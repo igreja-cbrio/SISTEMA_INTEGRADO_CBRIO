@@ -57,9 +57,11 @@ app.use((err, req, res, next) => {
   res.status(500).json({ error: 'Erro interno do servidor' });
 });
 
-app.listen(PORT, () => {
-  console.log(`[CBRio PMO] Servidor rodando na porta ${PORT}`);
-  console.log(`[CBRio PMO] Ambiente: ${process.env.NODE_ENV || 'development'}`);
-});
+if (process.env.VERCEL !== '1') {
+  app.listen(PORT, () => {
+    console.log(`[CBRio PMO] Servidor rodando na porta ${PORT}`);
+    console.log(`[CBRio PMO] Ambiente: ${process.env.NODE_ENV || 'development'}`);
+  });
+}
 
 module.exports = app;
