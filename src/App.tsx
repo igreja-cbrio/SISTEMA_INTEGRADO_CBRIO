@@ -8,6 +8,11 @@ import Login from './pages/Login';
 const Dashboard = lazy(() => import('./pages/Dashboard'));
 const Perfil = lazy(() => import('./pages/Perfil'));
 const NotFound = lazy(() => import('./pages/NotFound'));
+const SolicitarCompra = lazy(() => import('./pages/SolicitarCompra'));
+const NotificacaoRegras = lazy(() => import('./pages/admin/NotificacaoRegras'));
+const Membresia = lazy(() => import('./pages/ministerial/Membresia'));
+const AssistenteIA = lazy(() => import('./pages/admin/AssistenteIA'));
+const EventDetail = lazy(() => import('./pages/eventos/EventDetail'));
 
 // Placeholder pages for modules not yet copied
 const PlaceholderPage = ({ title }) => (
@@ -61,17 +66,17 @@ function AppRoutes() {
         {/* Placeholder routes for modules */}
         <Route path="/planejamento" element={<PlaceholderPage title="Planejamento" />} />
         <Route path="/eventos" element={<PlaceholderPage title="Eventos" />} />
-        <Route path="/eventos/:id" element={<PlaceholderPage title="Detalhe do Evento" />} />
+        <Route path="/eventos/:id" element={<Suspense fallback={<Loading />}><EventDetail /></Suspense>} />
         <Route path="/projetos" element={<PlaceholderPage title="Projetos" />} />
         <Route path="/expansao" element={<PlaceholderPage title="Expansão" />} />
         <Route path="/admin/rh" element={<PlaceholderPage title="Recursos Humanos" />} />
         <Route path="/admin/financeiro" element={<PlaceholderPage title="Financeiro" />} />
         <Route path="/admin/logistica" element={<PlaceholderPage title="Logística" />} />
         <Route path="/admin/patrimonio" element={<PlaceholderPage title="Patrimônio" />} />
-        <Route path="/ministerial/membresia" element={<PlaceholderPage title="Membresia" />} />
-        <Route path="/assistente-ia" element={<PlaceholderPage title="Assistente IA" />} />
-        <Route path="/solicitar-compra" element={<PlaceholderPage title="Solicitar Compra" />} />
-        <Route path="/admin/notificacao-regras" element={<PlaceholderPage title="Regras de Notificação" />} />
+        <Route path="/ministerial/membresia" element={<Suspense fallback={<Loading />}><Membresia /></Suspense>} />
+        <Route path="/assistente-ia" element={<Suspense fallback={<Loading />}><AssistenteIA /></Suspense>} />
+        <Route path="/solicitar-compra" element={<Suspense fallback={<Loading />}><SolicitarCompra /></Suspense>} />
+        <Route path="/admin/notificacao-regras" element={<Suspense fallback={<Loading />}><NotificacaoRegras /></Suspense>} />
         <Route path="/ministerial/*" element={<PlaceholderPage title="Ministerial" />} />
         <Route path="/criativo/*" element={<PlaceholderPage title="Criativo" />} />
 
