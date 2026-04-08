@@ -6,13 +6,14 @@ const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
 if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
-  throw new Error('[Supabase] SUPABASE_URL e SUPABASE_SERVICE_ROLE_KEY são obrigatórios no .env');
+  console.warn('[Supabase] SUPABASE_URL e SUPABASE_SERVICE_ROLE_KEY não configurados. Rotas que usam Supabase podem falhar.');
 }
 
-// Cliente com service_role — uso exclusivo no backend
-const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
-  auth: { autoRefreshToken: false, persistSession: false },
-});
+const supabase = (SUPABASE_URL && SUPABASE_SERVICE_ROLE_KEY)
+  ? createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
+      auth: { autoRefreshToken: false, persistSession: false },
+    })
+  : null;
 
 // Pool pg direto no Supabase Postgres (para queries complexas com RLS bypassada)
 const pool = new Pool({
