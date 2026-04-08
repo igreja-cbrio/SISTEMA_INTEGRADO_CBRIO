@@ -17,6 +17,8 @@ const Financeiro = lazy(() => import('./pages/admin/financeiro/Financeiro'));
 const Patrimonio = lazy(() => import('./pages/admin/patrimonio/Patrimonio'));
 const Expansao = lazy(() => import('./pages/Expansao'));
 const RH = lazy(() => import('./pages/admin/rh/RH'));
+const Logistica = lazy(() => import('./pages/admin/logistica/Logistica'));
+const Planejamento = lazy(() => import('./pages/Planejamento'));
 
 // Placeholder pages for modules not yet copied
 const PlaceholderPage = ({ title }) => (
@@ -68,14 +70,14 @@ function AppRoutes() {
         <Route path="/perfil" element={<Suspense fallback={<Loading />}><Perfil /></Suspense>} />
 
         {/* Placeholder routes for modules */}
-        <Route path="/planejamento" element={<PlaceholderPage title="Planejamento" />} />
+        <Route path="/planejamento" element={<Suspense fallback={<Loading />}><Planejamento /></Suspense>} />
         <Route path="/eventos" element={<PlaceholderPage title="Eventos" />} />
         <Route path="/eventos/:id" element={<Suspense fallback={<Loading />}><EventDetail /></Suspense>} />
         <Route path="/projetos" element={<PlaceholderPage title="Projetos" />} />
         <Route path="/expansao" element={<Suspense fallback={<Loading />}><Expansao /></Suspense>} />
         <Route path="/admin/rh" element={<Suspense fallback={<Loading />}><RH /></Suspense>} />
         <Route path="/admin/financeiro" element={<Suspense fallback={<Loading />}><Financeiro /></Suspense>} />
-        <Route path="/admin/logistica" element={<PlaceholderPage title="Logística" />} />
+        <Route path="/admin/logistica" element={<Suspense fallback={<Loading />}><Logistica /></Suspense>} />
         <Route path="/admin/patrimonio" element={<Suspense fallback={<Loading />}><Patrimonio /></Suspense>} />
         <Route path="/ministerial/membresia" element={<Suspense fallback={<Loading />}><Membresia /></Suspense>} />
         <Route path="/assistente-ia" element={<Suspense fallback={<Loading />}><AssistenteIA /></Suspense>} />
