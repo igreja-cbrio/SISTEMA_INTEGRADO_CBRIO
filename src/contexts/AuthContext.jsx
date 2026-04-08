@@ -43,7 +43,7 @@ export function AuthProvider({ children }) {
       if (!supabase) return;
       const { data: { session } } = await supabase.auth.getSession();
       if (!session?.access_token) return;
-      const res = await fetch(`${API}/api/auth/my-permissions`, {
+      const res = await fetch(`${API}/auth/my-permissions`, {
         headers: { Authorization: `Bearer ${session.access_token}` },
       });
       if (res.ok) {
