@@ -1,7 +1,8 @@
 import { createContext, useContext, useEffect, useState } from 'react';
 import { supabase } from '../supabaseClient';
+import { resolveApiBaseUrl } from '../lib/api-base';
 
-const API = import.meta.env.VITE_API_URL || '/api';
+const API = resolveApiBaseUrl(import.meta.env.VITE_API_URL);
 const AuthContext = createContext(null);
 
 // Set to true to bypass login and simulate an admin user

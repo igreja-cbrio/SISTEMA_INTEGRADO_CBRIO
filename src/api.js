@@ -1,7 +1,8 @@
 import { supabase } from './supabaseClient';
+import { resolveApiBaseUrl } from './lib/api-base';
 
 // Configure this to point to your Vercel backend
-const API = import.meta.env.VITE_API_URL || '/api';
+const API = resolveApiBaseUrl(import.meta.env.VITE_API_URL);
 
 async function getToken() {
   if (!supabase) return null;
