@@ -1,67 +1,59 @@
 
 
-## Plano: Copiar Frontend do CRM CBRio para o Lovable
+## Plano: Completar Frontend + Conectar GitHub
 
-### Visão Geral
-Copiar todo o frontend do repositório `igreja-cbrio/crmcbrio` (pasta `frontend/`) para este projeto Lovable, adaptando para funcionar com Tailwind CSS v3 (o Lovable não suporta v4). O backend Express permanece no Vercel — as chamadas de API serão redirecionadas para a URL do Vercel.
+### Situação Atual
+- **Copiado**: Dashboard, Login, Perfil, AppShell, UI components, contexts, api.js
+- **Faltando**: ~25 arquivos de páginas (módulos Admin, Eventos, Projetos, etc.)
+- **Backend**: Permanece no Vercel -- o Lovable só gerencia o frontend
 
-### Inventário de Arquivos (~50+ arquivos)
+### O que NÃO é possível
+O Lovable **não pode rodar o backend Express**. O backend continuará no Vercel e o frontend fará chamadas HTTP via `api.js` (já configurado com `VITE_API_URL`).
 
-**Configuração:**
-- `package.json` (ajustar dependências)
-- `vite.config.ts` (remover @tailwindcss/vite, usar PostCSS)
-- `index.html`
-- `tsconfig.json`
+### Arquivos restantes a copiar (por tamanho)
 
-**Core:**
-- `src/main.tsx`
-- `src/App.jsx`
-- `src/api.js` (ajustar base URL para Vercel)
-- `src/supabaseClient.js`
-- `src/index.css` (migrar Tailwind v4 → v3)
+**Arquivos grandes (>40KB cada -- precisam de múltiplas mensagens):**
+- `Eventos.jsx` (147KB) + 5 componentes (BudgetPanel, CycleView, EventFormModal, MeetingFormModal, TaskFormModal)
+- `Projetos.jsx` (139KB)
+- `RH.jsx` (138KB) + 6 tabs (TabAdmissao, TabAvaliacoes, TabExtras, TabFerias, TabFolha, TabTreinamentos) + ModalFuncionario
+- `Logistica.jsx` (93KB)
+- `Expansao.jsx` (90KB)
+- `Planejamento.jsx` (84KB)
+- `Patrimonio.jsx` (70KB)
+- `Financeiro.jsx` (46KB)
 
-**Contexts:**
-- `src/contexts/AuthContext.jsx`
-- `src/contexts/ThemeContext.jsx`
+**Arquivos médios/pequenos:**
+- `EventDetail.jsx` (19KB)
+- `Membresia.jsx` (20KB)
+- `AssistenteIA.jsx` (20KB)
+- `CompletionSection.jsx` (20KB)
+- `AttachmentButton.jsx` (9KB)
+- `SolicitarCompra.jsx` (7KB)
+- `NotificacaoRegras.jsx` (5KB)
 
-**Lib:**
-- `src/lib/utils.ts`
-- `src/lib/theme.ts`
-- `src/lib/export.js`
+### Execução (estimativa: 4-6 mensagens)
 
-**Components UI (~18 arquivos):**
-- avatar, badge, button, calendar, card, command-search, dialog, dropdown-menu, empty-state, input, label, loading-spinner, mega-menu, modern-side-bar, number-ticker, scroll-area, select, separator, skeleton, statistics-card, status-badge, switch, table, tabs
+**Msg 1**: Páginas pequenas/médias -- SolicitarCompra, NotificacaoRegras, Membresia, AssistenteIA, AttachmentButton, CompletionSection, EventDetail
+**Msg 2**: Financeiro + Patrimonio + Expansao
+**Msg 3**: RH completo (RH.jsx + 7 sub-componentes)
+**Msg 4**: Logistica + Planejamento
+**Msg 5**: Eventos completo (Eventos.jsx + 5 componentes)
+**Msg 6**: Projetos + App.tsx (rotas finais) + testes
 
-**Layout:**
-- `src/components/layout/AppShell.jsx`
+### GitHub
 
-**Pages (~15+ arquivos):**
-- Dashboard, Login, Perfil, Expansão, Planejamento, Projetos, SolicitarCompra
-- `admin/`: AssistenteIA, NotificacaoRegras
-- `admin/rh/`, `admin/financeiro/`, `admin/logistica/`, `admin/patrimonio/`
-- `eventos/` + `eventos/components/`
-- `ministerial/`
+Após completar a cópia:
+1. Vá em **Project Settings > GitHub > Connect project**
+2. Autorize o Lovable no GitHub
+3. Crie um novo repositório (ex: `crmcbrio-frontend`)
+4. O Lovable sincroniza automaticamente todas as mudanças
 
-**Assets:**
-- `public/images/` (logo SVG)
+**Sobre o repo existente** (`igreja-cbrio/crmcbrio`): O Lovable não consegue importar repos existentes diretamente. As opções são:
+- Criar um **novo repo** só para o frontend via Lovable (recomendado)
+- Ou após conectar, clonar localmente e fazer force push do código do Lovable para o repo existente (manual)
 
-### Adaptações Necessárias
-
-1. **Tailwind v4 → v3**: Converter `@import "tailwindcss"` para `@tailwind base/components/utilities`, mover tema para `tailwind.config.ts`
-2. **API Base URL**: Configurar `api.js` para apontar para `https://crmcbrio.vercel.app/api` (ou a URL real do Vercel)
-3. **Variáveis de ambiente**: Configurar `VITE_SUPABASE_URL` e `VITE_SUPABASE_ANON_KEY` nos secrets do Lovable
-4. **Dependências**: Instalar framer-motion, react-day-picker, cmdk, e outros pacotes usados
-
-### Estratégia de Execução (em várias mensagens)
-
-**Fase 1**: Configuração base — package.json, vite.config, tailwind.config, index.css, index.html
-**Fase 2**: Core — main.tsx, supabaseClient, api.js, contexts (Auth + Theme)  
-**Fase 3**: UI Components — todos os 18+ componentes da pasta ui/
-**Fase 4**: Layout — AppShell + mega-menu + modern-side-bar
-**Fase 5**: Pages — Dashboard, Login, Perfil e páginas simples
-**Fase 6**: Módulos Admin — RH, Financeiro, Logística, Patrimônio
-**Fase 7**: Módulos Eventos/Projetos — Eventos + componentes, Projetos, Planejamento, Expansão
-**Fase 8**: Testes e ajustes — verificar se tudo compila e as chamadas à API funcionam
-
-> ⚠️ **Importante**: Você precisará configurar os secrets (`VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`) no Lovable e informar a URL base da API no Vercel para que o app funcione de verdade.
+### Limitações importantes
+- Arquivos muito grandes (>100KB) podem precisar ser simplificados ou divididos
+- Adaptações de Tailwind v4 para v3 serão feitas em cada arquivo durante a cópia
+- O backend (Express/Vercel) precisa ser editado separadamente (VS Code, GitHub, etc.)
 
