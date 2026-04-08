@@ -4,12 +4,29 @@ import { supabase } from '../supabaseClient';
 const API = import.meta.env.VITE_API_URL || '/api';
 const AuthContext = createContext(null);
 
+// Set to true to bypass login and simulate an admin user
+const DEV_BYPASS_AUTH = true;
+
+const FAKE_USER = {
+  id: 'dev-user-00000000',
+  email: 'admin@cbrio.dev',
+};
+
+const FAKE_PROFILE = {
+  id: 'dev-user-00000000',
+  name: 'Admin Dev',
+  email: 'admin@cbrio.dev',
+  role: 'admin',
+  area: 'Tecnologia',
+  avatar_url: null,
+};
+
 export function AuthProvider({ children }) {
-  const [user, setUser] = useState(null);
-  const [profile, setProfile] = useState(null);
+  const [user, setUser] = useState(DEV_BYPASS_AUTH ? FAKE_USER : null);
+  const [profile, setProfile] = useState(DEV_BYPASS_AUTH ? FAKE_PROFILE : null);
   const [modulePerms, setModulePerms] = useState(null);
   const [permData, setPermData] = useState(null);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(DEV_BYPASS_AUTH ? false : true);
 
   async function fetchProfile(userId) {
     if (!supabase) return;
@@ -38,6 +55,7 @@ export function AuthProvider({ children }) {
   }
 
   useEffect(() => {
+    if (DEV_BYPASS_AUTH) return;
     if (!supabase) {
       setLoading(false);
       return;
@@ -89,6 +107,7 @@ export function AuthProvider({ children }) {
   }
 
   async function signOut() {
+    if (DEV_BYPASS_AUTH) return;
     if (supabase) await supabase.auth.signOut();
   }
 
