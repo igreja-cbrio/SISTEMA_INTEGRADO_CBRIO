@@ -16,6 +16,7 @@ const EventDetail = lazy(() => import('./pages/eventos/EventDetail'));
 const Financeiro = lazy(() => import('./pages/admin/financeiro/Financeiro'));
 const Patrimonio = lazy(() => import('./pages/admin/patrimonio/Patrimonio'));
 const Expansao = lazy(() => import('./pages/Expansao'));
+const RH = lazy(() => import('./pages/admin/rh/RH'));
 
 // Placeholder pages for modules not yet copied
 const PlaceholderPage = ({ title }) => (
