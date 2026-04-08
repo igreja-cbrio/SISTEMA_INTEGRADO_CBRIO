@@ -19,6 +19,8 @@ const Expansao = lazy(() => import('./pages/Expansao'));
 const RH = lazy(() => import('./pages/admin/rh/RH'));
 const Logistica = lazy(() => import('./pages/admin/logistica/Logistica'));
 const Planejamento = lazy(() => import('./pages/Planejamento'));
+const Eventos = lazy(() => import('./pages/eventos/Eventos'));
+const Projetos = lazy(() => import('./pages/Projetos'));
 
 // Placeholder pages for modules not yet copied
 const PlaceholderPage = ({ title }) => (
@@ -71,9 +73,9 @@ function AppRoutes() {
 
         {/* Placeholder routes for modules */}
         <Route path="/planejamento" element={<Suspense fallback={<Loading />}><Planejamento /></Suspense>} />
-        <Route path="/eventos" element={<PlaceholderPage title="Eventos" />} />
+        <Route path="/eventos" element={<Suspense fallback={<Loading />}><Eventos /></Suspense>} />
         <Route path="/eventos/:id" element={<Suspense fallback={<Loading />}><EventDetail /></Suspense>} />
-        <Route path="/projetos" element={<PlaceholderPage title="Projetos" />} />
+        <Route path="/projetos" element={<Suspense fallback={<Loading />}><Projetos /></Suspense>} />
         <Route path="/expansao" element={<Suspense fallback={<Loading />}><Expansao /></Suspense>} />
         <Route path="/admin/rh" element={<Suspense fallback={<Loading />}><RH /></Suspense>} />
         <Route path="/admin/financeiro" element={<Suspense fallback={<Loading />}><Financeiro /></Suspense>} />
