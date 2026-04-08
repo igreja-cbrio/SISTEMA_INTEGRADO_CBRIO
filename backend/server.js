@@ -48,7 +48,10 @@ app.get('/api/health', (req, res) => res.json({ status: 'ok', timestamp: new Dat
 // ── Serve frontend in production ──
 if (process.env.NODE_ENV === 'production') {
   app.use(express.static(path.join(__dirname, 'public')));
-  app.get('*', (req, res) => res.sendFile(path.join(__dirname, 'public', 'index.html')));
+  app.use((req, res, next) => {
+    if (!['GET', 'HEAD'].includes(req.method) || req.path.startsWith('/api/')) return next();
+    res.sendFile(path.join(__dirname, 'public', 'index.html'));
+  });
 }
 
 // ── Error handler ──
