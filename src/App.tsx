@@ -73,7 +73,7 @@ function AppRoutes() {
         <Route path="/eventos/:id" element={<Suspense fallback={<Loading />}><EventDetail /></Suspense>} />
         <Route path="/projetos" element={<PlaceholderPage title="Projetos" />} />
         <Route path="/expansao" element={<Suspense fallback={<Loading />}><Expansao /></Suspense>} />
-        <Route path="/admin/rh" element={<PlaceholderPage title="Recursos Humanos" />} />
+        <Route path="/admin/rh" element={<Suspense fallback={<Loading />}><RH /></Suspense>} />
         <Route path="/admin/financeiro" element={<Suspense fallback={<Loading />}><Financeiro /></Suspense>} />
         <Route path="/admin/logistica" element={<PlaceholderPage title="Logística" />} />
         <Route path="/admin/patrimonio" element={<Suspense fallback={<Loading />}><Patrimonio /></Suspense>} />
