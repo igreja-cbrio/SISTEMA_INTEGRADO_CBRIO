@@ -5,7 +5,7 @@ const API = import.meta.env.VITE_API_URL || '/api';
 const AuthContext = createContext(null);
 
 // Set to true to bypass login and simulate an admin user
-const DEV_BYPASS_AUTH = true;
+const DEV_BYPASS_AUTH = false;
 
 const FAKE_USER = {
   id: 'dev-user-00000000',
