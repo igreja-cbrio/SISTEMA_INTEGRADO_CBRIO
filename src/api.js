@@ -441,3 +441,22 @@ export const completions = {
   reopen: (taskId, reason) => request(`/completions/${taskId}/reopen`, { method: 'DELETE', body: JSON.stringify({ reason }) }),
   listByEvent: (eventId) => get(`/completions/event/${eventId}`),
 };
+
+export const ml = {
+  status: () => get('/ml/status'),
+  config: (data) => post('/ml/config', data),
+  authUrl: () => get('/ml/auth-url'),
+  disconnect: () => post('/ml/disconnect'),
+  orders: (params) => get('/ml/orders' + (params ? '?' + new URLSearchParams(params) : '')),
+  order: (id) => get(`/ml/orders/${id}`),
+  shipments: () => get('/ml/shipments'),
+  shipment: (id) => get(`/ml/shipments/${id}`),
+  syncNotas: () => post('/ml/sync-notas'),
+};
+
+export const arquivei = {
+  status: () => get('/arquivei/status'),
+  config: (data) => post('/arquivei/config', data),
+  disconnect: () => post('/arquivei/disconnect'),
+  sync: () => post('/arquivei/sync'),
+};

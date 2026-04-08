@@ -946,7 +946,7 @@ export default function Planejamento() {
             return (
               <div>
                 <div style={{ overflowX: 'auto', marginBottom: 16, paddingBottom: 6 }}>
-                  <div style={{ display: 'flex', gap: 5, minWidth: 'max-content', justifyContent: 'center', justifyContent: 'center' }}>
+                  <div style={{ display: 'flex', gap: 5, minWidth: 'max-content', justifyContent: 'center' }}>
                     {AREAS.map((a, i) => {
                       const count = a.key === 'all' ? strategicData.length : strategicData.filter(p => p.area_group === a.key).length;
                       const isActive = selectedAreaGroup === a.key;
