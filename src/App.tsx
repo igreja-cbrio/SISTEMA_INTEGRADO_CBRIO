@@ -13,6 +13,9 @@ const NotificacaoRegras = lazy(() => import('./pages/admin/NotificacaoRegras'));
 const Membresia = lazy(() => import('./pages/ministerial/Membresia'));
 const AssistenteIA = lazy(() => import('./pages/admin/AssistenteIA'));
 const EventDetail = lazy(() => import('./pages/eventos/EventDetail'));
+const Financeiro = lazy(() => import('./pages/admin/financeiro/Financeiro'));
+const Patrimonio = lazy(() => import('./pages/admin/patrimonio/Patrimonio'));
+const Expansao = lazy(() => import('./pages/Expansao'));
 
 // Placeholder pages for modules not yet copied
 const PlaceholderPage = ({ title }) => (
@@ -68,11 +71,11 @@ function AppRoutes() {
         <Route path="/eventos" element={<PlaceholderPage title="Eventos" />} />
         <Route path="/eventos/:id" element={<Suspense fallback={<Loading />}><EventDetail /></Suspense>} />
         <Route path="/projetos" element={<PlaceholderPage title="Projetos" />} />
-        <Route path="/expansao" element={<PlaceholderPage title="Expansão" />} />
+        <Route path="/expansao" element={<Suspense fallback={<Loading />}><Expansao /></Suspense>} />
         <Route path="/admin/rh" element={<PlaceholderPage title="Recursos Humanos" />} />
-        <Route path="/admin/financeiro" element={<PlaceholderPage title="Financeiro" />} />
+        <Route path="/admin/financeiro" element={<Suspense fallback={<Loading />}><Financeiro /></Suspense>} />
         <Route path="/admin/logistica" element={<PlaceholderPage title="Logística" />} />
-        <Route path="/admin/patrimonio" element={<PlaceholderPage title="Patrimônio" />} />
+        <Route path="/admin/patrimonio" element={<Suspense fallback={<Loading />}><Patrimonio /></Suspense>} />
         <Route path="/ministerial/membresia" element={<Suspense fallback={<Loading />}><Membresia /></Suspense>} />
         <Route path="/assistente-ia" element={<Suspense fallback={<Loading />}><AssistenteIA /></Suspense>} />
         <Route path="/solicitar-compra" element={<Suspense fallback={<Loading />}><SolicitarCompra /></Suspense>} />
