@@ -120,6 +120,7 @@ router.post('/chat', chatLimiter, async (req, res) => {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
+        'Accept': 'text/event-stream',
         'x-api-key': apiKey,
         'anthropic-version': '2023-06-01',
         'anthropic-beta': 'managed-agents-2026-04-01',
@@ -129,7 +130,6 @@ router.post('/chat', chatLimiter, async (req, res) => {
           type: 'user.message',
           content: [{ type: 'text', text: userContent }],
         }],
-        stream: true,
       }),
     });
 
