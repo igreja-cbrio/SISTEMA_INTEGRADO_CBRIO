@@ -1,0 +1,213 @@
+const router = require('express').Router();
+const { authenticate, authorize } = require('../middleware/auth');
+const { supabase } = require('../utils/supabase');
+
+router.use(authenticate, authorize('admin', 'diretor'));
+
+// ── Helpers ───────────────────────────────────────────────
+async function getMLConfig() {
+  const { data } = await supabase
+    .from('ml_config')
+    .select('*')
+    .limit(1)
+    .maybeSingle();
+  return data;
+}
+
+async function refreshToken(config) {
+  const res = await fetch('https://api.mercadolibre.com/oauth/token', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      grant_type: 'refresh_token',
+      client_id: config.client_id,
+      client_secret: config.client_secret,
+      refresh_token: config.refresh_token,
+    }),
+  });
+  if (!res.ok) throw new Error('Falha ao renovar token do ML');
+  const tokens = await res.json();
+  await supabase.from('ml_config').update({
+    access_token: tokens.access_token,
+    refresh_token: tokens.refresh_token,
+    token_expires_at: new Date(Date.now() + tokens.expires_in * 1000).toISOString(),
+  }).eq('id', config.id);
+  return tokens.access_token;
+}
+
+async function mlFetch(config, path) {
+  let token = config.access_token;
+  // Refresh if expired
+  if (config.token_expires_at && new Date(config.token_expires_at) < new Date()) {
+    token = await refreshToken(config);
+  }
+  const res = await fetch(`https://api.mercadolibre.com${path}`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  // Token expired mid-request
+  if (res.status === 401) {
+    token = await refreshToken(config);
+    const retry = await fetch(`https://api.mercadolibre.com${path}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    return retry.json();
+  }
+  return res.json();
+}
+
+// ── STATUS ────────────────────────────────────────────────
+router.get('/status', async (req, res) => {
+  try {
+    const config = await getMLConfig();
+    if (!config || !config.access_token) {
+      return res.json({ connected: false });
+    }
+    // Verify token works
+    try {
+      const user = await mlFetch(config, '/users/me');
+      return res.json({
+        connected: true,
+        nickname: user.nickname || user.first_name,
+        user_id: user.id,
+      });
+    } catch {
+      return res.json({ connected: false, error: 'Token inválido' });
+    }
+  } catch (e) {
+    console.error('[ML] Status error:', e.message);
+    res.json({ connected: false });
+  }
+});
+
+// ── CONFIG (save credentials + return auth URL) ───────────
+router.post('/config', async (req, res) => {
+  try {
+    const { client_id, client_secret } = req.body;
+    if (!client_id || !client_secret) {
+      return res.status(400).json({ error: 'Client ID e Client Secret são obrigatórios' });
+    }
+
+    const existing = await getMLConfig();
+    const redirect_uri = `${process.env.FRONTEND_URL || 'https://crmcbrio.vercel.app'}/admin/logistica?ml_callback=1`;
+
+    if (existing) {
+      await supabase.from('ml_config').update({
+        client_id, client_secret, access_token: null, refresh_token: null, token_expires_at: null,
+      }).eq('id', existing.id);
+    } else {
+      await supabase.from('ml_config').insert({ client_id, client_secret });
+    }
+
+    const auth_url = `https://auth.mercadolivre.com.br/authorization?response_type=code&client_id=${client_id}&redirect_uri=${encodeURIComponent(redirect_uri)}`;
+    res.json({ auth_url });
+  } catch (e) {
+    console.error('[ML] Config error:', e.message);
+    res.status(500).json({ error: 'Erro ao configurar ML' });
+  }
+});
+
+// ── AUTH CALLBACK (exchange code for token) ───────────────
+router.post('/auth-callback', async (req, res) => {
+  try {
+    const { code } = req.body;
+    if (!code) return res.status(400).json({ error: 'Código de autorização não fornecido' });
+
+    const config = await getMLConfig();
+    if (!config) return res.status(400).json({ error: 'Configuração ML não encontrada' });
+
+    const redirect_uri = `${process.env.FRONTEND_URL || 'https://crmcbrio.vercel.app'}/admin/logistica?ml_callback=1`;
+
+    const tokenRes = await fetch('https://api.mercadolibre.com/oauth/token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        grant_type: 'authorization_code',
+        client_id: config.client_id,
+        client_secret: config.client_secret,
+        code,
+        redirect_uri,
+      }),
+    });
+
+    if (!tokenRes.ok) {
+      const err = await tokenRes.json();
+      return res.status(400).json({ error: err.message || 'Falha na autorização do ML' });
+    }
+
+    const tokens = await tokenRes.json();
+    await supabase.from('ml_config').update({
+      access_token: tokens.access_token,
+      refresh_token: tokens.refresh_token,
+      token_expires_at: new Date(Date.now() + tokens.expires_in * 1000).toISOString(),
+      ml_user_id: tokens.user_id?.toString() || null,
+    }).eq('id', config.id);
+
+    res.json({ success: true });
+  } catch (e) {
+    console.error('[ML] Auth callback error:', e.message);
+    res.status(500).json({ error: 'Erro no callback de autorização' });
+  }
+});
+
+// ── DISCONNECT ────────────────────────────────────────────
+router.post('/disconnect', async (req, res) => {
+  try {
+    const config = await getMLConfig();
+    if (config) {
+      await supabase.from('ml_config').update({
+        access_token: null, refresh_token: null, token_expires_at: null, ml_user_id: null,
+      }).eq('id', config.id);
+    }
+    res.json({ success: true });
+  } catch (e) {
+    console.error('[ML] Disconnect error:', e.message);
+    res.status(500).json({ error: 'Erro ao desconectar ML' });
+  }
+});
+
+// ── ORDERS ────────────────────────────────────────────────
+router.get('/orders', async (req, res) => {
+  try {
+    const config = await getMLConfig();
+    if (!config?.access_token) return res.status(400).json({ error: 'ML não conectado' });
+
+    const { offset = 0, limit = 20, status, q } = req.query;
+    let path = `/orders/search?seller=${config.ml_user_id}&offset=${offset}&limit=${limit}&sort=date_desc`;
+    if (status) path += `&order.status=${status}`;
+    if (q) path += `&q=${encodeURIComponent(q)}`;
+
+    const data = await mlFetch(config, path);
+    res.json(data);
+  } catch (e) {
+    console.error('[ML] Orders error:', e.message);
+    res.status(500).json({ error: 'Erro ao buscar pedidos ML' });
+  }
+});
+
+// ── ORDER DETAIL ──────────────────────────────────────────
+router.get('/orders/:id', async (req, res) => {
+  try {
+    const config = await getMLConfig();
+    if (!config?.access_token) return res.status(400).json({ error: 'ML não conectado' });
+    const data = await mlFetch(config, `/orders/${req.params.id}`);
+    res.json(data);
+  } catch (e) {
+    console.error('[ML] Order detail error:', e.message);
+    res.status(500).json({ error: 'Erro ao buscar pedido' });
+  }
+});
+
+// ── SHIPMENTS ─────────────────────────────────────────────
+router.get('/shipments/:id', async (req, res) => {
+  try {
+    const config = await getMLConfig();
+    if (!config?.access_token) return res.status(400).json({ error: 'ML não conectado' });
+    const data = await mlFetch(config, `/shipments/${req.params.id}`);
+    res.json(data);
+  } catch (e) {
+    console.error('[ML] Shipment error:', e.message);
+    res.status(500).json({ error: 'Erro ao buscar envio' });
+  }
+});
+
+module.exports = router;
