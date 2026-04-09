@@ -210,6 +210,8 @@ function ChatTab() {
                 }
                 return updated;
               });
+            } else if (event.type === 'raw') {
+              console.log('[CHAT DEBUG] Raw SSE:', event.payload);
             } else if (event.type === 'error') {
               setMessages(prev => {
                 const updated = [...prev];

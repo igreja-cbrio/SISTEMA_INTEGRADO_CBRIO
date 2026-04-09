@@ -200,6 +200,9 @@ router.post('/chat', chatLimiter, async (req, res) => {
     const handleSsePayload = (jsonStr) => {
       if (!jsonStr || jsonStr === '[DONE]') return;
 
+      // Send raw payload to frontend for debugging
+      sendEvent('raw', { payload: jsonStr.slice(0, 500) });
+
       try {
         const event = JSON.parse(jsonStr);
         console.log('[AGENTS] SSE event:', JSON.stringify(event).slice(0, 300));
