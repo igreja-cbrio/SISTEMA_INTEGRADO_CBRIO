@@ -326,26 +326,20 @@ router.post('/chat', chatLimiter, async (req, res) => {
 
     // 6. Persist messages in DB
     try {
-      // Get the DB session id
-      const sessRow = await db.query(
+      const sessRow = await dbQuery(
         `SELECT id FROM agent_sessions WHERE anthropic_session_id = $1 LIMIT 1`,
         [activeSessionId]
       );
       const dbSessId = sessRow.rows[0]?.id;
       if (dbSessId) {
-        await db.query(
-          `INSERT INTO agent_messages (session_id, role, content) VALUES ($1, 'user', $2)`,
-          [dbSessId, message]
-        );
+        await dbInsert('agent_messages', { session_id: dbSessId, role: 'user', content: message });
         if (fullText) {
-          await db.query(
-            `INSERT INTO agent_messages (session_id, role, content) VALUES ($1, 'assistant', $2)`,
-            [dbSessId, fullText]
-          );
+          await dbInsert('agent_messages', { session_id: dbSessId, role: 'assistant', content: fullText });
         }
       }
     } catch (e) {
       console.warn('[AGENTS] Failed to persist messages:', e.message);
+      sendEvent('persist_error', { text: 'Mensagens não foram salvas no banco.' });
     }
 
     // 7. Log usage
@@ -371,7 +365,7 @@ router.post('/chat', chatLimiter, async (req, res) => {
 // GET /api/agents/sessions — lista sessões do usuário
 router.get('/sessions', async (req, res) => {
   try {
-    const r = await db.query(
+    const r = await dbQuery(
       `SELECT id, anthropic_session_id, agent_module, title, created_at, last_message_at
        FROM agent_sessions WHERE user_id = $1 ORDER BY last_message_at DESC LIMIT 30`,
       [req.user.userId]
@@ -383,10 +377,19 @@ router.get('/sessions', async (req, res) => {
   }
 });
 
-// GET /api/agents/sessions/:id/messages — histórico de mensagens
+// GET /api/agents/sessions/:id/messages — histórico de mensagens (com validação de ownership)
 router.get('/sessions/:id/messages', async (req, res) => {
   try {
-    const r = await db.query(
+    // Validate session belongs to user
+    const sessCheck = await dbQuery(
+      `SELECT id FROM agent_sessions WHERE id = $1 AND user_id = $2 LIMIT 1`,
+      [req.params.id, req.user.userId]
+    );
+    if (!sessCheck.rows.length) {
+      return res.status(404).json({ error: 'Sessão não encontrada' });
+    }
+
+    const r = await dbQuery(
       `SELECT id, role, content, created_at FROM agent_messages
        WHERE session_id = $1 ORDER BY created_at ASC`,
       [req.params.id]
