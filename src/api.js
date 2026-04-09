@@ -209,6 +209,7 @@ export const agents = {
   // Managed Agents — Chat
   modules: () => get('/agents/modules'),
   sessions: () => get('/agents/sessions'),
+  sessionMessages: (id) => get(`/agents/sessions/${id}/messages`),
   deleteSession: (id) => del(`/agents/sessions/${id}`),
   /**
    * Chat SSE stream. Returns the raw Response so the caller can read the stream.

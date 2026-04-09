@@ -123,7 +123,7 @@ function ChatTab() {
   const [sessionId, setSessionId] = useState(null);
   const [sessions, setSessions] = useState([]);
   const [streaming, setStreaming] = useState(false);
-  const [showSessions, setShowSessions] = useState(false);
+  const [showSessions, setShowSessions] = useState(true);
   const messagesEndRef = useRef(null);
   const textareaRef = useRef(null);
 
@@ -147,11 +147,23 @@ function ChatTab() {
     setSessionId(null);
   }
 
-  function resumeSession(sess) {
+  async function resumeSession(sess) {
     setSessionId(sess.anthropic_session_id);
     setModule(sess.agent_module);
-    setMessages([{ role: 'system', text: `Sessão restaurada: ${sess.title || 'Sem título'}` }]);
     setShowSessions(false);
+
+    // Load real message history
+    try {
+      const msgs = await agents.sessionMessages(sess.id);
+      if (msgs && msgs.length > 0) {
+        setMessages(msgs.map(m => ({ role: m.role, text: m.content })));
+      } else {
+        setMessages([{ role: 'system', text: `Sessão restaurada: ${sess.title || 'Sem título'}` }]);
+      }
+    } catch (e) {
+      console.error('[CHAT] Failed to load messages:', e);
+      setMessages([{ role: 'system', text: `Sessão restaurada: ${sess.title || 'Sem título'}` }]);
+    }
   }
 
   async function deleteSession(id) {
