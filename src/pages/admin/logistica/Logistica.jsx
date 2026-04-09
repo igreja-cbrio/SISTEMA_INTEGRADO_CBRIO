@@ -970,7 +970,22 @@ function ComprasMLTab() {
   const [shipDetail, setShipDetail] = useState(null);
   const [localError, setLocalError] = useState('');
 
-  useEffect(() => { checkStatus(); }, []);
+  // Handle OAuth callback
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const code = params.get('code');
+    const isCallback = params.get('ml_callback');
+    if (isCallback && code) {
+      // Clean URL immediately
+      window.history.replaceState({}, '', window.location.pathname);
+      setLoading(true);
+      ml.authCallback(code)
+        .then(() => checkStatus())
+        .catch(e => { setLocalError('Erro ao autorizar ML: ' + e.message); setLoading(false); });
+    } else {
+      checkStatus();
+    }
+  }, []);
 
   async function checkStatus() {
     setLoading(true);
@@ -984,6 +999,7 @@ function ComprasMLTab() {
 
   async function loadOrders(offset = 0) {
     setLoading(true);
+    setLocalError('');
     try {
       const params = { offset, limit: 20 };
       if (filtroStatus) params.status = filtroStatus;
@@ -991,7 +1007,10 @@ function ComprasMLTab() {
       const data = await ml.orders(params);
       setOrders(data.results || []);
       setPaging({ total: data.paging?.total || 0, offset });
-    } catch (e) { console.error(e); }
+    } catch (e) {
+      console.error(e);
+      setLocalError('Erro ao carregar pedidos: ' + e.message);
+    }
     setLoading(false);
   }
 
@@ -1243,10 +1262,19 @@ function RastreioMLTab() {
     return () => clearInterval(interval);
   }, [shipments]);
 
-  async function loadShipments() {
+  const [shipError, setShipError] = useState('');
+
+  async function loadShipments(forceRefresh = false) {
     setLoading(true);
-    try { setShipments(await ml.shipments() || []); }
-    catch (e) { console.error(e); }
+    setShipError('');
+    try {
+      const params = forceRefresh ? { refresh: 1 } : undefined;
+      const data = await ml.shipments(params);
+      setShipments(data || []);
+    } catch (e) {
+      console.error(e);
+      setShipError('Erro ao carregar rastreios: ' + e.message);
+    }
     setLoading(false);
   }
 
@@ -1267,16 +1295,22 @@ function RastreioMLTab() {
   if (shipments.length === 0) return (
     <div style={{ ...styles.card, padding: 40, textAlign: 'center' }}>
       <div style={{ fontSize: 48, marginBottom: 12 }}>📦</div>
-      <div style={{ fontSize: 16, fontWeight: 600, color: C.text }}>Nenhum envio encontrado</div>
-      <div style={{ fontSize: 13, color: C.text2, marginTop: 4 }}>Conecte ao Mercado Livre na aba "Compras ML" para ver os rastreios.</div>
-      <Button variant="outline" size="sm" style={{ marginTop: 16 }} onClick={() => { setLoading(true); ml.shipments({ refresh: 1 }).then(d => { setShipments(d.shipments || []); }).catch(() => {}).finally(() => setLoading(false)); }}>🔄 Tentar novamente</Button>
+      <div style={{ fontSize: 16, fontWeight: 600, color: C.text }}>{shipError ? 'Erro ao carregar rastreios' : 'Nenhum envio encontrado'}</div>
+      <div style={{ fontSize: 13, color: shipError ? C.red : C.text2, marginTop: 4 }}>{shipError || 'Conecte ao Mercado Livre na aba "Compras ML" para ver os rastreios.'}</div>
+      <Button variant="outline" size="sm" style={{ marginTop: 16 }} onClick={() => loadShipments(true)}>🔄 Tentar novamente</Button>
     </div>
   );
 
   return (<>
+    {shipError && (
+      <div style={{ background: C.redBg, color: C.red, padding: '10px 16px', borderRadius: 8, marginBottom: 12, fontSize: 13, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        {shipError}
+        <Button variant="ghost" onClick={() => setShipError('')}>&#x2715;</Button>
+      </div>
+    )}
     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
       <div style={{ fontSize: 14, fontWeight: 700, color: C.text }}>📦 {emTransito.length} envio(s) em andamento</div>
-      <Button variant="ghost" size="sm" onClick={() => { setLoading(true); ml.shipments({ refresh: 1 }).then(d => { setShipments(d.shipments || []); }).catch(() => {}).finally(() => setLoading(false)); }}>🔄 Atualizar</Button>
+      <Button variant="ghost" size="sm" onClick={() => loadShipments(true)}>🔄 Atualizar</Button>
     </div>
 
     {/* Em trânsito */}

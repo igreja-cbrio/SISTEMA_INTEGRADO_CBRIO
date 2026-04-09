@@ -31,11 +31,12 @@ async function refreshToken(config) {
   });
   if (!res.ok) throw new Error('Falha ao renovar token do ML');
   const tokens = await res.json();
-  await supabase.from('ml_config').update({
+  const { error: dbErr } = await supabase.from('ml_config').update({
     access_token: tokens.access_token,
     refresh_token: tokens.refresh_token,
     token_expires_at: new Date(Date.now() + tokens.expires_in * 1000).toISOString(),
   }).eq('id', config.id);
+  if (dbErr) console.error('[ML] Erro ao salvar tokens:', dbErr.message);
   return tokens.access_token;
 }
 
@@ -61,6 +62,59 @@ async function mlFetch(config, path) {
   return json;
 }
 
+/**
+ * Resolve ml_user_id: usa o valor salvo no banco ou busca via /users/me.
+ * Persiste automaticamente quando ausente ou divergente.
+ */
+async function ensureUserId(config) {
+  const user = await mlFetch(config, '/users/me');
+  const userId = String(user.id);
+  if (!config.ml_user_id || config.ml_user_id !== userId) {
+    console.log('[ML] Persistindo ml_user_id:', userId);
+    const { error: dbErr } = await supabase.from('ml_config').update({ ml_user_id: userId }).eq('id', config.id);
+    if (dbErr) console.error('[ML] Erro ao salvar ml_user_id:', dbErr.message);
+    config.ml_user_id = userId;
+  }
+  return { userId, nickname: user.nickname || user.first_name };
+}
+
+/**
+ * Busca pedidos tentando buyer primeiro, depois seller.
+ * Retorna o payload do ML (com results e paging).
+ */
+async function searchOrders(config, userId, { offset = 0, limit = 20, status, q } = {}) {
+  const buildPath = (role) => {
+    let path = `/orders/search?${role}=${userId}&offset=${offset}&limit=${limit}&sort=date_desc`;
+    if (status) path += `&order.status=${status}`;
+    if (q) path += `&q=${encodeURIComponent(q)}`;
+    return path;
+  };
+
+  // Try buyer
+  let data;
+  try {
+    data = await mlFetch(config, buildPath('buyer'));
+    console.log('[ML] Buyer results:', data.results?.length || 0);
+  } catch (e) {
+    console.error('[ML] Buyer search failed:', e.message);
+    data = { results: [] };
+  }
+
+  // Fallback to seller
+  if (!data.results || data.results.length === 0) {
+    console.log('[ML] Buyer vazio, tentando seller...');
+    try {
+      data = await mlFetch(config, buildPath('seller'));
+      console.log('[ML] Seller results:', data.results?.length || 0);
+    } catch (e2) {
+      console.error('[ML] Seller search also failed:', e2.message);
+      data = { results: [] };
+    }
+  }
+
+  return data;
+}
+
 // ── STATUS ────────────────────────────────────────────────
 router.get('/status', async (req, res) => {
   try {
@@ -69,17 +123,8 @@ router.get('/status', async (req, res) => {
       return res.json({ connected: false });
     }
     try {
-      const user = await mlFetch(config, '/users/me');
-      // Auto-fix ml_user_id if missing
-      if (user.id && (!config.ml_user_id || config.ml_user_id !== String(user.id))) {
-        console.log('[ML] Atualizando ml_user_id:', user.id);
-        await supabase.from('ml_config').update({ ml_user_id: String(user.id) }).eq('id', config.id);
-      }
-      return res.json({
-        connected: true,
-        nickname: user.nickname || user.first_name,
-        user_id: user.id,
-      });
+      const { userId, nickname } = await ensureUserId(config);
+      return res.json({ connected: true, nickname, user_id: userId });
     } catch {
       return res.json({ connected: false, error: 'Token inválido' });
     }
@@ -141,16 +186,19 @@ router.post('/auth-callback', async (req, res) => {
 
     if (!tokenRes.ok) {
       const err = await tokenRes.json();
+      console.error('[ML] Auth callback token error:', JSON.stringify(err));
       return res.status(400).json({ error: err.message || 'Falha na autorização do ML' });
     }
 
     const tokens = await tokenRes.json();
-    await supabase.from('ml_config').update({
+    const { error: dbErr } = await supabase.from('ml_config').update({
       access_token: tokens.access_token,
       refresh_token: tokens.refresh_token,
       token_expires_at: new Date(Date.now() + tokens.expires_in * 1000).toISOString(),
       ml_user_id: tokens.user_id?.toString() || null,
     }).eq('id', config.id);
+
+    if (dbErr) console.error('[ML] Erro ao salvar auth tokens:', dbErr.message);
 
     res.json({ success: true });
   } catch (e) {
@@ -181,38 +229,22 @@ router.get('/orders', async (req, res) => {
   try {
     const config = await getMLConfig();
     if (!config?.access_token) return res.status(400).json({ error: 'ML não conectado' });
-    if (!config.ml_user_id) return res.status(400).json({ error: 'ml_user_id não configurado. Reconecte o ML.' });
 
-    const { offset = 0, limit = 20, status, q } = req.query;
-
-    // Try buyer first
-    let path = `/orders/search?buyer=${config.ml_user_id}&offset=${offset}&limit=${limit}&sort=date_desc`;
-    if (status) path += `&order.status=${status}`;
-    if (q) path += `&q=${encodeURIComponent(q)}`;
-
-    console.log('[ML] Orders search path:', path);
-    let data;
-    try {
-      data = await mlFetch(config, path);
-    } catch (e) {
-      console.error('[ML] Buyer search failed:', e.message);
-      data = { results: [] };
-    }
-
-    // Fallback: try as seller if buyer returned empty
-    if (!data.results || data.results.length === 0) {
-      console.log('[ML] Buyer vazio, tentando como seller...');
-      let sellerPath = `/orders/search?seller=${config.ml_user_id}&offset=${offset}&limit=${limit}&sort=date_desc`;
-      if (status) sellerPath += `&order.status=${status}`;
-      if (q) sellerPath += `&q=${encodeURIComponent(q)}`;
+    // Resolve user_id automatically
+    let userId = config.ml_user_id;
+    if (!userId) {
       try {
-        data = await mlFetch(config, sellerPath);
-        console.log('[ML] Seller results:', data.results?.length || 0);
-      } catch (e2) {
-        console.error('[ML] Seller search also failed:', e2.message);
+        const resolved = await ensureUserId(config);
+        userId = resolved.userId;
+      } catch (e) {
+        console.error('[ML] Não foi possível resolver ml_user_id:', e.message);
+        return res.status(400).json({ error: 'Não foi possível identificar o usuário do ML. Reconecte.' });
       }
     }
 
+    const { offset = 0, limit = 20, status, q } = req.query;
+    const data = await searchOrders(config, userId, { offset: Number(offset), limit: Number(limit), status, q });
+    console.log('[ML] Orders response: results=%d, total=%d', data.results?.length || 0, data.paging?.total || 0);
     res.json(data);
   } catch (e) {
     console.error('[ML] Orders error:', e.message);
@@ -245,23 +277,22 @@ router.get('/shipments', async (req, res) => {
       return res.json(shipmentsCache.data);
     }
 
-    // Fetch recent orders (try buyer, fallback to seller)
-    let ordersData;
-    try {
-      ordersData = await mlFetch(config, `/orders/search?buyer=${config.ml_user_id}&offset=0&limit=50&sort=date_desc`);
-    } catch (e) {
-      console.error('[ML] Shipments buyer search failed:', e.message);
-      ordersData = { results: [] };
-    }
-    if (!ordersData.results || ordersData.results.length === 0) {
+    // Resolve user_id automatically
+    let userId = config.ml_user_id;
+    if (!userId) {
       try {
-        ordersData = await mlFetch(config, `/orders/search?seller=${config.ml_user_id}&offset=0&limit=50&sort=date_desc`);
-      } catch (e2) {
-        console.error('[ML] Shipments seller search also failed:', e2.message);
-        ordersData = { results: [] };
+        const resolved = await ensureUserId(config);
+        userId = resolved.userId;
+      } catch (e) {
+        console.error('[ML] Não foi possível resolver ml_user_id para shipments:', e.message);
+        return res.status(400).json({ error: 'Não foi possível identificar o usuário do ML.' });
       }
     }
+
+    // Fetch recent orders
+    const ordersData = await searchOrders(config, userId, { offset: 0, limit: 50 });
     const orders = ordersData.results || [];
+    console.log('[ML] Shipments: processing %d orders', orders.length);
 
     const shipments = [];
     for (const order of orders) {
@@ -286,7 +317,10 @@ router.get('/shipments', async (req, res) => {
       }
     }
 
-    shipmentsCache = { data: shipments, timestamp: Date.now() };
+    // Only cache valid responses
+    if (shipments.length > 0 || orders.length === 0) {
+      shipmentsCache = { data: shipments, timestamp: Date.now() };
+    }
     res.json(shipments);
   } catch (e) {
     console.error('[ML] Shipments list error:', e.message);
