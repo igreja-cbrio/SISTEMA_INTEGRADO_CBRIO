@@ -41,22 +41,24 @@ async function refreshToken(config) {
 
 async function mlFetch(config, path) {
   let token = config.access_token;
-  // Refresh if expired
   if (config.token_expires_at && new Date(config.token_expires_at) < new Date()) {
     token = await refreshToken(config);
   }
-  const res = await fetch(`https://api.mercadolibre.com${path}`, {
+  let res = await fetch(`https://api.mercadolibre.com${path}`, {
     headers: { Authorization: `Bearer ${token}` },
   });
-  // Token expired mid-request
   if (res.status === 401) {
     token = await refreshToken(config);
-    const retry = await fetch(`https://api.mercadolibre.com${path}`, {
+    res = await fetch(`https://api.mercadolibre.com${path}`, {
       headers: { Authorization: `Bearer ${token}` },
     });
-    return retry.json();
   }
-  return res.json();
+  const json = await res.json();
+  if (!res.ok) {
+    console.error(`[ML] API error ${res.status} on ${path}:`, JSON.stringify(json));
+    throw new Error(json.message || json.error || `ML API ${res.status}`);
+  }
+  return json;
 }
 
 // ── STATUS ────────────────────────────────────────────────
@@ -66,9 +68,13 @@ router.get('/status', async (req, res) => {
     if (!config || !config.access_token) {
       return res.json({ connected: false });
     }
-    // Verify token works
     try {
       const user = await mlFetch(config, '/users/me');
+      // Auto-fix ml_user_id if missing
+      if (user.id && (!config.ml_user_id || config.ml_user_id !== String(user.id))) {
+        console.log('[ML] Atualizando ml_user_id:', user.id);
+        await supabase.from('ml_config').update({ ml_user_id: String(user.id) }).eq('id', config.id);
+      }
       return res.json({
         connected: true,
         nickname: user.nickname || user.first_name,
@@ -175,13 +181,38 @@ router.get('/orders', async (req, res) => {
   try {
     const config = await getMLConfig();
     if (!config?.access_token) return res.status(400).json({ error: 'ML não conectado' });
+    if (!config.ml_user_id) return res.status(400).json({ error: 'ml_user_id não configurado. Reconecte o ML.' });
 
     const { offset = 0, limit = 20, status, q } = req.query;
+
+    // Try buyer first
     let path = `/orders/search?buyer=${config.ml_user_id}&offset=${offset}&limit=${limit}&sort=date_desc`;
     if (status) path += `&order.status=${status}`;
     if (q) path += `&q=${encodeURIComponent(q)}`;
 
-    const data = await mlFetch(config, path);
+    console.log('[ML] Orders search path:', path);
+    let data;
+    try {
+      data = await mlFetch(config, path);
+    } catch (e) {
+      console.error('[ML] Buyer search failed:', e.message);
+      data = { results: [] };
+    }
+
+    // Fallback: try as seller if buyer returned empty
+    if (!data.results || data.results.length === 0) {
+      console.log('[ML] Buyer vazio, tentando como seller...');
+      let sellerPath = `/orders/search?seller=${config.ml_user_id}&offset=${offset}&limit=${limit}&sort=date_desc`;
+      if (status) sellerPath += `&order.status=${status}`;
+      if (q) sellerPath += `&q=${encodeURIComponent(q)}`;
+      try {
+        data = await mlFetch(config, sellerPath);
+        console.log('[ML] Seller results:', data.results?.length || 0);
+      } catch (e2) {
+        console.error('[ML] Seller search also failed:', e2.message);
+      }
+    }
+
     res.json(data);
   } catch (e) {
     console.error('[ML] Orders error:', e.message);
@@ -214,8 +245,22 @@ router.get('/shipments', async (req, res) => {
       return res.json(shipmentsCache.data);
     }
 
-    // Fetch recent orders to extract shipment info
-    const ordersData = await mlFetch(config, `/orders/search?buyer=${config.ml_user_id}&offset=0&limit=50&sort=date_desc`);
+    // Fetch recent orders (try buyer, fallback to seller)
+    let ordersData;
+    try {
+      ordersData = await mlFetch(config, `/orders/search?buyer=${config.ml_user_id}&offset=0&limit=50&sort=date_desc`);
+    } catch (e) {
+      console.error('[ML] Shipments buyer search failed:', e.message);
+      ordersData = { results: [] };
+    }
+    if (!ordersData.results || ordersData.results.length === 0) {
+      try {
+        ordersData = await mlFetch(config, `/orders/search?seller=${config.ml_user_id}&offset=0&limit=50&sort=date_desc`);
+      } catch (e2) {
+        console.error('[ML] Shipments seller search also failed:', e2.message);
+        ordersData = { results: [] };
+      }
+    }
     const orders = ordersData.results || [];
 
     const shipments = [];
