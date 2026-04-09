@@ -65,6 +65,15 @@ app.use('/api/membresia', require('./routes/membresia'));
 // ── Health check ──
 app.get('/api/health', (req, res) => res.json({ status: 'ok', timestamp: new Date().toISOString() }));
 
+// ── API 404 (evita fallback HTML para rotas inexistentes) ──
+app.use('/api', (req, res) => {
+  res.status(404).json({
+    error: 'Endpoint de API não encontrado',
+    path: req.originalUrl,
+    method: req.method,
+  });
+});
+
 // ── Serve frontend in production ──
 if (process.env.NODE_ENV === 'production') {
   app.use(express.static(path.join(__dirname, 'public')));
