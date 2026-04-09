@@ -116,25 +116,27 @@ router.post('/chat', chatLimiter, async (req, res) => {
       // Persist in DB — must complete before sending session event
       let dbSessionId = null;
       try {
-        const insertResult = await db.query(
-          `INSERT INTO agent_sessions (user_id, anthropic_session_id, agent_module, title)
-           VALUES ($1, $2, $3, $4) RETURNING id`,
-          [req.user.userId, activeSessionId, agentModule, message.slice(0, 80)]
-        );
-        dbSessionId = insertResult.rows[0]?.id;
+        const row = await dbInsert('agent_sessions', {
+          user_id: req.user.userId,
+          anthropic_session_id: activeSessionId,
+          agent_module: agentModule,
+          title: message.slice(0, 80),
+        });
+        dbSessionId = row?.id;
       } catch (dbErr) {
         console.error('[AGENTS] Failed to persist session:', dbErr.message);
+        sendEvent('persist_error', { text: 'Sessão não foi salva no banco de dados.' });
       }
 
       sendEvent('session', { sessionId: activeSessionId, dbSessionId, module: agentModule });
     } else {
       // Update last_message_at
       try {
-        await db.query(
+        await dbQuery(
           `UPDATE agent_sessions SET last_message_at = NOW(), title = COALESCE(title, $1) WHERE anthropic_session_id = $2`,
           [message.slice(0, 80), activeSessionId]
         );
-      } catch (e) { /* ignore */ }
+      } catch (e) { console.warn('[AGENTS] Failed to update session timestamp:', e.message); }
     }
 
     // 2. Build context from DB
