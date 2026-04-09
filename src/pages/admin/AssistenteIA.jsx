@@ -352,7 +352,7 @@ function ChatTab() {
                   background: C.primaryBg, color: C.text2, fontStyle: 'italic', fontSize: 12,
                   borderRadius: 8,
                 } : {
-                  background: `${C.border}40`, color: C.text,
+                  background: C.card, color: C.text, border: `1px solid ${C.border}`,
                   borderBottomLeftRadius: 4,
                 }),
               }}>
