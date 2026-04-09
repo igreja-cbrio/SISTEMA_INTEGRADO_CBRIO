@@ -41,22 +41,24 @@ async function refreshToken(config) {
 
 async function mlFetch(config, path) {
   let token = config.access_token;
-  // Refresh if expired
   if (config.token_expires_at && new Date(config.token_expires_at) < new Date()) {
     token = await refreshToken(config);
   }
-  const res = await fetch(`https://api.mercadolibre.com${path}`, {
+  let res = await fetch(`https://api.mercadolibre.com${path}`, {
     headers: { Authorization: `Bearer ${token}` },
   });
-  // Token expired mid-request
   if (res.status === 401) {
     token = await refreshToken(config);
-    const retry = await fetch(`https://api.mercadolibre.com${path}`, {
+    res = await fetch(`https://api.mercadolibre.com${path}`, {
       headers: { Authorization: `Bearer ${token}` },
     });
-    return retry.json();
   }
-  return res.json();
+  const json = await res.json();
+  if (!res.ok) {
+    console.error(`[ML] API error ${res.status} on ${path}:`, JSON.stringify(json));
+    throw new Error(json.message || json.error || `ML API ${res.status}`);
+  }
+  return json;
 }
 
 // ── STATUS ────────────────────────────────────────────────
