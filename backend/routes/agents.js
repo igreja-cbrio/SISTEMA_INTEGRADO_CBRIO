@@ -255,7 +255,39 @@ router.post('/chat', chatLimiter, async (req, res) => {
       }
     }
 
-    // 5. Log usage
+    // 5. Fallback: if stream produced no text, use Messages API directly
+    if (!fullText) {
+      console.warn('[AGENTS] Stream produced no text, falling back to Messages API');
+      try {
+        const systemPrompt = `Você é o assistente ${agentModule} do PMO da CBRio (igreja). Responda em português de forma clara e útil. ${contextStr ? `Contexto do sistema:\n${contextStr}` : ''}`;
+        const fallbackRes = await fetch('https://api.anthropic.com/v1/messages', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'x-api-key': apiKey,
+            'anthropic-version': '2023-06-01',
+          },
+          body: JSON.stringify({
+            model: 'claude-haiku-4-5-20251001',
+            max_tokens: 2048,
+            system: systemPrompt,
+            messages: [{ role: 'user', content: message }],
+          }),
+        });
+        const fallbackData = await fallbackRes.json();
+        const fallbackText = fallbackData.content?.[0]?.text;
+        if (fallbackText) {
+          fullText = fallbackText;
+          sendEvent('delta', { text: fallbackText });
+        } else {
+          console.error('[AGENTS] Fallback also empty:', JSON.stringify(fallbackData).slice(0, 300));
+        }
+      } catch (fbErr) {
+        console.error('[AGENTS] Fallback error:', fbErr.message);
+      }
+    }
+
+    // 6. Log usage
     try {
       await db.query(
         'INSERT INTO agent_log (agent, action, details) VALUES ($1,$2,$3)',
