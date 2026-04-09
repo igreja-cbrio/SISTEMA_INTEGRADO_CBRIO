@@ -449,7 +449,7 @@ export const ml = {
   disconnect: () => post('/ml/disconnect'),
   orders: (params) => get('/ml/orders' + (params ? '?' + new URLSearchParams(params) : '')),
   order: (id) => get(`/ml/orders/${id}`),
-  shipments: () => get('/ml/shipments'),
+  shipments: (params) => get('/ml/shipments' + (params ? '?' + new URLSearchParams(params) : '')),
   shipment: (id) => get(`/ml/shipments/${id}`),
   syncNotas: () => post('/ml/sync-notas'),
 };
