@@ -662,7 +662,7 @@ export default function Eventos() {
       cozinha:    { label: 'Cozinha',    color: '#ec4899', bg: '#fce7f3' },
       outros:     { label: 'Outros',     color: 'var(--cbrio-text3)', bg: 'var(--cbrio-bg)' },
     };
-    const getCat = (t) => { if (t.area === 'marketing') return 'marketing'; const m = (t.observacoes || '').match(/Área:\s*(\w+)/i); return m ? m[1] : 'outros'; };
+    const getCat = (t) => (t.area || '').toLowerCase() || 'outros';
 
     const d = kanbanCycleData;
     if (!d) return <div style={{ padding: 20, textAlign: 'center', color: 'var(--cbrio-text3)' }}>{kanbanLoading ? 'Carregando...' : 'Nenhum ciclo criativo ativo'}</div>;
@@ -1033,7 +1033,10 @@ export default function Eventos() {
 
                   {/* Ações */}
                   <div style={{ display: 'flex', gap: 8, paddingTop: 16, borderTop: '1px solid var(--cbrio-border)', justifyContent: 'flex-end' }}>
-                    <button onClick={async () => { await cyclesApi.deleteTask(task.id); loadKanban(); setKanbanSelectedTask(null); }}
+                    <button onClick={async () => {
+                      if (!window.confirm(`Excluir o card "${task.titulo}"? Esta ação não pode ser desfeita.`)) return;
+                      await cyclesApi.deleteTask(task.id); loadKanban(); setKanbanSelectedTask(null);
+                    }}
                       style={{ padding: '8px 16px', borderRadius: 8, border: 'none', background: '#ef4444', color: '#fff', fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>
                       Excluir
                     </button>
