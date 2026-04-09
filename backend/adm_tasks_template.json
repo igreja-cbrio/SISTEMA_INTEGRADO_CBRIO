@@ -1,0 +1,962 @@
+[
+  {
+    "area": "compras",
+    "etapa": "Execução Estratégica",
+    "titulo": "Levantar e consolidar lista de compras do evento",
+    "offset_start": -42,
+    "offset_end": -29,
+    "subtasks": [
+      {
+        "name": "Solicitar ao marketing a lista final de materiais, peças e serviços necessários",
+        "offset_start": -42,
+        "offset_end": -40
+      },
+      {
+        "name": "Verificar estoque disponível da igreja antes de comprar",
+        "offset_start": -41,
+        "offset_end": -40
+      },
+      {
+        "name": "Pesquisar e cotar pelo menos 2 fornecedores por item",
+        "offset_start": -40,
+        "offset_end": -36
+      },
+      {
+        "name": "Montar planilha com fornecedor, valor e prazo de entrega",
+        "offset_start": -36,
+        "offset_end": -34
+      },
+      {
+        "name": "Submeter lista ao financeiro para aprovação de orçamento",
+        "offset_start": -34,
+        "offset_end": -33
+      },
+      {
+        "name": "Após aprovação, emitir ordens de compra e registrar no sistema",
+        "offset_start": -33,
+        "offset_end": -31
+      },
+      {
+        "name": "Confirmar data de entrega com cada fornecedor e alinhar com o PMO",
+        "offset_start": -31,
+        "offset_end": -29
+      }
+    ]
+  },
+  {
+    "area": "compras",
+    "etapa": "Pré-Testes",
+    "titulo": "Receber, conferir e distribuir os materiais",
+    "offset_start": -28,
+    "offset_end": -22,
+    "subtasks": [
+      {
+        "name": "Conferir cada item recebido contra a ordem de compra",
+        "offset_start": -28,
+        "offset_end": -26
+      },
+      {
+        "name": "Registrar divergências e acionar fornecedor imediatamente",
+        "offset_start": -27,
+        "offset_end": -26
+      },
+      {
+        "name": "Fotografar e documentar itens com problema",
+        "offset_start": -27,
+        "offset_end": -26
+      },
+      {
+        "name": "Entregar materiais às áreas responsáveis (marketing, manutenção, cozinha)",
+        "offset_start": -26,
+        "offset_end": -24
+      },
+      {
+        "name": "Sinalizar ao PMO qualquer item em aberto com risco de atraso",
+        "offset_start": -24,
+        "offset_end": -22
+      }
+    ]
+  },
+  {
+    "area": "compras",
+    "etapa": "Finalizações",
+    "titulo": "Resolver pendências e compras emergenciais",
+    "offset_start": -21,
+    "offset_end": -15,
+    "subtasks": [
+      {
+        "name": "Levantar itens ainda não recebidos ou com problema",
+        "offset_start": -21,
+        "offset_end": -20
+      },
+      {
+        "name": "Solicitar autorização do financeiro para qualquer compra emergencial",
+        "offset_start": -20,
+        "offset_end": -19
+      },
+      {
+        "name": "Executar compras emergenciais aprovadas",
+        "offset_start": -19,
+        "offset_end": -16
+      },
+      {
+        "name": "Confirmar ao PMO que todas as compras estão concluídas ou com previsão",
+        "offset_start": -16,
+        "offset_end": -15
+      }
+    ]
+  },
+  {
+    "area": "compras",
+    "etapa": "Alinhamentos Operacionais Finais",
+    "titulo": "Checklist final e standby",
+    "offset_start": -14,
+    "offset_end": -2,
+    "subtasks": [
+      {
+        "name": "Verificar se todos os itens foram entregues às áreas",
+        "offset_start": -14,
+        "offset_end": -12
+      },
+      {
+        "name": "Montar lista de fornecedores de emergência para o Dia D",
+        "offset_start": -12,
+        "offset_end": -10
+      },
+      {
+        "name": "Compartilhar lista de contatos emergenciais com o PMO",
+        "offset_start": -10,
+        "offset_end": -9
+      },
+      {
+        "name": "Confirmar que não há nenhuma ordem de compra pendente",
+        "offset_start": -9,
+        "offset_end": -7
+      }
+    ]
+  },
+  {
+    "area": "compras",
+    "etapa": "Dia D",
+    "titulo": "Suporte on-site de emergência",
+    "offset_start": 0,
+    "offset_end": 0,
+    "subtasks": [
+      {
+        "name": "Manter telefone disponível durante todo o evento",
+        "offset_start": 0,
+        "offset_end": 0
+      },
+      {
+        "name": "Acionar fornecedor emergencial se necessário",
+        "offset_start": 0,
+        "offset_end": 0
+      },
+      {
+        "name": "Registrar qualquer compra emergencial realizada no dia",
+        "offset_start": 0,
+        "offset_end": 0
+      }
+    ]
+  },
+  {
+    "area": "compras",
+    "etapa": "Debriefing",
+    "titulo": "Avaliação e aprendizado de compras",
+    "offset_start": 1,
+    "offset_end": 7,
+    "subtasks": [
+      {
+        "name": "Levantar itens que chegaram com atraso ou incorretos",
+        "offset_start": 1,
+        "offset_end": 2
+      },
+      {
+        "name": "Identificar fornecedores problemáticos para atualizar cadastro",
+        "offset_start": 2,
+        "offset_end": 4
+      },
+      {
+        "name": "Registrar sugestões de melhoria para o próximo evento",
+        "offset_start": 4,
+        "offset_end": 6
+      },
+      {
+        "name": "Participar da reunião de debrief com o PMO",
+        "offset_start": 6,
+        "offset_end": 7
+      }
+    ]
+  },
+  {
+    "area": "financeiro",
+    "etapa": "Execução Estratégica",
+    "titulo": "Análise financeira e aprovação do plano de compras",
+    "offset_start": -42,
+    "offset_end": -29,
+    "subtasks": [
+      {
+        "name": "Receber estimativa de custos da lista de compras",
+        "offset_start": -42,
+        "offset_end": -40
+      },
+      {
+        "name": "Comparar com orçamento aprovado pela liderança da igreja",
+        "offset_start": -40,
+        "offset_end": -38
+      },
+      {
+        "name": "Aprovar itens dentro do orçamento",
+        "offset_start": -38,
+        "offset_end": -36
+      },
+      {
+        "name": "Sinalizar itens que ultrapassam o orçamento para escalação",
+        "offset_start": -38,
+        "offset_end": -36
+      },
+      {
+        "name": "Processar pagamentos de entrada (sinal) exigidos por fornecedores",
+        "offset_start": -36,
+        "offset_end": -33
+      },
+      {
+        "name": "Registrar todos os compromissos financeiros do evento no sistema",
+        "offset_start": -33,
+        "offset_end": -31
+      },
+      {
+        "name": "Criar estrutura financeira específica do evento se necessário",
+        "offset_start": -31,
+        "offset_end": -29
+      }
+    ]
+  },
+  {
+    "area": "financeiro",
+    "etapa": "Pré-Testes",
+    "titulo": "Pagamentos e consolidação de custo parcial",
+    "offset_start": -28,
+    "offset_end": -22,
+    "subtasks": [
+      {
+        "name": "Processar pagamentos finais de fornecedores que exigem quitação antes da entrega",
+        "offset_start": -28,
+        "offset_end": -25
+      },
+      {
+        "name": "Consolidar custo total do evento com base nas notas fiscais recebidas",
+        "offset_start": -25,
+        "offset_end": -23
+      },
+      {
+        "name": "Comparar custo realizado vs planejado e sinalizar variações ao PMO",
+        "offset_start": -23,
+        "offset_end": -22
+      },
+      {
+        "name": "Verificar se há pendências de notas fiscais em aberto",
+        "offset_start": -23,
+        "offset_end": -22
+      }
+    ]
+  },
+  {
+    "area": "financeiro",
+    "etapa": "Finalizações",
+    "titulo": "Relatório financeiro preliminar",
+    "offset_start": -21,
+    "offset_end": -15,
+    "subtasks": [
+      {
+        "name": "Processar pagamentos restantes",
+        "offset_start": -21,
+        "offset_end": -19
+      },
+      {
+        "name": "Fazer previsão de custos do Dia D (alimentação, staff extra, despesas operacionais)",
+        "offset_start": -19,
+        "offset_end": -17
+      },
+      {
+        "name": "Emitir relatório financeiro preliminar com custo real x previsto",
+        "offset_start": -17,
+        "offset_end": -16
+      },
+      {
+        "name": "Entregar relatório ao PMO para acompanhamento",
+        "offset_start": -16,
+        "offset_end": -15
+      }
+    ]
+  },
+  {
+    "area": "financeiro",
+    "etapa": "Alinhamentos Operacionais Finais",
+    "titulo": "Preparar caixa e pagamentos do Dia D",
+    "offset_start": -14,
+    "offset_end": -2,
+    "subtasks": [
+      {
+        "name": "Definir valor do fundo de caixa on-site para o Dia D",
+        "offset_start": -14,
+        "offset_end": -12
+      },
+      {
+        "name": "Obter autorização da liderança para o caixa",
+        "offset_start": -12,
+        "offset_end": -10
+      },
+      {
+        "name": "Confirmar forma de pagamento para fornecedores que emitem nota no ato",
+        "offset_start": -10,
+        "offset_end": -8
+      },
+      {
+        "name": "Comunicar ao PMO o caixa liberado e quem será o responsável no dia",
+        "offset_start": -8,
+        "offset_end": -7
+      }
+    ]
+  },
+  {
+    "area": "financeiro",
+    "etapa": "Dia D",
+    "titulo": "Gestão financeira do dia",
+    "offset_start": 0,
+    "offset_end": 0,
+    "subtasks": [
+      {
+        "name": "Ter caixa físico ou digital disponível para despesas do dia",
+        "offset_start": 0,
+        "offset_end": 0
+      },
+      {
+        "name": "Registrar cada despesa realizada com descrição e valor",
+        "offset_start": 0,
+        "offset_end": 0
+      },
+      {
+        "name": "Solicitar nota fiscal ou comprovante de todo pagamento realizado",
+        "offset_start": 0,
+        "offset_end": 0
+      },
+      {
+        "name": "Fazer fechamento do caixa ao final do evento",
+        "offset_start": 0,
+        "offset_end": 0
+      }
+    ]
+  },
+  {
+    "area": "financeiro",
+    "etapa": "Debriefing",
+    "titulo": "Fechamento financeiro do evento",
+    "offset_start": 1,
+    "offset_end": 7,
+    "subtasks": [
+      {
+        "name": "Fechar relatório financeiro final com custo real x previsto",
+        "offset_start": 1,
+        "offset_end": 3
+      },
+      {
+        "name": "Calcular variação percentual e identificar causas",
+        "offset_start": 3,
+        "offset_end": 5
+      },
+      {
+        "name": "Registrar lições aprendidas para planejamento financeiro futuro",
+        "offset_start": 5,
+        "offset_end": 6
+      },
+      {
+        "name": "Apresentar resumo ao PMO na reunião de debrief",
+        "offset_start": 6,
+        "offset_end": 7
+      }
+    ]
+  },
+  {
+    "area": "manutencao",
+    "etapa": "Execução Estratégica",
+    "titulo": "Vistoria e planejamento de intervenções",
+    "offset_start": -42,
+    "offset_end": -29,
+    "subtasks": [
+      {
+        "name": "Receber briefing do evento: tema, layout, espaços e público esperado",
+        "offset_start": -42,
+        "offset_end": -41
+      },
+      {
+        "name": "Fazer vistoria completa de todos os espaços que serão utilizados",
+        "offset_start": -41,
+        "offset_end": -39
+      },
+      {
+        "name": "Listar todas as intervenções necessárias (pintura, elétrica, montagem, mobiliário)",
+        "offset_start": -39,
+        "offset_end": -38
+      },
+      {
+        "name": "Estimar tempo e material necessário para cada intervenção",
+        "offset_start": -38,
+        "offset_end": -37
+      },
+      {
+        "name": "Definir cronograma interno das semanas restantes",
+        "offset_start": -37,
+        "offset_end": -36
+      },
+      {
+        "name": "Solicitar ao financeiro/compras os materiais necessários",
+        "offset_start": -36,
+        "offset_end": -35
+      },
+      {
+        "name": "Iniciar intervenções com maior prazo de execução",
+        "offset_start": -35,
+        "offset_end": -29
+      }
+    ]
+  },
+  {
+    "area": "manutencao",
+    "etapa": "Pré-Testes",
+    "titulo": "Entregar estruturas para os pré-testes",
+    "offset_start": -28,
+    "offset_end": -22,
+    "subtasks": [
+      {
+        "name": "Concluir montagens estruturais necessárias para o pré-teste",
+        "offset_start": -28,
+        "offset_end": -25
+      },
+      {
+        "name": "Instalar cenário parcial conforme layout do evento",
+        "offset_start": -26,
+        "offset_end": -24
+      },
+      {
+        "name": "Garantir que iluminação, tomadas e pontos elétricos estão funcionando",
+        "offset_start": -24,
+        "offset_end": -23
+      },
+      {
+        "name": "Participar dos pré-testes junto com produção e CBLab",
+        "offset_start": -23,
+        "offset_end": -22
+      },
+      {
+        "name": "Registrar ajustes solicitados durante os pré-testes",
+        "offset_start": -23,
+        "offset_end": -22
+      }
+    ]
+  },
+  {
+    "area": "manutencao",
+    "etapa": "Finalizações",
+    "titulo": "Ajustes finais de infraestrutura",
+    "offset_start": -21,
+    "offset_end": -15,
+    "subtasks": [
+      {
+        "name": "Executar todos os ajustes identificados nos pré-testes",
+        "offset_start": -21,
+        "offset_end": -18
+      },
+      {
+        "name": "Finalizar acabamentos (pintura, decoração estrutural, fixações)",
+        "offset_start": -18,
+        "offset_end": -16
+      },
+      {
+        "name": "Revisar todos os pontos elétricos e de iluminação",
+        "offset_start": -16,
+        "offset_end": -15
+      },
+      {
+        "name": "Fazer vistoria pós-acabamento para garantir qualidade",
+        "offset_start": -15,
+        "offset_end": -15
+      }
+    ]
+  },
+  {
+    "area": "manutencao",
+    "etapa": "Alinhamentos Operacionais Finais",
+    "titulo": "Vistoria final e escalação do Dia D",
+    "offset_start": -14,
+    "offset_end": -2,
+    "subtasks": [
+      {
+        "name": "Fazer vistoria final de todos os espaços do evento",
+        "offset_start": -14,
+        "offset_end": -12
+      },
+      {
+        "name": "Confirmar que tudo está conforme o layout previsto",
+        "offset_start": -12,
+        "offset_end": -10
+      },
+      {
+        "name": "Definir horário de chegada da equipe no Dia D",
+        "offset_start": -10,
+        "offset_end": -9
+      },
+      {
+        "name": "Designar responsável on-site e contato de plantão",
+        "offset_start": -9,
+        "offset_end": -8
+      },
+      {
+        "name": "Participar da reunião de alinhamento operacional",
+        "offset_start": -8,
+        "offset_end": -7
+      },
+      {
+        "name": "Preparar ferramentas e equipamentos necessários para o Dia D",
+        "offset_start": -8,
+        "offset_end": -7
+      }
+    ]
+  },
+  {
+    "area": "manutencao",
+    "etapa": "Dia D",
+    "titulo": "Suporte on-site e coordenação de montagem/desmontagem",
+    "offset_start": 0,
+    "offset_end": 0,
+    "subtasks": [
+      {
+        "name": "Chegar antes da abertura para montagem final",
+        "offset_start": 0,
+        "offset_end": 0
+      },
+      {
+        "name": "Resolver imprevistos de infraestrutura durante o evento",
+        "offset_start": 0,
+        "offset_end": 0
+      },
+      {
+        "name": "Permanecer disponível durante todo o evento",
+        "offset_start": 0,
+        "offset_end": 0
+      },
+      {
+        "name": "Coordenar desmontagem ao final",
+        "offset_start": 0,
+        "offset_end": 0
+      },
+      {
+        "name": "Devolver espaços ao estado original",
+        "offset_start": 0,
+        "offset_end": 0
+      }
+    ]
+  },
+  {
+    "area": "manutencao",
+    "etapa": "Debriefing",
+    "titulo": "Avaliação das intervenções",
+    "offset_start": 1,
+    "offset_end": 7,
+    "subtasks": [
+      {
+        "name": "Levantar imprevistos que ocorreram e causas",
+        "offset_start": 1,
+        "offset_end": 3
+      },
+      {
+        "name": "Registrar o que pode ser feito com mais antecedência no próximo evento",
+        "offset_start": 3,
+        "offset_end": 5
+      },
+      {
+        "name": "Atualizar o cadastro dos espaços com informações do evento",
+        "offset_start": 5,
+        "offset_end": 6
+      },
+      {
+        "name": "Participar da reunião de debrief com o PMO",
+        "offset_start": 6,
+        "offset_end": 7
+      }
+    ]
+  },
+  {
+    "area": "limpeza",
+    "etapa": "Execução Estratégica",
+    "titulo": "Planejamento e cronograma de limpeza",
+    "offset_start": -42,
+    "offset_end": -29,
+    "subtasks": [
+      {
+        "name": "Receber informações do evento: espaços, datas, público estimado e cronograma do dia",
+        "offset_start": -42,
+        "offset_end": -41
+      },
+      {
+        "name": "Mapear todos os pontos de limpeza (banheiros, circulação, palco, lounge, estacionamento)",
+        "offset_start": -41,
+        "offset_end": -39
+      },
+      {
+        "name": "Definir equipe necessária para o Dia D e distribuir funções",
+        "offset_start": -39,
+        "offset_end": -37
+      },
+      {
+        "name": "Montar cronograma de limpeza: pré-evento, durante e pós-evento",
+        "offset_start": -37,
+        "offset_end": -35
+      },
+      {
+        "name": "Verificar estoque de produtos e solicitar compra se necessário",
+        "offset_start": -35,
+        "offset_end": -33
+      }
+    ]
+  },
+  {
+    "area": "limpeza",
+    "etapa": "Pré-Testes",
+    "titulo": "Limpeza profunda pós-obras de manutenção",
+    "offset_start": -28,
+    "offset_end": -22,
+    "subtasks": [
+      {
+        "name": "Aguardar liberação da manutenção dos espaços",
+        "offset_start": -28,
+        "offset_end": -27
+      },
+      {
+        "name": "Realizar limpeza profunda em todos os ambientes após as intervenções",
+        "offset_start": -27,
+        "offset_end": -24
+      },
+      {
+        "name": "Garantir que pó de obra, resíduos de tintas e materiais foram removidos",
+        "offset_start": -24,
+        "offset_end": -23
+      },
+      {
+        "name": "Entregar espaços limpos para os pré-testes do marketing e produção",
+        "offset_start": -23,
+        "offset_end": -22
+      }
+    ]
+  },
+  {
+    "area": "limpeza",
+    "etapa": "Finalizações",
+    "titulo": "Confirmar cronograma do Dia D",
+    "offset_start": -21,
+    "offset_end": -15,
+    "subtasks": [
+      {
+        "name": "Revisar e ajustar cronograma com base no layout final do evento",
+        "offset_start": -21,
+        "offset_end": -19
+      },
+      {
+        "name": "Confirmar a equipe escalada para o Dia D",
+        "offset_start": -19,
+        "offset_end": -18
+      },
+      {
+        "name": "Verificar se todos os produtos e equipamentos de limpeza estão disponíveis",
+        "offset_start": -18,
+        "offset_end": -16
+      },
+      {
+        "name": "Comunicar cronograma ao PMO",
+        "offset_start": -16,
+        "offset_end": -15
+      }
+    ]
+  },
+  {
+    "area": "limpeza",
+    "etapa": "Alinhamentos Operacionais Finais",
+    "titulo": "Limpeza final pré-evento e alinhamento",
+    "offset_start": -14,
+    "offset_end": -1,
+    "subtasks": [
+      {
+        "name": "Realizar limpeza completa de todos os espaços no dia anterior ou manhã do evento",
+        "offset_start": -14,
+        "offset_end": -2
+      },
+      {
+        "name": "Participar da reunião de alinhamento operacional",
+        "offset_start": -8,
+        "offset_end": -7
+      },
+      {
+        "name": "Confirmar pontos de atenção: áreas de maior circulação, banheiros, bastidores",
+        "offset_start": -7,
+        "offset_end": -5
+      },
+      {
+        "name": "Posicionar materiais de limpeza estrategicamente para uso durante o evento",
+        "offset_start": -2,
+        "offset_end": -1
+      }
+    ]
+  },
+  {
+    "area": "limpeza",
+    "etapa": "Dia D",
+    "titulo": "Manutenção de limpeza durante e após o evento",
+    "offset_start": 0,
+    "offset_end": 0,
+    "subtasks": [
+      {
+        "name": "Verificar e limpar banheiros a cada intervalo definido",
+        "offset_start": 0,
+        "offset_end": 0
+      },
+      {
+        "name": "Manter áreas de circulação e lounge organizados durante o evento",
+        "offset_start": 0,
+        "offset_end": 0
+      },
+      {
+        "name": "Recolher lixo durante o evento conforme necessário",
+        "offset_start": 0,
+        "offset_end": 0
+      },
+      {
+        "name": "Realizar limpeza geral ao final do evento",
+        "offset_start": 0,
+        "offset_end": 0
+      },
+      {
+        "name": "Devolver espaços limpos e organizados",
+        "offset_start": 0,
+        "offset_end": 0
+      }
+    ]
+  },
+  {
+    "area": "limpeza",
+    "etapa": "Debriefing",
+    "titulo": "Avaliação e feedback da limpeza",
+    "offset_start": 1,
+    "offset_end": 7,
+    "subtasks": [
+      {
+        "name": "Registrar o que funcionou bem e o que pode melhorar",
+        "offset_start": 1,
+        "offset_end": 3
+      },
+      {
+        "name": "Atualizar cronograma padrão com aprendizados do evento",
+        "offset_start": 3,
+        "offset_end": 5
+      },
+      {
+        "name": "Listar sugestões de melhoria",
+        "offset_start": 5,
+        "offset_end": 6
+      },
+      {
+        "name": "Participar da reunião de debrief com o PMO",
+        "offset_start": 6,
+        "offset_end": 7
+      }
+    ]
+  },
+  {
+    "area": "cozinha",
+    "etapa": "Execução Estratégica",
+    "titulo": "Definir escopo e cardápio do evento",
+    "offset_start": -42,
+    "offset_end": -29,
+    "subtasks": [
+      {
+        "name": "Reunir com o PMO para entender o escopo (café, lanche, refeição, staff ou convidados)",
+        "offset_start": -42,
+        "offset_end": -40
+      },
+      {
+        "name": "Definir cardápio e estimativa de quantidade com base no público esperado",
+        "offset_start": -40,
+        "offset_end": -38
+      },
+      {
+        "name": "Levantar necessidade de insumos e equipamentos",
+        "offset_start": -38,
+        "offset_end": -36
+      },
+      {
+        "name": "Verificar se há alergias ou restrições alimentares relevantes",
+        "offset_start": -36,
+        "offset_end": -35
+      },
+      {
+        "name": "Alinhar expectativas e aprovar escopo com o PMO",
+        "offset_start": -35,
+        "offset_end": -33
+      }
+    ]
+  },
+  {
+    "area": "cozinha",
+    "etapa": "Pré-Testes",
+    "titulo": "Cotação e planejamento de insumos",
+    "offset_start": -28,
+    "offset_end": -22,
+    "subtasks": [
+      {
+        "name": "Cotar alimentos não perecíveis necessários",
+        "offset_start": -28,
+        "offset_end": -26
+      },
+      {
+        "name": "Submeter lista de compras ao financeiro para aprovação",
+        "offset_start": -26,
+        "offset_end": -25
+      },
+      {
+        "name": "Verificar equipamentos disponíveis (fogão, forno, cafeteira, geladeira)",
+        "offset_start": -25,
+        "offset_end": -24
+      },
+      {
+        "name": "Identificar necessidade de equipamentos extras e solicitar com antecedência",
+        "offset_start": -24,
+        "offset_end": -23
+      },
+      {
+        "name": "Confirmar fornecedor de alimentos se houver encomenda específica",
+        "offset_start": -23,
+        "offset_end": -22
+      }
+    ]
+  },
+  {
+    "area": "cozinha",
+    "etapa": "Finalizações",
+    "titulo": "Comprar insumos não perecíveis",
+    "offset_start": -21,
+    "offset_end": -15,
+    "subtasks": [
+      {
+        "name": "Realizar as compras de não perecíveis aprovadas",
+        "offset_start": -21,
+        "offset_end": -18
+      },
+      {
+        "name": "Organizar e armazenar os itens corretamente",
+        "offset_start": -18,
+        "offset_end": -17
+      },
+      {
+        "name": "Confirmar que os perecíveis serão comprados próximo ao evento",
+        "offset_start": -17,
+        "offset_end": -15
+      }
+    ]
+  },
+  {
+    "area": "cozinha",
+    "etapa": "Alinhamentos Operacionais Finais",
+    "titulo": "Compras finais e alinhamento do Dia D",
+    "offset_start": -14,
+    "offset_end": -1,
+    "subtasks": [
+      {
+        "name": "Comprar alimentos perecíveis",
+        "offset_start": -14,
+        "offset_end": -12
+      },
+      {
+        "name": "Preparar ou pré-preparar o que for possível com antecedência",
+        "offset_start": -12,
+        "offset_end": -8
+      },
+      {
+        "name": "Participar da reunião de alinhamento operacional",
+        "offset_start": -8,
+        "offset_end": -7
+      },
+      {
+        "name": "Confirmar horário de início de preparo no Dia D",
+        "offset_start": -7,
+        "offset_end": -6
+      },
+      {
+        "name": "Definir responsável de plantão na cozinha durante o evento",
+        "offset_start": -6,
+        "offset_end": -5
+      }
+    ]
+  },
+  {
+    "area": "cozinha",
+    "etapa": "Dia D",
+    "titulo": "Preparação e serviço de alimentação",
+    "offset_start": 0,
+    "offset_end": 0,
+    "subtasks": [
+      {
+        "name": "Iniciar preparo conforme horário definido",
+        "offset_start": 0,
+        "offset_end": 0
+      },
+      {
+        "name": "Organizar montagem do buffet ou ponto de distribuição",
+        "offset_start": 0,
+        "offset_end": 0
+      },
+      {
+        "name": "Garantir alimentação disponível no momento certo para cada público",
+        "offset_start": 0,
+        "offset_end": 0
+      },
+      {
+        "name": "Manter cozinha organizada e limpa durante o evento",
+        "offset_start": 0,
+        "offset_end": 0
+      },
+      {
+        "name": "Fazer limpeza e fechamento da cozinha ao final",
+        "offset_start": 0,
+        "offset_end": 0
+      }
+    ]
+  },
+  {
+    "area": "cozinha",
+    "etapa": "Debriefing",
+    "titulo": "Avaliação da atuação da cozinha",
+    "offset_start": 1,
+    "offset_end": 7,
+    "subtasks": [
+      {
+        "name": "Registrar o que sobrou ou faltou para calibrar estimativas futuras",
+        "offset_start": 1,
+        "offset_end": 3
+      },
+      {
+        "name": "Avaliar o que pode ser preparado com mais antecedência",
+        "offset_start": 3,
+        "offset_end": 5
+      },
+      {
+        "name": "Listar sugestões de melhoria",
+        "offset_start": 5,
+        "offset_end": 6
+      },
+      {
+        "name": "Participar da reunião de debrief com o PMO",
+        "offset_start": 6,
+        "offset_end": 7
+      }
+    ]
+  }
+]

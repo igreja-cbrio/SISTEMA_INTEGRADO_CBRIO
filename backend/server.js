@@ -53,6 +53,14 @@ app.use('/api/rh', require('./routes/rh'));
 app.use('/api/financeiro', require('./routes/financeiro'));
 app.use('/api/logistica', require('./routes/logistica'));
 app.use('/api/patrimonio', require('./routes/patrimonio'));
+app.use('/api/cycles', require('./routes/cycles'));
+app.use('/api/completions', require('./routes/completions'));
+app.use('/api/events', require('./routes/reports'));
+app.use('/api/occurrences', require('./routes/occurrences'));
+app.use('/api/dashboard', require('./routes/dashboard'));
+app.use('/api/notificacoes', require('./routes/notificacoes'));
+app.use('/api/permissoes', require('./routes/permissoes'));
+app.use('/api/membresia', require('./routes/membresia'));
 
 // ── Health check ──
 app.get('/api/health', (req, res) => res.json({ status: 'ok', timestamp: new Date().toISOString() }));
