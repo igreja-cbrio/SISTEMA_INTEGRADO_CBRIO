@@ -1,63 +1,55 @@
 
 
-## Plano: Corrigir resposta em branco do chat IA
+## Plano: Corrigir resposta em branco do chat IA (duas causas)
 
-### Problema identificado
+### Problemas identificados
 
-O backend em `backend/routes/agents.js` (linhas 166-171) parseia o stream SSE da Anthropic procurando especificamente por eventos do tipo `content_block_delta` com `delta.type === 'text_delta'`. Esse formato pertence a **Messages API**, mas o chat usa a **Sessions API** (`/v1/sessions/{id}/events`), que retorna eventos com estrutura diferente.
+**1. Frontend: bolha do assistente invisível (causa principal visual)**
+Em `src/pages/admin/AssistenteIA.jsx` linha 355, o background da bolha do assistente é:
+```js
+background: `${C.border}40`
+```
+Onde `C.border = 'var(--cbrio-border)'`. Isso gera CSS inválido: `var(--cbrio-border)40`. O navegador não consegue interpretar, a bolha fica sem fundo, e o texto pode ficar invisível contra o fundo da página (texto da mesma cor que o background). **Esta é provavelmente a razão pela qual a resposta aparece "em branco" — o texto está lá, mas invisível.**
 
-Como nenhum evento bate com o filtro, nenhum delta de texto e repassado ao frontend, resultando em resposta em branco.
+**2. Backend: junção incorreta de data lines SSE**
+Em `backend/routes/agents.js` linha 237:
+```js
+handleSsePayload(dataLines.join('\n'));
+```
+Se um evento SSE tiver múltiplas linhas `data:`, elas são concatenadas com `\n` e passadas como uma string só para `JSON.parse`. Isso pode quebrar o parsing de JSON, resultando em nenhum texto extraído.
 
-### Correção
+### Correções
 
-1. **Adicionar logging temporario dos eventos recebidos** da Anthropic para descobrir a estrutura exata dos eventos da Sessions API.
-2. **Expandir o parsing de eventos** no backend para cobrir os formatos da Sessions API. Baseado na documentacao da API, os eventos provaveis sao:
-   - `agent.message` ou `assistant.message` (mensagem completa)
-   - `agent.message.delta` ou `text` events com conteudo parcial
-   - Ou o mesmo `content_block_delta` mas com path/estrutura diferente
-3. **Adicionar um `console.log` de cada evento recebido** (temporariamente) para mapear a estrutura real e garantir que o parsing funcione.
-4. **Implementar um fallback generico**: se o evento tiver qualquer campo de texto reconhecivel, extrair e repassar como delta.
+**Arquivo 1: `src/pages/admin/AssistenteIA.jsx`**
+- Linha 355: trocar `background: \`${C.border}40\`` por uma cor válida com opacidade, ex: `background: 'var(--cbrio-card)'` ou usar um valor hexadecimal sólido.
 
-### Mudanca principal
+**Arquivo 2: `backend/routes/agents.js`**
+- Linhas 236-238 e 250-252: em vez de `dataLines.join('\n')`, processar cada `data:` line individualmente com `handleSsePayload`, pois cada uma pode ser um JSON independente.
 
-Em `backend/routes/agents.js`, no bloco de parsing (linhas 158-179):
+### Mudanças exatas
 
 ```js
-// Antes: so captura content_block_delta
-if (event.type === 'content_block_delta' && event.delta?.type === 'text_delta') { ... }
-
-// Depois: captura multiplos formatos possiveis da Sessions API
-// Log para debug
-console.log('[AGENTS] SSE event:', JSON.stringify(event).slice(0, 300));
-
-// Formatos da Messages API
-if (event.type === 'content_block_delta' && event.delta?.type === 'text_delta') {
-  text = event.delta.text;
-}
-// Formatos da Sessions API
-else if (event.type === 'message_delta' && event.delta?.text) {
-  text = event.delta.text;
-}
-else if (event.type === 'text' && event.text) {
-  text = event.text;
-}
-// Fallback: qualquer evento com content[].text
-else if (event.content) {
-  const textBlock = (Array.isArray(event.content) ? event.content : [event.content])
-    .find(b => b.type === 'text' && b.text);
-  if (textBlock) text = textBlock.text;
-}
-
-if (text) { fullText += text; sendEvent('delta', { text }); }
+// AssistenteIA.jsx linha 355 — de:
+background: `${C.border}40`, color: C.text,
+// para:
+background: C.card, color: C.text, border: `1px solid ${C.border}`,
 ```
 
-### Arquivo alterado
+```js
+// agents.js linhas 236-238 — de:
+if (dataLines.length) {
+  handleSsePayload(dataLines.join('\n'));
+}
+// para:
+for (const dl of dataLines) {
+  handleSsePayload(dl);
+}
+```
 
-- `backend/routes/agents.js` (bloco de parsing SSE, ~20 linhas)
+(Mesma mudança no bloco do tail chunk, linhas 250-252.)
 
 ### Resultado esperado
-
-- O backend passa a capturar eventos de texto independente do formato exato retornado pela Sessions API.
-- O log temporario permite diagnosticar rapidamente se ainda houver formatos nao cobertos.
-- O frontend recebe os deltas e exibe a resposta normalmente com o indicador de digitacao.
+- A bolha do assistente fica visível com fundo sólido (cor do card) e borda sutil.
+- O parser SSE do backend processa corretamente cada linha `data:` como JSON individual.
+- A resposta do Supervisor aparece em streaming no chat.
 
