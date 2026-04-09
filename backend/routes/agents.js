@@ -2,9 +2,42 @@ const router = require('express').Router();
 const rateLimit = require('express-rate-limit');
 const { authenticate, authorize } = require('../middleware/auth');
 const db = require('../utils/db');
+const { supabase } = require('../utils/supabase');
 const { sanitizeObj, isValidUUID } = require('../utils/sanitize');
 const { ENVIRONMENT_ID, getAgentId, listModules } = require('../config/managedAgents');
 const { buildContext, serializeContext } = require('../services/agentContext');
+
+// Helper: persist to DB with supabase fallback
+async function dbInsert(table, data) {
+  try {
+    const cols = Object.keys(data);
+    const vals = Object.values(data);
+    const placeholders = cols.map((_, i) => `$${i + 1}`).join(', ');
+    const result = await db.query(
+      `INSERT INTO ${table} (${cols.join(', ')}) VALUES (${placeholders}) RETURNING *`,
+      vals
+    );
+    return result.rows[0];
+  } catch (pgErr) {
+    console.warn(`[AGENTS] pg INSERT into ${table} failed:`, pgErr.message);
+    // Fallback to supabase client
+    if (supabase) {
+      const { data: row, error } = await supabase.from(table).insert(data).select().single();
+      if (error) throw new Error(`Supabase fallback failed: ${error.message}`);
+      return row;
+    }
+    throw pgErr;
+  }
+}
+
+async function dbQuery(text, params) {
+  try {
+    return await db.query(text, params);
+  } catch (pgErr) {
+    console.warn('[AGENTS] pg query failed:', pgErr.message);
+    throw pgErr;
+  }
+}
 
 router.use(authenticate, authorize('diretor'));
 
