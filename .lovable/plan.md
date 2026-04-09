@@ -1,63 +1,34 @@
 
 
-## Diagnóstico: Por que a resposta continua em branco
+## Plano: Persistir sessões e histórico de mensagens do chat IA
 
-### Os agentes são reais ou esqueletos?
+### Problema
+1. **Sessão não aparece na sidebar** — o `INSERT INTO agent_sessions` pode falhar silenciosamente (o catch apenas loga warning), ou a tabela pode não existir no banco. Além disso, `loadSessions()` é chamado via `sendEvent('session')` que pode disparar antes do INSERT no backend ter completado.
+2. **Mensagens desaparecem ao clicar "+ Nova"** — as mensagens existem apenas no state React (`useState`), não são persistidas no banco. Ao restaurar uma sessão, só aparece "Sessão restaurada" sem o histórico real.
 
-Os agentes **existem de verdade** na plataforma Anthropic — cada um tem um ID real (ex: `agent_011CZtnVwVDPjxu4cJgm9ne2` para o Supervisor). O backend **injeta contexto real do banco de dados** na mensagem antes de enviar (dados de RH, financeiro, patrimônio, etc. via `buildContext()`). Então eles não são esqueletos — o problema é que **não conseguimos ver a resposta** porque o parser SSE não está capturando o formato correto dos eventos.
+### Correções
 
-### Causa raiz
+**1. Backend: Garantir ordem correta (INSERT antes do sendEvent)**
+- No `backend/routes/agents.js`, mover o `sendEvent('session', ...)` para DEPOIS do `await db.query(INSERT...)` e verificar se o INSERT teve sucesso antes de prosseguir. Adicionar log de erro mais explícito.
 
-Não sabemos o formato exato dos eventos SSE que a Anthropic Sessions API retorna. O parser tenta vários formatos, mas nenhum funciona. Os `console.log` de debug foram adicionados, mas rodam no Vercel — precisamos ver os logs lá, ou trazer essa informação para o frontend.
+**2. Backend: Criar tabela `agent_messages` para persistir histórico**
+- Nova migration `004_agent_messages.sql` com tabela:
+  - `id`, `session_id` (FK para agent_sessions.id), `role` (user/assistant), `content`, `created_at`
+- No endpoint `/agents/chat`, salvar a mensagem do usuário ao receber e a resposta do assistente ao finalizar o stream.
 
-### Plano de correção (abordagem de diagnóstico + fallback)
+**3. Backend: Endpoint para carregar histórico de uma sessão**
+- `GET /agents/sessions/:id/messages` — retorna mensagens ordenadas por `created_at`.
 
-**1. Adicionar modo debug no frontend** — mostrar os eventos SSE brutos no console do navegador para diagnóstico imediato:
+**4. Frontend: Carregar mensagens ao restaurar sessão**
+- Em `resumeSession()`, chamar o novo endpoint para carregar o histórico real em vez de exibir apenas "Sessão restaurada".
+- Em `src/api.js`, adicionar `sessionMessages: (id) => get(`/agents/sessions/${id}/messages`)`.
 
-```js
-// No backend, repassar TODOS os eventos SSE brutos ao frontend
-// Adicionar um evento 'debug' que envia o payload raw
-sendEvent('raw', { payload: jsonStr.slice(0, 500) });
-```
-
-**2. Fallback não-streaming** — se o stream não gerar texto, fazer uma segunda chamada usando a Messages API padrão (não Sessions API) como fallback, que tem formato bem documentado:
-
-```js
-// Se fullText estiver vazio após o stream, tentar Messages API diretamente
-if (!fullText) {
-  const fallbackRes = await fetch('https://api.anthropic.com/v1/messages', {
-    method: 'POST',
-    headers: { ... },
-    body: JSON.stringify({
-      model: 'claude-haiku-4-5-20251001',
-      max_tokens: 2048,
-      system: systemPromptForModule,
-      messages: [{ role: 'user', content: userContent }],
-    }),
-  });
-  const fallbackData = await fallbackRes.json();
-  const text = fallbackData.content?.[0]?.text;
-  if (text) sendEvent('delta', { text });
-}
-```
-
-**3. Frontend: capturar e exibir eventos raw** para debug temporário:
-
-```js
-// No sendMessage, tratar evento 'raw' para log no console
-if (event.type === 'raw') {
-  console.log('[CHAT DEBUG] Raw SSE:', event.payload);
-}
-```
+**5. Frontend: Garantir sidebar aberta por padrão**
+- Mudar `showSessions` de `false` para `true` como estado inicial, para que as sessões fiquem sempre visíveis.
 
 ### Arquivos alterados
-
-- `backend/routes/agents.js` — adicionar envio de evento `raw` + fallback Messages API
-- `src/pages/admin/AssistenteIA.jsx` — logar eventos `raw` no console
-
-### Resultado esperado
-
-- Com o fallback Messages API, o chat **sempre** terá uma resposta, mesmo que o stream da Sessions API falhe.
-- Os eventos `raw` no console do navegador permitirão diagnosticar o formato exato da Sessions API para corrigir o parser definitivamente.
-- Os agentes responderão com contexto real do sistema (dados de RH, financeiro, etc.).
+- `backend/migrations/004_agent_messages.sql` — nova tabela
+- `backend/routes/agents.js` — persistir mensagens + novo endpoint GET messages
+- `src/api.js` — adicionar `sessionMessages()`
+- `src/pages/admin/AssistenteIA.jsx` — carregar histórico ao restaurar sessão, sidebar aberta por padrão
 
