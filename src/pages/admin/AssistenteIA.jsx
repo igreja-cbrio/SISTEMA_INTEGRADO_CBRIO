@@ -1,6 +1,9 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { agents } from '../../api';
 import { Button } from '../../components/ui/button';
+import { Tabs, TabsList, TabsTrigger, TabsContent } from '../../components/ui/tabs';
+import { Textarea } from '../../components/ui/textarea';
+import ReactMarkdown from 'react-markdown';
 
 const C = {
   bg: 'var(--cbrio-bg)', card: 'var(--cbrio-card)', primary: '#00B39D', primaryBg: '#00B39D18',
@@ -35,6 +38,24 @@ const AGENT_TYPES = [
   { value: 'design_auditor', label: '🎨 Agente Design', desc: 'Analisa layout e UI do sistema, traz referências modernas (Linear, Vercel, Notion) e sugere melhorias concretas com Tailwind.', icon: '🎨' },
 ];
 
+const MODULE_OPTIONS = [
+  { value: 'supervisor', label: '🧠 Supervisor', icon: '🧠' },
+  { value: 'rh', label: '👥 RH', icon: '👥' },
+  { value: 'financeiro', label: '💰 Financeiro', icon: '💰' },
+  { value: 'logistica', label: '🚚 Logística', icon: '🚚' },
+  { value: 'patrimonio', label: '🏢 Patrimônio', icon: '🏢' },
+  { value: 'solicitarCompra', label: '🛒 Compras', icon: '🛒' },
+  { value: 'eventos', label: '📅 Eventos', icon: '📅' },
+  { value: 'projetos', label: '📊 Projetos', icon: '📊' },
+  { value: 'expansao', label: '🏗️ Expansão', icon: '🏗️' },
+  { value: 'integracao', label: '🔗 Integração', icon: '🔗' },
+  { value: 'grupos', label: '👥 Grupos', icon: '👥' },
+  { value: 'cuidados', label: '💜 Cuidados', icon: '💜' },
+  { value: 'voluntariado', label: '🤝 Voluntariado', icon: '🤝' },
+  { value: 'membresia', label: '⛪ Membresia', icon: '⛪' },
+  { value: 'marketing', label: '📣 Marketing', icon: '📣' },
+];
+
 const s = {
   page: { maxWidth: 1600, margin: '0 auto', padding: '0 24px' },
   card: { background: C.card, borderRadius: 12, border: `1px solid ${C.border}`, boxShadow: '0 1px 3px rgba(0,0,0,0.04)', overflow: 'hidden' },
@@ -49,7 +70,284 @@ const fmtDate = (d) => d ? new Date(d).toLocaleString('pt-BR', { day: '2-digit',
 const fmtCost = (v) => `$${(Number(v) || 0).toFixed(4)}`;
 const fmtTokens = (v) => (v || 0).toLocaleString('pt-BR');
 
-// Mini bar chart for score history
+// ─── Chat Tab Component ────────────────────────────────────────────────
+
+function ChatTab() {
+  const [messages, setMessages] = useState([]);
+  const [input, setInput] = useState('');
+  const [module, setModule] = useState('supervisor');
+  const [sessionId, setSessionId] = useState(null);
+  const [sessions, setSessions] = useState([]);
+  const [streaming, setStreaming] = useState(false);
+  const [showSessions, setShowSessions] = useState(false);
+  const messagesEndRef = useRef(null);
+  const textareaRef = useRef(null);
+
+  useEffect(() => {
+    loadSessions();
+  }, []);
+
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [messages]);
+
+  async function loadSessions() {
+    try {
+      const data = await agents.sessions();
+      setSessions(data);
+    } catch (e) { console.error(e); }
+  }
+
+  function startNewChat() {
+    setMessages([]);
+    setSessionId(null);
+  }
+
+  function resumeSession(sess) {
+    setSessionId(sess.anthropic_session_id);
+    setModule(sess.agent_module);
+    setMessages([{ role: 'system', text: `Sessão restaurada: ${sess.title || 'Sem título'}` }]);
+    setShowSessions(false);
+  }
+
+  async function deleteSession(id) {
+    try {
+      await agents.deleteSession(id);
+      setSessions(prev => prev.filter(s => s.id !== id));
+      if (sessions.find(s => s.id === id)?.anthropic_session_id === sessionId) {
+        startNewChat();
+      }
+    } catch (e) { console.error(e); }
+  }
+
+  async function sendMessage() {
+    if (!input.trim() || streaming) return;
+
+    const userMsg = input.trim();
+    setInput('');
+    setMessages(prev => [...prev, { role: 'user', text: userMsg }]);
+    setStreaming(true);
+
+    // Add an empty assistant message for streaming
+    const assistantIdx = messages.length + 1;
+    setMessages(prev => [...prev, { role: 'assistant', text: '' }]);
+
+    try {
+      const res = await agents.chat({ message: userMsg, module, sessionId });
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || '';
+
+        for (const line of lines) {
+          if (!line.startsWith('data: ')) continue;
+          const data = line.slice(6).trim();
+          if (data === '[DONE]') continue;
+
+          try {
+            const event = JSON.parse(data);
+
+            if (event.type === 'session') {
+              setSessionId(event.sessionId);
+              loadSessions();
+            } else if (event.type === 'delta') {
+              setMessages(prev => {
+                const updated = [...prev];
+                const lastAssistant = updated.length - 1;
+                if (updated[lastAssistant]?.role === 'assistant') {
+                  updated[lastAssistant] = { ...updated[lastAssistant], text: updated[lastAssistant].text + event.text };
+                }
+                return updated;
+              });
+            } else if (event.type === 'error') {
+              setMessages(prev => {
+                const updated = [...prev];
+                const lastAssistant = updated.length - 1;
+                if (updated[lastAssistant]?.role === 'assistant') {
+                  updated[lastAssistant] = { role: 'error', text: event.text };
+                }
+                return updated;
+              });
+            }
+          } catch (e) { /* skip */ }
+        }
+      }
+    } catch (e) {
+      setMessages(prev => {
+        const updated = [...prev];
+        const last = updated.length - 1;
+        if (updated[last]?.role === 'assistant' && !updated[last].text) {
+          updated[last] = { role: 'error', text: e.message };
+        } else {
+          updated.push({ role: 'error', text: e.message });
+        }
+        return updated;
+      });
+    }
+
+    setStreaming(false);
+  }
+
+  function handleKeyDown(e) {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      sendMessage();
+    }
+  }
+
+  const selectedModuleLabel = MODULE_OPTIONS.find(m => m.value === module)?.label || '🧠 Supervisor';
+
+  return (
+    <div style={{ display: 'flex', gap: 16, height: 'calc(100vh - 220px)', minHeight: 500 }}>
+      {/* Sessions sidebar */}
+      {showSessions && (
+        <div style={{ ...s.card, width: 280, flexShrink: 0, display: 'flex', flexDirection: 'column' }}>
+          <div style={{ ...s.cardHeader, flexShrink: 0 }}>
+            <div style={s.cardTitle}>Sessões</div>
+            <button onClick={() => setShowSessions(false)} style={{ ...s.btn('ghost'), padding: '4px 8px', fontSize: 16 }}>✕</button>
+          </div>
+          <div style={{ flex: 1, overflowY: 'auto' }}>
+            {sessions.length === 0 ? (
+              <div style={s.empty}>Nenhuma sessão</div>
+            ) : sessions.map(sess => (
+              <div key={sess.id} style={{
+                padding: '12px 16px', borderBottom: `1px solid ${C.border}`, cursor: 'pointer',
+                background: sess.anthropic_session_id === sessionId ? C.primaryBg : 'transparent',
+              }}>
+                <div onClick={() => resumeSession(sess)} style={{ marginBottom: 4 }}>
+                  <div style={{ fontSize: 13, fontWeight: 600, color: C.text, lineHeight: 1.3 }}>
+                    {sess.title || 'Sem título'}
+                  </div>
+                  <div style={{ fontSize: 11, color: C.text3, marginTop: 2 }}>
+                    {MODULE_OPTIONS.find(m => m.value === sess.agent_module)?.label || sess.agent_module} · {fmtDate(sess.last_message_at)}
+                  </div>
+                </div>
+                <button onClick={(e) => { e.stopPropagation(); deleteSession(sess.id); }}
+                  style={{ fontSize: 10, color: C.red, background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}>
+                  remover
+                </button>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Main chat */}
+      <div style={{ ...s.card, flex: 1, display: 'flex', flexDirection: 'column' }}>
+        {/* Chat header */}
+        <div style={{ ...s.cardHeader, flexShrink: 0, gap: 12 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <button onClick={() => setShowSessions(!showSessions)} style={{ ...s.btn('ghost'), padding: '4px 8px', fontSize: 16 }} title="Sessões">
+              💬
+            </button>
+            <button onClick={startNewChat} style={{ ...s.btn('ghost'), padding: '4px 8px', fontSize: 14 }} title="Nova conversa">
+              ＋ Nova
+            </button>
+          </div>
+
+          {/* Module selector */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+            <span style={{ fontSize: 11, color: C.text3 }}>Agente:</span>
+            <select value={module} onChange={(e) => setModule(e.target.value)}
+              style={{
+                padding: '4px 8px', borderRadius: 6, fontSize: 12, fontWeight: 600,
+                background: C.primaryBg, color: C.primary, border: `1px solid ${C.primary}40`,
+                cursor: 'pointer',
+              }}>
+              {MODULE_OPTIONS.map(m => (
+                <option key={m.value} value={m.value}>{m.label}</option>
+              ))}
+            </select>
+          </div>
+
+          {sessionId && (
+            <span style={{ fontSize: 10, color: C.text3, fontFamily: 'monospace' }}>
+              sessão ativa
+            </span>
+          )}
+        </div>
+
+        {/* Messages */}
+        <div style={{ flex: 1, overflowY: 'auto', padding: 20, display: 'flex', flexDirection: 'column', gap: 16 }}>
+          {messages.length === 0 && (
+            <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 12 }}>
+              <div style={{ fontSize: 48, opacity: 0.3 }}>🧠</div>
+              <div style={{ fontSize: 16, fontWeight: 700, color: C.text, opacity: 0.6 }}>Assistente IA CBRio</div>
+              <div style={{ fontSize: 13, color: C.text3, textAlign: 'center', maxWidth: 400, lineHeight: 1.5 }}>
+                Escolha um agente especialista e faça perguntas sobre o sistema.<br />
+                O agente tem acesso aos dados reais do ERP.
+              </div>
+            </div>
+          )}
+
+          {messages.map((msg, i) => (
+            <div key={i} style={{
+              display: 'flex',
+              justifyContent: msg.role === 'user' ? 'flex-end' : 'flex-start',
+            }}>
+              <div style={{
+                maxWidth: '80%',
+                padding: '12px 16px',
+                borderRadius: 12,
+                fontSize: 14,
+                lineHeight: 1.6,
+                ...(msg.role === 'user' ? {
+                  background: C.primary, color: '#fff',
+                  borderBottomRightRadius: 4,
+                } : msg.role === 'error' ? {
+                  background: C.redBg, color: C.red, border: `1px solid ${C.red}40`,
+                  borderBottomLeftRadius: 4,
+                } : msg.role === 'system' ? {
+                  background: C.primaryBg, color: C.text2, fontStyle: 'italic', fontSize: 12,
+                  borderRadius: 8,
+                } : {
+                  background: `${C.border}40`, color: C.text,
+                  borderBottomLeftRadius: 4,
+                }),
+              }}>
+                {msg.role === 'assistant' ? (
+                  <div className="prose prose-sm max-w-none" style={{ color: 'inherit' }}>
+                    <ReactMarkdown>{msg.text || (streaming && i === messages.length - 1 ? '●' : '')}</ReactMarkdown>
+                  </div>
+                ) : (
+                  <span style={{ whiteSpace: 'pre-wrap' }}>{msg.text}</span>
+                )}
+              </div>
+            </div>
+          ))}
+          <div ref={messagesEndRef} />
+        </div>
+
+        {/* Input */}
+        <div style={{ padding: '12px 20px', borderTop: `1px solid ${C.border}`, display: 'flex', gap: 8, alignItems: 'flex-end', flexShrink: 0 }}>
+          <Textarea
+            ref={textareaRef}
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            onKeyDown={handleKeyDown}
+            placeholder={`Pergunte ao agente ${selectedModuleLabel}...`}
+            disabled={streaming}
+            rows={1}
+            style={{ flex: 1, minHeight: 40, maxHeight: 120, resize: 'none', fontSize: 14 }}
+          />
+          <Button onClick={sendMessage} disabled={!input.trim() || streaming} style={{ flexShrink: 0 }}>
+            {streaming ? '...' : 'Enviar'}
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Score Chart ────────────────────────────────────────────────────────
+
 function ScoreChart({ scores = {} }) {
   const moduleNames = { module_rh: 'RH', module_financeiro: 'Fin', module_eventos: 'Evt', module_projetos: 'Proj', module_logistica: 'Log', module_patrimonio: 'Pat', module_membresia: 'Mem', system_auditor: 'Geral' };
   const entries = Object.entries(scores).filter(([, v]) => v.length > 0);
@@ -86,7 +384,9 @@ function ScoreChart({ scores = {} }) {
   );
 }
 
-export default function AssistenteIA() {
+// ─── Auditorias Tab (código existente preservado) ───────────────────────
+
+function AuditoriasTab() {
   const [runs, setRuns] = useState([]);
   const [stats, setStats] = useState(null);
   const [scores, setScores] = useState({});
@@ -110,7 +410,6 @@ export default function AssistenteIA() {
 
   useEffect(() => { loadRuns(); loadStats(); loadScores(); }, [loadRuns, loadStats, loadScores]);
 
-  // Polling para runs em execução
   useEffect(() => {
     const hasRunning = runs.some(r => r.status === 'running');
     if (hasRunning && !pollingId) {
@@ -143,32 +442,23 @@ export default function AssistenteIA() {
   }
 
   return (
-    <div style={s.page}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24, flexWrap: 'wrap', gap: 12 }}>
-        <div>
-          <div style={{ fontSize: 28, fontWeight: 800, color: C.text, letterSpacing: -0.5 }}>Assistente IA</div>
-          <div style={{ fontSize: 13, color: C.text2, marginTop: 2 }}>Agentes inteligentes para auditoria, análise e melhorias do sistema</div>
+    <>
+      {stats && (
+        <div style={{ display: 'flex', gap: 16, fontSize: 12, color: C.text2, marginBottom: 16 }}>
+          <span>Execuções: <strong style={{ color: C.text }}>{stats.totalRuns}</strong></span>
+          <span>Tokens: <strong style={{ color: C.text }}>{fmtTokens(stats.totalTokens)}</strong></span>
+          <span>Custo: <strong style={{ color: C.text }}>{fmtCost(stats.totalCost)}</strong></span>
         </div>
-        {stats && (
-          <div style={{ display: 'flex', gap: 16, fontSize: 12, color: C.text2 }}>
-            <span>Execuções: <strong style={{ color: C.text }}>{stats.totalRuns}</strong></span>
-            <span>Tokens: <strong style={{ color: C.text }}>{fmtTokens(stats.totalTokens)}</strong></span>
-            <span>Custo: <strong style={{ color: C.text }}>{fmtCost(stats.totalCost)}</strong></span>
-          </div>
-        )}
-      </div>
+      )}
 
-      {/* Score History Chart */}
       <ScoreChart scores={scores} />
 
-      {/* Launch All */}
       <div style={{ marginBottom: 16 }}>
         <Button onClick={async () => { for (const at of AGENT_TYPES) { await launchAgent(at.value); } }} disabled={launching}>
           {launching ? 'Iniciando...' : '🚀 Executar Todos os Agentes'}
         </Button>
       </div>
 
-      {/* Agent Cards */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 12, marginBottom: 24 }}>
         {AGENT_TYPES.map(at => {
           const lastRun = runs.find(r => r.agent_type === at.value);
@@ -200,7 +490,6 @@ export default function AssistenteIA() {
       </div>
 
       <div style={{ display: 'grid', gridTemplateColumns: selectedRun ? '1fr 2fr' : '1fr', gap: 16 }}>
-        {/* Runs List */}
         <div style={s.card}>
           <div style={s.cardHeader}>
             <div style={s.cardTitle}>Execuções</div>
@@ -238,10 +527,8 @@ export default function AssistenteIA() {
           )}
         </div>
 
-        {/* Run Detail */}
         {selectedRun && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-            {/* Summary */}
             {selectedRun.summary && (
               <div style={{ ...s.card, padding: 20 }}>
                 <div style={{ fontSize: 13, fontWeight: 700, color: C.primary, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 8 }}>Resumo Executivo</div>
@@ -256,7 +543,6 @@ export default function AssistenteIA() {
               </div>
             )}
 
-            {/* Findings */}
             {selectedRun.findings?.length > 0 && (
               <div style={s.card}>
                 <div style={s.cardHeader}>
@@ -289,7 +575,6 @@ export default function AssistenteIA() {
               </div>
             )}
 
-            {/* Design References */}
             {selectedRun.config?.topReferences?.length > 0 && (
               <div style={s.card}>
                 <div style={s.cardHeader}>
@@ -307,7 +592,6 @@ export default function AssistenteIA() {
               </div>
             )}
 
-            {/* Quick Wins */}
             {selectedRun.config?.quickWins?.length > 0 && (
               <div style={{ ...s.card, borderLeft: `4px solid ${C.green}` }}>
                 <div style={s.cardHeader}>
@@ -324,7 +608,6 @@ export default function AssistenteIA() {
               </div>
             )}
 
-            {/* Steps */}
             {steps.length > 0 && (
               <div style={s.card}>
                 <div style={s.cardHeader}>
@@ -341,7 +624,6 @@ export default function AssistenteIA() {
               </div>
             )}
 
-            {/* Status running */}
             {selectedRun.status === 'running' && (
               <div style={{ ...s.card, padding: 20, textAlign: 'center' }}>
                 <div style={{ fontSize: 24, marginBottom: 8 }}>🔄</div>
@@ -352,6 +634,34 @@ export default function AssistenteIA() {
           </div>
         )}
       </div>
+    </>
+  );
+}
+
+// ─── Main Page ──────────────────────────────────────────────────────────
+
+export default function AssistenteIA() {
+  return (
+    <div style={s.page}>
+      <div style={{ marginBottom: 20 }}>
+        <div style={{ fontSize: 28, fontWeight: 800, color: C.text, letterSpacing: -0.5 }}>Assistente IA</div>
+        <div style={{ fontSize: 13, color: C.text2, marginTop: 2 }}>Agentes inteligentes para chat, auditoria e análise do sistema</div>
+      </div>
+
+      <Tabs defaultValue="chat">
+        <TabsList className="mb-4">
+          <TabsTrigger value="chat">💬 Chat IA</TabsTrigger>
+          <TabsTrigger value="auditorias">🔍 Auditorias</TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="chat">
+          <ChatTab />
+        </TabsContent>
+
+        <TabsContent value="auditorias">
+          <AuditoriasTab />
+        </TabsContent>
+      </Tabs>
     </div>
   );
 }
