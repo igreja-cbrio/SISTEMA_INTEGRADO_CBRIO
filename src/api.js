@@ -206,6 +206,29 @@ export const agents = {
   stats: () => get('/agents/stats'),
   scores: () => get('/agents/scores'),
   memory: (module) => get(`/agents/memory/${module}`),
+  // Managed Agents — Chat
+  modules: () => get('/agents/modules'),
+  sessions: () => get('/agents/sessions'),
+  deleteSession: (id) => del(`/agents/sessions/${id}`),
+  /**
+   * Chat SSE stream. Returns the raw Response so the caller can read the stream.
+   */
+  chat: async ({ message, module, sessionId }) => {
+    const token = await getToken();
+    const res = await fetch(`${API}/agents/chat`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      body: JSON.stringify({ message, module, sessionId }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || `HTTP ${res.status}`);
+    }
+    return res; // caller reads SSE stream
+  },
 };
 
 export const financeiro = {
