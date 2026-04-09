@@ -628,6 +628,8 @@ export default function Eventos() {
   const [kanbanCycleData, setKanbanCycleData] = useState(null);
   const [kanbanPhase, setKanbanPhase] = useState(null);
   const [kanbanEvent, setKanbanEvent] = useState('all');
+  const [showKanbanNewTask, setShowKanbanNewTask] = useState(false);
+  const [kanbanNewTaskSubs, setKanbanNewTaskSubs] = useState([]);
 
   async function loadKanban() {
     setKanbanLoading(true);
@@ -798,11 +800,14 @@ export default function Eventos() {
 
         {/* Header da fase */}
         {kanbanPhase && (
-          <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--cbrio-text)', marginBottom: 10 }}>
-            Fase {kanbanPhase} — {phaseNames[kanbanPhase]}
-            <span style={{ fontSize: 12, fontWeight: 400, color: 'var(--cbrio-text3)', marginLeft: 12 }}>
-              {phaseTasks.filter(t => t.status === 'concluida').length}/{phaseTasks.length} tarefas
-            </span>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+            <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--cbrio-text)' }}>
+              Fase {kanbanPhase} — {phaseNames[kanbanPhase]}
+              <span style={{ fontSize: 12, fontWeight: 400, color: 'var(--cbrio-text3)', marginLeft: 12 }}>
+                {phaseTasks.filter(t => t.status !== 'concluida').length} pendente(s)
+              </span>
+            </div>
+            <button onClick={() => setShowKanbanNewTask(true)} style={{ padding: '4px 10px', fontSize: 11, border: 'none', cursor: 'pointer', fontWeight: 600, background: '#00B39D', color: '#fff', borderRadius: 6 }}>+ Tarefa</button>
           </div>
         )}
 
@@ -969,9 +974,37 @@ export default function Eventos() {
                           loadKanban();
                           setKanbanSelectedTask({ ...task, subtasks: subs.map(s => s.id === sub.id ? { ...s, done: !s.done } : s) });
                         }} style={{ cursor: 'pointer', width: 16, height: 16, accentColor: '#00B39D' }} />
-                        <span style={{ fontSize: 13, color: 'var(--cbrio-text)', ...(sub.done ? { textDecoration: 'line-through', color: 'var(--cbrio-text3)' } : {}) }}>{sub.name}</span>
+                        <span style={{ flex: 1, fontSize: 13, color: 'var(--cbrio-text)', ...(sub.done ? { textDecoration: 'line-through', color: 'var(--cbrio-text3)' } : {}) }}>{sub.name}</span>
+                        <button onClick={async () => {
+                          await cyclesApi.deleteSubtask(sub.id);
+                          loadKanban();
+                          setKanbanSelectedTask({ ...task, subtasks: subs.filter(s => s.id !== sub.id) });
+                        }} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--cbrio-text3)', padding: 0, lineHeight: 1 }} title="Excluir subtarefa">
+                          <span style={{ fontSize: 14 }}>✕</span>
+                        </button>
                       </div>
                     ))}
+                    {/* Adicionar subtarefa */}
+                    <div style={{ display: 'flex', gap: 6, marginTop: 8 }}>
+                      <input id="kanban-new-subtask" type="text" placeholder="Nova subtarefa..."
+                        onKeyDown={async (e) => {
+                          if (e.key === 'Enter' && e.target.value.trim()) {
+                            const name = e.target.value.trim(); e.target.value = '';
+                            const newSub = await cyclesApi.createSubtask(task.id, name);
+                            loadKanban();
+                            setKanbanSelectedTask({ ...task, subtasks: [...subs, newSub] });
+                          }
+                        }}
+                        style={{ flex: 1, padding: '5px 8px', borderRadius: 6, border: '1px solid var(--cbrio-border)', fontSize: 12, color: 'var(--cbrio-text)', background: 'var(--cbrio-input-bg, #fff)' }} />
+                      <button onClick={async () => {
+                        const input = document.getElementById('kanban-new-subtask');
+                        if (!input?.value.trim()) return;
+                        const name = input.value.trim(); input.value = '';
+                        const newSub = await cyclesApi.createSubtask(task.id, name);
+                        loadKanban();
+                        setKanbanSelectedTask({ ...task, subtasks: [...subs, newSub] });
+                      }} style={{ padding: '5px 10px', borderRadius: 6, border: 'none', background: '#00B39D', color: '#fff', fontSize: 12, fontWeight: 600, cursor: 'pointer' }}>+</button>
+                    </div>
                   </div>
 
                   {/* Observações */}
@@ -1004,6 +1037,91 @@ export default function Eventos() {
                 </div>
               </div>
             </>
+          );
+        })()}
+
+        {/* ── MODAL NOVA TAREFA (kanban) ── */}
+        {showKanbanNewTask && (() => {
+          const phaseOptions = [...new Map(filteredPhases.map(p => [p.numero_fase, p])).values()].sort((a, b) => a.numero_fase - b.numero_fase);
+          const eventOptions = allEvents.filter(e => e.status !== 'concluido');
+          return (
+            <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', zIndex: 900, display: 'flex', alignItems: 'center', justifyContent: 'center' }} onClick={() => { setShowKanbanNewTask(false); setKanbanNewTaskSubs([]); }}>
+              <div style={{ background: 'var(--cbrio-modal-bg, #fff)', borderRadius: 16, padding: 24, width: '95%', maxWidth: 500, maxHeight: '90vh', overflowY: 'auto' }} onClick={e => e.stopPropagation()}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 12 }}>
+                  <span style={{ fontSize: 16, fontWeight: 700, color: 'var(--cbrio-text)' }}>Nova Tarefa</span>
+                  <button onClick={() => { setShowKanbanNewTask(false); setKanbanNewTaskSubs([]); }} style={{ background: 'none', border: 'none', fontSize: 18, cursor: 'pointer', color: 'var(--cbrio-text3)' }}>✕</button>
+                </div>
+                <form onSubmit={async (e) => {
+                  e.preventDefault();
+                  const fd = new FormData(e.target);
+                  const d = Object.fromEntries(fd.entries());
+                  const task = await cyclesApi.createTask({ event_phase_id: d.phase_id, event_id: d.event_id, titulo: d.titulo, area: d.area, prazo: d.prazo || null, responsavel_nome: d.responsavel || null, status: 'a_fazer', prioridade: 'normal' });
+                  if (task?.id && kanbanNewTaskSubs.length > 0) {
+                    for (const name of kanbanNewTaskSubs) await cyclesApi.createSubtask(task.id, name);
+                  }
+                  setShowKanbanNewTask(false); setKanbanNewTaskSubs([]); loadKanban();
+                }}>
+                  <div style={{ display: 'flex', gap: 8, marginBottom: 10 }}>
+                    <div style={{ flex: 1 }}>
+                      <label style={{ fontSize: 10, fontWeight: 600, color: 'var(--cbrio-text3)', display: 'block', marginBottom: 2 }}>Evento *</label>
+                      <select name="event_id" required defaultValue={kanbanEvent !== 'all' ? kanbanEvent : ''} style={{ width: '100%', padding: '5px 8px', borderRadius: 6, border: '1px solid var(--cbrio-border)', fontSize: 12, color: 'var(--cbrio-text)', background: 'var(--cbrio-input-bg, #fff)' }}>
+                        <option value="">Selecione...</option>
+                        {eventOptions.map(ev => <option key={ev.id} value={ev.id}>{ev.name}</option>)}
+                      </select>
+                    </div>
+                    <div style={{ flex: 1 }}>
+                      <label style={{ fontSize: 10, fontWeight: 600, color: 'var(--cbrio-text3)', display: 'block', marginBottom: 2 }}>Fase</label>
+                      <select name="phase_id" required defaultValue={filteredPhases.find(p => p.numero_fase === kanbanPhase)?.id || ''} style={{ width: '100%', padding: '5px 8px', borderRadius: 6, border: '1px solid var(--cbrio-border)', fontSize: 12, color: 'var(--cbrio-text)', background: 'var(--cbrio-input-bg, #fff)' }}>
+                        {phaseOptions.map(p => <option key={p.id} value={p.id}>F{p.numero_fase} — {p.nome_fase}</option>)}
+                      </select>
+                    </div>
+                  </div>
+                  <div style={{ marginBottom: 10 }}>
+                    <label style={{ fontSize: 10, fontWeight: 600, color: 'var(--cbrio-text3)', display: 'block', marginBottom: 2 }}>Título *</label>
+                    <input name="titulo" required placeholder="Nome da tarefa" style={{ width: '100%', padding: '5px 8px', borderRadius: 6, border: '1px solid var(--cbrio-border)', fontSize: 12, color: 'var(--cbrio-text)', background: 'var(--cbrio-input-bg, #fff)', boxSizing: 'border-box' }} />
+                  </div>
+                  <div style={{ display: 'flex', gap: 8, marginBottom: 10 }}>
+                    <div style={{ flex: 1 }}>
+                      <label style={{ fontSize: 10, fontWeight: 600, color: 'var(--cbrio-text3)', display: 'block', marginBottom: 2 }}>Área</label>
+                      <select name="area" style={{ width: '100%', padding: '5px 8px', borderRadius: 6, border: '1px solid var(--cbrio-border)', fontSize: 12, color: 'var(--cbrio-text)', background: 'var(--cbrio-input-bg, #fff)' }}>
+                        <option value="compras">Compras</option><option value="financeiro">Financeiro</option>
+                        <option value="manutencao">Manutenção</option><option value="limpeza">Limpeza</option>
+                        <option value="cozinha">Cozinha</option><option value="marketing">Marketing</option>
+                      </select>
+                    </div>
+                    <div style={{ flex: 1 }}>
+                      <label style={{ fontSize: 10, fontWeight: 600, color: 'var(--cbrio-text3)', display: 'block', marginBottom: 2 }}>Prazo</label>
+                      <input type="date" name="prazo" style={{ width: '100%', padding: '5px 8px', borderRadius: 6, border: '1px solid var(--cbrio-border)', fontSize: 12, color: 'var(--cbrio-text)', background: 'var(--cbrio-input-bg, #fff)', boxSizing: 'border-box' }} />
+                    </div>
+                  </div>
+                  <div style={{ marginBottom: 10 }}>
+                    <label style={{ fontSize: 10, fontWeight: 600, color: 'var(--cbrio-text3)', display: 'block', marginBottom: 2 }}>Responsável</label>
+                    <input name="responsavel" placeholder="Nome do responsável" style={{ width: '100%', padding: '5px 8px', borderRadius: 6, border: '1px solid var(--cbrio-border)', fontSize: 12, color: 'var(--cbrio-text)', background: 'var(--cbrio-input-bg, #fff)', boxSizing: 'border-box' }} />
+                  </div>
+                  <div style={{ marginBottom: 10 }}>
+                    <label style={{ fontSize: 10, fontWeight: 600, color: 'var(--cbrio-text3)', display: 'block', marginBottom: 2 }}>Subtarefas</label>
+                    {kanbanNewTaskSubs.map((s, i) => (
+                      <div key={i} style={{ display: 'flex', gap: 6, alignItems: 'center', marginBottom: 4 }}>
+                        <span style={{ flex: 1, fontSize: 12, color: 'var(--cbrio-text)', padding: '4px 8px', background: 'var(--cbrio-bg)', borderRadius: 4 }}>{s}</span>
+                        <button type="button" onClick={() => setKanbanNewTaskSubs(prev => prev.filter((_, j) => j !== i))} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--cbrio-text3)', fontSize: 14 }}>✕</button>
+                      </div>
+                    ))}
+                    <div style={{ display: 'flex', gap: 6 }}>
+                      <input id="kanban-new-task-sub" type="text" placeholder="Nova subtarefa..." style={{ flex: 1, padding: '5px 8px', borderRadius: 6, border: '1px solid var(--cbrio-border)', fontSize: 12, color: 'var(--cbrio-text)', background: 'var(--cbrio-input-bg, #fff)' }}
+                        onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); const v = e.target.value.trim(); if (v) { setKanbanNewTaskSubs(prev => [...prev, v]); e.target.value = ''; } } }} />
+                      <button type="button" onClick={() => {
+                        const inp = document.getElementById('kanban-new-task-sub');
+                        if (inp?.value.trim()) { setKanbanNewTaskSubs(prev => [...prev, inp.value.trim()]); inp.value = ''; }
+                      }} style={{ padding: '5px 10px', borderRadius: 6, border: 'none', background: '#00B39D', color: '#fff', fontSize: 12, fontWeight: 600, cursor: 'pointer' }}>+</button>
+                    </div>
+                  </div>
+                  <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 12 }}>
+                    <button type="button" onClick={() => { setShowKanbanNewTask(false); setKanbanNewTaskSubs([]); }} style={{ padding: '6px 14px', borderRadius: 6, border: '1px solid var(--cbrio-border)', background: 'transparent', cursor: 'pointer', fontSize: 12 }}>Cancelar</button>
+                    <button type="submit" style={{ padding: '6px 14px', borderRadius: 6, border: 'none', background: '#00B39D', color: '#fff', cursor: 'pointer', fontSize: 12, fontWeight: 600 }}>Criar tarefa</button>
+                  </div>
+                </form>
+              </div>
+            </div>
           );
         })()}
 
