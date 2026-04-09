@@ -80,18 +80,20 @@ router.post('/chat', chatLimiter, async (req, res) => {
       const session = await createRes.json();
       activeSessionId = session.id;
 
-      // Persist in DB
+      // Persist in DB — must complete before sending session event
+      let dbSessionId = null;
       try {
-        await db.query(
+        const insertResult = await db.query(
           `INSERT INTO agent_sessions (user_id, anthropic_session_id, agent_module, title)
-           VALUES ($1, $2, $3, $4)`,
+           VALUES ($1, $2, $3, $4) RETURNING id`,
           [req.user.userId, activeSessionId, agentModule, message.slice(0, 80)]
         );
+        dbSessionId = insertResult.rows[0]?.id;
       } catch (dbErr) {
-        console.warn('[AGENTS] Failed to persist session:', dbErr.message);
+        console.error('[AGENTS] Failed to persist session:', dbErr.message);
       }
 
-      sendEvent('session', { sessionId: activeSessionId, module: agentModule });
+      sendEvent('session', { sessionId: activeSessionId, dbSessionId, module: agentModule });
     } else {
       // Update last_message_at
       try {
@@ -287,7 +289,31 @@ router.post('/chat', chatLimiter, async (req, res) => {
       }
     }
 
-    // 6. Log usage
+    // 6. Persist messages in DB
+    try {
+      // Get the DB session id
+      const sessRow = await db.query(
+        `SELECT id FROM agent_sessions WHERE anthropic_session_id = $1 LIMIT 1`,
+        [activeSessionId]
+      );
+      const dbSessId = sessRow.rows[0]?.id;
+      if (dbSessId) {
+        await db.query(
+          `INSERT INTO agent_messages (session_id, role, content) VALUES ($1, 'user', $2)`,
+          [dbSessId, message]
+        );
+        if (fullText) {
+          await db.query(
+            `INSERT INTO agent_messages (session_id, role, content) VALUES ($1, 'assistant', $2)`,
+            [dbSessId, fullText]
+          );
+        }
+      }
+    } catch (e) {
+      console.warn('[AGENTS] Failed to persist messages:', e.message);
+    }
+
+    // 7. Log usage
     try {
       await db.query(
         'INSERT INTO agent_log (agent, action, details) VALUES ($1,$2,$3)',
