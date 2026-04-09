@@ -233,8 +233,8 @@ router.post('/chat', chatLimiter, async (req, res) => {
           .filter(line => line.startsWith('data: '))
           .map(line => line.slice(6).trim());
 
-        if (dataLines.length) {
-          handleSsePayload(dataLines.join('\n'));
+        for (const dl of dataLines) {
+          handleSsePayload(dl);
         }
       }
     }
@@ -247,8 +247,8 @@ router.post('/chat', chatLimiter, async (req, res) => {
         .filter(line => line.startsWith('data: '))
         .map(line => line.slice(6).trim());
 
-      if (dataLines.length) {
-        handleSsePayload(dataLines.join('\n'));
+      for (const dl of dataLines) {
+        handleSsePayload(dl);
       }
     }
 
