@@ -197,7 +197,47 @@ router.get('/orders/:id', async (req, res) => {
   }
 });
 
-// ── SHIPMENTS ─────────────────────────────────────────────
+// ── SHIPMENTS LIST (from recent orders) ───────────────────
+router.get('/shipments', async (req, res) => {
+  try {
+    const config = await getMLConfig();
+    if (!config?.access_token) return res.status(400).json({ error: 'ML não conectado' });
+
+    // Fetch recent orders to extract shipment info
+    const ordersData = await mlFetch(config, `/orders/search?buyer=${config.ml_user_id}&offset=0&limit=50&sort=date_desc`);
+    const orders = ordersData.results || [];
+
+    const shipments = [];
+    for (const order of orders) {
+      if (!order.shipping?.id) continue;
+      try {
+        const ship = await mlFetch(config, `/shipments/${order.shipping.id}`);
+        shipments.push({
+          id: ship.id,
+          order_id: order.id,
+          status: ship.status,
+          substatus: ship.substatus,
+          tracking_number: ship.tracking_number,
+          tracking_method: ship.tracking_method,
+          date_created: ship.date_created,
+          last_updated: ship.last_updated,
+          receiver_address: ship.receiver_address,
+          total_amount: order.total_amount,
+          order_items: order.order_items,
+        });
+      } catch (e) {
+        console.error(`[ML] Shipment ${order.shipping.id} error:`, e.message);
+      }
+    }
+
+    res.json(shipments);
+  } catch (e) {
+    console.error('[ML] Shipments list error:', e.message);
+    res.status(500).json({ error: 'Erro ao buscar envios' });
+  }
+});
+
+// ── SHIPMENT DETAIL ───────────────────────────────────────
 router.get('/shipments/:id', async (req, res) => {
   try {
     const config = await getMLConfig();
