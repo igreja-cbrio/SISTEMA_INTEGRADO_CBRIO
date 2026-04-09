@@ -69,10 +69,11 @@ async function createSharePointFolders(eventName, phaseTemplates) {
 }
 
 // Helper: calcular datas das fases a partir do Dia D
-function calcDates(diaDDate, semanasInicio, semanasFim) {
+// calcDates: semanas_inicio/semanas_fim agora armazenam DIAS (não semanas)
+function calcDates(diaDDate, diasInicio, diasFim) {
   const diaD = new Date(diaDDate);
-  const inicio = new Date(diaD); inicio.setDate(diaD.getDate() + semanasInicio * 7);
-  const fim = new Date(diaD); fim.setDate(diaD.getDate() + semanasFim * 7);
+  const inicio = new Date(diaD); inicio.setDate(diaD.getDate() + diasInicio);
+  const fim = new Date(diaD); fim.setDate(diaD.getDate() + diasFim);
   return {
     data_inicio_prevista: inicio.toISOString().split('T')[0],
     data_fim_prevista: fim.toISOString().split('T')[0],
