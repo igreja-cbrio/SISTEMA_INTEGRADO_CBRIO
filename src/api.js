@@ -28,9 +28,8 @@ async function request(path, opts = {}) {
   }
 
   if (res.status === 401) {
-    if (supabase) await supabase.auth.signOut();
-    window.location.href = '/login';
-    throw new Error('Sessão expirada');
+    console.warn('[API] 401 – token inválido ou backend sem SUPABASE_SERVICE_ROLE_KEY');
+    throw new Error('Não autorizado. Verifique se o backend está configurado corretamente.');
   }
   if (!res.ok) {
     const err = await res.json().catch(() => ({ error: 'Erro desconhecido' }));
