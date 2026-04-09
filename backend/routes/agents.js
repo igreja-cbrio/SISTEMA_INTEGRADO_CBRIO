@@ -147,50 +147,108 @@ router.post('/chat', chatLimiter, async (req, res) => {
     let buffer = '';
     let fullText = '';
 
+    const emitText = (value) => {
+      if (typeof value !== 'string') return;
+      const candidate = value.replace(/\r/g, '');
+      if (!candidate.trim()) return;
+
+      let delta = candidate;
+      if (fullText && candidate === fullText) return;
+      if (fullText && candidate.startsWith(fullText)) {
+        delta = candidate.slice(fullText.length);
+      }
+      if (!delta) return;
+
+      fullText += delta;
+      sendEvent('delta', { text: delta });
+    };
+
+    const extractTextCandidates = (payload) => {
+      const candidates = [];
+      const push = (value) => {
+        if (typeof value === 'string' && value.trim()) {
+          candidates.push(value);
+        }
+      };
+      const pushContent = (content) => {
+        const blocks = Array.isArray(content) ? content : [content];
+        for (const block of blocks) {
+          if (!block || typeof block !== 'object') continue;
+          push(block.text);
+          push(block?.delta?.text);
+          if (block.content) pushContent(block.content);
+        }
+      };
+
+      push(payload?.delta?.text);
+      push(payload?.text);
+      push(payload?.message?.text);
+      push(payload?.message_delta?.text);
+      push(payload?.agent_response_event?.agent_response);
+      push(payload?.agent_response_correction_event?.corrected_agent_response);
+      push(payload?.output_text);
+      push(payload?.result?.text);
+      pushContent(payload?.content);
+      pushContent(payload?.delta?.content);
+      pushContent(payload?.message?.content);
+      pushContent(payload?.message_delta?.content);
+      pushContent(payload?.result?.content);
+
+      return [...new Set(candidates)];
+    };
+
+    const handleSsePayload = (jsonStr) => {
+      if (!jsonStr || jsonStr === '[DONE]') return;
+
+      try {
+        const event = JSON.parse(jsonStr);
+        console.log('[AGENTS] SSE event:', JSON.stringify(event).slice(0, 300));
+
+        const payloads = [event];
+        if (event.event && typeof event.event === 'object') payloads.push(event.event);
+        if (event.data && typeof event.data === 'object') payloads.push(event.data);
+
+        for (const payload of payloads) {
+          for (const text of extractTextCandidates(payload)) {
+            emitText(text);
+          }
+        }
+      } catch (e) {
+        // Skip unparseable payloads
+      }
+    };
+
     while (true) {
       const { done, value } = await reader.read();
       if (done) break;
 
       buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split('\n');
-      buffer = lines.pop() || '';
+      const chunks = buffer.split('\n\n');
+      buffer = chunks.pop() || '';
 
-      for (const line of lines) {
-        if (!line.startsWith('data: ')) continue;
-        const data = line.slice(6).trim();
-        if (data === '[DONE]') continue;
+      for (const chunk of chunks) {
+        const dataLines = chunk
+          .split('\n')
+          .map(line => line.trim())
+          .filter(line => line.startsWith('data: '))
+          .map(line => line.slice(6).trim());
 
-        try {
-          const event = JSON.parse(data);
-          console.log('[AGENTS] SSE event:', JSON.stringify(event).slice(0, 300));
-
-          let text = '';
-
-          // Messages API format
-          if (event.type === 'content_block_delta' && event.delta?.type === 'text_delta') {
-            text = event.delta.text;
-          }
-          // Sessions API formats
-          else if (event.type === 'message_delta' && event.delta?.text) {
-            text = event.delta.text;
-          }
-          else if (event.type === 'text' && event.text) {
-            text = event.text;
-          }
-          // Fallback: content array with text blocks
-          else if (event.content) {
-            const textBlock = (Array.isArray(event.content) ? event.content : [event.content])
-              .find(b => b.type === 'text' && b.text);
-            if (textBlock) text = textBlock.text;
-          }
-
-          if (text) {
-            fullText += text;
-            sendEvent('delta', { text });
-          }
-        } catch (e) {
-          // Skip unparseable lines
+        if (dataLines.length) {
+          handleSsePayload(dataLines.join('\n'));
         }
+      }
+    }
+
+    const tailChunk = buffer.trim();
+    if (tailChunk) {
+      const dataLines = tailChunk
+        .split('\n')
+        .map(line => line.trim())
+        .filter(line => line.startsWith('data: '))
+        .map(line => line.slice(6).trim());
+
+      if (dataLines.length) {
+        handleSsePayload(dataLines.join('\n'));
       }
     }
 
