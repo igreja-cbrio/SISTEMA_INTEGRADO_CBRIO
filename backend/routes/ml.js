@@ -68,9 +68,13 @@ router.get('/status', async (req, res) => {
     if (!config || !config.access_token) {
       return res.json({ connected: false });
     }
-    // Verify token works
     try {
       const user = await mlFetch(config, '/users/me');
+      // Auto-fix ml_user_id if missing
+      if (user.id && (!config.ml_user_id || config.ml_user_id !== String(user.id))) {
+        console.log('[ML] Atualizando ml_user_id:', user.id);
+        await supabase.from('ml_config').update({ ml_user_id: String(user.id) }).eq('id', config.id);
+      }
       return res.json({
         connected: true,
         nickname: user.nickname || user.first_name,
