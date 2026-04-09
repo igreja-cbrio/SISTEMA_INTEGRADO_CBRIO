@@ -1,21 +1,27 @@
 
 
-## Plano: Cache em memória para shipments do ML
+## Plano: Corrigir busca de compras e rastreio do Mercado Livre
 
-### Problema
-A rota `GET /shipments` faz até 50+ chamadas à API do ML (1 para orders + 1 por shipment), o que é lento e pode atingir rate limits.
+### Diagnóstico
+O problema provável é que `ml_user_id` está nulo ou incorreto no banco, fazendo com que a query `/orders/search?buyer=null` retorne vazio silenciosamente. O `mlFetch` não verifica erros da API — retorna o JSON "cru" (que pode ser um objeto de erro), e o frontend interpreta como lista vazia.
 
-### Solução
-Adicionar um cache em memória simples no topo de `backend/routes/ml.js`:
-- Um objeto `{ data, timestamp }` para o resultado de `/shipments`
-- TTL de 5 minutos (300s) — se o cache ainda for válido, retorna direto
-- Parâmetro opcional `?refresh=1` para forçar bypass do cache
-- Cache invalidado ao desconectar ML (`POST /disconnect`)
+### Correções em `backend/routes/ml.js`
+
+**1. Garantir `ml_user_id` no endpoint `/status`**
+Ao verificar o status, se o token funciona mas `ml_user_id` está nulo no banco, salvar o `user.id` automaticamente. Isso resolve cenários onde o callback não gravou o ID.
+
+**2. Adicionar validação de erro no `mlFetch`**
+Verificar se a resposta da API do ML é um erro (campos `error` ou `status >= 400`) e lançar exceção com mensagem útil, em vez de retornar silenciosamente.
+
+**3. Fallback seller na rota `/orders`**
+Se a busca por `buyer` retornar 0 resultados, tentar buscar por `seller` (caso a conta seja vendedora e não compradora). Retornar o que tiver dados.
+
+**4. Logs detalhados**
+Adicionar `console.log` nos endpoints de orders e shipments para registrar a resposta bruta da API, facilitando debug futuro.
 
 ### Arquivo alterado
-- `backend/routes/ml.js` — adicionar variável de cache no topo e lógica de verificação no `GET /shipments` e `POST /disconnect`
+- `backend/routes/ml.js`
 
-### Detalhes técnicos
-- Cache simples em variável (adequado para Vercel serverless — cada cold start limpa naturalmente)
-- Sem dependências externas
+### Após implementação
+Será necessário fazer redeploy no Vercel para aplicar as mudanças.
 
