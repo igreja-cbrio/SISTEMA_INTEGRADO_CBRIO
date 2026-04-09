@@ -1269,13 +1269,14 @@ function RastreioMLTab() {
       <div style={{ fontSize: 48, marginBottom: 12 }}>📦</div>
       <div style={{ fontSize: 16, fontWeight: 600, color: C.text }}>Nenhum envio encontrado</div>
       <div style={{ fontSize: 13, color: C.text2, marginTop: 4 }}>Conecte ao Mercado Livre na aba "Compras ML" para ver os rastreios.</div>
+      <Button variant="outline" size="sm" style={{ marginTop: 16 }} onClick={() => { setLoading(true); ml.shipments({ refresh: 1 }).then(d => { setShipments(d.shipments || []); }).catch(() => {}).finally(() => setLoading(false)); }}>🔄 Tentar novamente</Button>
     </div>
   );
 
   return (<>
     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
       <div style={{ fontSize: 14, fontWeight: 700, color: C.text }}>📦 {emTransito.length} envio(s) em andamento</div>
-      <Button variant="ghost" size="sm" onClick={loadShipments}>🔄 Atualizar</Button>
+      <Button variant="ghost" size="sm" onClick={() => { setLoading(true); ml.shipments({ refresh: 1 }).then(d => { setShipments(d.shipments || []); }).catch(() => {}).finally(() => setLoading(false)); }}>🔄 Atualizar</Button>
     </div>
 
     {/* Em trânsito */}
