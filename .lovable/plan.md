@@ -1,80 +1,63 @@
 
-Objetivo
 
-- Corrigir o erro de validação na criação da sessão do chat IA do Supervisor.
+## Plano: Corrigir resposta em branco do chat IA
 
-Do I know what the issue is?
+### Problema identificado
 
-- Yes.
+O backend em `backend/routes/agents.js` (linhas 166-171) parseia o stream SSE da Anthropic procurando especificamente por eventos do tipo `content_block_delta` com `delta.type === 'text_delta'`. Esse formato pertence a **Messages API**, mas o chat usa a **Sessions API** (`/v1/sessions/{id}/events`), que retorna eventos com estrutura diferente.
 
-O que eu identifiquei
+Como nenhum evento bate com o filtro, nenhum delta de texto e repassado ao frontend, resultando em resposta em branco.
 
-- Revisei os arquivos envolvidos no fluxo: `backend/routes/agents.js`, `backend/config/managedAgents.js`, `src/api.js`, `src/lib/api-base.js` e `src/pages/admin/AssistenteIA.jsx`.
-- O frontend está chamando `/api/agents/chat` corretamente; o erro vem do backend ao criar a sessão na Anthropic.
-- O código atual em `backend/routes/agents.js` envia:
-```js
-{
-  agent: agentId,
-  environment: ENVIRONMENT_ID,
-}
-```
-- A documentação oficial da Anthropic para Managed Agents / Sessions usa:
-```json
-{
-  "agent": "...",
-  "environment_id": "..."
-}
-```
-- Então o problema exato é este: o payload está misturando nomes de campos. `agent` está correto, mas `environment` está errado. O campo certo é `environment_id`.
-- Isso bate exatamente com o erro do screenshot: `environment: Extra inputs are not permitted. Did you mean 'environment_id'?`
+### Correção
 
-Plano de correção
+1. **Adicionar logging temporario dos eventos recebidos** da Anthropic para descobrir a estrutura exata dos eventos da Sessions API.
+2. **Expandir o parsing de eventos** no backend para cobrir os formatos da Sessions API. Baseado na documentacao da API, os eventos provaveis sao:
+   - `agent.message` ou `assistant.message` (mensagem completa)
+   - `agent.message.delta` ou `text` events com conteudo parcial
+   - Ou o mesmo `content_block_delta` mas com path/estrutura diferente
+3. **Adicionar um `console.log` de cada evento recebido** (temporariamente) para mapear a estrutura real e garantir que o parsing funcione.
+4. **Implementar um fallback generico**: se o evento tiver qualquer campo de texto reconhecivel, extrair e repassar como delta.
 
-1. Ajustar `backend/routes/agents.js` no bloco de criação da sessão (`POST https://api.anthropic.com/v1/sessions`).
-2. Trocar apenas `environment` por `environment_id`.
-3. Manter `agent` como está. Não mudar para `agent_id`, porque a própria documentação mostra que o short form correto é `agent`.
-4. Adicionar um comentário curto nesse trecho para evitar regressão futura, já que a API é assimétrica (`agent` + `environment_id`).
-5. Validar o fluxo completo após a alteração:
-   - abrir Assistente IA,
-   - enviar uma mensagem ao Supervisor,
-   - confirmar que a sessão é criada,
-   - confirmar que o banner vermelho some,
-   - confirmar que a resposta começa a chegar via streaming.
+### Mudanca principal
 
-Arquivo que precisa mudar
-
-- `backend/routes/agents.js`
-
-Arquivos revisados, mas sem necessidade de mudança para este erro
-
-- `backend/config/managedAgents.js`
-- `src/api.js`
-- `src/lib/api-base.js`
-- `src/pages/admin/AssistenteIA.jsx`
-
-Mudança exata
+Em `backend/routes/agents.js`, no bloco de parsing (linhas 158-179):
 
 ```js
-// de
-body: JSON.stringify({
-  agent: agentId,
-  environment: ENVIRONMENT_ID,
-})
+// Antes: so captura content_block_delta
+if (event.type === 'content_block_delta' && event.delta?.type === 'text_delta') { ... }
 
-// para
-body: JSON.stringify({
-  agent: agentId,
-  environment_id: ENVIRONMENT_ID,
-})
+// Depois: captura multiplos formatos possiveis da Sessions API
+// Log para debug
+console.log('[AGENTS] SSE event:', JSON.stringify(event).slice(0, 300));
+
+// Formatos da Messages API
+if (event.type === 'content_block_delta' && event.delta?.type === 'text_delta') {
+  text = event.delta.text;
+}
+// Formatos da Sessions API
+else if (event.type === 'message_delta' && event.delta?.text) {
+  text = event.delta.text;
+}
+else if (event.type === 'text' && event.text) {
+  text = event.text;
+}
+// Fallback: qualquer evento com content[].text
+else if (event.content) {
+  const textBlock = (Array.isArray(event.content) ? event.content : [event.content])
+    .find(b => b.type === 'text' && b.text);
+  if (textBlock) text = textBlock.text;
+}
+
+if (text) { fullText += text; sendEvent('delta', { text }); }
 ```
 
-Observação importante de teste
+### Arquivo alterado
 
-- Seu screenshot está em `crmcbrio.vercel.app`, então se você estiver testando nessa instância externa, será necessário redeploy após a correção.
-- Se testar no preview do Lovable, a validação deve refletir a versão atual do projeto.
+- `backend/routes/agents.js` (bloco de parsing SSE, ~20 linhas)
 
-Resultado esperado
+### Resultado esperado
 
-- O erro vermelho de validação na criação da sessão desaparece.
-- O chat do Supervisor passa da etapa de criação de sessão e segue para a resposta em streaming.
-- Se surgir outro erro depois disso, ele já será da próxima etapa (`/sessions/{id}/events`), não mais da criação da sessão.
+- O backend passa a capturar eventos de texto independente do formato exato retornado pela Sessions API.
+- O log temporario permite diagnosticar rapidamente se ainda houver formatos nao cobertos.
+- O frontend recebe os deltas e exibe a resposta normalmente com o indicador de digitacao.
+
