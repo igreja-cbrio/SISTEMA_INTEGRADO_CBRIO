@@ -1,55 +1,63 @@
 
 
-## Plano: Corrigir resposta em branco do chat IA (duas causas)
+## Diagnóstico: Por que a resposta continua em branco
 
-### Problemas identificados
+### Os agentes são reais ou esqueletos?
 
-**1. Frontend: bolha do assistente invisível (causa principal visual)**
-Em `src/pages/admin/AssistenteIA.jsx` linha 355, o background da bolha do assistente é:
-```js
-background: `${C.border}40`
-```
-Onde `C.border = 'var(--cbrio-border)'`. Isso gera CSS inválido: `var(--cbrio-border)40`. O navegador não consegue interpretar, a bolha fica sem fundo, e o texto pode ficar invisível contra o fundo da página (texto da mesma cor que o background). **Esta é provavelmente a razão pela qual a resposta aparece "em branco" — o texto está lá, mas invisível.**
+Os agentes **existem de verdade** na plataforma Anthropic — cada um tem um ID real (ex: `agent_011CZtnVwVDPjxu4cJgm9ne2` para o Supervisor). O backend **injeta contexto real do banco de dados** na mensagem antes de enviar (dados de RH, financeiro, patrimônio, etc. via `buildContext()`). Então eles não são esqueletos — o problema é que **não conseguimos ver a resposta** porque o parser SSE não está capturando o formato correto dos eventos.
 
-**2. Backend: junção incorreta de data lines SSE**
-Em `backend/routes/agents.js` linha 237:
-```js
-handleSsePayload(dataLines.join('\n'));
-```
-Se um evento SSE tiver múltiplas linhas `data:`, elas são concatenadas com `\n` e passadas como uma string só para `JSON.parse`. Isso pode quebrar o parsing de JSON, resultando em nenhum texto extraído.
+### Causa raiz
 
-### Correções
+Não sabemos o formato exato dos eventos SSE que a Anthropic Sessions API retorna. O parser tenta vários formatos, mas nenhum funciona. Os `console.log` de debug foram adicionados, mas rodam no Vercel — precisamos ver os logs lá, ou trazer essa informação para o frontend.
 
-**Arquivo 1: `src/pages/admin/AssistenteIA.jsx`**
-- Linha 355: trocar `background: \`${C.border}40\`` por uma cor válida com opacidade, ex: `background: 'var(--cbrio-card)'` ou usar um valor hexadecimal sólido.
+### Plano de correção (abordagem de diagnóstico + fallback)
 
-**Arquivo 2: `backend/routes/agents.js`**
-- Linhas 236-238 e 250-252: em vez de `dataLines.join('\n')`, processar cada `data:` line individualmente com `handleSsePayload`, pois cada uma pode ser um JSON independente.
-
-### Mudanças exatas
+**1. Adicionar modo debug no frontend** — mostrar os eventos SSE brutos no console do navegador para diagnóstico imediato:
 
 ```js
-// AssistenteIA.jsx linha 355 — de:
-background: `${C.border}40`, color: C.text,
-// para:
-background: C.card, color: C.text, border: `1px solid ${C.border}`,
+// No backend, repassar TODOS os eventos SSE brutos ao frontend
+// Adicionar um evento 'debug' que envia o payload raw
+sendEvent('raw', { payload: jsonStr.slice(0, 500) });
 ```
 
+**2. Fallback não-streaming** — se o stream não gerar texto, fazer uma segunda chamada usando a Messages API padrão (não Sessions API) como fallback, que tem formato bem documentado:
+
 ```js
-// agents.js linhas 236-238 — de:
-if (dataLines.length) {
-  handleSsePayload(dataLines.join('\n'));
-}
-// para:
-for (const dl of dataLines) {
-  handleSsePayload(dl);
+// Se fullText estiver vazio após o stream, tentar Messages API diretamente
+if (!fullText) {
+  const fallbackRes = await fetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: { ... },
+    body: JSON.stringify({
+      model: 'claude-haiku-4-5-20251001',
+      max_tokens: 2048,
+      system: systemPromptForModule,
+      messages: [{ role: 'user', content: userContent }],
+    }),
+  });
+  const fallbackData = await fallbackRes.json();
+  const text = fallbackData.content?.[0]?.text;
+  if (text) sendEvent('delta', { text });
 }
 ```
 
-(Mesma mudança no bloco do tail chunk, linhas 250-252.)
+**3. Frontend: capturar e exibir eventos raw** para debug temporário:
+
+```js
+// No sendMessage, tratar evento 'raw' para log no console
+if (event.type === 'raw') {
+  console.log('[CHAT DEBUG] Raw SSE:', event.payload);
+}
+```
+
+### Arquivos alterados
+
+- `backend/routes/agents.js` — adicionar envio de evento `raw` + fallback Messages API
+- `src/pages/admin/AssistenteIA.jsx` — logar eventos `raw` no console
 
 ### Resultado esperado
-- A bolha do assistente fica visível com fundo sólido (cor do card) e borda sutil.
-- O parser SSE do backend processa corretamente cada linha `data:` como JSON individual.
-- A resposta do Supervisor aparece em streaming no chat.
+
+- Com o fallback Messages API, o chat **sempre** terá uma resposta, mesmo que o stream da Sessions API falhe.
+- Os eventos `raw` no console do navegador permitirão diagnosticar o formato exato da Sessions API para corrigir o parser definitivamente.
+- Os agentes responderão com contexto real do sistema (dados de RH, financeiro, etc.).
 
