@@ -1,9 +1,11 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "framework": "vite",
+  "installCommand": "npm install && cd backend && npm install",
   "functions": {
     "api/index.js": {
-      "includeFiles": "backend/**"
+      "includeFiles": "backend/**",
+      "maxDuration": 60
     }
   },
   "rewrites": [
