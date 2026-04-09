@@ -138,6 +138,10 @@ router.post('/', async (req, res) => {
 router.put('/:id', async (req, res) => {
   try {
     const d = req.body;
+
+    // Buscar data antiga para comparar
+    const { data: oldEvent } = await supabase.from('events').select('date').eq('id', req.params.id).single();
+
     const { data, error } = await supabase.from('events').update({
       name: d.name, date: d.date, category_id: d.category_id || null,
       description: d.description || '', location: d.location || '', responsible: d.responsible || '',
@@ -148,6 +152,52 @@ router.put('/:id', async (req, res) => {
     }).eq('id', req.params.id).select().single();
     if (error) throw error;
     if (!data) return res.status(404).json({ error: 'Evento não encontrado' });
+
+    // Se a data mudou, recalcular todas as datas do ciclo criativo
+    if (oldEvent?.date && d.date && oldEvent.date !== d.date) {
+      const diffMs = new Date(d.date) - new Date(oldEvent.date);
+      const diffDays = Math.round(diffMs / 86400000);
+      if (diffDays !== 0) {
+        console.log(`[EVENTS] Data do evento ${req.params.id} mudou ${diffDays} dias. Recalculando ciclo...`);
+
+        // Recalcular fases
+        const { data: phases } = await supabase.from('event_cycle_phases')
+          .select('id, data_inicio_prevista, data_fim_prevista')
+          .eq('event_id', req.params.id);
+        for (const phase of (phases || [])) {
+          const updates = {};
+          if (phase.data_inicio_prevista) {
+            const newStart = new Date(phase.data_inicio_prevista);
+            newStart.setDate(newStart.getDate() + diffDays);
+            updates.data_inicio_prevista = newStart.toISOString().split('T')[0];
+          }
+          if (phase.data_fim_prevista) {
+            const newEnd = new Date(phase.data_fim_prevista);
+            newEnd.setDate(newEnd.getDate() + diffDays);
+            updates.data_fim_prevista = newEnd.toISOString().split('T')[0];
+          }
+          if (Object.keys(updates).length > 0) {
+            await supabase.from('event_cycle_phases').update(updates).eq('id', phase.id);
+          }
+        }
+
+        // Recalcular prazo das tarefas
+        const { data: tasks } = await supabase.from('cycle_phase_tasks')
+          .select('id, prazo')
+          .eq('event_id', req.params.id)
+          .not('prazo', 'is', null);
+        for (const task of (tasks || [])) {
+          const newPrazo = new Date(task.prazo);
+          newPrazo.setDate(newPrazo.getDate() + diffDays);
+          await supabase.from('cycle_phase_tasks')
+            .update({ prazo: newPrazo.toISOString().split('T')[0] })
+            .eq('id', task.id);
+        }
+
+        console.log(`[EVENTS] Recalculado: ${phases?.length || 0} fases, ${tasks?.length || 0} tarefas`);
+      }
+    }
+
     res.json(data);
   } catch (e) { console.error(e); res.status(500).json({ error: 'Erro ao atualizar evento' }); }
 });

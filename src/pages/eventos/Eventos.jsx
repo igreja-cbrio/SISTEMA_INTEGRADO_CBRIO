@@ -427,6 +427,10 @@ export default function Eventos() {
       delete data.ativar_ciclo;
 
       if (data.id) {
+        // Se a data mudou, confirmar com o usuário (recalcula ciclo inteiro)
+        if (selectedEvent?.date && data.date && selectedEvent.date !== data.date) {
+          if (!window.confirm('Ao alterar a data do evento, todas as datas das fases e tarefas do ciclo criativo serão recalculadas automaticamente. Deseja continuar?')) return;
+        }
         await events.update(data.id, data);
         // Ativar ciclo no editar se marcado e evento ainda não tem
         if (ativarCiclo && !hasCycle) {
