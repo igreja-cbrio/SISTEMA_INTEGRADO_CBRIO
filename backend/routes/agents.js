@@ -348,6 +348,21 @@ router.get('/sessions', async (req, res) => {
   }
 });
 
+// GET /api/agents/sessions/:id/messages — histórico de mensagens
+router.get('/sessions/:id/messages', async (req, res) => {
+  try {
+    const r = await db.query(
+      `SELECT id, role, content, created_at FROM agent_messages
+       WHERE session_id = $1 ORDER BY created_at ASC`,
+      [req.params.id]
+    );
+    res.json(r.rows);
+  } catch (e) {
+    console.error('[AGENTS] Messages list error:', e.message);
+    res.status(500).json({ error: 'Erro ao listar mensagens' });
+  }
+});
+
 // DELETE /api/agents/sessions/:id — remove sessão
 router.delete('/sessions/:id', async (req, res) => {
   try {
