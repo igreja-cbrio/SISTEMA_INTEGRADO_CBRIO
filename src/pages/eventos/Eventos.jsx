@@ -1055,7 +1055,9 @@ export default function Eventos() {
                   e.preventDefault();
                   const fd = new FormData(e.target);
                   const d = Object.fromEntries(fd.entries());
-                  const task = await cyclesApi.createTask({ event_phase_id: d.phase_id, event_id: d.event_id, titulo: d.titulo, area: d.area, prazo: d.prazo || null, responsavel_nome: d.responsavel || null, status: 'a_fazer', prioridade: 'normal' });
+                  const selectedPhase = filteredPhases.find(p => p.id === d.phase_id);
+                  const prazo = selectedPhase?.data_fim_prevista || null;
+                  const task = await cyclesApi.createTask({ event_phase_id: d.phase_id, event_id: d.event_id, titulo: d.titulo, area: d.area, prazo, responsavel_nome: d.responsavel || null, status: 'a_fazer', prioridade: 'normal' });
                   if (task?.id && kanbanNewTaskSubs.length > 0) {
                     for (const name of kanbanNewTaskSubs) await cyclesApi.createSubtask(task.id, name);
                   }
@@ -1080,19 +1082,13 @@ export default function Eventos() {
                     <label style={{ fontSize: 10, fontWeight: 600, color: 'var(--cbrio-text3)', display: 'block', marginBottom: 2 }}>Título *</label>
                     <input name="titulo" required placeholder="Nome da tarefa" style={{ width: '100%', padding: '5px 8px', borderRadius: 6, border: '1px solid var(--cbrio-border)', fontSize: 12, color: 'var(--cbrio-text)', background: 'var(--cbrio-input-bg, #fff)', boxSizing: 'border-box' }} />
                   </div>
-                  <div style={{ display: 'flex', gap: 8, marginBottom: 10 }}>
-                    <div style={{ flex: 1 }}>
-                      <label style={{ fontSize: 10, fontWeight: 600, color: 'var(--cbrio-text3)', display: 'block', marginBottom: 2 }}>Área</label>
-                      <select name="area" style={{ width: '100%', padding: '5px 8px', borderRadius: 6, border: '1px solid var(--cbrio-border)', fontSize: 12, color: 'var(--cbrio-text)', background: 'var(--cbrio-input-bg, #fff)' }}>
-                        <option value="compras">Compras</option><option value="financeiro">Financeiro</option>
-                        <option value="manutencao">Manutenção</option><option value="limpeza">Limpeza</option>
-                        <option value="cozinha">Cozinha</option><option value="marketing">Marketing</option>
-                      </select>
-                    </div>
-                    <div style={{ flex: 1 }}>
-                      <label style={{ fontSize: 10, fontWeight: 600, color: 'var(--cbrio-text3)', display: 'block', marginBottom: 2 }}>Prazo</label>
-                      <input type="date" name="prazo" style={{ width: '100%', padding: '5px 8px', borderRadius: 6, border: '1px solid var(--cbrio-border)', fontSize: 12, color: 'var(--cbrio-text)', background: 'var(--cbrio-input-bg, #fff)', boxSizing: 'border-box' }} />
-                    </div>
+                  <div style={{ marginBottom: 10 }}>
+                    <label style={{ fontSize: 10, fontWeight: 600, color: 'var(--cbrio-text3)', display: 'block', marginBottom: 2 }}>Área</label>
+                    <select name="area" style={{ width: '100%', padding: '5px 8px', borderRadius: 6, border: '1px solid var(--cbrio-border)', fontSize: 12, color: 'var(--cbrio-text)', background: 'var(--cbrio-input-bg, #fff)' }}>
+                      <option value="compras">Compras</option><option value="financeiro">Financeiro</option>
+                      <option value="manutencao">Manutenção</option><option value="limpeza">Limpeza</option>
+                      <option value="cozinha">Cozinha</option><option value="marketing">Marketing</option>
+                    </select>
                   </div>
                   <div style={{ marginBottom: 10 }}>
                     <label style={{ fontSize: 10, fontWeight: 600, color: 'var(--cbrio-text3)', display: 'block', marginBottom: 2 }}>Responsável</label>
