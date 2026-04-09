@@ -208,6 +208,12 @@ router.get('/shipments', async (req, res) => {
     const config = await getMLConfig();
     if (!config?.access_token) return res.status(400).json({ error: 'ML não conectado' });
 
+    // Retorna cache se válido e não forçou refresh
+    const forceRefresh = req.query.refresh === '1';
+    if (!forceRefresh && shipmentsCache.data && (Date.now() - shipmentsCache.timestamp < CACHE_TTL)) {
+      return res.json(shipmentsCache.data);
+    }
+
     // Fetch recent orders to extract shipment info
     const ordersData = await mlFetch(config, `/orders/search?buyer=${config.ml_user_id}&offset=0&limit=50&sort=date_desc`);
     const orders = ordersData.results || [];
@@ -235,6 +241,7 @@ router.get('/shipments', async (req, res) => {
       }
     }
 
+    shipmentsCache = { data: shipments, timestamp: Date.now() };
     res.json(shipments);
   } catch (e) {
     console.error('[ML] Shipments list error:', e.message);
