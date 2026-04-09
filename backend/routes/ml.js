@@ -137,6 +137,7 @@ router.post('/auth-callback', async (req, res) => {
       const err = await tokenRes.json();
       return res.status(400).json({ error: err.message || 'Falha na autorização do ML' });
     }
+    shipmentsCache = { data: null, timestamp: 0 };
 
     const tokens = await tokenRes.json();
     await supabase.from('ml_config').update({
