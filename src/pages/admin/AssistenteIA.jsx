@@ -145,12 +145,13 @@ function ChatTab() {
   function startNewChat() {
     setMessages([]);
     setSessionId(null);
+    loadSessions(); // Refresh list so previous session shows up
   }
 
   async function resumeSession(sess) {
     setSessionId(sess.anthropic_session_id);
     setModule(sess.agent_module);
-    setShowSessions(false);
+    // Don't hide sidebar — keep it visible for easy navigation
 
     // Load real message history
     try {
