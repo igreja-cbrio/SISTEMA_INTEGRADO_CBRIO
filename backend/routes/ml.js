@@ -2,6 +2,10 @@ const router = require('express').Router();
 const { authenticate, authorize } = require('../middleware/auth');
 const { supabase } = require('../utils/supabase');
 
+// ── Cache em memória para shipments ──────────────────────
+const CACHE_TTL = 300_000; // 5 minutos em ms
+let shipmentsCache = { data: null, timestamp: 0 };
+
 router.use(authenticate, authorize('admin', 'diretor'));
 
 // ── Helpers ───────────────────────────────────────────────
@@ -158,6 +162,7 @@ router.post('/disconnect', async (req, res) => {
         access_token: null, refresh_token: null, token_expires_at: null, ml_user_id: null,
       }).eq('id', config.id);
     }
+    shipmentsCache = { data: null, timestamp: 0 };
     res.json({ success: true });
   } catch (e) {
     console.error('[ML] Disconnect error:', e.message);
@@ -203,6 +208,12 @@ router.get('/shipments', async (req, res) => {
     const config = await getMLConfig();
     if (!config?.access_token) return res.status(400).json({ error: 'ML não conectado' });
 
+    // Retorna cache se válido e não forçou refresh
+    const forceRefresh = req.query.refresh === '1';
+    if (!forceRefresh && shipmentsCache.data && (Date.now() - shipmentsCache.timestamp < CACHE_TTL)) {
+      return res.json(shipmentsCache.data);
+    }
+
     // Fetch recent orders to extract shipment info
     const ordersData = await mlFetch(config, `/orders/search?buyer=${config.ml_user_id}&offset=0&limit=50&sort=date_desc`);
     const orders = ordersData.results || [];
@@ -230,6 +241,7 @@ router.get('/shipments', async (req, res) => {
       }
     }
 
+    shipmentsCache = { data: shipments, timestamp: Date.now() };
     res.json(shipments);
   } catch (e) {
     console.error('[ML] Shipments list error:', e.message);
