@@ -245,8 +245,22 @@ router.get('/shipments', async (req, res) => {
       return res.json(shipmentsCache.data);
     }
 
-    // Fetch recent orders to extract shipment info
-    const ordersData = await mlFetch(config, `/orders/search?buyer=${config.ml_user_id}&offset=0&limit=50&sort=date_desc`);
+    // Fetch recent orders (try buyer, fallback to seller)
+    let ordersData;
+    try {
+      ordersData = await mlFetch(config, `/orders/search?buyer=${config.ml_user_id}&offset=0&limit=50&sort=date_desc`);
+    } catch (e) {
+      console.error('[ML] Shipments buyer search failed:', e.message);
+      ordersData = { results: [] };
+    }
+    if (!ordersData.results || ordersData.results.length === 0) {
+      try {
+        ordersData = await mlFetch(config, `/orders/search?seller=${config.ml_user_id}&offset=0&limit=50&sort=date_desc`);
+      } catch (e2) {
+        console.error('[ML] Shipments seller search also failed:', e2.message);
+        ordersData = { results: [] };
+      }
+    }
     const orders = ordersData.results || [];
 
     const shipments = [];
