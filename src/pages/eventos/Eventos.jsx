@@ -780,8 +780,8 @@ export default function Eventos() {
                 <div key={num} style={{ display: 'flex', alignItems: 'center' }}>
                   <div onClick={() => { setKanbanPhase(num); setKanbanSelectedTask(null); }} style={{
                     borderRadius: 8, padding: '8px 10px', cursor: 'pointer', minWidth: 100, maxWidth: 120,
-                    border: isActive ? '2px solid #00B39D' : `1px solid var(--cbrio-border)`,
-                    background: isActive ? 'rgba(0,179,157,0.1)' : isDone ? 'var(--cbrio-bg)' : 'var(--cbrio-card)',
+                    border: isActive ? '2px solid #00B39D' : num === 10 ? '1px solid #f59e0b' : `1px solid var(--cbrio-border)`,
+                    background: isActive ? 'rgba(0,179,157,0.1)' : num === 10 ? '#fef3c720' : isDone ? 'var(--cbrio-bg)' : 'var(--cbrio-card)',
                     opacity: isDone && !isActive ? 0.7 : 1, transition: 'all .15s',
                   }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 9, color: 'var(--cbrio-text3)', marginBottom: 3 }}>
@@ -794,7 +794,7 @@ export default function Eventos() {
                     <div style={{ height: 3, borderRadius: 2, background: 'var(--cbrio-border)', marginBottom: 3 }}>
                       <div style={{ height: 3, borderRadius: 2, width: `${pPct}%`, background: isDone ? '#10b981' : pPct > 0 ? '#00B39D' : 'transparent', transition: 'width .3s' }} />
                     </div>
-                    <div style={{ fontSize: 9, color: 'var(--cbrio-text3)' }}>{pTasks.length > 0 ? `${pDone}/${pTasks.length}` : 'vazia'}</div>
+                    <div style={{ fontSize: 9, color: 'var(--cbrio-text3)' }}>{pTasks.length > 0 ? (isDone ? 'concluída' : `${pTasks.length - pDone} pendente(s)`) : 'vazia'}</div>
                   </div>
                   {i < phaseNums.length - 1 && <div style={{ width: 12, height: 2, background: isDone ? '#10b981' : 'var(--cbrio-border)', flexShrink: 0 }} />}
                 </div>
