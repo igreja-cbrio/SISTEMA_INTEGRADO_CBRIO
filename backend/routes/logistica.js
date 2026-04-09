@@ -163,10 +163,109 @@ router.post('/pedidos/:id/recebimento', async (req, res) => {
       .insert({ pedido_id: req.params.id, recebido_por: req.user.userId, observacoes: observacoes || null, status: status || 'ok' })
       .select().single();
     if (error) return res.status(400).json({ error: error.message });
-    // Atualizar status do pedido
     await supabase.from('log_pedidos').update({ status: 'recebido' }).eq('id', req.params.id);
     res.json(data);
   } catch (e) { res.status(500).json({ error: 'Erro ao registrar recebimento' }); }
+});
+
+// ── NOTAS FISCAIS ─────────────────────────────────────────
+router.get('/notas', async (req, res) => {
+  try {
+    const { data, error } = await supabase.from('log_notas_fiscais')
+      .select('*, log_fornecedores(razao_social, nome_fantasia)')
+      .order('data_emissao', { ascending: false });
+    if (error) return res.status(400).json({ error: error.message });
+    res.json(data);
+  } catch (e) { res.status(500).json({ error: 'Erro ao listar notas fiscais' }); }
+});
+
+router.post('/notas', async (req, res) => {
+  try {
+    const { numero, serie, fornecedor_id, pedido_id, valor, data_emissao, chave_acesso, tipo, observacoes } = req.body;
+    if (!numero) return res.status(400).json({ error: 'Número da nota é obrigatório' });
+    const { data, error } = await supabase.from('log_notas_fiscais')
+      .insert({ numero, serie: serie || null, fornecedor_id: fornecedor_id || null, pedido_id: pedido_id || null, valor: valor || null, data_emissao: data_emissao || new Date().toISOString(), chave_acesso: chave_acesso || null, tipo: tipo || 'entrada', observacoes: observacoes || null, created_by: req.user.userId })
+      .select().single();
+    if (error) return res.status(400).json({ error: error.message });
+    res.json(data);
+  } catch (e) { res.status(500).json({ error: 'Erro ao criar nota fiscal' }); }
+});
+
+router.delete('/notas/:id', async (req, res) => {
+  try {
+    const { error } = await supabase.from('log_notas_fiscais').delete().eq('id', req.params.id);
+    if (error) return res.status(400).json({ error: error.message });
+    res.json({ success: true });
+  } catch (e) { res.status(500).json({ error: 'Erro ao remover nota fiscal' }); }
+});
+
+// ── ITENS DE PEDIDO ───────────────────────────────────────
+router.get('/pedidos/:id/itens', async (req, res) => {
+  try {
+    const { data, error } = await supabase.from('log_pedido_itens')
+      .select('*')
+      .eq('pedido_id', req.params.id)
+      .order('created_at');
+    if (error) return res.status(400).json({ error: error.message });
+    res.json(data);
+  } catch (e) { res.status(500).json({ error: 'Erro ao listar itens do pedido' }); }
+});
+
+router.post('/pedidos/:id/itens', async (req, res) => {
+  try {
+    const { descricao, quantidade, unidade, valor_unitario } = req.body;
+    if (!descricao || !quantidade) return res.status(400).json({ error: 'Descrição e quantidade são obrigatórios' });
+    const { data, error } = await supabase.from('log_pedido_itens')
+      .insert({ pedido_id: req.params.id, descricao, quantidade, unidade: unidade || 'un', valor_unitario: valor_unitario || 0 })
+      .select().single();
+    if (error) return res.status(400).json({ error: error.message });
+    res.json(data);
+  } catch (e) { res.status(500).json({ error: 'Erro ao adicionar item ao pedido' }); }
+});
+
+router.delete('/itens/:id', async (req, res) => {
+  try {
+    const { error } = await supabase.from('log_pedido_itens').delete().eq('id', req.params.id);
+    if (error) return res.status(400).json({ error: error.message });
+    res.json({ success: true });
+  } catch (e) { res.status(500).json({ error: 'Erro ao remover item' }); }
+});
+
+// ── MOVIMENTAÇÕES ─────────────────────────────────────────
+router.get('/movimentacoes', async (req, res) => {
+  try {
+    const { tipo } = req.query;
+    let query = supabase.from('log_movimentacoes')
+      .select('*, profiles!responsavel_id(name)')
+      .order('data_movimentacao', { ascending: false });
+    if (tipo) query = query.eq('tipo', tipo);
+    const { data, error } = await query;
+    if (error) return res.status(400).json({ error: error.message });
+    res.json(data);
+  } catch (e) { res.status(500).json({ error: 'Erro ao listar movimentações' }); }
+});
+
+router.post('/movimentacoes', async (req, res) => {
+  try {
+    const { codigo_item, descricao, tipo, quantidade, origem, destino, observacoes } = req.body;
+    if (!descricao || !tipo || !quantidade) return res.status(400).json({ error: 'Descrição, tipo e quantidade são obrigatórios' });
+    const { data, error } = await supabase.from('log_movimentacoes')
+      .insert({ codigo_item: codigo_item || null, descricao, tipo, quantidade, origem: origem || null, destino: destino || null, observacoes: observacoes || null, responsavel_id: req.user.userId, data_movimentacao: new Date().toISOString() })
+      .select().single();
+    if (error) return res.status(400).json({ error: error.message });
+    res.json(data);
+  } catch (e) { res.status(500).json({ error: 'Erro ao registrar movimentação' }); }
+});
+
+router.get('/movimentacoes/historico/:codigo', async (req, res) => {
+  try {
+    const { data, error } = await supabase.from('log_movimentacoes')
+      .select('*')
+      .eq('codigo_item', req.params.codigo)
+      .order('data_movimentacao', { ascending: false });
+    if (error) return res.status(400).json({ error: error.message });
+    res.json(data);
+  } catch (e) { res.status(500).json({ error: 'Erro ao buscar histórico' }); }
 });
 
 module.exports = router;
