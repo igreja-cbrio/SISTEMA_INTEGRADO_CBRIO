@@ -162,16 +162,31 @@ router.post('/chat', chatLimiter, async (req, res) => {
 
         try {
           const event = JSON.parse(data);
+          console.log('[AGENTS] SSE event:', JSON.stringify(event).slice(0, 300));
 
-          // Extract text deltas from content_block_delta
+          let text = '';
+
+          // Messages API format
           if (event.type === 'content_block_delta' && event.delta?.type === 'text_delta') {
-            const text = event.delta.text;
+            text = event.delta.text;
+          }
+          // Sessions API formats
+          else if (event.type === 'message_delta' && event.delta?.text) {
+            text = event.delta.text;
+          }
+          else if (event.type === 'text' && event.text) {
+            text = event.text;
+          }
+          // Fallback: content array with text blocks
+          else if (event.content) {
+            const textBlock = (Array.isArray(event.content) ? event.content : [event.content])
+              .find(b => b.type === 'text' && b.text);
+            if (textBlock) text = textBlock.text;
+          }
+
+          if (text) {
             fullText += text;
             sendEvent('delta', { text });
-          }
-          // Also handle assistant message complete
-          else if (event.type === 'message_stop') {
-            // done
           }
         } catch (e) {
           // Skip unparseable lines
