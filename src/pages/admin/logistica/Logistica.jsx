@@ -970,7 +970,22 @@ function ComprasMLTab() {
   const [shipDetail, setShipDetail] = useState(null);
   const [localError, setLocalError] = useState('');
 
-  useEffect(() => { checkStatus(); }, []);
+  // Handle OAuth callback
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const code = params.get('code');
+    const isCallback = params.get('ml_callback');
+    if (isCallback && code) {
+      // Clean URL immediately
+      window.history.replaceState({}, '', window.location.pathname);
+      setLoading(true);
+      ml.authCallback(code)
+        .then(() => checkStatus())
+        .catch(e => { setLocalError('Erro ao autorizar ML: ' + e.message); setLoading(false); });
+    } else {
+      checkStatus();
+    }
+  }, []);
 
   async function checkStatus() {
     setLoading(true);
@@ -984,6 +999,7 @@ function ComprasMLTab() {
 
   async function loadOrders(offset = 0) {
     setLoading(true);
+    setLocalError('');
     try {
       const params = { offset, limit: 20 };
       if (filtroStatus) params.status = filtroStatus;
@@ -991,7 +1007,10 @@ function ComprasMLTab() {
       const data = await ml.orders(params);
       setOrders(data.results || []);
       setPaging({ total: data.paging?.total || 0, offset });
-    } catch (e) { console.error(e); }
+    } catch (e) {
+      console.error(e);
+      setLocalError('Erro ao carregar pedidos: ' + e.message);
+    }
     setLoading(false);
   }
 
@@ -1243,10 +1262,19 @@ function RastreioMLTab() {
     return () => clearInterval(interval);
   }, [shipments]);
 
-  async function loadShipments() {
+  const [shipError, setShipError] = useState('');
+
+  async function loadShipments(forceRefresh = false) {
     setLoading(true);
-    try { setShipments(await ml.shipments() || []); }
-    catch (e) { console.error(e); }
+    setShipError('');
+    try {
+      const params = forceRefresh ? { refresh: 1 } : undefined;
+      const data = await ml.shipments(params);
+      setShipments(data || []);
+    } catch (e) {
+      console.error(e);
+      setShipError('Erro ao carregar rastreios: ' + e.message);
+    }
     setLoading(false);
   }
 
