@@ -634,6 +634,7 @@ export default function Eventos() {
   const [kanbanEvent, setKanbanEvent] = useState('all');
   const [showKanbanNewTask, setShowKanbanNewTask] = useState(false);
   const [kanbanNewTaskSubs, setKanbanNewTaskSubs] = useState([]);
+  const [newTaskEventId, setNewTaskEventId] = useState('');
 
   async function loadKanban() {
     setKanbanLoading(true);
@@ -811,7 +812,7 @@ export default function Eventos() {
                 {phaseTasks.filter(t => t.status !== 'concluida').length} pendente(s)
               </span>
             </div>
-            <button onClick={() => setShowKanbanNewTask(true)} style={{ padding: '4px 10px', fontSize: 11, border: 'none', cursor: 'pointer', fontWeight: 600, background: '#00B39D', color: '#fff', borderRadius: 6 }}>+ Tarefa</button>
+            <button onClick={() => { setNewTaskEventId(kanbanEvent !== 'all' ? kanbanEvent : ''); setShowKanbanNewTask(true); }} style={{ padding: '4px 10px', fontSize: 11, border: 'none', cursor: 'pointer', fontWeight: 600, background: '#00B39D', color: '#fff', borderRadius: 6 }}>+ Tarefa</button>
           </div>
         )}
 
@@ -1049,14 +1050,15 @@ export default function Eventos() {
 
         {/* ── MODAL NOVA TAREFA (kanban) ── */}
         {showKanbanNewTask && (() => {
-          const phaseOptions = [...new Map(filteredPhases.map(p => [p.numero_fase, p])).values()].sort((a, b) => a.numero_fase - b.numero_fase);
           const eventOptions = allEvents.filter(e => e.status !== 'concluido');
+          const selectedEventId = newTaskEventId || (kanbanEvent !== 'all' ? kanbanEvent : '');
+          const eventPhases = filteredPhases.filter(p => p.event_id === selectedEventId).sort((a, b) => a.numero_fase - b.numero_fase);
           return (
-            <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', zIndex: 900, display: 'flex', alignItems: 'center', justifyContent: 'center' }} onClick={() => { setShowKanbanNewTask(false); setKanbanNewTaskSubs([]); }}>
+            <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', zIndex: 900, display: 'flex', alignItems: 'center', justifyContent: 'center' }} onClick={() => { setShowKanbanNewTask(false); setKanbanNewTaskSubs([]); setNewTaskEventId(''); }}>
               <div style={{ background: 'var(--cbrio-modal-bg, #fff)', borderRadius: 16, padding: 24, width: '95%', maxWidth: 500, maxHeight: '90vh', overflowY: 'auto' }} onClick={e => e.stopPropagation()}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 12 }}>
                   <span style={{ fontSize: 16, fontWeight: 700, color: 'var(--cbrio-text)' }}>Nova Tarefa</span>
-                  <button onClick={() => { setShowKanbanNewTask(false); setKanbanNewTaskSubs([]); }} style={{ background: 'none', border: 'none', fontSize: 18, cursor: 'pointer', color: 'var(--cbrio-text3)' }}>✕</button>
+                  <button onClick={() => { setShowKanbanNewTask(false); setKanbanNewTaskSubs([]); setNewTaskEventId(''); }} style={{ background: 'none', border: 'none', fontSize: 18, cursor: 'pointer', color: 'var(--cbrio-text3)' }}>✕</button>
                 </div>
                 <form onSubmit={async (e) => {
                   e.preventDefault();
@@ -1064,24 +1066,26 @@ export default function Eventos() {
                   const d = Object.fromEntries(fd.entries());
                   const selectedPhase = filteredPhases.find(p => p.id === d.phase_id);
                   const prazo = selectedPhase?.data_fim_prevista || null;
-                  const task = await cyclesApi.createTask({ event_phase_id: d.phase_id, event_id: d.event_id, titulo: d.titulo, area: d.area, prazo, responsavel_nome: d.responsavel || null, status: 'a_fazer', prioridade: 'normal' });
+                  const task = await cyclesApi.createTask({ event_phase_id: d.phase_id, event_id: selectedEventId, titulo: d.titulo, area: d.area, prazo, responsavel_nome: d.responsavel || null, status: 'a_fazer', prioridade: 'normal' });
                   if (task?.id && kanbanNewTaskSubs.length > 0) {
                     for (const name of kanbanNewTaskSubs) await cyclesApi.createSubtask(task.id, name);
                   }
-                  setShowKanbanNewTask(false); setKanbanNewTaskSubs([]); loadKanban();
+                  setShowKanbanNewTask(false); setKanbanNewTaskSubs([]); setNewTaskEventId(''); loadKanban();
                 }}>
                   <div style={{ display: 'flex', gap: 8, marginBottom: 10 }}>
                     <div style={{ flex: 1 }}>
                       <label style={{ fontSize: 10, fontWeight: 600, color: 'var(--cbrio-text3)', display: 'block', marginBottom: 2 }}>Evento *</label>
-                      <select name="event_id" required defaultValue={kanbanEvent !== 'all' ? kanbanEvent : ''} style={{ width: '100%', padding: '5px 8px', borderRadius: 6, border: '1px solid var(--cbrio-border)', fontSize: 12, color: 'var(--cbrio-text)', background: 'var(--cbrio-input-bg, #fff)' }}>
+                      <select name="event_id" required value={selectedEventId} onChange={e => setNewTaskEventId(e.target.value)}
+                        style={{ width: '100%', padding: '5px 8px', borderRadius: 6, border: '1px solid var(--cbrio-border)', fontSize: 12, color: 'var(--cbrio-text)', background: 'var(--cbrio-input-bg, #fff)' }}>
                         <option value="">Selecione...</option>
                         {eventOptions.map(ev => <option key={ev.id} value={ev.id}>{ev.name}</option>)}
                       </select>
                     </div>
                     <div style={{ flex: 1 }}>
                       <label style={{ fontSize: 10, fontWeight: 600, color: 'var(--cbrio-text3)', display: 'block', marginBottom: 2 }}>Fase</label>
-                      <select name="phase_id" required defaultValue={filteredPhases.find(p => p.numero_fase === kanbanPhase)?.id || ''} style={{ width: '100%', padding: '5px 8px', borderRadius: 6, border: '1px solid var(--cbrio-border)', fontSize: 12, color: 'var(--cbrio-text)', background: 'var(--cbrio-input-bg, #fff)' }}>
-                        {phaseOptions.map(p => <option key={p.id} value={p.id}>F{p.numero_fase} — {p.nome_fase}</option>)}
+                      <select name="phase_id" required style={{ width: '100%', padding: '5px 8px', borderRadius: 6, border: '1px solid var(--cbrio-border)', fontSize: 12, color: 'var(--cbrio-text)', background: 'var(--cbrio-input-bg, #fff)' }}>
+                        {eventPhases.length === 0 && <option value="">Selecione o evento primeiro</option>}
+                        {eventPhases.map(p => <option key={p.id} value={p.id}>F{p.numero_fase} — {p.nome_fase}</option>)}
                       </select>
                     </div>
                   </div>
