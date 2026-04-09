@@ -975,9 +975,9 @@ export default function Eventos() {
                     ) : subs.map(sub => (
                       <div key={sub.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 0', borderBottom: '1px solid var(--cbrio-border)' }}>
                         <input type="checkbox" checked={sub.done} onChange={async () => {
+                          const newSubs = subs.map(s => s.id === sub.id ? { ...s, done: !s.done } : s);
+                          setKanbanSelectedTask({ ...task, subtasks: newSubs });
                           await cyclesApi.updateSubtask(sub.id, { done: !sub.done });
-                          loadKanban();
-                          setKanbanSelectedTask({ ...task, subtasks: subs.map(s => s.id === sub.id ? { ...s, done: !s.done } : s) });
                         }} style={{ cursor: 'pointer', width: 16, height: 16, accentColor: '#00B39D' }} />
                         <span style={{ flex: 1, fontSize: 13, color: 'var(--cbrio-text)', ...(sub.done ? { textDecoration: 'line-through', color: 'var(--cbrio-text3)' } : {}) }}>{sub.name}</span>
                         <button onClick={async () => {
