@@ -171,6 +171,19 @@ export function AuthProvider({ children }) {
 
 export function useAuth() {
   const ctx = useContext(AuthContext);
-  if (!ctx) throw new Error('useAuth deve ser usado dentro de AuthProvider');
+  if (!ctx) {
+    // During HMR, context can temporarily be null — return a safe fallback
+    return {
+      user: null, profile: null, loading: true, role: null,
+      isAdmin: false, isDiretor: false, modulePerms: null,
+      canAccessModule: () => false, getAccessLevel: () => 1,
+      canRH: false, canFinanceiro: false, canLogistica: false,
+      canPatrimonio: false, canMembresia: false, canProjetos: false,
+      canExpansao: false, canAgenda: false, canIA: false,
+      userAreas: [], userSetores: [],
+      signInWithGoogle: async () => ({}), signInWithMicrosoft: async () => ({}),
+      signInWithEmail: async () => ({}), signOut: async () => {},
+    };
+  }
   return ctx;
 }
