@@ -1,23 +1,24 @@
 const router = require('express').Router();
-const { authenticate, authorize } = require('../middleware/auth');
-const db = require('../utils/db');
-const { sanitizeObj, isValidUUID, logActivity } = require('../utils/sanitize');
+const { authenticate } = require('../middleware/auth');
+const { supabase } = require('../utils/supabase');
 
 router.use(authenticate);
 
 // GET /api/events/categories
 router.get('/categories', async (req, res) => {
   try {
-    const r = await db.query('SELECT * FROM event_categories WHERE active = true ORDER BY sort_order');
-    res.json(r.rows);
+    const { data, error } = await supabase.from('event_categories').select('*').eq('active', true).order('sort_order');
+    if (error) throw error;
+    res.json(data);
   } catch (e) { res.status(500).json({ error: 'Erro ao buscar categorias' }); }
 });
 
-// GET /api/events/dashboard — view otimizada
+// GET /api/events/dashboard
 router.get('/dashboard', async (req, res) => {
   try {
-    const r = await db.query('SELECT * FROM v_events_dashboard ORDER BY date ASC');
-    res.json(r.rows);
+    const { data, error } = await supabase.from('v_events_dashboard').select('*').order('date');
+    if (error) throw error;
+    res.json(data);
   } catch (e) { res.status(500).json({ error: 'Erro ao buscar dashboard' }); }
 });
 
@@ -25,227 +26,490 @@ router.get('/dashboard', async (req, res) => {
 router.get('/', async (req, res) => {
   try {
     const { status, category_id, year } = req.query;
-    let q = `
-      SELECT e.*,
-        ec.name  AS category_name,
-        ec.color AS category_color,
-        ec.id    AS category_id,
-        COALESCE(
-          ARRAY(SELECT eo.date::text FROM event_occurrences eo
-                WHERE eo.event_id = e.id ORDER BY eo.date),
-          ARRAY[]::text[]
-        ) AS occurrence_dates
-      FROM events e
-      LEFT JOIN event_categories ec ON e.category_id = ec.id
-      WHERE 1=1`;
-    const params = [];
-    if (status)      { params.push(status);      q += ` AND e.status = $${params.length}`; }
-    if (category_id) { params.push(category_id); q += ` AND e.category_id = $${params.length}`; }
-    if (year)        { params.push(year);         q += ` AND EXTRACT(YEAR FROM e.date) = $${params.length}`; }
-    q += ' ORDER BY e.date ASC';
-    const r = await db.query(q, params);
-    res.json(r.rows);
+    let query = supabase.from('events').select('*, event_categories(name, color)').order('date');
+    if (status) query = query.eq('status', status);
+    if (category_id) query = query.eq('category_id', category_id);
+    if (year) query = query.gte('date', `${year}-01-01`).lte('date', `${year}-12-31`);
+
+    const { data: events, error } = await query;
+    if (error) throw error;
+
+    // Buscar ocorrências para cada evento
+    const ids = events.map(e => e.id);
+    const { data: allOccs } = await supabase.from('event_occurrences').select('event_id, date, status').in('event_id', ids.length > 0 ? ids : ['_']).order('date');
+
+    const occMap = {};
+    const nextOccMap = {};
+    (allOccs || []).forEach(o => {
+      if (!occMap[o.event_id]) occMap[o.event_id] = [];
+      occMap[o.event_id].push(o.date);
+      // Próxima ocorrência pendente
+      if (o.status === 'pendente' && !nextOccMap[o.event_id]) {
+        nextOccMap[o.event_id] = o.date;
+      }
+    });
+
+    const result = events.map(e => ({
+      ...e,
+      category_name: e.event_categories?.name || null,
+      category_color: e.event_categories?.color || null,
+      occurrence_dates: occMap[e.id] || [],
+      next_occurrence_date: nextOccMap[e.id] || null,
+    }));
+
+    res.json(result);
   } catch (e) { console.error(e); res.status(500).json({ error: 'Erro ao buscar eventos' }); }
 });
 
-// GET /api/events/:id — com tarefas, ocorrências, reuniões
+// GET /api/events/:id
 router.get('/:id', async (req, res) => {
   try {
-    if (!isValidUUID(req.params.id)) return res.status(400).json({ error: 'ID inválido' });
-    const ev = await db.query(
-      `SELECT e.*, ec.name AS category_name, ec.color AS category_color
-       FROM events e LEFT JOIN event_categories ec ON e.category_id = ec.id WHERE e.id = $1`, [req.params.id]);
-    if (!ev.rows[0]) return res.status(404).json({ error: 'Evento não encontrado' });
+    const { data: ev, error } = await supabase.from('events').select('*, event_categories(name, color)').eq('id', req.params.id).single();
+    if (error || !ev) return res.status(404).json({ error: 'Evento não encontrado' });
 
-    const [tasks, occurrences, meetings] = await Promise.all([
-      db.query('SELECT * FROM event_tasks WHERE event_id = $1 ORDER BY sort_order, deadline', [req.params.id]),
-      db.query('SELECT * FROM event_occurrences WHERE event_id = $1 ORDER BY date', [req.params.id]),
-      db.query('SELECT * FROM meetings WHERE event_id = $1 ORDER BY date DESC', [req.params.id]),
+    const [tasksRes, occsRes, meetingsRes] = await Promise.all([
+      supabase.from('event_tasks').select('*').eq('event_id', req.params.id).order('sort_order').order('deadline'),
+      supabase.from('event_occurrences').select('*').eq('event_id', req.params.id).order('date'),
+      supabase.from('meetings').select('*').eq('event_id', req.params.id).order('date', { ascending: false }),
     ]);
 
-    // Subtarefas e comentários de cada tarefa
-    const tasksWithDetails = await Promise.all(tasks.rows.map(async t => {
-      const [subs, comments, links, deps] = await Promise.all([
-        db.query('SELECT * FROM event_task_subtasks WHERE task_id = $1 ORDER BY sort_order', [t.id]),
-        db.query('SELECT * FROM event_task_comments WHERE task_id = $1 ORDER BY created_at DESC', [t.id]),
-        db.query('SELECT * FROM event_task_links WHERE task_id = $1 ORDER BY created_at', [t.id]),
-        db.query('SELECT depends_on_id FROM event_task_dependencies WHERE task_id = $1', [t.id]),
-      ]);
-      return { ...t, subtasks: subs.rows, comments: comments.rows, links: links.rows, dependencies: deps.rows.map(d => d.depends_on_id) };
+    // Subtarefas, comentários, links, dependências
+    const taskIds = (tasksRes.data || []).map(t => t.id);
+    const [subsRes, commentsRes, linksRes, depsRes] = taskIds.length > 0 ? await Promise.all([
+      supabase.from('event_task_subtasks').select('*').in('task_id', taskIds).order('sort_order'),
+      supabase.from('event_task_comments').select('*').in('task_id', taskIds).order('created_at', { ascending: false }),
+      supabase.from('event_task_links').select('*').in('task_id', taskIds).order('created_at'),
+      supabase.from('event_task_dependencies').select('*').in('task_id', taskIds),
+    ]) : [{ data: [] }, { data: [] }, { data: [] }, { data: [] }];
+
+    const tasks = (tasksRes.data || []).map(t => ({
+      ...t,
+      subtasks: (subsRes.data || []).filter(s => s.task_id === t.id),
+      comments: (commentsRes.data || []).filter(c => c.task_id === t.id),
+      links: (linksRes.data || []).filter(l => l.task_id === t.id),
+      dependencies: (depsRes.data || []).filter(d => d.task_id === t.id).map(d => d.depends_on_id),
     }));
 
-    // Pendências de cada reunião
-    const meetingsWithPends = await Promise.all(meetings.rows.map(async m => {
-      const pends = await db.query('SELECT * FROM pendencies WHERE meeting_id = $1 ORDER BY created_at', [m.id]);
-      return { ...m, pendencies: pends.rows };
+    // Pendências das reuniões
+    const meetingIds = (meetingsRes.data || []).map(m => m.id);
+    const { data: allPends } = meetingIds.length > 0
+      ? await supabase.from('pendencies').select('*').in('meeting_id', meetingIds).order('created_at')
+      : { data: [] };
+
+    const meetings = (meetingsRes.data || []).map(m => ({
+      ...m,
+      pendencies: (allPends || []).filter(p => p.meeting_id === m.id),
     }));
 
-    res.json({ ...ev.rows[0], tasks: tasksWithDetails, occurrences: occurrences.rows, meetings: meetingsWithPends });
+    res.json({
+      ...ev,
+      category_name: ev.event_categories?.name || null,
+      category_color: ev.event_categories?.color || null,
+      tasks,
+      occurrences: occsRes.data || [],
+      meetings,
+    });
   } catch (e) { console.error(e); res.status(500).json({ error: 'Erro ao buscar evento' }); }
 });
 
-// POST /api/events — só diretor
-router.post('/', authorize('diretor'), async (req, res) => {
+// POST /api/events
+router.post('/', async (req, res) => {
   try {
-    const d = sanitizeObj(req.body);
-    const r = await db.query(
-      `INSERT INTO events (name, date, category_id, description, location, responsible,
-        budget_planned, expected_attendance, recurrence, notes, project_id, created_by)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING *`,
-      [d.name, d.date, d.category_id||null, d.description||'', d.location||'', d.responsible||'',
-       d.budget_planned||0, d.expected_attendance||null, d.recurrence||'unico', d.notes||'',
-       d.project_id||null, req.user.userId]
-    );
+    const d = req.body;
+    const { data: ev, error } = await supabase.from('events').insert({
+      name: d.name, date: d.date, category_id: d.category_id || null,
+      description: d.description || '', location: d.location || '', responsible: d.responsible || '',
+      budget_planned: d.budget_planned || 0, expected_attendance: d.expected_attendance || null,
+      recurrence: d.recurrence || 'unico', notes: d.notes || '',
+      project_id: d.project_id || null, created_by: req.user.userId,
+    }).select().single();
+    if (error) throw error;
 
-    // Criar ocorrências se recorrente
     if (d.occurrence_dates && Array.isArray(d.occurrence_dates)) {
-      for (let i = 0; i < d.occurrence_dates.length; i++) {
-        await db.query(
-          'INSERT INTO event_occurrences (event_id, date, sort_order) VALUES ($1,$2,$3)',
-          [r.rows[0].id, d.occurrence_dates[i], i]
-        );
-      }
+      const occs = d.occurrence_dates.map((date, i) => ({ event_id: ev.id, date, sort_order: i }));
+      await supabase.from('event_occurrences').insert(occs);
     }
 
-    await logActivity(db, req.user.userId, 'create', 'events', r.rows[0].id, d.name, null, r.rows[0]);
-    res.json(r.rows[0]);
+    res.json(ev);
   } catch (e) { console.error(e); res.status(500).json({ error: 'Erro ao criar evento' }); }
 });
 
-// PUT /api/events/:id — só diretor
-router.put('/:id', authorize('diretor'), async (req, res) => {
+// PUT /api/events/:id
+router.put('/:id', async (req, res) => {
   try {
-    if (!isValidUUID(req.params.id)) return res.status(400).json({ error: 'ID inválido' });
-    const d = sanitizeObj(req.body);
-    const r = await db.query(
-      `UPDATE events SET name=$1, date=$2, category_id=$3, description=$4, location=$5,
-        responsible=$6, budget_planned=$7, budget_spent=$8, expected_attendance=$9,
-        actual_attendance=$10, recurrence=$11, notes=$12, lessons_learned=$13,
-        project_id=$14, status=$15
-       WHERE id=$16 RETURNING *`,
-      [d.name, d.date, d.category_id||null, d.description||'', d.location||'',
-       d.responsible||'', d.budget_planned||0, d.budget_spent||0, d.expected_attendance||null,
-       d.actual_attendance||null, d.recurrence||'unico', d.notes||'', d.lessons_learned||'',
-       d.project_id||null, d.status||'no-prazo', req.params.id]
-    );
-    if (!r.rows[0]) return res.status(404).json({ error: 'Evento não encontrado' });
-    res.json(r.rows[0]);
+    const d = req.body;
+    const { data, error } = await supabase.from('events').update({
+      name: d.name, date: d.date, category_id: d.category_id || null,
+      description: d.description || '', location: d.location || '', responsible: d.responsible || '',
+      budget_planned: d.budget_planned || 0, budget_spent: d.budget_spent || 0,
+      expected_attendance: d.expected_attendance || null, actual_attendance: d.actual_attendance || null,
+      recurrence: d.recurrence || 'unico', notes: d.notes || '', lessons_learned: d.lessons_learned || '',
+      project_id: d.project_id || null, status: d.status || 'no-prazo',
+    }).eq('id', req.params.id).select().single();
+    if (error) throw error;
+    if (!data) return res.status(404).json({ error: 'Evento não encontrado' });
+    res.json(data);
   } catch (e) { console.error(e); res.status(500).json({ error: 'Erro ao atualizar evento' }); }
 });
 
-// DELETE /api/events/:id — só diretor
-router.delete('/:id', authorize('diretor'), async (req, res) => {
+// PATCH /api/events/:id/status
+router.patch('/:id/status', async (req, res) => {
   try {
-    if (!isValidUUID(req.params.id)) return res.status(400).json({ error: 'ID inválido' });
-    await db.query('DELETE FROM events WHERE id = $1', [req.params.id]);
+    let { status } = req.body;
+    if (!status) return res.status(400).json({ error: 'Status obrigatório' });
+
+    if (status === 'reabrir') {
+      const { data: ev } = await supabase.from('events').select('date, recurrence').eq('id', req.params.id).single();
+      if (!ev) return res.status(404).json({ error: 'Evento não encontrado' });
+
+      // Se recorrente, usar próxima ocorrência pendente
+      if (ev.recurrence !== 'unico') {
+        const { data: nextOcc } = await supabase.from('event_occurrences')
+          .select('date').eq('event_id', req.params.id).eq('status', 'pendente').order('date').limit(1);
+        const refDate = nextOcc?.length > 0 ? new Date(nextOcc[0].date) : new Date(ev.date);
+        const diffDays = Math.ceil((refDate - new Date()) / 86400000);
+        status = diffDays < 0 ? 'atrasado' : diffDays <= 7 ? 'em-risco' : 'no-prazo';
+      } else {
+        const diffDays = Math.ceil((new Date(ev.date) - new Date()) / 86400000);
+        status = diffDays < 0 ? 'atrasado' : diffDays <= 7 ? 'em-risco' : 'no-prazo';
+      }
+    }
+
+    const { data: oldEv } = await supabase.from('events').select('status, name').eq('id', req.params.id).single();
+    const { data, error } = await supabase.from('events').update({ status }).eq('id', req.params.id).select().single();
+    if (error) throw error;
+    if (oldEv) await supabase.from('audit_log').insert({ table_name: 'events', record_id: req.params.id, event_id: req.params.id, action: 'status_change', field_name: 'status', old_value: oldEv.status, new_value: status, description: `Evento "${oldEv.name}" ${oldEv.status} → ${status}`, changed_by: req.user.userId, changed_by_name: req.user.name });
+    res.json(data);
+  } catch (e) { console.error(e); res.status(500).json({ error: 'Erro ao atualizar status' }); }
+});
+
+// DELETE /api/events/:id
+router.delete('/:id', async (req, res) => {
+  try {
+    await supabase.from('events').delete().eq('id', req.params.id);
     res.json({ success: true });
   } catch (e) { res.status(500).json({ error: 'Erro ao excluir evento' }); }
 });
 
-// ── OCCURRENCES ──
+// Helper: recalcular status do evento baseado na próxima ocorrência pendente
+async function recalcEventStatus(eventId) {
+  const { data: occs } = await supabase.from('event_occurrences')
+    .select('date, status')
+    .eq('event_id', eventId)
+    .eq('status', 'pendente')
+    .order('date')
+    .limit(1);
 
-// PATCH /api/events/:id/occurrences/:occId — atualizar status/notas de ocorrência
-router.patch('/:id/occurrences/:occId', authorize('diretor'), async (req, res) => {
+  if (!occs || occs.length === 0) {
+    // Todas as ocorrências concluídas — evento concluído
+    const { data: ev } = await supabase.from('events').select('recurrence').eq('id', eventId).single();
+    if (ev && ev.recurrence !== 'unico') {
+      await supabase.from('events').update({ status: 'concluido' }).eq('id', eventId);
+    }
+    return;
+  }
+
+  const nextDate = new Date(occs[0].date);
+  const diffDays = Math.ceil((nextDate - new Date()) / 86400000);
+  const newStatus = diffDays < 0 ? 'atrasado' : diffDays <= 7 ? 'em-risco' : 'no-prazo';
+  await supabase.from('events').update({ status: newStatus }).eq('id', eventId);
+}
+
+// ── OCCURRENCES ──
+router.patch('/:id/occurrences/:occId', async (req, res) => {
   try {
-    const d = sanitizeObj(req.body);
-    const r = await db.query(
-      `UPDATE event_occurrences SET status=COALESCE($1,status), notes=COALESCE($2,notes),
-       lessons_learned=COALESCE($3,lessons_learned), attendance=COALESCE($4,attendance)
-       WHERE id=$5 AND event_id=$6 RETURNING *`,
-      [d.status, d.notes, d.lessons_learned, d.attendance, req.params.occId, req.params.id]
-    );
-    if (!r.rows[0]) return res.status(404).json({ error: 'Ocorrência não encontrada' });
-    res.json(r.rows[0]);
+    const d = req.body;
+    const update = {};
+    if (d.status !== undefined) update.status = d.status;
+    if (d.notes !== undefined) update.notes = d.notes;
+    if (d.lessons_learned !== undefined) update.lessons_learned = d.lessons_learned;
+    if (d.attendance !== undefined) update.attendance = d.attendance;
+    const { data, error } = await supabase.from('event_occurrences').update(update).eq('id', req.params.occId).eq('event_id', req.params.id).select().single();
+    if (error) throw error;
+    // Recalcular status do evento pai baseado na próxima ocorrência pendente
+    await recalcEventStatus(req.params.id);
+    res.json(data);
   } catch (e) { res.status(500).json({ error: 'Erro ao atualizar ocorrência' }); }
 });
 
 // ── TASKS ──
-
-// POST /api/events/:id/tasks
-router.post('/:id/tasks', authorize('diretor'), async (req, res) => {
+router.post('/:id/tasks', async (req, res) => {
   try {
-    if (!isValidUUID(req.params.id)) return res.status(400).json({ error: 'ID inválido' });
-    const d = sanitizeObj(req.body);
-    const r = await db.query(
-      `INSERT INTO event_tasks (event_id, name, responsible, area, start_date, deadline, status, priority, is_milestone, description, created_by)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING *`,
-      [req.params.id, d.name, d.responsible||'', d.area||'', d.start_date||null, d.deadline||null,
-       d.status||'pendente', d.priority||'media', d.is_milestone||false, d.description||'', req.user.userId]
-    );
-    res.json(r.rows[0]);
+    const d = req.body;
+    const { data, error } = await supabase.from('event_tasks').insert({
+      event_id: req.params.id, name: d.name, responsible: d.responsible || '',
+      area: d.area || '', start_date: d.start_date || null, deadline: d.deadline || null,
+      status: d.status || 'pendente', priority: d.priority || 'media',
+      is_milestone: d.is_milestone || false, description: d.description || '',
+      created_by: req.user.userId,
+    }).select().single();
+    if (error) throw error;
+    await supabase.from('audit_log').insert({ table_name: 'event_tasks', record_id: data.id, event_id: req.params.id, action: 'create', description: `Tarefa criada: ${d.name}`, changed_by: req.user.userId, changed_by_name: req.user.name });
+    res.json(data);
   } catch (e) { console.error(e); res.status(500).json({ error: 'Erro ao criar tarefa' }); }
 });
 
-// PUT /api/events/tasks/:taskId
-router.put('/tasks/:taskId', authorize('diretor'), async (req, res) => {
+router.put('/tasks/:taskId', async (req, res) => {
   try {
-    if (!isValidUUID(req.params.taskId)) return res.status(400).json({ error: 'ID inválido' });
-    const d = sanitizeObj(req.body);
-    const r = await db.query(
-      `UPDATE event_tasks SET name=$1, responsible=$2, area=$3, start_date=$4, deadline=$5,
-       status=$6, priority=$7, is_milestone=$8, description=$9 WHERE id=$10 RETURNING *`,
-      [d.name, d.responsible||'', d.area||'', d.start_date||null, d.deadline||null,
-       d.status||'pendente', d.priority||'media', d.is_milestone||false, d.description||'', req.params.taskId]
-    );
-    if (!r.rows[0]) return res.status(404).json({ error: 'Tarefa não encontrada' });
-    res.json(r.rows[0]);
+    const d = req.body;
+    const { data, error } = await supabase.from('event_tasks').update({
+      name: d.name, responsible: d.responsible || '', area: d.area || '',
+      start_date: d.start_date || null, deadline: d.deadline || null,
+      status: d.status || 'pendente', priority: d.priority || 'media',
+      is_milestone: d.is_milestone || false, description: d.description || '',
+    }).eq('id', req.params.taskId).select().single();
+    if (error) throw error;
+    res.json(data);
   } catch (e) { res.status(500).json({ error: 'Erro ao atualizar tarefa' }); }
 });
 
-// PATCH /api/events/tasks/:taskId/status — mudança rápida de status (kanban drag)
-router.patch('/tasks/:taskId/status', authorize('diretor'), async (req, res) => {
+router.patch('/tasks/:taskId/status', async (req, res) => {
   try {
-    const { status } = req.body;
-    const r = await db.query('UPDATE event_tasks SET status=$1 WHERE id=$2 RETURNING *', [status, req.params.taskId]);
-    if (!r.rows[0]) return res.status(404).json({ error: 'Tarefa não encontrada' });
-    res.json(r.rows[0]);
+    const { data: old } = await supabase.from('event_tasks').select('status, name, event_id').eq('id', req.params.taskId).single();
+    const { data, error } = await supabase.from('event_tasks').update({ status: req.body.status }).eq('id', req.params.taskId).select().single();
+    if (error) throw error;
+    if (old) await supabase.from('audit_log').insert({ table_name: 'event_tasks', record_id: data.id, event_id: old.event_id, action: 'status_change', field_name: 'status', old_value: old.status, new_value: req.body.status, description: `Tarefa "${old.name}" ${old.status} → ${req.body.status}`, changed_by: req.user.userId, changed_by_name: req.user.name });
+    res.json(data);
   } catch (e) { res.status(500).json({ error: 'Erro' }); }
 });
 
-// DELETE /api/events/tasks/:taskId
-router.delete('/tasks/:taskId', authorize('diretor'), async (req, res) => {
+router.delete('/tasks/:taskId', async (req, res) => {
   try {
-    await db.query('DELETE FROM event_tasks WHERE id = $1', [req.params.taskId]);
+    await supabase.from('event_tasks').delete().eq('id', req.params.taskId);
     res.json({ success: true });
   } catch (e) { res.status(500).json({ error: 'Erro ao excluir tarefa' }); }
 });
 
 // ── SUBTASKS ──
-router.post('/tasks/:taskId/subtasks', authorize('diretor'), async (req, res) => {
+router.post('/tasks/:taskId/subtasks', async (req, res) => {
   try {
-    const d = sanitizeObj(req.body);
-    const r = await db.query(
-      'INSERT INTO event_task_subtasks (task_id, name) VALUES ($1,$2) RETURNING *',
-      [req.params.taskId, d.name]
-    );
-    res.json(r.rows[0]);
+    const { data, error } = await supabase.from('event_task_subtasks').insert({ task_id: req.params.taskId, name: req.body.name }).select().single();
+    if (error) throw error;
+    res.json(data);
   } catch (e) { res.status(500).json({ error: 'Erro' }); }
 });
 
-router.patch('/subtasks/:subId', authorize('diretor'), async (req, res) => {
+router.patch('/subtasks/:subId', async (req, res) => {
   try {
-    const r = await db.query('UPDATE event_task_subtasks SET done=$1 WHERE id=$2 RETURNING *', [req.body.done, req.params.subId]);
-    res.json(r.rows[0]);
+    const { data, error } = await supabase.from('event_task_subtasks').update({ done: req.body.done }).eq('id', req.params.subId).select().single();
+    if (error) throw error;
+    res.json(data);
   } catch (e) { res.status(500).json({ error: 'Erro' }); }
 });
 
-router.delete('/subtasks/:subId', authorize('diretor'), async (req, res) => {
+router.delete('/subtasks/:subId', async (req, res) => {
   try {
-    await db.query('DELETE FROM event_task_subtasks WHERE id = $1', [req.params.subId]);
+    await supabase.from('event_task_subtasks').delete().eq('id', req.params.subId);
     res.json({ success: true });
   } catch (e) { res.status(500).json({ error: 'Erro' }); }
 });
 
 // ── COMMENTS ──
-router.post('/tasks/:taskId/comments', authenticate, async (req, res) => {
+router.post('/tasks/:taskId/comments', async (req, res) => {
   try {
-    const d = sanitizeObj(req.body);
-    const r = await db.query(
-      'INSERT INTO event_task_comments (task_id, author_id, author_name, text) VALUES ($1,$2,$3,$4) RETURNING *',
-      [req.params.taskId, req.user.userId, req.user.name, d.text]
-    );
-    res.json(r.rows[0]);
+    const { data, error } = await supabase.from('event_task_comments').insert({
+      task_id: req.params.taskId, author_id: req.user.userId,
+      author_name: req.user.name || 'PMO', text: req.body.text,
+    }).select().single();
+    if (error) throw error;
+    res.json(data);
   } catch (e) { res.status(500).json({ error: 'Erro' }); }
+});
+
+// ── RISKS ──
+router.get('/:id/risks', async (req, res) => {
+  try {
+    const { data, error } = await supabase.from('event_risks').select('*').eq('event_id', req.params.id).order('score', { ascending: false });
+    if (error) throw error;
+    res.json(data);
+  } catch (e) { res.status(500).json({ error: 'Erro ao buscar riscos' }); }
+});
+
+router.post('/:id/risks', async (req, res) => {
+  try {
+    const d = req.body;
+    const { data, error } = await supabase.from('event_risks').insert({
+      event_id: req.params.id, title: d.title, description: d.description || '',
+      category: d.category || 'other', probability: d.probability || 3, impact: d.impact || 3,
+      mitigation: d.mitigation || '', owner_id: d.owner_id || null, owner_name: d.owner_name || '',
+      target_date: d.target_date || null, status: 'aberto', created_by: req.user.userId,
+    }).select().single();
+    if (error) throw error;
+    // Audit
+    await supabase.from('audit_log').insert({ table_name: 'event_risks', record_id: data.id, event_id: req.params.id, action: 'create', description: `Risco criado: ${d.title}`, changed_by: req.user.userId, changed_by_name: req.user.name });
+    res.json(data);
+  } catch (e) { console.error(e); res.status(500).json({ error: 'Erro ao criar risco' }); }
+});
+
+router.patch('/risks/:riskId', async (req, res) => {
+  try {
+    const d = req.body;
+    const { data: old } = await supabase.from('event_risks').select('status').eq('id', req.params.riskId).single();
+    const { data, error } = await supabase.from('event_risks').update(d).eq('id', req.params.riskId).select().single();
+    if (error) throw error;
+    if (old && old.status !== d.status) {
+      await supabase.from('audit_log').insert({ table_name: 'event_risks', record_id: data.id, event_id: data.event_id, action: 'status_change', field_name: 'status', old_value: old.status, new_value: d.status, changed_by: req.user.userId, changed_by_name: req.user.name });
+    }
+    res.json(data);
+  } catch (e) { res.status(500).json({ error: 'Erro ao atualizar risco' }); }
+});
+
+router.delete('/risks/:riskId', async (req, res) => {
+  try {
+    await supabase.from('event_risks').delete().eq('id', req.params.riskId);
+    res.json({ success: true });
+  } catch (e) { res.status(500).json({ error: 'Erro' }); }
+});
+
+// ── RETROSPECTIVE ──
+router.get('/:id/retrospective', async (req, res) => {
+  try {
+    const { data } = await supabase.from('event_retrospectives').select('*').eq('event_id', req.params.id).maybeSingle();
+    res.json(data);
+  } catch (e) { res.status(500).json({ error: 'Erro' }); }
+});
+
+router.post('/:id/retrospective', async (req, res) => {
+  try {
+    const d = req.body;
+    const { data, error } = await supabase.from('event_retrospectives').upsert({
+      event_id: req.params.id, what_went_well: d.what_went_well || '',
+      what_to_improve: d.what_to_improve || '', action_items: d.action_items || '',
+      attendee_feedback: d.attendee_feedback || '', overall_rating: d.overall_rating || null,
+      created_by: req.user.userId,
+    }, { onConflict: 'event_id' }).select().single();
+    if (error) throw error;
+    await supabase.from('audit_log').insert({ table_name: 'event_retrospectives', record_id: data.id, event_id: req.params.id, action: 'create', description: 'Retrospectiva salva', changed_by: req.user.userId, changed_by_name: req.user.name });
+    res.json(data);
+  } catch (e) { console.error(e); res.status(500).json({ error: 'Erro ao salvar retrospectiva' }); }
+});
+
+// ── AUDIT LOG ──
+router.get('/:id/history', async (req, res) => {
+  try {
+    const { data, error } = await supabase.from('audit_log').select('*').eq('event_id', req.params.id).order('created_at', { ascending: false }).limit(50);
+    if (error) throw error;
+    res.json(data);
+  } catch (e) { res.status(500).json({ error: 'Erro ao buscar histórico' }); }
+});
+
+// ── ATTACHMENTS (entregáveis) ──
+const multer = require('multer');
+const storage = require('../services/storageService');
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: storage.MAX_FILE_SIZE } });
+
+// POST /api/events/:eventId/tasks/:taskId/attachments — upload file
+router.post('/:eventId/tasks/:taskId/attachments', upload.single('file'), async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ error: 'Arquivo não fornecido' });
+
+    const { eventId, taskId } = req.params;
+    const { description, area, phase_name, task_type } = req.body; // task_type: 'event' | 'cycle'
+
+    // Fix encoding: multer/busboy interpreta filenames como latin1, mas browser envia UTF-8
+    const fileName = Buffer.from(req.file.originalname, 'latin1').toString('utf8');
+
+    // Buscar nome do evento para organizar pastas
+    const { data: event } = await supabase.from('events').select('name').eq('id', eventId).single();
+    const eventName = event?.name || eventId;
+
+    // Upload para storage
+    const result = await storage.uploadFile(eventName, phase_name || '', fileName, req.file.buffer, req.file.mimetype);
+
+    // Salvar registro no banco
+    const attachment = {
+      event_id: eventId,
+      file_name: fileName,
+      file_type: req.file.mimetype,
+      file_size: req.file.size,
+      supabase_path: result.provider === 'supabase' ? result.path : null,
+      sharepoint_url: result.url || null,
+      sharepoint_item_id: result.itemId || null,
+      phase_name: phase_name || null,
+      area: area || req.user.area || null,
+      description: description || null,
+      uploaded_by: req.user.userId,
+      uploaded_by_name: req.user.name,
+    };
+
+    // Vincular a event_task ou cycle_phase_task
+    if (task_type === 'cycle') {
+      attachment.cycle_task_id = taskId;
+    } else {
+      attachment.event_task_id = taskId;
+    }
+
+    const { data, error } = await supabase.from('event_task_attachments').insert(attachment).select().single();
+    if (error) throw error;
+
+    // Gerar URL assinada para acesso imediato
+    data.signed_url = await storage.getSignedUrl(result.path);
+
+    res.json(data);
+  } catch (e) {
+    console.error('[Events] Upload attachment:', e.message);
+    res.status(500).json({ error: e.message || 'Erro ao fazer upload' });
+  }
+});
+
+// GET /api/events/:eventId/attachments — listar todos anexos do evento
+router.get('/:eventId/attachments', async (req, res) => {
+  try {
+    const { data, error } = await supabase.from('event_task_attachments')
+      .select('*')
+      .eq('event_id', req.params.eventId)
+      .order('created_at', { ascending: false });
+    if (error) throw error;
+    res.json(data);
+  } catch (e) {
+    res.status(500).json({ error: 'Erro ao listar anexos' });
+  }
+});
+
+// GET /api/events/:eventId/tasks/:taskId/attachments — listar anexos de uma task
+router.get('/:eventId/tasks/:taskId/attachments', async (req, res) => {
+  try {
+    const { taskId } = req.params;
+    // Buscar por event_task_id OU cycle_task_id
+    const { data, error } = await supabase.from('event_task_attachments')
+      .select('*')
+      .or(`event_task_id.eq.${taskId},cycle_task_id.eq.${taskId}`)
+      .order('created_at', { ascending: false });
+    if (error) throw error;
+
+    // Resolver URLs de acesso
+    for (const a of data) {
+      if (a.sharepoint_url) {
+        a.signed_url = a.sharepoint_url; // SharePoint URL já é acessível
+      } else if (a.supabase_path) {
+        try { a.signed_url = await storage.getSignedUrl(a.supabase_path); } catch {}
+      }
+    }
+
+    res.json(data);
+  } catch (e) {
+    res.status(500).json({ error: 'Erro ao listar anexos da tarefa' });
+  }
+});
+
+// DELETE /api/events/attachments/:attachId — remover anexo
+router.delete('/attachments/:attachId', async (req, res) => {
+  try {
+    // Buscar para obter path do storage
+    const { data: attach } = await supabase.from('event_task_attachments')
+      .select('supabase_path, sharepoint_item_id')
+      .eq('id', req.params.attachId)
+      .single();
+
+    if (attach) await storage.deleteFile(attach.supabase_path, attach.sharepoint_item_id);
+
+    const { error } = await supabase.from('event_task_attachments').delete().eq('id', req.params.attachId);
+    if (error) throw error;
+    res.json({ success: true });
+  } catch (e) {
+    console.error('[Events] Delete attachment:', e.message);
+    res.status(500).json({ error: 'Erro ao excluir anexo' });
+  }
 });
 
 module.exports = router;
