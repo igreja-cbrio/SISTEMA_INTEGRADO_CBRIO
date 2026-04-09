@@ -64,8 +64,8 @@ router.post('/chat', chatLimiter, async (req, res) => {
           'anthropic-beta': 'managed-agents-2026-04-01',
         },
         body: JSON.stringify({
-          agent: agentId,
-          environment: ENVIRONMENT_ID,
+          agent: agentId,          // short form (not agent_id)
+          environment_id: ENVIRONMENT_ID, // API requires environment_id (not environment)
         }),
       });
 
