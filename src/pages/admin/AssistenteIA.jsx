@@ -70,6 +70,50 @@ const fmtDate = (d) => d ? new Date(d).toLocaleString('pt-BR', { day: '2-digit',
 const fmtCost = (v) => `$${(Number(v) || 0).toFixed(4)}`;
 const fmtTokens = (v) => (v || 0).toLocaleString('pt-BR');
 
+// ─── Typing Indicator ──────────────────────────────────────────────────
+
+const dotStyle = {
+  width: 8, height: 8, borderRadius: '50%', background: C.primary, opacity: 0.4,
+  display: 'inline-block',
+};
+
+function TypingIndicator() {
+  return (
+    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '4px 0' }}>
+      {[0, 1, 2].map(i => (
+        <span key={i} style={{
+          ...dotStyle,
+          animation: 'typingBounce 1.4s infinite ease-in-out both',
+          animationDelay: `${i * 0.16}s`,
+        }} />
+      ))}
+      <style>{`
+        @keyframes typingBounce {
+          0%, 80%, 100% { transform: scale(0.6); opacity: 0.3; }
+          40% { transform: scale(1); opacity: 1; }
+        }
+      `}</style>
+    </span>
+  );
+}
+
+function TypingCursor() {
+  return (
+    <span style={{
+      display: 'inline-block', width: 2, height: 16, background: C.primary,
+      marginLeft: 2, verticalAlign: 'text-bottom',
+      animation: 'cursorBlink 1s step-end infinite',
+    }}>
+      <style>{`
+        @keyframes cursorBlink {
+          0%, 100% { opacity: 1; }
+          50% { opacity: 0; }
+        }
+      `}</style>
+    </span>
+  );
+}
+
 // ─── Chat Tab Component ────────────────────────────────────────────────
 
 function ChatTab() {
