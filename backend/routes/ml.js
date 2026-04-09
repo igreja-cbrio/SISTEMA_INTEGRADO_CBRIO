@@ -172,7 +172,7 @@ router.get('/orders', async (req, res) => {
     if (!config?.access_token) return res.status(400).json({ error: 'ML não conectado' });
 
     const { offset = 0, limit = 20, status, q } = req.query;
-    let path = `/orders/search?seller=${config.ml_user_id}&offset=${offset}&limit=${limit}&sort=date_desc`;
+    let path = `/orders/search?buyer=${config.ml_user_id}&offset=${offset}&limit=${limit}&sort=date_desc`;
     if (status) path += `&order.status=${status}`;
     if (q) path += `&q=${encodeURIComponent(q)}`;
 
