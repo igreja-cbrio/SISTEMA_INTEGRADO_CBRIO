@@ -2,6 +2,10 @@ const router = require('express').Router();
 const { authenticate, authorize } = require('../middleware/auth');
 const { supabase } = require('../utils/supabase');
 
+// ── Cache em memória para shipments ──────────────────────
+const CACHE_TTL = 300_000; // 5 minutos em ms
+let shipmentsCache = { data: null, timestamp: 0 };
+
 router.use(authenticate, authorize('admin', 'diretor'));
 
 // ── Helpers ───────────────────────────────────────────────
