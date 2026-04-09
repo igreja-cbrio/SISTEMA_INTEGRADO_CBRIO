@@ -314,7 +314,12 @@ function ChatTab() {
               }}>
                 {msg.role === 'assistant' ? (
                   <div className="prose prose-sm max-w-none" style={{ color: 'inherit' }}>
-                    <ReactMarkdown>{msg.text || (streaming && i === messages.length - 1 ? '●' : '')}</ReactMarkdown>
+                    {msg.text ? (
+                      <ReactMarkdown>{msg.text}</ReactMarkdown>
+                    ) : streaming && i === messages.length - 1 ? (
+                      <TypingIndicator />
+                    ) : null}
+                    {streaming && i === messages.length - 1 && msg.text && <TypingCursor />}
                   </div>
                 ) : (
                   <span style={{ whiteSpace: 'pre-wrap' }}>{msg.text}</span>
