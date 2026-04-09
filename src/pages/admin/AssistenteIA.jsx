@@ -214,6 +214,8 @@ function ChatTab() {
             if (event.type === 'session') {
               setSessionId(event.sessionId);
               loadSessions();
+            } else if (event.type === 'done') {
+              loadSessions(); // Refresh sessions after response completes
             } else if (event.type === 'delta') {
               setMessages(prev => {
                 const updated = [...prev];
