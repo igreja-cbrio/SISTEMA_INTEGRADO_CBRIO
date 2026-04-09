@@ -162,6 +162,7 @@ router.post('/disconnect', async (req, res) => {
         access_token: null, refresh_token: null, token_expires_at: null, ml_user_id: null,
       }).eq('id', config.id);
     }
+    shipmentsCache = { data: null, timestamp: 0 };
     res.json({ success: true });
   } catch (e) {
     console.error('[ML] Disconnect error:', e.message);
