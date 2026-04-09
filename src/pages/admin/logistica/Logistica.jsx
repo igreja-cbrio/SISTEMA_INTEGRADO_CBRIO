@@ -1295,16 +1295,22 @@ function RastreioMLTab() {
   if (shipments.length === 0) return (
     <div style={{ ...styles.card, padding: 40, textAlign: 'center' }}>
       <div style={{ fontSize: 48, marginBottom: 12 }}>📦</div>
-      <div style={{ fontSize: 16, fontWeight: 600, color: C.text }}>Nenhum envio encontrado</div>
-      <div style={{ fontSize: 13, color: C.text2, marginTop: 4 }}>Conecte ao Mercado Livre na aba "Compras ML" para ver os rastreios.</div>
-      <Button variant="outline" size="sm" style={{ marginTop: 16 }} onClick={() => { setLoading(true); ml.shipments({ refresh: 1 }).then(d => { setShipments(d.shipments || []); }).catch(() => {}).finally(() => setLoading(false)); }}>🔄 Tentar novamente</Button>
+      <div style={{ fontSize: 16, fontWeight: 600, color: C.text }}>{shipError ? 'Erro ao carregar rastreios' : 'Nenhum envio encontrado'}</div>
+      <div style={{ fontSize: 13, color: shipError ? C.red : C.text2, marginTop: 4 }}>{shipError || 'Conecte ao Mercado Livre na aba "Compras ML" para ver os rastreios.'}</div>
+      <Button variant="outline" size="sm" style={{ marginTop: 16 }} onClick={() => loadShipments(true)}>🔄 Tentar novamente</Button>
     </div>
   );
 
   return (<>
+    {shipError && (
+      <div style={{ background: C.redBg, color: C.red, padding: '10px 16px', borderRadius: 8, marginBottom: 12, fontSize: 13, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        {shipError}
+        <Button variant="ghost" onClick={() => setShipError('')}>&#x2715;</Button>
+      </div>
+    )}
     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
       <div style={{ fontSize: 14, fontWeight: 700, color: C.text }}>📦 {emTransito.length} envio(s) em andamento</div>
-      <Button variant="ghost" size="sm" onClick={() => { setLoading(true); ml.shipments({ refresh: 1 }).then(d => { setShipments(d.shipments || []); }).catch(() => {}).finally(() => setLoading(false)); }}>🔄 Atualizar</Button>
+      <Button variant="ghost" size="sm" onClick={() => loadShipments(true)}>🔄 Atualizar</Button>
     </div>
 
     {/* Em trânsito */}
