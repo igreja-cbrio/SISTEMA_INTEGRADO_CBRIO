@@ -145,12 +145,13 @@ function ChatTab() {
   function startNewChat() {
     setMessages([]);
     setSessionId(null);
+    loadSessions(); // Refresh list so previous session shows up
   }
 
   async function resumeSession(sess) {
     setSessionId(sess.anthropic_session_id);
     setModule(sess.agent_module);
-    setShowSessions(false);
+    // Don't hide sidebar — keep it visible for easy navigation
 
     // Load real message history
     try {
@@ -213,6 +214,8 @@ function ChatTab() {
             if (event.type === 'session') {
               setSessionId(event.sessionId);
               loadSessions();
+            } else if (event.type === 'done') {
+              loadSessions(); // Refresh sessions after response completes
             } else if (event.type === 'delta') {
               setMessages(prev => {
                 const updated = [...prev];

@@ -6,4 +6,4 @@ CREATE TABLE IF NOT EXISTS agent_messages (
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
-CREATE INDEX idx_agent_messages_session ON agent_messages(session_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_agent_messages_session ON agent_messages(session_id, created_at);

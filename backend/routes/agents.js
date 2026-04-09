@@ -2,9 +2,42 @@ const router = require('express').Router();
 const rateLimit = require('express-rate-limit');
 const { authenticate, authorize } = require('../middleware/auth');
 const db = require('../utils/db');
+const { supabase } = require('../utils/supabase');
 const { sanitizeObj, isValidUUID } = require('../utils/sanitize');
 const { ENVIRONMENT_ID, getAgentId, listModules } = require('../config/managedAgents');
 const { buildContext, serializeContext } = require('../services/agentContext');
+
+// Helper: persist to DB with supabase fallback
+async function dbInsert(table, data) {
+  try {
+    const cols = Object.keys(data);
+    const vals = Object.values(data);
+    const placeholders = cols.map((_, i) => `$${i + 1}`).join(', ');
+    const result = await db.query(
+      `INSERT INTO ${table} (${cols.join(', ')}) VALUES (${placeholders}) RETURNING *`,
+      vals
+    );
+    return result.rows[0];
+  } catch (pgErr) {
+    console.warn(`[AGENTS] pg INSERT into ${table} failed:`, pgErr.message);
+    // Fallback to supabase client
+    if (supabase) {
+      const { data: row, error } = await supabase.from(table).insert(data).select().single();
+      if (error) throw new Error(`Supabase fallback failed: ${error.message}`);
+      return row;
+    }
+    throw pgErr;
+  }
+}
+
+async function dbQuery(text, params) {
+  try {
+    return await db.query(text, params);
+  } catch (pgErr) {
+    console.warn('[AGENTS] pg query failed:', pgErr.message);
+    throw pgErr;
+  }
+}
 
 router.use(authenticate, authorize('diretor'));
 
@@ -83,25 +116,27 @@ router.post('/chat', chatLimiter, async (req, res) => {
       // Persist in DB — must complete before sending session event
       let dbSessionId = null;
       try {
-        const insertResult = await db.query(
-          `INSERT INTO agent_sessions (user_id, anthropic_session_id, agent_module, title)
-           VALUES ($1, $2, $3, $4) RETURNING id`,
-          [req.user.userId, activeSessionId, agentModule, message.slice(0, 80)]
-        );
-        dbSessionId = insertResult.rows[0]?.id;
+        const row = await dbInsert('agent_sessions', {
+          user_id: req.user.userId,
+          anthropic_session_id: activeSessionId,
+          agent_module: agentModule,
+          title: message.slice(0, 80),
+        });
+        dbSessionId = row?.id;
       } catch (dbErr) {
         console.error('[AGENTS] Failed to persist session:', dbErr.message);
+        sendEvent('persist_error', { text: 'Sessão não foi salva no banco de dados.' });
       }
 
       sendEvent('session', { sessionId: activeSessionId, dbSessionId, module: agentModule });
     } else {
       // Update last_message_at
       try {
-        await db.query(
+        await dbQuery(
           `UPDATE agent_sessions SET last_message_at = NOW(), title = COALESCE(title, $1) WHERE anthropic_session_id = $2`,
           [message.slice(0, 80), activeSessionId]
         );
-      } catch (e) { /* ignore */ }
+      } catch (e) { console.warn('[AGENTS] Failed to update session timestamp:', e.message); }
     }
 
     // 2. Build context from DB
@@ -291,26 +326,20 @@ router.post('/chat', chatLimiter, async (req, res) => {
 
     // 6. Persist messages in DB
     try {
-      // Get the DB session id
-      const sessRow = await db.query(
+      const sessRow = await dbQuery(
         `SELECT id FROM agent_sessions WHERE anthropic_session_id = $1 LIMIT 1`,
         [activeSessionId]
       );
       const dbSessId = sessRow.rows[0]?.id;
       if (dbSessId) {
-        await db.query(
-          `INSERT INTO agent_messages (session_id, role, content) VALUES ($1, 'user', $2)`,
-          [dbSessId, message]
-        );
+        await dbInsert('agent_messages', { session_id: dbSessId, role: 'user', content: message });
         if (fullText) {
-          await db.query(
-            `INSERT INTO agent_messages (session_id, role, content) VALUES ($1, 'assistant', $2)`,
-            [dbSessId, fullText]
-          );
+          await dbInsert('agent_messages', { session_id: dbSessId, role: 'assistant', content: fullText });
         }
       }
     } catch (e) {
       console.warn('[AGENTS] Failed to persist messages:', e.message);
+      sendEvent('persist_error', { text: 'Mensagens não foram salvas no banco.' });
     }
 
     // 7. Log usage
@@ -336,7 +365,7 @@ router.post('/chat', chatLimiter, async (req, res) => {
 // GET /api/agents/sessions — lista sessões do usuário
 router.get('/sessions', async (req, res) => {
   try {
-    const r = await db.query(
+    const r = await dbQuery(
       `SELECT id, anthropic_session_id, agent_module, title, created_at, last_message_at
        FROM agent_sessions WHERE user_id = $1 ORDER BY last_message_at DESC LIMIT 30`,
       [req.user.userId]
@@ -348,10 +377,19 @@ router.get('/sessions', async (req, res) => {
   }
 });
 
-// GET /api/agents/sessions/:id/messages — histórico de mensagens
+// GET /api/agents/sessions/:id/messages — histórico de mensagens (com validação de ownership)
 router.get('/sessions/:id/messages', async (req, res) => {
   try {
-    const r = await db.query(
+    // Validate session belongs to user
+    const sessCheck = await dbQuery(
+      `SELECT id FROM agent_sessions WHERE id = $1 AND user_id = $2 LIMIT 1`,
+      [req.params.id, req.user.userId]
+    );
+    if (!sessCheck.rows.length) {
+      return res.status(404).json({ error: 'Sessão não encontrada' });
+    }
+
+    const r = await dbQuery(
       `SELECT id, role, content, created_at FROM agent_messages
        WHERE session_id = $1 ORDER BY created_at ASC`,
       [req.params.id]
