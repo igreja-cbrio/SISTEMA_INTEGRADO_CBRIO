@@ -129,7 +129,6 @@ router.post('/chat', chatLimiter, async (req, res) => {
           type: 'user.message',
           content: [{ type: 'text', text: userContent }],
         }],
-        stream: true,
       }),
     });
 
