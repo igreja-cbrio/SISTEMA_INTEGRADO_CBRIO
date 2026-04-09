@@ -1,17 +1,30 @@
 
 
-## Configurar Secrets do Supabase
+## Plano: Adicionar rotas faltantes no backend de Logística
 
-A partir do JWT fornecido, extraí o identificador do projeto: `hhntwfawfnxvuobhdfkb`.
+### Problema
+O frontend chama endpoints de Logística que não existem no backend (`/api/logistica/notas`, `/api/logistica/movimentacoes`, `/api/logistica/pedidos/:id/itens`, `/api/logistica/itens/:id`). Esses retornam 404 com "Endpoint de API não encontrado".
 
 ### O que será feito
 
-1. **Atualizar `.env`** com os valores reais:
-   - `VITE_SUPABASE_URL` → `https://hhntwfawfnxvuobhdfkb.supabase.co`
-   - `VITE_SUPABASE_ANON_KEY` → a chave fornecida
-   - `VITE_API_URL` → `https://crmcbrio.vercel.app/api` (já configurado)
+**1. Adicionar rotas faltantes em `backend/routes/logistica.js`:**
+- `GET /notas` — listar notas fiscais
+- `POST /notas` — criar nota fiscal
+- `DELETE /notas/:id` — remover nota fiscal
+- `GET /pedidos/:id/itens` — listar itens de um pedido
+- `POST /pedidos/:id/itens` — adicionar item a um pedido
+- `DELETE /itens/:id` — remover item de pedido
+- `GET /movimentacoes` — listar movimentações
+- `POST /movimentacoes` — criar movimentação
+- `GET /movimentacoes/historico/:codigo` — histórico por código
 
-Isso fará com que o frontend conecte ao seu Supabase existente e as requisições que estão falhando (indo para `seu-projeto.supabase.co`) passem a funcionar.
+**2. Tabelas Supabase necessárias (SQL para você executar):**
+- `log_notas_fiscais` — notas fiscais vinculadas a pedidos/fornecedores
+- `log_pedido_itens` — itens individuais de cada pedido
+- `log_movimentacoes` — registro de movimentações de materiais
 
-> **Nota de segurança**: A anon key é uma chave pública (publishable), então é seguro armazená-la no `.env` do projeto.
+### Detalhes técnicos
+- As rotas seguem o mesmo padrão já existente no arquivo (authenticate + authorize, queries Supabase, tratamento de erros)
+- RLS habilitado sem políticas públicas (acesso via service_role)
+- Será gerado o SQL completo para criar as tabelas
 
