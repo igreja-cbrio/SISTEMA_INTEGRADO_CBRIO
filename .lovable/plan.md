@@ -1,30 +1,21 @@
 
 
-## Plano: Adicionar rotas faltantes no backend de Logística
+## Plano: Cache em memória para shipments do ML
 
 ### Problema
-O frontend chama endpoints de Logística que não existem no backend (`/api/logistica/notas`, `/api/logistica/movimentacoes`, `/api/logistica/pedidos/:id/itens`, `/api/logistica/itens/:id`). Esses retornam 404 com "Endpoint de API não encontrado".
+A rota `GET /shipments` faz até 50+ chamadas à API do ML (1 para orders + 1 por shipment), o que é lento e pode atingir rate limits.
 
-### O que será feito
+### Solução
+Adicionar um cache em memória simples no topo de `backend/routes/ml.js`:
+- Um objeto `{ data, timestamp }` para o resultado de `/shipments`
+- TTL de 5 minutos (300s) — se o cache ainda for válido, retorna direto
+- Parâmetro opcional `?refresh=1` para forçar bypass do cache
+- Cache invalidado ao desconectar ML (`POST /disconnect`)
 
-**1. Adicionar rotas faltantes em `backend/routes/logistica.js`:**
-- `GET /notas` — listar notas fiscais
-- `POST /notas` — criar nota fiscal
-- `DELETE /notas/:id` — remover nota fiscal
-- `GET /pedidos/:id/itens` — listar itens de um pedido
-- `POST /pedidos/:id/itens` — adicionar item a um pedido
-- `DELETE /itens/:id` — remover item de pedido
-- `GET /movimentacoes` — listar movimentações
-- `POST /movimentacoes` — criar movimentação
-- `GET /movimentacoes/historico/:codigo` — histórico por código
-
-**2. Tabelas Supabase necessárias (SQL para você executar):**
-- `log_notas_fiscais` — notas fiscais vinculadas a pedidos/fornecedores
-- `log_pedido_itens` — itens individuais de cada pedido
-- `log_movimentacoes` — registro de movimentações de materiais
+### Arquivo alterado
+- `backend/routes/ml.js` — adicionar variável de cache no topo e lógica de verificação no `GET /shipments` e `POST /disconnect`
 
 ### Detalhes técnicos
-- As rotas seguem o mesmo padrão já existente no arquivo (authenticate + authorize, queries Supabase, tratamento de erros)
-- RLS habilitado sem políticas públicas (acesso via service_role)
-- Será gerado o SQL completo para criar as tabelas
+- Cache simples em variável (adequado para Vercel serverless — cada cold start limpa naturalmente)
+- Sem dependências externas
 
