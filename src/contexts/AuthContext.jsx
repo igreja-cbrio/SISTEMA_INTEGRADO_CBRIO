@@ -68,6 +68,9 @@ export function AuthProvider({ children }) {
         await Promise.all([fetchProfile(session.user.id), fetchPermissions()]);
       }
       setLoading(false);
+    }).catch((e) => {
+      console.warn('[Auth] Erro ao obter sessão:', e?.message);
+      setLoading(false);
     });
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
