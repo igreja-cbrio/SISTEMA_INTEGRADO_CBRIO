@@ -5,6 +5,8 @@ const { notificar, resolverDestinatarios } = require('../services/notificar');
 
 router.use(authenticate);
 
+const ALLOWED_CATEGORIES = ['ti', 'compras', 'reembolso', 'espaco', 'infraestrutura', 'ferias', 'outro'];
+
 // Map categoria → notification module
 const CATEGORIA_MODULO = {
   ti: 'ti',
@@ -91,6 +93,9 @@ router.post('/', async (req, res) => {
 
     const { titulo, descricao, justificativa, categoria, urgencia, valor_estimado, area_solicitante } = req.body;
     if (!titulo || !categoria) return res.status(400).json({ error: 'Título e categoria são obrigatórios' });
+    if (!ALLOWED_CATEGORIES.includes(categoria)) {
+      return res.status(400).json({ error: `Categoria inválida: "${categoria}". Permitidas: ${ALLOWED_CATEGORIES.join(', ')}` });
+    }
 
     const { data, error } = await supabase
       .from('solicitacoes')
@@ -123,7 +128,7 @@ router.post('/', async (req, res) => {
     res.status(201).json(data);
   } catch (e) {
     console.error('[SOLICITACOES] create error:', e.message);
-    res.status(500).json({ error: 'Erro ao criar solicitação' });
+    res.status(500).json({ error: e.message || 'Erro ao criar solicitação' });
   }
 });
 

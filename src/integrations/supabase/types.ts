@@ -413,6 +413,72 @@ export type Database = {
         }
         Relationships: []
       }
+      notificacao_regras: {
+        Row: {
+          ativo: boolean
+          created_at: string
+          id: string
+          modulo: string
+          profile_id: string
+        }
+        Insert: {
+          ativo?: boolean
+          created_at?: string
+          id?: string
+          modulo: string
+          profile_id: string
+        }
+        Update: {
+          ativo?: boolean
+          created_at?: string
+          id?: string
+          modulo?: string
+          profile_id?: string
+        }
+        Relationships: []
+      }
+      notificacoes: {
+        Row: {
+          chave_dedup: string | null
+          created_at: string
+          id: string
+          lida: boolean
+          link: string | null
+          mensagem: string | null
+          modulo: string | null
+          severidade: string
+          tipo: string | null
+          titulo: string
+          usuario_id: string
+        }
+        Insert: {
+          chave_dedup?: string | null
+          created_at?: string
+          id?: string
+          lida?: boolean
+          link?: string | null
+          mensagem?: string | null
+          modulo?: string | null
+          severidade?: string
+          tipo?: string | null
+          titulo: string
+          usuario_id: string
+        }
+        Update: {
+          chave_dedup?: string | null
+          created_at?: string
+          id?: string
+          lida?: boolean
+          link?: string | null
+          mensagem?: string | null
+          modulo?: string | null
+          severidade?: string
+          tipo?: string | null
+          titulo?: string
+          usuario_id?: string
+        }
+        Relationships: []
+      }
       permissoes_modulo: {
         Row: {
           id: string
