@@ -457,7 +457,7 @@ const STAT_SVGS = [
   <svg key="s6" style={{ position: 'absolute', right: 0, top: 0, height: '100%', width: '67%', pointerEvents: 'none', zIndex: 0 }} viewBox="0 0 300 200" fill="none"><circle cx="220" cy="110" r="88" fill="#fff" fillOpacity="0.08" /><circle cx="275" cy="55" r="52" fill="#fff" fillOpacity="0.09" /></svg>,
 ];
 
-function StatCard({ label, value, bg, svg }) {
+function StatCard({ label, value, bg, svg, hint }) {
   return (
     <div
       className="cbrio-kpi"
@@ -467,6 +467,7 @@ function StatCard({ label, value, bg, svg }) {
       <div style={{ position: 'relative', zIndex: 1 }}>
         <div style={{ fontSize: 13, fontWeight: 500, color: 'rgba(255,255,255,0.8)', marginBottom: 8 }}>{label}</div>
         <div style={{ fontSize: 32, fontWeight: 700, letterSpacing: -1 }}>{value}</div>
+        {hint && <div style={{ fontSize: 10, fontWeight: 400, color: 'rgba(255,255,255,0.7)', marginTop: 4, lineHeight: 1.3 }}>{hint}</div>}
       </div>
     </div>
   );
@@ -481,11 +482,11 @@ function DashboardTab({ dash }) {
     { label: 'Ped. Em Trânsito', value: dash.pedidosEmTransito ?? 0, bg: '#8b5cf6' },
     { label: 'Ped. Recebidos', value: dash.pedidosRecebidos ?? 0, bg: '#10b981' },
     { label: 'Solic. Aprovadas', value: dash.solicitacoesAprovadas ?? 0, bg: '#6b7280' },
-    { label: 'Valor Total Pedidos', value: fmtMoney(dash.valorTotalPedidos), bg: '#00B39D' },
+    { label: 'Compras do Mês', value: fmtMoney(dash.mlComprasMes ?? 0), bg: '#00B39D', hint: 'Apenas compras do Mercado Livre no mês corrente' },
   ];
   return (
     <div className="cbrio-stagger" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 12, marginBottom: 24 }}>
-      {kpis.map((k, i) => <StatCard key={k.label} label={k.label} value={k.value} bg={k.bg} svg={STAT_SVGS[i % STAT_SVGS.length]} />)}
+      {kpis.map((k, i) => <StatCard key={k.label} label={k.label} value={k.value} bg={k.bg} svg={STAT_SVGS[i % STAT_SVGS.length]} hint={k.hint} />)}
     </div>
   );
 }
