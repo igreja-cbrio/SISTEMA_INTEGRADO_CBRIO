@@ -1,31 +1,47 @@
 
+Objetivo
 
-## Plano: Observações ao mudar status + notificações bidirecionais
+- Corrigir o fluxo de criação de solicitação, que hoje entra em “Criando...” mas falha sem retorno visível.
 
-### 1. Dialog de detalhe com campo de observações (`src/pages/Solicitacoes.jsx`)
+Diagnóstico
 
-Quando o responsável clicar em Aprovar, Rejeitar ou Concluir no `DetailDialog`, em vez de executar imediatamente, abrir um mini-formulário inline com:
-- `Textarea` para observações (opcional)
-- Botão de confirmar a ação
+- O clique do botão está funcionando: `src/pages/Solicitacoes.jsx` já entra em `submitting`.
+- O problema mais provável está no backend de solicitações:
+  - `backend/routes/solicitacoes.js` usa `req.userId` e `req.userProfile`
+  - mas o middleware `authenticate` popula `req.user.userId`, `req.user.role`, `req.user.granular` e `req.user.name`
+- Isso quebra o fluxo:
+  - `GET /solicitacoes` filtra com usuário indefinido e tende a trazer lista vazia
+  - `POST /solicitacoes` tenta salvar `solicitante_id: undefined`, então a criação falha
+  - o erro não aparece para o usuário porque a página usa `toast` do Sonner, mas o app não está montando o `<Toaster />`
 
-O `DetailDialog` passará a ter estado interno (`actionPending`, `observacoes`) e chamará `onStatusChange(id, newStatus, observacoes)`.
+Implementação
 
-O `handleStatusChange` no componente pai será atualizado para enviar `{ status, observacoes }` via `api.update`.
+1. Corrigir `backend/routes/solicitacoes.js`
+- trocar `req.userId` por `req.user.userId`
+- trocar `req.userProfile?.role` por `req.user.role`
+- trocar `req.userProfile?.granular?.modulePerms` por `req.user.granular?.modulePerms`
+- trocar `req.userProfile?.name` por `req.user.name`
+- centralizar isso em variáveis locais no início de cada rota para evitar novas regressões
 
-Os botões rápidos no `SolicitacaoCard` do Kanban também passarão a abrir o `DetailDialog` (ou chamar sem observações — mantendo comportamento atual para agilidade).
+2. Restaurar feedback visual na interface
+- montar o `Toaster` do Sonner no app raiz (`src/App.tsx` ou `src/main.tsx`)
+- manter os `toast.success` e `toast.error` já existentes em `src/pages/Solicitacoes.jsx`
 
-### 2. Backend: notificações bidirecionais (`backend/routes/solicitacoes.js`)
+3. Validar o fluxo
+- abrir a tela de Solicitações e confirmar que a listagem volta a carregar
+- criar uma solicitação de Infraestrutura
+- verificar se:
+  - o dialog fecha
+  - aparece toast de sucesso ou erro
+  - a solicitação entra na lista/kanban
+- se houver erro, ele deixa de ficar “silencioso” e passa a aparecer corretamente
 
-No `PATCH /:id`, após atualizar o status:
-- **Notificar o solicitante** (já faz isso parcialmente) — garantir que `targetIds` inclui `data.solicitante_id`
-- **Notificar os responsáveis da área** — usar `resolverDestinatarios(modulo)` do `notificar.js` para encontrar quem deve ser avisado, e incluir no `targetIds` (ou fazer duas chamadas a `notificar`)
+Observação técnica
 
-Na criação (`POST /`), já notifica responsáveis — OK.
+- Se depois disso ainda falhar no preview, o próximo ponto a validar é a configuração do backend, porque `backend/utils/supabase.js` depende de `SUPABASE_URL` e `SUPABASE_SERVICE_ROLE_KEY`, enquanto a `.env` atual expõe principalmente variáveis `VITE_*`.
 
-### Arquivos modificados
+Arquivos envolvidos
 
-| Arquivo | Mudança |
-|---------|---------|
-| `src/pages/Solicitacoes.jsx` | `DetailDialog` com campo de observações antes de confirmar ação; `handleStatusChange` passa observações |
-| `backend/routes/solicitacoes.js` | `PATCH` envia notificação ao solicitante E aos responsáveis da área |
-
+- `backend/routes/solicitacoes.js`
+- `src/App.tsx` ou `src/main.tsx`
+- `src/pages/Solicitacoes.jsx`
