@@ -1,32 +1,56 @@
 
 
-## Plano: Criar tabelas de logística no banco de dados
+## Plano: Criar tabelas essenciais que faltam no banco de dados
 
 ### Diagnóstico
 
-O dashboard de logística mostra zeros porque as tabelas que o backend consulta (`log_fornecedores`, `log_solicitacoes_compra`, `log_pedidos`, `log_recebimentos`, `log_notas_fiscais`, `log_pedido_itens`, `log_movimentacoes`) **não existem** no banco de dados. A única tabela existente é `solicitacoes`.
+A **tabela `profiles` não existe** no banco de dados. O middleware `authenticate` consulta `profiles` em toda requisição autenticada — quando falha, o backend retorna 500 antes mesmo de chegar na rota de criar solicitação.
+
+Tabelas existentes: `solicitacoes`, `log_fornecedores`, `log_movimentacoes`, `log_notas_fiscais`, `log_pedido_itens`, `log_pedidos`, `log_recebimentos`, `log_solicitacoes_compra`.
+
+Tabelas que faltam (usadas pelo `authenticate` middleware):
+- **`profiles`** — essencial, sem ela NENHUMA rota funciona
+- **`modulos`** — listagem de módulos do sistema
+- **`cargos`** — níveis de permissão por cargo
+- **`usuarios`** — vínculo usuário ↔ cargo para permissões granulares
+- **`permissoes_modulo`** — overrides de permissão por módulo
+- **`areas`** e **`setores`** — estrutura organizacional
+- **`usuario_areas`** — vínculo usuário ↔ áreas
+- **`rh_funcionarios`** — usado no auto-sync de área do perfil
 
 ### Implementação
 
-**Migration SQL** — criar as 7 tabelas necessárias com RLS:
+**Uma migration SQL** criando todas as tabelas com RLS:
 
-1. **`log_fornecedores`** — id, razao_social, nome_fantasia, cnpj, email, telefone, contato, categoria, ativo (default true), observacoes, created_at
-2. **`log_solicitacoes_compra`** — id, titulo, descricao, justificativa, valor_estimado, urgencia, status (default 'pendente'), area, solicitante_id, aprovado_por, observacoes, created_at
-3. **`log_pedidos`** — id, solicitacao_id (FK → log_solicitacoes_compra), fornecedor_id (FK → log_fornecedores), descricao, valor_total, data_pedido (default now), data_prevista, status (default 'aguardando'), codigo_rastreio, transportadora, created_by, created_at
-4. **`log_recebimentos`** — id, pedido_id (FK → log_pedidos), recebido_por, observacoes, status (default 'ok'), created_at
-5. **`log_notas_fiscais`** — id, numero, serie, fornecedor_id (FK), pedido_id (FK), valor, data_emissao, chave_acesso, tipo (default 'entrada'), observacoes, created_by, created_at
-6. **`log_pedido_itens`** — id, pedido_id (FK), descricao, quantidade, unidade (default 'un'), valor_unitario, created_at
-7. **`log_movimentacoes`** — id, codigo_item, descricao, tipo, quantidade, origem, destino, observacoes, responsavel_id, data_movimentacao, created_at
+1. **`profiles`** — id (FK auth.users), name, email, role (default 'assistente'), area, active (default true), created_at. Trigger para criar perfil automaticamente no signup.
 
-**RLS**: Todas as tabelas terão RLS habilitada com política de leitura para usuários autenticados e políticas de escrita para autenticados (o backend já usa service role key, mas é boa prática).
+2. **`setores`** — id, nome, ativo, created_at
+
+3. **`areas`** — id, nome, setor_id (FK setores), ativo, created_at
+
+4. **`cargos`** — id, nome, nivel_padrao_leitura (default 1), nivel_padrao_escrita (default 1), created_at
+
+5. **`modulos`** — id, nome, ativo (default true), created_at. Seed com módulos: DP, Pessoas, Financeiro, Logística, Patrimônio, Membresia, TI, Agenda, Projetos, IA / Agentes, Tarefas, Comunicação.
+
+6. **`usuarios`** — id, email, cargo_id (FK cargos), ativo (default true), created_at
+
+7. **`permissoes_modulo`** — id, usuario_id (FK usuarios), modulo_id (FK modulos), nivel_leitura, nivel_escrita
+
+8. **`usuario_areas`** — id, usuario_id (FK usuarios), area_id (FK areas), is_principal (default false)
+
+9. **`rh_funcionarios`** — id, nome, cpf, email, telefone, cargo, area, tipo_contrato, data_admissao, data_demissao, salario, status (default 'ativo'), observacoes, created_at
+
+10. **`rh_documentos`**, **`rh_treinamentos`**, **`rh_treinamentos_funcionarios`**, **`rh_ferias_licencas`** — tabelas de RH dependentes
+
+RLS: todas com políticas permissivas para `authenticated`. Trigger `handle_new_user` para criar perfil automaticamente no registro.
 
 ### Nenhuma alteração de código
 
-O backend (`backend/routes/logistica.js`) e o frontend (`Logistica.jsx`) já estão prontos — só faltam as tabelas.
+O backend e frontend já estão prontos — só faltam as tabelas no banco.
 
 ### Arquivos envolvidos
 
 | Ação | Detalhe |
 |------|---------|
-| Migration SQL | Criar 7 tabelas `log_*` com foreign keys e RLS |
+| Migration SQL | Criar ~14 tabelas + trigger de perfil + seed de módulos |
 
