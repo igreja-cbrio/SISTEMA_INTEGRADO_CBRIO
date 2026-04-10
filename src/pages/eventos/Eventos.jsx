@@ -1368,30 +1368,21 @@ export default function Eventos() {
                     const si = normDate(ph.data_inicio_prevista); const ei = normDate(ph.data_fim_prevista);
                     if (!si || !ei) return <div key={ph.id} style={{ height: BH, borderBottom: '1px solid var(--cbrio-border)' }} />;
                     const lp = dPct(si); const rp = dPct(ei); const wp = Math.max(rp - lp, 0.5);
-                    const isSingleDay = si === ei;
                     const phT = aTasks.filter(t => t.event_phase_id === ph.id);
                     const phD = phT.filter(t => t.status === 'concluida').length;
                     const isDone = ph.status === 'concluida' || (phT.length > 0 && phD === phT.length) || phT.length === 0;
                     const endD = new Date(ei + 'T12:00:00');
                     const diff2 = Math.ceil((endD - new Date()) / 86400000);
-                    const barC = isDone ? '#d1d5db' : diff2 < 0 ? '#ef4444' : diff2 <= 3 ? '#f59e0b' : ph.numero_fase === 10 ? '#f59e0b' : '#10b981';
+                    const barC = isDone ? '#d1d5db' : diff2 < 0 ? '#ef4444' : diff2 <= 3 ? '#f59e0b' : '#10b981';
                     const dTxt = isDone ? '✓' : diff2 < 0 ? `${Math.abs(diff2)}d atrás` : diff2 === 0 ? 'Hoje' : `${diff2}d`;
                     return (
                       <div key={ph.id} style={{ position: 'relative', height: BH, borderBottom: '1px solid var(--cbrio-border)' }}>
                         {mL.map((m, i) => (<div key={i} style={{ position: 'absolute', left: `${m.pct}%`, top: 0, width: 1, height: '100%', background: 'var(--cbrio-border)', opacity: 0.3 }} />))}
                         <div style={{ position: 'absolute', left: `${tPct}%`, top: 0, width: 2, height: '100%', background: '#ef4444', zIndex: 2, opacity: 0.4 }} />
-                        {isSingleDay ? (
-                          <div title={`${ph.nome_fase}\n${fmtDate(si)}\n${dTxt}`}
-                            style={{ position: 'absolute', top: 2, left: `${lp}%`, transform: 'translateX(-50%)', display: 'flex', flexDirection: 'column', alignItems: 'center', zIndex: 1 }}>
-                            <div style={{ width: 20, height: 20, borderRadius: 4, background: barC, transform: 'rotate(45deg)', opacity: isDone ? 0.5 : 0.9 }} />
-                            <span style={{ fontSize: 9, fontWeight: 700, color: barC, marginTop: 1, whiteSpace: 'nowrap' }}>{dTxt}</span>
-                          </div>
-                        ) : (
-                          <div title={`${ph.nome_fase}\n${fmtDate(si)} → ${fmtDate(ei)}\n${dTxt}`}
-                            style={{ position: 'absolute', top: 4, height: BH - 8, borderRadius: 6, left: `${lp}%`, width: `${wp}%`, minWidth: 50, background: barC, opacity: isDone ? 0.5 : 0.9, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '0 6px', overflow: 'hidden' }}>
-                            <span style={{ fontSize: 11, fontWeight: 700, color: '#fff', whiteSpace: 'nowrap' }}>{dTxt}</span>
-                          </div>
-                        )}
+                        <div title={`${ph.nome_fase}\n${fmtDate(si)} → ${fmtDate(ei)}\n${dTxt}`}
+                          style={{ position: 'absolute', top: 4, height: BH - 8, borderRadius: 6, left: `${lp}%`, width: `${wp}%`, minWidth: 30, background: barC, opacity: isDone ? 0.5 : 0.9, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '0 6px', overflow: 'hidden' }}>
+                          <span style={{ fontSize: 11, fontWeight: 700, color: '#fff', whiteSpace: 'nowrap' }}>{dTxt}</span>
+                        </div>
                       </div>
                     );
                   })}
