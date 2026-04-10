@@ -3,6 +3,7 @@ import { Tag, ClipboardList, Trash2, Pencil, MapPin } from 'lucide-react';
 import { useAuth } from '../../../contexts/AuthContext';
 import { patrimonio, logistica } from '../../../api';
 import { Button } from '../../../components/ui/button';
+import BarcodeScanner from '../../../components/BarcodeScanner';
 
 const C = {
   bg: 'var(--cbrio-bg)', card: 'var(--cbrio-card)', primary: '#00B39D', primaryBg: '#00B39D18',
@@ -602,8 +603,6 @@ function ScannerTab({ localizacoes, onMov, onDetail }) {
   const [saving, setSaving] = useState(false);
   const [recentScans, setRecentScans] = useState([]);
   const [scanError, setScanError] = useState('');
-  const videoRef = useRef(null);
-  const streamRef = useRef(null);
   const inputRef = useRef(null);
 
   async function buscarPorCodigo(code) {
@@ -619,39 +618,10 @@ function ScannerTab({ localizacoes, onMov, onDetail }) {
     setLoading(false);
   }
 
-  async function startScan() {
-    setScanning(true);
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
-      streamRef.current = stream;
-      if (videoRef.current) { videoRef.current.srcObject = stream; videoRef.current.play(); }
-      if ('BarcodeDetector' in window) {
-        const detector = new BarcodeDetector({ formats: ['ean_13', 'ean_8', 'code_128', 'code_39', 'qr_code', 'upc_a', 'upc_e', 'codabar', 'itf'] });
-        const detectLoop = async () => {
-          if (!videoRef.current || !streamRef.current) return;
-          try {
-            const barcodes = await detector.detect(videoRef.current);
-            if (barcodes.length > 0) {
-              const code = barcodes[0].rawValue;
-              setCodigo(code);
-              stopScan();
-              buscarPorCodigo(code);
-              return;
-            }
-          } catch (e) { /* continue */ }
-          requestAnimationFrame(detectLoop);
-        };
-        requestAnimationFrame(detectLoop);
-      }
-    } catch (e) {
-      setScanError('Não foi possível acessar a câmera. Verifique as permissões do navegador.');
-      setScanning(false);
-    }
-  }
-
-  function stopScan() {
+  function handleDetected(code) {
+    setCodigo(code);
     setScanning(false);
-    if (streamRef.current) { streamRef.current.getTracks().forEach(t => t.stop()); streamRef.current = null; }
+    buscarPorCodigo(code);
   }
 
   function handleKeyDown(e) {
@@ -695,21 +665,20 @@ function ScannerTab({ localizacoes, onMov, onDetail }) {
             onKeyDown={handleKeyDown}
             autoFocus
           />
-          <Button variant={scanning ? 'destructive' : 'default'} onClick={scanning ? stopScan : startScan}>
+          <Button variant={scanning ? 'destructive' : 'default'} onClick={() => setScanning(s => !s)}>
             {scanning ? '⏹ Parar' : '📷 Escanear'}
           </Button>
         </div>
 
-        {/* Camera preview */}
+        {/* Camera preview (usa BarcodeDetector nativo ou ZXing como fallback) */}
         {scanning && (
-          <div style={{ textAlign: 'center' }}>
-            <video ref={videoRef} style={{ width: '100%', maxWidth: 400, borderRadius: 12, background: '#000', border: `3px solid ${C.primary}` }} autoPlay playsInline muted />
-            <div style={{ fontSize: 13, color: C.text2, marginTop: 8 }}>Aponte a câmera para o código de barras do patrimônio</div>
-            {!('BarcodeDetector' in window) && (
-              <div style={{ fontSize: 12, color: C.amber, marginTop: 8 }}>
-                Scanner automático não disponível neste navegador. Use o campo acima para digitar manualmente.
-              </div>
-            )}
+          <div style={{ maxWidth: 400, margin: '0 auto' }}>
+            <BarcodeScanner
+              active={scanning}
+              onDetect={handleDetected}
+              onError={(msg) => { setScanError(msg); setScanning(false); }}
+            />
+            <div style={{ fontSize: 13, color: C.text2, marginTop: 8, textAlign: 'center' }}>Aponte a câmera para o código de barras do patrimônio</div>
           </div>
         )}
       </div>
@@ -878,33 +847,11 @@ function LogMovimentacoesTab({ data, loading, filtroTipo, setFiltroTipo, onNew, 
   const [scanning, setScanning] = useState(false);
   const [scanResult, setScanResult] = useState(null);
   const [historico, setHistorico] = useState([]);
-  const videoRef = useRef(null);
-  const streamRef = useRef(null);
 
-  async function startScan() {
-    setScanning(true); setScanResult(null);
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
-      streamRef.current = stream;
-      if (videoRef.current) { videoRef.current.srcObject = stream; videoRef.current.play(); }
-      if ('BarcodeDetector' in window) {
-        const detector = new BarcodeDetector({ formats: ['ean_13', 'ean_8', 'code_128', 'code_39', 'qr_code', 'upc_a', 'upc_e'] });
-        const detectLoop = async () => {
-          if (!videoRef.current || !scanning) return;
-          try {
-            const barcodes = await detector.detect(videoRef.current);
-            if (barcodes.length > 0) { setScanResult(barcodes[0].rawValue); stopScan(); loadHistorico(barcodes[0].rawValue); return; }
-          } catch (e) { /* continue */ }
-          requestAnimationFrame(detectLoop);
-        };
-        requestAnimationFrame(detectLoop);
-      }
-    } catch (e) { setScanning(false); }
-  }
-
-  function stopScan() {
+  function handleDetected(code) {
+    setScanResult(code);
     setScanning(false);
-    if (streamRef.current) { streamRef.current.getTracks().forEach(t => t.stop()); streamRef.current = null; }
+    loadHistorico(code);
   }
 
   async function loadHistorico(codigo) {
@@ -922,15 +869,17 @@ function LogMovimentacoesTab({ data, loading, filtroTipo, setFiltroTipo, onNew, 
         {Object.entries(LOG_MOV_TIPO).map(([k, v]) => <option key={k} value={k}>{v.icon} {v.label}</option>)}
       </select>
       <Button onClick={onNew}>+ Nova Movimentação</Button>
-      <Button variant="outline" onClick={scanning ? stopScan : startScan}>
+      <Button variant="outline" onClick={() => setScanning(s => !s)}>
         {scanning ? '⏹ Parar Scanner' : '📷 Escanear Código'}
       </Button>
     </div>
 
     {scanning && (
-      <div style={{ ...styles.card, marginBottom: 16, padding: 16, textAlign: 'center' }}>
-        <video ref={videoRef} style={{ width: '100%', maxWidth: 400, borderRadius: 12, background: '#000' }} autoPlay playsInline muted />
-        <div style={{ fontSize: 13, color: C.text2, marginTop: 8 }}>Aponte a câmera para o código de barras</div>
+      <div style={{ ...styles.card, marginBottom: 16, padding: 16 }}>
+        <div style={{ maxWidth: 400, margin: '0 auto' }}>
+          <BarcodeScanner active={scanning} onDetect={handleDetected} onError={() => setScanning(false)} />
+          <div style={{ fontSize: 13, color: C.text2, marginTop: 8, textAlign: 'center' }}>Aponte a câmera para o código de barras</div>
+        </div>
       </div>
     )}
 
@@ -995,37 +944,17 @@ function LogMovimentacoesTab({ data, loading, filtroTipo, setFiltroTipo, onNew, 
 
 function LogMovimentacaoModal({ open, data, onClose, onSave, saving, upLogMov }) {
   const [scanning, setScanning] = useState(false);
-  const videoRef = useRef(null);
-  const streamRef = useRef(null);
 
-  async function startScan() {
-    setScanning(true);
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
-      streamRef.current = stream;
-      if (videoRef.current) { videoRef.current.srcObject = stream; videoRef.current.play(); }
-      if ('BarcodeDetector' in window) {
-        const detector = new BarcodeDetector({ formats: ['ean_13', 'ean_8', 'code_128', 'code_39', 'qr_code', 'upc_a', 'upc_e'] });
-        const detect = async () => {
-          if (!videoRef.current) return;
-          try { const b = await detector.detect(videoRef.current); if (b.length > 0) { upLogMov('codigo_barras', b[0].rawValue); stopScan(); return; } } catch {}
-          if (scanning) requestAnimationFrame(detect);
-        };
-        requestAnimationFrame(detect);
-      }
-    } catch (e) { setScanning(false); }
-  }
-
-  function stopScan() {
+  function handleDetected(code) {
+    upLogMov('codigo_barras', code);
     setScanning(false);
-    if (streamRef.current) { streamRef.current.getTracks().forEach(t => t.stop()); streamRef.current = null; }
   }
 
-  useEffect(() => { if (!open) stopScan(); }, [open]);
+  useEffect(() => { if (!open) setScanning(false); }, [open]);
 
   return (
-    <Modal open={open} onClose={() => { stopScan(); onClose(); }} title="Nova Movimentação"
-      footer={<><Button variant="outline" onClick={() => { stopScan(); onClose(); }}>Cancelar</Button><Button onClick={onSave} disabled={saving}>{saving ? 'Salvando...' : 'Registrar'}</Button></>}>
+    <Modal open={open} onClose={() => { setScanning(false); onClose(); }} title="Nova Movimentação"
+      footer={<><Button variant="outline" onClick={() => { setScanning(false); onClose(); }}>Cancelar</Button><Button onClick={onSave} disabled={saving}>{saving ? 'Salvando...' : 'Registrar'}</Button></>}>
       {data && (<>
         <Select label="Tipo *" value={data.tipo || 'entrada'} onChange={e => upLogMov('tipo', e.target.value)}>
           {Object.entries(LOG_MOV_TIPO).map(([k, v]) => <option key={k} value={k}>{v.icon} {v.label}</option>)}
@@ -1035,14 +964,14 @@ function LogMovimentacaoModal({ open, data, onClose, onSave, saving, upLogMov })
           <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
             <input className="flex h-9 w-full rounded-lg border border-input bg-background px-3 py-2 text-sm shadow-sm shadow-black/5 placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" style={{ flex: 1, fontFamily: 'monospace', fontSize: 16, fontWeight: 700 }}
               value={data.codigo_barras || ''} onChange={e => upLogMov('codigo_barras', e.target.value)} placeholder="Digite ou escaneie" />
-            <Button variant={scanning ? 'destructive' : 'outline'} onClick={scanning ? stopScan : startScan}>
+            <Button variant={scanning ? 'destructive' : 'outline'} onClick={() => setScanning(s => !s)}>
               {scanning ? '⏹' : '📷'}
             </Button>
           </div>
         </div>
         {scanning && (
-          <div style={{ textAlign: 'center', marginBottom: 12 }}>
-            <video ref={videoRef} style={{ width: '100%', maxWidth: 300, borderRadius: 10, background: '#000' }} autoPlay playsInline muted />
+          <div style={{ marginBottom: 12, maxWidth: 300, marginLeft: 'auto', marginRight: 'auto' }}>
+            <BarcodeScanner active={scanning} onDetect={handleDetected} onError={() => setScanning(false)} />
           </div>
         )}
         <Input label="Descrição" value={data.descricao || ''} onChange={e => upLogMov('descricao', e.target.value)} />
