@@ -958,5 +958,171 @@
         "offset_end": 7
       }
     ]
+  },
+  {
+    "area": "marketing",
+    "etapa": "Briefing",
+    "titulo": "Coordenar reunião de definição da campanha",
+    "offset_start": -85,
+    "offset_end": -78,
+    "subtasks": [
+      { "name": "Coordenar reunião de definição da campanha com todos os envolvidos", "offset_start": -85, "offset_end": -82 },
+      { "name": "Enviar e-mail de convocação e registros para todos os participantes", "offset_start": -82, "offset_end": -78 }
+    ]
+  },
+  {
+    "area": "marketing",
+    "etapa": "Brainstorming e Conceito",
+    "titulo": "Concepção interna de ideias para o evento",
+    "offset_start": -78,
+    "offset_end": -64,
+    "subtasks": []
+  },
+  {
+    "area": "marketing",
+    "etapa": "Identidade e Estratégia",
+    "titulo": "Criação de chave visual e estratégia do evento",
+    "offset_start": -64,
+    "offset_end": -50,
+    "subtasks": [
+      { "name": "Desenvolver logomarca e variações do evento", "offset_start": -64, "offset_end": -60 },
+      { "name": "Definir paleta de cores, tipografia e elementos gráficos", "offset_start": -60, "offset_end": -57 },
+      { "name": "Criar key visual (peça conceito) da campanha", "offset_start": -57, "offset_end": -53 },
+      { "name": "Elaborar planilha estratégica de comunicação", "offset_start": -53, "offset_end": -50 }
+    ]
+  },
+  {
+    "area": "marketing",
+    "etapa": "Execução Estratégica",
+    "titulo": "Produção de todas as peças do evento",
+    "offset_start": -43,
+    "offset_end": -29,
+    "subtasks": [
+      { "name": "Produzir vídeos (abertura, encerramento, inserções no culto)", "offset_start": -43, "offset_end": -38 },
+      { "name": "Criar posts e artes para redes sociais", "offset_start": -38, "offset_end": -34 },
+      { "name": "Produzir materiais impressos (banners, flyers, identidade de palco)", "offset_start": -34, "offset_end": -31 },
+      { "name": "Entregar peças finalizadas para revisão do cliente demandante", "offset_start": -31, "offset_end": -29 }
+    ]
+  },
+  {
+    "area": "marketing",
+    "etapa": "Pré-Testes",
+    "titulo": "Verificar execução das peças pela produção",
+    "offset_start": -29,
+    "offset_end": -22,
+    "subtasks": [
+      { "name": "Acompanhar os testes e confirmar que vídeos e peças estão conforme aprovado", "offset_start": -29, "offset_end": -25 },
+      { "name": "Sinalizar divergências entre o material entregue e o conceito aprovado", "offset_start": -25, "offset_end": -22 }
+    ]
+  },
+  {
+    "area": "marketing",
+    "etapa": "Finalizações",
+    "titulo": "Validar correções do pré-teste",
+    "offset_start": -22,
+    "offset_end": -15,
+    "subtasks": [
+      { "name": "Conferir se os ajustes técnicos refletem a identidade visual aprovada", "offset_start": -22, "offset_end": -18 },
+      { "name": "Dar aval final nas peças antes do evento", "offset_start": -18, "offset_end": -15 }
+    ]
+  },
+  {
+    "area": "marketing",
+    "etapa": "Alinhamentos Operacionais Finais",
+    "titulo": "Participar da reunião de alinhamento",
+    "offset_start": -15,
+    "offset_end": -1,
+    "subtasks": []
+  },
+  {
+    "area": "producao",
+    "etapa": "Brainstorming e Conceito",
+    "titulo": "Participar do brainstorm com parecer técnico",
+    "offset_start": -78,
+    "offset_end": -64,
+    "subtasks": [
+      { "name": "Ouvir as referências e conceitos apresentados pela CBLab", "offset_start": -78, "offset_end": -74 },
+      { "name": "Levantar limitações técnicas do espaço atual (palco, iluminação, projeção, som)", "offset_start": -74, "offset_end": -70 },
+      { "name": "Sinalizar o que é executável no padrão atual x o que exige recursos extras", "offset_start": -70, "offset_end": -67 },
+      { "name": "Dar parecer sobre viabilidade de referências audiovisuais trazidas", "offset_start": -67, "offset_end": -64 }
+    ]
+  },
+  {
+    "area": "producao",
+    "etapa": "Identidade e Estratégia",
+    "titulo": "Analisar key visual e estratégia com olhar técnico",
+    "offset_start": -64,
+    "offset_end": -50,
+    "subtasks": [
+      { "name": "Verificar se a paleta e elementos visuais funcionam nas telas/projeções do espaço", "offset_start": -64, "offset_end": -60 },
+      { "name": "Confirmar se o conceito é compatível com a liturgia do culto", "offset_start": -60, "offset_end": -57 },
+      { "name": "Avaliar necessidade de adaptação de palco ou cenografia", "offset_start": -57, "offset_end": -53 },
+      { "name": "Listar equipamentos e operadores necessários", "offset_start": -53, "offset_end": -50 }
+    ]
+  },
+  {
+    "area": "producao",
+    "etapa": "Pré-Testes",
+    "titulo": "Planejar e convocar os pré-testes",
+    "offset_start": -29,
+    "offset_end": -22,
+    "subtasks": [
+      { "name": "Definir data, horário e duração de cada sessão de pré-teste", "offset_start": -29, "offset_end": -27 },
+      { "name": "Convocar todos os envolvidos: adoração, CBLab, técnicos, voluntários", "offset_start": -27, "offset_end": -25 },
+      { "name": "Preparar roteiro de testes com todos os elementos a validar", "offset_start": -25, "offset_end": -22 }
+    ]
+  },
+  {
+    "area": "producao",
+    "etapa": "Pré-Testes",
+    "titulo": "Executar testes técnicos completos",
+    "offset_start": -29,
+    "offset_end": -22,
+    "subtasks": [
+      { "name": "Testar sistema de som: níveis, equalização, monitores, IEM", "offset_start": -29, "offset_end": -27 },
+      { "name": "Testar iluminação: cenas programadas, transições, cor x conceito", "offset_start": -28, "offset_end": -26 },
+      { "name": "Testar vídeo: ProPresenter, timecodes, transições", "offset_start": -27, "offset_end": -25 },
+      { "name": "Testar transmissão ao vivo: câmeras, switcher, streaming", "offset_start": -26, "offset_end": -24 },
+      { "name": "Testar cenografia e elementos de palco", "offset_start": -25, "offset_end": -23 },
+      { "name": "Simulação completa: roteiro do culto de ponta a ponta", "offset_start": -24, "offset_end": -22 }
+    ]
+  },
+  {
+    "area": "producao",
+    "etapa": "Finalizações",
+    "titulo": "Aplicar correções e confirmar escalação da equipe",
+    "offset_start": -22,
+    "offset_end": -15,
+    "subtasks": [
+      { "name": "Confirmar escalação dos voluntários de produção", "offset_start": -22, "offset_end": -19 },
+      { "name": "Executar correções técnicas apontadas no pré-teste", "offset_start": -19, "offset_end": -17 },
+      { "name": "Testar novamente os pontos críticos reprovados no pré-teste", "offset_start": -17, "offset_end": -15 }
+    ]
+  },
+  {
+    "area": "producao",
+    "etapa": "Alinhamentos Operacionais Finais",
+    "titulo": "Conduzir alinhamentos operacionais finais",
+    "offset_start": -15,
+    "offset_end": -1,
+    "subtasks": [
+      { "name": "Convocar e preparar a reunião de alinhamento operacional", "offset_start": -15, "offset_end": -10 },
+      { "name": "Conduzir a reunião de alinhamento", "offset_start": -10, "offset_end": -7 },
+      { "name": "Fazer vistoria final do espaço e equipamentos", "offset_start": -7, "offset_end": -3 },
+      { "name": "Distribuir materiais e briefar voluntários", "offset_start": -3, "offset_end": -1 }
+    ]
+  },
+  {
+    "area": "producao",
+    "etapa": "Dia D",
+    "titulo": "Liderar a operação completa do evento",
+    "offset_start": 0,
+    "offset_end": 0,
+    "subtasks": [
+      { "name": "Coordenar a montagem e soundcheck", "offset_start": 0, "offset_end": 0 },
+      { "name": "Dirigir a operação durante o culto", "offset_start": 0, "offset_end": 0 },
+      { "name": "Coordenar voluntários de produção durante o evento", "offset_start": 0, "offset_end": 0 },
+      { "name": "Conduzir o encerramento e desmontagem", "offset_start": 0, "offset_end": 0 }
+    ]
   }
 ]

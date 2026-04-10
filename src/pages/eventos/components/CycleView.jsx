@@ -18,6 +18,7 @@ const CAT = {
   manutencao:  { label: 'Manutenção',  color: '#f59e0b', bg: '#fef3c7', border: '#ef9f27' },
   limpeza:     { label: 'Limpeza',     color: '#8b5cf6', bg: '#ede9fe', border: '#afa9ec' },
   cozinha:     { label: 'Cozinha',     color: '#ec4899', bg: '#fce7f3', border: '#f0997b' },
+  producao:    { label: 'Produção',    color: '#6366f1', bg: '#e0e7ff', border: '#a5b4fc' },
   outros:      { label: 'Outros',      color: 'var(--cbrio-text3)', bg: 'var(--cbrio-bg)', border: 'var(--cbrio-border)' },
 };
 
@@ -464,7 +465,7 @@ export default function CycleView({ eventId, eventName }) {
                   <select name="area" style={inputStyle}>
                     <option value="adm">Administrativo</option><option value="marketing">Marketing</option>
                     <option value="compras">Compras</option><option value="financeiro">Financeiro</option>
-                    <option value="manutencao">Manutenção</option><option value="limpeza">Limpeza</option><option value="cozinha">Cozinha</option>
+                    <option value="manutencao">Manutenção</option><option value="limpeza">Limpeza</option><option value="cozinha">Cozinha</option><option value="producao">Produção</option>
                   </select>
                 </div>
                 <div style={{ flex: 1, marginBottom: 10 }}>
@@ -579,7 +580,7 @@ export default function CycleView({ eventId, eventName }) {
                           style={{ width: '100%', padding: '5px 8px', borderRadius: 6, border: `1px solid ${C.border}`, fontSize: 12, color: C.dark, background: 'var(--cbrio-input-bg, #fff)' }}>
                           <option value="adm">Administrativo</option><option value="marketing">Marketing</option>
                           <option value="compras">Compras</option><option value="financeiro">Financeiro</option>
-                          <option value="manutencao">Manutenção</option><option value="limpeza">Limpeza</option><option value="cozinha">Cozinha</option>
+                          <option value="manutencao">Manutenção</option><option value="limpeza">Limpeza</option><option value="cozinha">Cozinha</option><option value="producao">Produção</option>
                         </select>
                       </div>
                     </div>

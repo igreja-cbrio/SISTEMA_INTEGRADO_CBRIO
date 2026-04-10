@@ -661,6 +661,7 @@ export default function Eventos() {
       manutencao: { label: 'Manutenção', color: '#f59e0b', bg: '#fef3c7' },
       limpeza:    { label: 'Limpeza',    color: '#8b5cf6', bg: '#ede9fe' },
       cozinha:    { label: 'Cozinha',    color: '#ec4899', bg: '#fce7f3' },
+      producao:   { label: 'Produção',   color: '#6366f1', bg: '#e0e7ff' },
       outros:     { label: 'Outros',     color: 'var(--cbrio-text3)', bg: 'var(--cbrio-bg)' },
     };
     const getCat = (t) => (t.area || '').toLowerCase() || 'outros';
@@ -1098,7 +1099,7 @@ export default function Eventos() {
                     <select name="area" style={{ width: '100%', padding: '5px 8px', borderRadius: 6, border: '1px solid var(--cbrio-border)', fontSize: 12, color: 'var(--cbrio-text)', background: 'var(--cbrio-input-bg, #fff)' }}>
                       <option value="compras">Compras</option><option value="financeiro">Financeiro</option>
                       <option value="manutencao">Manutenção</option><option value="limpeza">Limpeza</option>
-                      <option value="cozinha">Cozinha</option><option value="marketing">Marketing</option>
+                      <option value="cozinha">Cozinha</option><option value="marketing">Marketing</option><option value="producao">Produção</option>
                     </select>
                   </div>
                   <div style={{ marginBottom: 10 }}>
