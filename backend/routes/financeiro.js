@@ -123,7 +123,11 @@ router.get('/transacoes', async (req, res) => {
     if (conta_id) query = query.eq('conta_id', conta_id);
     if (tipo) query = query.eq('tipo', tipo);
     if (status) query = query.eq('status', status);
-    if (mes) { query = query.gte('data_competencia', `${mes}-01`).lte('data_competencia', `${mes}-31`); }
+    if (mes) {
+      const [y, m] = mes.split('-');
+      const lastDay = new Date(Number(y), Number(m), 0).getDate();
+      query = query.gte('data_competencia', `${mes}-01`).lte('data_competencia', `${mes}-${String(lastDay).padStart(2, '0')}`);
+    }
     const { data, error } = await query;
     if (error) return res.status(400).json({ error: error.message });
     res.json(data);
