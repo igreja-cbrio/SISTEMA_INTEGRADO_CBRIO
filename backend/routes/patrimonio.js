@@ -1,49 +1,52 @@
 const router = require('express').Router();
 const { authenticate, authorize } = require('../middleware/auth');
-const { supabase } = require('../utils/supabase');
+const { supabase, query } = require('../utils/supabase');
 
 router.use(authenticate, authorize('admin', 'diretor'));
 
 // ── DASHBOARD ──────────────────────────────────────────────
 router.get('/dashboard', async (req, res) => {
   try {
-    const [bens, categorias, localizacoes, inventarios] = await Promise.all([
-      supabase.from('pat_bens').select('id, status, categoria_id, localizacao_id, valor_aquisicao'),
-      supabase.from('pat_categorias').select('id, nome'),
-      supabase.from('pat_localizacoes').select('id, nome'),
-      supabase.from('pat_inventarios').select('id, status'),
+    const [totais, porCategoria, porLocalizacao, inventarios] = await Promise.all([
+      query(`
+        SELECT 
+          COUNT(*)::int as total,
+          COUNT(*) FILTER (WHERE status = 'ativo')::int as ativos,
+          COUNT(*) FILTER (WHERE status = 'manutencao')::int as manutencao,
+          COUNT(*) FILTER (WHERE status = 'baixado')::int as baixados,
+          COUNT(*) FILTER (WHERE status = 'extraviado')::int as extraviados,
+          COALESCE(SUM(valor_aquisicao), 0)::numeric as valor_total
+        FROM pat_bens
+      `),
+      query(`
+        SELECT COALESCE(c.nome, 'Sem categoria') as nome, COUNT(*)::int as qtd
+        FROM pat_bens b LEFT JOIN pat_categorias c ON b.categoria_id = c.id
+        GROUP BY c.nome
+      `),
+      query(`
+        SELECT COALESCE(l.nome, 'Sem localização') as nome, COUNT(*)::int as qtd
+        FROM pat_bens b LEFT JOIN pat_localizacoes l ON b.localizacao_id = l.id
+        GROUP BY l.nome
+      `),
+      query(`SELECT COUNT(*)::int as total FROM pat_inventarios WHERE status = 'em_andamento'`),
     ]);
 
-    const b = bens.data || [];
-    const valorTotal = b.reduce((s, item) => s + Number(item.valor_aquisicao || 0), 0);
-
-    const porStatus = {};
-    b.forEach(item => { porStatus[item.status] = (porStatus[item.status] || 0) + 1; });
-
-    const porCategoria = {};
-    b.forEach(item => {
-      const cat = (categorias.data || []).find(c => c.id === item.categoria_id);
-      const nome = cat?.nome || 'Sem categoria';
-      porCategoria[nome] = (porCategoria[nome] || 0) + 1;
-    });
-
-    const porLocalizacao = {};
-    b.forEach(item => {
-      const loc = (localizacoes.data || []).find(l => l.id === item.localizacao_id);
-      const nome = loc?.nome || 'Sem localização';
-      porLocalizacao[nome] = (porLocalizacao[nome] || 0) + 1;
-    });
+    const t = totais.rows[0];
+    const catObj = {};
+    porCategoria.rows.forEach(r => { catObj[r.nome] = r.qtd; });
+    const locObj = {};
+    porLocalizacao.rows.forEach(r => { locObj[r.nome] = r.qtd; });
 
     res.json({
-      totalBens: b.length,
-      ativos: b.filter(i => i.status === 'ativo').length,
-      manutencao: b.filter(i => i.status === 'manutencao').length,
-      baixados: b.filter(i => i.status === 'baixado').length,
-      extraviados: b.filter(i => i.status === 'extraviado').length,
-      valorTotal,
-      porCategoria,
-      porLocalizacao,
-      inventariosAbertos: (inventarios.data || []).filter(i => i.status === 'em_andamento').length,
+      totalBens: t.total,
+      ativos: t.ativos,
+      manutencao: t.manutencao,
+      baixados: t.baixados,
+      extraviados: t.extraviados,
+      valorTotal: Number(t.valor_total),
+      porCategoria: catObj,
+      porLocalizacao: locObj,
+      inventariosAbertos: inventarios.rows[0].total,
     });
   } catch (e) {
     console.error('[PAT] Dashboard:', e.message);
