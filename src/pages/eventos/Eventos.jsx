@@ -1300,8 +1300,9 @@ export default function Eventos() {
   // ═══════════════════════════════════════════════════════════
   // RENDER — GANTT (por fases do ciclo criativo)
   // ═══════════════════════════════════════════════════════════
+  const [ganttMode, setGanttMode] = useState('eventos'); // 'eventos' | 'acumulado'
+
   function renderGantt() {
-    const ST_COLORS = { pendente: '#9ca3af', em_andamento: '#3b82f6', concluida: '#10b981', atrasada: '#ef4444', em_risco: '#f59e0b' };
     const MONTHS = ['Jan','Fev','Mar','Abr','Mai','Jun','Jul','Ago','Set','Out','Nov','Dez'];
     const d = kanbanCycleData;
     if (!d) return <div style={{ padding: 20, textAlign: 'center', color: 'var(--cbrio-text3)' }}>{kanbanLoading ? 'Carregando...' : 'Nenhum ciclo ativo'}</div>;
@@ -1310,13 +1311,13 @@ export default function Eventos() {
 
     // Agrupar por evento
     const evGroups = {};
-    aEvents.forEach(ev => { evGroups[ev.id] = { name: ev.name, phases: [] }; });
+    aEvents.forEach(ev => { evGroups[ev.id] = { name: ev.name, date: ev.date, phases: [] }; });
     aPhases.forEach(ph => { if (evGroups[ph.event_id]) evGroups[ph.event_id].phases.push(ph); });
     const groups = Object.values(evGroups).filter(g => g.phases.length > 0);
     groups.forEach(g => g.phases.sort((a, b) => a.numero_fase - b.numero_fase));
     groups.sort((a, b) => {
-      const da = a.phases[0]?.data_fim_prevista || '9999'; // Dia D ≈ última fase
-      const db = b.phases[0]?.data_fim_prevista || '9999';
+      const da = a.phases[0]?.data_inicio_prevista || '9999';
+      const db = b.phases[0]?.data_inicio_prevista || '9999';
       return da.localeCompare(db);
     });
 
@@ -1330,13 +1331,76 @@ export default function Eventos() {
     const mL = []; const mc = new Date(gS);
     while (mc < gE) { mL.push({ label: MONTHS[mc.getMonth()] + (mc.getMonth() === 0 ? ' ' + mc.getFullYear() : ''), pct: dPct(mc) }); mc.setMonth(mc.getMonth() + 1); }
 
-    const NW = 200; const BH = 32;
+    const NW = 220; const BH = 32;
+    const COLORS = ['#00B39D', '#3b82f6', '#8b5cf6', '#f59e0b', '#ef4444', '#ec4899', '#10b981', '#6366f1', '#14b8a6', '#f97316', '#a855f7', '#06b6d4', '#e11d48', '#84cc16'];
 
     return (
       <div style={{ margin: '0 -32px', padding: '0 16px' }}>
+        {/* Toggle */}
+        <div style={{ display: 'flex', gap: 6, marginBottom: 12 }}>
+          {[{ key: 'eventos', label: 'Por Evento' }, { key: 'acumulado', label: 'Acumulado' }].map(m => (
+            <button key={m.key} onClick={() => setGanttMode(m.key)} style={{
+              padding: '5px 14px', borderRadius: 20, fontSize: 12, fontWeight: ganttMode === m.key ? 600 : 400, cursor: 'pointer',
+              border: ganttMode === m.key ? '2px solid #00B39D' : '1px solid var(--cbrio-border)',
+              background: ganttMode === m.key ? '#00B39D15' : 'transparent',
+              color: ganttMode === m.key ? '#00B39D' : 'var(--cbrio-text3)',
+            }}>{m.label}</button>
+          ))}
+        </div>
+
         {groups.length === 0 && <div style={{ padding: 40, textAlign: 'center', color: 'var(--cbrio-text3)', fontSize: 13 }}>Nenhum ciclo criativo ativo</div>}
 
-        {groups.map((group, gi) => (
+        {/* ── GANTT ACUMULADO ── */}
+        {ganttMode === 'acumulado' && groups.length > 0 && (
+          <div style={{ background: 'var(--cbrio-card)', borderRadius: 12, border: '1px solid var(--cbrio-border)', marginBottom: 16, overflow: 'hidden' }}>
+            <div style={{ padding: '10px 16px', background: '#00B39D10', borderBottom: '1px solid var(--cbrio-border)' }}>
+              <span style={{ fontSize: 14, fontWeight: 700, color: 'var(--cbrio-text)' }}>Todos os Eventos — Visão Acumulada</span>
+              <span style={{ fontSize: 11, color: 'var(--cbrio-text3)', marginLeft: 12 }}>({groups.length} eventos)</span>
+            </div>
+            <div style={{ display: 'flex' }}>
+              <div style={{ width: NW, flexShrink: 0, borderRight: '1px solid var(--cbrio-border)' }}>
+                <div style={{ height: 28, borderBottom: '1px solid var(--cbrio-border)', background: 'var(--cbrio-table-header)' }} />
+                {groups.map((g, i) => (
+                  <div key={i} style={{ height: BH, padding: '0 10px', display: 'flex', alignItems: 'center', gap: 6, borderBottom: '1px solid var(--cbrio-border)' }}>
+                    <div style={{ width: 6, height: 6, borderRadius: '50%', background: COLORS[i % COLORS.length], flexShrink: 0 }} />
+                    <span style={{ fontSize: 11, fontWeight: 500, color: 'var(--cbrio-text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{g.name}</span>
+                  </div>
+                ))}
+              </div>
+              <div style={{ flex: 1, overflowX: 'auto' }}>
+                <div style={{ minWidth: 600, position: 'relative' }}>
+                  <div style={{ height: 28, position: 'relative', borderBottom: '1px solid var(--cbrio-border)', background: 'var(--cbrio-table-header)' }}>
+                    {mL.map((m, i) => (<div key={i} style={{ position: 'absolute', left: `${m.pct}%`, top: 0, height: '100%', borderLeft: '1px solid var(--cbrio-border)', padding: '5px 6px', fontSize: 10, fontWeight: 600, color: 'var(--cbrio-text2)', whiteSpace: 'nowrap' }}>{m.label}</div>))}
+                    <div style={{ position: 'absolute', left: `${tPct}%`, top: 0, width: 2, height: '100%', background: '#ef4444', zIndex: 2 }} />
+                    <div style={{ position: 'absolute', left: `${tPct}%`, top: -1, transform: 'translateX(-50%)', fontSize: 8, fontWeight: 700, color: '#ef4444', background: 'var(--cbrio-card)', padding: '0 3px', borderRadius: 3, zIndex: 3 }}>hoje</div>
+                  </div>
+                  {groups.map((g, gi) => {
+                    const firstDate = g.phases[0]?.data_inicio_prevista;
+                    const lastDate = g.phases[g.phases.length - 1]?.data_fim_prevista;
+                    if (!firstDate || !lastDate) return <div key={gi} style={{ height: BH, borderBottom: '1px solid var(--cbrio-border)' }} />;
+                    const lp = dPct(firstDate); const rp = dPct(lastDate); const wp = Math.max(rp - lp, 2);
+                    const phsDone = g.phases.filter(p => p.status === 'concluida').length;
+                    const pct = Math.round(phsDone / g.phases.length * 100);
+                    const barColor = COLORS[gi % COLORS.length];
+                    return (
+                      <div key={gi} style={{ position: 'relative', height: BH, borderBottom: '1px solid var(--cbrio-border)' }}>
+                        {mL.map((m, i) => (<div key={i} style={{ position: 'absolute', left: `${m.pct}%`, top: 0, width: 1, height: '100%', background: 'var(--cbrio-border)', opacity: 0.3 }} />))}
+                        <div style={{ position: 'absolute', left: `${tPct}%`, top: 0, width: 2, height: '100%', background: '#ef4444', zIndex: 2, opacity: 0.4 }} />
+                        <div title={`${g.name}\n${fmtDate(firstDate)} → ${fmtDate(lastDate)}\n${phsDone}/${g.phases.length} fases (${pct}%)`}
+                          style={{ position: 'absolute', top: 4, height: BH - 8, borderRadius: 6, left: `${lp}%`, width: `${wp}%`, background: barColor, opacity: 0.85, display: 'flex', alignItems: 'center', padding: '0 8px', overflow: 'hidden' }}>
+                          <span style={{ fontSize: 10, fontWeight: 700, color: '#fff', whiteSpace: 'nowrap' }}>{pct}%</span>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ── GANTT POR EVENTO ── */}
+        {ganttMode === 'eventos' && groups.map((group, gi) => (
           <div key={gi} style={{ background: 'var(--cbrio-card)', borderRadius: 12, border: '1px solid var(--cbrio-border)', marginBottom: 16, overflow: 'hidden' }}>
             <div style={{ padding: '10px 16px', background: '#00B39D10', borderBottom: '1px solid var(--cbrio-border)', display: 'flex', alignItems: 'center', gap: 8 }}>
               <div style={{ width: 8, height: 8, borderRadius: '50%', background: '#00B39D' }} />
