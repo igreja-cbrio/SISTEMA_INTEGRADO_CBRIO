@@ -2,9 +2,10 @@ const router = require('express').Router();
 const { authenticate, authorize } = require('../middleware/auth');
 const { supabase } = require('../utils/supabase');
 
-// ── Cache em memória para shipments ──────────────────────
+// ── Cache em memória para shipments e orders ──────────────
 const CACHE_TTL = 300_000; // 5 minutos em ms
 let shipmentsCache = { data: null, timestamp: 0 };
+const ordersCache = new Map(); // key: `${offset}-${limit}-${status||''}-${q||''}`, value: { data, timestamp }
 
 router.use(authenticate, authorize('admin', 'diretor'));
 
@@ -217,6 +218,7 @@ router.post('/disconnect', async (req, res) => {
       }).eq('id', config.id);
     }
     shipmentsCache = { data: null, timestamp: 0 };
+    ordersCache.clear();
     res.json({ success: true });
   } catch (e) {
     console.error('[ML] Disconnect error:', e.message);
@@ -230,6 +232,17 @@ router.get('/orders', async (req, res) => {
     const config = await getMLConfig();
     if (!config?.access_token) return res.status(400).json({ error: 'ML não conectado' });
 
+    const { offset = 0, limit = 20, status, q, refresh } = req.query;
+    const cacheKey = `${offset}-${limit}-${status || ''}-${q || ''}`;
+
+    // Retorna cache se válido e não forçou refresh
+    if (refresh !== '1') {
+      const cached = ordersCache.get(cacheKey);
+      if (cached && (Date.now() - cached.timestamp < CACHE_TTL)) {
+        return res.json({ ...cached.data, _cached: true });
+      }
+    }
+
     // Resolve user_id automatically
     let userId = config.ml_user_id;
     if (!userId) {
@@ -242,9 +255,13 @@ router.get('/orders', async (req, res) => {
       }
     }
 
-    const { offset = 0, limit = 20, status, q } = req.query;
     const data = await searchOrders(config, userId, { offset: Number(offset), limit: Number(limit), status, q });
     console.log('[ML] Orders response: results=%d, total=%d', data.results?.length || 0, data.paging?.total || 0);
+
+    // Cache apenas respostas válidas
+    if (data.results) {
+      ordersCache.set(cacheKey, { data, timestamp: Date.now() });
+    }
     res.json(data);
   } catch (e) {
     console.error('[ML] Orders error:', e.message);

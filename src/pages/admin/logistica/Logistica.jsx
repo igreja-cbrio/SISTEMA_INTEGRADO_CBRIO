@@ -970,6 +970,7 @@ function ComprasMLTab() {
   const [expanded, setExpanded] = useState(null);
   const [shipDetail, setShipDetail] = useState(null);
   const [localError, setLocalError] = useState('');
+  const [cachedFlag, setCachedFlag] = useState(false);
 
   // Handle OAuth callback
   useEffect(() => {
@@ -998,16 +999,18 @@ function ComprasMLTab() {
     } catch (e) { setMlStatus({ connected: false }); setLoading(false); }
   }
 
-  async function loadOrders(offset = 0) {
+  async function loadOrders(offset = 0, forceRefresh = false) {
     setLoading(true);
     setLocalError('');
     try {
       const params = { offset, limit: 20 };
       if (filtroStatus) params.status = filtroStatus;
       if (busca) params.q = busca;
+      if (forceRefresh) params.refresh = '1';
       const data = await ml.orders(params);
       setOrders(data.results || []);
       setPaging({ total: data.paging?.total || 0, offset });
+      setCachedFlag(!!data._cached);
     } catch (e) {
       console.error(e);
       setLocalError('Erro ao carregar pedidos: ' + e.message);
@@ -1098,10 +1101,15 @@ function ComprasMLTab() {
           <option value="confirmed">Confirmados</option>
           <option value="cancelled">Cancelados</option>
         </select>
-        <Button variant="ghost" size="sm" onClick={() => loadOrders(0)}>🔄</Button>
+        <Button variant="ghost" size="sm" onClick={() => loadOrders(0, true)} title="Atualizar (ignora cache)">🔄 Atualizar</Button>
         <Button variant="ghost" size="sm" className="text-red-500" onClick={handleDisconnect}>Desconectar</Button>
       </div>
     </div>
+    {cachedFlag && !loading && (
+      <div style={{ fontSize: 11, color: C.text3, marginBottom: 8, textAlign: 'right' }}>
+        💾 Dados em cache — clique em "Atualizar" para buscar novos pedidos
+      </div>
+    )}
 
     {/* Cards de compras */}
     {loading ? <div className="flex items-center justify-center py-6 gap-2"><div className="h-4 w-4 animate-spin rounded-full border-2 border-muted-foreground/25 border-t-primary" /><span className="text-xs text-muted-foreground">Carregando compras...</span></div>

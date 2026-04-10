@@ -4,9 +4,19 @@ const { supabase } = require('../utils/supabase');
 
 router.use(authenticate, authorize('admin', 'diretor'));
 
+// ── Cache em memória do dashboard (5 min TTL) ──────────────
+const DASHBOARD_CACHE_TTL = 5 * 60 * 1000;
+let dashboardCache = { data: null, timestamp: 0 };
+
 // ── DASHBOARD ──────────────────────────────────────────────
 router.get('/dashboard', async (req, res) => {
   try {
+    // Retorna cache se válido e não forçou refresh
+    const forceRefresh = req.query.refresh === '1';
+    if (!forceRefresh && dashboardCache.data && (Date.now() - dashboardCache.timestamp < DASHBOARD_CACHE_TTL)) {
+      return res.json({ ...dashboardCache.data, _cached: true });
+    }
+
     const [fornecedores, solicitacoes, pedidos] = await Promise.all([
       supabase.from('log_fornecedores').select('id, ativo'),
       supabase.from('log_solicitacoes_compra').select('id, status, valor_estimado'),
@@ -47,40 +57,49 @@ router.get('/dashboard', async (req, res) => {
           }
         }
 
-        // Buscar pedidos do mês atual (como buyer)
-        const now = new Date();
-        const startMonth = new Date(now.getFullYear(), now.getMonth(), 1).toISOString();
-        const ordersRes = await fetch(
-          `https://api.mercadolibre.com/orders/search?buyer=${mlConfig.ml_user_id}&order.date_created.from=${startMonth}&limit=50&sort=date_desc`,
-          { headers: { Authorization: `Bearer ${token}` } }
-        );
-        if (ordersRes.ok) {
-          const ordersData = await ordersRes.json();
-          const orders = ordersData.results || [];
-          mlComprasMes = orders
-            .filter(o => o.status !== 'cancelled')
-            .reduce((sum, o) => sum + Number(o.total_amount || 0), 0);
+        // Buscar pedidos recentes — tenta buyer primeiro, depois seller (mesmo padrão de ml.js)
+        const fetchOrders = async (role) => {
+          const url = `https://api.mercadolibre.com/orders/search?${role}=${mlConfig.ml_user_id}&limit=50&sort=date_desc`;
+          const r = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+          if (!r.ok) return [];
+          const d = await r.json();
+          return d.results || [];
+        };
 
-          // Contar envios em trânsito
-          for (const order of orders.slice(0, 20)) {
-            if (!order.shipping?.id) continue;
-            try {
-              const shipRes = await fetch(`https://api.mercadolibre.com/shipments/${order.shipping.id}`, {
-                headers: { Authorization: `Bearer ${token}` },
-              });
-              if (shipRes.ok) {
-                const ship = await shipRes.json();
-                if (['shipped', 'handling', 'ready_to_ship'].includes(ship.status)) mlEmTransito++;
-              }
-            } catch { /* ignora envio específico com erro */ }
-          }
+        let orders = await fetchOrders('buyer');
+        if (orders.length === 0) orders = await fetchOrders('seller');
+
+        // Filtrar pedidos do mês corrente
+        const now = new Date();
+        const startMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+        const ordersMes = orders.filter(o => {
+          if (o.status === 'cancelled') return false;
+          const created = new Date(o.date_created || o.last_updated);
+          return created >= startMonth;
+        });
+
+        mlComprasMes = ordersMes.reduce((sum, o) => sum + Number(o.total_amount || 0), 0);
+        console.log('[LOG] ML compras do mês:', { totalOrders: orders.length, ordersMes: ordersMes.length, valor: mlComprasMes });
+
+        // Contar envios em trânsito (dos pedidos do mês)
+        for (const order of ordersMes.slice(0, 20)) {
+          if (!order.shipping?.id) continue;
+          try {
+            const shipRes = await fetch(`https://api.mercadolibre.com/shipments/${order.shipping.id}`, {
+              headers: { Authorization: `Bearer ${token}` },
+            });
+            if (shipRes.ok) {
+              const ship = await shipRes.json();
+              if (['shipped', 'handling', 'ready_to_ship'].includes(ship.status)) mlEmTransito++;
+            }
+          } catch { /* ignora envio específico com erro */ }
         }
       }
     } catch (mlErr) {
       console.warn('[LOG] ML dashboard fetch falhou:', mlErr.message);
     }
 
-    res.json({
+    const result = {
       fornecedoresAtivos: forn.filter(f => f.ativo).length,
       solicitacoesPendentes: solic.filter(s => s.status === 'pendente').length,
       solicitacoesAprovadas: solic.filter(s => s.status === 'aprovado').length,
@@ -89,7 +108,11 @@ router.get('/dashboard', async (req, res) => {
       pedidosRecebidos: ped.filter(p => p.status === 'recebido').length,
       valorTotalPedidos: ped.filter(p => p.status !== 'cancelado').reduce((s, p) => s + Number(p.valor_total), 0),
       mlComprasMes,
-    });
+      _lastUpdate: new Date().toISOString(),
+    };
+
+    dashboardCache = { data: result, timestamp: Date.now() };
+    res.json(result);
   } catch (e) {
     console.error('[LOG] Dashboard:', e.message);
     res.status(500).json({ error: 'Erro ao carregar dashboard logística' });

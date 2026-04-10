@@ -265,7 +265,7 @@ export const financeiro = {
 };
 
 export const logistica = {
-  dashboard: () => get('/logistica/dashboard'),
+  dashboard: (refresh = false) => get('/logistica/dashboard' + (refresh ? '?refresh=1' : '')),
   fornecedores: {
     list: (params) => get('/logistica/fornecedores' + (params ? '?' + new URLSearchParams(params) : '')),
     create: (data) => post('/logistica/fornecedores', data),
