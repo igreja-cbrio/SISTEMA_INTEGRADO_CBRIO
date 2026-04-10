@@ -13,8 +13,8 @@ async function generateDigestsInBackground(attachmentRows) {
     if (!att.sharepoint_item_id && !att.supabase_path) continue;
     try {
       const buffer = await downloadFile(att.supabase_path, att.sharepoint_item_id);
-      const text = await extractText(buffer, att.file_type, att.file_name, 8000);
-      if (!text || text.startsWith('[')) continue; // binário ou erro
+      const text = (await extractText(buffer, att.file_type, att.file_name, 8000)).trim();
+      if (!text || text.length < 50 || text.startsWith('[')) continue; // binário, erro ou sem conteúdo
 
       const Anthropic = require('@anthropic-ai/sdk');
       const client = new Anthropic();
