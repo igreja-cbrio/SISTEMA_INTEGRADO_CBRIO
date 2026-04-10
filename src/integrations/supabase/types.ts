@@ -14,6 +14,328 @@ export type Database = {
   }
   public: {
     Tables: {
+      log_fornecedores: {
+        Row: {
+          ativo: boolean
+          categoria: string | null
+          cnpj: string | null
+          contato: string | null
+          created_at: string
+          email: string | null
+          id: string
+          nome_fantasia: string | null
+          observacoes: string | null
+          razao_social: string
+          telefone: string | null
+        }
+        Insert: {
+          ativo?: boolean
+          categoria?: string | null
+          cnpj?: string | null
+          contato?: string | null
+          created_at?: string
+          email?: string | null
+          id?: string
+          nome_fantasia?: string | null
+          observacoes?: string | null
+          razao_social: string
+          telefone?: string | null
+        }
+        Update: {
+          ativo?: boolean
+          categoria?: string | null
+          cnpj?: string | null
+          contato?: string | null
+          created_at?: string
+          email?: string | null
+          id?: string
+          nome_fantasia?: string | null
+          observacoes?: string | null
+          razao_social?: string
+          telefone?: string | null
+        }
+        Relationships: []
+      }
+      log_movimentacoes: {
+        Row: {
+          codigo_item: string | null
+          created_at: string
+          data_movimentacao: string
+          descricao: string
+          destino: string | null
+          id: string
+          observacoes: string | null
+          origem: string | null
+          quantidade: number
+          responsavel_id: string | null
+          tipo: string
+        }
+        Insert: {
+          codigo_item?: string | null
+          created_at?: string
+          data_movimentacao?: string
+          descricao: string
+          destino?: string | null
+          id?: string
+          observacoes?: string | null
+          origem?: string | null
+          quantidade?: number
+          responsavel_id?: string | null
+          tipo: string
+        }
+        Update: {
+          codigo_item?: string | null
+          created_at?: string
+          data_movimentacao?: string
+          descricao?: string
+          destino?: string | null
+          id?: string
+          observacoes?: string | null
+          origem?: string | null
+          quantidade?: number
+          responsavel_id?: string | null
+          tipo?: string
+        }
+        Relationships: []
+      }
+      log_notas_fiscais: {
+        Row: {
+          chave_acesso: string | null
+          created_at: string
+          created_by: string | null
+          data_emissao: string
+          fornecedor_id: string | null
+          id: string
+          numero: string
+          observacoes: string | null
+          pedido_id: string | null
+          serie: string | null
+          tipo: string
+          valor: number | null
+        }
+        Insert: {
+          chave_acesso?: string | null
+          created_at?: string
+          created_by?: string | null
+          data_emissao?: string
+          fornecedor_id?: string | null
+          id?: string
+          numero: string
+          observacoes?: string | null
+          pedido_id?: string | null
+          serie?: string | null
+          tipo?: string
+          valor?: number | null
+        }
+        Update: {
+          chave_acesso?: string | null
+          created_at?: string
+          created_by?: string | null
+          data_emissao?: string
+          fornecedor_id?: string | null
+          id?: string
+          numero?: string
+          observacoes?: string | null
+          pedido_id?: string | null
+          serie?: string | null
+          tipo?: string
+          valor?: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "log_notas_fiscais_fornecedor_id_fkey"
+            columns: ["fornecedor_id"]
+            isOneToOne: false
+            referencedRelation: "log_fornecedores"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "log_notas_fiscais_pedido_id_fkey"
+            columns: ["pedido_id"]
+            isOneToOne: false
+            referencedRelation: "log_pedidos"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      log_pedido_itens: {
+        Row: {
+          created_at: string
+          descricao: string
+          id: string
+          pedido_id: string
+          quantidade: number
+          unidade: string
+          valor_unitario: number
+        }
+        Insert: {
+          created_at?: string
+          descricao: string
+          id?: string
+          pedido_id: string
+          quantidade?: number
+          unidade?: string
+          valor_unitario?: number
+        }
+        Update: {
+          created_at?: string
+          descricao?: string
+          id?: string
+          pedido_id?: string
+          quantidade?: number
+          unidade?: string
+          valor_unitario?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "log_pedido_itens_pedido_id_fkey"
+            columns: ["pedido_id"]
+            isOneToOne: false
+            referencedRelation: "log_pedidos"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      log_pedidos: {
+        Row: {
+          codigo_rastreio: string | null
+          created_at: string
+          created_by: string | null
+          data_pedido: string
+          data_prevista: string | null
+          descricao: string
+          fornecedor_id: string | null
+          id: string
+          solicitacao_id: string | null
+          status: string
+          transportadora: string | null
+          valor_total: number
+        }
+        Insert: {
+          codigo_rastreio?: string | null
+          created_at?: string
+          created_by?: string | null
+          data_pedido?: string
+          data_prevista?: string | null
+          descricao: string
+          fornecedor_id?: string | null
+          id?: string
+          solicitacao_id?: string | null
+          status?: string
+          transportadora?: string | null
+          valor_total?: number
+        }
+        Update: {
+          codigo_rastreio?: string | null
+          created_at?: string
+          created_by?: string | null
+          data_pedido?: string
+          data_prevista?: string | null
+          descricao?: string
+          fornecedor_id?: string | null
+          id?: string
+          solicitacao_id?: string | null
+          status?: string
+          transportadora?: string | null
+          valor_total?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "log_pedidos_fornecedor_id_fkey"
+            columns: ["fornecedor_id"]
+            isOneToOne: false
+            referencedRelation: "log_fornecedores"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "log_pedidos_solicitacao_id_fkey"
+            columns: ["solicitacao_id"]
+            isOneToOne: false
+            referencedRelation: "log_solicitacoes_compra"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      log_recebimentos: {
+        Row: {
+          created_at: string
+          id: string
+          observacoes: string | null
+          pedido_id: string | null
+          recebido_por: string | null
+          status: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          observacoes?: string | null
+          pedido_id?: string | null
+          recebido_por?: string | null
+          status?: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          observacoes?: string | null
+          pedido_id?: string | null
+          recebido_por?: string | null
+          status?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "log_recebimentos_pedido_id_fkey"
+            columns: ["pedido_id"]
+            isOneToOne: false
+            referencedRelation: "log_pedidos"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      log_solicitacoes_compra: {
+        Row: {
+          aprovado_por: string | null
+          area: string | null
+          created_at: string
+          descricao: string | null
+          id: string
+          justificativa: string | null
+          observacoes: string | null
+          solicitante_id: string | null
+          status: string
+          titulo: string
+          urgencia: string
+          valor_estimado: number | null
+        }
+        Insert: {
+          aprovado_por?: string | null
+          area?: string | null
+          created_at?: string
+          descricao?: string | null
+          id?: string
+          justificativa?: string | null
+          observacoes?: string | null
+          solicitante_id?: string | null
+          status?: string
+          titulo: string
+          urgencia?: string
+          valor_estimado?: number | null
+        }
+        Update: {
+          aprovado_por?: string | null
+          area?: string | null
+          created_at?: string
+          descricao?: string | null
+          id?: string
+          justificativa?: string | null
+          observacoes?: string | null
+          solicitante_id?: string | null
+          status?: string
+          titulo?: string
+          urgencia?: string
+          valor_estimado?: number | null
+        }
+        Relationships: []
+      }
       solicitacoes: {
         Row: {
           area_solicitante: string | null
