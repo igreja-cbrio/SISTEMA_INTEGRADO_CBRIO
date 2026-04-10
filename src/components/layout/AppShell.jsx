@@ -92,14 +92,17 @@ const NAV_ITEMS = [
 ];
 
 export default function AppShell() {
-  const { profile, role, signOut, isAdmin, canRH, canFinanceiro, canLogistica, canPatrimonio, canMembresia, canProjetos, canExpansao, canAgenda, canIA } = useAuth();
+  const { profile, role, signOut, isAdmin, modulePerms, canRH, canFinanceiro, canLogistica, canPatrimonio, canMembresia, canProjetos, canExpansao, canAgenda, canIA } = useAuth();
   const permMap = { canRH, canFinanceiro, canLogistica, canPatrimonio, canMembresia, canProjetos, canExpansao, canAgenda, canIA };
+
+  // If permissions haven't loaded yet (modulePerms is null), show all items
+  const permsLoaded = modulePerms !== null || isAdmin;
 
   const filteredNavItems = NAV_ITEMS.map(section => ({
     ...section,
     subMenus: section.subMenus.map(sub => ({
       ...sub,
-      items: sub.items.filter(item => !item.perm || permMap[item.perm] !== false),
+      items: sub.items.filter(item => !item.perm || !permsLoaded || permMap[item.perm] !== false),
     })).filter(sub => sub.items.length > 0),
   })).filter(section => section.subMenus.length > 0);
 
