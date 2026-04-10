@@ -11,8 +11,29 @@ const CATEGORIA_MODULO = {
   compras: 'logistica',
   reembolso: 'financeiro',
   espaco: 'administrativo',
+  infraestrutura: 'administrativo',
   ferias: 'rh',
   outro: 'administrativo',
+};
+
+// Map módulo → categorias (for granular permission filtering)
+const MODULO_CATEGORIAS = {
+  ti: ['ti'],
+  logistica: ['compras'],
+  financeiro: ['reembolso'],
+  administrativo: ['espaco', 'infraestrutura', 'outro'],
+  rh: ['ferias'],
+};
+
+// Map modulePerms key → backend modulo
+const PERM_TO_MODULO = {
+  'DP': 'rh',
+  'Pessoas': 'rh',
+  'Financeiro': 'financeiro',
+  'Logística': 'logistica',
+  'Patrimônio': 'administrativo',
+  'Membresia': 'administrativo',
+  'TI': 'ti',
 };
 
 // ── LIST (filtered by role) ─────────────────────────────────
@@ -27,10 +48,32 @@ router.get('/', async (req, res) => {
     if (categoria) q = q.eq('categoria', categoria);
     if (status) q = q.eq('status', status);
 
-    // If 'mine' flag or user is not admin/diretor, filter to own
     const role = req.userProfile?.role;
-    if (mine === 'true' || !['admin', 'diretor'].includes(role)) {
+
+    if (mine === 'true') {
+      // Explicit "mine" flag — only own
       q = q.eq('solicitante_id', req.userId);
+    } else if (['admin', 'diretor'].includes(role)) {
+      // Admin/diretor sees all — no filter
+    } else {
+      // Check granular module permissions to determine which categories user can see
+      const modulePerms = req.userProfile?.granular?.modulePerms || {};
+      const allowedCategories = new Set();
+
+      for (const [permKey, modulo] of Object.entries(PERM_TO_MODULO)) {
+        if (modulePerms[permKey] && modulePerms[permKey].leitura >= 2) {
+          const cats = MODULO_CATEGORIAS[modulo] || [];
+          cats.forEach(c => allowedCategories.add(c));
+        }
+      }
+
+      if (allowedCategories.size > 0) {
+        // Responsável: sees own + categories they have permission for
+        q = q.or(`solicitante_id.eq.${req.userId},categoria.in.(${[...allowedCategories].join(',')})`);
+      } else {
+        // Regular collaborator: only own
+        q = q.eq('solicitante_id', req.userId);
+      }
     }
 
     const { data, error } = await q;
