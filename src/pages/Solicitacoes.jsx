@@ -249,7 +249,7 @@ export default function Solicitacoes() {
   );
 }
 
-function SolicitacaoCard({ item, isAdmin, onStatusChange, onClick }) {
+function SolicitacaoCard({ item, isAdmin, onStatusChange, onClick, draggable }) {
   const cat = getCatMeta(item.categoria);
   const urg = getUrgMeta(item.urgencia);
   const solicitante = item.solicitante?.name || 'Desconhecido';
@@ -257,9 +257,11 @@ function SolicitacaoCard({ item, isAdmin, onStatusChange, onClick }) {
 
   return (
     <Card
-      className="p-3 cursor-pointer hover:shadow-md transition-shadow border-l-4"
+      className={`p-3 cursor-pointer hover:shadow-md transition-shadow border-l-4 ${draggable ? 'active:opacity-60 active:scale-[0.97]' : ''}`}
       style={{ borderLeftColor: item.urgencia === 'critica' ? 'var(--destructive)' : item.urgencia === 'alta' ? '#f59e0b' : 'transparent' }}
       onClick={onClick}
+      draggable={draggable}
+      onDragStart={e => { e.dataTransfer.setData('text/plain', item.id); e.dataTransfer.effectAllowed = 'move'; }}
     >
       <div className="flex items-start justify-between gap-2 mb-2">
         <Badge className={`text-[10px] px-1.5 py-0.5 ${cat.color}`}>{cat.label}</Badge>
