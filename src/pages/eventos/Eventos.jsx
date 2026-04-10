@@ -1364,29 +1364,36 @@ export default function Eventos() {
                     <div style={{ position: 'absolute', left: `${tPct}%`, top: 0, width: 2, height: '100%', background: '#ef4444', zIndex: 2 }} />
                     <div style={{ position: 'absolute', left: `${tPct}%`, top: -1, transform: 'translateX(-50%)', fontSize: 8, fontWeight: 700, color: '#ef4444', background: 'var(--cbrio-card)', padding: '0 3px', borderRadius: 3, zIndex: 3 }}>hoje</div>
                   </div>
-                  {group.phases.map(ph => {
-                    const si = normDate(ph.data_inicio_prevista); const ei = normDate(ph.data_fim_prevista);
-                    if (!si || !ei) return <div key={ph.id} style={{ height: BH, borderBottom: '1px solid var(--cbrio-border)' }} />;
-                    const lp0 = dPct(si); const rp = dPct(ei); const wp = Math.max(rp - lp0, 2);
-                    const lp = si === ei ? lp0 + 0.5 : lp0; // Dia D: ajuste fino pra manter escadinha
-                    const phT = aTasks.filter(t => t.event_phase_id === ph.id);
-                    const phD = phT.filter(t => t.status === 'concluida').length;
-                    const isDone = ph.status === 'concluida' || (phT.length > 0 && phD === phT.length) || phT.length === 0;
-                    const endD = new Date(ei + 'T12:00:00');
-                    const diff2 = Math.ceil((endD - new Date()) / 86400000);
-                    const barC = isDone ? '#d1d5db' : diff2 < 0 ? '#ef4444' : diff2 <= 3 ? '#f59e0b' : '#10b981';
-                    const dTxt = isDone ? '✓' : diff2 < 0 ? `${Math.abs(diff2)}d atrás` : diff2 === 0 ? 'Hoje' : `${diff2}d`;
-                    return (
-                      <div key={ph.id} style={{ position: 'relative', height: BH, borderBottom: '1px solid var(--cbrio-border)' }}>
-                        {mL.map((m, i) => (<div key={i} style={{ position: 'absolute', left: `${m.pct}%`, top: 0, width: 1, height: '100%', background: 'var(--cbrio-border)', opacity: 0.3 }} />))}
-                        <div style={{ position: 'absolute', left: `${tPct}%`, top: 0, width: 2, height: '100%', background: '#ef4444', zIndex: 2, opacity: 0.4 }} />
-                        <div title={`${ph.nome_fase}\n${fmtDate(si)} → ${fmtDate(ei)}\n${dTxt}`}
-                          style={{ position: 'absolute', top: 4, height: BH - 8, borderRadius: 6, left: `${lp}%`, width: `${wp}%`, minWidth: 50, background: barC, opacity: isDone ? 0.5 : 0.9, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '0 6px', overflow: 'hidden' }}>
-                          <span style={{ fontSize: 11, fontWeight: 700, color: '#fff', whiteSpace: 'nowrap' }}>{dTxt}</span>
+                  {(() => {
+                    const BAR_W = 4.5; // largura minima visual de cada barra em %
+                    const GAP = 0.3; // gap entre barras em %
+                    let prevRight = 0; // rastreia onde a barra anterior terminou
+                    return group.phases.map(ph => {
+                      const si = normDate(ph.data_inicio_prevista); const ei = normDate(ph.data_fim_prevista);
+                      if (!si || !ei) return <div key={ph.id} style={{ height: BH, borderBottom: '1px solid var(--cbrio-border)' }} />;
+                      const realLeft = dPct(si);
+                      const lp = Math.max(realLeft, prevRight + GAP); // escadinha: nunca antes da anterior
+                      const wp = BAR_W;
+                      prevRight = lp + wp;
+                      const phT = aTasks.filter(t => t.event_phase_id === ph.id);
+                      const phD = phT.filter(t => t.status === 'concluida').length;
+                      const isDone = ph.status === 'concluida' || (phT.length > 0 && phD === phT.length) || phT.length === 0;
+                      const endD = new Date(ei + 'T12:00:00');
+                      const diff2 = Math.ceil((endD - new Date()) / 86400000);
+                      const barC = isDone ? '#d1d5db' : diff2 < 0 ? '#ef4444' : diff2 <= 3 ? '#f59e0b' : '#10b981';
+                      const dTxt = isDone ? '✓' : diff2 < 0 ? `${Math.abs(diff2)}d atrás` : diff2 === 0 ? 'Hoje' : `${diff2}d`;
+                      return (
+                        <div key={ph.id} style={{ position: 'relative', height: BH, borderBottom: '1px solid var(--cbrio-border)' }}>
+                          {mL.map((m, i) => (<div key={i} style={{ position: 'absolute', left: `${m.pct}%`, top: 0, width: 1, height: '100%', background: 'var(--cbrio-border)', opacity: 0.3 }} />))}
+                          <div style={{ position: 'absolute', left: `${tPct}%`, top: 0, width: 2, height: '100%', background: '#ef4444', zIndex: 2, opacity: 0.4 }} />
+                          <div title={`${ph.nome_fase}\n${fmtDate(si)} → ${fmtDate(ei)}\n${dTxt}`}
+                            style={{ position: 'absolute', top: 4, height: BH - 8, borderRadius: 6, left: `${lp}%`, width: `${wp}%`, background: barC, opacity: isDone ? 0.5 : 0.9, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '0 6px', overflow: 'hidden' }}>
+                            <span style={{ fontSize: 11, fontWeight: 700, color: '#fff', whiteSpace: 'nowrap' }}>{dTxt}</span>
+                          </div>
                         </div>
-                      </div>
-                    );
-                  })}
+                      );
+                    });
+                  })()}
                 </div>
               </div>
             </div>
