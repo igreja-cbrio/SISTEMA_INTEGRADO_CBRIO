@@ -69,7 +69,14 @@ const styles = {
 
 const fmtDate = (d) => d ? new Date(d + 'T12:00:00').toLocaleDateString('pt-BR') : '—';
 const fmtMoney = (v) => v != null ? `R$ ${Number(v).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}` : '—';
-const fmtCodigo = (c) => c != null ? String(c).padStart(5, '0') : '—';
+const fmtCodigo = (c) => {
+  if (c == null) return '—';
+  const s = String(c);
+  const m = s.match(/^([A-Z]+-?)(\d+)$/);
+  if (m) return m[1] + m[2].padStart(5, '0');
+  if (/^\d+$/.test(s)) return s.padStart(5, '0');
+  return s;
+};
 
 function Modal({ open, onClose, title, children, footer }) {
   if (!open) return null;
