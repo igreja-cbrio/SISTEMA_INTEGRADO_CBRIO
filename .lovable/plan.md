@@ -2,50 +2,58 @@
 
 ## Problem
 
-The Supabase client defaults to returning a maximum of **1,000 rows** per query. The `pat_bens` table has **4,264 rows**, so the dashboard endpoint only processes 1,000 rows, resulting in incorrect totals for everything: item counts, value totals, and category/location breakdowns.
+The dashboard de Patrimônio está carregando infinitamente. O código no backend (`backend/routes/patrimonio.js`) já foi corrigido para usar agregação SQL via `pg` Pool, mas o problema persiste.
 
-**Displayed**: 1,000 items / R$ 1.137.543,21
-**Actual**: 4,264 items / R$ 13.428.055,66
+**Causa provável**: O Vercel executa o backend como serverless function. O `pg` Pool com `max: 10` e `connectionTimeoutMillis: 5000` pode estar falhando silenciosamente em ambiente serverless — conexões persistentes (pool) não funcionam bem em serverless, onde cada invocação pode ser um cold start.
+
+Além disso, a query pode estar dando timeout ou erro de conexão, e o `catch` retorna 500, mas o frontend pode não estar tratando o erro adequadamente, ficando em "Carregando..." infinitamente.
 
 ## Solution
 
-Modify `backend/routes/patrimonio.js` to use a **database-level aggregation** approach instead of fetching all rows and computing in JavaScript. This is both more correct and more efficient.
+### 1. Fix pg Pool para ambiente serverless (`backend/utils/supabase.js`)
 
-### Changes to `backend/routes/patrimonio.js`
+Reduzir o pool size e aumentar o timeout para funcionar melhor em serverless:
 
-Replace the dashboard endpoint to use the `pg` pool for SQL aggregation queries instead of fetching all rows via the Supabase JS client:
-
-```sql
--- Total counts and value by status
-SELECT 
-  COUNT(*) as total,
-  COUNT(*) FILTER (WHERE status = 'ativo') as ativos,
-  COUNT(*) FILTER (WHERE status = 'manutencao') as manutencao,
-  COUNT(*) FILTER (WHERE status = 'baixado') as baixados,
-  COUNT(*) FILTER (WHERE status = 'extraviado') as extraviados,
-  COALESCE(SUM(valor_aquisicao), 0) as valor_total
-FROM pat_bens;
-
--- Counts by category
-SELECT COALESCE(c.nome, 'Sem categoria') as nome, COUNT(*) as qtd
-FROM pat_bens b LEFT JOIN pat_categorias c ON b.categoria_id = c.id
-GROUP BY c.nome;
-
--- Counts by location
-SELECT COALESCE(l.nome, 'Sem localização') as nome, COUNT(*) as qtd
-FROM pat_bens b LEFT JOIN pat_localizacoes l ON b.localizacao_id = l.id
-GROUP BY l.nome;
-
--- Open inventories count
-SELECT COUNT(*) as total FROM pat_inventarios WHERE status = 'em_andamento';
+```javascript
+const pool = new Pool({
+  connectionString: process.env.DATABASE_URL,
+  max: 1,  // serverless = 1 connection
+  idleTimeoutMillis: 10000,
+  connectionTimeoutMillis: 10000,
+});
 ```
 
-This uses the `query` function from `backend/utils/supabase.js` (which uses the `pg` Pool) to run SQL directly, bypassing the 1000-row limit entirely and being far more efficient.
+### 2. Adicionar tratamento de erro no frontend (`src/pages/admin/patrimonio/Patrimonio.jsx`)
 
-**Alternative quick fix**: Add `.range(0, 99999)` to the Supabase query, but SQL aggregation is the proper solution.
+Garantir que o frontend saia do estado de loading quando receber um erro:
+
+- No `useEffect` que carrega o dashboard, adicionar `.catch()` que seta o loading como `false` e mostra uma mensagem de erro ao invés de ficar eternamente em "Carregando..."
+
+### 3. Adicionar fallback com Supabase client no dashboard
+
+Se a query SQL falhar, usar o client Supabase como fallback (com `.range(0, 99999)` para evitar o limite de 1000 rows):
+
+```javascript
+router.get('/dashboard', async (req, res) => {
+  try {
+    // Tenta SQL direto primeiro
+    const [totais, ...] = await Promise.all([...]);
+    // ...responde normalmente
+  } catch (e) {
+    console.error('[PAT] Dashboard SQL falhou:', e.message);
+    // Fallback: tenta via Supabase client
+    try {
+      const { data } = await supabase.from('pat_bens').select('*').range(0, 99999);
+      // calcula totais em JS como fallback
+    } catch (e2) {
+      res.status(500).json({ error: 'Erro ao carregar dashboard' });
+    }
+  }
+});
+```
 
 ### Files modified
-- `backend/routes/patrimonio.js` — rewrite the `/dashboard` handler to use SQL aggregation via the `pg` pool
-
-No frontend changes needed — the response shape stays the same.
+- `backend/utils/supabase.js` — ajustar pool para serverless (max: 1, timeout maior)
+- `backend/routes/patrimonio.js` — adicionar logging e fallback no dashboard
+- `src/pages/admin/patrimonio/Patrimonio.jsx` — tratar erro no carregamento do dashboard
 
