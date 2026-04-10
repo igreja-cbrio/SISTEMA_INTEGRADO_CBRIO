@@ -322,7 +322,7 @@ export default function Logistica() {
         ))}
       </div>
 
-      {tab === 0 && <DashboardTab dash={dash} onRefresh={() => fetchDash(true)} />}
+      {tab === 0 && <DashboardTab dash={dash} onRefresh={() => fetchDash(true)} onNavigate={setTab} />}
       {tab === 1 && (
         <FornecedoresTab data={fornecedores} loading={loading} isDiretor={isDiretor}
           filtroAtivo={filtroFornAtivo} setFiltroAtivo={setFiltroFornAtivo}
@@ -461,11 +461,19 @@ const STAT_SVGS = [
   <svg key="s6" style={{ position: 'absolute', right: 0, top: 0, height: '100%', width: '67%', pointerEvents: 'none', zIndex: 0 }} viewBox="0 0 300 200" fill="none"><circle cx="220" cy="110" r="88" fill="#fff" fillOpacity="0.08" /><circle cx="275" cy="55" r="52" fill="#fff" fillOpacity="0.09" /></svg>,
 ];
 
-function StatCard({ label, value, bg, svg, hint }) {
+function StatCard({ label, value, bg, svg, hint, onClick }) {
   return (
     <div
       className="cbrio-kpi"
-      style={{ position: 'relative', overflow: 'hidden', background: bg, borderRadius: 12, padding: '20px 24px', color: '#fff', minHeight: 100 }}
+      onClick={onClick}
+      style={{
+        position: 'relative', overflow: 'hidden', background: bg, borderRadius: 12,
+        padding: '20px 24px', color: '#fff', minHeight: 100,
+        cursor: onClick ? 'pointer' : 'default',
+        transition: 'transform 0.15s ease, box-shadow 0.15s ease',
+      }}
+      onMouseEnter={(e) => { if (onClick) { e.currentTarget.style.transform = 'translateY(-2px)'; e.currentTarget.style.boxShadow = '0 8px 24px rgba(0,0,0,0.15)'; } }}
+      onMouseLeave={(e) => { if (onClick) { e.currentTarget.style.transform = 'translateY(0)'; e.currentTarget.style.boxShadow = 'none'; } }}
     >
       {svg}
       <div style={{ position: 'relative', zIndex: 1 }}>
@@ -477,16 +485,17 @@ function StatCard({ label, value, bg, svg, hint }) {
   );
 }
 
-function DashboardTab({ dash, onRefresh }) {
+function DashboardTab({ dash, onRefresh, onNavigate }) {
   if (!dash) return <div style={styles.empty}>Carregando dashboard...</div>;
+  // Tab indices: 1=Fornecedores, 2=Solicitações, 3=Pedidos, 5=Compras ML
   const kpis = [
-    { label: 'Fornecedores Ativos', value: dash.fornecedoresAtivos ?? 0, bg: '#00B39D' },
-    { label: 'Solic. Pendentes', value: dash.solicitacoesPendentes ?? 0, bg: '#f59e0b' },
-    { label: 'Ped. Aguardando', value: dash.pedidosAguardando ?? 0, bg: '#3b82f6' },
-    { label: 'Ped. Em Trânsito', value: dash.pedidosEmTransito ?? 0, bg: '#8b5cf6' },
-    { label: 'Ped. Recebidos', value: dash.pedidosRecebidos ?? 0, bg: '#10b981' },
-    { label: 'Solic. Aprovadas', value: dash.solicitacoesAprovadas ?? 0, bg: '#6b7280' },
-    { label: 'Compras do Mês', value: fmtMoney(dash.mlComprasMes ?? 0), bg: '#00B39D', hint: 'Apenas compras do Mercado Livre no mês corrente' },
+    { label: 'Fornecedores Ativos', value: dash.fornecedoresAtivos ?? 0, bg: '#00B39D', tab: 1 },
+    { label: 'Solic. Pendentes', value: dash.solicitacoesPendentes ?? 0, bg: '#f59e0b', tab: 2 },
+    { label: 'Ped. Aguardando', value: dash.pedidosAguardando ?? 0, bg: '#3b82f6', tab: 3 },
+    { label: 'Ped. Em Trânsito', value: dash.pedidosEmTransito ?? 0, bg: '#8b5cf6', tab: 3 },
+    { label: 'Ped. Recebidos', value: dash.pedidosRecebidos ?? 0, bg: '#10b981', tab: 3 },
+    { label: 'Solic. Aprovadas', value: dash.solicitacoesAprovadas ?? 0, bg: '#6b7280', tab: 2 },
+    { label: 'Compras do Mês', value: fmtMoney(dash.mlComprasMes ?? 0), bg: '#00B39D', hint: 'Apenas compras do Mercado Livre no mês corrente', tab: 5 },
   ];
   return (
     <>
@@ -498,7 +507,7 @@ function DashboardTab({ dash, onRefresh }) {
         <Button variant="ghost" size="sm" onClick={onRefresh} title="Atualizar (ignora cache)">🔄 Atualizar</Button>
       </div>
       <div className="cbrio-stagger" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 12, marginBottom: 24 }}>
-        {kpis.map((k, i) => <StatCard key={k.label} label={k.label} value={k.value} bg={k.bg} svg={STAT_SVGS[i % STAT_SVGS.length]} hint={k.hint} />)}
+        {kpis.map((k, i) => <StatCard key={k.label} label={k.label} value={k.value} bg={k.bg} svg={STAT_SVGS[i % STAT_SVGS.length]} hint={k.hint} onClick={() => onNavigate(k.tab)} />)}
       </div>
     </>
   );
