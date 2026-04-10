@@ -10,7 +10,7 @@ import { Label } from '../components/ui/label';
 import { Textarea } from '../components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select';
 import { ScrollArea } from '../components/ui/scroll-area';
-import { Plus, Filter, ClipboardList, Clock, CheckCircle2, XCircle, Search as SearchIcon, ArrowRight } from 'lucide-react';
+import { Plus, Filter, ClipboardList, Clock, CheckCircle2, XCircle, Search as SearchIcon, ArrowRight, List } from 'lucide-react';
 import { toast } from 'sonner';
 
 const CATEGORIAS = [
@@ -18,6 +18,7 @@ const CATEGORIAS = [
   { value: 'compras', label: 'Compras', color: 'bg-orange-500/15 text-orange-700 dark:text-orange-400' },
   { value: 'reembolso', label: 'Reembolso', color: 'bg-green-500/15 text-green-700 dark:text-green-400' },
   { value: 'espaco', label: 'Reserva de Espaço', color: 'bg-purple-500/15 text-purple-700 dark:text-purple-400' },
+  { value: 'infraestrutura', label: 'Infraestrutura', color: 'bg-yellow-500/15 text-yellow-700 dark:text-yellow-400' },
   { value: 'ferias', label: 'Férias', color: 'bg-cyan-500/15 text-cyan-700 dark:text-cyan-400' },
   { value: 'outro', label: 'Outro', color: 'bg-muted text-muted-foreground' },
 ];
@@ -37,15 +38,26 @@ const KANBAN_COLUMNS = [
   { key: 'concluido', label: 'Concluído', icon: CheckCircle2, color: 'border-t-emerald-600' },
 ];
 
+const STATUS_LABELS = {
+  pendente: { label: 'Pendente', color: 'bg-amber-500/15 text-amber-700 dark:text-amber-400' },
+  em_analise: { label: 'Em Análise', color: 'bg-blue-500/15 text-blue-700 dark:text-blue-400' },
+  aprovado: { label: 'Aprovado', color: 'bg-green-500/15 text-green-700 dark:text-green-400' },
+  rejeitado: { label: 'Rejeitado', color: 'bg-red-500/15 text-red-700 dark:text-red-400' },
+  concluido: { label: 'Concluído', color: 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-400' },
+};
+
 function getCatMeta(cat) {
-  return CATEGORIAS.find(c => c.value === cat) || CATEGORIAS[5];
+  return CATEGORIAS.find(c => c.value === cat) || CATEGORIAS[CATEGORIAS.length - 1];
 }
 function getUrgMeta(urg) {
   return URGENCIAS.find(u => u.value === urg) || URGENCIAS[1];
 }
+function getStatusMeta(status) {
+  return STATUS_LABELS[status] || { label: status, color: 'bg-muted text-muted-foreground' };
+}
 
 export default function Solicitacoes() {
-  const { profile, isAdmin } = useAuth();
+  const { profile, isAdmin, canAccessModule } = useAuth();
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
   const [filterCat, setFilterCat] = useState('todas');
@@ -53,12 +65,16 @@ export default function Solicitacoes() {
   const [detailItem, setDetailItem] = useState(null);
   const [dragOverCol, setDragOverCol] = useState(null);
 
+  // Determine if user is a "responsável" (can see Kanban)
+  const isResponsavel = isAdmin || canAccessModule(['DP', 'Pessoas', 'Financeiro', 'Logística', 'Patrimônio', 'Membresia', 'TI']);
+
   // Form state
   const [form, setForm] = useState({ titulo: '', descricao: '', justificativa: '', categoria: '', urgencia: 'normal', valor_estimado: '' });
 
   async function load() {
     try {
-      const data = await api.list();
+      const params = isResponsavel ? {} : { mine: 'true' };
+      const data = await api.list(params);
       setItems(data);
     } catch (e) {
       toast.error(e.message);
@@ -118,24 +134,26 @@ export default function Solicitacoes() {
             <ClipboardList className="h-6 w-6 text-primary" />
             Solicitações
           </h1>
-          <p className="text-sm text-muted-foreground mt-1">TI, compras, reembolso, espaços e férias</p>
+          <p className="text-sm text-muted-foreground mt-1">TI, compras, reembolso, infraestrutura, espaços e férias</p>
         </div>
         <div className="flex items-center gap-3">
-          {/* Category filter */}
-          <div className="flex items-center gap-2">
-            <Filter className="h-4 w-4 text-muted-foreground" />
-            <Select value={filterCat} onValueChange={setFilterCat}>
-              <SelectTrigger className="w-[160px] h-9 text-sm">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="todas">Todas</SelectItem>
-                {CATEGORIAS.map(c => <SelectItem key={c.value} value={c.value}>{c.label}</SelectItem>)}
-              </SelectContent>
-            </Select>
-          </div>
+          {/* Category filter — only for responsáveis */}
+          {isResponsavel && (
+            <div className="flex items-center gap-2">
+              <Filter className="h-4 w-4 text-muted-foreground" />
+              <Select value={filterCat} onValueChange={setFilterCat}>
+                <SelectTrigger className="w-[160px] h-9 text-sm">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="todas">Todas</SelectItem>
+                  {CATEGORIAS.map(c => <SelectItem key={c.value} value={c.value}>{c.label}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </div>
+          )}
 
-          {/* New request */}
+          {/* New request — everyone */}
           <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
             <DialogTrigger asChild>
               <Button size="sm" className="gap-1.5">
@@ -195,23 +213,24 @@ export default function Solicitacoes() {
         </div>
       </div>
 
-      {/* Kanban board */}
+      {/* Content: Kanban for responsáveis, List for collaborators */}
       {loading ? (
         <div className="flex items-center justify-center min-h-[40vh]">
           <div className="h-6 w-6 animate-spin rounded-full border-2 border-muted-foreground/30 border-t-primary" />
         </div>
-      ) : (
+      ) : isResponsavel ? (
+        /* ── Kanban Board (managers/admins) ── */
         <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-5 gap-4">
           {columns.map(col => (
             <div
               key={col.key}
               className={`flex flex-col rounded-lg transition-colors ${dragOverCol === col.key ? 'bg-accent/50 ring-2 ring-primary/30' : ''}`}
-              onDragOver={e => { if (!isAdmin) return; e.preventDefault(); setDragOverCol(col.key); }}
+              onDragOver={e => { if (!isResponsavel) return; e.preventDefault(); setDragOverCol(col.key); }}
               onDragLeave={() => setDragOverCol(null)}
               onDrop={e => {
                 e.preventDefault();
                 setDragOverCol(null);
-                if (!isAdmin) return;
+                if (!isResponsavel) return;
                 const itemId = e.dataTransfer.getData('text/plain');
                 if (itemId) handleStatusChange(itemId, col.key);
               }}
@@ -230,10 +249,10 @@ export default function Solicitacoes() {
                     <SolicitacaoCard
                       key={item.id}
                       item={item}
-                      isAdmin={isAdmin}
+                      isAdmin={isResponsavel}
                       onStatusChange={handleStatusChange}
                       onClick={() => setDetailItem(item)}
-                      draggable={isAdmin}
+                      draggable={isResponsavel}
                     />
                   ))}
                 </div>
@@ -241,10 +260,50 @@ export default function Solicitacoes() {
             </div>
           ))}
         </div>
+      ) : (
+        /* ── Simple list (collaborators) ── */
+        <div className="space-y-3">
+          {filtered.length === 0 ? (
+            <Card className="p-8 text-center">
+              <List className="h-10 w-10 text-muted-foreground mx-auto mb-3" />
+              <p className="text-muted-foreground">Você ainda não tem solicitações.</p>
+              <p className="text-sm text-muted-foreground mt-1">Clique em "Nova Solicitação" para começar.</p>
+            </Card>
+          ) : (
+            filtered.map(item => {
+              const cat = getCatMeta(item.categoria);
+              const urg = getUrgMeta(item.urgencia);
+              const st = getStatusMeta(item.status);
+              const date = new Date(item.created_at).toLocaleDateString('pt-BR');
+              return (
+                <Card
+                  key={item.id}
+                  className="p-4 cursor-pointer hover:shadow-md transition-shadow"
+                  onClick={() => setDetailItem(item)}
+                >
+                  <div className="flex items-center justify-between gap-4">
+                    <div className="flex items-center gap-3 min-w-0 flex-1">
+                      <Badge className={`text-xs shrink-0 ${cat.color}`}>{cat.label}</Badge>
+                      <p className="text-sm font-medium text-foreground truncate">{item.titulo}</p>
+                    </div>
+                    <div className="flex items-center gap-3 shrink-0">
+                      <Badge className={`text-xs ${urg.color}`}>{urg.label}</Badge>
+                      <Badge className={`text-xs ${st.color}`}>{st.label}</Badge>
+                      <span className="text-xs text-muted-foreground">{date}</span>
+                    </div>
+                  </div>
+                  {item.descricao && (
+                    <p className="text-xs text-muted-foreground mt-2 line-clamp-1">{item.descricao}</p>
+                  )}
+                </Card>
+              );
+            })
+          )}
+        </div>
       )}
 
       {/* Detail dialog */}
-      <DetailDialog item={detailItem} onClose={() => setDetailItem(null)} isAdmin={isAdmin} onStatusChange={handleStatusChange} />
+      <DetailDialog item={detailItem} onClose={() => setDetailItem(null)} isAdmin={isResponsavel} onStatusChange={handleStatusChange} />
     </div>
   );
 }

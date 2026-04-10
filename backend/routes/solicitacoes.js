@@ -11,8 +11,29 @@ const CATEGORIA_MODULO = {
   compras: 'logistica',
   reembolso: 'financeiro',
   espaco: 'administrativo',
+  infraestrutura: 'administrativo',
   ferias: 'rh',
   outro: 'administrativo',
+};
+
+// Map módulo → categorias (for granular permission filtering)
+const MODULO_CATEGORIAS = {
+  ti: ['ti'],
+  logistica: ['compras'],
+  financeiro: ['reembolso'],
+  administrativo: ['espaco', 'infraestrutura', 'outro'],
+  rh: ['ferias'],
+};
+
+// Map modulePerms key → backend modulo
+const PERM_TO_MODULO = {
+  'DP': 'rh',
+  'Pessoas': 'rh',
+  'Financeiro': 'financeiro',
+  'Logística': 'logistica',
+  'Patrimônio': 'administrativo',
+  'Membresia': 'administrativo',
+  'TI': 'ti',
 };
 
 // ── LIST (filtered by role) ─────────────────────────────────
