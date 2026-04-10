@@ -141,17 +141,36 @@ router.get('/bens/barcode/:codigo', async (req, res) => {
     const codigo = decodeURIComponent(req.params.codigo).trim();
     if (!codigo) return res.status(400).json({ error: 'Código vazio' });
 
-    const { data: bem, error } = await supabase.from('pat_bens')
+    // Normalização: etiquetas físicas têm '0' na frente mas planilha não.
+    // Tenta variações do código: exato, sem zeros à esquerda, com zeros (8 dígitos).
+    const variants = new Set();
+    variants.add(codigo);                                   // exato ("012345")
+    const semZeros = codigo.replace(/^0+/, '') || '0';
+    variants.add(semZeros);                                 // sem zeros ("12345")
+    // Padding comum de etiquetas (alguns lidos como 8-12 dígitos)
+    if (/^\d+$/.test(codigo)) {
+      for (const len of [6, 8, 10, 12, 13]) {
+        variants.add(semZeros.padStart(len, '0'));
+      }
+    }
+
+    const list = [...variants];
+    console.log('[PATRIMONIO] barcode lookup variants:', list);
+
+    const { data, error } = await supabase.from('pat_bens')
       .select('*, pat_categorias(nome), pat_localizacoes(nome)')
-      .eq('codigo_barras', codigo)
-      .maybeSingle();
+      .in('codigo_barras', list);
 
     if (error) {
       console.error('[PATRIMONIO] barcode lookup error:', error.message);
       return res.status(500).json({ error: error.message });
     }
-    if (!bem) return res.status(404).json({ error: 'Bem não encontrado' });
+    if (!data || data.length === 0) {
+      return res.status(404).json({ error: 'Bem não encontrado', triedVariants: list });
+    }
 
+    // Se tiver múltiplos matches (improvável mas possível), pega o primeiro
+    const bem = data[0];
     const { data: movs } = await supabase.from('pat_movimentacoes')
       .select('*, profiles!responsavel_id(name)')
       .eq('bem_id', bem.id)
