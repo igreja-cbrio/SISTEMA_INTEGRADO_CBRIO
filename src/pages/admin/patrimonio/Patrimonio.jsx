@@ -69,6 +69,14 @@ const styles = {
 
 const fmtDate = (d) => d ? new Date(d + 'T12:00:00').toLocaleDateString('pt-BR') : '—';
 const fmtMoney = (v) => v != null ? `R$ ${Number(v).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}` : '—';
+const fmtCodigo = (c) => {
+  if (c == null) return '—';
+  const s = String(c);
+  const m = s.match(/^([A-Z]+-?)(\d+)$/);
+  if (m) return m[1] + m[2].padStart(5, '0');
+  if (/^\d+$/.test(s)) return s.padStart(5, '0');
+  return s;
+};
 
 function Modal({ open, onClose, title, children, footer }) {
   if (!open) return null;
@@ -331,7 +339,7 @@ function BensTab({ bens, loading, busca, setBusca, filtroStatus, setFiltroStatus
               {!loading && bens.length === 0 && <tr><td colSpan={8}><div className="flex flex-col items-center py-10 gap-2"><div className="h-10 w-10 rounded-full bg-muted flex items-center justify-center mb-1"><svg className="h-5 w-5 text-muted-foreground" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M20 13V6a2 2 0 00-2-2H6a2 2 0 00-2 2v7m16 0v5a2 2 0 01-2 2H6a2 2 0 01-2-2v-5m16 0h-2.586a1 1 0 00-.707.293l-2.414 2.414a1 1 0 01-.707.293h-3.172a1 1 0 01-.707-.293l-2.414-2.414A1 1 0 006.586 13H4" /></svg></div><span className="text-sm font-medium text-foreground">Nenhum bem encontrado</span></div></td></tr>}
               {bens.map(b => (
                 <tr key={b.id} className="cbrio-row" onClick={() => onDetail(b.id)}>
-                  <td style={{ ...styles.td, fontFamily: 'monospace', fontSize: 12 }}>{b.codigo_barras}</td>
+                  <td style={{ ...styles.td, fontFamily: 'monospace', fontSize: 12 }}>{fmtCodigo(b.codigo_barras)}</td>
                   <td style={{ ...styles.td, fontWeight: 600 }}>{b.nome}</td>
                   <td style={styles.td}>{b.pat_categorias?.nome || '—'}</td>
                   <td style={styles.td}>{b.pat_localizacoes?.nome || '—'}</td>
@@ -498,7 +506,7 @@ function BemDetailModal({ open, data, onClose, onEdit, onDelete, onMov, isDireto
   return (
     <Modal open={open} onClose={onClose} title={data.nome}>
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px 16px', marginBottom: 20 }}>
-        <div><span style={{ fontSize: 11, color: C.text2 }}>Código:</span><div style={{ fontSize: 14, fontFamily: 'monospace' }}>{data.codigo_barras}</div></div>
+        <div><span style={{ fontSize: 11, color: C.text2 }}>Código:</span><div style={{ fontSize: 14, fontFamily: 'monospace' }}>{fmtCodigo(data.codigo_barras)}</div></div>
         <div><span style={{ fontSize: 11, color: C.text2 }}>Status:</span><div><Badge status={data.status} map={STATUS_BEM} /></div></div>
         <div><span style={{ fontSize: 11, color: C.text2 }}>Categoria:</span><div style={{ fontSize: 14 }}>{data.pat_categorias?.nome || '—'}</div></div>
         <div><span style={{ fontSize: 11, color: C.text2 }}>Localização:</span><div style={{ fontSize: 14 }}>{data.pat_localizacoes?.nome || '—'}</div></div>
@@ -706,7 +714,7 @@ function ScannerTab({ localizacoes, onMov, onDetail }) {
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: 12 }}>
               <div>
                 <div style={{ fontSize: 20, fontWeight: 800, color: C.text }}>{bem.nome}</div>
-                <div style={{ fontSize: 13, color: C.text2, fontFamily: 'monospace', marginTop: 4 }}>Cód: {bem.codigo_barras}</div>
+                <div style={{ fontSize: 13, color: C.text2, fontFamily: 'monospace', marginTop: 4 }}>Cód: {fmtCodigo(bem.codigo_barras)}</div>
               </div>
               <Badge status={bem.status} map={STATUS_BEM} />
             </div>
@@ -817,7 +825,7 @@ function ScannerTab({ localizacoes, onMov, onDetail }) {
             <div key={i} style={{ padding: '10px 20px', borderBottom: `1px solid ${C.border}`, display: 'flex', justifyContent: 'space-between', alignItems: 'center', cursor: 'pointer' }}
               onClick={() => { setCodigo(s.codigo); buscarPorCodigo(s.codigo); }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                <span style={{ fontFamily: 'monospace', fontSize: 13, fontWeight: 600, color: C.primary }}>{s.codigo}</span>
+                <span style={{ fontFamily: 'monospace', fontSize: 13, fontWeight: 600, color: C.primary }}>{fmtCodigo(s.codigo)}</span>
                 <span style={{ fontSize: 13, color: C.text }}>{s.nome}</span>
               </div>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -931,7 +939,7 @@ function LogMovimentacoesTab({ data, loading, filtroTipo, setFiltroTipo, onNew, 
         <tr key={m.id}>
           <td style={styles.td}>{fmtDateTime(m.created_at)}</td>
           <td style={styles.td}><Badge status={m.tipo} map={LOG_MOV_TIPO} /></td>
-          <td style={{ ...styles.td, fontFamily: 'monospace', fontWeight: 600 }}>{m.codigo_barras}</td>
+          <td style={{ ...styles.td, fontFamily: 'monospace', fontWeight: 600 }}>{fmtCodigo(m.codigo_barras)}</td>
           <td style={styles.td}>{m.descricao || '—'}</td>
           <td style={styles.td}>{m.quantidade} {m.unidade}</td>
           <td style={styles.td}>{m.localizacao || '—'}</td>
