@@ -168,7 +168,7 @@ export default function Solicitacoes() {
               <DialogHeader>
                 <DialogTitle>Nova Solicitação</DialogTitle>
               </DialogHeader>
-              <form onSubmit={handleCreate} className="space-y-4 mt-2">
+              <div className="space-y-4 mt-2">
                 <div className="space-y-2">
                   <Label>Categoria *</Label>
                   <Select value={form.categoria} onValueChange={v => setForm(f => ({ ...f, categoria: v }))}>
@@ -180,7 +180,7 @@ export default function Solicitacoes() {
                 </div>
                 <div className="space-y-2">
                   <Label>Título *</Label>
-                  <Input value={form.titulo} onChange={e => setForm(f => ({ ...f, titulo: e.target.value }))} required />
+                  <Input value={form.titulo} onChange={e => setForm(f => ({ ...f, titulo: e.target.value }))} />
                 </div>
                 <div className="space-y-2">
                   <Label>Descrição</Label>
@@ -209,9 +209,11 @@ export default function Solicitacoes() {
                 </div>
                 <div className="flex justify-end gap-2 pt-2">
                   <Button type="button" variant="outline" onClick={() => setDialogOpen(false)}>Cancelar</Button>
-                  <Button type="submit" disabled={!form.titulo || !form.categoria}>Criar Solicitação</Button>
+                  <Button onClick={handleCreate} disabled={!form.titulo || !form.categoria || submitting}>
+                    {submitting ? 'Criando...' : 'Criar Solicitação'}
+                  </Button>
                 </div>
-              </form>
+              </div>
             </DialogContent>
           </Dialog>
         </div>
