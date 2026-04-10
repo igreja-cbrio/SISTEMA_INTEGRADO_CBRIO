@@ -1,11 +1,11 @@
 
 -- Create solicitacoes table
-CREATE TABLE public.solicitacoes (
+CREATE TABLE IF NOT EXISTS public.solicitacoes (
   id UUID NOT NULL DEFAULT gen_random_uuid() PRIMARY KEY,
   titulo TEXT NOT NULL,
   descricao TEXT,
   justificativa TEXT,
-  categoria TEXT NOT NULL CHECK (categoria IN ('ti', 'compras', 'reembolso', 'espaco', 'ferias', 'outro')),
+  categoria TEXT NOT NULL CHECK (categoria IN ('ti', 'compras', 'reembolso', 'espaco', 'infraestrutura', 'ferias', 'outro')),
   urgencia TEXT NOT NULL DEFAULT 'normal' CHECK (urgencia IN ('baixa', 'normal', 'alta', 'critica')),
   status TEXT NOT NULL DEFAULT 'pendente' CHECK (status IN ('pendente', 'em_analise', 'aprovado', 'rejeitado', 'concluido')),
   valor_estimado NUMERIC,
@@ -18,9 +18,9 @@ CREATE TABLE public.solicitacoes (
 );
 
 -- Indexes
-CREATE INDEX idx_solicitacoes_solicitante ON public.solicitacoes (solicitante_id);
-CREATE INDEX idx_solicitacoes_categoria ON public.solicitacoes (categoria);
-CREATE INDEX idx_solicitacoes_status ON public.solicitacoes (status);
+CREATE INDEX IF NOT EXISTS idx_solicitacoes_solicitante ON public.solicitacoes (solicitante_id);
+CREATE INDEX IF NOT EXISTS idx_solicitacoes_categoria ON public.solicitacoes (categoria);
+CREATE INDEX IF NOT EXISTS idx_solicitacoes_status ON public.solicitacoes (status);
 
 -- Enable RLS
 ALTER TABLE public.solicitacoes ENABLE ROW LEVEL SECURITY;
