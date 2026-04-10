@@ -1379,14 +1379,16 @@ export default function Eventos() {
                     const lastDate = g.phases[g.phases.length - 1]?.data_fim_prevista;
                     if (!firstDate || !lastDate) return <div key={gi} style={{ height: BH, borderBottom: '1px solid var(--cbrio-border)' }} />;
                     const lp = dPct(firstDate); const rp = dPct(lastDate); const wp = Math.max(rp - lp, 2);
-                    const phsDone = g.phases.filter(p => p.status === 'concluida').length;
-                    const pct = Math.round(phsDone / g.phases.length * 100);
+                    const phaseIds = g.phases.map(p => p.id);
+                    const evTasks = aTasks.filter(t => phaseIds.includes(t.event_phase_id));
+                    const evDone = evTasks.filter(t => t.status === 'concluida').length;
+                    const pct = evTasks.length > 0 ? Math.round(evDone / evTasks.length * 100) : 0;
                     const barColor = COLORS[gi % COLORS.length];
                     return (
                       <div key={gi} style={{ position: 'relative', height: BH, borderBottom: '1px solid var(--cbrio-border)' }}>
                         {mL.map((m, i) => (<div key={i} style={{ position: 'absolute', left: `${m.pct}%`, top: 0, width: 1, height: '100%', background: 'var(--cbrio-border)', opacity: 0.3 }} />))}
                         <div style={{ position: 'absolute', left: `${tPct}%`, top: 0, width: 2, height: '100%', background: '#ef4444', zIndex: 2, opacity: 0.4 }} />
-                        <div title={`${g.name}\n${fmtDate(firstDate)} → ${fmtDate(lastDate)}\n${phsDone}/${g.phases.length} fases (${pct}%)`}
+                        <div title={`${g.name}\n${fmtDate(firstDate)} → ${fmtDate(lastDate)}\n${evDone}/${evTasks.length} tarefas (${pct}%)`}
                           style={{ position: 'absolute', top: 4, height: BH - 8, borderRadius: 6, left: `${lp}%`, width: `${wp}%`, background: barColor, opacity: 0.85, display: 'flex', alignItems: 'center', padding: '0 8px', overflow: 'hidden' }}>
                           <span style={{ fontSize: 10, fontWeight: 700, color: '#fff', whiteSpace: 'nowrap' }}>{pct}%</span>
                         </div>
