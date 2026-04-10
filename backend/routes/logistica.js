@@ -17,14 +17,78 @@ router.get('/dashboard', async (req, res) => {
     const solic = solicitacoes.data || [];
     const ped = pedidos.data || [];
 
+    // ── Buscar dados do Mercado Livre (contagem de envios em trânsito + total de compras no mês) ──
+    let mlEmTransito = 0;
+    let mlComprasMes = 0;
+    try {
+      const { data: mlConfig } = await supabase.from('ml_config').select('*').limit(1).maybeSingle();
+      if (mlConfig?.access_token && mlConfig?.ml_user_id) {
+        // Verificar expiração do token
+        let token = mlConfig.access_token;
+        if (mlConfig.token_expires_at && new Date(mlConfig.token_expires_at) < new Date()) {
+          const refreshRes = await fetch('https://api.mercadolibre.com/oauth/token', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              grant_type: 'refresh_token',
+              client_id: mlConfig.client_id,
+              client_secret: mlConfig.client_secret,
+              refresh_token: mlConfig.refresh_token,
+            }),
+          });
+          if (refreshRes.ok) {
+            const tokens = await refreshRes.json();
+            token = tokens.access_token;
+            await supabase.from('ml_config').update({
+              access_token: tokens.access_token,
+              refresh_token: tokens.refresh_token,
+              token_expires_at: new Date(Date.now() + tokens.expires_in * 1000).toISOString(),
+            }).eq('id', mlConfig.id);
+          }
+        }
+
+        // Buscar pedidos do mês atual (como buyer)
+        const now = new Date();
+        const startMonth = new Date(now.getFullYear(), now.getMonth(), 1).toISOString();
+        const ordersRes = await fetch(
+          `https://api.mercadolibre.com/orders/search?buyer=${mlConfig.ml_user_id}&order.date_created.from=${startMonth}&limit=50&sort=date_desc`,
+          { headers: { Authorization: `Bearer ${token}` } }
+        );
+        if (ordersRes.ok) {
+          const ordersData = await ordersRes.json();
+          const orders = ordersData.results || [];
+          mlComprasMes = orders
+            .filter(o => o.status !== 'cancelled')
+            .reduce((sum, o) => sum + Number(o.total_amount || 0), 0);
+
+          // Contar envios em trânsito
+          for (const order of orders.slice(0, 20)) {
+            if (!order.shipping?.id) continue;
+            try {
+              const shipRes = await fetch(`https://api.mercadolibre.com/shipments/${order.shipping.id}`, {
+                headers: { Authorization: `Bearer ${token}` },
+              });
+              if (shipRes.ok) {
+                const ship = await shipRes.json();
+                if (['shipped', 'handling', 'ready_to_ship'].includes(ship.status)) mlEmTransito++;
+              }
+            } catch { /* ignora envio específico com erro */ }
+          }
+        }
+      }
+    } catch (mlErr) {
+      console.warn('[LOG] ML dashboard fetch falhou:', mlErr.message);
+    }
+
     res.json({
       fornecedoresAtivos: forn.filter(f => f.ativo).length,
       solicitacoesPendentes: solic.filter(s => s.status === 'pendente').length,
       solicitacoesAprovadas: solic.filter(s => s.status === 'aprovado').length,
       pedidosAguardando: ped.filter(p => p.status === 'aguardando').length,
-      pedidosEmTransito: ped.filter(p => p.status === 'em_transito').length,
+      pedidosEmTransito: ped.filter(p => p.status === 'em_transito').length + mlEmTransito,
       pedidosRecebidos: ped.filter(p => p.status === 'recebido').length,
       valorTotalPedidos: ped.filter(p => p.status !== 'cancelado').reduce((s, p) => s + Number(p.valor_total), 0),
+      mlComprasMes,
     });
   } catch (e) {
     console.error('[LOG] Dashboard:', e.message);

@@ -7,7 +7,7 @@ import { StatisticsCard, StatisticsCardSkeleton } from '../components/ui/statist
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
 import {
   Users, DollarSign, CalendarDays, FolderKanban,
-  Truck, Tag, BookOpen, ShoppingCart, Bell, ArrowRight,
+  Truck, Tag, BookOpen, ClipboardList, Bell, ArrowRight,
   Clock, AlertTriangle, Package, ChevronRight, Sparkles,
   Activity, LayoutGrid,
 } from 'lucide-react';
@@ -20,7 +20,7 @@ const MODULES = [
   { label: 'Logística', desc: 'Compras e pedidos', icon: Truck, path: '/admin/logistica', color: '#ef4444', perm: 'canLogistica' },
   { label: 'Patrimônio', desc: 'Bens e inventário', icon: Tag, path: '/admin/patrimonio', color: '#6366f1', perm: 'canPatrimonio' },
   { label: 'Membresia', desc: 'Membros e famílias', icon: BookOpen, path: '/ministerial/membresia', color: '#00B39D', perm: 'canMembresia' },
-  { label: 'Solicitar Compra', desc: 'Peça materiais', icon: ShoppingCart, path: '/solicitar-compra', color: '#ec4899' },
+  { label: 'Solicitações', desc: 'TI, compras e reembolsos', icon: ClipboardList, path: '/solicitacoes', color: '#ec4899' },
 ];
 
 const SEV_COLORS = { urgente: '#ef4444', aviso: '#f59e0b', info: '#00B39D' };

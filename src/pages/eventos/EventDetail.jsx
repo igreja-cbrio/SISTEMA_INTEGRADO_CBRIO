@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { events as api, meetings as meetingsApi, cycles as cyclesApi } from '../../api';
 import { useAuth } from '../../contexts/AuthContext';
+import { toast } from 'sonner';
 import TaskFormModal from './components/TaskFormModal';
 import MeetingFormModal from './components/MeetingFormModal';
 import CycleView from './components/CycleView';
@@ -90,70 +91,65 @@ export default function EventDetail() {
 
   const handleDeleteEvent = async () => {
     if (!confirm('Tem certeza que deseja excluir este evento?')) return;
-    await api.remove(id);
-    navigate('/eventos');
+    try { await api.remove(id); navigate('/eventos'); }
+    catch (e) { toast.error(e.message || 'Erro ao excluir evento'); }
   };
 
   const handleFinalize = async () => {
-    await api.update(id, { status: 'concluido' });
-    load();
+    try { await api.update(id, { status: 'concluido' }); toast.success('Evento concluído'); load(); }
+    catch (e) { toast.error(e.message || 'Erro ao concluir evento'); }
   };
 
   // Tasks
   const handleSaveTask = async (data) => {
-    if (editTask) {
-      await api.updateTask(editTask.id, data);
-    } else {
-      await api.createTask(id, data);
-    }
-    setShowTaskForm(false);
-    setEditTask(null);
-    load();
+    try {
+      if (editTask) { await api.updateTask(editTask.id, data); }
+      else { await api.createTask(id, data); }
+      setShowTaskForm(false); setEditTask(null); load();
+    } catch (e) { toast.error(e.message || 'Erro ao salvar tarefa'); }
   };
 
   const handleTaskStatusChange = async (taskId, status) => {
-    await api.updateTaskStatus(taskId, status);
-    load();
+    try { await api.updateTaskStatus(taskId, status); load(); }
+    catch (e) { toast.error(e.message || 'Erro ao atualizar status'); }
   };
 
   const handleDeleteTask = async (taskId) => {
     if (!confirm('Excluir tarefa?')) return;
-    await api.removeTask(taskId);
-    load();
+    try { await api.removeTask(taskId); load(); }
+    catch (e) { toast.error(e.message || 'Erro ao excluir tarefa'); }
   };
 
   // Subtasks
   const handleAddSubtask = async (taskId) => {
     const name = prompt('Nome da subtarefa:');
     if (!name) return;
-    await api.createSubtask(taskId, { name });
-    load();
+    try { await api.createSubtask(taskId, { name }); load(); }
+    catch (e) { toast.error(e.message || 'Erro ao criar subtarefa'); }
   };
 
   const handleToggleSubtask = async (subId, done) => {
-    await api.toggleSubtask(subId, !done);
-    load();
+    try { await api.toggleSubtask(subId, !done); load(); }
+    catch (e) { toast.error(e.message || 'Erro ao atualizar subtarefa'); }
   };
 
   // Comments
   const handleAddComment = async (taskId) => {
     const text = commentText[taskId];
     if (!text?.trim()) return;
-    await api.addComment(taskId, text);
-    setCommentText(prev => ({ ...prev, [taskId]: '' }));
-    load();
+    try { await api.addComment(taskId, text); setCommentText(prev => ({ ...prev, [taskId]: '' })); load(); }
+    catch (e) { toast.error(e.message || 'Erro ao adicionar comentário'); }
   };
 
   // Meetings
   const handleSaveMeeting = async (data) => {
-    await meetingsApi.create({ ...data, event_id: id });
-    setShowMeetingForm(false);
-    load();
+    try { await meetingsApi.create({ ...data, event_id: id }); setShowMeetingForm(false); load(); }
+    catch (e) { toast.error(e.message || 'Erro ao salvar reunião'); }
   };
 
   const handleTogglePendency = async (pId, done) => {
-    await meetingsApi.togglePendency(pId, !done);
-    load();
+    try { await meetingsApi.togglePendency(pId, !done); load(); }
+    catch (e) { toast.error(e.message || 'Erro ao atualizar pendência'); }
   };
 
   if (loading) return <div style={{ padding: 40, color: C.t2 }}>Carregando...</div>;

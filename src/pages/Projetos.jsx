@@ -369,8 +369,11 @@ export default function Projetos() {
     loadCategories(); loadDash(); loadList();
     usersApi.list().then(d => setUsersList(Array.isArray(d) ? d : [])).catch(() => setUsersList([]));
     tasksApi.all({ source: 'projeto' }).then(d => setKanbanTasks(Array.isArray(d) ? d : [])).catch(() => {});
-    if (urlId) loadDetail(urlId);
   }, []);
+
+  useEffect(() => {
+    if (urlId) loadDetail(urlId);
+  }, [urlId, loadDetail]);
   useEffect(() => { loadList(); }, [fStatus, fCategory, fPriority]);
 
   // ── Counts ──

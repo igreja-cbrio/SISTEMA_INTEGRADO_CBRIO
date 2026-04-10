@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { solicitacoes as api } from '../api';
+import { playSuccessSound } from '../lib/sounds';
 import { Badge } from '../components/ui/badge';
 import { Button } from '../components/ui/button';
 import { Card } from '../components/ui/card';
@@ -122,7 +123,12 @@ export default function Solicitacoes() {
       const payload = { status: newStatus };
       if (observacoes) payload.observacoes = observacoes;
       await api.update(id, payload);
-      toast.success('Status atualizado');
+      if (newStatus === 'concluido') {
+        playSuccessSound();
+        toast.success('Solicitação concluída!');
+      } else {
+        toast.success('Status atualizado');
+      }
       load();
     } catch (e) {
       toast.error(e.message);

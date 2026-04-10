@@ -48,7 +48,7 @@ router.get('/', async (req, res) => {
     const { categoria, status, mine } = req.query;
     let q = supabase
       .from('solicitacoes')
-      .select('*, solicitante:profiles!solicitante_id(id,name,email), responsavel:profiles!responsavel_id(id,name,email)')
+      .select('*')
       .order('created_at', { ascending: false });
 
     if (categoria) q = q.eq('categoria', categoria);
@@ -70,7 +70,7 @@ router.get('/', async (req, res) => {
       }
 
       if (allowedCategories.size > 0) {
-        q = q.or(`solicitante_id.eq.${userId},categoria.in.(${[...allowedCategories].join(',')})`);
+        q = q.or(`solicitante_id.eq.${encodeURIComponent(userId)},categoria.in.(${[...allowedCategories].join(',')})`);
       } else {
         q = q.eq('solicitante_id', userId);
       }
@@ -78,7 +78,21 @@ router.get('/', async (req, res) => {
 
     const { data, error } = await q;
     if (error) throw error;
-    res.json(data || []);
+
+    // Resolve profile names for solicitante/responsavel
+    const profileIds = [...new Set((data || []).flatMap(d => [d.solicitante_id, d.responsavel_id].filter(Boolean)))];
+    let profileMap = {};
+    if (profileIds.length) {
+      const { data: profiles } = await supabase.from('profiles').select('id,name,email').in('id', profileIds);
+      if (profiles) profileMap = Object.fromEntries(profiles.map(p => [p.id, p]));
+    }
+    const enriched = (data || []).map(d => ({
+      ...d,
+      solicitante: profileMap[d.solicitante_id] || null,
+      responsavel: profileMap[d.responsavel_id] || null,
+    }));
+
+    res.json(enriched);
   } catch (e) {
     console.error('[SOLICITACOES] list error:', e.message);
     res.status(500).json({ error: 'Erro ao listar solicitações' });

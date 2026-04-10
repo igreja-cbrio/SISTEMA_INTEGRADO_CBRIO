@@ -544,7 +544,7 @@ function ContratoEditorModal({ data, onClose, onSave, saving }) {
           ref={editorRef}
           contentEditable
           suppressContentEditableWarning
-          dangerouslySetInnerHTML={{ __html: adm.contrato_editado || '' }}
+          dangerouslySetInnerHTML={{ __html: (adm.contrato_editado || '').replace(/<script[\s\S]*?<\/script>/gi, '').replace(/on\w+\s*=/gi, 'data-removed=') }}
           style={{
             flex: 1, padding: '32px 48px', overflowY: 'auto',
             outline: 'none', fontSize: 14, lineHeight: 1.7, color: C.text,

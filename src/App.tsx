@@ -1,27 +1,82 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { ThemeProvider } from './contexts/ThemeContext';
-import { lazy, Suspense } from 'react';
+import { lazy, Suspense, Component } from 'react';
+import type { ReactNode, ComponentType } from 'react';
 import { Toaster } from 'sonner';
 import AppShell from './components/layout/AppShell';
 import Login from './pages/Login';
 
-const Dashboard = lazy(() => import('./pages/Dashboard'));
-const Perfil = lazy(() => import('./pages/Perfil'));
-const NotFound = lazy(() => import('./pages/NotFound'));
-const Solicitacoes = lazy(() => import('./pages/Solicitacoes'));
-const NotificacaoRegras = lazy(() => import('./pages/admin/NotificacaoRegras'));
-const Membresia = lazy(() => import('./pages/ministerial/Membresia'));
-const AssistenteIA = lazy(() => import('./pages/admin/AssistenteIA'));
-const EventDetail = lazy(() => import('./pages/eventos/EventDetail'));
-const Financeiro = lazy(() => import('./pages/admin/financeiro/Financeiro'));
-const Patrimonio = lazy(() => import('./pages/admin/patrimonio/Patrimonio'));
-const Expansao = lazy(() => import('./pages/Expansao'));
-const RH = lazy(() => import('./pages/admin/rh/RH'));
-const Logistica = lazy(() => import('./pages/admin/logistica/Logistica'));
-const Planejamento = lazy(() => import('./pages/Planejamento'));
-const Eventos = lazy(() => import('./pages/eventos/Eventos'));
-const Projetos = lazy(() => import('./pages/Projetos'));
+// ── Lazy loader com retry automático em caso de chunk load failure ──
+// Quando há um novo deploy, o browser pode tentar carregar um chunk antigo
+// que não existe mais, causando tela branca. Esta função tenta recarregar
+// a página automaticamente na primeira falha para pegar os novos chunks.
+function lazyWithRetry<T extends ComponentType<any>>(factory: () => Promise<{ default: T }>) {
+  return lazy(async () => {
+    const key = 'chunk-retry-' + factory.toString().slice(0, 50);
+    try {
+      return await factory();
+    } catch (err: any) {
+      const alreadyRetried = sessionStorage.getItem(key);
+      const isChunkError = /Loading chunk|ChunkLoadError|Failed to fetch dynamically imported module|Importing a module script failed/i.test(err?.message || '');
+      if (isChunkError && !alreadyRetried) {
+        sessionStorage.setItem(key, '1');
+        window.location.reload();
+        return new Promise(() => {}); // Nunca resolve — página vai recarregar
+      }
+      throw err;
+    }
+  });
+}
+
+class ErrorBoundary extends Component<{ children: ReactNode }, { hasError: boolean; error: Error | null }> {
+  constructor(props: { children: ReactNode }) {
+    super(props);
+    this.state = { hasError: false, error: null };
+  }
+  static getDerivedStateFromError(error: Error) {
+    return { hasError: true, error };
+  }
+  componentDidCatch(error: Error) {
+    // Se for chunk load error, tenta recarregar automaticamente
+    const isChunkError = /Loading chunk|ChunkLoadError|Failed to fetch dynamically imported module|Importing a module script failed/i.test(error?.message || '');
+    if (isChunkError && !sessionStorage.getItem('boundary-chunk-retry')) {
+      sessionStorage.setItem('boundary-chunk-retry', '1');
+      window.location.reload();
+    }
+  }
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', minHeight: '60vh', gap: 16, padding: 32 }}>
+          <h1 style={{ fontSize: 24, fontWeight: 'bold' }}>Algo deu errado</h1>
+          <p style={{ color: '#888' }}>{this.state.error?.message || 'Erro inesperado na aplicação.'}</p>
+          <button onClick={() => { sessionStorage.clear(); window.location.reload(); }} style={{ padding: '8px 24px', borderRadius: 8, background: '#00B39D', color: '#fff', border: 'none', cursor: 'pointer' }}>
+            Recarregar
+          </button>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
+const Dashboard = lazyWithRetry(() => import('./pages/Dashboard'));
+const Perfil = lazyWithRetry(() => import('./pages/Perfil'));
+const NotFound = lazyWithRetry(() => import('./pages/NotFound'));
+const Solicitacoes = lazyWithRetry(() => import('./pages/Solicitacoes'));
+const NotificacaoRegras = lazyWithRetry(() => import('./pages/admin/NotificacaoRegras'));
+const Membresia = lazyWithRetry(() => import('./pages/ministerial/Membresia'));
+const AssistenteIA = lazyWithRetry(() => import('./pages/admin/AssistenteIA'));
+const EventDetail = lazyWithRetry(() => import('./pages/eventos/EventDetail'));
+const Financeiro = lazyWithRetry(() => import('./pages/admin/financeiro/Financeiro'));
+const Patrimonio = lazyWithRetry(() => import('./pages/admin/patrimonio/Patrimonio'));
+const Expansao = lazyWithRetry(() => import('./pages/Expansao'));
+const RH = lazyWithRetry(() => import('./pages/admin/rh/RH'));
+const Logistica = lazyWithRetry(() => import('./pages/admin/logistica/Logistica'));
+const Planejamento = lazyWithRetry(() => import('./pages/Planejamento'));
+const Eventos = lazyWithRetry(() => import('./pages/eventos/Eventos'));
+const Projetos = lazyWithRetry(() => import('./pages/Projetos'));
 
 // Placeholder pages for modules not yet copied
 const PlaceholderPage = ({ title }) => (
@@ -99,13 +154,15 @@ function AppRoutes() {
 
 export default function App() {
   return (
-    <ThemeProvider>
-      <AuthProvider>
-        <BrowserRouter>
-          <AppRoutes />
-          <Toaster position="top-right" richColors />
-        </BrowserRouter>
-      </AuthProvider>
-    </ThemeProvider>
+    <ErrorBoundary>
+      <ThemeProvider>
+        <AuthProvider>
+          <BrowserRouter>
+            <AppRoutes />
+            <Toaster position="top-right" richColors />
+          </BrowserRouter>
+        </AuthProvider>
+      </ThemeProvider>
+    </ErrorBoundary>
   );
 }

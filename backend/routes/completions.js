@@ -95,7 +95,7 @@ router.post('/', async (req, res) => {
       task_id,
       event_id,
       event_phase_id: event_phase_id || null,
-      phase_number: parseInt(phase_number) || 0,
+      phase_number: Number.isFinite(Number(phase_number)) ? Number(phase_number) : 0,
       area: area || '',
       card_titulo: task?.titulo || '',
       card_subtarefas: task?.subtasks ? { items: task.subtasks } : null,

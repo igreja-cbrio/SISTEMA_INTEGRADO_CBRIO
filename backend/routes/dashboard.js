@@ -1,5 +1,5 @@
 const router = require('express').Router();
-const { authenticate } = require('../middleware/auth');
+const { authenticate, authorize } = require('../middleware/auth');
 const { supabase } = require('../utils/supabase');
 
 router.use(authenticate);
@@ -23,7 +23,7 @@ router.get('/workload', async (req, res) => {
 });
 
 // POST /api/dashboard/sync-areas — sincronizar area dos profiles com RH
-router.post('/sync-areas', async (req, res) => {
+router.post('/sync-areas', authorize('admin', 'diretor'), async (req, res) => {
   try {
     const { data: profiles } = await supabase.from('profiles').select('id, email, area');
     const { data: funcionarios } = await supabase.from('rh_funcionarios').select('email, area, cargo').eq('status', 'ativo');

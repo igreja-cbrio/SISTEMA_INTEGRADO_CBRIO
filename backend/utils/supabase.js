@@ -18,7 +18,7 @@ const supabase = (SUPABASE_URL && SUPABASE_SERVICE_ROLE_KEY)
 // Pool pg direto no Supabase Postgres (para queries complexas com RLS bypassada)
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
-  max: 1,
+  max: parseInt(process.env.DB_POOL_MAX) || 10,
   idleTimeoutMillis: 10000,
   connectionTimeoutMillis: 10000,
 });

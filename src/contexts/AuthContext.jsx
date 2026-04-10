@@ -52,7 +52,7 @@ export function AuthProvider({ children }) {
         setModulePerms(data.granular?.modulePerms ?? null);
         setPermData(data.granular ?? null);
       }
-    } catch { /* ignore */ }
+    } catch (e) { console.warn('[Auth] Erro ao buscar permissões:', e?.message); }
   }
 
   useEffect(() => {
@@ -65,8 +65,7 @@ export function AuthProvider({ children }) {
     supabase.auth.getSession().then(async ({ data: { session } }) => {
       setUser(session?.user ?? null);
       if (session?.user) {
-        await fetchProfile(session.user.id);
-        await fetchPermissions();
+        await Promise.all([fetchProfile(session.user.id), fetchPermissions()]);
       }
       setLoading(false);
     });

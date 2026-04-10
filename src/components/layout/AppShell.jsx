@@ -1,8 +1,9 @@
 import { Outlet, useNavigate, useLocation } from 'react-router-dom';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
 import { useTheme } from '../../contexts/ThemeContext';
 import { notificacoes as notifApi } from '../../api';
+import { playNotificationSound } from '../../lib/sounds';
 import MegaMenu from '../ui/mega-menu';
 import { CommandSearch } from '../ui/command-search';
 import {
@@ -117,6 +118,7 @@ export default function AppShell() {
     .toUpperCase();
 
   const [notifCount, setNotifCount] = useState(0);
+  const prevNotifCount = useRef(0);
 
   useEffect(() => {
     loadNotifCount();
@@ -127,6 +129,10 @@ export default function AppShell() {
   async function loadNotifCount() {
     try {
       const { count } = await notifApi.count();
+      if (count > prevNotifCount.current && prevNotifCount.current !== 0) {
+        playNotificationSound();
+      }
+      prevNotifCount.current = count;
       setNotifCount(count);
     } catch { /* backend might not be ready */ }
   }
