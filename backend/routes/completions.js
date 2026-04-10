@@ -205,17 +205,14 @@ router.get('/task/:taskId', async (req, res) => {
       .limit(1)
       .maybeSingle();
 
-    // Buscar todos os arquivos vinculados
-    let files = [];
-    if (data) {
-      const { data: attachs } = await supabase.from('event_task_attachments')
-        .select('*')
-        .eq('cycle_task_id', req.params.taskId)
-        .order('created_at', { ascending: false });
-      files = attachs || [];
-    }
+    // Buscar arquivos SEMPRE (mesmo sem conclusão ativa — evita sumir ao reabrir)
+    const { data: attachs } = await supabase.from('event_task_attachments')
+      .select('*')
+      .eq('cycle_task_id', req.params.taskId)
+      .order('created_at', { ascending: false });
+    const files = attachs || [];
 
-    res.json(data ? { ...data, files } : null);
+    res.json(data ? { ...data, files } : { files });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
