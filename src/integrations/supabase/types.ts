@@ -14,6 +14,62 @@ export type Database = {
   }
   public: {
     Tables: {
+      areas: {
+        Row: {
+          ativo: boolean
+          created_at: string
+          id: string
+          nome: string
+          setor_id: string | null
+        }
+        Insert: {
+          ativo?: boolean
+          created_at?: string
+          id?: string
+          nome: string
+          setor_id?: string | null
+        }
+        Update: {
+          ativo?: boolean
+          created_at?: string
+          id?: string
+          nome?: string
+          setor_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "areas_setor_id_fkey"
+            columns: ["setor_id"]
+            isOneToOne: false
+            referencedRelation: "setores"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      cargos: {
+        Row: {
+          created_at: string
+          id: string
+          nivel_padrao_escrita: number
+          nivel_padrao_leitura: number
+          nome: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          nivel_padrao_escrita?: number
+          nivel_padrao_leitura?: number
+          nome: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          nivel_padrao_escrita?: number
+          nivel_padrao_leitura?: number
+          nome?: string
+        }
+        Relationships: []
+      }
       log_fornecedores: {
         Row: {
           ativo: boolean
@@ -336,6 +392,322 @@ export type Database = {
         }
         Relationships: []
       }
+      modulos: {
+        Row: {
+          ativo: boolean
+          created_at: string
+          id: string
+          nome: string
+        }
+        Insert: {
+          ativo?: boolean
+          created_at?: string
+          id?: string
+          nome: string
+        }
+        Update: {
+          ativo?: boolean
+          created_at?: string
+          id?: string
+          nome?: string
+        }
+        Relationships: []
+      }
+      permissoes_modulo: {
+        Row: {
+          id: string
+          modulo_id: string
+          nivel_escrita: number
+          nivel_leitura: number
+          usuario_id: string
+        }
+        Insert: {
+          id?: string
+          modulo_id: string
+          nivel_escrita?: number
+          nivel_leitura?: number
+          usuario_id: string
+        }
+        Update: {
+          id?: string
+          modulo_id?: string
+          nivel_escrita?: number
+          nivel_leitura?: number
+          usuario_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "permissoes_modulo_modulo_id_fkey"
+            columns: ["modulo_id"]
+            isOneToOne: false
+            referencedRelation: "modulos"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "permissoes_modulo_usuario_id_fkey"
+            columns: ["usuario_id"]
+            isOneToOne: false
+            referencedRelation: "usuarios"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      profiles: {
+        Row: {
+          active: boolean
+          area: string | null
+          avatar_url: string | null
+          created_at: string
+          email: string | null
+          id: string
+          name: string | null
+          role: string
+          updated_at: string
+        }
+        Insert: {
+          active?: boolean
+          area?: string | null
+          avatar_url?: string | null
+          created_at?: string
+          email?: string | null
+          id: string
+          name?: string | null
+          role?: string
+          updated_at?: string
+        }
+        Update: {
+          active?: boolean
+          area?: string | null
+          avatar_url?: string | null
+          created_at?: string
+          email?: string | null
+          id?: string
+          name?: string | null
+          role?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      rh_documentos: {
+        Row: {
+          created_at: string
+          descricao: string | null
+          funcionario_id: string
+          id: string
+          tipo: string
+          url: string | null
+        }
+        Insert: {
+          created_at?: string
+          descricao?: string | null
+          funcionario_id: string
+          id?: string
+          tipo: string
+          url?: string | null
+        }
+        Update: {
+          created_at?: string
+          descricao?: string | null
+          funcionario_id?: string
+          id?: string
+          tipo?: string
+          url?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "rh_documentos_funcionario_id_fkey"
+            columns: ["funcionario_id"]
+            isOneToOne: false
+            referencedRelation: "rh_funcionarios"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      rh_ferias_licencas: {
+        Row: {
+          created_at: string
+          data_fim: string
+          data_inicio: string
+          funcionario_id: string
+          id: string
+          observacoes: string | null
+          status: string
+          tipo: string
+        }
+        Insert: {
+          created_at?: string
+          data_fim: string
+          data_inicio: string
+          funcionario_id: string
+          id?: string
+          observacoes?: string | null
+          status?: string
+          tipo?: string
+        }
+        Update: {
+          created_at?: string
+          data_fim?: string
+          data_inicio?: string
+          funcionario_id?: string
+          id?: string
+          observacoes?: string | null
+          status?: string
+          tipo?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "rh_ferias_licencas_funcionario_id_fkey"
+            columns: ["funcionario_id"]
+            isOneToOne: false
+            referencedRelation: "rh_funcionarios"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      rh_funcionarios: {
+        Row: {
+          area: string | null
+          cargo: string | null
+          cpf: string | null
+          created_at: string
+          data_admissao: string | null
+          data_demissao: string | null
+          email: string | null
+          id: string
+          nome: string
+          observacoes: string | null
+          salario: number | null
+          status: string
+          telefone: string | null
+          tipo_contrato: string | null
+        }
+        Insert: {
+          area?: string | null
+          cargo?: string | null
+          cpf?: string | null
+          created_at?: string
+          data_admissao?: string | null
+          data_demissao?: string | null
+          email?: string | null
+          id?: string
+          nome: string
+          observacoes?: string | null
+          salario?: number | null
+          status?: string
+          telefone?: string | null
+          tipo_contrato?: string | null
+        }
+        Update: {
+          area?: string | null
+          cargo?: string | null
+          cpf?: string | null
+          created_at?: string
+          data_admissao?: string | null
+          data_demissao?: string | null
+          email?: string | null
+          id?: string
+          nome?: string
+          observacoes?: string | null
+          salario?: number | null
+          status?: string
+          telefone?: string | null
+          tipo_contrato?: string | null
+        }
+        Relationships: []
+      }
+      rh_treinamentos: {
+        Row: {
+          carga_horaria: number | null
+          created_at: string
+          data_fim: string | null
+          data_inicio: string | null
+          descricao: string | null
+          id: string
+          status: string
+          titulo: string
+        }
+        Insert: {
+          carga_horaria?: number | null
+          created_at?: string
+          data_fim?: string | null
+          data_inicio?: string | null
+          descricao?: string | null
+          id?: string
+          status?: string
+          titulo: string
+        }
+        Update: {
+          carga_horaria?: number | null
+          created_at?: string
+          data_fim?: string | null
+          data_inicio?: string | null
+          descricao?: string | null
+          id?: string
+          status?: string
+          titulo?: string
+        }
+        Relationships: []
+      }
+      rh_treinamentos_funcionarios: {
+        Row: {
+          funcionario_id: string
+          id: string
+          nota: number | null
+          status: string
+          treinamento_id: string
+        }
+        Insert: {
+          funcionario_id: string
+          id?: string
+          nota?: number | null
+          status?: string
+          treinamento_id: string
+        }
+        Update: {
+          funcionario_id?: string
+          id?: string
+          nota?: number | null
+          status?: string
+          treinamento_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "rh_treinamentos_funcionarios_funcionario_id_fkey"
+            columns: ["funcionario_id"]
+            isOneToOne: false
+            referencedRelation: "rh_funcionarios"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "rh_treinamentos_funcionarios_treinamento_id_fkey"
+            columns: ["treinamento_id"]
+            isOneToOne: false
+            referencedRelation: "rh_treinamentos"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      setores: {
+        Row: {
+          ativo: boolean
+          created_at: string
+          id: string
+          nome: string
+        }
+        Insert: {
+          ativo?: boolean
+          created_at?: string
+          id?: string
+          nome: string
+        }
+        Update: {
+          ativo?: boolean
+          created_at?: string
+          id?: string
+          nome?: string
+        }
+        Relationships: []
+      }
       solicitacoes: {
         Row: {
           area_solicitante: string | null
@@ -386,6 +758,74 @@ export type Database = {
           valor_estimado?: number | null
         }
         Relationships: []
+      }
+      usuario_areas: {
+        Row: {
+          area_id: string
+          id: string
+          is_principal: boolean
+          usuario_id: string
+        }
+        Insert: {
+          area_id: string
+          id?: string
+          is_principal?: boolean
+          usuario_id: string
+        }
+        Update: {
+          area_id?: string
+          id?: string
+          is_principal?: boolean
+          usuario_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "usuario_areas_area_id_fkey"
+            columns: ["area_id"]
+            isOneToOne: false
+            referencedRelation: "areas"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "usuario_areas_usuario_id_fkey"
+            columns: ["usuario_id"]
+            isOneToOne: false
+            referencedRelation: "usuarios"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      usuarios: {
+        Row: {
+          ativo: boolean
+          cargo_id: string | null
+          created_at: string
+          email: string
+          id: string
+        }
+        Insert: {
+          ativo?: boolean
+          cargo_id?: string | null
+          created_at?: string
+          email: string
+          id?: string
+        }
+        Update: {
+          ativo?: boolean
+          cargo_id?: string | null
+          created_at?: string
+          email?: string
+          id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "usuarios_cargo_id_fkey"
+            columns: ["cargo_id"]
+            isOneToOne: false
+            referencedRelation: "cargos"
+            referencedColumns: ["id"]
+          },
+        ]
       }
     }
     Views: {
