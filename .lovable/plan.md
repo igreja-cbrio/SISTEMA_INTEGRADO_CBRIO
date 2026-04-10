@@ -1,86 +1,47 @@
 
 
-## Plano: Módulo "Solicitações" (serviço geral com Kanban)
+## Plano: Adicionar "Infraestrutura" + separar visão colaborador vs. responsável
 
-### Visão Geral
+### Resumo
 
-Transformar a página "Solicitar Compra" em um módulo completo de **Solicitações** que permite ao colaborador solicitar diversos tipos de serviço (TI, Compras, Reembolso, Reserva de Espaço, Férias, etc.). Os responsáveis de cada área veem as solicitações em formato **Kanban**, filtradas por categoria.
-
----
-
-### 1. Criar nova tabela no banco de dados
-
-Criar tabela `solicitacoes` (separada da `log_solicitacoes_compra`) com colunas:
-
-| Coluna | Tipo | Descrição |
-|--------|------|-----------|
-| id | uuid PK | |
-| titulo | text NOT NULL | O que precisa |
-| descricao | text | Detalhes |
-| justificativa | text | Por quê |
-| categoria | text NOT NULL | `ti`, `compras`, `reembolso`, `espaco`, `ferias`, `outro` |
-| urgencia | text | `baixa`, `normal`, `alta`, `critica` |
-| status | text DEFAULT 'pendente' | `pendente`, `em_analise`, `aprovado`, `rejeitado`, `concluido` |
-| valor_estimado | numeric | |
-| solicitante_id | uuid FK profiles | Quem pediu |
-| responsavel_id | uuid FK profiles | Quem está tratando |
-| area_solicitante | text | Área de quem pediu |
-| observacoes | text | Notas do responsável |
-| created_at | timestamptz | |
-| updated_at | timestamptz | |
-
-RLS: Solicitante vê as próprias; responsáveis de área veem as da sua categoria; admin/diretor veem tudo.
-
-### 2. Criar rotas backend (`backend/routes/solicitacoes.js`)
-
-- `GET /solicitacoes` — lista com filtros (categoria, status, solicitante)
-- `POST /solicitacoes` — criar (qualquer usuário autenticado)
-- `PATCH /solicitacoes/:id` — atualizar status, responsável, observações
-- Rota aberta para criação (não requer admin), leitura filtrada por permissão
-
-### 3. Criar API client (`src/api.js`)
-
-Adicionar namespace `solicitacoes` com `list`, `create`, `update`.
-
-### 4. Criar página `src/pages/Solicitacoes.jsx`
-
-Duas visões na mesma página:
-
-**a) Formulário de nova solicitação** (dialog/modal)
-- Campo categoria (select): TI, Compras, Reembolso, Reserva de Espaço, Férias, Outro
-- Campos dinâmicos conforme categoria (ex: valor para Reembolso/Compras, datas para Férias/Espaço)
-- Título, descrição, justificativa, urgência
-
-**b) Kanban dos responsáveis**
-- Colunas: Pendente → Em Análise → Aprovado → Concluído (+ Rejeitado)
-- Cards com título, solicitante, urgência, categoria (badge colorido), data
-- Filtro por categoria no topo
-- Drag-and-drop para mudar status (ou botões de ação no card)
-- Colaborador comum: vê apenas suas solicitações
-- Responsável/admin: vê solicitações da sua área em Kanban
-
-### 5. Atualizar navegação
-
-- Renomear rota de `/solicitar-compra` para `/solicitacoes`
-- Atualizar `App.tsx` (lazy import + rota)
-- Atualizar `AppShell.jsx` — label "Solicitações", ícone `ClipboardList`, descrição "TI, compras, reembolso, espaços e férias"
-
-### 6. Notificações
-
-Usar o sistema `notificar()` existente para avisar responsáveis quando uma nova solicitação chegar na sua categoria.
+1. Adicionar categoria **"Infraestrutura"** nas solicitações
+2. Separar a página em **duas visões**: colaboradores comuns veem apenas uma **lista simples** das suas solicitações (sem Kanban); responsáveis de área e admins veem o **Kanban** com as solicitações da sua categoria
 
 ---
 
-### Arquivos criados/modificados
+### 1. Adicionar categoria "Infraestrutura"
 
-| Arquivo | Ação |
-|---------|------|
-| Migration SQL (tabela `solicitacoes`) | Criar |
-| `backend/routes/solicitacoes.js` | Criar |
-| `backend/server.js` | Registrar nova rota |
-| `src/pages/Solicitacoes.jsx` | Criar (formulário + Kanban) |
-| `src/api.js` | Adicionar namespace `solicitacoes` |
-| `src/App.tsx` | Atualizar rota |
-| `src/components/layout/AppShell.jsx` | Renomear menu item |
-| `src/pages/SolicitarCompra.jsx` | Remover (substituído) |
+**Frontend (`src/pages/Solicitacoes.jsx`)**:
+- Adicionar `{ value: 'infraestrutura', label: 'Infraestrutura', color: 'bg-yellow-500/15 text-yellow-700 dark:text-yellow-400' }` ao array `CATEGORIAS`
+
+**Backend (`backend/routes/solicitacoes.js`)**:
+- Adicionar `infraestrutura: 'administrativo'` ao mapa `CATEGORIA_MODULO` (ou outro módulo se preferir)
+
+---
+
+### 2. Separar visão: colaborador vs. responsável
+
+A lógica de quem vê o Kanban usará o sistema de permissões granulares já existente (`canAccessModule`). O conceito:
+
+- **Colaborador comum** (sem permissão de módulo relevante): vê apenas o botão "Nova Solicitação" + uma **lista/tabela** das suas próprias solicitações com status, sem Kanban
+- **Responsável de área / admin / diretor** (quem tem `canAccessModule` em módulos como DP, Financeiro, Logística, etc.): vê o **Kanban completo** com filtro por categoria
+
+**Frontend (`src/pages/Solicitacoes.jsx`)**:
+- Usar `useAuth()` para verificar: `isAdmin` ou `canAccessModule(['DP','Pessoas','Financeiro','Logística','Patrimônio','Membresia'])` → `isResponsavel`
+- Se `isResponsavel`: mostrar Kanban (como está hoje) + drag-and-drop + botões de ação
+- Se não: mostrar lista simples das próprias solicitações (cards ou tabela), com status visual (badge), sem ações de aprovação
+- O botão "Nova Solicitação" aparece para **todos**
+
+**Backend (`backend/routes/solicitacoes.js`)**:
+- A rota GET já filtra: não-admin vê apenas `solicitante_id = req.userId`. Isso funciona bem para colaboradores comuns
+- Para responsáveis que não são admin/diretor mas têm permissão granular, adicionar lógica: se o usuário tem permissão no módulo correspondente à categoria, pode ver solicitações daquela categoria (usando `req.user.granular.modulePerms`)
+
+---
+
+### Arquivos modificados
+
+| Arquivo | Mudança |
+|---------|---------|
+| `src/pages/Solicitacoes.jsx` | Adicionar "Infraestrutura", criar visão lista para colaboradores, condicionar Kanban a responsáveis |
+| `backend/routes/solicitacoes.js` | Adicionar "infraestrutura" ao mapa, permitir responsáveis de módulo verem solicitações da sua categoria |
 
