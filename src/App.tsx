@@ -2,6 +2,7 @@ import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { ThemeProvider } from './contexts/ThemeContext';
 import { lazy, Suspense } from 'react';
+import { Toaster } from 'sonner';
 import AppShell from './components/layout/AppShell';
 import Login from './pages/Login';
 
@@ -102,6 +103,7 @@ export default function App() {
       <AuthProvider>
         <BrowserRouter>
           <AppRoutes />
+          <Toaster position="top-right" richColors />
         </BrowserRouter>
       </AuthProvider>
     </ThemeProvider>
