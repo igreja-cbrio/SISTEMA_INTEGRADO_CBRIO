@@ -198,7 +198,7 @@ export default function CompletionSection({ task, phase, eventName, isPMO, onCom
   const DropZone = ({ children, onFiles }) => (
     <div
       onDragOver={handleDragOver} onDragLeave={handleDragLeave}
-      onDrop={(e) => { handleDrop(e); if (onFiles) onFiles(e.dataTransfer.files); else addFilesFromDrop(e.dataTransfer.files); }}
+      onDrop={(e) => { e.preventDefault(); e.stopPropagation(); setDragging(false); if (onFiles) onFiles(e.dataTransfer.files); else addFilesFromDrop(e.dataTransfer.files); }}
       style={{
         padding: '8px 14px', borderRadius: 6, cursor: 'pointer', width: '100%',
         border: `1px dashed ${dragging ? C.primary : C.border}`,
