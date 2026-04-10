@@ -625,8 +625,11 @@ export default function Eventos() {
   const [reportModal, setReportModal] = useState(null); // null | { step: 'event' | 'scope' | 'phase' | 'generating' | 'done', eventId, eventName, type, phaseName, result, error }
 
   // ── Kanban (dois níveis)
-  const [kanbanViewMode, setKanbanViewMode] = useState(isPMO ? 'pmo' : accessLevel >= 3 ? 'area' : 'minhas');
-  const [kanbanArea, setKanbanArea] = useState('all');
+  const isLider = !isPMO && accessLevel >= 3;
+  // Líderes: visão PMO filtrada pela area deles. PMO: visão completa.
+  const [kanbanViewMode, setKanbanViewMode] = useState('pmo');
+  const defaultArea = isLider && userAreas.length > 0 ? userAreas[0].toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '') : 'all';
+  const [kanbanArea, setKanbanArea] = useState(defaultArea);
   const [kanbanHorizon, setKanbanHorizon] = useState(15);
   const [kanbanSelectedTask, setKanbanSelectedTask] = useState(null);
   const [kanbanCycleData, setKanbanCycleData] = useState(null);
@@ -683,22 +686,28 @@ export default function Eventos() {
     const phaseIds = new Set(filteredPhases.map(p => p.id));
 
     // Tarefas da fase selecionada + filtros + visão
+    const lowerUserAreas = (userAreas || []).map(a => a.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, ''));
+
     let phaseTasks = allTasks.filter(t => {
+      // Filtrar por fase (modo PMO — sempre ativo)
       if (kanbanViewMode === 'pmo') {
         const ph = allPhases.find(p => p.id === t.event_phase_id);
         if (!ph || ph.numero_fase !== kanbanPhase) return false;
       }
+      // Filtrar por evento
       if (kanbanEvent !== 'all' && t.event_id !== kanbanEvent) return false;
-      if (kanbanViewMode === 'area') {
+      // Líderes: filtrar pela area automaticamente (sem opcao de mudar)
+      if (isLider && lowerUserAreas.length > 0) {
         const cat = getCat(t);
-        const lowerAreas = (userAreas || []).map(a => a.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, ''));
-        if (!lowerAreas.includes(cat) && !lowerAreas.includes((t.area || '').toLowerCase())) return false;
+        if (!lowerUserAreas.includes(cat)) return false;
       }
+      // Minhas tarefas (PMO)
       if (kanbanViewMode === 'minhas') {
         if (t.responsavel_id !== userId && t.responsavel_nome !== profile?.name) return false;
       }
       return true;
     });
+    // Filtro de area manual (so PMO usa)
     if (kanbanArea !== 'all') phaseTasks = phaseTasks.filter(t => getCat(t) === kanbanArea);
     phaseTasks = filterByHorizon(phaseTasks, kanbanHorizon, 'prazo');
 
@@ -716,30 +725,23 @@ export default function Eventos() {
           </div>
         )}
 
-        {/* Toggle visão */}
-        <div style={{ display: 'flex', gap: 6, marginBottom: 10, alignItems: 'center' }}>
-          <span style={{ fontSize: 11, color: 'var(--cbrio-text2)', fontWeight: 600 }}>Visão:</span>
-          {[
-            { key: 'pmo', label: 'PMO (por fase)' },
-            ...(userAreas.length > 0 ? [{ key: 'area', label: `Minha área (${userAreas.join(', ')})` }] : []),
-            { key: 'minhas', label: 'Minhas tarefas' },
-          ].map(v => (
-            <button key={v.key} onClick={() => setKanbanViewMode(v.key)} style={{
-              padding: '5px 14px', borderRadius: 8, fontSize: 12, fontWeight: kanbanViewMode === v.key ? 700 : 400, cursor: 'pointer',
-              border: kanbanViewMode === v.key ? '2px solid #00B39D' : '1px solid var(--cbrio-border)',
-              background: kanbanViewMode === v.key ? '#00B39D15' : 'transparent',
-              color: kanbanViewMode === v.key ? '#00B39D' : 'var(--cbrio-text3)',
-            }}>{v.label}</button>
-          ))}
-          <span style={{ width: 1, height: 20, background: 'var(--cbrio-border)' }} />
-          <span style={{ fontSize: 11, color: 'var(--cbrio-text2)', fontWeight: 600 }}>Horizonte:</span>
-          <select value={kanbanHorizon} onChange={e => setKanbanHorizon(parseInt(e.target.value))}
-            style={{ fontSize: 12, padding: '4px 8px', borderRadius: 8, border: '1px solid var(--cbrio-border)', background: 'var(--cbrio-card)' }}>
-            <option value={15}>15 dias</option>
-            <option value={30}>30 dias</option>
-            <option value={0}>Sem filtro</option>
-          </select>
-        </div>
+        {/* Toggle visão (só PMO vê) */}
+        {isPMO && (
+          <div style={{ display: 'flex', gap: 6, marginBottom: 10, alignItems: 'center' }}>
+            <span style={{ fontSize: 11, color: 'var(--cbrio-text2)', fontWeight: 600 }}>Visão:</span>
+            {[
+              { key: 'pmo', label: 'PMO (por fase)' },
+              { key: 'minhas', label: 'Minhas tarefas' },
+            ].map(v => (
+              <button key={v.key} onClick={() => setKanbanViewMode(v.key)} style={{
+                padding: '5px 14px', borderRadius: 8, fontSize: 12, fontWeight: kanbanViewMode === v.key ? 700 : 400, cursor: 'pointer',
+                border: kanbanViewMode === v.key ? '2px solid #00B39D' : '1px solid var(--cbrio-border)',
+                background: kanbanViewMode === v.key ? '#00B39D15' : 'transparent',
+                color: kanbanViewMode === v.key ? '#00B39D' : 'var(--cbrio-text3)',
+              }}>{v.label}</button>
+            ))}
+          </div>
+        )}
 
         {/* Filtros */}
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 12, alignItems: 'center' }}>
@@ -753,16 +755,28 @@ export default function Eventos() {
 
           <span style={{ width: 1, height: 20, background: 'var(--cbrio-border)', margin: '0 4px' }} />
 
-          {/* Filtro área */}
-          <span style={{ fontSize: 11, color: 'var(--cbrio-text2)', fontWeight: 600 }}>Área:</span>
-          {[{ key: 'all', label: 'Todas' }, ...Object.entries(CAT).filter(([k]) => k !== 'outros').map(([k, v]) => ({ key: k, label: v.label, color: v.color, bg: v.bg }))].map(f => (
-            <button key={f.key} onClick={() => setKanbanArea(f.key)} style={{
-              padding: '4px 10px', borderRadius: 20, fontSize: 11, fontWeight: kanbanArea === f.key ? 600 : 400, cursor: 'pointer',
-              border: kanbanArea === f.key ? `2px solid ${f.color || '#00B39D'}` : `1px solid var(--cbrio-border)`,
-              background: kanbanArea === f.key ? (f.bg || '#d1fae5') : 'transparent',
-              color: kanbanArea === f.key ? (f.color || '#00B39D') : 'var(--cbrio-text3)',
-            }}>{f.label}</button>
-          ))}
+          {/* Horizonte */}
+          <span style={{ fontSize: 11, color: 'var(--cbrio-text2)', fontWeight: 600 }}>Horizonte:</span>
+          <select value={kanbanHorizon} onChange={e => setKanbanHorizon(parseInt(e.target.value))}
+            style={{ fontSize: 12, padding: '4px 8px', borderRadius: 8, border: '1px solid var(--cbrio-border)', background: 'var(--cbrio-card)' }}>
+            <option value={15}>15 dias</option>
+            <option value={30}>30 dias</option>
+            <option value={0}>Sem filtro</option>
+          </select>
+
+          {/* Filtro área (só PMO vê) */}
+          {isPMO && <>
+            <span style={{ width: 1, height: 20, background: 'var(--cbrio-border)', margin: '0 4px' }} />
+            <span style={{ fontSize: 11, color: 'var(--cbrio-text2)', fontWeight: 600 }}>Área:</span>
+            {[{ key: 'all', label: 'Todas' }, ...Object.entries(CAT).filter(([k]) => k !== 'outros').map(([k, v]) => ({ key: k, label: v.label, color: v.color, bg: v.bg }))].map(f => (
+              <button key={f.key} onClick={() => setKanbanArea(f.key)} style={{
+                padding: '4px 10px', borderRadius: 20, fontSize: 11, fontWeight: kanbanArea === f.key ? 600 : 400, cursor: 'pointer',
+                border: kanbanArea === f.key ? `2px solid ${f.color || '#00B39D'}` : `1px solid var(--cbrio-border)`,
+                background: kanbanArea === f.key ? (f.bg || '#d1fae5') : 'transparent',
+                color: kanbanArea === f.key ? (f.color || '#00B39D') : 'var(--cbrio-text3)',
+              }}>{f.label}</button>
+            ))}
+          </>}
         </div>
 
         {/* Faixa de fases (nível 1) */}
