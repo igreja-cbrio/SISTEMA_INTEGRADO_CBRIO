@@ -691,7 +691,8 @@ export default function Eventos() {
       if (kanbanEvent !== 'all' && t.event_id !== kanbanEvent) return false;
       if (kanbanViewMode === 'area') {
         const cat = getCat(t);
-        if (!userAreas.includes(cat) && !userAreas.includes(t.area)) return false;
+        const lowerAreas = (userAreas || []).map(a => a.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, ''));
+        if (!lowerAreas.includes(cat) && !lowerAreas.includes((t.area || '').toLowerCase())) return false;
       }
       if (kanbanViewMode === 'minhas') {
         if (t.responsavel_id !== userId && t.responsavel_nome !== profile?.name) return false;
@@ -704,7 +705,7 @@ export default function Eventos() {
     return (
       <div style={{ margin: '0 -32px', padding: '0 16px' }}>
         {/* Header com botão relatório */}
-        {['admin', 'diretor'].includes(userRole) && (
+        {accessLevel >= 3 && (
           <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 8 }}>
             <button onClick={() => setReportModal({ step: 'event' })} style={{
               padding: '7px 16px', borderRadius: 8, border: 'none', fontSize: 12, fontWeight: 600,
