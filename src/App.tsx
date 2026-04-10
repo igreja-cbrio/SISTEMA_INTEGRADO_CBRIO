@@ -8,7 +8,7 @@ import Login from './pages/Login';
 const Dashboard = lazy(() => import('./pages/Dashboard'));
 const Perfil = lazy(() => import('./pages/Perfil'));
 const NotFound = lazy(() => import('./pages/NotFound'));
-const SolicitarCompra = lazy(() => import('./pages/SolicitarCompra'));
+const Solicitacoes = lazy(() => import('./pages/Solicitacoes'));
 const NotificacaoRegras = lazy(() => import('./pages/admin/NotificacaoRegras'));
 const Membresia = lazy(() => import('./pages/ministerial/Membresia'));
 const AssistenteIA = lazy(() => import('./pages/admin/AssistenteIA'));
@@ -83,7 +83,7 @@ function AppRoutes() {
         <Route path="/admin/patrimonio" element={<Suspense fallback={<Loading />}><Patrimonio /></Suspense>} />
         <Route path="/ministerial/membresia" element={<Suspense fallback={<Loading />}><Membresia /></Suspense>} />
         <Route path="/assistente-ia" element={<Suspense fallback={<Loading />}><AssistenteIA /></Suspense>} />
-        <Route path="/solicitar-compra" element={<Suspense fallback={<Loading />}><SolicitarCompra /></Suspense>} />
+        <Route path="/solicitacoes" element={<Suspense fallback={<Loading />}><Solicitacoes /></Suspense>} />
         <Route path="/admin/notificacao-regras" element={<Suspense fallback={<Loading />}><NotificacaoRegras /></Suspense>} />
         <Route path="/ministerial/*" element={<PlaceholderPage title="Ministerial" />} />
         <Route path="/criativo/*" element={<PlaceholderPage title="Criativo" />} />
