@@ -714,7 +714,7 @@ export default function Eventos() {
     return (
       <div style={{ margin: '0 -32px', padding: '0 16px' }}>
         {/* Header com botão relatório */}
-        {accessLevel >= 3 && (
+        {accessLevel >= 5 && (
           <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 8 }}>
             <button onClick={() => setReportModal({ step: 'event' })} style={{
               padding: '7px 16px', borderRadius: 8, border: 'none', fontSize: 12, fontWeight: 600,
