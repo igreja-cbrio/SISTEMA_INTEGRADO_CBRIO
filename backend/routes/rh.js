@@ -1,9 +1,10 @@
 const router = require('express').Router();
-const { authenticate, authorize } = require('../middleware/auth');
+const { authenticate, authorizeModule } = require('../middleware/auth');
 const { supabase } = require('../utils/supabase');
 
-// Todas as rotas exigem admin ou diretor
-router.use(authenticate, authorize('admin', 'diretor'));
+// Requer permissão granular no módulo RH (DP ou Pessoas, nível >= 2)
+// Admin e Diretor passam automaticamente
+router.use(authenticate, authorizeModule('rh'));
 
 // ── DASHBOARD ──────────────────────────────────────────────
 router.get('/dashboard', async (req, res) => {

@@ -102,9 +102,12 @@ async function authenticate(req, res, next) {
 
       for (const mod of modulos) {
         const override = (overrides || []).find(o => o.modulo_id === mod.id);
+        // Sem override explícito → nível 1 (acesso apenas aos próprios dados).
+        // O nível padrão do cargo NÃO é propagado para todos os módulos, evitando
+        // que colaboradores vejam módulos de áreas que não são as suas.
         modulePerms[mod.nome] = {
-          leitura: override?.nivel_leitura ?? permUser.cargos?.nivel_padrao_leitura ?? 1,
-          escrita: override?.nivel_escrita ?? permUser.cargos?.nivel_padrao_escrita ?? 1,
+          leitura: override ? override.nivel_leitura : 1,
+          escrita: override ? override.nivel_escrita : 1,
         };
       }
 
