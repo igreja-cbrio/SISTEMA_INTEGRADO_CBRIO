@@ -29,6 +29,54 @@ router.get('/:occId', async (req, res) => {
   } catch (e) { console.error(e); res.status(500).json({ error: 'Erro ao buscar ocorrência' }); }
 });
 
+// GET /api/occurrences/:eventId (list by event)
+router.get('/event/:eventId', async (req, res) => {
+  try {
+    const { data, error } = await supabase.from('event_occurrences').select('*').eq('event_id', req.params.eventId).order('date');
+    if (error) throw error;
+    res.json(data);
+  } catch (e) { res.status(500).json({ error: 'Erro ao listar ocorrências' }); }
+});
+
+// POST /api/occurrences/:eventId (create)
+router.post('/:eventId', async (req, res) => {
+  try {
+    const d = req.body;
+    const { data, error } = await supabase.from('event_occurrences').insert({
+      event_id: req.params.eventId, date: d.date, status: d.status || 'pendente',
+      notes: d.notes || '', sort_order: d.sort_order || 0,
+    }).select().single();
+    if (error) throw error;
+    res.json(data);
+  } catch (e) { res.status(500).json({ error: 'Erro ao criar ocorrência' }); }
+});
+
+// PATCH /api/occurrences/:id (update)
+router.patch('/:id', async (req, res) => {
+  try {
+    const d = req.body;
+    const update = {};
+    if (d.date !== undefined) update.date = d.date;
+    if (d.status !== undefined) update.status = d.status;
+    if (d.notes !== undefined) update.notes = d.notes;
+    if (d.lessons_learned !== undefined) update.lessons_learned = d.lessons_learned;
+    if (d.attendance !== undefined) update.attendance = d.attendance;
+    const { data, error } = await supabase.from('event_occurrences').update(update).eq('id', req.params.id).select().single();
+    if (error) throw error;
+    res.json(data);
+  } catch (e) { res.status(500).json({ error: 'Erro ao atualizar ocorrência' }); }
+});
+
+// DELETE /api/occurrences/:id
+router.delete('/:id', async (req, res) => {
+  try {
+    await supabase.from('occurrence_tasks').delete().eq('occurrence_id', req.params.id).catch(() => {});
+    await supabase.from('occurrence_meetings').delete().eq('occurrence_id', req.params.id).catch(() => {});
+    await supabase.from('event_occurrences').delete().eq('id', req.params.id);
+    res.json({ success: true });
+  } catch (e) { res.status(500).json({ error: 'Erro ao excluir ocorrência' }); }
+});
+
 // ── TASKS ──
 router.post('/:occId/tasks', async (req, res) => {
   try {
@@ -44,6 +92,23 @@ router.post('/:occId/tasks', async (req, res) => {
     if (error) throw error;
     res.json(data);
   } catch (e) { console.error(e); res.status(500).json({ error: 'Erro ao criar tarefa' }); }
+});
+
+router.patch('/tasks/:taskId', async (req, res) => {
+  try {
+    const d = req.body;
+    const update = {};
+    if (d.name !== undefined) update.name = d.name;
+    if (d.responsible !== undefined) update.responsible = d.responsible;
+    if (d.area !== undefined) update.area = d.area;
+    if (d.deadline !== undefined) update.deadline = d.deadline;
+    if (d.status !== undefined) update.status = d.status;
+    if (d.priority !== undefined) update.priority = d.priority;
+    if (d.description !== undefined) update.description = d.description;
+    const { data, error } = await supabase.from('occurrence_tasks').update(update).eq('id', req.params.taskId).select().single();
+    if (error) throw error;
+    res.json(data);
+  } catch (e) { res.status(500).json({ error: 'Erro ao atualizar tarefa' }); }
 });
 
 router.patch('/tasks/:taskId/status', async (req, res) => {
