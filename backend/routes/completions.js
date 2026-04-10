@@ -9,20 +9,41 @@ router.use(authenticate);
 
 // ── Gerar digest de arquivo em background (não bloqueia response) ──
 async function generateDigestsInBackground(attachmentRows) {
+  const Anthropic = require('@anthropic-ai/sdk');
+  const client = new Anthropic();
+
   for (const att of attachmentRows) {
     if (!att.sharepoint_item_id && !att.supabase_path) continue;
     try {
       const buffer = await downloadFile(att.supabase_path, att.sharepoint_item_id);
       const text = (await extractText(buffer, att.file_type, att.file_name, 8000)).trim();
-      if (!text || text.length < 50 || text.startsWith('[')) continue; // binário, erro ou sem conteúdo
 
-      const Anthropic = require('@anthropic-ai/sdk');
-      const client = new Anthropic();
-      const msg = await client.messages.create({
-        model: 'claude-haiku-4-5-20251001',
-        max_tokens: 600,
-        messages: [{ role: 'user', content: `Resuma este documento em 200-300 palavras. Foco em: valores monetários, datas, itens/materiais, decisões, responsáveis e qualquer dado relevante para um evento de igreja.\n\nArquivo: ${att.file_name}\n\nConteúdo:\n${text}` }],
-      });
+      // Video: salvar apenas referência
+      if (text.startsWith('[VIDEO:')) {
+        await supabase.from('event_task_attachments').update({ file_digest: `Vídeo enviado: ${att.file_name}` }).eq('id', att.id);
+        console.log(`[DIGEST] ${att.file_name} → video registrado`);
+        continue;
+      }
+
+      // Erro de extração: pular
+      if (text.startsWith('[Erro')) continue;
+
+      let messages;
+      if (text === '[IMAGEM]') {
+        // Imagem ou PDF escaneado: usar visão do Haiku
+        const mediaType = att.file_type?.startsWith('image/') ? att.file_type : 'image/png';
+        messages = [{ role: 'user', content: [
+          { type: 'image', source: { type: 'base64', media_type: mediaType, data: buffer.toString('base64') } },
+          { type: 'text', text: `Descreva o conteúdo desta imagem/documento em 200-300 palavras. Foco em: valores monetários, datas, itens, decisões, responsáveis e dados relevantes para um evento de igreja.\n\nArquivo: ${att.file_name}` },
+        ] }];
+      } else if (text.length >= 50 && !text.startsWith('[')) {
+        // Texto extraído: resumir
+        messages = [{ role: 'user', content: `Resuma este documento em 200-300 palavras. Foco em: valores monetários, datas, itens/materiais, decisões, responsáveis e qualquer dado relevante para um evento de igreja.\n\nArquivo: ${att.file_name}\n\nConteúdo:\n${text}` }];
+      } else {
+        continue; // sem conteúdo útil
+      }
+
+      const msg = await client.messages.create({ model: 'claude-haiku-4-5-20251001', max_tokens: 600, messages });
       const digest = msg.content?.[0]?.text || '';
       if (digest) {
         await supabase.from('event_task_attachments').update({ file_digest: digest }).eq('id', att.id);

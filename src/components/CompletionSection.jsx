@@ -335,7 +335,7 @@ export default function CompletionSection({ task, phase, eventName, isPMO, onCom
           {/* Observação */}
           <div>
             <label style={{ fontSize: 11, fontWeight: 600, color: C.t2, display: 'block', marginBottom: 4 }}>
-              Observação <span style={{ fontWeight: 400 }}>(opcional)</span>
+              Observação <span style={{ fontWeight: 400, color: '#ef4444' }}>(obrigatório)</span>
             </label>
             <textarea rows={2} value={observacao} onChange={e => setObservacao(e.target.value)}
               placeholder="Como foi feito, resultado obtido, imprevisto..."
@@ -388,8 +388,8 @@ export default function CompletionSection({ task, phase, eventName, isPMO, onCom
               style={{ padding: '7px 14px', borderRadius: 6, border: `1px solid ${C.border}`, background: 'transparent', cursor: 'pointer', fontSize: 12, color: C.t2 }}>
               Cancelar
             </button>
-            <button onClick={handleComplete} disabled={submitting}
-              style={{ padding: '7px 14px', borderRadius: 6, border: 'none', background: C.green, color: '#fff', cursor: 'pointer', fontSize: 12, fontWeight: 600 }}>
+            <button onClick={handleComplete} disabled={submitting || !observacao.trim()}
+              style={{ padding: '7px 14px', borderRadius: 6, border: 'none', background: C.green, color: '#fff', cursor: submitting || !observacao.trim() ? 'not-allowed' : 'pointer', fontSize: 12, fontWeight: 600, opacity: !observacao.trim() ? 0.5 : 1 }}>
               {submitting ? (files.length > 0 ? 'Enviando arquivos...' : 'Registrando...') : '✓ Marcar como concluído'}
             </button>
           </div>
