@@ -1280,31 +1280,48 @@ export default function Eventos() {
                     </div>
                   )}
 
-                  {/* Step 5: Resultado */}
+                  {/* Step 5: Resultado — botões de download */}
                   {rm.step === 'done' && (
                     <div>
                       {rm.error ? (
                         <div style={{ padding: '12px 16px', background: '#fee2e2', color: '#ef4444', borderRadius: 8, fontSize: 13 }}>{rm.error}</div>
                       ) : (
-                        <>
-                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
-                            <div>
-                              <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--cbrio-text)' }}>
-                                {rm.type === 'full' ? 'Relatório Completo' : `Fase: ${rm.phaseName}`}
-                              </div>
-                              <div style={{ fontSize: 11, color: 'var(--cbrio-text3)' }}>
-                                {rm.eventName} · {rm.result?.attachments_count || 0} arquivo(s)
-                              </div>
-                            </div>
-                            <button onClick={() => navigator.clipboard.writeText(rm.result?.content || '')} style={{
-                              padding: '5px 12px', borderRadius: 6, border: '1px solid var(--cbrio-border)',
-                              background: 'transparent', fontSize: 11, cursor: 'pointer', color: 'var(--cbrio-text2)',
-                            }}>Copiar</button>
+                        <div style={{ textAlign: 'center', padding: '10px 0' }}>
+                          <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--cbrio-text)', marginBottom: 4 }}>
+                            {rm.type === 'full' ? 'Relatório Completo' : `Fase: ${rm.phaseName}`}
                           </div>
-                          <div style={{ fontSize: 13, lineHeight: 1.7, color: 'var(--cbrio-text)', whiteSpace: 'pre-wrap', maxHeight: 400, overflowY: 'auto', background: 'var(--cbrio-bg)', borderRadius: 8, padding: '14px 16px' }}>
-                            {rm.result?.content || 'Sem conteúdo.'}
+                          <div style={{ fontSize: 11, color: 'var(--cbrio-text3)', marginBottom: 20 }}>
+                            {rm.eventName} · {rm.result?.attachments_count || 0} arquivo(s) analisado(s)
                           </div>
-                        </>
+                          <div style={{ display: 'flex', gap: 12, justifyContent: 'center', flexWrap: 'wrap' }}>
+                            <button onClick={async () => {
+                              try {
+                                const res = await fetch(`${API}/events/${rm.eventId}/report/export`, {
+                                  method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${(await supabase.auth.getSession()).data.session?.access_token}` },
+                                  body: JSON.stringify({ reportId: rm.result.id, format: 'pptx' }),
+                                });
+                                const blob = await res.blob();
+                                const url = URL.createObjectURL(blob);
+                                const a = document.createElement('a'); a.href = url; a.download = `Apresentacao_${rm.eventName}.pptx`; a.click();
+                              } catch (e) { console.error(e); }
+                            }} style={{ padding: '14px 28px', borderRadius: 10, border: 'none', background: '#00839D', color: '#fff', fontSize: 14, fontWeight: 700, cursor: 'pointer' }}>
+                              Baixar Apresentação
+                            </button>
+                            <button onClick={async () => {
+                              try {
+                                const res = await fetch(`${API}/events/${rm.eventId}/report/export`, {
+                                  method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${(await supabase.auth.getSession()).data.session?.access_token}` },
+                                  body: JSON.stringify({ reportId: rm.result.id, format: 'docx' }),
+                                });
+                                const blob = await res.blob();
+                                const url = URL.createObjectURL(blob);
+                                const a = document.createElement('a'); a.href = url; a.download = `Documento_${rm.eventName}.docx`; a.click();
+                              } catch (e) { console.error(e); }
+                            }} style={{ padding: '14px 28px', borderRadius: 10, border: 'none', background: '#242223', color: '#fff', fontSize: 14, fontWeight: 700, cursor: 'pointer' }}>
+                              Baixar Documento
+                            </button>
+                          </div>
+                        </div>
                       )}
                     </div>
                   )}
