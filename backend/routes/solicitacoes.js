@@ -68,7 +68,7 @@ router.get('/', async (req, res) => {
       }
 
       if (allowedCategories.size > 0) {
-        q = q.or(`solicitante_id.eq.${userId},categoria.in.(${[...allowedCategories].join(',')})`);
+        q = q.or(`solicitante_id.eq.${encodeURIComponent(userId)},categoria.in.(${[...allowedCategories].join(',')})`);
       } else {
         q = q.eq('solicitante_id', userId);
       }

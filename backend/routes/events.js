@@ -523,7 +523,7 @@ router.get('/:eventId/tasks/:taskId/attachments', async (req, res) => {
     // Buscar por event_task_id OU cycle_task_id
     const { data, error } = await supabase.from('event_task_attachments')
       .select('*')
-      .or(`event_task_id.eq.${taskId},cycle_task_id.eq.${taskId}`)
+      .or(`event_task_id.eq.${encodeURIComponent(taskId)},cycle_task_id.eq.${encodeURIComponent(taskId)}`)
       .order('created_at', { ascending: false });
     if (error) throw error;
 

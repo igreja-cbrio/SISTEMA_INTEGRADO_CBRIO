@@ -32,7 +32,7 @@ router.post('/', authorize('diretor'), async (req, res) => {
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *`,
       [d.event_id||null, d.occurrence_id||null, d.project_id||null, d.title||'Reunião',
        d.date, d.occurrence_date||null,
-       d.participants ? `{${d.participants.join(',')}}` : null,
+       Array.isArray(d.participants) ? `{${d.participants.map(p => String(p).replace(/[{},]/g, '')).join(',')}}` : null,
        d.decisions||'', d.notes||'', req.user.userId]
     );
 
@@ -57,7 +57,7 @@ router.put('/:id', authorize('diretor'), async (req, res) => {
     const r = await db.query(
       `UPDATE meetings SET title=$1, date=$2, participants=$3, decisions=$4, notes=$5
        WHERE id=$6 RETURNING *`,
-      [d.title, d.date, d.participants ? `{${d.participants.join(',')}}` : null,
+      [d.title, d.date, Array.isArray(d.participants) ? `{${d.participants.map(p => String(p).replace(/[{},]/g, '')).join(',')}}` : null,
        d.decisions||'', d.notes||'', req.params.id]
     );
     res.json(r.rows[0]);

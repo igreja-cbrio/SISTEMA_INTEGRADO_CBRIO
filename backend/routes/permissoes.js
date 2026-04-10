@@ -102,6 +102,7 @@ router.put('/usuario/:id/areas', async (req, res) => {
   try {
     const { area_ids } = req.body; // array of area IDs
     const userId = parseInt(req.params.id);
+    if (isNaN(userId)) return res.status(400).json({ error: 'ID inválido' });
 
     // Delete existing
     await supabase.from('usuario_areas').delete().eq('usuario_id', userId);
@@ -122,6 +123,7 @@ router.put('/usuario/:id/modulo', async (req, res) => {
   try {
     const { modulo_id, nivel_leitura, nivel_escrita, motivo } = req.body;
     const userId = parseInt(req.params.id);
+    if (isNaN(userId)) return res.status(400).json({ error: 'ID inválido' });
 
     // If levels match cargo default, remove override
     const { data: user } = await supabase.from('usuarios')

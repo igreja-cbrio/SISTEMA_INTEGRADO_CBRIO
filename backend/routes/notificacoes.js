@@ -6,7 +6,13 @@ const { gerarTodasNotificacoes } = require('../services/notificacaoGenerator');
 // Endpoint de cron (sem auth, protegido por secret header)
 router.get('/cron', async (req, res) => {
   const cronSecret = process.env.CRON_SECRET;
-  if (cronSecret && req.headers.authorization !== `Bearer ${cronSecret}`) {
+  if (!cronSecret) {
+    return res.status(500).json({ error: 'CRON_SECRET não configurado' });
+  }
+  const provided = req.headers.authorization || '';
+  const expected = `Bearer ${cronSecret}`;
+  if (provided.length !== expected.length ||
+      !require('crypto').timingSafeEqual(Buffer.from(provided), Buffer.from(expected))) {
     return res.status(401).json({ error: 'Unauthorized' });
   }
   try {

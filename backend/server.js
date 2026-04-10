@@ -24,7 +24,7 @@ app.use(cors({
     if (!origin || allowed.includes(origin) || /\.vercel\.app$/.test(origin) || /\.lovable\.app$/.test(origin) || /\.lovableproject\.com$/.test(origin)) {
       callback(null, true);
     } else {
-      callback(null, true); // Allow all origins for now — tighten later
+      callback(new Error('Origem não permitida pelo CORS'));
     }
   },
   credentials: true,
