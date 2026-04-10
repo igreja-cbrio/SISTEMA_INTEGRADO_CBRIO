@@ -49,8 +49,35 @@ router.get('/dashboard', async (req, res) => {
       inventariosAbertos: inventarios.rows[0].total,
     });
   } catch (e) {
-    console.error('[PAT] Dashboard:', e.message);
-    res.status(500).json({ error: 'Erro ao carregar dashboard patrimônio' });
+    console.error('[PAT] Dashboard SQL falhou:', e.message);
+    // Fallback: usa Supabase client com range estendido
+    try {
+      const { data: bens } = await supabase.from('pat_bens').select('*, pat_categorias(nome), pat_localizacoes(nome)').range(0, 99999);
+      const { data: invs } = await supabase.from('pat_inventarios').select('id').eq('status', 'em_andamento');
+      const arr = bens || [];
+      const catObj = {};
+      const locObj = {};
+      arr.forEach(b => {
+        const cn = b.pat_categorias?.nome || 'Sem categoria';
+        catObj[cn] = (catObj[cn] || 0) + 1;
+        const ln = b.pat_localizacoes?.nome || 'Sem localização';
+        locObj[ln] = (locObj[ln] || 0) + 1;
+      });
+      res.json({
+        totalBens: arr.length,
+        ativos: arr.filter(b => b.status === 'ativo').length,
+        manutencao: arr.filter(b => b.status === 'manutencao').length,
+        baixados: arr.filter(b => b.status === 'baixado').length,
+        extraviados: arr.filter(b => b.status === 'extraviado').length,
+        valorTotal: arr.reduce((s, b) => s + (Number(b.valor_aquisicao) || 0), 0),
+        porCategoria: catObj,
+        porLocalizacao: locObj,
+        inventariosAbertos: (invs || []).length,
+      });
+    } catch (e2) {
+      console.error('[PAT] Dashboard fallback falhou:', e2.message);
+      res.status(500).json({ error: 'Erro ao carregar dashboard patrimônio' });
+    }
   }
 });
 
