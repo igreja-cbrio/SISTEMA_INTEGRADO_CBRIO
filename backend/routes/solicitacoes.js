@@ -1,7 +1,7 @@
 const router = require('express').Router();
 const { authenticate } = require('../middleware/auth');
 const { supabase } = require('../utils/supabase');
-const { notificar } = require('../services/notificar');
+const { notificar, resolverDestinatarios } = require('../services/notificar');
 
 router.use(authenticate);
 
@@ -145,18 +145,40 @@ router.patch('/:id', async (req, res) => {
       .single();
     if (error) throw error;
 
-    // Notify solicitante about status change
+    // Notify solicitante + area managers about status change
     if (status && data) {
+      const modulo = CATEGORIA_MODULO[data.categoria] || 'administrativo';
+      const statusLabel = status.replace('_', ' ');
+      const obsNote = observacoes ? ` — "${observacoes}"` : '';
+
+      // 1. Notify the requester
       notificar({
-        modulo: CATEGORIA_MODULO[data.categoria] || 'administrativo',
+        modulo,
         tipo: 'solicitacao_status',
         titulo: `Solicitação atualizada: ${data.titulo}`,
-        mensagem: `Status alterado para "${status}"`,
+        mensagem: `Status alterado para "${statusLabel}"${obsNote}`,
         link: '/solicitacoes',
-        severidade: 'info',
+        severidade: status === 'rejeitado' ? 'alta' : 'info',
         chaveDedup: `solicitacao_status_${data.id}_${status}`,
         targetIds: [data.solicitante_id],
-      }).catch(err => console.error('[SOLICITACOES] notify error:', err.message));
+      }).catch(err => console.error('[SOLICITACOES] notify solicitante error:', err.message));
+
+      // 2. Notify area managers (excluding the requester to avoid duplicate)
+      resolverDestinatarios(modulo).then(managers => {
+        const filtered = managers.filter(id => id !== data.solicitante_id);
+        if (filtered.length) {
+          notificar({
+            modulo,
+            tipo: 'solicitacao_status',
+            titulo: `Solicitação atualizada: ${data.titulo}`,
+            mensagem: `Status alterado para "${statusLabel}" por ${req.userProfile?.name || 'usuário'}${obsNote}`,
+            link: '/solicitacoes',
+            severidade: 'info',
+            chaveDedup: `solicitacao_status_mgr_${data.id}_${status}`,
+            targetIds: filtered,
+          }).catch(err => console.error('[SOLICITACOES] notify managers error:', err.message));
+        }
+      }).catch(err => console.error('[SOLICITACOES] resolve managers error:', err.message));
     }
 
     res.json(data);
