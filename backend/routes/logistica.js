@@ -4,8 +4,8 @@ const { supabase } = require('../utils/supabase');
 
 router.use(authenticate, authorize('admin', 'diretor'));
 
-// ── Cache em memória do dashboard (5 min TTL) ──────────────
-const DASHBOARD_CACHE_TTL = 5 * 60 * 1000;
+// ── Cache em memória do dashboard (30s TTL) ───────────────
+const DASHBOARD_CACHE_TTL = 30 * 1000;
 let dashboardCache = { data: null, timestamp: 0 };
 
 // ── DASHBOARD ──────────────────────────────────────────────
@@ -30,12 +30,18 @@ router.get('/dashboard', async (req, res) => {
     // ── Buscar dados do Mercado Livre (contagem de envios em trânsito + total de compras no mês) ──
     let mlEmTransito = 0;
     let mlComprasMes = 0;
+    let mlDebug = { stage: 'start' };
     try {
       const { data: mlConfig } = await supabase.from('ml_config').select('*').limit(1).maybeSingle();
-      if (mlConfig?.access_token && mlConfig?.ml_user_id) {
-        // Verificar expiração do token
+      mlDebug.hasConfig = !!mlConfig;
+      mlDebug.hasToken = !!mlConfig?.access_token;
+      mlDebug.hasUserId = !!mlConfig?.ml_user_id;
+
+      if (mlConfig?.access_token) {
+        // Verificar expiração do token — renovar se necessário
         let token = mlConfig.access_token;
         if (mlConfig.token_expires_at && new Date(mlConfig.token_expires_at) < new Date()) {
+          mlDebug.stage = 'refreshing_token';
           const refreshRes = await fetch('https://api.mercadolibre.com/oauth/token', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -54,49 +60,82 @@ router.get('/dashboard', async (req, res) => {
               refresh_token: tokens.refresh_token,
               token_expires_at: new Date(Date.now() + tokens.expires_in * 1000).toISOString(),
             }).eq('id', mlConfig.id);
+          } else {
+            mlDebug.refreshError = refreshRes.status;
           }
         }
 
-        // Buscar pedidos recentes — tenta buyer primeiro, depois seller (mesmo padrão de ml.js)
-        const fetchOrders = async (role) => {
-          const url = `https://api.mercadolibre.com/orders/search?${role}=${mlConfig.ml_user_id}&limit=50&sort=date_desc`;
-          const r = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
-          if (!r.ok) return [];
-          const d = await r.json();
-          return d.results || [];
-        };
+        // Resolver ml_user_id se estiver faltando
+        let userId = mlConfig.ml_user_id;
+        if (!userId) {
+          mlDebug.stage = 'resolving_user_id';
+          const meRes = await fetch('https://api.mercadolibre.com/users/me', {
+            headers: { Authorization: `Bearer ${token}` },
+          });
+          if (meRes.ok) {
+            const me = await meRes.json();
+            userId = String(me.id);
+            mlDebug.resolvedUserId = userId;
+            await supabase.from('ml_config').update({ ml_user_id: userId }).eq('id', mlConfig.id);
+          } else {
+            mlDebug.userIdError = meRes.status;
+          }
+        }
 
-        let orders = await fetchOrders('buyer');
-        if (orders.length === 0) orders = await fetchOrders('seller');
-
-        // Filtrar pedidos do mês corrente
-        const now = new Date();
-        const startMonth = new Date(now.getFullYear(), now.getMonth(), 1);
-        const ordersMes = orders.filter(o => {
-          if (o.status === 'cancelled') return false;
-          const created = new Date(o.date_created || o.last_updated);
-          return created >= startMonth;
-        });
-
-        mlComprasMes = ordersMes.reduce((sum, o) => sum + Number(o.total_amount || 0), 0);
-        console.log('[LOG] ML compras do mês:', { totalOrders: orders.length, ordersMes: ordersMes.length, valor: mlComprasMes });
-
-        // Contar envios em trânsito (dos pedidos do mês)
-        for (const order of ordersMes.slice(0, 20)) {
-          if (!order.shipping?.id) continue;
-          try {
-            const shipRes = await fetch(`https://api.mercadolibre.com/shipments/${order.shipping.id}`, {
-              headers: { Authorization: `Bearer ${token}` },
-            });
-            if (shipRes.ok) {
-              const ship = await shipRes.json();
-              if (['shipped', 'handling', 'ready_to_ship'].includes(ship.status)) mlEmTransito++;
+        if (userId) {
+          // Buscar pedidos recentes — tenta buyer primeiro, depois seller (mesmo padrão de ml.js)
+          const fetchOrders = async (role) => {
+            const url = `https://api.mercadolibre.com/orders/search?${role}=${userId}&limit=50&sort=date_desc`;
+            const r = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+            if (!r.ok) {
+              console.warn(`[LOG] ML orders fetch ${role} failed: ${r.status}`);
+              return [];
             }
-          } catch { /* ignora envio específico com erro */ }
+            const d = await r.json();
+            return d.results || [];
+          };
+
+          mlDebug.stage = 'fetching_buyer';
+          let orders = await fetchOrders('buyer');
+          mlDebug.buyerCount = orders.length;
+          if (orders.length === 0) {
+            mlDebug.stage = 'fetching_seller';
+            orders = await fetchOrders('seller');
+            mlDebug.sellerCount = orders.length;
+          }
+
+          // Filtrar pedidos do mês corrente
+          const now = new Date();
+          const startMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+          const ordersMes = orders.filter(o => {
+            if (o.status === 'cancelled') return false;
+            const created = new Date(o.date_created || o.last_updated);
+            return created >= startMonth;
+          });
+
+          mlComprasMes = ordersMes.reduce((sum, o) => sum + Number(o.total_amount || 0), 0);
+          mlDebug.ordersTotal = orders.length;
+          mlDebug.ordersMes = ordersMes.length;
+          mlDebug.valor = mlComprasMes;
+          console.log('[LOG] ML dashboard:', JSON.stringify(mlDebug));
+
+          // Contar envios em trânsito (dos pedidos do mês)
+          for (const order of ordersMes.slice(0, 20)) {
+            if (!order.shipping?.id) continue;
+            try {
+              const shipRes = await fetch(`https://api.mercadolibre.com/shipments/${order.shipping.id}`, {
+                headers: { Authorization: `Bearer ${token}` },
+              });
+              if (shipRes.ok) {
+                const ship = await shipRes.json();
+                if (['shipped', 'handling', 'ready_to_ship'].includes(ship.status)) mlEmTransito++;
+              }
+            } catch { /* ignora envio específico com erro */ }
+          }
         }
       }
     } catch (mlErr) {
-      console.warn('[LOG] ML dashboard fetch falhou:', mlErr.message);
+      console.error('[LOG] ML dashboard erro:', mlErr.message, mlDebug);
     }
 
     const result = {
@@ -108,6 +147,7 @@ router.get('/dashboard', async (req, res) => {
       pedidosRecebidos: ped.filter(p => p.status === 'recebido').length,
       valorTotalPedidos: ped.filter(p => p.status !== 'cancelado').reduce((s, p) => s + Number(p.valor_total), 0),
       mlComprasMes,
+      _mlDebug: mlDebug,
       _lastUpdate: new Date().toISOString(),
     };
 

@@ -156,8 +156,12 @@ export default function Logistica() {
   const [saving, setSaving] = useState(false);
 
   // ── Fetch ──────────────────────────────────────────────
-  const fetchDash = useCallback(async () => {
-    try { setDash(await logistica.dashboard()); } catch (e) { console.error(e); }
+  const fetchDash = useCallback(async (refresh = false) => {
+    try {
+      const data = await logistica.dashboard(refresh);
+      console.log('[Logistica] dashboard:', data);
+      setDash(data);
+    } catch (e) { console.error(e); }
   }, []);
 
   const fetchFornecedores = useCallback(async () => {
@@ -318,7 +322,7 @@ export default function Logistica() {
         ))}
       </div>
 
-      {tab === 0 && <DashboardTab dash={dash} />}
+      {tab === 0 && <DashboardTab dash={dash} onRefresh={() => fetchDash(true)} />}
       {tab === 1 && (
         <FornecedoresTab data={fornecedores} loading={loading} isDiretor={isDiretor}
           filtroAtivo={filtroFornAtivo} setFiltroAtivo={setFiltroFornAtivo}
@@ -473,7 +477,7 @@ function StatCard({ label, value, bg, svg, hint }) {
   );
 }
 
-function DashboardTab({ dash }) {
+function DashboardTab({ dash, onRefresh }) {
   if (!dash) return <div style={styles.empty}>Carregando dashboard...</div>;
   const kpis = [
     { label: 'Fornecedores Ativos', value: dash.fornecedoresAtivos ?? 0, bg: '#00B39D' },
@@ -485,9 +489,18 @@ function DashboardTab({ dash }) {
     { label: 'Compras do Mês', value: fmtMoney(dash.mlComprasMes ?? 0), bg: '#00B39D', hint: 'Apenas compras do Mercado Livre no mês corrente' },
   ];
   return (
-    <div className="cbrio-stagger" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 12, marginBottom: 24 }}>
-      {kpis.map((k, i) => <StatCard key={k.label} label={k.label} value={k.value} bg={k.bg} svg={STAT_SVGS[i % STAT_SVGS.length]} hint={k.hint} />)}
-    </div>
+    <>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+        <div style={{ fontSize: 11, color: C.text3 }}>
+          {dash._cached ? '💾 Cache (válido por 30s)' : '✓ Dados atualizados'}
+          {dash._lastUpdate && ` • ${new Date(dash._lastUpdate).toLocaleTimeString('pt-BR')}`}
+        </div>
+        <Button variant="ghost" size="sm" onClick={onRefresh} title="Atualizar (ignora cache)">🔄 Atualizar</Button>
+      </div>
+      <div className="cbrio-stagger" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 12, marginBottom: 24 }}>
+        {kpis.map((k, i) => <StatCard key={k.label} label={k.label} value={k.value} bg={k.bg} svg={STAT_SVGS[i % STAT_SVGS.length]} hint={k.hint} />)}
+      </div>
+    </>
   );
 }
 
