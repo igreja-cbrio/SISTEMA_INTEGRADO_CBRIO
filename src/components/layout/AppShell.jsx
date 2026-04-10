@@ -35,7 +35,7 @@ const NAV_ITEMS = [
       {
         title: 'Serviços',
         items: [
-          { label: 'Solicitar Compra', description: 'Peça materiais ou serviços', icon: ShoppingCart, path: '/solicitar-compra' },
+          { label: 'Solicitações', description: 'TI, compras, reembolso, espaços e férias', icon: ShoppingCart, path: '/solicitacoes' },
         ],
       },
       {

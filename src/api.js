@@ -410,6 +410,12 @@ export const permissoes = {
   setModulo: (id, data) => put(`/permissoes/usuario/${id}/modulo`, data),
 };
 
+export const solicitacoes = {
+  list: (params) => get('/solicitacoes' + (params ? '?' + new URLSearchParams(params) : '')),
+  create: (data) => post('/solicitacoes', data),
+  update: (id, data) => patch(`/solicitacoes/${id}`, data),
+};
+
 export const membresia = {
   kpis: () => get('/membresia/kpis'),
   membros: {
