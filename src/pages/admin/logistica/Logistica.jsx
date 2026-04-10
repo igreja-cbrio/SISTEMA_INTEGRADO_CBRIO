@@ -470,7 +470,7 @@ function StatCard({ label, value, bg, svg, hint }) {
       {svg}
       <div style={{ position: 'relative', zIndex: 1 }}>
         <div style={{ fontSize: 13, fontWeight: 500, color: 'rgba(255,255,255,0.8)', marginBottom: 8 }}>{label}</div>
-        <div style={{ fontSize: 32, fontWeight: 700, letterSpacing: -1 }}>{value}</div>
+        <div style={{ fontSize: 28, fontWeight: 700, letterSpacing: -0.5, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{value}</div>
         {hint && <div style={{ fontSize: 10, fontWeight: 400, color: 'rgba(255,255,255,0.7)', marginTop: 4, lineHeight: 1.3 }}>{hint}</div>}
       </div>
     </div>
@@ -497,7 +497,7 @@ function DashboardTab({ dash, onRefresh }) {
         </div>
         <Button variant="ghost" size="sm" onClick={onRefresh} title="Atualizar (ignora cache)">🔄 Atualizar</Button>
       </div>
-      <div className="cbrio-stagger" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 12, marginBottom: 24 }}>
+      <div className="cbrio-stagger" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 12, marginBottom: 24 }}>
         {kpis.map((k, i) => <StatCard key={k.label} label={k.label} value={k.value} bg={k.bg} svg={STAT_SVGS[i % STAT_SVGS.length]} hint={k.hint} />)}
       </div>
     </>
