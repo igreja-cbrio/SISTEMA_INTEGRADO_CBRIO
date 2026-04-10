@@ -1,7 +1,11 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
 import { events, meetings, cycles as cyclesApi, occurrences as occApi, dashboard as dashApi, risks as risksApi, retrospective as retroApi, history as historyApi, users as usersApi, reports as reportsApi } from '../../api';
+import { supabase } from '../../supabaseClient';
+import { resolveApiBaseUrl } from '../../lib/api-base';
 import CycleView from './components/CycleView';
+
+const API = resolveApiBaseUrl(import.meta.env.VITE_API_URL);
 import BudgetPanel from './components/BudgetPanel';
 import { Button } from '../../components/ui/button';
 import CompletionSection from '../../components/CompletionSection';
@@ -2591,6 +2595,28 @@ function ReportTab({ eventId, isPMO }) {
               </span>
             </div>
             <div style={{ display: 'flex', gap: 6 }}>
+              <button onClick={async () => {
+                try {
+                  const res = await fetch(`${API}/events/${eventId}/report/export`, {
+                    method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${(await supabase.auth.getSession()).data.session?.access_token}` },
+                    body: JSON.stringify({ reportId: viewReport.id, format: 'pptx' }),
+                  });
+                  const blob = await res.blob();
+                  const url = URL.createObjectURL(blob);
+                  const a = document.createElement('a'); a.href = url; a.download = `Apresentacao_${viewReport.report_type}.pptx`; a.click();
+                } catch (e) { console.error(e); }
+              }} style={{ padding: '4px 10px', borderRadius: 6, border: 'none', background: '#00839D', fontSize: 11, cursor: 'pointer', color: '#fff', fontWeight: 600 }}>Apresentação</button>
+              <button onClick={async () => {
+                try {
+                  const res = await fetch(`${API}/events/${eventId}/report/export`, {
+                    method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${(await supabase.auth.getSession()).data.session?.access_token}` },
+                    body: JSON.stringify({ reportId: viewReport.id, format: 'docx' }),
+                  });
+                  const blob = await res.blob();
+                  const url = URL.createObjectURL(blob);
+                  const a = document.createElement('a'); a.href = url; a.download = `Documento_${viewReport.report_type}.docx`; a.click();
+                } catch (e) { console.error(e); }
+              }} style={{ padding: '4px 10px', borderRadius: 6, border: 'none', background: '#242223', fontSize: 11, cursor: 'pointer', color: '#fff', fontWeight: 600 }}>Documento</button>
               <button onClick={() => navigator.clipboard.writeText(viewReport.content)} style={{ padding: '4px 10px', borderRadius: 6, border: '1px solid var(--cbrio-border)', background: 'transparent', fontSize: 11, cursor: 'pointer', color: 'var(--cbrio-text2)' }}>Copiar</button>
               <button onClick={() => setViewReport(null)} style={{ padding: '4px 10px', borderRadius: 6, border: '1px solid var(--cbrio-border)', background: 'transparent', fontSize: 11, cursor: 'pointer', color: 'var(--cbrio-text2)' }}>Fechar</button>
             </div>
