@@ -220,10 +220,17 @@ const PAT_STAT_SVGS = [
 ];
 
 function PatStatCard({ label, value, bg, svg, onClick }) {
+  // Font-size adaptativo baseado no comprimento do texto
+  const valueStr = String(value ?? '');
+  let fontSize = 28;
+  if (valueStr.length > 10) fontSize = 24;
+  if (valueStr.length > 13) fontSize = 20;
+  if (valueStr.length > 16) fontSize = 17;
   return (
     <div
       className="cbrio-kpi"
       onClick={onClick}
+      title={valueStr}
       style={{
         position: 'relative', overflow: 'hidden', background: bg, borderRadius: 12,
         padding: '20px 24px', color: '#fff', minHeight: 100,
@@ -236,7 +243,7 @@ function PatStatCard({ label, value, bg, svg, onClick }) {
       {svg}
       <div style={{ position: 'relative', zIndex: 1 }}>
         <div style={{ fontSize: 13, fontWeight: 500, color: 'rgba(255,255,255,0.8)', marginBottom: 8 }}>{label}</div>
-        <div style={{ fontSize: 28, fontWeight: 700, letterSpacing: -0.5, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{value}</div>
+        <div style={{ fontSize, fontWeight: 700, letterSpacing: -0.5, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{value}</div>
       </div>
     </div>
   );
