@@ -51,6 +51,7 @@ export default function Solicitacoes() {
   const [filterCat, setFilterCat] = useState('todas');
   const [dialogOpen, setDialogOpen] = useState(false);
   const [detailItem, setDetailItem] = useState(null);
+  const [dragOverCol, setDragOverCol] = useState(null);
 
   // Form state
   const [form, setForm] = useState({ titulo: '', descricao: '', justificativa: '', categoria: '', urgencia: 'normal', valor_estimado: '' });
@@ -202,14 +203,26 @@ export default function Solicitacoes() {
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-5 gap-4">
           {columns.map(col => (
-            <div key={col.key} className="flex flex-col">
+            <div
+              key={col.key}
+              className={`flex flex-col rounded-lg transition-colors ${dragOverCol === col.key ? 'bg-accent/50 ring-2 ring-primary/30' : ''}`}
+              onDragOver={e => { if (!isAdmin) return; e.preventDefault(); setDragOverCol(col.key); }}
+              onDragLeave={() => setDragOverCol(null)}
+              onDrop={e => {
+                e.preventDefault();
+                setDragOverCol(null);
+                if (!isAdmin) return;
+                const itemId = e.dataTransfer.getData('text/plain');
+                if (itemId) handleStatusChange(itemId, col.key);
+              }}
+            >
               <div className={`flex items-center gap-2 pb-3 mb-3 border-b-2 ${col.color.replace('border-t-', 'border-b-')}`}>
                 <col.icon className="h-4 w-4 text-muted-foreground" />
                 <span className="text-sm font-semibold text-foreground">{col.label}</span>
                 <Badge variant="secondary" className="ml-auto text-xs">{col.items.length}</Badge>
               </div>
               <ScrollArea className="flex-1 max-h-[calc(100vh-280px)]">
-                <div className="space-y-3 pr-1">
+                <div className="space-y-3 pr-1 min-h-[60px]">
                   {col.items.length === 0 && (
                     <p className="text-xs text-muted-foreground text-center py-8">Nenhuma solicitação</p>
                   )}
@@ -220,6 +233,7 @@ export default function Solicitacoes() {
                       isAdmin={isAdmin}
                       onStatusChange={handleStatusChange}
                       onClick={() => setDetailItem(item)}
+                      draggable={isAdmin}
                     />
                   ))}
                 </div>
@@ -235,7 +249,7 @@ export default function Solicitacoes() {
   );
 }
 
-function SolicitacaoCard({ item, isAdmin, onStatusChange, onClick }) {
+function SolicitacaoCard({ item, isAdmin, onStatusChange, onClick, draggable }) {
   const cat = getCatMeta(item.categoria);
   const urg = getUrgMeta(item.urgencia);
   const solicitante = item.solicitante?.name || 'Desconhecido';
@@ -243,9 +257,11 @@ function SolicitacaoCard({ item, isAdmin, onStatusChange, onClick }) {
 
   return (
     <Card
-      className="p-3 cursor-pointer hover:shadow-md transition-shadow border-l-4"
+      className={`p-3 cursor-pointer hover:shadow-md transition-shadow border-l-4 ${draggable ? 'active:opacity-60 active:scale-[0.97]' : ''}`}
       style={{ borderLeftColor: item.urgencia === 'critica' ? 'var(--destructive)' : item.urgencia === 'alta' ? '#f59e0b' : 'transparent' }}
       onClick={onClick}
+      draggable={draggable}
+      onDragStart={e => { e.dataTransfer.setData('text/plain', item.id); e.dataTransfer.effectAllowed = 'move'; }}
     >
       <div className="flex items-start justify-between gap-2 mb-2">
         <Badge className={`text-[10px] px-1.5 py-0.5 ${cat.color}`}>{cat.label}</Badge>
