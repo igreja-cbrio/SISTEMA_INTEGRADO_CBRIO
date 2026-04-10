@@ -39,6 +39,10 @@ const PERM_TO_MODULO = {
 // ── LIST (filtered by role) ─────────────────────────────────
 router.get('/', async (req, res) => {
   try {
+    const userId = req.user.userId;
+    const role = req.user.role;
+    const granular = req.user.granular;
+
     const { categoria, status, mine } = req.query;
     let q = supabase
       .from('solicitacoes')
@@ -48,16 +52,12 @@ router.get('/', async (req, res) => {
     if (categoria) q = q.eq('categoria', categoria);
     if (status) q = q.eq('status', status);
 
-    const role = req.userProfile?.role;
-
     if (mine === 'true') {
-      // Explicit "mine" flag — only own
-      q = q.eq('solicitante_id', req.userId);
+      q = q.eq('solicitante_id', userId);
     } else if (['admin', 'diretor'].includes(role)) {
       // Admin/diretor sees all — no filter
     } else {
-      // Check granular module permissions to determine which categories user can see
-      const modulePerms = req.userProfile?.granular?.modulePerms || {};
+      const modulePerms = granular?.modulePerms || {};
       const allowedCategories = new Set();
 
       for (const [permKey, modulo] of Object.entries(PERM_TO_MODULO)) {
@@ -68,11 +68,9 @@ router.get('/', async (req, res) => {
       }
 
       if (allowedCategories.size > 0) {
-        // Responsável: sees own + categories they have permission for
-        q = q.or(`solicitante_id.eq.${req.userId},categoria.in.(${[...allowedCategories].join(',')})`);
+        q = q.or(`solicitante_id.eq.${userId},categoria.in.(${[...allowedCategories].join(',')})`);
       } else {
-        // Regular collaborator: only own
-        q = q.eq('solicitante_id', req.userId);
+        q = q.eq('solicitante_id', userId);
       }
     }
 
@@ -88,6 +86,9 @@ router.get('/', async (req, res) => {
 // ── CREATE ──────────────────────────────────────────────────
 router.post('/', async (req, res) => {
   try {
+    const userId = req.user.userId;
+    const userName = req.user.name;
+
     const { titulo, descricao, justificativa, categoria, urgencia, valor_estimado, area_solicitante } = req.body;
     if (!titulo || !categoria) return res.status(400).json({ error: 'Título e categoria são obrigatórios' });
 
@@ -100,7 +101,7 @@ router.post('/', async (req, res) => {
         categoria,
         urgencia: urgencia || 'normal',
         valor_estimado,
-        solicitante_id: req.userId,
+        solicitante_id: userId,
         area_solicitante,
       })
       .select('*')
@@ -113,7 +114,7 @@ router.post('/', async (req, res) => {
       modulo,
       tipo: 'solicitacao',
       titulo: `Nova solicitação: ${titulo}`,
-      mensagem: `${req.userProfile?.name || 'Usuário'} criou uma solicitação de ${categoria}`,
+      mensagem: `${userName || 'Usuário'} criou uma solicitação de ${categoria}`,
       link: '/solicitacoes',
       severidade: urgencia === 'critica' ? 'alta' : 'info',
       chaveDedup: `solicitacao_nova_${data.id}`,
@@ -129,6 +130,8 @@ router.post('/', async (req, res) => {
 // ── UPDATE (status, responsavel, observacoes) ───────────────
 router.patch('/:id', async (req, res) => {
   try {
+    const userName = req.user.name;
+
     const { status, responsavel_id, observacoes } = req.body;
     const update = {};
     if (status) update.status = status;
@@ -171,7 +174,7 @@ router.patch('/:id', async (req, res) => {
             modulo,
             tipo: 'solicitacao_status',
             titulo: `Solicitação atualizada: ${data.titulo}`,
-            mensagem: `Status alterado para "${statusLabel}" por ${req.userProfile?.name || 'usuário'}${obsNote}`,
+            mensagem: `Status alterado para "${statusLabel}" por ${userName || 'usuário'}${obsNote}`,
             link: '/solicitacoes',
             severidade: 'info',
             chaveDedup: `solicitacao_status_mgr_${data.id}_${status}`,
