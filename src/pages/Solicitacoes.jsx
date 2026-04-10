@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { solicitacoes as api } from '../api';
 import { playSuccessSound } from '../lib/sounds';
@@ -11,7 +11,8 @@ import { Label } from '../components/ui/label';
 import { Textarea } from '../components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select';
 import { ScrollArea } from '../components/ui/scroll-area';
-import { Plus, Filter, ClipboardList, Clock, CheckCircle2, XCircle, Search as SearchIcon, ArrowRight, List } from 'lucide-react';
+import { Plus, Filter, ClipboardList, Clock, CheckCircle2, XCircle, Search as SearchIcon, ArrowRight, List, Upload, FileText, X } from 'lucide-react';
+import { supabase } from '../supabaseClient';
 import { toast } from 'sonner';
 
 const CATEGORIAS = [
@@ -66,12 +67,15 @@ export default function Solicitacoes() {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [detailItem, setDetailItem] = useState(null);
   const [dragOverCol, setDragOverCol] = useState(null);
+  const [dragOver, setDragOver] = useState(false);
+  const fileInputRef = useRef(null);
 
   // Determine if user is a "responsável" (can see Kanban)
   const isResponsavel = isAdmin || canAccessModule(['DP', 'Pessoas', 'Financeiro', 'Logística', 'Patrimônio', 'Membresia', 'TI']);
 
   // Form state
-  const [form, setForm] = useState({ titulo: '', descricao: '', justificativa: '', categoria: '', urgencia: 'normal', valor_estimado: '' });
+  const FORM_INITIAL = { titulo: '', descricao: '', justificativa: '', categoria: '', urgencia: 'normal', valor_estimado: '', forma_pagamento: '', chave_pix: '', banco: '', agencia: '', conta: '', documento_file: null };
+  const [form, setForm] = useState(FORM_INITIAL);
 
   async function load() {
     try {
@@ -103,12 +107,28 @@ export default function Solicitacoes() {
     try {
       setSubmitting(true);
       const payload = { ...form };
+      delete payload.documento_file;
+
       if (payload.valor_estimado) payload.valor_estimado = parseFloat(payload.valor_estimado);
       else delete payload.valor_estimado;
+
+      // Upload do comprovante para Supabase Storage (bucket: solicitacoes)
+      if (form.documento_file && supabase) {
+        const ext = form.documento_file.name.split('.').pop().toLowerCase();
+        const path = `comprovantes/${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`;
+        const { error: uploadError } = await supabase.storage
+          .from('solicitacoes')
+          .upload(path, form.documento_file, { upsert: false });
+        if (uploadError) throw new Error('Erro ao enviar comprovante: ' + uploadError.message);
+        const { data: { publicUrl } } = supabase.storage.from('solicitacoes').getPublicUrl(path);
+        payload.documento_url = publicUrl;
+      }
+
       await api.create(payload);
       toast.success('Solicitação criada com sucesso!');
       setDialogOpen(false);
-      setForm({ titulo: '', descricao: '', justificativa: '', categoria: '', urgencia: 'normal', valor_estimado: '' });
+      setForm(FORM_INITIAL);
+      setDragOver(false);
       load();
     } catch (e) {
       console.error('[SOLICITACOES] create error:', e);
@@ -136,6 +156,12 @@ export default function Solicitacoes() {
   }
 
   const showValueField = ['compras', 'reembolso'].includes(form.categoria);
+  const isReembolso = form.categoria === 'reembolso';
+  const reembolsoValid = !isReembolso || (
+    form.forma_pagamento &&
+    (form.forma_pagamento !== 'pix' || form.chave_pix.trim()) &&
+    (form.forma_pagamento !== 'transferencia_bancaria' || (form.banco.trim() && form.agencia.trim() && form.conta.trim()))
+  );
 
   return (
     <div className="p-6 space-y-6">
@@ -215,9 +241,88 @@ export default function Solicitacoes() {
                     </div>
                   )}
                 </div>
+                {isReembolso && (
+                  <>
+                    {/* Comprovante — drag and drop */}
+                    <div className="space-y-2">
+                      <Label>Comprovante / Documento</Label>
+                      <div
+                        className={`border-2 border-dashed rounded-lg p-5 text-center transition-colors cursor-pointer
+                          ${dragOver ? 'border-primary bg-primary/5' : 'border-border hover:border-primary/40'}
+                          ${form.documento_file ? 'border-green-500 bg-green-500/5' : ''}`}
+                        onDragOver={e => { e.preventDefault(); setDragOver(true); }}
+                        onDragLeave={() => setDragOver(false)}
+                        onDrop={e => {
+                          e.preventDefault(); setDragOver(false);
+                          const file = e.dataTransfer.files[0];
+                          if (file) setForm(f => ({ ...f, documento_file: file }));
+                        }}
+                        onClick={() => fileInputRef.current?.click()}
+                      >
+                        {form.documento_file ? (
+                          <div className="flex items-center justify-center gap-2">
+                            <FileText className="h-5 w-5 text-green-600 shrink-0" />
+                            <span className="text-sm text-green-700 truncate max-w-[220px]">{form.documento_file.name}</span>
+                            <button type="button" className="ml-1 text-muted-foreground hover:text-red-500"
+                              onClick={e => { e.stopPropagation(); setForm(f => ({ ...f, documento_file: null })); if (fileInputRef.current) fileInputRef.current.value = ''; }}>
+                              <X className="h-4 w-4" />
+                            </button>
+                          </div>
+                        ) : (
+                          <div className="flex flex-col items-center gap-1.5">
+                            <Upload className="h-7 w-7 text-muted-foreground" />
+                            <p className="text-sm text-muted-foreground">Arraste ou clique para selecionar</p>
+                            <p className="text-xs text-muted-foreground">PDF, JPG, PNG — até 10 MB</p>
+                          </div>
+                        )}
+                      </div>
+                      <input ref={fileInputRef} type="file" className="hidden" accept=".pdf,.jpg,.jpeg,.png,.webp"
+                        onChange={e => { const f = e.target.files[0]; if (f) setForm(prev => ({ ...prev, documento_file: f })); }} />
+                    </div>
+
+                    {/* Forma de pagamento */}
+                    <div className="space-y-2">
+                      <Label>Forma de pagamento *</Label>
+                      <Select value={form.forma_pagamento} onValueChange={v => setForm(f => ({ ...f, forma_pagamento: v, chave_pix: '', banco: '', agencia: '', conta: '' }))}>
+                        <SelectTrigger><SelectValue placeholder="Como quer receber?" /></SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="pix">PIX</SelectItem>
+                          <SelectItem value="transferencia_bancaria">Transferência Bancária</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+
+                    {form.forma_pagamento === 'pix' && (
+                      <div className="space-y-2">
+                        <Label>Chave PIX *</Label>
+                        <Input value={form.chave_pix} onChange={e => setForm(f => ({ ...f, chave_pix: e.target.value }))} placeholder="CPF, e-mail, telefone ou chave aleatória" />
+                      </div>
+                    )}
+
+                    {form.forma_pagamento === 'transferencia_bancaria' && (
+                      <div className="space-y-3">
+                        <div className="space-y-2">
+                          <Label>Banco *</Label>
+                          <Input value={form.banco} onChange={e => setForm(f => ({ ...f, banco: e.target.value }))} placeholder="Ex: Banco do Brasil, Nubank..." />
+                        </div>
+                        <div className="grid grid-cols-2 gap-3">
+                          <div className="space-y-2">
+                            <Label>Agência *</Label>
+                            <Input value={form.agencia} onChange={e => setForm(f => ({ ...f, agencia: e.target.value }))} placeholder="0000" />
+                          </div>
+                          <div className="space-y-2">
+                            <Label>Conta *</Label>
+                            <Input value={form.conta} onChange={e => setForm(f => ({ ...f, conta: e.target.value }))} placeholder="00000-0" />
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                  </>
+                )}
+
                 <div className="flex justify-end gap-2 pt-2">
                   <Button type="button" variant="outline" onClick={() => setDialogOpen(false)}>Cancelar</Button>
-                  <Button onClick={handleCreate} disabled={!form.titulo || !form.categoria || submitting}>
+                  <Button onClick={handleCreate} disabled={!form.titulo || !form.categoria || !reembolsoValid || submitting}>
                     {submitting ? 'Criando...' : 'Criar Solicitação'}
                   </Button>
                 </div>
@@ -453,6 +558,40 @@ function DetailDialog({ item, onClose, isAdmin, onStatusChange }) {
             <div>
               <span className="text-sm text-muted-foreground">Observações</span>
               <p className="text-sm mt-1 whitespace-pre-wrap">{item.observacoes}</p>
+            </div>
+          )}
+
+          {/* Dados de reembolso */}
+          {item.categoria === 'reembolso' && (item.forma_pagamento || item.documento_url) && (
+            <div className="space-y-3 pt-3 border-t border-border">
+              <p className="text-sm font-semibold text-foreground">Dados de reembolso</p>
+              {item.forma_pagamento && (
+                <div className="grid grid-cols-2 gap-4 text-sm">
+                  <div>
+                    <span className="text-muted-foreground">Forma de pagamento</span>
+                    <p className="font-medium">{item.forma_pagamento === 'pix' ? 'PIX' : 'Transferência Bancária'}</p>
+                  </div>
+                  {item.forma_pagamento === 'pix' && item.chave_pix && (
+                    <div>
+                      <span className="text-muted-foreground">Chave PIX</span>
+                      <p className="font-medium font-mono">{item.chave_pix}</p>
+                    </div>
+                  )}
+                  {item.forma_pagamento === 'transferencia_bancaria' && (
+                    <>
+                      {item.banco && <div><span className="text-muted-foreground">Banco</span><p className="font-medium">{item.banco}</p></div>}
+                      {item.agencia && <div><span className="text-muted-foreground">Agência</span><p className="font-medium">{item.agencia}</p></div>}
+                      {item.conta && <div><span className="text-muted-foreground">Conta</span><p className="font-medium">{item.conta}</p></div>}
+                    </>
+                  )}
+                </div>
+              )}
+              {item.documento_url && (
+                <a href={item.documento_url} target="_blank" rel="noopener noreferrer"
+                  className="inline-flex items-center gap-2 text-sm text-primary hover:underline">
+                  <FileText className="h-4 w-4" /> Ver comprovante
+                </a>
+              )}
             </div>
           )}
 
