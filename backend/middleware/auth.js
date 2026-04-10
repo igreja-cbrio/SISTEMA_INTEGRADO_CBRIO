@@ -145,13 +145,26 @@ async function authenticate(req, res, next) {
   next();
 }
 
-// Verifica se o role do usuário está na lista permitida (sistema simples)
+// Verifica permissão: primeiro granular (nivel do cargo), fallback pro profiles.role
+// authorize('diretor') = exige nivel >= 4
+// authorize('admin') = exige nivel >= 5
+// authorize('diretor', 'admin') = exige nivel >= 4
+const ROLE_NIVEL = { admin: 5, diretor: 4, assistente: 2 };
 function authorize(...roles) {
+  const nivelMinimo = Math.min(...roles.map(r => ROLE_NIVEL[r] || 4));
   return (req, res, next) => {
-    if (!req.user || !roles.includes(req.user.role)) {
-      return res.status(403).json({ error: 'Acesso negado para este perfil' });
+    if (!req.user) return res.status(401).json({ error: 'Não autenticado' });
+
+    // 1. Checar granular (nivel do cargo na tabela usuarios)
+    if (req.user.granular) {
+      const nivel = Math.max(req.user.granular.cargoNivelLeitura || 1, req.user.granular.cargoNivelEscrita || 1);
+      if (nivel >= nivelMinimo) return next();
     }
-    next();
+
+    // 2. Fallback: checar profiles.role (retrocompatibilidade)
+    if (roles.includes(req.user.role)) return next();
+
+    return res.status(403).json({ error: 'Acesso negado para este perfil' });
   };
 }
 

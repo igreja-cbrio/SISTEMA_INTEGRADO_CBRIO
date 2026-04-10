@@ -1,5 +1,5 @@
 const router = require('express').Router();
-const { authenticate, authorizeCycle } = require('../middleware/auth');
+const { authenticate, authorizeCycle, authorize } = require('../middleware/auth');
 const { supabase } = require('../utils/supabase');
 const ADM_TASKS_TEMPLATE = require('../adm_tasks_template.json');
 const { SHAREPOINT_CONFIGURED } = require('../services/storageService');
@@ -179,7 +179,7 @@ router.get('/kanban/all', async (req, res) => {
 });
 
 // POST /api/cycles/activate/:eventId
-router.post('/activate/:eventId', async (req, res) => {
+router.post('/activate/:eventId', authorize('diretor'), async (req, res) => {
   const { eventId } = req.params;
   const userId = req.user.userId;
   try {
@@ -362,7 +362,7 @@ router.post('/phases', async (req, res) => {
 });
 
 // DELETE /api/cycles/phases/:phaseId — excluir fase (cascade exclui tarefas)
-router.delete('/phases/:phaseId', async (req, res) => {
+router.delete('/phases/:phaseId', authorize('diretor'), async (req, res) => {
   try {
     await supabase.from('cycle_phase_tasks').delete().eq('event_phase_id', req.params.phaseId);
     await supabase.from('event_cycle_phases').delete().eq('id', req.params.phaseId);
@@ -371,7 +371,7 @@ router.delete('/phases/:phaseId', async (req, res) => {
 });
 
 // DELETE /api/cycles/tasks/:taskId — excluir tarefa
-router.delete('/tasks/:taskId', async (req, res) => {
+router.delete('/tasks/:taskId', authorize('diretor'), async (req, res) => {
   try {
     await supabase.from('cycle_task_subtasks').delete().eq('task_id', req.params.taskId);
     await supabase.from('cycle_phase_tasks').delete().eq('id', req.params.taskId);
@@ -404,7 +404,7 @@ router.post('/tasks/:taskId/subtasks', async (req, res) => {
 });
 
 // DELETE /api/cycles/subtasks/:subId — excluir subtarefa
-router.delete('/subtasks/:subId', async (req, res) => {
+router.delete('/subtasks/:subId', authorize('diretor'), async (req, res) => {
   try {
     await supabase.from('cycle_task_subtasks').delete().eq('id', req.params.subId);
     res.json({ success: true });
