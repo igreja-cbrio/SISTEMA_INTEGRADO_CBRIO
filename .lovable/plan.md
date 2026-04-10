@@ -1,47 +1,32 @@
 
-Objetivo
 
-- Corrigir o fluxo de criação de solicitação, que hoje entra em “Criando...” mas falha sem retorno visível.
+## Plano: Criar tabelas de logística no banco de dados
 
-Diagnóstico
+### Diagnóstico
 
-- O clique do botão está funcionando: `src/pages/Solicitacoes.jsx` já entra em `submitting`.
-- O problema mais provável está no backend de solicitações:
-  - `backend/routes/solicitacoes.js` usa `req.userId` e `req.userProfile`
-  - mas o middleware `authenticate` popula `req.user.userId`, `req.user.role`, `req.user.granular` e `req.user.name`
-- Isso quebra o fluxo:
-  - `GET /solicitacoes` filtra com usuário indefinido e tende a trazer lista vazia
-  - `POST /solicitacoes` tenta salvar `solicitante_id: undefined`, então a criação falha
-  - o erro não aparece para o usuário porque a página usa `toast` do Sonner, mas o app não está montando o `<Toaster />`
+O dashboard de logística mostra zeros porque as tabelas que o backend consulta (`log_fornecedores`, `log_solicitacoes_compra`, `log_pedidos`, `log_recebimentos`, `log_notas_fiscais`, `log_pedido_itens`, `log_movimentacoes`) **não existem** no banco de dados. A única tabela existente é `solicitacoes`.
 
-Implementação
+### Implementação
 
-1. Corrigir `backend/routes/solicitacoes.js`
-- trocar `req.userId` por `req.user.userId`
-- trocar `req.userProfile?.role` por `req.user.role`
-- trocar `req.userProfile?.granular?.modulePerms` por `req.user.granular?.modulePerms`
-- trocar `req.userProfile?.name` por `req.user.name`
-- centralizar isso em variáveis locais no início de cada rota para evitar novas regressões
+**Migration SQL** — criar as 7 tabelas necessárias com RLS:
 
-2. Restaurar feedback visual na interface
-- montar o `Toaster` do Sonner no app raiz (`src/App.tsx` ou `src/main.tsx`)
-- manter os `toast.success` e `toast.error` já existentes em `src/pages/Solicitacoes.jsx`
+1. **`log_fornecedores`** — id, razao_social, nome_fantasia, cnpj, email, telefone, contato, categoria, ativo (default true), observacoes, created_at
+2. **`log_solicitacoes_compra`** — id, titulo, descricao, justificativa, valor_estimado, urgencia, status (default 'pendente'), area, solicitante_id, aprovado_por, observacoes, created_at
+3. **`log_pedidos`** — id, solicitacao_id (FK → log_solicitacoes_compra), fornecedor_id (FK → log_fornecedores), descricao, valor_total, data_pedido (default now), data_prevista, status (default 'aguardando'), codigo_rastreio, transportadora, created_by, created_at
+4. **`log_recebimentos`** — id, pedido_id (FK → log_pedidos), recebido_por, observacoes, status (default 'ok'), created_at
+5. **`log_notas_fiscais`** — id, numero, serie, fornecedor_id (FK), pedido_id (FK), valor, data_emissao, chave_acesso, tipo (default 'entrada'), observacoes, created_by, created_at
+6. **`log_pedido_itens`** — id, pedido_id (FK), descricao, quantidade, unidade (default 'un'), valor_unitario, created_at
+7. **`log_movimentacoes`** — id, codigo_item, descricao, tipo, quantidade, origem, destino, observacoes, responsavel_id, data_movimentacao, created_at
 
-3. Validar o fluxo
-- abrir a tela de Solicitações e confirmar que a listagem volta a carregar
-- criar uma solicitação de Infraestrutura
-- verificar se:
-  - o dialog fecha
-  - aparece toast de sucesso ou erro
-  - a solicitação entra na lista/kanban
-- se houver erro, ele deixa de ficar “silencioso” e passa a aparecer corretamente
+**RLS**: Todas as tabelas terão RLS habilitada com política de leitura para usuários autenticados e políticas de escrita para autenticados (o backend já usa service role key, mas é boa prática).
 
-Observação técnica
+### Nenhuma alteração de código
 
-- Se depois disso ainda falhar no preview, o próximo ponto a validar é a configuração do backend, porque `backend/utils/supabase.js` depende de `SUPABASE_URL` e `SUPABASE_SERVICE_ROLE_KEY`, enquanto a `.env` atual expõe principalmente variáveis `VITE_*`.
+O backend (`backend/routes/logistica.js`) e o frontend (`Logistica.jsx`) já estão prontos — só faltam as tabelas.
 
-Arquivos envolvidos
+### Arquivos envolvidos
 
-- `backend/routes/solicitacoes.js`
-- `src/App.tsx` ou `src/main.tsx`
-- `src/pages/Solicitacoes.jsx`
+| Ação | Detalhe |
+|------|---------|
+| Migration SQL | Criar 7 tabelas `log_*` com foreign keys e RLS |
+
