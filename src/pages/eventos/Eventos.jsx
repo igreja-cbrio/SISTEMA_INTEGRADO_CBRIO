@@ -1367,7 +1367,8 @@ export default function Eventos() {
                   {group.phases.map(ph => {
                     const si = normDate(ph.data_inicio_prevista); const ei = normDate(ph.data_fim_prevista);
                     if (!si || !ei) return <div key={ph.id} style={{ height: BH, borderBottom: '1px solid var(--cbrio-border)' }} />;
-                    const lp = dPct(si); const rp = dPct(ei); const wp = Math.max(rp - lp, 2);
+                    const lp0 = dPct(si); const rp = dPct(ei); const wp = Math.max(rp - lp0, 2);
+                    const lp = si === ei ? lp0 + 1.5 : lp0; // Dia D: desloca pra manter escadinha
                     const phT = aTasks.filter(t => t.event_phase_id === ph.id);
                     const phD = phT.filter(t => t.status === 'concluida').length;
                     const isDone = ph.status === 'concluida' || (phT.length > 0 && phD === phT.length) || phT.length === 0;
