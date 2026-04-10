@@ -117,9 +117,11 @@ export default function Solicitacoes() {
     }
   }
 
-  async function handleStatusChange(id, newStatus) {
+  async function handleStatusChange(id, newStatus, observacoes) {
     try {
-      await api.update(id, { status: newStatus });
+      const payload = { status: newStatus };
+      if (observacoes) payload.observacoes = observacoes;
+      await api.update(id, payload);
       toast.success('Status atualizado');
       load();
     } catch (e) {
@@ -362,12 +364,35 @@ function SolicitacaoCard({ item, isAdmin, onStatusChange, onClick, draggable }) 
 }
 
 function DetailDialog({ item, onClose, isAdmin, onStatusChange }) {
+  const [actionPending, setActionPending] = useState(null); // e.g. 'aprovado', 'rejeitado', 'concluido', 'em_analise'
+  const [obsText, setObsText] = useState('');
+
   if (!item) return null;
   const cat = getCatMeta(item.categoria);
   const urg = getUrgMeta(item.urgencia);
 
+  const ACTION_LABELS = {
+    em_analise: 'Analisar',
+    aprovado: 'Aprovar',
+    rejeitado: 'Rejeitar',
+    concluido: 'Concluir',
+  };
+
+  function confirmAction() {
+    if (!actionPending) return;
+    onStatusChange(item.id, actionPending, obsText.trim() || undefined);
+    setActionPending(null);
+    setObsText('');
+    onClose();
+  }
+
+  function cancelAction() {
+    setActionPending(null);
+    setObsText('');
+  }
+
   return (
-    <Dialog open={!!item} onOpenChange={v => { if (!v) onClose(); }}>
+    <Dialog open={!!item} onOpenChange={v => { if (!v) { cancelAction(); onClose(); } }}>
       <DialogContent className="sm:max-w-lg">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
@@ -425,16 +450,37 @@ function DetailDialog({ item, onClose, isAdmin, onStatusChange }) {
             </div>
           )}
 
-          {isAdmin && (
+          {isAdmin && !actionPending && (
             <div className="flex flex-wrap gap-2 pt-2 border-t border-border">
-              {item.status === 'pendente' && <Button size="sm" onClick={() => { onStatusChange(item.id, 'em_analise'); onClose(); }}>Analisar</Button>}
+              {item.status === 'pendente' && <Button size="sm" onClick={() => setActionPending('em_analise')}>Analisar</Button>}
               {item.status === 'em_analise' && (
                 <>
-                  <Button size="sm" className="bg-green-600 hover:bg-green-700" onClick={() => { onStatusChange(item.id, 'aprovado'); onClose(); }}>Aprovar</Button>
-                  <Button size="sm" variant="destructive" onClick={() => { onStatusChange(item.id, 'rejeitado'); onClose(); }}>Rejeitar</Button>
+                  <Button size="sm" className="bg-green-600 hover:bg-green-700" onClick={() => setActionPending('aprovado')}>Aprovar</Button>
+                  <Button size="sm" variant="destructive" onClick={() => setActionPending('rejeitado')}>Rejeitar</Button>
                 </>
               )}
-              {item.status === 'aprovado' && <Button size="sm" onClick={() => { onStatusChange(item.id, 'concluido'); onClose(); }}>Concluir</Button>}
+              {item.status === 'aprovado' && <Button size="sm" onClick={() => setActionPending('concluido')}>Concluir</Button>}
+            </div>
+          )}
+
+          {actionPending && (
+            <div className="space-y-3 pt-2 border-t border-border">
+              <p className="text-sm font-medium text-foreground">
+                Confirmar ação: <span className="text-primary">{ACTION_LABELS[actionPending]}</span>
+              </p>
+              <div className="space-y-2">
+                <Label className="text-sm">Observações (opcional)</Label>
+                <Textarea
+                  value={obsText}
+                  onChange={e => setObsText(e.target.value)}
+                  placeholder="Adicione observações sobre esta decisão..."
+                  rows={3}
+                />
+              </div>
+              <div className="flex gap-2 justify-end">
+                <Button size="sm" variant="outline" onClick={cancelAction}>Cancelar</Button>
+                <Button size="sm" onClick={confirmAction}>{ACTION_LABELS[actionPending]}</Button>
+              </div>
             </div>
           )}
         </div>
