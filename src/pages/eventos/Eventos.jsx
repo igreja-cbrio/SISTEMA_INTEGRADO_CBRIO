@@ -1367,7 +1367,7 @@ export default function Eventos() {
                   {group.phases.map(ph => {
                     const si = normDate(ph.data_inicio_prevista); const ei = normDate(ph.data_fim_prevista);
                     if (!si || !ei) return <div key={ph.id} style={{ height: BH, borderBottom: '1px solid var(--cbrio-border)' }} />;
-                    const lp = dPct(si); const rp = dPct(ei); const wp = Math.max(rp - lp, 0.5);
+                    const lp = dPct(si); const rp = dPct(ei); const wp = Math.max(rp - lp, 2);
                     const phT = aTasks.filter(t => t.event_phase_id === ph.id);
                     const phD = phT.filter(t => t.status === 'concluida').length;
                     const isDone = ph.status === 'concluida' || (phT.length > 0 && phD === phT.length) || phT.length === 0;
@@ -1380,7 +1380,7 @@ export default function Eventos() {
                         {mL.map((m, i) => (<div key={i} style={{ position: 'absolute', left: `${m.pct}%`, top: 0, width: 1, height: '100%', background: 'var(--cbrio-border)', opacity: 0.3 }} />))}
                         <div style={{ position: 'absolute', left: `${tPct}%`, top: 0, width: 2, height: '100%', background: '#ef4444', zIndex: 2, opacity: 0.4 }} />
                         <div title={`${ph.nome_fase}\n${fmtDate(si)} → ${fmtDate(ei)}\n${dTxt}`}
-                          style={{ position: 'absolute', top: 4, height: BH - 8, borderRadius: 6, left: `${lp}%`, width: `${wp}%`, minWidth: 30, background: barC, opacity: isDone ? 0.5 : 0.9, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '0 6px', overflow: 'hidden' }}>
+                          style={{ position: 'absolute', top: 4, height: BH - 8, borderRadius: 6, left: `${lp}%`, width: `${wp}%`, minWidth: 50, background: barC, opacity: isDone ? 0.5 : 0.9, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '0 6px', overflow: 'hidden' }}>
                           <span style={{ fontSize: 11, fontWeight: 700, color: '#fff', whiteSpace: 'nowrap' }}>{dTxt}</span>
                         </div>
                       </div>
