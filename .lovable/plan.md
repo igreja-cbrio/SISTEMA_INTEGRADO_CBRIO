@@ -1,50 +1,65 @@
 
 
-## Problem
+## Problema
 
-The dashboard de Patrimônio está carregando infinitamente. O código no backend (`backend/routes/patrimonio.js`) já foi corrigido para usar agregação SQL via `pg` Pool, mas o problema persiste.
+Sem `DATABASE_URL` configurada no Vercel, a query via `pg` Pool falha. O fallback usa o cliente Supabase com `.range(0, 99999)`, mas o Supabase tem um limite server-side de 1.000 linhas na API REST que não pode ser ultrapassado pelo cliente JS.
 
-**Causa provável**: O Vercel executa o backend como serverless function. O `pg` Pool com `max: 10` e `connectionTimeoutMillis: 5000` pode estar falhando silenciosamente em ambiente serverless — conexões persistentes (pool) não funcionam bem em serverless, onde cada invocação pode ser um cold start.
+## Solução
 
-Além disso, a query pode estar dando timeout ou erro de conexão, e o `catch` retorna 500, mas o frontend pode não estar tratando o erro adequadamente, ficando em "Carregando..." infinitamente.
+Criar uma **função RPC (database function)** no Supabase que faz a agregação SQL diretamente no banco, e chamá-la via `supabase.rpc()` no backend. Isso elimina a dependência de `DATABASE_URL` e do `pg` Pool.
 
-## Solution
+### 1. Criar função RPC no banco (migration)
 
-### 1. Fix pg Pool para ambiente serverless (`backend/utils/supabase.js`)
-
-Reduzir o pool size e aumentar o timeout para funcionar melhor em serverless:
-
-```javascript
-const pool = new Pool({
-  connectionString: process.env.DATABASE_URL,
-  max: 1,  // serverless = 1 connection
-  idleTimeoutMillis: 10000,
-  connectionTimeoutMillis: 10000,
-});
+```sql
+CREATE OR REPLACE FUNCTION pat_dashboard_stats()
+RETURNS json
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+AS $$
+  SELECT json_build_object(
+    'totalBens', (SELECT COUNT(*)::int FROM pat_bens),
+    'ativos', (SELECT COUNT(*)::int FROM pat_bens WHERE status = 'ativo'),
+    'manutencao', (SELECT COUNT(*)::int FROM pat_bens WHERE status = 'manutencao'),
+    'baixados', (SELECT COUNT(*)::int FROM pat_bens WHERE status = 'baixado'),
+    'extraviados', (SELECT COUNT(*)::int FROM pat_bens WHERE status = 'extraviado'),
+    'valorTotal', (SELECT COALESCE(SUM(valor_aquisicao), 0)::numeric FROM pat_bens),
+    'porCategoria', (
+      SELECT json_object_agg(nome, qtd) FROM (
+        SELECT COALESCE(c.nome, 'Sem categoria') as nome, COUNT(*)::int as qtd
+        FROM pat_bens b LEFT JOIN pat_categorias c ON b.categoria_id = c.id
+        GROUP BY c.nome
+      ) sub
+    ),
+    'porLocalizacao', (
+      SELECT json_object_agg(nome, qtd) FROM (
+        SELECT COALESCE(l.nome, 'Sem localização') as nome, COUNT(*)::int as qtd
+        FROM pat_bens b LEFT JOIN pat_localizacoes l ON b.localizacao_id = l.id
+        GROUP BY l.nome
+      ) sub
+    ),
+    'inventariosAbertos', (SELECT COUNT(*)::int FROM pat_inventarios WHERE status = 'em_andamento')
+  )
+$$;
 ```
 
-### 2. Adicionar tratamento de erro no frontend (`src/pages/admin/patrimonio/Patrimonio.jsx`)
+### 2. Atualizar `backend/routes/patrimonio.js`
 
-Garantir que o frontend saia do estado de loading quando receber um erro:
-
-- No `useEffect` que carrega o dashboard, adicionar `.catch()` que seta o loading como `false` e mostra uma mensagem de erro ao invés de ficar eternamente em "Carregando..."
-
-### 3. Adicionar fallback com Supabase client no dashboard
-
-Se a query SQL falhar, usar o client Supabase como fallback (com `.range(0, 99999)` para evitar o limite de 1000 rows):
+Reescrever o endpoint `/dashboard` para:
+1. **Primário**: chamar `supabase.rpc('pat_dashboard_stats')` — funciona sem `DATABASE_URL`
+2. **Fallback**: manter a query via `pg` Pool caso o RPC falhe (para quando `DATABASE_URL` estiver disponível)
 
 ```javascript
 router.get('/dashboard', async (req, res) => {
   try {
-    // Tenta SQL direto primeiro
-    const [totais, ...] = await Promise.all([...]);
-    // ...responde normalmente
+    const { data, error } = await supabase.rpc('pat_dashboard_stats');
+    if (error) throw error;
+    res.json(data);
   } catch (e) {
-    console.error('[PAT] Dashboard SQL falhou:', e.message);
-    // Fallback: tenta via Supabase client
+    // fallback via pg pool se disponível
     try {
-      const { data } = await supabase.from('pat_bens').select('*').range(0, 99999);
-      // calcula totais em JS como fallback
+      const [totais, ...] = await Promise.all([...]);
+      res.json({...});
     } catch (e2) {
       res.status(500).json({ error: 'Erro ao carregar dashboard' });
     }
@@ -52,8 +67,10 @@ router.get('/dashboard', async (req, res) => {
 });
 ```
 
-### Files modified
-- `backend/utils/supabase.js` — ajustar pool para serverless (max: 1, timeout maior)
-- `backend/routes/patrimonio.js` — adicionar logging e fallback no dashboard
-- `src/pages/admin/patrimonio/Patrimonio.jsx` — tratar erro no carregamento do dashboard
+### Arquivos modificados
+- **Migration SQL** — criar função `pat_dashboard_stats()`
+- **`backend/routes/patrimonio.js`** — usar `supabase.rpc()` como método primário
+
+### Resultado esperado
+Dashboard mostrará os **4.264 bens** e **R$ 13.428.055,66** corretamente, sem depender de `DATABASE_URL`.
 
