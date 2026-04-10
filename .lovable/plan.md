@@ -1,56 +1,81 @@
 
+Objetivo
 
-## Plano: Criar tabelas essenciais que faltam no banco de dados
+- Corrigir o erro real da criação de solicitação, que continua falhando mesmo com o botão e o toast funcionando.
 
-### Diagnóstico
+O que eu revisei
 
-A **tabela `profiles` não existe** no banco de dados. O middleware `authenticate` consulta `profiles` em toda requisição autenticada — quando falha, o backend retorna 500 antes mesmo de chegar na rota de criar solicitação.
+- Fluxo frontend em `src/pages/Solicitacoes.jsx`
+- Cliente de API em `src/api.js`
+- Rota backend em `backend/routes/solicitacoes.js`
+- Middleware de autenticação em `backend/middleware/auth.js`
+- Migration da tabela `solicitacoes` em `supabase/migrations/20260410011300_ee3f7612-3ff5-4d13-8e37-6cdb2a573043.sql`
+- Serviço de notificação em `backend/services/notificar.js`
 
-Tabelas existentes: `solicitacoes`, `log_fornecedores`, `log_movimentacoes`, `log_notas_fiscais`, `log_pedido_itens`, `log_pedidos`, `log_recebimentos`, `log_solicitacoes_compra`.
+Do I know what the issue is?
 
-Tabelas que faltam (usadas pelo `authenticate` middleware):
-- **`profiles`** — essencial, sem ela NENHUMA rota funciona
-- **`modulos`** — listagem de módulos do sistema
-- **`cargos`** — níveis de permissão por cargo
-- **`usuarios`** — vínculo usuário ↔ cargo para permissões granulares
-- **`permissoes_modulo`** — overrides de permissão por módulo
-- **`areas`** e **`setores`** — estrutura organizacional
-- **`usuario_areas`** — vínculo usuário ↔ áreas
-- **`rh_funcionarios`** — usado no auto-sync de área do perfil
+- Sim, o problema mais provável está identificado.
 
-### Implementação
+Problema exato
 
-**Uma migration SQL** criando todas as tabelas com RLS:
+- A UI permite criar solicitação com categoria `infraestrutura`.
+- O backend também aceita `infraestrutura` em `backend/routes/solicitacoes.js`.
+- Mas a tabela `public.solicitacoes` foi criada com um `CHECK` que só permite:
+  - `ti`, `compras`, `reembolso`, `espaco`, `ferias`, `outro`
+- `infraestrutura` não está nessa constraint.
+- No print do usuário, a categoria selecionada é exatamente `Infraestrutura`.
+- Resultado: o insert falha no banco e o backend devolve o erro genérico “Erro ao criar solicitação”.
 
-1. **`profiles`** — id (FK auth.users), name, email, role (default 'assistente'), area, active (default true), created_at. Trigger para criar perfil automaticamente no signup.
+Há um segundo risco já visível
 
-2. **`setores`** — id, nome, ativo, created_at
+- Após o insert, a rota chama `notificar()` em modo assíncrono.
+- Esse serviço depende das tabelas `notificacoes` e `notificacao_regras`.
+- Pelas migrations lidas, essas tabelas não aparecem no projeto.
+- Isso provavelmente não derruba a criação porque o código usa `.catch(...)`, mas continua gerando erro de backend em log e precisa ser tratado.
 
-3. **`areas`** — id, nome, setor_id (FK setores), ativo, created_at
+Plano de correção
 
-4. **`cargos`** — id, nome, nivel_padrao_leitura (default 1), nivel_padrao_escrita (default 1), created_at
+1. Ajustar o schema da tabela `solicitacoes`
+- Criar uma migration para atualizar a regra da coluna `categoria`
+- Incluir `infraestrutura` entre os valores permitidos
+- Aproveitar para revisar se `espaco` e demais categorias da UI continuam alinhadas com o banco
 
-5. **`modulos`** — id, nome, ativo (default true), created_at. Seed com módulos: DP, Pessoas, Financeiro, Logística, Patrimônio, Membresia, TI, Agenda, Projetos, IA / Agentes, Tarefas, Comunicação.
+2. Endurecer a rota de criação para evitar novos desencontros
+- Em `backend/routes/solicitacoes.js`, validar `categoria` contra a mesma lista usada pela UI/backend
+- Se vier categoria inválida, retornar `400` com mensagem específica, em vez de deixar quebrar no banco
+- Isso evita outro ciclo de erro “genérico”
 
-6. **`usuarios`** — id, email, cargo_id (FK cargos), ativo (default true), created_at
+3. Melhorar a mensagem de erro da criação
+- No `catch` da rota, retornar `e.message` ou `error.message` quando for seguro
+- Assim, se houver nova falha de schema/constraint, o usuário verá algo acionável e não apenas “Erro ao criar solicitação”
 
-7. **`permissoes_modulo`** — id, usuario_id (FK usuarios), modulo_id (FK modulos), nivel_leitura, nivel_escrita
+4. Blindar notificações para não poluir o fluxo
+- Verificar se o projeto realmente precisa das tabelas `notificacoes` e `notificacao_regras`
+- Se elas ainda não existirem, tenho duas opções de implementação:
+  - criar essas tabelas corretamente no banco, ou
+  - proteger o serviço para ignorar ausência dessas tabelas sem gerar erro
+- Eu seguiria a primeira opção se o módulo de notificações já fizer parte do produto
 
-8. **`usuario_areas`** — id, usuario_id (FK usuarios), area_id (FK areas), is_principal (default false)
+Arquivos envolvidos
 
-9. **`rh_funcionarios`** — id, nome, cpf, email, telefone, cargo, area, tipo_contrato, data_admissao, data_demissao, salario, status (default 'ativo'), observacoes, created_at
+- `supabase/migrations/...` nova migration para ajustar a constraint de `solicitacoes`
+- `backend/routes/solicitacoes.js`
+- possivelmente migrations para `notificacoes` e `notificacao_regras` se confirmarmos esse bloco
 
-10. **`rh_documentos`**, **`rh_treinamentos`**, **`rh_treinamentos_funcionarios`**, **`rh_ferias_licencas`** — tabelas de RH dependentes
+Resultado esperado
 
-RLS: todas com políticas permissivas para `authenticated`. Trigger `handle_new_user` para criar perfil automaticamente no registro.
+- Criar solicitação com categoria `Infraestrutura` passa a funcionar
+- O erro deixa de ser genérico
+- O fluxo fica consistente entre frontend, backend e banco
 
-### Nenhuma alteração de código
+Detalhe técnico
 
-O backend e frontend já estão prontos — só faltam as tabelas no banco.
+- O conflito principal é este desalinhamento:
+```text
+Frontend/backend aceitam:
+ti, compras, reembolso, espaco, infraestrutura, ferias, outro
 
-### Arquivos envolvidos
-
-| Ação | Detalhe |
-|------|---------|
-| Migration SQL | Criar ~14 tabelas + trigger de perfil + seed de módulos |
-
+Banco aceita hoje:
+ti, compras, reembolso, espaco, ferias, outro
+```
+- Ou seja, `infraestrutura` quebra no insert.
