@@ -1,6 +1,7 @@
 const router = require('express').Router();
 const { authenticate, authorize } = require('../middleware/auth');
 const { supabase } = require('../utils/supabase');
+const { getMLConfig, mlFetch, ensureUserId, searchOrders } = require('../services/mercadoLivreService');
 
 router.use(authenticate, authorize('admin', 'diretor'));
 
@@ -30,79 +31,33 @@ router.get('/dashboard', async (req, res) => {
     // ── Buscar dados do Mercado Livre (contagem de envios em trânsito + total de compras no mês) ──
     let mlEmTransito = 0;
     let mlComprasMes = 0;
-    let mlDebug = { stage: 'start' };
+    const mlDebug = { stage: 'start' };
     try {
-      const { data: mlConfig } = await supabase.from('ml_config').select('*').limit(1).maybeSingle();
+      const mlConfig = await getMLConfig();
       mlDebug.hasConfig = !!mlConfig;
       mlDebug.hasToken = !!mlConfig?.access_token;
-      mlDebug.hasUserId = !!mlConfig?.ml_user_id;
+      mlDebug.hasUserIdSaved = !!mlConfig?.ml_user_id;
 
       if (mlConfig?.access_token) {
-        // Verificar expiração do token — renovar se necessário
-        let token = mlConfig.access_token;
-        if (mlConfig.token_expires_at && new Date(mlConfig.token_expires_at) < new Date()) {
-          mlDebug.stage = 'refreshing_token';
-          const refreshRes = await fetch('https://api.mercadolibre.com/oauth/token', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              grant_type: 'refresh_token',
-              client_id: mlConfig.client_id,
-              client_secret: mlConfig.client_secret,
-              refresh_token: mlConfig.refresh_token,
-            }),
-          });
-          if (refreshRes.ok) {
-            const tokens = await refreshRes.json();
-            token = tokens.access_token;
-            await supabase.from('ml_config').update({
-              access_token: tokens.access_token,
-              refresh_token: tokens.refresh_token,
-              token_expires_at: new Date(Date.now() + tokens.expires_in * 1000).toISOString(),
-            }).eq('id', mlConfig.id);
-          } else {
-            mlDebug.refreshError = refreshRes.status;
-          }
-        }
-
-        // Resolver ml_user_id se estiver faltando
+        // Resolver user_id (usa o salvo ou busca via /users/me — mesma lógica de ml.js)
         let userId = mlConfig.ml_user_id;
         if (!userId) {
-          mlDebug.stage = 'resolving_user_id';
-          const meRes = await fetch('https://api.mercadolibre.com/users/me', {
-            headers: { Authorization: `Bearer ${token}` },
-          });
-          if (meRes.ok) {
-            const me = await meRes.json();
-            userId = String(me.id);
+          mlDebug.stage = 'ensure_user_id';
+          try {
+            const resolved = await ensureUserId(mlConfig);
+            userId = resolved.userId;
             mlDebug.resolvedUserId = userId;
-            await supabase.from('ml_config').update({ ml_user_id: userId }).eq('id', mlConfig.id);
-          } else {
-            mlDebug.userIdError = meRes.status;
+          } catch (e) {
+            mlDebug.userIdError = e.message;
           }
         }
 
         if (userId) {
-          // Buscar pedidos recentes — tenta buyer primeiro, depois seller (mesmo padrão de ml.js)
-          const fetchOrders = async (role) => {
-            const url = `https://api.mercadolibre.com/orders/search?${role}=${userId}&limit=50&sort=date_desc`;
-            const r = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
-            if (!r.ok) {
-              console.warn(`[LOG] ML orders fetch ${role} failed: ${r.status}`);
-              return [];
-            }
-            const d = await r.json();
-            return d.results || [];
-          };
-
-          mlDebug.stage = 'fetching_buyer';
-          let orders = await fetchOrders('buyer');
-          mlDebug.buyerCount = orders.length;
-          if (orders.length === 0) {
-            mlDebug.stage = 'fetching_seller';
-            orders = await fetchOrders('seller');
-            mlDebug.sellerCount = orders.length;
-          }
+          mlDebug.stage = 'searching_orders';
+          // Reutiliza searchOrders do service (já tem buyer→seller fallback + retry 401)
+          const ordersData = await searchOrders(mlConfig, userId, { offset: 0, limit: 50 });
+          const orders = ordersData.results || [];
+          mlDebug.totalOrders = orders.length;
 
           // Filtrar pedidos do mês corrente
           const now = new Date();
@@ -114,28 +69,26 @@ router.get('/dashboard', async (req, res) => {
           });
 
           mlComprasMes = ordersMes.reduce((sum, o) => sum + Number(o.total_amount || 0), 0);
-          mlDebug.ordersTotal = orders.length;
           mlDebug.ordersMes = ordersMes.length;
           mlDebug.valor = mlComprasMes;
+          mlDebug.stage = 'fetching_shipments';
           console.log('[LOG] ML dashboard:', JSON.stringify(mlDebug));
 
-          // Contar envios em trânsito (dos pedidos do mês)
+          // Contar envios em trânsito dos pedidos do mês
           for (const order of ordersMes.slice(0, 20)) {
             if (!order.shipping?.id) continue;
             try {
-              const shipRes = await fetch(`https://api.mercadolibre.com/shipments/${order.shipping.id}`, {
-                headers: { Authorization: `Bearer ${token}` },
-              });
-              if (shipRes.ok) {
-                const ship = await shipRes.json();
-                if (['shipped', 'handling', 'ready_to_ship'].includes(ship.status)) mlEmTransito++;
-              }
+              const ship = await mlFetch(mlConfig, `/shipments/${order.shipping.id}`);
+              if (['shipped', 'handling', 'ready_to_ship'].includes(ship.status)) mlEmTransito++;
             } catch { /* ignora envio específico com erro */ }
           }
+          mlDebug.emTransito = mlEmTransito;
+          mlDebug.stage = 'done';
         }
       }
     } catch (mlErr) {
-      console.error('[LOG] ML dashboard erro:', mlErr.message, mlDebug);
+      mlDebug.error = mlErr.message;
+      console.error('[LOG] ML dashboard erro:', mlErr.message, JSON.stringify(mlDebug));
     }
 
     const result = {
