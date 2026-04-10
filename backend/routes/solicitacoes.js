@@ -105,7 +105,8 @@ router.post('/', async (req, res) => {
     const userId = req.user.userId;
     const userName = req.user.name;
 
-    const { titulo, descricao, justificativa, categoria, urgencia, valor_estimado, area_solicitante } = req.body;
+    const { titulo, descricao, justificativa, categoria, urgencia, valor_estimado, area_solicitante,
+            forma_pagamento, chave_pix, banco, agencia, conta, documento_url } = req.body;
     if (!titulo || !categoria) return res.status(400).json({ error: 'Título e categoria são obrigatórios' });
     if (!ALLOWED_CATEGORIES.includes(categoria)) {
       return res.status(400).json({ error: `Categoria inválida: "${categoria}". Permitidas: ${ALLOWED_CATEGORIES.join(', ')}` });
@@ -122,6 +123,14 @@ router.post('/', async (req, res) => {
         valor_estimado,
         solicitante_id: userId,
         area_solicitante,
+        ...(categoria === 'reembolso' && {
+          forma_pagamento: forma_pagamento || null,
+          chave_pix: chave_pix || null,
+          banco: banco || null,
+          agencia: agencia || null,
+          conta: conta || null,
+          documento_url: documento_url || null,
+        }),
       })
       .select('*')
       .single();
