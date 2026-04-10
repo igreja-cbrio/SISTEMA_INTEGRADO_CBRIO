@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { cn } from '@/lib/utils'
 import {
   Search, Users, DollarSign, Truck, Tag, CalendarDays,
-  FolderKanban, BookOpen, ShoppingCart, Bot, User,
+  FolderKanban, BookOpen, ClipboardList, Bot, User,
   LayoutDashboard, Map, UserCheck, UsersRound, Heart,
   HandHelping, Megaphone,
 } from 'lucide-react'
@@ -19,7 +19,7 @@ interface SearchItem {
 const PAGES: SearchItem[] = [
   { label: 'Dashboard', description: 'Página inicial', path: '/', icon: LayoutDashboard, category: 'Geral' },
   { label: 'Meu Perfil', description: 'Seus dados e configurações', path: '/perfil', icon: User, category: 'Geral' },
-  { label: 'Solicitar Compra', description: 'Pedir materiais ou serviços', path: '/solicitar-compra', icon: ShoppingCart, category: 'Geral' },
+  { label: 'Solicitações', description: 'TI, compras, reembolsos e infraestrutura', path: '/solicitacoes', icon: ClipboardList, category: 'Geral' },
   { label: 'Recursos Humanos', description: 'Colaboradores, treinamentos e férias', path: '/admin/rh', icon: Users, category: 'Administrativo' },
   { label: 'Financeiro', description: 'Contas, transações e reembolsos', path: '/admin/financeiro', icon: DollarSign, category: 'Administrativo' },
   { label: 'Logística', description: 'Fornecedores, compras e pedidos', path: '/admin/logistica', icon: Truck, category: 'Administrativo' },
