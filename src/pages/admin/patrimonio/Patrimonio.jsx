@@ -118,7 +118,8 @@ export default function Patrimonio() {
   const [modalLogMov, setModalLogMov] = useState(null);
   const [saving, setSaving] = useState(false);
 
-  const loadDash = useCallback(async () => { try { setDash(await patrimonio.dashboard()); } catch (e) { console.error(e); } }, []);
+  const [dashError, setDashError] = useState(false);
+  const loadDash = useCallback(async () => { try { setDashError(false); setDash(await patrimonio.dashboard()); } catch (e) { console.error(e); setDashError(true); setDash({ totalBens: 0, ativos: 0, manutencao: 0, baixados: 0, extraviados: 0, valorTotal: 0, porCategoria: {}, porLocalizacao: {}, inventariosAbertos: 0 }); } }, []);
   const loadBens = useCallback(async () => {
     try { setLoading(true); const p = {}; if (filtroStatus) p.status = filtroStatus; if (filtroCat) p.categoria_id = filtroCat; if (filtroLoc) p.localizacao_id = filtroLoc; if (busca) p.busca = busca; setBens(await patrimonio.bens.list(p)); }
     catch (e) { console.error(e); } finally { setLoading(false); }

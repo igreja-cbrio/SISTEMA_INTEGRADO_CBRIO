@@ -17,10 +17,10 @@ const supabase = (SUPABASE_URL && SUPABASE_SERVICE_ROLE_KEY)
 
 // Pool pg direto no Supabase Postgres (para queries complexas com RLS bypassada)
 const pool = new Pool({
-  connectionString: process.env.DATABASE_URL, // postgres://postgres.[ref]:[password]@aws-0-*.pooler.supabase.com:6543/postgres
-  max: 10,
-  idleTimeoutMillis: 30000,
-  connectionTimeoutMillis: 5000,
+  connectionString: process.env.DATABASE_URL,
+  max: 1,
+  idleTimeoutMillis: 10000,
+  connectionTimeoutMillis: 10000,
 });
 
 pool.on('error', (err) => {
