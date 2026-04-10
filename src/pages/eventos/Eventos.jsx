@@ -2539,6 +2539,8 @@ function ReportTab({ eventId, isPMO }) {
     reportsApi.list(eventId).then(setReportsList).catch(() => {});
   }, [eventId]);
 
+  const [exporting, setExporting] = useState('');
+
   const generate = async () => {
     setGenerating(true);
     setError('');
@@ -2551,6 +2553,24 @@ function ReportTab({ eventId, isPMO }) {
     } finally {
       setGenerating(false);
     }
+  };
+
+  const downloadExport = async (reportId, format) => {
+    setExporting(format);
+    try {
+      const res = await fetch(`${API}/events/${eventId}/report/export`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${(await supabase.auth.getSession()).data.session?.access_token}` },
+        body: JSON.stringify({ reportId, format }),
+      });
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = format === 'pptx' ? `Apresentacao_CBRio.pptx` : `Documento_CBRio.docx`;
+      a.click();
+    } catch (e) { setError('Erro ao exportar: ' + e.message); }
+    finally { setExporting(''); }
   };
 
   return (
@@ -2582,47 +2602,28 @@ function ReportTab({ eventId, isPMO }) {
         </div>
       )}
 
-      {/* Relatório expandido */}
+      {/* Relatório gerado — botões de download */}
       {viewReport && (
-        <div style={{ background: 'var(--cbrio-card)', borderRadius: 12, border: '1px solid var(--cbrio-border)', marginBottom: 16, overflow: 'hidden' }}>
-          <div style={{ padding: '16px 20px', borderBottom: '1px solid var(--cbrio-border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <div>
-              <span style={{ fontSize: 14, fontWeight: 700, color: 'var(--cbrio-text)' }}>
-                {viewReport.report_type === 'full' ? 'Relatório Completo' : `Relatório: ${viewReport.phase_name}`}
-              </span>
-              <span style={{ fontSize: 11, color: 'var(--cbrio-text3)', marginLeft: 12 }}>
-                {viewReport.attachments_count} arquivo(s) analisado(s) · ${viewReport.token_cost?.toFixed(4) || '0'} USD
-              </span>
-            </div>
-            <div style={{ display: 'flex', gap: 6 }}>
-              <button onClick={async () => {
-                try {
-                  const res = await fetch(`${API}/events/${eventId}/report/export`, {
-                    method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${(await supabase.auth.getSession()).data.session?.access_token}` },
-                    body: JSON.stringify({ reportId: viewReport.id, format: 'pptx' }),
-                  });
-                  const blob = await res.blob();
-                  const url = URL.createObjectURL(blob);
-                  const a = document.createElement('a'); a.href = url; a.download = `Apresentacao_${viewReport.report_type}.pptx`; a.click();
-                } catch (e) { console.error(e); }
-              }} style={{ padding: '4px 10px', borderRadius: 6, border: 'none', background: '#00839D', fontSize: 11, cursor: 'pointer', color: '#fff', fontWeight: 600 }}>Apresentação</button>
-              <button onClick={async () => {
-                try {
-                  const res = await fetch(`${API}/events/${eventId}/report/export`, {
-                    method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${(await supabase.auth.getSession()).data.session?.access_token}` },
-                    body: JSON.stringify({ reportId: viewReport.id, format: 'docx' }),
-                  });
-                  const blob = await res.blob();
-                  const url = URL.createObjectURL(blob);
-                  const a = document.createElement('a'); a.href = url; a.download = `Documento_${viewReport.report_type}.docx`; a.click();
-                } catch (e) { console.error(e); }
-              }} style={{ padding: '4px 10px', borderRadius: 6, border: 'none', background: '#242223', fontSize: 11, cursor: 'pointer', color: '#fff', fontWeight: 600 }}>Documento</button>
-              <button onClick={() => navigator.clipboard.writeText(viewReport.content)} style={{ padding: '4px 10px', borderRadius: 6, border: '1px solid var(--cbrio-border)', background: 'transparent', fontSize: 11, cursor: 'pointer', color: 'var(--cbrio-text2)' }}>Copiar</button>
-              <button onClick={() => setViewReport(null)} style={{ padding: '4px 10px', borderRadius: 6, border: '1px solid var(--cbrio-border)', background: 'transparent', fontSize: 11, cursor: 'pointer', color: 'var(--cbrio-text2)' }}>Fechar</button>
-            </div>
+        <div style={{ background: 'var(--cbrio-card)', borderRadius: 12, border: '1px solid var(--cbrio-border)', marginBottom: 16, padding: '24px 20px' }}>
+          <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--cbrio-text)', marginBottom: 4 }}>
+            {viewReport.report_type === 'full' ? 'Relatório Completo' : `Relatório: ${viewReport.phase_name}`}
           </div>
-          <div style={{ padding: '20px 24px', fontSize: 13, lineHeight: 1.7, color: 'var(--cbrio-text)', whiteSpace: 'pre-wrap' }}>
-            {viewReport.content}
+          <div style={{ fontSize: 11, color: 'var(--cbrio-text3)', marginBottom: 20 }}>
+            {viewReport.attachments_count} arquivo(s) analisado(s) · Gerado em {new Date(viewReport.created_at).toLocaleString('pt-BR')}
+          </div>
+          <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
+            <button onClick={() => downloadExport(viewReport.id, 'pptx')} disabled={!!exporting}
+              style={{ padding: '14px 28px', borderRadius: 10, border: 'none', background: '#00839D', color: '#fff', fontSize: 14, fontWeight: 700, cursor: exporting ? 'wait' : 'pointer', display: 'flex', alignItems: 'center', gap: 8, opacity: exporting === 'docx' ? 0.5 : 1 }}>
+              {exporting === 'pptx' ? 'Gerando...' : 'Baixar Apresentação'}
+            </button>
+            <button onClick={() => downloadExport(viewReport.id, 'docx')} disabled={!!exporting}
+              style={{ padding: '14px 28px', borderRadius: 10, border: 'none', background: '#242223', color: '#fff', fontSize: 14, fontWeight: 700, cursor: exporting ? 'wait' : 'pointer', display: 'flex', alignItems: 'center', gap: 8, opacity: exporting === 'pptx' ? 0.5 : 1 }}>
+              {exporting === 'docx' ? 'Gerando...' : 'Baixar Documento'}
+            </button>
+            <button onClick={() => setViewReport(null)}
+              style={{ padding: '14px 20px', borderRadius: 10, border: '1px solid var(--cbrio-border)', background: 'transparent', fontSize: 13, cursor: 'pointer', color: 'var(--cbrio-text3)' }}>
+              Fechar
+            </button>
           </div>
         </div>
       )}
