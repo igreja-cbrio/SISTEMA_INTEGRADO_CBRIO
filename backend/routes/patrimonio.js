@@ -134,6 +134,35 @@ router.get('/bens', async (req, res) => {
   } catch (e) { res.status(500).json({ error: 'Erro ao listar bens' }); }
 });
 
+// Buscar bem por código de barras (usado pelo scanner)
+// IMPORTANTE: precisa vir ANTES de /bens/:id para não conflitar
+router.get('/bens/barcode/:codigo', async (req, res) => {
+  try {
+    const codigo = decodeURIComponent(req.params.codigo).trim();
+    if (!codigo) return res.status(400).json({ error: 'Código vazio' });
+
+    const { data: bem, error } = await supabase.from('pat_bens')
+      .select('*, pat_categorias(nome), pat_localizacoes(nome)')
+      .eq('codigo_barras', codigo)
+      .maybeSingle();
+
+    if (error) {
+      console.error('[PATRIMONIO] barcode lookup error:', error.message);
+      return res.status(500).json({ error: error.message });
+    }
+    if (!bem) return res.status(404).json({ error: 'Bem não encontrado' });
+
+    const { data: movs } = await supabase.from('pat_movimentacoes')
+      .select('*, profiles!responsavel_id(name)')
+      .eq('bem_id', bem.id)
+      .order('data_movimentacao', { ascending: false });
+    res.json({ ...bem, movimentacoes: movs || [] });
+  } catch (e) {
+    console.error('[PATRIMONIO] barcode lookup exception:', e.message);
+    res.status(500).json({ error: 'Erro ao buscar bem por código' });
+  }
+});
+
 router.get('/bens/:id', async (req, res) => {
   try {
     const { data: bem, error } = await supabase.from('pat_bens')

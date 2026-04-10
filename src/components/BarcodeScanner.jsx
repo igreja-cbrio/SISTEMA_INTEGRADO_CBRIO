@@ -1,10 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
 
 /**
- * Scanner de código de barras universal com controle de zoom.
+ * Scanner de código de barras universal com zoom, lanterna e foco contínuo.
  * - Usa BarcodeDetector nativo quando disponível (Chrome/Edge Android, mais rápido)
  * - Fallback para @zxing/browser (funciona no Safari iOS, Firefox, etc)
- * - Zoom nativo via MediaStream constraints (quando suportado pelo hardware)
  *
  * Props:
  * - active: boolean — se true, inicia o scanner
@@ -24,6 +23,7 @@ export default function BarcodeScanner({ active, onDetect, onError, formats }) {
   const [zoom, setZoom] = useState(1);
   const [torchSupported, setTorchSupported] = useState(false);
   const [torchOn, setTorchOn] = useState(false);
+  const [status, setStatus] = useState('Iniciando câmera...');
 
   useEffect(() => {
     if (!active) {
@@ -37,29 +37,46 @@ export default function BarcodeScanner({ active, onDetect, onError, formats }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [active]);
 
-  // Tenta descobrir capabilities de zoom/torch da track ativa
-  function initTrackCapabilities(stream) {
+  // Tenta descobrir capabilities e aplica foco contínuo
+  async function initTrackCapabilities(stream) {
     const track = stream?.getVideoTracks?.()[0];
     if (!track) return;
     trackRef.current = track;
     try {
-      const caps = track.getCapabilities?.();
-      if (caps?.zoom) {
+      const caps = track.getCapabilities?.() || {};
+      console.log('[BarcodeScanner] Track capabilities:', caps);
+
+      const advanced = [];
+
+      // Foco contínuo (macro quando possível)
+      if (caps.focusMode && caps.focusMode.includes('continuous')) {
+        advanced.push({ focusMode: 'continuous' });
+      }
+      // Exposição automática
+      if (caps.exposureMode && caps.exposureMode.includes('continuous')) {
+        advanced.push({ exposureMode: 'continuous' });
+      }
+      // White balance automático
+      if (caps.whiteBalanceMode && caps.whiteBalanceMode.includes('continuous')) {
+        advanced.push({ whiteBalanceMode: 'continuous' });
+      }
+
+      if (advanced.length) {
+        try { await track.applyConstraints({ advanced }); } catch (e) { console.warn('[BarcodeScanner] focus constraints:', e?.message); }
+      }
+
+      if (caps.zoom) {
         const min = caps.zoom.min ?? 1;
         const max = caps.zoom.max ?? 1;
         const step = caps.zoom.step ?? 0.1;
-        setZoomCaps({ min, max, step });
-        // Inicia com zoom atual ou 1x
-        const current = track.getSettings?.().zoom ?? min;
-        setZoom(current);
-      } else {
-        setZoomCaps(null);
+        if (max > min) {
+          setZoomCaps({ min, max, step });
+          const current = track.getSettings?.().zoom ?? min;
+          setZoom(current);
+        }
       }
-      if (caps?.torch) {
-        setTorchSupported(true);
-      } else {
-        setTorchSupported(false);
-      }
+
+      if (caps.torch) setTorchSupported(true);
     } catch (e) {
       console.warn('[BarcodeScanner] capabilities não disponíveis:', e?.message);
     }
@@ -90,24 +107,34 @@ export default function BarcodeScanner({ active, onDetect, onError, formats }) {
 
   async function startScanner() {
     try {
+      // Abre câmera com constraints ideais para scan
+      setStatus('Abrindo câmera...');
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: {
+          facingMode: { ideal: 'environment' },
+          width: { ideal: 1920 },
+          height: { ideal: 1080 },
+          frameRate: { ideal: 30 },
+        },
+        audio: false,
+      });
+      streamRef.current = stream;
+
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream;
+        videoRef.current.setAttribute('playsinline', 'true');
+        videoRef.current.setAttribute('muted', 'true');
+        videoRef.current.setAttribute('autoplay', 'true');
+        try { await videoRef.current.play(); } catch (e) { console.warn('[BarcodeScanner] video.play():', e?.message); }
+      }
+
+      await initTrackCapabilities(stream);
+      setStatus('Aponte para o código');
+
       // 1) Tentar BarcodeDetector nativo (Chrome/Edge Android)
       if ('BarcodeDetector' in window) {
         setEngine('native');
-        const stream = await navigator.mediaDevices.getUserMedia({
-          video: {
-            facingMode: 'environment',
-            width: { ideal: 1920 },
-            height: { ideal: 1080 },
-          },
-          audio: false,
-        });
-        streamRef.current = stream;
-        initTrackCapabilities(stream);
-        if (videoRef.current) {
-          videoRef.current.srcObject = stream;
-          videoRef.current.setAttribute('playsinline', 'true');
-          await videoRef.current.play();
-        }
+        console.log('[BarcodeScanner] Usando BarcodeDetector nativo');
         const detector = new window.BarcodeDetector({
           formats: formats || ['ean_13', 'ean_8', 'code_128', 'code_39', 'qr_code', 'upc_a', 'upc_e', 'codabar', 'itf'],
         });
@@ -116,44 +143,53 @@ export default function BarcodeScanner({ active, onDetect, onError, formats }) {
           try {
             const barcodes = await detector.detect(videoRef.current);
             if (barcodes.length > 0) {
+              console.log('[BarcodeScanner] Detectado (nativo):', barcodes[0].rawValue);
               detectedRef.current = true;
               onDetect?.(barcodes[0].rawValue);
               return;
             }
-          } catch { /* ignora falhas de frame */ }
+          } catch (e) { /* ignora falhas de frame */ }
           rafRef.current = requestAnimationFrame(loop);
         };
         rafRef.current = requestAnimationFrame(loop);
         return;
       }
 
-      // 2) Fallback: @zxing/browser (iOS Safari, Firefox, etc)
+      // 2) Fallback: @zxing/library direto (mais controle)
       setEngine('zxing');
+      console.log('[BarcodeScanner] Usando ZXing (fallback)');
       const { BrowserMultiFormatReader } = await import('@zxing/browser');
-      const reader = new BrowserMultiFormatReader();
-      // Lista câmeras e escolhe a traseira (se possível)
-      const devices = await BrowserMultiFormatReader.listVideoInputDevices();
-      const backCam = devices.find(d => /back|rear|environment|traseira/i.test(d.label)) || devices[devices.length - 1];
-      const deviceId = backCam?.deviceId;
+      const { DecodeHintType, BarcodeFormat } = await import('@zxing/library');
 
-      const controls = await reader.decodeFromVideoDevice(deviceId, videoRef.current, (result, err, ctrls) => {
+      const hints = new Map();
+      hints.set(DecodeHintType.POSSIBLE_FORMATS, [
+        BarcodeFormat.EAN_13,
+        BarcodeFormat.EAN_8,
+        BarcodeFormat.CODE_128,
+        BarcodeFormat.CODE_39,
+        BarcodeFormat.QR_CODE,
+        BarcodeFormat.UPC_A,
+        BarcodeFormat.UPC_E,
+        BarcodeFormat.CODABAR,
+        BarcodeFormat.ITF,
+        BarcodeFormat.DATA_MATRIX,
+      ]);
+      hints.set(DecodeHintType.TRY_HARDER, true);
+
+      const reader = new BrowserMultiFormatReader(hints, { delayBetweenScanAttempts: 100 });
+
+      // Usa o video element que já está com o stream da câmera
+      const controls = await reader.decodeFromVideoElement(videoRef.current, (result, err) => {
         if (detectedRef.current) return;
         if (result) {
+          console.log('[BarcodeScanner] Detectado (zxing):', result.getText());
           detectedRef.current = true;
-          ctrls.stop();
+          try { controls.stop(); } catch { /* noop */ }
           onDetect?.(result.getText());
         }
         // Ignora erros de frames sem código (NotFoundException)
       });
       zxingControlsRef.current = controls;
-      // Aguarda o video ter um stream atribuído para extrair capabilities
-      setTimeout(() => {
-        const stream = videoRef.current?.srcObject;
-        if (stream) {
-          streamRef.current = stream;
-          initTrackCapabilities(stream);
-        }
-      }, 500);
     } catch (e) {
       console.error('[BarcodeScanner] Erro:', e);
       const msg = e?.name === 'NotAllowedError'
@@ -187,6 +223,23 @@ export default function BarcodeScanner({ active, onDetect, onError, formats }) {
     setZoom(1);
     setTorchSupported(false);
     setTorchOn(false);
+    setStatus('');
+  }
+
+  // Click-to-focus: ao tocar na tela, aplica foco manual no ponto (quando suportado)
+  async function handleTap(e) {
+    const track = trackRef.current;
+    if (!track) return;
+    const caps = track.getCapabilities?.();
+    if (!caps?.pointsOfInterest || !caps?.focusMode?.includes('single-shot')) return;
+    try {
+      const rect = e.currentTarget.getBoundingClientRect();
+      const x = (e.clientX - rect.left) / rect.width;
+      const y = (e.clientY - rect.top) / rect.height;
+      await track.applyConstraints({
+        advanced: [{ focusMode: 'single-shot', pointsOfInterest: [{ x, y }] }],
+      });
+    } catch { /* ignore */ }
   }
 
   if (!active) return null;
@@ -197,6 +250,8 @@ export default function BarcodeScanner({ active, onDetect, onError, formats }) {
         ref={videoRef}
         playsInline
         muted
+        autoPlay
+        onClick={handleTap}
         style={{ width: '100%', maxHeight: 400, objectFit: 'cover', display: 'block' }}
       />
 
@@ -207,6 +262,18 @@ export default function BarcodeScanner({ active, onDetect, onError, formats }) {
         borderRadius: 8, boxShadow: '0 0 0 9999px rgba(0,0,0,0.35)',
         pointerEvents: 'none',
       }} />
+
+      {/* Status */}
+      {status && (
+        <div style={{
+          position: 'absolute', top: 12, left: 12,
+          background: 'rgba(0,0,0,0.6)', color: '#fff',
+          fontSize: 11, padding: '4px 10px', borderRadius: 12,
+          backdropFilter: 'blur(4px)',
+        }}>
+          {status}
+        </div>
+      )}
 
       {/* Botão de lanterna (flash) */}
       {torchSupported && (
@@ -267,8 +334,7 @@ export default function BarcodeScanner({ active, onDetect, onError, formats }) {
         position: 'absolute', bottom: 8, left: 0, right: 0, textAlign: 'center',
         fontSize: 11, color: 'rgba(255,255,255,0.8)', pointerEvents: 'none',
       }}>
-        {engine === 'zxing' ? '📷 ZXing' : '📷 Nativo'}
-        {!zoomCaps && ' • Aproxime para focar'}
+        {engine === 'zxing' ? '📷 ZXing' : engine === 'native' ? '📷 Nativo' : ''}
       </div>
     </div>
   );
