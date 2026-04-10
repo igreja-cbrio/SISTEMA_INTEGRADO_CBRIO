@@ -98,9 +98,9 @@ export default function Solicitacoes() {
     }));
   }, [filtered]);
 
-  async function handleCreate(e) {
-    e.preventDefault();
+  async function handleCreate() {
     try {
+      setSubmitting(true);
       const payload = { ...form };
       if (payload.valor_estimado) payload.valor_estimado = parseFloat(payload.valor_estimado);
       else delete payload.valor_estimado;
@@ -110,7 +110,10 @@ export default function Solicitacoes() {
       setForm({ titulo: '', descricao: '', justificativa: '', categoria: '', urgencia: 'normal', valor_estimado: '' });
       load();
     } catch (e) {
-      toast.error(e.message);
+      console.error('[SOLICITACOES] create error:', e);
+      toast.error(e.message || 'Erro ao criar solicitação');
+    } finally {
+      setSubmitting(false);
     }
   }
 
