@@ -1,47 +1,51 @@
 
-Objetivo: fazer a sessão realmente persistir e reaparecer na lateral, mesmo após clicar em “+ Nova” ou recarregar a página.
 
-Diagnóstico mais provável:
-- O frontend já tenta listar e restaurar sessões, então o problema principal não parece mais ser só visual.
-- Em `backend/routes/agents.js`, a persistência ainda falha de forma silenciosa: se salvar sessão ou mensagens der erro, o chat continua funcionando, mas nada fica gravado.
-- O arquivo `backend/migrations/004_agent_messages.sql` no repositório não cria a tabela no banco por si só. Neste projeto não há runner automático de migrations; o SQL precisa existir no banco real do deploy.
-- A rota de agentes usa `backend/utils/db.js` com `DATABASE_URL`. Se esse env não estiver configurado no deploy, a IA ainda responde, mas salvar/listar sessões quebra.
-- Há um problema secundário de UX: `resumeSession()` fecha a sidebar e `startNewChat()` não reabre nem força refresh, o que pode parecer que “sumiu”.
-- Há também um ajuste de segurança pendente: `GET /agents/sessions/:id/messages` não valida se a sessão pertence ao usuário.
+## Problem
 
-Implementação proposta:
-1. Garantir a estrutura no banco real
-- Verificar se `agent_sessions` e `agent_messages` existem no banco do ambiente atual.
-- Se faltarem, aplicar `003_agent_sessions.sql` e `004_agent_messages.sql`.
-- Confirmar índice único para `agent_sessions.anthropic_session_id`.
+The Supabase client defaults to returning a maximum of **1,000 rows** per query. The `pat_bens` table has **4,264 rows**, so the dashboard endpoint only processes 1,000 rows, resulting in incorrect totals for everything: item counts, value totals, and category/location breakdowns.
 
-2. Fortalecer a persistência no backend
-- Refatorar `backend/routes/agents.js` para usar o client service-role já existente em `backend/utils/supabase.js` para sessões e mensagens, ou no mínimo parar de depender silenciosamente de `DATABASE_URL`.
-- Se a gravação falhar, responder erro explícito em vez de seguir como se tivesse salvo.
+**Displayed**: 1,000 items / R$ 1.137.543,21
+**Actual**: 4,264 items / R$ 13.428.055,66
 
-3. Expor falhas de forma clara
-- Se a sessão não puder ser persistida, enviar um evento de erro específico ao frontend.
-- Mostrar aviso no chat quando a resposta aparecer, mas a conversa não tiver sido salva.
+## Solution
 
-4. Ajustar a experiência da sidebar
-- Em `src/pages/admin/AssistenteIA.jsx`, recarregar sessões no evento `done` e também ao clicar em “+ Nova”.
-- Não esconder automaticamente a sidebar ao restaurar sessão em desktop, ou reabri-la em `startNewChat()`.
-- Garantir que a sessão recém-criada continue visível na lista.
+Modify `backend/routes/patrimonio.js` to use a **database-level aggregation** approach instead of fetching all rows and computing in JavaScript. This is both more correct and more efficient.
 
-5. Corrigir a restauração com segurança
-- Em `/agents/sessions/:id/messages`, validar que a sessão solicitada pertence a `req.user.userId` antes de retornar o histórico.
+### Changes to `backend/routes/patrimonio.js`
 
-Arquivos previstos:
-- `backend/routes/agents.js`
-- `backend/utils/supabase.js` ou `backend/utils/db.js`
-- `backend/migrations/003_agent_sessions.sql`
-- `backend/migrations/004_agent_messages.sql`
-- `src/pages/admin/AssistenteIA.jsx`
+Replace the dashboard endpoint to use the `pg` pool for SQL aggregation queries instead of fetching all rows via the Supabase JS client:
 
-Validação final:
-- Enviar uma mensagem ao Supervisor.
-- Confirmar que a sessão aparece na lateral.
-- Clicar em “+ Nova” e verificar que a conversa anterior continua listada.
-- Reabrir a sessão e validar o histórico.
-- Recarregar a página e confirmar que a sessão permanece.
-- Testar o fluxo de erro para garantir que falha de persistência não fique silenciosa.
+```sql
+-- Total counts and value by status
+SELECT 
+  COUNT(*) as total,
+  COUNT(*) FILTER (WHERE status = 'ativo') as ativos,
+  COUNT(*) FILTER (WHERE status = 'manutencao') as manutencao,
+  COUNT(*) FILTER (WHERE status = 'baixado') as baixados,
+  COUNT(*) FILTER (WHERE status = 'extraviado') as extraviados,
+  COALESCE(SUM(valor_aquisicao), 0) as valor_total
+FROM pat_bens;
+
+-- Counts by category
+SELECT COALESCE(c.nome, 'Sem categoria') as nome, COUNT(*) as qtd
+FROM pat_bens b LEFT JOIN pat_categorias c ON b.categoria_id = c.id
+GROUP BY c.nome;
+
+-- Counts by location
+SELECT COALESCE(l.nome, 'Sem localização') as nome, COUNT(*) as qtd
+FROM pat_bens b LEFT JOIN pat_localizacoes l ON b.localizacao_id = l.id
+GROUP BY l.nome;
+
+-- Open inventories count
+SELECT COUNT(*) as total FROM pat_inventarios WHERE status = 'em_andamento';
+```
+
+This uses the `query` function from `backend/utils/supabase.js` (which uses the `pg` Pool) to run SQL directly, bypassing the 1000-row limit entirely and being far more efficient.
+
+**Alternative quick fix**: Add `.range(0, 99999)` to the Supabase query, but SQL aggregation is the proper solution.
+
+### Files modified
+- `backend/routes/patrimonio.js` — rewrite the `/dashboard` handler to use SQL aggregation via the `pg` pool
+
+No frontend changes needed — the response shape stays the same.
+
