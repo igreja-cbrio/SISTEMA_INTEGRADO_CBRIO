@@ -60,6 +60,7 @@ export default function Solicitacoes() {
   const { profile, isAdmin, canAccessModule } = useAuth();
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [submitting, setSubmitting] = useState(false);
   const [filterCat, setFilterCat] = useState('todas');
   const [dialogOpen, setDialogOpen] = useState(false);
   const [detailItem, setDetailItem] = useState(null);
