@@ -180,7 +180,7 @@ export default function Patrimonio() {
       )}
       <div style={styles.tabs}>{TABS.map((t, i) => <button key={t} style={styles.tab(tab === i)} onClick={() => setTab(i)}>{t}</button>)}</div>
 
-      {tab === 0 && <DashboardTab dash={dash} />}
+      {tab === 0 && <DashboardTab dash={dash} onNavigate={(targetTab, status) => { setFiltroStatus(status || ''); setTab(targetTab); }} />}
       {tab === 1 && (
         <BensTab bens={bens} loading={loading} busca={busca} setBusca={setBusca}
           filtroStatus={filtroStatus} setFiltroStatus={setFiltroStatus}
@@ -219,35 +219,44 @@ const PAT_STAT_SVGS = [
   <svg key="p5" style={{ position: 'absolute', right: 0, top: 0, height: '100%', width: '67%', pointerEvents: 'none', zIndex: 0 }} viewBox="0 0 300 200" fill="none"><circle cx="200" cy="100" r="90" fill="#fff" fillOpacity="0.07" /><circle cx="260" cy="40" r="60" fill="#fff" fillOpacity="0.10" /></svg>,
 ];
 
-function PatStatCard({ label, value, bg, svg }) {
+function PatStatCard({ label, value, bg, svg, onClick }) {
   return (
     <div
       className="cbrio-kpi"
-      style={{ position: 'relative', overflow: 'hidden', background: bg, borderRadius: 12, padding: '20px 24px', color: '#fff', minHeight: 100 }}
+      onClick={onClick}
+      style={{
+        position: 'relative', overflow: 'hidden', background: bg, borderRadius: 12,
+        padding: '20px 24px', color: '#fff', minHeight: 100,
+        cursor: onClick ? 'pointer' : 'default',
+        transition: 'transform 0.15s ease, box-shadow 0.15s ease',
+      }}
+      onMouseEnter={(e) => { if (onClick) { e.currentTarget.style.transform = 'translateY(-2px)'; e.currentTarget.style.boxShadow = '0 8px 24px rgba(0,0,0,0.15)'; } }}
+      onMouseLeave={(e) => { if (onClick) { e.currentTarget.style.transform = 'translateY(0)'; e.currentTarget.style.boxShadow = 'none'; } }}
     >
       {svg}
       <div style={{ position: 'relative', zIndex: 1 }}>
         <div style={{ fontSize: 13, fontWeight: 500, color: 'rgba(255,255,255,0.8)', marginBottom: 8 }}>{label}</div>
-        <div style={{ fontSize: 32, fontWeight: 700, letterSpacing: -1 }}>{value}</div>
+        <div style={{ fontSize: 28, fontWeight: 700, letterSpacing: -0.5, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{value}</div>
       </div>
     </div>
   );
 }
 
-function DashboardTab({ dash }) {
+function DashboardTab({ dash, onNavigate }) {
   if (!dash) return <div style={styles.empty}>Carregando dashboard...</div>;
+  // Tab 1 = Bens; filtra por status quando aplicável
   const kpis = [
-    { label: 'Total de Bens', value: dash.totalBens, bg: '#0a0a0a' },
-    { label: 'Ativos', value: dash.ativos, bg: '#10b981' },
-    { label: 'Manutenção', value: dash.manutencao, bg: '#f59e0b' },
-    { label: 'Baixados', value: dash.baixados, bg: '#6b7280' },
-    { label: 'Extraviados', value: dash.extraviados, bg: '#ef4444' },
-    { label: 'Valor Total', value: fmtMoney(dash.valorTotal), bg: '#3b82f6' },
+    { label: 'Total de Bens', value: dash.totalBens, bg: '#0a0a0a', status: '' },
+    { label: 'Ativos', value: dash.ativos, bg: '#10b981', status: 'ativo' },
+    { label: 'Manutenção', value: dash.manutencao, bg: '#f59e0b', status: 'manutencao' },
+    { label: 'Baixados', value: dash.baixados, bg: '#6b7280', status: 'baixado' },
+    { label: 'Extraviados', value: dash.extraviados, bg: '#ef4444', status: 'extraviado' },
+    { label: 'Valor Total', value: fmtMoney(dash.valorTotal), bg: '#3b82f6', status: '' },
   ];
   return (
     <>
-      <div className="cbrio-stagger" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 12, marginBottom: 24 }}>
-        {kpis.map((k, i) => <PatStatCard key={k.label} label={k.label} value={k.value} bg={k.bg} svg={PAT_STAT_SVGS[i % PAT_STAT_SVGS.length]} />)}
+      <div className="cbrio-stagger" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 12, marginBottom: 24 }}>
+        {kpis.map((k, i) => <PatStatCard key={k.label} label={k.label} value={k.value} bg={k.bg} svg={PAT_STAT_SVGS[i % PAT_STAT_SVGS.length]} onClick={() => onNavigate(1, k.status)} />)}
       </div>
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginBottom: 24 }}>
         <div style={styles.card}>
