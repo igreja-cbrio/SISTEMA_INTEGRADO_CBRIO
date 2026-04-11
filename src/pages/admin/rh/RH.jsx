@@ -135,6 +135,7 @@ export default function RH() {
   const [funcs, setFuncs] = useState([]);
   const [treinos, setTreinos] = useState([]);
   const [setores, setSetores] = useState([]);
+  const [areas, setAreas] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
@@ -180,8 +181,12 @@ export default function RH() {
 
   const loadSetores = useCallback(async () => {
     try {
-      const { data } = await supabase.from('setores').select('*').eq('ativo', true).order('nome');
-      setSetores(data || []);
+      const [{ data: setoresData }, { data: areasData }] = await Promise.all([
+        supabase.from('setores').select('*').order('nome'),
+        supabase.from('areas').select('*').order('nome'),
+      ]);
+      setSetores(setoresData || []);
+      setAreas(areasData || []);
     } catch (e) { console.error(e); }
   }, []);
 
@@ -333,7 +338,7 @@ export default function RH() {
       </Tabs>
 
       {/* Modais */}
-      <FuncionarioFormModal open={!!modalFunc} data={modalFunc} onClose={() => setModalFunc(null)} onSave={saveFuncionario} funcionarios={funcs} setores={setores} />
+      <FuncionarioFormModal open={!!modalFunc} data={modalFunc} onClose={() => setModalFunc(null)} onSave={saveFuncionario} funcionarios={funcs} setores={setores} areas={areas} />
       <TreinamentoFormModal open={!!modalTreino} data={modalTreino} onClose={() => setModalTreino(null)} onSave={saveTreinamento} />
       <FeriasFormModal open={!!modalFerias} funcs={funcs} onClose={() => setModalFerias(null)} onSave={saveFerias} />
       <FuncionarioDetailPanel
@@ -1464,7 +1469,7 @@ function OrgChartTab({ funcs, onDetail }) {
 // MODAIS
 // ═══════════════════════════════════════════════════════════
 
-function FuncionarioFormModal({ open, data, onClose, onSave, funcionarios = [], setores = [] }) {
+function FuncionarioFormModal({ open, data, onClose, onSave, funcionarios = [], setores = [], areas = [] }) {
   const [f, setF] = useState({});
   const [uploading, setUploading] = useState(false);
   const [dragging, setDragging] = useState(false);
@@ -1513,13 +1518,21 @@ function FuncionarioFormModal({ open, data, onClose, onSave, funcionarios = [], 
       </div>
       <div style={styles.formRow}>
         <Input label="Telefone" value={f.telefone || ''} onChange={e => upd('telefone', e.target.value)} />
-        <Select label="Setor" value={f.setor_id || ''} onChange={e => upd('setor_id', e.target.value ? parseInt(e.target.value) : null)}>
+        <Select label="Setor" value={f.setor_id || ''} onChange={e => {
+          const id = e.target.value ? parseInt(e.target.value) : null;
+          setF(p => ({ ...p, setor_id: id, area: '' }));
+        }}>
           <option value="">Selecione o setor</option>
           {setores.map(s => <option key={s.id} value={s.id}>{s.nome}</option>)}
         </Select>
       </div>
       <div style={styles.formRow}>
-        <Input label="Área" value={f.area || ''} onChange={e => upd('area', e.target.value)} />
+        <Select label="Área" value={f.area || ''} onChange={e => upd('area', e.target.value)}>
+          <option value="">Selecione a área</option>
+          {(f.setor_id ? areas.filter(a => a.setor_id === f.setor_id) : areas).map(a => (
+            <option key={a.id} value={a.nome}>{a.nome}</option>
+          ))}
+        </Select>
       </div>
       <div style={styles.formRow}>
         <Input label="Cargo *" value={f.cargo || ''} onChange={e => upd('cargo', e.target.value)} />
