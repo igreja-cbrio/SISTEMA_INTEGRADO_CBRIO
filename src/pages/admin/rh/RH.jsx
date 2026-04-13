@@ -1400,36 +1400,36 @@ function FuncionarioFormModal({ open, data, onClose, onSave, funcionarios = [], 
       </div>
       <div style={styles.formRow}>
         <Input label="Telefone" value={f.telefone || ''} onChange={e => upd('telefone', e.target.value)} />
-        <Select label="Setor" value={f.setor_id || ''} onChange={e => {
+        <FormSelect label="Setor" value={String(f.setor_id || '')} onChange={e => {
           const id = e.target.value ? parseInt(e.target.value) : null;
           setF(p => ({ ...p, setor_id: id, area: '' }));
-        }}>
-          <option value="">Selecione o setor</option>
-          {setores.map(s => <option key={s.id} value={s.id}>{s.nome}</option>)}
-        </Select>
+        }} placeholder="Selecione o setor">
+          <SelectItem value="">Nenhum</SelectItem>
+          {setores.map(s => <SelectItem key={s.id} value={String(s.id)}>{s.nome}</SelectItem>)}
+        </FormSelect>
       </div>
       <div style={styles.formRow}>
-        <Select label="Área" value={f.area || ''} onChange={e => upd('area', e.target.value)}>
-          <option value="">Selecione a área</option>
+        <FormSelect label="Área" value={f.area || ''} onChange={e => upd('area', e.target.value)} placeholder="Selecione a área">
+          <SelectItem value="">Nenhuma</SelectItem>
           {(f.setor_id ? areas.filter(a => a.setor_id === f.setor_id) : areas).map(a => (
-            <option key={a.id} value={a.nome}>{a.nome}</option>
+            <SelectItem key={a.id} value={a.nome}>{a.nome}</SelectItem>
           ))}
-        </Select>
+        </FormSelect>
       </div>
       <div style={styles.formRow}>
         <Input label="Cargo *" value={f.cargo || ''} onChange={e => upd('cargo', e.target.value)} />
-        <Select label="Tipo de Contrato" value={f.tipo_contrato || 'clt'} onChange={e => upd('tipo_contrato', e.target.value)}>
-          {Object.entries(TIPO_CONTRATO).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
-        </Select>
+        <FormSelect label="Tipo de Contrato" value={f.tipo_contrato || 'clt'} onChange={e => upd('tipo_contrato', e.target.value)}>
+          {Object.entries(TIPO_CONTRATO).map(([k, v]) => <SelectItem key={k} value={k}>{v}</SelectItem>)}
+        </FormSelect>
       </div>
       <div style={styles.formRow}>
         <Input label="Data Admissão *" type="date" value={f.data_admissao || ''} onChange={e => upd('data_admissao', e.target.value)} />
         <Input label="Salário (R$)" type="number" value={f.salario || ''} onChange={e => upd('salario', e.target.value)} />
       </div>
-      <Select label="Gestor Direto" value={f.gestor_id || ''} onChange={e => upd('gestor_id', e.target.value || null)}>
-        <option value="">Nenhum (nível máximo)</option>
-        {funcionarios.filter(fn => fn.id !== f.id && fn.status === 'ativo').map(fn => <option key={fn.id} value={fn.id}>{fn.nome} — {fn.cargo}</option>)}
-      </Select>
+      <FormSelect label="Gestor Direto" value={f.gestor_id || ''} onChange={e => upd('gestor_id', e.target.value || null)} placeholder="Nenhum (nível máximo)">
+        <SelectItem value="">Nenhum (nível máximo)</SelectItem>
+        {funcionarios.filter(fn => fn.id !== f.id && fn.status === 'ativo').map(fn => <SelectItem key={fn.id} value={fn.id}>{fn.nome} — {fn.cargo}</SelectItem>)}
+      </FormSelect>
       {f.id && (
         <div style={styles.formRow}>
           <Select label="Status" value={f.status || 'ativo'} onChange={e => upd('status', e.target.value)}>
