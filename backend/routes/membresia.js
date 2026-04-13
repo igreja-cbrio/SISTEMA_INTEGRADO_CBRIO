@@ -69,7 +69,7 @@ router.get('/membros/:id', async (req, res) => {
     if (membro.familia_id) {
       const { data: fam } = await supabase
         .from('mem_membros')
-        .select('id, nome, status, foto_url')
+        .select('id, nome, status, foto_url, parentesco')
         .eq('familia_id', membro.familia_id)
         .neq('id', membro.id)
         .eq('active', true);
@@ -259,10 +259,13 @@ router.patch('/trilha/:id', authorize('admin', 'diretor'), async (req, res) => {
 // GET /api/membresia/familias
 router.get('/familias', async (req, res) => {
   try {
-    const { data, error } = await supabase
+    const { busca } = req.query;
+    let query = supabase
       .from('mem_familias')
-      .select('*, membros:mem_membros(id, nome, status)')
+      .select('*, membros:mem_membros(id, nome, status, parentesco)')
       .order('nome');
+    if (busca) query = query.ilike('nome', `%${busca}%`);
+    const { data, error } = await query;
     if (error) throw error;
     res.json(data);
   } catch (e) {
@@ -282,6 +285,62 @@ router.post('/familias', authorize('admin', 'diretor'), async (req, res) => {
     res.status(201).json(data);
   } catch (e) {
     res.status(500).json({ error: 'Erro ao criar família' });
+  }
+});
+
+// PUT /api/membresia/familias/:id
+router.put('/familias/:id', authorize('admin', 'diretor'), async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('mem_familias')
+      .update(req.body)
+      .eq('id', req.params.id)
+      .select()
+      .single();
+    if (error) throw error;
+    res.json(data);
+  } catch (e) {
+    res.status(500).json({ error: 'Erro ao atualizar família' });
+  }
+});
+
+// DELETE /api/membresia/familias/:id
+router.delete('/familias/:id', authorize('admin', 'diretor'), async (req, res) => {
+  try {
+    // Desvincula todos os membros antes de remover
+    await supabase
+      .from('mem_membros')
+      .update({ familia_id: null, parentesco: null })
+      .eq('familia_id', req.params.id);
+    const { error } = await supabase
+      .from('mem_familias')
+      .delete()
+      .eq('id', req.params.id);
+    if (error) throw error;
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ error: 'Erro ao remover família' });
+  }
+});
+
+// PATCH /api/membresia/membros/:id/familia — vincular/desvincular
+router.patch('/membros/:id/familia', authorize('admin', 'diretor'), async (req, res) => {
+  try {
+    const { familia_id, parentesco } = req.body || {};
+    const payload = {
+      familia_id: familia_id || null,
+      parentesco: familia_id ? (parentesco || null) : null,
+    };
+    const { data, error } = await supabase
+      .from('mem_membros')
+      .update(payload)
+      .eq('id', req.params.id)
+      .select('*, familia:mem_familias(id, nome)')
+      .single();
+    if (error) throw error;
+    res.json(data);
+  } catch (e) {
+    res.status(500).json({ error: 'Erro ao vincular família' });
   }
 });
 

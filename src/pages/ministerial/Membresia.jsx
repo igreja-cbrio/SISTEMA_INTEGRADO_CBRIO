@@ -58,6 +58,13 @@ const TRILHA_ETAPAS = [
 
 const ESTADO_CIVIL_OPTIONS = ['Solteiro(a)', 'Casado(a)', 'Divorciado(a)', 'Viúvo(a)', 'Outros'];
 
+const PARENTESCO_OPTIONS = {
+  responsavel: { label: 'Responsável', cor: '#00B39D', bg: '#00B39D18' },
+  conjuge: { label: 'Cônjuge', cor: '#8b5cf6', bg: '#8b5cf618' },
+  filho: { label: 'Filho(a)', cor: '#3b82f6', bg: '#3b82f618' },
+  outro: { label: 'Outro', cor: '#737373', bg: '#73737318' },
+};
+
 const DIAS_SEMANA = ['Domingo', 'Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta', 'Sábado'];
 
 const TIPOS_CONTRIBUICAO = {
@@ -94,7 +101,8 @@ function fmtMoeda(v) {
 const EMPTY_FORM = {
   nome: '', email: '', telefone: '', data_nascimento: '', estado_civil: '',
   endereco: '', bairro: '', cidade: '', cep: '', profissao: '',
-  ministerio: '', grupo: '', status: 'visitante', familia_id: '', observacoes: '',
+  ministerio: '', grupo: '', status: 'visitante',
+  familia_id: '', familia_nome_novo: '', parentesco: '', observacoes: '',
 };
 
 const Badge = ({ status }) => {
@@ -105,6 +113,104 @@ const Badge = ({ status }) => {
     </span>
   );
 };
+
+/* ── Autocomplete de Família (buscar + criar inline) ── */
+function FamiliaAutocomplete({ familias, value, onChange, placeholder = 'Buscar ou criar família...', autoFocus = false }) {
+  const [query, setQuery] = useState('');
+  const [open, setOpen] = useState(false);
+
+  useEffect(() => {
+    if (value) {
+      const f = familias.find(x => x.id === value);
+      setQuery(f?.nome || '');
+    } else {
+      setQuery('');
+    }
+  }, [value, familias]);
+
+  const q = query.trim().toLowerCase();
+  const filtradas = q
+    ? familias.filter(f => f.nome.toLowerCase().includes(q))
+    : familias.slice(0, 10);
+  const exatoExiste = q && familias.some(f => f.nome.toLowerCase() === q);
+  const podeCriar = q.length >= 2 && !exatoExiste;
+
+  const selecionar = (id, nome) => {
+    onChange({ familia_id: id, familia_nome_novo: '' });
+    setQuery(nome);
+    setOpen(false);
+  };
+  const criar = () => {
+    onChange({ familia_id: '', familia_nome_novo: query.trim() });
+    setOpen(false);
+  };
+  const limpar = () => {
+    onChange({ familia_id: '', familia_nome_novo: '' });
+    setQuery('');
+    setOpen(false);
+  };
+
+  return (
+    <div style={{ position: 'relative' }}>
+      <div style={{ position: 'relative' }}>
+        <Search style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)', width: 14, height: 14, color: '#737373', zIndex: 1, pointerEvents: 'none' }} />
+        <Input
+          value={query}
+          autoFocus={autoFocus}
+          onChange={e => { setQuery(e.target.value); setOpen(true); if (!e.target.value) onChange({ familia_id: '', familia_nome_novo: '' }); }}
+          onFocus={() => setOpen(true)}
+          onBlur={() => setTimeout(() => setOpen(false), 150)}
+          placeholder={placeholder}
+          style={{ paddingLeft: 32, paddingRight: query ? 32 : 12 }}
+        />
+        {query && (
+          <button
+            type="button"
+            onMouseDown={e => { e.preventDefault(); limpar(); }}
+            style={{ position: 'absolute', right: 8, top: '50%', transform: 'translateY(-50%)', background: 'transparent', border: 'none', color: '#737373', cursor: 'pointer', padding: 2, display: 'flex', alignItems: 'center' }}
+            title="Limpar"
+          >
+            <X style={{ width: 14, height: 14 }} />
+          </button>
+        )}
+      </div>
+      {open && (filtradas.length > 0 || podeCriar) && (
+        <div style={{ position: 'absolute', top: 'calc(100% + 4px)', left: 0, right: 0, zIndex: 1100, background: 'var(--cbrio-modal-bg, var(--cbrio-card))', border: '1px solid var(--cbrio-border)', borderRadius: 10, maxHeight: 240, overflow: 'auto', boxShadow: '0 8px 24px rgba(0,0,0,0.18)' }}>
+          {filtradas.map(f => (
+            <button
+              key={f.id}
+              type="button"
+              onMouseDown={e => { e.preventDefault(); selecionar(f.id, f.nome); }}
+              style={{ display: 'flex', width: '100%', alignItems: 'center', gap: 10, padding: '10px 12px', background: 'transparent', border: 'none', textAlign: 'left', cursor: 'pointer', color: 'var(--cbrio-text)', fontSize: 13, borderBottom: '1px solid var(--cbrio-border)' }}
+              onMouseEnter={e => e.currentTarget.style.background = 'var(--cbrio-input-bg)'}
+              onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
+            >
+              <Home style={{ width: 14, height: 14, color: '#00B39D', flexShrink: 0 }} />
+              <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{f.nome}</span>
+              {f.membros?.length > 0 && (
+                <span style={{ fontSize: 11, color: 'var(--cbrio-text3)', flexShrink: 0 }}>
+                  {f.membros.length} {f.membros.length === 1 ? 'membro' : 'membros'}
+                </span>
+              )}
+            </button>
+          ))}
+          {podeCriar && (
+            <button
+              type="button"
+              onMouseDown={e => { e.preventDefault(); criar(); }}
+              style={{ display: 'flex', width: '100%', alignItems: 'center', gap: 10, padding: '10px 12px', background: 'transparent', border: 'none', textAlign: 'left', cursor: 'pointer', color: '#00B39D', fontSize: 13, fontWeight: 600 }}
+              onMouseEnter={e => e.currentTarget.style.background = 'var(--cbrio-input-bg)'}
+              onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
+            >
+              <Plus style={{ width: 14, height: 14, flexShrink: 0 }} />
+              <span>Criar família "<strong>{query.trim()}</strong>"</span>
+            </button>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
 
 /* ── Modal Form ── */
 function MembroFormModal({ open, onOpenChange, editData, familias, onSaved }) {
@@ -130,6 +236,8 @@ function MembroFormModal({ open, onOpenChange, editData, familias, onSaved }) {
         grupo: editData.grupo || '',
         status: editData.status || 'visitante',
         familia_id: editData.familia_id || '',
+        familia_nome_novo: '',
+        parentesco: editData.parentesco || '',
         observacoes: editData.observacoes || '',
       });
     } else {
@@ -144,7 +252,20 @@ function MembroFormModal({ open, onOpenChange, editData, familias, onSaved }) {
     setSaving(true);
     try {
       const payload = { ...form };
-      if (!payload.familia_id) delete payload.familia_id;
+      const novoNome = payload.familia_nome_novo?.trim();
+      delete payload.familia_nome_novo;
+
+      // Cria a família nova antes de salvar o membro
+      if (!payload.familia_id && novoNome) {
+        const novaFam = await membresia.familias.create({ nome: novoNome });
+        payload.familia_id = novaFam.id;
+      }
+
+      if (!payload.familia_id) {
+        delete payload.familia_id;
+        payload.parentesco = null;
+      }
+      if (!payload.parentesco) delete payload.parentesco;
       if (!payload.data_nascimento) delete payload.data_nascimento;
 
       if (isEdit) {
@@ -247,11 +368,35 @@ function MembroFormModal({ open, onOpenChange, editData, familias, onSaved }) {
           </div>
           <div className="space-y-1.5">
             <Label>Família</Label>
-            <Select value={form.familia_id || '__none__'} onValueChange={v => set('familia_id', v === '__none__' ? '' : v)}>
-              <SelectTrigger><SelectValue placeholder="Selecionar família" /></SelectTrigger>
+            <FamiliaAutocomplete
+              familias={familias}
+              value={form.familia_id}
+              onChange={({ familia_id, familia_nome_novo }) => setForm(prev => ({
+                ...prev,
+                familia_id,
+                familia_nome_novo,
+                parentesco: (familia_id || familia_nome_novo) ? prev.parentesco : '',
+              }))}
+            />
+            {form.familia_nome_novo && (
+              <div style={{ fontSize: 11, color: '#00B39D', marginTop: 4, display: 'flex', alignItems: 'center', gap: 4 }}>
+                <Plus style={{ width: 12, height: 12 }} /> Nova família: <strong>{form.familia_nome_novo}</strong>
+              </div>
+            )}
+          </div>
+          <div className="space-y-1.5">
+            <Label>Parentesco</Label>
+            <Select
+              value={form.parentesco || '__none__'}
+              onValueChange={v => set('parentesco', v === '__none__' ? '' : v)}
+              disabled={!form.familia_id && !form.familia_nome_novo}
+            >
+              <SelectTrigger><SelectValue placeholder={(form.familia_id || form.familia_nome_novo) ? 'Selecionar' : 'Vincule uma família primeiro'} /></SelectTrigger>
               <SelectContent className="z-[1001]">
-                <SelectItem value="__none__">Nenhuma</SelectItem>
-                {familias.map(f => <SelectItem key={f.id} value={f.id}>{f.nome}</SelectItem>)}
+                <SelectItem value="__none__">Não informado</SelectItem>
+                {Object.entries(PARENTESCO_OPTIONS).map(([k, v]) => (
+                  <SelectItem key={k} value={k}>{v.label}</SelectItem>
+                ))}
               </SelectContent>
             </Select>
           </div>
@@ -305,6 +450,9 @@ export default function Membresia() {
   const [showCheckinForm, setShowCheckinForm] = useState(false);
   const [checkinForm, setCheckinForm] = useState({ ministerio_id: '', data: new Date().toISOString().slice(0, 10), culto: '' });
   const [salvandoCheckin, setSalvandoCheckin] = useState(false);
+  const [showFamiliaEdit, setShowFamiliaEdit] = useState(false);
+  const [familiaLinkForm, setFamiliaLinkForm] = useState({ familia_id: '', familia_nome_novo: '', parentesco: '' });
+  const [salvandoFamilia, setSalvandoFamilia] = useState(false);
 
   const fetchData = useCallback(async () => {
     try {
@@ -339,6 +487,10 @@ export default function Membresia() {
       setSelectedMembro(data);
       setActiveTab('info');
       setNovoHist('');
+      setShowFamiliaEdit(false);
+      setShowVolForm(false);
+      setShowCheckinForm(false);
+      setShowContribForm(false);
     } catch (e) {
       setError(e.message);
     }
@@ -504,6 +656,51 @@ export default function Membresia() {
     try {
       await membresia.checkins.remove(id);
       await reloadDetail();
+    } catch (e) {
+      setError(e.message);
+    }
+  };
+
+  const abrirEdicaoFamilia = () => {
+    setFamiliaLinkForm({
+      familia_id: selectedMembro?.familia_id || '',
+      familia_nome_novo: '',
+      parentesco: selectedMembro?.parentesco || '',
+    });
+    setShowFamiliaEdit(true);
+  };
+
+  const salvarVinculoFamilia = async () => {
+    if (!selectedMembro) return;
+    setSalvandoFamilia(true);
+    try {
+      let familia_id = familiaLinkForm.familia_id;
+      const novoNome = familiaLinkForm.familia_nome_novo?.trim();
+      if (!familia_id && novoNome) {
+        const nova = await membresia.familias.create({ nome: novoNome });
+        familia_id = nova.id;
+      }
+      await membresia.familias.vincular(selectedMembro.id, {
+        familia_id: familia_id || null,
+        parentesco: familia_id ? (familiaLinkForm.parentesco || null) : null,
+      });
+      setShowFamiliaEdit(false);
+      setFamiliaLinkForm({ familia_id: '', familia_nome_novo: '', parentesco: '' });
+      await reloadDetail();
+      fetchData();
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setSalvandoFamilia(false);
+    }
+  };
+
+  const desvincularFamilia = async () => {
+    if (!selectedMembro || !confirm('Desvincular da família?')) return;
+    try {
+      await membresia.familias.vincular(selectedMembro.id, { familia_id: null, parentesco: null });
+      await reloadDetail();
+      fetchData();
     } catch (e) {
       setError(e.message);
     }
@@ -776,35 +973,136 @@ export default function Membresia() {
 
                 {/* Aba: Família */}
                 <TabsContent value="familia" className="mt-4">
-                  <div style={{ marginBottom: 16, fontSize: 13, color: C.text2 }}>
-                    {selectedMembro.familia?.nome ? (
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                        <Home style={{ width: 16, height: 16, color: C.primary }} />
-                        <span style={{ color: C.text, fontWeight: 500 }}>{selectedMembro.familia.nome}</span>
-                      </div>
-                    ) : (
-                      <span style={{ color: C.text3 }}>Nenhuma família vinculada</span>
-                    )}
-                  </div>
-                  {selectedMembro.familiares?.length > 0 ? (
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                      {selectedMembro.familiares.map(f => (
-                        <div key={f.id} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 14px', background: 'var(--cbrio-input-bg)', borderRadius: 10 }}>
-                          <div style={{ width: 36, height: 36, borderRadius: '50%', background: C.primaryBg, color: C.primary, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12, fontWeight: 700, flexShrink: 0 }}>
-                            {f.nome?.split(' ').map(n => n[0]).slice(0, 2).join('').toUpperCase()}
-                          </div>
-                          <div style={{ flex: 1 }}>
-                            <div style={{ fontSize: 14, fontWeight: 500, color: C.text }}>{f.nome}</div>
-                          </div>
-                          {f.status && <Badge status={f.status} />}
+                  {/* Cabeçalho: família atual + parentesco */}
+                  {selectedMembro.familia?.nome ? (
+                    <div style={{ padding: 14, borderRadius: 12, background: C.primaryBg, border: `1px solid ${C.primary}30`, marginBottom: 16, display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12 }}>
+                      <div style={{ flex: 1, minWidth: 0, display: 'flex', alignItems: 'center', gap: 10 }}>
+                        <Home style={{ width: 18, height: 18, color: C.primary, flexShrink: 0 }} />
+                        <div style={{ minWidth: 0 }}>
+                          <div style={{ fontSize: 11, color: C.primary, textTransform: 'uppercase', letterSpacing: 0.5, fontWeight: 700 }}>Família</div>
+                          <div style={{ fontSize: 15, fontWeight: 600, color: C.text, marginTop: 2 }}>{selectedMembro.familia.nome}</div>
+                          {selectedMembro.parentesco && (
+                            <div style={{ marginTop: 4 }}>
+                              <span style={{ fontSize: 11, padding: '2px 8px', borderRadius: 10, color: PARENTESCO_OPTIONS[selectedMembro.parentesco]?.cor || C.text3, background: PARENTESCO_OPTIONS[selectedMembro.parentesco]?.bg || '#73737318', fontWeight: 600 }}>
+                                {PARENTESCO_OPTIONS[selectedMembro.parentesco]?.label || selectedMembro.parentesco}
+                              </span>
+                            </div>
+                          )}
                         </div>
-                      ))}
+                      </div>
+                      {isDiretor && !showFamiliaEdit && (
+                        <div style={{ display: 'flex', gap: 4, flexShrink: 0 }}>
+                          <Button variant="ghost" size="icon" onClick={abrirEdicaoFamilia} title="Editar vínculo">
+                            <Pencil style={{ width: 14, height: 14 }} />
+                          </Button>
+                          <Button variant="ghost" size="icon" onClick={desvincularFamilia} title="Desvincular">
+                            <X style={{ width: 16, height: 16, color: C.red }} />
+                          </Button>
+                        </div>
+                      )}
                     </div>
                   ) : (
-                    <div style={{ padding: '24px 0', textAlign: 'center', color: C.text3, fontSize: 13 }}>
-                      Nenhum familiar cadastrado
+                    <div style={{ padding: 14, borderRadius: 12, background: 'var(--cbrio-input-bg)', marginBottom: 16, display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12 }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 10, color: C.text3, fontSize: 13 }}>
+                        <Home style={{ width: 16, height: 16 }} />
+                        Nenhuma família vinculada
+                      </div>
+                      {isDiretor && !showFamiliaEdit && (
+                        <Button variant="outline" size="sm" onClick={abrirEdicaoFamilia}>
+                          <Plus style={{ width: 14, height: 14 }} /> Vincular
+                        </Button>
+                      )}
                     </div>
                   )}
+
+                  {/* Formulário inline de vínculo */}
+                  {isDiretor && showFamiliaEdit && (
+                    <div style={{ padding: 14, background: 'var(--cbrio-input-bg)', borderRadius: 12, marginBottom: 16, display: 'flex', flexDirection: 'column', gap: 10 }}>
+                      <div>
+                        <Label style={{ fontSize: 11 }}>Família</Label>
+                        <FamiliaAutocomplete
+                          familias={familias}
+                          value={familiaLinkForm.familia_id}
+                          onChange={({ familia_id, familia_nome_novo }) => setFamiliaLinkForm(prev => ({
+                            ...prev,
+                            familia_id,
+                            familia_nome_novo,
+                            parentesco: (familia_id || familia_nome_novo) ? prev.parentesco : '',
+                          }))}
+                        />
+                        {familiaLinkForm.familia_nome_novo && (
+                          <div style={{ fontSize: 11, color: C.primary, marginTop: 4, display: 'flex', alignItems: 'center', gap: 4 }}>
+                            <Plus style={{ width: 12, height: 12 }} /> Nova família: <strong>{familiaLinkForm.familia_nome_novo}</strong>
+                          </div>
+                        )}
+                      </div>
+                      <div>
+                        <Label style={{ fontSize: 11 }}>Parentesco</Label>
+                        <Select
+                          value={familiaLinkForm.parentesco || '__none__'}
+                          onValueChange={v => setFamiliaLinkForm(f => ({ ...f, parentesco: v === '__none__' ? '' : v }))}
+                          disabled={!familiaLinkForm.familia_id && !familiaLinkForm.familia_nome_novo}
+                        >
+                          <SelectTrigger><SelectValue placeholder="Selecionar" /></SelectTrigger>
+                          <SelectContent className="z-[1001]">
+                            <SelectItem value="__none__">Não informado</SelectItem>
+                            {Object.entries(PARENTESCO_OPTIONS).map(([k, v]) => (
+                              <SelectItem key={k} value={k}>{v.label}</SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 4 }}>
+                        <Button variant="outline" onClick={() => setShowFamiliaEdit(false)}>Cancelar</Button>
+                        <Button onClick={salvarVinculoFamilia} disabled={salvandoFamilia || (!familiaLinkForm.familia_id && !familiaLinkForm.familia_nome_novo?.trim())}>
+                          {salvandoFamilia ? 'Salvando...' : 'Salvar'}
+                        </Button>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Lista de familiares */}
+                  {selectedMembro.familia?.nome && (
+                    <h3 style={{ fontSize: 13, fontWeight: 600, color: C.text2, marginBottom: 10, textTransform: 'uppercase', letterSpacing: 0.5 }}>
+                      Familiares ({selectedMembro.familiares?.length || 0})
+                    </h3>
+                  )}
+                  {selectedMembro.familiares?.length > 0 ? (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                      {selectedMembro.familiares.map(f => {
+                        const pOpt = PARENTESCO_OPTIONS[f.parentesco];
+                        return (
+                          <button
+                            key={f.id}
+                            type="button"
+                            onClick={() => openDetail(f.id)}
+                            style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 14px', background: 'var(--cbrio-input-bg)', borderRadius: 10, border: 'none', cursor: 'pointer', textAlign: 'left', width: '100%', transition: 'background 0.15s' }}
+                            onMouseEnter={e => e.currentTarget.style.background = C.primaryBg}
+                            onMouseLeave={e => e.currentTarget.style.background = 'var(--cbrio-input-bg)'}
+                          >
+                            <div style={{ width: 36, height: 36, borderRadius: '50%', background: C.primaryBg, color: C.primary, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12, fontWeight: 700, flexShrink: 0 }}>
+                              {f.nome?.split(' ').map(n => n[0]).slice(0, 2).join('').toUpperCase()}
+                            </div>
+                            <div style={{ flex: 1, minWidth: 0 }}>
+                              <div style={{ fontSize: 14, fontWeight: 500, color: C.text }}>{f.nome}</div>
+                              {pOpt && (
+                                <div style={{ marginTop: 2 }}>
+                                  <span style={{ fontSize: 10, padding: '1px 6px', borderRadius: 8, color: pOpt.cor, background: pOpt.bg, fontWeight: 600 }}>
+                                    {pOpt.label}
+                                  </span>
+                                </div>
+                              )}
+                            </div>
+                            {f.status && <Badge status={f.status} />}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  ) : selectedMembro.familia?.nome ? (
+                    <div style={{ padding: '24px 0', textAlign: 'center', color: C.text3, fontSize: 13 }}>
+                      Nenhum outro familiar cadastrado nesta família
+                    </div>
+                  ) : null}
                 </TabsContent>
 
                 {/* Aba: Grupo de Conexão */}

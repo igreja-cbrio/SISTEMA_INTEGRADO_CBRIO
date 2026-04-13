@@ -430,8 +430,11 @@ export const membresia = {
     update: (id, data) => patch(`/membresia/trilha/${id}`, data),
   },
   familias: {
-    list: () => get('/membresia/familias'),
+    list: (params) => get('/membresia/familias' + (params ? '?' + new URLSearchParams(params) : '')),
     create: (data) => post('/membresia/familias', data),
+    update: (id, data) => put(`/membresia/familias/${id}`, data),
+    remove: (id) => del(`/membresia/familias/${id}`),
+    vincular: (membroId, data) => patch(`/membresia/membros/${membroId}/familia`, data),
   },
   historico: {
     create: (data) => post('/membresia/historico', data),
