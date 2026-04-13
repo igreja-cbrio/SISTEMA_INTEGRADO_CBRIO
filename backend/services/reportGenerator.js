@@ -40,6 +40,38 @@ function extractSection(content, title) {
   return markdownToHtml(text);
 }
 
+function extractSummary(content) {
+  // Pegar Resumo Executivo ou primeiro parágrafo substancial
+  const sec = extractSection(content, 'Resumo Executivo') || extractSection(content, 'Resumo');
+  if (sec) return sec;
+  // Fallback: pegar entregas por área
+  return extractSection(content, 'Entregas') || extractSection(content, 'Status');
+}
+
+function extractRisks(content) {
+  const pontos = extractSection(content, 'Pontos de Atenção') || extractSection(content, 'Pontos');
+  const pendentes = extractSection(content, 'Cards Pendentes') || extractSection(content, 'Pendentes');
+  let html = '';
+  if (pontos) html += pontos;
+  if (pendentes) html += pendentes;
+  return html || '<p>Nenhum risco ou alerta identificado neste período.</p>';
+}
+
+function extractRecommendations(content) {
+  return extractSection(content, 'Recomendações') || extractSection(content, 'Próximos') || '<p>Sem recomendações adicionais.</p>';
+}
+
+function extractDetailedBody(content) {
+  // Remove resumo e riscos pra não duplicar — mantém Entregas, Observações, etc.
+  let body = content || '';
+  // Remove seções já exibidas separadamente
+  ['Resumo Executivo', 'Pontos de Atenção', 'Cards Pendentes', 'Recomendações'].forEach(title => {
+    const regex = new RegExp(`##?\\s*\\d*\\.?\\s*${title}[\\s\\S]*?(?=\\n##[^#]|$)`, 'i');
+    body = body.replace(regex, '');
+  });
+  return markdownToHtml(body.trim());
+}
+
 function generateSlideHTML({ eventName, eventDate, scope, phases, completedTasks, pendingTasks, totalTasks, pctDone, reportContent }) {
   let html = loadTemplate('slide.html');
 
@@ -58,8 +90,8 @@ function generateSlideHTML({ eventName, eventDate, scope, phases, completedTasks
       </div>`;
   });
 
-  const highlights = extractSection(reportContent || '', 'Pontos de Atenção') || '<p>Nenhum ponto de atenção identificado.</p>';
-  const recommendations = extractSection(reportContent || '', 'Recomendações') || extractSection(reportContent || '', 'Próximos') || '<p>Sem recomendações adicionais.</p>';
+  const highlights = extractRisks(reportContent || '');
+  const recommendations = extractRecommendations(reportContent || '');
 
   html = html
     .replace(/\{\{eventName\}\}/g, eventName || 'Evento')
@@ -94,8 +126,10 @@ function generateDocumentHTML({ eventName, eventDate, scope, phases, completedTa
       </tr>`;
   });
 
-  // Corpo do relatório (markdown → HTML)
-  const reportBody = markdownToHtml(reportContent || '');
+  // Separar conteúdo em seções
+  const summaryBody = extractSummary(reportContent || '');
+  const risksBody = extractRisks(reportContent || '');
+  const reportBody = extractDetailedBody(reportContent || '');
 
   html = html
     .replace(/\{\{eventName\}\}/g, eventName || 'Evento')
@@ -106,6 +140,8 @@ function generateDocumentHTML({ eventName, eventDate, scope, phases, completedTa
     .replace(/\{\{pendingTasks\}\}/g, String(pendingTasks || 0))
     .replace(/\{\{pctDone\}\}/g, String(pctDone || 0))
     .replace(/\{\{phaseRows\}\}/g, phaseRows)
+    .replace(/\{\{summaryBody\}\}/g, summaryBody)
+    .replace(/\{\{risksBody\}\}/g, risksBody)
     .replace(/\{\{reportBody\}\}/g, reportBody)
     .replace(/\{\{generatedAt\}\}/g, new Date().toLocaleString('pt-BR'));
 
