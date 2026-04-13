@@ -40,8 +40,8 @@ router.get('/dashboard', async (req, res) => {
     const { data: feriasProximas } = await supabase
       .from('rh_ferias_licencas')
       .select('*, rh_funcionarios(nome)')
-      .eq('status', 'aprovado')
-      .gte('data_fim', hoje)
+      .in('status', ['pendente', 'aprovado'])
+      .gte('data_inicio', hoje)
       .lte('data_inicio', em30)
       .order('data_inicio');
 
