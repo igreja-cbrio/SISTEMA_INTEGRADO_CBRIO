@@ -1714,23 +1714,23 @@ export default function Eventos() {
 
         {/* Filtros */}
         <div style={styles.filterRow}>
-          <ShadSelect value={filtroStatus} onValueChange={v => setFiltroStatus(v)}>
+          <ShadSelect value={filtroStatus || '__all__'} onValueChange={v => setFiltroStatus(v === '__all__' ? '' : v)}>
             <SelectTrigger className="w-[180px]">
               <SelectValue placeholder="Todos os status" />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="">Todos os status</SelectItem>
+              <SelectItem value="__all__">Todos os status</SelectItem>
               {Object.entries(STATUS_MAP).map(([k, v]) => (
                 <SelectItem key={k} value={k}>{v.label}</SelectItem>
               ))}
             </SelectContent>
           </ShadSelect>
-          <ShadSelect value={filtroCategoria} onValueChange={v => setFiltroCategoria(v)}>
+          <ShadSelect value={filtroCategoria || '__all__'} onValueChange={v => setFiltroCategoria(v === '__all__' ? '' : v)}>
             <SelectTrigger className="w-[180px]">
               <SelectValue placeholder="Todas as categorias" />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="">Todas as categorias</SelectItem>
+              <SelectItem value="__all__">Todas as categorias</SelectItem>
               {categories.map(c => (
                 <SelectItem key={c.id} value={String(c.id)}>{c.name}</SelectItem>
               ))}
