@@ -36,6 +36,7 @@ import {
 } from '../../../components/ui/dialog';
 import { rh } from '../../../api';
 import { C, TIPO_FERIAS, FERIAS_STATUS } from '../../../lib/theme';
+import { Select as ShadSelect, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../../components/ui/select';
 
 const VACATION_COLORS = {
   ferias: { dot: 'bg-blue-500', badge: 'bg-blue-500/10 text-blue-400 border border-blue-500/20', label: 'Férias' },
@@ -474,28 +475,26 @@ export default function TabFeriasCalendar({ funcs, onAprovar }) {
           <div className="space-y-4">
             <div>
               <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1 block">Colaborador *</label>
-              <select
-                className="flex h-9 w-full rounded-lg border border-input bg-background px-3 py-2 text-sm shadow-sm shadow-black/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                value={form.funcionario_id || ''}
-                onChange={e => upd('funcionario_id', e.target.value)}
-              >
-                <option value="">Selecionar</option>
-                {(funcs || []).filter(f => f.status === 'ativo').map(f => (
-                  <option key={f.id} value={f.id}>{f.nome}</option>
-                ))}
-              </select>
+              <ShadSelect value={form.funcionario_id || '__none__'} onValueChange={v => upd('funcionario_id', v === '__none__' ? '' : v)}>
+                <SelectTrigger className="h-9 w-full text-sm"><SelectValue placeholder="Selecionar" /></SelectTrigger>
+                <SelectContent className="z-[1001]">
+                  <SelectItem value="__none__">Selecionar</SelectItem>
+                  {(funcs || []).filter(f => f.status === 'ativo').map(f => (
+                    <SelectItem key={f.id} value={f.id}>{f.nome}</SelectItem>
+                  ))}
+                </SelectContent>
+              </ShadSelect>
             </div>
             <div>
               <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1 block">Tipo *</label>
-              <select
-                className="flex h-9 w-full rounded-lg border border-input bg-background px-3 py-2 text-sm shadow-sm shadow-black/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                value={form.tipo}
-                onChange={e => upd('tipo', e.target.value)}
-              >
-                {Object.entries(TIPO_FERIAS).map(([k, v]) => (
-                  <option key={k} value={k}>{v}</option>
-                ))}
-              </select>
+              <ShadSelect value={form.tipo} onValueChange={v => upd('tipo', v)}>
+                <SelectTrigger className="h-9 w-full text-sm"><SelectValue /></SelectTrigger>
+                <SelectContent className="z-[1001]">
+                  {Object.entries(TIPO_FERIAS).map(([k, v]) => (
+                    <SelectItem key={k} value={k}>{v}</SelectItem>
+                  ))}
+                </SelectContent>
+              </ShadSelect>
             </div>
             <div className="grid grid-cols-2 gap-3">
               <div>

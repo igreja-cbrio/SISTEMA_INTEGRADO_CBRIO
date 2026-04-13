@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { rh } from '../../../api';
 import { Button } from '../../../components/ui/button';
+import { Select as ShadSelect, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../../components/ui/select';
 
 const C = {
   bg: 'var(--cbrio-bg)', card: 'var(--cbrio-card)', primary: '#00B39D', primaryBg: '#00B39D18',
@@ -145,17 +146,24 @@ export default function TabAvaliacoes({ funcionarios = [] }) {
           <div style={{ padding: 20, maxHeight: 600, overflowY: 'auto' }}>
             <div style={{ marginBottom: 14 }}>
               <label style={s.label}>Colaborador *</label>
-              <select style={s.input} value={panel.funcionario_id || ''} onChange={e => upd('funcionario_id', e.target.value)}>
-                <option value="">Selecione...</option>
-                {funcionarios.filter(f => f.status === 'ativo').map(f => <option key={f.id} value={f.id}>{f.nome} — {f.cargo}</option>)}
-              </select>
+              <ShadSelect value={panel.funcionario_id || '__none__'} onValueChange={v => upd('funcionario_id', v === '__none__' ? '' : v)}>
+                <SelectTrigger className="w-full h-9 text-sm"><SelectValue placeholder="Selecione..." /></SelectTrigger>
+                <SelectContent className="z-[1001]">
+                  <SelectItem value="__none__">Selecione...</SelectItem>
+                  {funcionarios.filter(f => f.status === 'ativo').map(f => <SelectItem key={f.id} value={f.id}>{f.nome} — {f.cargo}</SelectItem>)}
+                </SelectContent>
+              </ShadSelect>
             </div>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 14 }}>
               <div>
                 <label style={s.label}>Período *</label>
-                <select style={s.input} value={panel.periodo || ''} onChange={e => upd('periodo', e.target.value)}>
-                  {periodos.map(p => <option key={p} value={p}>{p}</option>)}
-                </select>
+                <ShadSelect value={panel.periodo || periodos[0]} onValueChange={v => upd('periodo', v)}>
+                  <SelectTrigger className="w-full h-9 text-sm"><SelectValue /></SelectTrigger>
+                  <SelectContent className="z-[1001]">
+                    {periodos.map(p => <SelectItem key={p} value={p}>{p}</SelectItem>)}
+                  </SelectContent>
+                </ShadSelect>
+              </div>
               </div>
               <div>
                 <label style={s.label}>Data</label>
