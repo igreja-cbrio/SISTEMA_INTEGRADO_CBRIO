@@ -97,12 +97,12 @@ export default function EventFormModal({ event, categories, onSave, onClose }) {
             <Field label="Data *" type="date" value={f.date} onChange={v => upd('date', v)} style={{ flex: 1 }} />
             <div style={{ flex: 1 }}>
               <label style={labelStyle}>Categoria</label>
-              <Select value={f.category_id || ''} onValueChange={v => upd('category_id', v)}>
+              <Select value={f.category_id || '__none__'} onValueChange={v => upd('category_id', v === '__none__' ? '' : v)}>
                 <SelectTrigger className="w-full h-8 text-xs">
                   <SelectValue placeholder="Sem categoria" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="">Sem categoria</SelectItem>
+                  <SelectItem value="__none__">Sem categoria</SelectItem>
                   {categories.map(c => <SelectItem key={c.id} value={String(c.id)}>{c.name}</SelectItem>)}
                 </SelectContent>
               </Select>
