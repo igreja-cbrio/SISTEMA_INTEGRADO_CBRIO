@@ -2074,15 +2074,25 @@ function FuncionarioDetailPanel({ open, data, onClose, onEdit, onDelete, onNewDo
           ))}
           <div>
             <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1 block">Contrato</label>
-            <select className="flex h-9 w-full rounded-lg border border-input bg-background px-3 py-2 text-sm shadow-sm shadow-black/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" value={editForm.tipo_contrato || 'clt'} onChange={e => setEditForm(p => ({ ...p, tipo_contrato: e.target.value }))}>
-              {Object.entries(TIPO_CONTRATO).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
-            </select>
+            <ShadSelect value={editForm.tipo_contrato || 'clt'} onValueChange={v => setEditForm(p => ({ ...p, tipo_contrato: v }))}>
+              <SelectTrigger className="w-full">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {Object.entries(TIPO_CONTRATO).map(([k, v]) => <SelectItem key={k} value={k}>{v}</SelectItem>)}
+              </SelectContent>
+            </ShadSelect>
           </div>
           <div>
             <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1 block">Status</label>
-            <select className="flex h-9 w-full rounded-lg border border-input bg-background px-3 py-2 text-sm shadow-sm shadow-black/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" value={editForm.status || 'ativo'} onChange={e => setEditForm(p => ({ ...p, status: e.target.value }))}>
-              {Object.entries(STATUS_COLORS).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
-            </select>
+            <ShadSelect value={editForm.status || 'ativo'} onValueChange={v => setEditForm(p => ({ ...p, status: v }))}>
+              <SelectTrigger className="w-full">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {Object.entries(STATUS_COLORS).map(([k, v]) => <SelectItem key={k} value={k}>{v.label}</SelectItem>)}
+              </SelectContent>
+            </ShadSelect>
           </div>
         </div>
       ) : (
@@ -2209,18 +2219,24 @@ function FuncionarioDetailPanel({ open, data, onClose, onEdit, onDelete, onNewDo
                             {isChanged && <span style={{ fontSize: 9, color: C.amber, marginLeft: 4 }}>alterado</span>}
                           </td>
                           <td style={{ padding: '4px 8px', borderBottom: `1px solid ${C.border}`, textAlign: 'center' }}>
-                            <select value={levels.leitura} onChange={e => handleModuloChange(mod.id, 'leitura', parseInt(e.target.value))}
-                              disabled={saving}
-                              style={{ padding: '3px 6px', borderRadius: 6, border: `1px solid ${C.border}`, fontSize: 11, background: 'var(--cbrio-card)', color: NIVEL_COLORS[levels.leitura], fontWeight: 600, cursor: 'pointer' }}>
-                              {[1, 2, 3, 4, 5].map(n => <option key={n} value={n}>{n} — {NIVEL_LABELS[n]}</option>)}
-                            </select>
+                            <ShadSelect value={String(levels.leitura)} onValueChange={v => handleModuloChange(mod.id, 'leitura', parseInt(v))} disabled={saving}>
+                              <SelectTrigger className="w-full" size="sm">
+                                <SelectValue />
+                              </SelectTrigger>
+                              <SelectContent>
+                                {[1, 2, 3, 4, 5].map(n => <SelectItem key={n} value={String(n)}>{n} — {NIVEL_LABELS[n]}</SelectItem>)}
+                              </SelectContent>
+                            </ShadSelect>
                           </td>
                           <td style={{ padding: '4px 8px', borderBottom: `1px solid ${C.border}`, textAlign: 'center' }}>
-                            <select value={levels.escrita} onChange={e => handleModuloChange(mod.id, 'escrita', parseInt(e.target.value))}
-                              disabled={saving}
-                              style={{ padding: '3px 6px', borderRadius: 6, border: `1px solid ${C.border}`, fontSize: 11, background: 'var(--cbrio-card)', color: NIVEL_COLORS[levels.escrita], fontWeight: 600, cursor: 'pointer' }}>
-                              {[1, 2, 3, 4, 5].map(n => <option key={n} value={n}>{n} — {NIVEL_LABELS[n]}</option>)}
-                            </select>
+                            <ShadSelect value={String(levels.escrita)} onValueChange={v => handleModuloChange(mod.id, 'escrita', parseInt(v))} disabled={saving}>
+                              <SelectTrigger className="w-full" size="sm">
+                                <SelectValue />
+                              </SelectTrigger>
+                              <SelectContent>
+                                {[1, 2, 3, 4, 5].map(n => <SelectItem key={n} value={String(n)}>{n} — {NIVEL_LABELS[n]}</SelectItem>)}
+                              </SelectContent>
+                            </ShadSelect>
                           </td>
                         </tr>
                       );
@@ -2263,14 +2279,14 @@ function DocumentoFormModal({ open, data, onClose, onSave }) {
     <Modal open={open} onClose={onClose} title="📄 Novo Documento"
       footer={<Button onClick={() => onSave(data?.funcionario_id, f)}>Salvar</Button>}>
       <Input label="Nome do Documento *" value={f.nome || ''} onChange={e => upd('nome', e.target.value)} />
-      <Select label="Tipo" value={f.tipo} onChange={e => upd('tipo', e.target.value)}>
-        <option value="contrato">Contrato</option>
-        <option value="ctps">CTPS</option>
-        <option value="rg">RG</option>
-        <option value="cpf">CPF</option>
-        <option value="certificado">Certificado</option>
-        <option value="outro">Outro</option>
-      </Select>
+      <FormSelect label="Tipo" value={f.tipo} onChange={e => upd('tipo', e.target.value)}>
+        <SelectItem value="contrato">Contrato</SelectItem>
+        <SelectItem value="ctps">CTPS</SelectItem>
+        <SelectItem value="rg">RG</SelectItem>
+        <SelectItem value="cpf">CPF</SelectItem>
+        <SelectItem value="certificado">Certificado</SelectItem>
+        <SelectItem value="outro">Outro</SelectItem>
+      </FormSelect>
       <Input label="Data de Expiração" type="date" value={f.data_expiracao || ''} onChange={e => upd('data_expiracao', e.target.value)} />
     </Modal>
   );
