@@ -99,11 +99,14 @@ function Input({ label, ...props }) {
 }
 
 function FormSelect({ label, value, onChange, children, placeholder, ...props }) {
-  // children = array of {value, label} for options
+  const safeValue = value || '__none__';
   return (
     <div style={styles.formGroup}>
       {label && <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1 block">{label}</label>}
-      <ShadSelect value={value || ''} onValueChange={v => onChange && onChange({ target: { value: v } })} {...props}>
+      <ShadSelect value={safeValue} onValueChange={v => {
+        const actual = (v === '__none__' || v === '__all__') ? '' : v;
+        onChange && onChange({ target: { value: actual } });
+      }} {...props}>
         <SelectTrigger className="w-full">
           <SelectValue placeholder={placeholder || 'Selecione...'} />
         </SelectTrigger>
@@ -643,21 +646,21 @@ function FuncionariosTab({ funcs, loading, busca, setBusca, filtroStatus, setFil
                 value={busca} onChange={e => setBusca(e.target.value)}
               />
             </div>
-            <ShadSelect value={filtroStatus} onValueChange={v => setFiltroStatus(v)}>
+            <ShadSelect value={filtroStatus || '__all__'} onValueChange={v => setFiltroStatus(v === '__all__' ? '' : v)}>
               <SelectTrigger className="w-[180px]">
                 <SelectValue placeholder="Todos os status" />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="">Todos os status</SelectItem>
+                <SelectItem value="__all__">Todos os status</SelectItem>
                 {Object.entries(STATUS_COLORS).map(([k, v]) => <SelectItem key={k} value={k}>{v.label}</SelectItem>)}
               </SelectContent>
             </ShadSelect>
-            <ShadSelect value={filtroArea} onValueChange={v => setFiltroArea(v)}>
+            <ShadSelect value={filtroArea || '__all__'} onValueChange={v => setFiltroArea(v === '__all__' ? '' : v)}>
               <SelectTrigger className="w-[180px]">
                 <SelectValue placeholder="Todas as áreas" />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="">Todas as áreas</SelectItem>
+                <SelectItem value="__all__">Todas as áreas</SelectItem>
                 {areas.map(a => <SelectItem key={a} value={a}>{a}</SelectItem>)}
               </SelectContent>
             </ShadSelect>
@@ -1419,13 +1422,13 @@ function FuncionarioFormModal({ open, data, onClose, onSave, funcionarios = [], 
           const id = e.target.value ? parseInt(e.target.value) : null;
           setF(p => ({ ...p, setor_id: id, area: '' }));
         }} placeholder="Selecione o setor">
-          <SelectItem value="">Nenhum</SelectItem>
+          <SelectItem value="__none__">Nenhum</SelectItem>
           {setores.map(s => <SelectItem key={s.id} value={String(s.id)}>{s.nome}</SelectItem>)}
         </FormSelect>
       </div>
       <div style={styles.formRow}>
         <FormSelect label="Área" value={f.area || ''} onChange={e => upd('area', e.target.value)} placeholder="Selecione a área">
-          <SelectItem value="">Nenhuma</SelectItem>
+          <SelectItem value="__none__">Nenhuma</SelectItem>
           {(f.setor_id ? areas.filter(a => a.setor_id === f.setor_id) : areas).map(a => (
             <SelectItem key={a.id} value={a.nome}>{a.nome}</SelectItem>
           ))}
@@ -1442,7 +1445,7 @@ function FuncionarioFormModal({ open, data, onClose, onSave, funcionarios = [], 
         <Input label="Salário (R$)" type="number" value={f.salario || ''} onChange={e => upd('salario', e.target.value)} />
       </div>
       <FormSelect label="Gestor Direto" value={f.gestor_id || ''} onChange={e => upd('gestor_id', e.target.value || null)} placeholder="Nenhum (nível máximo)">
-        <SelectItem value="">Nenhum (nível máximo)</SelectItem>
+        <SelectItem value="__none__">Nenhum (nível máximo)</SelectItem>
         {funcionarios.filter(fn => fn.id !== f.id && fn.status === 'ativo').map(fn => <SelectItem key={fn.id} value={fn.id}>{fn.nome} — {fn.cargo}</SelectItem>)}
       </FormSelect>
       {f.id && (
