@@ -5,6 +5,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../..
 import { StatisticsCard } from '../../../components/ui/statistics-card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../../../components/ui/tabs';
 import { ScrollArea, ScrollBar } from '../../../components/ui/scroll-area';
+import { Select as ShadSelect, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../../components/ui/select';
 import { useAuth } from '../../../contexts/AuthContext';
 import { rh, permissoes } from '../../../api';
 import { exportCSV, exportPDF } from '../../../lib/export';
@@ -97,11 +98,19 @@ function Input({ label, ...props }) {
   );
 }
 
-function Select({ label, children, ...props }) {
+function FormSelect({ label, value, onChange, children, placeholder, ...props }) {
+  // children = array of {value, label} for options
   return (
     <div style={styles.formGroup}>
       {label && <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1 block">{label}</label>}
-      <select className="flex h-9 w-full rounded-lg border border-input bg-background px-3 py-2 text-sm shadow-sm shadow-black/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" {...props}>{children}</select>
+      <ShadSelect value={value || ''} onValueChange={v => onChange && onChange({ target: { value: v } })} {...props}>
+        <SelectTrigger className="w-full">
+          <SelectValue placeholder={placeholder || 'Selecione...'} />
+        </SelectTrigger>
+        <SelectContent>
+          {children}
+        </SelectContent>
+      </ShadSelect>
     </div>
   );
 }
@@ -634,20 +643,24 @@ function FuncionariosTab({ funcs, loading, busca, setBusca, filtroStatus, setFil
                 value={busca} onChange={e => setBusca(e.target.value)}
               />
             </div>
-            <select
-              className="flex h-9 rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-              value={filtroStatus} onChange={e => setFiltroStatus(e.target.value)}
-            >
-              <option value="">Todos os status</option>
-              {Object.entries(STATUS_COLORS).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
-            </select>
-            <select
-              className="flex h-9 rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-              value={filtroArea} onChange={e => setFiltroArea(e.target.value)}
-            >
-              <option value="">Todas as áreas</option>
-              {areas.map(a => <option key={a} value={a}>{a}</option>)}
-            </select>
+            <ShadSelect value={filtroStatus} onValueChange={v => setFiltroStatus(v)}>
+              <SelectTrigger className="w-[180px]">
+                <SelectValue placeholder="Todos os status" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="">Todos os status</SelectItem>
+                {Object.entries(STATUS_COLORS).map(([k, v]) => <SelectItem key={k} value={k}>{v.label}</SelectItem>)}
+              </SelectContent>
+            </ShadSelect>
+            <ShadSelect value={filtroArea} onValueChange={v => setFiltroArea(v)}>
+              <SelectTrigger className="w-[180px]">
+                <SelectValue placeholder="Todas as áreas" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="">Todas as áreas</SelectItem>
+                {areas.map(a => <SelectItem key={a} value={a}>{a}</SelectItem>)}
+              </SelectContent>
+            </ShadSelect>
           </div>
         </div>
         <div className="flex gap-2 mt-2 justify-end">
@@ -945,10 +958,16 @@ function TreinamentosTab({ treinos, funcs, onNew, onEdit, onDelete, onInscrever,
                 ))}
                 {inscrevendo === t.id ? (
                   <div style={{ display: 'flex', gap: 8, marginTop: 8, alignItems: 'center' }}>
-                    <select className="flex h-9 w-full rounded-lg border border-input bg-background px-3 py-2 text-sm shadow-sm shadow-black/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" style={{ flex: 1 }} value={funcSel} onChange={e => setFuncSel(e.target.value)}>
-                      <option value="">Selecionar colaborador</option>
-                      {funcs.filter(f => f.status === 'ativo').map(f => <option key={f.id} value={f.id}>{f.nome}</option>)}
-                    </select>
+                    <div style={{ flex: 1 }}>
+                      <ShadSelect value={funcSel} onValueChange={v => setFuncSel(v)}>
+                        <SelectTrigger className="w-full">
+                          <SelectValue placeholder="Selecionar colaborador" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {funcs.filter(f => f.status === 'ativo').map(f => <SelectItem key={f.id} value={f.id}>{f.nome}</SelectItem>)}
+                        </SelectContent>
+                      </ShadSelect>
+                    </div>
                     <Button size="sm"
                       onClick={async () => { if (funcSel) { await onInscrever(t.id, funcSel); setInscrevendo(null); setFuncSel(''); } }}>
                       OK
@@ -1104,9 +1123,14 @@ function TreinamentosTab({ treinos, funcs, onNew, onEdit, onDelete, onInscrever,
                           <Input label="Título *" value={matForm.titulo} onChange={e => setMatForm(f => ({ ...f, titulo: e.target.value }))} />
                           <div style={styles.formGroup}>
                             <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1 block">Tipo</label>
-                            <select className="flex h-9 w-full rounded-lg border border-input bg-background px-3 py-2 text-sm shadow-sm shadow-black/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" value={matForm.tipo} onChange={e => setMatForm(f => ({ ...f, tipo: e.target.value }))}>
-                              {Object.entries(TIPO_MATERIAL).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
-                            </select>
+                            <ShadSelect value={matForm.tipo} onValueChange={v => setMatForm(f => ({ ...f, tipo: v }))}>
+                              <SelectTrigger className="w-full">
+                                <SelectValue />
+                              </SelectTrigger>
+                              <SelectContent>
+                                {Object.entries(TIPO_MATERIAL).map(([k, v]) => <SelectItem key={k} value={k}>{v}</SelectItem>)}
+                              </SelectContent>
+                            </ShadSelect>
                           </div>
                         </div>
                         <div style={styles.formGroup}>
@@ -1391,41 +1415,41 @@ function FuncionarioFormModal({ open, data, onClose, onSave, funcionarios = [], 
       </div>
       <div style={styles.formRow}>
         <Input label="Telefone" value={f.telefone || ''} onChange={e => upd('telefone', e.target.value)} />
-        <Select label="Setor" value={f.setor_id || ''} onChange={e => {
+        <FormSelect label="Setor" value={String(f.setor_id || '')} onChange={e => {
           const id = e.target.value ? parseInt(e.target.value) : null;
           setF(p => ({ ...p, setor_id: id, area: '' }));
-        }}>
-          <option value="">Selecione o setor</option>
-          {setores.map(s => <option key={s.id} value={s.id}>{s.nome}</option>)}
-        </Select>
+        }} placeholder="Selecione o setor">
+          <SelectItem value="">Nenhum</SelectItem>
+          {setores.map(s => <SelectItem key={s.id} value={String(s.id)}>{s.nome}</SelectItem>)}
+        </FormSelect>
       </div>
       <div style={styles.formRow}>
-        <Select label="Área" value={f.area || ''} onChange={e => upd('area', e.target.value)}>
-          <option value="">Selecione a área</option>
+        <FormSelect label="Área" value={f.area || ''} onChange={e => upd('area', e.target.value)} placeholder="Selecione a área">
+          <SelectItem value="">Nenhuma</SelectItem>
           {(f.setor_id ? areas.filter(a => a.setor_id === f.setor_id) : areas).map(a => (
-            <option key={a.id} value={a.nome}>{a.nome}</option>
+            <SelectItem key={a.id} value={a.nome}>{a.nome}</SelectItem>
           ))}
-        </Select>
+        </FormSelect>
       </div>
       <div style={styles.formRow}>
         <Input label="Cargo *" value={f.cargo || ''} onChange={e => upd('cargo', e.target.value)} />
-        <Select label="Tipo de Contrato" value={f.tipo_contrato || 'clt'} onChange={e => upd('tipo_contrato', e.target.value)}>
-          {Object.entries(TIPO_CONTRATO).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
-        </Select>
+        <FormSelect label="Tipo de Contrato" value={f.tipo_contrato || 'clt'} onChange={e => upd('tipo_contrato', e.target.value)}>
+          {Object.entries(TIPO_CONTRATO).map(([k, v]) => <SelectItem key={k} value={k}>{v}</SelectItem>)}
+        </FormSelect>
       </div>
       <div style={styles.formRow}>
         <Input label="Data Admissão *" type="date" value={f.data_admissao || ''} onChange={e => upd('data_admissao', e.target.value)} />
         <Input label="Salário (R$)" type="number" value={f.salario || ''} onChange={e => upd('salario', e.target.value)} />
       </div>
-      <Select label="Gestor Direto" value={f.gestor_id || ''} onChange={e => upd('gestor_id', e.target.value || null)}>
-        <option value="">Nenhum (nível máximo)</option>
-        {funcionarios.filter(fn => fn.id !== f.id && fn.status === 'ativo').map(fn => <option key={fn.id} value={fn.id}>{fn.nome} — {fn.cargo}</option>)}
-      </Select>
+      <FormSelect label="Gestor Direto" value={f.gestor_id || ''} onChange={e => upd('gestor_id', e.target.value || null)} placeholder="Nenhum (nível máximo)">
+        <SelectItem value="">Nenhum (nível máximo)</SelectItem>
+        {funcionarios.filter(fn => fn.id !== f.id && fn.status === 'ativo').map(fn => <SelectItem key={fn.id} value={fn.id}>{fn.nome} — {fn.cargo}</SelectItem>)}
+      </FormSelect>
       {f.id && (
         <div style={styles.formRow}>
-          <Select label="Status" value={f.status || 'ativo'} onChange={e => upd('status', e.target.value)}>
-            {Object.entries(STATUS_COLORS).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
-          </Select>
+          <FormSelect label="Status" value={f.status || 'ativo'} onChange={e => upd('status', e.target.value)}>
+            {Object.entries(STATUS_COLORS).map(([k, v]) => <SelectItem key={k} value={k}>{v.label}</SelectItem>)}
+          </FormSelect>
           <Input label="Data Demissão" type="date" value={f.data_demissao || ''} onChange={e => upd('data_demissao', e.target.value)} />
         </div>
       )}
@@ -2050,15 +2074,25 @@ function FuncionarioDetailPanel({ open, data, onClose, onEdit, onDelete, onNewDo
           ))}
           <div>
             <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1 block">Contrato</label>
-            <select className="flex h-9 w-full rounded-lg border border-input bg-background px-3 py-2 text-sm shadow-sm shadow-black/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" value={editForm.tipo_contrato || 'clt'} onChange={e => setEditForm(p => ({ ...p, tipo_contrato: e.target.value }))}>
-              {Object.entries(TIPO_CONTRATO).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
-            </select>
+            <ShadSelect value={editForm.tipo_contrato || 'clt'} onValueChange={v => setEditForm(p => ({ ...p, tipo_contrato: v }))}>
+              <SelectTrigger className="w-full">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {Object.entries(TIPO_CONTRATO).map(([k, v]) => <SelectItem key={k} value={k}>{v}</SelectItem>)}
+              </SelectContent>
+            </ShadSelect>
           </div>
           <div>
             <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1 block">Status</label>
-            <select className="flex h-9 w-full rounded-lg border border-input bg-background px-3 py-2 text-sm shadow-sm shadow-black/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" value={editForm.status || 'ativo'} onChange={e => setEditForm(p => ({ ...p, status: e.target.value }))}>
-              {Object.entries(STATUS_COLORS).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
-            </select>
+            <ShadSelect value={editForm.status || 'ativo'} onValueChange={v => setEditForm(p => ({ ...p, status: v }))}>
+              <SelectTrigger className="w-full">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {Object.entries(STATUS_COLORS).map(([k, v]) => <SelectItem key={k} value={k}>{v.label}</SelectItem>)}
+              </SelectContent>
+            </ShadSelect>
           </div>
         </div>
       ) : (
@@ -2185,18 +2219,24 @@ function FuncionarioDetailPanel({ open, data, onClose, onEdit, onDelete, onNewDo
                             {isChanged && <span style={{ fontSize: 9, color: C.amber, marginLeft: 4 }}>alterado</span>}
                           </td>
                           <td style={{ padding: '4px 8px', borderBottom: `1px solid ${C.border}`, textAlign: 'center' }}>
-                            <select value={levels.leitura} onChange={e => handleModuloChange(mod.id, 'leitura', parseInt(e.target.value))}
-                              disabled={saving}
-                              style={{ padding: '3px 6px', borderRadius: 6, border: `1px solid ${C.border}`, fontSize: 11, background: 'var(--cbrio-card)', color: NIVEL_COLORS[levels.leitura], fontWeight: 600, cursor: 'pointer' }}>
-                              {[1, 2, 3, 4, 5].map(n => <option key={n} value={n}>{n} — {NIVEL_LABELS[n]}</option>)}
-                            </select>
+                            <ShadSelect value={String(levels.leitura)} onValueChange={v => handleModuloChange(mod.id, 'leitura', parseInt(v))} disabled={saving}>
+                              <SelectTrigger className="w-full" size="sm">
+                                <SelectValue />
+                              </SelectTrigger>
+                              <SelectContent>
+                                {[1, 2, 3, 4, 5].map(n => <SelectItem key={n} value={String(n)}>{n} — {NIVEL_LABELS[n]}</SelectItem>)}
+                              </SelectContent>
+                            </ShadSelect>
                           </td>
                           <td style={{ padding: '4px 8px', borderBottom: `1px solid ${C.border}`, textAlign: 'center' }}>
-                            <select value={levels.escrita} onChange={e => handleModuloChange(mod.id, 'escrita', parseInt(e.target.value))}
-                              disabled={saving}
-                              style={{ padding: '3px 6px', borderRadius: 6, border: `1px solid ${C.border}`, fontSize: 11, background: 'var(--cbrio-card)', color: NIVEL_COLORS[levels.escrita], fontWeight: 600, cursor: 'pointer' }}>
-                              {[1, 2, 3, 4, 5].map(n => <option key={n} value={n}>{n} — {NIVEL_LABELS[n]}</option>)}
-                            </select>
+                            <ShadSelect value={String(levels.escrita)} onValueChange={v => handleModuloChange(mod.id, 'escrita', parseInt(v))} disabled={saving}>
+                              <SelectTrigger className="w-full" size="sm">
+                                <SelectValue />
+                              </SelectTrigger>
+                              <SelectContent>
+                                {[1, 2, 3, 4, 5].map(n => <SelectItem key={n} value={String(n)}>{n} — {NIVEL_LABELS[n]}</SelectItem>)}
+                              </SelectContent>
+                            </ShadSelect>
                           </td>
                         </tr>
                       );
@@ -2239,14 +2279,14 @@ function DocumentoFormModal({ open, data, onClose, onSave }) {
     <Modal open={open} onClose={onClose} title="📄 Novo Documento"
       footer={<Button onClick={() => onSave(data?.funcionario_id, f)}>Salvar</Button>}>
       <Input label="Nome do Documento *" value={f.nome || ''} onChange={e => upd('nome', e.target.value)} />
-      <Select label="Tipo" value={f.tipo} onChange={e => upd('tipo', e.target.value)}>
-        <option value="contrato">Contrato</option>
-        <option value="ctps">CTPS</option>
-        <option value="rg">RG</option>
-        <option value="cpf">CPF</option>
-        <option value="certificado">Certificado</option>
-        <option value="outro">Outro</option>
-      </Select>
+      <FormSelect label="Tipo" value={f.tipo} onChange={e => upd('tipo', e.target.value)}>
+        <SelectItem value="contrato">Contrato</SelectItem>
+        <SelectItem value="ctps">CTPS</SelectItem>
+        <SelectItem value="rg">RG</SelectItem>
+        <SelectItem value="cpf">CPF</SelectItem>
+        <SelectItem value="certificado">Certificado</SelectItem>
+        <SelectItem value="outro">Outro</SelectItem>
+      </FormSelect>
       <Input label="Data de Expiração" type="date" value={f.data_expiracao || ''} onChange={e => upd('data_expiracao', e.target.value)} />
     </Modal>
   );
