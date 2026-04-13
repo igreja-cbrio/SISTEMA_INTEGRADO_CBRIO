@@ -1,17 +1,26 @@
 
 
-## Fix: Card "Férias Próximas" não reflete férias em andamento
+## Fix: Card "Férias Próximas" — mostrar apenas férias futuras (próximos 30 dias)
 
 ### Problema
-A query do dashboard de RH filtra férias com `data_inicio >= hoje`, o que ignora férias que já começaram mas ainda estão em vigor (ex: férias de 01/04 a 15/04 não aparecem no dia 13/04 porque `data_inicio` já passou).
+A alteração anterior mudou o filtro para `.gte('data_fim', hoje)`, o que inclui férias já em andamento. O usuário quer ver apenas férias que **vão começar** nos próximos 30 dias.
 
 ### Solução
-Alterar a query no backend para mostrar férias cujo período ainda esteja ativo ou prestes a iniciar nos próximos 30 dias:
-- Trocar `.gte('data_inicio', hoje)` por `.gte('data_fim', hoje)` — garante que férias em andamento apareçam
-- Manter `.lte('data_inicio', em30)` — limita a férias que começam em até 30 dias
-
-Isso captura tanto férias em andamento quanto as que vão iniciar nos próximos 30 dias.
+No `backend/routes/rh.js`, reverter para filtrar por `data_inicio`:
+- `.gte('data_inicio', hoje)` — férias que começam hoje ou no futuro
+- `.lte('data_inicio', em30)` — dentro dos próximos 30 dias
+- Remover o filtro `.eq('status', 'aprovado')` e usar `.in('status', ['pendente', 'aprovado'])` para incluir férias agendadas ainda pendentes de aprovação (que é o que aparece na aba de férias)
 
 ### Arquivo modificado
-- `backend/routes/rh.js` — linha 44: `.gte('data_inicio', hoje)` → `.gte('data_fim', hoje)`
+- **`backend/routes/rh.js`** — linhas 43-47: atualizar a query de `feriasProximas`
+
+```javascript
+const { data: feriasProximas } = await supabase
+  .from('rh_ferias_licencas')
+  .select('*, rh_funcionarios(nome)')
+  .in('status', ['pendente', 'aprovado'])
+  .gte('data_inicio', hoje)
+  .lte('data_inicio', em30)
+  .order('data_inicio');
+```
 
