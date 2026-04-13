@@ -164,7 +164,6 @@ export default function TabAvaliacoes({ funcionarios = [] }) {
                   </SelectContent>
                 </ShadSelect>
               </div>
-              </div>
               <div>
                 <label style={s.label}>Data</label>
                 <input type="date" style={s.input} value={panel.data_avaliacao || ''} onChange={e => upd('data_avaliacao', e.target.value)} />
