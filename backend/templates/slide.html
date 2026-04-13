@@ -2,130 +2,119 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8">
-<title>{{eventName}} — Apresentação</title>
+<meta name="viewport" content="width=1280">
+<title>{{eventName}} — Apresentação CBRio</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet">
 <style>
-  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
   * { margin: 0; padding: 0; box-sizing: border-box; }
-  :root {
-    --primary: #00839D;
-    --secondary: #00ACB3;
-    --dark: #242223;
-    --sand: #E0D1B9;
-    --offwhite: #EDE8E2;
-    --cream: #F2ECE8;
-    --green: #10B981;
-    --red: #EF4444;
-    --amber: #F59E0B;
-  }
-  body { font-family: 'Inter', 'Century Gothic', 'Avenir', sans-serif; background: #fff; }
-  .slide {
-    width: 1280px; height: 720px; position: relative; overflow: hidden;
-    page-break-after: always; margin: 0 auto 20px;
-    box-shadow: 0 4px 24px rgba(0,0,0,0.08);
-  }
-  @media print {
-    body { margin: 0; background: #fff; }
-    .slide { box-shadow: none; margin: 0; page-break-after: always; }
-    @page { size: landscape; margin: 0; }
-  }
+  :root { --p: #00839D; --s: #00ACB3; --d: #242223; --sand: #E0D1B9; --ow: #EDE8E2; --cr: #F2ECE8; --g: #10B981; --r: #EF4444; --a: #F59E0B; }
+  body { font-family: 'Inter', sans-serif; background: #f0f0f0; }
+  .s { width: 1280px; height: 720px; position: relative; overflow: hidden; page-break-after: always; margin: 20px auto; background: #fff; }
+  @media print { body { background: #fff; margin: 0; } .s { margin: 0; box-shadow: none; } @page { size: 1280px 720px; margin: 0; } }
 
-  /* ── Slide: Capa ── */
-  .slide-cover { background: var(--primary); display: flex; flex-direction: column; justify-content: center; padding: 80px; }
-  .slide-cover .label { font-size: 14px; letter-spacing: 6px; color: var(--sand); text-transform: uppercase; margin-bottom: 24px; }
-  .slide-cover h1 { font-size: 48px; font-weight: 800; color: #fff; line-height: 1.15; margin-bottom: 16px; }
-  .slide-cover .scope { font-size: 16px; color: var(--secondary); font-weight: 500; }
-  .slide-cover .footer { position: absolute; bottom: 40px; left: 80px; font-size: 12px; color: var(--sand); opacity: 0.7; }
+  /* ═══ SLIDE 1: CAPA ═══ */
+  .s1 { background: linear-gradient(135deg, #00839D 0%, #006B7F 50%, #004D5C 100%); }
+  .s1::before { content: ''; position: absolute; top: -200px; right: -200px; width: 600px; height: 600px; border-radius: 50%; background: rgba(0,172,179,0.12); }
+  .s1::after { content: ''; position: absolute; bottom: -150px; left: -100px; width: 400px; height: 400px; border-radius: 50%; background: rgba(255,255,255,0.04); }
+  .s1 .wrap { position: relative; z-index: 1; padding: 80px 90px; height: 100%; display: flex; flex-direction: column; justify-content: center; }
+  .s1 .tag { display: inline-block; padding: 6px 16px; border: 1px solid rgba(224,209,185,0.4); border-radius: 20px; font-size: 11px; letter-spacing: 4px; color: var(--sand); text-transform: uppercase; margin-bottom: 32px; }
+  .s1 h1 { font-size: 52px; font-weight: 900; color: #fff; line-height: 1.1; margin-bottom: 20px; max-width: 800px; }
+  .s1 .meta { font-size: 15px; color: var(--s); font-weight: 500; display: flex; align-items: center; gap: 12px; }
+  .s1 .meta .dot { width: 5px; height: 5px; border-radius: 50%; background: var(--s); }
+  .s1 .footer { position: absolute; bottom: 36px; left: 90px; right: 90px; display: flex; justify-content: space-between; font-size: 11px; color: rgba(224,209,185,0.5); z-index: 1; }
 
-  /* ── Slide: Conteúdo ── */
-  .slide-content { background: #fff; padding: 60px 80px; }
-  .slide-content h2 { font-size: 32px; font-weight: 700; color: var(--dark); margin-bottom: 8px; }
-  .slide-content .accent-bar { width: 60px; height: 4px; background: var(--primary); border-radius: 2px; margin-bottom: 40px; }
+  /* ═══ SLIDE 2: KPIs ═══ */
+  .s2 { padding: 56px 80px; }
+  .s2 .head { display: flex; justify-content: space-between; align-items: flex-end; margin-bottom: 48px; }
+  .s2 h2 { font-size: 36px; font-weight: 800; color: var(--d); }
+  .s2 .sub { font-size: 13px; color: #999; }
+  .s2 .bar { width: 50px; height: 4px; background: var(--p); border-radius: 2px; margin-top: 10px; }
+  .kgrid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 24px; }
+  .kcard { border-radius: 16px; padding: 36px 28px; text-align: center; position: relative; overflow: hidden; }
+  .kcard::before { content: ''; position: absolute; top: 0; left: 0; right: 0; height: 4px; }
+  .kcard.c1 { background: linear-gradient(180deg, #E8F8FA 0%, #fff 100%); } .kcard.c1::before { background: var(--p); }
+  .kcard.c2 { background: linear-gradient(180deg, #ECFDF5 0%, #fff 100%); } .kcard.c2::before { background: var(--g); }
+  .kcard.c3 { background: linear-gradient(180deg, #FEF2F2 0%, #fff 100%); } .kcard.c3::before { background: var(--r); }
+  .kcard.c4 { background: linear-gradient(180deg, #E8FAFB 0%, #fff 100%); } .kcard.c4::before { background: var(--s); }
+  .kval { font-size: 56px; font-weight: 900; line-height: 1; margin-bottom: 8px; }
+  .klbl { font-size: 12px; color: #888; font-weight: 600; text-transform: uppercase; letter-spacing: 1px; }
 
-  /* KPIs */
-  .kpi-grid { display: flex; gap: 24px; margin-top: 20px; }
-  .kpi-card { flex: 1; background: var(--cream); border-radius: 12px; padding: 28px 24px; text-align: center; }
-  .kpi-value { font-size: 48px; font-weight: 800; line-height: 1; margin-bottom: 8px; }
-  .kpi-label { font-size: 13px; color: #666; font-weight: 500; }
+  /* ═══ SLIDE 3: FASES ═══ */
+  .s3 { padding: 56px 80px; }
+  .s3 h2 { font-size: 36px; font-weight: 800; color: var(--d); margin-bottom: 8px; }
+  .s3 .bar { width: 50px; height: 4px; background: var(--p); border-radius: 2px; margin-bottom: 36px; }
+  .prow { display: flex; align-items: center; gap: 16px; padding: 10px 0; border-bottom: 1px solid #f5f5f5; }
+  .prow:last-child { border: none; }
+  .pnum { width: 32px; height: 32px; border-radius: 8px; background: var(--cr); display: flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 800; color: var(--p); flex-shrink: 0; }
+  .pname { width: 250px; font-size: 13px; font-weight: 600; color: var(--d); }
+  .pbar { flex: 1; height: 12px; background: #f5f5f5; border-radius: 6px; overflow: hidden; }
+  .pbar-fill { height: 100%; border-radius: 6px; }
+  .ppct { width: 55px; text-align: right; font-size: 14px; font-weight: 800; }
 
-  /* Barras de progresso */
-  .phase-row { display: flex; align-items: center; gap: 16px; margin-bottom: 14px; }
-  .phase-name { width: 280px; font-size: 13px; color: var(--dark); font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .phase-bar { flex: 1; height: 20px; background: var(--offwhite); border-radius: 10px; overflow: hidden; }
-  .phase-bar-fill { height: 100%; border-radius: 10px; transition: width 0.3s; }
-  .phase-pct { width: 50px; text-align: right; font-size: 13px; font-weight: 700; color: var(--dark); }
+  /* ═══ SLIDE 4/5: CONTEÚDO ═══ */
+  .sc { padding: 56px 80px; }
+  .sc h2 { font-size: 36px; font-weight: 800; color: var(--d); margin-bottom: 8px; }
+  .sc .bar { width: 50px; height: 4px; border-radius: 2px; margin-bottom: 32px; }
+  .sc .body { font-size: 14px; line-height: 1.9; color: #444; column-count: 2; column-gap: 40px; }
+  .sc .body p { margin-bottom: 10px; }
+  .sc .body ul { padding-left: 20px; margin-bottom: 10px; }
+  .sc .body li { margin-bottom: 6px; }
+  .sc .body strong { color: var(--d); }
 
-  /* Listas */
-  .content-text { font-size: 15px; line-height: 1.8; color: var(--dark); }
-  .content-text ul { padding-left: 24px; }
-  .content-text li { margin-bottom: 8px; }
-
-  /* ── Slide: Final ── */
-  .slide-end { background: var(--dark); display: flex; flex-direction: column; justify-content: center; align-items: center; }
-  .slide-end h2 { font-size: 56px; font-weight: 800; color: var(--primary); margin-bottom: 12px; }
-  .slide-end p { font-size: 16px; color: var(--sand); }
-  .slide-end .gen { position: absolute; bottom: 30px; font-size: 10px; color: #555; }
+  /* ═══ SLIDE 6: FINAL ═══ */
+  .sf { background: var(--d); display: flex; flex-direction: column; justify-content: center; align-items: center; }
+  .sf::before { content: ''; position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%); width: 500px; height: 500px; border-radius: 50%; border: 1px solid rgba(0,131,157,0.15); }
+  .sf h2 { font-size: 64px; font-weight: 900; color: var(--p); position: relative; z-index: 1; }
+  .sf p { font-size: 16px; color: var(--sand); margin-top: 8px; position: relative; z-index: 1; font-weight: 300; }
+  .sf .gen { position: absolute; bottom: 28px; font-size: 10px; color: #444; }
 </style>
 </head>
 <body>
 
-<!-- SLIDE 1: Capa -->
-<div class="slide slide-cover">
-  <div class="label">Relatório de Evento</div>
-  <h1>{{eventName}}</h1>
-  <div class="scope">{{scope}} · {{eventDate}}</div>
-  <div class="footer">CBRio — Igreja Comunidade Batista do Rio</div>
+<div class="s s1">
+  <div class="wrap">
+    <div class="tag">Relatório de Evento</div>
+    <h1>{{eventName}}</h1>
+    <div class="meta"><span>{{scope}}</span><span class="dot"></span><span>{{eventDate}}</span></div>
+  </div>
+  <div class="footer"><span>CBRio — Igreja Comunidade Batista do Rio</span><span>{{generatedAt}}</span></div>
 </div>
 
-<!-- SLIDE 2: KPIs -->
-<div class="slide slide-content">
-  <h2>Resumo Executivo</h2>
-  <div class="accent-bar"></div>
-  <div class="kpi-grid">
-    <div class="kpi-card">
-      <div class="kpi-value" style="color: var(--primary)">{{totalTasks}}</div>
-      <div class="kpi-label">Total de Tarefas</div>
-    </div>
-    <div class="kpi-card">
-      <div class="kpi-value" style="color: var(--green)">{{completedTasks}}</div>
-      <div class="kpi-label">Concluídas</div>
-    </div>
-    <div class="kpi-card">
-      <div class="kpi-value" style="color: var(--red)">{{pendingTasks}}</div>
-      <div class="kpi-label">Pendentes</div>
-    </div>
-    <div class="kpi-card">
-      <div class="kpi-value" style="color: var(--secondary)">{{pctDone}}%</div>
-      <div class="kpi-label">Progresso</div>
-    </div>
+<div class="s s2">
+  <div class="head">
+    <div><h2>Resumo Executivo</h2><div class="bar"></div></div>
+    <div class="sub">Visão geral do progresso</div>
+  </div>
+  <div class="kgrid">
+    <div class="kcard c1"><div class="kval" style="color:var(--p)">{{totalTasks}}</div><div class="klbl">Total</div></div>
+    <div class="kcard c2"><div class="kval" style="color:var(--g)">{{completedTasks}}</div><div class="klbl">Concluídas</div></div>
+    <div class="kcard c3"><div class="kval" style="color:var(--r)">{{pendingTasks}}</div><div class="klbl">Pendentes</div></div>
+    <div class="kcard c4"><div class="kval" style="color:var(--s)">{{pctDone}}%</div><div class="klbl">Progresso</div></div>
   </div>
 </div>
 
-<!-- SLIDE 3: Progresso por Fase -->
-<div class="slide slide-content">
+<div class="s s3">
   <h2>Progresso por Fase</h2>
-  <div class="accent-bar"></div>
+  <div class="bar"></div>
   {{phaseBars}}
 </div>
 
-<!-- SLIDE 4: Pontos de Atenção -->
-<div class="slide slide-content">
+<div class="s sc">
   <h2>Pontos de Atenção</h2>
-  <div class="accent-bar" style="background: var(--red)"></div>
-  <div class="content-text">{{highlights}}</div>
+  <div class="bar" style="background:var(--r)"></div>
+  <div class="body">{{highlights}}</div>
 </div>
 
-<!-- SLIDE 5: Recomendações -->
-<div class="slide slide-content">
+<div class="s sc">
   <h2>Recomendações</h2>
-  <div class="accent-bar" style="background: var(--secondary)"></div>
-  <div class="content-text">{{recommendations}}</div>
+  <div class="bar" style="background:var(--s)"></div>
+  <div class="body">{{recommendations}}</div>
 </div>
 
-<!-- SLIDE 6: Final -->
-<div class="slide slide-end">
+<div class="s sf">
   <h2>CBRio</h2>
   <p>Igreja Comunidade Batista do Rio</p>
-  <div class="gen">Gerado automaticamente pelo Sistema PMO CBRio · {{generatedAt}}</div>
+  <div class="gen">Sistema PMO CBRio · {{generatedAt}}</div>
 </div>
 
 </body>

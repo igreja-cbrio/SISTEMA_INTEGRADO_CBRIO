@@ -47,12 +47,14 @@ function generateSlideHTML({ eventName, eventDate, scope, phases, completedTasks
   let phaseBars = '';
   (phases || []).forEach(p => {
     const pct = p.total > 0 ? Math.round(p.done / p.total * 100) : 0;
-    const color = pct === 100 ? 'var(--green)' : pct > 0 ? 'var(--primary)' : 'var(--offwhite)';
+    const color = pct === 100 ? 'var(--g)' : pct > 0 ? 'var(--p)' : '#e5e5e5';
+    const pctColor = pct === 100 ? 'var(--g)' : pct > 0 ? 'var(--p)' : '#ccc';
     phaseBars += `
-      <div class="phase-row">
-        <div class="phase-name">F${String(p.numero).padStart(2, '0')} ${p.nome}</div>
-        <div class="phase-bar"><div class="phase-bar-fill" style="width:${pct}%;background:${color}"></div></div>
-        <div class="phase-pct">${pct}%</div>
+      <div class="prow">
+        <div class="pnum">${String(p.numero).padStart(2, '0')}</div>
+        <div class="pname">${p.nome}</div>
+        <div class="pbar"><div class="pbar-fill" style="width:${pct}%;background:${color}"></div></div>
+        <div class="ppct" style="color:${pctColor}">${pct}%</div>
       </div>`;
   });
 
@@ -82,13 +84,13 @@ function generateDocumentHTML({ eventName, eventDate, scope, phases, completedTa
   let phaseRows = '';
   (phases || []).forEach(p => {
     const pct = p.total > 0 ? Math.round(p.done / p.total * 100) : 0;
-    const color = pct === 100 ? 'var(--green)' : pct > 0 ? 'var(--primary)' : '#ddd';
+    const color = pct === 100 ? 'var(--g)' : pct > 0 ? 'var(--p)' : '#ddd';
     phaseRows += `
       <tr>
-        <td>F${String(p.numero).padStart(2, '0')} ${p.nome}</td>
+        <td><strong style="color:var(--p)">F${String(p.numero).padStart(2, '0')}</strong> ${p.nome}</td>
         <td>${p.done}/${p.total}</td>
-        <td class="bar-cell"><div class="mini-bar"><div class="mini-bar-fill" style="width:${pct}%;background:${color}"></div></div></td>
-        <td class="pct-done" style="color:${color}">${pct}%</td>
+        <td><div class="mbar"><div class="mbar-fill" style="width:${pct}%;background:${color}"></div></div></td>
+        <td class="pct" style="color:${color};text-align:right">${pct}%</td>
       </tr>`;
   });
 
