@@ -98,11 +98,19 @@ function Input({ label, ...props }) {
   );
 }
 
-function Select({ label, children, ...props }) {
+function FormSelect({ label, value, onChange, children, placeholder, ...props }) {
+  // children = array of {value, label} for options
   return (
     <div style={styles.formGroup}>
       {label && <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1 block">{label}</label>}
-      <select className="flex h-9 w-full rounded-lg border border-input bg-background px-3 py-2 text-sm shadow-sm shadow-black/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" {...props}>{children}</select>
+      <ShadSelect value={value || ''} onValueChange={v => onChange && onChange({ target: { value: v } })} {...props}>
+        <SelectTrigger className="w-full">
+          <SelectValue placeholder={placeholder || 'Selecione...'} />
+        </SelectTrigger>
+        <SelectContent>
+          {children}
+        </SelectContent>
+      </ShadSelect>
     </div>
   );
 }
