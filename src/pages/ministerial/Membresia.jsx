@@ -8,7 +8,9 @@ import {
   CheckCircle2, Circle, UserPlus, Home, Pencil,
   AlertCircle, LogOut, MapPin as MapPinIcon, Clock, Trash2,
   DollarSign, HandCoins, Sparkles, Activity, Inbox,
+  Copy, Share2, Download, QrCode,
 } from 'lucide-react';
+import { toast } from 'sonner';
 import { Button } from '../../components/ui/button';
 import { Input } from '../../components/ui/input';
 import { Label } from '../../components/ui/label';
@@ -22,8 +24,6 @@ import {
 import {
   Tabs, TabsList, TabsTrigger, TabsContent,
 } from '../../components/ui/tabs';
-import TabGrupos from './TabGrupos';
-import TabMinisterios from './TabMinisterios';
 import TabCadastros from './TabCadastros';
 
 const C = {
@@ -441,6 +441,7 @@ export default function Membresia() {
   const [grupoSelecionado, setGrupoSelecionado] = useState('');
   const [salvandoGrupo, setSalvandoGrupo] = useState(false);
   const [pageTab, setPageTab] = useState('membros');
+  const [showShareLink, setShowShareLink] = useState(false);
   const [showContribForm, setShowContribForm] = useState(false);
   const [contribForm, setContribForm] = useState({ tipo: 'dizimo', valor: '', data: new Date().toISOString().slice(0, 10), forma_pagamento: '', campanha: '', observacoes: '' });
   const [salvandoContrib, setSalvandoContrib] = useState(false);
@@ -750,13 +751,18 @@ export default function Membresia() {
             <Users style={{ width: 28, height: 28, color: C.primary }} />
             <h1 style={{ fontSize: 20, fontWeight: 700, color: C.text, margin: 0, lineHeight: 1.25 }}>Membresia</h1>
           </div>
-          <p style={{ fontSize: 14, color: C.text2, marginTop: 4, lineHeight: 1.5 }}>Membros, famílias, grupos, ministérios, generosidade e trilha dos valores</p>
+          <p style={{ fontSize: 14, color: C.text2, marginTop: 4, lineHeight: 1.5 }}>Membros, famílias, generosidade e trilha dos valores</p>
         </div>
-        {isDiretor && (
-          <Button onClick={openCreate}>
-            <UserPlus style={{ width: 16, height: 16 }} /> Novo Membro
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          <Button variant="outline" onClick={() => setShowShareLink(true)}>
+            <QrCode style={{ width: 16, height: 16 }} /> Link de cadastro
           </Button>
-        )}
+          {isDiretor && (
+            <Button onClick={openCreate}>
+              <UserPlus style={{ width: 16, height: 16 }} /> Novo Membro
+            </Button>
+          )}
+        </div>
       </div>
 
       {error && (
@@ -766,13 +772,11 @@ export default function Membresia() {
         </div>
       )}
 
-      {/* Page Tabs: Membros × Grupos */}
+      {/* Page Tabs: Membros × Cadastros pendentes */}
       <Tabs value={pageTab} onValueChange={setPageTab}>
         <TabsList className="inline-flex h-auto w-auto bg-transparent p-0 gap-1 border-b border-border rounded-none mb-5">
           {[
             { key: 'membros', label: 'Membros', icon: Users },
-            { key: 'grupos', label: 'Grupos de Conexão', icon: Home },
-            { key: 'ministerios', label: 'Ministérios', icon: Sparkles },
             { key: 'cadastros', label: 'Cadastros pendentes', icon: Inbox },
           ].map(t => {
             const Icon = t.icon;
@@ -879,14 +883,6 @@ export default function Membresia() {
           </tbody>
         </table>
       </div>
-        </TabsContent>
-
-        <TabsContent value="grupos">
-          <TabGrupos />
-        </TabsContent>
-
-        <TabsContent value="ministerios">
-          <TabMinisterios />
         </TabsContent>
 
         <TabsContent value="cadastros">
@@ -1708,6 +1704,109 @@ export default function Membresia() {
         familias={familias}
         onSaved={handleSaved}
       />
+
+      {/* Share Link / QR Code Modal */}
+      <ShareCadastroLinkDialog open={showShareLink} onOpenChange={setShowShareLink} />
     </div>
+  );
+}
+
+function ShareCadastroLinkDialog({ open, onOpenChange }) {
+  const publicUrl = typeof window !== 'undefined'
+    ? `${window.location.origin}/cadastro-membresia`
+    : '/cadastro-membresia';
+  const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=280x280&margin=8&data=${encodeURIComponent(publicUrl)}`;
+
+  const copyLink = async () => {
+    try {
+      await navigator.clipboard.writeText(publicUrl);
+      toast.success('Link copiado para a área de transferência');
+    } catch {
+      toast.error('Não foi possível copiar o link');
+    }
+  };
+
+  const shareLink = async () => {
+    const shareData = {
+      title: 'Cadastro de Membresia - CBRio',
+      text: 'Preencha seu cadastro de membresia:',
+      url: publicUrl,
+    };
+    try {
+      if (navigator.share) {
+        await navigator.share(shareData);
+      } else {
+        await copyLink();
+      }
+    } catch {
+      /* usuário cancelou o compartilhamento */
+    }
+  };
+
+  const downloadQr = async () => {
+    try {
+      const resp = await fetch(qrUrl);
+      const blob = await resp.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'cadastro-membresia-qrcode.png';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch {
+      toast.error('Não foi possível baixar o QR Code');
+    }
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <QrCode style={{ width: 18, height: 18, color: '#00B39D' }} />
+            Link público de cadastro
+          </DialogTitle>
+        </DialogHeader>
+
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 16, alignItems: 'center' }}>
+          <p style={{ fontSize: 13, color: 'var(--cbrio-text2)', textAlign: 'center', margin: 0 }}>
+            Compartilhe este link ou QR Code para que novos membros preencham o formulário público.
+          </p>
+
+          <div style={{
+            padding: 12,
+            borderRadius: 12,
+            border: '1px solid var(--cbrio-border)',
+            background: '#fff',
+          }}>
+            <img
+              src={qrUrl}
+              alt="QR Code para cadastro público"
+              width={240}
+              height={240}
+              style={{ display: 'block', width: 240, height: 240 }}
+            />
+          </div>
+
+          <div style={{ display: 'flex', width: '100%', gap: 8 }}>
+            <Input readOnly value={publicUrl} onFocus={(e) => e.target.select()} />
+            <Button type="button" variant="outline" onClick={copyLink} title="Copiar link">
+              <Copy style={{ width: 16, height: 16 }} />
+            </Button>
+          </div>
+        </div>
+
+        <DialogFooter>
+          <Button type="button" variant="outline" onClick={downloadQr}>
+            <Download style={{ width: 16, height: 16 }} /> Baixar QR Code
+          </Button>
+          <Button type="button" onClick={shareLink}>
+            <Share2 style={{ width: 16, height: 16 }} /> Compartilhar
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
