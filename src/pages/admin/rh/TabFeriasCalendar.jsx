@@ -209,6 +209,29 @@ export default function TabFeriasCalendar({ funcs, onAprovar }) {
         </div>
       </div>
 
+      {/* Type Filter */}
+      <div className="flex items-center gap-1.5 flex-wrap">
+        {FILTER_OPTIONS.map(opt => {
+          const isActive = filterType === opt.value;
+          const color = opt.value !== 'todos' ? VACATION_COLORS[opt.value] : null;
+          return (
+            <button
+              key={opt.value}
+              onClick={() => setFilterType(opt.value)}
+              className={[
+                'px-3 py-1.5 rounded-full text-xs font-medium border transition-colors',
+                isActive
+                  ? (color ? color.badge : 'bg-primary text-primary-foreground border-primary')
+                  : 'bg-card text-muted-foreground border-border hover:bg-muted/50',
+              ].join(' ')}
+            >
+              {color && <span className={`inline-block w-2 h-2 rounded-full mr-1.5 ${color.dot}`} />}
+              {opt.label}
+            </button>
+          );
+        })}
+      </div>
+
       {/* Calendar + Sidebar */}
       <div className="grid grid-cols-1 xl:grid-cols-[1fr_340px] gap-4">
         {/* Calendar */}
