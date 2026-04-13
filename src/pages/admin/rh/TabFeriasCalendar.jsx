@@ -36,6 +36,7 @@ import {
 } from '../../../components/ui/dialog';
 import { rh } from '../../../api';
 import { C, TIPO_FERIAS, FERIAS_STATUS } from '../../../lib/theme';
+import { Select as ShadSelect, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../../components/ui/select';
 
 const VACATION_COLORS = {
   ferias: { dot: 'bg-blue-500', badge: 'bg-blue-500/10 text-blue-400 border border-blue-500/20', label: 'Férias' },
