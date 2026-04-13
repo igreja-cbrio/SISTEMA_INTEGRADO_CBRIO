@@ -2,8 +2,9 @@ import { useState, useEffect, useCallback } from 'react';
 import { membresia } from '../../api';
 import { useAuth } from '../../contexts/AuthContext';
 import {
-  Inbox, Check, X, AlertTriangle, Search, User, Mail, Phone,
+  Inbox, Check, X, Search, User, Mail, Phone,
   MapPin, Calendar, Copy, ExternalLink, Trash2, CheckCircle2,
+  CreditCard, RefreshCw,
 } from 'lucide-react';
 import { Button } from '../../components/ui/button';
 import { Input } from '../../components/ui/input';
@@ -36,6 +37,12 @@ const STATUS_META = {
 const ORIGEM_LABEL = {
   site: 'Site', qr_code: 'QR Code', evento: 'Evento', importacao: 'Importação',
 };
+
+function fmtCpf(v) {
+  const d = (v || '').toString().replace(/\D+/g, '');
+  if (d.length !== 11) return v || '';
+  return `${d.slice(0, 3)}.${d.slice(3, 6)}.${d.slice(6, 9)}-${d.slice(9)}`;
+}
 
 function fmtData(d) {
   if (!d) return '—';
@@ -357,16 +364,18 @@ export default function TabCadastros() {
                   borderRadius: 10, fontSize: 13, color: C.blue,
                   display: 'flex', alignItems: 'flex-start', gap: 10,
                 }}>
-                  <AlertTriangle style={{ width: 16, height: 16, flexShrink: 0, marginTop: 2 }} />
+                  <RefreshCw style={{ width: 16, height: 16, flexShrink: 0, marginTop: 2 }} />
                   <div>
-                    <strong>Possível duplicata</strong> do membro <strong>{selecionado.duplicado_de.nome}</strong>.
-                    Revise antes de aprovar.
+                    <strong>Atualização cadastral</strong> — CPF / contato já pertence ao membro{' '}
+                    <strong>{selecionado.duplicado_de.nome}</strong>. Ao aprovar, os dados abaixo
+                    serão aplicados ao cadastro existente (não cria membro novo).
                   </div>
                 </div>
               )}
 
               <DataGrid
                 items={[
+                  { icon: CreditCard, label: 'CPF', value: selecionado.cpf ? fmtCpf(selecionado.cpf) : null },
                   { icon: Mail, label: 'E-mail', value: selecionado.email },
                   { icon: Phone, label: 'Telefone', value: selecionado.telefone },
                   { icon: Calendar, label: 'Nascimento', value: selecionado.data_nascimento ? new Date(selecionado.data_nascimento + 'T00:00:00').toLocaleDateString('pt-BR') : null },
@@ -425,9 +434,13 @@ export default function TabCadastros() {
                 <div style={{ display: 'flex', gap: 10, marginTop: 22, flexWrap: 'wrap' }}>
                   <Button
                     onClick={() => { setAcao('aprovar'); setObservacoesAprov(''); }}
-                    style={{ background: C.green, color: '#fff', flex: 1, minWidth: 140 }}
+                    style={{ background: selecionado.duplicado_de ? C.blue : C.green, color: '#fff', flex: 1, minWidth: 160 }}
                   >
-                    <Check style={{ width: 16, height: 16 }} /> Aprovar e criar membro
+                    {selecionado.duplicado_de ? (
+                      <><RefreshCw style={{ width: 16, height: 16 }} /> Atualizar cadastro existente</>
+                    ) : (
+                      <><Check style={{ width: 16, height: 16 }} /> Aprovar e criar membro</>
+                    )}
                   </Button>
                   <Button
                     variant="outline"
@@ -463,13 +476,20 @@ export default function TabCadastros() {
       <Dialog open={acao === 'aprovar'} onOpenChange={(v) => !v && setAcao(null)}>
         <DialogContent className="max-w-md z-[1100]">
           <DialogHeader>
-            <DialogTitle>Aprovar cadastro</DialogTitle>
+            <DialogTitle>
+              {selecionado?.duplicado_de ? 'Atualizar cadastro existente' : 'Aprovar cadastro'}
+            </DialogTitle>
           </DialogHeader>
           <div style={{ padding: '4px 0 12px' }}>
             <p style={{ fontSize: 13, color: C.text2, lineHeight: 1.6, marginBottom: 14 }}>
-              Isso criará um novo <strong>membro</strong> a partir dos dados enviados,
-              com status inicial <em>visitante</em>. Você poderá ajustar família, grupo
-              e trilha depois na tela do membro.
+              {selecionado?.duplicado_de ? (
+                <>Os dados enviados serão aplicados ao membro <strong>{selecionado.duplicado_de.nome}</strong>.
+                Campos vazios no formulário não sobrescrevem os dados atuais.</>
+              ) : (
+                <>Isso criará um novo <strong>membro</strong> a partir dos dados enviados,
+                com status inicial <em>visitante</em>. Você poderá ajustar família, grupo
+                e trilha depois na tela do membro.</>
+              )}
             </p>
             <Label htmlFor="obs-aprov">Observações (opcional)</Label>
             <Textarea
@@ -483,8 +503,14 @@ export default function TabCadastros() {
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setAcao(null)} disabled={salvando}>Cancelar</Button>
-            <Button onClick={handleAprovar} disabled={salvando} style={{ background: C.green, color: '#fff' }}>
-              {salvando ? 'Aprovando...' : 'Confirmar aprovação'}
+            <Button
+              onClick={handleAprovar}
+              disabled={salvando}
+              style={{ background: selecionado?.duplicado_de ? C.blue : C.green, color: '#fff' }}
+            >
+              {salvando
+                ? (selecionado?.duplicado_de ? 'Atualizando...' : 'Aprovando...')
+                : (selecionado?.duplicado_de ? 'Confirmar atualização' : 'Confirmar aprovação')}
             </Button>
           </DialogFooter>
         </DialogContent>
