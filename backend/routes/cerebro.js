@@ -5,10 +5,12 @@ const { processarFila } = require('../services/cerebroProcessor');
 
 const CRON_SECRET = process.env.CRON_SECRET;
 
-// POST /api/cerebro/processar — chamado pelo cron job
-router.post('/processar', async (req, res) => {
+// GET+POST /api/cerebro/processar — chamado pelo Vercel Cron (GET) ou cron-job.org (POST)
+router.all('/processar', async (req, res) => {
+  // Vercel Cron envia header CRON_SECRET automaticamente
   const auth = req.headers['x-cron-secret'] || req.headers['authorization'];
-  if (auth !== CRON_SECRET && auth !== `Bearer ${CRON_SECRET}`) {
+  const isVercelCron = req.headers['user-agent']?.includes('vercel-cron');
+  if (!isVercelCron && auth !== CRON_SECRET && auth !== `Bearer ${CRON_SECRET}`) {
     return res.status(401).json({ erro: 'Nao autorizado' });
   }
 
