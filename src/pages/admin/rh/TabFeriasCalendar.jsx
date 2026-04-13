@@ -113,16 +113,16 @@ export default function TabFeriasCalendar({ funcs, onAprovar }) {
   const selectedDayVacations = calendarData.find(d => isSameDay(d.day, selectedDay))?.vacations || [];
 
   const stats = useMemo(() => {
-    const pending = ferias.filter(v => v.status === 'pendente').length;
-    const approved = ferias.filter(v => v.status === 'aprovado').length;
-    const totalDays = ferias
+    const pending = filteredFerias.filter(v => v.status === 'pendente').length;
+    const approved = filteredFerias.filter(v => v.status === 'aprovado').length;
+    const totalDays = filteredFerias
       .filter(v => v.status === 'aprovado')
       .reduce((sum, v) => {
         if (!v.data_inicio || !v.data_fim) return sum;
         return sum + Math.ceil((new Date(v.data_fim) - new Date(v.data_inicio)) / 86400000);
       }, 0);
     return { pending, approved, totalDays };
-  }, [ferias]);
+  }, [filteredFerias]);
 
   function previousMonth() {
     setCurrentMonth(format(add(firstDayCurrentMonth, { months: -1 }), 'MMM-yyyy'));
