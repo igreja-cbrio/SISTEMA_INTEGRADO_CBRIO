@@ -110,7 +110,7 @@ function FormSelect({ label, value, onChange, children, placeholder, ...props })
         <SelectTrigger className="w-full">
           <SelectValue placeholder={placeholder || 'Selecione...'} />
         </SelectTrigger>
-        <SelectContent>
+        <SelectContent className="z-[1001]">
           {children}
         </SelectContent>
       </ShadSelect>
