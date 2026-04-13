@@ -17,6 +17,9 @@ import {
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
 } from '../../components/ui/dialog';
+import {
+  Tabs, TabsList, TabsTrigger, TabsContent,
+} from '../../components/ui/tabs';
 
 const C = {
   bg: 'var(--cbrio-bg)', card: 'var(--cbrio-card)', primary: '#00B39D', primaryBg: '#00B39D18',
@@ -247,6 +250,10 @@ export default function Membresia() {
   const [selectedMembro, setSelectedMembro] = useState(null);
   const [showForm, setShowForm] = useState(false);
   const [editMembro, setEditMembro] = useState(null);
+  const [activeTab, setActiveTab] = useState('info');
+  const [novoHist, setNovoHist] = useState('');
+  const [salvandoHist, setSalvandoHist] = useState(false);
+  const [togglingEtapa, setTogglingEtapa] = useState(null);
 
   const fetchData = useCallback(async () => {
     try {
@@ -275,8 +282,65 @@ export default function Membresia() {
     try {
       const data = await membresia.membros.get(id);
       setSelectedMembro(data);
+      setActiveTab('info');
+      setNovoHist('');
     } catch (e) {
       setError(e.message);
+    }
+  };
+
+  const reloadDetail = async () => {
+    if (!selectedMembro?.id) return;
+    try {
+      const data = await membresia.membros.get(selectedMembro.id);
+      setSelectedMembro(data);
+    } catch (e) {
+      setError(e.message);
+    }
+  };
+
+  const toggleEtapa = async (etapaKey) => {
+    if (!isDiretor || !selectedMembro) return;
+    const registro = selectedMembro.trilha?.find(t => t.etapa === etapaKey);
+    setTogglingEtapa(etapaKey);
+    try {
+      if (registro) {
+        const novaConclusao = !registro.concluida;
+        await membresia.trilha.update(registro.id, {
+          concluida: novaConclusao,
+          data_conclusao: novaConclusao ? new Date().toISOString().slice(0, 10) : null,
+        });
+      } else {
+        await membresia.trilha.create({
+          membro_id: selectedMembro.id,
+          etapa: etapaKey,
+          concluida: true,
+          data_conclusao: new Date().toISOString().slice(0, 10),
+        });
+      }
+      await reloadDetail();
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setTogglingEtapa(null);
+    }
+  };
+
+  const adicionarHistorico = async () => {
+    if (!novoHist.trim() || !selectedMembro) return;
+    setSalvandoHist(true);
+    try {
+      await membresia.historico.create({
+        membro_id: selectedMembro.id,
+        descricao: novoHist.trim(),
+        data: new Date().toISOString().slice(0, 10),
+      });
+      setNovoHist('');
+      await reloadDetail();
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setSalvandoHist(false);
     }
   };
 
@@ -436,111 +500,187 @@ export default function Membresia() {
               </div>
             </div>
 
-            <div style={{ padding: '24px 32px' }}>
-              {/* Info grid */}
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginBottom: 28 }}>
-                {[
-                  { icon: Mail, label: 'Email', value: selectedMembro.email },
-                  { icon: Phone, label: 'Telefone', value: selectedMembro.telefone },
-                  { icon: MapPin, label: 'Endereço', value: [selectedMembro.endereco, selectedMembro.bairro, selectedMembro.cidade].filter(Boolean).join(', ') },
-                  { icon: Calendar, label: 'Nascimento', value: selectedMembro.data_nascimento ? new Date(selectedMembro.data_nascimento).toLocaleDateString('pt-BR') : null },
-                  { icon: Heart, label: 'Estado Civil', value: selectedMembro.estado_civil },
-                  { icon: Home, label: 'Família', value: selectedMembro.familia?.nome },
-                  { icon: Users, label: 'Ministério', value: selectedMembro.ministerio },
-                  { icon: Star, label: 'Grupo', value: selectedMembro.grupo },
-                ].map((item, i) => (
-                  <div key={i} style={{ display: 'flex', gap: 10, alignItems: 'start' }}>
-                    <item.icon style={{ width: 16, height: 16, color: C.text3, marginTop: 2, flexShrink: 0 }} />
-                    <div>
-                      <div style={{ fontSize: 11, color: C.text3, textTransform: 'uppercase', letterSpacing: 0.5 }}>{item.label}</div>
-                      <div style={{ fontSize: 14, color: item.value ? C.text : C.text3, marginTop: 2 }}>{item.value || '—'}</div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-
-              {/* Familiares */}
-              {selectedMembro.familiares?.length > 0 && (
-                <div style={{ marginBottom: 28 }}>
-                  <h3 style={{ fontSize: 14, fontWeight: 600, color: C.text, marginBottom: 12, display: 'flex', alignItems: 'center', gap: 6 }}>
-                    <Home style={{ width: 16, height: 16, color: C.primary }} /> Familiares
-                  </h3>
-                  <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
-                    {selectedMembro.familiares.map(f => (
-                      <div key={f.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 14px', background: C.primaryBg, borderRadius: 10 }}>
-                        <div style={{ width: 28, height: 28, borderRadius: '50%', background: C.primary, color: 'var(--cbrio-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 10, fontWeight: 700 }}>
-                          {f.nome?.split(' ').map(n => n[0]).slice(0, 2).join('').toUpperCase()}
-                        </div>
-                        <span style={{ fontSize: 13, color: C.text, fontWeight: 500 }}>{f.nome}</span>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {/* Trilha dos Valores */}
-              <div style={{ marginBottom: 28 }}>
-                <h3 style={{ fontSize: 14, fontWeight: 600, color: C.text, marginBottom: 16, display: 'flex', alignItems: 'center', gap: 6 }}>
-                  <Star style={{ width: 16, height: 16, color: C.primary }} /> Trilha dos Valores
-                </h3>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
-                  {TRILHA_ETAPAS.map((etapa, i) => {
-                    const registro = selectedMembro.trilha?.find(t => t.etapa === etapa.key);
-                    const concluida = registro?.concluida;
+            <div style={{ padding: '20px 32px 28px' }}>
+              <Tabs value={activeTab} onValueChange={setActiveTab}>
+                <TabsList className="inline-flex h-auto w-auto bg-transparent p-0 gap-1 border-b border-border rounded-none mb-4">
+                  {[
+                    { key: 'info', label: 'Informações', icon: Users },
+                    { key: 'familia', label: 'Família', icon: Home },
+                    { key: 'trilha', label: 'Trilha', icon: Star },
+                    { key: 'historico', label: 'Histórico', icon: Calendar },
+                  ].map(t => {
+                    const Icon = t.icon;
                     return (
-                      <div key={etapa.key} style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
-                        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', width: 24 }}>
-                          <div style={{
-                            width: 24, height: 24, borderRadius: '50%',
-                            background: concluida ? C.primary : 'transparent',
-                            border: `2px solid ${concluida ? C.primary : C.border}`,
-                            display: 'flex', alignItems: 'center', justifyContent: 'center',
-                          }}>
-                            {concluida ? (
-                              <CheckCircle2 style={{ width: 14, height: 14, color: 'var(--cbrio-bg)' }} />
-                            ) : (
-                              <Circle style={{ width: 10, height: 10, color: C.text3 }} />
-                            )}
-                          </div>
-                          {i < TRILHA_ETAPAS.length - 1 && (
-                            <div style={{ width: 2, height: 28, background: concluida ? C.primary : C.border }} />
-                          )}
-                        </div>
-                        <div style={{ padding: '6px 0', flex: 1 }}>
-                          <div style={{ fontSize: 13, fontWeight: concluida ? 600 : 400, color: concluida ? C.text : C.text3 }}>
-                            {etapa.label}
-                          </div>
-                          {registro?.data_conclusao && (
-                            <div style={{ fontSize: 11, color: C.text3, marginTop: 2 }}>
-                              {new Date(registro.data_conclusao).toLocaleDateString('pt-BR')}
-                            </div>
-                          )}
-                        </div>
-                      </div>
+                      <TabsTrigger
+                        key={t.key}
+                        value={t.key}
+                        className="relative rounded-none border-b-2 border-transparent px-4 py-2.5 text-[13px] font-medium text-muted-foreground transition-colors hover:text-foreground data-[state=active]:border-b-primary data-[state=active]:text-primary data-[state=active]:bg-transparent data-[state=active]:shadow-none bg-transparent"
+                      >
+                        <Icon className="size-3.5 mr-1.5 hidden sm:inline-block" />
+                        {t.label}
+                      </TabsTrigger>
                     );
                   })}
-                </div>
-              </div>
+                </TabsList>
 
-              {/* Histórico */}
-              {selectedMembro.historico?.length > 0 && (
-                <div>
-                  <h3 style={{ fontSize: 14, fontWeight: 600, color: C.text, marginBottom: 12 }}>Histórico</h3>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                    {selectedMembro.historico.map(h => (
-                      <div key={h.id} style={{ padding: '10px 14px', background: 'var(--cbrio-input-bg)', borderRadius: 10, display: 'flex', justifyContent: 'space-between', alignItems: 'start' }}>
+                {/* Aba: Informações */}
+                <TabsContent value="info" className="mt-4">
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
+                    {[
+                      { icon: Mail, label: 'Email', value: selectedMembro.email },
+                      { icon: Phone, label: 'Telefone', value: selectedMembro.telefone },
+                      { icon: MapPin, label: 'Endereço', value: [selectedMembro.endereco, selectedMembro.bairro, selectedMembro.cidade].filter(Boolean).join(', ') },
+                      { icon: Calendar, label: 'Nascimento', value: selectedMembro.data_nascimento ? new Date(selectedMembro.data_nascimento).toLocaleDateString('pt-BR') : null },
+                      { icon: Heart, label: 'Estado Civil', value: selectedMembro.estado_civil },
+                      { icon: Home, label: 'Família', value: selectedMembro.familia?.nome },
+                      { icon: Users, label: 'Ministério', value: selectedMembro.ministerio },
+                      { icon: Star, label: 'Grupo', value: selectedMembro.grupo },
+                    ].map((item, i) => (
+                      <div key={i} style={{ display: 'flex', gap: 10, alignItems: 'start' }}>
+                        <item.icon style={{ width: 16, height: 16, color: C.text3, marginTop: 2, flexShrink: 0 }} />
                         <div>
-                          <div style={{ fontSize: 13, color: C.text }}>{h.descricao}</div>
-                          <div style={{ fontSize: 11, color: C.text3, marginTop: 2 }}>{h.registrado?.name || ''}</div>
-                        </div>
-                        <div style={{ fontSize: 11, color: C.text3, flexShrink: 0 }}>
-                          {new Date(h.data).toLocaleDateString('pt-BR')}
+                          <div style={{ fontSize: 11, color: C.text3, textTransform: 'uppercase', letterSpacing: 0.5 }}>{item.label}</div>
+                          <div style={{ fontSize: 14, color: item.value ? C.text : C.text3, marginTop: 2 }}>{item.value || '—'}</div>
                         </div>
                       </div>
                     ))}
                   </div>
-                </div>
-              )}
+                  {selectedMembro.observacoes && (
+                    <div style={{ marginTop: 24, padding: '12px 14px', background: 'var(--cbrio-input-bg)', borderRadius: 10 }}>
+                      <div style={{ fontSize: 11, color: C.text3, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 4 }}>Observações</div>
+                      <div style={{ fontSize: 13, color: C.text, whiteSpace: 'pre-wrap' }}>{selectedMembro.observacoes}</div>
+                    </div>
+                  )}
+                </TabsContent>
+
+                {/* Aba: Família */}
+                <TabsContent value="familia" className="mt-4">
+                  <div style={{ marginBottom: 16, fontSize: 13, color: C.text2 }}>
+                    {selectedMembro.familia?.nome ? (
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                        <Home style={{ width: 16, height: 16, color: C.primary }} />
+                        <span style={{ color: C.text, fontWeight: 500 }}>{selectedMembro.familia.nome}</span>
+                      </div>
+                    ) : (
+                      <span style={{ color: C.text3 }}>Nenhuma família vinculada</span>
+                    )}
+                  </div>
+                  {selectedMembro.familiares?.length > 0 ? (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                      {selectedMembro.familiares.map(f => (
+                        <div key={f.id} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 14px', background: 'var(--cbrio-input-bg)', borderRadius: 10 }}>
+                          <div style={{ width: 36, height: 36, borderRadius: '50%', background: C.primaryBg, color: C.primary, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12, fontWeight: 700, flexShrink: 0 }}>
+                            {f.nome?.split(' ').map(n => n[0]).slice(0, 2).join('').toUpperCase()}
+                          </div>
+                          <div style={{ flex: 1 }}>
+                            <div style={{ fontSize: 14, fontWeight: 500, color: C.text }}>{f.nome}</div>
+                          </div>
+                          {f.status && <Badge status={f.status} />}
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div style={{ padding: '24px 0', textAlign: 'center', color: C.text3, fontSize: 13 }}>
+                      Nenhum familiar cadastrado
+                    </div>
+                  )}
+                </TabsContent>
+
+                {/* Aba: Trilha dos Valores */}
+                <TabsContent value="trilha" className="mt-4">
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
+                    {TRILHA_ETAPAS.map((etapa, i) => {
+                      const registro = selectedMembro.trilha?.find(t => t.etapa === etapa.key);
+                      const concluida = registro?.concluida;
+                      const carregando = togglingEtapa === etapa.key;
+                      return (
+                        <div key={etapa.key} style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
+                          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', width: 24 }}>
+                            <button
+                              type="button"
+                              onClick={() => toggleEtapa(etapa.key)}
+                              disabled={!isDiretor || carregando}
+                              title={isDiretor ? (concluida ? 'Marcar como pendente' : 'Marcar como concluída') : ''}
+                              style={{
+                                width: 24, height: 24, borderRadius: '50%',
+                                background: concluida ? C.primary : 'transparent',
+                                border: `2px solid ${concluida ? C.primary : C.border}`,
+                                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                padding: 0,
+                                cursor: isDiretor && !carregando ? 'pointer' : 'default',
+                                opacity: carregando ? 0.5 : 1,
+                                transition: 'all 0.15s ease',
+                              }}
+                            >
+                              {concluida ? (
+                                <CheckCircle2 style={{ width: 14, height: 14, color: 'var(--cbrio-bg)' }} />
+                              ) : (
+                                <Circle style={{ width: 10, height: 10, color: C.text3 }} />
+                              )}
+                            </button>
+                            {i < TRILHA_ETAPAS.length - 1 && (
+                              <div style={{ width: 2, height: 28, background: concluida ? C.primary : C.border }} />
+                            )}
+                          </div>
+                          <div style={{ padding: '6px 0', flex: 1 }}>
+                            <div style={{ fontSize: 13, fontWeight: concluida ? 600 : 400, color: concluida ? C.text : C.text3 }}>
+                              {etapa.label}
+                            </div>
+                            {registro?.data_conclusao && (
+                              <div style={{ fontSize: 11, color: C.text3, marginTop: 2 }}>
+                                {new Date(registro.data_conclusao).toLocaleDateString('pt-BR')}
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                  {isDiretor && (
+                    <div style={{ fontSize: 11, color: C.text3, marginTop: 16, fontStyle: 'italic' }}>
+                      Clique em um círculo para marcar/desmarcar a etapa.
+                    </div>
+                  )}
+                </TabsContent>
+
+                {/* Aba: Histórico */}
+                <TabsContent value="historico" className="mt-4">
+                  {isDiretor && (
+                    <div style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
+                      <Input
+                        value={novoHist}
+                        onChange={e => setNovoHist(e.target.value)}
+                        placeholder="Registrar novo evento..."
+                        onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); adicionarHistorico(); } }}
+                      />
+                      <Button onClick={adicionarHistorico} disabled={salvandoHist || !novoHist.trim()}>
+                        {salvandoHist ? 'Salvando...' : 'Adicionar'}
+                      </Button>
+                    </div>
+                  )}
+                  {selectedMembro.historico?.length > 0 ? (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                      {selectedMembro.historico.map(h => (
+                        <div key={h.id} style={{ padding: '10px 14px', background: 'var(--cbrio-input-bg)', borderRadius: 10, display: 'flex', justifyContent: 'space-between', alignItems: 'start', gap: 12 }}>
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <div style={{ fontSize: 13, color: C.text, wordBreak: 'break-word' }}>{h.descricao}</div>
+                            {h.registrado?.name && (
+                              <div style={{ fontSize: 11, color: C.text3, marginTop: 2 }}>por {h.registrado.name}</div>
+                            )}
+                          </div>
+                          <div style={{ fontSize: 11, color: C.text3, flexShrink: 0 }}>
+                            {new Date(h.data).toLocaleDateString('pt-BR')}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div style={{ padding: '24px 0', textAlign: 'center', color: C.text3, fontSize: 13 }}>
+                      Nenhum registro no histórico
+                    </div>
+                  )}
+                </TabsContent>
+              </Tabs>
             </div>
           </div>
         </div>
