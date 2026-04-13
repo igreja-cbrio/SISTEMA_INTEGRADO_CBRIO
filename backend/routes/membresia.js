@@ -4,6 +4,21 @@ const { supabase } = require('../utils/supabase');
 
 router.use(authenticate);
 
+// ── Utils ──
+// Nível de generosidade baseado na data da última contribuição.
+// Regra do cliente:
+//   ativo: contribuiu nos últimos 30 dias
+//   irregular: contribuiu entre 31 e 150 dias (≤ 5 meses)
+//   inativo: última contribuição > 150 dias
+//   nunca_contribuiu: 0 contribuições
+function calcularNivelGenerosidade(ultimaContribuicaoDate) {
+  if (!ultimaContribuicaoDate) return 'nunca_contribuiu';
+  const dias = Math.floor((Date.now() - new Date(ultimaContribuicaoDate).getTime()) / (1000 * 60 * 60 * 24));
+  if (dias <= 30) return 'ativo';
+  if (dias <= 150) return 'irregular';
+  return 'inativo';
+}
+
 // ── Membros ──
 
 // GET /api/membresia/membros
@@ -74,6 +89,32 @@ router.get('/membros/:id', async (req, res) => {
     const grupo_atual = (participacoes || []).find(p => !p.saiu_em) || null;
     const grupo_historico = (participacoes || []).filter(p => p.saiu_em);
 
+    // Contribuições (últimas 30) + nível de generosidade + totais do ano corrente
+    const { data: contribuicoes } = await supabase
+      .from('mem_contribuicoes')
+      .select('*')
+      .eq('membro_id', membro.id)
+      .order('data', { ascending: false })
+      .limit(30);
+
+    const ultimaContribuicao = contribuicoes?.[0]?.data || null;
+    const nivelGenerosidade = calcularNivelGenerosidade(ultimaContribuicao);
+
+    const anoAtual = new Date().getFullYear();
+    const { data: contribAno } = await supabase
+      .from('mem_contribuicoes')
+      .select('tipo, valor')
+      .eq('membro_id', membro.id)
+      .gte('data', `${anoAtual}-01-01`)
+      .lte('data', `${anoAtual}-12-31`);
+
+    const totaisAno = { dizimo: 0, oferta: 0, campanha: 0, total: 0 };
+    (contribAno || []).forEach(c => {
+      const v = Number(c.valor) || 0;
+      totaisAno[c.tipo] = (totaisAno[c.tipo] || 0) + v;
+      totaisAno.total += v;
+    });
+
     res.json({
       ...membro,
       familiares,
@@ -81,6 +122,10 @@ router.get('/membros/:id', async (req, res) => {
       historico: historico || [],
       grupo_atual,
       grupo_historico,
+      contribuicoes: contribuicoes || [],
+      nivel_generosidade: nivelGenerosidade,
+      ultima_contribuicao: ultimaContribuicao,
+      totais_ano: totaisAno,
     });
   } catch (e) {
     res.status(500).json({ error: 'Erro ao buscar membro' });
@@ -353,12 +398,153 @@ router.patch('/grupo-membros/:id/sair', authorize('admin', 'diretor'), async (re
   }
 });
 
+// ── Contribuições (Generosidade) ──
+
+// GET /api/membresia/contribuicoes (lista com filtros)
+router.get('/contribuicoes', async (req, res) => {
+  try {
+    const { membro_id, tipo, data_inicio, data_fim, limit } = req.query;
+    let query = supabase
+      .from('mem_contribuicoes')
+      .select('*, membro:mem_membros(id, nome)')
+      .order('data', { ascending: false });
+
+    if (membro_id) query = query.eq('membro_id', membro_id);
+    if (tipo) query = query.eq('tipo', tipo);
+    if (data_inicio) query = query.gte('data', data_inicio);
+    if (data_fim) query = query.lte('data', data_fim);
+    if (limit) query = query.limit(Number(limit));
+
+    const { data, error } = await query;
+    if (error) throw error;
+    res.json(data);
+  } catch (e) {
+    res.status(500).json({ error: 'Erro ao buscar contribuições' });
+  }
+});
+
+// POST /api/membresia/contribuicoes
+router.post('/contribuicoes', authorize('admin', 'diretor'), async (req, res) => {
+  try {
+    const payload = {
+      ...req.body,
+      registrado_por: req.user.id,
+      origem: req.body.origem || 'manual',
+    };
+    if (payload.campanha === '') delete payload.campanha;
+    if (payload.forma_pagamento === '') delete payload.forma_pagamento;
+    if (payload.referencia_externa === '') delete payload.referencia_externa;
+
+    const { data, error } = await supabase
+      .from('mem_contribuicoes')
+      .insert(payload)
+      .select('*, membro:mem_membros(id, nome)')
+      .single();
+    if (error) throw error;
+    res.status(201).json(data);
+  } catch (e) {
+    res.status(500).json({ error: 'Erro ao registrar contribuição' });
+  }
+});
+
+// PUT /api/membresia/contribuicoes/:id
+router.put('/contribuicoes/:id', authorize('admin', 'diretor'), async (req, res) => {
+  try {
+    const payload = { ...req.body };
+    delete payload.registrado_por;
+    const { data, error } = await supabase
+      .from('mem_contribuicoes')
+      .update(payload)
+      .eq('id', req.params.id)
+      .select()
+      .single();
+    if (error) throw error;
+    res.json(data);
+  } catch (e) {
+    res.status(500).json({ error: 'Erro ao atualizar contribuição' });
+  }
+});
+
+// DELETE /api/membresia/contribuicoes/:id
+router.delete('/contribuicoes/:id', authorize('admin', 'diretor'), async (req, res) => {
+  try {
+    const { error } = await supabase.from('mem_contribuicoes').delete().eq('id', req.params.id);
+    if (error) throw error;
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ error: 'Erro ao remover contribuição' });
+  }
+});
+
+// GET /api/membresia/contribuicoes/kpis — agregados gerais
+router.get('/contribuicoes/kpis', async (req, res) => {
+  try {
+    const hoje = new Date();
+    const anoAtual = hoje.getFullYear();
+
+    // Totais do ano por tipo
+    const { data: contribsAno } = await supabase
+      .from('mem_contribuicoes')
+      .select('tipo, valor, data, membro_id')
+      .gte('data', `${anoAtual}-01-01`);
+
+    const totais = { dizimo: 0, oferta: 0, campanha: 0, total: 0 };
+    const contribuintesPorMembro = new Map(); // membro_id -> data mais recente
+    (contribsAno || []).forEach(c => {
+      const v = Number(c.valor) || 0;
+      totais[c.tipo] = (totais[c.tipo] || 0) + v;
+      totais.total += v;
+      const atual = contribuintesPorMembro.get(c.membro_id);
+      if (!atual || new Date(c.data) > new Date(atual)) {
+        contribuintesPorMembro.set(c.membro_id, c.data);
+      }
+    });
+
+    // Classificação por nível (ativo/irregular/inativo) considerando TODOS os membros ativos
+    const { data: todosMembros } = await supabase
+      .from('mem_membros')
+      .select('id')
+      .eq('active', true);
+
+    // Para inativo/ativo preciso olhar histórico completo (não só do ano). Pegamos última contribuição por membro.
+    const membroIds = (todosMembros || []).map(m => m.id);
+    const niveis = { ativo: 0, irregular: 0, inativo: 0, nunca_contribuiu: 0 };
+
+    if (membroIds.length > 0) {
+      const { data: ultimas } = await supabase
+        .from('mem_contribuicoes')
+        .select('membro_id, data')
+        .in('membro_id', membroIds)
+        .order('data', { ascending: false });
+
+      const ultimaPorMembro = new Map();
+      (ultimas || []).forEach(c => {
+        if (!ultimaPorMembro.has(c.membro_id)) ultimaPorMembro.set(c.membro_id, c.data);
+      });
+
+      membroIds.forEach(id => {
+        const n = calcularNivelGenerosidade(ultimaPorMembro.get(id));
+        niveis[n] = (niveis[n] || 0) + 1;
+      });
+    }
+
+    res.json({
+      ano: anoAtual,
+      totais,
+      niveis,
+      contribuintes_unicos_ano: contribuintesPorMembro.size,
+    });
+  } catch (e) {
+    res.status(500).json({ error: 'Erro ao buscar KPIs de contribuições' });
+  }
+});
+
 // ── KPIs ──
 router.get('/kpis', async (req, res) => {
   try {
     const { data: membros } = await supabase
       .from('mem_membros')
-      .select('status')
+      .select('id, status')
       .eq('active', true);
 
     const total = membros?.length || 0;
@@ -371,7 +557,30 @@ router.get('/kpis', async (req, res) => {
       .from('mem_familias')
       .select('id', { count: 'exact', head: true });
 
-    res.json({ total, byStatus, familias: familias || 0 });
+    // Contribuintes ativos (≤30 dias) — olhando última contribuição de cada membro ativo
+    const membroIds = (membros || []).map(m => m.id);
+    let contribuintesAtivos = 0;
+    if (membroIds.length > 0) {
+      const { data: contribs } = await supabase
+        .from('mem_contribuicoes')
+        .select('membro_id, data')
+        .in('membro_id', membroIds)
+        .order('data', { ascending: false });
+      const vistos = new Set();
+      const limite30d = Date.now() - 30 * 24 * 60 * 60 * 1000;
+      (contribs || []).forEach(c => {
+        if (vistos.has(c.membro_id)) return;
+        vistos.add(c.membro_id);
+        if (new Date(c.data).getTime() >= limite30d) contribuintesAtivos += 1;
+      });
+    }
+
+    res.json({
+      total,
+      byStatus,
+      familias: familias || 0,
+      contribuintes_ativos: contribuintesAtivos,
+    });
   } catch (e) {
     res.status(500).json({ error: 'Erro ao buscar KPIs' });
   }

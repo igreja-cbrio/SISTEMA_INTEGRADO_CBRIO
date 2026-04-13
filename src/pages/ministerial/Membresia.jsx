@@ -7,6 +7,7 @@ import {
   Phone, Mail, MapPin, Heart, Calendar, Star,
   CheckCircle2, Circle, UserPlus, Home, Pencil,
   AlertCircle, LogOut, MapPin as MapPinIcon, Clock, Trash2,
+  DollarSign, HandCoins,
 } from 'lucide-react';
 import { Button } from '../../components/ui/button';
 import { Input } from '../../components/ui/input';
@@ -58,10 +59,29 @@ const ESTADO_CIVIL_OPTIONS = ['Solteiro(a)', 'Casado(a)', 'Divorciado(a)', 'Viú
 
 const DIAS_SEMANA = ['Domingo', 'Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta', 'Sábado'];
 
+const TIPOS_CONTRIBUICAO = {
+  dizimo: { label: 'Dízimo', cor: '#10b981', bg: '#10b98118' },
+  oferta: { label: 'Oferta', cor: '#3b82f6', bg: '#3b82f618' },
+  campanha: { label: 'Campanha', cor: '#f59e0b', bg: '#f59e0b18' },
+};
+
+const FORMAS_PAGAMENTO = ['PIX', 'Dinheiro', 'Cartão', 'Transferência', 'Boleto'];
+
+const NIVEIS_GENEROSIDADE = {
+  ativo: { label: 'Ativo', cor: '#10b981', bg: '#10b98118', desc: 'Contribuiu nos últimos 30 dias' },
+  irregular: { label: 'Irregular', cor: '#f59e0b', bg: '#f59e0b18', desc: 'Contribuiu nos últimos 5 meses' },
+  inativo: { label: 'Inativo', cor: '#ef4444', bg: '#ef444418', desc: 'Sem contribuições há mais de 5 meses' },
+  nunca_contribuiu: { label: 'Nunca contribuiu', cor: '#737373', bg: '#73737318', desc: 'Nenhum registro de contribuição' },
+};
+
 function diasSemGrupo(dataSaida) {
   if (!dataSaida) return null;
   const diff = Date.now() - new Date(dataSaida).getTime();
   return Math.max(0, Math.floor(diff / (1000 * 60 * 60 * 24)));
+}
+
+function fmtMoeda(v) {
+  return (Number(v) || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 }
 
 const EMPTY_FORM = {
@@ -268,6 +288,9 @@ export default function Membresia() {
   const [grupoSelecionado, setGrupoSelecionado] = useState('');
   const [salvandoGrupo, setSalvandoGrupo] = useState(false);
   const [pageTab, setPageTab] = useState('membros');
+  const [showContribForm, setShowContribForm] = useState(false);
+  const [contribForm, setContribForm] = useState({ tipo: 'dizimo', valor: '', data: new Date().toISOString().slice(0, 10), forma_pagamento: '', campanha: '', observacoes: '' });
+  const [salvandoContrib, setSalvandoContrib] = useState(false);
 
   const fetchData = useCallback(async () => {
     try {
@@ -370,6 +393,44 @@ export default function Membresia() {
     }
   };
 
+  const adicionarContribuicao = async () => {
+    if (!selectedMembro) return;
+    const valor = Number(contribForm.valor);
+    if (!valor || valor <= 0) return;
+    setSalvandoContrib(true);
+    try {
+      const payload = {
+        membro_id: selectedMembro.id,
+        tipo: contribForm.tipo,
+        valor,
+        data: contribForm.data,
+      };
+      if (contribForm.forma_pagamento) payload.forma_pagamento = contribForm.forma_pagamento;
+      if (contribForm.campanha) payload.campanha = contribForm.campanha;
+      if (contribForm.observacoes) payload.observacoes = contribForm.observacoes;
+      await membresia.contribuicoes.create(payload);
+      setContribForm({ tipo: 'dizimo', valor: '', data: new Date().toISOString().slice(0, 10), forma_pagamento: '', campanha: '', observacoes: '' });
+      setShowContribForm(false);
+      await reloadDetail();
+      fetchData();
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setSalvandoContrib(false);
+    }
+  };
+
+  const removerContribuicao = async (id) => {
+    if (!confirm('Remover esta contribuição?')) return;
+    try {
+      await membresia.contribuicoes.remove(id);
+      await reloadDetail();
+      fetchData();
+    } catch (e) {
+      setError(e.message);
+    }
+  };
+
   const adicionarHistorico = async () => {
     if (!novoHist.trim() || !selectedMembro) return;
     setSalvandoHist(true);
@@ -453,11 +514,12 @@ export default function Membresia() {
         <TabsContent value="membros">
 
       {/* KPIs */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-7">
+      <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mb-7">
         <StatisticsCard title="Total Membros" value={kpis.total} icon={Users} iconColor="#00B39D" />
         <StatisticsCard title="Membros Ativos" value={kpis.byStatus?.membro_ativo || 0} icon={Users} iconColor="#10b981" />
         <StatisticsCard title="Visitantes" value={kpis.byStatus?.visitante || 0} icon={UserPlus} iconColor="#3b82f6" />
         <StatisticsCard title="Famílias" value={kpis.familias} icon={Home} iconColor="#f59e0b" />
+        <StatisticsCard title="Contribuintes Ativos" value={kpis.contribuintes_ativos || 0} icon={HandCoins} iconColor="#22c55e" />
       </div>
 
       {/* Filters */}
@@ -580,6 +642,7 @@ export default function Membresia() {
                     { key: 'info', label: 'Informações', icon: Users },
                     { key: 'familia', label: 'Família', icon: Home },
                     { key: 'grupo', label: 'Grupo', icon: Users },
+                    { key: 'generosidade', label: 'Generosidade', icon: HandCoins },
                     { key: 'trilha', label: 'Trilha', icon: Star },
                     { key: 'historico', label: 'Histórico', icon: Calendar },
                   ].map(t => {
@@ -777,6 +840,145 @@ export default function Membresia() {
                       </div>
                     </div>
                   )}
+                </TabsContent>
+
+                {/* Aba: Generosidade */}
+                <TabsContent value="generosidade" className="mt-4">
+                  {(() => {
+                    const nivel = NIVEIS_GENEROSIDADE[selectedMembro.nivel_generosidade] || NIVEIS_GENEROSIDADE.nunca_contribuiu;
+                    const totais = selectedMembro.totais_ano || { dizimo: 0, oferta: 0, campanha: 0, total: 0 };
+                    return (
+                      <>
+                        {/* Card de status */}
+                        <div style={{ padding: 14, borderRadius: 12, background: nivel.bg, border: `1px solid ${nivel.cor}30`, marginBottom: 16, display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12 }}>
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <div style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: 0.5, color: nivel.cor, fontWeight: 700 }}>Nível de Generosidade</div>
+                            <div style={{ fontSize: 16, fontWeight: 700, color: C.text, marginTop: 2 }}>{nivel.label}</div>
+                            <div style={{ fontSize: 12, color: C.text2, marginTop: 2 }}>{nivel.desc}</div>
+                          </div>
+                          {selectedMembro.ultima_contribuicao && (
+                            <div style={{ textAlign: 'right', flexShrink: 0 }}>
+                              <div style={{ fontSize: 10, color: C.text3, textTransform: 'uppercase', letterSpacing: 0.5 }}>Última</div>
+                              <div style={{ fontSize: 13, color: C.text, fontWeight: 600, marginTop: 2 }}>
+                                {new Date(selectedMembro.ultima_contribuicao).toLocaleDateString('pt-BR')}
+                              </div>
+                            </div>
+                          )}
+                        </div>
+
+                        {/* Totais do ano */}
+                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 8, marginBottom: 20 }}>
+                          {[
+                            { label: 'Dízimos', valor: totais.dizimo, cor: TIPOS_CONTRIBUICAO.dizimo.cor, bg: TIPOS_CONTRIBUICAO.dizimo.bg },
+                            { label: 'Ofertas', valor: totais.oferta, cor: TIPOS_CONTRIBUICAO.oferta.cor, bg: TIPOS_CONTRIBUICAO.oferta.bg },
+                            { label: 'Campanhas', valor: totais.campanha, cor: TIPOS_CONTRIBUICAO.campanha.cor, bg: TIPOS_CONTRIBUICAO.campanha.bg },
+                            { label: 'Total ano', valor: totais.total, cor: C.primary, bg: C.primaryBg },
+                          ].map((t, i) => (
+                            <div key={i} style={{ padding: 10, borderRadius: 10, background: t.bg, border: `1px solid ${t.cor}20` }}>
+                              <div style={{ fontSize: 10, color: t.cor, textTransform: 'uppercase', letterSpacing: 0.5, fontWeight: 700 }}>{t.label}</div>
+                              <div style={{ fontSize: 13, color: C.text, fontWeight: 600, marginTop: 4 }}>{fmtMoeda(t.valor)}</div>
+                            </div>
+                          ))}
+                        </div>
+
+                        {/* Botão + formulário */}
+                        {isDiretor && (
+                          showContribForm ? (
+                            <div style={{ padding: 14, background: 'var(--cbrio-input-bg)', borderRadius: 12, marginBottom: 16, display: 'flex', flexDirection: 'column', gap: 10 }}>
+                              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                                <div>
+                                  <Label style={{ fontSize: 11 }}>Tipo *</Label>
+                                  <Select value={contribForm.tipo} onValueChange={v => setContribForm(f => ({ ...f, tipo: v }))}>
+                                    <SelectTrigger><SelectValue /></SelectTrigger>
+                                    <SelectContent className="z-[1001]">
+                                      {Object.entries(TIPOS_CONTRIBUICAO).map(([k, v]) => (
+                                        <SelectItem key={k} value={k}>{v.label}</SelectItem>
+                                      ))}
+                                    </SelectContent>
+                                  </Select>
+                                </div>
+                                <div>
+                                  <Label style={{ fontSize: 11 }}>Valor *</Label>
+                                  <Input type="number" step="0.01" min="0" value={contribForm.valor} onChange={e => setContribForm(f => ({ ...f, valor: e.target.value }))} placeholder="0,00" />
+                                </div>
+                                <div>
+                                  <Label style={{ fontSize: 11 }}>Data *</Label>
+                                  <Input type="date" value={contribForm.data} onChange={e => setContribForm(f => ({ ...f, data: e.target.value }))} />
+                                </div>
+                                <div>
+                                  <Label style={{ fontSize: 11 }}>Forma de pagamento</Label>
+                                  <Select value={contribForm.forma_pagamento || '__none__'} onValueChange={v => setContribForm(f => ({ ...f, forma_pagamento: v === '__none__' ? '' : v }))}>
+                                    <SelectTrigger><SelectValue placeholder="—" /></SelectTrigger>
+                                    <SelectContent className="z-[1001]">
+                                      <SelectItem value="__none__">Não informado</SelectItem>
+                                      {FORMAS_PAGAMENTO.map(fp => <SelectItem key={fp} value={fp}>{fp}</SelectItem>)}
+                                    </SelectContent>
+                                  </Select>
+                                </div>
+                                {contribForm.tipo === 'campanha' && (
+                                  <div style={{ gridColumn: '1 / -1' }}>
+                                    <Label style={{ fontSize: 11 }}>Nome da campanha</Label>
+                                    <Input value={contribForm.campanha} onChange={e => setContribForm(f => ({ ...f, campanha: e.target.value }))} placeholder="Ex: Missões 2026" />
+                                  </div>
+                                )}
+                              </div>
+                              <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 4 }}>
+                                <Button variant="outline" onClick={() => setShowContribForm(false)}>Cancelar</Button>
+                                <Button onClick={adicionarContribuicao} disabled={salvandoContrib || !contribForm.valor}>
+                                  {salvandoContrib ? 'Salvando...' : 'Registrar'}
+                                </Button>
+                              </div>
+                            </div>
+                          ) : (
+                            <Button variant="outline" size="sm" onClick={() => setShowContribForm(true)} style={{ marginBottom: 16 }}>
+                              <Plus style={{ width: 14, height: 14 }} /> Registrar contribuição
+                            </Button>
+                          )
+                        )}
+
+                        {/* Lista de contribuições recentes */}
+                        <div>
+                          <h3 style={{ fontSize: 13, fontWeight: 600, color: C.text2, marginBottom: 10, textTransform: 'uppercase', letterSpacing: 0.5 }}>
+                            Últimas contribuições
+                          </h3>
+                          {selectedMembro.contribuicoes?.length > 0 ? (
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                              {selectedMembro.contribuicoes.map(c => {
+                                const tipo = TIPOS_CONTRIBUICAO[c.tipo] || { label: c.tipo, cor: C.text3, bg: '#73737318' };
+                                return (
+                                  <div key={c.id} style={{ padding: '10px 14px', background: 'var(--cbrio-input-bg)', borderRadius: 10, display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12 }}>
+                                    <div style={{ flex: 1, minWidth: 0, display: 'flex', gap: 10, alignItems: 'center' }}>
+                                      <span style={{ fontSize: 10, padding: '2px 8px', borderRadius: 10, color: tipo.cor, background: tipo.bg, fontWeight: 600, flexShrink: 0 }}>
+                                        {tipo.label}
+                                      </span>
+                                      <div style={{ flex: 1, minWidth: 0 }}>
+                                        <div style={{ fontSize: 14, color: C.text, fontWeight: 600 }}>{fmtMoeda(c.valor)}</div>
+                                        <div style={{ fontSize: 11, color: C.text3, marginTop: 1 }}>
+                                          {new Date(c.data).toLocaleDateString('pt-BR')}
+                                          {c.forma_pagamento && ` · ${c.forma_pagamento}`}
+                                          {c.campanha && ` · ${c.campanha}`}
+                                          {c.origem && c.origem !== 'manual' && ` · ${c.origem}`}
+                                        </div>
+                                      </div>
+                                    </div>
+                                    {isDiretor && (
+                                      <Button variant="ghost" size="icon" onClick={() => removerContribuicao(c.id)} title="Remover">
+                                        <Trash2 style={{ width: 14, height: 14, color: C.red }} />
+                                      </Button>
+                                    )}
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          ) : (
+                            <div style={{ padding: '24px 0', textAlign: 'center', color: C.text3, fontSize: 13 }}>
+                              Nenhuma contribuição registrada
+                            </div>
+                          )}
+                        </div>
+                      </>
+                    );
+                  })()}
                 </TabsContent>
 
                 {/* Aba: Trilha dos Valores */}

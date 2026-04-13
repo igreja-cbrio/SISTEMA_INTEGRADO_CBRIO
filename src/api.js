@@ -445,6 +445,13 @@ export const membresia = {
     adicionarMembro: (grupoId, data) => post(`/membresia/grupos/${grupoId}/membros`, data),
     sairMembro: (participacaoId, data) => patch(`/membresia/grupo-membros/${participacaoId}/sair`, data),
   },
+  contribuicoes: {
+    list: (params) => get('/membresia/contribuicoes' + (params ? '?' + new URLSearchParams(params) : '')),
+    create: (data) => post('/membresia/contribuicoes', data),
+    update: (id, data) => put(`/membresia/contribuicoes/${id}`, data),
+    remove: (id) => del(`/membresia/contribuicoes/${id}`),
+    kpis: () => get('/membresia/contribuicoes/kpis'),
+  },
 };
 
 async function requestFile(path, formData) {
