@@ -100,7 +100,7 @@ export default function TabFeriasCalendar({ funcs, onAprovar }) {
 
   const calendarData = useMemo(() => {
     return days.map(day => {
-      const dayVacations = ferias.filter(v => {
+      const dayVacations = filteredFerias.filter(v => {
         if (!v.data_inicio || !v.data_fim) return false;
         const start = new Date(v.data_inicio + 'T00:00:00');
         const end = new Date(v.data_fim + 'T23:59:59');
@@ -108,7 +108,7 @@ export default function TabFeriasCalendar({ funcs, onAprovar }) {
       });
       return { day, vacations: dayVacations };
     });
-  }, [days, ferias]);
+  }, [days, filteredFerias]);
 
   const selectedDayVacations = calendarData.find(d => isSameDay(d.day, selectedDay))?.vacations || [];
 
