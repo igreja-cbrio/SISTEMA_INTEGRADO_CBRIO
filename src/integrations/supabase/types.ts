@@ -392,6 +392,171 @@ export type Database = {
         }
         Relationships: []
       }
+      mem_familias: {
+        Row: {
+          created_at: string
+          id: string
+          nome: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          nome: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          nome?: string
+        }
+        Relationships: []
+      }
+      mem_historico: {
+        Row: {
+          created_at: string
+          data: string
+          descricao: string
+          id: string
+          membro_id: string
+          registrado_por: string | null
+        }
+        Insert: {
+          created_at?: string
+          data?: string
+          descricao: string
+          id?: string
+          membro_id: string
+          registrado_por?: string | null
+        }
+        Update: {
+          created_at?: string
+          data?: string
+          descricao?: string
+          id?: string
+          membro_id?: string
+          registrado_por?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "mem_historico_membro_id_fkey"
+            columns: ["membro_id"]
+            isOneToOne: false
+            referencedRelation: "mem_membros"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      mem_membros: {
+        Row: {
+          active: boolean
+          bairro: string | null
+          cep: string | null
+          cidade: string | null
+          created_at: string
+          data_nascimento: string | null
+          email: string | null
+          endereco: string | null
+          estado_civil: string | null
+          familia_id: string | null
+          foto_url: string | null
+          grupo: string | null
+          id: string
+          ministerio: string | null
+          nome: string
+          observacoes: string | null
+          profissao: string | null
+          status: string
+          telefone: string | null
+        }
+        Insert: {
+          active?: boolean
+          bairro?: string | null
+          cep?: string | null
+          cidade?: string | null
+          created_at?: string
+          data_nascimento?: string | null
+          email?: string | null
+          endereco?: string | null
+          estado_civil?: string | null
+          familia_id?: string | null
+          foto_url?: string | null
+          grupo?: string | null
+          id?: string
+          ministerio?: string | null
+          nome: string
+          observacoes?: string | null
+          profissao?: string | null
+          status?: string
+          telefone?: string | null
+        }
+        Update: {
+          active?: boolean
+          bairro?: string | null
+          cep?: string | null
+          cidade?: string | null
+          created_at?: string
+          data_nascimento?: string | null
+          email?: string | null
+          endereco?: string | null
+          estado_civil?: string | null
+          familia_id?: string | null
+          foto_url?: string | null
+          grupo?: string | null
+          id?: string
+          ministerio?: string | null
+          nome?: string
+          observacoes?: string | null
+          profissao?: string | null
+          status?: string
+          telefone?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "mem_membros_familia_id_fkey"
+            columns: ["familia_id"]
+            isOneToOne: false
+            referencedRelation: "mem_familias"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      mem_trilha_valores: {
+        Row: {
+          concluida: boolean
+          created_at: string
+          data_conclusao: string | null
+          etapa: string
+          id: string
+          membro_id: string
+          observacoes: string | null
+        }
+        Insert: {
+          concluida?: boolean
+          created_at?: string
+          data_conclusao?: string | null
+          etapa: string
+          id?: string
+          membro_id: string
+          observacoes?: string | null
+        }
+        Update: {
+          concluida?: boolean
+          created_at?: string
+          data_conclusao?: string | null
+          etapa?: string
+          id?: string
+          membro_id?: string
+          observacoes?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "mem_trilha_valores_membro_id_fkey"
+            columns: ["membro_id"]
+            isOneToOne: false
+            referencedRelation: "mem_membros"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       modulos: {
         Row: {
           ativo: boolean
