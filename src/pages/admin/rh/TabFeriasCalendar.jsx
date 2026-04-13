@@ -232,6 +232,17 @@ export default function TabFeriasCalendar({ funcs, onAprovar }) {
         })}
       </div>
 
+      {/* Legend */}
+      <div className="flex items-center gap-4 flex-wrap rounded-lg border border-border bg-card px-4 py-2.5">
+        <span className="text-xs font-medium text-muted-foreground mr-1">Legenda:</span>
+        {Object.entries(VACATION_COLORS).map(([key, val]) => (
+          <div key={key} className="flex items-center gap-1.5">
+            <span className={`inline-block w-2.5 h-2.5 rounded-full ${val.dot}`} />
+            <span className="text-xs text-foreground">{val.label}</span>
+          </div>
+        ))}
+      </div>
+
       {/* Calendar + Sidebar */}
       <div className="grid grid-cols-1 xl:grid-cols-[1fr_340px] gap-4">
         {/* Calendar */}
