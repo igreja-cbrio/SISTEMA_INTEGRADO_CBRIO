@@ -14,6 +14,7 @@ import TabAdmissao from './TabAdmissao';
 import TabFolha from './TabFolha';
 import TabAvaliacoes from './TabAvaliacoes';
 import TabExtras from './TabExtras';
+import TabFeriasCalendar from './TabFeriasCalendar';
 
 // ── Toast de feedback ───────────────────────────────────────
 function Toast({ message, type = 'error', onClose }) {
@@ -326,9 +327,7 @@ export default function RH() {
           />
         </TabsContent>
         <TabsContent value="ferias">
-          <FeriasTab dash={dash} funcs={funcs}
-            onNew={() => setModalFerias({})} onAprovar={aprovarFerias}
-          />
+          <TabFeriasCalendar funcs={funcs} onAprovar={aprovarFerias} />
         </TabsContent>
         <TabsContent value="extras">
           <div style={{ minHeight: 200, padding: '4px 0' }}>
@@ -340,7 +339,7 @@ export default function RH() {
       {/* Modais */}
       <FuncionarioFormModal open={!!modalFunc} data={modalFunc} onClose={() => setModalFunc(null)} onSave={saveFuncionario} funcionarios={funcs} setores={setores} areas={areas} />
       <TreinamentoFormModal open={!!modalTreino} data={modalTreino} onClose={() => setModalTreino(null)} onSave={saveTreinamento} />
-      <FeriasFormModal open={!!modalFerias} funcs={funcs} onClose={() => setModalFerias(null)} onSave={saveFerias} />
+      
       <FuncionarioDetailPanel
         open={!!modalDetail} data={modalDetail} onClose={() => setModalDetail(null)}
         onEdit={(f) => { setModalDetail(null); setModalFunc(f); }}
