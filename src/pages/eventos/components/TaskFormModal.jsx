@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../../components/ui/select';
 
 export default function TaskFormModal({ task, onSave, onClose }) {
   const [f, setF] = useState({
@@ -58,20 +59,30 @@ export default function TaskFormModal({ task, onSave, onClose }) {
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
             <div style={{ flex: 1, marginBottom: 12 }}>
               <label style={labelStyle}>Status</label>
-              <select value={f.status} onChange={e => upd('status', e.target.value)} style={inputStyle}>
-                <option value="pendente">Pendente</option>
-                <option value="em-andamento">Em andamento</option>
-                <option value="concluida">Concluída</option>
-              </select>
+              <Select value={f.status} onValueChange={v => upd('status', v)}>
+                <SelectTrigger className="w-full h-8 text-xs">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="pendente">Pendente</SelectItem>
+                  <SelectItem value="em-andamento">Em andamento</SelectItem>
+                  <SelectItem value="concluida">Concluída</SelectItem>
+                </SelectContent>
+              </Select>
             </div>
             <div style={{ flex: 1, marginBottom: 12 }}>
               <label style={labelStyle}>Prioridade</label>
-              <select value={f.priority} onChange={e => upd('priority', e.target.value)} style={inputStyle}>
-                <option value="baixa">Baixa</option>
-                <option value="media">Média</option>
-                <option value="alta">Alta</option>
-                <option value="urgente">Urgente</option>
-              </select>
+              <Select value={f.priority} onValueChange={v => upd('priority', v)}>
+                <SelectTrigger className="w-full h-8 text-xs">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="baixa">Baixa</SelectItem>
+                  <SelectItem value="media">Média</SelectItem>
+                  <SelectItem value="alta">Alta</SelectItem>
+                  <SelectItem value="urgente">Urgente</SelectItem>
+                </SelectContent>
+              </Select>
             </div>
           </div>
           <div style={{ marginBottom: 12, display: 'flex', alignItems: 'center', gap: 8 }}>
