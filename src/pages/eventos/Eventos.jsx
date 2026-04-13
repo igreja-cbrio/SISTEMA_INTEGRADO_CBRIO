@@ -2259,10 +2259,14 @@ export default function Eventos() {
                   {isOpen && (
                     <div style={{ marginTop: 12, paddingTop: 12, borderTop: `1px solid ${C.border}` }} onClick={e => e.stopPropagation()}>
                       <div style={{ display: 'flex', gap: 6, marginBottom: 10 }}>
-                        <select value={risk.status} onChange={async e => { await risksApi.update(risk.id, { status: e.target.value }); risksApi.list(ev.id).then(setEventRisks); }}
-                          className="flex h-9 w-full rounded-lg border border-input bg-background px-3 py-2 text-sm shadow-sm shadow-black/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" style={{ padding: '4px 8px', fontSize: 12 }}>
-                          {['aberto','mitigando','mitigado','aceito','fechado'].map(s => <option key={s} value={s}>{s}</option>)}
-                        </select>
+                        <ShadSelect value={risk.status} onValueChange={async v => { await risksApi.update(risk.id, { status: v }); risksApi.list(ev.id).then(setEventRisks); }}>
+                          <SelectTrigger className="w-[140px] h-8 text-xs">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {['aberto','mitigando','mitigado','aceito','fechado'].map(s => <SelectItem key={s} value={s}>{s}</SelectItem>)}
+                          </SelectContent>
+                        </ShadSelect>
                         <Button variant="ghost" size="sm" className="text-destructive"
                           onClick={async () => { if (window.confirm('Excluir risco?')) { await risksApi.remove(risk.id); risksApi.list(ev.id).then(setEventRisks); } }}>Excluir</Button>
                       </div>
@@ -2647,11 +2651,15 @@ function ReportTab({ eventId, isPMO }) {
         <div style={{ fontSize: 18, fontWeight: 700, color: 'var(--cbrio-text)' }}>Relatórios do Evento</div>
         {isPMO && (
           <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-            <select value={reportType} onChange={e => setReportType(e.target.value)}
-              style={{ padding: '6px 10px', borderRadius: 8, border: '1px solid var(--cbrio-border)', fontSize: 12, background: 'var(--cbrio-input-bg, #fff)', color: 'var(--cbrio-text)' }}>
-              <option value="full">Evento Completo</option>
-              <option value="phase">Por Fase</option>
-            </select>
+            <ShadSelect value={reportType} onValueChange={v => setReportType(v)}>
+              <SelectTrigger className="w-[180px] h-8 text-xs">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="full">Evento Completo</SelectItem>
+                <SelectItem value="phase">Por Fase</SelectItem>
+              </SelectContent>
+            </ShadSelect>
             <button onClick={generate} disabled={generating}
               style={{
                 padding: '8px 16px', borderRadius: 8, border: 'none', fontSize: 13, fontWeight: 600,
