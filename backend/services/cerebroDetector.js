@@ -8,7 +8,7 @@ const { getGraphToken } = require('./storageService');
 const HUB_SITE_ID = 'infracbrio.sharepoint.com,04b50f10-ea32-40ba-84bd-44a3b38ee2a7,94fe6af6-f064-455d-afc5-67a377f5e82c';
 
 const EXTENSOES = new Set(['pdf', 'xlsx', 'csv', 'docx', 'pptx', 'txt', 'md', 'json', 'png', 'jpg', 'jpeg']);
-const TAM_MINIMO = 1024;
+const TAM_MINIMO = 100; // bytes
 
 async function graphFetch(path, token) {
   const res = await fetch(`https://graph.microsoft.com/v1.0${path}`, { headers: { Authorization: `Bearer ${token}` } });
@@ -34,10 +34,15 @@ async function detectarArquivosNovos() {
     // Delta link salvo
     const deltaKey = `delta_${drive.id}`;
     const { data: deltaRow } = await supabase.from('cerebro_config').select('valor').eq('chave', deltaKey).maybeSingle();
-    let deltaUrl = deltaRow?.valor ? String(deltaRow.valor).replace(/^"|"$/g, '') : null;
+    let savedDelta = deltaRow?.valor ? String(deltaRow.valor).replace(/^"|"$/g, '') : null;
+    let deltaUrl;
 
-    if (!deltaUrl || deltaUrl === 'null') {
+    if (savedDelta && savedDelta !== 'null' && savedDelta.startsWith('http')) {
+      deltaUrl = savedDelta;
+      console.log(`  [DELTA] Usando link salvo`);
+    } else {
       deltaUrl = `https://graph.microsoft.com/v1.0/drives/${drive.id}/root/delta`;
+      console.log(`  [DELTA] Scan completo (sem link salvo)`);
     }
 
     let hasMore = true;

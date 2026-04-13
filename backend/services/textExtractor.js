@@ -53,6 +53,11 @@ async function extractText(buffer, mimeType, fileName, maxChars = 15000) {
       return (text || '').slice(0, maxChars);
     }
 
+    // Texto puro (txt, csv, md, json)
+    if (mimeType?.startsWith('text/') || mimeType === 'application/json' || fileName?.match(/\.(txt|csv|md|json)$/i)) {
+      return buffer.toString('utf-8').slice(0, maxChars);
+    }
+
     // Outros binários
     return `[Arquivo binário: ${fileName || 'desconhecido'}, tipo: ${mimeType}]`;
   } catch (e) {
