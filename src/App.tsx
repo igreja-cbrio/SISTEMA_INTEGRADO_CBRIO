@@ -77,6 +77,7 @@ const Logistica = lazyWithRetry(() => import('./pages/admin/logistica/Logistica'
 const Planejamento = lazyWithRetry(() => import('./pages/Planejamento'));
 const Eventos = lazyWithRetry(() => import('./pages/eventos/Eventos'));
 const Projetos = lazyWithRetry(() => import('./pages/Projetos'));
+const CadastroMembresia = lazyWithRetry(() => import('./pages/public/CadastroMembresia'));
 
 // Placeholder pages for modules not yet copied
 const PlaceholderPage = ({ title }) => (
@@ -116,6 +117,10 @@ function AppRoutes() {
   return (
     <Routes>
       <Route path="/login" element={user ? <Navigate to="/dashboard" replace /> : <Login />} />
+
+      {/* Rota pública — sem AppShell, sem autenticação.
+          Permite que visitantes enviem o formulário de cadastro de membresia. */}
+      <Route path="/cadastro-membresia" element={<Suspense fallback={<Loading />}><CadastroMembresia /></Suspense>} />
 
       <Route
         element={

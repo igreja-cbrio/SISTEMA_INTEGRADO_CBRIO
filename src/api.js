@@ -478,6 +478,31 @@ export const membresia = {
     create: (data) => post('/membresia/checkins', data),
     remove: (id) => del(`/membresia/checkins/${id}`),
   },
+  cadastros: {
+    list: (params) => get('/membresia/cadastros' + (params ? '?' + new URLSearchParams(params) : '')),
+    kpis: () => get('/membresia/cadastros/kpis'),
+    aprovar: (id, data) => post(`/membresia/cadastros/${id}/aprovar`, data || {}),
+    rejeitar: (id, motivo) => post(`/membresia/cadastros/${id}/rejeitar`, { motivo }),
+    update: (id, data) => patch(`/membresia/cadastros/${id}`, data),
+    remove: (id) => del(`/membresia/cadastros/${id}`),
+  },
+};
+
+// ── Endpoint público (sem auth) do formulário de cadastro de membresia ──
+// Usa fetch direto porque não requer token e deve funcionar em rotas públicas.
+export const cadastroPublico = {
+  enviar: async (data) => {
+    const res = await fetch(`${API}/public/membresia/cadastro`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: 'Erro desconhecido' }));
+      throw new Error(err.error || `HTTP ${res.status}`);
+    }
+    return res.json();
+  },
 };
 
 async function requestFile(path, formData) {

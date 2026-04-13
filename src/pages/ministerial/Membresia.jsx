@@ -7,7 +7,7 @@ import {
   Phone, Mail, MapPin, Heart, Calendar, Star,
   CheckCircle2, Circle, UserPlus, Home, Pencil,
   AlertCircle, LogOut, MapPin as MapPinIcon, Clock, Trash2,
-  DollarSign, HandCoins, Sparkles, Activity,
+  DollarSign, HandCoins, Sparkles, Activity, Inbox,
 } from 'lucide-react';
 import { Button } from '../../components/ui/button';
 import { Input } from '../../components/ui/input';
@@ -24,6 +24,7 @@ import {
 } from '../../components/ui/tabs';
 import TabGrupos from './TabGrupos';
 import TabMinisterios from './TabMinisterios';
+import TabCadastros from './TabCadastros';
 
 const C = {
   bg: 'var(--cbrio-bg)', card: 'var(--cbrio-card)', primary: '#00B39D', primaryBg: '#00B39D18',
@@ -772,6 +773,7 @@ export default function Membresia() {
             { key: 'membros', label: 'Membros', icon: Users },
             { key: 'grupos', label: 'Grupos de Conexão', icon: Home },
             { key: 'ministerios', label: 'Ministérios', icon: Sparkles },
+            { key: 'cadastros', label: 'Cadastros pendentes', icon: Inbox },
           ].map(t => {
             const Icon = t.icon;
             return (
@@ -885,6 +887,10 @@ export default function Membresia() {
 
         <TabsContent value="ministerios">
           <TabMinisterios />
+        </TabsContent>
+
+        <TabsContent value="cadastros">
+          <TabCadastros />
         </TabsContent>
       </Tabs>
 

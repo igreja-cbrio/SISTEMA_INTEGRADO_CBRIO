@@ -898,6 +898,182 @@ router.delete('/checkins/:id', authorize('admin', 'diretor'), async (req, res) =
   }
 });
 
+// ── Cadastros pendentes (fila de aprovação do formulário público) ──
+
+// GET /api/membresia/cadastros — lista cadastros pendentes (filtro por status)
+router.get('/cadastros', async (req, res) => {
+  try {
+    const { status } = req.query;
+    // duplicado_de e membro referenciam mem_membros — nomeamos os embeds pela FK.
+    let query = supabase
+      .from('mem_cadastros_pendentes')
+      .select('*, duplicado_de:duplicado_de_id(id, nome), membro:membro_id(id, nome)')
+      .order('created_at', { ascending: false });
+    if (status) query = query.eq('status', status);
+    const { data, error } = await query;
+    if (error) throw error;
+    res.json(data);
+  } catch (e) {
+    console.error('[CADASTROS] list error:', e.message);
+    res.status(500).json({ error: 'Erro ao buscar cadastros pendentes' });
+  }
+});
+
+// GET /api/membresia/cadastros/kpis — contadores por status
+router.get('/cadastros/kpis', async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('mem_cadastros_pendentes')
+      .select('status');
+    if (error) throw error;
+    const counts = { pendente: 0, aprovado: 0, rejeitado: 0, duplicado: 0 };
+    (data || []).forEach((c) => {
+      counts[c.status] = (counts[c.status] || 0) + 1;
+    });
+    res.json(counts);
+  } catch (e) {
+    res.status(500).json({ error: 'Erro ao buscar KPIs de cadastros' });
+  }
+});
+
+// POST /api/membresia/cadastros/:id/aprovar — cria mem_membros e marca aprovado
+router.post('/cadastros/:id/aprovar', authorize('admin', 'diretor'), async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { familia_id, parentesco, observacoes } = req.body || {};
+
+    const { data: cad, error: e1 } = await supabase
+      .from('mem_cadastros_pendentes')
+      .select('*')
+      .eq('id', id)
+      .single();
+    if (e1 || !cad) return res.status(404).json({ error: 'Cadastro não encontrado' });
+    if (cad.status === 'aprovado') {
+      return res.status(400).json({ error: 'Cadastro já foi aprovado.' });
+    }
+
+    // Cria o mem_membros a partir do cadastro pendente.
+    // Observação "Como conheceu" vai para observacoes (mem_membros não tem esse campo).
+    const obsAuto = [
+      cad.como_conheceu ? `Como conheceu: ${cad.como_conheceu}` : null,
+      observacoes || cad.observacoes,
+    ].filter(Boolean).join('\n');
+
+    const membroPayload = {
+      nome: cad.nome,
+      email: cad.email,
+      telefone: cad.telefone,
+      data_nascimento: cad.data_nascimento,
+      estado_civil: cad.estado_civil,
+      endereco: cad.endereco,
+      bairro: cad.bairro,
+      cidade: cad.cidade,
+      cep: cad.cep,
+      profissao: cad.profissao,
+      status: 'visitante',
+      familia_id: familia_id || null,
+      parentesco: parentesco || null,
+      observacoes: obsAuto || null,
+      active: true,
+    };
+
+    const { data: membro, error: e2 } = await supabase
+      .from('mem_membros')
+      .insert(membroPayload)
+      .select()
+      .single();
+    if (e2) {
+      console.error('[CADASTROS] erro ao criar membro:', e2.message);
+      return res.status(500).json({ error: 'Erro ao criar membro.' });
+    }
+
+    // Marca cadastro como aprovado e liga ao membro criado
+    const { error: e3 } = await supabase
+      .from('mem_cadastros_pendentes')
+      .update({
+        status: 'aprovado',
+        aprovado_por: req.user.userId,
+        aprovado_em: new Date().toISOString(),
+        membro_id: membro.id,
+        observacoes: observacoes || cad.observacoes,
+      })
+      .eq('id', id);
+    if (e3) {
+      console.error('[CADASTROS] erro ao atualizar cadastro:', e3.message);
+    }
+
+    // Registra no histórico do membro
+    try {
+      await supabase.from('mem_historico').insert({
+        membro_id: membro.id,
+        descricao: `Aprovado a partir do formulário público (origem: ${cad.origem}).`,
+        registrado_por: req.user.userId,
+      });
+    } catch (_) { /* histórico é opcional */ }
+
+    res.status(201).json({ ok: true, membro });
+  } catch (e) {
+    console.error('[CADASTROS] aprovar exception:', e.message);
+    res.status(500).json({ error: 'Erro ao aprovar cadastro' });
+  }
+});
+
+// POST /api/membresia/cadastros/:id/rejeitar — marca rejeitado com motivo
+router.post('/cadastros/:id/rejeitar', authorize('admin', 'diretor'), async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { motivo } = req.body || {};
+    const { error } = await supabase
+      .from('mem_cadastros_pendentes')
+      .update({
+        status: 'rejeitado',
+        motivo_rejeicao: motivo || null,
+        aprovado_por: req.user.userId,
+        aprovado_em: new Date().toISOString(),
+      })
+      .eq('id', id);
+    if (error) throw error;
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ error: 'Erro ao rejeitar cadastro' });
+  }
+});
+
+// PATCH /api/membresia/cadastros/:id — atualiza observações/duplicado_de
+router.patch('/cadastros/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { observacoes, duplicado_de_id } = req.body || {};
+    const patch = {};
+    if (observacoes !== undefined) patch.observacoes = observacoes;
+    if (duplicado_de_id !== undefined) patch.duplicado_de_id = duplicado_de_id;
+    const { data, error } = await supabase
+      .from('mem_cadastros_pendentes')
+      .update(patch)
+      .eq('id', id)
+      .select()
+      .single();
+    if (error) throw error;
+    res.json(data);
+  } catch (e) {
+    res.status(500).json({ error: 'Erro ao atualizar cadastro' });
+  }
+});
+
+// DELETE /api/membresia/cadastros/:id — admin apaga submissão (spam, etc.)
+router.delete('/cadastros/:id', authorize('admin', 'diretor'), async (req, res) => {
+  try {
+    const { error } = await supabase
+      .from('mem_cadastros_pendentes')
+      .delete()
+      .eq('id', req.params.id);
+    if (error) throw error;
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ error: 'Erro ao remover cadastro' });
+  }
+});
+
 // ── KPIs ──
 router.get('/kpis', async (req, res) => {
   try {
