@@ -1,13 +1,17 @@
 
 
-## Fix: Select dropdown não aparece dentro do Modal
+## Fix: Card "Férias Próximas" não reflete férias em andamento
 
 ### Problema
-O Modal customizado usa `z-[1000]`, mas o `SelectContent` do Radix UI renderiza via portal no root do documento com `z-50`. O dropdown fica atrás do modal e não é visível.
+A query do dashboard de RH filtra férias com `data_inicio >= hoje`, o que ignora férias que já começaram mas ainda estão em vigor (ex: férias de 01/04 a 15/04 não aparecem no dia 13/04 porque `data_inicio` já passou).
 
 ### Solução
-Adicionar `className="z-[1001]"` ao `SelectContent` dentro do `FormSelect`, para que o dropdown fique acima do modal.
+Alterar a query no backend para mostrar férias cujo período ainda esteja ativo ou prestes a iniciar nos próximos 30 dias:
+- Trocar `.gte('data_inicio', hoje)` por `.gte('data_fim', hoje)` — garante que férias em andamento apareçam
+- Manter `.lte('data_inicio', em30)` — limita a férias que começam em até 30 dias
+
+Isso captura tanto férias em andamento quanto as que vão iniciar nos próximos 30 dias.
 
 ### Arquivo modificado
-- `src/pages/admin/rh/RH.jsx` — linha 113: alterar `<SelectContent>` para `<SelectContent className="z-[1001]">`
+- `backend/routes/rh.js` — linha 44: `.gte('data_inicio', hoje)` → `.gte('data_fim', hoje)`
 
