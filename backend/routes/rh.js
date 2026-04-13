@@ -41,7 +41,7 @@ router.get('/dashboard', async (req, res) => {
       .from('rh_ferias_licencas')
       .select('*, rh_funcionarios(nome)')
       .eq('status', 'aprovado')
-      .gte('data_inicio', hoje)
+      .gte('data_fim', hoje)
       .lte('data_inicio', em30)
       .order('data_inicio');
 
