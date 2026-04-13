@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { dashboard as dashApi, cycles as cyclesApi, tasks as tasksApi, projects as projectsApi } from '../api';
+import { Select as ShadSelect, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select';
 
 const C = {
   text: 'var(--cbrio-text)', t2: 'var(--cbrio-text2)', t3: 'var(--cbrio-text3)',
@@ -461,31 +462,37 @@ export default function Planejamento() {
             {(typeFilter === 'all' || typeFilter === 'eventos') && allEvents.length > 0 && (
               <>
                 <span style={{ fontSize: 11, color: C.t2, fontWeight: 600 }}>{typeFilter === 'eventos' ? 'Evento:' : 'Evento/Projeto:'}</span>
-                <select value={eventFilter} onChange={e => setEventFilter(e.target.value)}
-                  style={{ fontSize: 12, padding: '4px 8px', borderRadius: 8, border: `1px solid ${C.border}`, background: C.inputBg }}>
-                  <option value="all">Todos</option>
-                  {allEvents.map(ev => <option key={ev.id} value={ev.id}>{ev.name}</option>)}
-                </select>
+                <ShadSelect value={eventFilter} onValueChange={setEventFilter}>
+                  <SelectTrigger className="h-7 w-auto min-w-[120px] text-xs"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">Todos</SelectItem>
+                    {allEvents.map(ev => <SelectItem key={ev.id} value={ev.id}>{ev.name}</SelectItem>)}
+                  </SelectContent>
+                </ShadSelect>
               </>
             )}
             {typeFilter === 'projetos' && (
               <>
                 <span style={{ fontSize: 11, color: C.t2, fontWeight: 600 }}>Projeto:</span>
-                <select value={eventFilter} onChange={e => setEventFilter(e.target.value)}
-                  style={{ fontSize: 12, padding: '4px 8px', borderRadius: 8, border: `1px solid ${C.border}`, background: C.inputBg }}>
-                  <option value="all">Todos os projetos</option>
-                  {projectsData.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
-                </select>
+                <ShadSelect value={eventFilter} onValueChange={setEventFilter}>
+                  <SelectTrigger className="h-7 w-auto min-w-[120px] text-xs"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">Todos os projetos</SelectItem>
+                    {projectsData.map(p => <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>)}
+                  </SelectContent>
+                </ShadSelect>
               </>
             )}
             {typeFilter === 'estrategico' && (
               <>
                 <span style={{ fontSize: 11, color: C.t2, fontWeight: 600 }}>Marco:</span>
-                <select value={eventFilter} onChange={e => setEventFilter(e.target.value)}
-                  style={{ fontSize: 12, padding: '4px 8px', borderRadius: 8, border: `1px solid ${C.border}`, background: C.inputBg }}>
-                  <option value="all">Todos os marcos</option>
-                  {strategicData.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
-                </select>
+                <ShadSelect value={eventFilter} onValueChange={setEventFilter}>
+                  <SelectTrigger className="h-7 w-auto min-w-[120px] text-xs"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">Todos os marcos</SelectItem>
+                    {strategicData.map(p => <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>)}
+                  </SelectContent>
+                </ShadSelect>
               </>
             )}
 
@@ -506,12 +513,14 @@ export default function Planejamento() {
 
             {/* Horizonte temporal */}
             <span style={{ fontSize: 11, color: C.t2, fontWeight: 600 }}>Horizonte:</span>
-            <select value={horizon} onChange={e => setHorizon(parseInt(e.target.value))}
-              style={{ fontSize: 12, padding: '4px 8px', borderRadius: 8, border: `1px solid ${C.border}`, background: C.inputBg }}>
-              <option value={15}>Próx. 15 dias</option>
-              <option value={30}>Próx. 30 dias</option>
-              <option value={0}>Sem filtro</option>
-            </select>
+            <ShadSelect value={String(horizon)} onValueChange={v => setHorizon(parseInt(v))}>
+              <SelectTrigger className="h-7 w-auto min-w-[120px] text-xs"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="15">Próx. 15 dias</SelectItem>
+                <SelectItem value="30">Próx. 30 dias</SelectItem>
+                <SelectItem value="0">Sem filtro</SelectItem>
+              </SelectContent>
+            </ShadSelect>
           </div>
 
           {/* ══ KANBAN "TODOS" — swim lanes por responsável ══ */}
@@ -824,11 +833,13 @@ export default function Planejamento() {
                 {/* Filtro por projeto */}
                 <div style={{ display: 'flex', gap: 8, marginBottom: 12, alignItems: 'center' }}>
                   <span style={{ fontSize: 11, color: C.t2, fontWeight: 600 }}>Projeto:</span>
-                  <select value={projKanbanProject} onChange={e => setProjKanbanProject(e.target.value)}
-                    style={{ fontSize: 12, padding: '4px 8px', borderRadius: 8, border: `1px solid ${C.border}`, background: C.inputBg, maxWidth: 280 }}>
-                    <option value="all">Todos os projetos ({projectsData.length})</option>
-                    {projectsData.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
-                  </select>
+                  <ShadSelect value={projKanbanProject} onValueChange={setProjKanbanProject}>
+                    <SelectTrigger className="h-7 w-auto min-w-[120px] max-w-[280px] text-xs"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">Todos os projetos ({projectsData.length})</SelectItem>
+                      {projectsData.map(p => <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>)}
+                    </SelectContent>
+                  </ShadSelect>
                 </div>
 
                 {/* Strip de 7 fases */}
@@ -1072,12 +1083,14 @@ export default function Planejamento() {
             {/* Filtros */}
             <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 16, alignItems: 'center' }}>
               <span style={{ fontSize: 11, color: C.t2, fontWeight: 600 }}>Horizonte:</span>
-              <select value={listHorizon} onChange={e => setListHorizon(parseInt(e.target.value))}
-                style={{ fontSize: 12, padding: '4px 8px', borderRadius: 8, border: `1px solid ${C.border}`, background: C.inputBg }}>
-                <option value={15}>15 dias</option>
-                <option value={30}>30 dias</option>
-                <option value={0}>Sem filtro</option>
-              </select>
+              <ShadSelect value={String(listHorizon)} onValueChange={v => setListHorizon(parseInt(v))}>
+                <SelectTrigger className="h-7 w-auto min-w-[100px] text-xs"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="15">15 dias</SelectItem>
+                  <SelectItem value="30">30 dias</SelectItem>
+                  <SelectItem value="0">Sem filtro</SelectItem>
+                </SelectContent>
+              </ShadSelect>
               <span style={{ width: 1, height: 20, background: C.border }} />
               <span style={{ fontSize: 11, color: C.t2, fontWeight: 600 }}>Visão:</span>
               {[
