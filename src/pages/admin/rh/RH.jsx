@@ -643,20 +643,24 @@ function FuncionariosTab({ funcs, loading, busca, setBusca, filtroStatus, setFil
                 value={busca} onChange={e => setBusca(e.target.value)}
               />
             </div>
-            <select
-              className="flex h-9 rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-              value={filtroStatus} onChange={e => setFiltroStatus(e.target.value)}
-            >
-              <option value="">Todos os status</option>
-              {Object.entries(STATUS_COLORS).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
-            </select>
-            <select
-              className="flex h-9 rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-              value={filtroArea} onChange={e => setFiltroArea(e.target.value)}
-            >
-              <option value="">Todas as áreas</option>
-              {areas.map(a => <option key={a} value={a}>{a}</option>)}
-            </select>
+            <ShadSelect value={filtroStatus} onValueChange={v => setFiltroStatus(v)}>
+              <SelectTrigger className="w-[180px]">
+                <SelectValue placeholder="Todos os status" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="">Todos os status</SelectItem>
+                {Object.entries(STATUS_COLORS).map(([k, v]) => <SelectItem key={k} value={k}>{v.label}</SelectItem>)}
+              </SelectContent>
+            </ShadSelect>
+            <ShadSelect value={filtroArea} onValueChange={v => setFiltroArea(v)}>
+              <SelectTrigger className="w-[180px]">
+                <SelectValue placeholder="Todas as áreas" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="">Todas as áreas</SelectItem>
+                {areas.map(a => <SelectItem key={a} value={a}>{a}</SelectItem>)}
+              </SelectContent>
+            </ShadSelect>
           </div>
         </div>
         <div className="flex gap-2 mt-2 justify-end">
@@ -954,10 +958,16 @@ function TreinamentosTab({ treinos, funcs, onNew, onEdit, onDelete, onInscrever,
                 ))}
                 {inscrevendo === t.id ? (
                   <div style={{ display: 'flex', gap: 8, marginTop: 8, alignItems: 'center' }}>
-                    <select className="flex h-9 w-full rounded-lg border border-input bg-background px-3 py-2 text-sm shadow-sm shadow-black/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" style={{ flex: 1 }} value={funcSel} onChange={e => setFuncSel(e.target.value)}>
-                      <option value="">Selecionar colaborador</option>
-                      {funcs.filter(f => f.status === 'ativo').map(f => <option key={f.id} value={f.id}>{f.nome}</option>)}
-                    </select>
+                    <div style={{ flex: 1 }}>
+                      <ShadSelect value={funcSel} onValueChange={v => setFuncSel(v)}>
+                        <SelectTrigger className="w-full">
+                          <SelectValue placeholder="Selecionar colaborador" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {funcs.filter(f => f.status === 'ativo').map(f => <SelectItem key={f.id} value={f.id}>{f.nome}</SelectItem>)}
+                        </SelectContent>
+                      </ShadSelect>
+                    </div>
                     <Button size="sm"
                       onClick={async () => { if (funcSel) { await onInscrever(t.id, funcSel); setInscrevendo(null); setFuncSel(''); } }}>
                       OK
@@ -1113,9 +1123,14 @@ function TreinamentosTab({ treinos, funcs, onNew, onEdit, onDelete, onInscrever,
                           <Input label="Título *" value={matForm.titulo} onChange={e => setMatForm(f => ({ ...f, titulo: e.target.value }))} />
                           <div style={styles.formGroup}>
                             <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1 block">Tipo</label>
-                            <select className="flex h-9 w-full rounded-lg border border-input bg-background px-3 py-2 text-sm shadow-sm shadow-black/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" value={matForm.tipo} onChange={e => setMatForm(f => ({ ...f, tipo: e.target.value }))}>
-                              {Object.entries(TIPO_MATERIAL).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
-                            </select>
+                            <ShadSelect value={matForm.tipo} onValueChange={v => setMatForm(f => ({ ...f, tipo: v }))}>
+                              <SelectTrigger className="w-full">
+                                <SelectValue />
+                              </SelectTrigger>
+                              <SelectContent>
+                                {Object.entries(TIPO_MATERIAL).map(([k, v]) => <SelectItem key={k} value={k}>{v}</SelectItem>)}
+                              </SelectContent>
+                            </ShadSelect>
                           </div>
                         </div>
                         <div style={styles.formGroup}>
@@ -1432,9 +1447,9 @@ function FuncionarioFormModal({ open, data, onClose, onSave, funcionarios = [], 
       </FormSelect>
       {f.id && (
         <div style={styles.formRow}>
-          <Select label="Status" value={f.status || 'ativo'} onChange={e => upd('status', e.target.value)}>
-            {Object.entries(STATUS_COLORS).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
-          </Select>
+          <FormSelect label="Status" value={f.status || 'ativo'} onChange={e => upd('status', e.target.value)}>
+            {Object.entries(STATUS_COLORS).map(([k, v]) => <SelectItem key={k} value={k}>{v.label}</SelectItem>)}
+          </FormSelect>
           <Input label="Data Demissão" type="date" value={f.data_demissao || ''} onChange={e => upd('data_demissao', e.target.value)} />
         </div>
       )}
