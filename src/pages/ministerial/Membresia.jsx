@@ -4,9 +4,18 @@ import { membresia } from '../../api';
 import {
   Users, Search, Plus, ChevronRight, X,
   Phone, Mail, MapPin, Heart, Calendar, Star,
-  CheckCircle2, Circle, UserPlus, Home,
+  CheckCircle2, Circle, UserPlus, Home, Pencil,
 } from 'lucide-react';
 import { Button } from '../../components/ui/button';
+import { Input } from '../../components/ui/input';
+import { Label } from '../../components/ui/label';
+import { Textarea } from '../../components/ui/textarea';
+import {
+  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
+} from '../../components/ui/select';
+import {
+  Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
+} from '../../components/ui/dialog';
 
 const C = {
   bg: 'var(--cbrio-bg)', card: 'var(--cbrio-card)', primary: '#00B39D', primaryBg: '#00B39D18',
@@ -39,6 +48,14 @@ const TRILHA_ETAPAS = [
   { key: 'ministerio', label: 'Ministério', icon: Heart },
 ];
 
+const ESTADO_CIVIL_OPTIONS = ['Solteiro(a)', 'Casado(a)', 'Divorciado(a)', 'Viúvo(a)', 'Outros'];
+
+const EMPTY_FORM = {
+  nome: '', email: '', telefone: '', data_nascimento: '', estado_civil: '',
+  endereco: '', bairro: '', cidade: '', cep: '', profissao: '',
+  ministerio: '', grupo: '', status: 'visitante', familia_id: '', observacoes: '',
+};
+
 const Badge = ({ status }) => {
   const s = STATUS_MAP[status] || STATUS_MAP.visitante;
   return (
@@ -48,16 +65,187 @@ const Badge = ({ status }) => {
   );
 };
 
+/* ── Modal Form ── */
+function MembroFormModal({ open, onOpenChange, editData, familias, onSaved }) {
+  const [form, setForm] = useState(EMPTY_FORM);
+  const [saving, setSaving] = useState(false);
+
+  const isEdit = !!editData;
+
+  useEffect(() => {
+    if (editData) {
+      setForm({
+        nome: editData.nome || '',
+        email: editData.email || '',
+        telefone: editData.telefone || '',
+        data_nascimento: editData.data_nascimento || '',
+        estado_civil: editData.estado_civil || '',
+        endereco: editData.endereco || '',
+        bairro: editData.bairro || '',
+        cidade: editData.cidade || '',
+        cep: editData.cep || '',
+        profissao: editData.profissao || '',
+        ministerio: editData.ministerio || '',
+        grupo: editData.grupo || '',
+        status: editData.status || 'visitante',
+        familia_id: editData.familia_id || '',
+        observacoes: editData.observacoes || '',
+      });
+    } else {
+      setForm(EMPTY_FORM);
+    }
+  }, [editData, open]);
+
+  const set = (k, v) => setForm(prev => ({ ...prev, [k]: v }));
+
+  const handleSave = async () => {
+    if (!form.nome.trim()) return;
+    setSaving(true);
+    try {
+      const payload = { ...form };
+      if (!payload.familia_id) delete payload.familia_id;
+      if (!payload.data_nascimento) delete payload.data_nascimento;
+
+      if (isEdit) {
+        await membresia.membros.update(editData.id, payload);
+      } else {
+        await membresia.membros.create(payload);
+      }
+      onSaved();
+      onOpenChange(false);
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto z-[1000]">
+        <DialogHeader>
+          <DialogTitle>{isEdit ? 'Editar Membro' : 'Novo Membro'}</DialogTitle>
+        </DialogHeader>
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 py-4">
+          {/* Nome */}
+          <div className="sm:col-span-2 space-y-1.5">
+            <Label>Nome *</Label>
+            <Input value={form.nome} onChange={e => set('nome', e.target.value)} placeholder="Nome completo" />
+          </div>
+
+          {/* Email / Telefone */}
+          <div className="space-y-1.5">
+            <Label>Email</Label>
+            <Input type="email" value={form.email} onChange={e => set('email', e.target.value)} placeholder="email@exemplo.com" />
+          </div>
+          <div className="space-y-1.5">
+            <Label>Telefone</Label>
+            <Input value={form.telefone} onChange={e => set('telefone', e.target.value)} placeholder="(00) 00000-0000" />
+          </div>
+
+          {/* Nascimento / Estado Civil */}
+          <div className="space-y-1.5">
+            <Label>Data de Nascimento</Label>
+            <Input type="date" value={form.data_nascimento} onChange={e => set('data_nascimento', e.target.value)} />
+          </div>
+          <div className="space-y-1.5">
+            <Label>Estado Civil</Label>
+            <Select value={form.estado_civil || '__none__'} onValueChange={v => set('estado_civil', v === '__none__' ? '' : v)}>
+              <SelectTrigger><SelectValue placeholder="Selecionar" /></SelectTrigger>
+              <SelectContent className="z-[1001]">
+                <SelectItem value="__none__">Não informado</SelectItem>
+                {ESTADO_CIVIL_OPTIONS.map(ec => <SelectItem key={ec} value={ec}>{ec}</SelectItem>)}
+              </SelectContent>
+            </Select>
+          </div>
+
+          {/* Endereço */}
+          <div className="sm:col-span-2 space-y-1.5">
+            <Label>Endereço</Label>
+            <Input value={form.endereco} onChange={e => set('endereco', e.target.value)} placeholder="Rua, número" />
+          </div>
+          <div className="space-y-1.5">
+            <Label>Bairro</Label>
+            <Input value={form.bairro} onChange={e => set('bairro', e.target.value)} />
+          </div>
+          <div className="space-y-1.5">
+            <Label>Cidade</Label>
+            <Input value={form.cidade} onChange={e => set('cidade', e.target.value)} />
+          </div>
+          <div className="space-y-1.5">
+            <Label>CEP</Label>
+            <Input value={form.cep} onChange={e => set('cep', e.target.value)} placeholder="00000-000" />
+          </div>
+          <div className="space-y-1.5">
+            <Label>Profissão</Label>
+            <Input value={form.profissao} onChange={e => set('profissao', e.target.value)} />
+          </div>
+
+          {/* Ministério / Grupo */}
+          <div className="space-y-1.5">
+            <Label>Ministério</Label>
+            <Input value={form.ministerio} onChange={e => set('ministerio', e.target.value)} placeholder="Ex: Louvor, Infantil" />
+          </div>
+          <div className="space-y-1.5">
+            <Label>Grupo</Label>
+            <Input value={form.grupo} onChange={e => set('grupo', e.target.value)} placeholder="Ex: Grupo Vida Centro" />
+          </div>
+
+          {/* Status / Família */}
+          <div className="space-y-1.5">
+            <Label>Status</Label>
+            <Select value={form.status} onValueChange={v => set('status', v)}>
+              <SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectContent className="z-[1001]">
+                {Object.entries(STATUS_MAP).map(([k, v]) => (
+                  <SelectItem key={k} value={k}>{v.label}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="space-y-1.5">
+            <Label>Família</Label>
+            <Select value={form.familia_id || '__none__'} onValueChange={v => set('familia_id', v === '__none__' ? '' : v)}>
+              <SelectTrigger><SelectValue placeholder="Selecionar família" /></SelectTrigger>
+              <SelectContent className="z-[1001]">
+                <SelectItem value="__none__">Nenhuma</SelectItem>
+                {familias.map(f => <SelectItem key={f.id} value={f.id}>{f.nome}</SelectItem>)}
+              </SelectContent>
+            </Select>
+          </div>
+
+          {/* Observações */}
+          <div className="sm:col-span-2 space-y-1.5">
+            <Label>Observações</Label>
+            <Textarea value={form.observacoes} onChange={e => set('observacoes', e.target.value)} rows={3} />
+          </div>
+        </div>
+
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)}>Cancelar</Button>
+          <Button onClick={handleSave} disabled={saving || !form.nome.trim()}>
+            {saving ? 'Salvando...' : isEdit ? 'Salvar' : 'Criar'}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/* ── Main ── */
 export default function Membresia() {
   const { isDiretor } = useAuth();
   const [membros, setMembros] = useState([]);
   const [kpis, setKpis] = useState({ total: 0, byStatus: {}, familias: 0 });
+  const [familias, setFamilias] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [busca, setBusca] = useState('');
   const [filterStatus, setFilterStatus] = useState('');
   const [selectedMembro, setSelectedMembro] = useState(null);
   const [showForm, setShowForm] = useState(false);
+  const [editMembro, setEditMembro] = useState(null);
 
   const fetchData = useCallback(async () => {
     try {
@@ -65,12 +253,14 @@ export default function Membresia() {
       const params = {};
       if (busca) params.busca = busca;
       if (filterStatus) params.status = filterStatus;
-      const [m, k] = await Promise.all([
+      const [m, k, f] = await Promise.all([
         membresia.membros.list(Object.keys(params).length ? params : null),
         membresia.kpis(),
+        membresia.familias.list(),
       ]);
       setMembros(m);
       setKpis(k);
+      setFamilias(f);
     } catch (e) {
       setError(e.message);
     } finally {
@@ -89,6 +279,22 @@ export default function Membresia() {
     }
   };
 
+  const openEdit = (membro) => {
+    setEditMembro(membro);
+    setSelectedMembro(null);
+    setShowForm(true);
+  };
+
+  const openCreate = () => {
+    setEditMembro(null);
+    setShowForm(true);
+  };
+
+  const handleSaved = () => {
+    setEditMembro(null);
+    fetchData();
+  };
+
   return (
     <div style={{ maxWidth: 1600, margin: '0 auto', padding: '0 24px' }}>
       {/* Header */}
@@ -101,7 +307,7 @@ export default function Membresia() {
           <p style={{ fontSize: 14, color: C.text2, marginTop: 4, lineHeight: 1.5 }}>Cadastro de membros, famílias e trilha dos valores</p>
         </div>
         {isDiretor && (
-          <Button onClick={() => setShowForm(true)}>
+          <Button onClick={openCreate}>
             <UserPlus style={{ width: 16, height: 16 }} /> Novo Membro
           </Button>
         )}
@@ -132,23 +338,23 @@ export default function Membresia() {
       {/* Filters */}
       <div style={{ display: 'flex', gap: 12, marginBottom: 20, flexWrap: 'wrap' }}>
         <div style={{ position: 'relative', flex: 1, minWidth: 200 }}>
-          <Search style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', width: 16, height: 16, color: C.text3 }} />
-          <input
+          <Search style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', width: 16, height: 16, color: C.text3, zIndex: 1 }} />
+          <Input
             placeholder="Buscar membro..."
             value={busca}
             onChange={e => setBusca(e.target.value)}
-            className="flex h-9 w-full rounded-lg border border-input bg-background px-3 py-2 text-sm shadow-sm shadow-black/5 placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             style={{ paddingLeft: 36 }}
           />
         </div>
-        <select
-          value={filterStatus}
-          onChange={e => setFilterStatus(e.target.value)}
-          className="flex h-9 w-full rounded-lg border border-input bg-background px-3 py-2 text-sm shadow-sm shadow-black/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-        >
-          <option value="">Todos os status</option>
-          {Object.entries(STATUS_MAP).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
-        </select>
+        <div style={{ minWidth: 180 }}>
+          <Select value={filterStatus || '__all__'} onValueChange={v => setFilterStatus(v === '__all__' ? '' : v)}>
+            <SelectTrigger><SelectValue placeholder="Todos os status" /></SelectTrigger>
+            <SelectContent className="z-[1001]">
+              <SelectItem value="__all__">Todos os status</SelectItem>
+              {Object.entries(STATUS_MAP).map(([k, v]) => <SelectItem key={k} value={k}>{v.label}</SelectItem>)}
+            </SelectContent>
+          </Select>
+        </div>
       </div>
 
       {/* Table */}
@@ -169,9 +375,7 @@ export default function Membresia() {
             ) : membros.length === 0 ? (
               <tr><td colSpan={6}><div className="flex flex-col items-center py-10 gap-2"><div className="h-10 w-10 rounded-full bg-muted flex items-center justify-center mb-1"><svg className="h-5 w-5 text-muted-foreground" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M20 13V6a2 2 0 00-2-2H6a2 2 0 00-2 2v7m16 0v5a2 2 0 01-2 2H6a2 2 0 01-2-2v-5m16 0h-2.586a1 1 0 00-.707.293l-2.414 2.414a1 1 0 01-.707.293h-3.172a1 1 0 01-.707-.293l-2.414-2.414A1 1 0 006.586 13H4" /></svg></div><span className="text-sm font-medium text-foreground">Nenhum membro encontrado</span></div></td></tr>
             ) : membros.map((m) => (
-              <tr key={m.id} className="cbrio-row"
-                onClick={() => openDetail(m.id)}
-              >
+              <tr key={m.id} className="cbrio-row" onClick={() => openDetail(m.id)}>
                 <td style={{ padding: '14px 18px', borderBottom: `1px solid ${C.border}` }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
                     <div style={{ width: 36, height: 36, borderRadius: '50%', background: C.primaryBg, display: 'flex', alignItems: 'center', justifyContent: 'center', color: C.primary, fontWeight: 700, fontSize: 13, flexShrink: 0 }}>
@@ -226,9 +430,16 @@ export default function Membresia() {
                   <Badge status={selectedMembro.status} />
                 </div>
               </div>
-              <Button variant="ghost" onClick={() => setSelectedMembro(null)} style={{ fontSize: 20 }}>
-                <X style={{ width: 20, height: 20 }} />
-              </Button>
+              <div style={{ display: 'flex', gap: 4 }}>
+                {isDiretor && (
+                  <Button variant="ghost" size="icon" onClick={() => openEdit(selectedMembro)} title="Editar">
+                    <Pencil style={{ width: 16, height: 16 }} />
+                  </Button>
+                )}
+                <Button variant="ghost" size="icon" onClick={() => setSelectedMembro(null)}>
+                  <X style={{ width: 20, height: 20 }} />
+                </Button>
+              </div>
             </div>
 
             <div style={{ padding: '24px 32px' }}>
@@ -282,10 +493,8 @@ export default function Membresia() {
                   {TRILHA_ETAPAS.map((etapa, i) => {
                     const registro = selectedMembro.trilha?.find(t => t.etapa === etapa.key);
                     const concluida = registro?.concluida;
-                    const Icon = etapa.icon;
                     return (
                       <div key={etapa.key} style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
-                        {/* Timeline line */}
                         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', width: 24 }}>
                           <div style={{
                             width: 24, height: 24, borderRadius: '50%',
@@ -303,7 +512,6 @@ export default function Membresia() {
                             <div style={{ width: 2, height: 28, background: concluida ? C.primary : C.border }} />
                           )}
                         </div>
-                        {/* Content */}
                         <div style={{ padding: '6px 0', flex: 1 }}>
                           <div style={{ fontSize: 13, fontWeight: concluida ? 600 : 400, color: concluida ? C.text : C.text3 }}>
                             {etapa.label}
@@ -343,6 +551,15 @@ export default function Membresia() {
           </div>
         </div>
       )}
+
+      {/* Form Modal */}
+      <MembroFormModal
+        open={showForm}
+        onOpenChange={setShowForm}
+        editData={editMembro}
+        familias={familias}
+        onSaved={handleSaved}
+      />
     </div>
   );
 }
