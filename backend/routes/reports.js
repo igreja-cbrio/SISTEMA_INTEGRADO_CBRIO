@@ -174,26 +174,20 @@ Baseie-se APENAS nos dados fornecidos. Não invente informações.`;
   }
 });
 
-// POST /api/events/:eventId/report/export — gerar PPTX ou DOCX a partir de um relatório existente
+// POST /api/events/:eventId/report/export — gerar HTML (slide ou documento)
 router.post('/:eventId/report/export', async (req, res) => {
   try {
     const { eventId } = req.params;
-    const { reportId, format } = req.body; // format: 'pptx' | 'docx'
+    const { reportId, format } = req.body; // format: 'slide' | 'document'
     if (!reportId || !format) return res.status(400).json({ error: 'reportId e format são obrigatórios' });
 
-    const { generatePPTX, generateDOCX } = require('../services/reportGenerator');
+    const { generateSlideHTML, generateDocumentHTML } = require('../services/reportGenerator');
 
-    // Buscar evento
     const { data: event } = await supabase.from('events').select('name, date').eq('id', eventId).single();
-
-    // Buscar relatório
     const { data: report } = await supabase.from('event_reports').select('*').eq('id', reportId).single();
     if (!report) return res.status(404).json({ error: 'Relatório não encontrado' });
 
-    // Buscar progresso por fase
     const { data: progress } = await supabase.from('vw_phase_progress').select('*').eq('event_id', eventId).order('phase_number');
-
-    // Agregar por fase
     const phaseMap = {};
     (progress || []).forEach(p => {
       if (!phaseMap[p.phase_number]) phaseMap[p.phase_number] = { numero: p.phase_number, nome: p.nome_fase, total: 0, done: 0 };
@@ -201,50 +195,27 @@ router.post('/:eventId/report/export', async (req, res) => {
       phaseMap[p.phase_number].done += p.cards_concluidos || 0;
     });
     const phases = Object.values(phaseMap).sort((a, b) => a.numero - b.numero);
-
     const totalTasks = phases.reduce((s, p) => s + p.total, 0);
     const completedTasks = phases.reduce((s, p) => s + p.done, 0);
-    const pendingTasks = totalTasks - completedTasks;
-    const pctDone = totalTasks > 0 ? Math.round(completedTasks / totalTasks * 100) : 0;
-
-    // Extrair seções do conteúdo markdown
-    const content = report.content || '';
-    const extractSection = (title) => {
-      const regex = new RegExp(`##?\\s*\\d*\\.?\\s*${title}[\\s\\S]*?(?=\\n##|$)`, 'i');
-      const match = content.match(regex);
-      return match ? match[0].replace(/^##?\s*\d*\.?\s*/, '').trim() : '';
-    };
-
-    const scope = report.report_type === 'phase' ? `Fase: ${report.phase_name}` : 'Evento Completo';
 
     const params = {
       eventName: event?.name || 'Evento',
-      eventDate: event?.date ? new Date(event.date).toLocaleDateString('pt-BR') : '',
-      scope,
-      phases,
-      completedTasks,
-      pendingTasks,
+      eventDate: event?.date ? new Date(event.date + 'T12:00:00').toLocaleDateString('pt-BR') : '',
+      scope: report.report_type === 'phase' ? `Fase: ${report.phase_name}` : 'Evento Completo',
+      phases, completedTasks,
+      pendingTasks: totalTasks - completedTasks,
       totalTasks,
-      pctDone,
-      highlights: extractSection('Pontos de Atenção'),
-      recommendations: extractSection('Recomendações') || extractSection('Próximos'),
-      reportContent: content,
+      pctDone: totalTasks > 0 ? Math.round(completedTasks / totalTasks * 100) : 0,
+      reportContent: report.content || '',
     };
 
-    let buffer, filename, contentType;
-    if (format === 'pptx') {
-      buffer = await generatePPTX(params);
-      filename = `Relatorio_${event?.name || 'evento'}_${report.report_type}.pptx`;
-      contentType = 'application/vnd.openxmlformats-officedocument.presentationml.presentation';
-    } else {
-      buffer = await generateDOCX(params);
-      filename = `Relatorio_${event?.name || 'evento'}_${report.report_type}.docx`;
-      contentType = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
-    }
+    const html = format === 'slide' ? generateSlideHTML(params) : generateDocumentHTML(params);
+    const ext = format === 'slide' ? 'Apresentacao' : 'Documento';
+    const filename = `${ext}_${event?.name || 'evento'}.html`;
 
-    res.setHeader('Content-Type', contentType);
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
     res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(filename)}"`);
-    res.send(Buffer.from(buffer));
+    res.send(html);
   } catch (e) {
     console.error('[Reports] Export:', e.message);
     res.status(500).json({ error: e.message || 'Erro ao exportar relatório' });

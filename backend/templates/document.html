@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<title>{{eventName}} — Documento</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  :root {
+    --primary: #00839D;
+    --secondary: #00ACB3;
+    --dark: #242223;
+    --sand: #E0D1B9;
+    --offwhite: #EDE8E2;
+    --cream: #F2ECE8;
+    --green: #10B981;
+    --red: #EF4444;
+  }
+  body { font-family: 'Inter', 'Century Gothic', sans-serif; color: var(--dark); line-height: 1.7; max-width: 800px; margin: 0 auto; padding: 40px; }
+  @media print { body { padding: 20px; } @page { size: A4; margin: 20mm; } }
+
+  /* ── Capa ── */
+  .cover { text-align: center; padding: 120px 0 80px; page-break-after: always; }
+  .cover .label { font-size: 13px; letter-spacing: 5px; color: var(--primary); text-transform: uppercase; margin-bottom: 20px; }
+  .cover h1 { font-size: 42px; font-weight: 800; color: var(--dark); line-height: 1.2; margin-bottom: 12px; }
+  .cover .scope { font-size: 16px; color: var(--primary); font-weight: 500; margin-bottom: 60px; }
+  .cover .org { font-size: 13px; color: #999; }
+  .cover .divider { width: 60px; height: 3px; background: var(--primary); margin: 40px auto; border-radius: 2px; }
+
+  /* ── KPI strip ── */
+  .kpi-strip { display: flex; gap: 16px; margin: 30px 0; }
+  .kpi-box { flex: 1; background: var(--cream); border-radius: 10px; padding: 20px; text-align: center; }
+  .kpi-box .val { font-size: 32px; font-weight: 800; }
+  .kpi-box .lbl { font-size: 11px; color: #666; margin-top: 4px; }
+
+  /* ── Headings ── */
+  h2 { font-size: 22px; font-weight: 700; color: var(--dark); margin-top: 40px; padding-bottom: 8px; border-bottom: 3px solid var(--primary); margin-bottom: 16px; }
+  h3 { font-size: 17px; font-weight: 600; color: var(--primary); margin-top: 28px; margin-bottom: 10px; }
+  h4 { font-size: 14px; font-weight: 600; color: var(--dark); margin-top: 20px; margin-bottom: 8px; }
+
+  /* ── Texto ── */
+  p { margin-bottom: 12px; font-size: 14px; }
+  ul, ol { padding-left: 24px; margin-bottom: 16px; }
+  li { margin-bottom: 6px; font-size: 14px; }
+  strong { color: var(--dark); }
+
+  /* ── Tabela de progresso ── */
+  .progress-table { width: 100%; border-collapse: collapse; margin: 20px 0; }
+  .progress-table th { text-align: left; font-size: 11px; text-transform: uppercase; letter-spacing: 1px; color: #888; padding: 8px 12px; border-bottom: 2px solid var(--offwhite); }
+  .progress-table td { padding: 10px 12px; font-size: 13px; border-bottom: 1px solid var(--offwhite); }
+  .progress-table .bar-cell { width: 200px; }
+  .mini-bar { height: 8px; background: var(--offwhite); border-radius: 4px; overflow: hidden; }
+  .mini-bar-fill { height: 100%; border-radius: 4px; }
+  .pct-done { font-weight: 700; font-size: 13px; }
+
+  /* ── Pendências ── */
+  .pending-card { background: #FEF2F2; border-left: 4px solid var(--red); border-radius: 0 8px 8px 0; padding: 12px 16px; margin-bottom: 8px; }
+  .pending-card .title { font-weight: 600; font-size: 13px; color: var(--dark); }
+  .pending-card .meta { font-size: 11px; color: #888; margin-top: 2px; }
+
+  /* ── Rodapé ── */
+  .doc-footer { margin-top: 60px; padding-top: 20px; border-top: 1px solid var(--offwhite); text-align: center; font-size: 11px; color: #aaa; }
+</style>
+</head>
+<body>
+
+<!-- CAPA -->
+<div class="cover">
+  <div class="label">Relatório de Evento</div>
+  <h1>{{eventName}}</h1>
+  <div class="scope">{{scope}} · {{eventDate}}</div>
+  <div class="divider"></div>
+  <div class="org">CBRio — Igreja Comunidade Batista do Rio</div>
+  <div style="margin-top: 8px; font-size: 11px; color: #bbb;">Gerado em {{generatedAt}}</div>
+</div>
+
+<!-- KPIs -->
+<h2>Resumo Executivo</h2>
+<div class="kpi-strip">
+  <div class="kpi-box"><div class="val" style="color: var(--primary)">{{totalTasks}}</div><div class="lbl">Total de Tarefas</div></div>
+  <div class="kpi-box"><div class="val" style="color: var(--green)">{{completedTasks}}</div><div class="lbl">Concluídas</div></div>
+  <div class="kpi-box"><div class="val" style="color: var(--red)">{{pendingTasks}}</div><div class="lbl">Pendentes</div></div>
+  <div class="kpi-box"><div class="val" style="color: var(--secondary)">{{pctDone}}%</div><div class="lbl">Progresso</div></div>
+</div>
+
+<!-- Progresso por Fase -->
+<h2>Progresso por Fase</h2>
+<table class="progress-table">
+  <thead><tr><th>Fase</th><th>Tarefas</th><th class="bar-cell">Progresso</th><th>%</th></tr></thead>
+  <tbody>{{phaseRows}}</tbody>
+</table>
+
+<!-- Conteúdo do relatório IA -->
+{{reportBody}}
+
+<!-- Rodapé -->
+<div class="doc-footer">
+  CBRio — Igreja Comunidade Batista do Rio · Sistema PMO · Gerado automaticamente
+</div>
+
+</body>
+</html>

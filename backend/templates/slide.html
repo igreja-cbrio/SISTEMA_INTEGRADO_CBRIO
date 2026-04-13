@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<title>{{eventName}} — Apresentação</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  :root {
+    --primary: #00839D;
+    --secondary: #00ACB3;
+    --dark: #242223;
+    --sand: #E0D1B9;
+    --offwhite: #EDE8E2;
+    --cream: #F2ECE8;
+    --green: #10B981;
+    --red: #EF4444;
+    --amber: #F59E0B;
+  }
+  body { font-family: 'Inter', 'Century Gothic', 'Avenir', sans-serif; background: #fff; }
+  .slide {
+    width: 1280px; height: 720px; position: relative; overflow: hidden;
+    page-break-after: always; margin: 0 auto 20px;
+    box-shadow: 0 4px 24px rgba(0,0,0,0.08);
+  }
+  @media print {
+    body { margin: 0; background: #fff; }
+    .slide { box-shadow: none; margin: 0; page-break-after: always; }
+    @page { size: landscape; margin: 0; }
+  }
+
+  /* ── Slide: Capa ── */
+  .slide-cover { background: var(--primary); display: flex; flex-direction: column; justify-content: center; padding: 80px; }
+  .slide-cover .label { font-size: 14px; letter-spacing: 6px; color: var(--sand); text-transform: uppercase; margin-bottom: 24px; }
+  .slide-cover h1 { font-size: 48px; font-weight: 800; color: #fff; line-height: 1.15; margin-bottom: 16px; }
+  .slide-cover .scope { font-size: 16px; color: var(--secondary); font-weight: 500; }
+  .slide-cover .footer { position: absolute; bottom: 40px; left: 80px; font-size: 12px; color: var(--sand); opacity: 0.7; }
+
+  /* ── Slide: Conteúdo ── */
+  .slide-content { background: #fff; padding: 60px 80px; }
+  .slide-content h2 { font-size: 32px; font-weight: 700; color: var(--dark); margin-bottom: 8px; }
+  .slide-content .accent-bar { width: 60px; height: 4px; background: var(--primary); border-radius: 2px; margin-bottom: 40px; }
+
+  /* KPIs */
+  .kpi-grid { display: flex; gap: 24px; margin-top: 20px; }
+  .kpi-card { flex: 1; background: var(--cream); border-radius: 12px; padding: 28px 24px; text-align: center; }
+  .kpi-value { font-size: 48px; font-weight: 800; line-height: 1; margin-bottom: 8px; }
+  .kpi-label { font-size: 13px; color: #666; font-weight: 500; }
+
+  /* Barras de progresso */
+  .phase-row { display: flex; align-items: center; gap: 16px; margin-bottom: 14px; }
+  .phase-name { width: 280px; font-size: 13px; color: var(--dark); font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .phase-bar { flex: 1; height: 20px; background: var(--offwhite); border-radius: 10px; overflow: hidden; }
+  .phase-bar-fill { height: 100%; border-radius: 10px; transition: width 0.3s; }
+  .phase-pct { width: 50px; text-align: right; font-size: 13px; font-weight: 700; color: var(--dark); }
+
+  /* Listas */
+  .content-text { font-size: 15px; line-height: 1.8; color: var(--dark); }
+  .content-text ul { padding-left: 24px; }
+  .content-text li { margin-bottom: 8px; }
+
+  /* ── Slide: Final ── */
+  .slide-end { background: var(--dark); display: flex; flex-direction: column; justify-content: center; align-items: center; }
+  .slide-end h2 { font-size: 56px; font-weight: 800; color: var(--primary); margin-bottom: 12px; }
+  .slide-end p { font-size: 16px; color: var(--sand); }
+  .slide-end .gen { position: absolute; bottom: 30px; font-size: 10px; color: #555; }
+</style>
+</head>
+<body>
+
+<!-- SLIDE 1: Capa -->
+<div class="slide slide-cover">
+  <div class="label">Relatório de Evento</div>
+  <h1>{{eventName}}</h1>
+  <div class="scope">{{scope}} · {{eventDate}}</div>
+  <div class="footer">CBRio — Igreja Comunidade Batista do Rio</div>
+</div>
+
+<!-- SLIDE 2: KPIs -->
+<div class="slide slide-content">
+  <h2>Resumo Executivo</h2>
+  <div class="accent-bar"></div>
+  <div class="kpi-grid">
+    <div class="kpi-card">
+      <div class="kpi-value" style="color: var(--primary)">{{totalTasks}}</div>
+      <div class="kpi-label">Total de Tarefas</div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-value" style="color: var(--green)">{{completedTasks}}</div>
+      <div class="kpi-label">Concluídas</div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-value" style="color: var(--red)">{{pendingTasks}}</div>
+      <div class="kpi-label">Pendentes</div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-value" style="color: var(--secondary)">{{pctDone}}%</div>
+      <div class="kpi-label">Progresso</div>
+    </div>
+  </div>
+</div>
+
+<!-- SLIDE 3: Progresso por Fase -->
+<div class="slide slide-content">
+  <h2>Progresso por Fase</h2>
+  <div class="accent-bar"></div>
+  {{phaseBars}}
+</div>
+
+<!-- SLIDE 4: Pontos de Atenção -->
+<div class="slide slide-content">
+  <h2>Pontos de Atenção</h2>
+  <div class="accent-bar" style="background: var(--red)"></div>
+  <div class="content-text">{{highlights}}</div>
+</div>
+
+<!-- SLIDE 5: Recomendações -->
+<div class="slide slide-content">
+  <h2>Recomendações</h2>
+  <div class="accent-bar" style="background: var(--secondary)"></div>
+  <div class="content-text">{{recommendations}}</div>
+</div>
+
+<!-- SLIDE 6: Final -->
+<div class="slide slide-end">
+  <h2>CBRio</h2>
+  <p>Igreja Comunidade Batista do Rio</p>
+  <div class="gen">Gerado automaticamente pelo Sistema PMO CBRio · {{generatedAt}}</div>
+</div>
+
+</body>
+</html>

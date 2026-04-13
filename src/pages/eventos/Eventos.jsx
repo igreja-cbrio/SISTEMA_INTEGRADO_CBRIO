@@ -1298,7 +1298,7 @@ export default function Eventos() {
                               try {
                                 const res = await fetch(`${API}/events/${rm.eventId}/report/export`, {
                                   method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${(await supabase.auth.getSession()).data.session?.access_token}` },
-                                  body: JSON.stringify({ reportId: rm.result.id, format: 'pptx' }),
+                                  body: JSON.stringify({ reportId: rm.result.id, format: 'slide' }),
                                 });
                                 const blob = await res.blob();
                                 const url = URL.createObjectURL(blob);
@@ -1311,7 +1311,7 @@ export default function Eventos() {
                               try {
                                 const res = await fetch(`${API}/events/${rm.eventId}/report/export`, {
                                   method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${(await supabase.auth.getSession()).data.session?.access_token}` },
-                                  body: JSON.stringify({ reportId: rm.result.id, format: 'docx' }),
+                                  body: JSON.stringify({ reportId: rm.result.id, format: 'document' }),
                                 });
                                 const blob = await res.blob();
                                 const url = URL.createObjectURL(blob);
