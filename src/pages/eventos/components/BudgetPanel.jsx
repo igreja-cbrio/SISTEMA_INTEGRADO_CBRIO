@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { cycles as api } from '../../../api';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../../components/ui/select';
 
 const C = { dark: 'var(--cbrio-text)', t2: 'var(--cbrio-text2)', border: 'var(--cbrio-border)', accent: '#00B39D' };
 
@@ -67,13 +68,18 @@ export default function BudgetPanel({ eventId, budget, onReload }) {
           <div style={{ display: 'flex', gap: 6, marginTop: 6 }}>
             <input type="number" step="0.01" placeholder="Valor R$" value={expense.valor}
               onChange={e => setExpense(p => ({ ...p, valor: e.target.value }))} style={{ ...inputStyle, flex: 1 }} />
-            <select value={expense.categoria} onChange={e => setExpense(p => ({ ...p, categoria: e.target.value }))} style={{ ...inputStyle, flex: 1 }}>
-              <option value="compras">Compras</option>
-              <option value="manutencao">Manutenção</option>
-              <option value="limpeza">Limpeza</option>
-              <option value="financeiro">Financeiro</option>
-              <option value="outro">Outro</option>
-            </select>
+            <Select value={expense.categoria} onValueChange={v => setExpense(p => ({ ...p, categoria: v }))}>
+              <SelectTrigger className="flex-1 h-8 text-xs">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="compras">Compras</SelectItem>
+                <SelectItem value="manutencao">Manutenção</SelectItem>
+                <SelectItem value="limpeza">Limpeza</SelectItem>
+                <SelectItem value="financeiro">Financeiro</SelectItem>
+                <SelectItem value="outro">Outro</SelectItem>
+              </SelectContent>
+            </Select>
           </div>
           <input placeholder="Fornecedor (opcional)" value={expense.fornecedor}
             onChange={e => setExpense(p => ({ ...p, fornecedor: e.target.value }))} style={{ ...inputStyle, marginTop: 6 }} />
