@@ -353,9 +353,9 @@ export default function TabFeriasCalendar({ funcs, onAprovar }) {
                   <div className="h-4 w-4 animate-spin rounded-full border-2 border-muted-foreground/25 border-t-primary" />
                   <span className="text-xs text-muted-foreground">Carregando...</span>
                 </div>
-              ) : ferias.length === 0 ? (
+              ) : filteredFerias.length === 0 ? (
                 <p className="text-sm text-muted-foreground text-center py-4">Nenhuma solicitação</p>
-              ) : ferias.map(v => (
+              ) : filteredFerias.map(v => (
                 <div
                   key={v.id}
                   className="flex items-center gap-2.5 p-2 rounded-lg hover:bg-muted/50 transition-colors cursor-pointer"
