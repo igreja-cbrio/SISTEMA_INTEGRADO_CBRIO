@@ -961,6 +961,7 @@ router.post('/cadastros/:id/aprovar', authorize('admin', 'diretor'), async (req,
 
     const membroPayload = {
       nome: cad.nome,
+      cpf: cad.cpf,
       email: cad.email,
       telefone: cad.telefone,
       data_nascimento: cad.data_nascimento,

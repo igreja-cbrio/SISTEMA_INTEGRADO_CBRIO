@@ -23,6 +23,24 @@ function ehEmailValido(email) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
 }
 
+// Valida CPF (algoritmo oficial). Aceita entrada com ou sem máscara.
+function cpfValido(cpf) {
+  const d = soDigitos(cpf);
+  if (d.length !== 11) return false;
+  if (/^(\d)\1{10}$/.test(d)) return false;
+  const calc = (base, fator) => {
+    let soma = 0;
+    for (let i = 0; i < base.length; i += 1) {
+      soma += parseInt(base[i], 10) * (fator - i);
+    }
+    const resto = (soma * 10) % 11;
+    return resto === 10 ? 0 : resto;
+  };
+  const dv1 = calc(d.slice(0, 9), 10);
+  const dv2 = calc(d.slice(0, 10), 11);
+  return dv1 === parseInt(d[9], 10) && dv2 === parseInt(d[10], 10);
+}
+
 // POST /api/public/membresia/cadastro
 // Submissão pública do formulário de cadastro de membresia.
 // - Não exige autenticação (RLS permite INSERT para role anon)
@@ -33,6 +51,7 @@ router.post('/cadastro', cadastroLimiter, async (req, res) => {
   try {
     const {
       nome,
+      cpf,
       email,
       telefone,
       data_nascimento,
@@ -63,6 +82,15 @@ router.post('/cadastro', cadastroLimiter, async (req, res) => {
     if (nome.trim().length > 200) {
       return res.status(400).json({ error: 'Nome muito longo.' });
     }
+    if (!telefone || soDigitos(telefone).length < 10) {
+      return res.status(400).json({ error: 'Celular é obrigatório (informe DDD + número).' });
+    }
+    if (!cpf || !cpfValido(cpf)) {
+      return res.status(400).json({ error: 'CPF inválido.' });
+    }
+    if (!data_nascimento) {
+      return res.status(400).json({ error: 'Data de nascimento é obrigatória.' });
+    }
     if (email && !ehEmailValido(email)) {
       return res.status(400).json({ error: 'E-mail inválido.' });
     }
@@ -77,8 +105,20 @@ router.post('/cadastro', cadastroLimiter, async (req, res) => {
     let duplicadoDeId = null;
     const emailLimpo = email ? email.trim().toLowerCase() : null;
     const telefoneLimpo = soDigitos(telefone);
+    const cpfLimpo = soDigitos(cpf);
 
-    if (emailLimpo) {
+    if (cpfLimpo) {
+      const { data: porCpf } = await supabase
+        .from('mem_membros')
+        .select('id')
+        .eq('active', true)
+        .eq('cpf', cpfLimpo)
+        .limit(1)
+        .maybeSingle();
+      if (porCpf) duplicadoDeId = porCpf.id;
+    }
+
+    if (!duplicadoDeId && emailLimpo) {
       const { data: porEmail } = await supabase
         .from('mem_membros')
         .select('id')
@@ -115,6 +155,7 @@ router.post('/cadastro', cadastroLimiter, async (req, res) => {
 
     const payload = {
       nome: nome.trim(),
+      cpf: cpfLimpo,
       email: emailLimpo,
       telefone: telefone || null,
       data_nascimento: data_nascimento || null,
