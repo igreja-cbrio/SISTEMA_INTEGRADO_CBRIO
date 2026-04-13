@@ -436,6 +436,15 @@ export const membresia = {
   historico: {
     create: (data) => post('/membresia/historico', data),
   },
+  grupos: {
+    list: (params) => get('/membresia/grupos' + (params ? '?' + new URLSearchParams(params) : '')),
+    get: (id) => get(`/membresia/grupos/${id}`),
+    create: (data) => post('/membresia/grupos', data),
+    update: (id, data) => put(`/membresia/grupos/${id}`, data),
+    remove: (id) => del(`/membresia/grupos/${id}`),
+    adicionarMembro: (grupoId, data) => post(`/membresia/grupos/${grupoId}/membros`, data),
+    sairMembro: (participacaoId, data) => patch(`/membresia/grupo-membros/${participacaoId}/sair`, data),
+  },
 };
 
 async function requestFile(path, formData) {

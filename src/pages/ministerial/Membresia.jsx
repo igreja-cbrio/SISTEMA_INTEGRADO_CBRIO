@@ -6,6 +6,7 @@ import {
   Users, Search, Plus, ChevronRight, X,
   Phone, Mail, MapPin, Heart, Calendar, Star,
   CheckCircle2, Circle, UserPlus, Home, Pencil,
+  AlertCircle, LogOut, MapPin as MapPinIcon, Clock, Trash2,
 } from 'lucide-react';
 import { Button } from '../../components/ui/button';
 import { Input } from '../../components/ui/input';
@@ -20,6 +21,7 @@ import {
 import {
   Tabs, TabsList, TabsTrigger, TabsContent,
 } from '../../components/ui/tabs';
+import TabGrupos from './TabGrupos';
 
 const C = {
   bg: 'var(--cbrio-bg)', card: 'var(--cbrio-card)', primary: '#00B39D', primaryBg: '#00B39D18',
@@ -53,6 +55,14 @@ const TRILHA_ETAPAS = [
 ];
 
 const ESTADO_CIVIL_OPTIONS = ['Solteiro(a)', 'Casado(a)', 'Divorciado(a)', 'Viúvo(a)', 'Outros'];
+
+const DIAS_SEMANA = ['Domingo', 'Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta', 'Sábado'];
+
+function diasSemGrupo(dataSaida) {
+  if (!dataSaida) return null;
+  const diff = Date.now() - new Date(dataSaida).getTime();
+  return Math.max(0, Math.floor(diff / (1000 * 60 * 60 * 24)));
+}
 
 const EMPTY_FORM = {
   nome: '', email: '', telefone: '', data_nascimento: '', estado_civil: '',
@@ -254,6 +264,10 @@ export default function Membresia() {
   const [novoHist, setNovoHist] = useState('');
   const [salvandoHist, setSalvandoHist] = useState(false);
   const [togglingEtapa, setTogglingEtapa] = useState(null);
+  const [grupos, setGrupos] = useState([]);
+  const [grupoSelecionado, setGrupoSelecionado] = useState('');
+  const [salvandoGrupo, setSalvandoGrupo] = useState(false);
+  const [pageTab, setPageTab] = useState('membros');
 
   const fetchData = useCallback(async () => {
     try {
@@ -261,14 +275,16 @@ export default function Membresia() {
       const params = {};
       if (busca) params.busca = busca;
       if (filterStatus) params.status = filterStatus;
-      const [m, k, f] = await Promise.all([
+      const [m, k, f, g] = await Promise.all([
         membresia.membros.list(Object.keys(params).length ? params : null),
         membresia.kpis(),
         membresia.familias.list(),
+        membresia.grupos.list({ ativo: 'true' }).catch(() => []),
       ]);
       setMembros(m);
       setKpis(k);
       setFamilias(f);
+      setGrupos(g);
     } catch (e) {
       setError(e.message);
     } finally {
@@ -326,6 +342,34 @@ export default function Membresia() {
     }
   };
 
+  const adicionarAGrupo = async () => {
+    if (!grupoSelecionado || !selectedMembro) return;
+    setSalvandoGrupo(true);
+    try {
+      await membresia.grupos.adicionarMembro(grupoSelecionado, { membro_id: selectedMembro.id });
+      setGrupoSelecionado('');
+      await reloadDetail();
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setSalvandoGrupo(false);
+    }
+  };
+
+  const sairDoGrupo = async () => {
+    if (!selectedMembro?.grupo_atual?.id) return;
+    if (!confirm('Remover este membro do grupo atual?')) return;
+    setSalvandoGrupo(true);
+    try {
+      await membresia.grupos.sairMembro(selectedMembro.grupo_atual.id, {});
+      await reloadDetail();
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setSalvandoGrupo(false);
+    }
+  };
+
   const adicionarHistorico = async () => {
     if (!novoHist.trim() || !selectedMembro) return;
     setSalvandoHist(true);
@@ -369,7 +413,7 @@ export default function Membresia() {
             <Users style={{ width: 28, height: 28, color: C.primary }} />
             <h1 style={{ fontSize: 20, fontWeight: 700, color: C.text, margin: 0, lineHeight: 1.25 }}>Membresia</h1>
           </div>
-          <p style={{ fontSize: 14, color: C.text2, marginTop: 4, lineHeight: 1.5 }}>Cadastro de membros, famílias e trilha dos valores</p>
+          <p style={{ fontSize: 14, color: C.text2, marginTop: 4, lineHeight: 1.5 }}>Membros, famílias, grupos de conexão e trilha dos valores</p>
         </div>
         {isDiretor && (
           <Button onClick={openCreate}>
@@ -384,6 +428,29 @@ export default function Membresia() {
           <X style={{ width: 16, height: 16, cursor: 'pointer' }} onClick={() => setError('')} />
         </div>
       )}
+
+      {/* Page Tabs: Membros × Grupos */}
+      <Tabs value={pageTab} onValueChange={setPageTab}>
+        <TabsList className="inline-flex h-auto w-auto bg-transparent p-0 gap-1 border-b border-border rounded-none mb-5">
+          {[
+            { key: 'membros', label: 'Membros', icon: Users },
+            { key: 'grupos', label: 'Grupos de Conexão', icon: Home },
+          ].map(t => {
+            const Icon = t.icon;
+            return (
+              <TabsTrigger
+                key={t.key}
+                value={t.key}
+                className="relative rounded-none border-b-2 border-transparent px-4 py-2.5 text-[13px] font-medium text-muted-foreground transition-colors hover:text-foreground data-[state=active]:border-b-primary data-[state=active]:text-primary data-[state=active]:bg-transparent data-[state=active]:shadow-none bg-transparent"
+              >
+                <Icon className="size-3.5 mr-1.5 hidden sm:inline-block" />
+                {t.label}
+              </TabsTrigger>
+            );
+          })}
+        </TabsList>
+
+        <TabsContent value="membros">
 
       {/* KPIs */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-7">
@@ -472,6 +539,12 @@ export default function Membresia() {
           </tbody>
         </table>
       </div>
+        </TabsContent>
+
+        <TabsContent value="grupos">
+          <TabGrupos />
+        </TabsContent>
+      </Tabs>
 
       {/* Member Detail Modal */}
       {selectedMembro && (
@@ -506,6 +579,7 @@ export default function Membresia() {
                   {[
                     { key: 'info', label: 'Informações', icon: Users },
                     { key: 'familia', label: 'Família', icon: Home },
+                    { key: 'grupo', label: 'Grupo', icon: Users },
                     { key: 'trilha', label: 'Trilha', icon: Star },
                     { key: 'historico', label: 'Histórico', icon: Calendar },
                   ].map(t => {
@@ -582,6 +656,125 @@ export default function Membresia() {
                   ) : (
                     <div style={{ padding: '24px 0', textAlign: 'center', color: C.text3, fontSize: 13 }}>
                       Nenhum familiar cadastrado
+                    </div>
+                  )}
+                </TabsContent>
+
+                {/* Aba: Grupo de Conexão */}
+                <TabsContent value="grupo" className="mt-4">
+                  {selectedMembro.grupo_atual ? (
+                    <div style={{ marginBottom: 20 }}>
+                      <div style={{ padding: 16, background: C.primaryBg, borderRadius: 12, border: `1px solid ${C.primary}30` }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'start', gap: 12 }}>
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <div style={{ fontSize: 11, color: C.primary, textTransform: 'uppercase', letterSpacing: 0.5, fontWeight: 600, marginBottom: 4 }}>
+                              Grupo atual
+                            </div>
+                            <div style={{ fontSize: 16, fontWeight: 600, color: C.text }}>
+                              {selectedMembro.grupo_atual.grupo?.nome}
+                            </div>
+                            {selectedMembro.grupo_atual.grupo?.categoria && (
+                              <div style={{ fontSize: 12, color: C.text3, marginTop: 2 }}>{selectedMembro.grupo_atual.grupo.categoria}</div>
+                            )}
+                          </div>
+                          {isDiretor && (
+                            <Button variant="ghost" size="sm" onClick={sairDoGrupo} disabled={salvandoGrupo} title="Remover do grupo">
+                              <LogOut style={{ width: 14, height: 14 }} />
+                            </Button>
+                          )}
+                        </div>
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginTop: 12 }}>
+                          {selectedMembro.grupo_atual.grupo?.lider?.nome && (
+                            <div style={{ display: 'flex', gap: 8, alignItems: 'center', fontSize: 12, color: C.text2 }}>
+                              <Users style={{ width: 14, height: 14, color: C.text3 }} />
+                              Líder: <span style={{ color: C.text, fontWeight: 500 }}>{selectedMembro.grupo_atual.grupo.lider.nome}</span>
+                            </div>
+                          )}
+                          {selectedMembro.grupo_atual.grupo?.dia_semana != null && (
+                            <div style={{ display: 'flex', gap: 8, alignItems: 'center', fontSize: 12, color: C.text2 }}>
+                              <Calendar style={{ width: 14, height: 14, color: C.text3 }} />
+                              {DIAS_SEMANA[selectedMembro.grupo_atual.grupo.dia_semana]}
+                              {selectedMembro.grupo_atual.grupo.horario && ` · ${selectedMembro.grupo_atual.grupo.horario.slice(0, 5)}`}
+                            </div>
+                          )}
+                          {selectedMembro.grupo_atual.grupo?.local && (
+                            <div style={{ display: 'flex', gap: 8, alignItems: 'center', fontSize: 12, color: C.text2, gridColumn: '1 / -1' }}>
+                              <MapPinIcon style={{ width: 14, height: 14, color: C.text3 }} />
+                              {selectedMembro.grupo_atual.grupo.local}
+                            </div>
+                          )}
+                        </div>
+                        {selectedMembro.grupo_atual.entrou_em && (
+                          <div style={{ fontSize: 11, color: C.text3, marginTop: 12, paddingTop: 12, borderTop: `1px solid ${C.border}` }}>
+                            Desde {new Date(selectedMembro.grupo_atual.entrou_em).toLocaleDateString('pt-BR')}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  ) : (
+                    <div style={{ marginBottom: 20 }}>
+                      <div style={{ padding: 14, background: C.amberBg, borderRadius: 12, border: `1px solid ${C.amber}30`, display: 'flex', alignItems: 'start', gap: 12 }}>
+                        <AlertCircle style={{ width: 18, height: 18, color: C.amber, flexShrink: 0, marginTop: 1 }} />
+                        <div style={{ flex: 1 }}>
+                          <div style={{ fontSize: 13, fontWeight: 600, color: C.text }}>Sem grupo de conexão</div>
+                          {(() => {
+                            const ultimo = selectedMembro.grupo_historico?.[0];
+                            const dias = ultimo ? diasSemGrupo(ultimo.saiu_em) : null;
+                            if (dias != null) {
+                              return (
+                                <div style={{ fontSize: 12, color: C.text2, marginTop: 2 }}>
+                                  Há {dias} {dias === 1 ? 'dia' : 'dias'} sem grupo (saiu do {ultimo.grupo?.nome || '—'} em {new Date(ultimo.saiu_em).toLocaleDateString('pt-BR')})
+                                </div>
+                              );
+                            }
+                            return <div style={{ fontSize: 12, color: C.text2, marginTop: 2 }}>Este membro ainda não participou de nenhum grupo.</div>;
+                          })()}
+                        </div>
+                      </div>
+
+                      {isDiretor && grupos.length > 0 && (
+                        <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
+                          <Select value={grupoSelecionado || '__none__'} onValueChange={v => setGrupoSelecionado(v === '__none__' ? '' : v)}>
+                            <SelectTrigger><SelectValue placeholder="Selecionar grupo..." /></SelectTrigger>
+                            <SelectContent className="z-[1001]">
+                              <SelectItem value="__none__">Selecionar grupo...</SelectItem>
+                              {grupos.map(g => (
+                                <SelectItem key={g.id} value={g.id}>
+                                  {g.nome}{g.categoria ? ` · ${g.categoria}` : ''}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                          <Button onClick={adicionarAGrupo} disabled={!grupoSelecionado || salvandoGrupo}>
+                            {salvandoGrupo ? 'Salvando...' : 'Adicionar'}
+                          </Button>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Histórico de grupos */}
+                  {selectedMembro.grupo_historico?.length > 0 && (
+                    <div>
+                      <h3 style={{ fontSize: 13, fontWeight: 600, color: C.text2, marginBottom: 10, textTransform: 'uppercase', letterSpacing: 0.5 }}>
+                        Histórico
+                      </h3>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                        {selectedMembro.grupo_historico.map(p => (
+                          <div key={p.id} style={{ padding: '10px 14px', background: 'var(--cbrio-input-bg)', borderRadius: 10, display: 'flex', justifyContent: 'space-between', alignItems: 'start', gap: 12 }}>
+                            <div style={{ flex: 1, minWidth: 0 }}>
+                              <div style={{ fontSize: 13, color: C.text, fontWeight: 500 }}>{p.grupo?.nome || '—'}</div>
+                              {p.motivo_saida && (
+                                <div style={{ fontSize: 11, color: C.text3, marginTop: 2 }}>{p.motivo_saida}</div>
+                              )}
+                            </div>
+                            <div style={{ fontSize: 11, color: C.text3, flexShrink: 0, textAlign: 'right' }}>
+                              {new Date(p.entrou_em).toLocaleDateString('pt-BR')}<br />
+                              → {new Date(p.saiu_em).toLocaleDateString('pt-BR')}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
                     </div>
                   )}
                 </TabsContent>

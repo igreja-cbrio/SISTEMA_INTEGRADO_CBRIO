@@ -64,7 +64,24 @@ router.get('/membros/:id', async (req, res) => {
       .order('data', { ascending: false })
       .limit(20);
 
-    res.json({ ...membro, familiares, trilha: trilha || [], historico: historico || [] });
+    // Grupo de Conexão — participação atual + histórico
+    const { data: participacoes } = await supabase
+      .from('mem_grupo_membros')
+      .select('*, grupo:mem_grupos(id, nome, categoria, local, dia_semana, horario, lider:mem_membros!lider_id(id, nome))')
+      .eq('membro_id', membro.id)
+      .order('entrou_em', { ascending: false });
+
+    const grupo_atual = (participacoes || []).find(p => !p.saiu_em) || null;
+    const grupo_historico = (participacoes || []).filter(p => p.saiu_em);
+
+    res.json({
+      ...membro,
+      familiares,
+      trilha: trilha || [],
+      historico: historico || [],
+      grupo_atual,
+      grupo_historico,
+    });
   } catch (e) {
     res.status(500).json({ error: 'Erro ao buscar membro' });
   }
@@ -190,6 +207,149 @@ router.post('/historico', authorize('admin', 'diretor'), async (req, res) => {
     res.status(201).json(data);
   } catch (e) {
     res.status(500).json({ error: 'Erro ao registrar histórico' });
+  }
+});
+
+// ── Grupos de Conexão ──
+
+// GET /api/membresia/grupos
+router.get('/grupos', async (req, res) => {
+  try {
+    const { ativo } = req.query;
+    let query = supabase
+      .from('mem_grupos')
+      .select('*, lider:mem_membros!lider_id(id, nome), membros:mem_grupo_membros(id, membro_id, entrou_em, saiu_em)')
+      .order('nome');
+
+    if (ativo === 'true') query = query.eq('ativo', true);
+    if (ativo === 'false') query = query.eq('ativo', false);
+
+    const { data, error } = await query;
+    if (error) throw error;
+
+    // Injeta total_ativos (só participações com saiu_em null)
+    const withCount = (data || []).map(g => ({
+      ...g,
+      total_ativos: (g.membros || []).filter(m => !m.saiu_em).length,
+    }));
+    res.json(withCount);
+  } catch (e) {
+    res.status(500).json({ error: 'Erro ao buscar grupos' });
+  }
+});
+
+// GET /api/membresia/grupos/:id (detalhe com membros ativos e históricos)
+router.get('/grupos/:id', async (req, res) => {
+  try {
+    const { data: grupo, error } = await supabase
+      .from('mem_grupos')
+      .select('*, lider:mem_membros!lider_id(id, nome)')
+      .eq('id', req.params.id)
+      .single();
+    if (error) throw error;
+
+    const { data: participacoes } = await supabase
+      .from('mem_grupo_membros')
+      .select('*, membro:mem_membros(id, nome, status)')
+      .eq('grupo_id', grupo.id)
+      .order('entrou_em', { ascending: false });
+
+    const ativos = (participacoes || []).filter(p => !p.saiu_em);
+    const historico = (participacoes || []).filter(p => p.saiu_em);
+
+    res.json({ ...grupo, ativos, historico });
+  } catch (e) {
+    res.status(500).json({ error: 'Erro ao buscar grupo' });
+  }
+});
+
+// POST /api/membresia/grupos
+router.post('/grupos', authorize('admin', 'diretor'), async (req, res) => {
+  try {
+    const payload = { ...req.body };
+    if (payload.lider_id === '') delete payload.lider_id;
+    if (payload.dia_semana === '' || payload.dia_semana == null) delete payload.dia_semana;
+    if (payload.horario === '') delete payload.horario;
+
+    const { data, error } = await supabase.from('mem_grupos').insert(payload).select().single();
+    if (error) throw error;
+    res.status(201).json(data);
+  } catch (e) {
+    res.status(500).json({ error: 'Erro ao criar grupo' });
+  }
+});
+
+// PUT /api/membresia/grupos/:id
+router.put('/grupos/:id', authorize('admin', 'diretor'), async (req, res) => {
+  try {
+    const payload = { ...req.body };
+    if (payload.lider_id === '') payload.lider_id = null;
+    if (payload.dia_semana === '') payload.dia_semana = null;
+    if (payload.horario === '') payload.horario = null;
+
+    const { data, error } = await supabase.from('mem_grupos').update(payload).eq('id', req.params.id).select().single();
+    if (error) throw error;
+    res.json(data);
+  } catch (e) {
+    res.status(500).json({ error: 'Erro ao atualizar grupo' });
+  }
+});
+
+// DELETE /api/membresia/grupos/:id (soft delete: ativo = false)
+router.delete('/grupos/:id', authorize('admin', 'diretor'), async (req, res) => {
+  try {
+    const { error } = await supabase.from('mem_grupos').update({ ativo: false }).eq('id', req.params.id);
+    if (error) throw error;
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ error: 'Erro ao desativar grupo' });
+  }
+});
+
+// POST /api/membresia/grupos/:id/membros — adicionar membro ao grupo
+// Se o membro já estava em outro grupo ativo, fecha o registro anterior (saiu_em = hoje).
+router.post('/grupos/:id/membros', authorize('admin', 'diretor'), async (req, res) => {
+  try {
+    const grupoId = req.params.id;
+    const { membro_id, entrou_em } = req.body;
+    if (!membro_id) return res.status(400).json({ error: 'membro_id obrigatório' });
+
+    const hoje = new Date().toISOString().slice(0, 10);
+
+    // Fecha participação ativa anterior (se houver)
+    await supabase
+      .from('mem_grupo_membros')
+      .update({ saiu_em: hoje, motivo_saida: 'Transferido para outro grupo' })
+      .eq('membro_id', membro_id)
+      .is('saiu_em', null);
+
+    // Cria nova
+    const { data, error } = await supabase
+      .from('mem_grupo_membros')
+      .insert({ grupo_id: grupoId, membro_id, entrou_em: entrou_em || hoje })
+      .select()
+      .single();
+    if (error) throw error;
+    res.status(201).json(data);
+  } catch (e) {
+    res.status(500).json({ error: 'Erro ao adicionar membro ao grupo' });
+  }
+});
+
+// PATCH /api/membresia/grupo-membros/:id/sair — remover membro do grupo (marca saiu_em)
+router.patch('/grupo-membros/:id/sair', authorize('admin', 'diretor'), async (req, res) => {
+  try {
+    const { motivo } = req.body || {};
+    const { data, error } = await supabase
+      .from('mem_grupo_membros')
+      .update({ saiu_em: new Date().toISOString().slice(0, 10), motivo_saida: motivo || null })
+      .eq('id', req.params.id)
+      .select()
+      .single();
+    if (error) throw error;
+    res.json(data);
+  } catch (e) {
+    res.status(500).json({ error: 'Erro ao remover membro do grupo' });
   }
 });
 
