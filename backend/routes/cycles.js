@@ -29,7 +29,7 @@ async function createSharePointFolders(eventName, phaseTemplates) {
   const tenantId = process.env.MICROSOFT_TENANT_ID;
   const clientId = process.env.MICROSOFT_CLIENT_ID;
   const clientSecret = process.env.MICROSOFT_CLIENT_SECRET;
-  const siteId = process.env.SHAREPOINT_SITE_ID;
+  const DRIVE_ID = 'b!EA-1BDLqukCEvUSjs47ip_Zq_pRk8F1Fr8Vno3f16CycaaIn52TbSKQ7nZOyjaOa'; // Planejamento
 
   // Get token
   const tokenRes = await fetch(`https://login.microsoftonline.com/${tenantId}/oauth2/v2.0/token`, {
@@ -45,8 +45,8 @@ async function createSharePointFolders(eventName, phaseTemplates) {
 
   const createFolder = async (parentPath, name) => {
     const endpoint = parentPath
-      ? `https://graph.microsoft.com/v1.0/sites/${siteId}/drive/root:/${parentPath}:/children`
-      : `https://graph.microsoft.com/v1.0/sites/${siteId}/drive/root/children`;
+      ? `https://graph.microsoft.com/v1.0/drives/${DRIVE_ID}/root:/${parentPath}:/children`
+      : `https://graph.microsoft.com/v1.0/drives/${DRIVE_ID}/root/children`;
     const res = await fetch(endpoint, {
       method: 'POST',
       headers: { Authorization: `Bearer ${access_token}`, 'Content-Type': 'application/json' },

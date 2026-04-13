@@ -16,6 +16,10 @@ const SHAREPOINT_CONFIGURED = !!(
   process.env.SHAREPOINT_SITE_ID
 );
 
+// CBRioHub — novo site unificado. Drive Planejamento pra arquivos de eventos.
+const CBRIO_HUB_SITE_ID = 'infracbrio.sharepoint.com,04b50f10-ea32-40ba-84bd-44a3b38ee2a7,94fe6af6-f064-455d-afc5-67a377f5e82c';
+const PLANEJAMENTO_DRIVE_ID = 'b!EA-1BDLqukCEvUSjs47ip_Zq_pRk8F1Fr8Vno3f16CycaaIn52TbSKQ7nZOyjaOa';
+
 // ── Microsoft Graph auth (client credentials) ──
 let cachedToken = null;
 let tokenExpiry = 0;
@@ -73,6 +77,25 @@ async function graphRequest(path, opts = {}) {
   return res;
 }
 
+async function ensureSharePointFolderInDrive(driveId, folderPath) {
+  try {
+    const token = await getGraphToken();
+    await fetch(`${GRAPH_BASE}/drives/${driveId}/root:/${folderPath}`, { headers: { Authorization: `Bearer ${token}` } });
+  } catch {
+    const parts = folderPath.split('/');
+    let current = '';
+    for (const part of parts) {
+      const parentPath = current ? `${GRAPH_BASE}/drives/${driveId}/root:/${current}:/children` : `${GRAPH_BASE}/drives/${driveId}/root/children`;
+      try {
+        const token = await getGraphToken();
+        await fetch(parentPath, { method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name: part, folder: {}, '@microsoft.graph.conflictBehavior': 'fail' }) });
+      } catch {}
+      current = current ? `${current}/${part}` : part;
+    }
+  }
+}
+
 async function ensureSharePointFolder(folderPath) {
   const siteId = process.env.SHAREPOINT_SITE_ID;
   // Try to get the folder — if 404, create it
@@ -98,19 +121,21 @@ async function ensureSharePointFolder(folderPath) {
 }
 
 async function uploadToSharePoint(eventName, phaseName, fileName, fileBuffer) {
-  const siteId = process.env.SHAREPOINT_SITE_ID;
+  const driveId = PLANEJAMENTO_DRIVE_ID;
   const folder = `Eventos/${sanitizePath(eventName)}/${sanitizePath(phaseName || 'geral')}`;
   const safeName = sanitizePath(fileName);
 
-  await ensureSharePointFolder(folder);
+  // Garantir pastas no drive Planejamento
+  await ensureSharePointFolderInDrive(driveId, folder);
 
-  // Upload file (up to 4MB simple, larger needs upload session — for 10MB we use simple)
   const filePath = `${folder}/${safeName}`;
-  const res = await graphRequest(`/sites/${siteId}/drive/root:/${filePath}:/content`, {
+  const token = await getGraphToken();
+  const res = await fetch(`${GRAPH_BASE}/drives/${driveId}/root:/${filePath}:/content`, {
     method: 'PUT',
-    headers: { 'Content-Type': 'application/octet-stream' },
+    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/octet-stream' },
     body: fileBuffer,
   });
+  if (!res.ok) { const err = await res.text().catch(() => ''); throw new Error(`Upload failed ${res.status}: ${err.slice(0, 200)}`); }
   const data = await res.json();
 
   return {
@@ -122,9 +147,14 @@ async function uploadToSharePoint(eventName, phaseName, fileName, fileBuffer) {
 }
 
 async function downloadFromSharePoint(itemId) {
-  const siteId = process.env.SHAREPOINT_SITE_ID;
-  // Get download URL
-  const metaRes = await graphRequest(`/sites/${siteId}/drive/items/${itemId}`);
+  // Tentar no drive Planejamento (novo) primeiro, fallback pro site antigo
+  let metaRes;
+  try {
+    metaRes = await graphRequest(`/drives/${PLANEJAMENTO_DRIVE_ID}/items/${itemId}`);
+  } catch {
+    const siteId = process.env.SHAREPOINT_SITE_ID;
+    metaRes = await graphRequest(`/sites/${siteId}/drive/items/${itemId}`);
+  }
   const meta = await metaRes.json();
   const downloadUrl = meta['@microsoft.graph.downloadUrl'];
   if (!downloadUrl) throw new Error('Download URL not available');
@@ -135,8 +165,12 @@ async function downloadFromSharePoint(itemId) {
 }
 
 async function deleteFromSharePoint(itemId) {
-  const siteId = process.env.SHAREPOINT_SITE_ID;
-  await graphRequest(`/sites/${siteId}/drive/items/${itemId}`, { method: 'DELETE' });
+  try {
+    await graphRequest(`/drives/${PLANEJAMENTO_DRIVE_ID}/items/${itemId}`, { method: 'DELETE' });
+  } catch {
+    const siteId = process.env.SHAREPOINT_SITE_ID;
+    await graphRequest(`/sites/${siteId}/drive/items/${itemId}`, { method: 'DELETE' });
+  }
 }
 
 // ── Public API ──
@@ -255,4 +289,4 @@ async function syncPendingToSharePoint() {
   return { synced, failed, total: pending.length, message: `${synced} sincronizado(s), ${failed} falha(s)` };
 }
 
-module.exports = { uploadFile, downloadFile, deleteFile, getSignedUrl, syncPendingToSharePoint, getGraphToken, ensureSharePointFolder, sanitizePath, MAX_FILE_SIZE, SHAREPOINT_CONFIGURED };
+module.exports = { uploadFile, downloadFile, deleteFile, getSignedUrl, syncPendingToSharePoint, getGraphToken, ensureSharePointFolder, ensureSharePointFolderInDrive, sanitizePath, MAX_FILE_SIZE, SHAREPOINT_CONFIGURED, PLANEJAMENTO_DRIVE_ID, CBRIO_HUB_SITE_ID };

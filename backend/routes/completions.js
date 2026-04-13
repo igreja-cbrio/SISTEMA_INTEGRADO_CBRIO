@@ -62,17 +62,18 @@ router.post('/upload-url', async (req, res) => {
     if (!fileName) return res.status(400).json({ error: 'fileName é obrigatório' });
     if (!SHAREPOINT_CONFIGURED) return res.status(400).json({ error: 'SharePoint não configurado (variáveis de ambiente ausentes)' });
 
-    const siteId = process.env.SHAREPOINT_SITE_ID;
+    const DRIVE_ID = 'b!EA-1BDLqukCEvUSjs47ip_Zq_pRk8F1Fr8Vno3f16CycaaIn52TbSKQ7nZOyjaOa'; // Planejamento
     const token = await getGraphToken();
     const safeName = sanitizePath(fileName);
     const folder = `Eventos/${sanitizePath(eventName || 'geral')}/${sanitizePath(phaseName || 'geral')}`;
     const filePath = `${folder}/${safeName}`;
 
-    // Garantir que a estrutura de pastas existe no SharePoint
-    await ensureSharePointFolder(folder);
+    // Garantir que a estrutura de pastas existe no drive Planejamento
+    const { ensureSharePointFolderInDrive } = require('../services/storageService');
+    await ensureSharePointFolderInDrive(DRIVE_ID, folder);
 
-    // Criar upload session (suporta arquivos de qualquer tamanho)
-    const sessionRes = await fetch(`https://graph.microsoft.com/v1.0/sites/${siteId}/drive/root:/${filePath}:/createUploadSession`, {
+    // Criar upload session no drive Planejamento
+    const sessionRes = await fetch(`https://graph.microsoft.com/v1.0/drives/${DRIVE_ID}/root:/${filePath}:/createUploadSession`, {
       method: 'POST',
       headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({ item: { '@microsoft.graph.conflictBehavior': 'rename' } }),
