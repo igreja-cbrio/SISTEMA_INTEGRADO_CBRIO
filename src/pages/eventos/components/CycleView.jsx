@@ -598,19 +598,32 @@ export default function CycleView({ eventId, eventName }) {
                     <div style={{ display: 'flex', gap: 8 }}>
                       <div style={{ flex: 1 }}>
                         <label style={{ fontSize: 10, fontWeight: 600, color: C.t3 }}>Fase</label>
-                        <select value={editData.event_phase_id || ''} onChange={e => setEditData(d => ({ ...d, event_phase_id: e.target.value }))}
-                          style={{ width: '100%', padding: '5px 8px', borderRadius: 6, border: `1px solid ${C.border}`, fontSize: 12, color: C.dark, background: 'var(--cbrio-input-bg, #fff)' }}>
-                          {phases.map(ph => <option key={ph.id} value={ph.id}>F{ph.numero_fase} — {ph.nome_fase}</option>)}
-                        </select>
+                        <ShadSelect value={editData.event_phase_id || ''} onValueChange={v => setEditData(d => ({ ...d, event_phase_id: v }))}>
+                          <SelectTrigger className="w-full h-8 text-xs">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {phases.map(ph => <SelectItem key={ph.id} value={ph.id}>F{ph.numero_fase} — {ph.nome_fase}</SelectItem>)}
+                          </SelectContent>
+                        </ShadSelect>
                       </div>
                       <div style={{ flex: 1 }}>
                         <label style={{ fontSize: 10, fontWeight: 600, color: C.t3 }}>Área</label>
-                        <select value={editData.area || 'adm'} onChange={e => setEditData(d => ({ ...d, area: e.target.value }))}
-                          style={{ width: '100%', padding: '5px 8px', borderRadius: 6, border: `1px solid ${C.border}`, fontSize: 12, color: C.dark, background: 'var(--cbrio-input-bg, #fff)' }}>
-                          <option value="adm">Administrativo</option><option value="marketing">Marketing</option>
-                          <option value="compras">Compras</option><option value="financeiro">Financeiro</option>
-                          <option value="manutencao">Manutenção</option><option value="limpeza">Limpeza</option><option value="cozinha">Cozinha</option><option value="producao">Produção</option>
-                        </select>
+                        <ShadSelect value={editData.area || 'adm'} onValueChange={v => setEditData(d => ({ ...d, area: v }))}>
+                          <SelectTrigger className="w-full h-8 text-xs">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="adm">Administrativo</SelectItem>
+                            <SelectItem value="marketing">Marketing</SelectItem>
+                            <SelectItem value="compras">Compras</SelectItem>
+                            <SelectItem value="financeiro">Financeiro</SelectItem>
+                            <SelectItem value="manutencao">Manutenção</SelectItem>
+                            <SelectItem value="limpeza">Limpeza</SelectItem>
+                            <SelectItem value="cozinha">Cozinha</SelectItem>
+                            <SelectItem value="producao">Produção</SelectItem>
+                          </SelectContent>
+                        </ShadSelect>
                       </div>
                     </div>
                     <div style={{ display: 'flex', gap: 8 }}>
