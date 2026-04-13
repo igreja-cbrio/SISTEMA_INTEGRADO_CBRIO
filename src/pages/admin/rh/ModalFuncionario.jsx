@@ -2,6 +2,7 @@ import { useState, useRef } from 'react';
 import { supabase } from '../../../supabaseClient';
 import { Button } from '../../../components/ui/button';
 import { X } from 'lucide-react';
+import { Select as ShadSelect, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../../components/ui/select';
 
 const s = {
   label:    { display: 'block', fontSize: 13, fontWeight: 600, color: 'var(--cbrio-text2)', marginBottom: 5, marginTop: 14 },
@@ -146,22 +147,28 @@ export default function ModalFuncionario({ funcionario, onSalvar, onFechar }) {
 
             <div>
               <label style={s.label}>Tipo de contrato</label>
-              <select style={s.select} value={form.tipo_contrato} onChange={set('tipo_contrato')}>
-                <option value="clt">CLT</option>
-                <option value="pj">PJ</option>
-                <option value="voluntario">Voluntário</option>
-                <option value="estagiario">Estagiário</option>
-              </select>
+              <ShadSelect value={form.tipo_contrato} onValueChange={v => set('tipo_contrato')({ target: { value: v } })}>
+                <SelectTrigger className="w-full h-9 text-sm"><SelectValue /></SelectTrigger>
+                <SelectContent className="z-[1001]">
+                  <SelectItem value="clt">CLT</SelectItem>
+                  <SelectItem value="pj">PJ</SelectItem>
+                  <SelectItem value="voluntario">Voluntário</SelectItem>
+                  <SelectItem value="estagiario">Estagiário</SelectItem>
+                </SelectContent>
+              </ShadSelect>
             </div>
 
             <div>
               <label style={s.label}>Status</label>
-              <select style={s.select} value={form.status} onChange={set('status')}>
-                <option value="ativo">Ativo</option>
-                <option value="ferias">Férias</option>
-                <option value="licenca">Licença</option>
-                <option value="inativo">Inativo</option>
-              </select>
+              <ShadSelect value={form.status} onValueChange={v => set('status')({ target: { value: v } })}>
+                <SelectTrigger className="w-full h-9 text-sm"><SelectValue /></SelectTrigger>
+                <SelectContent className="z-[1001]">
+                  <SelectItem value="ativo">Ativo</SelectItem>
+                  <SelectItem value="ferias">Férias</SelectItem>
+                  <SelectItem value="licenca">Licença</SelectItem>
+                  <SelectItem value="inativo">Inativo</SelectItem>
+                </SelectContent>
+              </ShadSelect>
             </div>
 
             <div style={s.fullCol}>

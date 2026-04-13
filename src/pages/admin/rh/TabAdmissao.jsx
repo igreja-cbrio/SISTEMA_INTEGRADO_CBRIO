@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { rh } from '../../../api';
 import { Button } from '../../../components/ui/button';
+import { Select as ShadSelect, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../../components/ui/select';
 
 const C = {
   bg: 'var(--cbrio-bg)', card: 'var(--cbrio-card)', primary: '#00B39D', primaryBg: '#00B39D18',
@@ -50,7 +51,17 @@ const styles = {
 };
 
 function Input({ label, error, ...props }) { return (<div style={styles.formGroup}>{label && <label style={styles.label}>{label}</label>}<input style={{ ...styles.input, ...(error ? { borderColor: '#ef4444' } : {}) }} {...props} />{error && <div style={{ fontSize: 11, color: '#ef4444', marginTop: 2 }}>{error}</div>}</div>); }
-function Select({ label, children, ...props }) { return (<div style={styles.formGroup}>{label && <label style={styles.label}>{label}</label>}<select style={styles.select} {...props}>{children}</select></div>); }
+function AdmSelect({ label, children, value, onChange }) {
+  return (
+    <div style={styles.formGroup}>
+      {label && <label style={styles.label}>{label}</label>}
+      <ShadSelect value={value || '__none__'} onValueChange={v => onChange && onChange({ target: { value: v === '__none__' ? '' : v } })}>
+        <SelectTrigger className="w-full h-9 text-sm"><SelectValue /></SelectTrigger>
+        <SelectContent className="z-[1001]">{children}</SelectContent>
+      </ShadSelect>
+    </div>
+  );
+}
 
 // ── Template de contrato PJ ──────────────────────────────
 function gerarContratoPJ(adm) {
@@ -319,10 +330,13 @@ export default function TabAdmissao() {
   return (<>
     {localError && <div style={{ color: '#ef4444', background: '#ef444418', border: '1px solid #ef444450', borderRadius: 8, padding: '10px 14px', marginBottom: 12, fontSize: 13 }}>{localError}</div>}
     <div style={styles.filterRow}>
-      <select style={{ ...styles.select, width: 'auto' }} value={filtroStatus} onChange={e => setFiltroStatus(e.target.value)}>
-        <option value="">Todos os status</option>
-        {Object.entries(STATUS_ADM).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
-      </select>
+      <ShadSelect value={filtroStatus || '__all__'} onValueChange={v => setFiltroStatus(v === '__all__' ? '' : v)}>
+        <SelectTrigger className="h-9 w-auto min-w-[160px] text-sm"><SelectValue placeholder="Todos os status" /></SelectTrigger>
+        <SelectContent>
+          <SelectItem value="__all__">Todos os status</SelectItem>
+          {Object.entries(STATUS_ADM).map(([k, v]) => <SelectItem key={k} value={k}>{v.label}</SelectItem>)}
+        </SelectContent>
+      </ShadSelect>
       <Button onClick={() => setModalForm({ tipo_contrato: 'pj', status: 'rascunho' })}>
         + Nova Admissão
       </Button>
@@ -415,9 +429,9 @@ function AdmissaoFormModal({ data, onClose, onSave, saving }) {
 
         {/* Body */}
         <div style={{ flex: 1, padding: '24px 28px', overflowY: 'auto' }}>
-          <Select label="Tipo de Contrato *" value={f.tipo_contrato || 'pj'} onChange={e => upd('tipo_contrato', e.target.value)}>
-            {Object.entries(TIPO_CONTRATO).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
-          </Select>
+          <AdmSelect label="Tipo de Contrato *" value={f.tipo_contrato || 'pj'} onChange={e => upd('tipo_contrato', e.target.value)}>
+            {Object.entries(TIPO_CONTRATO).map(([k, v]) => <SelectItem key={k} value={k}>{v}</SelectItem>)}
+          </AdmSelect>
 
           <div style={styles.section}>
             <div style={styles.sectionTitle}>Dados Pessoais</div>
