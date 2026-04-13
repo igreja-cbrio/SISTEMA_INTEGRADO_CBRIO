@@ -19,6 +19,18 @@ function calcularNivelGenerosidade(ultimaContribuicaoDate) {
   return 'inativo';
 }
 
+// Nível de serviço baseado em check-ins (fonte de verdade do "está servindo")
+// Regra do cliente:
+//   ativo: fez check-in nos últimos 60 dias
+//   ausente: último check-in há mais de 60 dias
+//   nunca_serviu: 0 check-ins
+function calcularNivelServico(ultimoCheckinDate) {
+  if (!ultimoCheckinDate) return 'nunca_serviu';
+  const dias = Math.floor((Date.now() - new Date(ultimoCheckinDate).getTime()) / (1000 * 60 * 60 * 24));
+  if (dias <= 60) return 'ativo';
+  return 'ausente';
+}
+
 // ── Membros ──
 
 // GET /api/membresia/membros
@@ -115,6 +127,36 @@ router.get('/membros/:id', async (req, res) => {
       totaisAno.total += v;
     });
 
+    // Voluntariado / Ministérios
+    const { data: voluntarios } = await supabase
+      .from('mem_voluntarios')
+      .select('*, ministerio:mem_ministerios(id, nome, cor, ativo)')
+      .eq('membro_id', membro.id)
+      .order('desde', { ascending: false });
+
+    const ministerios_ativos = (voluntarios || []).filter(v => !v.ate);
+    const ministerios_historico = (voluntarios || []).filter(v => v.ate);
+
+    // Check-ins recentes (últimos 20)
+    const { data: checkins } = await supabase
+      .from('mem_checkins')
+      .select('*, ministerio:mem_ministerios(id, nome, cor)')
+      .eq('membro_id', membro.id)
+      .order('data', { ascending: false })
+      .limit(20);
+
+    const ultimoCheckin = checkins?.[0]?.data || null;
+    const nivelServico = calcularNivelServico(ultimoCheckin);
+
+    // Escalas futuras
+    const { data: escalasFuturas } = await supabase
+      .from('mem_escalas')
+      .select('*, ministerio:mem_ministerios(id, nome, cor)')
+      .eq('membro_id', membro.id)
+      .gte('data', new Date().toISOString().slice(0, 10))
+      .order('data')
+      .limit(10);
+
     res.json({
       ...membro,
       familiares,
@@ -126,6 +168,12 @@ router.get('/membros/:id', async (req, res) => {
       nivel_generosidade: nivelGenerosidade,
       ultima_contribuicao: ultimaContribuicao,
       totais_ano: totaisAno,
+      ministerios_ativos,
+      ministerios_historico,
+      checkins: checkins || [],
+      ultimo_checkin: ultimoCheckin,
+      nivel_servico: nivelServico,
+      escalas_futuras: escalasFuturas || [],
     });
   } catch (e) {
     res.status(500).json({ error: 'Erro ao buscar membro' });
@@ -536,6 +584,258 @@ router.get('/contribuicoes/kpis', async (req, res) => {
     });
   } catch (e) {
     res.status(500).json({ error: 'Erro ao buscar KPIs de contribuições' });
+  }
+});
+
+// ══════════════════════════════════════════════════════════════
+// Ministérios / Voluntariado / Escalas / Check-ins
+// ══════════════════════════════════════════════════════════════
+
+// ── Ministérios ──
+
+router.get('/ministerios', async (req, res) => {
+  try {
+    const { ativo } = req.query;
+    let query = supabase
+      .from('mem_ministerios')
+      .select('*, lider:mem_membros!lider_id(id, nome), voluntarios:mem_voluntarios(id, ate)')
+      .order('nome');
+    if (ativo === 'true') query = query.eq('ativo', true);
+    if (ativo === 'false') query = query.eq('ativo', false);
+
+    const { data, error } = await query;
+    if (error) throw error;
+
+    const withCount = (data || []).map(m => ({
+      ...m,
+      total_voluntarios: (m.voluntarios || []).filter(v => !v.ate).length,
+    }));
+    res.json(withCount);
+  } catch (e) {
+    res.status(500).json({ error: 'Erro ao buscar ministérios' });
+  }
+});
+
+router.get('/ministerios/:id', async (req, res) => {
+  try {
+    const { data: ministerio, error } = await supabase
+      .from('mem_ministerios')
+      .select('*, lider:mem_membros!lider_id(id, nome)')
+      .eq('id', req.params.id)
+      .single();
+    if (error) throw error;
+
+    const { data: voluntarios } = await supabase
+      .from('mem_voluntarios')
+      .select('*, membro:mem_membros(id, nome, status, telefone)')
+      .eq('ministerio_id', ministerio.id)
+      .order('desde', { ascending: false });
+
+    const ativos = (voluntarios || []).filter(v => !v.ate);
+    const historico = (voluntarios || []).filter(v => v.ate);
+
+    res.json({ ...ministerio, ativos, historico });
+  } catch (e) {
+    res.status(500).json({ error: 'Erro ao buscar ministério' });
+  }
+});
+
+router.post('/ministerios', authorize('admin', 'diretor'), async (req, res) => {
+  try {
+    const payload = { ...req.body };
+    if (payload.lider_id === '') delete payload.lider_id;
+    const { data, error } = await supabase.from('mem_ministerios').insert(payload).select().single();
+    if (error) throw error;
+    res.status(201).json(data);
+  } catch (e) {
+    res.status(500).json({ error: 'Erro ao criar ministério' });
+  }
+});
+
+router.put('/ministerios/:id', authorize('admin', 'diretor'), async (req, res) => {
+  try {
+    const payload = { ...req.body };
+    if (payload.lider_id === '') payload.lider_id = null;
+    const { data, error } = await supabase.from('mem_ministerios').update(payload).eq('id', req.params.id).select().single();
+    if (error) throw error;
+    res.json(data);
+  } catch (e) {
+    res.status(500).json({ error: 'Erro ao atualizar ministério' });
+  }
+});
+
+router.delete('/ministerios/:id', authorize('admin', 'diretor'), async (req, res) => {
+  try {
+    const { error } = await supabase.from('mem_ministerios').update({ ativo: false }).eq('id', req.params.id);
+    if (error) throw error;
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ error: 'Erro ao desativar ministério' });
+  }
+});
+
+// ── Voluntários (membro × ministério) ──
+
+router.post('/voluntarios', authorize('admin', 'diretor'), async (req, res) => {
+  try {
+    const payload = { ...req.body };
+    if (payload.papel === '') delete payload.papel;
+    const { data, error } = await supabase
+      .from('mem_voluntarios')
+      .insert(payload)
+      .select('*, ministerio:mem_ministerios(id, nome, cor), membro:mem_membros(id, nome)')
+      .single();
+    if (error) throw error;
+    res.status(201).json(data);
+  } catch (e) {
+    res.status(500).json({ error: 'Erro ao cadastrar voluntário' });
+  }
+});
+
+router.patch('/voluntarios/:id/sair', authorize('admin', 'diretor'), async (req, res) => {
+  try {
+    const { motivo } = req.body || {};
+    const { data, error } = await supabase
+      .from('mem_voluntarios')
+      .update({ ate: new Date().toISOString().slice(0, 10), motivo_saida: motivo || null })
+      .eq('id', req.params.id)
+      .select()
+      .single();
+    if (error) throw error;
+    res.json(data);
+  } catch (e) {
+    res.status(500).json({ error: 'Erro ao registrar saída do voluntário' });
+  }
+});
+
+router.put('/voluntarios/:id', authorize('admin', 'diretor'), async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('mem_voluntarios')
+      .update(req.body)
+      .eq('id', req.params.id)
+      .select()
+      .single();
+    if (error) throw error;
+    res.json(data);
+  } catch (e) {
+    res.status(500).json({ error: 'Erro ao atualizar voluntário' });
+  }
+});
+
+// ── Escalas ──
+
+router.get('/escalas', async (req, res) => {
+  try {
+    const { membro_id, ministerio_id, data_inicio, data_fim, limit } = req.query;
+    let query = supabase
+      .from('mem_escalas')
+      .select('*, ministerio:mem_ministerios(id, nome, cor), membro:mem_membros(id, nome)')
+      .order('data', { ascending: false });
+    if (membro_id) query = query.eq('membro_id', membro_id);
+    if (ministerio_id) query = query.eq('ministerio_id', ministerio_id);
+    if (data_inicio) query = query.gte('data', data_inicio);
+    if (data_fim) query = query.lte('data', data_fim);
+    if (limit) query = query.limit(Number(limit));
+
+    const { data, error } = await query;
+    if (error) throw error;
+    res.json(data);
+  } catch (e) {
+    res.status(500).json({ error: 'Erro ao buscar escalas' });
+  }
+});
+
+router.post('/escalas', authorize('admin', 'diretor'), async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('mem_escalas')
+      .insert(req.body)
+      .select('*, ministerio:mem_ministerios(id, nome, cor), membro:mem_membros(id, nome)')
+      .single();
+    if (error) {
+      if (error.code === '23505') {
+        return res.status(409).json({ error: 'Este membro já está escalado neste culto' });
+      }
+      throw error;
+    }
+    res.status(201).json(data);
+  } catch (e) {
+    res.status(500).json({ error: 'Erro ao criar escala' });
+  }
+});
+
+router.put('/escalas/:id', authorize('admin', 'diretor'), async (req, res) => {
+  try {
+    const { data, error } = await supabase.from('mem_escalas').update(req.body).eq('id', req.params.id).select().single();
+    if (error) throw error;
+    res.json(data);
+  } catch (e) {
+    res.status(500).json({ error: 'Erro ao atualizar escala' });
+  }
+});
+
+router.delete('/escalas/:id', authorize('admin', 'diretor'), async (req, res) => {
+  try {
+    const { error } = await supabase.from('mem_escalas').delete().eq('id', req.params.id);
+    if (error) throw error;
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ error: 'Erro ao remover escala' });
+  }
+});
+
+// ── Check-ins ──
+// Estrutura pronta para integração com sistema de check-in futuro.
+// Por enquanto, permite registro manual para testes.
+
+router.get('/checkins', async (req, res) => {
+  try {
+    const { membro_id, ministerio_id, data_inicio, data_fim, limit } = req.query;
+    let query = supabase
+      .from('mem_checkins')
+      .select('*, ministerio:mem_ministerios(id, nome, cor), membro:mem_membros(id, nome)')
+      .order('data', { ascending: false });
+    if (membro_id) query = query.eq('membro_id', membro_id);
+    if (ministerio_id) query = query.eq('ministerio_id', ministerio_id);
+    if (data_inicio) query = query.gte('data', data_inicio);
+    if (data_fim) query = query.lte('data', data_fim);
+    if (limit) query = query.limit(Number(limit));
+
+    const { data, error } = await query;
+    if (error) throw error;
+    res.json(data);
+  } catch (e) {
+    res.status(500).json({ error: 'Erro ao buscar check-ins' });
+  }
+});
+
+router.post('/checkins', authorize('admin', 'diretor'), async (req, res) => {
+  try {
+    const payload = {
+      ...req.body,
+      registrado_por: req.user.id,
+      origem: req.body.origem || 'manual',
+    };
+    const { data, error } = await supabase
+      .from('mem_checkins')
+      .insert(payload)
+      .select('*, ministerio:mem_ministerios(id, nome, cor), membro:mem_membros(id, nome)')
+      .single();
+    if (error) throw error;
+    res.status(201).json(data);
+  } catch (e) {
+    res.status(500).json({ error: 'Erro ao registrar check-in' });
+  }
+});
+
+router.delete('/checkins/:id', authorize('admin', 'diretor'), async (req, res) => {
+  try {
+    const { error } = await supabase.from('mem_checkins').delete().eq('id', req.params.id);
+    if (error) throw error;
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ error: 'Erro ao remover check-in' });
   }
 });
 

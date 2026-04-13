@@ -7,7 +7,7 @@ import {
   Phone, Mail, MapPin, Heart, Calendar, Star,
   CheckCircle2, Circle, UserPlus, Home, Pencil,
   AlertCircle, LogOut, MapPin as MapPinIcon, Clock, Trash2,
-  DollarSign, HandCoins,
+  DollarSign, HandCoins, Sparkles, Activity,
 } from 'lucide-react';
 import { Button } from '../../components/ui/button';
 import { Input } from '../../components/ui/input';
@@ -23,6 +23,7 @@ import {
   Tabs, TabsList, TabsTrigger, TabsContent,
 } from '../../components/ui/tabs';
 import TabGrupos from './TabGrupos';
+import TabMinisterios from './TabMinisterios';
 
 const C = {
   bg: 'var(--cbrio-bg)', card: 'var(--cbrio-card)', primary: '#00B39D', primaryBg: '#00B39D18',
@@ -72,6 +73,12 @@ const NIVEIS_GENEROSIDADE = {
   irregular: { label: 'Irregular', cor: '#f59e0b', bg: '#f59e0b18', desc: 'Contribuiu nos últimos 5 meses' },
   inativo: { label: 'Inativo', cor: '#ef4444', bg: '#ef444418', desc: 'Sem contribuições há mais de 5 meses' },
   nunca_contribuiu: { label: 'Nunca contribuiu', cor: '#737373', bg: '#73737318', desc: 'Nenhum registro de contribuição' },
+};
+
+const NIVEIS_SERVICO = {
+  ativo: { label: 'Servindo', cor: '#10b981', bg: '#10b98118', desc: 'Fez check-in nos últimos 60 dias' },
+  ausente: { label: 'Ausente', cor: '#f59e0b', bg: '#f59e0b18', desc: 'Sem check-in há mais de 60 dias' },
+  nunca_serviu: { label: 'Nunca serviu', cor: '#737373', bg: '#73737318', desc: 'Nenhum check-in registrado' },
 };
 
 function diasSemGrupo(dataSaida) {
@@ -291,6 +298,13 @@ export default function Membresia() {
   const [showContribForm, setShowContribForm] = useState(false);
   const [contribForm, setContribForm] = useState({ tipo: 'dizimo', valor: '', data: new Date().toISOString().slice(0, 10), forma_pagamento: '', campanha: '', observacoes: '' });
   const [salvandoContrib, setSalvandoContrib] = useState(false);
+  const [ministeriosList, setMinisteriosList] = useState([]);
+  const [showVolForm, setShowVolForm] = useState(false);
+  const [volForm, setVolForm] = useState({ ministerio_id: '', papel: '' });
+  const [salvandoVol, setSalvandoVol] = useState(false);
+  const [showCheckinForm, setShowCheckinForm] = useState(false);
+  const [checkinForm, setCheckinForm] = useState({ ministerio_id: '', data: new Date().toISOString().slice(0, 10), culto: '' });
+  const [salvandoCheckin, setSalvandoCheckin] = useState(false);
 
   const fetchData = useCallback(async () => {
     try {
@@ -298,16 +312,18 @@ export default function Membresia() {
       const params = {};
       if (busca) params.busca = busca;
       if (filterStatus) params.status = filterStatus;
-      const [m, k, f, g] = await Promise.all([
+      const [m, k, f, g, mi] = await Promise.all([
         membresia.membros.list(Object.keys(params).length ? params : null),
         membresia.kpis(),
         membresia.familias.list(),
         membresia.grupos.list({ ativo: 'true' }).catch(() => []),
+        membresia.ministerios.list({ ativo: 'true' }).catch(() => []),
       ]);
       setMembros(m);
       setKpis(k);
       setFamilias(f);
       setGrupos(g);
+      setMinisteriosList(mi);
     } catch (e) {
       setError(e.message);
     } finally {
@@ -431,6 +447,68 @@ export default function Membresia() {
     }
   };
 
+  const adicionarVoluntario = async () => {
+    if (!selectedMembro || !volForm.ministerio_id) return;
+    setSalvandoVol(true);
+    try {
+      const payload = {
+        membro_id: selectedMembro.id,
+        ministerio_id: volForm.ministerio_id,
+      };
+      if (volForm.papel) payload.papel = volForm.papel;
+      await membresia.voluntarios.create(payload);
+      setVolForm({ ministerio_id: '', papel: '' });
+      setShowVolForm(false);
+      await reloadDetail();
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setSalvandoVol(false);
+    }
+  };
+
+  const sairVoluntario = async (voluntarioId) => {
+    const motivo = prompt('Motivo da saída (opcional):') ?? null;
+    if (motivo === null && !confirm('Registrar saída do ministério?')) return;
+    try {
+      await membresia.voluntarios.sair(voluntarioId, motivo);
+      await reloadDetail();
+    } catch (e) {
+      setError(e.message);
+    }
+  };
+
+  const registrarCheckin = async () => {
+    if (!selectedMembro) return;
+    setSalvandoCheckin(true);
+    try {
+      const payload = {
+        membro_id: selectedMembro.id,
+        data: checkinForm.data,
+      };
+      if (checkinForm.ministerio_id) payload.ministerio_id = checkinForm.ministerio_id;
+      if (checkinForm.culto) payload.culto = checkinForm.culto;
+      await membresia.checkins.create(payload);
+      setCheckinForm({ ministerio_id: '', data: new Date().toISOString().slice(0, 10), culto: '' });
+      setShowCheckinForm(false);
+      await reloadDetail();
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setSalvandoCheckin(false);
+    }
+  };
+
+  const removerCheckin = async (id) => {
+    if (!confirm('Remover este check-in?')) return;
+    try {
+      await membresia.checkins.remove(id);
+      await reloadDetail();
+    } catch (e) {
+      setError(e.message);
+    }
+  };
+
   const adicionarHistorico = async () => {
     if (!novoHist.trim() || !selectedMembro) return;
     setSalvandoHist(true);
@@ -474,7 +552,7 @@ export default function Membresia() {
             <Users style={{ width: 28, height: 28, color: C.primary }} />
             <h1 style={{ fontSize: 20, fontWeight: 700, color: C.text, margin: 0, lineHeight: 1.25 }}>Membresia</h1>
           </div>
-          <p style={{ fontSize: 14, color: C.text2, marginTop: 4, lineHeight: 1.5 }}>Membros, famílias, grupos de conexão e trilha dos valores</p>
+          <p style={{ fontSize: 14, color: C.text2, marginTop: 4, lineHeight: 1.5 }}>Membros, famílias, grupos, ministérios, generosidade e trilha dos valores</p>
         </div>
         {isDiretor && (
           <Button onClick={openCreate}>
@@ -496,6 +574,7 @@ export default function Membresia() {
           {[
             { key: 'membros', label: 'Membros', icon: Users },
             { key: 'grupos', label: 'Grupos de Conexão', icon: Home },
+            { key: 'ministerios', label: 'Ministérios', icon: Sparkles },
           ].map(t => {
             const Icon = t.icon;
             return (
@@ -606,6 +685,10 @@ export default function Membresia() {
         <TabsContent value="grupos">
           <TabGrupos />
         </TabsContent>
+
+        <TabsContent value="ministerios">
+          <TabMinisterios />
+        </TabsContent>
       </Tabs>
 
       {/* Member Detail Modal */}
@@ -643,6 +726,7 @@ export default function Membresia() {
                     { key: 'familia', label: 'Família', icon: Home },
                     { key: 'grupo', label: 'Grupo', icon: Users },
                     { key: 'generosidade', label: 'Generosidade', icon: HandCoins },
+                    { key: 'servico', label: 'Serviço', icon: Sparkles },
                     { key: 'trilha', label: 'Trilha', icon: Star },
                     { key: 'historico', label: 'Histórico', icon: Calendar },
                   ].map(t => {
@@ -976,6 +1060,237 @@ export default function Membresia() {
                             </div>
                           )}
                         </div>
+                      </>
+                    );
+                  })()}
+                </TabsContent>
+
+                {/* Aba: Serviço (Ministérios / Voluntariado / Check-ins) */}
+                <TabsContent value="servico" className="mt-4">
+                  {(() => {
+                    const nivel = NIVEIS_SERVICO[selectedMembro.nivel_servico] || NIVEIS_SERVICO.nunca_serviu;
+                    const ativos = selectedMembro.ministerios_ativos || [];
+                    const historico = selectedMembro.ministerios_historico || [];
+                    const checkins = selectedMembro.checkins || [];
+                    const escalas = selectedMembro.escalas_futuras || [];
+                    const disponiveis = ministeriosList.filter(m => !ativos.some(a => a.ministerio_id === m.id));
+                    return (
+                      <>
+                        {/* Card de status */}
+                        <div style={{ padding: 14, borderRadius: 12, background: nivel.bg, border: `1px solid ${nivel.cor}30`, marginBottom: 16, display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12 }}>
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <div style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: 0.5, color: nivel.cor, fontWeight: 700 }}>Nível de Serviço</div>
+                            <div style={{ fontSize: 16, fontWeight: 700, color: C.text, marginTop: 2 }}>{nivel.label}</div>
+                            <div style={{ fontSize: 12, color: C.text2, marginTop: 2 }}>{nivel.desc}</div>
+                          </div>
+                          {selectedMembro.ultimo_checkin && (
+                            <div style={{ textAlign: 'right', flexShrink: 0 }}>
+                              <div style={{ fontSize: 10, color: C.text3, textTransform: 'uppercase', letterSpacing: 0.5 }}>Último check-in</div>
+                              <div style={{ fontSize: 13, color: C.text, fontWeight: 600, marginTop: 2 }}>
+                                {new Date(selectedMembro.ultimo_checkin).toLocaleDateString('pt-BR')}
+                              </div>
+                            </div>
+                          )}
+                        </div>
+
+                        {/* Ministérios ativos */}
+                        <div style={{ marginBottom: 20 }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+                            <h3 style={{ fontSize: 13, fontWeight: 600, color: C.text2, margin: 0, textTransform: 'uppercase', letterSpacing: 0.5 }}>
+                              Ministérios atuais
+                            </h3>
+                            {isDiretor && disponiveis.length > 0 && !showVolForm && (
+                              <Button variant="outline" size="sm" onClick={() => setShowVolForm(true)}>
+                                <Plus style={{ width: 14, height: 14 }} /> Adicionar
+                              </Button>
+                            )}
+                          </div>
+
+                          {isDiretor && showVolForm && (
+                            <div style={{ padding: 14, background: 'var(--cbrio-input-bg)', borderRadius: 12, marginBottom: 12, display: 'flex', flexDirection: 'column', gap: 10 }}>
+                              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                                <div>
+                                  <Label style={{ fontSize: 11 }}>Ministério *</Label>
+                                  <Select value={volForm.ministerio_id} onValueChange={v => setVolForm(f => ({ ...f, ministerio_id: v }))}>
+                                    <SelectTrigger><SelectValue placeholder="Selecione..." /></SelectTrigger>
+                                    <SelectContent className="z-[1001]">
+                                      {disponiveis.map(m => (
+                                        <SelectItem key={m.id} value={m.id}>{m.nome}</SelectItem>
+                                      ))}
+                                    </SelectContent>
+                                  </Select>
+                                </div>
+                                <div>
+                                  <Label style={{ fontSize: 11 }}>Papel / função</Label>
+                                  <Input value={volForm.papel} onChange={e => setVolForm(f => ({ ...f, papel: e.target.value }))} placeholder="Ex: Vocal, Monitor..." />
+                                </div>
+                              </div>
+                              <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+                                <Button variant="outline" onClick={() => { setShowVolForm(false); setVolForm({ ministerio_id: '', papel: '' }); }}>Cancelar</Button>
+                                <Button onClick={adicionarVoluntario} disabled={salvandoVol || !volForm.ministerio_id}>
+                                  {salvandoVol ? 'Salvando...' : 'Adicionar'}
+                                </Button>
+                              </div>
+                            </div>
+                          )}
+
+                          {ativos.length > 0 ? (
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                              {ativos.map(v => {
+                                const cor = v.ministerio?.cor || C.primary;
+                                return (
+                                  <div key={v.id} style={{ padding: '10px 14px', background: 'var(--cbrio-input-bg)', borderRadius: 10, display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, borderLeft: `3px solid ${cor}` }}>
+                                    <div style={{ flex: 1, minWidth: 0 }}>
+                                      <div style={{ fontSize: 14, color: C.text, fontWeight: 600 }}>{v.ministerio?.nome || '—'}</div>
+                                      <div style={{ fontSize: 11, color: C.text3, marginTop: 2 }}>
+                                        {v.papel && `${v.papel} · `}
+                                        desde {new Date(v.desde).toLocaleDateString('pt-BR')}
+                                      </div>
+                                    </div>
+                                    {isDiretor && (
+                                      <Button variant="ghost" size="icon" onClick={() => sairVoluntario(v.id)} title="Registrar saída">
+                                        <LogOut style={{ width: 14, height: 14, color: C.red }} />
+                                      </Button>
+                                    )}
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          ) : (
+                            <div style={{ padding: '16px 0', textAlign: 'center', color: C.text3, fontSize: 13 }}>
+                              Não é voluntário em nenhum ministério
+                            </div>
+                          )}
+                        </div>
+
+                        {/* Próximas escalas */}
+                        {escalas.length > 0 && (
+                          <div style={{ marginBottom: 20 }}>
+                            <h3 style={{ fontSize: 13, fontWeight: 600, color: C.text2, marginBottom: 10, textTransform: 'uppercase', letterSpacing: 0.5 }}>
+                              Próximas escalas
+                            </h3>
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                              {escalas.slice(0, 5).map(e => (
+                                <div key={e.id} style={{ padding: '8px 12px', background: 'var(--cbrio-input-bg)', borderRadius: 10, display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12 }}>
+                                  <div style={{ flex: 1, minWidth: 0 }}>
+                                    <div style={{ fontSize: 13, color: C.text, fontWeight: 500 }}>
+                                      {e.ministerio?.nome || '—'}
+                                      {e.papel && <span style={{ color: C.text3, fontWeight: 400 }}> · {e.papel}</span>}
+                                    </div>
+                                    <div style={{ fontSize: 11, color: C.text3, marginTop: 2 }}>
+                                      {new Date(e.data).toLocaleDateString('pt-BR')}
+                                      {e.culto && ` · ${e.culto}`}
+                                    </div>
+                                  </div>
+                                  {e.confirmado ? (
+                                    <span style={{ fontSize: 10, padding: '2px 8px', borderRadius: 10, color: C.green, background: C.greenBg, fontWeight: 600 }}>Confirmado</span>
+                                  ) : (
+                                    <span style={{ fontSize: 10, padding: '2px 8px', borderRadius: 10, color: C.amber, background: C.amberBg, fontWeight: 600 }}>Pendente</span>
+                                  )}
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Check-ins */}
+                        <div style={{ marginBottom: 16 }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+                            <h3 style={{ fontSize: 13, fontWeight: 600, color: C.text2, margin: 0, textTransform: 'uppercase', letterSpacing: 0.5 }}>
+                              Check-ins recentes
+                            </h3>
+                            {isDiretor && !showCheckinForm && (
+                              <Button variant="outline" size="sm" onClick={() => setShowCheckinForm(true)}>
+                                <Plus style={{ width: 14, height: 14 }} /> Registrar
+                              </Button>
+                            )}
+                          </div>
+
+                          {isDiretor && showCheckinForm && (
+                            <div style={{ padding: 14, background: 'var(--cbrio-input-bg)', borderRadius: 12, marginBottom: 12, display: 'flex', flexDirection: 'column', gap: 10 }}>
+                              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                                <div>
+                                  <Label style={{ fontSize: 11 }}>Data *</Label>
+                                  <Input type="date" value={checkinForm.data} onChange={e => setCheckinForm(f => ({ ...f, data: e.target.value }))} />
+                                </div>
+                                <div>
+                                  <Label style={{ fontSize: 11 }}>Ministério</Label>
+                                  <Select value={checkinForm.ministerio_id || '__none__'} onValueChange={v => setCheckinForm(f => ({ ...f, ministerio_id: v === '__none__' ? '' : v }))}>
+                                    <SelectTrigger><SelectValue placeholder="—" /></SelectTrigger>
+                                    <SelectContent className="z-[1001]">
+                                      <SelectItem value="__none__">Não informado</SelectItem>
+                                      {ministeriosList.map(m => <SelectItem key={m.id} value={m.id}>{m.nome}</SelectItem>)}
+                                    </SelectContent>
+                                  </Select>
+                                </div>
+                                <div style={{ gridColumn: '1 / -1' }}>
+                                  <Label style={{ fontSize: 11 }}>Culto</Label>
+                                  <Input value={checkinForm.culto} onChange={e => setCheckinForm(f => ({ ...f, culto: e.target.value }))} placeholder="Ex: Culto da manhã" />
+                                </div>
+                              </div>
+                              <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+                                <Button variant="outline" onClick={() => { setShowCheckinForm(false); setCheckinForm({ ministerio_id: '', data: new Date().toISOString().slice(0, 10), culto: '' }); }}>Cancelar</Button>
+                                <Button onClick={registrarCheckin} disabled={salvandoCheckin}>
+                                  {salvandoCheckin ? 'Salvando...' : 'Registrar'}
+                                </Button>
+                              </div>
+                            </div>
+                          )}
+
+                          {checkins.length > 0 ? (
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                              {checkins.slice(0, 10).map(ci => {
+                                const cor = ci.ministerio?.cor || C.text3;
+                                return (
+                                  <div key={ci.id} style={{ padding: '8px 12px', background: 'var(--cbrio-input-bg)', borderRadius: 10, display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12 }}>
+                                    <div style={{ flex: 1, minWidth: 0, display: 'flex', gap: 10, alignItems: 'center' }}>
+                                      <Activity style={{ width: 14, height: 14, color: cor, flexShrink: 0 }} />
+                                      <div style={{ flex: 1, minWidth: 0 }}>
+                                        <div style={{ fontSize: 13, color: C.text, fontWeight: 500 }}>
+                                          {ci.ministerio?.nome || 'Check-in geral'}
+                                        </div>
+                                        <div style={{ fontSize: 11, color: C.text3, marginTop: 1 }}>
+                                          {new Date(ci.data).toLocaleDateString('pt-BR')}
+                                          {ci.culto && ` · ${ci.culto}`}
+                                          {ci.origem && ci.origem !== 'manual' && ` · ${ci.origem}`}
+                                        </div>
+                                      </div>
+                                    </div>
+                                    {isDiretor && (
+                                      <Button variant="ghost" size="icon" onClick={() => removerCheckin(ci.id)} title="Remover">
+                                        <Trash2 style={{ width: 14, height: 14, color: C.red }} />
+                                      </Button>
+                                    )}
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          ) : (
+                            <div style={{ padding: '16px 0', textAlign: 'center', color: C.text3, fontSize: 13 }}>
+                              Nenhum check-in registrado
+                            </div>
+                          )}
+                        </div>
+
+                        {/* Histórico de ministérios */}
+                        {historico.length > 0 && (
+                          <div>
+                            <h3 style={{ fontSize: 13, fontWeight: 600, color: C.text2, marginBottom: 10, textTransform: 'uppercase', letterSpacing: 0.5 }}>
+                              Ministérios passados
+                            </h3>
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                              {historico.map(v => (
+                                <div key={v.id} style={{ padding: '8px 12px', background: 'var(--cbrio-input-bg)', borderRadius: 10, opacity: 0.75 }}>
+                                  <div style={{ fontSize: 13, color: C.text, fontWeight: 500 }}>{v.ministerio?.nome || '—'}</div>
+                                  <div style={{ fontSize: 11, color: C.text3, marginTop: 2 }}>
+                                    {new Date(v.desde).toLocaleDateString('pt-BR')} — {new Date(v.ate).toLocaleDateString('pt-BR')}
+                                    {v.motivo_saida && ` · ${v.motivo_saida}`}
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
                       </>
                     );
                   })()}

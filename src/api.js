@@ -452,6 +452,29 @@ export const membresia = {
     remove: (id) => del(`/membresia/contribuicoes/${id}`),
     kpis: () => get('/membresia/contribuicoes/kpis'),
   },
+  ministerios: {
+    list: (params) => get('/membresia/ministerios' + (params ? '?' + new URLSearchParams(params) : '')),
+    get: (id) => get(`/membresia/ministerios/${id}`),
+    create: (data) => post('/membresia/ministerios', data),
+    update: (id, data) => put(`/membresia/ministerios/${id}`, data),
+    remove: (id) => del(`/membresia/ministerios/${id}`),
+  },
+  voluntarios: {
+    create: (data) => post('/membresia/voluntarios', data),
+    update: (id, data) => put(`/membresia/voluntarios/${id}`, data),
+    sair: (id, motivo) => patch(`/membresia/voluntarios/${id}/sair`, { motivo }),
+  },
+  escalas: {
+    list: (params) => get('/membresia/escalas' + (params ? '?' + new URLSearchParams(params) : '')),
+    create: (data) => post('/membresia/escalas', data),
+    update: (id, data) => put(`/membresia/escalas/${id}`, data),
+    remove: (id) => del(`/membresia/escalas/${id}`),
+  },
+  checkins: {
+    list: (params) => get('/membresia/checkins' + (params ? '?' + new URLSearchParams(params) : '')),
+    create: (data) => post('/membresia/checkins', data),
+    remove: (id) => del(`/membresia/checkins/${id}`),
+  },
 };
 
 async function requestFile(path, formData) {
