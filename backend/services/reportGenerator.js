@@ -90,6 +90,7 @@ function generateSlideHTML({ eventName, eventDate, scope, phases, completedTasks
       </div>`;
   });
 
+  const summary = extractSummary(reportContent || '');
   const highlights = extractRisks(reportContent || '');
   const recommendations = extractRecommendations(reportContent || '');
 
@@ -102,6 +103,7 @@ function generateSlideHTML({ eventName, eventDate, scope, phases, completedTasks
     .replace(/\{\{pendingTasks\}\}/g, String(pendingTasks || 0))
     .replace(/\{\{pctDone\}\}/g, String(pctDone || 0))
     .replace(/\{\{phaseBars\}\}/g, phaseBars)
+    .replace(/\{\{summary\}\}/g, summary)
     .replace(/\{\{highlights\}\}/g, highlights)
     .replace(/\{\{recommendations\}\}/g, recommendations)
     .replace(/\{\{generatedAt\}\}/g, new Date().toLocaleString('pt-BR'));
