@@ -952,42 +952,80 @@ router.post('/cadastros/:id/aprovar', authorize('admin', 'diretor'), async (req,
       return res.status(400).json({ error: 'Cadastro já foi aprovado.' });
     }
 
-    // Cria o mem_membros a partir do cadastro pendente.
     // Observação "Como conheceu" vai para observacoes (mem_membros não tem esse campo).
     const obsAuto = [
       cad.como_conheceu ? `Como conheceu: ${cad.como_conheceu}` : null,
       observacoes || cad.observacoes,
     ].filter(Boolean).join('\n');
 
-    const membroPayload = {
-      nome: cad.nome,
-      email: cad.email,
-      telefone: cad.telefone,
-      data_nascimento: cad.data_nascimento,
-      estado_civil: cad.estado_civil,
-      endereco: cad.endereco,
-      bairro: cad.bairro,
-      cidade: cad.cidade,
-      cep: cad.cep,
-      profissao: cad.profissao,
-      status: 'visitante',
-      familia_id: familia_id || null,
-      parentesco: parentesco || null,
-      observacoes: obsAuto || null,
-      active: true,
-    };
+    let membro = null;
+    let foiAtualizacao = false;
 
-    const { data: membro, error: e2 } = await supabase
-      .from('mem_membros')
-      .insert(membroPayload)
-      .select()
-      .single();
-    if (e2) {
-      console.error('[CADASTROS] erro ao criar membro:', e2.message);
-      return res.status(500).json({ error: 'Erro ao criar membro.' });
+    if (cad.duplicado_de_id) {
+      // ── Atualização cadastral ──
+      // CPF/email/telefone já pertencem a um membro existente. Atualizamos
+      // os dados dele com o que veio no formulário, preservando campos que
+      // o cadastro pendente não preencheu (não sobrescreve com null).
+      const patch = {};
+      const campos = [
+        'nome', 'cpf', 'email', 'telefone', 'data_nascimento', 'estado_civil',
+        'endereco', 'bairro', 'cidade', 'cep', 'profissao',
+      ];
+      for (const k of campos) {
+        if (cad[k] !== null && cad[k] !== undefined && cad[k] !== '') {
+          patch[k] = cad[k];
+        }
+      }
+      if (familia_id) patch.familia_id = familia_id;
+      if (parentesco) patch.parentesco = parentesco;
+      if (obsAuto) patch.observacoes = obsAuto;
+
+      const { data: atualizado, error: eUpd } = await supabase
+        .from('mem_membros')
+        .update(patch)
+        .eq('id', cad.duplicado_de_id)
+        .select()
+        .single();
+      if (eUpd || !atualizado) {
+        console.error('[CADASTROS] erro ao atualizar membro existente:', eUpd?.message);
+        return res.status(500).json({ error: 'Erro ao atualizar membro existente.' });
+      }
+      membro = atualizado;
+      foiAtualizacao = true;
+    } else {
+      // ── Novo membro ──
+      const membroPayload = {
+        nome: cad.nome,
+        cpf: cad.cpf,
+        email: cad.email,
+        telefone: cad.telefone,
+        data_nascimento: cad.data_nascimento,
+        estado_civil: cad.estado_civil,
+        endereco: cad.endereco,
+        bairro: cad.bairro,
+        cidade: cad.cidade,
+        cep: cad.cep,
+        profissao: cad.profissao,
+        status: 'visitante',
+        familia_id: familia_id || null,
+        parentesco: parentesco || null,
+        observacoes: obsAuto || null,
+        active: true,
+      };
+
+      const { data: novo, error: e2 } = await supabase
+        .from('mem_membros')
+        .insert(membroPayload)
+        .select()
+        .single();
+      if (e2) {
+        console.error('[CADASTROS] erro ao criar membro:', e2.message);
+        return res.status(500).json({ error: 'Erro ao criar membro.' });
+      }
+      membro = novo;
     }
 
-    // Marca cadastro como aprovado e liga ao membro criado
+    // Marca cadastro como aprovado e liga ao membro criado/atualizado
     const { error: e3 } = await supabase
       .from('mem_cadastros_pendentes')
       .update({
@@ -1006,12 +1044,14 @@ router.post('/cadastros/:id/aprovar', authorize('admin', 'diretor'), async (req,
     try {
       await supabase.from('mem_historico').insert({
         membro_id: membro.id,
-        descricao: `Aprovado a partir do formulário público (origem: ${cad.origem}).`,
+        descricao: foiAtualizacao
+          ? `Atualização cadastral a partir do formulário público (origem: ${cad.origem}).`
+          : `Aprovado a partir do formulário público (origem: ${cad.origem}).`,
         registrado_por: req.user.userId,
       });
     } catch (_) { /* histórico é opcional */ }
 
-    res.status(201).json({ ok: true, membro });
+    res.status(foiAtualizacao ? 200 : 201).json({ ok: true, membro, atualizacao: foiAtualizacao });
   } catch (e) {
     console.error('[CADASTROS] aprovar exception:', e.message);
     res.status(500).json({ error: 'Erro ao aprovar cadastro' });

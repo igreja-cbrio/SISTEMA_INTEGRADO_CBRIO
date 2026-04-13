@@ -94,8 +94,42 @@ function SmokeyBackground({ color = '#00736B' }) {
   );
 }
 
+// ── Helpers de máscara ──
+function soDigitos(v) { return (v || '').toString().replace(/\D+/g, ''); }
+
+function mascaraCpf(v) {
+  const d = soDigitos(v).slice(0, 11);
+  if (d.length <= 3) return d;
+  if (d.length <= 6) return `${d.slice(0, 3)}.${d.slice(3)}`;
+  if (d.length <= 9) return `${d.slice(0, 3)}.${d.slice(3, 6)}.${d.slice(6)}`;
+  return `${d.slice(0, 3)}.${d.slice(3, 6)}.${d.slice(6, 9)}-${d.slice(9)}`;
+}
+
+function mascaraTelefone(v) {
+  const d = soDigitos(v).slice(0, 11);
+  if (d.length <= 2) return d.length ? `(${d}` : '';
+  if (d.length <= 6) return `(${d.slice(0, 2)}) ${d.slice(2)}`;
+  if (d.length <= 10) return `(${d.slice(0, 2)}) ${d.slice(2, 6)}-${d.slice(6)}`;
+  return `(${d.slice(0, 2)}) ${d.slice(2, 7)}-${d.slice(7)}`;
+}
+
+function cpfValido(v) {
+  const d = soDigitos(v);
+  if (d.length !== 11) return false;
+  if (/^(\d)\1{10}$/.test(d)) return false;
+  const calc = (base, fator) => {
+    let soma = 0;
+    for (let i = 0; i < base.length; i += 1) soma += parseInt(base[i], 10) * (fator - i);
+    const resto = (soma * 10) % 11;
+    return resto === 10 ? 0 : resto;
+  };
+  const dv1 = calc(d.slice(0, 9), 10);
+  const dv2 = calc(d.slice(0, 10), 11);
+  return dv1 === parseInt(d[9], 10) && dv2 === parseInt(d[10], 10);
+}
+
 // ── Input reutilizável com label flutuante (mesmo estilo do Login) ──
-function Field({ id, label, type = 'text', value, onChange, required, placeholder, as = 'input', rows, maxLength, autoComplete }) {
+function Field({ id, label, type = 'text', value, onChange, required, placeholder, as = 'input', rows, maxLength, autoComplete, inputMode }) {
   const [focused, setFocused] = useState(false);
   const active = focused || (value !== undefined && value !== null && String(value).length > 0);
   const Tag = as;
@@ -110,6 +144,7 @@ function Field({ id, label, type = 'text', value, onChange, required, placeholde
         rows={rows}
         maxLength={maxLength}
         autoComplete={autoComplete}
+        inputMode={inputMode}
         onChange={onChange}
         onFocus={() => setFocused(true)}
         onBlur={() => setFocused(false)}
@@ -207,6 +242,8 @@ const ESTADO_CIVIL_OPTS = [
 export default function CadastroMembresia() {
   const [form, setForm] = useState({
     nome: '',
+    sobrenome: '',
+    cpf: '',
     email: '',
     telefone: '',
     data_nascimento: '',
@@ -236,6 +273,7 @@ export default function CadastroMembresia() {
   }, []);
 
   const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
+  const setMasked = (k, mask) => (e) => setForm((f) => ({ ...f, [k]: mask(e.target.value) }));
 
   async function handleSubmit(e) {
     e.preventDefault();
@@ -244,14 +282,33 @@ export default function CadastroMembresia() {
       setError('É necessário aceitar os termos para enviar o cadastro.');
       return;
     }
-    if (!form.nome.trim() || form.nome.trim().length < 3) {
-      setError('Por favor, informe seu nome completo.');
+    if (!form.nome.trim()) {
+      setError('Informe seu nome.');
+      return;
+    }
+    if (!form.sobrenome.trim()) {
+      setError('Informe seu sobrenome.');
+      return;
+    }
+    if (soDigitos(form.telefone).length < 10) {
+      setError('Informe um celular válido com DDD.');
+      return;
+    }
+    if (!cpfValido(form.cpf)) {
+      setError('CPF inválido.');
+      return;
+    }
+    if (!form.data_nascimento) {
+      setError('Informe sua data de nascimento.');
       return;
     }
     setLoading(true);
     try {
+      const { sobrenome, ...rest } = form;
       await cadastroPublico.enviar({
-        ...form,
+        ...rest,
+        nome: `${form.nome.trim()} ${sobrenome.trim()}`.trim(),
+        cpf: soDigitos(form.cpf),
         origem,
         aceita_termos: aceitaTermos,
         aceita_contato: aceitaContato,
@@ -280,8 +337,12 @@ export default function CadastroMembresia() {
         padding: '40px 36px',
       }}>
         <div style={{ textAlign: 'center', marginBottom: 28 }}>
-          <div style={{ fontSize: 36, marginBottom: 8 }}>⛪</div>
-          <h1 style={{ fontSize: 22, fontWeight: 800, color: '#e5e5e5', margin: 0 }}>Queremos te conhecer</h1>
+          <img
+            src="/logo-cbrio.svg"
+            alt="CBRio"
+            style={{ width: 72, height: 72, marginBottom: 12, display: 'inline-block' }}
+          />
+          <h1 style={{ fontSize: 22, fontWeight: 800, color: '#e5e5e5', margin: 0 }}>Cadastro de Membresia</h1>
           <p style={{ fontSize: 13, color: '#a3a3a3', marginTop: 6, lineHeight: 1.5 }}>
             Preencha seus dados para que nossa equipe de acolhimento entre em contato.
           </p>
@@ -332,16 +393,39 @@ export default function CadastroMembresia() {
             </div>
 
             <SectionTitle>Dados pessoais</SectionTitle>
-            <Field id="nome" label="Nome completo" value={form.nome} onChange={set('nome')} required autoComplete="name" maxLength={200} />
             <Row>
+              <Field id="nome" label="Nome" value={form.nome} onChange={set('nome')} required autoComplete="given-name" maxLength={100} />
+              <Field id="sobrenome" label="Sobrenome" value={form.sobrenome} onChange={set('sobrenome')} required autoComplete="family-name" maxLength={100} />
+            </Row>
+            <Row>
+              <Field
+                id="cpf"
+                label="CPF"
+                value={form.cpf}
+                onChange={setMasked('cpf', mascaraCpf)}
+                required
+                inputMode="numeric"
+                maxLength={14}
+              />
+              <Field
+                id="telefone"
+                label="Celular / WhatsApp"
+                value={form.telefone}
+                onChange={setMasked('telefone', mascaraTelefone)}
+                required
+                autoComplete="tel"
+                inputMode="tel"
+                maxLength={16}
+              />
+            </Row>
+            <Row>
+              <Field id="data_nascimento" type="date" label="Data de nascimento" value={form.data_nascimento} onChange={set('data_nascimento')} required />
               <Field id="email" type="email" label="E-mail" value={form.email} onChange={set('email')} autoComplete="email" maxLength={200} />
-              <Field id="telefone" label="Telefone / WhatsApp" value={form.telefone} onChange={set('telefone')} autoComplete="tel" maxLength={30} />
             </Row>
             <Row>
-              <Field id="data_nascimento" type="date" label="Data de nascimento" value={form.data_nascimento} onChange={set('data_nascimento')} />
               <SelectField id="estado_civil" label="Estado civil" value={form.estado_civil} onChange={set('estado_civil')} options={ESTADO_CIVIL_OPTS} />
+              <Field id="profissao" label="Profissão" value={form.profissao} onChange={set('profissao')} maxLength={120} />
             </Row>
-            <Field id="profissao" label="Profissão" value={form.profissao} onChange={set('profissao')} maxLength={120} />
 
             <SectionTitle>Endereço</SectionTitle>
             <Field id="endereco" label="Endereço (rua e número)" value={form.endereco} onChange={set('endereco')} autoComplete="street-address" maxLength={200} />
