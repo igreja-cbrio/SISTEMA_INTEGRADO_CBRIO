@@ -214,7 +214,6 @@ router.post('/:eventId/report/export', async (req, res) => {
     const filename = `${ext}_${event?.name || 'evento'}.html`;
 
     res.setHeader('Content-Type', 'text/html; charset=utf-8');
-    res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(filename)}"`);
     res.send(html);
   } catch (e) {
     console.error('[Reports] Export:', e.message);
