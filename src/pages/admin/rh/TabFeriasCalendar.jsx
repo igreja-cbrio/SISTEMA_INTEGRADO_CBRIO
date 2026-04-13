@@ -55,6 +55,15 @@ const STATUS_LABEL = { pendente: 'Pendente', aprovado: 'Aprovado', rejeitado: 'R
 
 const colStartClasses = ['', 'col-start-2', 'col-start-3', 'col-start-4', 'col-start-5', 'col-start-6', 'col-start-7'];
 
+const FILTER_OPTIONS = [
+  { value: 'todos', label: 'Todos' },
+  { value: 'ferias', label: 'Férias' },
+  { value: 'licenca_medica', label: 'Licença Médica' },
+  { value: 'licenca_maternidade', label: 'Maternidade' },
+  { value: 'licenca_paternidade', label: 'Paternidade' },
+  { value: 'outro', label: 'Outro' },
+];
+
 export default function TabFeriasCalendar({ funcs, onAprovar }) {
   const today = startOfToday();
   const [selectedDay, setSelectedDay] = useState(today);
@@ -64,6 +73,12 @@ export default function TabFeriasCalendar({ funcs, onAprovar }) {
   const [isNewOpen, setIsNewOpen] = useState(false);
   const [selectedVacation, setSelectedVacation] = useState(null);
   const [form, setForm] = useState({ tipo: 'ferias' });
+  const [filterType, setFilterType] = useState('todos');
+
+  const filteredFerias = useMemo(() => {
+    if (filterType === 'todos') return ferias;
+    return ferias.filter(v => v.tipo === filterType);
+  }, [ferias, filterType]);
 
   const firstDayCurrentMonth = parse(currentMonth, 'MMM-yyyy', new Date());
 
