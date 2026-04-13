@@ -1,29 +1,40 @@
 
 
-## Plano: Corrigir erro "Could not find table in schema cache"
+## Plan: Redesign da TabFerias com Calendário Visual
 
-### Diagnóstico
+### Objetivo
+Substituir a aba de Férias/Licenças no módulo RH pelo novo layout baseado em calendário, mantendo a integração com a API existente (`rh.ferias.list`, `rh.ferias.create`, `rh.ferias.update`).
 
-Dois problemas encontrados:
+### O que muda
 
-1. **Variável de ambiente errada** — O arquivo `src/supabaseClient.js` usa `VITE_SUPABASE_ANON_KEY`, mas o Lovable Cloud fornece `VITE_SUPABASE_PUBLISHABLE_KEY`. Isso faz o cliente Supabase do frontend ficar `null` no preview do Lovable, ou apontar para uma instância diferente em produção.
+**1. Reescrever `FeriasTab` em `RH.jsx` (linhas 1189-1312)**
+- Substituir a tabela simples por um calendário mensal interativo com visualização de férias por dia
+- Adicionar cards de estatísticas (Pendentes, Aprovadas, Total de dias)
+- Painel lateral direito mostrando detalhes do dia selecionado e lista de todas as solicitações
+- Navegação entre meses (anterior/próximo/hoje)
+- Cada dia do calendário mostra badges coloridos com os nomes dos colaboradores em férias
+- Cores por tipo: Férias (azul), Licença Médica (vermelho), Pessoal (roxo), Outro (cinza)
 
-2. **Schema cache desatualizado** — O PostgREST mantém um cache do schema do banco. Após criar muitas tabelas via migrations, o cache pode não ter atualizado, causando o erro "Could not find the table 'public.solicitacoes' in the schema cache".
+**2. Reescrever `FeriasFormModal` em `RH.jsx` (linhas 1642-1667)**
+- Usar Dialog do shadcn/ui no lugar do Modal customizado
+- Manter os mesmos campos (Colaborador, Tipo, Datas, Observações)
 
-### Correção
+**3. Adicionar Dialog de detalhes da solicitação**
+- Modal para ver detalhes completos de uma solicitação selecionada
+- Botões de Aprovar/Rejeitar dentro do dialog quando status é "pendente"
 
-1. **Atualizar `src/supabaseClient.js`** — Usar `VITE_SUPABASE_PUBLISHABLE_KEY` (com fallback para `VITE_SUPABASE_ANON_KEY` para compatibilidade com o deploy Vercel externo):
-```js
-const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY 
-  || import.meta.env.VITE_SUPABASE_ANON_KEY;
-```
+**4. Remover `TabFerias.jsx` standalone**
+- O arquivo `src/pages/admin/rh/TabFerias.jsx` não é importado no RH.jsx (a lógica está inline como `FeriasTab`), mas pode ser removido para evitar confusão
 
-2. **Forçar reload do schema cache** — Executar `NOTIFY pgrst, 'reload schema'` no banco para que o PostgREST atualize o cache e reconheça as novas tabelas.
+### Detalhes técnicos
+- Usar `date-fns` (já instalado) com locale `ptBR` para formatação e navegação do calendário
+- Usar componentes shadcn existentes: Card, Badge, Button, Dialog, Separator
+- Usar lucide-react icons: ChevronLeft, ChevronRight, CalendarIcon, etc.
+- Manter chamadas à API via `rh.ferias.list()`, `rh.ferias.create()` e callback `onAprovar`
+- Adaptar estilos ao tema dark do projeto (usando classes Tailwind com variáveis CSS existentes)
+- Layout: grid com calendário à esquerda (~60%) e painel lateral à direita (~40%)
 
-### Arquivos envolvidos
-
-| Ação | Arquivo |
-|------|---------|
-| Editar | `src/supabaseClient.js` |
-| Migration SQL | `NOTIFY pgrst, 'reload schema'` |
+### Arquivos modificados
+- `src/pages/admin/rh/RH.jsx` — reescrever `FeriasTab` e `FeriasFormModal`
+- `src/pages/admin/rh/TabFerias.jsx` — remover (código duplicado não utilizado)
 
