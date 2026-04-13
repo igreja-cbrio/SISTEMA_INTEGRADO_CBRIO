@@ -8,6 +8,7 @@ import CycleView from './components/CycleView';
 const API = resolveApiBaseUrl(import.meta.env.VITE_API_URL);
 import BudgetPanel from './components/BudgetPanel';
 import { Button } from '../../components/ui/button';
+import { Select as ShadSelect, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../components/ui/select';
 import CompletionSection from '../../components/CompletionSection';
 
 // ── Tema ────────────────────────────────────────────────────
@@ -157,11 +158,18 @@ function Input({ label, ...props }) {
   );
 }
 
-function Select({ label, children, ...props }) {
+function FormSelect({ label, value, onChange, children, placeholder, style, ...props }) {
   return (
-    <div style={styles.formGroup}>
+    <div style={{ ...styles.formGroup, ...style }}>
       {label && <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1 block">{label}</label>}
-      <select className="flex h-9 w-full rounded-lg border border-input bg-background px-3 py-2 text-sm shadow-sm shadow-black/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" {...props}>{children}</select>
+      <ShadSelect value={value || ''} onValueChange={v => onChange && onChange({ target: { value: v } })} {...props}>
+        <SelectTrigger className="w-full">
+          <SelectValue placeholder={placeholder || 'Selecione...'} />
+        </SelectTrigger>
+        <SelectContent>
+          {children}
+        </SelectContent>
+      </ShadSelect>
     </div>
   );
 }
@@ -751,22 +759,30 @@ export default function Eventos() {
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 12, alignItems: 'center' }}>
           {/* Filtro evento */}
           <span style={{ fontSize: 11, color: 'var(--cbrio-text2)', fontWeight: 600 }}>Evento:</span>
-          <select value={kanbanEvent} onChange={e => setKanbanEvent(e.target.value)}
-            style={{ fontSize: 12, padding: '4px 8px', borderRadius: 8, border: `1px solid var(--cbrio-border)`, background: 'var(--cbrio-card)' }}>
-            <option value="all">Todos os eventos</option>
-            {allEvents.map(ev => <option key={ev.id} value={ev.id}>{ev.name}</option>)}
-          </select>
+          <ShadSelect value={kanbanEvent} onValueChange={v => setKanbanEvent(v)}>
+            <SelectTrigger className="w-[200px] h-8 text-xs">
+              <SelectValue placeholder="Todos os eventos" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">Todos os eventos</SelectItem>
+              {allEvents.map(ev => <SelectItem key={ev.id} value={String(ev.id)}>{ev.name}</SelectItem>)}
+            </SelectContent>
+          </ShadSelect>
 
           <span style={{ width: 1, height: 20, background: 'var(--cbrio-border)', margin: '0 4px' }} />
 
           {/* Horizonte */}
           <span style={{ fontSize: 11, color: 'var(--cbrio-text2)', fontWeight: 600 }}>Horizonte:</span>
-          <select value={kanbanHorizon} onChange={e => setKanbanHorizon(parseInt(e.target.value))}
-            style={{ fontSize: 12, padding: '4px 8px', borderRadius: 8, border: '1px solid var(--cbrio-border)', background: 'var(--cbrio-card)' }}>
-            <option value={15}>15 dias</option>
-            <option value={30}>30 dias</option>
-            <option value={0}>Sem filtro</option>
-          </select>
+          <ShadSelect value={String(kanbanHorizon)} onValueChange={v => setKanbanHorizon(parseInt(v))}>
+            <SelectTrigger className="w-[120px] h-8 text-xs">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="15">15 dias</SelectItem>
+              <SelectItem value="30">30 dias</SelectItem>
+              <SelectItem value="0">Sem filtro</SelectItem>
+            </SelectContent>
+          </ShadSelect>
 
           {/* Filtro área (só PMO vê) */}
           {isPMO && <>
@@ -1095,18 +1111,26 @@ export default function Eventos() {
                   <div style={{ display: 'flex', gap: 8, marginBottom: 10 }}>
                     <div style={{ flex: 1 }}>
                       <label style={{ fontSize: 10, fontWeight: 600, color: 'var(--cbrio-text3)', display: 'block', marginBottom: 2 }}>Evento *</label>
-                      <select name="event_id" required value={selectedEventId} onChange={e => setNewTaskEventId(e.target.value)}
-                        style={{ width: '100%', padding: '5px 8px', borderRadius: 6, border: '1px solid var(--cbrio-border)', fontSize: 12, color: 'var(--cbrio-text)', background: 'var(--cbrio-input-bg, #fff)' }}>
-                        <option value="">Selecione...</option>
-                        {eventOptions.map(ev => <option key={ev.id} value={ev.id}>{ev.name}</option>)}
-                      </select>
+                      <ShadSelect value={selectedEventId} onValueChange={v => setNewTaskEventId(v)}>
+                        <SelectTrigger className="w-full h-8 text-xs">
+                          <SelectValue placeholder="Selecione..." />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {eventOptions.map(ev => <SelectItem key={ev.id} value={String(ev.id)}>{ev.name}</SelectItem>)}
+                        </SelectContent>
+                      </ShadSelect>
+                      <input type="hidden" name="event_id" value={selectedEventId} />
                     </div>
                     <div style={{ flex: 1 }}>
                       <label style={{ fontSize: 10, fontWeight: 600, color: 'var(--cbrio-text3)', display: 'block', marginBottom: 2 }}>Fase</label>
-                      <select name="phase_id" required style={{ width: '100%', padding: '5px 8px', borderRadius: 6, border: '1px solid var(--cbrio-border)', fontSize: 12, color: 'var(--cbrio-text)', background: 'var(--cbrio-input-bg, #fff)' }}>
-                        {eventPhases.length === 0 && <option value="">Selecione o evento primeiro</option>}
-                        {eventPhases.map(p => <option key={p.id} value={p.id}>F{p.numero_fase} — {p.nome_fase}</option>)}
-                      </select>
+                      <ShadSelect name="phase_id" defaultValue={eventPhases[0]?.id || ''}>
+                        <SelectTrigger className="w-full h-8 text-xs">
+                          <SelectValue placeholder={eventPhases.length === 0 ? 'Selecione o evento primeiro' : 'Selecione...'} />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {eventPhases.map(p => <SelectItem key={p.id} value={p.id}>F{p.numero_fase} — {p.nome_fase}</SelectItem>)}
+                        </SelectContent>
+                      </ShadSelect>
                     </div>
                   </div>
                   <div style={{ marginBottom: 10 }}>
@@ -1115,11 +1139,20 @@ export default function Eventos() {
                   </div>
                   <div style={{ marginBottom: 10 }}>
                     <label style={{ fontSize: 10, fontWeight: 600, color: 'var(--cbrio-text3)', display: 'block', marginBottom: 2 }}>Área</label>
-                    <select name="area" style={{ width: '100%', padding: '5px 8px', borderRadius: 6, border: '1px solid var(--cbrio-border)', fontSize: 12, color: 'var(--cbrio-text)', background: 'var(--cbrio-input-bg, #fff)' }}>
-                      <option value="compras">Compras</option><option value="financeiro">Financeiro</option>
-                      <option value="manutencao">Manutenção</option><option value="limpeza">Limpeza</option>
-                      <option value="cozinha">Cozinha</option><option value="marketing">Marketing</option><option value="producao">Produção</option>
-                    </select>
+                    <ShadSelect name="area" defaultValue="compras">
+                      <SelectTrigger className="w-full h-8 text-xs">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="compras">Compras</SelectItem>
+                        <SelectItem value="financeiro">Financeiro</SelectItem>
+                        <SelectItem value="manutencao">Manutenção</SelectItem>
+                        <SelectItem value="limpeza">Limpeza</SelectItem>
+                        <SelectItem value="cozinha">Cozinha</SelectItem>
+                        <SelectItem value="marketing">Marketing</SelectItem>
+                        <SelectItem value="producao">Produção</SelectItem>
+                      </SelectContent>
+                    </ShadSelect>
                   </div>
                   <div style={{ marginBottom: 10 }}>
                     <label style={{ fontSize: 10, fontWeight: 600, color: 'var(--cbrio-text3)', display: 'block', marginBottom: 2 }}>Responsável</label>
@@ -1681,18 +1714,28 @@ export default function Eventos() {
 
         {/* Filtros */}
         <div style={styles.filterRow}>
-          <select className="flex h-9 w-full rounded-lg border border-input bg-background px-3 py-2 text-sm shadow-sm shadow-black/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" value={filtroStatus} onChange={e => setFiltroStatus(e.target.value)}>
-            <option value="">Todos os status</option>
-            {Object.entries(STATUS_MAP).map(([k, v]) => (
-              <option key={k} value={k}>{v.label}</option>
-            ))}
-          </select>
-          <select className="flex h-9 w-full rounded-lg border border-input bg-background px-3 py-2 text-sm shadow-sm shadow-black/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" value={filtroCategoria} onChange={e => setFiltroCategoria(e.target.value)}>
-            <option value="">Todas as categorias</option>
-            {categories.map(c => (
-              <option key={c.id} value={c.id}>{c.name}</option>
-            ))}
-          </select>
+          <ShadSelect value={filtroStatus} onValueChange={v => setFiltroStatus(v)}>
+            <SelectTrigger className="w-[180px]">
+              <SelectValue placeholder="Todos os status" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="">Todos os status</SelectItem>
+              {Object.entries(STATUS_MAP).map(([k, v]) => (
+                <SelectItem key={k} value={k}>{v.label}</SelectItem>
+              ))}
+            </SelectContent>
+          </ShadSelect>
+          <ShadSelect value={filtroCategoria} onValueChange={v => setFiltroCategoria(v)}>
+            <SelectTrigger className="w-[180px]">
+              <SelectValue placeholder="Todas as categorias" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="">Todas as categorias</SelectItem>
+              {categories.map(c => (
+                <SelectItem key={c.id} value={String(c.id)}>{c.name}</SelectItem>
+              ))}
+            </SelectContent>
+          </ShadSelect>
           <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: 'var(--cbrio-text2)', cursor: 'pointer' }}>
             <input type="checkbox" checked={hideDone} onChange={e => setHideDone(e.target.checked)} />
             Esconder concluídos
@@ -1930,10 +1973,14 @@ export default function Eventos() {
               <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexShrink: 0 }} onClick={e => e.stopPropagation()}>
                 {task.priority && <Badge status={task.priority} map={PRIORITY_MAP} />}
                 <Badge status={task.status} map={TASK_STATUS_MAP} />
-                <select className="flex h-9 w-full rounded-lg border border-input bg-background px-3 py-2 text-sm shadow-sm shadow-black/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" style={{ padding: '2px 6px', fontSize: 11 }} value={task.status}
-                  onChange={e => changeTaskStatus(task.id, e.target.value)}>
-                  {Object.entries(TASK_STATUS_MAP).map(([k, v]) => (<option key={k} value={k}>{v.label}</option>))}
-                </select>
+                <ShadSelect value={task.status} onValueChange={v => changeTaskStatus(task.id, v)}>
+                  <SelectTrigger className="w-[130px] h-7 text-xs">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {Object.entries(TASK_STATUS_MAP).map(([k, v]) => (<SelectItem key={k} value={k}>{v.label}</SelectItem>))}
+                  </SelectContent>
+                </ShadSelect>
               </div>
             </div>
 
@@ -2085,12 +2132,16 @@ export default function Eventos() {
                   </div>
                   <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexShrink: 0 }} onClick={e => e.stopPropagation()}>
                     <Badge status={task.status} map={TASK_STATUS_MAP} />
-                    <select value={task.status} onChange={e => changeOccTaskStatus(task.id, e.target.value, expandedOcc.id)}
-                      className="flex h-9 w-full rounded-lg border border-input bg-background px-3 py-2 text-sm shadow-sm shadow-black/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" style={{ padding: '2px 6px', fontSize: 11 }}>
-                      <option value="pendente">Pendente</option>
-                      <option value="em-andamento">Em andamento</option>
-                      <option value="concluida">Concluída</option>
-                    </select>
+                    <ShadSelect value={task.status} onValueChange={v => changeOccTaskStatus(task.id, v, expandedOcc.id)}>
+                      <SelectTrigger className="w-[130px] h-7 text-xs">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="pendente">Pendente</SelectItem>
+                        <SelectItem value="em-andamento">Em andamento</SelectItem>
+                        <SelectItem value="concluida">Concluída</SelectItem>
+                      </SelectContent>
+                    </ShadSelect>
                   </div>
                 </div>
                 {isOpen && (
@@ -2208,10 +2259,14 @@ export default function Eventos() {
                   {isOpen && (
                     <div style={{ marginTop: 12, paddingTop: 12, borderTop: `1px solid ${C.border}` }} onClick={e => e.stopPropagation()}>
                       <div style={{ display: 'flex', gap: 6, marginBottom: 10 }}>
-                        <select value={risk.status} onChange={async e => { await risksApi.update(risk.id, { status: e.target.value }); risksApi.list(ev.id).then(setEventRisks); }}
-                          className="flex h-9 w-full rounded-lg border border-input bg-background px-3 py-2 text-sm shadow-sm shadow-black/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" style={{ padding: '4px 8px', fontSize: 12 }}>
-                          {['aberto','mitigando','mitigado','aceito','fechado'].map(s => <option key={s} value={s}>{s}</option>)}
-                        </select>
+                        <ShadSelect value={risk.status} onValueChange={async v => { await risksApi.update(risk.id, { status: v }); risksApi.list(ev.id).then(setEventRisks); }}>
+                          <SelectTrigger className="w-[140px] h-8 text-xs">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {['aberto','mitigando','mitigado','aceito','fechado'].map(s => <SelectItem key={s} value={s}>{s}</SelectItem>)}
+                          </SelectContent>
+                        </ShadSelect>
                         <Button variant="ghost" size="sm" className="text-destructive"
                           onClick={async () => { if (window.confirm('Excluir risco?')) { await risksApi.remove(risk.id); risksApi.list(ev.id).then(setEventRisks); } }}>Excluir</Button>
                       </div>
@@ -2596,11 +2651,15 @@ function ReportTab({ eventId, isPMO }) {
         <div style={{ fontSize: 18, fontWeight: 700, color: 'var(--cbrio-text)' }}>Relatórios do Evento</div>
         {isPMO && (
           <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-            <select value={reportType} onChange={e => setReportType(e.target.value)}
-              style={{ padding: '6px 10px', borderRadius: 8, border: '1px solid var(--cbrio-border)', fontSize: 12, background: 'var(--cbrio-input-bg, #fff)', color: 'var(--cbrio-text)' }}>
-              <option value="full">Evento Completo</option>
-              <option value="phase">Por Fase</option>
-            </select>
+            <ShadSelect value={reportType} onValueChange={v => setReportType(v)}>
+              <SelectTrigger className="w-[180px] h-8 text-xs">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="full">Evento Completo</SelectItem>
+                <SelectItem value="phase">Por Fase</SelectItem>
+              </SelectContent>
+            </ShadSelect>
             <button onClick={generate} disabled={generating}
               style={{
                 padding: '8px 16px', borderRadius: 8, border: 'none', fontSize: 13, fontWeight: 600,

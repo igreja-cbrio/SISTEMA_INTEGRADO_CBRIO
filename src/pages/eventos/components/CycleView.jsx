@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { useAuth } from '../../../contexts/AuthContext';
 import { cycles as api } from '../../../api';
 import CompletionSection from '../../../components/CompletionSection';
+import { Select as ShadSelect, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../../components/ui/select';
 
 const C = { dark: 'var(--cbrio-text)', t2: 'var(--cbrio-text2)', t3: 'var(--cbrio-text3)', border: 'var(--cbrio-border)', accent: '#00B39D' };
 
@@ -269,14 +270,18 @@ export default function CycleView({ eventId, eventName }) {
               <button onClick={() => setViewMode('kanban')} style={{ padding: '4px 10px', fontSize: 11, border: 'none', cursor: 'pointer', fontWeight: 600, background: viewMode === 'kanban' ? C.accent : 'transparent', color: viewMode === 'kanban' ? '#fff' : C.t3 }}>Kanban</button>
               <button onClick={() => setViewMode('lista')} style={{ padding: '4px 10px', fontSize: 11, border: 'none', cursor: 'pointer', fontWeight: 600, background: viewMode === 'lista' ? C.accent : 'transparent', color: viewMode === 'lista' ? '#fff' : C.t3 }}>Lista</button>
             </div>
-            <select value={currentPhase.status} onChange={e => handlePhaseStatus(currentPhase.id, e.target.value)}
-              style={{ fontSize: 11, padding: '4px 8px', borderRadius: 6, border: `1px solid ${C.border}` }}>
-              <option value="pendente">Pendente</option>
-              <option value="em_andamento">Em andamento</option>
-              <option value="concluida">Concluída</option>
-              <option value="atrasada">Atrasada</option>
-              <option value="em_risco">Em risco</option>
-            </select>
+            <ShadSelect value={currentPhase.status} onValueChange={v => handlePhaseStatus(currentPhase.id, v)}>
+              <SelectTrigger className="w-[140px] h-7 text-xs">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="pendente">Pendente</SelectItem>
+                <SelectItem value="em_andamento">Em andamento</SelectItem>
+                <SelectItem value="concluida">Concluída</SelectItem>
+                <SelectItem value="atrasada">Atrasada</SelectItem>
+                <SelectItem value="em_risco">Em risco</SelectItem>
+              </SelectContent>
+            </ShadSelect>
           </div>
         </div>
       )}
@@ -419,7 +424,15 @@ export default function CycleView({ eventId, eventName }) {
               <div style={{ display: 'flex', gap: 8 }}>
                 <div style={{ flex: 1, marginBottom: 10 }}>
                   <label style={lblStyle}>Área</label>
-                  <select name="area" style={inputStyle}><option value="ambos">Ambos</option><option value="marketing">Marketing</option></select>
+                  <ShadSelect name="area" defaultValue="ambos">
+                    <SelectTrigger className="w-full h-8 text-xs">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="ambos">Ambos</SelectItem>
+                      <SelectItem value="marketing">Marketing</SelectItem>
+                    </SelectContent>
+                  </ShadSelect>
                 </div>
               </div>
               <div style={{ display: 'flex', gap: 8 }}>
@@ -446,14 +459,20 @@ export default function CycleView({ eventId, eventName }) {
             <form onSubmit={handleCreateTask}>
               <div style={{ marginBottom: 10 }}>
                 <label style={lblStyle}>Fase</label>
-                <select name="phase_id" defaultValue={activePhase || ''} style={inputStyle}
-                  onChange={e => {
-                    const p = phases.find(ph => ph.id === e.target.value);
-                    const prazoInput = e.target.form?.querySelector('[name=prazo]');
+                <ShadSelect name="phase_id" defaultValue={activePhase || ''}
+                  onValueChange={v => {
+                    const p = phases.find(ph => ph.id === v);
+                    const form = document.querySelector('form');
+                    const prazoInput = form?.querySelector('[name=prazo]');
                     if (p?.data_fim_prevista && prazoInput) prazoInput.value = p.data_fim_prevista;
                   }}>
-                  {phases.map(p => <option key={p.id} value={p.id}>F{p.numero_fase} — {p.nome_fase}</option>)}
-                </select>
+                  <SelectTrigger className="w-full h-8 text-xs">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {phases.map(p => <SelectItem key={p.id} value={p.id}>F{p.numero_fase} — {p.nome_fase}</SelectItem>)}
+                  </SelectContent>
+                </ShadSelect>
               </div>
               <div style={{ marginBottom: 10 }}>
                 <label style={lblStyle}>Título *</label>
@@ -462,11 +481,21 @@ export default function CycleView({ eventId, eventName }) {
               <div style={{ display: 'flex', gap: 8 }}>
                 <div style={{ flex: 1, marginBottom: 10 }}>
                   <label style={lblStyle}>Área</label>
-                  <select name="area" style={inputStyle}>
-                    <option value="adm">Administrativo</option><option value="marketing">Marketing</option>
-                    <option value="compras">Compras</option><option value="financeiro">Financeiro</option>
-                    <option value="manutencao">Manutenção</option><option value="limpeza">Limpeza</option><option value="cozinha">Cozinha</option><option value="producao">Produção</option>
-                  </select>
+                  <ShadSelect name="area" defaultValue="adm">
+                    <SelectTrigger className="w-full h-8 text-xs">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="adm">Administrativo</SelectItem>
+                      <SelectItem value="marketing">Marketing</SelectItem>
+                      <SelectItem value="compras">Compras</SelectItem>
+                      <SelectItem value="financeiro">Financeiro</SelectItem>
+                      <SelectItem value="manutencao">Manutenção</SelectItem>
+                      <SelectItem value="limpeza">Limpeza</SelectItem>
+                      <SelectItem value="cozinha">Cozinha</SelectItem>
+                      <SelectItem value="producao">Produção</SelectItem>
+                    </SelectContent>
+                  </ShadSelect>
                 </div>
                 <div style={{ flex: 1, marginBottom: 10 }}>
                   <label style={lblStyle}>Prazo</label>
@@ -569,19 +598,32 @@ export default function CycleView({ eventId, eventName }) {
                     <div style={{ display: 'flex', gap: 8 }}>
                       <div style={{ flex: 1 }}>
                         <label style={{ fontSize: 10, fontWeight: 600, color: C.t3 }}>Fase</label>
-                        <select value={editData.event_phase_id || ''} onChange={e => setEditData(d => ({ ...d, event_phase_id: e.target.value }))}
-                          style={{ width: '100%', padding: '5px 8px', borderRadius: 6, border: `1px solid ${C.border}`, fontSize: 12, color: C.dark, background: 'var(--cbrio-input-bg, #fff)' }}>
-                          {phases.map(ph => <option key={ph.id} value={ph.id}>F{ph.numero_fase} — {ph.nome_fase}</option>)}
-                        </select>
+                        <ShadSelect value={editData.event_phase_id || ''} onValueChange={v => setEditData(d => ({ ...d, event_phase_id: v }))}>
+                          <SelectTrigger className="w-full h-8 text-xs">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {phases.map(ph => <SelectItem key={ph.id} value={ph.id}>F{ph.numero_fase} — {ph.nome_fase}</SelectItem>)}
+                          </SelectContent>
+                        </ShadSelect>
                       </div>
                       <div style={{ flex: 1 }}>
                         <label style={{ fontSize: 10, fontWeight: 600, color: C.t3 }}>Área</label>
-                        <select value={editData.area || 'adm'} onChange={e => setEditData(d => ({ ...d, area: e.target.value }))}
-                          style={{ width: '100%', padding: '5px 8px', borderRadius: 6, border: `1px solid ${C.border}`, fontSize: 12, color: C.dark, background: 'var(--cbrio-input-bg, #fff)' }}>
-                          <option value="adm">Administrativo</option><option value="marketing">Marketing</option>
-                          <option value="compras">Compras</option><option value="financeiro">Financeiro</option>
-                          <option value="manutencao">Manutenção</option><option value="limpeza">Limpeza</option><option value="cozinha">Cozinha</option><option value="producao">Produção</option>
-                        </select>
+                        <ShadSelect value={editData.area || 'adm'} onValueChange={v => setEditData(d => ({ ...d, area: v }))}>
+                          <SelectTrigger className="w-full h-8 text-xs">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="adm">Administrativo</SelectItem>
+                            <SelectItem value="marketing">Marketing</SelectItem>
+                            <SelectItem value="compras">Compras</SelectItem>
+                            <SelectItem value="financeiro">Financeiro</SelectItem>
+                            <SelectItem value="manutencao">Manutenção</SelectItem>
+                            <SelectItem value="limpeza">Limpeza</SelectItem>
+                            <SelectItem value="cozinha">Cozinha</SelectItem>
+                            <SelectItem value="producao">Produção</SelectItem>
+                          </SelectContent>
+                        </ShadSelect>
                       </div>
                     </div>
                     <div style={{ display: 'flex', gap: 8 }}>

@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo } from 'react';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../../components/ui/select';
 
 const C = { dark: 'var(--cbrio-text)', t2: 'var(--cbrio-text2)', border: 'var(--cbrio-border)', accent: '#00B39D' };
 
@@ -96,24 +97,39 @@ export default function EventFormModal({ event, categories, onSave, onClose }) {
             <Field label="Data *" type="date" value={f.date} onChange={v => upd('date', v)} style={{ flex: 1 }} />
             <div style={{ flex: 1 }}>
               <label style={labelStyle}>Categoria</label>
-              <select value={f.category_id} onChange={e => upd('category_id', e.target.value)} style={inputStyle}>
-                <option value="">Sem categoria</option>
-                {categories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-              </select>
+              <Select value={f.category_id || ''} onValueChange={v => upd('category_id', v)}>
+                <SelectTrigger className="w-full h-8 text-xs">
+                  <SelectValue placeholder="Sem categoria" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="">Sem categoria</SelectItem>
+                  {categories.map(c => <SelectItem key={c.id} value={String(c.id)}>{c.name}</SelectItem>)}
+                </SelectContent>
+              </Select>
             </div>
           </div>
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
             <div style={{ flex: 1 }}>
               <label style={labelStyle}>Status</label>
-              <select value={f.status} onChange={e => upd('status', e.target.value)} style={inputStyle}>
-                {STATUS_OPTIONS.map(s => <option key={s.value} value={s.value}>{s.label}</option>)}
-              </select>
+              <Select value={f.status} onValueChange={v => upd('status', v)}>
+                <SelectTrigger className="w-full h-8 text-xs">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {STATUS_OPTIONS.map(s => <SelectItem key={s.value} value={s.value}>{s.label}</SelectItem>)}
+                </SelectContent>
+              </Select>
             </div>
             <div style={{ flex: 1 }}>
               <label style={labelStyle}>Recorrência</label>
-              <select value={f.recurrence} onChange={e => upd('recurrence', e.target.value)} style={inputStyle}>
-                {RECURRENCES.map(r => <option key={r.value} value={r.value}>{r.label}</option>)}
-              </select>
+              <Select value={f.recurrence} onValueChange={v => upd('recurrence', v)}>
+                <SelectTrigger className="w-full h-8 text-xs">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {RECURRENCES.map(r => <SelectItem key={r.value} value={r.value}>{r.label}</SelectItem>)}
+                </SelectContent>
+              </Select>
             </div>
           </div>
 
