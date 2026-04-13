@@ -759,22 +759,30 @@ export default function Eventos() {
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 12, alignItems: 'center' }}>
           {/* Filtro evento */}
           <span style={{ fontSize: 11, color: 'var(--cbrio-text2)', fontWeight: 600 }}>Evento:</span>
-          <select value={kanbanEvent} onChange={e => setKanbanEvent(e.target.value)}
-            style={{ fontSize: 12, padding: '4px 8px', borderRadius: 8, border: `1px solid var(--cbrio-border)`, background: 'var(--cbrio-card)' }}>
-            <option value="all">Todos os eventos</option>
-            {allEvents.map(ev => <option key={ev.id} value={ev.id}>{ev.name}</option>)}
-          </select>
+          <ShadSelect value={kanbanEvent} onValueChange={v => setKanbanEvent(v)}>
+            <SelectTrigger className="w-[200px] h-8 text-xs">
+              <SelectValue placeholder="Todos os eventos" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">Todos os eventos</SelectItem>
+              {allEvents.map(ev => <SelectItem key={ev.id} value={String(ev.id)}>{ev.name}</SelectItem>)}
+            </SelectContent>
+          </ShadSelect>
 
           <span style={{ width: 1, height: 20, background: 'var(--cbrio-border)', margin: '0 4px' }} />
 
           {/* Horizonte */}
           <span style={{ fontSize: 11, color: 'var(--cbrio-text2)', fontWeight: 600 }}>Horizonte:</span>
-          <select value={kanbanHorizon} onChange={e => setKanbanHorizon(parseInt(e.target.value))}
-            style={{ fontSize: 12, padding: '4px 8px', borderRadius: 8, border: '1px solid var(--cbrio-border)', background: 'var(--cbrio-card)' }}>
-            <option value={15}>15 dias</option>
-            <option value={30}>30 dias</option>
-            <option value={0}>Sem filtro</option>
-          </select>
+          <ShadSelect value={String(kanbanHorizon)} onValueChange={v => setKanbanHorizon(parseInt(v))}>
+            <SelectTrigger className="w-[120px] h-8 text-xs">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="15">15 dias</SelectItem>
+              <SelectItem value="30">30 dias</SelectItem>
+              <SelectItem value="0">Sem filtro</SelectItem>
+            </SelectContent>
+          </ShadSelect>
 
           {/* Filtro área (só PMO vê) */}
           {isPMO && <>
