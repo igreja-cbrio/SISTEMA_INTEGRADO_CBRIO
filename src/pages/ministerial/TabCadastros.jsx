@@ -70,8 +70,7 @@ function Badge({ status }) {
 }
 
 export default function TabCadastros() {
-  const { user } = useAuth();
-  const isDiretor = user && ['admin', 'diretor'].includes(user.role);
+  const { isDiretor } = useAuth();
 
   const [cadastros, setCadastros] = useState([]);
   const [kpis, setKpis] = useState({ pendente: 0, aprovado: 0, rejeitado: 0, duplicado: 0 });
