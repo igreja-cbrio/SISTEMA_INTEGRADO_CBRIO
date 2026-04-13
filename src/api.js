@@ -430,11 +430,78 @@ export const membresia = {
     update: (id, data) => patch(`/membresia/trilha/${id}`, data),
   },
   familias: {
-    list: () => get('/membresia/familias'),
+    list: (params) => get('/membresia/familias' + (params ? '?' + new URLSearchParams(params) : '')),
     create: (data) => post('/membresia/familias', data),
+    update: (id, data) => put(`/membresia/familias/${id}`, data),
+    remove: (id) => del(`/membresia/familias/${id}`),
+    vincular: (membroId, data) => patch(`/membresia/membros/${membroId}/familia`, data),
   },
   historico: {
     create: (data) => post('/membresia/historico', data),
+  },
+  grupos: {
+    list: (params) => get('/membresia/grupos' + (params ? '?' + new URLSearchParams(params) : '')),
+    get: (id) => get(`/membresia/grupos/${id}`),
+    create: (data) => post('/membresia/grupos', data),
+    update: (id, data) => put(`/membresia/grupos/${id}`, data),
+    remove: (id) => del(`/membresia/grupos/${id}`),
+    adicionarMembro: (grupoId, data) => post(`/membresia/grupos/${grupoId}/membros`, data),
+    sairMembro: (participacaoId, data) => patch(`/membresia/grupo-membros/${participacaoId}/sair`, data),
+  },
+  contribuicoes: {
+    list: (params) => get('/membresia/contribuicoes' + (params ? '?' + new URLSearchParams(params) : '')),
+    create: (data) => post('/membresia/contribuicoes', data),
+    update: (id, data) => put(`/membresia/contribuicoes/${id}`, data),
+    remove: (id) => del(`/membresia/contribuicoes/${id}`),
+    kpis: () => get('/membresia/contribuicoes/kpis'),
+  },
+  ministerios: {
+    list: (params) => get('/membresia/ministerios' + (params ? '?' + new URLSearchParams(params) : '')),
+    get: (id) => get(`/membresia/ministerios/${id}`),
+    create: (data) => post('/membresia/ministerios', data),
+    update: (id, data) => put(`/membresia/ministerios/${id}`, data),
+    remove: (id) => del(`/membresia/ministerios/${id}`),
+  },
+  voluntarios: {
+    create: (data) => post('/membresia/voluntarios', data),
+    update: (id, data) => put(`/membresia/voluntarios/${id}`, data),
+    sair: (id, motivo) => patch(`/membresia/voluntarios/${id}/sair`, { motivo }),
+  },
+  escalas: {
+    list: (params) => get('/membresia/escalas' + (params ? '?' + new URLSearchParams(params) : '')),
+    create: (data) => post('/membresia/escalas', data),
+    update: (id, data) => put(`/membresia/escalas/${id}`, data),
+    remove: (id) => del(`/membresia/escalas/${id}`),
+  },
+  checkins: {
+    list: (params) => get('/membresia/checkins' + (params ? '?' + new URLSearchParams(params) : '')),
+    create: (data) => post('/membresia/checkins', data),
+    remove: (id) => del(`/membresia/checkins/${id}`),
+  },
+  cadastros: {
+    list: (params) => get('/membresia/cadastros' + (params ? '?' + new URLSearchParams(params) : '')),
+    kpis: () => get('/membresia/cadastros/kpis'),
+    aprovar: (id, data) => post(`/membresia/cadastros/${id}/aprovar`, data || {}),
+    rejeitar: (id, motivo) => post(`/membresia/cadastros/${id}/rejeitar`, { motivo }),
+    update: (id, data) => patch(`/membresia/cadastros/${id}`, data),
+    remove: (id) => del(`/membresia/cadastros/${id}`),
+  },
+};
+
+// ── Endpoint público (sem auth) do formulário de cadastro de membresia ──
+// Usa fetch direto porque não requer token e deve funcionar em rotas públicas.
+export const cadastroPublico = {
+  enviar: async (data) => {
+    const res = await fetch(`${API}/public/membresia/cadastro`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: 'Erro desconhecido' }));
+      throw new Error(err.error || `HTTP ${res.status}`);
+    }
+    return res.json();
   },
 };
 
