@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
+import { StatisticsCard } from '../../components/ui/statistics-card';
 import { useAuth } from '../../contexts/AuthContext';
 import { membresia } from '../../api';
 import {
@@ -321,18 +322,11 @@ export default function Membresia() {
       )}
 
       {/* KPIs */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 14, marginBottom: 28 }}>
-        {[
-          { label: 'Total Membros', value: kpis.total, color: C.primary },
-          { label: 'Membros Ativos', value: kpis.byStatus?.membro_ativo || 0, color: C.green },
-          { label: 'Visitantes', value: kpis.byStatus?.visitante || 0, color: C.blue },
-          { label: 'Famílias', value: kpis.familias, color: C.amber },
-        ].map((k, i) => (
-          <div key={i} style={{ background: C.card, borderRadius: 12, padding: '18px 22px', border: `1px solid ${C.border}`, borderLeft: `4px solid ${k.color}` }}>
-            <div style={{ fontSize: 20, fontWeight: 700, color: C.text, lineHeight: 1.25 }}>{k.value}</div>
-            <div style={{ fontSize: 12, fontWeight: 600, color: C.text2, textTransform: 'uppercase', letterSpacing: 0.5, marginTop: 2 }}>{k.label}</div>
-          </div>
-        ))}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-7">
+        <StatisticsCard title="Total Membros" value={kpis.total} icon={Users} iconColor="#00B39D" />
+        <StatisticsCard title="Membros Ativos" value={kpis.byStatus?.membro_ativo || 0} icon={Users} iconColor="#10b981" />
+        <StatisticsCard title="Visitantes" value={kpis.byStatus?.visitante || 0} icon={UserPlus} iconColor="#3b82f6" />
+        <StatisticsCard title="Famílias" value={kpis.familias} icon={Home} iconColor="#f59e0b" />
       </div>
 
       {/* Filters */}
