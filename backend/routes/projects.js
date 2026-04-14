@@ -96,7 +96,7 @@ router.get('/:id', async (req, res) => {
 });
 
 // ── CREATE ──
-router.post('/', authorize('diretor'), async (req, res) => {
+router.post('/', authorize('admin', 'diretor'), async (req, res) => {
   try {
     const d = req.body;
     const { data, error } = await supabase.from('projects').insert({
@@ -112,7 +112,7 @@ router.post('/', authorize('diretor'), async (req, res) => {
 });
 
 // ── UPDATE ──
-router.put('/:id', authorize('diretor'), async (req, res) => {
+router.put('/:id', authorize('admin', 'diretor'), async (req, res) => {
   try {
     if (!isUUID(req.params.id)) return res.status(400).json({ error: 'ID inválido' });
     const d = req.body;
@@ -129,7 +129,7 @@ router.put('/:id', authorize('diretor'), async (req, res) => {
 });
 
 // ── DELETE ──
-router.delete('/:id', authorize('diretor'), async (req, res) => {
+router.delete('/:id', authorize('admin', 'diretor'), async (req, res) => {
   try {
     await supabase.from('projects').delete().eq('id', req.params.id);
     res.json({ success: true });
@@ -139,7 +139,7 @@ router.delete('/:id', authorize('diretor'), async (req, res) => {
 // ══════════════════════════════════════════════
 // PHASES
 // ══════════════════════════════════════════════
-router.post('/:id/phases', authorize('diretor'), async (req, res) => {
+router.post('/:id/phases', authorize('admin', 'diretor'), async (req, res) => {
   try {
     const d = req.body;
     const { data, error } = await supabase.from('project_phases').insert({
@@ -152,7 +152,7 @@ router.post('/:id/phases', authorize('diretor'), async (req, res) => {
   } catch (e) { res.status(500).json({ error: 'Erro' }); }
 });
 
-router.patch('/phases/:phaseId', authorize('diretor'), async (req, res) => {
+router.patch('/phases/:phaseId', authorize('admin', 'diretor'), async (req, res) => {
   try {
     const { data, error } = await supabase.from('project_phases').update(req.body).eq('id', req.params.phaseId).select().single();
     if (error) throw error;
@@ -163,7 +163,7 @@ router.patch('/phases/:phaseId', authorize('diretor'), async (req, res) => {
 // ══════════════════════════════════════════════
 // TASKS
 // ══════════════════════════════════════════════
-router.post('/:id/tasks', authorize('diretor'), async (req, res) => {
+router.post('/:id/tasks', authorize('admin', 'diretor'), async (req, res) => {
   try {
     const d = req.body;
     const { data, error } = await supabase.from('project_tasks').insert({
@@ -178,7 +178,7 @@ router.post('/:id/tasks', authorize('diretor'), async (req, res) => {
   } catch (e) { res.status(500).json({ error: 'Erro' }); }
 });
 
-router.put('/tasks/:taskId', authorize('diretor'), async (req, res) => {
+router.put('/tasks/:taskId', authorize('admin', 'diretor'), async (req, res) => {
   try {
     const d = req.body;
     const { data, error } = await supabase.from('project_tasks').update({
@@ -199,7 +199,7 @@ router.patch('/tasks/:taskId/status', async (req, res) => {
   } catch (e) { res.status(500).json({ error: 'Erro' }); }
 });
 
-router.delete('/tasks/:taskId', authorize('diretor'), async (req, res) => {
+router.delete('/tasks/:taskId', authorize('admin', 'diretor'), async (req, res) => {
   try {
     await supabase.from('project_task_subtasks').delete().eq('task_id', req.params.taskId);
     await supabase.from('project_tasks').delete().eq('id', req.params.taskId);
@@ -226,7 +226,7 @@ router.patch('/subtasks/:subId', async (req, res) => {
   } catch (e) { res.status(500).json({ error: 'Erro' }); }
 });
 
-router.delete('/subtasks/:subId', authorize('diretor'), async (req, res) => {
+router.delete('/subtasks/:subId', authorize('admin', 'diretor'), async (req, res) => {
   try {
     await supabase.from('project_task_subtasks').delete().eq('id', req.params.subId);
     res.json({ success: true });
@@ -247,7 +247,7 @@ router.post('/tasks/:taskId/comments', async (req, res) => {
 // ══════════════════════════════════════════════
 // MILESTONES
 // ══════════════════════════════════════════════
-router.post('/:id/milestones', authorize('diretor'), async (req, res) => {
+router.post('/:id/milestones', authorize('admin', 'diretor'), async (req, res) => {
   try {
     const d = req.body;
     const { data, error } = await supabase.from('project_milestones').insert({
@@ -259,7 +259,7 @@ router.post('/:id/milestones', authorize('diretor'), async (req, res) => {
   } catch (e) { res.status(500).json({ error: 'Erro' }); }
 });
 
-router.put('/milestones/:mId', authorize('diretor'), async (req, res) => {
+router.put('/milestones/:mId', authorize('admin', 'diretor'), async (req, res) => {
   try {
     const { data, error } = await supabase.from('project_milestones').update(req.body).eq('id', req.params.mId).select().single();
     if (error) throw error;
@@ -278,7 +278,7 @@ router.patch('/milestones/:mId/status', async (req, res) => {
 // ══════════════════════════════════════════════
 // KPIs
 // ══════════════════════════════════════════════
-router.post('/:id/kpis', authorize('diretor'), async (req, res) => {
+router.post('/:id/kpis', authorize('admin', 'diretor'), async (req, res) => {
   try {
     const d = req.body;
     const { data, error } = await supabase.from('project_kpis').insert({
@@ -298,7 +298,7 @@ router.patch('/kpis/:kpiId', async (req, res) => {
   } catch (e) { res.status(500).json({ error: 'Erro' }); }
 });
 
-router.delete('/kpis/:kpiId', authorize('diretor'), async (req, res) => {
+router.delete('/kpis/:kpiId', authorize('admin', 'diretor'), async (req, res) => {
   try {
     await supabase.from('project_kpis').delete().eq('id', req.params.kpiId);
     res.json({ success: true });
@@ -308,7 +308,7 @@ router.delete('/kpis/:kpiId', authorize('diretor'), async (req, res) => {
 // ══════════════════════════════════════════════
 // RISKS
 // ══════════════════════════════════════════════
-router.post('/:id/risks', authorize('diretor'), async (req, res) => {
+router.post('/:id/risks', authorize('admin', 'diretor'), async (req, res) => {
   try {
     const d = req.body;
     const { data, error } = await supabase.from('project_risks').insert({
@@ -332,7 +332,7 @@ router.patch('/risks/:riskId', async (req, res) => {
   } catch (e) { res.status(500).json({ error: 'Erro' }); }
 });
 
-router.delete('/risks/:riskId', authorize('diretor'), async (req, res) => {
+router.delete('/risks/:riskId', authorize('admin', 'diretor'), async (req, res) => {
   try {
     await supabase.from('project_risks').delete().eq('id', req.params.riskId);
     res.json({ success: true });
@@ -342,7 +342,7 @@ router.delete('/risks/:riskId', authorize('diretor'), async (req, res) => {
 // ══════════════════════════════════════════════
 // BUDGET
 // ══════════════════════════════════════════════
-router.post('/:id/budget', authorize('diretor'), async (req, res) => {
+router.post('/:id/budget', authorize('admin', 'diretor'), async (req, res) => {
   try {
     const d = req.body;
     const { data, error } = await supabase.from('project_budget_items').insert({
@@ -363,7 +363,7 @@ router.patch('/budget/:itemId', async (req, res) => {
   } catch (e) { res.status(500).json({ error: 'Erro' }); }
 });
 
-router.delete('/budget/:itemId', authorize('diretor'), async (req, res) => {
+router.delete('/budget/:itemId', authorize('admin', 'diretor'), async (req, res) => {
   try {
     await supabase.from('project_budget_items').delete().eq('id', req.params.itemId);
     res.json({ success: true });
@@ -381,7 +381,7 @@ router.get('/:id/retrospective', async (req, res) => {
   } catch (e) { res.status(500).json({ error: 'Erro' }); }
 });
 
-router.post('/:id/retrospective', authorize('diretor'), async (req, res) => {
+router.post('/:id/retrospective', authorize('admin', 'diretor'), async (req, res) => {
   try {
     const d = req.body;
     const { data: existing } = await supabase.from('project_retrospectives').select('id').eq('project_id', req.params.id).maybeSingle();
