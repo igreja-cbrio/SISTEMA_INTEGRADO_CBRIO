@@ -125,18 +125,18 @@ export default function AppShell() {
   const [notifOpen, setNotifOpen] = useState(false);
   const [notifs, setNotifs] = useState([]);
   const [notifsLoading, setNotifsLoading] = useState(false);
-  const prevNotifCount = useRef(0);
+  const prevNotifCount = useRef(-1);
 
   useEffect(() => {
     loadNotifCount();
-    const interval = setInterval(loadNotifCount, 30000);
+    const interval = setInterval(loadNotifCount, 10000);
     return () => clearInterval(interval);
   }, []);
 
   async function loadNotifCount() {
     try {
       const { count } = await notifApi.count();
-      if (count > prevNotifCount.current && prevNotifCount.current !== 0) {
+      if (count > 0 && prevNotifCount.current >= 0 && count > prevNotifCount.current) {
         playNotificationSound();
       }
       prevNotifCount.current = count;
