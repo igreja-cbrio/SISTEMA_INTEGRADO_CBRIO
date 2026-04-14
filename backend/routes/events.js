@@ -200,7 +200,7 @@ router.patch('/:id/status', async (req, res) => {
 
     // Reabrir: reativar ciclo criativo e recalcular status
     if (status === 'reabrir') {
-      await supabase.from('event_cycles').update({ status: 'ativo' }).eq('event_id', req.params.id).eq('status', 'concluido');
+      await supabase.from('event_cycles').update({ status: 'ativo' }).eq('event_id', req.params.id).eq('status', 'encerrado');
       const { data: ev } = await supabase.from('events').select('date, recurrence').eq('id', req.params.id).single();
       if (!ev) return res.status(404).json({ error: 'Evento não encontrado' });
       if (ev.recurrence !== 'unico') {
@@ -216,7 +216,7 @@ router.patch('/:id/status', async (req, res) => {
 
     // Finalizar: desativar ciclo criativo (se existir)
     if (status === 'concluido') {
-      await supabase.from('event_cycles').update({ status: 'concluido' }).eq('event_id', req.params.id).eq('status', 'ativo');
+      await supabase.from('event_cycles').update({ status: 'encerrado' }).eq('event_id', req.params.id).eq('status', 'ativo');
     }
 
     const { data: oldEv } = await supabase.from('events').select('status, name').eq('id', req.params.id).single();
