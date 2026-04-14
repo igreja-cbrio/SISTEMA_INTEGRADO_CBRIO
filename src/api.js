@@ -118,6 +118,20 @@ export const expansion = {
   getDependencies: (id) => get(`/expansion/milestones/${id}/dependencies`),
 };
 
+export const grupos = {
+  list: (params) => get('/grupos' + (params ? '?' + new URLSearchParams(params) : '')),
+  get: (id) => get(`/grupos/${id}`),
+  create: (data) => post('/grupos', data),
+  update: (id, data) => put(`/grupos/${id}`, data),
+  remove: (id) => del(`/grupos/${id}`),
+  addMembro: (grupoId, data) => post(`/grupos/${grupoId}/membros`, data),
+  sairMembro: (participacaoId, data) => patch(`/grupos/participacao/${participacaoId}/sair`, data),
+  registrarPresenca: (participacaoId) => patch(`/grupos/participacao/${participacaoId}/presenca`, {}),
+  documentos: (grupoId) => get(`/grupos/${grupoId}/documentos`),
+  uploadDoc: (grupoId, formData) => requestFile(`/grupos/${grupoId}/documentos`, formData),
+  removeDoc: (docId) => del(`/grupos/documentos/${docId}`),
+};
+
 export const strategic = {
   categories: () => get('/strategic/categories'),
   list: (params) => get('/strategic' + (params ? '?' + new URLSearchParams(params) : '')),
