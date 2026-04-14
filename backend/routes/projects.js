@@ -17,7 +17,7 @@ router.get('/dashboard', async (req, res) => {
 router.get('/', async (req, res) => {
   try {
     const { year, status, area } = req.query;
-    let q = 'SELECT p.*, u.name AS owner_name, em.name AS milestone_name FROM projects p LEFT JOIN users u ON p.owner_id = u.id LEFT JOIN expansion_milestones em ON p.milestone_id = em.id WHERE 1=1';
+    let q = 'SELECT p.*, pc.name AS category_name, pc.color AS category_color FROM projects p LEFT JOIN project_categories pc ON p.category_id = pc.id WHERE 1=1';
     const params = [];
     if (year) { params.push(year); q += ` AND p.year = $${params.length}`; }
     if (status) { params.push(status); q += ` AND p.status = $${params.length}`; }
@@ -32,7 +32,7 @@ router.get('/', async (req, res) => {
 router.get('/:id', async (req, res) => {
   try {
     if (!isValidUUID(req.params.id)) return res.status(400).json({ error: 'ID inválido' });
-    const p = await db.query('SELECT p.*, u.name AS owner_name FROM projects p LEFT JOIN users u ON p.owner_id = u.id WHERE p.id = $1', [req.params.id]);
+    const p = await db.query('SELECT p.*, pc.name AS category_name, pc.color AS category_color FROM projects p LEFT JOIN project_categories pc ON p.category_id = pc.id WHERE p.id = $1', [req.params.id]);
     if (!p.rows[0]) return res.status(404).json({ error: 'Projeto não encontrado' });
 
     const [objectives, tasks, milestones, events, meetings] = await Promise.all([
@@ -71,12 +71,12 @@ router.post('/', authorize('diretor'), async (req, res) => {
   try {
     const d = sanitizeObj(req.body);
     const r = await db.query(
-      `INSERT INTO projects (name, year, description, status, owner_id, area, start_date, end_date,
-        budget_planned, milestone_id, priority, notes, created_by)
+      `INSERT INTO projects (name, year, description, status, responsible, area, date_start, date_end,
+        budget_planned, category_id, priority, notes, created_by)
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) RETURNING *`,
       [d.name, d.year||new Date().getFullYear(), d.description||'', d.status||'planejamento',
-       d.owner_id||req.user.userId, d.area||'', d.start_date||null, d.end_date||null,
-       d.budget_planned||0, d.milestone_id||null, d.priority||'media', d.notes||'', req.user.userId]
+       d.responsible||'', d.area||'', d.date_start||d.start_date||null, d.date_end||d.end_date||null,
+       d.budget_planned||0, d.category_id||null, d.priority||'media', d.notes||'', req.user.userId]
     );
     await logActivity(db, req.user.userId, 'create', 'projects', r.rows[0].id, d.name, null, r.rows[0]);
     res.json(r.rows[0]);
@@ -89,12 +89,12 @@ router.put('/:id', authorize('diretor'), async (req, res) => {
     if (!isValidUUID(req.params.id)) return res.status(400).json({ error: 'ID inválido' });
     const d = sanitizeObj(req.body);
     const r = await db.query(
-      `UPDATE projects SET name=$1, year=$2, description=$3, status=$4, owner_id=$5, area=$6,
-        start_date=$7, end_date=$8, budget_planned=$9, budget_spent=$10, milestone_id=$11,
+      `UPDATE projects SET name=$1, year=$2, description=$3, status=$4, responsible=$5, area=$6,
+        date_start=$7, date_end=$8, budget_planned=$9, budget_spent=$10, category_id=$11,
         priority=$12, notes=$13 WHERE id=$14 RETURNING *`,
-      [d.name, d.year, d.description||'', d.status, d.owner_id||null, d.area||'',
-       d.start_date||null, d.end_date||null, d.budget_planned||0, d.budget_spent||0,
-       d.milestone_id||null, d.priority||'media', d.notes||'', req.params.id]
+      [d.name, d.year, d.description||'', d.status, d.responsible||'', d.area||'',
+       d.date_start||d.start_date||null, d.date_end||d.end_date||null, d.budget_planned||0, d.budget_spent||0,
+       d.category_id||null, d.priority||'media', d.notes||'', req.params.id]
     );
     if (!r.rows[0]) return res.status(404).json({ error: 'Projeto não encontrado' });
     res.json(r.rows[0]);
