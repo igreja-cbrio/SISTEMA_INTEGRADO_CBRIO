@@ -969,34 +969,57 @@ router.post('/cadastros/:id/aprovar', authorize('admin', 'diretor'), async (req,
       }
       return out;
     }
+
+    // Campos que PODEM existir em mem_membros (depende de quais migrations rodaram).
+    // Se PostgREST reclamar de coluna ausente, retiramos e tentamos de novo.
     const cadFields = [
       'nome', 'cpf', 'email', 'telefone', 'data_nascimento', 'estado_civil',
       'endereco', 'bairro', 'cidade', 'cep', 'profissao',
     ];
 
+    // Extrai nome da coluna ausente da mensagem do PostgREST
+    function missingCol(err) {
+      if (!err?.message) return null;
+      const m = err.message.match(/Could not find the '(\w+)' column/);
+      return m ? m[1] : null;
+    }
+
     if (cad.duplicado_de_id) {
       // ── Atualização cadastral ──
-      const patch = pickNonNull(cad, cadFields);
+      let patch = pickNonNull(cad, cadFields);
       if (familia_id) patch.familia_id = familia_id;
       if (parentesco) patch.parentesco = parentesco;
       if (obsAuto) patch.observacoes = obsAuto;
 
-      const { data: atualizado, error: eUpd } = await supabase
-        .from('mem_membros')
-        .update(patch)
-        .eq('id', cad.duplicado_de_id)
-        .select()
-        .single();
-      if (eUpd || !atualizado) {
+      // Tenta até 3x, removendo colunas ausentes a cada tentativa
+      for (let attempt = 0; attempt < 3; attempt++) {
+        const { data: atualizado, error: eUpd } = await supabase
+          .from('mem_membros')
+          .update(patch)
+          .eq('id', cad.duplicado_de_id)
+          .select()
+          .single();
+        if (!eUpd && atualizado) {
+          membro = atualizado;
+          break;
+        }
+        const bad = missingCol(eUpd);
+        if (bad) {
+          console.warn(`[CADASTROS] coluna '${bad}' não existe em mem_membros, removendo do payload`);
+          delete patch[bad];
+          continue;
+        }
         const msg = eUpd?.message || 'registro não encontrado';
-        console.error('[CADASTROS] erro ao atualizar membro:', msg, eUpd?.details, eUpd?.hint);
+        console.error('[CADASTROS] erro ao atualizar membro:', msg);
         return res.status(500).json({ error: `Erro ao atualizar membro: ${msg}` });
       }
-      membro = atualizado;
+      if (!membro) {
+        return res.status(500).json({ error: 'Não foi possível atualizar: muitas colunas ausentes.' });
+      }
       foiAtualizacao = true;
     } else {
       // ── Novo membro ──
-      const membroPayload = {
+      let membroPayload = {
         ...pickNonNull(cad, cadFields),
         nome: cad.nome, // obrigatório
         status: 'visitante',
@@ -1006,16 +1029,29 @@ router.post('/cadastros/:id/aprovar', authorize('admin', 'diretor'), async (req,
       if (parentesco) membroPayload.parentesco = parentesco;
       if (obsAuto) membroPayload.observacoes = obsAuto;
 
-      const { data: novo, error: e2 } = await supabase
-        .from('mem_membros')
-        .insert(membroPayload)
-        .select()
-        .single();
-      if (e2) {
-        console.error('[CADASTROS] erro ao criar membro:', e2.message, e2.details, e2.hint, e2.code);
+      // Tenta até 3x, removendo colunas ausentes a cada tentativa
+      for (let attempt = 0; attempt < 3; attempt++) {
+        const { data: novo, error: e2 } = await supabase
+          .from('mem_membros')
+          .insert(membroPayload)
+          .select()
+          .single();
+        if (!e2 && novo) {
+          membro = novo;
+          break;
+        }
+        const bad = missingCol(e2);
+        if (bad) {
+          console.warn(`[CADASTROS] coluna '${bad}' não existe em mem_membros, removendo do payload`);
+          delete membroPayload[bad];
+          continue;
+        }
+        console.error('[CADASTROS] erro ao criar membro:', e2.message, e2.code);
         return res.status(500).json({ error: `Erro ao criar membro: ${e2.message}` });
       }
-      membro = novo;
+      if (!membro) {
+        return res.status(500).json({ error: 'Não foi possível criar: muitas colunas ausentes.' });
+      }
     }
 
     // Marca cadastro como aprovado e liga ao membro criado/atualizado
