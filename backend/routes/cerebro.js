@@ -75,7 +75,8 @@ router.post('/subscriptions', async (req, res) => {
     const drivesRes = await fetch(`https://graph.microsoft.com/v1.0/sites/${HUB_SITE_ID}/drives`, { headers: { Authorization: `Bearer ${token}` } });
     const drives = (await drivesRes.json()).value || [];
 
-    const notificationUrl = `https://crmcbrio.vercel.app/api/cerebro/webhook`;
+    const baseUrl = process.env.FRONTEND_URL || (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : 'https://crmcbrio.vercel.app');
+    const notificationUrl = `${baseUrl}/api/cerebro/webhook`;
     const expiration = new Date(Date.now() + 29 * 24 * 60 * 60 * 1000).toISOString(); // 29 dias
 
     const results = [];
