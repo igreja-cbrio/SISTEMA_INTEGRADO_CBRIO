@@ -224,6 +224,7 @@ router.post('/activate/:eventId', authorize('diretor'), async (req, res) => {
 
     // Mapear etapas da planilha para fases do ciclo
     const etapaToFase = {
+      'Pré-Briefing': 'Pré-Briefing',
       'Aprovação': 'Aprovação',
       'Execução Estratégica': 'Execução Estratégica',
       'Pré-Testes': 'Pré-Testes',
