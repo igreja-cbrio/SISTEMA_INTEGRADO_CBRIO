@@ -70,7 +70,7 @@ function Badge({ status }) {
   );
 }
 
-export default function TabCadastros() {
+export default function TabCadastros({ onMembrosChange }) {
   const { isDiretor } = useAuth();
 
   const [cadastros, setCadastros] = useState([]);
@@ -133,6 +133,7 @@ export default function TabCadastros() {
           : `${nome} aprovado(a) como novo membro!`,
       );
       await load();
+      onMembrosChange?.();
     } catch (e) {
       toast.error(e.message || 'Erro ao aprovar cadastro');
     } finally {
