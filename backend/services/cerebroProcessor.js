@@ -18,7 +18,32 @@ const MAPA_VAULT = {
   'CRM e Pessoas':'crm-pessoas',
 };
 
+// Cache das regras do agente (recarrega a cada execucao do cron)
+let _cachedRegras = null;
+
+async function carregarRegrasDoSharePoint() {
+  try {
+    const token = await getGraphToken();
+    const drivesRes = await fetch(`https://graph.microsoft.com/v1.0/sites/${HUB_SITE_ID}/drives`, { headers: { Authorization: `Bearer ${token}` } });
+    const drives = await drivesRes.json();
+    const vaultDrive = drives.value?.find(d => d.name === 'Cerebro CBRio');
+    if (!vaultDrive) { console.warn('[CEREBRO] Vault drive nao encontrado, usando regras padrao'); return null; }
+
+    const fileRes = await fetch(`https://graph.microsoft.com/v1.0/drives/${vaultDrive.id}/root:/AGENTE-REGRAS.md:/content`, { headers: { Authorization: `Bearer ${token}` } });
+    if (!fileRes.ok) { console.warn('[CEREBRO] AGENTE-REGRAS.md nao encontrado no vault'); return null; }
+    const regras = await fileRes.text();
+    console.log(`[CEREBRO] Regras carregadas do SharePoint (${Math.round(regras.length / 1024)}KB)`);
+    return regras;
+  } catch (e) {
+    console.warn('[CEREBRO] Erro ao carregar regras:', e.message);
+    return null;
+  }
+}
+
 async function processarFila() {
+  // Carregar regras atualizadas do SharePoint
+  _cachedRegras = await carregarRegrasDoSharePoint();
+
   const { data: pendentes } = await supabase.from('cerebro_fila')
     .select('*').eq('status', 'pendente')
     .order('detectado_em').limit(5);
@@ -62,7 +87,7 @@ async function processarFila() {
 
       const response = await client.messages.create({
         model: 'claude-haiku-4-5-20251001', max_tokens: 1500,
-        system: SYSTEM_PROMPT,
+        system: getSystemPrompt(),
         messages
       });
 
@@ -100,18 +125,29 @@ async function processarFila() {
   return { processados, erros };
 }
 
-const SYSTEM_PROMPT = `Voce e o processador do Cerebro CBRio — base de conhecimento da Igreja CBRio.
+const BASE_SYSTEM_PROMPT = `Voce e o processador do Cerebro CBRio — base de conhecimento da Igreja CBRio.
 Analise o documento e responda APENAS com JSON valido (sem markdown, sem backticks):
 {
   "resumo": "Resumo de 2-3 frases do conteudo",
   "tipo_documento": "relatorio | lista | planilha | ata | contrato | apresentacao | material | foto | outro",
-  "tags": ["tag1", "tag2"],
+  "tags": ["tipo/X", "area/X", "status/ativo", "ano/YYYY"],
   "dados_chave": { "campo1": "valor1" },
-  "notas_relacionadas": ["possivel link 1"],
-  "area_vault": "subpasta destino (ex: financeiro, membros, atas)"
+  "notas_relacionadas": ["[[arquivo-existente]]"],
+  "area_vault": "subpasta destino (ex: relatorios, membros, atas)",
+  "nome_arquivo_sugerido": "nome-kebab-case-max-25-chars"
 }
-Tags padrao: #membro #evento #projeto #financeiro #ministerio #ata #decisao #pendente #concluido #marketing #producao #patrimonio #administrativo
-Extraia valores monetarios, datas, nomes, quantidades. Resumo deve ser informativo e direto.`;
+Tags hierarquicas obrigatorias: tipo/X, area/X, status/X, ano/X.
+Extraia valores monetarios, datas, nomes, quantidades.
+Resumo deve ser profundo e informativo — minimo 3-5 frases.
+Nome do arquivo sugerido: semantico, kebab-case, max 25 chars, sem acentos.
+Wikilinks APENAS para arquivos reais do vault, nunca para conceitos ou frases.`;
+
+function getSystemPrompt() {
+  if (_cachedRegras) {
+    return BASE_SYSTEM_PROMPT + '\n\n--- REGRAS COMPLETAS DO AGENTE ---\n\n' + _cachedRegras;
+  }
+  return BASE_SYSTEM_PROMPT;
+}
 
 function buildPrompt(item) {
   return `Analise este documento.\nNome: ${item.nome_arquivo}\nBiblioteca: ${item.biblioteca}\nPasta: ${item.pasta_origem}\nTamanho: ${Math.round(item.tamanho_bytes / 1024)}KB`;

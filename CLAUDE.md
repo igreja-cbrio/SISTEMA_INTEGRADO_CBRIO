@@ -139,6 +139,144 @@ usuários com role `admin` ou `diretor`.
   `SUPABASE_SERVICE_ROLE_KEY`, `DATABASE_URL`, `ANTHROPIC_API_KEY`,
   `CRON_SECRET`, `FRONTEND_URL`.
 
+## Cérebro CBRio — Base de Conhecimento
+
+O Cérebro é o sistema automático que transforma documentos do
+SharePoint em notas Obsidian contextualizadas. **Qualquer alteração
+neste módulo deve respeitar a arquitetura abaixo.**
+
+### Fluxo de dados
+
+1. **Upload no SharePoint** → bibliotecas monitoradas (Gestão,
+   Criativo, Ministerial, etc.)
+2. **Detecção** → webhook do Microsoft Graph ou cron (`/api/cerebro/processar`)
+   detecta arquivos novos via Delta Query
+3. **Fila** → arquivo entra na tabela `cerebro_fila` com status
+   `pendente`
+4. **Processamento** → `backend/services/cerebroProcessor.js` baixa o
+   arquivo, extrai texto via `textExtractor.js`, envia para
+   **Claude Haiku** classificar e resumir (JSON estruturado)
+5. **Nota gerada** → arquivo `.md` com frontmatter YAML completo é
+   salvo na biblioteca "Cerebro CBRio" no SharePoint
+6. **Obsidian** → qualquer membro com OneDrive sincronizado vê as
+   notas aparecerem automaticamente no vault local
+
+### Arquitetura dos arquivos
+
+```
+backend/
+  routes/cerebro.js          — Webhook Graph + cron + subscriptions
+  services/cerebroProcessor.js — Coração: baixa, classifica, gera nota
+  services/textExtractor.js    — Extrai texto de PDF/DOCX/XLSX/PPTX/imagens
+  services/storageService.js   — getGraphToken, downloadFile
+```
+
+### Regras do agente processador
+
+- **Modelo**: usar `claude-haiku-4-5-20251001` (barato e rápido)
+- **System prompt**: pedir JSON puro com campos `resumo`,
+  `tipo_documento`, `tags`, `dados_chave`, `notas_relacionadas`,
+  `area_vault`
+- **Tags padrão**: `#membro`, `#evento`, `#projeto`, `#financeiro`,
+  `#ministerio`, `#ata`, `#decisao`, `#pendente`, `#concluido`,
+  `#marketing`, `#producao`, `#patrimonio`, `#administrativo`
+- **Frontmatter YAML** obrigatório em toda nota gerada:
+  ```yaml
+  titulo, tipo, data_criacao, ultima_atualizacao,
+  biblioteca_origem, pasta_origem, arquivo_original,
+  tamanho, status, tags, processado_por: cerebro-cbrio
+  ```
+- **Nomenclatura** de notas: minúsculas, hífens, sem acentos,
+  max 80 chars (ex: `relatorio-financeiro-marco-2026.md`)
+- **Wikilinks**: notas relacionadas usam `[[nome-da-nota]]`
+
+### Vault Obsidian — estrutura
+
+```
+cerebro-cbrio/
+├── 01-crm-pessoas/    ← Membros, visitantes, líderes
+├── 02-eventos/        ← Cultos, conferências, retiros
+├── 03-projetos/       ← Projetos e iniciativas
+├── 04-financas/       ← Receitas, despesas, relatórios
+├── 05-comunicacao/    ← Campanhas, identidade visual
+├── 06-ministerios/    ← Células, louvor, infantil, voluntários
+├── 07-patrimonio/     ← Espaços, equipamentos
+├── 08-administrativo/ ← Atas, docs legais, processos
+├── 09-ensino-discipulado/ ← Cursos, trilhas, materiais
+├── _dados-brutos/     ← Importados sem classificação
+├── _relatorios-ia/    ← Relatórios gerados pelo Claude
+└── _templates/        ← Templates reutilizáveis
+```
+
+### Mapa biblioteca → pasta vault
+
+| SharePoint         | Vault                  |
+|--------------------|------------------------|
+| Gestão             | gestao                 |
+| Criativo           | criativo               |
+| Ministerial        | ministerial            |
+| CRM e Pessoas      | crm-pessoas            |
+| Eventos            | 02-eventos             |
+| Projetos           | 03-projetos            |
+| Financas           | 04-financas            |
+| Comunicacao        | 05-comunicacao         |
+| Ministerios        | 06-ministerios         |
+| Patrimonio         | 07-patrimonio          |
+| Administrativo     | 08-administrativo      |
+| Ensino             | 09-ensino-discipulado  |
+
+### Tabelas Supabase do Cérebro
+
+- `cerebro_fila` — fila de processamento (status: pendente →
+  processando → concluido/erro/ignorado)
+- `cerebro_config` — configurações (bibliotecas monitoradas,
+  extensões permitidas, delta links, limite de tokens)
+
+### AGENTE-REGRAS.md — fonte única de verdade
+
+As regras completas do agente vivem no **SharePoint** dentro do
+vault "Cerebro CBRio", no arquivo `AGENTE-REGRAS.md`. O processador
+(`cerebroProcessor.js`) baixa esse arquivo automaticamente antes de
+cada execução e injeta as regras no system prompt do Haiku.
+
+**NÃO manter cópia do AGENTE-REGRAS.md no repositório Git.** Se
+precisar alterar regras, editar direto no SharePoint — as mudanças
+valem imediatamente na próxima execução do cron.
+
+Regras críticas resumidas (detalhes no SharePoint):
+- 3 camadas: Supabase (operacional) → SharePoint (lastro) → Obsidian (inteligência derivada)
+- Nomes: kebab-case, max 25 chars, semânticos, temporais com prefixo `YYYY-MM-DD-`
+- Tags hierárquicas obrigatórias: `tipo/X`, `area/X`, `status/X`, `ano/X`
+- Classificar por CONTEÚDO, não por pasta de origem
+- Pastas de alto volume usam hierarquia `YYYY/MM/`
+- MOCs (Map of Content) por ano em áreas de alto volume
+- Resumos PROFUNDOS (min 40 linhas projetos, 35 eventos, 25 financeiro)
+- Wikilinks APENAS para arquivos reais do vault
+- Fotos: descrição visual via Haiku + metadados no frontmatter
+
+### O que NÃO fazer
+
+- **Nunca duplicar** o AGENTE-REGRAS.md no repo — fonte é o SharePoint
+- **Nunca alterar o frontmatter** das notas sem manter todos os
+  campos obrigatórios
+- **Nunca salvar nota sem resumo** — se o Claude não conseguir
+  gerar resumo, marcar como `erro` na fila
+- **Nunca processar arquivos temporários** (começam com `~` ou `.`)
+- **Nunca exceder 10 arquivos por execução do cron** — controlar
+  custo de tokens
+- **Nunca usar modelo caro** para classificação — Haiku é suficiente
+- **Nunca hardcodar o Site ID do SharePoint** — usar constante
+  `HUB_SITE_ID` em `cerebroProcessor.js`
+- **Nunca gerar resumos rasos** de 2-3 linhas — inutiliza o Cérebro
+
+### Variáveis de ambiente necessárias
+
+```
+AZURE_CLIENT_ID, AZURE_CLIENT_SECRET, AZURE_TENANT_ID
+ANTHROPIC_API_KEY
+CRON_SECRET
+```
+
 ## Contexto do projeto
 
 Sistema ERP interno da CBRio (Igreja). Stack: React 18 + Vite +
@@ -148,4 +286,4 @@ serverless functions via `api/index.js`).
 
 Módulos principais: Dashboard, Eventos, Projetos, Planejamento,
 Expansão, RH, Financeiro, Logística, Patrimônio, **Membresia**,
-Solicitações, Assistente IA, Permissões.
+Solicitações, Assistente IA, Permissões, **Cérebro CBRio**.
