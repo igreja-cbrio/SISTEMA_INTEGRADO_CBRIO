@@ -1,7 +1,17 @@
 const router = require('express').Router();
+const multer = require('multer');
 const rateLimit = require('express-rate-limit');
 const { supabase } = require('../utils/supabase');
 const { notificar } = require('../services/notificar');
+
+const uploadMw = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 5 * 1024 * 1024 },
+  fileFilter: (_req, file, cb) => {
+    if (['image/jpeg', 'image/png', 'image/webp'].includes(file.mimetype)) cb(null, true);
+    else cb(new Error('Formato de imagem não suportado.'));
+  },
+});
 
 // ── Rate limit específico para formulário público ──
 // Bem mais restritivo que o global: 10 submissões por IP a cada 15 min.
@@ -41,6 +51,27 @@ function cpfValido(cpf) {
   const dv2 = calc(d.slice(0, 10), 11);
   return dv1 === parseInt(d[9], 10) && dv2 === parseInt(d[10], 10);
 }
+
+// POST /api/public/membresia/upload-foto — upload de foto pelo formulário público
+router.post('/upload-foto', cadastroLimiter, uploadMw.single('foto'), async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ error: 'Imagem não fornecida' });
+    const id = `pub_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    const ext = req.file.mimetype === 'image/png' ? 'png' : req.file.mimetype === 'image/webp' ? 'webp' : 'jpg';
+    const path = `cadastros/${id}.${ext}`;
+
+    const { error: upErr } = await supabase.storage
+      .from('fotos-membros')
+      .upload(path, req.file.buffer, { contentType: req.file.mimetype, upsert: true });
+    if (upErr) throw upErr;
+
+    const { data: urlData } = supabase.storage.from('fotos-membros').getPublicUrl(path);
+    res.json({ foto_url: urlData.publicUrl });
+  } catch (e) {
+    console.error('[PUBLIC] foto upload error:', e.message);
+    res.status(500).json({ error: 'Erro ao enviar foto' });
+  }
+});
 
 // GET /api/public/membresia/verificar-familia?sobrenome=...
 // Retorna famílias cujo nome contenha o sobrenome informado.
@@ -92,6 +123,7 @@ router.post('/cadastro', cadastroLimiter, async (req, res) => {
       aceita_contato,
       consentimento_texto,
       familia_sugerida_id,
+      foto_url,
       // honeypot (não deve ser preenchido por humanos)
       website,
     } = req.body || {};
@@ -197,6 +229,7 @@ router.post('/cadastro', cadastroLimiter, async (req, res) => {
       aceita_contato: !!aceita_contato,
       consentimento_texto: consentimento_texto || null,
       familia_sugerida_id: familia_sugerida_id || null,
+      foto_url: foto_url || null,
       status: duplicadoDeId ? 'duplicado' : 'pendente',
       duplicado_de_id: duplicadoDeId,
       ip_origem: ip,

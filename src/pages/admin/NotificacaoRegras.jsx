@@ -13,6 +13,8 @@ const MODULOS = [
   { id: 'logistica', label: 'Logística', desc: 'Pedidos atrasados, solicitações pendentes', color: '#3b82f6' },
   { id: 'patrimonio', label: 'Patrimônio', desc: 'Bens extraviados, inventários abertos', color: '#f59e0b' },
   { id: 'membresia', label: 'Membresia', desc: 'Novos cadastros, aprovações pendentes', color: '#00B39D' },
+  { id: 'eventos', label: 'Eventos', desc: 'Tarefas atrasadas, eventos próximos', color: '#6366f1' },
+  { id: 'projetos', label: 'Projetos', desc: 'Marcos atrasados, tarefas pendentes', color: '#ec4899' },
 ];
 
 export default function NotificacaoRegras() {

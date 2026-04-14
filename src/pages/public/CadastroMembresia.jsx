@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import { cadastroPublico } from '../../api';
 
 // ── Background shader (mesmo padrão visual da tela de Login) ──
@@ -263,6 +263,12 @@ export default function CadastroMembresia() {
   const [error, setError] = useState('');
   const [sent, setSent] = useState(false);
 
+  // Foto
+  const [fotoPreview, setFotoPreview] = useState(null);
+  const [fotoFile, setFotoFile] = useState(null);
+  const [fotoUploading, setFotoUploading] = useState(false);
+  const fotoRef = useRef(null);
+
   // Sugestão de família por sobrenome
   const [familiaSugerida, setFamiliaSugerida] = useState(null); // { id, nome }
   const [familiaOpcoes, setFamiliaOpcoes] = useState([]); // famílias encontradas
@@ -280,6 +286,18 @@ export default function CadastroMembresia() {
 
   const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
   const setMasked = (k, mask) => (e) => setForm((f) => ({ ...f, [k]: mask(e.target.value) }));
+
+  const handleFotoSelect = useCallback((e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (!file.type.startsWith('image/')) { setError('Selecione um arquivo de imagem (JPG, PNG ou WebP).'); return; }
+    if (file.size > 5 * 1024 * 1024) { setError('A imagem deve ter no maximo 5 MB.'); return; }
+    setFotoFile(file);
+    const reader = new FileReader();
+    reader.onload = (ev) => setFotoPreview(ev.target.result);
+    reader.readAsDataURL(file);
+    setError('');
+  }, []);
 
   function validarForm() {
     if (!form.nome.trim()) return 'Informe seu nome.';
@@ -328,6 +346,17 @@ export default function CadastroMembresia() {
   async function enviarCadastro(familiaId) {
     setLoading(true);
     try {
+      // Upload photo first if selected
+      let foto_url = null;
+      if (fotoFile) {
+        setFotoUploading(true);
+        try {
+          const res = await cadastroPublico.uploadFoto(fotoFile);
+          foto_url = res.foto_url;
+        } catch { /* photo upload failure should not block cadastro */ }
+        setFotoUploading(false);
+      }
+
       const { sobrenome, ...rest } = form;
       await cadastroPublico.enviar({
         ...rest,
@@ -338,6 +367,7 @@ export default function CadastroMembresia() {
         aceita_contato: aceitaContato,
         consentimento_texto: TEXTO_CONSENTIMENTO,
         familia_sugerida_id: familiaId || null,
+        foto_url,
       });
       setSent(true);
     } catch (err) {
@@ -485,6 +515,48 @@ export default function CadastroMembresia() {
             </div>
 
             <SectionTitle>Dados pessoais</SectionTitle>
+
+            {/* Foto */}
+            <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 20 }}>
+              <div
+                onClick={() => fotoRef.current?.click()}
+                style={{
+                  width: 96, height: 96, borderRadius: '50%',
+                  background: fotoPreview ? 'transparent' : 'rgba(0,179,157,0.12)',
+                  border: `2px dashed ${fotoPreview ? '#00B39D' : 'var(--cbrio-border)'}`,
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  cursor: 'pointer', overflow: 'hidden', position: 'relative',
+                  transition: 'border-color 0.3s',
+                }}
+              >
+                {fotoPreview ? (
+                  <img src={fotoPreview} alt="Preview" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                ) : (
+                  <div style={{ textAlign: 'center', color: '#a3a3a3' }}>
+                    <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z" />
+                      <circle cx="12" cy="13" r="4" />
+                    </svg>
+                    <div style={{ fontSize: 10, marginTop: 2 }}>Foto</div>
+                  </div>
+                )}
+                {fotoUploading && (
+                  <div style={{ position: 'absolute', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                    <div style={{ width: 20, height: 20, border: '2px solid rgba(255,255,255,0.3)', borderTopColor: '#fff', borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
+                  </div>
+                )}
+              </div>
+              <input ref={fotoRef} type="file" accept="image/jpeg,image/png,image/webp" style={{ display: 'none' }} onChange={handleFotoSelect} />
+            </div>
+            {fotoPreview && (
+              <div style={{ textAlign: 'center', marginBottom: 16, marginTop: -12 }}>
+                <button type="button" onClick={() => { setFotoFile(null); setFotoPreview(null); if (fotoRef.current) fotoRef.current.value = ''; }}
+                  style={{ fontSize: 12, color: '#ef4444', background: 'transparent', border: 'none', cursor: 'pointer', textDecoration: 'underline' }}>
+                  Remover foto
+                </button>
+              </div>
+            )}
+
             <Row>
               <Field id="nome" label="Nome" value={form.nome} onChange={set('nome')} required autoComplete="given-name" maxLength={100} />
               <Field id="sobrenome" label="Sobrenome" value={form.sobrenome} onChange={set('sobrenome')} required autoComplete="family-name" maxLength={100} />
