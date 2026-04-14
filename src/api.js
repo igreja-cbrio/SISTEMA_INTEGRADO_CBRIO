@@ -491,6 +491,11 @@ export const membresia = {
 // ── Endpoint público (sem auth) do formulário de cadastro de membresia ──
 // Usa fetch direto porque não requer token e deve funcionar em rotas públicas.
 export const cadastroPublico = {
+  verificarFamilia: async (sobrenome) => {
+    const res = await fetch(`${API}/public/membresia/verificar-familia?sobrenome=${encodeURIComponent(sobrenome)}`);
+    if (!res.ok) return { familias: [] };
+    return res.json();
+  },
   enviar: async (data) => {
     const res = await fetch(`${API}/public/membresia/cadastro`, {
       method: 'POST',

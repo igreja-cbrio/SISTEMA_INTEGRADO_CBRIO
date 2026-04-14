@@ -42,6 +42,30 @@ function cpfValido(cpf) {
   return dv1 === parseInt(d[9], 10) && dv2 === parseInt(d[10], 10);
 }
 
+// GET /api/public/membresia/verificar-familia?sobrenome=...
+// Retorna famílias cujo nome contenha o sobrenome informado.
+// Usado pelo formulário público para sugerir vínculo antes do envio.
+router.get('/verificar-familia', cadastroLimiter, async (req, res) => {
+  try {
+    const { sobrenome } = req.query;
+    if (!sobrenome || typeof sobrenome !== 'string' || sobrenome.trim().length < 2) {
+      return res.json({ familias: [] });
+    }
+    const termo = sobrenome.trim();
+    const { data: familias } = await supabase
+      .from('mem_familias')
+      .select('id, nome')
+      .ilike('nome', `%${termo}%`)
+      .limit(5);
+
+    // Retorna só id + nome (privacidade: sem dados de membros)
+    res.json({ familias: familias || [] });
+  } catch (e) {
+    console.error('[PUBLIC] verificar-familia error:', e.message);
+    res.json({ familias: [] });
+  }
+});
+
 // POST /api/public/membresia/cadastro
 // Submissão pública do formulário de cadastro de membresia.
 // - Não exige autenticação (RLS permite INSERT para role anon)
@@ -67,6 +91,7 @@ router.post('/cadastro', cadastroLimiter, async (req, res) => {
       aceita_termos,
       aceita_contato,
       consentimento_texto,
+      familia_sugerida_id,
       // honeypot (não deve ser preenchido por humanos)
       website,
     } = req.body || {};
@@ -171,6 +196,7 @@ router.post('/cadastro', cadastroLimiter, async (req, res) => {
       aceita_termos: !!aceita_termos,
       aceita_contato: !!aceita_contato,
       consentimento_texto: consentimento_texto || null,
+      familia_sugerida_id: familia_sugerida_id || null,
       status: duplicadoDeId ? 'duplicado' : 'pendente',
       duplicado_de_id: duplicadoDeId,
       ip_origem: ip,
