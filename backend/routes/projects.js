@@ -1,212 +1,406 @@
 const router = require('express').Router();
 const { authenticate, authorize } = require('../middleware/auth');
-const db = require('../utils/db');
-const { sanitizeObj, isValidUUID, logActivity } = require('../utils/sanitize');
+const { supabase, query: dbQuery } = require('../utils/supabase');
 
 router.use(authenticate);
 
-// GET /api/projects/dashboard
+const isUUID = (s) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(s);
+
+// ── CATEGORIES (deve vir antes de /:id) ──
+router.get('/categories', async (req, res) => {
+  try {
+    const { data, error } = await supabase.from('project_categories').select('*').order('sort_order');
+    if (error) throw error;
+    res.json(data);
+  } catch (e) { res.status(500).json({ error: 'Erro ao buscar categorias' }); }
+});
+
+// ── DASHBOARD ──
 router.get('/dashboard', async (req, res) => {
   try {
-    const r = await db.query('SELECT * FROM v_projects_dashboard ORDER BY year DESC, name');
-    res.json(r.rows);
-  } catch (e) { res.status(500).json({ error: 'Erro ao buscar dashboard de projetos' }); }
-});
-
-// GET /api/projects
-router.get('/', async (req, res) => {
-  try {
-    const { year, status, area } = req.query;
-    let q = 'SELECT p.*, u.name AS owner_name, em.name AS milestone_name FROM projects p LEFT JOIN users u ON p.owner_id = u.id LEFT JOIN expansion_milestones em ON p.milestone_id = em.id WHERE 1=1';
-    const params = [];
-    if (year) { params.push(year); q += ` AND p.year = $${params.length}`; }
-    if (status) { params.push(status); q += ` AND p.status = $${params.length}`; }
-    if (area) { params.push(area); q += ` AND p.area = $${params.length}`; }
-    q += ' ORDER BY p.year DESC, p.priority, p.name';
-    const r = await db.query(q, params);
-    res.json(r.rows);
-  } catch (e) { res.status(500).json({ error: 'Erro ao buscar projetos' }); }
-});
-
-// GET /api/projects/:id — com objectives, tasks, milestones, events vinculados
-router.get('/:id', async (req, res) => {
-  try {
-    if (!isValidUUID(req.params.id)) return res.status(400).json({ error: 'ID inválido' });
-    const p = await db.query('SELECT p.*, u.name AS owner_name FROM projects p LEFT JOIN users u ON p.owner_id = u.id WHERE p.id = $1', [req.params.id]);
-    if (!p.rows[0]) return res.status(404).json({ error: 'Projeto não encontrado' });
-
-    const [objectives, tasks, milestones, events, meetings] = await Promise.all([
-      db.query('SELECT * FROM project_objectives WHERE project_id = $1 ORDER BY sort_order', [req.params.id]),
-      db.query('SELECT * FROM project_tasks WHERE project_id = $1 ORDER BY sort_order, deadline', [req.params.id]),
-      db.query('SELECT * FROM project_milestones WHERE project_id = $1 ORDER BY date', [req.params.id]),
-      db.query('SELECT id, name, date, status FROM events WHERE project_id = $1 ORDER BY date', [req.params.id]),
-      db.query('SELECT * FROM meetings WHERE project_id = $1 ORDER BY date DESC', [req.params.id]),
-    ]);
-
-    // Subtarefas de cada task
-    const tasksWithSubs = await Promise.all(tasks.rows.map(async t => {
-      const subs = await db.query('SELECT * FROM project_task_subtasks WHERE task_id = $1 ORDER BY sort_order', [t.id]);
-      return { ...t, subtasks: subs.rows };
-    }));
-
-    // Pendências de cada reunião
-    const meetingsWithPends = await Promise.all(meetings.rows.map(async m => {
-      const pends = await db.query('SELECT * FROM pendencies WHERE meeting_id = $1 ORDER BY created_at', [m.id]);
-      return { ...m, pendencies: pends.rows };
-    }));
-
-    res.json({
-      ...p.rows[0],
-      objectives: objectives.rows,
-      tasks: tasksWithSubs,
-      milestones: milestones.rows,
-      events: events.rows,
-      meetings: meetingsWithPends,
-    });
-  } catch (e) { console.error(e); res.status(500).json({ error: 'Erro ao buscar projeto' }); }
-});
-
-// POST /api/projects — só diretor
-router.post('/', authorize('diretor'), async (req, res) => {
-  try {
-    const d = sanitizeObj(req.body);
-    const r = await db.query(
-      `INSERT INTO projects (name, year, description, status, owner_id, area, start_date, end_date,
-        budget_planned, milestone_id, priority, notes, created_by)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) RETURNING *`,
-      [d.name, d.year||new Date().getFullYear(), d.description||'', d.status||'planejamento',
-       d.owner_id||req.user.userId, d.area||'', d.start_date||null, d.end_date||null,
-       d.budget_planned||0, d.milestone_id||null, d.priority||'media', d.notes||'', req.user.userId]
-    );
-    await logActivity(db, req.user.userId, 'create', 'projects', r.rows[0].id, d.name, null, r.rows[0]);
-    res.json(r.rows[0]);
-  } catch (e) { console.error(e); res.status(500).json({ error: 'Erro ao criar projeto' }); }
-});
-
-// PUT /api/projects/:id
-router.put('/:id', authorize('diretor'), async (req, res) => {
-  try {
-    if (!isValidUUID(req.params.id)) return res.status(400).json({ error: 'ID inválido' });
-    const d = sanitizeObj(req.body);
-    const r = await db.query(
-      `UPDATE projects SET name=$1, year=$2, description=$3, status=$4, owner_id=$5, area=$6,
-        start_date=$7, end_date=$8, budget_planned=$9, budget_spent=$10, milestone_id=$11,
-        priority=$12, notes=$13 WHERE id=$14 RETURNING *`,
-      [d.name, d.year, d.description||'', d.status, d.owner_id||null, d.area||'',
-       d.start_date||null, d.end_date||null, d.budget_planned||0, d.budget_spent||0,
-       d.milestone_id||null, d.priority||'media', d.notes||'', req.params.id]
-    );
-    if (!r.rows[0]) return res.status(404).json({ error: 'Projeto não encontrado' });
-    res.json(r.rows[0]);
-  } catch (e) { res.status(500).json({ error: 'Erro ao atualizar projeto' }); }
-});
-
-// DELETE /api/projects/:id
-router.delete('/:id', authorize('diretor'), async (req, res) => {
-  try {
-    await db.query('DELETE FROM projects WHERE id = $1', [req.params.id]);
-    res.json({ success: true });
-  } catch (e) { res.status(500).json({ error: 'Erro ao excluir projeto' }); }
-});
-
-// ── OBJECTIVES ──
-router.post('/:id/objectives', authorize('diretor'), async (req, res) => {
-  try {
-    const d = sanitizeObj(req.body);
-    const r = await db.query(
-      `INSERT INTO project_objectives (project_id, name, description, target_value, unit, deadline)
-       VALUES ($1,$2,$3,$4,$5,$6) RETURNING *`,
-      [req.params.id, d.name, d.description||'', d.target_value||null, d.unit||'%', d.deadline||null]
-    );
-    res.json(r.rows[0]);
-  } catch (e) { res.status(500).json({ error: 'Erro' }); }
-});
-
-router.put('/objectives/:objId', authorize('diretor'), async (req, res) => {
-  try {
-    const d = sanitizeObj(req.body);
-    const r = await db.query(
-      `UPDATE project_objectives SET name=$1, description=$2, target_value=$3, current_value=$4,
-       unit=$5, deadline=$6, status=$7 WHERE id=$8 RETURNING *`,
-      [d.name, d.description||'', d.target_value, d.current_value||0, d.unit||'%', d.deadline||null, d.status||'pendente', req.params.objId]
-    );
-    res.json(r.rows[0]);
-  } catch (e) { res.status(500).json({ error: 'Erro' }); }
-});
-
-// ── PROJECT TASKS ──
-router.post('/:id/tasks', authorize('diretor'), async (req, res) => {
-  try {
-    const d = sanitizeObj(req.body);
-    const r = await db.query(
-      `INSERT INTO project_tasks (project_id, objective_id, name, responsible, area, start_date, deadline, status, priority, description)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *`,
-      [req.params.id, d.objective_id||null, d.name, d.responsible||'', d.area||'',
-       d.start_date||null, d.deadline||null, d.status||'pendente', d.priority||'media', d.description||'']
-    );
-    res.json(r.rows[0]);
-  } catch (e) { res.status(500).json({ error: 'Erro' }); }
-});
-
-router.put('/tasks/:taskId', authorize('diretor'), async (req, res) => {
-  try {
-    const d = sanitizeObj(req.body);
-    const r = await db.query(
-      `UPDATE project_tasks SET name=$1, responsible=$2, area=$3, start_date=$4, deadline=$5,
-       status=$6, priority=$7, description=$8, pct=$9 WHERE id=$10 RETURNING *`,
-      [d.name, d.responsible||'', d.area||'', d.start_date||null, d.deadline||null,
-       d.status||'pendente', d.priority||'media', d.description||'', d.pct||0, req.params.taskId]
-    );
-    res.json(r.rows[0]);
-  } catch (e) { res.status(500).json({ error: 'Erro' }); }
-});
-
-router.patch('/tasks/:taskId/status', authorize('diretor'), async (req, res) => {
-  try {
-    const r = await db.query('UPDATE project_tasks SET status=$1 WHERE id=$2 RETURNING *', [req.body.status, req.params.taskId]);
-    res.json(r.rows[0]);
-  } catch (e) { res.status(500).json({ error: 'Erro' }); }
-});
-
-router.delete('/tasks/:taskId', authorize('diretor'), async (req, res) => {
-  try {
-    await db.query('DELETE FROM project_tasks WHERE id = $1', [req.params.taskId]);
-    res.json({ success: true });
-  } catch (e) { res.status(500).json({ error: 'Erro' }); }
-});
-
-// ── PROJECT MILESTONES ──
-router.post('/:id/milestones', authorize('diretor'), async (req, res) => {
-  try {
-    const d = sanitizeObj(req.body);
-    const r = await db.query(
-      'INSERT INTO project_milestones (project_id, name, date, description) VALUES ($1,$2,$3,$4) RETURNING *',
-      [req.params.id, d.name, d.date, d.description||'']
-    );
-    res.json(r.rows[0]);
-  } catch (e) { res.status(500).json({ error: 'Erro' }); }
-});
-
-router.patch('/milestones/:mId', authorize('diretor'), async (req, res) => {
-  try {
-    const r = await db.query('UPDATE project_milestones SET done=$1 WHERE id=$2 RETURNING *', [req.body.done, req.params.mId]);
-    res.json(r.rows[0]);
-  } catch (e) { res.status(500).json({ error: 'Erro' }); }
+    const { data, error } = await supabase.from('v_projects_dashboard').select('*').order('year', { ascending: false }).order('name');
+    if (error) throw error;
+    res.json(data);
+  } catch (e) { console.error('[Projects dashboard]', e.message); res.status(500).json({ error: 'Erro ao buscar dashboard de projetos' }); }
 });
 
 // ── WORKLOAD VIEW ──
 router.get('/views/workload', async (req, res) => {
   try {
-    const r = await db.query('SELECT * FROM v_workload_by_responsible ORDER BY active DESC');
+    const r = await dbQuery('SELECT responsible, count(*) as active FROM project_tasks WHERE status NOT IN (\'concluida\',\'concluido\') GROUP BY responsible ORDER BY active DESC');
     res.json(r.rows);
   } catch (e) { res.status(500).json({ error: 'Erro' }); }
 });
 
-// ── PENDENCIES VIEW ──
-router.get('/views/pendencies-by-area', async (req, res) => {
+// ── LIST ──
+router.get('/', async (req, res) => {
   try {
-    const r = await db.query('SELECT * FROM v_pendencies_by_area');
-    res.json(r.rows);
+    const { year, status, area } = req.query;
+    let q = supabase.from('projects').select('*, project_categories(name, color)');
+    if (year) q = q.eq('year', year);
+    if (status) q = q.eq('status', status);
+    if (area) q = q.eq('area', area);
+    q = q.order('year', { ascending: false }).order('priority').order('name');
+    const { data, error } = await q;
+    if (error) throw error;
+    res.json((data || []).map(p => ({
+      ...p,
+      category_name: p.project_categories?.name || '',
+      category_color: p.project_categories?.color || '',
+      project_categories: undefined,
+    })));
+  } catch (e) { console.error('[Projects list]', e.message); res.status(500).json({ error: 'Erro ao buscar projetos' }); }
+});
+
+// ── GET by ID ──
+router.get('/:id', async (req, res) => {
+  try {
+    if (!isUUID(req.params.id)) return res.status(400).json({ error: 'ID inválido' });
+    const { data: project, error } = await supabase.from('projects').select('*, project_categories(name, color)').eq('id', req.params.id).single();
+    if (error) throw error;
+
+    const [phases, tasks, milestones, kpis, risks, budget] = await Promise.all([
+      supabase.from('project_phases').select('*').eq('project_id', req.params.id).order('phase_order'),
+      supabase.from('project_tasks').select('*').eq('project_id', req.params.id).order('sort_order').order('deadline'),
+      supabase.from('project_milestones').select('*').eq('project_id', req.params.id).order('sort_order'),
+      supabase.from('project_kpis').select('*').eq('project_id', req.params.id).order('sort_order'),
+      supabase.from('project_risks').select('*').eq('project_id', req.params.id).order('created_at'),
+      supabase.from('project_budget_items').select('*').eq('project_id', req.params.id).order('created_at'),
+    ]);
+
+    // Subtarefas
+    const taskIds = (tasks.data || []).map(t => t.id);
+    let subtasks = [];
+    if (taskIds.length > 0) {
+      const { data: subs } = await supabase.from('project_task_subtasks').select('*').in('task_id', taskIds).order('sort_order');
+      subtasks = subs || [];
+    }
+    const tasksWithSubs = (tasks.data || []).map(t => ({
+      ...t,
+      subtasks: subtasks.filter(s => s.task_id === t.id),
+    }));
+
+    res.json({
+      ...project,
+      category_name: project.project_categories?.name || '',
+      category_color: project.project_categories?.color || '',
+      project_categories: undefined,
+      phases: phases.data || [],
+      tasks: tasksWithSubs,
+      milestones: milestones.data || [],
+      kpis: kpis.data || [],
+      risks: risks.data || [],
+      budget_items: budget.data || [],
+    });
+  } catch (e) { console.error('[Projects get]', e.message); res.status(500).json({ error: 'Erro ao buscar projeto' }); }
+});
+
+// ── CREATE ──
+router.post('/', authorize('diretor'), async (req, res) => {
+  try {
+    const d = req.body;
+    const { data, error } = await supabase.from('projects').insert({
+      name: d.name, year: d.year || new Date().getFullYear(), description: d.description || '',
+      status: d.status || 'planejamento', responsible: d.responsible || '', area: d.area || '',
+      date_start: d.date_start || null, date_end: d.date_end || null,
+      budget_planned: d.budget_planned || 0, category_id: d.category_id || null,
+      priority: d.priority || 'media', notes: d.notes || '', created_by: req.user.userId,
+    }).select().single();
+    if (error) throw error;
+    res.json(data);
+  } catch (e) { console.error('[Projects create]', e.message); res.status(500).json({ error: 'Erro ao criar projeto' }); }
+});
+
+// ── UPDATE ──
+router.put('/:id', authorize('diretor'), async (req, res) => {
+  try {
+    if (!isUUID(req.params.id)) return res.status(400).json({ error: 'ID inválido' });
+    const d = req.body;
+    const { data, error } = await supabase.from('projects').update({
+      name: d.name, year: d.year, description: d.description || '', status: d.status,
+      responsible: d.responsible || '', area: d.area || '',
+      date_start: d.date_start || null, date_end: d.date_end || null,
+      budget_planned: d.budget_planned || 0, budget_spent: d.budget_spent || 0,
+      category_id: d.category_id || null, priority: d.priority || 'media', notes: d.notes || '',
+    }).eq('id', req.params.id).select().single();
+    if (error) throw error;
+    res.json(data);
+  } catch (e) { res.status(500).json({ error: 'Erro ao atualizar projeto' }); }
+});
+
+// ── DELETE ──
+router.delete('/:id', authorize('diretor'), async (req, res) => {
+  try {
+    await supabase.from('projects').delete().eq('id', req.params.id);
+    res.json({ success: true });
+  } catch (e) { res.status(500).json({ error: 'Erro ao excluir projeto' }); }
+});
+
+// ══════════════════════════════════════════════
+// PHASES
+// ══════════════════════════════════════════════
+router.post('/:id/phases', authorize('diretor'), async (req, res) => {
+  try {
+    const d = req.body;
+    const { data, error } = await supabase.from('project_phases').insert({
+      project_id: req.params.id, name: d.name, phase_order: d.phase_order || 0,
+      date_start: d.date_start || null, date_end: d.date_end || null,
+      status: d.status || 'pendente', responsible: d.responsible || '', notes: d.notes || '',
+    }).select().single();
+    if (error) throw error;
+    res.json(data);
+  } catch (e) { res.status(500).json({ error: 'Erro' }); }
+});
+
+router.patch('/phases/:phaseId', authorize('diretor'), async (req, res) => {
+  try {
+    const { data, error } = await supabase.from('project_phases').update(req.body).eq('id', req.params.phaseId).select().single();
+    if (error) throw error;
+    res.json(data);
+  } catch (e) { res.status(500).json({ error: 'Erro' }); }
+});
+
+// ══════════════════════════════════════════════
+// TASKS
+// ══════════════════════════════════════════════
+router.post('/:id/tasks', authorize('diretor'), async (req, res) => {
+  try {
+    const d = req.body;
+    const { data, error } = await supabase.from('project_tasks').insert({
+      project_id: req.params.id, milestone_id: d.milestone_id || null, name: d.name,
+      responsible: d.responsible || '', area: d.area || '',
+      start_date: d.start_date || null, deadline: d.deadline || null,
+      status: d.status || 'pendente', priority: d.priority || 'media', description: d.description || '',
+      created_by: req.user.userId,
+    }).select().single();
+    if (error) throw error;
+    res.json(data);
+  } catch (e) { res.status(500).json({ error: 'Erro' }); }
+});
+
+router.put('/tasks/:taskId', authorize('diretor'), async (req, res) => {
+  try {
+    const d = req.body;
+    const { data, error } = await supabase.from('project_tasks').update({
+      name: d.name, responsible: d.responsible || '', area: d.area || '',
+      start_date: d.start_date || null, deadline: d.deadline || null,
+      status: d.status, priority: d.priority || 'media', description: d.description || '',
+    }).eq('id', req.params.taskId).select().single();
+    if (error) throw error;
+    res.json(data);
+  } catch (e) { res.status(500).json({ error: 'Erro' }); }
+});
+
+router.patch('/tasks/:taskId/status', async (req, res) => {
+  try {
+    const { data, error } = await supabase.from('project_tasks').update({ status: req.body.status }).eq('id', req.params.taskId).select().single();
+    if (error) throw error;
+    res.json(data);
+  } catch (e) { res.status(500).json({ error: 'Erro' }); }
+});
+
+router.delete('/tasks/:taskId', authorize('diretor'), async (req, res) => {
+  try {
+    await supabase.from('project_task_subtasks').delete().eq('task_id', req.params.taskId);
+    await supabase.from('project_tasks').delete().eq('id', req.params.taskId);
+    res.json({ success: true });
+  } catch (e) { res.status(500).json({ error: 'Erro' }); }
+});
+
+// ── SUBTASKS ──
+router.post('/tasks/:taskId/subtasks', async (req, res) => {
+  try {
+    const { data, error } = await supabase.from('project_task_subtasks').insert({
+      task_id: req.params.taskId, name: req.body.name, done: false,
+    }).select().single();
+    if (error) throw error;
+    res.json(data);
+  } catch (e) { res.status(500).json({ error: 'Erro' }); }
+});
+
+router.patch('/subtasks/:subId', async (req, res) => {
+  try {
+    const { data, error } = await supabase.from('project_task_subtasks').update({ done: req.body.done }).eq('id', req.params.subId).select().single();
+    if (error) throw error;
+    res.json(data);
+  } catch (e) { res.status(500).json({ error: 'Erro' }); }
+});
+
+router.delete('/subtasks/:subId', authorize('diretor'), async (req, res) => {
+  try {
+    await supabase.from('project_task_subtasks').delete().eq('id', req.params.subId);
+    res.json({ success: true });
+  } catch (e) { res.status(500).json({ error: 'Erro' }); }
+});
+
+// ── COMMENTS ──
+router.post('/tasks/:taskId/comments', async (req, res) => {
+  try {
+    const { data, error } = await supabase.from('project_task_comments').insert({
+      task_id: req.params.taskId, author_id: req.user.userId, author_name: req.user.name, text: req.body.text,
+    }).select().single();
+    if (error) throw error;
+    res.json(data);
+  } catch (e) { res.status(500).json({ error: 'Erro' }); }
+});
+
+// ══════════════════════════════════════════════
+// MILESTONES
+// ══════════════════════════════════════════════
+router.post('/:id/milestones', authorize('diretor'), async (req, res) => {
+  try {
+    const d = req.body;
+    const { data, error } = await supabase.from('project_milestones').insert({
+      project_id: req.params.id, name: d.name, description: d.description || '',
+      date_start: d.date_start || null, date_end: d.date_end || null, status: d.status || 'pendente',
+    }).select().single();
+    if (error) throw error;
+    res.json(data);
+  } catch (e) { res.status(500).json({ error: 'Erro' }); }
+});
+
+router.put('/milestones/:mId', authorize('diretor'), async (req, res) => {
+  try {
+    const { data, error } = await supabase.from('project_milestones').update(req.body).eq('id', req.params.mId).select().single();
+    if (error) throw error;
+    res.json(data);
+  } catch (e) { res.status(500).json({ error: 'Erro' }); }
+});
+
+router.patch('/milestones/:mId/status', async (req, res) => {
+  try {
+    const { data, error } = await supabase.from('project_milestones').update({ status: req.body.status }).eq('id', req.params.mId).select().single();
+    if (error) throw error;
+    res.json(data);
+  } catch (e) { res.status(500).json({ error: 'Erro' }); }
+});
+
+// ══════════════════════════════════════════════
+// KPIs
+// ══════════════════════════════════════════════
+router.post('/:id/kpis', authorize('diretor'), async (req, res) => {
+  try {
+    const d = req.body;
+    const { data, error } = await supabase.from('project_kpis').insert({
+      project_id: req.params.id, name: d.name, target_value: d.target_value || 0,
+      current_value: d.current_value || 0, unit: d.unit || '%', instrument: d.instrument || '',
+    }).select().single();
+    if (error) throw error;
+    res.json(data);
+  } catch (e) { res.status(500).json({ error: 'Erro' }); }
+});
+
+router.patch('/kpis/:kpiId', async (req, res) => {
+  try {
+    const { data, error } = await supabase.from('project_kpis').update(req.body).eq('id', req.params.kpiId).select().single();
+    if (error) throw error;
+    res.json(data);
+  } catch (e) { res.status(500).json({ error: 'Erro' }); }
+});
+
+router.delete('/kpis/:kpiId', authorize('diretor'), async (req, res) => {
+  try {
+    await supabase.from('project_kpis').delete().eq('id', req.params.kpiId);
+    res.json({ success: true });
+  } catch (e) { res.status(500).json({ error: 'Erro' }); }
+});
+
+// ══════════════════════════════════════════════
+// RISKS
+// ══════════════════════════════════════════════
+router.post('/:id/risks', authorize('diretor'), async (req, res) => {
+  try {
+    const d = req.body;
+    const { data, error } = await supabase.from('project_risks').insert({
+      project_id: req.params.id, title: d.title, description: d.description || '',
+      probability: d.probability || 3, impact: d.impact || 3,
+      score: (d.probability || 3) * (d.impact || 3),
+      mitigation: d.mitigation || '', owner_name: d.owner_name || '', status: d.status || 'identificado',
+    }).select().single();
+    if (error) throw error;
+    res.json(data);
+  } catch (e) { res.status(500).json({ error: 'Erro' }); }
+});
+
+router.patch('/risks/:riskId', async (req, res) => {
+  try {
+    const d = req.body;
+    if (d.probability && d.impact) d.score = d.probability * d.impact;
+    const { data, error } = await supabase.from('project_risks').update(d).eq('id', req.params.riskId).select().single();
+    if (error) throw error;
+    res.json(data);
+  } catch (e) { res.status(500).json({ error: 'Erro' }); }
+});
+
+router.delete('/risks/:riskId', authorize('diretor'), async (req, res) => {
+  try {
+    await supabase.from('project_risks').delete().eq('id', req.params.riskId);
+    res.json({ success: true });
+  } catch (e) { res.status(500).json({ error: 'Erro' }); }
+});
+
+// ══════════════════════════════════════════════
+// BUDGET
+// ══════════════════════════════════════════════
+router.post('/:id/budget', authorize('diretor'), async (req, res) => {
+  try {
+    const d = req.body;
+    const { data, error } = await supabase.from('project_budget_items').insert({
+      project_id: req.params.id, description: d.description, category: d.category || '',
+      planned_amount: d.planned_amount || 0, actual_amount: d.actual_amount || 0,
+      date: d.date || null, notes: d.notes || '',
+    }).select().single();
+    if (error) throw error;
+    res.json(data);
+  } catch (e) { res.status(500).json({ error: 'Erro' }); }
+});
+
+router.patch('/budget/:itemId', async (req, res) => {
+  try {
+    const { data, error } = await supabase.from('project_budget_items').update(req.body).eq('id', req.params.itemId).select().single();
+    if (error) throw error;
+    res.json(data);
+  } catch (e) { res.status(500).json({ error: 'Erro' }); }
+});
+
+router.delete('/budget/:itemId', authorize('diretor'), async (req, res) => {
+  try {
+    await supabase.from('project_budget_items').delete().eq('id', req.params.itemId);
+    res.json({ success: true });
+  } catch (e) { res.status(500).json({ error: 'Erro' }); }
+});
+
+// ══════════════════════════════════════════════
+// RETROSPECTIVE
+// ══════════════════════════════════════════════
+router.get('/:id/retrospective', async (req, res) => {
+  try {
+    const { data, error } = await supabase.from('project_retrospectives').select('*').eq('project_id', req.params.id).maybeSingle();
+    if (error) throw error;
+    res.json(data);
+  } catch (e) { res.status(500).json({ error: 'Erro' }); }
+});
+
+router.post('/:id/retrospective', authorize('diretor'), async (req, res) => {
+  try {
+    const d = req.body;
+    const { data: existing } = await supabase.from('project_retrospectives').select('id').eq('project_id', req.params.id).maybeSingle();
+    if (existing) {
+      const { data, error } = await supabase.from('project_retrospectives').update({
+        what_went_well: d.what_went_well, what_to_improve: d.what_to_improve,
+        action_items: d.action_items, overall_rating: d.overall_rating,
+      }).eq('id', existing.id).select().single();
+      if (error) throw error;
+      res.json(data);
+    } else {
+      const { data, error } = await supabase.from('project_retrospectives').insert({
+        project_id: req.params.id, what_went_well: d.what_went_well || '',
+        what_to_improve: d.what_to_improve || '', action_items: d.action_items || '',
+        overall_rating: d.overall_rating || 0, created_by: req.user.userId,
+      }).select().single();
+      if (error) throw error;
+      res.json(data);
+    }
   } catch (e) { res.status(500).json({ error: 'Erro' }); }
 });
 

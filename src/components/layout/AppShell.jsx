@@ -188,13 +188,15 @@ export default function AppShell() {
       <header className="sticky top-0 z-30 border-b border-border bg-card/80 backdrop-blur-md">
         <div className="flex items-center justify-between h-14 px-6 max-w-[1800px] mx-auto">
           {/* Left: Logo + Nav */}
-          <div className="flex items-center gap-6">
+          {/* Left: Logo */}
+          <div className="flex items-center gap-2 min-w-[140px]">
             <button onClick={() => navigate('/')} className="flex items-center gap-2 hover:opacity-80 transition-opacity">
-              <div className="h-8 w-8 rounded-lg bg-primary flex items-center justify-center text-primary-foreground font-bold text-sm">
-                C
-              </div>
-              <span className="text-sm font-bold text-foreground hidden sm:inline">CBRio ERP</span>
+              <img src="/logo-cbrio-text.png" alt="CBRio" className="h-8 object-contain" />
             </button>
+          </div>
+
+          {/* Center: Navigation */}
+          <div className="flex-1 flex justify-center">
             <MegaMenu items={filteredNavItems} role={role} />
           </div>
 
