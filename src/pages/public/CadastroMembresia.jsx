@@ -287,9 +287,9 @@ export default function CadastroMembresia() {
   const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
   const setMasked = (k, mask) => (e) => setForm((f) => ({ ...f, [k]: mask(e.target.value) }));
 
-  const handleFotoSelect = useCallback((e) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
+  const [fotoDragOver, setFotoDragOver] = useState(false);
+
+  const processarFoto = useCallback((file) => {
     if (!file.type.startsWith('image/')) { setError('Selecione um arquivo de imagem (JPG, PNG ou WebP).'); return; }
     if (file.size > 5 * 1024 * 1024) { setError('A imagem deve ter no maximo 5 MB.'); return; }
     setFotoFile(file);
@@ -298,6 +298,18 @@ export default function CadastroMembresia() {
     reader.readAsDataURL(file);
     setError('');
   }, []);
+
+  const handleFotoSelect = useCallback((e) => {
+    const file = e.target.files?.[0];
+    if (file) processarFoto(file);
+  }, [processarFoto]);
+
+  const handleFotoDrop = useCallback((e) => {
+    e.preventDefault();
+    setFotoDragOver(false);
+    const file = e.dataTransfer?.files?.[0];
+    if (file) processarFoto(file);
+  }, [processarFoto]);
 
   function validarForm() {
     if (!form.nome.trim()) return 'Informe seu nome.';
@@ -516,23 +528,26 @@ export default function CadastroMembresia() {
 
             <SectionTitle>Dados pessoais</SectionTitle>
 
-            {/* Foto */}
-            <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 20 }}>
+            {/* Foto (click + drag & drop) */}
+            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', marginBottom: 20, gap: 8 }}>
               <div
                 onClick={() => fotoRef.current?.click()}
+                onDragOver={(e) => { e.preventDefault(); setFotoDragOver(true); }}
+                onDragLeave={() => setFotoDragOver(false)}
+                onDrop={handleFotoDrop}
                 style={{
                   width: 96, height: 96, borderRadius: '50%',
-                  background: fotoPreview ? 'transparent' : 'rgba(0,179,157,0.12)',
-                  border: `2px dashed ${fotoPreview ? '#00B39D' : 'var(--cbrio-border)'}`,
+                  background: fotoPreview ? 'transparent' : fotoDragOver ? 'rgba(0,179,157,0.25)' : 'rgba(0,179,157,0.12)',
+                  border: `2px dashed ${fotoDragOver ? '#00B39D' : fotoPreview ? '#00B39D' : 'var(--cbrio-border)'}`,
                   display: 'flex', alignItems: 'center', justifyContent: 'center',
                   cursor: 'pointer', overflow: 'hidden', position: 'relative',
-                  transition: 'border-color 0.3s',
+                  transition: 'border-color 0.3s, background 0.3s',
                 }}
               >
                 {fotoPreview ? (
                   <img src={fotoPreview} alt="Preview" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
                 ) : (
-                  <div style={{ textAlign: 'center', color: '#a3a3a3' }}>
+                  <div style={{ textAlign: 'center', color: fotoDragOver ? '#00B39D' : '#a3a3a3' }}>
                     <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
                       <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z" />
                       <circle cx="12" cy="13" r="4" />
@@ -547,15 +562,14 @@ export default function CadastroMembresia() {
                 )}
               </div>
               <input ref={fotoRef} type="file" accept="image/jpeg,image/png,image/webp" style={{ display: 'none' }} onChange={handleFotoSelect} />
-            </div>
-            {fotoPreview && (
-              <div style={{ textAlign: 'center', marginBottom: 16, marginTop: -12 }}>
+              {!fotoPreview && <span style={{ fontSize: 11, color: '#a3a3a3' }}>Clique ou arraste uma foto</span>}
+              {fotoPreview && (
                 <button type="button" onClick={() => { setFotoFile(null); setFotoPreview(null); if (fotoRef.current) fotoRef.current.value = ''; }}
                   style={{ fontSize: 12, color: '#ef4444', background: 'transparent', border: 'none', cursor: 'pointer', textDecoration: 'underline' }}>
                   Remover foto
                 </button>
-              </div>
-            )}
+              )}
+            </div>
 
             <Row>
               <Field id="nome" label="Nome" value={form.nome} onChange={set('nome')} required autoComplete="given-name" maxLength={100} />

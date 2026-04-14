@@ -269,12 +269,24 @@ function MembroFormModal({ open, onOpenChange, editData, familias, onSaved }) {
   const handleFotoSelect = (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
+    processarFoto(file);
+  };
+
+  const processarFoto = (file) => {
     if (!file.type.startsWith('image/')) { toast.error('Selecione uma imagem (JPG, PNG ou WebP).'); return; }
     if (file.size > 5 * 1024 * 1024) { toast.error('A imagem deve ter no maximo 5 MB.'); return; }
     setFotoFile(file);
     const reader = new FileReader();
     reader.onload = (ev) => setFotoPreview(ev.target.result);
     reader.readAsDataURL(file);
+  };
+
+  const [fotoDragOver, setFotoDragOver] = useState(false);
+  const handleFotoDrop = (e) => {
+    e.preventDefault();
+    setFotoDragOver(false);
+    const file = e.dataTransfer?.files?.[0];
+    if (file) processarFoto(file);
   };
 
   const handleSave = async () => {
@@ -352,12 +364,15 @@ function MembroFormModal({ open, onOpenChange, editData, familias, onSaved }) {
           <DialogTitle>{isEdit ? 'Editar Membro' : 'Novo Membro'}</DialogTitle>
         </DialogHeader>
 
-        {/* Foto upload */}
+        {/* Foto upload (click + drag & drop) */}
         <div className="flex flex-col items-center gap-2 py-4">
           <div
             onClick={() => fotoInputRef.current?.click()}
+            onDragOver={(e) => { e.preventDefault(); setFotoDragOver(true); }}
+            onDragLeave={() => setFotoDragOver(false)}
+            onDrop={handleFotoDrop}
             className="relative cursor-pointer group"
-            style={{ width: 80, height: 80, borderRadius: '50%', overflow: 'hidden', border: `2px dashed ${C.border}`, background: fotoPreview ? 'transparent' : C.primaryBg, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+            style={{ width: 80, height: 80, borderRadius: '50%', overflow: 'hidden', border: `2px dashed ${fotoDragOver ? C.primary : C.border}`, background: fotoPreview ? 'transparent' : fotoDragOver ? '#00B39D25' : C.primaryBg, display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'border-color 0.2s, background 0.2s' }}
           >
             {fotoPreview ? (
               <img src={fotoPreview} alt="Foto" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
@@ -375,7 +390,7 @@ function MembroFormModal({ open, onOpenChange, editData, familias, onSaved }) {
               Remover foto
             </button>
           )}
-          {!fotoPreview && <span className="text-xs text-muted-foreground">Clique para adicionar foto</span>}
+          {!fotoPreview && <span className="text-xs text-muted-foreground">Clique ou arraste uma foto</span>}
         </div>
 
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 py-4">
