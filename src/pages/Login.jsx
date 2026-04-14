@@ -209,7 +209,7 @@ export default function Login() {
         border: '1px solid rgba(255,255,255,0.06)', borderRadius: 20, padding: '40px 36px',
       }}>
         <div style={{ textAlign: 'center', marginBottom: 32 }}>
-          <div style={{ fontSize: 36, marginBottom: 8 }}>⛪</div>
+          <img src="/logo-cbrio-icon.png" alt="CBRio" style={{ width: 72, height: 72, marginBottom: 12, display: 'inline-block' }} />
           <h1 style={{ fontSize: 22, fontWeight: 800, color: '#e5e5e5', margin: 0 }}>CBRio ERP</h1>
           <p style={{ fontSize: 13, color: '#737373', marginTop: 4 }}>Sistema de gestão interna</p>
         </div>
