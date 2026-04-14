@@ -8,7 +8,7 @@ import { Textarea } from '../../components/ui/textarea';
 import { Select as ShadSelect, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../components/ui/select';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../../components/ui/dialog';
 import { toast } from 'sonner';
-import { Users, MapPin, Clock, Plus, Search, ChevronLeft, UserPlus, X, ArrowRightLeft } from 'lucide-react';
+import { Users, MapPin, Clock, Plus, Search, ChevronLeft, UserPlus, X, ArrowRightLeft, FileUp, Trash2, FileText, Image, File } from 'lucide-react';
 
 const C = {
   bg: 'var(--cbrio-bg)', card: 'var(--cbrio-card)', primary: '#00B39D', primaryBg: '#00B39D18',
@@ -46,6 +46,10 @@ export default function Grupos() {
   const [filterDia, setFilterDia] = useState('all');
   const [filterLocal, setFilterLocal] = useState('all');
   const [filterTema, setFilterTema] = useState('all');
+  const [detailTab, setDetailTab] = useState('membros');
+  const [documentos, setDocumentos] = useState([]);
+  const [uploading, setUploading] = useState(false);
+  const [uploadComment, setUploadComment] = useState('');
 
   const loadList = useCallback(async () => {
     setLoading(true);
@@ -69,8 +73,8 @@ export default function Grupos() {
   useEffect(() => { loadList(); }, [loadList]);
 
   useEffect(() => {
-    if (selectedGrupo) loadDetail(selectedGrupo);
-  }, [selectedGrupo, loadDetail]);
+    if (selectedGrupo) { loadDetail(selectedGrupo); loadDocumentos(selectedGrupo); setDetailTab('membros'); }
+  }, [selectedGrupo, loadDetail, loadDocumentos]);
 
   const openCreate = () => { setEditData(null); setModalOpen(true); };
   const openEdit = () => { setEditData(detailData); setModalOpen(true); };
@@ -121,6 +125,40 @@ export default function Grupos() {
       toast.success('Membro removido');
       loadDetail(selectedGrupo);
       loadList();
+    } catch { toast.error('Erro ao remover'); }
+  };
+
+  const loadDocumentos = useCallback(async (grupoId) => {
+    try {
+      const data = await api.documentos(grupoId || selectedGrupo);
+      setDocumentos(data || []);
+    } catch {}
+  }, [selectedGrupo]);
+
+  const handleUploadFile = async (file) => {
+    if (!file || !selectedGrupo) return;
+    if (file.size > 10 * 1024 * 1024) { toast.error('Arquivo deve ter no maximo 10MB'); return; }
+    setUploading(true);
+    try {
+      const fd = new FormData();
+      fd.append('arquivo', file);
+      fd.append('nome', file.name);
+      fd.append('tipo', file.name.split('.').pop().toLowerCase());
+      fd.append('comentario', uploadComment || `Upload por ${profile?.name || 'usuario'}`);
+      await api.uploadDoc(selectedGrupo, fd);
+      toast.success('Arquivo enviado');
+      setUploadComment('');
+      loadDocumentos(selectedGrupo);
+    } catch (e) { toast.error(e.message || 'Erro ao enviar arquivo'); }
+    finally { setUploading(false); }
+  };
+
+  const handleDeleteDoc = async (docId) => {
+    if (!window.confirm('Remover este arquivo?')) return;
+    try {
+      await api.removeDoc(docId);
+      toast.success('Arquivo removido');
+      loadDocumentos(selectedGrupo);
     } catch { toast.error('Erro ao remover'); }
   };
 
@@ -225,7 +263,26 @@ export default function Grupos() {
           </div>
         )}
 
-        {/* Membros */}
+        {/* Tabs */}
+        <div style={{ display: 'flex', gap: 0, marginBottom: 16, borderBottom: `1px solid ${C.border}` }}>
+          {[
+            { key: 'membros', label: 'Membros', icon: Users, count: membrosAtivos.length },
+            { key: 'arquivos', label: 'Arquivos', icon: FileText, count: documentos.length },
+          ].map(tab => (
+            <button key={tab.key} onClick={() => setDetailTab(tab.key)} style={{
+              padding: '10px 20px', background: 'none', border: 'none', cursor: 'pointer',
+              fontSize: 13, fontWeight: detailTab === tab.key ? 700 : 400,
+              color: detailTab === tab.key ? C.primary : C.t3,
+              borderBottom: detailTab === tab.key ? `2px solid ${C.primary}` : '2px solid transparent',
+              display: 'flex', alignItems: 'center', gap: 6, transition: 'all 0.15s',
+            }}>
+              <tab.icon size={14} /> {tab.label} ({tab.count})
+            </button>
+          ))}
+        </div>
+
+        {/* TAB: Membros */}
+        {detailTab === 'membros' && <>
         <div style={{ background: C.card, borderRadius: 12, border: `1px solid ${C.border}`, overflow: 'hidden' }}>
           <div style={{ padding: '12px 16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: `1px solid ${C.border}` }}>
             <span style={{ fontSize: 14, fontWeight: 700, color: C.text }}>Membros ({membrosAtivos.length})</span>
@@ -277,6 +334,89 @@ export default function Grupos() {
           <div style={{ background: C.card, borderRadius: 12, padding: 16, border: `1px solid ${C.border}`, marginTop: 16 }}>
             <div style={{ fontSize: 14, fontWeight: 600, color: C.text, marginBottom: 8 }}>Observacoes</div>
             <div style={{ fontSize: 13, color: C.t2, whiteSpace: 'pre-wrap' }}>{g.observacoes}</div>
+          </div>
+        )}
+        </>}
+
+        {/* TAB: Arquivos */}
+        {detailTab === 'arquivos' && (
+          <div>
+            {/* Upload area */}
+            <div style={{ background: C.card, borderRadius: 12, padding: 20, border: `1px solid ${C.border}`, marginBottom: 16 }}>
+              <div style={{ fontSize: 14, fontWeight: 700, color: C.text, marginBottom: 12, display: 'flex', alignItems: 'center', gap: 8 }}>
+                <FileUp size={16} /> Enviar arquivo
+              </div>
+              <div style={{ display: 'flex', gap: 10, alignItems: 'flex-end' }}>
+                <div style={{ flex: 1 }}>
+                  <Label style={{ fontSize: 11 }}>Comentario do upload</Label>
+                  <Input placeholder="Ex: Roteiro da semana 14/04, Material para lideres..." value={uploadComment} onChange={e => setUploadComment(e.target.value)} />
+                </div>
+                <label style={{
+                  padding: '8px 16px', borderRadius: 8, background: C.primary, color: '#fff',
+                  fontSize: 13, fontWeight: 600, cursor: uploading ? 'wait' : 'pointer',
+                  display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0, opacity: uploading ? 0.6 : 1,
+                }}>
+                  <FileUp size={14} /> {uploading ? 'Enviando...' : 'Escolher arquivo'}
+                  <input type="file" hidden disabled={uploading} onChange={e => { if (e.target.files?.[0]) handleUploadFile(e.target.files[0]); e.target.value = ''; }} />
+                </label>
+              </div>
+              <div style={{ fontSize: 11, color: C.t3, marginTop: 6 }}>Max 10MB. Roteiros, imagens, PDFs, planilhas. Arquivos vao automaticamente para o SharePoint.</div>
+            </div>
+
+            {/* Lista de documentos */}
+            <div style={{ background: C.card, borderRadius: 12, border: `1px solid ${C.border}`, overflow: 'hidden' }}>
+              <div style={{ padding: '12px 16px', borderBottom: `1px solid ${C.border}` }}>
+                <span style={{ fontSize: 14, fontWeight: 700, color: C.text }}>Arquivos ({documentos.length})</span>
+              </div>
+              {documentos.length === 0 ? (
+                <div style={{ padding: 32, textAlign: 'center', color: C.t3, fontSize: 13 }}>Nenhum arquivo enviado ainda</div>
+              ) : (
+                <div>
+                  {documentos.map(doc => {
+                    const ext = doc.tipo || doc.nome?.split('.').pop() || '';
+                    const isImg = ['png', 'jpg', 'jpeg', 'gif', 'webp'].includes(ext.toLowerCase());
+                    const isPdf = ext.toLowerCase() === 'pdf';
+                    const IconFile = isImg ? Image : isPdf ? FileText : File;
+                    const iconColor = isImg ? '#ec4899' : isPdf ? '#ef4444' : C.blue;
+                    return (
+                      <div key={doc.id} style={{ padding: '12px 16px', borderBottom: `1px solid ${C.border}`, display: 'flex', alignItems: 'center', gap: 12 }}>
+                        <div style={{ width: 36, height: 36, borderRadius: 8, background: `${iconColor}15`, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                          <IconFile size={18} style={{ color: iconColor }} />
+                        </div>
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ fontSize: 13, fontWeight: 600, color: C.text, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                            {doc.sharepoint_url ? (
+                              <a href={doc.sharepoint_url} target="_blank" rel="noopener noreferrer" style={{ color: C.text, textDecoration: 'none' }}
+                                onMouseEnter={e => e.target.style.color = C.primary}
+                                onMouseLeave={e => e.target.style.color = C.text}>
+                                {doc.nome}
+                              </a>
+                            ) : doc.storage_path ? (
+                              <a href={doc.storage_path} target="_blank" rel="noopener noreferrer" style={{ color: C.text, textDecoration: 'none' }}
+                                onMouseEnter={e => e.target.style.color = C.primary}
+                                onMouseLeave={e => e.target.style.color = C.text}>
+                                {doc.nome}
+                              </a>
+                            ) : doc.nome}
+                          </div>
+                          <div style={{ fontSize: 11, color: C.t3, display: 'flex', gap: 8, marginTop: 2 }}>
+                            {doc.uploaded_by_name && <span>{doc.uploaded_by_name}</span>}
+                            <span>{fmtDate(doc.created_at?.split('T')[0])}</span>
+                            {doc.comentario && <span style={{ color: C.t2 }}>- {doc.comentario}</span>}
+                          </div>
+                        </div>
+                        <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
+                          {doc.sharepoint_url && (
+                            <a href={doc.sharepoint_url} target="_blank" rel="noopener noreferrer" style={{ fontSize: 11, color: C.primary, textDecoration: 'none', fontWeight: 600 }}>SharePoint</a>
+                          )}
+                          <button onClick={() => handleDeleteDoc(doc.id)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: C.red }}><Trash2 size={14} /></button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
           </div>
         )}
 
