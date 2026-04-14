@@ -6,7 +6,7 @@ const { supabase } = require('../utils/supabase');
  */
 async function buildContext(targetModules = ['all']) {
   const modules = targetModules.includes('all')
-    ? ['rh', 'financeiro', 'logistica', 'patrimonio', 'eventos', 'projetos']
+    ? ['rh', 'financeiro', 'logistica', 'patrimonio', 'eventos', 'projetos', 'membresia']
     : targetModules;
 
   const ctx = { sistema: getSystemDoc(), modulos: {} };
@@ -35,6 +35,7 @@ Módulos:
 - Patrimônio: bens, categorias, localizações, movimentações, inventários
 - Eventos: projetos de eventos, tarefas, reuniões, ciclos criativos
 - Projetos: projetos institucionais com milestones
+- Membresia: membros da igreja, famílias, trilha dos valores, grupos de vida, contribuições, voluntariado, cadastros pendentes
 
 Regras de negócio importantes:
 - Transferências entre contas devem ser filtradas nas análises financeiras
@@ -53,6 +54,7 @@ async function fetchModuleContext(mod) {
     case 'patrimonio': return fetchPatrimonioContext();
     case 'eventos': return fetchEventosContext();
     case 'projetos': return fetchProjetosContext();
+    case 'membresia': return fetchMembresiaContext();
     default: return { info: 'Módulo não reconhecido' };
   }
 }
@@ -128,6 +130,38 @@ async function fetchEventosContext() {
 async function fetchProjetosContext() {
   const { count: total } = await supabase.from('projects').select('id', { count: 'exact', head: true });
   return { resumo: { total_projetos: total } };
+}
+
+async function fetchMembresiaContext() {
+  const { count: total } = await supabase.from('mem_membros').select('id', { count: 'exact', head: true }).eq('active', true);
+  const { count: membrosAtivos } = await supabase.from('mem_membros').select('id', { count: 'exact', head: true }).eq('active', true).eq('status', 'membro_ativo');
+  const { count: visitantes } = await supabase.from('mem_membros').select('id', { count: 'exact', head: true }).eq('active', true).eq('status', 'visitante');
+  const { count: inativos } = await supabase.from('mem_membros').select('id', { count: 'exact', head: true }).eq('active', true).eq('status', 'inativo');
+  const { count: familias } = await supabase.from('mem_familias').select('id', { count: 'exact', head: true });
+  const { count: grupos } = await supabase.from('mem_grupos').select('id', { count: 'exact', head: true }).eq('ativo', true);
+  const { count: cadastrosPend } = await supabase.from('mem_cadastros_pendentes').select('id', { count: 'exact', head: true }).eq('status', 'pendente');
+  const { count: contribuicoes } = await supabase.from('mem_contribuicoes').select('id', { count: 'exact', head: true });
+  const { count: ministerios } = await supabase.from('mem_ministerios').select('id', { count: 'exact', head: true }).eq('ativo', true);
+
+  // Membros sem família vinculada
+  const { count: semFamilia } = await supabase.from('mem_membros').select('id', { count: 'exact', head: true }).eq('active', true).is('familia_id', null);
+
+  return {
+    resumo: {
+      total_membros: total,
+      membros_ativos: membrosAtivos,
+      visitantes,
+      inativos,
+      familias,
+      grupos_ativos: grupos,
+      cadastros_pendentes: cadastrosPend,
+      contribuicoes_total: contribuicoes,
+      ministerios_ativos: ministerios,
+    },
+    problemas: {
+      membros_sem_familia: semFamilia,
+    },
+  };
 }
 
 /**
