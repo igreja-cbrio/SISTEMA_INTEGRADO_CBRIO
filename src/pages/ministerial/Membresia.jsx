@@ -256,6 +256,10 @@ function MembroFormModal({ open, onOpenChange, editData, familias, onSaved }) {
       const novoNome = payload.familia_nome_novo?.trim();
       delete payload.familia_nome_novo;
 
+      // Remove campos que não são colunas de mem_membros
+      delete payload.ministerio;
+      delete payload.grupo;
+
       // Cria a família nova antes de salvar o membro
       if (!payload.familia_id && novoNome) {
         const novaFam = await membresia.familias.create({ nome: novoNome });
@@ -269,6 +273,11 @@ function MembroFormModal({ open, onOpenChange, editData, familias, onSaved }) {
       if (!payload.parentesco) delete payload.parentesco;
       if (!payload.data_nascimento) delete payload.data_nascimento;
 
+      // Remove campos vazios para não enviar strings vazias ao banco
+      for (const k of Object.keys(payload)) {
+        if (payload[k] === '') delete payload[k];
+      }
+
       if (isEdit) {
         await membresia.membros.update(editData.id, payload);
       } else {
@@ -278,6 +287,7 @@ function MembroFormModal({ open, onOpenChange, editData, familias, onSaved }) {
       onOpenChange(false);
     } catch (e) {
       console.error(e);
+      toast.error(e.message || 'Erro ao salvar membro');
     } finally {
       setSaving(false);
     }

@@ -191,7 +191,8 @@ router.post('/membros', authorize('admin', 'diretor'), async (req, res) => {
     if (error) throw error;
     res.status(201).json(data);
   } catch (e) {
-    res.status(500).json({ error: 'Erro ao criar membro' });
+    console.error('[MEMBROS] create error:', e.message);
+    res.status(500).json({ error: `Erro ao criar membro: ${e.message}` });
   }
 });
 
@@ -207,7 +208,8 @@ router.put('/membros/:id', authorize('admin', 'diretor'), async (req, res) => {
     if (error) throw error;
     res.json(data);
   } catch (e) {
-    res.status(500).json({ error: 'Erro ao atualizar membro' });
+    console.error('[MEMBROS] update error:', e.message);
+    res.status(500).json({ error: `Erro ao atualizar membro: ${e.message}` });
   }
 });
 
