@@ -100,7 +100,7 @@ function fmtMoeda(v) {
 }
 
 const EMPTY_FORM = {
-  nome: '', email: '', telefone: '', data_nascimento: '', estado_civil: '',
+  nome: '', cpf: '', email: '', telefone: '', data_nascimento: '', estado_civil: '',
   endereco: '', bairro: '', cidade: '', cep: '', profissao: '',
   ministerio: '', grupo: '', status: 'membro_ativo',
   familia_id: '', familia_nome_novo: '', parentesco: '', observacoes: '',
@@ -307,14 +307,20 @@ function MembroFormModal({ open, onOpenChange, editData, familias, onSaved }) {
             <Input value={form.nome} onChange={e => set('nome', e.target.value)} placeholder="Nome completo" />
           </div>
 
-          {/* Email / Telefone */}
+          {/* CPF / Telefone */}
           <div className="space-y-1.5">
-            <Label>Email</Label>
-            <Input type="email" value={form.email} onChange={e => set('email', e.target.value)} placeholder="email@exemplo.com" />
+            <Label>CPF</Label>
+            <Input value={form.cpf} onChange={e => set('cpf', e.target.value)} placeholder="000.000.000-00" inputMode="numeric" maxLength={14} />
           </div>
           <div className="space-y-1.5">
             <Label>Telefone</Label>
             <Input value={form.telefone} onChange={e => set('telefone', e.target.value)} placeholder="(00) 00000-0000" />
+          </div>
+
+          {/* Email */}
+          <div className="sm:col-span-2 space-y-1.5">
+            <Label>Email</Label>
+            <Input type="email" value={form.email} onChange={e => set('email', e.target.value)} placeholder="email@exemplo.com" />
           </div>
 
           {/* Nascimento / Estado Civil */}
