@@ -27,6 +27,7 @@ const TIPOS_GRUPO = ['Conexao', 'Estudo', 'Jornada 180', 'Discipulado', 'Casais'
 
 function fmtDate(d) { if (!d) return ''; try { return new Date(d + 'T12:00:00').toLocaleDateString('pt-BR'); } catch { return d; } }
 
+// v2 - tabs membros/arquivos
 export default function Grupos() {
   const { profile } = useAuth();
   const [gruposList, setGruposList] = useState([]);
