@@ -23,6 +23,8 @@ const RECORRENCIAS = [
   { value: 'mensal', label: 'Mensal' },
 ];
 
+const TIPOS_GRUPO = ['Conexao', 'Estudo', 'Jornada 180', 'Discipulado', 'Casais', 'Jovens', 'Mulheres', 'Homens', 'Misto'];
+
 function fmtDate(d) { if (!d) return ''; try { return new Date(d + 'T12:00:00').toLocaleDateString('pt-BR'); } catch { return d; } }
 
 export default function Grupos() {
@@ -40,6 +42,10 @@ export default function Grupos() {
   const [membrosSearch, setMembrosSearch] = useState('');
   const [allMembros, setAllMembros] = useState([]);
   const [gruposForSelect, setGruposForSelect] = useState([]);
+  const [filterTipo, setFilterTipo] = useState('all');
+  const [filterDia, setFilterDia] = useState('all');
+  const [filterLocal, setFilterLocal] = useState('all');
+  const [filterTema, setFilterTema] = useState('all');
 
   const loadList = useCallback(async () => {
     setLoading(true);
@@ -125,11 +131,24 @@ export default function Grupos() {
     } catch {}
   };
 
-  const filtered = gruposList.filter(g =>
-    g.nome?.toLowerCase().includes(search.toLowerCase()) ||
-    g.lider_nome?.toLowerCase().includes(search.toLowerCase()) ||
-    g.local?.toLowerCase().includes(search.toLowerCase())
-  );
+  // Extrair opcoes unicas para filtros
+  const tiposUnicos = [...new Set(gruposList.map(g => g.categoria).filter(Boolean))].sort();
+  const locaisUnicos = [...new Set(gruposList.map(g => g.local).filter(Boolean))].sort();
+  const temasUnicos = [...new Set(gruposList.map(g => g.tema).filter(Boolean))].sort();
+
+  const filtered = gruposList.filter(g => {
+    if (search) {
+      const s = search.toLowerCase();
+      if (!(g.nome?.toLowerCase().includes(s) || g.lider_nome?.toLowerCase().includes(s) || g.local?.toLowerCase().includes(s) || g.tema?.toLowerCase().includes(s))) return false;
+    }
+    if (filterTipo !== 'all' && g.categoria !== filterTipo) return false;
+    if (filterDia !== 'all' && String(g.dia_semana) !== filterDia) return false;
+    if (filterLocal !== 'all' && g.local !== filterLocal) return false;
+    if (filterTema !== 'all' && g.tema !== filterTema) return false;
+    return true;
+  });
+
+  const hasActiveFilters = filterTipo !== 'all' || filterDia !== 'all' || filterLocal !== 'all' || filterTema !== 'all';
 
   // ── DETALHE DO GRUPO ──
   if (selectedGrupo && detailData) {
@@ -300,9 +319,54 @@ export default function Grupos() {
         <Button onClick={openCreate}><Plus size={16} style={{ marginRight: 6 }} /> Novo Grupo</Button>
       </div>
 
-      <div style={{ marginBottom: 16, position: 'relative' }}>
+      <div style={{ marginBottom: 12, position: 'relative' }}>
         <Search size={16} style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', color: C.t3 }} />
-        <Input placeholder="Buscar grupo, lider ou local..." value={search} onChange={e => setSearch(e.target.value)} style={{ paddingLeft: 36 }} />
+        <Input placeholder="Buscar grupo, lider, local ou tema..." value={search} onChange={e => setSearch(e.target.value)} style={{ paddingLeft: 36 }} />
+      </div>
+
+      {/* Filtros */}
+      <div style={{ display: 'flex', gap: 10, marginBottom: 16, flexWrap: 'wrap', alignItems: 'center' }}>
+        <ShadSelect value={filterTipo} onValueChange={setFilterTipo}>
+          <SelectTrigger className="w-[150px] h-8 text-xs"><SelectValue placeholder="Tipo" /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">Todos os tipos</SelectItem>
+            {tiposUnicos.map(t => <SelectItem key={t} value={t}>{t}</SelectItem>)}
+            {TIPOS_GRUPO.filter(t => !tiposUnicos.includes(t)).map(t => <SelectItem key={t} value={t}>{t}</SelectItem>)}
+          </SelectContent>
+        </ShadSelect>
+
+        <ShadSelect value={filterDia} onValueChange={setFilterDia}>
+          <SelectTrigger className="w-[140px] h-8 text-xs"><SelectValue placeholder="Dia" /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">Todos os dias</SelectItem>
+            {DIAS.map((d, i) => <SelectItem key={i} value={String(i)}>{d}</SelectItem>)}
+          </SelectContent>
+        </ShadSelect>
+
+        <ShadSelect value={filterLocal} onValueChange={setFilterLocal}>
+          <SelectTrigger className="w-[160px] h-8 text-xs"><SelectValue placeholder="Local" /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">Todos os locais</SelectItem>
+            {locaisUnicos.map(l => <SelectItem key={l} value={l}>{l}</SelectItem>)}
+          </SelectContent>
+        </ShadSelect>
+
+        <ShadSelect value={filterTema} onValueChange={setFilterTema}>
+          <SelectTrigger className="w-[180px] h-8 text-xs"><SelectValue placeholder="Tema" /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">Todos os temas</SelectItem>
+            {temasUnicos.map(t => <SelectItem key={t} value={t}>{t}</SelectItem>)}
+          </SelectContent>
+        </ShadSelect>
+
+        {hasActiveFilters && (
+          <button onClick={() => { setFilterTipo('all'); setFilterDia('all'); setFilterLocal('all'); setFilterTema('all'); }}
+            style={{ fontSize: 11, color: C.red, background: 'none', border: 'none', cursor: 'pointer', fontWeight: 600, display: 'flex', alignItems: 'center', gap: 4 }}>
+            <X size={12} /> Limpar filtros
+          </button>
+        )}
+
+        <span style={{ fontSize: 11, color: C.t3, marginLeft: 'auto' }}>{filtered.length} de {gruposList.length} grupos</span>
       </div>
 
       {loading ? (
@@ -404,8 +468,13 @@ function GrupoFormModal({ open, onClose, data, onSave, saving, gruposForSelect, 
 
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
             <div>
-              <Label>Categoria</Label>
-              <Input value={form.categoria || ''} onChange={e => set('categoria', e.target.value)} placeholder="Ex: Jovens, Casais, Misto" />
+              <Label>Tipo de grupo</Label>
+              <ShadSelect value={form.categoria || ''} onValueChange={v => set('categoria', v)}>
+                <SelectTrigger><SelectValue placeholder="Selecione o tipo" /></SelectTrigger>
+                <SelectContent>
+                  {TIPOS_GRUPO.map(t => <SelectItem key={t} value={t}>{t}</SelectItem>)}
+                </SelectContent>
+              </ShadSelect>
             </div>
             <div>
               <Label>Recorrencia</Label>
