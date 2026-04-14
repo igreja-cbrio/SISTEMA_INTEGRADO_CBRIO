@@ -4,7 +4,7 @@
   "installCommand": "npm install && cd backend && npm install",
   "functions": {
     "api/index.js": {
-      "includeFiles": "backend/**",
+      "includeFiles": ["backend/**", "!backend/node_modules"],
       "maxDuration": 60
     }
   },
