@@ -1,5 +1,5 @@
 import { Outlet, useNavigate, useLocation } from 'react-router-dom';
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
 import { useTheme } from '../../contexts/ThemeContext';
 import { notificacoes as notifApi } from '../../api';
@@ -11,13 +11,17 @@ import {
   CalendarDays, FolderKanban, Map,
   UserCheck, UsersRound, Heart, HandHelping, BookOpen,
   Megaphone, BrainCircuit, ShoppingCart,
-  Sun, Moon, Bell, LogOut, Search,
+  Sun, Moon, Bell, LogOut, Search, CheckCheck, Settings,
 } from 'lucide-react';
 import {
   DropdownMenu, DropdownMenuTrigger, DropdownMenuContent,
 } from '../ui/dropdown-menu';
 import { ScrollArea } from '../ui/scroll-area';
 import { Avatar, AvatarFallback } from '../ui/avatar';
+
+const SEV_COLORS = { urgente: '#ef4444', aviso: '#f59e0b', info: '#00B39D' };
+const MOD_COLORS = { rh: '#8b5cf6', financeiro: '#10b981', logistica: '#ef4444', patrimonio: '#6366f1', membresia: '#00B39D', eventos: '#3b82f6', sistema: '#6b7280' };
+const MOD_LABELS = { rh: 'RH', financeiro: 'Financeiro', logistica: 'Logistica', patrimonio: 'Patrimonio', membresia: 'Membresia', eventos: 'Eventos', sistema: 'Sistema' };
 
 const NAV_ITEMS = [
   {
@@ -118,6 +122,9 @@ export default function AppShell() {
     .toUpperCase();
 
   const [notifCount, setNotifCount] = useState(0);
+  const [notifOpen, setNotifOpen] = useState(false);
+  const [notifs, setNotifs] = useState([]);
+  const [notifsLoading, setNotifsLoading] = useState(false);
   const prevNotifCount = useRef(0);
 
   useEffect(() => {
@@ -135,6 +142,37 @@ export default function AppShell() {
       prevNotifCount.current = count;
       setNotifCount(count);
     } catch { /* backend might not be ready */ }
+  }
+
+  const loadNotifs = useCallback(async () => {
+    setNotifsLoading(true);
+    try {
+      const data = await notifApi.list();
+      setNotifs(data || []);
+    } catch { /* ignore */ }
+    setNotifsLoading(false);
+  }, []);
+
+  async function handleNotifClick(n) {
+    if (!n.lida) {
+      try {
+        await notifApi.ler(n.id);
+        setNotifs(prev => prev.map(x => x.id === n.id ? { ...x, lida: true } : x));
+        setNotifCount(prev => Math.max(0, prev - 1));
+      } catch { /* ignore */ }
+    }
+    if (n.link) {
+      setNotifOpen(false);
+      navigate(n.link);
+    }
+  }
+
+  async function handleLerTodas() {
+    try {
+      await notifApi.lerTodas();
+      setNotifs(prev => prev.map(x => ({ ...x, lida: true })));
+      setNotifCount(0);
+    } catch { /* ignore */ }
   }
 
   async function handleSignOut() {
@@ -180,17 +218,75 @@ export default function AppShell() {
             </button>
 
             {/* Notifications */}
-            <button
-              onClick={() => navigate('/admin/notificacao-regras')}
-              className="relative p-2 rounded-lg hover:bg-accent transition-colors text-muted-foreground"
-            >
-              <Bell className="h-4 w-4" />
-              {notifCount > 0 && (
-                <span className="absolute -top-0.5 -right-0.5 h-4 min-w-[16px] rounded-full bg-primary text-[9px] font-bold text-primary-foreground flex items-center justify-center cbrio-badge-pulse px-1">
-                  {notifCount > 9 ? '9+' : notifCount}
-                </span>
-              )}
-            </button>
+            <DropdownMenu open={notifOpen} onOpenChange={(v) => { setNotifOpen(v); if (v) loadNotifs(); }}>
+              <DropdownMenuTrigger asChild>
+                <button className="relative p-2 rounded-lg hover:bg-accent transition-colors text-muted-foreground">
+                  <Bell className="h-4 w-4" />
+                  {notifCount > 0 && (
+                    <span className="absolute -top-0.5 -right-0.5 h-4 min-w-[16px] rounded-full bg-primary text-[9px] font-bold text-primary-foreground flex items-center justify-center cbrio-badge-pulse px-1">
+                      {notifCount > 9 ? '9+' : notifCount}
+                    </span>
+                  )}
+                </button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-[380px] p-0" sideOffset={8}>
+                <div className="flex items-center justify-between px-4 py-3 border-b border-border">
+                  <span className="text-sm font-bold text-foreground">Notificacoes</span>
+                  <div className="flex items-center gap-2">
+                    {notifCount > 0 && (
+                      <button onClick={handleLerTodas} className="flex items-center gap-1 text-[11px] text-primary hover:underline">
+                        <CheckCheck className="h-3 w-3" /> Marcar todas como lidas
+                      </button>
+                    )}
+                    <button onClick={() => { setNotifOpen(false); navigate('/admin/notificacao-regras'); }} className="p-1 rounded hover:bg-accent text-muted-foreground" title="Configurar regras">
+                      <Settings className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
+                </div>
+                <ScrollArea className="max-h-[400px]">
+                  {notifsLoading ? (
+                    <div className="flex items-center justify-center py-8">
+                      <div className="h-4 w-4 animate-spin rounded-full border-2 border-muted-foreground/25 border-t-primary" />
+                    </div>
+                  ) : notifs.length === 0 ? (
+                    <div className="flex flex-col items-center py-10 gap-2 text-muted-foreground">
+                      <Bell className="h-8 w-8 opacity-30" />
+                      <span className="text-xs">Nenhuma notificacao</span>
+                    </div>
+                  ) : (
+                    <div className="py-1">
+                      {notifs.map(n => {
+                        const sevColor = SEV_COLORS[n.severidade] || '#00B39D';
+                        const modColor = MOD_COLORS[n.modulo] || '#6b7280';
+                        const diff = Date.now() - new Date(n.created_at).getTime();
+                        const mins = Math.floor(diff / 60000);
+                        const timeAgo = mins < 1 ? 'agora' : mins < 60 ? `${mins}min` : mins < 1440 ? `${Math.floor(mins / 60)}h` : `${Math.floor(mins / 1440)}d`;
+                        return (
+                          <div
+                            key={n.id}
+                            onClick={() => handleNotifClick(n)}
+                            className="px-4 py-3 hover:bg-accent/50 transition-colors cursor-pointer"
+                            style={{ borderLeft: `3px solid ${sevColor}`, background: n.lida ? undefined : 'var(--cbrio-input-bg)' }}
+                          >
+                            <div className="flex items-center justify-between mb-0.5">
+                              <div className="flex items-center gap-2">
+                                {!n.lida && <span className="h-2 w-2 rounded-full bg-primary flex-shrink-0" />}
+                                <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded" style={{ color: modColor, background: `${modColor}15` }}>
+                                  {MOD_LABELS[n.modulo] || n.modulo}
+                                </span>
+                              </div>
+                              <span className="text-[10px] text-muted-foreground">{timeAgo}</span>
+                            </div>
+                            <p className={`text-sm ${n.lida ? 'text-muted-foreground' : 'text-foreground font-medium'}`}>{n.titulo}</p>
+                            {n.mensagem && <p className="text-xs text-muted-foreground mt-0.5 line-clamp-2">{n.mensagem}</p>}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </ScrollArea>
+              </DropdownMenuContent>
+            </DropdownMenu>
 
             {/* User menu */}
             <button onClick={() => navigate('/perfil')} className="flex items-center gap-2 p-1.5 rounded-lg hover:bg-accent transition-colors">
