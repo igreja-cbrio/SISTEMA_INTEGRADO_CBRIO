@@ -118,6 +118,26 @@ export const expansion = {
   getDependencies: (id) => get(`/expansion/milestones/${id}/dependencies`),
 };
 
+export const strategic = {
+  categories: () => get('/strategic/categories'),
+  list: (params) => get('/strategic' + (params ? '?' + new URLSearchParams(params) : '')),
+  get: (id) => get(`/strategic/${id}`),
+  create: (data) => post('/strategic', data),
+  update: (id, data) => put(`/strategic/${id}`, data),
+  remove: (id) => del(`/strategic/${id}`),
+  createTask: (planId, data) => post(`/strategic/${planId}/tasks`, data),
+  updateTask: (taskId, data) => put(`/strategic/tasks/${taskId}`, data),
+  updateTaskStatus: (taskId, status) => patch(`/strategic/tasks/${taskId}/status`, { status }),
+  removeTask: (taskId) => del(`/strategic/tasks/${taskId}`),
+  createSubtask: (taskId, data) => post(`/strategic/tasks/${taskId}/subtasks`, data),
+  toggleSubtask: (subId, done) => patch(`/strategic/subtasks/${subId}`, { done }),
+  removeSubtask: (subId) => del(`/strategic/subtasks/${subId}`),
+  addComment: (taskId, text) => post(`/strategic/tasks/${taskId}/comments`, { text }),
+  createMilestone: (planId, data) => post(`/strategic/${planId}/milestones`, data),
+  updateMilestone: (mId, data) => put(`/strategic/milestones/${mId}`, data),
+  updateMilestoneStatus: (mId, status) => patch(`/strategic/milestones/${mId}/status`, { status }),
+};
+
 export const meetings = {
   list: (params) => get('/meetings' + (params ? '?' + new URLSearchParams(params) : '')),
   create: (data) => post('/meetings', data),
