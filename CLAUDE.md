@@ -125,6 +125,20 @@ usuários com role `admin` ou `diretor`.
 - Rodar comandos destrutivos no sistema de arquivos do usuário.
 - Usar `gh` CLI (usar as ferramentas GitHub MCP).
 
+## Deploy na Vercel — cuidados
+
+- `vercel.json` usa `includeFiles` com exclusão de `node_modules` para
+  não estourar o limite de 250 MB da serverless function.
+- **Nunca adicionar dependências pesadas** (binários, browsers, etc.) no
+  `backend/package.json` sem necessidade comprovada — cada MB conta.
+- O pool de conexões Postgres (`backend/utils/supabase.js`) usa `max: 1`
+  em ambiente Vercel (serverless) para não esgotar o pooler do Supabase.
+- URL do webhook do Cerebro usa `FRONTEND_URL` / `VERCEL_URL` — não
+  hardcodar domínios.
+- Variáveis de ambiente obrigatórias na Vercel: `SUPABASE_URL`,
+  `SUPABASE_SERVICE_ROLE_KEY`, `DATABASE_URL`, `ANTHROPIC_API_KEY`,
+  `CRON_SECRET`, `FRONTEND_URL`.
+
 ## Contexto do projeto
 
 Sistema ERP interno da CBRio (Igreja). Stack: React 18 + Vite +
