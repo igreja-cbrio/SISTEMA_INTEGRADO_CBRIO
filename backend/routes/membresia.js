@@ -1022,7 +1022,7 @@ router.post('/cadastros/:id/aprovar', authorize('admin', 'diretor'), async (req,
       let membroPayload = {
         ...pickNonNull(cad, cadFields),
         nome: cad.nome, // obrigatório
-        status: 'visitante',
+        status: 'membro_ativo',
         active: true,
       };
       if (familia_id) membroPayload.familia_id = familia_id;

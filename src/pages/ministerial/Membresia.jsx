@@ -102,7 +102,7 @@ function fmtMoeda(v) {
 const EMPTY_FORM = {
   nome: '', email: '', telefone: '', data_nascimento: '', estado_civil: '',
   endereco: '', bairro: '', cidade: '', cep: '', profissao: '',
-  ministerio: '', grupo: '', status: 'visitante',
+  ministerio: '', grupo: '', status: 'membro_ativo',
   familia_id: '', familia_nome_novo: '', parentesco: '', observacoes: '',
 };
 
@@ -235,7 +235,7 @@ function MembroFormModal({ open, onOpenChange, editData, familias, onSaved }) {
         profissao: editData.profissao || '',
         ministerio: editData.ministerio || '',
         grupo: editData.grupo || '',
-        status: editData.status || 'visitante',
+        status: editData.status || 'membro_ativo',
         familia_id: editData.familia_id || '',
         familia_nome_novo: '',
         parentesco: editData.parentesco || '',
@@ -796,10 +796,9 @@ export default function Membresia() {
         <TabsContent value="membros">
 
       {/* KPIs */}
-      <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mb-7">
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-7">
         <StatisticsCard title="Total Membros" value={kpis.total} icon={Users} iconColor="#00B39D" />
         <StatisticsCard title="Membros Ativos" value={kpis.byStatus?.membro_ativo || 0} icon={Users} iconColor="#10b981" />
-        <StatisticsCard title="Visitantes" value={kpis.byStatus?.visitante || 0} icon={UserPlus} iconColor="#3b82f6" />
         <StatisticsCard title="Famílias" value={kpis.familias} icon={Home} iconColor="#f59e0b" />
         <StatisticsCard title="Contribuintes Ativos" value={kpis.contribuintes_ativos || 0} icon={HandCoins} iconColor="#22c55e" />
       </div>

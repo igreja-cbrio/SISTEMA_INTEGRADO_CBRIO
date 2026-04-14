@@ -159,6 +159,14 @@ table tbody tr {
 table tbody tr:hover {
   background: color-mix(in srgb, var(--cbrio-input-bg) 50%, transparent);
 }
+.cbrio-row {
+  cursor: pointer;
+  transition: background 0.15s ease, box-shadow 0.15s ease !important;
+}
+.cbrio-row:hover {
+  background: color-mix(in srgb, var(--cbrio-input-bg) 70%, transparent) !important;
+  box-shadow: inset 3px 0 0 #00B39D;
+}
 
 /* ── Typography tokens ── */
 .cbrio-page-title { font-size: 24px; font-weight: 800; color: var(--cbrio-text); }
