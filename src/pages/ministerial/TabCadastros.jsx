@@ -499,9 +499,8 @@ export default function TabCadastros() {
                 <>Os dados enviados serão aplicados ao membro <strong>{selecionado.duplicado_de.nome}</strong>.
                 Campos vazios no formulário não sobrescrevem os dados atuais.</>
               ) : (
-                <>Isso criará um novo <strong>membro</strong> a partir dos dados enviados,
-                com status inicial <em>visitante</em>. Você poderá ajustar família, grupo
-                e trilha depois na tela do membro.</>
+                <>Isso criará um novo <strong>membro ativo</strong> a partir dos dados enviados.
+                Você poderá ajustar família, grupo e trilha depois na tela do membro.</>
               )}
             </p>
             <Label htmlFor="obs-aprov">Observações (opcional)</Label>
