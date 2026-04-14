@@ -297,8 +297,10 @@ function MembroFormModal({ open, onOpenChange, editData, familias, onSaved }) {
 
       if (isEdit) {
         await membresia.membros.update(editData.id, payload);
+        toast.success('Membro atualizado com sucesso!');
       } else {
         await membresia.membros.create(payload);
+        toast.success(`${payload.nome} cadastrado(a) com sucesso!`);
       }
       onSaved();
       onOpenChange(false);
