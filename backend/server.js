@@ -67,6 +67,7 @@ app.use('/api/membresia', require('./routes/membresia'));
 app.use('/api/public/membresia', require('./routes/publicMembresia'));
 app.use('/api/solicitacoes', require('./routes/solicitacoes'));
 app.use('/api/cerebro', require('./routes/cerebro'));
+app.use('/api/grupos', require('./routes/grupos'));
 
 // ── Health check ──
 app.get('/api/health', (req, res) => res.json({ status: 'ok', timestamp: new Date().toISOString() }));

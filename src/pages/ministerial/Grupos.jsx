@@ -1,0 +1,504 @@
+import { useState, useEffect, useCallback } from 'react';
+import { useAuth } from '../../contexts/AuthContext';
+import { grupos as api, membresia } from '../../api';
+import { Button } from '../../components/ui/button';
+import { Input } from '../../components/ui/input';
+import { Label } from '../../components/ui/label';
+import { Textarea } from '../../components/ui/textarea';
+import { Select as ShadSelect, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../components/ui/select';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../../components/ui/dialog';
+import { toast } from 'sonner';
+import { Users, MapPin, Clock, Plus, Search, ChevronLeft, UserPlus, X, ArrowRightLeft } from 'lucide-react';
+
+const C = {
+  bg: 'var(--cbrio-bg)', card: 'var(--cbrio-card)', primary: '#00B39D', primaryBg: '#00B39D18',
+  text: 'var(--cbrio-text)', t2: 'var(--cbrio-text2)', t3: 'var(--cbrio-text3)',
+  border: 'var(--cbrio-border)', green: '#10b981', red: '#ef4444', amber: '#f59e0b', blue: '#3b82f6',
+};
+
+const DIAS = ['Domingo', 'Segunda', 'Terca', 'Quarta', 'Quinta', 'Sexta', 'Sabado'];
+const RECORRENCIAS = [
+  { value: 'semanal', label: 'Semanal' },
+  { value: 'quinzenal', label: 'Quinzenal' },
+  { value: 'mensal', label: 'Mensal' },
+];
+
+function fmtDate(d) { if (!d) return ''; try { return new Date(d + 'T12:00:00').toLocaleDateString('pt-BR'); } catch { return d; } }
+
+export default function Grupos() {
+  const { profile } = useAuth();
+  const [gruposList, setGruposList] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [search, setSearch] = useState('');
+  const [selectedGrupo, setSelectedGrupo] = useState(null);
+  const [detailData, setDetailData] = useState(null);
+  const [detailLoading, setDetailLoading] = useState(false);
+  const [modalOpen, setModalOpen] = useState(false);
+  const [editData, setEditData] = useState(null);
+  const [saving, setSaving] = useState(false);
+  const [addMembroOpen, setAddMembroOpen] = useState(false);
+  const [membrosSearch, setMembrosSearch] = useState('');
+  const [allMembros, setAllMembros] = useState([]);
+  const [gruposForSelect, setGruposForSelect] = useState([]);
+
+  const loadList = useCallback(async () => {
+    setLoading(true);
+    try {
+      const data = await api.list();
+      setGruposList(data || []);
+      setGruposForSelect((data || []).filter(g => g.ativo));
+    } catch { toast.error('Erro ao carregar grupos'); }
+    finally { setLoading(false); }
+  }, []);
+
+  const loadDetail = useCallback(async (id) => {
+    setDetailLoading(true);
+    try {
+      const data = await api.get(id);
+      setDetailData(data);
+    } catch { toast.error('Erro ao carregar detalhe'); }
+    finally { setDetailLoading(false); }
+  }, []);
+
+  useEffect(() => { loadList(); }, [loadList]);
+
+  useEffect(() => {
+    if (selectedGrupo) loadDetail(selectedGrupo);
+  }, [selectedGrupo, loadDetail]);
+
+  const openCreate = () => { setEditData(null); setModalOpen(true); };
+  const openEdit = () => { setEditData(detailData); setModalOpen(true); };
+
+  const handleSave = async (form) => {
+    setSaving(true);
+    try {
+      if (form.id) {
+        await api.update(form.id, form);
+        toast.success('Grupo atualizado');
+      } else {
+        await api.create(form);
+        toast.success('Grupo criado');
+      }
+      setModalOpen(false);
+      await loadList();
+      if (form.id) loadDetail(form.id);
+    } catch (e) { toast.error(e.message || 'Erro ao salvar'); }
+    finally { setSaving(false); }
+  };
+
+  const handleDelete = async () => {
+    if (!detailData?.id) return;
+    if (!window.confirm('Desativar este grupo?')) return;
+    try {
+      await api.remove(detailData.id);
+      toast.success('Grupo desativado');
+      setSelectedGrupo(null);
+      setDetailData(null);
+      loadList();
+    } catch { toast.error('Erro ao desativar'); }
+  };
+
+  const handleAddMembro = async (membroId) => {
+    try {
+      await api.addMembro(selectedGrupo, { membro_id: membroId });
+      toast.success('Membro adicionado');
+      setAddMembroOpen(false);
+      loadDetail(selectedGrupo);
+      loadList();
+    } catch (e) { toast.error(e.message || 'Erro ao adicionar'); }
+  };
+
+  const handleRemoveMembro = async (participacaoId) => {
+    if (!window.confirm('Remover este membro do grupo?')) return;
+    try {
+      await api.sairMembro(participacaoId, { motivo: 'Removido pelo lider' });
+      toast.success('Membro removido');
+      loadDetail(selectedGrupo);
+      loadList();
+    } catch { toast.error('Erro ao remover'); }
+  };
+
+  const loadMembros = async () => {
+    try {
+      const data = await membresia.membros.list();
+      setAllMembros(data || []);
+    } catch {}
+  };
+
+  const filtered = gruposList.filter(g =>
+    g.nome?.toLowerCase().includes(search.toLowerCase()) ||
+    g.lider_nome?.toLowerCase().includes(search.toLowerCase()) ||
+    g.local?.toLowerCase().includes(search.toLowerCase())
+  );
+
+  // ── DETALHE DO GRUPO ──
+  if (selectedGrupo && detailData) {
+    const g = detailData;
+    const membrosAtivos = g.membros || [];
+    const visitantes = membrosAtivos.filter(m => m.is_visitante);
+    const regulares = membrosAtivos.filter(m => !m.is_visitante);
+
+    return (
+      <div style={{ padding: '24px 32px', maxWidth: 1100, margin: '0 auto' }}>
+        <button onClick={() => { setSelectedGrupo(null); setDetailData(null); }} style={{ display: 'flex', alignItems: 'center', gap: 6, background: 'none', border: 'none', color: C.primary, cursor: 'pointer', fontSize: 13, fontWeight: 600, marginBottom: 16 }}>
+          <ChevronLeft size={16} /> Voltar para grupos
+        </button>
+
+        {/* Header */}
+        <div style={{ display: 'flex', gap: 20, marginBottom: 24 }}>
+          <div style={{ width: 80, height: 80, borderRadius: 16, background: g.foto_url ? `url(${g.foto_url}) center/cover` : C.primaryBg, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+            {!g.foto_url && <Users size={32} style={{ color: C.primary }} />}
+          </div>
+          <div style={{ flex: 1 }}>
+            <h1 style={{ fontSize: 22, fontWeight: 700, color: C.text, margin: 0 }}>{g.nome}</h1>
+            <div style={{ display: 'flex', gap: 16, marginTop: 6, flexWrap: 'wrap' }}>
+              {g.lider && <span style={{ fontSize: 13, color: C.t2 }}>Lider: <strong style={{ color: C.text }}>{g.lider.nome}</strong></span>}
+              {g.local && <span style={{ fontSize: 13, color: C.t2, display: 'flex', alignItems: 'center', gap: 4 }}><MapPin size={12} /> {g.local}</span>}
+              {g.dia_semana != null && <span style={{ fontSize: 13, color: C.t2, display: 'flex', alignItems: 'center', gap: 4 }}><Clock size={12} /> {DIAS[g.dia_semana]} {g.horario?.slice(0, 5)}</span>}
+              <span style={{ fontSize: 12, padding: '2px 8px', borderRadius: 99, background: g.ativo ? '#10b98120' : '#ef444420', color: g.ativo ? C.green : C.red, fontWeight: 600 }}>{g.ativo ? 'Ativo' : 'Inativo'}</span>
+            </div>
+            {g.tema && <div style={{ fontSize: 13, color: C.t3, marginTop: 6 }}>Tema: {g.tema}</div>}
+            {g.descricao && <div style={{ fontSize: 13, color: C.t3, marginTop: 4 }}>{g.descricao}</div>}
+          </div>
+          <div style={{ display: 'flex', gap: 8, flexShrink: 0 }}>
+            <Button size="sm" variant="outline" onClick={openEdit}>Editar</Button>
+            <Button size="sm" variant="destructive" onClick={handleDelete}>Desativar</Button>
+          </div>
+        </div>
+
+        {/* Info cards */}
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12, marginBottom: 24 }}>
+          {[
+            { label: 'Membros', value: regulares.length, color: C.primary },
+            { label: 'Visitantes', value: visitantes.length, color: C.amber },
+            { label: 'Total', value: membrosAtivos.length, color: C.blue },
+            { label: 'Multiplicacoes', value: g.multiplicacoes?.length || 0, color: '#8b5cf6' },
+          ].map(k => (
+            <div key={k.label} style={{ background: C.card, borderRadius: 12, padding: 16, border: `1px solid ${C.border}` }}>
+              <div style={{ fontSize: 24, fontWeight: 700, color: k.color }}>{k.value}</div>
+              <div style={{ fontSize: 12, color: C.t3 }}>{k.label}</div>
+            </div>
+          ))}
+        </div>
+
+        {/* Grupo de origem e multiplicacoes */}
+        {(g.grupo_origem || g.multiplicacoes?.length > 0) && (
+          <div style={{ background: C.card, borderRadius: 12, padding: 16, border: `1px solid ${C.border}`, marginBottom: 24 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+              <ArrowRightLeft size={16} style={{ color: C.primary }} />
+              <span style={{ fontSize: 14, fontWeight: 600, color: C.text }}>Arvore de multiplicacao</span>
+            </div>
+            {g.grupo_origem && (
+              <div style={{ fontSize: 13, color: C.t2, marginBottom: 4 }}>
+                Nasceu de: <button onClick={() => { setSelectedGrupo(g.grupo_origem.id); }} style={{ background: 'none', border: 'none', color: C.primary, cursor: 'pointer', fontWeight: 600 }}>{g.grupo_origem.nome}</button>
+              </div>
+            )}
+            {g.multiplicacoes?.length > 0 && (
+              <div style={{ fontSize: 13, color: C.t2 }}>
+                Multiplicou em: {g.multiplicacoes.map((m, i) => (
+                  <span key={m.id}>
+                    {i > 0 && ', '}
+                    <button onClick={() => setSelectedGrupo(m.id)} style={{ background: 'none', border: 'none', color: C.primary, cursor: 'pointer', fontWeight: 600 }}>{m.nome}</button>
+                  </span>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Membros */}
+        <div style={{ background: C.card, borderRadius: 12, border: `1px solid ${C.border}`, overflow: 'hidden' }}>
+          <div style={{ padding: '12px 16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: `1px solid ${C.border}` }}>
+            <span style={{ fontSize: 14, fontWeight: 700, color: C.text }}>Membros ({membrosAtivos.length})</span>
+            <Button size="sm" onClick={() => { loadMembros(); setAddMembroOpen(true); }}><UserPlus size={14} style={{ marginRight: 4 }} /> Adicionar</Button>
+          </div>
+          {membrosAtivos.length === 0 ? (
+            <div style={{ padding: 32, textAlign: 'center', color: C.t3, fontSize: 13 }}>Nenhum membro neste grupo</div>
+          ) : (
+            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+              <thead>
+                <tr style={{ background: 'var(--cbrio-table-header)' }}>
+                  <th style={{ padding: '8px 16px', textAlign: 'left', fontSize: 11, fontWeight: 600, color: C.t3, textTransform: 'uppercase' }}>Nome</th>
+                  <th style={{ padding: '8px 16px', textAlign: 'left', fontSize: 11, fontWeight: 600, color: C.t3, textTransform: 'uppercase' }}>Telefone</th>
+                  <th style={{ padding: '8px 16px', textAlign: 'left', fontSize: 11, fontWeight: 600, color: C.t3, textTransform: 'uppercase' }}>Entrou em</th>
+                  <th style={{ padding: '8px 16px', textAlign: 'center', fontSize: 11, fontWeight: 600, color: C.t3, textTransform: 'uppercase' }}>Presencas</th>
+                  <th style={{ padding: '8px 16px', textAlign: 'center', fontSize: 11, fontWeight: 600, color: C.t3, textTransform: 'uppercase' }}>Tipo</th>
+                  <th style={{ padding: '8px 16px', textAlign: 'center', fontSize: 11, fontWeight: 600, color: C.t3 }}></th>
+                </tr>
+              </thead>
+              <tbody>
+                {membrosAtivos.map(m => (
+                  <tr key={m.participacao_id} style={{ borderBottom: `1px solid ${C.border}` }}>
+                    <td style={{ padding: '10px 16px', display: 'flex', alignItems: 'center', gap: 10 }}>
+                      <div style={{ width: 32, height: 32, borderRadius: '50%', background: m.foto_url ? `url(${m.foto_url}) center/cover` : C.primaryBg, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, fontSize: 12, fontWeight: 700, color: C.primary }}>
+                        {!m.foto_url && (m.nome?.charAt(0) || '?')}
+                      </div>
+                      <span style={{ fontSize: 13, fontWeight: 600, color: C.text }}>{m.nome}</span>
+                    </td>
+                    <td style={{ padding: '10px 16px', fontSize: 13, color: C.t2 }}>{m.telefone || '-'}</td>
+                    <td style={{ padding: '10px 16px', fontSize: 13, color: C.t2 }}>{fmtDate(m.entrou_em)}</td>
+                    <td style={{ padding: '10px 16px', fontSize: 13, color: C.t2, textAlign: 'center' }}>{m.presencas}</td>
+                    <td style={{ padding: '10px 16px', textAlign: 'center' }}>
+                      <span style={{ fontSize: 11, padding: '2px 8px', borderRadius: 99, background: m.is_visitante ? '#f59e0b20' : '#10b98120', color: m.is_visitante ? C.amber : C.green, fontWeight: 600 }}>
+                        {m.is_visitante ? 'Visitante' : 'Membro'}
+                      </span>
+                    </td>
+                    <td style={{ padding: '10px 16px', textAlign: 'center' }}>
+                      <button onClick={() => handleRemoveMembro(m.participacao_id)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: C.red, fontSize: 11 }}><X size={14} /></button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+
+        {/* Observacoes */}
+        {g.observacoes && (
+          <div style={{ background: C.card, borderRadius: 12, padding: 16, border: `1px solid ${C.border}`, marginTop: 16 }}>
+            <div style={{ fontSize: 14, fontWeight: 600, color: C.text, marginBottom: 8 }}>Observacoes</div>
+            <div style={{ fontSize: 13, color: C.t2, whiteSpace: 'pre-wrap' }}>{g.observacoes}</div>
+          </div>
+        )}
+
+        {/* Modal adicionar membro */}
+        <Dialog open={addMembroOpen} onOpenChange={setAddMembroOpen}>
+          <DialogContent className="max-w-md">
+            <DialogHeader><DialogTitle>Adicionar membro ao grupo</DialogTitle></DialogHeader>
+            <Input placeholder="Buscar membro..." value={membrosSearch} onChange={e => setMembrosSearch(e.target.value)} />
+            <div style={{ maxHeight: 300, overflowY: 'auto', marginTop: 8 }}>
+              {allMembros
+                .filter(m => m.nome?.toLowerCase().includes(membrosSearch.toLowerCase()))
+                .filter(m => !membrosAtivos.some(a => a.id === m.id))
+                .slice(0, 20)
+                .map(m => (
+                  <div key={m.id} onClick={() => handleAddMembro(m.id)} style={{ padding: '10px 12px', cursor: 'pointer', borderBottom: `1px solid ${C.border}`, display: 'flex', alignItems: 'center', gap: 10, borderRadius: 8 }}
+                    onMouseEnter={e => e.currentTarget.style.background = C.bg}
+                    onMouseLeave={e => e.currentTarget.style.background = 'transparent'}>
+                    <div style={{ width: 32, height: 32, borderRadius: '50%', background: C.primaryBg, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12, fontWeight: 700, color: C.primary }}>{m.nome?.charAt(0)}</div>
+                    <div>
+                      <div style={{ fontSize: 13, fontWeight: 600, color: C.text }}>{m.nome}</div>
+                      <div style={{ fontSize: 11, color: C.t3 }}>{m.telefone || m.email || ''}</div>
+                    </div>
+                  </div>
+                ))}
+            </div>
+          </DialogContent>
+        </Dialog>
+
+        {/* Modal editar grupo */}
+        <GrupoFormModal open={modalOpen} onClose={() => setModalOpen(false)} data={editData} onSave={handleSave} saving={saving} gruposForSelect={gruposForSelect} allMembros={allMembros} loadMembros={loadMembros} />
+      </div>
+    );
+  }
+
+  // ── LISTA DE GRUPOS ──
+  return (
+    <div style={{ padding: '24px 32px', maxWidth: 1100, margin: '0 auto' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 }}>
+        <h1 style={{ fontSize: 22, fontWeight: 700, color: C.text, margin: 0 }}>Grupos</h1>
+        <Button onClick={openCreate}><Plus size={16} style={{ marginRight: 6 }} /> Novo Grupo</Button>
+      </div>
+
+      <div style={{ marginBottom: 16, position: 'relative' }}>
+        <Search size={16} style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', color: C.t3 }} />
+        <Input placeholder="Buscar grupo, lider ou local..." value={search} onChange={e => setSearch(e.target.value)} style={{ paddingLeft: 36 }} />
+      </div>
+
+      {loading ? (
+        <div style={{ padding: 40, textAlign: 'center', color: C.t3 }}>Carregando...</div>
+      ) : filtered.length === 0 ? (
+        <div style={{ padding: 40, textAlign: 'center', color: C.t3 }}>
+          {search ? 'Nenhum grupo encontrado' : 'Nenhum grupo cadastrado'}
+        </div>
+      ) : (
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(320, 1fr))', gap: 16 }}>
+          {filtered.map(g => (
+            <div key={g.id} onClick={() => setSelectedGrupo(g.id)} style={{
+              background: C.card, borderRadius: 14, padding: 18, border: `1px solid ${C.border}`,
+              cursor: 'pointer', transition: 'border-color 0.15s',
+            }}
+              onMouseEnter={e => e.currentTarget.style.borderColor = C.primary}
+              onMouseLeave={e => e.currentTarget.style.borderColor = C.border}>
+              <div style={{ display: 'flex', gap: 14, alignItems: 'flex-start' }}>
+                <div style={{ width: 52, height: 52, borderRadius: 12, background: g.foto_url ? `url(${g.foto_url}) center/cover` : C.primaryBg, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                  {!g.foto_url && <Users size={22} style={{ color: C.primary }} />}
+                </div>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 15, fontWeight: 700, color: C.text, marginBottom: 4 }}>{g.nome}</div>
+                  {g.lider_nome && <div style={{ fontSize: 12, color: C.t2, marginBottom: 2 }}>Lider: {g.lider_nome}</div>}
+                  <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginTop: 4 }}>
+                    {g.dia_semana != null && (
+                      <span style={{ fontSize: 11, color: C.t3, display: 'flex', alignItems: 'center', gap: 3 }}>
+                        <Clock size={11} /> {DIAS[g.dia_semana]} {g.horario?.slice(0, 5)}
+                      </span>
+                    )}
+                    {g.local && (
+                      <span style={{ fontSize: 11, color: C.t3, display: 'flex', alignItems: 'center', gap: 3 }}>
+                        <MapPin size={11} /> {g.local}
+                      </span>
+                    )}
+                  </div>
+                </div>
+                <div style={{ textAlign: 'right', flexShrink: 0 }}>
+                  <div style={{ fontSize: 20, fontWeight: 700, color: C.primary }}>{g.membros_count}</div>
+                  <div style={{ fontSize: 10, color: C.t3 }}>membros</div>
+                </div>
+              </div>
+              {g.grupo_origem_nome && (
+                <div style={{ fontSize: 11, color: C.t3, marginTop: 8, paddingTop: 8, borderTop: `1px solid ${C.border}` }}>
+                  Multiplicado de: {g.grupo_origem_nome}
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+
+      <GrupoFormModal open={modalOpen} onClose={() => setModalOpen(false)} data={editData} onSave={handleSave} saving={saving} gruposForSelect={gruposForSelect} allMembros={allMembros} loadMembros={loadMembros} />
+    </div>
+  );
+}
+
+// ── MODAL DE FORMULARIO ──
+function GrupoFormModal({ open, onClose, data, onSave, saving, gruposForSelect, allMembros, loadMembros }) {
+  const [form, setForm] = useState({});
+  const [liderSearch, setLiderSearch] = useState('');
+
+  useEffect(() => {
+    if (open) {
+      loadMembros();
+      setForm(data ? { ...data } : {
+        nome: '', categoria: '', lider_id: '', local: '', endereco: '',
+        dia_semana: '', horario: '', recorrencia: 'semanal', tema: '',
+        foto_url: '', observacoes: '', grupo_origem_id: '', descricao: '',
+      });
+      setLiderSearch('');
+    }
+  }, [open, data]);
+
+  const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
+
+  const handleSubmit = (e) => {
+    e.preventDefault();
+    if (!form.nome?.trim()) { toast.error('Nome e obrigatorio'); return; }
+    onSave({
+      ...form,
+      dia_semana: form.dia_semana === '' ? null : Number(form.dia_semana),
+      lider_id: form.lider_id || null,
+      grupo_origem_id: form.grupo_origem_id || null,
+    });
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={onClose}>
+      <DialogContent className="max-w-lg max-h-[85vh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle>{data?.id ? 'Editar Grupo' : 'Novo Grupo'}</DialogTitle>
+        </DialogHeader>
+        <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+          <div>
+            <Label>Nome do grupo *</Label>
+            <Input value={form.nome || ''} onChange={e => set('nome', e.target.value)} placeholder="Ex: Conexao Barra" />
+          </div>
+
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+            <div>
+              <Label>Categoria</Label>
+              <Input value={form.categoria || ''} onChange={e => set('categoria', e.target.value)} placeholder="Ex: Jovens, Casais, Misto" />
+            </div>
+            <div>
+              <Label>Recorrencia</Label>
+              <ShadSelect value={form.recorrencia || 'semanal'} onValueChange={v => set('recorrencia', v)}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  {RECORRENCIAS.map(r => <SelectItem key={r.value} value={r.value}>{r.label}</SelectItem>)}
+                </SelectContent>
+              </ShadSelect>
+            </div>
+          </div>
+
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+            <div>
+              <Label>Dia da semana</Label>
+              <ShadSelect value={form.dia_semana?.toString() ?? ''} onValueChange={v => set('dia_semana', v)}>
+                <SelectTrigger><SelectValue placeholder="Selecione" /></SelectTrigger>
+                <SelectContent>
+                  {DIAS.map((d, i) => <SelectItem key={i} value={String(i)}>{d}</SelectItem>)}
+                </SelectContent>
+              </ShadSelect>
+            </div>
+            <div>
+              <Label>Horario</Label>
+              <Input type="time" value={form.horario || ''} onChange={e => set('horario', e.target.value)} />
+            </div>
+          </div>
+
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+            <div>
+              <Label>Local</Label>
+              <Input value={form.local || ''} onChange={e => set('local', e.target.value)} placeholder="Ex: Barra da Tijuca" />
+            </div>
+            <div>
+              <Label>Endereco</Label>
+              <Input value={form.endereco || ''} onChange={e => set('endereco', e.target.value)} placeholder="Rua, numero" />
+            </div>
+          </div>
+
+          <div>
+            <Label>Lider</Label>
+            <Input placeholder="Buscar lider..." value={liderSearch} onChange={e => setLiderSearch(e.target.value)} />
+            {liderSearch.length >= 2 && (
+              <div style={{ maxHeight: 150, overflowY: 'auto', border: `1px solid ${C.border}`, borderRadius: 8, marginTop: 4, background: C.card }}>
+                {allMembros.filter(m => m.nome?.toLowerCase().includes(liderSearch.toLowerCase())).slice(0, 10).map(m => (
+                  <div key={m.id} onClick={() => { set('lider_id', m.id); setLiderSearch(m.nome); }} style={{ padding: '8px 12px', cursor: 'pointer', fontSize: 13, borderBottom: `1px solid ${C.border}` }}
+                    onMouseEnter={e => e.currentTarget.style.background = C.bg}
+                    onMouseLeave={e => e.currentTarget.style.background = 'transparent'}>
+                    {m.nome}
+                  </div>
+                ))}
+              </div>
+            )}
+            {form.lider_id && !liderSearch && <div style={{ fontSize: 12, color: C.t3, marginTop: 4 }}>Lider selecionado (ID: {form.lider_id.slice(0, 8)}...)</div>}
+          </div>
+
+          <div>
+            <Label>Tema atual</Label>
+            <Input value={form.tema || ''} onChange={e => set('tema', e.target.value)} placeholder="Ex: Serie Inabalavel" />
+          </div>
+
+          <div>
+            <Label>Grupo de origem (multiplicacao)</Label>
+            <ShadSelect value={form.grupo_origem_id || '_none'} onValueChange={v => set('grupo_origem_id', v === '_none' ? '' : v)}>
+              <SelectTrigger><SelectValue placeholder="Nenhum" /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="_none">Nenhum</SelectItem>
+                {gruposForSelect.filter(g => g.id !== form.id).map(g => <SelectItem key={g.id} value={g.id}>{g.nome}</SelectItem>)}
+              </SelectContent>
+            </ShadSelect>
+          </div>
+
+          <div>
+            <Label>Foto (URL)</Label>
+            <Input value={form.foto_url || ''} onChange={e => set('foto_url', e.target.value)} placeholder="https://..." />
+          </div>
+
+          <div>
+            <Label>Descricao</Label>
+            <Textarea value={form.descricao || ''} onChange={e => set('descricao', e.target.value)} rows={2} />
+          </div>
+
+          <div>
+            <Label>Observacoes</Label>
+            <Textarea value={form.observacoes || ''} onChange={e => set('observacoes', e.target.value)} rows={3} />
+          </div>
+
+          <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', marginTop: 8 }}>
+            <Button type="button" variant="outline" onClick={onClose}>Cancelar</Button>
+            <Button type="submit" disabled={saving}>{saving ? 'Salvando...' : (data?.id ? 'Salvar' : 'Criar Grupo')}</Button>
+          </div>
+        </form>
+      </DialogContent>
+    </Dialog>
+  );
+}
