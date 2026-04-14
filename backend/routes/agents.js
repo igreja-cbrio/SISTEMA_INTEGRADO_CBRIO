@@ -143,13 +143,14 @@ router.post('/chat', chatLimiter, async (req, res) => {
     let contextStr = '';
     try {
       const ctx = await buildContext([agentModule === 'supervisor' ? 'all' : agentModule]);
-      contextStr = serializeContext(ctx, 4000);
+      contextStr = serializeContext(ctx, 12000);
     } catch (e) {
       console.warn('[AGENTS] Context build failed:', e.message);
     }
 
+    const antiHallucination = 'REGRA ABSOLUTA: Responda SOMENTE com dados presentes no contexto abaixo. Se a informação não estiver disponível no contexto, diga claramente que não encontrou. NUNCA invente, estime ou adivinhe dados. Use os registros reais fornecidos.';
     const userContent = contextStr
-      ? `[CONTEXTO DO SISTEMA]\n${contextStr}\n\n[PERGUNTA DO USUÁRIO]\n${message}`
+      ? `[INSTRUÇÃO]\n${antiHallucination}\n\n[CONTEXTO DO SISTEMA — DADOS REAIS DO BANCO DE DADOS]\n${contextStr}\n\n[PERGUNTA DO USUÁRIO]\n${message}`
       : message;
 
     // 3. Send event to session and stream response
@@ -296,7 +297,7 @@ router.post('/chat', chatLimiter, async (req, res) => {
     if (!fullText) {
       console.warn('[AGENTS] Stream produced no text, falling back to Messages API');
       try {
-        const systemPrompt = `Você é o assistente ${agentModule} do PMO da CBRio (igreja). Responda em português de forma clara e útil. ${contextStr ? `Contexto do sistema:\n${contextStr}` : ''}`;
+        const systemPrompt = `Você é o assistente ${agentModule} do ERP da CBRio (igreja). Responda em português de forma clara e útil. REGRA ABSOLUTA: Responda SOMENTE com dados presentes no contexto. NUNCA invente dados. Se não encontrar a informação, diga claramente. ${contextStr ? `\n\nDados reais do banco de dados:\n${contextStr}` : ''}`;
         const fallbackRes = await fetch('https://api.anthropic.com/v1/messages', {
           method: 'POST',
           headers: {
