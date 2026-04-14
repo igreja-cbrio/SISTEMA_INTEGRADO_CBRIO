@@ -8,7 +8,7 @@ router.use(authenticate);
 // GET /api/expansion/dashboard
 router.get('/dashboard', async (req, res) => {
   try {
-    const r = await db.query('SELECT * FROM v_expansion_dashboard ORDER BY sort_order, deadline');
+    const r = await db.query('SELECT * FROM v_expansion_dashboard ORDER BY sort_order, date_end');
     res.json(r.rows);
   } catch (e) { res.status(500).json({ error: 'Erro' }); }
 });
@@ -16,7 +16,7 @@ router.get('/dashboard', async (req, res) => {
 // GET /api/expansion/milestones — com tasks e subtasks aninhados
 router.get('/milestones', async (req, res) => {
   try {
-    const milestones = await db.query('SELECT * FROM expansion_milestones ORDER BY sort_order, deadline');
+    const milestones = await db.query('SELECT * FROM expansion_milestones ORDER BY sort_order, date_end');
     const result = await Promise.all(milestones.rows.map(async mi => {
       const tasks = await db.query('SELECT * FROM expansion_tasks WHERE milestone_id = $1 ORDER BY sort_order', [mi.id]);
       const tasksWithSubs = await Promise.all(tasks.rows.map(async t => {
@@ -34,9 +34,9 @@ router.post('/milestones', authorize('diretor'), async (req, res) => {
   try {
     const d = sanitizeObj(req.body);
     const r = await db.query(
-      `INSERT INTO expansion_milestones (name, description, deadline, phase, budget_planned, created_by)
+      `INSERT INTO expansion_milestones (name, description, date_end, phase, budget_planned, created_by)
        VALUES ($1,$2,$3,$4,$5,$6) RETURNING *`,
-      [d.name, d.description||'', d.deadline||null, d.phase||'', d.budget_planned||0, req.user.userId]
+      [d.name, d.description||'', d.deadline||d.date_end||null, d.phase||'', d.budget_planned||0, req.user.userId]
     );
     res.json(r.rows[0]);
   } catch (e) { res.status(500).json({ error: 'Erro ao criar marco' }); }
@@ -47,9 +47,9 @@ router.put('/milestones/:id', authorize('diretor'), async (req, res) => {
   try {
     const d = sanitizeObj(req.body);
     const r = await db.query(
-      `UPDATE expansion_milestones SET name=$1, description=$2, deadline=$3, phase=$4,
+      `UPDATE expansion_milestones SET name=$1, description=$2, date_end=$3, phase=$4,
        budget_planned=$5, budget_spent=$6 WHERE id=$7 RETURNING *`,
-      [d.name, d.description||'', d.deadline||null, d.phase||'', d.budget_planned||0, d.budget_spent||0, req.params.id]
+      [d.name, d.description||'', d.deadline||d.date_end||null, d.phase||'', d.budget_planned||0, d.budget_spent||0, req.params.id]
     );
     res.json(r.rows[0]);
   } catch (e) { res.status(500).json({ error: 'Erro' }); }
