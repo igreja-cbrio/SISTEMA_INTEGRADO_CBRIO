@@ -129,6 +129,8 @@ export default function TabCadastros() {
       setError(e.message || 'Erro ao aprovar cadastro');
     } finally {
       setSalvando(false);
+      setAcao(null);
+      setSelecionado(null);
     }
   }
 
@@ -145,6 +147,8 @@ export default function TabCadastros() {
       setError(e.message || 'Erro ao rejeitar cadastro');
     } finally {
       setSalvando(false);
+      setAcao(null);
+      setSelecionado(null);
     }
   }
 
