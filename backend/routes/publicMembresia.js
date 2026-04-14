@@ -3,6 +3,7 @@ const multer = require('multer');
 const rateLimit = require('express-rate-limit');
 const { supabase } = require('../utils/supabase');
 const { notificar } = require('../services/notificar');
+const { uploadModuleFile, SHAREPOINT_CONFIGURED } = require('../services/storageService');
 
 const uploadMw = multer({
   storage: multer.memoryStorage(),
@@ -66,6 +67,14 @@ router.post('/upload-foto', cadastroLimiter, uploadMw.single('foto'), async (req
     if (upErr) throw upErr;
 
     const { data: urlData } = supabase.storage.from('fotos-membros').getPublicUrl(path);
+
+    // Copiar para SharePoint "CRM e Pessoas" em background
+    if (SHAREPOINT_CONFIGURED) {
+      uploadModuleFile('membresia', 'Cadastros_Publicos', `${id}.${ext}`, req.file.buffer)
+        .then(() => console.log(`[PUBLIC] Foto sincronizada com SharePoint: ${id}`))
+        .catch(spErr => console.error('[PUBLIC] SharePoint sync erro (nao-critico):', spErr.message));
+    }
+
     res.json({ foto_url: urlData.publicUrl });
   } catch (e) {
     console.error('[PUBLIC] foto upload error:', e.message);

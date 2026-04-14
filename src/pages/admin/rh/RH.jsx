@@ -1787,15 +1787,13 @@ function DocumentosSection({ data, onNewDoc, onDeleteDoc }) {
     setUploading(true);
     try {
       const ext = file.name.split('.').pop();
-      const filePath = `documentos/${data.id}/${crypto.randomUUID()}.${ext}`;
-      const { error } = await supabase.storage.from('rh-fotos').upload(filePath, file, { upsert: true });
-      if (error) throw error;
-      const { data: { publicUrl } } = supabase.storage.from('rh-fotos').getPublicUrl(filePath);
-      // Create document record
       const tipo = ext.toLowerCase() === 'pdf' ? 'contrato' : ext.toLowerCase();
-      await rh.documentos.create(data.id, { nome: file.name, tipo, storage_path: publicUrl });
-      setDocError(''); // success
-      // Reload - parent should handle
+      const fd = new FormData();
+      fd.append('arquivo', file);
+      fd.append('nome', file.name);
+      fd.append('tipo', tipo);
+      await rh.documentos.upload(data.id, fd);
+      setDocError('');
     } catch (e) {
       console.error(e);
       setDocError('Erro ao enviar documento: ' + e.message);

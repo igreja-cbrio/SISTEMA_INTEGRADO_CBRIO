@@ -2,6 +2,9 @@
  * Storage Service — upload/download de arquivos.
  * Primary: SharePoint via Microsoft Graph API (se configurado)
  * Fallback: Supabase Storage (bucket eventos-anexos)
+ *
+ * Suporta upload para qualquer biblioteca do CBRio Hub por nome.
+ * Módulos mapeados para suas respectivas bibliotecas SharePoint.
  */
 const { supabase } = require('../utils/supabase');
 require('dotenv').config();
@@ -16,9 +19,25 @@ const SHAREPOINT_CONFIGURED = !!(
   process.env.SHAREPOINT_SITE_ID
 );
 
-// CBRioHub — novo site unificado. Drive Planejamento pra arquivos de eventos.
+// CBRioHub — site unificado. Drive Planejamento pra arquivos de eventos.
 const CBRIO_HUB_SITE_ID = 'infracbrio.sharepoint.com,04b50f10-ea32-40ba-84bd-44a3b38ee2a7,94fe6af6-f064-455d-afc5-67a377f5e82c';
 const PLANEJAMENTO_DRIVE_ID = 'b!EA-1BDLqukCEvUSjs47ip_Zq_pRk8F1Fr8Vno3f16CycaaIn52TbSKQ7nZOyjaOa';
+
+// Mapeamento módulo → biblioteca SharePoint no CBRio Hub
+const MODULE_LIBRARY_MAP = {
+  rh: 'Gestão',
+  financeiro: 'Gestão',
+  logistica: 'Gestão',
+  patrimonio: 'Gestão',
+  membresia: 'CRM e Pessoas',
+  eventos: 'Planejamento',
+  criativo: 'Criativo',
+  ministerial: 'Ministerial',
+};
+
+// Cache de drive IDs por nome de biblioteca (name → driveId)
+const driveCache = {};
+let driveCacheExpiry = 0;
 
 // ── Microsoft Graph auth (client credentials) ──
 let cachedToken = null;
@@ -63,6 +82,66 @@ function buildSupabasePath(eventName, phaseName, fileName) {
 
 // ── SharePoint functions ──
 const GRAPH_BASE = 'https://graph.microsoft.com/v1.0';
+
+// Descobre todas as bibliotecas (drives) do CBRio Hub e cacheia por 1h
+async function listHubDrives() {
+  if (Date.now() < driveCacheExpiry && Object.keys(driveCache).length > 0) return driveCache;
+  const token = await getGraphToken();
+  const res = await fetch(`${GRAPH_BASE}/sites/${CBRIO_HUB_SITE_ID}/drives`, { headers: { Authorization: `Bearer ${token}` } });
+  if (!res.ok) { const err = await res.text(); throw new Error(`List drives failed ${res.status}: ${err.slice(0, 200)}`); }
+  const data = await res.json();
+  for (const d of (data.value || [])) { driveCache[d.name] = d.id; }
+  driveCacheExpiry = Date.now() + 60 * 60 * 1000; // 1h
+  return driveCache;
+}
+
+async function getDriveIdByName(libraryName) {
+  if (driveCache[libraryName] && Date.now() < driveCacheExpiry) return driveCache[libraryName];
+  await listHubDrives();
+  if (!driveCache[libraryName]) throw new Error(`Biblioteca "${libraryName}" nao encontrada no CBRio Hub`);
+  return driveCache[libraryName];
+}
+
+// Upload genérico para qualquer drive por ID
+async function uploadToDrive(driveId, folderPath, fileName, fileBuffer) {
+  const safeFolder = folderPath.split('/').map(sanitizePath).join('/');
+  const safeName = sanitizePath(fileName);
+  await ensureSharePointFolderInDrive(driveId, safeFolder);
+  const filePath = `${safeFolder}/${safeName}`;
+  const token = await getGraphToken();
+  const res = await fetch(`${GRAPH_BASE}/drives/${driveId}/root:/${filePath}:/content`, {
+    method: 'PUT',
+    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/octet-stream' },
+    body: fileBuffer,
+  });
+  if (!res.ok) { const err = await res.text().catch(() => ''); throw new Error(`Upload failed ${res.status}: ${err.slice(0, 200)}`); }
+  const data = await res.json();
+  return {
+    url: data.webUrl || data['@microsoft.graph.downloadUrl'] || '',
+    itemId: data.id,
+    path: filePath,
+    driveId,
+    provider: 'sharepoint',
+  };
+}
+
+/**
+ * Upload de arquivo para a biblioteca SharePoint do módulo correspondente.
+ * @param {string} module - Nome do módulo (rh, financeiro, membresia, etc.)
+ * @param {string} subFolder - Subpasta dentro da biblioteca (ex: "Documentos/Joao_Silva")
+ * @param {string} fileName - Nome do arquivo
+ * @param {Buffer} fileBuffer - Conteúdo do arquivo
+ * @returns {Promise<{url, itemId, path, driveId, provider}>}
+ */
+async function uploadModuleFile(module, subFolder, fileName, fileBuffer) {
+  if (!SHAREPOINT_CONFIGURED) throw new Error('SharePoint nao configurado');
+  const libraryName = MODULE_LIBRARY_MAP[module];
+  if (!libraryName) throw new Error(`Modulo "${module}" nao tem biblioteca SharePoint mapeada`);
+
+  // Planejamento já tem drive ID fixo
+  const driveId = libraryName === 'Planejamento' ? PLANEJAMENTO_DRIVE_ID : await getDriveIdByName(libraryName);
+  return uploadToDrive(driveId, subFolder, fileName, fileBuffer);
+}
 
 async function graphRequest(path, opts = {}) {
   const token = await getGraphToken();
@@ -289,4 +368,9 @@ async function syncPendingToSharePoint() {
   return { synced, failed, total: pending.length, message: `${synced} sincronizado(s), ${failed} falha(s)` };
 }
 
-module.exports = { uploadFile, downloadFile, deleteFile, getSignedUrl, syncPendingToSharePoint, getGraphToken, ensureSharePointFolder, ensureSharePointFolderInDrive, sanitizePath, MAX_FILE_SIZE, SHAREPOINT_CONFIGURED, PLANEJAMENTO_DRIVE_ID, CBRIO_HUB_SITE_ID };
+module.exports = {
+  uploadFile, downloadFile, deleteFile, getSignedUrl, syncPendingToSharePoint,
+  getGraphToken, ensureSharePointFolder, ensureSharePointFolderInDrive, sanitizePath,
+  uploadModuleFile, uploadToDrive, getDriveIdByName, listHubDrives,
+  MAX_FILE_SIZE, SHAREPOINT_CONFIGURED, PLANEJAMENTO_DRIVE_ID, CBRIO_HUB_SITE_ID, MODULE_LIBRARY_MAP,
+};

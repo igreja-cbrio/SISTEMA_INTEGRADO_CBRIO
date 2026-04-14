@@ -2,6 +2,7 @@ const router = require('express').Router();
 const multer = require('multer');
 const { authenticate, authorize } = require('../middleware/auth');
 const { supabase } = require('../utils/supabase');
+const { uploadModuleFile, SHAREPOINT_CONFIGURED } = require('../services/storageService');
 
 const uploadMw = multer({
   storage: multer.memoryStorage(),
@@ -251,6 +252,20 @@ router.post('/membros/:id/foto', authorize('admin', 'diretor'), uploadMw.single(
 
     const { error: dbErr } = await supabase.from('mem_membros').update({ foto_url }).eq('id', id);
     if (dbErr) throw dbErr;
+
+    // Copiar para SharePoint "CRM e Pessoas" em background (nao bloqueia resposta)
+    if (SHAREPOINT_CONFIGURED) {
+      (async () => {
+        try {
+          const { data: membro } = await supabase.from('mem_membros').select('nome').eq('id', id).single();
+          const nomePasta = membro?.nome || id;
+          await uploadModuleFile('membresia', `Fotos`, `${nomePasta}_${id}.${ext}`, req.file.buffer);
+          console.log(`[MEMBROS] Foto sincronizada com SharePoint: ${nomePasta}`);
+        } catch (spErr) {
+          console.error('[MEMBROS] SharePoint sync erro (nao-critico):', spErr.message);
+        }
+      })();
+    }
 
     res.json({ foto_url });
   } catch (e) {

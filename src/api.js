@@ -340,6 +340,7 @@ export const rh = {
   },
   documentos: {
     create: (funcId, data) => post(`/rh/funcionarios/${funcId}/documentos`, data),
+    upload: (funcId, formData) => requestFile(`/rh/funcionarios/${funcId}/documentos`, formData),
     remove: (id) => del(`/rh/documentos/${id}`),
   },
   treinamentos: {
