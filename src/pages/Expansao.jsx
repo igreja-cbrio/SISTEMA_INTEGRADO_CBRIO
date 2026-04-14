@@ -342,6 +342,24 @@ export default function Expansao() {
       setError('Data início não pode ser posterior à data fim');
       return;
     }
+
+    // Se editando e a data mudou, verificar marcos dependentes
+    if (form.id) {
+      const original = milestones.find(m => m.id === form.id);
+      if (original && form.date_end && original.date_end !== form.date_end) {
+        try {
+          const dependents = await expansion.getDependents(form.id);
+          if (dependents && dependents.length > 0) {
+            const names = dependents.map(d => `\u2022 ${d.name}`).join('\n');
+            const confirmed = window.confirm(
+              `Alterar a data deste marco vai afetar ${dependents.length} marco(s) dependente(s):\n\n${names}\n\nDeseja continuar?`
+            );
+            if (!confirmed) return;
+          }
+        } catch {}
+      }
+    }
+
     setSaving(true);
     try {
       if (form.id) {

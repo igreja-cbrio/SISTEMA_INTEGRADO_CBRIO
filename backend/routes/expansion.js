@@ -137,4 +137,38 @@ router.delete('/subtasks/:id', authorize('diretor'), async (req, res) => {
   } catch (e) { res.status(500).json({ error: 'Erro' }); }
 });
 
+// ── DEPENDENCIES ──
+// GET /api/expansion/milestones/:id/dependents — marcos que dependem deste
+router.get('/milestones/:id/dependents', async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('expansion_milestone_dependencies')
+      .select('milestone_id, expansion_milestones!expansion_milestone_dependencies_milestone_id_fkey(id, name, date_end, status)')
+      .eq('depends_on_id', req.params.id);
+    if (error) throw error;
+    const dependents = (data || []).map(d => d.expansion_milestones).filter(Boolean);
+    res.json(dependents);
+  } catch (e) {
+    // Fallback: query simples sem join
+    try {
+      const { data: depIds } = await supabase.from('expansion_milestone_dependencies').select('milestone_id').eq('depends_on_id', req.params.id);
+      if (!depIds || depIds.length === 0) return res.json([]);
+      const ids = depIds.map(d => d.milestone_id);
+      const { data: milestones } = await supabase.from('expansion_milestones').select('id, name, date_end, status').in('id', ids);
+      res.json(milestones || []);
+    } catch (e2) { res.status(500).json({ error: 'Erro ao buscar dependentes' }); }
+  }
+});
+
+// GET /api/expansion/milestones/:id/dependencies — marcos dos quais este depende
+router.get('/milestones/:id/dependencies', async (req, res) => {
+  try {
+    const { data: depIds } = await supabase.from('expansion_milestone_dependencies').select('depends_on_id').eq('milestone_id', req.params.id);
+    if (!depIds || depIds.length === 0) return res.json([]);
+    const ids = depIds.map(d => d.depends_on_id);
+    const { data: milestones } = await supabase.from('expansion_milestones').select('id, name, date_end, status').in('id', ids);
+    res.json(milestones || []);
+  } catch (e) { res.status(500).json({ error: 'Erro ao buscar dependências' }); }
+});
+
 module.exports = router;
