@@ -1,8 +1,8 @@
 const router = require('express').Router();
-const { authenticate, authorize } = require('../middleware/auth');
+const { authenticate, authorizeModule } = require('../middleware/auth');
 const { supabase } = require('../utils/supabase');
 
-router.use(authenticate, authorize('admin', 'diretor'));
+router.use(authenticate, authorizeModule('financeiro'));
 
 // ── DASHBOARD ──────────────────────────────────────────────
 router.get('/dashboard', async (req, res) => {

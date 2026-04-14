@@ -1,6 +1,6 @@
 const router = require('express').Router();
 const multer = require('multer');
-const { authenticate, authorizeModule } = require('../middleware/auth');
+const { authenticate, authorizeModule, applyAccessFilter, getEffectiveLevel } = require('../middleware/auth');
 const { supabase } = require('../utils/supabase');
 const { uploadModuleFile, SHAREPOINT_CONFIGURED, sanitizePath } = require('../services/storageService');
 
@@ -16,9 +16,9 @@ router.use(authenticate, authorizeModule('rh'));
 // ── DASHBOARD ──────────────────────────────────────────────
 router.get('/dashboard', async (req, res) => {
   try {
-    const { data: funcionarios, error } = await supabase
-      .from('rh_funcionarios')
-      .select('id, status, tipo_contrato, area');
+    let query = supabase.from('rh_funcionarios').select('id, status, tipo_contrato, area');
+    query = applyAccessFilter(query, req, 'rh', { areaColumn: 'area', ownerColumn: 'email', ownerEmail: true });
+    const { data: funcionarios, error } = await query;
 
     if (error) return res.status(400).json({ error: error.message });
 
@@ -83,6 +83,9 @@ router.get('/funcionarios', async (req, res) => {
       .select('*, rh_ferias_licencas(tipo, data_inicio, data_fim, status)')
       .order('nome');
 
+    // Filtro de acesso por nível: área (3) ou pessoal (2)
+    query = applyAccessFilter(query, req, 'rh', { areaColumn: 'area', ownerColumn: 'email', ownerEmail: true });
+
     if (status) query = query.eq('status', status);
     if (area) query = query.eq('area', area);
     if (tipo_contrato) query = query.eq('tipo_contrato', tipo_contrato);
@@ -100,11 +103,9 @@ router.get('/funcionarios', async (req, res) => {
 // GET /api/rh/funcionarios/:id
 router.get('/funcionarios/:id', async (req, res) => {
   try {
-    const { data: func, error } = await supabase
-      .from('rh_funcionarios')
-      .select('*')
-      .eq('id', req.params.id)
-      .single();
+    let query = supabase.from('rh_funcionarios').select('*').eq('id', req.params.id);
+    query = applyAccessFilter(query, req, 'rh', { areaColumn: 'area', ownerColumn: 'email', ownerEmail: true });
+    const { data: func, error } = await query.single();
 
     if (error) return res.status(404).json({ error: 'Funcionário não encontrado' });
 

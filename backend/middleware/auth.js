@@ -85,11 +85,61 @@ async function authenticate(req, res, next) {
   // ── Carregar permissões granulares (se o usuário existe na tabela usuarios) ──
   let granular = null;
   if (profile.email) {
-    const { data: permUser } = await supabase.from('usuarios')
+    let permUser = null;
+    const { data: existing } = await supabase.from('usuarios')
       .select('id, cargo_id, cargos(nivel_padrao_leitura, nivel_padrao_escrita)')
       .eq('email', profile.email)
       .eq('ativo', true)
       .maybeSingle();
+
+    permUser = existing;
+
+    // Auto-provisionar: se o usuário não existe em usuarios, criar automaticamente
+    if (!permUser) {
+      try {
+        // Buscar cargo compatível pelo nome do role
+        const roleCargoMap = { admin: 'Admin', diretor: 'Líder', assistente: 'Assistente' };
+        const cargoNome = roleCargoMap[profile.role] || 'Assistente';
+        const { data: cargo } = await supabase.from('cargos')
+          .select('id, nivel_padrao_leitura, nivel_padrao_escrita')
+          .ilike('nome', `%${cargoNome}%`)
+          .limit(1)
+          .maybeSingle();
+
+        const insertPayload = {
+          email: profile.email,
+          cargo_id: cargo?.id || null,
+          ativo: true,
+        };
+
+        const { data: created } = await supabase.from('usuarios')
+          .insert(insertPayload)
+          .select('id, cargo_id, cargos(nivel_padrao_leitura, nivel_padrao_escrita)')
+          .single();
+
+        if (created) {
+          permUser = created;
+          console.log(`[AUTH] Auto-provisionado usuario granular: ${profile.email} (cargo: ${cargoNome})`);
+
+          // Para admin/diretor: criar overrides com nível alto em todos os módulos
+          if (['admin', 'diretor'].includes(profile.role)) {
+            const nivel = profile.role === 'admin' ? 5 : 4;
+            const modulos = await getModulos();
+            const overrides = modulos.map(m => ({
+              usuario_id: created.id,
+              modulo_id: m.id,
+              nivel_leitura: nivel,
+              nivel_escrita: nivel,
+            }));
+            if (overrides.length > 0) {
+              await supabase.from('permissoes_modulo').insert(overrides);
+            }
+          }
+        }
+      } catch (autoErr) {
+        console.error('[AUTH] Auto-provisionar usuario falhou:', autoErr.message);
+      }
+    }
 
     if (permUser) {
       // Buscar overrides por módulo
@@ -276,4 +326,57 @@ function getEffectiveLevel(req, routeKey) {
   return maxLevel;
 }
 
-module.exports = { authenticate, authorize, authorizeCycle, authorizeModule, getMyPermissions, getEffectiveLevel, ROLE_MAP, PERMISSIONS, ROUTE_MODULE_MAP };
+/**
+ * Retorna as áreas do usuário (para filtragem de dados por área).
+ * Combina áreas granulares + profile.area como fallback.
+ */
+function getUserAreas(req) {
+  const areas = [];
+  if (req.user?.granular?.areas?.length) {
+    areas.push(...req.user.granular.areas);
+  }
+  if (req.user?.area && !areas.includes(req.user.area)) {
+    areas.push(req.user.area);
+  }
+  return areas;
+}
+
+/**
+ * Aplica filtro de nível de acesso em uma Supabase query.
+ * - Nível 5/4: sem filtro (admin/diretor vê tudo)
+ * - Nível 3: filtra por áreas do usuário
+ * - Nível 2: filtra por dados próprios (userId)
+ * - Nível 1: não deveria chegar aqui (bloqueado por authorizeModule)
+ *
+ * @param {object} query - Supabase query builder
+ * @param {object} req - Express request (com req.user)
+ * @param {string} routeKey - Chave do módulo ('rh', 'financeiro', etc.)
+ * @param {object} opts - { areaColumn: 'area', ownerColumn: null, ownerEmail: false }
+ * @returns {object} query com filtros aplicados
+ */
+function applyAccessFilter(query, req, routeKey, opts = {}) {
+  const level = getEffectiveLevel(req, routeKey);
+  const { areaColumn = 'area', ownerColumn = null, ownerEmail = false } = opts;
+
+  if (level >= 4) return query; // admin/diretor vê tudo
+
+  if (level === 3 && areaColumn) {
+    const areas = getUserAreas(req);
+    if (areas.length > 0) {
+      query = query.in(areaColumn, areas);
+    }
+    return query;
+  }
+
+  if (level === 2 && ownerColumn) {
+    const val = ownerEmail ? req.user.email : req.user.userId;
+    query = query.eq(ownerColumn, val);
+    return query;
+  }
+
+  // level 1 ou sem owner column: retorna nada
+  query = query.eq('id', '00000000-0000-0000-0000-000000000000');
+  return query;
+}
+
+module.exports = { authenticate, authorize, authorizeCycle, authorizeModule, getMyPermissions, getEffectiveLevel, getUserAreas, applyAccessFilter, ROLE_MAP, PERMISSIONS, ROUTE_MODULE_MAP };
