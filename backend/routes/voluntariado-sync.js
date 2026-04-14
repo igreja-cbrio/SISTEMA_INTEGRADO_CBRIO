@@ -6,7 +6,7 @@ const {
   processServiceType, upsertVolunteerQrCodes, PC_SERVICES_BASE,
 } = require('../services/planningCenter');
 
-router.use(authenticate, authorizeModule('membresia'));
+router.use(authenticate, authorizeModule('membresia', 1));
 
 // ══════════════════════════════════════════════════════════════
 // SYNC — MANUAL (future + recent past)

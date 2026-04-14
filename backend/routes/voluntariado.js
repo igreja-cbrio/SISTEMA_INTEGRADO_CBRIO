@@ -2,7 +2,7 @@ const router = require('express').Router();
 const { authenticate, authorizeModule } = require('../middleware/auth');
 const { supabase } = require('../utils/supabase');
 
-router.use(authenticate, authorizeModule('membresia'));
+router.use(authenticate, authorizeModule('membresia', 1));
 
 // ══════════════════════════════════════════════════════════════
 // PROFILES
