@@ -28,6 +28,7 @@ const ROUTE_MODULE_MAP = {
   'tasks':       ['Tarefas'],
   'notificacoes':['Comunicação'],
   'expansion':   ['Projetos'],
+  'voluntariado':['Membresia'],
 };
 
 // Cache de módulos (carrega uma vez e reutiliza)

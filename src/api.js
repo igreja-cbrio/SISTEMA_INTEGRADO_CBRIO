@@ -607,3 +607,67 @@ export const arquivei = {
   disconnect: () => post('/arquivei/disconnect'),
   sync: () => post('/arquivei/sync'),
 };
+
+// ── Voluntariado ──
+export const voluntariado = {
+  // Profiles
+  profiles: {
+    list: () => get('/voluntariado/profiles'),
+    get: (id) => get(`/voluntariado/profiles/${id}`),
+    update: (id, data) => put(`/voluntariado/profiles/${id}`, data),
+  },
+  // Roles
+  roles: {
+    list: () => get('/voluntariado/roles'),
+    add: (profile_id, role) => post('/voluntariado/roles', { profile_id, role }),
+    remove: (profileId, role) => del(`/voluntariado/roles/${profileId}/${role}`),
+  },
+  // Services
+  services: {
+    list: () => get('/voluntariado/services'),
+    upcoming: () => get('/voluntariado/services/upcoming'),
+    today: () => get('/voluntariado/services/today'),
+  },
+  // Schedules
+  schedules: {
+    list: (params) => get('/voluntariado/schedules' + (params ? '?' + new URLSearchParams(params) : '')),
+  },
+  // Check-ins
+  checkIns: {
+    list: (params) => get('/voluntariado/check-ins' + (params ? '?' + new URLSearchParams(params) : '')),
+    create: (data) => post('/voluntariado/check-ins', data),
+  },
+  // QR code lookup
+  qrLookup: (qr_code) => post('/voluntariado/qr-lookup', { qr_code }),
+  // Volunteer QR codes
+  volunteerQrCodes: {
+    list: () => get('/voluntariado/volunteer-qrcodes'),
+    create: (data) => post('/voluntariado/volunteer-qrcodes', data),
+  },
+  // Face
+  face: {
+    saveProfile: (data) => post('/voluntariado/face/save-profile', data),
+    saveQrcode: (data) => post('/voluntariado/face/save-qrcode', data),
+    match: (descriptor, threshold) => post('/voluntariado/face/match', { descriptor, threshold }),
+  },
+  // Self check-in
+  selfCheckin: (data) => post('/voluntariado/self-checkin', data),
+  // Sync
+  sync: () => post('/voluntariado/sync'),
+  syncHistorical: (startDate, endDate) => post('/voluntariado/sync-historical', { startDate, endDate }),
+  syncAuto: () => post('/voluntariado/sync-auto'),
+  // Sync logs
+  syncLogs: () => get('/voluntariado/sync-logs'),
+  // Teams
+  teams: () => get('/voluntariado/teams'),
+  // Training
+  trainingCheckins: {
+    list: (params) => get('/voluntariado/training-checkins' + (params ? '?' + new URLSearchParams(params) : '')),
+    create: (data) => post('/voluntariado/training-checkins', data),
+  },
+  // Planning Center proxy
+  pc: {
+    searchPeople: (query) => post('/voluntariado/pc/search-people', { query }),
+    getPerson: (person_id) => post('/voluntariado/pc/get-person', { person_id }),
+  },
+};
