@@ -100,7 +100,7 @@ function fmtMoeda(v) {
 }
 
 const EMPTY_FORM = {
-  nome: '', cpf: '', email: '', telefone: '', data_nascimento: '', estado_civil: '',
+  nome: '', sobrenome: '', cpf: '', email: '', telefone: '', data_nascimento: '', estado_civil: '',
   endereco: '', bairro: '', cidade: '', cep: '', profissao: '',
   ministerio: '', grupo: '', status: 'membro_ativo',
   familia_id: '', familia_nome_novo: '', parentesco: '', observacoes: '',
@@ -222,8 +222,14 @@ function MembroFormModal({ open, onOpenChange, editData, familias, onSaved }) {
 
   useEffect(() => {
     if (editData) {
+      // Separa nome completo em nome + sobrenome
+      const partes = (editData.nome || '').trim().split(/\s+/);
+      const primeiro = partes[0] || '';
+      const restante = partes.slice(1).join(' ');
       setForm({
-        nome: editData.nome || '',
+        nome: primeiro,
+        sobrenome: restante,
+        cpf: editData.cpf || '',
         email: editData.email || '',
         telefone: editData.telefone || '',
         data_nascimento: editData.data_nascimento || '',
@@ -249,10 +255,16 @@ function MembroFormModal({ open, onOpenChange, editData, familias, onSaved }) {
   const set = (k, v) => setForm(prev => ({ ...prev, [k]: v }));
 
   const handleSave = async () => {
-    if (!form.nome.trim()) return;
+    if (!form.nome.trim()) { toast.error('Nome é obrigatório.'); return; }
+    if (!form.sobrenome.trim()) { toast.error('Sobrenome é obrigatório.'); return; }
+    if (!form.cpf.trim()) { toast.error('CPF é obrigatório.'); return; }
+    if (!form.data_nascimento) { toast.error('Data de nascimento é obrigatória.'); return; }
     setSaving(true);
     try {
       const payload = { ...form };
+      // Junta nome + sobrenome
+      payload.nome = `${form.nome.trim()} ${form.sobrenome.trim()}`.trim();
+      delete payload.sobrenome;
       const novoNome = payload.familia_nome_novo?.trim();
       delete payload.familia_nome_novo;
 
@@ -271,7 +283,6 @@ function MembroFormModal({ open, onOpenChange, editData, familias, onSaved }) {
         payload.parentesco = null;
       }
       if (!payload.parentesco) delete payload.parentesco;
-      if (!payload.data_nascimento) delete payload.data_nascimento;
 
       // Remove campos vazios para não enviar strings vazias ao banco
       for (const k of Object.keys(payload)) {
@@ -301,32 +312,34 @@ function MembroFormModal({ open, onOpenChange, editData, familias, onSaved }) {
         </DialogHeader>
 
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 py-4">
-          {/* Nome */}
-          <div className="sm:col-span-2 space-y-1.5">
+          {/* Nome / Sobrenome */}
+          <div className="space-y-1.5">
             <Label>Nome *</Label>
-            <Input value={form.nome} onChange={e => set('nome', e.target.value)} placeholder="Nome completo" />
+            <Input value={form.nome} onChange={e => set('nome', e.target.value)} placeholder="Nome" />
+          </div>
+          <div className="space-y-1.5">
+            <Label>Sobrenome *</Label>
+            <Input value={form.sobrenome} onChange={e => set('sobrenome', e.target.value)} placeholder="Sobrenome" />
           </div>
 
-          {/* CPF / Telefone */}
+          {/* CPF / Data de Nascimento */}
           <div className="space-y-1.5">
-            <Label>CPF</Label>
+            <Label>CPF *</Label>
             <Input value={form.cpf} onChange={e => set('cpf', e.target.value)} placeholder="000.000.000-00" inputMode="numeric" maxLength={14} />
+          </div>
+          <div className="space-y-1.5">
+            <Label>Data de Nascimento *</Label>
+            <Input type="date" value={form.data_nascimento} onChange={e => set('data_nascimento', e.target.value)} />
+          </div>
+
+          {/* Email / Telefone */}
+          <div className="space-y-1.5">
+            <Label>Email</Label>
+            <Input type="email" value={form.email} onChange={e => set('email', e.target.value)} placeholder="email@exemplo.com" />
           </div>
           <div className="space-y-1.5">
             <Label>Telefone</Label>
             <Input value={form.telefone} onChange={e => set('telefone', e.target.value)} placeholder="(00) 00000-0000" />
-          </div>
-
-          {/* Email */}
-          <div className="sm:col-span-2 space-y-1.5">
-            <Label>Email</Label>
-            <Input type="email" value={form.email} onChange={e => set('email', e.target.value)} placeholder="email@exemplo.com" />
-          </div>
-
-          {/* Nascimento / Estado Civil */}
-          <div className="space-y-1.5">
-            <Label>Data de Nascimento</Label>
-            <Input type="date" value={form.data_nascimento} onChange={e => set('data_nascimento', e.target.value)} />
           </div>
           <div className="space-y-1.5">
             <Label>Estado Civil</Label>
