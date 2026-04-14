@@ -199,30 +199,38 @@ router.patch('/participacao/:id/presenca', async (req, res) => {
 });
 
 // ══════════════════════════════════════════════
-// DOCUMENTOS / ARQUIVOS
+// MATERIAIS (biblioteca central)
 // ══════════════════════════════════════════════
 
-// GET /api/grupos/:id/documentos
-router.get('/:id/documentos', async (req, res) => {
+// GET /api/grupos/materiais — lista todos com filtro por etiqueta
+router.get('/materiais', async (req, res) => {
   try {
-    const { data, error } = await supabase.from('mem_grupo_documentos')
-      .select('*').eq('grupo_id', req.params.id).order('created_at', { ascending: false });
+    const { etiqueta, grupo_id } = req.query;
+    let q = supabase.from('mem_grupo_documentos').select('*').order('created_at', { ascending: false });
+    if (etiqueta && etiqueta !== 'all') q = q.contains('etiquetas', [etiqueta]);
+    if (grupo_id) q = q.contains('grupo_ids', [grupo_id]);
+    const { data, error } = await q;
     if (error) throw error;
     res.json(data || []);
-  } catch (e) { res.status(500).json({ error: 'Erro ao buscar documentos' }); }
+  } catch (e) { console.error('[Materiais list]', e.message); res.status(500).json({ error: 'Erro ao buscar materiais' }); }
 });
 
-// POST /api/grupos/:id/documentos — upload com comentario + sync SharePoint + fila Cerebro
-router.post('/:id/documentos', uploadMw.single('arquivo'), async (req, res) => {
+// POST /api/grupos/materiais — upload central
+router.post('/materiais', uploadMw.single('arquivo'), async (req, res) => {
   try {
-    const { tipo, nome, comentario } = req.body;
+    const { nome, comentario, etiquetas, grupo_ids } = req.body;
     if (!req.file) return res.status(400).json({ error: 'Arquivo nao fornecido' });
     const fileName = nome || req.file.originalname;
     const ext = fileName.split('.').pop().toLowerCase();
+    const parsedEtiquetas = etiquetas ? JSON.parse(etiquetas) : ['Todos'];
+    const parsedGrupoIds = grupo_ids ? JSON.parse(grupo_ids) : [];
 
-    // 1. Upload para Supabase Storage (acesso rapido)
+    // Determinar pasta no SharePoint por etiqueta principal
+    const pastaEtiqueta = parsedEtiquetas[0] === 'Todos' ? 'Geral' : sanitizePath(parsedEtiquetas[0]);
+
+    // 1. Upload para Supabase Storage
     let storagePath = null;
-    const supaPath = `grupos/${req.params.id}/${Date.now()}_${sanitizePath(fileName)}`;
+    const supaPath = `grupos/materiais/${pastaEtiqueta}/${Date.now()}_${sanitizePath(fileName)}`;
     const { error: upErr } = await supabase.storage
       .from('eventos-anexos')
       .upload(supaPath, req.file.buffer, { contentType: req.file.mimetype, upsert: true });
@@ -231,71 +239,54 @@ router.post('/:id/documentos', uploadMw.single('arquivo'), async (req, res) => {
       storagePath = urlData.publicUrl;
     }
 
-    // 2. Salvar registro no banco
+    // 2. Salvar registro
     const { data: doc, error: dbErr } = await supabase.from('mem_grupo_documentos').insert({
-      grupo_id: req.params.id,
-      tipo: tipo || ext,
+      tipo: ext,
       nome: fileName,
       comentario: comentario || null,
+      etiquetas: parsedEtiquetas,
+      grupo_ids: parsedGrupoIds,
       storage_path: storagePath,
       uploaded_by: req.user?.userId || null,
       uploaded_by_name: req.user?.name || null,
     }).select().single();
     if (dbErr) throw dbErr;
 
-    // 3. Upload para SharePoint em background + enfileirar no Cerebro
+    // 3. SharePoint + Cerebro em background
     if (SHAREPOINT_CONFIGURED) {
       (async () => {
         try {
-          const { data: grupo } = await supabase.from('mem_grupos').select('nome').eq('id', req.params.id).single();
-          const nomePasta = sanitizePath(grupo?.nome || 'grupo');
-          const result = await uploadModuleFile('ministerial', `Grupos/${nomePasta}`, sanitizePath(fileName), req.file.buffer);
-
-          // Atualizar registro com URLs do SharePoint
+          const result = await uploadModuleFile('ministerial', `Grupos/Materiais/${pastaEtiqueta}`, sanitizePath(fileName), req.file.buffer);
           if (result.url) {
             await supabase.from('mem_grupo_documentos')
               .update({ sharepoint_url: result.url, sharepoint_item_id: result.itemId })
               .eq('id', doc.id);
           }
-
-          // Enfileirar no Cerebro para gerar resumo .md
           const EXTENSOES_CEREBRO = new Set(['pdf', 'xlsx', 'csv', 'docx', 'pptx', 'txt', 'md', 'json', 'png', 'jpg', 'jpeg']);
           if (EXTENSOES_CEREBRO.has(ext)) {
             await supabase.from('cerebro_fila').insert({
-              drive_id: result.driveId,
-              item_id: result.itemId,
-              nome_arquivo: fileName,
-              extensao: ext,
-              tamanho_bytes: req.file.size,
-              pasta_origem: `Grupos/${nomePasta}`,
-              biblioteca: 'Ministerial',
-              sharepoint_url: result.url,
-              status: 'pendente',
+              drive_id: result.driveId, item_id: result.itemId,
+              nome_arquivo: fileName, extensao: ext, tamanho_bytes: req.file.size,
+              pasta_origem: `Grupos/Materiais/${pastaEtiqueta}`, biblioteca: 'Ministerial',
+              sharepoint_url: result.url, status: 'pendente',
             });
-            console.log(`[Grupos] Arquivo enfileirado no Cerebro: ${fileName}`);
           }
-
-          console.log(`[Grupos] SharePoint sync: ${nomePasta}/${fileName}`);
-        } catch (spErr) {
-          console.error('[Grupos] SharePoint sync error:', spErr.message);
-        }
+          console.log(`[Materiais] SharePoint: Materiais/${pastaEtiqueta}/${fileName}`);
+        } catch (spErr) { console.error('[Materiais] SharePoint error:', spErr.message); }
       })();
     }
 
     res.json(doc);
-  } catch (e) {
-    console.error('[Grupos upload]', e.message);
-    res.status(500).json({ error: 'Erro ao fazer upload' });
-  }
+  } catch (e) { console.error('[Materiais upload]', e.message); res.status(500).json({ error: 'Erro ao fazer upload' }); }
 });
 
-// DELETE /api/grupos/documentos/:docId
-router.delete('/documentos/:docId', authorize('admin', 'diretor'), async (req, res) => {
+// DELETE /api/grupos/materiais/:docId
+router.delete('/materiais/:docId', authorize('admin', 'diretor'), async (req, res) => {
   try {
     const { error } = await supabase.from('mem_grupo_documentos').delete().eq('id', req.params.docId);
     if (error) throw error;
     res.json({ success: true });
-  } catch (e) { res.status(500).json({ error: 'Erro ao remover documento' }); }
+  } catch (e) { res.status(500).json({ error: 'Erro ao remover material' }); }
 });
 
 module.exports = router;
