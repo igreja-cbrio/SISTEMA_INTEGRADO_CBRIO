@@ -418,7 +418,7 @@ export default function CadastroMembresia() {
       }}>
         <div style={{ textAlign: 'center', marginBottom: 28 }}>
           <img
-            src="/logo-cbrio.svg"
+            src="/logo-cbrio-icon.png"
             alt="CBRio"
             style={{ width: 72, height: 72, marginBottom: 12, display: 'inline-block' }}
           />
