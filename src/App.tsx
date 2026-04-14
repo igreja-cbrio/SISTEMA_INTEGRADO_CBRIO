@@ -78,6 +78,7 @@ const Planejamento = lazyWithRetry(() => import('./pages/Planejamento'));
 const Eventos = lazyWithRetry(() => import('./pages/eventos/Eventos'));
 const Projetos = lazyWithRetry(() => import('./pages/Projetos'));
 const CadastroMembresia = lazyWithRetry(() => import('./pages/public/CadastroMembresia'));
+const Voluntariado = lazyWithRetry(() => import('./pages/ministerial/voluntariado'));
 
 // Placeholder pages for modules not yet copied
 const PlaceholderPage = ({ title }) => (
@@ -159,6 +160,7 @@ function AppRoutes() {
         <Route path="/admin/logistica" element={<ModuleGuard permKey="canLogistica"><Suspense fallback={<Loading />}><Logistica /></Suspense></ModuleGuard>} />
         <Route path="/admin/patrimonio" element={<ModuleGuard permKey="canPatrimonio"><Suspense fallback={<Loading />}><Patrimonio /></Suspense></ModuleGuard>} />
         <Route path="/ministerial/membresia" element={<ModuleGuard permKey="canMembresia"><Suspense fallback={<Loading />}><Membresia /></Suspense></ModuleGuard>} />
+        <Route path="/ministerial/voluntariado/*" element={<ModuleGuard permKey="canMembresia"><Suspense fallback={<Loading />}><Voluntariado /></Suspense></ModuleGuard>} />
         <Route path="/assistente-ia" element={<ModuleGuard permKey="canIA"><Suspense fallback={<Loading />}><AssistenteIA /></Suspense></ModuleGuard>} />
         <Route path="/solicitacoes" element={<Suspense fallback={<Loading />}><Solicitacoes /></Suspense>} />
         <Route path="/admin/notificacao-regras" element={<Suspense fallback={<Loading />}><NotificacaoRegras /></Suspense>} />
