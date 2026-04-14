@@ -39,7 +39,7 @@ async function dbQuery(text, params) {
   }
 }
 
-router.use(authenticate, authorize('diretor'));
+router.use(authenticate, authorize('admin', 'diretor'));
 
 const aiLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,

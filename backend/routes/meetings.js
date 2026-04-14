@@ -24,7 +24,7 @@ router.get('/', async (req, res) => {
 });
 
 // POST /api/meetings
-router.post('/', authorize('diretor'), async (req, res) => {
+router.post('/', authorize('admin', 'diretor'), async (req, res) => {
   try {
     const d = sanitizeObj(req.body);
     const r = await db.query(
@@ -51,7 +51,7 @@ router.post('/', authorize('diretor'), async (req, res) => {
 });
 
 // PUT /api/meetings/:id
-router.put('/:id', authorize('diretor'), async (req, res) => {
+router.put('/:id', authorize('admin', 'diretor'), async (req, res) => {
   try {
     const d = sanitizeObj(req.body);
     const r = await db.query(
@@ -65,7 +65,7 @@ router.put('/:id', authorize('diretor'), async (req, res) => {
 });
 
 // DELETE /api/meetings/:id
-router.delete('/:id', authorize('diretor'), async (req, res) => {
+router.delete('/:id', authorize('admin', 'diretor'), async (req, res) => {
   try {
     await db.query('DELETE FROM meetings WHERE id = $1', [req.params.id]);
     res.json({ success: true });
@@ -73,7 +73,7 @@ router.delete('/:id', authorize('diretor'), async (req, res) => {
 });
 
 // ── PENDENCIES ──
-router.patch('/pendencies/:id', authorize('diretor'), async (req, res) => {
+router.patch('/pendencies/:id', authorize('admin', 'diretor'), async (req, res) => {
   try {
     const done = req.body.done;
     const r = await db.query(
@@ -84,7 +84,7 @@ router.patch('/pendencies/:id', authorize('diretor'), async (req, res) => {
   } catch (e) { res.status(500).json({ error: 'Erro' }); }
 });
 
-router.delete('/pendencies/:id', authorize('diretor'), async (req, res) => {
+router.delete('/pendencies/:id', authorize('admin', 'diretor'), async (req, res) => {
   try {
     await db.query('DELETE FROM pendencies WHERE id = $1', [req.params.id]);
     res.json({ success: true });
