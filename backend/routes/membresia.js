@@ -987,31 +987,32 @@ router.post('/cadastros/:id/aprovar', authorize('admin', 'diretor'), async (req,
         .select()
         .single();
       if (eUpd || !atualizado) {
-        console.error('[CADASTROS] erro ao atualizar membro existente:', eUpd?.message);
-        return res.status(500).json({ error: 'Erro ao atualizar membro existente.' });
+        console.error('[CADASTROS] erro ao atualizar membro existente:', eUpd?.message, eUpd?.details, eUpd?.hint);
+        return res.status(500).json({ error: `Erro ao atualizar membro existente: ${eUpd?.message || 'registro não encontrado'}` });
       }
       membro = atualizado;
       foiAtualizacao = true;
     } else {
       // ── Novo membro ──
+      // Monta payload com apenas campos não-nulos para evitar erros se
+      // alguma migration opcional (parentesco, cpf) ainda não foi aplicada.
       const membroPayload = {
         nome: cad.nome,
-        cpf: cad.cpf,
-        email: cad.email,
-        telefone: cad.telefone,
-        data_nascimento: cad.data_nascimento,
-        estado_civil: cad.estado_civil,
-        endereco: cad.endereco,
-        bairro: cad.bairro,
-        cidade: cad.cidade,
-        cep: cad.cep,
-        profissao: cad.profissao,
         status: 'visitante',
-        familia_id: familia_id || null,
-        parentesco: parentesco || null,
-        observacoes: obsAuto || null,
         active: true,
       };
+      const optFields = [
+        'cpf', 'email', 'telefone', 'data_nascimento', 'estado_civil',
+        'endereco', 'bairro', 'cidade', 'cep', 'profissao',
+      ];
+      for (const k of optFields) {
+        if (cad[k] !== null && cad[k] !== undefined && cad[k] !== '') {
+          membroPayload[k] = cad[k];
+        }
+      }
+      if (familia_id) membroPayload.familia_id = familia_id;
+      if (parentesco) membroPayload.parentesco = parentesco;
+      if (obsAuto) membroPayload.observacoes = obsAuto;
 
       const { data: novo, error: e2 } = await supabase
         .from('mem_membros')
@@ -1019,8 +1020,8 @@ router.post('/cadastros/:id/aprovar', authorize('admin', 'diretor'), async (req,
         .select()
         .single();
       if (e2) {
-        console.error('[CADASTROS] erro ao criar membro:', e2.message);
-        return res.status(500).json({ error: 'Erro ao criar membro.' });
+        console.error('[CADASTROS] erro ao criar membro:', e2.message, e2.details, e2.hint);
+        return res.status(500).json({ error: `Erro ao criar membro: ${e2.message}` });
       }
       membro = novo;
     }
