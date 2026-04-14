@@ -1720,19 +1720,78 @@ export default function Membresia() {
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
                     {TRILHA_ETAPAS.map((etapa, i) => {
                       const registro = selectedMembro.trilha?.find(t => t.etapa === etapa.key);
-                      const concluida = registro?.concluida;
+                      const manualConcluida = registro?.concluida;
+
+                      // Auto-detection from real system data
+                      const auto = (() => {
+                        const m = selectedMembro;
+                        switch (etapa.key) {
+                          case 'primeiro_contato': {
+                            if (m.created_at) {
+                              const data = new Date(m.created_at).toLocaleDateString('pt-BR');
+                              return { detected: true, detail: `Cadastrado em ${data}` };
+                            }
+                            return null;
+                          }
+                          case 'grupo_vida': {
+                            if (m.grupo_atual?.grupo) {
+                              const g = m.grupo_atual.grupo;
+                              const desde = m.grupo_atual.entrou_em ? new Date(m.grupo_atual.entrou_em).toLocaleDateString('pt-BR') : null;
+                              return { detected: true, detail: `${g.nome}${desde ? ` · desde ${desde}` : ''}` };
+                            }
+                            return null;
+                          }
+                          case 'voluntariado': {
+                            if (m.ministerios_ativos?.length > 0) {
+                              const nomes = m.ministerios_ativos.map(v => {
+                                const desde = v.desde ? new Date(v.desde).toLocaleDateString('pt-BR') : null;
+                                return `${v.ministerio?.nome || 'Ministerio'}${desde ? ` (desde ${desde})` : ''}`;
+                              });
+                              return { detected: true, detail: nomes.join(', ') };
+                            }
+                            return null;
+                          }
+                          case 'generosidade': {
+                            if (m.contribuicoes?.length > 0) {
+                              const total = m.totais_ano?.total || 0;
+                              const ultima = m.ultima_contribuicao ? new Date(m.ultima_contribuicao).toLocaleDateString('pt-BR') : null;
+                              const parts = [];
+                              if (total > 0) parts.push(`R$ ${total.toLocaleString('pt-BR', { minimumFractionDigits: 2 })} no ano`);
+                              if (ultima) parts.push(`ultima em ${ultima}`);
+                              return { detected: true, detail: parts.join(' · ') || 'Possui contribuicoes' };
+                            }
+                            return null;
+                          }
+                          case 'engajamento': {
+                            if (m.checkins?.length >= 3 || m.nivel_servico === 'engajado' || m.nivel_servico === 'ativo') {
+                              const ultimo = m.ultimo_checkin ? new Date(m.ultimo_checkin).toLocaleDateString('pt-BR') : null;
+                              const parts = [];
+                              if (m.checkins?.length > 0) parts.push(`${m.checkins.length} check-ins recentes`);
+                              if (ultimo) parts.push(`ultimo em ${ultimo}`);
+                              return { detected: true, detail: parts.join(' · ') || 'Engajamento detectado' };
+                            }
+                            return null;
+                          }
+                          default:
+                            return null;
+                        }
+                      })();
+
+                      const concluida = manualConcluida || !!auto?.detected;
+                      const isAutoOnly = !manualConcluida && auto?.detected;
                       const carregando = togglingEtapa === etapa.key;
+
                       return (
-                        <div key={etapa.key} style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
-                          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', width: 24 }}>
+                        <div key={etapa.key} style={{ display: 'flex', alignItems: 'flex-start', gap: 14 }}>
+                          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', width: 24, paddingTop: 6 }}>
                             <button
                               type="button"
                               onClick={() => toggleEtapa(etapa.key)}
                               disabled={!isDiretor || carregando}
-                              title={isDiretor ? (concluida ? 'Marcar como pendente' : 'Marcar como concluída') : ''}
+                              title={isDiretor ? (manualConcluida ? 'Marcar como pendente' : 'Marcar como concluida') : (isAutoOnly ? 'Detectado automaticamente' : '')}
                               style={{
                                 width: 24, height: 24, borderRadius: '50%',
-                                background: concluida ? C.primary : 'transparent',
+                                background: concluida ? (isAutoOnly ? '#00B39D60' : C.primary) : 'transparent',
                                 border: `2px solid ${concluida ? C.primary : C.border}`,
                                 display: 'flex', alignItems: 'center', justifyContent: 'center',
                                 padding: 0,
@@ -1742,22 +1801,37 @@ export default function Membresia() {
                               }}
                             >
                               {concluida ? (
-                                <CheckCircle2 style={{ width: 14, height: 14, color: 'var(--cbrio-bg)' }} />
+                                <CheckCircle2 style={{ width: 14, height: 14, color: isAutoOnly ? C.primary : 'var(--cbrio-bg)' }} />
                               ) : (
                                 <Circle style={{ width: 10, height: 10, color: C.text3 }} />
                               )}
                             </button>
                             {i < TRILHA_ETAPAS.length - 1 && (
-                              <div style={{ width: 2, height: 28, background: concluida ? C.primary : C.border }} />
+                              <div style={{ width: 2, minHeight: 28, flex: 1, background: concluida ? C.primary : C.border }} />
                             )}
                           </div>
                           <div style={{ padding: '6px 0', flex: 1 }}>
-                            <div style={{ fontSize: 13, fontWeight: concluida ? 600 : 400, color: concluida ? C.text : C.text3 }}>
-                              {etapa.label}
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                              <span style={{ fontSize: 13, fontWeight: concluida ? 600 : 400, color: concluida ? C.text : C.text3 }}>
+                                {etapa.label}
+                              </span>
+                              {isAutoOnly && (
+                                <span style={{
+                                  fontSize: 9, fontWeight: 600, padding: '1px 5px', borderRadius: 4,
+                                  background: C.primaryBg, color: C.primary, letterSpacing: 0.3,
+                                }}>
+                                  AUTO
+                                </span>
+                              )}
                             </div>
                             {registro?.data_conclusao && (
                               <div style={{ fontSize: 11, color: C.text3, marginTop: 2 }}>
-                                {new Date(registro.data_conclusao).toLocaleDateString('pt-BR')}
+                                Marcado em {new Date(registro.data_conclusao).toLocaleDateString('pt-BR')}
+                              </div>
+                            )}
+                            {auto?.detail && (
+                              <div style={{ fontSize: 11, color: C.primary, marginTop: 2, lineHeight: 1.4 }}>
+                                {auto.detail}
                               </div>
                             )}
                           </div>
@@ -1767,7 +1841,7 @@ export default function Membresia() {
                   </div>
                   {isDiretor && (
                     <div style={{ fontSize: 11, color: C.text3, marginTop: 16, fontStyle: 'italic' }}>
-                      Clique em um círculo para marcar/desmarcar a etapa.
+                      Clique em um circulo para marcar/desmarcar manualmente. Etapas com badge "AUTO" foram detectadas automaticamente.
                     </div>
                   )}
                 </TabsContent>
