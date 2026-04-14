@@ -1,9 +1,10 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { useSearchParams, useNavigate } from 'react-router-dom';
 import { Html5Qrcode } from 'html5-qrcode';
 import { Button } from '@/components/ui/button';
 import { voluntariado } from '@/api';
-import { QrCode, Hand, Scan, CheckCircle2, XCircle, RefreshCw, Maximize } from 'lucide-react';
+import { useAuth } from '@/contexts/AuthContext';
+import { QrCode, Hand, Scan, CheckCircle2, XCircle, RefreshCw, Maximize, ArrowLeft } from 'lucide-react';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 
@@ -17,8 +18,11 @@ interface CheckInResult {
 }
 
 export default function VolTotem() {
+  const navigate = useNavigate();
+  const { isVoluntario } = useAuth();
   const [searchParams] = useSearchParams();
   const serviceIdParam = searchParams.get('serviceId');
+  const backPath = isVoluntario ? '/voluntariado/checkin' : '/ministerial/voluntariado';
   const [services, setServices] = useState<any[]>([]);
   const [selectedServiceId, setSelectedServiceId] = useState(serviceIdParam || '');
   const [mode, setMode] = useState<TotemMode>('idle');
@@ -150,6 +154,15 @@ export default function VolTotem() {
       {/* Top bar */}
       <div className="flex items-center justify-between px-4 md:px-6 py-3 md:py-4">
         <div className="flex items-center gap-2 md:gap-3">
+          <Button
+            variant="ghost"
+            size="sm"
+            className="text-white/50 hover:text-white gap-1.5"
+            onClick={() => { stopScanning(); navigate(backPath); }}
+          >
+            <ArrowLeft className="h-4 w-4" />
+            <span className="hidden sm:inline">Sair</span>
+          </Button>
           <img src="/logo-cbrio-text.png" alt="CBRio" className="h-6 md:h-8 object-contain brightness-0 invert" />
           <span className="text-base md:text-lg font-semibold opacity-70">Check-in</span>
         </div>

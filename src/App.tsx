@@ -1,4 +1,4 @@
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, Navigate, Outlet, useNavigate } from 'react-router-dom';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { ThemeProvider } from './contexts/ThemeContext';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -131,18 +131,46 @@ function ModuleGuard({ permKey, children }: { permKey: string; children: ReactNo
 function VoluntariadoGuard({ children }: { children: ReactNode }) {
   const auth = useAuth();
   if (auth.loading) return <Loading />;
-  // Volunteers always have access to voluntariado
   if (auth.isVoluntario) return <>{children}</>;
-  // Staff need canMembresia permission
   if (auth.canMembresia === false) return <Navigate to="/dashboard" replace />;
   return <>{children}</>;
+}
+
+/** Shell minimalista para voluntarios — so logo + nome + sair */
+function VolunteerShell() {
+  const { profile, signOut } = useAuth();
+  const navigate = useNavigate();
+  return (
+    <div className="min-h-screen" style={{ background: 'var(--cbrio-bg)' }}>
+      <header className="sticky top-0 z-30 border-b border-border bg-card/80 backdrop-blur-md">
+        <div className="flex items-center justify-between h-14 px-4 md:px-6 max-w-[1800px] mx-auto">
+          <div className="flex items-center gap-2">
+            <img src="/logo-cbrio-text.png" alt="CBRio" className="h-7 object-contain" />
+            <span className="text-sm font-medium text-muted-foreground">Check-in Voluntariado</span>
+          </div>
+          <div className="flex items-center gap-3">
+            {profile?.name && <span className="text-sm text-foreground hidden sm:inline">{profile.name.split(' ')[0]}</span>}
+            <button
+              onClick={async () => { await signOut(); navigate('/login'); }}
+              className="px-3 py-1.5 rounded-lg text-sm font-medium text-muted-foreground hover:bg-accent hover:text-foreground transition-colors"
+            >
+              Sair
+            </button>
+          </div>
+        </div>
+      </header>
+      <main className="max-w-[1800px] mx-auto">
+        <Outlet />
+      </main>
+    </div>
+  );
 }
 
 function DefaultRedirect() {
   const { user, loading, isVoluntario } = useAuth();
   if (loading) return <Loading />;
   if (!user) return <Navigate to="/login" replace />;
-  if (isVoluntario) return <Navigate to="/ministerial/voluntariado/checkin" replace />;
+  if (isVoluntario) return <Navigate to="/voluntariado/checkin" replace />;
   return <Navigate to="/dashboard" replace />;
 }
 
@@ -152,18 +180,22 @@ function AppRoutes() {
 
   return (
     <Routes>
-      <Route path="/login" element={user ? (isVoluntario ? <Navigate to="/ministerial/voluntariado/checkin" replace /> : <Navigate to="/dashboard" replace />) : <Login />} />
+      <Route path="/login" element={user ? (isVoluntario ? <Navigate to="/voluntariado/checkin" replace /> : <Navigate to="/dashboard" replace />) : <Login />} />
 
-      {/* Rota pública — sem AppShell, sem autenticação.
-          Permite que visitantes enviem o formulário de cadastro de membresia. */}
+      {/* Rotas publicas */}
       <Route path="/cadastro-membresia" element={<Suspense fallback={<Loading />}><CadastroMembresia /></Suspense>} />
-
-      {/* Planning Center OAuth callback — public route */}
       <Route path="/auth/pc-callback" element={<Suspense fallback={<Loading />}><PcCallback /></Suspense>} />
 
-      {/* Totem check-in — fullscreen, sem AppShell, mas requer login */}
+      {/* Totem — fullscreen, sem shell nenhum */}
       <Route path="/voluntariado/totem" element={<ProtectedRoute><Suspense fallback={<Loading />}><VolTotem /></Suspense></ProtectedRoute>} />
 
+      {/* ═══ Rotas do VOLUNTARIO — shell minimalista, so check-in ═══ */}
+      <Route element={<ProtectedRoute><VolunteerShell /></ProtectedRoute>}>
+        <Route path="/voluntariado/checkin" element={<Suspense fallback={<Loading />}><Voluntariado /></Suspense>} />
+        <Route path="/voluntariado/*" element={<Navigate to="/voluntariado/checkin" replace />} />
+      </Route>
+
+      {/* ═══ Rotas do STAFF — AppShell completo ═══ */}
       <Route
         element={
           <ProtectedRoute>
@@ -173,8 +205,6 @@ function AppRoutes() {
       >
         <Route path="/dashboard" element={<Suspense fallback={<Loading />}><Dashboard /></Suspense>} />
         <Route path="/perfil" element={<Suspense fallback={<Loading />}><Perfil /></Suspense>} />
-
-        {/* Placeholder routes for modules */}
         <Route path="/planejamento" element={<Suspense fallback={<Loading />}><Planejamento /></Suspense>} />
         <Route path="/eventos" element={<ModuleGuard permKey="canAgenda"><Suspense fallback={<Loading />}><Eventos /></Suspense></ModuleGuard>} />
         <Route path="/eventos/:id" element={<ModuleGuard permKey="canAgenda"><Suspense fallback={<Loading />}><EventDetail /></Suspense></ModuleGuard>} />

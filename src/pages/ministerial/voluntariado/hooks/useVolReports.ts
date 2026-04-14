@@ -101,8 +101,9 @@ export function useInactiveVolunteers(period = '3months', teamName?: string, mod
         voluntariado.services.list() as Promise<VolService[]>,
       ]);
 
-      const months = period === '2months' ? 2 : period === '4months' ? 4 : period === '6months' ? 6 : 3;
-      const cutoff = subMonths(new Date(), months);
+      const periodMonths: Record<string, number> = { week: 0.25, month: 1, '2months': 2, '3months': 3, '4months': 4, '6months': 6 };
+      const months = periodMonths[period] || 3;
+      const cutoff = months < 1 ? subDays(new Date(), Math.round(months * 30)) : subMonths(new Date(), months);
       const now = new Date();
 
       if (mode === 'schedule') {
@@ -198,11 +199,34 @@ export function useVolunteerThermometer(period: Period = 'month', teamName?: str
         volStats.get(sch.planning_center_person_id)!.scheduled++;
       }
 
+      // Build volunteer_id → planning_center_person_id map for fallback matching
+      const volIdToPcId = new Map<string, string>();
+      for (const sch of periodSchedules) {
+        if (sch.volunteer_id) volIdToPcId.set(sch.volunteer_id, sch.planning_center_person_id);
+      }
+
+      const countedScheduleIds = new Set<string>();
       for (const ci of periodCheckIns) {
-        const sch = periodSchedules.find(s => s.id === ci.schedule_id);
-        if (!sch) continue;
-        const stat = volStats.get(sch.planning_center_person_id);
-        if (stat) stat.checkedIn++;
+        let matchedPcId: string | null = null;
+
+        // 1. Match by schedule_id
+        if (ci.schedule_id) {
+          const sch = periodSchedules.find(s => s.id === ci.schedule_id);
+          if (sch) {
+            matchedPcId = sch.planning_center_person_id;
+            countedScheduleIds.add(ci.schedule_id);
+          }
+        }
+
+        // 2. Fallback: match by volunteer_id
+        if (!matchedPcId && ci.volunteer_id) {
+          matchedPcId = volIdToPcId.get(ci.volunteer_id) || null;
+        }
+
+        if (matchedPcId) {
+          const stat = volStats.get(matchedPcId);
+          if (stat) stat.checkedIn++;
+        }
       }
 
       return Array.from(volStats.entries()).map(([id, stat]) => {

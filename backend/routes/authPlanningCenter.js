@@ -193,7 +193,7 @@ router.get('/callback', async (req, res) => {
       type: 'magiclink',
       email,
       options: {
-        redirectTo: `${frontendUrl}/ministerial/voluntariado/checkin`,
+        redirectTo: `${frontendUrl}/voluntariado/checkin`,
       },
     });
 

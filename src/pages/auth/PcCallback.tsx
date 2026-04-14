@@ -24,7 +24,7 @@ export default function PcCallback() {
           setError(verifyErr.message);
           setTimeout(() => navigate('/login?error=verify_failed', { replace: true }), 2500);
         } else {
-          navigate('/ministerial/voluntariado/checkin', { replace: true });
+          navigate('/voluntariado/checkin', { replace: true });
         }
       });
   }, []);
