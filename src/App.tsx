@@ -103,6 +103,22 @@ function ProtectedRoute({ children }) {
   return children;
 }
 
+/**
+ * Guarda de módulo — verifica se o usuário tem permissão para acessar o módulo.
+ * Se não tiver, redireciona para /dashboard.
+ * permKey: chave de permissão ('canRH', 'canFinanceiro', etc.)
+ */
+function ModuleGuard({ permKey, children }: { permKey: string; children: ReactNode }) {
+  const auth = useAuth();
+  if (auth.loading) return <Loading />;
+
+  const hasAccess = permKey ? auth[permKey] : true;
+  if (hasAccess === false) {
+    return <Navigate to="/dashboard" replace />;
+  }
+  return <>{children}</>;
+}
+
 function DefaultRedirect() {
   const { user, loading } = useAuth();
   if (loading) return <Loading />;
@@ -134,16 +150,16 @@ function AppRoutes() {
 
         {/* Placeholder routes for modules */}
         <Route path="/planejamento" element={<Suspense fallback={<Loading />}><Planejamento /></Suspense>} />
-        <Route path="/eventos" element={<Suspense fallback={<Loading />}><Eventos /></Suspense>} />
-        <Route path="/eventos/:id" element={<Suspense fallback={<Loading />}><EventDetail /></Suspense>} />
-        <Route path="/projetos" element={<Suspense fallback={<Loading />}><Projetos /></Suspense>} />
-        <Route path="/expansao" element={<Suspense fallback={<Loading />}><Expansao /></Suspense>} />
-        <Route path="/admin/rh" element={<Suspense fallback={<Loading />}><RH /></Suspense>} />
-        <Route path="/admin/financeiro" element={<Suspense fallback={<Loading />}><Financeiro /></Suspense>} />
-        <Route path="/admin/logistica" element={<Suspense fallback={<Loading />}><Logistica /></Suspense>} />
-        <Route path="/admin/patrimonio" element={<Suspense fallback={<Loading />}><Patrimonio /></Suspense>} />
-        <Route path="/ministerial/membresia" element={<Suspense fallback={<Loading />}><Membresia /></Suspense>} />
-        <Route path="/assistente-ia" element={<Suspense fallback={<Loading />}><AssistenteIA /></Suspense>} />
+        <Route path="/eventos" element={<ModuleGuard permKey="canAgenda"><Suspense fallback={<Loading />}><Eventos /></Suspense></ModuleGuard>} />
+        <Route path="/eventos/:id" element={<ModuleGuard permKey="canAgenda"><Suspense fallback={<Loading />}><EventDetail /></Suspense></ModuleGuard>} />
+        <Route path="/projetos" element={<ModuleGuard permKey="canProjetos"><Suspense fallback={<Loading />}><Projetos /></Suspense></ModuleGuard>} />
+        <Route path="/expansao" element={<ModuleGuard permKey="canExpansao"><Suspense fallback={<Loading />}><Expansao /></Suspense></ModuleGuard>} />
+        <Route path="/admin/rh" element={<ModuleGuard permKey="canRH"><Suspense fallback={<Loading />}><RH /></Suspense></ModuleGuard>} />
+        <Route path="/admin/financeiro" element={<ModuleGuard permKey="canFinanceiro"><Suspense fallback={<Loading />}><Financeiro /></Suspense></ModuleGuard>} />
+        <Route path="/admin/logistica" element={<ModuleGuard permKey="canLogistica"><Suspense fallback={<Loading />}><Logistica /></Suspense></ModuleGuard>} />
+        <Route path="/admin/patrimonio" element={<ModuleGuard permKey="canPatrimonio"><Suspense fallback={<Loading />}><Patrimonio /></Suspense></ModuleGuard>} />
+        <Route path="/ministerial/membresia" element={<ModuleGuard permKey="canMembresia"><Suspense fallback={<Loading />}><Membresia /></Suspense></ModuleGuard>} />
+        <Route path="/assistente-ia" element={<ModuleGuard permKey="canIA"><Suspense fallback={<Loading />}><AssistenteIA /></Suspense></ModuleGuard>} />
         <Route path="/solicitacoes" element={<Suspense fallback={<Loading />}><Solicitacoes /></Suspense>} />
         <Route path="/admin/notificacao-regras" element={<Suspense fallback={<Loading />}><NotificacaoRegras /></Suspense>} />
         <Route path="/ministerial/*" element={<PlaceholderPage title="Ministerial" />} />

@@ -1,9 +1,9 @@
 const router = require('express').Router();
-const { authenticate, authorize } = require('../middleware/auth');
+const { authenticate, authorizeModule } = require('../middleware/auth');
 const { supabase } = require('../utils/supabase');
 const { getMLConfig, mlFetch, ensureUserId, searchOrders } = require('../services/mercadoLivreService');
 
-router.use(authenticate, authorize('admin', 'diretor'));
+router.use(authenticate, authorizeModule('logistica'));
 
 // ── Cache em memória do dashboard (30s TTL) ───────────────
 const DASHBOARD_CACHE_TTL = 30 * 1000;
