@@ -47,6 +47,7 @@ app.use('/api/auth', require('./routes/auth'));
 app.use('/api/events', require('./routes/events'));
 app.use('/api/projects', require('./routes/projects'));
 app.use('/api/expansion', require('./routes/expansion'));
+app.use('/api/strategic', require('./routes/strategic'));
 app.use('/api/meetings', require('./routes/meetings'));
 app.use('/api/agents', require('./routes/agents'));
 app.use('/api/rh', require('./routes/rh'));

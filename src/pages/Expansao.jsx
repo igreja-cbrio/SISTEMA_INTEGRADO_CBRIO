@@ -160,13 +160,25 @@ function Modal({ open, onClose, title, children, footer }) {
   );
 }
 
-function ConfirmDialog({ message, onConfirm, onCancel }) {
+function ConfirmDialog({ message, details, onConfirm, onCancel }) {
   if (!message) return null;
   return (
     <div style={{ position: 'fixed', inset: 0, zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(0,0,0,0.5)' }}>
-      <div style={{ background: 'var(--cbrio-modal-bg)', borderRadius: 16, padding: 28, maxWidth: 400, boxShadow: '0 20px 60px rgba(0,0,0,0.3)', textAlign: 'center' }}>
-        <AlertTriangle style={{ width: 36, height: 36, color: '#f59e0b', margin: '0 auto 12px' }} />
-        <div style={{ fontSize: 15, fontWeight: 600, color: 'var(--cbrio-text)', marginBottom: 20 }}>{message}</div>
+      <div style={{ background: 'var(--cbrio-modal-bg)', borderRadius: 16, padding: 28, maxWidth: 440, boxShadow: '0 20px 60px rgba(0,0,0,0.3)' }}>
+        <div style={{ textAlign: 'center' }}>
+          <AlertTriangle style={{ width: 36, height: 36, color: '#f59e0b', margin: '0 auto 12px' }} />
+          <div style={{ fontSize: 15, fontWeight: 600, color: 'var(--cbrio-text)', marginBottom: details ? 12 : 20 }}>{message}</div>
+        </div>
+        {details && details.length > 0 && (
+          <div style={{ maxHeight: 200, overflowY: 'auto', marginBottom: 20, borderRadius: 10, border: '1px solid var(--cbrio-border)', background: 'var(--cbrio-bg)' }}>
+            {details.map((item, i) => (
+              <div key={i} style={{ padding: '8px 14px', fontSize: 13, color: 'var(--cbrio-text)', borderBottom: i < details.length - 1 ? '1px solid var(--cbrio-border)' : 'none', display: 'flex', alignItems: 'center', gap: 8 }}>
+                <div style={{ width: 6, height: 6, borderRadius: '50%', background: '#f59e0b', flexShrink: 0 }} />
+                {item}
+              </div>
+            ))}
+          </div>
+        )}
         <div style={{ display: 'flex', gap: 10, justifyContent: 'center' }}>
           <button style={styles.btn('ghost')} onClick={onCancel}>Cancelar</button>
           <button style={styles.btn('danger')} onClick={onConfirm}>Confirmar</button>
@@ -336,6 +348,20 @@ export default function Expansao() {
   }, [visibleMilestones]);
 
   // ── CRUD Handlers ──
+  const doSaveMilestone = async (form) => {
+    setSaving(true);
+    try {
+      if (form.id) {
+        await expansion.updateMilestone(form.id, form);
+      } else {
+        await expansion.createMilestone(form);
+      }
+      setModalMilestone(null);
+      await refreshAll();
+    } catch (err) { setError(err.message); }
+    finally { setSaving(false); }
+  };
+
   const saveMilestone = async (form) => {
     // Validate dates
     if (form.date_start && form.date_end && form.date_start > form.date_end) {
@@ -350,27 +376,18 @@ export default function Expansao() {
         try {
           const dependents = await expansion.getDependents(form.id);
           if (dependents && dependents.length > 0) {
-            const names = dependents.map(d => `\u2022 ${d.name}`).join('\n');
-            const confirmed = window.confirm(
-              `Alterar a data deste marco vai afetar ${dependents.length} marco(s) dependente(s):\n\n${names}\n\nDeseja continuar?`
-            );
-            if (!confirmed) return;
+            setConfirmMsg({
+              message: `Alterar a data deste marco vai afetar ${dependents.length} marco(s) dependente(s):`,
+              details: dependents.map(d => d.name),
+              onConfirm: () => { setConfirmMsg(null); doSaveMilestone(form); },
+            });
+            return;
           }
         } catch {}
       }
     }
 
-    setSaving(true);
-    try {
-      if (form.id) {
-        await expansion.updateMilestone(form.id, form);
-      } else {
-        await expansion.createMilestone(form);
-      }
-      setModalMilestone(null);
-      await refreshAll();
-    } catch (err) { setError(err.message); }
-    finally { setSaving(false); }
+    doSaveMilestone(form);
   };
 
   const deleteMilestone = (id) => {
@@ -1441,6 +1458,7 @@ export default function Expansao() {
       {/* Confirm Dialog */}
       <ConfirmDialog
         message={confirmMsg?.message}
+        details={confirmMsg?.details}
         onConfirm={confirmMsg?.onConfirm}
         onCancel={() => setConfirmMsg(null)}
       />
