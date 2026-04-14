@@ -12,9 +12,11 @@ export default function PeriodFilter({ value, onChange }: PeriodFilterProps) {
         <SelectValue placeholder="Periodo" />
       </SelectTrigger>
       <SelectContent>
-        <SelectItem value="week">Esta semana</SelectItem>
-        <SelectItem value="month">Ultimo mes</SelectItem>
-        <SelectItem value="3months">Ultimos 3 meses</SelectItem>
+        <SelectItem value="week">Ultima Semana</SelectItem>
+        <SelectItem value="month">Mes Atual</SelectItem>
+        <SelectItem value="3months">3 Meses</SelectItem>
+        <SelectItem value="4months">4 Meses</SelectItem>
+        <SelectItem value="6months">6 Meses</SelectItem>
       </SelectContent>
     </Select>
   );
