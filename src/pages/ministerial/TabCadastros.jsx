@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { membresia } from '../../api';
 import { useAuth } from '../../contexts/AuthContext';
+import { toast } from 'sonner';
 import {
   Inbox, Check, X, Search, User, Mail, Phone,
   MapPin, Calendar, Copy, ExternalLink, Trash2, CheckCircle2,
@@ -116,6 +117,8 @@ export default function TabCadastros() {
 
   async function handleAprovar() {
     if (!selecionado) return;
+    const nome = selecionado.nome;
+    const ehAtualizacao = !!selecionado.duplicado_de;
     setSalvando(true);
     try {
       await membresia.cadastros.aprovar(selecionado.id, {
@@ -124,9 +127,14 @@ export default function TabCadastros() {
       setAcao(null);
       setSelecionado(null);
       setObservacoesAprov('');
+      toast.success(
+        ehAtualizacao
+          ? `Cadastro de ${nome} atualizado com sucesso!`
+          : `${nome} aprovado(a) como novo membro!`,
+      );
       await load();
     } catch (e) {
-      setError(e.message || 'Erro ao aprovar cadastro');
+      toast.error(e.message || 'Erro ao aprovar cadastro');
     } finally {
       setSalvando(false);
       setAcao(null);
@@ -136,15 +144,17 @@ export default function TabCadastros() {
 
   async function handleRejeitar() {
     if (!selecionado) return;
+    const nome = selecionado.nome;
     setSalvando(true);
     try {
       await membresia.cadastros.rejeitar(selecionado.id, motivoRejeicao);
       setAcao(null);
       setSelecionado(null);
       setMotivoRejeicao('');
+      toast.success(`Cadastro de ${nome} rejeitado.`);
       await load();
     } catch (e) {
-      setError(e.message || 'Erro ao rejeitar cadastro');
+      toast.error(e.message || 'Erro ao rejeitar cadastro');
     } finally {
       setSalvando(false);
       setAcao(null);
@@ -159,7 +169,7 @@ export default function TabCadastros() {
       if (selecionado?.id === cad.id) setSelecionado(null);
       await load();
     } catch (e) {
-      setError(e.message || 'Erro ao remover cadastro');
+      toast.error(e.message || 'Erro ao remover cadastro');
     }
   }
 
