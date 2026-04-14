@@ -8,7 +8,7 @@ import { Textarea } from '../../components/ui/textarea';
 import { Select as ShadSelect, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../components/ui/select';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../../components/ui/dialog';
 import { toast } from 'sonner';
-import { Users, MapPin, Clock, Plus, Search, ChevronLeft, UserPlus, X, ArrowRightLeft, FileUp, Trash2, FileText, Image, File } from 'lucide-react';
+import { Users, MapPin, Clock, Plus, Search, ChevronLeft, UserPlus, X, ArrowRightLeft, FileUp, Trash2, FileText, Image, File as FileIcon } from 'lucide-react';
 
 const C = {
   bg: 'var(--cbrio-bg)', card: 'var(--cbrio-card)', primary: '#00B39D', primaryBg: '#00B39D18',
@@ -376,7 +376,7 @@ export default function Grupos() {
                     const ext = doc.tipo || doc.nome?.split('.').pop() || '';
                     const isImg = ['png', 'jpg', 'jpeg', 'gif', 'webp'].includes(ext.toLowerCase());
                     const isPdf = ext.toLowerCase() === 'pdf';
-                    const IconFile = isImg ? Image : isPdf ? FileText : File;
+                    const IconFile = isImg ? Image : isPdf ? FileText : FileIcon;
                     const iconColor = isImg ? '#ec4899' : isPdf ? '#ef4444' : C.blue;
                     return (
                       <div key={doc.id} style={{ padding: '12px 16px', borderBottom: `1px solid ${C.border}`, display: 'flex', alignItems: 'center', gap: 12 }}>
