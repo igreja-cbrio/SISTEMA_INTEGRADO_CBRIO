@@ -15,10 +15,14 @@ const C = {
 };
 
 const STATUS_MAP = {
+  'planejamento': { c: '#9ca3af', bg: '#9ca3af20', label: 'Planejamento' },
   'no-prazo': { c: C.green, bg: C.greenBg, label: 'No Prazo' },
+  'em_andamento': { c: C.blue, bg: C.blueBg, label: 'Em Andamento' },
   'em-risco': { c: C.amber, bg: C.amberBg, label: 'Em Risco' },
   'atrasado': { c: C.red, bg: C.redBg, label: 'Atrasado' },
-  'concluido': { c: C.blue, bg: C.blueBg, label: 'Concluido' },
+  'concluido': { c: '#06b6d4', bg: '#06b6d420', label: 'Concluido' },
+  'cancelado': { c: '#6b7280', bg: '#6b728020', label: 'Cancelado' },
+  'pausado': { c: '#d946ef', bg: '#d946ef20', label: 'Pausado' },
 };
 
 const TASK_STATUS_MAP = {
@@ -797,7 +801,7 @@ export default function Projetos() {
           <table style={styles.table}>
             <thead style={{ position: 'sticky', top: 0, zIndex: 10 }}>
               <tr>
-                {[{ key: 'name', label: 'Nome' }, { key: 'category', label: 'Categoria' }, { key: 'leader', label: 'Lider' }, { key: 'status', label: 'Status' }, { key: 'priority', label: 'Prioridade' }, { key: 'progress', label: 'Progresso' }, { key: 'deadline', label: 'Prazo' }].map(col => (
+                {[{ key: 'name', label: 'Nome' }, { key: 'category', label: 'Categoria' }, { key: 'leader', label: 'Lider' }, { key: 'status', label: 'Status' }, { key: 'priority', label: 'Prioridade' }, { key: 'progress', label: 'Progresso' }, { key: 'deadline', label: 'Prazo' }, ...(isDiretor ? [{ key: '_actions', label: 'Acoes' }] : [])].map(col => (
                   <th key={col.key} style={{ ...styles.th, cursor: 'pointer', userSelect: 'none' }} onClick={() => thClick(col.key)}>
                     {col.label} {sortCol === col.key ? (sortAsc ? '\u25B2' : '\u25BC') : ''}
                   </th>
@@ -832,6 +836,16 @@ export default function Projetos() {
                       {fmtDate(p.date_end)}
                       <DaysCounter date={p.date_end} status={p.status} />
                     </td>
+                    {isDiretor && (
+                      <td style={styles.td} onClick={e => e.stopPropagation()}>
+                        <div style={{ display: 'flex', gap: 4 }}>
+                          <button onClick={() => setModalProject(p)} style={{ padding: '3px 8px', fontSize: 10, borderRadius: 4, border: `1px solid ${C.border}`, background: 'transparent', color: C.primary, cursor: 'pointer', fontWeight: 600 }}>Editar</button>
+                          <button onClick={() => toggleProjectStatus(p.id, p.status)} style={{ padding: '3px 8px', fontSize: 10, borderRadius: 4, border: 'none', background: p.status === 'concluido' ? C.amberBg : C.greenBg, color: p.status === 'concluido' ? C.amber : C.green, cursor: 'pointer', fontWeight: 600 }}>
+                            {p.status === 'concluido' ? 'Reabrir' : 'Finalizar'}
+                          </button>
+                        </div>
+                      </td>
+                    )}
                   </tr>
                 );
               })}
