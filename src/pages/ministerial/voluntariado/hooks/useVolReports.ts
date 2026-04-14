@@ -90,22 +90,50 @@ export function useWeeklyReport(period: Period = 'month', teamName?: string) {
   });
 }
 
-// Inactive volunteers
-export function useInactiveVolunteers(period = '3months', teamName?: string) {
+// Inactive volunteers — two modes: 'checkin' (no check-in) and 'schedule' (not scheduled)
+export function useInactiveVolunteers(period = '3months', teamName?: string, mode: 'checkin' | 'schedule' = 'checkin') {
   return useQuery({
-    queryKey: ['vol', 'inactive', period, teamName],
+    queryKey: ['vol', 'inactive', period, teamName, mode],
     queryFn: async () => {
-      const [schedules, checkIns] = await Promise.all([
+      const [schedules, checkIns, services] = await Promise.all([
         voluntariado.schedules.list({}) as Promise<VolSchedule[]>,
         voluntariado.checkIns.list({}) as Promise<VolCheckIn[]>,
+        voluntariado.services.list() as Promise<VolService[]>,
       ]);
 
-      const cutoff = period === '2months' ? subMonths(new Date(), 2)
-        : period === '4months' ? subMonths(new Date(), 4)
-        : period === '6months' ? subMonths(new Date(), 6)
-        : subMonths(new Date(), 3);
+      const months = period === '2months' ? 2 : period === '4months' ? 4 : period === '6months' ? 6 : 3;
+      const cutoff = subMonths(new Date(), months);
+      const now = new Date();
 
-      // Unique volunteers from schedules
+      if (mode === 'schedule') {
+        // Volunteers who haven't been SCHEDULED in the period
+        const volunteerMap = new Map<string, { name: string; team: string | null; lastSchedule: Date | null }>();
+
+        for (const sch of schedules) {
+          if (teamName && sch.team_name && !sch.team_name.includes(teamName)) continue;
+          const svc = services.find(s => s.id === sch.service_id);
+          const schedDate = svc ? new Date(svc.scheduled_at) : new Date(sch.created_at);
+
+          if (!volunteerMap.has(sch.planning_center_person_id)) {
+            volunteerMap.set(sch.planning_center_person_id, { name: sch.volunteer_name, team: sch.team_name, lastSchedule: schedDate });
+          } else {
+            const existing = volunteerMap.get(sch.planning_center_person_id)!;
+            if (!existing.lastSchedule || schedDate > existing.lastSchedule) existing.lastSchedule = schedDate;
+          }
+        }
+
+        return Array.from(volunteerMap.entries())
+          .filter(([, v]) => !v.lastSchedule || v.lastSchedule < cutoff)
+          .map(([id, v]) => {
+            const monthsInactive = v.lastSchedule
+              ? Math.max(1, Math.round((now.getTime() - v.lastSchedule.getTime()) / (30 * 24 * 60 * 60 * 1000)))
+              : null;
+            return { planningCenterId: id, name: v.name, team: v.team, lastDate: v.lastSchedule?.toISOString() || null, monthsInactive };
+          })
+          .sort((a, b) => (b.monthsInactive || 999) - (a.monthsInactive || 999));
+      }
+
+      // mode === 'checkin' — Volunteers who haven't done CHECK-IN in the period
       const volunteerMap = new Map<string, { name: string; team: string | null; lastCheckIn: Date | null }>();
       for (const sch of schedules) {
         if (teamName && sch.team_name && !sch.team_name.includes(teamName)) continue;
@@ -114,7 +142,6 @@ export function useInactiveVolunteers(period = '3months', teamName?: string) {
         }
       }
 
-      // Find last check-in for each
       for (const ci of checkIns) {
         const sch = schedules.find(s => s.id === ci.schedule_id);
         if (!sch) continue;
@@ -125,10 +152,15 @@ export function useInactiveVolunteers(period = '3months', teamName?: string) {
         }
       }
 
-      // Filter inactive
       return Array.from(volunteerMap.entries())
         .filter(([, v]) => !v.lastCheckIn || v.lastCheckIn < cutoff)
-        .map(([id, v]) => ({ planningCenterId: id, name: v.name, team: v.team, lastCheckIn: v.lastCheckIn?.toISOString() || null }));
+        .map(([id, v]) => {
+          const monthsInactive = v.lastCheckIn
+            ? Math.max(1, Math.round((now.getTime() - v.lastCheckIn.getTime()) / (30 * 24 * 60 * 60 * 1000)))
+            : null;
+          return { planningCenterId: id, name: v.name, team: v.team, lastDate: v.lastCheckIn?.toISOString() || null, monthsInactive };
+        })
+        .sort((a, b) => (b.monthsInactive || 999) - (a.monthsInactive || 999));
     },
   });
 }

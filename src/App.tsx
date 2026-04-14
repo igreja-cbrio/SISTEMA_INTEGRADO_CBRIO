@@ -85,6 +85,7 @@ const Projetos = lazyWithRetry(() => import('./pages/Projetos'));
 const Grupos = lazyWithRetry(() => import('./pages/ministerial/Grupos'));
 const CadastroMembresia = lazyWithRetry(() => import('./pages/public/CadastroMembresia'));
 const Voluntariado = lazyWithRetry(() => import('./pages/ministerial/voluntariado'));
+const VolTotem = lazyWithRetry(() => import('./pages/ministerial/voluntariado/VolTotem'));
 
 // Placeholder pages for modules not yet copied
 const PlaceholderPage = ({ title }) => (
@@ -144,6 +145,9 @@ function AppRoutes() {
       {/* Rota pública — sem AppShell, sem autenticação.
           Permite que visitantes enviem o formulário de cadastro de membresia. */}
       <Route path="/cadastro-membresia" element={<Suspense fallback={<Loading />}><CadastroMembresia /></Suspense>} />
+
+      {/* Totem check-in — fullscreen, sem AppShell, mas requer login */}
+      <Route path="/voluntariado/totem" element={<ProtectedRoute><Suspense fallback={<Loading />}><VolTotem /></Suspense></ProtectedRoute>} />
 
       <Route
         element={
