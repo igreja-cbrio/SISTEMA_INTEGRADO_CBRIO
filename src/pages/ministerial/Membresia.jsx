@@ -885,7 +885,7 @@ export default function Membresia() {
         </TabsContent>
 
         <TabsContent value="cadastros">
-          <TabCadastros />
+          <TabCadastros onMembrosChange={fetchData} />
         </TabsContent>
       </Tabs>
 
