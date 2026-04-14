@@ -85,8 +85,8 @@ export default function Login() {
   }
 
   return (
-    <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', position: 'relative', overflow: 'hidden' }}>
-      <SmokeyBackground />
+    <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', position: 'relative', overflow: 'hidden', background: '#0a0a0a' }}>
+      <LoginShapesBackground />
 
       <div style={{
         position: 'relative', zIndex: 1, width: '100%', maxWidth: 420, margin: '0 16px',
