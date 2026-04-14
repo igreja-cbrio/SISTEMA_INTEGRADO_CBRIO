@@ -907,7 +907,7 @@ export default function Expansao() {
                         {(STATUS_MAP[mi.status] || STATUS_MAP.pendente).label}
                       </span>
                     </td>
-                    <td style={styles.td}>{fmtDate(mi.expected_delivery)}</td>
+                    <td style={styles.td}>{mi.expected_delivery || '\u2014'}</td>
                   </tr>
                 );
               })}
@@ -1255,10 +1255,7 @@ export default function Expansao() {
             </div>
             <div>
               <div style={styles.infoLabel}>Entrega Esperada</div>
-              <div style={{ ...styles.infoValue, display: 'flex', alignItems: 'center' }}>
-                {fmtDate(mi.expected_delivery)}
-                <DaysCounter date={mi.expected_delivery} status={mi.status} />
-              </div>
+              <div style={styles.infoValue}>{mi.expected_delivery || '\u2014'}</div>
             </div>
             <div>
               <div style={styles.infoLabel}>Fase</div>
@@ -1547,7 +1544,7 @@ function MilestoneFormModal({ open, data, saving, onSave, onClose, usersList }) 
         responsible_id: data?.responsible_id || '',
         date_start: data?.date_start ? normDate(data.date_start) : '',
         date_end: data?.date_end ? normDate(data.date_end) : '',
-        expected_delivery: data?.expected_delivery ? normDate(data.expected_delivery) : '',
+        expected_delivery: data?.expected_delivery || '',
         status: data?.status || 'pendente',
         phase: data?.phase || '',
         budget_planned: data?.budget_planned ?? '',
@@ -1623,7 +1620,7 @@ function MilestoneFormModal({ open, data, saving, onSave, onClose, usersList }) 
         </div>
         <div style={styles.formRow}>
           <Field label="Entrega Esperada">
-            <input type="date" style={styles.input} value={form.expected_delivery || ''} onChange={e => set('expected_delivery', e.target.value)} />
+            <input style={styles.input} placeholder="Ex: Relatório, Documento, Sistema ativo..." value={form.expected_delivery || ''} onChange={e => set('expected_delivery', e.target.value)} />
           </Field>
           <Field label="Fase">
             <input style={styles.input} value={form.phase || ''} onChange={e => set('phase', e.target.value)} />
