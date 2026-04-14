@@ -114,6 +114,8 @@ export const expansion = {
   createSubtask: (taskId, data) => post(`/expansion/tasks/${taskId}/subtasks`, data),
   updateSubtaskPct: (id, pct) => patch(`/expansion/subtasks/${id}`, { pct }),
   removeSubtask: (id) => del(`/expansion/subtasks/${id}`),
+  getDependents: (id) => get(`/expansion/milestones/${id}/dependents`),
+  getDependencies: (id) => get(`/expansion/milestones/${id}/dependencies`),
 };
 
 export const meetings = {
