@@ -1,6 +1,13 @@
 const router = require('express').Router();
+const multer = require('multer');
 const { authenticate, authorizeModule } = require('../middleware/auth');
 const { supabase } = require('../utils/supabase');
+const { uploadModuleFile, SHAREPOINT_CONFIGURED, sanitizePath } = require('../services/storageService');
+
+const uploadMw = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 10 * 1024 * 1024 }, // 10 MB
+});
 
 // Requer permissão granular no módulo RH (DP ou Pessoas, nível >= 2)
 // Admin e Diretor passam automaticamente
@@ -191,18 +198,61 @@ router.delete('/funcionarios/:id', async (req, res) => {
 });
 
 // ── DOCUMENTOS ─────────────────────────────────────────────
-// POST /api/rh/funcionarios/:id/documentos
-router.post('/funcionarios/:id/documentos', async (req, res) => {
+// POST /api/rh/funcionarios/:id/documentos — aceita JSON ou multipart com arquivo
+router.post('/funcionarios/:id/documentos', uploadMw.single('arquivo'), async (req, res) => {
   try {
     const { tipo, nome, storage_path, data_expiracao } = req.body;
     if (!tipo || !nome) return res.status(400).json({ error: 'Tipo e nome são obrigatórios' });
+
+    let finalStoragePath = storage_path || null;
+    let sharepointUrl = null;
+    let sharepointItemId = null;
+
+    // Se veio arquivo, fazer upload para Supabase + SharePoint
+    if (req.file) {
+      const ext = (req.file.originalname || nome).split('.').pop();
+      const supaPath = `documentos/${req.params.id}/${Date.now()}_${sanitizePath(nome)}.${ext}`;
+
+      // Upload para Supabase (acesso rapido)
+      const { error: upErr } = await supabase.storage
+        .from('rh-fotos')
+        .upload(supaPath, req.file.buffer, { contentType: req.file.mimetype, upsert: true });
+      if (upErr) console.error('[RH] Supabase upload error:', upErr.message);
+      else {
+        const { data: urlData } = supabase.storage.from('rh-fotos').getPublicUrl(supaPath);
+        finalStoragePath = urlData.publicUrl;
+      }
+
+      // Upload para SharePoint em background
+      if (SHAREPOINT_CONFIGURED) {
+        (async () => {
+          try {
+            const { data: func } = await supabase.from('rh_funcionarios').select('nome').eq('id', req.params.id).single();
+            const nomePasta = sanitizePath(func?.nome || req.params.id);
+            const result = await uploadModuleFile('rh', `Documentos/${nomePasta}`, `${sanitizePath(nome)}.${ext}`, req.file.buffer);
+            // Atualizar registro com dados do SharePoint
+            if (result.url) {
+              await supabase.from('rh_documentos')
+                .update({ sharepoint_url: result.url, sharepoint_item_id: result.itemId })
+                .eq('funcionario_id', req.params.id)
+                .eq('nome', nome)
+                .order('created_at', { ascending: false })
+                .limit(1);
+            }
+            console.log(`[RH] Documento sincronizado com SharePoint: ${nomePasta}/${nome}`);
+          } catch (spErr) {
+            console.error('[RH] SharePoint sync erro (nao-critico):', spErr.message);
+          }
+        })();
+      }
+    }
 
     const { data, error } = await supabase
       .from('rh_documentos')
       .insert({
         funcionario_id: req.params.id,
         tipo, nome,
-        storage_path: storage_path || null,
+        storage_path: finalStoragePath,
         data_expiracao: data_expiracao || null,
       })
       .select()
