@@ -198,7 +198,9 @@ router.patch('/:id/status', async (req, res) => {
     let { status } = req.body;
     if (!status) return res.status(400).json({ error: 'Status obrigatório' });
 
+    // Reabrir: reativar ciclo criativo e recalcular status
     if (status === 'reabrir') {
+      await supabase.from('event_cycles').update({ status: 'ativo' }).eq('event_id', req.params.id).eq('status', 'concluido');
       const { data: ev } = await supabase.from('events').select('date, recurrence').eq('id', req.params.id).single();
       if (!ev) return res.status(404).json({ error: 'Evento não encontrado' });
       if (ev.recurrence !== 'unico') {
@@ -210,6 +212,11 @@ router.patch('/:id/status', async (req, res) => {
         const diffDays = Math.ceil((new Date(ev.date) - new Date()) / 86400000);
         status = diffDays < 0 ? 'atrasado' : diffDays <= 7 ? 'em-risco' : 'no-prazo';
       }
+    }
+
+    // Finalizar: desativar ciclo criativo (se existir)
+    if (status === 'concluido') {
+      await supabase.from('event_cycles').update({ status: 'concluido' }).eq('event_id', req.params.id).eq('status', 'ativo');
     }
 
     const { data: oldEv } = await supabase.from('events').select('status, name').eq('id', req.params.id).single();

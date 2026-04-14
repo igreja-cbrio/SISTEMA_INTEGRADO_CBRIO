@@ -651,7 +651,7 @@ export default function Eventos() {
   const [kanbanViewMode, setKanbanViewMode] = useState('pmo');
   const defaultArea = isLider && userAreas.length > 0 ? userAreas[0].toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '') : 'all';
   const [kanbanArea, setKanbanArea] = useState(defaultArea);
-  const [kanbanHorizon, setKanbanHorizon] = useState(15);
+  const [kanbanHorizon, setKanbanHorizon] = useState(0);
   const [kanbanSelectedTask, setKanbanSelectedTask] = useState(null);
   const [kanbanCycleData, setKanbanCycleData] = useState(null);
   const [kanbanPhase, setKanbanPhase] = useState(null);
@@ -679,6 +679,7 @@ export default function Eventos() {
   // ═══════════════════════════════════════════════════════════
   function renderKanban() {
     const CAT = {
+      adm:        { label: 'Administrativo', color: '#0ea5e9', bg: '#e0f2fe' },
       marketing:  { label: 'Marketing',  color: '#00B39D', bg: '#d1fae5' },
       compras:    { label: 'Compras',    color: '#3b82f6', bg: '#dbeafe' },
       financeiro: { label: 'Financeiro', color: '#10b981', bg: '#d1fae5' },
