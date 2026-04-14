@@ -43,7 +43,7 @@ router.get('/milestones', async (req, res) => {
 });
 
 // POST /api/expansion/milestones
-router.post('/milestones', authorize('diretor'), async (req, res) => {
+router.post('/milestones', authorize('admin', 'diretor'), async (req, res) => {
   try {
     const d = req.body;
     const { data, error } = await supabase.from('expansion_milestones').insert({
@@ -56,7 +56,7 @@ router.post('/milestones', authorize('diretor'), async (req, res) => {
 });
 
 // PUT /api/expansion/milestones/:id
-router.put('/milestones/:id', authorize('diretor'), async (req, res) => {
+router.put('/milestones/:id', authorize('admin', 'diretor'), async (req, res) => {
   try {
     const d = req.body;
     const { data, error } = await supabase.from('expansion_milestones').update({
@@ -69,7 +69,7 @@ router.put('/milestones/:id', authorize('diretor'), async (req, res) => {
 });
 
 // DELETE /api/expansion/milestones/:id
-router.delete('/milestones/:id', authorize('diretor'), async (req, res) => {
+router.delete('/milestones/:id', authorize('admin', 'diretor'), async (req, res) => {
   try {
     await supabase.from('expansion_milestones').delete().eq('id', req.params.id);
     res.json({ success: true });
@@ -77,7 +77,7 @@ router.delete('/milestones/:id', authorize('diretor'), async (req, res) => {
 });
 
 // ── TASKS ──
-router.post('/milestones/:miId/tasks', authorize('diretor'), async (req, res) => {
+router.post('/milestones/:miId/tasks', authorize('admin', 'diretor'), async (req, res) => {
   try {
     const d = req.body;
     const { data, error } = await supabase.from('expansion_tasks').insert({
@@ -90,7 +90,7 @@ router.post('/milestones/:miId/tasks', authorize('diretor'), async (req, res) =>
   } catch (e) { res.status(500).json({ error: 'Erro' }); }
 });
 
-router.put('/tasks/:id', authorize('diretor'), async (req, res) => {
+router.put('/tasks/:id', authorize('admin', 'diretor'), async (req, res) => {
   try {
     const d = req.body;
     const { data, error } = await supabase.from('expansion_tasks').update({
@@ -103,7 +103,7 @@ router.put('/tasks/:id', authorize('diretor'), async (req, res) => {
   } catch (e) { res.status(500).json({ error: 'Erro' }); }
 });
 
-router.delete('/tasks/:id', authorize('diretor'), async (req, res) => {
+router.delete('/tasks/:id', authorize('admin', 'diretor'), async (req, res) => {
   try {
     await supabase.from('expansion_tasks').delete().eq('id', req.params.id);
     res.json({ success: true });
@@ -111,7 +111,7 @@ router.delete('/tasks/:id', authorize('diretor'), async (req, res) => {
 });
 
 // ── SUBTASKS ──
-router.post('/tasks/:taskId/subtasks', authorize('diretor'), async (req, res) => {
+router.post('/tasks/:taskId/subtasks', authorize('admin', 'diretor'), async (req, res) => {
   try {
     const { data, error } = await supabase.from('expansion_subtasks').insert({
       task_id: req.params.taskId, name: req.body.name,
@@ -121,7 +121,7 @@ router.post('/tasks/:taskId/subtasks', authorize('diretor'), async (req, res) =>
   } catch (e) { res.status(500).json({ error: 'Erro' }); }
 });
 
-router.patch('/subtasks/:id', authorize('diretor'), async (req, res) => {
+router.patch('/subtasks/:id', authorize('admin', 'diretor'), async (req, res) => {
   try {
     const pct = Math.min(100, Math.max(0, parseInt(req.body.pct) || 0));
     const { data, error } = await supabase.from('expansion_subtasks').update({ pct }).eq('id', req.params.id).select().single();
@@ -130,7 +130,7 @@ router.patch('/subtasks/:id', authorize('diretor'), async (req, res) => {
   } catch (e) { res.status(500).json({ error: 'Erro' }); }
 });
 
-router.delete('/subtasks/:id', authorize('diretor'), async (req, res) => {
+router.delete('/subtasks/:id', authorize('admin', 'diretor'), async (req, res) => {
   try {
     await supabase.from('expansion_subtasks').delete().eq('id', req.params.id);
     res.json({ success: true });
