@@ -1,6 +1,6 @@
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { RefreshCw, Users, Calendar, QrCode, BarChart3, ClipboardCheck, Loader2 } from 'lucide-react';
+import { RefreshCw, Users, Calendar, QrCode, BarChart3, ClipboardCheck, Loader2, Monitor } from 'lucide-react';
 import { useTodaysServices, useUpcomingServices } from './hooks';
 import { useSyncPlanningCenter, useLastSync } from './hooks';
 import LastSyncIndicator from './components/dashboard/LastSyncIndicator';
@@ -26,6 +26,7 @@ export default function VolDashboard() {
 
   const quickActions = [
     { label: 'Check-in', icon: ClipboardCheck, path: '/ministerial/voluntariado/checkin', color: 'text-green-600' },
+    { label: 'Modo Totem', icon: Monitor, path: '/voluntariado/totem', color: 'text-teal-600' },
     { label: 'Escalas', icon: Calendar, path: '/ministerial/voluntariado/escalas', color: 'text-blue-600' },
     { label: 'QR Codes', icon: QrCode, path: '/ministerial/voluntariado/qrcodes', color: 'text-purple-600' },
     { label: 'Relatorios', icon: BarChart3, path: '/ministerial/voluntariado/relatorios', color: 'text-orange-600' },
