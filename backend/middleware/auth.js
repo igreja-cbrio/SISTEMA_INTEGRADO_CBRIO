@@ -252,6 +252,11 @@ function authorizeModule(routeKey, nivelMinimo = 2) {
     // Admin/Diretor sempre passam (backward compatibility)
     if (['admin', 'diretor'].includes(req.user.role)) return next();
 
+    // Voluntarios podem acessar rotas de voluntariado (membresia nivel 1)
+    if (req.user.role === 'voluntario' && moduleNames.some(m => m === 'Membresia') && nivelMinimo <= 1) {
+      return next();
+    }
+
     // Se não tem granular, bloquear (assistente sem granular = sem acesso)
     if (!req.user.granular) {
       return res.status(403).json({ error: 'Acesso negado — permissões não configuradas' });

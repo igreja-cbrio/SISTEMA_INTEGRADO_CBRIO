@@ -80,14 +80,14 @@ export default function VolCheckin() {
   }, [schedules, checkIn, selectedServiceId]);
 
   return (
-    <div className="space-y-6">
-      <h1 className="text-2xl font-bold text-foreground">Check-in</h1>
+    <div className="space-y-4 md:space-y-6">
+      <h1 className="text-xl md:text-2xl font-bold text-foreground">Check-in</h1>
 
       {/* Service selector */}
       <Card>
-        <CardContent className="p-4">
+        <CardContent className="p-3 md:p-4">
           <Select value={selectedServiceId} onValueChange={setSelectedServiceId}>
-            <SelectTrigger><SelectValue placeholder="Selecione o culto de hoje" /></SelectTrigger>
+            <SelectTrigger className="min-h-[44px]"><SelectValue placeholder="Selecione o culto de hoje" /></SelectTrigger>
             <SelectContent>
               {todayServices.map(svc => (
                 <SelectItem key={svc.id} value={svc.id}>{svc.name} — {svc.service_type_name || ''}</SelectItem>
@@ -100,10 +100,10 @@ export default function VolCheckin() {
 
       {selectedServiceId && (
         <Tabs defaultValue="manual">
-          <TabsList className="grid w-full grid-cols-3">
-            <TabsTrigger value="manual" className="gap-1"><Hand className="h-4 w-4" /> Manual</TabsTrigger>
-            <TabsTrigger value="qr" className="gap-1"><QrCode className="h-4 w-4" /> QR Code</TabsTrigger>
-            <TabsTrigger value="face" className="gap-1"><Scan className="h-4 w-4" /> Facial</TabsTrigger>
+          <TabsList className="grid w-full grid-cols-3 min-h-[44px]">
+            <TabsTrigger value="manual" className="gap-1 min-h-[40px]"><Hand className="h-4 w-4" /><span className="hidden sm:inline">Manual</span></TabsTrigger>
+            <TabsTrigger value="qr" className="gap-1 min-h-[40px]"><QrCode className="h-4 w-4" /><span className="hidden sm:inline">QR Code</span><span className="sm:hidden">QR</span></TabsTrigger>
+            <TabsTrigger value="face" className="gap-1 min-h-[40px]"><Scan className="h-4 w-4" /><span className="hidden sm:inline">Facial</span></TabsTrigger>
           </TabsList>
 
           <TabsContent value="manual">

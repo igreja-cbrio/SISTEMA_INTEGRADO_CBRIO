@@ -53,6 +53,9 @@ const GoogleIcon = () => (
 const MicrosoftIcon = () => (
   <svg width="18" height="18" viewBox="0 0 21 21"><rect x="1" y="1" width="9" height="9" fill="#f25022"/><rect x="11" y="1" width="9" height="9" fill="#7fba00"/><rect x="1" y="11" width="9" height="9" fill="#00a4ef"/><rect x="11" y="11" width="9" height="9" fill="#ffb900"/></svg>
 );
+const PlanningCenterIcon = () => (
+  <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="10" stroke="#00B39D" strokeWidth="2"/><circle cx="12" cy="12" r="4" fill="#00B39D"/></svg>
+);
 
 export default function Login() {
   const { signInWithEmail, signInWithGoogle, signInWithMicrosoft, user } = useAuth();
@@ -62,6 +65,23 @@ export default function Login() {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const [btnHover, setBtnHover] = useState(false);
+
+  // Show OAuth error messages from redirects
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const oauthError = params.get('error');
+    if (oauthError) {
+      const msgs = {
+        pc_oauth_denied: 'Login com Planning Center foi cancelado.',
+        pc_no_email: 'Nenhum e-mail encontrado na sua conta do Planning Center.',
+        pc_oauth_failed: 'Erro ao autenticar com Planning Center. Tente novamente.',
+        verify_failed: 'Erro ao verificar sessao. Tente novamente.',
+      };
+      setError(msgs[oauthError] || 'Erro na autenticacao.');
+      // Clean the URL
+      window.history.replaceState({}, '', '/login');
+    }
+  }, []);
 
   useEffect(() => {
     if (user) navigate('/');
@@ -139,6 +159,20 @@ export default function Login() {
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
           <OAuthButton icon={<GoogleIcon />} label="Google" onClick={() => handleOAuth('google')} />
           <OAuthButton icon={<MicrosoftIcon />} label="Microsoft" onClick={() => handleOAuth('microsoft')} />
+        </div>
+
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, margin: '20px 0 0' }}>
+          <div style={{ flex: 1, height: 1, background: 'var(--cbrio-border)' }} />
+          <span style={{ fontSize: 12, color: 'var(--cbrio-text3)' }}>voluntarios</span>
+          <div style={{ flex: 1, height: 1, background: 'var(--cbrio-border)' }} />
+        </div>
+
+        <div style={{ marginTop: 12 }}>
+          <OAuthButton
+            icon={<PlanningCenterIcon />}
+            label="Entrar com Planning Center"
+            onClick={() => { window.location.href = '/api/auth/planning-center/login'; }}
+          />
         </div>
       </div>
     </div>

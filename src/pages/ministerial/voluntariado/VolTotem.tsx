@@ -148,16 +148,16 @@ export default function VolTotem() {
   return (
     <div className="min-h-screen bg-gradient-to-b from-gray-900 to-gray-950 text-white flex flex-col">
       {/* Top bar */}
-      <div className="flex items-center justify-between px-6 py-4">
-        <div className="flex items-center gap-3">
-          <img src="/logo-cbrio-text.png" alt="CBRio" className="h-8 object-contain brightness-0 invert" />
-          <span className="text-lg font-semibold opacity-70">Check-in</span>
+      <div className="flex items-center justify-between px-4 md:px-6 py-3 md:py-4">
+        <div className="flex items-center gap-2 md:gap-3">
+          <img src="/logo-cbrio-text.png" alt="CBRio" className="h-6 md:h-8 object-contain brightness-0 invert" />
+          <span className="text-base md:text-lg font-semibold opacity-70">Check-in</span>
         </div>
-        <div className="flex items-center gap-4">
-          <span className="text-sm opacity-60">
+        <div className="flex items-center gap-2 md:gap-4">
+          <span className="text-xs md:text-sm opacity-60 hidden sm:inline">
             {format(clock, "EEEE, dd 'de' MMMM", { locale: ptBR })}
           </span>
-          <span className="text-2xl font-mono font-bold tabular-nums">
+          <span className="text-xl md:text-2xl font-mono font-bold tabular-nums">
             {format(clock, 'HH:mm:ss')}
           </span>
           <Button variant="ghost" size="icon" className="text-white/50 hover:text-white" onClick={toggleFullscreen}>
@@ -195,11 +195,11 @@ export default function VolTotem() {
 
       {/* Main content */}
       {selectedServiceId && mode !== 'success' && mode !== 'error' && (
-        <div className="flex-1 flex flex-col items-center justify-center gap-8 p-6">
+        <div className="flex-1 flex flex-col items-center justify-center gap-6 md:gap-8 p-4 md:p-6">
           {/* Current service info */}
           {selectedService && (
             <div className="text-center">
-              <p className="text-lg font-semibold opacity-70">{selectedService.name}</p>
+              <p className="text-base md:text-lg font-semibold opacity-70">{selectedService.name}</p>
               {selectedService.service_type_name && (
                 <p className="text-sm opacity-40">{selectedService.service_type_name}</p>
               )}
@@ -207,25 +207,25 @@ export default function VolTotem() {
           )}
 
           {/* QR Scanner */}
-          <div className="relative">
+          <div className="relative w-64 h-64 sm:w-72 sm:h-72 md:w-80 md:h-80">
             <div
               id={containerId}
-              className="w-80 h-80 rounded-2xl overflow-hidden bg-white/5 border-2 border-white/10"
+              className="w-full h-full rounded-2xl overflow-hidden bg-white/5 border-2 border-white/10"
             />
             {mode === 'idle' && (
               <div className="absolute inset-0 flex items-center justify-center bg-black/50 rounded-2xl">
                 <Button
                   onClick={startScanning}
-                  className="bg-[#00B39D] hover:bg-[#00B39D]/80 text-white gap-2 text-lg px-8 py-6"
+                  className="bg-[#00B39D] hover:bg-[#00B39D]/80 text-white gap-2 text-base md:text-lg px-6 py-5 md:px-8 md:py-6"
                 >
-                  <QrCode className="h-6 w-6" /> Iniciar Scanner
+                  <QrCode className="h-5 w-5 md:h-6 md:w-6" /> Iniciar Scanner
                 </Button>
               </div>
             )}
           </div>
 
           <div className="text-center space-y-2">
-            <p className="text-xl font-medium">Aproxime seu QR Code</p>
+            <p className="text-lg md:text-xl font-medium">Aproxime seu QR Code</p>
             <p className="text-sm text-white/40">Posicione o QR code em frente a camera</p>
           </div>
 
@@ -242,18 +242,18 @@ export default function VolTotem() {
 
       {/* Success screen */}
       {mode === 'success' && result && (
-        <div className="flex-1 flex items-center justify-center animate-in fade-in zoom-in">
-          <div className="text-center space-y-6">
-            <CheckCircle2 className="h-32 w-32 mx-auto text-green-400" />
-            <h2 className="text-4xl font-bold">Check-in realizado!</h2>
-            <p className="text-3xl">{result.name}</p>
+        <div className="flex-1 flex items-center justify-center animate-in fade-in zoom-in p-4">
+          <div className="text-center space-y-4 md:space-y-6">
+            <CheckCircle2 className="h-24 w-24 md:h-32 md:w-32 mx-auto text-green-400" />
+            <h2 className="text-2xl md:text-4xl font-bold">Check-in realizado!</h2>
+            <p className="text-xl md:text-3xl">{result.name}</p>
             {result.team && (
-              <p className="text-xl text-white/60">
+              <p className="text-base md:text-xl text-white/60">
                 {result.team}{result.position ? ` - ${result.position}` : ''}
               </p>
             )}
             {result.unscheduled && (
-              <span className="inline-block px-4 py-2 bg-yellow-500/20 text-yellow-300 rounded-full text-lg">
+              <span className="inline-block px-4 py-2 bg-yellow-500/20 text-yellow-300 rounded-full text-base md:text-lg">
                 Sem escala
               </span>
             )}
@@ -263,11 +263,11 @@ export default function VolTotem() {
 
       {/* Error screen */}
       {mode === 'error' && (
-        <div className="flex-1 flex items-center justify-center animate-in fade-in">
-          <div className="text-center space-y-6">
-            <XCircle className="h-32 w-32 mx-auto text-red-400" />
-            <h2 className="text-3xl font-bold">Erro</h2>
-            <p className="text-xl text-white/60">{errorMsg}</p>
+        <div className="flex-1 flex items-center justify-center animate-in fade-in p-4">
+          <div className="text-center space-y-4 md:space-y-6">
+            <XCircle className="h-24 w-24 md:h-32 md:w-32 mx-auto text-red-400" />
+            <h2 className="text-2xl md:text-3xl font-bold">Erro</h2>
+            <p className="text-base md:text-xl text-white/60">{errorMsg}</p>
           </div>
         </div>
       )}

@@ -97,7 +97,7 @@ const NAV_ITEMS = [
 ];
 
 export default function AppShell() {
-  const { profile, role, signOut, isAdmin, modulePerms, canRH, canFinanceiro, canLogistica, canPatrimonio, canMembresia, canProjetos, canExpansao, canAgenda, canIA } = useAuth();
+  const { profile, role, signOut, isAdmin, isVoluntario, modulePerms, canRH, canFinanceiro, canLogistica, canPatrimonio, canMembresia, canProjetos, canExpansao, canAgenda, canIA } = useAuth();
   const permMap = { canRH, canFinanceiro, canLogistica, canPatrimonio, canMembresia, canProjetos, canExpansao, canAgenda, canIA };
 
   // If permissions haven't loaded yet (modulePerms is null), show all items
@@ -195,10 +195,17 @@ export default function AppShell() {
             </button>
           </div>
 
-          {/* Center: Navigation */}
-          <div className="flex-1 flex justify-center">
-            <MegaMenu items={filteredNavItems} role={role} />
-          </div>
+          {/* Center: Navigation (hidden for volunteers) */}
+          {!isVoluntario && (
+            <div className="flex-1 flex justify-center">
+              <MegaMenu items={filteredNavItems} role={role} />
+            </div>
+          )}
+          {isVoluntario && (
+            <div className="flex-1 flex justify-center">
+              <span className="text-sm font-medium text-muted-foreground">Voluntariado</span>
+            </div>
+          )}
 
           {/* Right: Actions */}
           <div className="flex items-center gap-2">

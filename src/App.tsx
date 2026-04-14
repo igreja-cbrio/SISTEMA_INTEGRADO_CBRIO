@@ -86,6 +86,7 @@ const Grupos = lazyWithRetry(() => import('./pages/ministerial/Grupos'));
 const CadastroMembresia = lazyWithRetry(() => import('./pages/public/CadastroMembresia'));
 const Voluntariado = lazyWithRetry(() => import('./pages/ministerial/voluntariado'));
 const VolTotem = lazyWithRetry(() => import('./pages/ministerial/voluntariado/VolTotem'));
+const PcCallback = lazyWithRetry(() => import('./pages/auth/PcCallback'));
 
 // Placeholder pages for modules not yet copied
 const PlaceholderPage = ({ title }) => (
@@ -127,24 +128,38 @@ function ModuleGuard({ permKey, children }: { permKey: string; children: ReactNo
   return <>{children}</>;
 }
 
+function VoluntariadoGuard({ children }: { children: ReactNode }) {
+  const auth = useAuth();
+  if (auth.loading) return <Loading />;
+  // Volunteers always have access to voluntariado
+  if (auth.isVoluntario) return <>{children}</>;
+  // Staff need canMembresia permission
+  if (auth.canMembresia === false) return <Navigate to="/dashboard" replace />;
+  return <>{children}</>;
+}
+
 function DefaultRedirect() {
-  const { user, loading } = useAuth();
+  const { user, loading, isVoluntario } = useAuth();
   if (loading) return <Loading />;
   if (!user) return <Navigate to="/login" replace />;
+  if (isVoluntario) return <Navigate to="/ministerial/voluntariado/checkin" replace />;
   return <Navigate to="/dashboard" replace />;
 }
 
 function AppRoutes() {
-  const { user, loading } = useAuth();
+  const { user, loading, isVoluntario } = useAuth();
   if (loading) return <Loading />;
 
   return (
     <Routes>
-      <Route path="/login" element={user ? <Navigate to="/dashboard" replace /> : <Login />} />
+      <Route path="/login" element={user ? (isVoluntario ? <Navigate to="/ministerial/voluntariado/checkin" replace /> : <Navigate to="/dashboard" replace />) : <Login />} />
 
       {/* Rota pública — sem AppShell, sem autenticação.
           Permite que visitantes enviem o formulário de cadastro de membresia. */}
       <Route path="/cadastro-membresia" element={<Suspense fallback={<Loading />}><CadastroMembresia /></Suspense>} />
+
+      {/* Planning Center OAuth callback — public route */}
+      <Route path="/auth/pc-callback" element={<Suspense fallback={<Loading />}><PcCallback /></Suspense>} />
 
       {/* Totem check-in — fullscreen, sem AppShell, mas requer login */}
       <Route path="/voluntariado/totem" element={<ProtectedRoute><Suspense fallback={<Loading />}><VolTotem /></Suspense></ProtectedRoute>} />
@@ -170,7 +185,7 @@ function AppRoutes() {
         <Route path="/admin/logistica" element={<ModuleGuard permKey="canLogistica"><Suspense fallback={<Loading />}><Logistica /></Suspense></ModuleGuard>} />
         <Route path="/admin/patrimonio" element={<ModuleGuard permKey="canPatrimonio"><Suspense fallback={<Loading />}><Patrimonio /></Suspense></ModuleGuard>} />
         <Route path="/ministerial/membresia" element={<ModuleGuard permKey="canMembresia"><Suspense fallback={<Loading />}><Membresia /></Suspense></ModuleGuard>} />
-        <Route path="/ministerial/voluntariado/*" element={<ModuleGuard permKey="canMembresia"><Suspense fallback={<Loading />}><Voluntariado /></Suspense></ModuleGuard>} />
+        <Route path="/ministerial/voluntariado/*" element={<VoluntariadoGuard><Suspense fallback={<Loading />}><Voluntariado /></Suspense></VoluntariadoGuard>} />
         <Route path="/grupos" element={<ModuleGuard permKey="canMembresia"><Suspense fallback={<Loading />}><Grupos /></Suspense></ModuleGuard>} />
         <Route path="/assistente-ia" element={<ModuleGuard permKey="canIA"><Suspense fallback={<Loading />}><AssistenteIA /></Suspense></ModuleGuard>} />
         <Route path="/solicitacoes" element={<Suspense fallback={<Loading />}><Solicitacoes /></Suspense>} />
