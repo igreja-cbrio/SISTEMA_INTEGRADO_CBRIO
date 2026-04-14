@@ -143,8 +143,55 @@ async function fetchMembresiaContext() {
   const { count: contribuicoes } = await supabase.from('mem_contribuicoes').select('id', { count: 'exact', head: true });
   const { count: ministerios } = await supabase.from('mem_ministerios').select('id', { count: 'exact', head: true }).eq('ativo', true);
 
-  // Membros sem família vinculada
-  const { count: semFamilia } = await supabase.from('mem_membros').select('id', { count: 'exact', head: true }).eq('active', true).is('familia_id', null);
+  // Dados reais dos membros para consultas especificas
+  const { data: membros } = await supabase
+    .from('mem_membros')
+    .select('id, nome, status, email, telefone, data_nascimento, estado_civil, cidade, profissao, familia_id, created_at')
+    .eq('active', true)
+    .order('nome')
+    .limit(200);
+
+  // Familias com nomes
+  const { data: familiasData } = await supabase
+    .from('mem_familias')
+    .select('id, nome')
+    .order('nome')
+    .limit(100);
+
+  // Cadastros pendentes
+  const { data: cadastros } = await supabase
+    .from('mem_cadastros_pendentes')
+    .select('id, nome, email, telefone, status, created_at')
+    .eq('status', 'pendente')
+    .order('created_at', { ascending: false })
+    .limit(50);
+
+  // Contribuicoes recentes (ultimos 90 dias)
+  const d90 = new Date(Date.now() - 90 * 86400000).toISOString().slice(0, 10);
+  const { data: contribRecentes } = await supabase
+    .from('mem_contribuicoes')
+    .select('membro_id, tipo, valor, data, forma_pagamento')
+    .gte('data', d90)
+    .order('data', { ascending: false })
+    .limit(100);
+
+  // Grupos ativos
+  const { data: gruposData } = await supabase
+    .from('mem_grupos')
+    .select('id, nome, dia_semana, lider_id')
+    .eq('ativo', true)
+    .order('nome')
+    .limit(50);
+
+  // Mapa familia_id -> nome
+  const famMap = {};
+  (familiasData || []).forEach(f => { famMap[f.id] = f.nome; });
+
+  // Enriquece membros com nome da familia
+  const membrosEnriquecidos = (membros || []).map(m => ({
+    ...m,
+    familia: famMap[m.familia_id] || null,
+  }));
 
   return {
     resumo: {
@@ -152,26 +199,28 @@ async function fetchMembresiaContext() {
       membros_ativos: membrosAtivos,
       visitantes,
       inativos,
-      familias,
+      familias: familias,
       grupos_ativos: grupos,
       cadastros_pendentes: cadastrosPend,
       contribuicoes_total: contribuicoes,
       ministerios_ativos: ministerios,
     },
-    problemas: {
-      membros_sem_familia: semFamilia,
-    },
+    membros: membrosEnriquecidos,
+    cadastros_pendentes: cadastros || [],
+    contribuicoes_recentes: contribRecentes || [],
+    grupos: gruposData || [],
+    familias: familiasData || [],
   };
 }
 
 /**
  * Serializa contexto para incluir no prompt (controla tamanho)
  */
-function serializeContext(ctx, maxChars = 8000) {
+function serializeContext(ctx, maxChars = 12000) {
   const json = JSON.stringify(ctx, null, 2);
   if (json.length <= maxChars) return json;
   // Trunca contexto para caber no budget
-  return json.slice(0, maxChars) + '\n... (contexto truncado)';
+  return json.slice(0, maxChars) + '\n... (contexto truncado por limite de tamanho)';
 }
 
 module.exports = { buildContext, serializeContext };
