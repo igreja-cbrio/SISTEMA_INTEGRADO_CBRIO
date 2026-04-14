@@ -263,6 +263,12 @@ export default function CadastroMembresia() {
   const [error, setError] = useState('');
   const [sent, setSent] = useState(false);
 
+  // Sugestão de família por sobrenome
+  const [familiaSugerida, setFamiliaSugerida] = useState(null); // { id, nome }
+  const [familiaOpcoes, setFamiliaOpcoes] = useState([]); // famílias encontradas
+  const [showFamiliaStep, setShowFamiliaStep] = useState(false);
+  const [buscouFamilia, setBuscouFamilia] = useState(false);
+
   // Captura origem do querystring (?origem=qr_code por exemplo)
   const origem = useMemo(() => {
     try {
@@ -275,33 +281,51 @@ export default function CadastroMembresia() {
   const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
   const setMasked = (k, mask) => (e) => setForm((f) => ({ ...f, [k]: mask(e.target.value) }));
 
-  async function handleSubmit(e) {
+  function validarForm() {
+    if (!form.nome.trim()) return 'Informe seu nome.';
+    if (!form.sobrenome.trim()) return 'Informe seu sobrenome.';
+    if (soDigitos(form.telefone).length < 10) return 'Informe um celular válido com DDD.';
+    if (!cpfValido(form.cpf)) return 'CPF inválido.';
+    if (!form.data_nascimento) return 'Informe sua data de nascimento.';
+    if (!aceitaTermos) return 'É necessário aceitar os termos para enviar o cadastro.';
+    return null;
+  }
+
+  // Busca famílias pelo sobrenome antes de enviar
+  async function verificarFamiliaEEnviar(e) {
     e.preventDefault();
     setError('');
-    if (!aceitaTermos) {
-      setError('É necessário aceitar os termos para enviar o cadastro.');
+    const erro = validarForm();
+    if (erro) { setError(erro); return; }
+
+    // Se já passou pela etapa de família, envia direto
+    if (buscouFamilia) {
+      await enviarCadastro(familiaSugerida?.id);
       return;
     }
-    if (!form.nome.trim()) {
-      setError('Informe seu nome.');
-      return;
+
+    // Busca famílias pelo sobrenome
+    setLoading(true);
+    try {
+      const { familias } = await cadastroPublico.verificarFamilia(form.sobrenome.trim());
+      if (familias && familias.length > 0) {
+        setFamiliaOpcoes(familias);
+        setShowFamiliaStep(true);
+        setBuscouFamilia(true);
+      } else {
+        setBuscouFamilia(true);
+        await enviarCadastro();
+      }
+    } catch {
+      // Se falhar a busca, envia sem sugestão
+      setBuscouFamilia(true);
+      await enviarCadastro();
+    } finally {
+      setLoading(false);
     }
-    if (!form.sobrenome.trim()) {
-      setError('Informe seu sobrenome.');
-      return;
-    }
-    if (soDigitos(form.telefone).length < 10) {
-      setError('Informe um celular válido com DDD.');
-      return;
-    }
-    if (!cpfValido(form.cpf)) {
-      setError('CPF inválido.');
-      return;
-    }
-    if (!form.data_nascimento) {
-      setError('Informe sua data de nascimento.');
-      return;
-    }
+  }
+
+  async function enviarCadastro(familiaId) {
     setLoading(true);
     try {
       const { sobrenome, ...rest } = form;
@@ -313,13 +337,27 @@ export default function CadastroMembresia() {
         aceita_termos: aceitaTermos,
         aceita_contato: aceitaContato,
         consentimento_texto: TEXTO_CONSENTIMENTO,
+        familia_sugerida_id: familiaId || null,
       });
       setSent(true);
     } catch (err) {
       setError(err.message || 'Não foi possível enviar o cadastro. Tente novamente.');
+      setShowFamiliaStep(false);
     } finally {
       setLoading(false);
     }
+  }
+
+  function selecionarFamilia(fam) {
+    setFamiliaSugerida(fam);
+    setShowFamiliaStep(false);
+    enviarCadastro(fam.id);
+  }
+
+  function negarFamilia() {
+    setFamiliaSugerida(null);
+    setShowFamiliaStep(false);
+    enviarCadastro(null);
   }
 
   return (
@@ -366,8 +404,62 @@ export default function CadastroMembresia() {
               Obrigado por se conectar com a CBRio. Em breve nossa equipe entrará em contato com você.
             </p>
           </div>
+        ) : showFamiliaStep ? (
+          <div style={{
+            padding: '28px 20px', textAlign: 'center',
+            background: 'rgba(0,179,157,0.06)', border: '1px solid rgba(0,179,157,0.25)',
+            borderRadius: 14,
+          }}>
+            <div style={{
+              width: 48, height: 48, borderRadius: '50%',
+              background: '#00B39D30', color: '#00B39D',
+              display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+              fontSize: 22, marginBottom: 14,
+            }}>&#x1F3E0;</div>
+            <h2 style={{ fontSize: 17, fontWeight: 700, color: '#e5e5e5', margin: '0 0 8px' }}>
+              Encontramos uma familia!
+            </h2>
+            <p style={{ fontSize: 13, color: '#a3a3a3', lineHeight: 1.5, marginBottom: 20 }}>
+              {familiaOpcoes.length === 1
+                ? `Existe a familia "${familiaOpcoes[0].nome}" cadastrada. Voce faz parte dessa familia?`
+                : `Encontramos familias com sobrenome parecido. Voce faz parte de alguma delas?`}
+            </p>
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 10, maxWidth: 360, margin: '0 auto' }}>
+              {familiaOpcoes.map((fam) => (
+                <button
+                  key={fam.id}
+                  type="button"
+                  onClick={() => selecionarFamilia(fam)}
+                  disabled={loading}
+                  style={{
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    gap: 8, padding: '12px 20px',
+                    background: 'rgba(0,179,157,0.12)', border: '1px solid rgba(0,179,157,0.35)',
+                    borderRadius: 10, color: '#00B39D', fontSize: 14, fontWeight: 600,
+                    cursor: 'pointer', transition: 'all 0.2s',
+                  }}
+                >
+                  Sim, sou da familia {fam.nome}
+                </button>
+              ))}
+              <button
+                type="button"
+                onClick={negarFamilia}
+                disabled={loading}
+                style={{
+                  padding: '12px 20px', background: 'transparent',
+                  border: '1px solid rgba(255,255,255,0.12)', borderRadius: 10,
+                  color: '#a3a3a3', fontSize: 13, fontWeight: 500,
+                  cursor: 'pointer', transition: 'all 0.2s',
+                }}
+              >
+                {loading ? 'Enviando...' : 'Nao, nao faco parte de nenhuma dessas familias'}
+              </button>
+            </div>
+          </div>
         ) : (
-          <form onSubmit={handleSubmit} noValidate>
+          <form onSubmit={verificarFamiliaEEnviar} noValidate>
             {error && (
               <div style={{
                 background: '#ef444418', border: '1px solid #ef444440', borderRadius: 10,

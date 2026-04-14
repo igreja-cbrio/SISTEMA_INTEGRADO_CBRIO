@@ -86,6 +86,12 @@ export default function TabCadastros({ onMembrosChange }) {
   const [observacoesAprov, setObservacoesAprov] = useState('');
   const [salvando, setSalvando] = useState(false);
 
+  // Família — sugestão automática na aprovação
+  const [familiasDisponiveis, setFamiliasDisponiveis] = useState([]);
+  const [familiaEscolhida, setFamiliaEscolhida] = useState(''); // id ou '__nova__'
+  const [familiaNovaNome, setFamiliaNovaNome] = useState('');
+  const [parentesco, setParentesco] = useState('');
+
   const load = useCallback(async () => {
     setLoading(true);
     try {
@@ -105,6 +111,39 @@ export default function TabCadastros({ onMembrosChange }) {
 
   useEffect(() => { load(); }, [load]);
 
+  // Quando abre o dialog de aprovação, busca famílias e detecta sobrenome
+  useEffect(() => {
+    if (acao !== 'aprovar' || !selecionado) return;
+    setFamiliaEscolhida('');
+    setFamiliaNovaNome('');
+    setParentesco('');
+
+    (async () => {
+      try {
+        const todasFamilias = await membresia.familias.list();
+        setFamiliasDisponiveis(todasFamilias || []);
+
+        // Se o cadastro já tem familia_sugerida_id (do form público), pré-selecionar
+        if (selecionado.familia_sugerida_id) {
+          setFamiliaEscolhida(selecionado.familia_sugerida_id);
+          return;
+        }
+
+        // Auto-detecta sobrenome e sugere família
+        const partes = (selecionado.nome || '').trim().split(/\s+/);
+        if (partes.length >= 2) {
+          const sobrenome = partes[partes.length - 1].toLowerCase();
+          const match = (todasFamilias || []).find(
+            (f) => f.nome.toLowerCase() === sobrenome,
+          );
+          if (match) setFamiliaEscolhida(match.id);
+        }
+      } catch (e) {
+        console.error('Erro ao carregar famílias:', e);
+      }
+    })();
+  }, [acao, selecionado]);
+
   const filtrados = cadastros.filter((c) => {
     if (!busca) return true;
     const q = busca.toLowerCase();
@@ -121,8 +160,19 @@ export default function TabCadastros({ onMembrosChange }) {
     const ehAtualizacao = !!selecionado.duplicado_de;
     setSalvando(true);
     try {
+      // Resolve família: criar nova se necessário
+      let familia_id = (familiaEscolhida && familiaEscolhida !== '__nenhuma__') ? familiaEscolhida : null;
+      if (familia_id === '__nova__' && familiaNovaNome.trim()) {
+        const nova = await membresia.familias.create({ nome: familiaNovaNome.trim() });
+        familia_id = nova.id;
+      } else if (familia_id === '__nova__') {
+        familia_id = null;
+      }
+
       await membresia.cadastros.aprovar(selecionado.id, {
         observacoes: observacoesAprov || undefined,
+        familia_id: familia_id || undefined,
+        parentesco: (familia_id && parentesco) ? parentesco : undefined,
       });
       setAcao(null);
       setSelecionado(null);
@@ -504,13 +554,80 @@ export default function TabCadastros({ onMembrosChange }) {
                 Você poderá ajustar família, grupo e trilha depois na tela do membro.</>
               )}
             </p>
-            <Label htmlFor="obs-aprov">Observações (opcional)</Label>
+            {/* Família */}
+            <div style={{ marginBottom: 14 }}>
+              <Label>Familia</Label>
+              {familiaEscolhida && familiaEscolhida !== '__nova__' && (() => {
+                const fam = familiasDisponiveis.find(f => f.id === familiaEscolhida);
+                return fam ? (
+                  <div style={{
+                    background: C.primaryBg, border: `1px solid ${C.primary}40`,
+                    borderRadius: 8, padding: '8px 12px', marginTop: 6, marginBottom: 8,
+                    fontSize: 13, color: C.primary, fontWeight: 500,
+                  }}>
+                    Sugestao: familia <strong>{fam.nome}</strong>
+                    {fam.membros?.length > 0 && (
+                      <span style={{ color: C.text2, fontWeight: 400 }}>
+                        {' '}({fam.membros.map(m => m.nome).join(', ')})
+                      </span>
+                    )}
+                  </div>
+                ) : null;
+              })()}
+              <Select value={familiaEscolhida || '__nenhuma__'} onValueChange={setFamiliaEscolhida}>
+                <SelectTrigger className="mt-1">
+                  <SelectValue placeholder="Sem familia" />
+                </SelectTrigger>
+                <SelectContent className="z-[1200]">
+                  <SelectItem value="__nenhuma__">Sem familia</SelectItem>
+                  {familiasDisponiveis.map((f) => (
+                    <SelectItem key={f.id} value={f.id}>
+                      {f.nome}{f.membros?.length ? ` (${f.membros.length} membro${f.membros.length > 1 ? 's' : ''})` : ''}
+                    </SelectItem>
+                  ))}
+                  <SelectItem value="__nova__">+ Criar nova familia</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            {familiaEscolhida === '__nova__' && (
+              <div style={{ marginBottom: 14 }}>
+                <Label htmlFor="nova-familia">Nome da nova familia</Label>
+                <Input
+                  id="nova-familia"
+                  value={familiaNovaNome}
+                  onChange={(e) => setFamiliaNovaNome(e.target.value)}
+                  placeholder="Ex.: Salviano"
+                  className="mt-1"
+                />
+              </div>
+            )}
+
+            {familiaEscolhida && familiaEscolhida !== '__nenhuma__' && (
+              <div style={{ marginBottom: 14 }}>
+                <Label>Parentesco</Label>
+                <Select value={parentesco || '__nenhum__'} onValueChange={(v) => setParentesco(v === '__nenhum__' ? '' : v)}>
+                  <SelectTrigger className="mt-1">
+                    <SelectValue placeholder="Selecione..." />
+                  </SelectTrigger>
+                  <SelectContent className="z-[1200]">
+                    <SelectItem value="__nenhum__">Nao informado</SelectItem>
+                    <SelectItem value="responsavel">Responsavel</SelectItem>
+                    <SelectItem value="conjuge">Conjuge</SelectItem>
+                    <SelectItem value="filho">Filho(a)</SelectItem>
+                    <SelectItem value="outro">Outro</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
+
+            <Label htmlFor="obs-aprov">Observacoes (opcional)</Label>
             <Textarea
               id="obs-aprov"
-              rows={3}
+              rows={2}
               value={observacoesAprov}
               onChange={(e) => setObservacoesAprov(e.target.value)}
-              placeholder="Ex.: conheceu pela campanha X, agendar café..."
+              placeholder="Ex.: conheceu pela campanha X, agendar cafe..."
               className="mt-1"
             />
           </div>

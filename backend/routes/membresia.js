@@ -940,7 +940,7 @@ router.get('/cadastros/kpis', async (req, res) => {
 router.post('/cadastros/:id/aprovar', authorize('admin', 'diretor'), async (req, res) => {
   try {
     const { id } = req.params;
-    const { familia_id, parentesco, observacoes } = req.body || {};
+    const { familia_id: reqFamiliaId, parentesco, observacoes } = req.body || {};
 
     const { data: cad, error: e1 } = await supabase
       .from('mem_cadastros_pendentes')
@@ -951,6 +951,9 @@ router.post('/cadastros/:id/aprovar', authorize('admin', 'diretor'), async (req,
     if (cad.status === 'aprovado') {
       return res.status(400).json({ error: 'Cadastro já foi aprovado.' });
     }
+
+    // Família: prioriza a escolhida no modal, senão usa sugestão do formulário público
+    const familia_id = reqFamiliaId || cad.familia_sugerida_id || null;
 
     // Observação "Como conheceu" vai para observacoes (mem_membros não tem esse campo).
     const obsAuto = [
