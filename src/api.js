@@ -127,6 +127,9 @@ export const grupos = {
   addMembro: (grupoId, data) => post(`/grupos/${grupoId}/membros`, data),
   sairMembro: (participacaoId, data) => patch(`/grupos/participacao/${participacaoId}/sair`, data),
   registrarPresenca: (participacaoId) => patch(`/grupos/participacao/${participacaoId}/presenca`, {}),
+  documentos: (grupoId) => get(`/grupos/${grupoId}/documentos`),
+  uploadDoc: (grupoId, formData) => requestFile(`/grupos/${grupoId}/documentos`, formData),
+  removeDoc: (docId) => del(`/grupos/documentos/${docId}`),
 };
 
 export const strategic = {

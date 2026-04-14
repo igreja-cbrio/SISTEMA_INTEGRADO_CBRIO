@@ -1,6 +1,11 @@
 const router = require('express').Router();
 const { authenticate, authorize } = require('../middleware/auth');
 const { supabase } = require('../utils/supabase');
+const multer = require('multer');
+const { uploadModuleFile, SHAREPOINT_CONFIGURED } = require('../services/storageService');
+
+const uploadMw = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
+const sanitizePath = (s) => (s || '').replace(/[^a-zA-Z0-9\-_ ]/g, '').trim();
 
 router.use(authenticate);
 
@@ -191,6 +196,106 @@ router.patch('/participacao/:id/presenca', async (req, res) => {
     if (error) throw error;
     res.json(data);
   } catch (e) { res.status(500).json({ error: 'Erro' }); }
+});
+
+// ══════════════════════════════════════════════
+// DOCUMENTOS / ARQUIVOS
+// ══════════════════════════════════════════════
+
+// GET /api/grupos/:id/documentos
+router.get('/:id/documentos', async (req, res) => {
+  try {
+    const { data, error } = await supabase.from('mem_grupo_documentos')
+      .select('*').eq('grupo_id', req.params.id).order('created_at', { ascending: false });
+    if (error) throw error;
+    res.json(data || []);
+  } catch (e) { res.status(500).json({ error: 'Erro ao buscar documentos' }); }
+});
+
+// POST /api/grupos/:id/documentos — upload com comentario + sync SharePoint + fila Cerebro
+router.post('/:id/documentos', uploadMw.single('arquivo'), async (req, res) => {
+  try {
+    const { tipo, nome, comentario } = req.body;
+    if (!req.file) return res.status(400).json({ error: 'Arquivo nao fornecido' });
+    const fileName = nome || req.file.originalname;
+    const ext = fileName.split('.').pop().toLowerCase();
+
+    // 1. Upload para Supabase Storage (acesso rapido)
+    let storagePath = null;
+    const supaPath = `grupos/${req.params.id}/${Date.now()}_${sanitizePath(fileName)}`;
+    const { error: upErr } = await supabase.storage
+      .from('eventos-anexos')
+      .upload(supaPath, req.file.buffer, { contentType: req.file.mimetype, upsert: true });
+    if (!upErr) {
+      const { data: urlData } = supabase.storage.from('eventos-anexos').getPublicUrl(supaPath);
+      storagePath = urlData.publicUrl;
+    }
+
+    // 2. Salvar registro no banco
+    const { data: doc, error: dbErr } = await supabase.from('mem_grupo_documentos').insert({
+      grupo_id: req.params.id,
+      tipo: tipo || ext,
+      nome: fileName,
+      comentario: comentario || null,
+      storage_path: storagePath,
+      uploaded_by: req.user?.userId || null,
+      uploaded_by_name: req.user?.name || null,
+    }).select().single();
+    if (dbErr) throw dbErr;
+
+    // 3. Upload para SharePoint em background + enfileirar no Cerebro
+    if (SHAREPOINT_CONFIGURED) {
+      (async () => {
+        try {
+          const { data: grupo } = await supabase.from('mem_grupos').select('nome').eq('id', req.params.id).single();
+          const nomePasta = sanitizePath(grupo?.nome || 'grupo');
+          const result = await uploadModuleFile('ministerial', `Grupos/${nomePasta}`, sanitizePath(fileName), req.file.buffer);
+
+          // Atualizar registro com URLs do SharePoint
+          if (result.url) {
+            await supabase.from('mem_grupo_documentos')
+              .update({ sharepoint_url: result.url, sharepoint_item_id: result.itemId })
+              .eq('id', doc.id);
+          }
+
+          // Enfileirar no Cerebro para gerar resumo .md
+          const EXTENSOES_CEREBRO = new Set(['pdf', 'xlsx', 'csv', 'docx', 'pptx', 'txt', 'md', 'json', 'png', 'jpg', 'jpeg']);
+          if (EXTENSOES_CEREBRO.has(ext)) {
+            await supabase.from('cerebro_fila').insert({
+              drive_id: result.driveId,
+              item_id: result.itemId,
+              nome_arquivo: fileName,
+              extensao: ext,
+              tamanho_bytes: req.file.size,
+              pasta_origem: `Grupos/${nomePasta}`,
+              biblioteca: 'Ministerial',
+              sharepoint_url: result.url,
+              status: 'pendente',
+            });
+            console.log(`[Grupos] Arquivo enfileirado no Cerebro: ${fileName}`);
+          }
+
+          console.log(`[Grupos] SharePoint sync: ${nomePasta}/${fileName}`);
+        } catch (spErr) {
+          console.error('[Grupos] SharePoint sync error:', spErr.message);
+        }
+      })();
+    }
+
+    res.json(doc);
+  } catch (e) {
+    console.error('[Grupos upload]', e.message);
+    res.status(500).json({ error: 'Erro ao fazer upload' });
+  }
+});
+
+// DELETE /api/grupos/documentos/:docId
+router.delete('/documentos/:docId', authorize('admin', 'diretor'), async (req, res) => {
+  try {
+    const { error } = await supabase.from('mem_grupo_documentos').delete().eq('id', req.params.docId);
+    if (error) throw error;
+    res.json({ success: true });
+  } catch (e) { res.status(500).json({ error: 'Erro ao remover documento' }); }
 });
 
 module.exports = router;
