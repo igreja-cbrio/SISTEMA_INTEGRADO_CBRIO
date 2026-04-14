@@ -57,7 +57,13 @@ const TRILHA_ETAPAS = [
   { key: 'ministerio', label: 'Ministério', icon: Heart },
 ];
 
-const ESTADO_CIVIL_OPTIONS = ['Solteiro(a)', 'Casado(a)', 'Divorciado(a)', 'Viúvo(a)', 'Outros'];
+const ESTADO_CIVIL_OPTIONS = [
+  { value: 'solteiro', label: 'Solteiro(a)' },
+  { value: 'casado', label: 'Casado(a)' },
+  { value: 'divorciado', label: 'Divorciado(a)' },
+  { value: 'viuvo', label: 'Viúvo(a)' },
+  { value: 'uniao_estavel', label: 'União estável' },
+];
 
 const PARENTESCO_OPTIONS = {
   responsavel: { label: 'Responsável', cor: '#00B39D', bg: '#00B39D18' },
@@ -289,11 +295,6 @@ function MembroFormModal({ open, onOpenChange, editData, familias, onSaved }) {
         if (payload[k] === '') delete payload[k];
       }
 
-      // Remove campos vazios para não enviar strings vazias ao banco
-      for (const k of Object.keys(payload)) {
-        if (payload[k] === '') delete payload[k];
-      }
-
       if (isEdit) {
         await membresia.membros.update(editData.id, payload);
       } else {
@@ -352,7 +353,7 @@ function MembroFormModal({ open, onOpenChange, editData, familias, onSaved }) {
               <SelectTrigger><SelectValue placeholder="Selecionar" /></SelectTrigger>
               <SelectContent className="z-[1001]">
                 <SelectItem value="__none__">Não informado</SelectItem>
-                {ESTADO_CIVIL_OPTIONS.map(ec => <SelectItem key={ec} value={ec}>{ec}</SelectItem>)}
+                {ESTADO_CIVIL_OPTIONS.map(ec => <SelectItem key={ec.value} value={ec.value}>{ec.label}</SelectItem>)}
               </SelectContent>
             </Select>
           </div>
@@ -984,7 +985,7 @@ export default function Membresia() {
                       { icon: Phone, label: 'Telefone', value: selectedMembro.telefone },
                       { icon: MapPin, label: 'Endereço', value: [selectedMembro.endereco, selectedMembro.bairro, selectedMembro.cidade].filter(Boolean).join(', ') },
                       { icon: Calendar, label: 'Nascimento', value: selectedMembro.data_nascimento ? new Date(selectedMembro.data_nascimento).toLocaleDateString('pt-BR') : null },
-                      { icon: Heart, label: 'Estado Civil', value: selectedMembro.estado_civil },
+                      { icon: Heart, label: 'Estado Civil', value: ESTADO_CIVIL_OPTIONS.find(e => e.value === selectedMembro.estado_civil)?.label || selectedMembro.estado_civil },
                       { icon: Home, label: 'Família', value: selectedMembro.familia?.nome },
                       { icon: Users, label: 'Ministério', value: selectedMembro.ministerio },
                       { icon: Star, label: 'Grupo', value: selectedMembro.grupo },
