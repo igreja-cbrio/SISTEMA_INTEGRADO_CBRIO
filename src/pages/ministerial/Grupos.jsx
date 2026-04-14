@@ -70,6 +70,13 @@ export default function Grupos() {
     finally { setDetailLoading(false); }
   }, []);
 
+  const loadDocumentos = useCallback(async (grupoId) => {
+    try {
+      const data = await api.documentos(grupoId || selectedGrupo);
+      setDocumentos(data || []);
+    } catch {}
+  }, [selectedGrupo]);
+
   useEffect(() => { loadList(); }, [loadList]);
 
   useEffect(() => {
@@ -127,13 +134,6 @@ export default function Grupos() {
       loadList();
     } catch { toast.error('Erro ao remover'); }
   };
-
-  const loadDocumentos = useCallback(async (grupoId) => {
-    try {
-      const data = await api.documentos(grupoId || selectedGrupo);
-      setDocumentos(data || []);
-    } catch {}
-  }, [selectedGrupo]);
 
   const handleUploadFile = async (file) => {
     if (!file || !selectedGrupo) return;
