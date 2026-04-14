@@ -47,10 +47,14 @@ export default function Grupos() {
   const [filterDia, setFilterDia] = useState('all');
   const [filterLocal, setFilterLocal] = useState('all');
   const [filterTema, setFilterTema] = useState('all');
-  const [detailTab, setDetailTab] = useState('membros');
-  const [documentos, setDocumentos] = useState([]);
+  const [pageTab, setPageTab] = useState('grupos');
+  const [materiais, setMateriais] = useState([]);
+  const [materiaisFilter, setMateriaisFilter] = useState('all');
   const [uploading, setUploading] = useState(false);
   const [uploadComment, setUploadComment] = useState('');
+  const [uploadEtiquetas, setUploadEtiquetas] = useState(['Todos']);
+  const [uploadGrupoIds, setUploadGrupoIds] = useState([]);
+  const [customTag, setCustomTag] = useState('');
 
   const loadList = useCallback(async () => {
     setLoading(true);
@@ -71,18 +75,20 @@ export default function Grupos() {
     finally { setDetailLoading(false); }
   }, []);
 
-  const loadDocumentos = useCallback(async (grupoId) => {
+  const loadMateriais = useCallback(async () => {
     try {
-      const data = await api.documentos(grupoId || selectedGrupo);
-      setDocumentos(data || []);
+      const params = materiaisFilter !== 'all' ? { etiqueta: materiaisFilter } : {};
+      const data = await api.materiais(params);
+      setMateriais(data || []);
     } catch {}
-  }, [selectedGrupo]);
+  }, [materiaisFilter]);
 
   useEffect(() => { loadList(); }, [loadList]);
+  useEffect(() => { if (pageTab === 'materiais') loadMateriais(); }, [pageTab, loadMateriais]);
 
   useEffect(() => {
-    if (selectedGrupo) { loadDetail(selectedGrupo); loadDocumentos(selectedGrupo); setDetailTab('membros'); }
-  }, [selectedGrupo, loadDetail, loadDocumentos]);
+    if (selectedGrupo) loadDetail(selectedGrupo);
+  }, [selectedGrupo, loadDetail]);
 
   const openCreate = () => { setEditData(null); setModalOpen(true); };
   const openEdit = () => { setEditData(detailData); setModalOpen(true); };
@@ -136,30 +142,33 @@ export default function Grupos() {
     } catch { toast.error('Erro ao remover'); }
   };
 
-  const handleUploadFile = async (file) => {
-    if (!file || !selectedGrupo) return;
+  const handleUploadMaterial = async (file) => {
+    if (!file) return;
     if (file.size > 10 * 1024 * 1024) { toast.error('Arquivo deve ter no maximo 10MB'); return; }
     setUploading(true);
     try {
       const fd = new FormData();
       fd.append('arquivo', file);
       fd.append('nome', file.name);
-      fd.append('tipo', file.name.split('.').pop().toLowerCase());
       fd.append('comentario', uploadComment || `Upload por ${profile?.name || 'usuario'}`);
-      await api.uploadDoc(selectedGrupo, fd);
-      toast.success('Arquivo enviado');
+      fd.append('etiquetas', JSON.stringify(uploadEtiquetas.length > 0 ? uploadEtiquetas : ['Todos']));
+      fd.append('grupo_ids', JSON.stringify(uploadGrupoIds));
+      await api.uploadMaterial(fd);
+      toast.success('Material enviado');
       setUploadComment('');
-      loadDocumentos(selectedGrupo);
-    } catch (e) { toast.error(e.message || 'Erro ao enviar arquivo'); }
+      setUploadEtiquetas(['Todos']);
+      setUploadGrupoIds([]);
+      loadMateriais();
+    } catch (e) { toast.error(e.message || 'Erro ao enviar'); }
     finally { setUploading(false); }
   };
 
-  const handleDeleteDoc = async (docId) => {
-    if (!window.confirm('Remover este arquivo?')) return;
+  const handleDeleteMaterial = async (docId) => {
+    if (!window.confirm('Remover este material?')) return;
     try {
-      await api.removeDoc(docId);
-      toast.success('Arquivo removido');
-      loadDocumentos(selectedGrupo);
+      await api.removeMaterial(docId);
+      toast.success('Material removido');
+      loadMateriais();
     } catch { toast.error('Erro ao remover'); }
   };
 
@@ -264,26 +273,7 @@ export default function Grupos() {
           </div>
         )}
 
-        {/* Tabs */}
-        <div style={{ display: 'flex', gap: 0, marginBottom: 16, borderBottom: `1px solid ${C.border}` }}>
-          {[
-            { key: 'membros', label: 'Membros', icon: Users, count: membrosAtivos.length },
-            { key: 'arquivos', label: 'Arquivos', icon: FileText, count: documentos.length },
-          ].map(tab => (
-            <button key={tab.key} onClick={() => setDetailTab(tab.key)} style={{
-              padding: '10px 20px', background: 'none', border: 'none', cursor: 'pointer',
-              fontSize: 13, fontWeight: detailTab === tab.key ? 700 : 400,
-              color: detailTab === tab.key ? C.primary : C.t3,
-              borderBottom: detailTab === tab.key ? `2px solid ${C.primary}` : '2px solid transparent',
-              display: 'flex', alignItems: 'center', gap: 6, transition: 'all 0.15s',
-            }}>
-              <tab.icon size={14} /> {tab.label} ({tab.count})
-            </button>
-          ))}
-        </div>
-
-        {/* TAB: Membros */}
-        {detailTab === 'membros' && <>
+        {/* Membros */}
         <div style={{ background: C.card, borderRadius: 12, border: `1px solid ${C.border}`, overflow: 'hidden' }}>
           <div style={{ padding: '12px 16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: `1px solid ${C.border}` }}>
             <span style={{ fontSize: 14, fontWeight: 700, color: C.text }}>Membros ({membrosAtivos.length})</span>
@@ -337,90 +327,6 @@ export default function Grupos() {
             <div style={{ fontSize: 13, color: C.t2, whiteSpace: 'pre-wrap' }}>{g.observacoes}</div>
           </div>
         )}
-        </>}
-
-        {/* TAB: Arquivos */}
-        {detailTab === 'arquivos' && (
-          <div>
-            {/* Upload area */}
-            <div style={{ background: C.card, borderRadius: 12, padding: 20, border: `1px solid ${C.border}`, marginBottom: 16 }}>
-              <div style={{ fontSize: 14, fontWeight: 700, color: C.text, marginBottom: 12, display: 'flex', alignItems: 'center', gap: 8 }}>
-                <FileUp size={16} /> Enviar arquivo
-              </div>
-              <div style={{ display: 'flex', gap: 10, alignItems: 'flex-end' }}>
-                <div style={{ flex: 1 }}>
-                  <Label style={{ fontSize: 11 }}>Comentario do upload</Label>
-                  <Input placeholder="Ex: Roteiro da semana 14/04, Material para lideres..." value={uploadComment} onChange={e => setUploadComment(e.target.value)} />
-                </div>
-                <label style={{
-                  padding: '8px 16px', borderRadius: 8, background: C.primary, color: '#fff',
-                  fontSize: 13, fontWeight: 600, cursor: uploading ? 'wait' : 'pointer',
-                  display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0, opacity: uploading ? 0.6 : 1,
-                }}>
-                  <FileUp size={14} /> {uploading ? 'Enviando...' : 'Escolher arquivo'}
-                  <input type="file" hidden disabled={uploading} onChange={e => { if (e.target.files?.[0]) handleUploadFile(e.target.files[0]); e.target.value = ''; }} />
-                </label>
-              </div>
-              <div style={{ fontSize: 11, color: C.t3, marginTop: 6 }}>Max 10MB. Roteiros, imagens, PDFs, planilhas. Arquivos vao automaticamente para o SharePoint.</div>
-            </div>
-
-            {/* Lista de documentos */}
-            <div style={{ background: C.card, borderRadius: 12, border: `1px solid ${C.border}`, overflow: 'hidden' }}>
-              <div style={{ padding: '12px 16px', borderBottom: `1px solid ${C.border}` }}>
-                <span style={{ fontSize: 14, fontWeight: 700, color: C.text }}>Arquivos ({documentos.length})</span>
-              </div>
-              {documentos.length === 0 ? (
-                <div style={{ padding: 32, textAlign: 'center', color: C.t3, fontSize: 13 }}>Nenhum arquivo enviado ainda</div>
-              ) : (
-                <div>
-                  {documentos.map(doc => {
-                    const ext = doc.tipo || doc.nome?.split('.').pop() || '';
-                    const isImg = ['png', 'jpg', 'jpeg', 'gif', 'webp'].includes(ext.toLowerCase());
-                    const isPdf = ext.toLowerCase() === 'pdf';
-                    const IconFile = isImg ? Image : isPdf ? FileText : FileIcon;
-                    const iconColor = isImg ? '#ec4899' : isPdf ? '#ef4444' : C.blue;
-                    return (
-                      <div key={doc.id} style={{ padding: '12px 16px', borderBottom: `1px solid ${C.border}`, display: 'flex', alignItems: 'center', gap: 12 }}>
-                        <div style={{ width: 36, height: 36, borderRadius: 8, background: `${iconColor}15`, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                          <IconFile size={18} style={{ color: iconColor }} />
-                        </div>
-                        <div style={{ flex: 1, minWidth: 0 }}>
-                          <div style={{ fontSize: 13, fontWeight: 600, color: C.text, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                            {doc.sharepoint_url ? (
-                              <a href={doc.sharepoint_url} target="_blank" rel="noopener noreferrer" style={{ color: C.text, textDecoration: 'none' }}
-                                onMouseEnter={e => e.target.style.color = C.primary}
-                                onMouseLeave={e => e.target.style.color = C.text}>
-                                {doc.nome}
-                              </a>
-                            ) : doc.storage_path ? (
-                              <a href={doc.storage_path} target="_blank" rel="noopener noreferrer" style={{ color: C.text, textDecoration: 'none' }}
-                                onMouseEnter={e => e.target.style.color = C.primary}
-                                onMouseLeave={e => e.target.style.color = C.text}>
-                                {doc.nome}
-                              </a>
-                            ) : doc.nome}
-                          </div>
-                          <div style={{ fontSize: 11, color: C.t3, display: 'flex', gap: 8, marginTop: 2 }}>
-                            {doc.uploaded_by_name && <span>{doc.uploaded_by_name}</span>}
-                            <span>{fmtDate(doc.created_at?.split('T')[0])}</span>
-                            {doc.comentario && <span style={{ color: C.t2 }}>- {doc.comentario}</span>}
-                          </div>
-                        </div>
-                        <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
-                          {doc.sharepoint_url && (
-                            <a href={doc.sharepoint_url} target="_blank" rel="noopener noreferrer" style={{ fontSize: 11, color: C.primary, textDecoration: 'none', fontWeight: 600 }}>SharePoint</a>
-                          )}
-                          <button onClick={() => handleDeleteDoc(doc.id)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: C.red }}><Trash2 size={14} /></button>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
-          </div>
-        )}
-
         {/* Modal adicionar membro */}
         <Dialog open={addMembroOpen} onOpenChange={setAddMembroOpen}>
           <DialogContent className="max-w-md">
@@ -455,11 +361,169 @@ export default function Grupos() {
   // ── LISTA DE GRUPOS ──
   return (
     <div style={{ padding: '24px 32px', maxWidth: 1100, margin: '0 auto' }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
         <h1 style={{ fontSize: 22, fontWeight: 700, color: C.text, margin: 0 }}>Grupos</h1>
-        <Button onClick={openCreate}><Plus size={16} style={{ marginRight: 6 }} /> Novo Grupo</Button>
+        {pageTab === 'grupos' && <Button onClick={openCreate}><Plus size={16} style={{ marginRight: 6 }} /> Novo Grupo</Button>}
       </div>
 
+      {/* Tabs principais: Grupos | Materiais */}
+      <div style={{ display: 'flex', gap: 0, marginBottom: 16, borderBottom: `1px solid ${C.border}` }}>
+        {[
+          { key: 'grupos', label: 'Grupos', icon: Users },
+          { key: 'materiais', label: 'Materiais', icon: FileText },
+        ].map(tab => (
+          <button key={tab.key} onClick={() => setPageTab(tab.key)} style={{
+            padding: '10px 24px', background: 'none', border: 'none', cursor: 'pointer',
+            fontSize: 14, fontWeight: pageTab === tab.key ? 700 : 400,
+            color: pageTab === tab.key ? C.primary : C.t3,
+            borderBottom: pageTab === tab.key ? `2px solid ${C.primary}` : '2px solid transparent',
+            display: 'flex', alignItems: 'center', gap: 8, transition: 'all 0.15s',
+          }}>
+            <tab.icon size={16} /> {tab.label}
+          </button>
+        ))}
+      </div>
+
+      {/* ═══ TAB MATERIAIS ═══ */}
+      {pageTab === 'materiais' && (
+        <div>
+          {/* Upload */}
+          <div style={{ background: C.card, borderRadius: 12, padding: 20, border: `1px solid ${C.border}`, marginBottom: 16 }}>
+            <div style={{ fontSize: 14, fontWeight: 700, color: C.text, marginBottom: 12, display: 'flex', alignItems: 'center', gap: 8 }}>
+              <FileUp size={16} /> Enviar material
+            </div>
+            <div style={{ display: 'flex', gap: 10, marginBottom: 10, flexWrap: 'wrap' }}>
+              <div style={{ flex: 1, minWidth: 200 }}>
+                <Label style={{ fontSize: 11 }}>Comentario</Label>
+                <Input placeholder="Ex: Roteiro semana 14/04, Devocional igreja..." value={uploadComment} onChange={e => setUploadComment(e.target.value)} />
+              </div>
+            </div>
+            <div style={{ marginBottom: 10 }}>
+              <Label style={{ fontSize: 11 }}>Etiquetas (para quem vai esse material?)</Label>
+              <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 4 }}>
+                {['Todos', ...TIPOS_GRUPO].map(tag => {
+                  const active = uploadEtiquetas.includes(tag);
+                  return (
+                    <button key={tag} onClick={() => {
+                      if (tag === 'Todos') { setUploadEtiquetas(['Todos']); return; }
+                      setUploadEtiquetas(prev => {
+                        const without = prev.filter(t => t !== 'Todos');
+                        return active ? without.filter(t => t !== tag) : [...without, tag];
+                      });
+                    }} style={{
+                      padding: '4px 12px', borderRadius: 20, fontSize: 11, fontWeight: active ? 600 : 400, cursor: 'pointer',
+                      border: active ? `2px solid ${C.primary}` : `1px solid ${C.border}`,
+                      background: active ? C.primaryBg : 'transparent', color: active ? C.primary : C.t3,
+                    }}>{tag}</button>
+                  );
+                })}
+                {/* Etiqueta livre */}
+                <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
+                  <input placeholder="Customizada..." value={customTag} onChange={e => setCustomTag(e.target.value)} style={{
+                    padding: '4px 10px', borderRadius: 20, fontSize: 11, border: `1px solid ${C.border}`,
+                    background: 'transparent', color: C.text, width: 120, outline: 'none',
+                  }} onKeyDown={e => {
+                    if (e.key === 'Enter' && customTag.trim()) {
+                      setUploadEtiquetas(prev => [...prev.filter(t => t !== 'Todos'), customTag.trim()]);
+                      setCustomTag('');
+                    }
+                  }} />
+                </div>
+              </div>
+              {uploadEtiquetas.length > 0 && (
+                <div style={{ fontSize: 11, color: C.t2, marginTop: 4 }}>
+                  Selecionado: {uploadEtiquetas.join(', ')}
+                </div>
+              )}
+            </div>
+            <div style={{ marginBottom: 10 }}>
+              <Label style={{ fontSize: 11 }}>Grupos especificos (opcional)</Label>
+              <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 4 }}>
+                {gruposList.filter(g => g.ativo).map(g => {
+                  const active = uploadGrupoIds.includes(g.id);
+                  return (
+                    <button key={g.id} onClick={() => setUploadGrupoIds(prev => active ? prev.filter(x => x !== g.id) : [...prev, g.id])} style={{
+                      padding: '3px 10px', borderRadius: 16, fontSize: 10, cursor: 'pointer',
+                      border: active ? `2px solid ${C.blue}` : `1px solid ${C.border}`,
+                      background: active ? '#3b82f620' : 'transparent', color: active ? C.blue : C.t3, fontWeight: active ? 600 : 400,
+                    }}>{g.nome}</button>
+                  );
+                })}
+              </div>
+            </div>
+            <label style={{
+              padding: '8px 20px', borderRadius: 8, background: C.primary, color: '#fff',
+              fontSize: 13, fontWeight: 600, cursor: uploading ? 'wait' : 'pointer',
+              display: 'inline-flex', alignItems: 'center', gap: 6, opacity: uploading ? 0.6 : 1,
+            }}>
+              <FileUp size={14} /> {uploading ? 'Enviando...' : 'Escolher arquivo e enviar'}
+              <input type="file" hidden disabled={uploading} onChange={e => { if (e.target.files?.[0]) handleUploadMaterial(e.target.files[0]); e.target.value = ''; }} />
+            </label>
+            <span style={{ fontSize: 11, color: C.t3, marginLeft: 10 }}>Max 10MB. Vai automaticamente para o SharePoint.</span>
+          </div>
+
+          {/* Filtro de etiquetas */}
+          <div style={{ display: 'flex', gap: 6, marginBottom: 16, flexWrap: 'wrap', alignItems: 'center' }}>
+            <span style={{ fontSize: 12, color: C.t2, fontWeight: 600 }}>Filtrar:</span>
+            {['all', 'Todos', ...TIPOS_GRUPO].map(tag => {
+              const active = materiaisFilter === tag;
+              return (
+                <button key={tag} onClick={() => setMateriaisFilter(tag)} style={{
+                  padding: '4px 12px', borderRadius: 20, fontSize: 11, cursor: 'pointer',
+                  border: active ? `2px solid ${C.primary}` : `1px solid ${C.border}`,
+                  background: active ? C.primaryBg : 'transparent', color: active ? C.primary : C.t3, fontWeight: active ? 600 : 400,
+                }}>{tag === 'all' ? 'Tudo' : tag}</button>
+              );
+            })}
+            <span style={{ fontSize: 11, color: C.t3, marginLeft: 'auto' }}>{materiais.length} materiais</span>
+          </div>
+
+          {/* Lista */}
+          <div style={{ background: C.card, borderRadius: 12, border: `1px solid ${C.border}`, overflow: 'hidden' }}>
+            {materiais.length === 0 ? (
+              <div style={{ padding: 40, textAlign: 'center', color: C.t3, fontSize: 13 }}>Nenhum material encontrado</div>
+            ) : materiais.map(doc => {
+              const ext = doc.tipo || doc.nome?.split('.').pop() || '';
+              const isImg = ['png', 'jpg', 'jpeg', 'gif', 'webp'].includes(ext.toLowerCase());
+              const isPdf = ext.toLowerCase() === 'pdf';
+              const DocIcon = isImg ? Image : isPdf ? FileText : FileIcon;
+              const iconColor = isImg ? '#ec4899' : isPdf ? '#ef4444' : C.blue;
+              const url = doc.sharepoint_url || doc.storage_path;
+              return (
+                <div key={doc.id} style={{ padding: '14px 16px', borderBottom: `1px solid ${C.border}`, display: 'flex', alignItems: 'center', gap: 12 }}>
+                  <div style={{ width: 40, height: 40, borderRadius: 10, background: `${iconColor}15`, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                    <DocIcon size={20} style={{ color: iconColor }} />
+                  </div>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: 13, fontWeight: 600, color: C.text }}>
+                      {url ? <a href={url} target="_blank" rel="noopener noreferrer" style={{ color: C.text, textDecoration: 'none' }} onMouseEnter={e => e.target.style.color = C.primary} onMouseLeave={e => e.target.style.color = C.text}>{doc.nome}</a> : doc.nome}
+                    </div>
+                    <div style={{ fontSize: 11, color: C.t3, display: 'flex', gap: 8, marginTop: 3, flexWrap: 'wrap' }}>
+                      {doc.uploaded_by_name && <span>{doc.uploaded_by_name}</span>}
+                      <span>{fmtDate(doc.created_at?.split('T')[0])}</span>
+                      {doc.comentario && <span style={{ color: C.t2 }}>- {doc.comentario}</span>}
+                    </div>
+                    {(doc.etiquetas?.length > 0) && (
+                      <div style={{ display: 'flex', gap: 4, marginTop: 4, flexWrap: 'wrap' }}>
+                        {doc.etiquetas.map(tag => (
+                          <span key={tag} style={{ fontSize: 10, padding: '1px 8px', borderRadius: 99, background: tag === 'Todos' ? '#10b98118' : C.primaryBg, color: tag === 'Todos' ? C.green : C.primary, fontWeight: 500 }}>{tag}</span>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                  <div style={{ display: 'flex', gap: 8, flexShrink: 0, alignItems: 'center' }}>
+                    {doc.sharepoint_url && <a href={doc.sharepoint_url} target="_blank" rel="noopener noreferrer" style={{ fontSize: 10, color: C.primary, fontWeight: 600 }}>SharePoint</a>}
+                    <button onClick={() => handleDeleteMaterial(doc.id)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: C.red }}><Trash2 size={14} /></button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* ═══ TAB GRUPOS ═══ */}
+      {pageTab === 'grupos' && <>
       <div style={{ marginBottom: 12, position: 'relative' }}>
         <Search size={16} style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', color: C.t3 }} />
         <Input placeholder="Buscar grupo, lider, local ou tema..." value={search} onChange={e => setSearch(e.target.value)} style={{ paddingLeft: 36 }} />
@@ -559,6 +623,8 @@ export default function Grupos() {
           ))}
         </div>
       )}
+
+      </>}
 
       <GrupoFormModal open={modalOpen} onClose={() => setModalOpen(false)} data={editData} onSave={handleSave} saving={saving} gruposForSelect={gruposForSelect} allMembros={allMembros} loadMembros={loadMembros} />
     </div>
