@@ -1,4 +1,5 @@
 import { Routes, Route, Navigate } from 'react-router-dom';
+import { useAuth } from '@/contexts/AuthContext';
 import VolDashboard from './VolDashboard';
 import VolCheckin from './VolCheckin';
 import VolEscalas from './VolEscalas';
@@ -8,8 +9,24 @@ import VolAdmin from './VolAdmin';
 import VolNavBar from './components/VolNavBar';
 
 export default function Voluntariado() {
+  const { isVoluntario } = useAuth();
+
+  // Volunteers can only access check-in
+  if (isVoluntario) {
+    return (
+      <div className="p-4 md:p-6">
+        <VolNavBar />
+        <Routes>
+          <Route index element={<Navigate to="checkin" replace />} />
+          <Route path="checkin" element={<VolCheckin />} />
+          <Route path="*" element={<Navigate to="checkin" replace />} />
+        </Routes>
+      </div>
+    );
+  }
+
   return (
-    <div className="p-6">
+    <div className="p-4 md:p-6">
       <VolNavBar />
       <Routes>
         <Route index element={<VolDashboard />} />

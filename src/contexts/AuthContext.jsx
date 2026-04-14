@@ -149,6 +149,8 @@ export function AuthProvider({ children }) {
   const canAgenda = canAccessModule(['Agenda']);
   const canIA = canAccessModule(['IA / Agentes']);
 
+  const isVoluntario = profile?.role === 'voluntario';
+
   const value = {
     user,
     profile,
@@ -156,6 +158,7 @@ export function AuthProvider({ children }) {
     role: profile?.role ?? null,
     isAdmin: ['admin', 'diretor'].includes(profile?.role),
     isDiretor: profile?.role === 'diretor',
+    isVoluntario,
     modulePerms,
     canAccessModule,
     canRH, canFinanceiro, canLogistica, canPatrimonio, canMembresia, canProjetos, canExpansao, canAgenda, canIA,
@@ -177,7 +180,7 @@ export function useAuth() {
     // During HMR, context can temporarily be null — return a safe fallback
     return {
       user: null, profile: null, loading: true, role: null,
-      isAdmin: false, isDiretor: false, modulePerms: null,
+      isAdmin: false, isDiretor: false, isVoluntario: false, modulePerms: null,
       canAccessModule: () => false, getAccessLevel: () => 1,
       canRH: false, canFinanceiro: false, canLogistica: false,
       canPatrimonio: false, canMembresia: false, canProjetos: false,

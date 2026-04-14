@@ -152,6 +152,10 @@
 ::-webkit-scrollbar-thumb { background: var(--cbrio-border); border-radius: 3px; }
 ::-webkit-scrollbar-thumb:hover { background: var(--cbrio-text3); }
 
+/* ── Hide scrollbar utility (for horizontal scroll tabs) ── */
+.scrollbar-hide { -ms-overflow-style: none; scrollbar-width: none; }
+.scrollbar-hide::-webkit-scrollbar { display: none; }
+
 /* ── Table row hover ── */
 table tbody tr {
   transition: background 0.12s ease !important;

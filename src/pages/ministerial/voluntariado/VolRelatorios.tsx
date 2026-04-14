@@ -82,17 +82,17 @@ export default function VolRelatorios() {
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="flex items-center justify-between flex-wrap gap-3">
+      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-bold text-foreground">Relatorios</h1>
+          <h1 className="text-xl md:text-2xl font-bold text-foreground">Relatorios</h1>
           <p className="text-sm text-muted-foreground">Analise de presenca</p>
         </div>
-        <div className="flex gap-2 items-center">
-          <Button variant="outline" size="sm" className="gap-1" onClick={() => window.print()}>
+        <div className="flex gap-2 items-center w-full sm:w-auto">
+          <Button variant="outline" size="sm" className="gap-1 hidden sm:flex" onClick={() => window.print()}>
             <Printer className="h-4 w-4" /> Imprimir
           </Button>
           <Select value={teamFilter} onValueChange={setTeamFilter}>
-            <SelectTrigger className="w-[170px]">
+            <SelectTrigger className="w-full sm:w-[170px]">
               <div className="flex items-center gap-1.5">
                 <Filter className="h-3.5 w-3.5" />
                 <SelectValue placeholder="Todas Equipes" />
@@ -107,13 +107,15 @@ export default function VolRelatorios() {
       </div>
 
       <Tabs defaultValue="weekly">
-        <div className="flex items-center justify-between flex-wrap gap-2">
-          <TabsList>
-            <TabsTrigger value="weekly"><Calendar className="h-4 w-4 mr-1.5" />Relatorio Semanal</TabsTrigger>
-            <TabsTrigger value="overview"><BarChart3 className="h-4 w-4 mr-1.5" />Visao Geral</TabsTrigger>
-            <TabsTrigger value="inactive"><UserX className="h-4 w-4 mr-1.5" />Inativos</TabsTrigger>
-            <TabsTrigger value="thermometer"><Flame className="h-4 w-4 mr-1.5" />Termometro</TabsTrigger>
-          </TabsList>
+        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2">
+          <div className="w-full sm:w-auto overflow-x-auto scrollbar-hide">
+            <TabsList className="inline-flex w-auto min-w-max">
+              <TabsTrigger value="weekly" className="gap-1 text-xs sm:text-sm"><Calendar className="h-4 w-4 shrink-0" /><span className="hidden sm:inline">Relatorio</span> Semanal</TabsTrigger>
+              <TabsTrigger value="overview" className="gap-1 text-xs sm:text-sm"><BarChart3 className="h-4 w-4 shrink-0" /><span className="hidden sm:inline">Visao</span> Geral</TabsTrigger>
+              <TabsTrigger value="inactive" className="gap-1 text-xs sm:text-sm"><UserX className="h-4 w-4 shrink-0" />Inativos</TabsTrigger>
+              <TabsTrigger value="thermometer" className="gap-1 text-xs sm:text-sm"><Flame className="h-4 w-4 shrink-0" />Termometro</TabsTrigger>
+            </TabsList>
+          </div>
           <PeriodFilter value={period} onChange={setPeriod} />
         </div>
 

@@ -24,9 +24,9 @@ export default function VolunteerThermometer({ data }: { data: ThermometerEntry[
   const total = sorted.length;
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4 md:space-y-6">
       {/* Summary cards */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 md:gap-4">
         {(Object.entries(counts) as [keyof typeof counts, number][]).map(([level, count]) => {
           const cfg = levelConfig[level];
           return (
@@ -70,32 +70,31 @@ export default function VolunteerThermometer({ data }: { data: ThermometerEntry[
       )}
 
       {/* Volunteer list */}
-      <div className="p-4 rounded-lg border bg-card space-y-3">
-        <h4 className="font-semibold">Voluntarios ({total})</h4>
+      <div className="p-3 md:p-4 rounded-lg border bg-card space-y-3">
+        <h4 className="font-semibold text-sm md:text-base">Voluntarios ({total})</h4>
         <div className="space-y-2 max-h-[500px] overflow-y-auto">
           {sorted.map(v => {
             const cfg = levelConfig[v.level];
             const pct = v.scheduled > 0 ? Math.round((v.checkedIn / v.scheduled) * 100) : 0;
             return (
-              <div key={v.planningCenterId} className="flex items-center gap-3 p-3 rounded-lg border bg-card hover:bg-muted/30">
-                <Badge variant="outline" className={`${cfg.bgClass} shrink-0 text-xs`}>
+              <div key={v.planningCenterId} className="flex items-center gap-2 md:gap-3 p-2.5 md:p-3 rounded-lg border bg-card hover:bg-muted/30 min-h-[52px]">
+                <Badge variant="outline" className={`${cfg.bgClass} shrink-0 text-[10px] md:text-xs`}>
                   {cfg.label}
                 </Badge>
                 <div className="flex-1 min-w-0">
-                  <p className="font-medium text-sm truncate">{v.name}</p>
-                  {v.team && <p className="text-xs text-muted-foreground truncate">{v.team}</p>}
+                  <p className="font-medium text-xs md:text-sm truncate">{v.name}</p>
+                  {v.team && <p className="text-[10px] md:text-xs text-muted-foreground truncate">{v.team}</p>}
                 </div>
                 <div className="flex items-center gap-2 shrink-0">
-                  <div className="w-24 h-2 bg-muted rounded-full overflow-hidden hidden sm:block">
+                  <div className="w-16 md:w-24 h-2 bg-muted rounded-full overflow-hidden hidden sm:block">
                     <div
                       className="h-full rounded-full transition-all"
                       style={{ width: `${Math.min(pct, 100)}%`, backgroundColor: cfg.color }}
                     />
                   </div>
-                  <span className="text-xs text-muted-foreground w-16 text-right">
+                  <span className="text-[10px] md:text-xs text-muted-foreground text-right">
                     {v.checkedIn}/{v.scheduled}
                   </span>
-                  <span className="text-xs text-muted-foreground w-10">escalas</span>
                 </div>
               </div>
             );

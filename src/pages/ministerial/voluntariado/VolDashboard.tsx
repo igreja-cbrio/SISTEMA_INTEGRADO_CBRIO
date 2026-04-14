@@ -35,24 +35,24 @@ export default function VolDashboard() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-bold text-foreground">Voluntariado</h1>
+          <h1 className="text-xl md:text-2xl font-bold text-foreground">Voluntariado</h1>
           <LastSyncIndicator />
         </div>
-        <Button onClick={handleSync} disabled={sync.isPending} variant="outline" className="gap-2">
+        <Button onClick={handleSync} disabled={sync.isPending} variant="outline" className="gap-2 w-full sm:w-auto">
           {sync.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
           Sincronizar
         </Button>
       </div>
 
       {/* Quick actions */}
-      <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+      <div className="grid grid-cols-3 md:grid-cols-6 gap-2 md:gap-3">
         {quickActions.map(a => (
-          <Card key={a.path} className="cursor-pointer hover:bg-muted/50 transition-colors" onClick={() => navigate(a.path)}>
-            <CardContent className="flex flex-col items-center gap-2 p-4">
-              <a.icon className={`h-8 w-8 ${a.color}`} />
-              <span className="text-sm font-medium">{a.label}</span>
+          <Card key={a.path} className="cursor-pointer hover:bg-muted/50 transition-colors active:scale-95" onClick={() => navigate(a.path)}>
+            <CardContent className="flex flex-col items-center gap-1.5 p-3 md:p-4">
+              <a.icon className={`h-6 w-6 md:h-8 md:w-8 ${a.color}`} />
+              <span className="text-xs md:text-sm font-medium text-center">{a.label}</span>
             </CardContent>
           </Card>
         ))}
@@ -65,15 +65,15 @@ export default function VolDashboard() {
           {todayServices.length === 0 ? (
             <p className="text-muted-foreground text-center py-4">Nenhum culto agendado para hoje</p>
           ) : (
-            <div className="space-y-3">
+            <div className="space-y-2 md:space-y-3">
               {todayServices.map(svc => (
-                <div key={svc.id} className="flex items-center justify-between p-3 rounded-lg border bg-card hover:bg-muted/30 cursor-pointer"
+                <div key={svc.id} className="flex items-center justify-between p-3 md:p-4 rounded-lg border bg-card hover:bg-muted/30 cursor-pointer active:scale-[0.98] transition-transform min-h-[56px]"
                   onClick={() => navigate(`/ministerial/voluntariado/checkin?serviceId=${svc.id}`)}>
-                  <div>
-                    <p className="font-medium">{svc.name}</p>
-                    {svc.service_type_name && <p className="text-sm text-muted-foreground">{svc.service_type_name}</p>}
+                  <div className="min-w-0 flex-1">
+                    <p className="font-medium text-sm md:text-base truncate">{svc.name}</p>
+                    {svc.service_type_name && <p className="text-xs md:text-sm text-muted-foreground truncate">{svc.service_type_name}</p>}
                   </div>
-                  <span className="text-sm text-muted-foreground">{format(new Date(svc.scheduled_at), 'HH:mm', { locale: ptBR })}</span>
+                  <span className="text-sm text-muted-foreground ml-3 shrink-0">{format(new Date(svc.scheduled_at), 'HH:mm', { locale: ptBR })}</span>
                 </div>
               ))}
             </div>

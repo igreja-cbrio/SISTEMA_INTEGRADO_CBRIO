@@ -49,14 +49,14 @@ export default function VolQrCodes() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between flex-wrap gap-3">
+      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-bold text-foreground flex items-center gap-2">
-            <QrCode className="h-6 w-6" /> Gestao de QR Codes
+          <h1 className="text-xl md:text-2xl font-bold text-foreground flex items-center gap-2">
+            <QrCode className="h-5 w-5 md:h-6 md:w-6" /> Gestao de QR Codes
           </h1>
           <p className="text-sm text-muted-foreground">Voluntarios ativos nos ultimos 3 meses</p>
         </div>
-        <Button variant="outline" className="gap-2" onClick={() => document.getElementById('pc-search-section')?.scrollIntoView({ behavior: 'smooth' })}>
+        <Button variant="outline" className="gap-2 w-full sm:w-auto" onClick={() => document.getElementById('pc-search-section')?.scrollIntoView({ behavior: 'smooth' })}>
           <Search className="h-4 w-4" /> Buscar no Planning Center
         </Button>
       </div>
@@ -67,22 +67,22 @@ export default function VolQrCodes() {
       </div>
 
       {/* Volunteer list with QR thumbnails */}
-      <div className="space-y-3">
+      <div className="space-y-2 md:space-y-3">
         {filtered.map(v => (
-          <Card key={`${v.source}-${v.id}`} className="hover:bg-muted/30 transition-colors">
-            <CardContent className="flex items-center gap-4 p-4">
+          <Card key={`${v.source}-${v.id}`} className="hover:bg-muted/30 transition-colors active:scale-[0.99]">
+            <CardContent className="flex items-center gap-3 md:gap-4 p-3 md:p-4">
               {v.qr_code ? (
                 <div className="shrink-0 p-1 bg-white rounded">
-                  <QRCodeSVG value={v.qr_code} size={56} level="L" />
+                  <QRCodeSVG value={v.qr_code} size={48} level="L" />
                 </div>
               ) : (
-                <div className="shrink-0 h-16 w-16 rounded bg-muted flex items-center justify-center">
-                  <QrCode className="h-6 w-6 text-muted-foreground" />
+                <div className="shrink-0 h-14 w-14 rounded bg-muted flex items-center justify-center">
+                  <QrCode className="h-5 w-5 text-muted-foreground" />
                 </div>
               )}
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2 flex-wrap">
-                  <p className="font-medium">{v.name}</p>
+                  <p className="font-medium text-sm md:text-base truncate">{v.name}</p>
                   {v.source === 'profile' ? (
                     <Badge variant="outline" className="bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-300 text-[10px]">Com Conta</Badge>
                   ) : (
@@ -93,8 +93,8 @@ export default function VolQrCodes() {
               </div>
               <div className="flex items-center gap-2 shrink-0">
                 {v.qr_code && (
-                  <Button variant="outline" size="sm" className="gap-1" onClick={() => setSelectedQr({ qrCode: v.qr_code, name: v.name })}>
-                    <Eye className="h-3.5 w-3.5" /> Ver QR
+                  <Button variant="outline" size="sm" className="gap-1 min-h-[40px]" onClick={() => setSelectedQr({ qrCode: v.qr_code, name: v.name })}>
+                    <Eye className="h-3.5 w-3.5" /><span className="hidden sm:inline">Ver QR</span>
                   </Button>
                 )}
               </div>

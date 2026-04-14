@@ -8,7 +8,7 @@ interface PeriodFilterProps {
 export default function PeriodFilter({ value, onChange }: PeriodFilterProps) {
   return (
     <Select value={value} onValueChange={onChange}>
-      <SelectTrigger className="w-[180px]">
+      <SelectTrigger className="w-full sm:w-[180px] min-h-[40px]">
         <SelectValue placeholder="Periodo" />
       </SelectTrigger>
       <SelectContent>
