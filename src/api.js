@@ -424,6 +424,7 @@ export const membresia = {
     create: (data) => post('/membresia/membros', data),
     update: (id, data) => put(`/membresia/membros/${id}`, data),
     remove: (id) => del(`/membresia/membros/${id}`),
+    uploadFoto: (id, formData) => requestFile(`/membresia/membros/${id}/foto`, formData),
   },
   trilha: {
     create: (data) => post('/membresia/trilha', data),
@@ -491,6 +492,13 @@ export const membresia = {
 // ── Endpoint público (sem auth) do formulário de cadastro de membresia ──
 // Usa fetch direto porque não requer token e deve funcionar em rotas públicas.
 export const cadastroPublico = {
+  uploadFoto: async (file) => {
+    const fd = new FormData();
+    fd.append('foto', file);
+    const res = await fetch(`${API}/public/membresia/upload-foto`, { method: 'POST', body: fd });
+    if (!res.ok) { const err = await res.json().catch(() => ({})); throw new Error(err.error || 'Erro ao enviar foto'); }
+    return res.json();
+  },
   verificarFamilia: async (sobrenome) => {
     const res = await fetch(`${API}/public/membresia/verificar-familia?sobrenome=${encodeURIComponent(sobrenome)}`);
     if (!res.ok) return { familias: [] };

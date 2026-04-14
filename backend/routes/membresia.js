@@ -1,6 +1,16 @@
 const router = require('express').Router();
+const multer = require('multer');
 const { authenticate, authorize } = require('../middleware/auth');
 const { supabase } = require('../utils/supabase');
+
+const uploadMw = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 5 * 1024 * 1024 }, // 5 MB
+  fileFilter: (_req, file, cb) => {
+    if (['image/jpeg', 'image/png', 'image/webp'].includes(file.mimetype)) cb(null, true);
+    else cb(new Error('Formato de imagem não suportado. Use JPG, PNG ou WebP.'));
+  },
+});
 
 router.use(authenticate);
 
@@ -220,6 +230,32 @@ router.delete('/membros/:id', authorize('admin', 'diretor'), async (req, res) =>
     res.json({ ok: true });
   } catch (e) {
     res.status(500).json({ error: 'Erro ao remover membro' });
+  }
+});
+
+// POST /api/membresia/membros/:id/foto — upload de foto do membro
+router.post('/membros/:id/foto', authorize('admin', 'diretor'), uploadMw.single('foto'), async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ error: 'Imagem não fornecida' });
+    const { id } = req.params;
+    const ext = req.file.mimetype === 'image/png' ? 'png' : req.file.mimetype === 'image/webp' ? 'webp' : 'jpg';
+    const path = `membros/${id}.${ext}`;
+
+    const { error: upErr } = await supabase.storage
+      .from('fotos-membros')
+      .upload(path, req.file.buffer, { contentType: req.file.mimetype, upsert: true });
+    if (upErr) throw upErr;
+
+    const { data: urlData } = supabase.storage.from('fotos-membros').getPublicUrl(path);
+    const foto_url = `${urlData.publicUrl}?t=${Date.now()}`;
+
+    const { error: dbErr } = await supabase.from('mem_membros').update({ foto_url }).eq('id', id);
+    if (dbErr) throw dbErr;
+
+    res.json({ foto_url });
+  } catch (e) {
+    console.error('[MEMBROS] foto upload error:', e.message);
+    res.status(500).json({ error: `Erro ao enviar foto: ${e.message}` });
   }
 });
 

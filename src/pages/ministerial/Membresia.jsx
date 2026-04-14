@@ -8,7 +8,7 @@ import {
   CheckCircle2, Circle, UserPlus, Home, Pencil,
   AlertCircle, LogOut, MapPin as MapPinIcon, Clock, Trash2,
   DollarSign, HandCoins, Sparkles, Activity, Inbox,
-  Copy, Share2, Download, QrCode,
+  Copy, Share2, Download, QrCode, Camera,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '../../components/ui/button';
@@ -223,6 +223,9 @@ function FamiliaAutocomplete({ familias, value, onChange, placeholder = 'Buscar 
 function MembroFormModal({ open, onOpenChange, editData, familias, onSaved }) {
   const [form, setForm] = useState(EMPTY_FORM);
   const [saving, setSaving] = useState(false);
+  const [fotoPreview, setFotoPreview] = useState(null);
+  const [fotoFile, setFotoFile] = useState(null);
+  const fotoInputRef = useState(() => ({ current: null }))[0];
 
   const isEdit = !!editData;
 
@@ -253,12 +256,26 @@ function MembroFormModal({ open, onOpenChange, editData, familias, onSaved }) {
         parentesco: editData.parentesco || '',
         observacoes: editData.observacoes || '',
       });
+      setFotoPreview(editData.foto_url || null);
     } else {
       setForm(EMPTY_FORM);
+      setFotoPreview(null);
     }
+    setFotoFile(null);
   }, [editData, open]);
 
   const set = (k, v) => setForm(prev => ({ ...prev, [k]: v }));
+
+  const handleFotoSelect = (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (!file.type.startsWith('image/')) { toast.error('Selecione uma imagem (JPG, PNG ou WebP).'); return; }
+    if (file.size > 5 * 1024 * 1024) { toast.error('A imagem deve ter no maximo 5 MB.'); return; }
+    setFotoFile(file);
+    const reader = new FileReader();
+    reader.onload = (ev) => setFotoPreview(ev.target.result);
+    reader.readAsDataURL(file);
+  };
 
   const handleSave = async () => {
     if (!form.nome.trim()) { toast.error('Nome é obrigatório.'); return; }
@@ -295,13 +312,29 @@ function MembroFormModal({ open, onOpenChange, editData, familias, onSaved }) {
         if (payload[k] === '') delete payload[k];
       }
 
+      let membroId;
       if (isEdit) {
         await membresia.membros.update(editData.id, payload);
+        membroId = editData.id;
         toast.success('Membro atualizado com sucesso!');
       } else {
-        await membresia.membros.create(payload);
+        const novo = await membresia.membros.create(payload);
+        membroId = novo?.id;
         toast.success(`${payload.nome} cadastrado(a) com sucesso!`);
       }
+
+      // Upload photo if selected
+      if (fotoFile && membroId) {
+        try {
+          const fd = new FormData();
+          fd.append('foto', fotoFile);
+          await membresia.membros.uploadFoto(membroId, fd);
+        } catch (fotoErr) {
+          console.error('Foto upload failed:', fotoErr);
+          toast.error('Membro salvo, mas houve erro ao enviar a foto.');
+        }
+      }
+
       onSaved();
       onOpenChange(false);
     } catch (e) {
@@ -318,6 +351,32 @@ function MembroFormModal({ open, onOpenChange, editData, familias, onSaved }) {
         <DialogHeader>
           <DialogTitle>{isEdit ? 'Editar Membro' : 'Novo Membro'}</DialogTitle>
         </DialogHeader>
+
+        {/* Foto upload */}
+        <div className="flex flex-col items-center gap-2 py-4">
+          <div
+            onClick={() => fotoInputRef.current?.click()}
+            className="relative cursor-pointer group"
+            style={{ width: 80, height: 80, borderRadius: '50%', overflow: 'hidden', border: `2px dashed ${C.border}`, background: fotoPreview ? 'transparent' : C.primaryBg, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+          >
+            {fotoPreview ? (
+              <img src={fotoPreview} alt="Foto" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+            ) : (
+              <Camera style={{ width: 24, height: 24, color: C.primary }} />
+            )}
+            <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+              <Camera style={{ width: 20, height: 20, color: '#fff' }} />
+            </div>
+          </div>
+          <input ref={el => fotoInputRef.current = el} type="file" accept="image/jpeg,image/png,image/webp" className="hidden" onChange={handleFotoSelect} />
+          {fotoPreview && (
+            <button type="button" onClick={() => { setFotoFile(null); setFotoPreview(null); if (fotoInputRef.current) fotoInputRef.current.value = ''; }}
+              className="text-xs text-red-500 hover:underline">
+              Remover foto
+            </button>
+          )}
+          {!fotoPreview && <span className="text-xs text-muted-foreground">Clique para adicionar foto</span>}
+        </div>
 
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 py-4">
           {/* Nome / Sobrenome */}
@@ -883,8 +942,12 @@ export default function Membresia() {
               <tr key={m.id} className="cbrio-row" onClick={() => openDetail(m.id)}>
                 <td style={{ padding: '14px 18px', borderBottom: `1px solid ${C.border}` }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-                    <div style={{ width: 36, height: 36, borderRadius: '50%', background: C.primaryBg, display: 'flex', alignItems: 'center', justifyContent: 'center', color: C.primary, fontWeight: 700, fontSize: 13, flexShrink: 0 }}>
-                      {m.nome?.split(' ').map(n => n[0]).slice(0, 2).join('').toUpperCase()}
+                    <div style={{ width: 36, height: 36, borderRadius: '50%', background: C.primaryBg, display: 'flex', alignItems: 'center', justifyContent: 'center', color: C.primary, fontWeight: 700, fontSize: 13, flexShrink: 0, overflow: 'hidden' }}>
+                      {m.foto_url ? (
+                        <img src={m.foto_url} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                      ) : (
+                        m.nome?.split(' ').map(n => n[0]).slice(0, 2).join('').toUpperCase()
+                      )}
                     </div>
                     <div>
                       <div style={{ fontSize: 14, fontWeight: 500, color: C.text }}>{m.nome}</div>
@@ -933,8 +996,12 @@ export default function Membresia() {
             {/* Header */}
             <div style={{ padding: '28px 32px 20px', borderBottom: `1px solid ${C.border}`, display: 'flex', justifyContent: 'space-between', alignItems: 'start' }}>
               <div style={{ display: 'flex', gap: 16, alignItems: 'center' }}>
-                <div style={{ width: 56, height: 56, borderRadius: '50%', background: C.primaryBg, display: 'flex', alignItems: 'center', justifyContent: 'center', color: C.primary, fontWeight: 700, fontSize: 20 }}>
-                  {selectedMembro.nome?.split(' ').map(n => n[0]).slice(0, 2).join('').toUpperCase()}
+                <div style={{ width: 56, height: 56, borderRadius: '50%', background: C.primaryBg, display: 'flex', alignItems: 'center', justifyContent: 'center', color: C.primary, fontWeight: 700, fontSize: 20, overflow: 'hidden' }}>
+                  {selectedMembro.foto_url ? (
+                    <img src={selectedMembro.foto_url} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                  ) : (
+                    selectedMembro.nome?.split(' ').map(n => n[0]).slice(0, 2).join('').toUpperCase()
+                  )}
                 </div>
                 <div>
                   <h2 style={{ fontSize: 22, fontWeight: 700, color: C.text, margin: 0 }}>{selectedMembro.nome}</h2>
@@ -1118,8 +1185,12 @@ export default function Membresia() {
                             onMouseEnter={e => e.currentTarget.style.background = C.primaryBg}
                             onMouseLeave={e => e.currentTarget.style.background = 'var(--cbrio-input-bg)'}
                           >
-                            <div style={{ width: 36, height: 36, borderRadius: '50%', background: C.primaryBg, color: C.primary, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12, fontWeight: 700, flexShrink: 0 }}>
-                              {f.nome?.split(' ').map(n => n[0]).slice(0, 2).join('').toUpperCase()}
+                            <div style={{ width: 36, height: 36, borderRadius: '50%', background: C.primaryBg, color: C.primary, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12, fontWeight: 700, flexShrink: 0, overflow: 'hidden' }}>
+                              {f.foto_url ? (
+                                <img src={f.foto_url} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                              ) : (
+                                f.nome?.split(' ').map(n => n[0]).slice(0, 2).join('').toUpperCase()
+                              )}
                             </div>
                             <div style={{ flex: 1, minWidth: 0 }}>
                               <div style={{ fontSize: 14, fontWeight: 500, color: C.text }}>{f.nome}</div>
