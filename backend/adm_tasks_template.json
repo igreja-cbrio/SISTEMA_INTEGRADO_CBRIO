@@ -1124,5 +1124,17 @@
       { "name": "Coordenar voluntários de produção durante o evento", "offset_start": 0, "offset_end": 0 },
       { "name": "Conduzir o encerramento e desmontagem", "offset_start": 0, "offset_end": 0 }
     ]
+  },
+  {
+    "area": "gestao",
+    "etapa": "Pré-Briefing",
+    "titulo": "Levantar requisitos do evento",
+    "offset_start": -90,
+    "offset_end": -85,
+    "subtasks": [
+      { "name": "Marcar reunião com dono do evento", "offset_start": -90, "offset_end": -88 },
+      { "name": "Fazer a ata da reunião", "offset_start": -88, "offset_end": -86 },
+      { "name": "Mandar para o marketing", "offset_start": -86, "offset_end": -85 }
+    ]
   }
 ]
