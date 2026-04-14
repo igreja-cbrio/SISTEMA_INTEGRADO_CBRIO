@@ -1,6 +1,6 @@
 const router = require('express').Router();
 const { authenticate, authorize } = require('../middleware/auth');
-const { supabase } = require('../utils/supabase');
+const { supabase, query: dbQuery } = require('../utils/supabase');
 
 router.use(authenticate);
 
@@ -963,99 +963,100 @@ router.post('/cadastros/:id/aprovar', authorize('admin', 'diretor'), async (req,
 
     if (cad.duplicado_de_id) {
       // ── Atualização cadastral ──
-      // CPF/email/telefone já pertencem a um membro existente. Atualizamos
-      // os dados dele com o que veio no formulário, preservando campos que
-      // o cadastro pendente não preencheu (não sobrescreve com null).
-      const patch = {};
-      const campos = [
-        'nome', 'cpf', 'email', 'telefone', 'data_nascimento', 'estado_civil',
-        'endereco', 'bairro', 'cidade', 'cep', 'profissao',
-      ];
-      for (const k of campos) {
-        if (cad[k] !== null && cad[k] !== undefined && cad[k] !== '') {
-          patch[k] = cad[k];
+      // Usa SQL direto para contornar possíveis problemas com PostgREST/RLS.
+      const sets = [];
+      const vals = [];
+      const campos = {
+        nome: cad.nome, cpf: cad.cpf, email: cad.email, telefone: cad.telefone,
+        data_nascimento: cad.data_nascimento, estado_civil: cad.estado_civil,
+        endereco: cad.endereco, bairro: cad.bairro, cidade: cad.cidade,
+        cep: cad.cep, profissao: cad.profissao,
+      };
+      if (familia_id) campos.familia_id = familia_id;
+      if (parentesco) campos.parentesco = parentesco;
+      if (obsAuto) campos.observacoes = obsAuto;
+      for (const [k, v] of Object.entries(campos)) {
+        if (v !== null && v !== undefined && v !== '') {
+          vals.push(v);
+          sets.push(`${k} = $${vals.length}`);
         }
       }
-      if (familia_id) patch.familia_id = familia_id;
-      if (parentesco) patch.parentesco = parentesco;
-      if (obsAuto) patch.observacoes = obsAuto;
-
-      const { data: atualizado, error: eUpd } = await supabase
-        .from('mem_membros')
-        .update(patch)
-        .eq('id', cad.duplicado_de_id)
-        .select()
-        .single();
-      if (eUpd || !atualizado) {
-        console.error('[CADASTROS] erro ao atualizar membro existente:', eUpd?.message, eUpd?.details, eUpd?.hint);
-        return res.status(500).json({ error: `Erro ao atualizar membro existente: ${eUpd?.message || 'registro não encontrado'}` });
+      if (sets.length === 0) {
+        return res.status(400).json({ error: 'Nenhum campo a atualizar.' });
       }
-      membro = atualizado;
+      vals.push(cad.duplicado_de_id);
+      const sql = `UPDATE public.mem_membros SET ${sets.join(', ')} WHERE id = $${vals.length} RETURNING *`;
+      try {
+        const result = await dbQuery(sql, vals);
+        if (result.rows.length === 0) {
+          return res.status(404).json({ error: 'Membro referenciado não encontrado.' });
+        }
+        membro = result.rows[0];
+      } catch (dbErr) {
+        console.error('[CADASTROS] erro SQL ao atualizar membro:', dbErr.message, dbErr.detail);
+        return res.status(500).json({ error: `Erro ao atualizar membro: ${dbErr.message}` });
+      }
       foiAtualizacao = true;
     } else {
       // ── Novo membro ──
-      // Monta payload com apenas campos não-nulos para evitar erros se
-      // alguma migration opcional (parentesco, cpf) ainda não foi aplicada.
-      const membroPayload = {
-        nome: cad.nome,
-        status: 'visitante',
-        active: true,
+      // Usa SQL direto (pg pool) para contornar possíveis problemas com
+      // PostgREST/RLS e obter mensagens de erro claras do Postgres.
+      const cols = ['nome', 'status', 'active'];
+      const vals = [cad.nome, 'visitante', true];
+      const optFields = {
+        email: cad.email, telefone: cad.telefone,
+        data_nascimento: cad.data_nascimento, estado_civil: cad.estado_civil,
+        endereco: cad.endereco, bairro: cad.bairro, cidade: cad.cidade,
+        cep: cad.cep, profissao: cad.profissao, cpf: cad.cpf,
+        observacoes: obsAuto || null,
       };
-      const optFields = [
-        'cpf', 'email', 'telefone', 'data_nascimento', 'estado_civil',
-        'endereco', 'bairro', 'cidade', 'cep', 'profissao',
-      ];
-      for (const k of optFields) {
-        if (cad[k] !== null && cad[k] !== undefined && cad[k] !== '') {
-          membroPayload[k] = cad[k];
+      if (familia_id) optFields.familia_id = familia_id;
+      if (parentesco) optFields.parentesco = parentesco;
+      for (const [k, v] of Object.entries(optFields)) {
+        if (v !== null && v !== undefined && v !== '') {
+          cols.push(k);
+          vals.push(v);
         }
       }
-      if (familia_id) membroPayload.familia_id = familia_id;
-      if (parentesco) membroPayload.parentesco = parentesco;
-      if (obsAuto) membroPayload.observacoes = obsAuto;
-
-      const { data: novo, error: e2 } = await supabase
-        .from('mem_membros')
-        .insert(membroPayload)
-        .select()
-        .single();
-      if (e2) {
-        console.error('[CADASTROS] erro ao criar membro:', e2.message, e2.details, e2.hint);
-        return res.status(500).json({ error: `Erro ao criar membro: ${e2.message}` });
+      const placeholders = vals.map((_, i) => `$${i + 1}`).join(', ');
+      const sql = `INSERT INTO public.mem_membros (${cols.join(', ')}) VALUES (${placeholders}) RETURNING *`;
+      try {
+        const result = await dbQuery(sql, vals);
+        membro = result.rows[0];
+      } catch (dbErr) {
+        console.error('[CADASTROS] erro SQL ao criar membro:', dbErr.message, dbErr.detail);
+        return res.status(500).json({ error: `Erro ao criar membro: ${dbErr.message}` });
       }
-      membro = novo;
     }
 
     // Marca cadastro como aprovado e liga ao membro criado/atualizado
-    const { error: e3 } = await supabase
-      .from('mem_cadastros_pendentes')
-      .update({
-        status: 'aprovado',
-        aprovado_por: req.user.userId,
-        aprovado_em: new Date().toISOString(),
-        membro_id: membro.id,
-        observacoes: observacoes || cad.observacoes,
-      })
-      .eq('id', id);
-    if (e3) {
+    try {
+      await dbQuery(
+        `UPDATE public.mem_cadastros_pendentes
+         SET status = 'aprovado', aprovado_por = $1, aprovado_em = now(),
+             membro_id = $2, observacoes = $3
+         WHERE id = $4`,
+        [req.user.userId, membro.id, observacoes || cad.observacoes, id],
+      );
+    } catch (e3) {
       console.error('[CADASTROS] erro ao atualizar cadastro:', e3.message);
     }
 
     // Registra no histórico do membro
     try {
-      await supabase.from('mem_historico').insert({
-        membro_id: membro.id,
-        descricao: foiAtualizacao
-          ? `Atualização cadastral a partir do formulário público (origem: ${cad.origem}).`
-          : `Aprovado a partir do formulário público (origem: ${cad.origem}).`,
-        registrado_por: req.user.userId,
-      });
+      const descHist = foiAtualizacao
+        ? `Atualização cadastral a partir do formulário público (origem: ${cad.origem}).`
+        : `Aprovado a partir do formulário público (origem: ${cad.origem}).`;
+      await dbQuery(
+        `INSERT INTO public.mem_historico (membro_id, descricao, registrado_por) VALUES ($1, $2, $3)`,
+        [membro.id, descHist, req.user.userId],
+      );
     } catch (_) { /* histórico é opcional */ }
 
     res.status(foiAtualizacao ? 200 : 201).json({ ok: true, membro, atualizacao: foiAtualizacao });
   } catch (e) {
-    console.error('[CADASTROS] aprovar exception:', e.message);
-    res.status(500).json({ error: 'Erro ao aprovar cadastro' });
+    console.error('[CADASTROS] aprovar exception:', e.message, e.stack);
+    res.status(500).json({ error: `Erro ao aprovar cadastro: ${e.message}` });
   }
 });
 
