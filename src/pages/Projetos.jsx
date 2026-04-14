@@ -229,7 +229,8 @@ const TABS = ['Home', 'Lista', 'Kanban', 'Gantt'];
 // COMPONENTE PRINCIPAL
 // ═══════════════════════════════════════════════════════════
 export default function Projetos() {
-  const { profile, user, isDiretor, getAccessLevel, userAreas } = useAuth();
+  const { profile, user, isDiretor, isAdmin, getAccessLevel, userAreas } = useAuth();
+  const canEdit = isAdmin || isDiretor;
   const userRole = profile?.role || '';
   const userArea = profile?.area || '';
   const isPMO = ['diretor', 'admin'].includes(userRole);
@@ -430,6 +431,14 @@ export default function Projetos() {
       await projects.remove(id);
       setDetail(null); setTab(0);
       loadList(); loadDash();
+    } catch (e) { setError(e.message); }
+  }
+
+  async function changeProjectStatus(id, newStatus) {
+    try {
+      await projects.update(id, { status: newStatus });
+      loadList(); loadDash();
+      if (detail?.id === id) refreshDetail();
     } catch (e) { setError(e.message); }
   }
 
@@ -836,7 +845,7 @@ export default function Projetos() {
                       {fmtDate(p.date_end)}
                       <DaysCounter date={p.date_end} status={p.status} />
                     </td>
-                    {isDiretor && (
+                    {canEdit && (
                       <td style={styles.td} onClick={e => e.stopPropagation()}>
                         <div style={{ display: 'flex', gap: 4 }}>
                           <button onClick={() => setModalProject(p)} style={{ padding: '3px 8px', fontSize: 10, borderRadius: 4, border: `1px solid ${C.border}`, background: 'transparent', color: C.primary, cursor: 'pointer', fontWeight: 600 }}>Editar</button>
@@ -1361,13 +1370,18 @@ export default function Projetos() {
               {p.project_categories?.name && <span style={styles.badge(p.project_categories.color || C.primary, (p.project_categories.color || C.primary) + '18')}>{p.project_categories.name}</span>}
             </div>
           </div>
-          {isDiretor && (
-            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          {canEdit && (
+            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
               <button style={styles.btn('secondary')} onClick={() => setModalProject(p)}>Editar</button>
-              <button style={styles.btn(p.status === 'concluido' ? 'secondary' : 'primary')} onClick={() => toggleProjectStatus(p.id, p.status)}>
-                {p.status === 'concluido' ? 'Reabrir' : 'Finalizar'}
-              </button>
-              <button style={styles.btn('danger')} onClick={() => deleteProject(p.id)}>Excluir</button>
+              {p.status !== 'concluido' && p.status !== 'cancelado' && (
+                <button style={{ ...styles.btn('primary'), background: '#10b981', color: '#fff' }} onClick={() => changeProjectStatus(p.id, 'concluido')}>Finalizar</button>
+              )}
+              {p.status !== 'cancelado' && p.status !== 'concluido' && (
+                <button style={{ ...styles.btn('secondary'), color: '#6b7280' }} onClick={() => { if (window.confirm('Cancelar este projeto?')) changeProjectStatus(p.id, 'cancelado'); }}>Cancelar</button>
+              )}
+              {(p.status === 'concluido' || p.status === 'cancelado') && (
+                <button style={{ ...styles.btn('secondary'), color: C.amber }} onClick={() => changeProjectStatus(p.id, 'no-prazo')}>Reabrir</button>
+              )}
             </div>
           )}
         </div>
@@ -1442,7 +1456,7 @@ export default function Projetos() {
             <div style={styles.section}>
               <div style={styles.sectionTitle}>
                 <span>KPIs ({kpis.length})</span>
-                {isDiretor && <button style={{ ...styles.btn('secondary'), ...styles.btnSm }} onClick={() => setModalKpi({})}>+ KPI</button>}
+                {canEdit && <button style={{ ...styles.btn('secondary'), ...styles.btnSm }} onClick={() => setModalKpi({})}>+ KPI</button>}
               </div>
               {kpis.length === 0 ? (
                 <div style={styles.empty}>Nenhum KPI cadastrado.</div>
@@ -1455,7 +1469,7 @@ export default function Projetos() {
                       <div key={kpi.id} style={{ ...styles.card, padding: 16 }}>
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 8 }}>
                           <div style={{ fontSize: 13, fontWeight: 600, color: C.text }}>{kpi.name}</div>
-                          {isDiretor && (
+                          {canEdit && (
                             <div style={{ display: 'flex', gap: 4 }}>
                               <button style={{ ...styles.btn('ghost'), ...styles.btnSm, fontSize: 10 }} onClick={() => setModalKpi(kpi)}>Editar</button>
                               <button style={{ ...styles.btn('ghost'), ...styles.btnSm, fontSize: 10, color: C.red }} onClick={() => deleteKpi(kpi.id)}>X</button>
@@ -1503,7 +1517,7 @@ export default function Projetos() {
             {phases.length === 0 ? (
               <div style={{ textAlign: 'center', padding: 40 }}>
                 <div style={{ fontSize: 14, color: C.t3, marginBottom: 16 }}>Nenhuma fase cadastrada.</div>
-                {isDiretor && <button style={styles.btn('primary')} onClick={initPhases}>Iniciar Fases (7 fases)</button>}
+                {canEdit && <button style={styles.btn('primary')} onClick={initPhases}>Iniciar Fases (7 fases)</button>}
               </div>
             ) : (() => {
               const sortedPhases = [...phases].sort((a, b) => (a.order_index || 0) - (b.order_index || 0));
@@ -1625,7 +1639,7 @@ export default function Projetos() {
                         </div>
                       </div>
 
-                      {isDiretor && (
+                      {canEdit && (
                         <div style={{ display: 'flex', gap: 12, alignItems: 'center', marginTop: 12 }}>
                           <label style={styles.label}>Status</label>
                           <select style={styles.select} value={selectedPhase.status} onChange={e => updatePhaseField(selectedPhase.id, 'status', e.target.value)}>
@@ -1634,7 +1648,7 @@ export default function Projetos() {
                         </div>
                       )}
 
-                      {isDiretor && (
+                      {canEdit && (
                         <div style={{ marginTop: 12 }}>
                           <label style={styles.label}>Notas</label>
                           <textarea style={{ ...styles.input, minHeight: 60, resize: 'vertical' }} defaultValue={selectedPhase.notes || ''}
@@ -1718,7 +1732,7 @@ export default function Projetos() {
                   }}>{v === 'lista' ? 'Lista' : 'Kanban'}</button>
                 ))}
               </div>
-              {isDiretor && <button style={{ ...styles.btn('primary'), ...styles.btnSm }} onClick={() => setModalTask({})}>+ Tarefa</button>}
+              {canEdit && <button style={{ ...styles.btn('primary'), ...styles.btnSm }} onClick={() => setModalTask({})}>+ Tarefa</button>}
             </div>
 
             {taskView === 'lista' ? (
@@ -1740,13 +1754,13 @@ export default function Projetos() {
                           </div>
                           <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
                             <Badge status={t.priority} map={PRIORITY_MAP} />
-                            {isDiretor ? (
+                            {canEdit ? (
                               <select style={{ ...styles.select, fontSize: 11, padding: '2px 6px' }} value={t.status}
                                 onChange={e => changeTaskStatus(t.id, e.target.value)}>
                                 {Object.entries(TASK_STATUS_MAP).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
                               </select>
                             ) : <Badge status={t.status} map={TASK_STATUS_MAP} />}
-                            {isDiretor && (
+                            {canEdit && (
                               <div style={{ display: 'flex', gap: 2 }}>
                                 <button style={{ ...styles.btn('ghost'), ...styles.btnSm, fontSize: 10 }} onClick={() => setModalTask(t)}>Editar</button>
                                 <button style={{ ...styles.btn('ghost'), ...styles.btnSm, fontSize: 10, color: C.red }} onClick={() => deleteTask(t.id)}>X</button>
@@ -1763,7 +1777,7 @@ export default function Projetos() {
                               <div key={sub.id} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '3px 0', fontSize: 12, color: C.text }}>
                                 <input type="checkbox" checked={!!sub.done} onChange={() => toggleSubtask(sub.id, !sub.done)} style={{ cursor: 'pointer', width: 14, height: 14, accentColor: C.primary }} />
                                 <span style={sub.done ? { textDecoration: 'line-through', color: C.t3 } : {}}>{sub.name}</span>
-                                {isDiretor && <button onClick={() => deleteSubtask(sub.id)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: C.red, fontSize: 10, marginLeft: 'auto' }}>{'\u2715'}</button>}
+                                {canEdit && <button onClick={() => deleteSubtask(sub.id)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: C.red, fontSize: 10, marginLeft: 'auto' }}>{'\u2715'}</button>}
                               </div>
                             ))}
                           </div>
@@ -1862,7 +1876,7 @@ export default function Projetos() {
           <>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
               <div style={{ fontSize: 14, fontWeight: 700, color: C.text }}>Riscos ({risks.length})</div>
-              {isDiretor && <button style={{ ...styles.btn('primary'), ...styles.btnSm }} onClick={() => setModalRisk({})}>+ Risco</button>}
+              {canEdit && <button style={{ ...styles.btn('primary'), ...styles.btnSm }} onClick={() => setModalRisk({})}>+ Risco</button>}
             </div>
             {/* Matriz de Riscos 5x5 */}
             {(detail.risks || []).length > 0 && (
@@ -1910,7 +1924,7 @@ export default function Projetos() {
                             Prob.: {r.probability} x Imp.: {r.impact} = <span style={{ fontWeight: 700, color: borderColor }}>Score {score}</span>
                           </div>
                         </div>
-                        {isDiretor && (
+                        {canEdit && (
                           <div style={{ display: 'flex', gap: 4 }}>
                             <button style={{ ...styles.btn('ghost'), ...styles.btnSm, fontSize: 10 }} onClick={() => setModalRisk(r)}>Editar</button>
                             <button style={{ ...styles.btn('ghost'), ...styles.btnSm, fontSize: 10, color: C.red }} onClick={() => deleteRisk(r.id)}>X</button>
@@ -1978,7 +1992,7 @@ export default function Projetos() {
             {/* Items table */}
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
               <div style={{ fontSize: 14, fontWeight: 700, color: C.text }}>Itens ({budgetItems.length})</div>
-              {isDiretor && <button style={{ ...styles.btn('primary'), ...styles.btnSm }} onClick={() => setModalBudget({})}>+ Item</button>}
+              {canEdit && <button style={{ ...styles.btn('primary'), ...styles.btnSm }} onClick={() => setModalBudget({})}>+ Item</button>}
             </div>
             {budgetItems.length === 0 ? <div style={styles.empty}>Nenhum item de orcamento. Adicione itens para acompanhar gastos.</div> : (
               <div style={styles.card}>
@@ -1990,7 +2004,7 @@ export default function Projetos() {
                       <th style={styles.th}>Planejado</th>
                       <th style={styles.th}>Real</th>
                       <th style={styles.th}>Data</th>
-                      {isDiretor && <th style={styles.th}>Acoes</th>}
+                      {canEdit && <th style={styles.th}>Acoes</th>}
                     </tr>
                   </thead>
                   <tbody>
@@ -2004,7 +2018,7 @@ export default function Projetos() {
                           <td style={styles.td}>{fmtMoney(bi.planned_amount)}</td>
                           <td style={styles.td}>{fmtMoney(bi.actual_amount)}</td>
                           <td style={styles.td}>{fmtDate(bi.date)}</td>
-                          {isDiretor && (
+                          {canEdit && (
                             <td style={styles.td}>
                               <div style={{ display: 'flex', gap: 4 }}>
                                 <button style={{ ...styles.btn('ghost'), ...styles.btnSm, fontSize: 10 }} onClick={() => setModalBudget(bi)}>Editar</button>
@@ -2081,7 +2095,7 @@ export default function Projetos() {
           <div style={styles.title}>Projetos</div>
           <div style={styles.subtitle}>Planejamento e acompanhamento de 67 projetos estrategicos</div>
         </div>
-        {isDiretor && tab !== 4 && (
+        {canEdit && tab !== 4 && (
           <button style={styles.btn('primary')} onClick={() => setModalProject({})}>+ Novo Projeto</button>
         )}
       </div>
@@ -2113,7 +2127,7 @@ export default function Projetos() {
       {/* ═══════════════════════════════════════════════════ */}
 
       {/* Project Form Modal */}
-      <ProjectFormModal open={!!modalProject} data={modalProject} categories={categories} onClose={() => setModalProject(null)} onSave={saveProject} isDiretor={isDiretor} modalSaving={modalSaving} />
+      <ProjectFormModal open={!!modalProject} data={modalProject} categories={categories} onClose={() => setModalProject(null)} onSave={saveProject} isDiretor={canEdit} modalSaving={modalSaving} />
 
       {/* Task Form Modal */}
       <TaskFormModal open={!!modalTask} data={modalTask} milestones={detail?.milestones || []} usersList={usersList} onClose={() => setModalTask(null)} onSave={saveTask} modalSaving={modalSaving} />
