@@ -87,6 +87,26 @@ código tolera ausência da coluna.
 - Evitar criar arquivos `.md` novos a menos que o usuário peça
   explicitamente (exceto este `CLAUDE.md`).
 
+## Notificações
+
+Todo módulo novo ou existente que gere eventos relevantes (aprovações
+pendentes, vencimentos, alertas) **deve** incluir integração com o
+sistema de notificações:
+
+1. **Notificação imediata**: chamar `notificar()` de
+   `backend/services/notificar.js` no momento em que o evento ocorre
+   (ex.: novo cadastro, novo pedido, documento vencido).
+2. **Notificação periódica**: adicionar função em
+   `backend/services/notificacaoGenerator.js` para verificar itens
+   pendentes/atrasados e gerar alertas automaticamente (chamado pelo
+   cron diário).
+3. **Regras de destinatário**: registrar o módulo no array `MODULOS` de
+   `src/pages/admin/NotificacaoRegras.jsx` para que administradores
+   possam configurar quem recebe as notificações daquele módulo.
+
+Se nenhuma regra for configurada, o fallback envia para todos os
+usuários com role `admin` ou `diretor`.
+
 ## Commits e PRs
 
 - Mensagem de commit: prefixo `feat(<modulo>):`, `fix(<modulo>):`,

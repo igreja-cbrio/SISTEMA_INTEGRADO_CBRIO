@@ -1,6 +1,7 @@
 const router = require('express').Router();
 const rateLimit = require('express-rate-limit');
 const { supabase } = require('../utils/supabase');
+const { notificar } = require('../services/notificar');
 
 // ── Rate limit específico para formulário público ──
 // Bem mais restritivo que o global: 10 submissões por IP a cada 15 min.
@@ -186,6 +187,17 @@ router.post('/cadastro', cadastroLimiter, async (req, res) => {
       console.error('[PUBLIC CADASTRO] insert error:', error.message);
       return res.status(500).json({ error: 'Não foi possível registrar seu cadastro.' });
     }
+
+    // Notifica responsáveis pela integração (assíncrono, não bloqueia resposta)
+    notificar({
+      modulo: 'membresia',
+      tipo: 'novo_cadastro',
+      titulo: `Novo cadastro de membresia`,
+      mensagem: `${nome.trim()} enviou um cadastro pelo formulário público.`,
+      link: '/ministerial/membresia',
+      severidade: 'info',
+      chaveDedup: `novo_cadastro_${data.id}`,
+    }).catch(err => console.error('[PUBLIC CADASTRO] notificação falhou:', err.message));
 
     // Resposta neutra — não confirma se foi duplicado, preserva privacidade
     res.status(201).json({ ok: true, id: data.id });

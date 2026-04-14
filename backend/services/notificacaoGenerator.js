@@ -13,6 +13,7 @@ async function gerarTodasNotificacoes() {
     total += await gerarNotificacoesFinanceiro();
     total += await gerarNotificacoesLogistica();
     total += await gerarNotificacoesPatrimonio();
+    total += await gerarNotificacoesMembresia();
     console.log(`[Notificações] ${total} notificação(ões) gerada(s).`);
   } catch (e) {
     console.error('[Notificações] Erro:', e.message);
@@ -331,6 +332,38 @@ async function gerarNotificacoesPatrimonio() {
       link: '/admin/patrimonio',
       severidade: 'aviso',
       chaveDedup: `inv_aberto_${inv.id}`,
+    });
+  }
+
+  return count;
+}
+
+// ═══════════════════════════════════════════════════════════
+// MEMBRESIA
+// ═══════════════════════════════════════════════════════════
+async function gerarNotificacoesMembresia() {
+  let count = 0;
+
+  // 1. Cadastros pendentes aguardando aprovação há 1+ dia
+  const { data: pendentes } = await supabase
+    .from('mem_cadastros_pendentes')
+    .select('id, nome, created_at')
+    .eq('status', 'pendente');
+
+  for (const c of pendentes || []) {
+    const dias = Math.floor((Date.now() - new Date(c.created_at).getTime()) / 86400000);
+    const severidade = dias >= 3 ? 'urgente' : dias >= 1 ? 'aviso' : 'info';
+    if (dias < 1) continue;
+    count += await notificar({
+      modulo: 'membresia',
+      tipo: 'cadastro_pendente',
+      titulo: `Cadastro pendente — ${c.nome}`,
+      mensagem: dias === 1
+        ? `${c.nome} enviou cadastro de membresia ontem e aguarda aprovação.`
+        : `${c.nome} aguarda aprovação de membresia há ${dias} dias.`,
+      link: '/ministerial/membresia',
+      severidade,
+      chaveDedup: `cadastro_pendente_${c.id}`,
     });
   }
 
