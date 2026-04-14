@@ -44,17 +44,14 @@ const STATUS_MAP = {
 };
 
 const TRILHA_ETAPAS = [
-  { key: 'primeiro_contato', label: 'Primeiro Contato', icon: Star },
-  { key: 'cafe_boas_vindas', label: 'Café de Boas-Vindas', icon: Heart },
-  { key: 'classe_batismo', label: 'Classe de Batismo', icon: Calendar },
-  { key: 'batismo', label: 'Batismo', icon: CheckCircle2 },
-  { key: 'classe_membresia', label: 'Classe de Membresia', icon: Users },
-  { key: 'membresia', label: 'Membresia', icon: CheckCircle2 },
-  { key: 'classe_valores', label: 'Classe dos Valores', icon: Star },
-  { key: 'grupo_vida', label: 'Grupo de Vida', icon: Home },
-  { key: 'escola_lideres', label: 'Escola de Líderes', icon: Users },
-  { key: 'lider_grupo', label: 'Líder de Grupo', icon: Star },
-  { key: 'ministerio', label: 'Ministério', icon: Heart },
+  { key: 'primeiro_contato', label: 'Chegou na Igreja', icon: Star },
+  { key: 'conversao', label: 'Conversao', icon: Heart },
+  { key: 'conversa_lider', label: 'Conversa com Pastor/Lider', icon: Users },
+  { key: 'next', label: 'Next (Visao e Cultura CBRio)', icon: Calendar },
+  { key: 'voluntariado', label: 'Voluntariado (comecou a servir)', icon: UserPlus },
+  { key: 'engajamento', label: 'Engajamento ativo', icon: Activity },
+  { key: 'grupo_vida', label: 'Inscricao em Grupo', icon: Home },
+  { key: 'generosidade', label: 'Generosidade (contribuicao)', icon: HandCoins },
 ];
 
 const ESTADO_CIVIL_OPTIONS = [
