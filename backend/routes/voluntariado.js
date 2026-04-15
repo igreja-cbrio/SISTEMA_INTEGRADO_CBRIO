@@ -91,6 +91,58 @@ router.put('/me', async (req, res) => {
   } catch (e) { res.status(500).json({ error: 'Erro ao atualizar perfil' }); }
 });
 
+// Google Wallet — gera URL "Save to Google Wallet" com o QR pessoal do voluntario
+router.get('/me/wallet/google', async (req, res) => {
+  try {
+    const userId = req.user.userId;
+
+    const issuerId = process.env.GOOGLE_WALLET_ISSUER_ID;
+    const serviceAccountEmail = process.env.GOOGLE_WALLET_SERVICE_ACCOUNT_EMAIL;
+    const rawKey = process.env.GOOGLE_WALLET_PRIVATE_KEY || '';
+    const privateKey = rawKey.replace(/\\n/g, '\n');
+
+    if (!issuerId || !serviceAccountEmail || !privateKey) {
+      return res.status(503).json({ error: 'Google Wallet nao configurado' });
+    }
+
+    const { data: profile } = await supabase.from('vol_profiles')
+      .select('id, full_name, qr_code').eq('auth_user_id', userId).maybeSingle();
+
+    if (!profile) return res.status(404).json({ error: 'Perfil nao encontrado' });
+    if (!profile.qr_code) return res.status(400).json({ error: 'QR Code ainda nao gerado para este perfil' });
+
+    const jwt = require('jsonwebtoken');
+    const classId = `${issuerId}.cbrio_voluntario_v1`;
+    const objectId = `${issuerId}.vol_${profile.id.replace(/-/g, '_')}`;
+
+    const genericObject = {
+      id: objectId,
+      classId: classId,
+      genericType: 'GENERIC_OTHER',
+      hexBackgroundColor: '#00B39D',
+      cardTitle: { defaultValue: { language: 'pt-BR', value: 'CBRio' } },
+      subheader: { defaultValue: { language: 'pt-BR', value: 'Voluntario' } },
+      header: { defaultValue: { language: 'pt-BR', value: profile.full_name || 'Voluntario' } },
+      barcode: { type: 'QR_CODE', value: profile.qr_code, alternateText: profile.qr_code },
+      state: 'ACTIVE',
+    };
+
+    const claims = {
+      iss: serviceAccountEmail,
+      aud: 'google',
+      typ: 'savetowallet',
+      iat: Math.floor(Date.now() / 1000),
+      payload: { genericObjects: [genericObject] },
+    };
+
+    const token = jwt.sign(claims, privateKey, { algorithm: 'RS256' });
+    res.json({ url: `https://pay.google.com/gp/v/save/${token}` });
+  } catch (err) {
+    console.error('[Wallet] Google error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Get my upcoming schedules
 router.get('/my-schedules', async (req, res) => {
   try {

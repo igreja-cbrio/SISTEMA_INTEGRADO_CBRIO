@@ -14,7 +14,7 @@ import { ptBR } from 'date-fns/locale';
 import { toast } from 'sonner';
 import {
   Calendar, Check, X, Clock, CalendarOff, ChevronRight,
-  CheckCircle2, XCircle, Loader2, Users, ScanLine,
+  CheckCircle2, XCircle, Loader2, Users, ScanLine, Wallet,
 } from 'lucide-react';
 import type { VolSchedule, VolAvailability } from './types';
 
@@ -58,8 +58,25 @@ function useRemoveMyAvailability() {
   });
 }
 
+function useGoogleWalletUrl() {
+  return useMutation({
+    mutationFn: () => voluntariado.me.walletGoogle(),
+  });
+}
+
 export default function VolMeuPainel() {
   const navigate = useNavigate();
+  const googleWallet = useGoogleWalletUrl();
+
+  const handleAddToGoogleWallet = async () => {
+    try {
+      const data = await googleWallet.mutateAsync();
+      window.open(data.url, '_blank');
+    } catch (err: any) {
+      toast.error(err.message || 'Erro ao gerar passe do Google Wallet');
+    }
+  };
+
   return (
     <div className="space-y-6">
       <h1 className="text-2xl font-bold text-foreground">Meu Painel</h1>
@@ -70,6 +87,21 @@ export default function VolMeuPainel() {
         onClick={() => navigate('/voluntariado/checkin/checkin')}
       >
         <ScanLine className="h-5 w-5" /> Escanear QR do Totem para Check-in
+      </Button>
+
+      <Button
+        size="lg"
+        variant="outline"
+        className="w-full gap-2 min-h-[56px] text-base border-2"
+        onClick={handleAddToGoogleWallet}
+        disabled={googleWallet.isPending}
+      >
+        {googleWallet.isPending ? (
+          <Loader2 className="h-5 w-5 animate-spin" />
+        ) : (
+          <Wallet className="h-5 w-5" />
+        )}
+        Adicionar ao Google Wallet
       </Button>
 
       <Tabs defaultValue="escalas">
