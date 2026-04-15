@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -13,7 +14,7 @@ import { ptBR } from 'date-fns/locale';
 import { toast } from 'sonner';
 import {
   Calendar, Check, X, Clock, CalendarOff, ChevronRight,
-  CheckCircle2, XCircle, Loader2, Users,
+  CheckCircle2, XCircle, Loader2, Users, ScanLine, Wallet,
 } from 'lucide-react';
 import type { VolSchedule, VolAvailability } from './types';
 
@@ -57,10 +58,51 @@ function useRemoveMyAvailability() {
   });
 }
 
+function useGoogleWalletUrl() {
+  return useMutation({
+    mutationFn: () => voluntariado.me.walletGoogle(),
+  });
+}
+
 export default function VolMeuPainel() {
+  const navigate = useNavigate();
+  const googleWallet = useGoogleWalletUrl();
+
+  const handleAddToGoogleWallet = async () => {
+    try {
+      const data = await googleWallet.mutateAsync();
+      window.open(data.url, '_blank');
+    } catch (err: any) {
+      toast.error(err.message || 'Erro ao gerar passe do Google Wallet');
+    }
+  };
+
   return (
     <div className="space-y-6">
       <h1 className="text-2xl font-bold text-foreground">Meu Painel</h1>
+
+      <Button
+        size="lg"
+        className="w-full gap-2 min-h-[56px] bg-[#00B39D] hover:bg-[#00B39D]/90 text-base"
+        onClick={() => navigate('/voluntariado/checkin/checkin')}
+      >
+        <ScanLine className="h-5 w-5" /> Escanear QR do Totem para Check-in
+      </Button>
+
+      <Button
+        size="lg"
+        variant="outline"
+        className="w-full gap-2 min-h-[56px] text-base border-2"
+        onClick={handleAddToGoogleWallet}
+        disabled={googleWallet.isPending}
+      >
+        {googleWallet.isPending ? (
+          <Loader2 className="h-5 w-5 animate-spin" />
+        ) : (
+          <Wallet className="h-5 w-5" />
+        )}
+        Adicionar ao Google Wallet
+      </Button>
 
       <Tabs defaultValue="escalas">
         <TabsList className="w-full overflow-x-auto scrollbar-hide">
