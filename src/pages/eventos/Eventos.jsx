@@ -325,6 +325,7 @@ export default function Eventos() {
   const [kpiConfigOpen, setKpiConfigOpen] = useState(false);
   const [kpiTemplates, setKpiTemplates] = useState([]);
   const [kpiWeights, setKpiWeights] = useState([]);
+  const [newTpl, setNewTpl] = useState({ category_id: '', phase_name: '', area: '', document_name: '', is_critical: false });
   const [eventList, setEventList] = useState([]);
   const [categories, setCategories] = useState([]);
   const [dash, setDash] = useState(null);
@@ -756,6 +757,7 @@ export default function Eventos() {
                   <th style={{ padding: '8px 12px', textAlign: 'center', fontSize: 11, fontWeight: 600, color: C.t3, textTransform: 'uppercase' }}>Aprovado</th>
                   <th style={{ padding: '8px 12px', textAlign: 'center', fontSize: 11, fontWeight: 600, color: C.t3, textTransform: 'uppercase' }}>Arquivo</th>
                   <th style={{ padding: '8px 12px', textAlign: 'center', fontSize: 11, fontWeight: 600, color: C.t3, textTransform: 'uppercase' }}>Score</th>
+                  <th style={{ padding: '8px 12px', textAlign: 'center', fontSize: 11, fontWeight: 600, color: C.t3, textTransform: 'uppercase' }}>Acoes</th>
                 </tr></thead>
                 <tbody>
                   {(ev.documentos || []).map(doc => {
@@ -769,6 +771,18 @@ export default function Eventos() {
                         <td style={{ padding: '10px 12px', textAlign: 'center' }}>{doc.approved_by ? <span style={{ color: '#10b981' }}>Sim</span> : <span style={{ color: C.t3 }}>-</span>}</td>
                         <td style={{ padding: '10px 12px', textAlign: 'center' }}>{doc.file_name ? <span style={{ color: '#10b981' }}>Sim</span> : <span style={{ color: C.t3 }}>-</span>}</td>
                         <td style={{ padding: '10px 12px', textAlign: 'center', fontWeight: 800, color: scoreColor(doc.score || 0) }}>{doc.score || 0}</td>
+                        <td style={{ padding: '10px 12px', textAlign: 'center' }}>
+                          <div style={{ display: 'flex', gap: 4, justifyContent: 'center' }}>
+                            {!doc.approved_by && (
+                              <button onClick={async () => { await cyclesApi.approveCard(doc.id); loadKpiEventDetail(doc.event_id); }} style={{ padding: '3px 8px', fontSize: 10, borderRadius: 4, border: 'none', background: '#10b98120', color: '#10b981', cursor: 'pointer', fontWeight: 600 }}>Aprovar</button>
+                            )}
+                            {doc.quality_rating !== 'ok' ? (
+                              <button onClick={async () => { await cyclesApi.qualityCard(doc.id, 'ok'); loadKpiEventDetail(doc.event_id); }} style={{ padding: '3px 8px', fontSize: 10, borderRadius: 4, border: 'none', background: '#10b98120', color: '#10b981', cursor: 'pointer', fontWeight: 600 }}>Qualidade OK</button>
+                            ) : (
+                              <button onClick={async () => { await cyclesApi.qualityCard(doc.id, 'incompleto'); loadKpiEventDetail(doc.event_id); }} style={{ padding: '3px 8px', fontSize: 10, borderRadius: 4, border: 'none', background: '#f59e0b20', color: '#f59e0b', cursor: 'pointer', fontWeight: 600 }}>Incompleto</button>
+                            )}
+                          </div>
+                        </td>
                       </tr>
                     );
                   })}
@@ -877,7 +891,6 @@ export default function Eventos() {
     if (!kpiConfigOpen) return null;
     const AREAS = ['marketing', 'producao', 'compras', 'financeiro', 'manutencao', 'limpeza', 'cozinha', 'adm'];
     const PHASES = ['Pré Briefing', 'Briefing', 'Brainstorming e Conceito', 'Identidade e Estratégia', 'Aprovação', 'Execução Estratégica', 'Pré-Testes', 'Finalizações', 'Alinhamentos Operacionais Finais', 'Dia D', 'Debrief'];
-    const [newTpl, setNewTpl] = useState({ category_id: '', phase_name: '', area: '', document_name: '', is_critical: false });
 
     return (
       <div style={{ position: 'fixed', inset: 0, zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(0,0,0,0.6)' }}>
