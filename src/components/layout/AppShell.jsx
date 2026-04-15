@@ -40,7 +40,7 @@ const NAV_ITEMS = [
       {
         title: 'Serviços',
         items: [
-          { label: 'Solicitações', description: 'TI, compras, reembolso, espaços e férias', icon: ShoppingCart, path: '/solicitacoes' },
+          { label: 'Solicitações', description: 'TI, compras, reembolso, espaços e férias', icon: ShoppingCart, path: '/solicitacoes', perm: 'isColaborador' },
         ],
       },
       {
@@ -97,8 +97,8 @@ const NAV_ITEMS = [
 ];
 
 export default function AppShell() {
-  const { profile, role, signOut, isAdmin, isVoluntario, modulePerms, canRH, canFinanceiro, canLogistica, canPatrimonio, canMembresia, canProjetos, canExpansao, canAgenda, canIA } = useAuth();
-  const permMap = { canRH, canFinanceiro, canLogistica, canPatrimonio, canMembresia, canProjetos, canExpansao, canAgenda, canIA };
+  const { profile, role, signOut, isAdmin, isVoluntario, isColaborador, modulePerms, canRH, canFinanceiro, canLogistica, canPatrimonio, canMembresia, canProjetos, canExpansao, canAgenda, canIA } = useAuth();
+  const permMap = { canRH, canFinanceiro, canLogistica, canPatrimonio, canMembresia, canProjetos, canExpansao, canAgenda, canIA, isColaborador };
 
   // If permissions haven't loaded yet (modulePerms is null), show all items
   const permsLoaded = modulePerms !== null || isAdmin;

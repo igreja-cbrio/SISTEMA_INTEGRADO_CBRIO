@@ -231,6 +231,35 @@ function authorizeCycle(...roles) {
   };
 }
 
+// Padroes de URL "self-service" no modulo de voluntariado — qualquer usuario
+// autenticado pode acessar (o proprio handler ja filtra por auth_user_id).
+// Isso garante que colaboradores/membros com role 'assistente' (sem granular)
+// consigam fazer check-in, ver suas escalas, marcar disponibilidade etc.
+//
+// Cada item: { re: RegExp, methods?: string[] } — methods restringe verbos HTTP.
+// Se methods nao for informado, qualquer verbo e aceito.
+const VOLUNTARIADO_SELF_SERVICE_PATTERNS = [
+  { re: /^\/me(\/|$)/ },                      // /me, /me/wallet/google, /me/face, ...
+  { re: /^\/my-/ },                           // /my-schedules, /my-availability, ...
+  { re: /^\/self-checkin(\/|$)/ },            // /self-checkin, /self-checkin-qr/:id
+  { re: /^\/qr-lookup(\/|$)/ },               // /qr-lookup
+  { re: /^\/quero-servir(\/|$)/ },            // /quero-servir (inscricao inicial)
+  { re: /^\/check-ins$/, methods: ['POST'] }, // criar proprio check-in (GET e admin)
+  { re: /^\/face\/match$/, methods: ['POST'] }, // reconhecimento facial no totem
+  { re: /^\/services\/(upcoming|today)$/, methods: ['GET'] }, // lista de cultos disponiveis
+];
+
+function isVoluntariadoSelfService(req, moduleNames) {
+  if (!moduleNames.some((m) => m === 'Membresia')) return false;
+  const p = req.path || '';
+  const method = req.method;
+  return VOLUNTARIADO_SELF_SERVICE_PATTERNS.some(({ re, methods }) => {
+    if (!re.test(p)) return false;
+    if (methods && !methods.includes(method)) return false;
+    return true;
+  });
+}
+
 /**
  * Middleware de autorização granular por módulo.
  *
@@ -240,8 +269,9 @@ function authorizeCycle(...roles) {
  *
  * Lógica:
  * 1. Se o usuário tem role 'admin' ou 'diretor' → permitido (backward compat)
- * 2. Se o usuário está no sistema granular → verificar nível do módulo
- * 3. Se NÃO está no sistema granular → fallback para authorize simples (bloqueia assistente)
+ * 2. Se a rota e self-service de voluntariado → qualquer autenticado passa
+ * 3. Se o usuário está no sistema granular → verificar nível do módulo
+ * 4. Se NÃO está no sistema granular → bloqueia (assistente sem granular = sem acesso)
  */
 function authorizeModule(routeKey, nivelMinimo = 2) {
   const moduleNames = ROUTE_MODULE_MAP[routeKey] || [];
@@ -254,6 +284,12 @@ function authorizeModule(routeKey, nivelMinimo = 2) {
 
     // Voluntarios podem acessar rotas de voluntariado (membresia nivel 1)
     if (req.user.role === 'voluntario' && moduleNames.some(m => m === 'Membresia') && nivelMinimo <= 1) {
+      return next();
+    }
+
+    // Self-service de voluntariado: qualquer autenticado pode acessar
+    // os proprios dados (handler filtra por auth_user_id).
+    if (isVoluntariadoSelfService(req, moduleNames)) {
       return next();
     }
 

@@ -623,6 +623,13 @@ export const arquivei = {
   sync: () => post('/arquivei/sync'),
 };
 
+// ── Rotas PUBLICAS do voluntariado (sem auth — scan QR sem conta) ──
+export const publicVoluntariado = {
+  lookupCpf: (cpf) => post('/public/voluntariado/lookup-cpf', { cpf }),
+  requestLogin: (cpf, serviceId) => post('/public/voluntariado/request-login', { cpf, serviceId }),
+  register: (data) => post('/public/voluntariado/register', data),
+};
+
 // ── Voluntariado ──
 export const voluntariado = {
   // Volunteer Portal (self-service)
@@ -635,6 +642,7 @@ export const voluntariado = {
     addAvailability: (data) => post('/voluntariado/my-availability', data),
     removeAvailability: (id) => del(`/voluntariado/my-availability/${id}`),
     walletGoogle: () => get('/voluntariado/me/wallet/google'),
+    saveFace: (descriptor, photo_url) => post('/voluntariado/me/face', { descriptor, photo_url }),
   },
   selfCheckinQr: (serviceId) => get(`/voluntariado/self-checkin-qr/${serviceId}`),
   // Profiles

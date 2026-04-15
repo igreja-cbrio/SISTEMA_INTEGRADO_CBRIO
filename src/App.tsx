@@ -190,8 +190,10 @@ function AppRoutes() {
       {/* Totem — fullscreen, sem shell nenhum */}
       <Route path="/voluntariado/totem" element={<ProtectedRoute><Suspense fallback={<Loading />}><VolTotem /></Suspense></ProtectedRoute>} />
 
-      {/* Self check-in — voluntario escaneia QR do totem com celular */}
-      <Route path="/voluntariado/self-checkin" element={<ProtectedRoute><Suspense fallback={<Loading />}><VolSelfCheckin /></Suspense></ProtectedRoute>} />
+      {/* Self check-in — voluntario escaneia QR do totem com celular.
+          Rota PUBLICA: se nao estiver autenticado, a propria pagina oferece
+          cadastro via CPF (fluxo de registration / magic link). */}
+      <Route path="/voluntariado/self-checkin" element={<Suspense fallback={<Loading />}><VolSelfCheckin /></Suspense>} />
 
       {/* ═══ Rotas do VOLUNTARIO — shell minimalista ═══ */}
       <Route element={<ProtectedRoute><VolunteerShell /></ProtectedRoute>}>

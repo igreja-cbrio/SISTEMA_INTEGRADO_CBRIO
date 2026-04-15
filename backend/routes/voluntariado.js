@@ -44,6 +44,34 @@ router.get('/me', async (req, res) => {
   } catch (e) { res.status(500).json({ error: 'Erro ao buscar perfil do voluntario' }); }
 });
 
+// Save face descriptor for MY OWN volunteer profile (self-service enrollment)
+router.post('/me/face', async (req, res) => {
+  try {
+    const userId = req.user.userId;
+    const { descriptor, photo_url } = req.body;
+    if (!descriptor || !Array.isArray(descriptor)) {
+      return res.status(400).json({ error: 'descriptor obrigatorio' });
+    }
+
+    const { data: profile } = await supabase.from('vol_profiles')
+      .select('id').eq('auth_user_id', userId).maybeSingle();
+    if (!profile) {
+      return res.status(404).json({ error: 'Perfil de voluntario nao encontrado' });
+    }
+
+    const { data, error } = await supabase.rpc('vol_save_profile_face_descriptor', {
+      p_profile_id: profile.id,
+      descriptor,
+      photo_url: photo_url || null,
+    });
+    if (error) return res.status(400).json({ error: error.message });
+    res.json(data);
+  } catch (e) {
+    console.error('[Vol] save my face error:', e.message);
+    res.status(500).json({ error: 'Erro ao salvar reconhecimento facial' });
+  }
+});
+
 // Complete/update my volunteer profile
 router.put('/me', async (req, res) => {
   try {
@@ -115,15 +143,29 @@ router.get('/me/wallet/google', async (req, res) => {
     const classId = `${issuerId}.cbrio_voluntario_v1`;
     const objectId = `${issuerId}.vol_${profile.id.replace(/-/g, '_')}`;
 
+    // ID legivel derivado do UUID do vol_profile (estavel, sem migration)
+    const voluntarioId = `CBR-${profile.id.replace(/-/g, '').slice(0, 8).toUpperCase()}`;
+
+    // Logo publica servida pelo frontend (Google busca pela internet para renderizar)
+    const frontendUrl = (process.env.FRONTEND_URL || (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : '')).replace(/\/+$/, '');
+    const logoUrl = frontendUrl ? `${frontendUrl}/logo-cbrio-text.png` : 'https://sistema-cbrio.vercel.app/logo-cbrio-text.png';
+
     const genericObject = {
       id: objectId,
       classId: classId,
       genericType: 'GENERIC_OTHER',
       hexBackgroundColor: '#00B39D',
+      logo: {
+        sourceUri: { uri: logoUrl },
+        contentDescription: { defaultValue: { language: 'pt-BR', value: 'CBRio' } },
+      },
       cardTitle: { defaultValue: { language: 'pt-BR', value: 'CBRio' } },
-      subheader: { defaultValue: { language: 'pt-BR', value: 'Voluntario' } },
+      subheader: { defaultValue: { language: 'pt-BR', value: 'NOME' } },
       header: { defaultValue: { language: 'pt-BR', value: profile.full_name || 'Voluntario' } },
-      barcode: { type: 'QR_CODE', value: profile.qr_code, alternateText: profile.qr_code },
+      textModulesData: [
+        { id: 'vol_id', header: 'VOLUNTARIO ID', body: voluntarioId },
+      ],
+      barcode: { type: 'QR_CODE', value: profile.qr_code, alternateText: voluntarioId },
       state: 'ACTIVE',
     };
 
@@ -136,7 +178,7 @@ router.get('/me/wallet/google', async (req, res) => {
     };
 
     const token = jwt.sign(claims, privateKey, { algorithm: 'RS256' });
-    res.json({ url: `https://pay.google.com/gp/v/save/${token}` });
+    res.json({ url: `https://pay.google.com/gp/v/save/${token}`, voluntarioId });
   } catch (err) {
     console.error('[Wallet] Google error:', err.message);
     res.status(500).json({ error: err.message });
