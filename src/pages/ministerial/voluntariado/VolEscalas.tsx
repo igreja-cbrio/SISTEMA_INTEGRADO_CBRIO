@@ -1,12 +1,16 @@
 import { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useUpcomingServices, useServiceSchedules } from './hooks';
 import ScheduleList from './components/schedules/ScheduleList';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
+import { CalendarPlus } from 'lucide-react';
 
 export default function VolEscalas() {
+  const navigate = useNavigate();
   const { data: services = [], isLoading } = useUpcomingServices();
   const [selectedServiceId, setSelectedServiceId] = useState('');
   const { data: schedules = [] } = useServiceSchedules(selectedServiceId || undefined);
@@ -18,7 +22,16 @@ export default function VolEscalas() {
 
   return (
     <div className="space-y-6">
-      <h1 className="text-2xl font-bold text-foreground">Escalas</h1>
+      <div className="flex items-center justify-between">
+        <h1 className="text-2xl font-bold text-foreground">Escalas</h1>
+        <Button
+          size="sm"
+          className="gap-1.5 bg-[#00B39D] hover:bg-[#00B39D]/90"
+          onClick={() => navigate('/ministerial/voluntariado/montar-escala')}
+        >
+          <CalendarPlus className="h-4 w-4" /> Montar Escala
+        </Button>
+      </div>
 
       <Card>
         <CardContent className="p-4">
