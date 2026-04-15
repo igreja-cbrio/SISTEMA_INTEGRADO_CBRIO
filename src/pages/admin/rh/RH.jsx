@@ -1212,8 +1212,132 @@ function TreinamentosTab({ treinos, funcs, onNew, onEdit, onDelete, onInscrever,
 // FeriasTab moved to TabFeriasCalendar.jsx
 
 // ═══════════════════════════════════════════════════════════
-// TAB: ORGANOGRAMA (visual flowchart)
+// TAB: ORGANOGRAMA (visual flowchart) — redesign wireframe style
 // ═══════════════════════════════════════════════════════════
+
+function OrgProfilePanel({ func, funcs, onClose, onDetail }) {
+  if (!func) return null;
+  const gestor = func.gestor_id ? funcs.find(f => f.id === func.gestor_id) : null;
+  const subordinados = funcs.filter(f => f.gestor_id === func.id && f.status === 'ativo');
+  return (
+    <div className="fixed inset-0 z-[1000] flex justify-end" onClick={onClose}>
+      <div className="flex-1 bg-black/40" />
+      <div
+        className="w-[380px] max-w-full bg-card border-l border-border shadow-2xl overflow-y-auto flex flex-col"
+        style={{ animation: 'slideInRight 0.25s ease-out' }}
+        onClick={e => e.stopPropagation()}
+      >
+        {/* Header */}
+        <div className="px-6 pt-6 pb-4 border-b border-border flex items-start justify-between">
+          <div className="flex items-center gap-4">
+            {func.foto_url ? (
+              <img src={func.foto_url} alt="" className="w-16 h-16 rounded-full object-cover border-[3px] border-primary" />
+            ) : (
+              <div className="w-16 h-16 rounded-full bg-primary/10 text-primary flex items-center justify-center text-2xl font-bold border-[3px] border-primary">
+                {func.nome[0]?.toUpperCase()}
+              </div>
+            )}
+            <div>
+              <div className="text-base font-bold text-foreground">{func.nome}</div>
+              <div className="text-sm text-muted-foreground">{func.cargo || '—'}</div>
+              {func.area && <span className="inline-block mt-1 px-2 py-0.5 rounded-full bg-primary/10 text-primary text-[11px] font-semibold">{func.area}</span>}
+            </div>
+          </div>
+          <Button variant="ghost" size="icon" onClick={onClose}><X className="h-4 w-4" /></Button>
+        </div>
+
+        {/* Info */}
+        <div className="px-6 py-4 space-y-3 text-sm flex-1">
+          {func.email && (
+            <div className="flex items-center gap-2 text-muted-foreground">
+              <span className="font-medium text-foreground w-20">Email</span>
+              <span className="truncate">{func.email}</span>
+            </div>
+          )}
+          {func.telefone && (
+            <div className="flex items-center gap-2 text-muted-foreground">
+              <span className="font-medium text-foreground w-20">Telefone</span>
+              <span>{func.telefone}</span>
+            </div>
+          )}
+          {func.tipo_contrato && (
+            <div className="flex items-center gap-2 text-muted-foreground">
+              <span className="font-medium text-foreground w-20">Contrato</span>
+              <span>{TIPO_CONTRATO[func.tipo_contrato]?.label || func.tipo_contrato}</span>
+            </div>
+          )}
+          {func.data_admissao && (
+            <div className="flex items-center gap-2 text-muted-foreground">
+              <span className="font-medium text-foreground w-20">Admissão</span>
+              <span>{fmtDate(func.data_admissao)}</span>
+            </div>
+          )}
+
+          {/* Gestor */}
+          {gestor && (
+            <div className="pt-3 border-t border-border">
+              <div className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">Gestor Direto</div>
+              <div
+                className="flex items-center gap-3 p-2 rounded-xl bg-muted/50 cursor-pointer hover:bg-muted transition-colors"
+                onClick={() => onDetail(gestor.id)}
+              >
+                {gestor.foto_url ? (
+                  <img src={gestor.foto_url} alt="" className="w-8 h-8 rounded-full object-cover border border-primary/40" />
+                ) : (
+                  <div className="w-8 h-8 rounded-full bg-primary/10 text-primary flex items-center justify-center text-xs font-bold">
+                    {gestor.nome[0]?.toUpperCase()}
+                  </div>
+                )}
+                <div>
+                  <div className="text-sm font-medium text-foreground">{gestor.nome}</div>
+                  <div className="text-xs text-muted-foreground">{gestor.cargo || '—'}</div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Subordinados */}
+          {subordinados.length > 0 && (
+            <div className="pt-3 border-t border-border">
+              <div className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">
+                Subordinados Diretos ({subordinados.length})
+              </div>
+              <div className="space-y-1.5 max-h-[200px] overflow-y-auto">
+                {subordinados.map(s => (
+                  <div
+                    key={s.id}
+                    className="flex items-center gap-3 p-2 rounded-xl cursor-pointer hover:bg-muted/50 transition-colors"
+                    onClick={() => onDetail(s.id)}
+                  >
+                    {s.foto_url ? (
+                      <img src={s.foto_url} alt="" className="w-7 h-7 rounded-full object-cover border border-border" />
+                    ) : (
+                      <div className="w-7 h-7 rounded-full bg-primary/10 text-primary flex items-center justify-center text-[10px] font-bold">
+                        {s.nome[0]?.toUpperCase()}
+                      </div>
+                    )}
+                    <div>
+                      <div className="text-sm font-medium text-foreground">{s.nome}</div>
+                      <div className="text-xs text-muted-foreground">{s.cargo || '—'}</div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Footer */}
+        <div className="px-6 py-3 border-t border-border">
+          <Button variant="outline" className="w-full" onClick={() => { onClose(); onDetail(func.id); }}>
+            <Eye className="h-4 w-4 mr-2" /> Ver perfil completo
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function OrgChartTab({ funcs, onDetail }) {
   const ativos = funcs.filter(f => f.status === 'ativo');
   const containerRef = useRef(null);
@@ -1221,6 +1345,14 @@ function OrgChartTab({ funcs, onDetail }) {
   const [pan, setPan] = useState({ x: 0, y: 0 });
   const [dragging, setDragging] = useState(false);
   const dragStart = useRef({ x: 0, y: 0, panX: 0, panY: 0 });
+  const [searchTerm, setSearchTerm] = useState('');
+  const [filterArea, setFilterArea] = useState('all');
+  const [previewFunc, setPreviewFunc] = useState(null);
+  const [expandAll, setExpandAll] = useState(true);
+  const [collapsed, setCollapsed] = useState({});
+
+  // Unique areas
+  const areas = [...new Set(ativos.map(f => f.area).filter(Boolean))].sort();
 
   function handleWheel(e) {
     e.preventDefault();
@@ -1229,7 +1361,7 @@ function OrgChartTab({ funcs, onDetail }) {
   }
 
   function handleMouseDown(e) {
-    if (e.target.closest('[data-orgcard]')) return; // don't drag when clicking cards
+    if (e.target.closest('[data-orgcard]')) return;
     setDragging(true);
     dragStart.current = { x: e.clientX, y: e.clientY, panX: pan.x, panY: pan.y };
   }
@@ -1251,61 +1383,155 @@ function OrgChartTab({ funcs, onDetail }) {
     return () => el.removeEventListener('wheel', handleWheel);
   }, []);
 
-  function getChildren(gestorId) {
-    return ativos.filter(f => (f.gestor_id || null) === gestorId).sort((a, b) => a.nome.localeCompare(b.nome));
+  function toggleCollapse(id) {
+    setCollapsed(prev => ({ ...prev, [id]: !prev[id] }));
   }
 
-  // Card do colaborador
-  function OrgCard({ func, highlight }) {
+  useEffect(() => {
+    if (expandAll) setCollapsed({});
+    else {
+      const c = {};
+      ativos.forEach(f => { c[f.id] = true; });
+      setCollapsed(c);
+    }
+  }, [expandAll]);
+
+  function getChildren(gestorId) {
+    return ativos
+      .filter(f => (f.gestor_id || null) === gestorId)
+      .filter(f => {
+        if (filterArea !== 'all' && f.area !== filterArea) return false;
+        if (searchTerm && !f.nome.toLowerCase().includes(searchTerm.toLowerCase()) && !(f.cargo || '').toLowerCase().includes(searchTerm.toLowerCase())) return false;
+        return true;
+      })
+      .sort((a, b) => a.nome.localeCompare(b.nome));
+  }
+
+  function countDescendants(id) {
+    const children = ativos.filter(f => f.gestor_id === id);
+    let total = children.length;
+    children.forEach(c => { total += countDescendants(c.id); });
+    return total;
+  }
+
+  // Card do colaborador — 3 níveis visuais
+  function OrgCard({ func, level }) {
+    const numReports = countDescendants(func.id);
+    const directReports = ativos.filter(f => f.gestor_id === func.id).length;
+    const isHighlighted = searchTerm && (func.nome.toLowerCase().includes(searchTerm.toLowerCase()) || (func.cargo || '').toLowerCase().includes(searchTerm.toLowerCase()));
+
+    // Nível raiz (sem gestor)
+    if (level === 0) {
+      return (
+        <div
+          data-orgcard
+          onClick={() => setPreviewFunc(func)}
+          className={`bg-card border-2 rounded-3xl p-5 text-center cursor-pointer transition-all duration-200 hover:border-primary/50 hover:shadow-xl group ${isHighlighted ? 'border-primary ring-2 ring-primary/20' : 'border-border'}`}
+          style={{ minWidth: 240, maxWidth: 280 }}
+        >
+          {func.foto_url ? (
+            <img src={func.foto_url} alt="" className="w-20 h-20 rounded-full object-cover mx-auto mb-3 border-[3px] border-primary shadow-md group-hover:scale-105 transition-transform" />
+          ) : (
+            <div className="w-20 h-20 rounded-full bg-primary/10 text-primary flex items-center justify-center text-3xl font-bold mx-auto mb-3 border-[3px] border-primary">
+              {func.nome[0]?.toUpperCase()}
+            </div>
+          )}
+          <div className="text-[15px] font-bold text-foreground leading-tight">{func.nome}</div>
+          <div className="text-sm text-primary font-semibold mt-1">{func.cargo || '—'}</div>
+          {func.area && <span className="inline-block mt-2 px-2.5 py-0.5 rounded-full bg-primary/10 text-primary text-[11px] font-semibold">{func.area}</span>}
+          {numReports > 0 && (
+            <div className="mt-3 flex items-center justify-center gap-1.5 text-xs text-muted-foreground">
+              <Users className="w-3.5 h-3.5" />
+              <span>{directReports} diretos · {numReports} total</span>
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    // Nível gerencial (tem subordinados)
+    if (directReports > 0) {
+      return (
+        <div
+          data-orgcard
+          onClick={() => setPreviewFunc(func)}
+          className={`bg-card border rounded-2xl p-3.5 cursor-pointer transition-all duration-200 hover:border-primary/40 hover:shadow-lg group flex items-center gap-3 ${isHighlighted ? 'border-primary ring-2 ring-primary/20' : 'border-border'}`}
+          style={{ minWidth: 220, maxWidth: 260 }}
+        >
+          {func.foto_url ? (
+            <img src={func.foto_url} alt="" className="w-12 h-12 rounded-full object-cover border-2 border-primary/60 shrink-0 group-hover:scale-105 transition-transform" />
+          ) : (
+            <div className="w-12 h-12 rounded-full bg-primary/10 text-primary flex items-center justify-center text-lg font-bold shrink-0 border-2 border-primary/60">
+              {func.nome[0]?.toUpperCase()}
+            </div>
+          )}
+          <div className="flex-1 text-left min-w-0">
+            <div className="text-sm font-semibold text-foreground truncate">{func.nome}</div>
+            <div className="text-xs text-muted-foreground truncate">{func.cargo || '—'}</div>
+            <div className="flex items-center gap-1.5 mt-1">
+              {func.area && <span className="px-2 py-0.5 rounded-full bg-primary/10 text-primary text-[10px] font-semibold">{func.area}</span>}
+              <span className="text-[10px] text-muted-foreground flex items-center gap-0.5"><Users className="w-3 h-3" />{directReports}</span>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    // Nível folha (sem subordinados)
     return (
       <div
         data-orgcard
-        onClick={() => onDetail(func.id)}
-        style={{
-          background: 'var(--cbrio-card)', border: `2px solid ${highlight ? C.primary : C.border}`,
-          borderRadius: 12, padding: '14px 20px', textAlign: 'center', cursor: 'pointer',
-          minWidth: 140, maxWidth: 200, transition: 'all 0.2s', boxShadow: '0 2px 8px rgba(0,0,0,0.1)',
-        }}
-        onMouseEnter={e => { e.currentTarget.style.transform = 'translateY(-3px)'; e.currentTarget.style.boxShadow = '0 8px 24px rgba(0,0,0,0.25)'; e.currentTarget.style.borderColor = C.primary; }}
-        onMouseLeave={e => { e.currentTarget.style.transform = ''; e.currentTarget.style.boxShadow = '0 2px 8px rgba(0,0,0,0.1)'; e.currentTarget.style.borderColor = highlight ? C.primary : C.border; }}
+        onClick={() => setPreviewFunc(func)}
+        className={`bg-card border rounded-2xl p-3 cursor-pointer transition-all duration-200 hover:border-primary/30 hover:shadow-md group text-center ${isHighlighted ? 'border-primary ring-2 ring-primary/20' : 'border-border'}`}
+        style={{ minWidth: 160, maxWidth: 180 }}
       >
         {func.foto_url ? (
-          <img src={func.foto_url} alt="" style={{ width: 44, height: 44, borderRadius: '50%', objectFit: 'cover', margin: '0 auto 8px', display: 'block', border: `2px solid ${C.primary}` }} />
+          <img src={func.foto_url} alt="" className="w-10 h-10 rounded-full object-cover mx-auto mb-2 border-2 border-border group-hover:border-primary/40 transition-colors" />
         ) : (
-          <div style={{ width: 44, height: 44, borderRadius: '50%', background: C.primaryBg, color: C.primary, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 18, fontWeight: 700, margin: '0 auto 8px' }}>
-            {func.nome[0].toUpperCase()}
+          <div className="w-10 h-10 rounded-full bg-muted text-muted-foreground flex items-center justify-center text-sm font-bold mx-auto mb-2 group-hover:bg-primary/10 group-hover:text-primary transition-colors">
+            {func.nome[0]?.toUpperCase()}
           </div>
         )}
-        <div style={{ fontSize: 12, fontWeight: 700, color: C.text, lineHeight: 1.3 }}>{func.cargo || func.area || '—'}</div>
-        <div style={{ fontSize: 11, color: C.text2, marginTop: 2 }}>{func.nome}</div>
+        <div className="text-xs font-semibold text-foreground truncate">{func.nome}</div>
+        <div className="text-[11px] text-muted-foreground truncate mt-0.5">{func.cargo || '—'}</div>
       </div>
     );
   }
 
   // Nó recursivo da árvore visual
-  function OrgTreeNode({ func }) {
+  function OrgTreeNode({ func, level = 0 }) {
     const children = getChildren(func.id);
+    const isCollapsed = collapsed[func.id];
+    const hasChildren = children.length > 0;
+
     return (
-      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
-        <OrgCard func={func} highlight={children.length > 0} />
-        {children.length > 0 && (
+      <div className="flex flex-col items-center">
+        <div className="relative">
+          <OrgCard func={func} level={level} />
+          {hasChildren && (
+            <button
+              onClick={(e) => { e.stopPropagation(); toggleCollapse(func.id); }}
+              className="absolute -bottom-3 left-1/2 -translate-x-1/2 w-6 h-6 rounded-full bg-card border border-border shadow-sm flex items-center justify-center text-muted-foreground hover:text-primary hover:border-primary/40 transition-colors z-10 text-xs font-bold"
+            >
+              {isCollapsed ? '+' : '−'}
+            </button>
+          )}
+        </div>
+        {hasChildren && !isCollapsed && (
           <>
-            {/* Linha vertical descendo do pai */}
-            <div style={{ width: 2, height: 24, background: C.primary, opacity: 0.4 }} />
-            {/* Container dos filhos */}
-            <div style={{ position: 'relative', display: 'flex', gap: 16, justifyContent: 'center' }}>
-              {/* Linha horizontal conectando filhos */}
+            {/* Vertical connector from parent */}
+            <div className="w-px h-6 bg-border" />
+            {/* Children container */}
+            <div className="relative flex gap-4 justify-center">
+              {/* Horizontal connector line across children */}
               {children.length > 1 && (
-                <div style={{
-                  position: 'absolute', top: 0, left: '50%', transform: 'translateX(-50%)',
-                  width: `calc(100% - 140px)`, height: 2, background: C.primary, opacity: 0.4,
-                }} />
+                <div className="absolute top-0 left-1/2 -translate-x-1/2 h-px bg-border" style={{ width: `calc(100% - 80px)` }} />
               )}
               {children.map(child => (
-                <div key={child.id} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
-                  {/* Linha vertical subindo para conectar */}
-                  <div style={{ width: 2, height: 24, background: C.primary, opacity: 0.4 }} />
-                  <OrgTreeNode func={child} />
+                <div key={child.id} className="flex flex-col items-center">
+                  {/* Vertical connector up to horizontal line */}
+                  <div className="w-px h-6 bg-border" />
+                  <OrgTreeNode func={child} level={level + 1} />
                 </div>
               ))}
             </div>
@@ -1320,46 +1546,119 @@ function OrgChartTab({ funcs, onDetail }) {
 
   return (
     <>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
-        <div style={{ fontSize: 13, color: C.text2 }}>
-          {ativos.length} colaboradores · {comGestor} com gestor definido
-        </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <Button variant="outline" size="icon-xs" onClick={() => setZoom(z => Math.max(0.3, z - 0.1))}>−</Button>
-          <span style={{ fontSize: 12, color: C.text3, minWidth: 40, textAlign: 'center' }}>{Math.round(zoom * 100)}%</span>
-          <Button variant="outline" size="icon-xs" onClick={() => setZoom(z => Math.min(2, z + 0.1))}>+</Button>
-          <Button variant="ghost" size="xs" onClick={() => { setZoom(0.85); setPan({ x: 0, y: 0 }); }}>Reset</Button>
-        </div>
-      </div>
-      <div style={{ fontSize: 11, color: C.text3, marginBottom: 8 }}>Scroll para zoom · Arraste para mover · Clique no card para detalhes</div>
-      {roots.length === 0 ? (
-        <div style={styles.empty}>
-          <div style={{ fontSize: 28, marginBottom: 8 }}>🏢</div>
-          Defina o campo "Gestor Direto" em cada colaborador para montar o organograma.
-        </div>
-      ) : (
-        <div
-          ref={containerRef}
-          onMouseDown={handleMouseDown}
-          onMouseMove={handleMouseMove}
-          onMouseUp={handleMouseUp}
-          onMouseLeave={handleMouseUp}
-          style={{
-            overflow: 'hidden', borderRadius: 12, border: `1px solid ${C.border}`,
-            background: 'var(--cbrio-input-bg)', cursor: dragging ? 'grabbing' : 'grab',
-            height: 'calc(100vh - 280px)', minHeight: 400, position: 'relative',
-          }}
-        >
-          <div style={{
-            transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
-            transformOrigin: 'top center',
-            display: 'flex', flexDirection: 'column', alignItems: 'center',
-            minWidth: 'max-content', padding: '40px 60px 80px',
-            transition: dragging ? 'none' : 'transform 0.1s ease-out',
-          }}>
-            {roots.map(r => <OrgTreeNode key={r.id} func={r} />)}
+      {/* Toolbar */}
+      <div className="flex flex-col gap-3 mb-4">
+        <div className="flex items-center justify-between flex-wrap gap-2">
+          <div className="text-sm text-muted-foreground">
+            {ativos.length} colaboradores · {comGestor} com gestor definido
+          </div>
+          <div className="flex items-center gap-2">
+            <Button
+              variant={expandAll ? 'default' : 'outline'}
+              size="sm"
+              onClick={() => setExpandAll(prev => !prev)}
+              className="text-xs rounded-full"
+            >
+              {expandAll ? 'Recolher' : 'Expandir Tudo'}
+            </Button>
           </div>
         </div>
+
+        {/* Filter bar */}
+        <div className="flex items-center gap-2 flex-wrap">
+          <div className="relative">
+            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
+            <input
+              type="text"
+              placeholder="Buscar nome ou cargo..."
+              value={searchTerm}
+              onChange={e => setSearchTerm(e.target.value)}
+              className="h-8 pl-8 pr-3 w-56 rounded-full border border-input bg-background text-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            />
+          </div>
+          <div className="flex items-center gap-1 overflow-x-auto">
+            <button
+              onClick={() => setFilterArea('all')}
+              className={`px-3 py-1 rounded-full text-xs font-medium transition-colors whitespace-nowrap ${filterArea === 'all' ? 'bg-primary text-primary-foreground' : 'bg-muted text-muted-foreground hover:text-foreground'}`}
+            >
+              Todos
+            </button>
+            {areas.map(area => (
+              <button
+                key={area}
+                onClick={() => setFilterArea(area)}
+                className={`px-3 py-1 rounded-full text-xs font-medium transition-colors whitespace-nowrap ${filterArea === area ? 'bg-primary text-primary-foreground' : 'bg-muted text-muted-foreground hover:text-foreground'}`}
+              >
+                {area}
+              </button>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      {/* Hint */}
+      <div className="text-[11px] text-muted-foreground mb-2">Scroll para zoom · Arraste para mover · Clique no card para preview</div>
+
+      {roots.length === 0 ? (
+        <div className="text-center py-16 text-muted-foreground">
+          <Network className="w-10 h-10 mx-auto mb-3 opacity-40" />
+          <div className="text-sm">Defina o campo "Gestor Direto" em cada colaborador para montar o organograma.</div>
+        </div>
+      ) : (
+        <div className="relative">
+          <div
+            ref={containerRef}
+            onMouseDown={handleMouseDown}
+            onMouseMove={handleMouseMove}
+            onMouseUp={handleMouseUp}
+            onMouseLeave={handleMouseUp}
+            className="overflow-hidden rounded-2xl border border-border bg-muted/30"
+            style={{
+              cursor: dragging ? 'grabbing' : 'grab',
+              height: 'calc(100vh - 300px)',
+              minHeight: 400,
+              position: 'relative',
+            }}
+          >
+            <div style={{
+              transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
+              transformOrigin: 'top center',
+              display: 'flex', flexDirection: 'column', alignItems: 'center',
+              minWidth: 'max-content', padding: '40px 60px 80px',
+              transition: dragging ? 'none' : 'transform 0.1s ease-out',
+            }}>
+              {roots.map(r => <OrgTreeNode key={r.id} func={r} />)}
+            </div>
+          </div>
+
+          {/* Floating zoom controls */}
+          <div className="absolute bottom-4 right-4 flex flex-col gap-1 bg-card border border-border rounded-2xl shadow-lg p-1.5 z-10">
+            <button
+              onClick={() => setZoom(z => Math.min(2, z + 0.1))}
+              className="w-8 h-8 rounded-xl flex items-center justify-center text-sm font-bold text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
+            >+</button>
+            <div className="text-[10px] text-muted-foreground text-center py-0.5">{Math.round(zoom * 100)}%</div>
+            <button
+              onClick={() => setZoom(z => Math.max(0.3, z - 0.1))}
+              className="w-8 h-8 rounded-xl flex items-center justify-center text-sm font-bold text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
+            >−</button>
+            <div className="h-px bg-border mx-1" />
+            <button
+              onClick={() => { setZoom(0.85); setPan({ x: 0, y: 0 }); }}
+              className="w-8 h-8 rounded-xl flex items-center justify-center text-[10px] font-medium text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
+            >fit</button>
+          </div>
+        </div>
+      )}
+
+      {/* Profile slide-in panel */}
+      {previewFunc && (
+        <OrgProfilePanel
+          func={previewFunc}
+          funcs={ativos}
+          onClose={() => setPreviewFunc(null)}
+          onDetail={(id) => { setPreviewFunc(null); onDetail(id); }}
+        />
       )}
     </>
   );
