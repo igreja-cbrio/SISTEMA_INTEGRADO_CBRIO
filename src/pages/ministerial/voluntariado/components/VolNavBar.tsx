@@ -1,5 +1,5 @@
 import { useNavigate, useLocation } from 'react-router-dom';
-import { Home, QrCode, ClipboardCheck, Calendar, BarChart3, Settings, Monitor, Users, CalendarPlus, Church, CalendarOff, LayoutDashboard, List, ScanLine, User } from 'lucide-react';
+import { Home, QrCode, ClipboardCheck, Calendar, BarChart3, Settings, Monitor, Users, CalendarPlus, Church, CalendarOff, LayoutDashboard, List, ScanLine, User, History } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 
 // Staff navigation — all management tabs
@@ -21,6 +21,7 @@ const STAFF_NAV_ITEMS = [
 const VOL_NAV_ITEMS = [
   { label: 'Meu Painel', icon: LayoutDashboard, path: '/voluntariado/checkin/painel' },
   { label: 'Check-in', icon: ScanLine, path: '/voluntariado/checkin/checkin' },
+  { label: 'Meus Check-ins', icon: History, path: '/voluntariado/checkin/historico' },
   { label: 'Meu Perfil', icon: User, path: '/voluntariado/checkin/perfil' },
 ];
 

@@ -644,6 +644,7 @@ export const voluntariado = {
     walletGoogle: () => get('/voluntariado/me/wallet/google'),
     saveFace: (descriptor, photo_url) => post('/voluntariado/me/face', { descriptor, photo_url }),
     registerMember: (data) => post('/voluntariado/me/register-member', data),
+    checkIns: () => get('/voluntariado/my-check-ins'),
   },
   selfCheckinQr: (serviceId) => get(`/voluntariado/self-checkin-qr/${serviceId}`),
   // Profiles

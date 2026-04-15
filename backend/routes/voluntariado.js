@@ -734,6 +734,17 @@ router.post('/check-ins', async (req, res) => {
     const { schedule_id, volunteer_id, service_id, method, is_unscheduled } = req.body;
     if (!method) return res.status(400).json({ error: 'method obrigatorio' });
 
+    // Auto-detectar "sem escala" se nao informado explicitamente:
+    // - sem schedule_id vinculado E
+    // - existe volunteer_id + service_id E
+    // - nao ha escala no vol_schedules pra esse volunteer+service
+    let resolvedUnscheduled = is_unscheduled;
+    if (resolvedUnscheduled === undefined && !schedule_id && volunteer_id && service_id) {
+      const { data: sched } = await supabase.from('vol_schedules')
+        .select('id').eq('volunteer_id', volunteer_id).eq('service_id', service_id).maybeSingle();
+      resolvedUnscheduled = !sched;
+    }
+
     const { data, error } = await supabase.from('vol_check_ins')
       .insert({
         schedule_id: schedule_id || null,
@@ -741,7 +752,7 @@ router.post('/check-ins', async (req, res) => {
         service_id: service_id || null,
         checked_in_by: req.user.userId,
         method,
-        is_unscheduled: is_unscheduled || false,
+        is_unscheduled: resolvedUnscheduled || false,
       }).select().single();
 
     if (error) {
@@ -791,8 +802,29 @@ router.post('/check-ins', async (req, res) => {
         .update({ confirmation_status: 'confirmed' }).eq('id', schedule_id).eq('confirmation_status', 'pending');
     }
 
-    res.json(data);
+    res.json({ ...data, isUnscheduled: !!resolvedUnscheduled });
   } catch (e) { res.status(500).json({ error: 'Erro ao registrar check-in' }); }
+});
+
+// Historico de check-ins do voluntario logado (self-service)
+router.get('/my-check-ins', async (req, res) => {
+  try {
+    const userId = req.user.userId;
+    const { data: profile } = await supabase.from('vol_profiles')
+      .select('id').eq('auth_user_id', userId).maybeSingle();
+    if (!profile) return res.json([]);
+
+    const { data, error } = await supabase.from('vol_check_ins')
+      .select('id, checked_in_at, method, is_unscheduled, schedule_id, service:vol_services(id, name, scheduled_at)')
+      .eq('volunteer_id', profile.id)
+      .order('checked_in_at', { ascending: false })
+      .limit(100);
+    if (error) return res.status(400).json({ error: error.message });
+    res.json(data || []);
+  } catch (e) {
+    console.error('[Vol] my-check-ins error:', e.message);
+    res.status(500).json({ error: 'Erro ao listar meus check-ins' });
+  }
 });
 
 // ══════════════════════════════════════════════════════════════
