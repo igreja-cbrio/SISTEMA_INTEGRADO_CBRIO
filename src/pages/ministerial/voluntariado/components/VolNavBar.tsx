@@ -1,5 +1,5 @@
 import { useNavigate, useLocation } from 'react-router-dom';
-import { Home, QrCode, ClipboardCheck, Calendar, BarChart3, Settings, Monitor, Users, CalendarPlus, Church, CalendarOff, LayoutDashboard } from 'lucide-react';
+import { Home, QrCode, ClipboardCheck, Calendar, BarChart3, Settings, Monitor, Users, CalendarPlus, Church, CalendarOff, LayoutDashboard, List, ScanLine } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 
 // Staff navigation — all management tabs
@@ -7,6 +7,7 @@ const STAFF_NAV_ITEMS = [
   { label: 'Inicio', icon: Home, path: '/ministerial/voluntariado' },
   { label: 'Check-in', icon: ClipboardCheck, path: '/ministerial/voluntariado/checkin' },
   { label: 'Montar Escala', icon: CalendarPlus, path: '/ministerial/voluntariado/montar-escala' },
+  { label: 'Voluntarios', icon: List, path: '/ministerial/voluntariado/lista' },
   { label: 'Escalas', icon: Calendar, path: '/ministerial/voluntariado/escalas' },
   { label: 'Equipes', icon: Users, path: '/ministerial/voluntariado/equipes' },
   { label: 'Tipos de Culto', icon: Church, path: '/ministerial/voluntariado/tipos-culto' },
@@ -19,8 +20,7 @@ const STAFF_NAV_ITEMS = [
 // Volunteer navigation — only their portal tabs
 const VOL_NAV_ITEMS = [
   { label: 'Meu Painel', icon: LayoutDashboard, path: '/voluntariado/checkin/painel' },
-  { label: 'Check-in', icon: ClipboardCheck, path: '/voluntariado/checkin/checkin' },
-  { label: 'Modo Totem', icon: Monitor, path: '/voluntariado/totem' },
+  { label: 'Fazer Check-in', icon: ScanLine, path: '/voluntariado/checkin/checkin' },
 ];
 
 export default function VolNavBar() {

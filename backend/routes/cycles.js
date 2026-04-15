@@ -473,4 +473,192 @@ router.post('/expenses', async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// ══════════════════════════════════════════════
+// KPIs DE EVENTOS
+// ══════════════════════════════════════════════
+
+// Helper: calcula score de um card_completion
+function calcScore(cc) {
+  let score = 0;
+  // Entrega no prazo: 40pts
+  if (cc.completed_at || cc.delivered_at) {
+    if (!cc.deadline_at || (cc.delivered_at || cc.completed_at) <= cc.deadline_at) score += 40;
+  }
+  // Aprovado: 30pts
+  if (cc.approved_by) score += 30;
+  // Qualidade OK: 20pts
+  if (cc.quality_rating === 'ok') score += 20;
+  // Documento anexado: 10pts
+  if (cc.file_name) score += 10;
+  return score;
+}
+
+// POST /api/cycles/card-completions/:id/deliver — marcar como entregue
+router.post('/card-completions/:id/deliver', async (req, res) => {
+  try {
+    const now = new Date().toISOString();
+    const { data: cc, error: getErr } = await supabase.from('card_completions').select('*').eq('id', req.params.id).single();
+    if (getErr) throw getErr;
+
+    const updates = {
+      delivered_at: now,
+      completed_at: cc.completed_at || now,
+      completed_by: cc.completed_by || req.user.userId,
+      completed_by_name: cc.completed_by_name || req.user.name,
+      quality_rating: req.body.quality_rating || 'ok',
+    };
+    if (req.body.file_name) updates.file_name = req.body.file_name;
+    if (req.body.file_url) updates.file_url = req.body.file_url;
+
+    updates.score = calcScore({ ...cc, ...updates });
+
+    const { data, error } = await supabase.from('card_completions').update(updates).eq('id', req.params.id).select().single();
+    if (error) throw error;
+    res.json(data);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// POST /api/cycles/card-completions/:id/approve — aprovar documento
+router.patch('/card-completions/:id/approve', async (req, res) => {
+  try {
+    const { data: cc } = await supabase.from('card_completions').select('*').eq('id', req.params.id).single();
+    const updates = { approved_by: req.user.userId, approved_at: new Date().toISOString() };
+    updates.score = calcScore({ ...cc, ...updates });
+
+    const { data, error } = await supabase.from('card_completions').update(updates).eq('id', req.params.id).select().single();
+    if (error) throw error;
+    res.json(data);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// PATCH /api/cycles/card-completions/:id/quality — atualizar qualidade
+router.patch('/card-completions/:id/quality', async (req, res) => {
+  try {
+    const { data: cc } = await supabase.from('card_completions').select('*').eq('id', req.params.id).single();
+    const updates = { quality_rating: req.body.quality_rating || 'ok' };
+    updates.score = calcScore({ ...cc, ...updates });
+
+    const { data, error } = await supabase.from('card_completions').update(updates).eq('id', req.params.id).select().single();
+    if (error) throw error;
+    res.json(data);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// GET /api/cycles/kpis/evento/:eventId — KPI de um evento especifico (nivel 2+3)
+router.get('/kpis/evento/:eventId', async (req, res) => {
+  try {
+    // KPI por area (nivel 2)
+    const { data: areas } = await supabase.from('vw_event_area_kpi').select('*').eq('event_id', req.params.eventId);
+    // KPI do evento (nivel 3)
+    const { data: evento } = await supabase.from('vw_event_kpi').select('*').eq('event_id', req.params.eventId).maybeSingle();
+    // Docs individuais
+    const { data: docs } = await supabase.from('card_completions').select('*').eq('event_id', req.params.eventId).order('area').order('phase_number');
+
+    res.json({ kpi_evento: evento, kpi_areas: areas || [], documentos: docs || [] });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// GET /api/cycles/kpis/cross — KPI cross-eventos (nivel 4) com filtro serie/evento
+router.get('/kpis/cross', async (req, res) => {
+  try {
+    const { tipo } = req.query; // 'serie' | 'evento' | undefined (todos)
+
+    // Buscar todos os eventos com ciclo criativo
+    let q = supabase.from('event_cycles').select('event_id, events(id, name, status, date, category_id, event_categories(name))').eq('status', 'ativo');
+    const { data: cycles } = await q;
+
+    let eventIds = (cycles || [])
+      .filter(c => c.events?.status !== 'concluido')
+      .map(c => c.event_id);
+
+    // Filtrar por tipo (serie vs evento)
+    if (tipo === 'serie') {
+      eventIds = (cycles || []).filter(c => c.events?.event_categories?.name === 'Série').map(c => c.event_id);
+    } else if (tipo === 'evento') {
+      eventIds = (cycles || []).filter(c => c.events?.event_categories?.name !== 'Série').map(c => c.event_id);
+    }
+
+    if (eventIds.length === 0) return res.json({ eventos: [], kpi_medio: 0, ranking_areas: [], ranking_responsaveis: [] });
+
+    // KPIs por evento
+    const { data: kpis } = await supabase.from('vw_event_kpi').select('*').in('event_id', eventIds);
+    const { data: areaKpis } = await supabase.from('vw_event_area_kpi').select('*').in('event_id', eventIds);
+
+    // Enriquecer com nome do evento
+    const eventos = (kpis || []).map(k => {
+      const cycle = (cycles || []).find(c => c.event_id === k.event_id);
+      return { ...k, event_name: cycle?.events?.name || '', category: cycle?.events?.event_categories?.name || '', date: cycle?.events?.date };
+    });
+
+    // KPI medio
+    const scores = eventos.map(e => e.kpi_evento).filter(s => s != null);
+    const kpiMedio = scores.length > 0 ? Math.round(scores.reduce((a, b) => a + b, 0) / scores.length) : 0;
+
+    // Ranking de areas cross-eventos
+    const areaMap = {};
+    (areaKpis || []).forEach(a => {
+      if (!areaMap[a.area]) areaMap[a.area] = { scores: [], total_docs: 0, docs_ok: 0 };
+      areaMap[a.area].scores.push(a.kpi_area);
+      areaMap[a.area].total_docs += Number(a.total_docs);
+      areaMap[a.area].docs_ok += Number(a.docs_ok);
+    });
+    const rankingAreas = Object.entries(areaMap).map(([area, d]) => ({
+      area, kpi: Math.round(d.scores.reduce((a, b) => a + b, 0) / d.scores.length),
+      total_docs: d.total_docs, docs_ok: d.docs_ok,
+    })).sort((a, b) => b.kpi - a.kpi);
+
+    res.json({ eventos, kpi_medio: kpiMedio, ranking_areas: rankingAreas });
+  } catch (err) { console.error('[KPI cross]', err.message); res.status(500).json({ error: err.message }); }
+});
+
+// GET /api/cycles/kpis/templates — listar templates de documentos
+router.get('/kpis/templates', async (req, res) => {
+  try {
+    const { data, error } = await supabase.from('event_document_templates').select('*, event_categories(name)').order('phase_name').order('area').order('sort_order');
+    if (error) throw error;
+    res.json(data || []);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// POST /api/cycles/kpis/templates — criar template
+router.post('/kpis/templates', authorize('admin', 'diretor'), async (req, res) => {
+  try {
+    const d = req.body;
+    const { data, error } = await supabase.from('event_document_templates').insert({
+      category_id: d.category_id, phase_name: d.phase_name, area: d.area,
+      document_name: d.document_name, is_critical: d.is_critical || false,
+      is_required: d.is_required ?? true, expected_format: d.expected_format || '',
+      description: d.description || '',
+    }).select().single();
+    if (error) throw error;
+    res.json(data);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// DELETE /api/cycles/kpis/templates/:id
+router.delete('/kpis/templates/:id', authorize('admin', 'diretor'), async (req, res) => {
+  try {
+    await supabase.from('event_document_templates').delete().eq('id', req.params.id);
+    res.json({ success: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// GET /api/cycles/kpis/area-weights — pesos de area por categoria
+router.get('/kpis/area-weights', async (req, res) => {
+  try {
+    const { data, error } = await supabase.from('event_area_weights').select('*, event_categories(name)');
+    if (error) throw error;
+    res.json(data || []);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// PUT /api/cycles/kpis/area-weights — atualizar peso
+router.put('/kpis/area-weights/:id', authorize('admin', 'diretor'), async (req, res) => {
+  try {
+    const { data, error } = await supabase.from('event_area_weights').update({ weight: req.body.weight }).eq('id', req.params.id).select().single();
+    if (error) throw error;
+    res.json(data);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 module.exports = router;

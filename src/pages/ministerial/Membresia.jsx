@@ -3,7 +3,7 @@ import { AnimatePresence, motion } from 'framer-motion';
 import { StatisticsCard } from '../../components/ui/statistics-card';
 import { MultistepFormShell } from '../../components/ui/multistep-form';
 import { useAuth } from '../../contexts/AuthContext';
-import { membresia } from '../../api';
+import { membresia, voluntariado } from '../../api';
 import {
   Users, Search, Plus, ChevronRight, X,
   Phone, Mail, MapPin, Heart, Calendar, Star,
@@ -586,6 +586,9 @@ export default function Membresia() {
   const [showFamiliaEdit, setShowFamiliaEdit] = useState(false);
   const [familiaLinkForm, setFamiliaLinkForm] = useState({ familia_id: '', familia_nome_novo: '', parentesco: '' });
   const [salvandoFamilia, setSalvandoFamilia] = useState(false);
+  const [volStatus, setVolStatus] = useState(null);
+  const [loadingVolStatus, setLoadingVolStatus] = useState(false);
+  const [indicandoServir, setIndicandoServir] = useState(false);
 
   const fetchData = useCallback(async () => {
     try {
@@ -614,6 +617,32 @@ export default function Membresia() {
 
   useEffect(() => { fetchData(); }, [fetchData]);
 
+  const loadVolStatus = async (membroId) => {
+    setLoadingVolStatus(true);
+    try {
+      const data = await voluntariado.volByMembro(membroId);
+      setVolStatus(data);
+    } catch {
+      setVolStatus(null);
+    } finally {
+      setLoadingVolStatus(false);
+    }
+  };
+
+  const indicarParaServir = async () => {
+    if (!selectedMembro || indicandoServir) return;
+    setIndicandoServir(true);
+    try {
+      await voluntariado.queroServir(selectedMembro.id);
+      toast.success(`${selectedMembro.nome} foi adicionado(a) à fila de alocação`);
+      await loadVolStatus(selectedMembro.id);
+    } catch (e) {
+      toast.error(e.message || 'Erro ao indicar para servir');
+    } finally {
+      setIndicandoServir(false);
+    }
+  };
+
   const openDetail = async (id) => {
     try {
       const data = await membresia.membros.get(id);
@@ -624,6 +653,8 @@ export default function Membresia() {
       setShowVolForm(false);
       setShowCheckinForm(false);
       setShowContribForm(false);
+      setVolStatus(null);
+      loadVolStatus(id);
     } catch (e) {
       setError(e.message);
     }
@@ -1531,6 +1562,67 @@ export default function Membresia() {
                               <div style={{ fontSize: 13, color: C.text, fontWeight: 600, marginTop: 2 }}>
                                 {new Date(selectedMembro.ultimo_checkin).toLocaleDateString('pt-BR')}
                               </div>
+                            </div>
+                          )}
+                        </div>
+
+                        {/* Voluntariado no Sistema de Escalas */}
+                        <div style={{ padding: 14, borderRadius: 12, background: 'var(--cbrio-input-bg)', border: '1px solid var(--cbrio-border)', marginBottom: 16 }}>
+                          <h3 style={{ fontSize: 13, fontWeight: 600, color: C.text2, margin: '0 0 10px 0', textTransform: 'uppercase', letterSpacing: 0.5 }}>
+                            Voluntariado no Sistema de Escalas
+                          </h3>
+                          {loadingVolStatus ? (
+                            <div style={{ fontSize: 13, color: C.text3 }}>Carregando...</div>
+                          ) : volStatus ? (
+                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
+                              <div>
+                                {volStatus.allocation_status === 'waiting_allocation' ? (
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                                    <Clock style={{ width: 15, height: 15, color: C.amber, flexShrink: 0 }} />
+                                    <span style={{ fontSize: 13, color: C.text, fontWeight: 600 }}>Aguardando alocação de equipe</span>
+                                  </div>
+                                ) : volStatus.allocation_status === 'active' ? (
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                                    <CheckCircle2 style={{ width: 15, height: 15, color: C.green, flexShrink: 0 }} />
+                                    <span style={{ fontSize: 13, color: C.text, fontWeight: 600 }}>
+                                      Voluntário ativo
+                                      {volStatus.team_members?.length > 0 && ` · ${volStatus.team_members.map(tm => tm.team?.name).filter(Boolean).join(', ')}`}
+                                    </span>
+                                  </div>
+                                ) : (
+                                  <div style={{ fontSize: 13, color: C.text3 }}>Cadastrado no sistema de voluntariado</div>
+                                )}
+                                {volStatus.origem && (
+                                  <div style={{ fontSize: 11, color: C.text3, marginTop: 4 }}>
+                                    Origem: {volStatus.origem === 'planning_center' ? 'Planning Center' : volStatus.origem === 'membresia' ? 'Membresia' : 'Manual'}
+                                  </div>
+                                )}
+                              </div>
+                              {volStatus.allocation_status === 'waiting_allocation' && (
+                                <span style={{ fontSize: 10, padding: '3px 10px', borderRadius: 20, background: C.amberBg, color: C.amber, fontWeight: 600 }}>
+                                  Na fila de alocação
+                                </span>
+                              )}
+                              {volStatus.allocation_status === 'active' && (
+                                <span style={{ fontSize: 10, padding: '3px 10px', borderRadius: 20, background: C.greenBg, color: C.green, fontWeight: 600 }}>
+                                  Ativo
+                                </span>
+                              )}
+                            </div>
+                          ) : (
+                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
+                              <span style={{ fontSize: 13, color: C.text3 }}>Não está no sistema de voluntariado (escalas)</span>
+                              {isDiretor && (
+                                <Button
+                                  size="sm"
+                                  onClick={indicarParaServir}
+                                  disabled={indicandoServir}
+                                  style={{ background: C.primary, color: '#fff', border: 'none' }}
+                                >
+                                  <UserPlus style={{ width: 14, height: 14 }} />
+                                  {indicandoServir ? 'Indicando...' : 'Indicar para servir'}
+                                </Button>
+                              )}
                             </div>
                           )}
                         </div>

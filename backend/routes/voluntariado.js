@@ -76,10 +76,10 @@ router.put('/me', async (req, res) => {
       const cleanCpf = cpf.replace(/\D/g, '');
       if (cleanCpf.length === 11) {
         const { data: membro } = await supabase.from('mem_membros')
-          .select('id, nome_completo').eq('cpf', cleanCpf).maybeSingle();
+          .select('id, nome').eq('cpf', cleanCpf).maybeSingle();
         if (membro) {
           await supabase.from('vol_profiles').update({ membresia_id: membro.id }).eq('id', profileId);
-          membresiaMatch = { id: membro.id, nome: membro.nome_completo };
+          membresiaMatch = { id: membro.id, nome: membro.nome };
         }
       }
     }
@@ -325,6 +325,191 @@ router.delete('/roles/:profileId/:role', async (req, res) => {
     if (error) return res.status(400).json({ error: error.message });
     res.json({ success: true });
   } catch (e) { res.status(500).json({ error: 'Erro ao remover role' }); }
+});
+
+// ══════════════════════════════════════════════════════════════
+// CPF / MEMBRESIA UNIFICATION ENDPOINTS
+// ══════════════════════════════════════════════════════════════
+
+// GET /vol-by-membro/:membroId — vol_profile linked to a mem_membros record
+router.get('/vol-by-membro/:membroId', async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('vol_profiles')
+      .select('id, full_name, allocation_status, origem, cpf, team_members:vol_team_members(id, team:vol_teams(id, name, color))')
+      .eq('membresia_id', req.params.membroId)
+      .maybeSingle();
+    if (error) return res.status(400).json({ error: error.message });
+    res.json(data || null);
+  } catch (e) { res.status(500).json({ error: 'Erro ao buscar perfil do voluntario' }); }
+});
+
+// POST /quero-servir — member opts in; creates or links vol_profile
+router.post('/quero-servir', async (req, res) => {
+  try {
+    const { membro_id } = req.body;
+    if (!membro_id) return res.status(400).json({ error: 'membro_id obrigatorio' });
+
+    // Load membro data
+    const { data: membro, error: memErr } = await supabase
+      .from('mem_membros')
+      .select('id, nome, cpf, email')
+      .eq('id', membro_id)
+      .single();
+    if (memErr || !membro) return res.status(404).json({ error: 'Membro nao encontrado' });
+
+    const cleanCpf = membro.cpf ? membro.cpf.replace(/\D/g, '') : null;
+    let volProfile = null;
+
+    // 1. Try to find existing vol_profile by membresia_id
+    const { data: byMembro } = await supabase
+      .from('vol_profiles')
+      .select('id, allocation_status, cpf')
+      .eq('membresia_id', membro_id)
+      .maybeSingle();
+
+    if (byMembro) {
+      // Already linked — just ensure waiting_allocation if not yet active in a team
+      const hasTeam = await supabase.from('vol_team_members')
+        .select('id').eq('volunteer_profile_id', byMembro.id).limit(1);
+      const newStatus = hasTeam.data?.length > 0 ? 'active' : 'waiting_allocation';
+      await supabase.from('vol_profiles').update({
+        membresia_id: membro_id,
+        origem: 'membresia',
+        allocation_status: newStatus,
+      }).eq('id', byMembro.id);
+      const { data: updated } = await supabase.from('vol_profiles').select('*').eq('id', byMembro.id).single();
+      volProfile = updated;
+    } else if (cleanCpf) {
+      // 2. Try to find by CPF
+      const { data: byCpf } = await supabase
+        .from('vol_profiles')
+        .select('id, allocation_status')
+        .eq('cpf', cleanCpf)
+        .maybeSingle();
+
+      if (byCpf) {
+        // Link existing vol_profile to this membro
+        await supabase.from('vol_profiles').update({
+          membresia_id: membro_id,
+          origem: 'membresia',
+          allocation_status: 'waiting_allocation',
+        }).eq('id', byCpf.id);
+        const { data: updated } = await supabase.from('vol_profiles').select('*').eq('id', byCpf.id).single();
+        volProfile = updated;
+      } else {
+        // 3. Create new vol_profile
+        const { data: created, error: createErr } = await supabase
+          .from('vol_profiles')
+          .insert({
+            full_name: membro.nome,
+            cpf: cleanCpf,
+            email: membro.email,
+            membresia_id: membro_id,
+            origem: 'membresia',
+            allocation_status: 'waiting_allocation',
+            profile_complete: false,
+          })
+          .select('*')
+          .single();
+        if (createErr) return res.status(400).json({ error: createErr.message });
+        volProfile = created;
+      }
+    } else {
+      // No CPF — create anyway, admin will fill later
+      const { data: created, error: createErr } = await supabase
+        .from('vol_profiles')
+        .insert({
+          full_name: membro.nome,
+          email: membro.email,
+          membresia_id: membro_id,
+          origem: 'membresia',
+          allocation_status: 'waiting_allocation',
+          profile_complete: false,
+        })
+        .select('*')
+        .single();
+      if (createErr) return res.status(400).json({ error: createErr.message });
+      volProfile = created;
+    }
+
+    // Mark membro as wanting to serve
+    await supabase.from('mem_membros').update({ quer_servir: true }).eq('id', membro_id);
+
+    res.json({ success: true, vol_profile: volProfile });
+  } catch (e) {
+    console.error('[QUERO SERVIR]', e.message);
+    res.status(500).json({ error: 'Erro ao registrar interesse em servir' });
+  }
+});
+
+// GET /waiting-allocation — volunteers waiting for team assignment
+router.get('/waiting-allocation', async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('vol_profiles')
+      .select(`
+        id, full_name, email, cpf, avatar_url, origem, created_at,
+        membro:mem_membros!membresia_id(id, nome, status),
+        team_members:vol_team_members(id, team:vol_teams(id, name, color))
+      `)
+      .eq('allocation_status', 'waiting_allocation')
+      .order('created_at', { ascending: true });
+    if (error) return res.status(400).json({ error: error.message });
+    res.json(data || []);
+  } catch (e) { res.status(500).json({ error: 'Erro ao listar fila de alocacao' }); }
+});
+
+// POST /allocate/:id — admin assigns volunteer to a team
+router.post('/allocate/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { team_id, position_id } = req.body;
+    if (!team_id) return res.status(400).json({ error: 'team_id obrigatorio' });
+
+    // Verify vol_profile exists
+    const { data: vol } = await supabase.from('vol_profiles').select('id').eq('id', id).maybeSingle();
+    if (!vol) return res.status(404).json({ error: 'Voluntario nao encontrado' });
+
+    // Add to team (upsert to avoid duplicate)
+    const { error: tmErr } = await supabase.from('vol_team_members')
+      .upsert({
+        volunteer_profile_id: id,
+        team_id,
+        position_id: position_id || null,
+      }, { onConflict: 'volunteer_profile_id,team_id', ignoreDuplicates: false });
+    if (tmErr) return res.status(400).json({ error: tmErr.message });
+
+    // Mark as active
+    await supabase.from('vol_profiles').update({ allocation_status: 'active' }).eq('id', id);
+
+    res.json({ success: true });
+  } catch (e) {
+    console.error('[ALLOCATE]', e.message);
+    res.status(500).json({ error: 'Erro ao alocar voluntario' });
+  }
+});
+
+// ══════════════════════════════════════════════════════════════
+// VOLUNTEERS POOL — all active vol_profiles with team memberships
+// Used by the schedule builder popup. Cached on the client (5 min staleTime).
+// ══════════════════════════════════════════════════════════════
+router.get('/volunteers-pool', async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('vol_profiles')
+      .select(`
+        id, full_name, email, avatar_url, planning_center_id, qr_code,
+        team_members:vol_team_members(
+          id, team_id, position_id,
+          team:vol_teams(id, name, color),
+          position:vol_positions(id, name)
+        )
+      `)
+      .order('full_name');
+    if (error) return res.status(400).json({ error: error.message });
+    res.json(data);
+  } catch (e) { res.status(500).json({ error: 'Erro ao listar pool de voluntarios' }); }
 });
 
 // ══════════════════════════════════════════════════════════════

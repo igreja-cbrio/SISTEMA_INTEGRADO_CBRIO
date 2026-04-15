@@ -15,6 +15,8 @@ import VolScheduleBuilder from './VolScheduleBuilder';
 import VolDisponibilidade from './VolDisponibilidade';
 import VolMeuPainel from './VolMeuPainel';
 import VolProfileComplete from './VolProfileComplete';
+import VolLista from './VolLista';
+import VolScanTotem from './VolScanTotem';
 import VolNavBar from './components/VolNavBar';
 
 export default function Voluntariado() {
@@ -39,6 +41,7 @@ export default function Voluntariado() {
         <Route path="disponibilidade" element={<VolDisponibilidade />} />
         <Route path="relatorios" element={<VolRelatorios />} />
         <Route path="qrcodes" element={<VolQrCodes />} />
+        <Route path="lista" element={<VolLista />} />
         <Route path="admin" element={<VolAdmin />} />
         <Route path="*" element={<Navigate to="/ministerial/voluntariado" replace />} />
       </Routes>
@@ -88,7 +91,7 @@ function VolunteerPortal() {
       <Routes>
         <Route index element={<Navigate to="painel" replace />} />
         <Route path="painel" element={<VolMeuPainel />} />
-        <Route path="checkin" element={<VolCheckin />} />
+        <Route path="checkin" element={<VolScanTotem />} />
         <Route path="*" element={<Navigate to="painel" replace />} />
       </Routes>
     </div>
