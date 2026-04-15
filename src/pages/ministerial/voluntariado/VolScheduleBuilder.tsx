@@ -8,11 +8,11 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import {
   useUpcomingServices, useServiceSchedules, useVolTeamsManaged,
-  useVolTeamMembers, useCreateSchedule, useDeleteSchedule,
+  useCreateSchedule, useDeleteSchedule,
   useAutoFillSchedule, useCopySchedule, useCreateService,
-  useVolServiceTypes,
+  useVolServiceTypes, useVolunteersPool, useSyncPlanningCenter,
 } from './hooks';
-import { Plus, Trash2, Wand2, Copy, UserPlus, X, Calendar, Users, ChevronDown, ChevronUp } from 'lucide-react';
+import { Plus, Trash2, Wand2, Copy, UserPlus, X, Calendar, Users, ChevronDown, ChevronUp, RefreshCw, Search } from 'lucide-react';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { toast } from 'sonner';
@@ -267,130 +267,179 @@ function AddVolunteerDialog({ serviceId, teams, existingSchedules, onClose }: {
   serviceId: string; teams: VolTeam[]; existingSchedules: VolSchedule[]; onClose: () => void;
 }) {
   const createSchedule = useCreateSchedule();
-  const { data: allMembers = [] } = useVolTeamMembers();
+  const sync = useSyncPlanningCenter();
+  const { data: pool = [], isLoading: poolLoading, refetch } = useVolunteersPool();
   const [selectedTeamId, setSelectedTeamId] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
-  const [searchResults, setSearchResults] = useState<any[]>([]);
+  const [addedIds, setAddedIds] = useState<Set<string>>(new Set());
 
-  // Filter team members not already scheduled
-  const alreadyScheduledIds = new Set(existingSchedules.map(s => s.volunteer_id || s.planning_center_person_id));
-  const teamMembers = useMemo(() => {
-    let filtered = allMembers.filter(m => !alreadyScheduledIds.has(m.volunteer_profile_id || m.planning_center_person_id));
-    if (selectedTeamId) filtered = filtered.filter(m => m.team_id === selectedTeamId);
-    if (searchQuery) filtered = filtered.filter(m => m.volunteer_name.toLowerCase().includes(searchQuery.toLowerCase()));
-    return filtered;
-  }, [allMembers, selectedTeamId, searchQuery, alreadyScheduledIds]);
+  // Volunteers not yet on this service (existing + added in this session)
+  const alreadyScheduledIds = useMemo(() => {
+    const ids = new Set<string>();
+    for (const s of existingSchedules) {
+      if (s.volunteer_id) ids.add(s.volunteer_id);
+      if (s.planning_center_person_id) ids.add(s.planning_center_person_id);
+    }
+    for (const id of addedIds) ids.add(id);
+    return ids;
+  }, [existingSchedules, addedIds]);
 
-  const handleAdd = (member: any) => {
+  const filtered = useMemo(() => {
+    let list: any[] = pool.filter((v: any) => !alreadyScheduledIds.has(v.id) &&
+      !alreadyScheduledIds.has(v.planning_center_id));
+
+    if (selectedTeamId && selectedTeamId !== 'all') {
+      list = list.filter((v: any) =>
+        (v.team_members || []).some((tm: any) => tm.team_id === selectedTeamId)
+      );
+    }
+    if (searchQuery.trim()) {
+      const q = searchQuery.toLowerCase();
+      list = list.filter((v: any) => v.full_name.toLowerCase().includes(q) ||
+        v.email?.toLowerCase().includes(q));
+    }
+    return list;
+  }, [pool, selectedTeamId, searchQuery, alreadyScheduledIds]);
+
+  const handleAdd = (vol: any) => {
+    // Pick first team membership to pre-fill team/position
+    const tm = vol.team_members?.[0];
     createSchedule.mutate({
       service_id: serviceId,
-      volunteer_id: member.volunteer_profile_id || undefined,
-      volunteer_name: member.volunteer_name,
-      team_id: member.team_id,
-      team_name: member.team?.name,
-      position_id: member.position_id || undefined,
-      position_name: member.position?.name,
-      planning_center_person_id: member.planning_center_person_id || undefined,
+      volunteer_id: vol.id,
+      volunteer_name: vol.full_name,
+      team_id: tm?.team_id || undefined,
+      team_name: tm?.team?.name || undefined,
+      position_id: tm?.position_id || undefined,
+      position_name: tm?.position?.name || undefined,
+      planning_center_person_id: vol.planning_center_id || undefined,
     }, {
-      onSuccess: () => toast.success(`${member.volunteer_name} escalado`),
+      onSuccess: () => {
+        toast.success(`${vol.full_name} escalado`);
+        setAddedIds(prev => new Set(prev).add(vol.id));
+      },
       onError: (err: any) => toast.error(err.message || 'Erro ao escalar'),
     });
   };
 
-  const handleSearchPC = async () => {
-    if (!searchQuery.trim() || searchQuery.trim().length < 2) return;
-    try {
-      const { people } = await (await import('@/api')).voluntariado.pc.searchPeople(searchQuery.trim());
-      setSearchResults(people || []);
-    } catch { toast.error('Erro ao buscar no PC'); }
-  };
-
-  const handleAddFromPC = (person: any) => {
-    createSchedule.mutate({
-      service_id: serviceId,
-      volunteer_name: person.full_name,
-      planning_center_person_id: person.id,
-    }, {
-      onSuccess: () => { toast.success(`${person.full_name} escalado`); setSearchResults(prev => prev.filter(p => p.id !== person.id)); },
-      onError: (err: any) => toast.error(err.message || 'Erro ao escalar'),
+  const handleSync = () => {
+    sync.mutate(undefined, {
+      onSuccess: (data: any) => {
+        toast.success(`Sincronizado: ${data.services} cultos, ${data.newSchedules} escalas`);
+        refetch();
+      },
+      onError: (err: any) => toast.error(err.message || 'Erro ao sincronizar'),
     });
   };
 
   return (
     <Dialog open onOpenChange={onClose}>
-      <DialogContent className="max-w-lg max-h-[80vh] overflow-hidden flex flex-col">
-        <DialogHeader>
-          <DialogTitle>Adicionar Voluntario</DialogTitle>
-        </DialogHeader>
-        <div className="space-y-3 flex-1 overflow-hidden flex flex-col">
-          <div className="flex gap-2">
-            <Select value={selectedTeamId} onValueChange={setSelectedTeamId}>
-              <SelectTrigger className="w-40"><SelectValue placeholder="Equipe" /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">Todas</SelectItem>
-                {teams.filter(t => t.is_active).map(t => (
-                  <SelectItem key={t.id} value={t.id}>{t.name}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+      <DialogContent className="w-full max-w-lg h-[90vh] sm:h-[80vh] flex flex-col p-0 gap-0">
+        {/* Header */}
+        <div className="flex items-center justify-between px-5 pt-5 pb-3 border-b shrink-0">
+          <div>
+            <h2 className="text-base font-semibold">Adicionar Voluntario</h2>
+            <p className="text-xs text-muted-foreground mt-0.5">{pool.length} voluntario(s) no sistema</p>
+          </div>
+          <Button
+            size="sm" variant="outline" className="gap-1.5 text-xs"
+            onClick={handleSync} disabled={sync.isPending}
+          >
+            {sync.isPending
+              ? <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+              : <RefreshCw className="h-3.5 w-3.5" />}
+            Sincronizar
+          </Button>
+        </div>
+
+        {/* Filters */}
+        <div className="flex gap-2 px-4 py-3 border-b shrink-0">
+          <Select value={selectedTeamId} onValueChange={setSelectedTeamId}>
+            <SelectTrigger className="w-36 h-9 text-sm"><SelectValue placeholder="Equipe" /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">Todas equipes</SelectItem>
+              {teams.filter(t => t.is_active).map(t => (
+                <SelectItem key={t.id} value={t.id}>{t.name}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <div className="relative flex-1">
+            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
             <Input
               placeholder="Buscar por nome..."
               value={searchQuery}
               onChange={e => setSearchQuery(e.target.value)}
-              className="flex-1"
+              className="pl-8 h-9 text-sm"
             />
           </div>
+        </div>
 
-          <div className="flex-1 overflow-y-auto space-y-1 min-h-0">
-            {teamMembers.length > 0 ? (
-              teamMembers.map(m => (
-                <div key={m.id} className="flex items-center justify-between p-2.5 rounded-lg border">
-                  <div className="flex items-center gap-2">
-                    <div className="h-7 w-7 rounded-full bg-muted flex items-center justify-center text-xs font-medium">
-                      {m.volunteer_name.charAt(0)}
+        {/* List */}
+        <div className="flex-1 overflow-y-auto px-2 py-2 min-h-0">
+          {poolLoading ? (
+            <div className="flex items-center justify-center py-12">
+              <RefreshCw className="h-5 w-5 animate-spin text-muted-foreground" />
+            </div>
+          ) : filtered.length === 0 ? (
+            <div className="text-center py-10">
+              <Users className="h-8 w-8 mx-auto text-muted-foreground/30 mb-2" />
+              <p className="text-sm text-muted-foreground">
+                {pool.length === 0
+                  ? 'Nenhum voluntario sincronizado. Clique em Sincronizar.'
+                  : 'Nenhum voluntario encontrado com esse filtro.'}
+              </p>
+            </div>
+          ) : (
+            <div className="space-y-1">
+              {filtered.map((vol: any) => {
+                const teams_of = (vol.team_members || []) as any[];
+                return (
+                  <div key={vol.id} className="flex items-center gap-3 px-3 py-2.5 rounded-lg border hover:bg-accent/50 transition-colors">
+                    {/* Avatar */}
+                    <div className="h-9 w-9 rounded-full bg-muted flex items-center justify-center text-sm font-semibold shrink-0 overflow-hidden">
+                      {vol.avatar_url
+                        ? <img src={vol.avatar_url} alt={vol.full_name} className="h-full w-full object-cover" />
+                        : vol.full_name.charAt(0).toUpperCase()}
                     </div>
-                    <div>
-                      <p className="text-sm font-medium">{m.volunteer_name}</p>
-                      <p className="text-xs text-muted-foreground">{m.team?.name}{m.position ? ` - ${m.position.name}` : ''}</p>
-                    </div>
-                  </div>
-                  <Button size="sm" variant="ghost" onClick={() => handleAdd(m)} disabled={createSchedule.isPending}>
-                    <Plus className="h-4 w-4" />
-                  </Button>
-                </div>
-              ))
-            ) : (
-              <div className="text-center py-6">
-                <p className="text-sm text-muted-foreground mb-2">Nenhum membro disponivel</p>
-                <Button size="sm" variant="outline" onClick={handleSearchPC} className="gap-1">
-                  Buscar no Planning Center
-                </Button>
-              </div>
-            )}
-
-            {searchResults.length > 0 && (
-              <>
-                <p className="text-xs text-muted-foreground pt-2 px-1">Resultados do Planning Center:</p>
-                {searchResults.map(p => (
-                  <div key={p.id} className="flex items-center justify-between p-2.5 rounded-lg border border-dashed">
-                    <div className="flex items-center gap-2">
-                      <div className="h-7 w-7 rounded-full bg-muted flex items-center justify-center text-xs font-medium">
-                        {p.full_name.charAt(0)}
+                    {/* Info */}
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-medium truncate">{vol.full_name}</p>
+                      <div className="flex flex-wrap gap-1 mt-0.5">
+                        {teams_of.length > 0
+                          ? teams_of.slice(0, 2).map((tm: any) => (
+                              <span key={tm.id} className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded bg-muted text-muted-foreground">
+                                {tm.team?.color && <span className="h-1.5 w-1.5 rounded-full shrink-0" style={{ backgroundColor: tm.team.color }} />}
+                                {tm.team?.name}{tm.position ? ` · ${tm.position.name}` : ''}
+                              </span>
+                            ))
+                          : <span className="text-[10px] text-muted-foreground/60">Sem equipe</span>
+                        }
+                        {teams_of.length > 2 && (
+                          <span className="text-[10px] text-muted-foreground/60">+{teams_of.length - 2}</span>
+                        )}
                       </div>
-                      <p className="text-sm">{p.full_name}</p>
                     </div>
-                    <Button size="sm" variant="ghost" onClick={() => handleAddFromPC(p)} disabled={createSchedule.isPending}>
+                    {/* Add button */}
+                    <Button
+                      size="icon"
+                      className="h-8 w-8 shrink-0 bg-[#00B39D] hover:bg-[#00B39D]/80 text-white"
+                      onClick={() => handleAdd(vol)}
+                      disabled={createSchedule.isPending}
+                    >
                       <Plus className="h-4 w-4" />
                     </Button>
                   </div>
-                ))}
-              </>
-            )}
-          </div>
+                );
+              })}
+            </div>
+          )}
         </div>
-        <DialogFooter>
-          <Button variant="outline" onClick={onClose}>Fechar</Button>
-        </DialogFooter>
+
+        {/* Footer */}
+        <div className="border-t px-4 py-3 shrink-0 flex items-center justify-between">
+          <p className="text-xs text-muted-foreground">{filtered.length} disponivel(is)</p>
+          <Button variant="outline" size="sm" onClick={onClose}>Fechar</Button>
+        </div>
       </DialogContent>
     </Dialog>
   );

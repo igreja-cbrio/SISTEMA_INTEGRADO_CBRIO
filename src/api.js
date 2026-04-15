@@ -701,6 +701,13 @@ export const voluntariado = {
   syncAuto: () => post('/voluntariado/sync-auto'),
   // Sync logs
   syncLogs: () => get('/voluntariado/sync-logs'),
+  // Volunteers pool (all vol_profiles with team memberships, cached 5 min on client)
+  volunteersPool: () => get('/voluntariado/volunteers-pool'),
+  // CPF / Membresia unification
+  volByMembro: (membroId) => get(`/voluntariado/vol-by-membro/${membroId}`),
+  queroServir: (membroId) => post('/voluntariado/quero-servir', { membro_id: membroId }),
+  waitingAllocation: () => get('/voluntariado/waiting-allocation'),
+  allocate: (id, data) => post(`/voluntariado/allocate/${id}`, data),
   // Teams (legacy — unique names from schedules)
   teams: () => get('/voluntariado/teams'),
   // Teams Management (formal CRUD)
