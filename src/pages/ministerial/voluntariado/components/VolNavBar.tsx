@@ -1,13 +1,17 @@
 import { useNavigate, useLocation } from 'react-router-dom';
-import { Home, QrCode, ClipboardCheck, Calendar, BarChart3, Settings, Monitor } from 'lucide-react';
+import { Home, QrCode, ClipboardCheck, Calendar, BarChart3, Settings, Monitor, Users, CalendarPlus, Church, CalendarOff } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 
 const ALL_NAV_ITEMS = [
   { label: 'Inicio', icon: Home, path: '/ministerial/voluntariado', volOnly: false },
-  { label: 'QR Codes', icon: QrCode, path: '/ministerial/voluntariado/qrcodes', volOnly: false },
   { label: 'Check-in', icon: ClipboardCheck, path: '/ministerial/voluntariado/checkin', volOnly: true },
   { label: 'Modo Totem', icon: Monitor, path: '/voluntariado/totem', volOnly: true },
+  { label: 'Montar Escala', icon: CalendarPlus, path: '/ministerial/voluntariado/montar-escala', volOnly: false },
   { label: 'Escalas', icon: Calendar, path: '/ministerial/voluntariado/escalas', volOnly: false },
+  { label: 'Equipes', icon: Users, path: '/ministerial/voluntariado/equipes', volOnly: false },
+  { label: 'Tipos de Culto', icon: Church, path: '/ministerial/voluntariado/tipos-culto', volOnly: false },
+  { label: 'Disponibilidade', icon: CalendarOff, path: '/ministerial/voluntariado/disponibilidade', volOnly: false },
+  { label: 'QR Codes', icon: QrCode, path: '/ministerial/voluntariado/qrcodes', volOnly: false },
   { label: 'Relatorios', icon: BarChart3, path: '/ministerial/voluntariado/relatorios', volOnly: false },
   { label: 'Admin', icon: Settings, path: '/ministerial/voluntariado/admin', volOnly: false },
 ];

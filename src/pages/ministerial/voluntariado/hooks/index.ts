@@ -8,3 +8,7 @@ export * from './useVolCheckInHistory';
 export * from './useVolReports';
 export * from './useVolFace';
 export * from './useVolPlanningCenter';
+export * from './useVolServiceTypes';
+export * from './useVolTeamsManage';
+export * from './useVolScheduleBuilder';
+export * from './useVolAvailability';
