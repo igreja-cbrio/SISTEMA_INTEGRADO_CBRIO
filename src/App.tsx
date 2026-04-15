@@ -86,6 +86,7 @@ const Grupos = lazyWithRetry(() => import('./pages/ministerial/Grupos'));
 const CadastroMembresia = lazyWithRetry(() => import('./pages/public/CadastroMembresia'));
 const Voluntariado = lazyWithRetry(() => import('./pages/ministerial/voluntariado'));
 const VolTotem = lazyWithRetry(() => import('./pages/ministerial/voluntariado/VolTotem'));
+const VolSelfCheckin = lazyWithRetry(() => import('./pages/ministerial/voluntariado/VolSelfCheckin'));
 const PcCallback = lazyWithRetry(() => import('./pages/auth/PcCallback'));
 
 // Placeholder pages for modules not yet copied
@@ -146,7 +147,7 @@ function VolunteerShell() {
         <div className="flex items-center justify-between h-14 px-4 md:px-6 max-w-[1800px] mx-auto">
           <div className="flex items-center gap-2">
             <img src="/logo-cbrio-text.png" alt="CBRio" className="h-7 object-contain" />
-            <span className="text-sm font-medium text-muted-foreground">Check-in Voluntariado</span>
+            <span className="text-sm font-medium text-muted-foreground">Voluntariado</span>
           </div>
           <div className="flex items-center gap-3">
             {profile?.name && <span className="text-sm text-foreground hidden sm:inline">{profile.name.split(' ')[0]}</span>}
@@ -189,9 +190,12 @@ function AppRoutes() {
       {/* Totem — fullscreen, sem shell nenhum */}
       <Route path="/voluntariado/totem" element={<ProtectedRoute><Suspense fallback={<Loading />}><VolTotem /></Suspense></ProtectedRoute>} />
 
-      {/* ═══ Rotas do VOLUNTARIO — shell minimalista, so check-in ═══ */}
+      {/* Self check-in — voluntario escaneia QR do totem com celular */}
+      <Route path="/voluntariado/self-checkin" element={<ProtectedRoute><Suspense fallback={<Loading />}><VolSelfCheckin /></Suspense></ProtectedRoute>} />
+
+      {/* ═══ Rotas do VOLUNTARIO — shell minimalista ═══ */}
       <Route element={<ProtectedRoute><VolunteerShell /></ProtectedRoute>}>
-        <Route path="/voluntariado/checkin" element={<Suspense fallback={<Loading />}><Voluntariado /></Suspense>} />
+        <Route path="/voluntariado/checkin/*" element={<Suspense fallback={<Loading />}><Voluntariado /></Suspense>} />
         <Route path="/voluntariado/*" element={<Navigate to="/voluntariado/checkin" replace />} />
       </Route>
 

@@ -5,6 +5,218 @@ const { supabase } = require('../utils/supabase');
 router.use(authenticate, authorizeModule('membresia', 1));
 
 // ══════════════════════════════════════════════════════════════
+// VOLUNTEER PORTAL — endpoints for logged-in volunteers
+// ══════════════════════════════════════════════════════════════
+
+// Get my volunteer profile (linked to auth user)
+router.get('/me', async (req, res) => {
+  try {
+    const userId = req.user.userId;
+    // Try vol_profiles first
+    let { data: volProfile } = await supabase.from('vol_profiles')
+      .select('*').eq('auth_user_id', userId).maybeSingle();
+
+    // If no vol_profile exists, try to find by email
+    if (!volProfile) {
+      const { data: authProfile } = await supabase.from('profiles')
+        .select('email, name').eq('id', userId).maybeSingle();
+      if (authProfile?.email) {
+        const { data: byEmail } = await supabase.from('vol_profiles')
+          .select('*').eq('email', authProfile.email).maybeSingle();
+        if (byEmail) {
+          // Link auth_user_id
+          await supabase.from('vol_profiles').update({ auth_user_id: userId }).eq('id', byEmail.id);
+          volProfile = { ...byEmail, auth_user_id: userId };
+        }
+      }
+    }
+
+    // Get team memberships
+    let teams = [];
+    if (volProfile) {
+      const { data: memberData } = await supabase.from('vol_team_members')
+        .select('*, team:vol_teams(id, name, color), position:vol_positions(id, name)')
+        .eq('volunteer_profile_id', volProfile.id).eq('is_active', true);
+      teams = memberData || [];
+    }
+
+    res.json({ profile: volProfile, teams });
+  } catch (e) { res.status(500).json({ error: 'Erro ao buscar perfil do voluntario' }); }
+});
+
+// Complete/update my volunteer profile
+router.put('/me', async (req, res) => {
+  try {
+    const userId = req.user.userId;
+    const { full_name, cpf, phone, email } = req.body;
+    if (!full_name) return res.status(400).json({ error: 'Nome obrigatorio' });
+
+    // Check if vol_profile exists
+    let { data: existing } = await supabase.from('vol_profiles')
+      .select('id').eq('auth_user_id', userId).maybeSingle();
+
+    let profileId;
+    if (existing) {
+      profileId = existing.id;
+      await supabase.from('vol_profiles').update({
+        full_name, cpf: cpf || null, phone: phone || null, email: email || null, profile_complete: true,
+      }).eq('id', profileId);
+    } else {
+      // Create new vol_profile
+      const { data: created, error } = await supabase.from('vol_profiles').insert({
+        auth_user_id: userId, full_name, cpf: cpf || null, phone: phone || null, email: email || null, profile_complete: true,
+      }).select().single();
+      if (error) return res.status(400).json({ error: error.message });
+      profileId = created.id;
+    }
+
+    // CPF matching: link to membresia if CPF matches
+    let membresiaMatch = null;
+    if (cpf) {
+      const cleanCpf = cpf.replace(/\D/g, '');
+      if (cleanCpf.length === 11) {
+        const { data: membro } = await supabase.from('mem_membros')
+          .select('id, nome_completo').eq('cpf', cleanCpf).maybeSingle();
+        if (membro) {
+          await supabase.from('vol_profiles').update({ membresia_id: membro.id }).eq('id', profileId);
+          membresiaMatch = { id: membro.id, nome: membro.nome_completo };
+        }
+      }
+    }
+
+    const { data: updated } = await supabase.from('vol_profiles')
+      .select('*').eq('id', profileId).single();
+
+    res.json({ profile: updated, membresiaMatch });
+  } catch (e) { res.status(500).json({ error: 'Erro ao atualizar perfil' }); }
+});
+
+// Get my upcoming schedules
+router.get('/my-schedules', async (req, res) => {
+  try {
+    const userId = req.user.userId;
+
+    // Get vol_profile
+    const { data: volProfile } = await supabase.from('vol_profiles')
+      .select('id, planning_center_id').eq('auth_user_id', userId).maybeSingle();
+
+    if (!volProfile) return res.json([]);
+
+    // Build query conditions
+    const conditions = [`volunteer_id.eq.${volProfile.id}`];
+    if (volProfile.planning_center_id) {
+      conditions.push(`planning_center_person_id.eq.${volProfile.planning_center_id}`);
+    }
+
+    const { data: schedules } = await supabase.from('vol_schedules')
+      .select('*, service:vol_services!inner(*)')
+      .or(conditions.join(','))
+      .gte('service.scheduled_at', new Date().toISOString())
+      .order('service(scheduled_at)', { ascending: true });
+
+    // Attach check-in status
+    const scheduleIds = (schedules || []).map(s => s.id);
+    let checkIns = [];
+    if (scheduleIds.length > 0) {
+      const { data: ci } = await supabase.from('vol_check_ins').select('schedule_id').in('schedule_id', scheduleIds);
+      checkIns = ci || [];
+    }
+    const checkedIds = new Set(checkIns.map(c => c.schedule_id));
+
+    const result = (schedules || []).map(s => ({
+      ...s,
+      has_checkin: checkedIds.has(s.id),
+    }));
+
+    res.json(result);
+  } catch (e) { res.status(500).json({ error: 'Erro ao buscar minhas escalas' }); }
+});
+
+// Respond to schedule (accept/decline)
+router.post('/my-schedules/:id/respond', async (req, res) => {
+  try {
+    const { status } = req.body;
+    if (!['confirmed', 'declined'].includes(status)) {
+      return res.status(400).json({ error: 'Status deve ser confirmed ou declined' });
+    }
+
+    const { data, error } = await supabase.from('vol_schedules')
+      .update({ confirmation_status: status })
+      .eq('id', req.params.id)
+      .select().single();
+
+    if (error) return res.status(400).json({ error: error.message });
+    res.json(data);
+  } catch (e) { res.status(500).json({ error: 'Erro ao responder escala' }); }
+});
+
+// Get my availability
+router.get('/my-availability', async (req, res) => {
+  try {
+    const userId = req.user.userId;
+    const { data: volProfile } = await supabase.from('vol_profiles')
+      .select('id').eq('auth_user_id', userId).maybeSingle();
+    if (!volProfile) return res.json([]);
+
+    const { data, error } = await supabase.from('vol_availability')
+      .select('*').eq('volunteer_profile_id', volProfile.id).order('unavailable_from');
+    if (error) return res.status(400).json({ error: error.message });
+    res.json(data);
+  } catch (e) { res.status(500).json({ error: 'Erro ao buscar disponibilidade' }); }
+});
+
+// Set my availability (create unavailability)
+router.post('/my-availability', async (req, res) => {
+  try {
+    const userId = req.user.userId;
+    const { unavailable_from, unavailable_to, reason } = req.body;
+    if (!unavailable_from || !unavailable_to) return res.status(400).json({ error: 'Datas obrigatorias' });
+
+    const { data: volProfile } = await supabase.from('vol_profiles')
+      .select('id').eq('auth_user_id', userId).maybeSingle();
+    if (!volProfile) return res.status(404).json({ error: 'Perfil de voluntario nao encontrado' });
+
+    const { data, error } = await supabase.from('vol_availability')
+      .insert({ volunteer_profile_id: volProfile.id, unavailable_from, unavailable_to, reason })
+      .select().single();
+    if (error) return res.status(400).json({ error: error.message });
+    res.json(data);
+  } catch (e) { res.status(500).json({ error: 'Erro ao registrar indisponibilidade' }); }
+});
+
+// Delete my availability
+router.delete('/my-availability/:id', async (req, res) => {
+  try {
+    const userId = req.user.userId;
+    const { data: volProfile } = await supabase.from('vol_profiles')
+      .select('id').eq('auth_user_id', userId).maybeSingle();
+    if (!volProfile) return res.status(404).json({ error: 'Perfil nao encontrado' });
+
+    // Only delete own availability
+    const { error } = await supabase.from('vol_availability')
+      .delete().eq('id', req.params.id).eq('volunteer_profile_id', volProfile.id);
+    if (error) return res.status(400).json({ error: error.message });
+    res.json({ success: true });
+  } catch (e) { res.status(500).json({ error: 'Erro ao remover indisponibilidade' }); }
+});
+
+// Generate self-checkin token for a service (fixed QR code on totem)
+router.get('/self-checkin-qr/:serviceId', async (req, res) => {
+  try {
+    const serviceId = req.params.serviceId;
+    const { data: service } = await supabase.from('vol_services')
+      .select('id, name, scheduled_at').eq('id', serviceId).single();
+    if (!service) return res.status(404).json({ error: 'Culto nao encontrado' });
+
+    // The QR code payload is a URL to the self-checkin page
+    const frontendUrl = process.env.FRONTEND_URL || (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : 'http://localhost:5173');
+    const qrUrl = `${frontendUrl}/voluntariado/self-checkin?serviceId=${serviceId}`;
+
+    res.json({ url: qrUrl, service });
+  } catch (e) { res.status(500).json({ error: 'Erro ao gerar QR code' }); }
+});
+
+// ══════════════════════════════════════════════════════════════
 // PROFILES
 // ══════════════════════════════════════════════════════════════
 router.get('/profiles', async (req, res) => {
