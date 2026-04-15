@@ -93,6 +93,7 @@ const Eventos = lazyWithRetry(() => import('./pages/eventos/Eventos'));
 const Projetos = lazyWithRetry(() => import('./pages/Projetos'));
 const Grupos = lazyWithRetry(() => import('./pages/ministerial/Grupos'));
 const CadastroMembresia = lazyWithRetry(() => import('./pages/public/CadastroMembresia'));
+const Motion = lazyWithRetry(() => import('./pages/public/Motion'));
 const Voluntariado = lazyWithRetry(() => import('./pages/ministerial/voluntariado'));
 const VolTotem = lazyWithRetry(() => import('./pages/ministerial/voluntariado/VolTotem'));
 const VolSelfCheckin = lazyWithRetry(() => import('./pages/ministerial/voluntariado/VolSelfCheckin'));
@@ -194,6 +195,7 @@ function AppRoutes() {
 
       {/* Rotas publicas */}
       <Route path="/cadastro-membresia" element={<Suspense fallback={<Loading />}><CadastroMembresia /></Suspense>} />
+      <Route path="/motion" element={<Suspense fallback={<Loading />}><Motion /></Suspense>} />
       <Route path="/auth/pc-callback" element={<Suspense fallback={<Loading />}><PcCallback /></Suspense>} />
 
       {/* Totem — fullscreen, sem shell nenhum */}
