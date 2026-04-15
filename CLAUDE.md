@@ -139,6 +139,48 @@ usuários com role `admin` ou `diretor`.
   `SUPABASE_SERVICE_ROLE_KEY`, `DATABASE_URL`, `ANTHROPIC_API_KEY`,
   `CRON_SECRET`, `FRONTEND_URL`.
 
+## KPIs de Eventos — Plano aprovado (implementar em 3 PRs)
+
+Sistema de score de performance operacional dos eventos com ciclo
+criativo. Arquitetura de rollup em 4 niveis:
+
+```
+Nivel 4: Institucional (cross-eventos) → media dos KPIs
+Nivel 3: Evento → media ponderada dos KPIs das areas
+Nivel 2: Area → media ponderada dos scores dos documentos
+Nivel 1: Documento → score 0-100 (4 criterios)
+```
+
+### Regras de scoring (Nivel 1)
+- Entrega no prazo: 40pts (`delivered_at <= deadline`)
+- Aprovado: 30pts (`approved_by IS NOT NULL`)
+- Qualidade OK: 20pts (`quality_rating = 'ok'`)
+- Documento anexado: 10pts (`file_name IS NOT NULL`)
+- Documentos criticos (`momento_chave = true`) pesam **2x** na area
+
+### Categorias
+- **Series**: poucas mudancas entre edicoes (menor complexidade)
+- **Eventos**: mais mudancas (maior complexidade)
+- So eventos com **ciclo criativo ativo** entram no calculo
+
+### Pesos de area (configuraveis por categoria)
+Producao: 3 | Marketing: 2 | Logistica: 2 | Financeiro: 2 |
+Cozinha/Limpeza/Manutencao: 1
+
+### PRs planejadas
+1. **Schema + Templates** — tabelas `event_document_templates` e
+   `event_documents`, templates iniciais Serie/Evento
+2. **Backend + Calculo** — endpoints de entrega, aprovacao, score,
+   KPIs por nivel, filtro serie/evento
+3. **Dashboard na Home de Eventos** — KPI cards, filtro
+   Series/Eventos/Todos, rankings, evolucao temporal, KPI no detalhe
+
+### Decisoes tomadas
+- Escala 0-100 (nao A/B/C/D)
+- Aprovador = responsavel da area
+- Auto-aprovar apos X dias se ninguem reprovou (evitar gargalo)
+- Dashboard na HOME de `/eventos` (nao dentro de cada evento)
+
 ## Cérebro CBRio — Base de Conhecimento
 
 O Cérebro é o sistema automático que transforma documentos do
