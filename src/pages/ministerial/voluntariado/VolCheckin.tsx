@@ -47,6 +47,12 @@ export default function VolCheckin() {
   }, [checkIn, selectedServiceId]);
 
   const handleQrScan = useCallback(async (qrCode: string) => {
+    // If the scanned content is a totem URL, extract the volunteer-facing self-checkin URL
+    // and advise to use a volunteer's QR code instead.
+    if (qrCode.includes('/voluntariado/self-checkin')) {
+      toast.error('Este e o QR do totem. Use o QR pessoal do voluntario.');
+      return;
+    }
     try {
       const result = await qrLookup.mutateAsync(qrCode);
       if (result.isUnscheduled) {
