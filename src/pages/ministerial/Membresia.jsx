@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { AnimatePresence, motion } from 'framer-motion';
 import { StatisticsCard } from '../../components/ui/statistics-card';
 import { MultistepFormShell } from '../../components/ui/multistep-form';
@@ -10,7 +11,7 @@ import {
   CheckCircle2, Circle, UserPlus, Home, Pencil,
   AlertCircle, LogOut, MapPin as MapPinIcon, Clock, Trash2,
   DollarSign, HandCoins, Sparkles, Activity, Inbox,
-  Copy, Share2, Download, QrCode, Camera,
+  Copy, Share2, Download, QrCode, Camera, ScanLine,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '../../components/ui/button';
@@ -553,6 +554,7 @@ function MembroFormModal({ open, onOpenChange, editData, familias, onSaved }) {
 }
 /* ── Main ── */
 export default function Membresia() {
+  const navigate = useNavigate();
   const { isDiretor } = useAuth();
   const [membros, setMembros] = useState([]);
   const [kpis, setKpis] = useState({ total: 0, byStatus: {}, familias: 0 });
@@ -916,6 +918,9 @@ export default function Membresia() {
           <p style={{ fontSize: 14, color: C.text2, marginTop: 4, lineHeight: 1.5 }}>Membros, famílias, generosidade e trilha dos valores</p>
         </div>
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          <Button variant="outline" onClick={() => navigate('/ministerial/membresia/scan')}>
+            <ScanLine style={{ width: 16, height: 16 }} /> Escanear QR
+          </Button>
           <Button variant="outline" onClick={() => setShowShareLink(true)}>
             <QrCode style={{ width: 16, height: 16 }} /> Link de cadastro
           </Button>
