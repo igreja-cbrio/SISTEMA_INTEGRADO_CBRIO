@@ -104,10 +104,22 @@ export default function VolMeuPainel() {
         Adicionar ao Google Wallet
       </Button>
 
-      <Tabs defaultValue="escalas">
-        <TabsList className="w-full overflow-x-auto scrollbar-hide">
-          <TabsTrigger value="escalas" className="min-h-[44px]">Minhas Escalas</TabsTrigger>
-          <TabsTrigger value="disponibilidade" className="min-h-[44px]">Disponibilidade</TabsTrigger>
+      <Tabs defaultValue="escalas" className="w-full">
+        <TabsList className="w-full grid grid-cols-2 h-auto p-1.5 bg-muted/60 rounded-xl gap-1.5">
+          <TabsTrigger
+            value="escalas"
+            className="flex items-center justify-center gap-2 min-h-[48px] rounded-lg text-sm font-semibold transition-all data-[state=active]:bg-[#00B39D] data-[state=active]:text-white data-[state=active]:shadow-md data-[state=inactive]:text-muted-foreground data-[state=inactive]:hover:text-foreground"
+          >
+            <Calendar className="h-4 w-4" />
+            <span>Minhas Escalas</span>
+          </TabsTrigger>
+          <TabsTrigger
+            value="disponibilidade"
+            className="flex items-center justify-center gap-2 min-h-[48px] rounded-lg text-sm font-semibold transition-all data-[state=active]:bg-[#00B39D] data-[state=active]:text-white data-[state=active]:shadow-md data-[state=inactive]:text-muted-foreground data-[state=inactive]:hover:text-foreground"
+          >
+            <CalendarOff className="h-4 w-4" />
+            <span>Disponibilidade</span>
+          </TabsTrigger>
         </TabsList>
 
         <TabsContent value="escalas" className="mt-4">
