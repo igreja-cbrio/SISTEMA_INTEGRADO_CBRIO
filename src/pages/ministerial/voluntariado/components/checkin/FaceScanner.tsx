@@ -29,7 +29,7 @@ export default function FaceScanner({ onMatch, onNoMatch }: FaceScannerProps) {
     }
     setStatus('Buscando correspondencia...');
     try {
-      const results = await faceMatch.mutateAsync({ descriptor: Array.from(descriptor) });
+      const results = await faceMatch.mutateAsync({ descriptor: Array.from(descriptor) }) as any[];
       if (results && results.length > 0) {
         const match = results[0];
         setStatus(`Encontrado: ${match.volunteer_name}`);

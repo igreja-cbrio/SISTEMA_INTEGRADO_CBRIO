@@ -1,5 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
+import { AnimatePresence, motion } from 'framer-motion';
 import { StatisticsCard } from '../../components/ui/statistics-card';
+import { MultistepFormShell } from '../../components/ui/multistep-form';
 import { useAuth } from '../../contexts/AuthContext';
 import { membresia } from '../../api';
 import {
@@ -216,19 +218,25 @@ function FamiliaAutocomplete({ familias, value, onChange, placeholder = 'Buscar 
   );
 }
 
-/* ── Modal Form ── */
+const MODAL_STEPS = [
+  { id: 'pessoal', title: 'Dados Pessoais' },
+  { id: 'endereco', title: 'Endereço / Profissão' },
+  { id: 'vinculo', title: 'Vínculo / Status' },
+];
+
+/* ── Modal Form (Multistep) ── */
 function MembroFormModal({ open, onOpenChange, editData, familias, onSaved }) {
   const [form, setForm] = useState(EMPTY_FORM);
   const [saving, setSaving] = useState(false);
   const [fotoPreview, setFotoPreview] = useState(null);
   const [fotoFile, setFotoFile] = useState(null);
   const fotoInputRef = useState(() => ({ current: null }))[0];
+  const [currentStep, setCurrentStep] = useState(0);
 
   const isEdit = !!editData;
 
   useEffect(() => {
     if (editData) {
-      // Separa nome completo em nome + sobrenome
       const partes = (editData.nome || '').trim().split(/\s+/);
       const primeiro = partes[0] || '';
       const restante = partes.slice(1).join(' ');
@@ -259,6 +267,7 @@ function MembroFormModal({ open, onOpenChange, editData, familias, onSaved }) {
       setFotoPreview(null);
     }
     setFotoFile(null);
+    setCurrentStep(0);
   }, [editData, open]);
 
   const set = (k, v) => setForm(prev => ({ ...prev, [k]: v }));
@@ -286,6 +295,15 @@ function MembroFormModal({ open, onOpenChange, editData, familias, onSaved }) {
     if (file) processarFoto(file);
   };
 
+  const isStepValid = () => {
+    switch (currentStep) {
+      case 0:
+        return form.nome.trim() !== '' && form.sobrenome.trim() !== '' && form.cpf.trim() !== '' && !!form.data_nascimento;
+      default:
+        return true;
+    }
+  };
+
   const handleSave = async () => {
     if (!form.nome.trim()) { toast.error('Nome é obrigatório.'); return; }
     if (!form.sobrenome.trim()) { toast.error('Sobrenome é obrigatório.'); return; }
@@ -294,17 +312,14 @@ function MembroFormModal({ open, onOpenChange, editData, familias, onSaved }) {
     setSaving(true);
     try {
       const payload = { ...form };
-      // Junta nome + sobrenome
       payload.nome = `${form.nome.trim()} ${form.sobrenome.trim()}`.trim();
       delete payload.sobrenome;
       const novoNome = payload.familia_nome_novo?.trim();
       delete payload.familia_nome_novo;
 
-      // Remove campos que não são colunas de mem_membros
       delete payload.ministerio;
       delete payload.grupo;
 
-      // Cria a família nova antes de salvar o membro
       if (!payload.familia_id && novoNome) {
         const novaFam = await membresia.familias.create({ nome: novoNome });
         payload.familia_id = novaFam.id;
@@ -316,7 +331,6 @@ function MembroFormModal({ open, onOpenChange, editData, familias, onSaved }) {
       }
       if (!payload.parentesco) delete payload.parentesco;
 
-      // Remove campos vazios para não enviar strings vazias ao banco
       for (const k of Object.keys(payload)) {
         if (payload[k] === '') delete payload[k];
       }
@@ -332,7 +346,6 @@ function MembroFormModal({ open, onOpenChange, editData, familias, onSaved }) {
         toast.success(`${payload.nome} cadastrado(a) com sucesso!`);
       }
 
-      // Upload photo if selected
       if (fotoFile && membroId) {
         try {
           const fd = new FormData();
@@ -354,6 +367,9 @@ function MembroFormModal({ open, onOpenChange, editData, familias, onSaved }) {
     }
   };
 
+  const nextStep = () => { if (currentStep < MODAL_STEPS.length - 1) setCurrentStep(s => s + 1); };
+  const prevStep = () => { if (currentStep > 0) setCurrentStep(s => s - 1); };
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto z-[1000]">
@@ -361,173 +377,180 @@ function MembroFormModal({ open, onOpenChange, editData, familias, onSaved }) {
           <DialogTitle>{isEdit ? 'Editar Membro' : 'Novo Membro'}</DialogTitle>
         </DialogHeader>
 
-        {/* Foto upload (click + drag & drop) */}
-        <div className="flex flex-col items-center gap-2 py-4">
-          <div
-            onClick={() => fotoInputRef.current?.click()}
-            onDragOver={(e) => { e.preventDefault(); setFotoDragOver(true); }}
-            onDragLeave={() => setFotoDragOver(false)}
-            onDrop={handleFotoDrop}
-            className="relative cursor-pointer group"
-            style={{ width: 80, height: 80, borderRadius: '50%', overflow: 'hidden', border: `2px dashed ${fotoDragOver ? C.primary : C.border}`, background: fotoPreview ? 'transparent' : fotoDragOver ? '#00B39D25' : C.primaryBg, display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'border-color 0.2s, background 0.2s' }}
-          >
-            {fotoPreview ? (
-              <img src={fotoPreview} alt="Foto" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-            ) : (
-              <Camera style={{ width: 24, height: 24, color: C.primary }} />
-            )}
-            <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
-              <Camera style={{ width: 20, height: 20, color: '#fff' }} />
-            </div>
-          </div>
-          <input ref={el => fotoInputRef.current = el} type="file" accept="image/jpeg,image/png,image/webp" className="hidden" onChange={handleFotoSelect} />
-          {fotoPreview && (
-            <button type="button" onClick={() => { setFotoFile(null); setFotoPreview(null); if (fotoInputRef.current) fotoInputRef.current.value = ''; }}
-              className="text-xs text-red-500 hover:underline">
-              Remover foto
-            </button>
-          )}
-          {!fotoPreview && <span className="text-xs text-muted-foreground">Clique ou arraste uma foto</span>}
-        </div>
-
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 py-4">
-          {/* Nome / Sobrenome */}
-          <div className="space-y-1.5">
-            <Label>Nome *</Label>
-            <Input value={form.nome} onChange={e => set('nome', e.target.value)} placeholder="Nome" />
-          </div>
-          <div className="space-y-1.5">
-            <Label>Sobrenome *</Label>
-            <Input value={form.sobrenome} onChange={e => set('sobrenome', e.target.value)} placeholder="Sobrenome" />
-          </div>
-
-          {/* CPF / Data de Nascimento */}
-          <div className="space-y-1.5">
-            <Label>CPF *</Label>
-            <Input value={form.cpf} onChange={e => set('cpf', e.target.value)} placeholder="000.000.000-00" inputMode="numeric" maxLength={14} />
-          </div>
-          <div className="space-y-1.5">
-            <Label>Data de Nascimento *</Label>
-            <Input type="date" value={form.data_nascimento} onChange={e => set('data_nascimento', e.target.value)} />
-          </div>
-
-          {/* Email / Telefone */}
-          <div className="space-y-1.5">
-            <Label>Email</Label>
-            <Input type="email" value={form.email} onChange={e => set('email', e.target.value)} placeholder="email@exemplo.com" />
-          </div>
-          <div className="space-y-1.5">
-            <Label>Telefone</Label>
-            <Input value={form.telefone} onChange={e => set('telefone', e.target.value)} placeholder="(00) 00000-0000" />
-          </div>
-          <div className="space-y-1.5">
-            <Label>Estado Civil</Label>
-            <Select value={form.estado_civil || '__none__'} onValueChange={v => set('estado_civil', v === '__none__' ? '' : v)}>
-              <SelectTrigger><SelectValue placeholder="Selecionar" /></SelectTrigger>
-              <SelectContent className="z-[1001]">
-                <SelectItem value="__none__">Não informado</SelectItem>
-                {ESTADO_CIVIL_OPTIONS.map(ec => <SelectItem key={ec.value} value={ec.value}>{ec.label}</SelectItem>)}
-              </SelectContent>
-            </Select>
-          </div>
-
-          {/* Endereço */}
-          <div className="sm:col-span-2 space-y-1.5">
-            <Label>Endereço</Label>
-            <Input value={form.endereco} onChange={e => set('endereco', e.target.value)} placeholder="Rua, número" />
-          </div>
-          <div className="space-y-1.5">
-            <Label>Bairro</Label>
-            <Input value={form.bairro} onChange={e => set('bairro', e.target.value)} />
-          </div>
-          <div className="space-y-1.5">
-            <Label>Cidade</Label>
-            <Input value={form.cidade} onChange={e => set('cidade', e.target.value)} />
-          </div>
-          <div className="space-y-1.5">
-            <Label>CEP</Label>
-            <Input value={form.cep} onChange={e => set('cep', e.target.value)} placeholder="00000-000" />
-          </div>
-          <div className="space-y-1.5">
-            <Label>Profissão</Label>
-            <Input value={form.profissao} onChange={e => set('profissao', e.target.value)} />
-          </div>
-
-          {/* Ministério / Grupo */}
-          <div className="space-y-1.5">
-            <Label>Ministério</Label>
-            <Input value={form.ministerio} onChange={e => set('ministerio', e.target.value)} placeholder="Ex: Louvor, Infantil" />
-          </div>
-          <div className="space-y-1.5">
-            <Label>Grupo</Label>
-            <Input value={form.grupo} onChange={e => set('grupo', e.target.value)} placeholder="Ex: Grupo Vida Centro" />
-          </div>
-
-          {/* Status / Família */}
-          <div className="space-y-1.5">
-            <Label>Status</Label>
-            <Select value={form.status} onValueChange={v => set('status', v)}>
-              <SelectTrigger><SelectValue /></SelectTrigger>
-              <SelectContent className="z-[1001]">
-                {Object.entries(STATUS_MAP).map(([k, v]) => (
-                  <SelectItem key={k} value={k}>{v.label}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-          <div className="space-y-1.5">
-            <Label>Família</Label>
-            <FamiliaAutocomplete
-              familias={familias}
-              value={form.familia_id}
-              onChange={({ familia_id, familia_nome_novo }) => setForm(prev => ({
-                ...prev,
-                familia_id,
-                familia_nome_novo,
-                parentesco: (familia_id || familia_nome_novo) ? prev.parentesco : '',
-              }))}
-            />
-            {form.familia_nome_novo && (
-              <div style={{ fontSize: 11, color: '#00B39D', marginTop: 4, display: 'flex', alignItems: 'center', gap: 4 }}>
-                <Plus style={{ width: 12, height: 12 }} /> Nova família: <strong>{form.familia_nome_novo}</strong>
+        <MultistepFormShell
+          steps={MODAL_STEPS}
+          currentStep={currentStep}
+          onNext={nextStep}
+          onPrev={prevStep}
+          onSubmit={handleSave}
+          isSubmitting={saving}
+          isStepValid={isStepValid()}
+          submitLabel={isEdit ? 'Salvar' : 'Criar'}
+        >
+          {/* Step 1: Dados Pessoais */}
+          {currentStep === 0 && (
+            <div>
+              {/* Foto upload */}
+              <div className="flex flex-col items-center gap-2 py-4">
+                <div
+                  onClick={() => fotoInputRef.current?.click()}
+                  onDragOver={(e) => { e.preventDefault(); setFotoDragOver(true); }}
+                  onDragLeave={() => setFotoDragOver(false)}
+                  onDrop={handleFotoDrop}
+                  className="relative cursor-pointer group"
+                  style={{ width: 80, height: 80, borderRadius: '50%', overflow: 'hidden', border: `2px dashed ${fotoDragOver ? C.primary : C.border}`, background: fotoPreview ? 'transparent' : fotoDragOver ? '#00B39D25' : C.primaryBg, display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'border-color 0.2s, background 0.2s' }}
+                >
+                  {fotoPreview ? (
+                    <img src={fotoPreview} alt="Foto" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                  ) : (
+                    <Camera style={{ width: 24, height: 24, color: C.primary }} />
+                  )}
+                  <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                    <Camera style={{ width: 20, height: 20, color: '#fff' }} />
+                  </div>
+                </div>
+                <input ref={el => fotoInputRef.current = el} type="file" accept="image/jpeg,image/png,image/webp" className="hidden" onChange={handleFotoSelect} />
+                {fotoPreview && (
+                  <button type="button" onClick={() => { setFotoFile(null); setFotoPreview(null); if (fotoInputRef.current) fotoInputRef.current.value = ''; }}
+                    className="text-xs text-red-500 hover:underline">
+                    Remover foto
+                  </button>
+                )}
+                {!fotoPreview && <span className="text-xs text-muted-foreground">Clique ou arraste uma foto</span>}
               </div>
-            )}
-          </div>
-          <div className="space-y-1.5">
-            <Label>Parentesco</Label>
-            <Select
-              value={form.parentesco || '__none__'}
-              onValueChange={v => set('parentesco', v === '__none__' ? '' : v)}
-              disabled={!form.familia_id && !form.familia_nome_novo}
-            >
-              <SelectTrigger><SelectValue placeholder={(form.familia_id || form.familia_nome_novo) ? 'Selecionar' : 'Vincule uma família primeiro'} /></SelectTrigger>
-              <SelectContent className="z-[1001]">
-                <SelectItem value="__none__">Não informado</SelectItem>
-                {Object.entries(PARENTESCO_OPTIONS).map(([k, v]) => (
-                  <SelectItem key={k} value={k}>{v.label}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
 
-          {/* Observações */}
-          <div className="sm:col-span-2 space-y-1.5">
-            <Label>Observações</Label>
-            <Textarea value={form.observacoes} onChange={e => set('observacoes', e.target.value)} rows={3} />
-          </div>
-        </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div className="space-y-1.5">
+                  <Label>Nome *</Label>
+                  <Input value={form.nome} onChange={e => set('nome', e.target.value)} placeholder="Nome" />
+                </div>
+                <div className="space-y-1.5">
+                  <Label>Sobrenome *</Label>
+                  <Input value={form.sobrenome} onChange={e => set('sobrenome', e.target.value)} placeholder="Sobrenome" />
+                </div>
+                <div className="space-y-1.5">
+                  <Label>CPF *</Label>
+                  <Input value={form.cpf} onChange={e => set('cpf', e.target.value)} placeholder="000.000.000-00" inputMode="numeric" maxLength={14} />
+                </div>
+                <div className="space-y-1.5">
+                  <Label>Data de Nascimento *</Label>
+                  <Input type="date" value={form.data_nascimento} onChange={e => set('data_nascimento', e.target.value)} />
+                </div>
+                <div className="space-y-1.5">
+                  <Label>Email</Label>
+                  <Input type="email" value={form.email} onChange={e => set('email', e.target.value)} placeholder="email@exemplo.com" />
+                </div>
+                <div className="space-y-1.5">
+                  <Label>Telefone</Label>
+                  <Input value={form.telefone} onChange={e => set('telefone', e.target.value)} placeholder="(00) 00000-0000" />
+                </div>
+                <div className="space-y-1.5">
+                  <Label>Estado Civil</Label>
+                  <Select value={form.estado_civil || '__none__'} onValueChange={v => set('estado_civil', v === '__none__' ? '' : v)}>
+                    <SelectTrigger><SelectValue placeholder="Selecionar" /></SelectTrigger>
+                    <SelectContent className="z-[1001]">
+                      <SelectItem value="__none__">Não informado</SelectItem>
+                      {ESTADO_CIVIL_OPTIONS.map(ec => <SelectItem key={ec.value} value={ec.value}>{ec.label}</SelectItem>)}
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+            </div>
+          )}
 
-        <DialogFooter>
-          <Button variant="outline" onClick={() => onOpenChange(false)}>Cancelar</Button>
-          <Button onClick={handleSave} disabled={saving || !form.nome.trim()}>
-            {saving ? 'Salvando...' : isEdit ? 'Salvar' : 'Criar'}
-          </Button>
-        </DialogFooter>
+          {/* Step 2: Endereço e Profissão */}
+          {currentStep === 1 && (
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div className="sm:col-span-2 space-y-1.5">
+                <Label>Endereço</Label>
+                <Input value={form.endereco} onChange={e => set('endereco', e.target.value)} placeholder="Rua, número" />
+              </div>
+              <div className="space-y-1.5">
+                <Label>Bairro</Label>
+                <Input value={form.bairro} onChange={e => set('bairro', e.target.value)} />
+              </div>
+              <div className="space-y-1.5">
+                <Label>Cidade</Label>
+                <Input value={form.cidade} onChange={e => set('cidade', e.target.value)} />
+              </div>
+              <div className="space-y-1.5">
+                <Label>CEP</Label>
+                <Input value={form.cep} onChange={e => set('cep', e.target.value)} placeholder="00000-000" />
+              </div>
+              <div className="space-y-1.5">
+                <Label>Profissão</Label>
+                <Input value={form.profissao} onChange={e => set('profissao', e.target.value)} />
+              </div>
+              <div className="space-y-1.5">
+                <Label>Ministério</Label>
+                <Input value={form.ministerio} onChange={e => set('ministerio', e.target.value)} placeholder="Ex: Louvor, Infantil" />
+              </div>
+              <div className="space-y-1.5">
+                <Label>Grupo</Label>
+                <Input value={form.grupo} onChange={e => set('grupo', e.target.value)} placeholder="Ex: Grupo Vida Centro" />
+              </div>
+            </div>
+          )}
+
+          {/* Step 3: Vínculo e Status */}
+          {currentStep === 2 && (
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div className="space-y-1.5">
+                <Label>Status</Label>
+                <Select value={form.status} onValueChange={v => set('status', v)}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent className="z-[1001]">
+                    {Object.entries(STATUS_MAP).map(([k, v]) => (
+                      <SelectItem key={k} value={k}>{v.label}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-1.5">
+                <Label>Família</Label>
+                <FamiliaAutocomplete
+                  familias={familias}
+                  value={form.familia_id}
+                  onChange={({ familia_id, familia_nome_novo }) => setForm(prev => ({
+                    ...prev,
+                    familia_id,
+                    familia_nome_novo,
+                    parentesco: (familia_id || familia_nome_novo) ? prev.parentesco : '',
+                  }))}
+                />
+                {form.familia_nome_novo && (
+                  <div style={{ fontSize: 11, color: '#00B39D', marginTop: 4, display: 'flex', alignItems: 'center', gap: 4 }}>
+                    <Plus style={{ width: 12, height: 12 }} /> Nova família: <strong>{form.familia_nome_novo}</strong>
+                  </div>
+                )}
+              </div>
+              <div className="space-y-1.5">
+                <Label>Parentesco</Label>
+                <Select
+                  value={form.parentesco || '__none__'}
+                  onValueChange={v => set('parentesco', v === '__none__' ? '' : v)}
+                  disabled={!form.familia_id && !form.familia_nome_novo}
+                >
+                  <SelectTrigger><SelectValue placeholder={(form.familia_id || form.familia_nome_novo) ? 'Selecionar' : 'Vincule uma família primeiro'} /></SelectTrigger>
+                  <SelectContent className="z-[1001]">
+                    <SelectItem value="__none__">Não informado</SelectItem>
+                    {Object.entries(PARENTESCO_OPTIONS).map(([k, v]) => (
+                      <SelectItem key={k} value={k}>{v.label}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="sm:col-span-2 space-y-1.5">
+                <Label>Observações</Label>
+                <Textarea value={form.observacoes} onChange={e => set('observacoes', e.target.value)} rows={3} />
+              </div>
+            </div>
+          )}
+        </MultistepFormShell>
       </DialogContent>
     </Dialog>
   );
 }
-
 /* ── Main ── */
 export default function Membresia() {
   const { isDiretor } = useAuth();
