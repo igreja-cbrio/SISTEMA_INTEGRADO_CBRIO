@@ -51,6 +51,32 @@ router.get('/login', (req, res) => {
   res.redirect(authorizeUrl.toString());
 });
 
+// ── GET /api/auth/planning-center/debug ─────────────────────────────────
+// Public diagnostic endpoint: returns fingerprint of env vars WITHOUT leaking
+// secrets. Use to verify Vercel env has the right values after paste.
+router.get('/debug', (req, res) => {
+  const rawClientId = process.env.PC_OAUTH_CLIENT_ID || process.env.PLANNING_CENTER_APP_ID || '';
+  const rawClientSecret = process.env.PC_OAUTH_CLIENT_SECRET || process.env.PLANNING_CENTER_SECRET || '';
+  const frontendUrl = getFrontendUrl();
+
+  const mask = (v) => v ? `${v.slice(0, 6)}...${v.slice(-4)} (len=${v.length})` : '(missing)';
+  const hasWhitespace = (v) => /\s/.test(v) ? 'YES — contains whitespace/newline!' : 'no';
+
+  res.json({
+    client_id_fingerprint: mask(rawClientId),
+    client_id_has_whitespace: hasWhitespace(rawClientId),
+    client_secret_fingerprint: mask(rawClientSecret),
+    client_secret_has_whitespace: hasWhitespace(rawClientSecret),
+    frontend_url: frontendUrl,
+    callback_url: `${frontendUrl}/api/auth/planning-center/callback`,
+    source: {
+      client_id_var: process.env.PC_OAUTH_CLIENT_ID ? 'PC_OAUTH_CLIENT_ID' : (process.env.PLANNING_CENTER_APP_ID ? 'PLANNING_CENTER_APP_ID' : 'none'),
+      client_secret_var: process.env.PC_OAUTH_CLIENT_SECRET ? 'PC_OAUTH_CLIENT_SECRET' : (process.env.PLANNING_CENTER_SECRET ? 'PLANNING_CENTER_SECRET' : 'none'),
+    },
+    hint: 'Compare client_id_fingerprint com o UID exato do OAuth App em https://api.planningcenteronline.com/oauth/applications. Verifique client_id_has_whitespace=no. callback_url deve estar cadastrado nos Redirect URIs do app.',
+  });
+});
+
 // ── GET /api/auth/planning-center/callback ──────────────────────────────
 // Exchanges authorization code for PC access token, creates Supabase user, generates session
 router.get('/callback', async (req, res) => {
