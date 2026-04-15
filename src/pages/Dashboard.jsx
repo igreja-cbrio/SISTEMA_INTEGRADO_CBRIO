@@ -9,9 +9,11 @@ import {
   Users, DollarSign, CalendarDays, FolderKanban,
   Truck, Tag, BookOpen, ClipboardList, Bell, ArrowRight,
   Clock, AlertTriangle, Package, ChevronRight, Sparkles,
-  Activity, LayoutGrid,
+  Activity, LayoutGrid, HandHelping,
 } from 'lucide-react';
 
+// path='VOLUNTARIADO_DYNAMIC' e tratado no click handler (vai para painel do
+// voluntario ou visao admin conforme o perfil do usuario logado)
 const MODULES = [
   { label: 'Recursos Humanos', desc: 'Colaboradores e DP', icon: Users, path: '/admin/rh', color: '#8b5cf6', perm: 'canRH' },
   { label: 'Financeiro', desc: 'Contas e transações', icon: DollarSign, path: '/admin/financeiro', color: '#10b981', perm: 'canFinanceiro' },
@@ -19,8 +21,9 @@ const MODULES = [
   { label: 'Projetos', desc: 'Acompanhamento', icon: FolderKanban, path: '/projetos', color: '#f59e0b', perm: 'canProjetos' },
   { label: 'Logística', desc: 'Compras e pedidos', icon: Truck, path: '/admin/logistica', color: '#ef4444', perm: 'canLogistica' },
   { label: 'Patrimônio', desc: 'Bens e inventário', icon: Tag, path: '/admin/patrimonio', color: '#6366f1', perm: 'canPatrimonio' },
+  { label: 'Voluntariado', desc: 'Check-in, escalas e meu painel', icon: HandHelping, path: 'VOLUNTARIADO_DYNAMIC', color: '#00B39D' },
   { label: 'Membresia', desc: 'Membros e famílias', icon: BookOpen, path: '/ministerial/membresia', color: '#00B39D', perm: 'canMembresia' },
-  { label: 'Solicitações', desc: 'TI, compras e reembolsos', icon: ClipboardList, path: '/solicitacoes', color: '#ec4899' },
+  { label: 'Solicitações', desc: 'TI, compras e reembolsos', icon: ClipboardList, path: '/solicitacoes', color: '#ec4899', perm: 'isColaborador' },
 ];
 
 const SEV_COLORS = { urgente: '#ef4444', aviso: '#f59e0b', info: '#00B39D' };
@@ -59,11 +62,19 @@ function NotifItem({ n, onClick }) {
 }
 
 export default function Dashboard() {
-  const { profile, isAdmin, canRH, canFinanceiro, canLogistica, canPatrimonio, canAgenda, canProjetos, canMembresia } = useAuth();
+  const { profile, isAdmin, isVoluntario, isColaborador, canRH, canFinanceiro, canLogistica, canPatrimonio, canAgenda, canProjetos, canMembresia } = useAuth();
   const navigate = useNavigate();
 
-  const permMap = { canRH, canFinanceiro, canLogistica, canPatrimonio, canAgenda, canProjetos, canMembresia };
+  const permMap = { canRH, canFinanceiro, canLogistica, canPatrimonio, canAgenda, canProjetos, canMembresia, isColaborador };
   const links = MODULES.filter(l => !l.perm || isAdmin || permMap[l.perm]);
+
+  const handleModuleClick = (path) => {
+    if (path === 'VOLUNTARIADO_DYNAMIC') {
+      navigate(isVoluntario ? '/voluntariado/checkin/painel' : '/ministerial/voluntariado');
+    } else {
+      navigate(path);
+    }
+  };
 
   const [notifs, setNotifs] = useState([]);
   const [rhData, setRhData] = useState(null);
@@ -158,7 +169,7 @@ export default function Dashboard() {
             return (
               <button
                 key={link.path}
-                onClick={() => navigate(link.path)}
+                onClick={() => handleModuleClick(link.path)}
                 className="group flex items-center gap-4 rounded-xl border border-border/50 bg-card shadow-sm text-left transition-all duration-200 hover:shadow-md hover:-translate-y-0.5 cursor-pointer w-full px-5 py-4"
               >
                 <div className="rounded-lg p-2" style={{ background: `${link.color}18` }}>
