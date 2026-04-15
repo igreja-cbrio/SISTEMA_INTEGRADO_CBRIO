@@ -1,98 +1,7 @@
 import { useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import { cadastroPublico } from '../../api';
-
-// ── Background shader (mesmo padrão visual da tela de Login) ──
-const vertexSource = `
-  attribute vec4 a_position;
-  void main() { gl_Position = a_position; }
-`;
-
-const fragmentSource = `
-precision mediump float;
-uniform vec2 iResolution;
-uniform float iTime;
-uniform vec3 u_color;
-
-void mainImage(out vec4 fragColor, in vec2 fragCoord){
-  vec2 centeredUV = (2.0 * fragCoord - iResolution.xy) / min(iResolution.x, iResolution.y);
-  float time = iTime * 0.35;
-  vec2 d = centeredUV;
-  for (float i = 1.0; i < 8.0; i++) {
-    d.x += 0.5 / i * cos(i * 2.0 * d.y + time);
-    d.y += 0.5 / i * cos(i * 2.0 * d.x + time);
-  }
-  float wave = abs(sin(d.x + d.y + time));
-  float glow = smoothstep(0.9, 0.2, wave);
-  fragColor = vec4(u_color * glow, 1.0);
-}
-
-void main() { mainImage(gl_FragColor, gl_FragCoord.xy); }
-`;
-
-function SmokeyBackground({ color = '#00736B' }) {
-  const canvasRef = useRef(null);
-  const rafRef = useRef(null);
-
-  useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const gl = canvas.getContext('webgl');
-    if (!gl) return;
-
-    function compile(type, src) {
-      const s = gl.createShader(type);
-      gl.shaderSource(s, src);
-      gl.compileShader(s);
-      if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) { gl.deleteShader(s); return null; }
-      return s;
-    }
-
-    const vs = compile(gl.VERTEX_SHADER, vertexSource);
-    const fs = compile(gl.FRAGMENT_SHADER, fragmentSource);
-    if (!vs || !fs) return;
-
-    const prog = gl.createProgram();
-    gl.attachShader(prog, vs);
-    gl.attachShader(prog, fs);
-    gl.linkProgram(prog);
-    if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) return;
-    gl.useProgram(prog);
-
-    const buf = gl.createBuffer();
-    gl.bindBuffer(gl.ARRAY_BUFFER, buf);
-    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1,-1,1,-1,-1,1,-1,1,1,-1,1,1]), gl.STATIC_DRAW);
-    const pos = gl.getAttribLocation(prog, 'a_position');
-    gl.enableVertexAttribArray(pos);
-    gl.vertexAttribPointer(pos, 2, gl.FLOAT, false, 0, 0);
-
-    const uRes = gl.getUniformLocation(prog, 'iResolution');
-    const uTime = gl.getUniformLocation(prog, 'iTime');
-    const uColor = gl.getUniformLocation(prog, 'u_color');
-
-    const r = parseInt(color.substring(1, 3), 16) / 255;
-    const g2 = parseInt(color.substring(3, 5), 16) / 255;
-    const b = parseInt(color.substring(5, 7), 16) / 255;
-    gl.uniform3f(uColor, r, g2, b);
-
-    const t0 = Date.now();
-    function render() {
-      const w = canvas.clientWidth, h = canvas.clientHeight;
-      canvas.width = w; canvas.height = h;
-      gl.viewport(0, 0, w, h);
-      gl.uniform2f(uRes, w, h);
-      gl.uniform1f(uTime, (Date.now() - t0) / 1000);
-      gl.drawArrays(gl.TRIANGLES, 0, 6);
-      rafRef.current = requestAnimationFrame(render);
-    }
-    render();
-
-    return () => cancelAnimationFrame(rafRef.current);
-  }, [color]);
-
-  return (
-    <canvas ref={canvasRef} style={{ position: 'fixed', inset: 0, width: '100%', height: '100%', zIndex: 0 }} />
-  );
-}
+import { LoginShapesBackground } from '../../components/ui/shape-landing-hero';
+import { MultistepFormShell } from '../../components/ui/multistep-form';
 
 // ── Helpers de máscara ──
 function soDigitos(v) { return (v || '').toString().replace(/\D+/g, ''); }
@@ -128,7 +37,7 @@ function cpfValido(v) {
   return dv1 === parseInt(d[9], 10) && dv2 === parseInt(d[10], 10);
 }
 
-// ── Input reutilizável com label flutuante (mesmo estilo do Login) ──
+// ── Input reutilizável com label flutuante ──
 function Field({ id, label, type = 'text', value, onChange, required, placeholder, as = 'input', rows, maxLength, autoComplete, inputMode }) {
   const [focused, setFocused] = useState(false);
   const active = focused || (value !== undefined && value !== null && String(value).length > 0);
@@ -227,7 +136,7 @@ function SelectField({ id, label, value, onChange, options, required }) {
   );
 }
 
-// ── Texto de consentimento LGPD (gravado como snapshot) ──
+// ── Texto de consentimento LGPD ──
 const TEXTO_CONSENTIMENTO =
   'Declaro que li e concordo com o tratamento dos meus dados pessoais pela CBRio para fins de acolhimento e acompanhamento pastoral, conforme a Lei Geral de Proteção de Dados (LGPD - Lei 13.709/2018). Meus dados serão mantidos em ambiente seguro e não serão compartilhados com terceiros sem minha autorização.';
 
@@ -239,23 +148,63 @@ const ESTADO_CIVIL_OPTS = [
   { value: 'uniao_estavel', label: 'União estável' },
 ];
 
+const STEPS = [
+  { id: 'pessoal', title: 'Dados Pessoais' },
+  { id: 'info', title: 'Informações' },
+  { id: 'endereco', title: 'Endereço' },
+  { id: 'termos', title: 'Termos' },
+];
+
+function Row({ children }) {
+  return (
+    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 16 }}>
+      {children}
+    </div>
+  );
+}
+
+function SectionTitle({ children }) {
+  return (
+    <h2 style={{
+      fontSize: 11, fontWeight: 700, textTransform: 'uppercase',
+      letterSpacing: 1.2, color: '#00B39D',
+      margin: '8px 0 14px', paddingBottom: 6,
+      borderBottom: '1px solid var(--cbrio-border)',
+    }}>
+      {children}
+    </h2>
+  );
+}
+
+function CheckboxField({ id, checked, onChange, label }) {
+  return (
+    <label htmlFor={id} style={{
+      display: 'flex', alignItems: 'flex-start', gap: 10,
+      fontSize: 13, color: '#d4d4d4', cursor: 'pointer',
+      padding: '6px 0',
+    }}>
+      <input
+        id={id}
+        type="checkbox"
+        checked={checked}
+        onChange={(e) => onChange(e.target.checked)}
+        style={{
+          marginTop: 2, width: 16, height: 16,
+          accentColor: '#00B39D', cursor: 'pointer',
+        }}
+      />
+      <span style={{ lineHeight: 1.5 }}>{label}</span>
+    </label>
+  );
+}
+
 export default function CadastroMembresia() {
+  const [currentStep, setCurrentStep] = useState(0);
   const [form, setForm] = useState({
-    nome: '',
-    sobrenome: '',
-    cpf: '',
-    email: '',
-    telefone: '',
-    data_nascimento: '',
-    estado_civil: '',
-    endereco: '',
-    bairro: '',
-    cidade: '',
-    cep: '',
-    profissao: '',
-    como_conheceu: '',
-    // honeypot — permanece vazio em humanos
-    website: '',
+    nome: '', sobrenome: '', cpf: '', email: '', telefone: '',
+    data_nascimento: '', estado_civil: '', endereco: '', bairro: '',
+    cidade: '', cep: '', profissao: '', como_conheceu: '',
+    website: '', // honeypot
   });
   const [aceitaTermos, setAceitaTermos] = useState(false);
   const [aceitaContato, setAceitaContato] = useState(true);
@@ -269,13 +218,12 @@ export default function CadastroMembresia() {
   const [fotoUploading, setFotoUploading] = useState(false);
   const fotoRef = useRef(null);
 
-  // Sugestão de família por sobrenome
-  const [familiaSugerida, setFamiliaSugerida] = useState(null); // { id, nome }
-  const [familiaOpcoes, setFamiliaOpcoes] = useState([]); // famílias encontradas
+  // Sugestão de família
+  const [familiaSugerida, setFamiliaSugerida] = useState(null);
+  const [familiaOpcoes, setFamiliaOpcoes] = useState([]);
   const [showFamiliaStep, setShowFamiliaStep] = useState(false);
   const [buscouFamilia, setBuscouFamilia] = useState(false);
 
-  // Captura origem do querystring (?origem=qr_code por exemplo)
   const origem = useMemo(() => {
     try {
       const params = new URLSearchParams(window.location.search);
@@ -311,6 +259,22 @@ export default function CadastroMembresia() {
     if (file) processarFoto(file);
   }, [processarFoto]);
 
+  // Step validation
+  const isStepValid = () => {
+    switch (currentStep) {
+      case 0:
+        return form.nome.trim() !== '' && form.sobrenome.trim() !== '' && soDigitos(form.telefone).length >= 10 && cpfValido(form.cpf);
+      case 1:
+        return !!form.data_nascimento;
+      case 2:
+        return true; // address is optional
+      case 3:
+        return aceitaTermos;
+      default:
+        return true;
+    }
+  };
+
   function validarForm() {
     if (!form.nome.trim()) return 'Informe seu nome.';
     if (!form.sobrenome.trim()) return 'Informe seu sobrenome.';
@@ -321,20 +285,16 @@ export default function CadastroMembresia() {
     return null;
   }
 
-  // Busca famílias pelo sobrenome antes de enviar
-  async function verificarFamiliaEEnviar(e) {
-    e.preventDefault();
+  async function verificarFamiliaEEnviar() {
     setError('');
     const erro = validarForm();
     if (erro) { setError(erro); return; }
 
-    // Se já passou pela etapa de família, envia direto
     if (buscouFamilia) {
       await enviarCadastro(familiaSugerida?.id);
       return;
     }
 
-    // Busca famílias pelo sobrenome
     setLoading(true);
     try {
       const { familias } = await cadastroPublico.verificarFamilia(form.sobrenome.trim());
@@ -347,7 +307,6 @@ export default function CadastroMembresia() {
         await enviarCadastro();
       }
     } catch {
-      // Se falhar a busca, envia sem sugestão
       setBuscouFamilia(true);
       await enviarCadastro();
     } finally {
@@ -358,7 +317,6 @@ export default function CadastroMembresia() {
   async function enviarCadastro(familiaId) {
     setLoading(true);
     try {
-      // Upload photo first if selected
       let foto_url = null;
       if (fotoFile) {
         setFotoUploading(true);
@@ -402,13 +360,20 @@ export default function CadastroMembresia() {
     enviarCadastro(null);
   }
 
+  const nextStep = () => {
+    if (currentStep < STEPS.length - 1) setCurrentStep(s => s + 1);
+  };
+  const prevStep = () => {
+    if (currentStep > 0) setCurrentStep(s => s - 1);
+  };
+
   return (
     <div style={{
       minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center',
       position: 'relative', overflow: 'hidden',
-      padding: '40px 16px',
+      padding: '40px 16px', background: '#0a0a0a',
     }}>
-      <SmokeyBackground />
+      <LoginShapesBackground />
 
       <div style={{
         position: 'relative', zIndex: 1, width: '100%', maxWidth: 640,
@@ -438,7 +403,7 @@ export default function CadastroMembresia() {
               background: '#00B39D', color: '#fff',
               display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
               fontSize: 28, marginBottom: 16,
-            }}>✓</div>
+            }}>&#10003;</div>
             <h2 style={{ fontSize: 18, fontWeight: 700, color: '#e5e5e5', margin: 0 }}>
               Cadastro enviado!
             </h2>
@@ -501,7 +466,7 @@ export default function CadastroMembresia() {
             </div>
           </div>
         ) : (
-          <form onSubmit={verificarFamiliaEEnviar} noValidate>
+          <>
             {error && (
               <div style={{
                 background: '#ef444418', border: '1px solid #ef444440', borderRadius: 10,
@@ -511,205 +476,150 @@ export default function CadastroMembresia() {
               </div>
             )}
 
-            {/* Honeypot — escondido visualmente e de leitores de tela;
-                bots preenchem porque veem o input no HTML. */}
+            {/* Honeypot */}
             <div aria-hidden="true" style={{ position: 'absolute', left: '-9999px', top: 'auto', width: 1, height: 1, overflow: 'hidden' }}>
               <label htmlFor="website">Website</label>
-              <input
-                id="website"
-                name="website"
-                type="text"
-                tabIndex={-1}
-                autoComplete="off"
-                value={form.website}
-                onChange={set('website')}
-              />
+              <input id="website" name="website" type="text" tabIndex={-1} autoComplete="off"
+                value={form.website} onChange={set('website')} />
             </div>
 
-            <SectionTitle>Dados pessoais</SectionTitle>
-
-            {/* Foto (click + drag & drop) */}
-            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', marginBottom: 20, gap: 8 }}>
-              <div
-                onClick={() => fotoRef.current?.click()}
-                onDragOver={(e) => { e.preventDefault(); setFotoDragOver(true); }}
-                onDragLeave={() => setFotoDragOver(false)}
-                onDrop={handleFotoDrop}
-                style={{
-                  width: 96, height: 96, borderRadius: '50%',
-                  background: fotoPreview ? 'transparent' : fotoDragOver ? 'rgba(0,179,157,0.25)' : 'rgba(0,179,157,0.12)',
-                  border: `2px dashed ${fotoDragOver ? '#00B39D' : fotoPreview ? '#00B39D' : 'var(--cbrio-border)'}`,
-                  display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  cursor: 'pointer', overflow: 'hidden', position: 'relative',
-                  transition: 'border-color 0.3s, background 0.3s',
-                }}
-              >
-                {fotoPreview ? (
-                  <img src={fotoPreview} alt="Preview" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-                ) : (
-                  <div style={{ textAlign: 'center', color: fotoDragOver ? '#00B39D' : '#a3a3a3' }}>
-                    <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-                      <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z" />
-                      <circle cx="12" cy="13" r="4" />
-                    </svg>
-                    <div style={{ fontSize: 10, marginTop: 2 }}>Foto</div>
-                  </div>
-                )}
-                {fotoUploading && (
-                  <div style={{ position: 'absolute', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                    <div style={{ width: 20, height: 20, border: '2px solid rgba(255,255,255,0.3)', borderTopColor: '#fff', borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
-                  </div>
-                )}
-              </div>
-              <input ref={fotoRef} type="file" accept="image/jpeg,image/png,image/webp" style={{ display: 'none' }} onChange={handleFotoSelect} />
-              {!fotoPreview && <span style={{ fontSize: 11, color: '#a3a3a3' }}>Clique ou arraste uma foto</span>}
-              {fotoPreview && (
-                <button type="button" onClick={() => { setFotoFile(null); setFotoPreview(null); if (fotoRef.current) fotoRef.current.value = ''; }}
-                  style={{ fontSize: 12, color: '#ef4444', background: 'transparent', border: 'none', cursor: 'pointer', textDecoration: 'underline' }}>
-                  Remover foto
-                </button>
-              )}
-            </div>
-
-            <Row>
-              <Field id="nome" label="Nome" value={form.nome} onChange={set('nome')} required autoComplete="given-name" maxLength={100} />
-              <Field id="sobrenome" label="Sobrenome" value={form.sobrenome} onChange={set('sobrenome')} required autoComplete="family-name" maxLength={100} />
-            </Row>
-            <Row>
-              <Field
-                id="cpf"
-                label="CPF"
-                value={form.cpf}
-                onChange={setMasked('cpf', mascaraCpf)}
-                required
-                inputMode="numeric"
-                maxLength={14}
-              />
-              <Field
-                id="telefone"
-                label="Celular / WhatsApp"
-                value={form.telefone}
-                onChange={setMasked('telefone', mascaraTelefone)}
-                required
-                autoComplete="tel"
-                inputMode="tel"
-                maxLength={16}
-              />
-            </Row>
-            <Row>
-              <Field id="data_nascimento" type="date" label="Data de nascimento" value={form.data_nascimento} onChange={set('data_nascimento')} required />
-              <Field id="email" type="email" label="E-mail" value={form.email} onChange={set('email')} autoComplete="email" maxLength={200} />
-            </Row>
-            <Row>
-              <SelectField id="estado_civil" label="Estado civil" value={form.estado_civil} onChange={set('estado_civil')} options={ESTADO_CIVIL_OPTS} />
-              <Field id="profissao" label="Profissão" value={form.profissao} onChange={set('profissao')} maxLength={120} />
-            </Row>
-
-            <SectionTitle>Endereço</SectionTitle>
-            <Field id="endereco" label="Endereço (rua e número)" value={form.endereco} onChange={set('endereco')} autoComplete="street-address" maxLength={200} />
-            <Row>
-              <Field id="bairro" label="Bairro" value={form.bairro} onChange={set('bairro')} maxLength={80} />
-              <Field id="cidade" label="Cidade" value={form.cidade} onChange={set('cidade')} maxLength={80} />
-            </Row>
-            <Field id="cep" label="CEP" value={form.cep} onChange={set('cep')} autoComplete="postal-code" maxLength={12} />
-
-            <SectionTitle>Como você chegou até nós?</SectionTitle>
-            <Field
-              id="como_conheceu"
-              label="Como conheceu a CBRio? (opcional)"
-              value={form.como_conheceu}
-              onChange={set('como_conheceu')}
-              as="textarea"
-              rows={3}
-              maxLength={500}
-            />
-
-            {/* LGPD */}
-            <div style={{
-              background: 'rgba(255,255,255,0.03)',
-              border: '1px solid var(--cbrio-border)',
-              borderRadius: 12, padding: 16, marginTop: 24, marginBottom: 8,
-            }}>
-              <p style={{ fontSize: 12, color: '#a3a3a3', lineHeight: 1.6, margin: 0, marginBottom: 12 }}>
-                {TEXTO_CONSENTIMENTO}
-              </p>
-              <Checkbox
-                id="aceita_termos"
-                checked={aceitaTermos}
-                onChange={setAceitaTermos}
-                label="Li e concordo com o tratamento dos meus dados pessoais. *"
-              />
-              <Checkbox
-                id="aceita_contato"
-                checked={aceitaContato}
-                onChange={setAceitaContato}
-                label="Autorizo o contato da equipe de acolhimento por e-mail, telefone ou WhatsApp."
-              />
-            </div>
-
-            <button
-              type="submit"
-              disabled={loading}
-              style={{
-                width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center',
-                gap: 8, padding: '13px 20px', marginTop: 16,
-                background: loading ? '#009985' : '#00B39D',
-                color: '#fff', border: 'none', borderRadius: 10, fontSize: 15, fontWeight: 600,
-                cursor: loading ? 'wait' : 'pointer', transition: 'all 0.3s', opacity: loading ? 0.7 : 1,
-              }}
+            <MultistepFormShell
+              steps={STEPS}
+              currentStep={currentStep}
+              onNext={nextStep}
+              onPrev={prevStep}
+              onSubmit={verificarFamiliaEEnviar}
+              isSubmitting={loading}
+              isStepValid={isStepValid()}
+              submitLabel="Enviar cadastro"
             >
-              {loading ? 'Enviando...' : 'Enviar cadastro'}
-            </button>
-          </form>
+              {/* Step 1: Dados Pessoais */}
+              {currentStep === 0 && (
+                <div>
+                  <SectionTitle>Dados pessoais</SectionTitle>
+
+                  {/* Foto */}
+                  <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', marginBottom: 20, gap: 8 }}>
+                    <div
+                      onClick={() => fotoRef.current?.click()}
+                      onDragOver={(e) => { e.preventDefault(); setFotoDragOver(true); }}
+                      onDragLeave={() => setFotoDragOver(false)}
+                      onDrop={handleFotoDrop}
+                      style={{
+                        width: 96, height: 96, borderRadius: '50%',
+                        background: fotoPreview ? 'transparent' : fotoDragOver ? 'rgba(0,179,157,0.25)' : 'rgba(0,179,157,0.12)',
+                        border: `2px dashed ${fotoDragOver ? '#00B39D' : fotoPreview ? '#00B39D' : 'var(--cbrio-border)'}`,
+                        display: 'flex', alignItems: 'center', justifyContent: 'center',
+                        cursor: 'pointer', overflow: 'hidden', position: 'relative',
+                        transition: 'border-color 0.3s, background 0.3s',
+                      }}
+                    >
+                      {fotoPreview ? (
+                        <img src={fotoPreview} alt="Preview" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                      ) : (
+                        <div style={{ textAlign: 'center', color: fotoDragOver ? '#00B39D' : '#a3a3a3' }}>
+                          <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                            <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z" />
+                            <circle cx="12" cy="13" r="4" />
+                          </svg>
+                          <div style={{ fontSize: 10, marginTop: 2 }}>Foto</div>
+                        </div>
+                      )}
+                      {fotoUploading && (
+                        <div style={{ position: 'absolute', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                          <div style={{ width: 20, height: 20, border: '2px solid rgba(255,255,255,0.3)', borderTopColor: '#fff', borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
+                        </div>
+                      )}
+                    </div>
+                    <input ref={fotoRef} type="file" accept="image/jpeg,image/png,image/webp" style={{ display: 'none' }} onChange={handleFotoSelect} />
+                    {!fotoPreview && <span style={{ fontSize: 11, color: '#a3a3a3' }}>Clique ou arraste uma foto</span>}
+                    {fotoPreview && (
+                      <button type="button" onClick={() => { setFotoFile(null); setFotoPreview(null); if (fotoRef.current) fotoRef.current.value = ''; }}
+                        style={{ fontSize: 12, color: '#ef4444', background: 'transparent', border: 'none', cursor: 'pointer', textDecoration: 'underline' }}>
+                        Remover foto
+                      </button>
+                    )}
+                  </div>
+
+                  <Row>
+                    <Field id="nome" label="Nome" value={form.nome} onChange={set('nome')} required autoComplete="given-name" maxLength={100} />
+                    <Field id="sobrenome" label="Sobrenome" value={form.sobrenome} onChange={set('sobrenome')} required autoComplete="family-name" maxLength={100} />
+                  </Row>
+                  <Row>
+                    <Field id="cpf" label="CPF" value={form.cpf} onChange={setMasked('cpf', mascaraCpf)} required inputMode="numeric" maxLength={14} />
+                    <Field id="telefone" label="Celular / WhatsApp" value={form.telefone} onChange={setMasked('telefone', mascaraTelefone)} required autoComplete="tel" inputMode="tel" maxLength={16} />
+                  </Row>
+                </div>
+              )}
+
+              {/* Step 2: Informações */}
+              {currentStep === 1 && (
+                <div>
+                  <SectionTitle>Informações</SectionTitle>
+                  <Row>
+                    <Field id="data_nascimento" type="date" label="Data de nascimento" value={form.data_nascimento} onChange={set('data_nascimento')} required />
+                    <Field id="email" type="email" label="E-mail" value={form.email} onChange={set('email')} autoComplete="email" maxLength={200} />
+                  </Row>
+                  <Row>
+                    <SelectField id="estado_civil" label="Estado civil" value={form.estado_civil} onChange={set('estado_civil')} options={ESTADO_CIVIL_OPTS} />
+                    <Field id="profissao" label="Profissão" value={form.profissao} onChange={set('profissao')} maxLength={120} />
+                  </Row>
+                  <Field
+                    id="como_conheceu"
+                    label="Como conheceu a CBRio? (opcional)"
+                    value={form.como_conheceu}
+                    onChange={set('como_conheceu')}
+                    as="textarea"
+                    rows={3}
+                    maxLength={500}
+                  />
+                </div>
+              )}
+
+              {/* Step 3: Endereço */}
+              {currentStep === 2 && (
+                <div>
+                  <SectionTitle>Endereço</SectionTitle>
+                  <Field id="endereco" label="Endereço (rua e número)" value={form.endereco} onChange={set('endereco')} autoComplete="street-address" maxLength={200} />
+                  <Row>
+                    <Field id="bairro" label="Bairro" value={form.bairro} onChange={set('bairro')} maxLength={80} />
+                    <Field id="cidade" label="Cidade" value={form.cidade} onChange={set('cidade')} maxLength={80} />
+                  </Row>
+                  <Field id="cep" label="CEP" value={form.cep} onChange={set('cep')} autoComplete="postal-code" maxLength={12} />
+                </div>
+              )}
+
+              {/* Step 4: Termos */}
+              {currentStep === 3 && (
+                <div>
+                  <SectionTitle>Termos e consentimento</SectionTitle>
+                  <div style={{
+                    background: 'rgba(255,255,255,0.03)',
+                    border: '1px solid var(--cbrio-border)',
+                    borderRadius: 12, padding: 16, marginBottom: 8,
+                  }}>
+                    <p style={{ fontSize: 12, color: '#a3a3a3', lineHeight: 1.6, margin: 0, marginBottom: 12 }}>
+                      {TEXTO_CONSENTIMENTO}
+                    </p>
+                    <CheckboxField
+                      id="aceita_termos"
+                      checked={aceitaTermos}
+                      onChange={setAceitaTermos}
+                      label="Li e concordo com o tratamento dos meus dados pessoais. *"
+                    />
+                    <CheckboxField
+                      id="aceita_contato"
+                      checked={aceitaContato}
+                      onChange={setAceitaContato}
+                      label="Autorizo o contato da equipe de acolhimento por e-mail, telefone ou WhatsApp."
+                    />
+                  </div>
+                </div>
+              )}
+            </MultistepFormShell>
+          </>
         )}
       </div>
     </div>
-  );
-}
-
-function SectionTitle({ children }) {
-  return (
-    <h2 style={{
-      fontSize: 11, fontWeight: 700, textTransform: 'uppercase',
-      letterSpacing: 1.2, color: '#00B39D',
-      margin: '28px 0 14px', paddingBottom: 6,
-      borderBottom: '1px solid var(--cbrio-border)',
-    }}>
-      {children}
-    </h2>
-  );
-}
-
-function Row({ children }) {
-  return (
-    <div style={{
-      display: 'grid',
-      gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))',
-      gap: 16,
-    }}>
-      {children}
-    </div>
-  );
-}
-
-function Checkbox({ id, checked, onChange, label }) {
-  return (
-    <label htmlFor={id} style={{
-      display: 'flex', alignItems: 'flex-start', gap: 10,
-      fontSize: 13, color: '#d4d4d4', cursor: 'pointer',
-      padding: '6px 0',
-    }}>
-      <input
-        id={id}
-        type="checkbox"
-        checked={checked}
-        onChange={(e) => onChange(e.target.checked)}
-        style={{
-          marginTop: 2, width: 16, height: 16,
-          accentColor: '#00B39D', cursor: 'pointer',
-        }}
-      />
-      <span style={{ lineHeight: 1.5 }}>{label}</span>
-    </label>
   );
 }
