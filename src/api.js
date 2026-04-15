@@ -623,6 +623,13 @@ export const arquivei = {
   sync: () => post('/arquivei/sync'),
 };
 
+// ── Rotas PUBLICAS do voluntariado (sem auth — scan QR sem conta) ──
+export const publicVoluntariado = {
+  lookupCpf: (cpf) => post('/public/voluntariado/lookup-cpf', { cpf }),
+  requestLogin: (cpf, serviceId) => post('/public/voluntariado/request-login', { cpf, serviceId }),
+  register: (data) => post('/public/voluntariado/register', data),
+};
+
 // ── Voluntariado ──
 export const voluntariado = {
   // Volunteer Portal (self-service)

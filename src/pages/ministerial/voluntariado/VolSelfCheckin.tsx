@@ -1,37 +1,72 @@
 import { useState, useEffect } from 'react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
-import { voluntariado } from '@/api';
+import { voluntariado, publicVoluntariado } from '@/api';
 import { useAuth } from '@/contexts/AuthContext';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
-import { CheckCircle2, XCircle, Loader2, ArrowLeft } from 'lucide-react';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import {
+  CheckCircle2, XCircle, Loader2, ArrowLeft, MailCheck, UserPlus, IdCard,
+} from 'lucide-react';
 
-type State = 'loading' | 'ready' | 'checking' | 'success' | 'error' | 'already';
+type State =
+  | 'loading'      // avaliando sessao / carregando perfil
+  | 'checking'     // fazendo checkin do usuario logado
+  | 'success'      // checkin ok
+  | 'already'      // ja tinha checkin
+  | 'error'
+  | 'cpf'          // pedindo CPF (usuario nao autenticado)
+  | 'register'     // cadastro completo (CPF nao existe em lugar nenhum)
+  | 'sent';        // magic link enviado
+
+// Formata CPF enquanto digita (000.000.000-00)
+function formatCpf(v: string) {
+  const d = v.replace(/\D+/g, '').slice(0, 11);
+  if (d.length <= 3) return d;
+  if (d.length <= 6) return `${d.slice(0, 3)}.${d.slice(3)}`;
+  if (d.length <= 9) return `${d.slice(0, 3)}.${d.slice(3, 6)}.${d.slice(6)}`;
+  return `${d.slice(0, 3)}.${d.slice(3, 6)}.${d.slice(6, 9)}-${d.slice(9)}`;
+}
 
 export default function VolSelfCheckin() {
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
-  const { user } = useAuth();
+  const { user, loading: authLoading } = useAuth();
   const serviceId = searchParams.get('serviceId');
+
   const [state, setState] = useState<State>('loading');
   const [serviceName, setServiceName] = useState('');
   const [resultName, setResultName] = useState('');
   const [errorMsg, setErrorMsg] = useState('');
 
+  // Fluxo nao autenticado
+  const [cpf, setCpf] = useState('');
+  const [maskedEmail, setMaskedEmail] = useState('');
+  const [regName, setRegName] = useState('');
+  const [regEmail, setRegEmail] = useState('');
+  const [regPhone, setRegPhone] = useState('');
+  const [busy, setBusy] = useState(false);
+
   useEffect(() => {
-    if (!serviceId || !user) {
-      navigate('/login', { replace: true });
+    if (authLoading) return;
+    if (!serviceId) {
+      setErrorMsg('Link invalido (sem serviceId). Escaneie novamente o QR do totem.');
+      setState('error');
       return;
     }
-    doCheckin();
-  }, [serviceId, user]);
+    if (user) {
+      doCheckin();
+    } else {
+      setState('cpf');
+    }
+  }, [serviceId, user, authLoading]);
 
   const doCheckin = async () => {
     if (!serviceId) return;
     setState('checking');
 
     try {
-      // First get the volunteer's vol_profile
       const { profile } = await voluntariado.me.get();
       if (!profile) {
         setErrorMsg('Perfil de voluntario nao encontrado. Complete seu cadastro primeiro.');
@@ -39,10 +74,8 @@ export default function VolSelfCheckin() {
         return;
       }
 
-      // Show the name immediately (used in both success and already states)
       setResultName(profile.full_name);
 
-      // Try scheduled check-in first (if qr_code is set and lookup finds a schedule)
       if (profile.qr_code) {
         try {
           const lookup = await voluntariado.qrLookup(profile.qr_code);
@@ -66,18 +99,14 @@ export default function VolSelfCheckin() {
               throw ciErr;
             }
           }
-          // lookup.isUnscheduled = true → fall through to direct check-in below
         } catch (lookupErr: any) {
-          // Duplicate check-in from qr-lookup path
           if (lookupErr.alreadyCheckedIn || lookupErr.status === 409) {
             setState('already');
             return;
           }
-          // qr-lookup 404 or any other error → silently fall through to direct check-in
         }
       }
 
-      // Fallback: direct unscheduled check-in (works even without qr_code / schedule)
       try {
         await voluntariado.checkIns.create({
           volunteer_id: profile.id,
@@ -103,6 +132,67 @@ export default function VolSelfCheckin() {
     }
   };
 
+  const handleCpfSubmit = async () => {
+    const clean = cpf.replace(/\D+/g, '');
+    if (clean.length !== 11) {
+      setErrorMsg('Digite um CPF valido (11 digitos).');
+      return;
+    }
+    setErrorMsg('');
+    setBusy(true);
+    try {
+      const lookup = await publicVoluntariado.lookupCpf(clean);
+      if (!lookup.found) {
+        // Nao achou em nenhum cadastro — pedir dados completos
+        setState('register');
+        setBusy(false);
+        return;
+      }
+      if (!lookup.hasEmail) {
+        setErrorMsg('Seu cadastro nao tem email. Procure um lider para atualizar.');
+        setBusy(false);
+        return;
+      }
+      // Achou + tem email: enviar magic link
+      const resp = await publicVoluntariado.requestLogin(clean, serviceId || undefined);
+      setMaskedEmail(resp.maskedEmail || '');
+      setState('sent');
+    } catch (err: any) {
+      setErrorMsg(err.message || 'Erro ao buscar cadastro');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleRegister = async () => {
+    const clean = cpf.replace(/\D+/g, '');
+    if (!regName.trim() || regName.trim().length < 3) {
+      setErrorMsg('Informe seu nome completo.');
+      return;
+    }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(regEmail)) {
+      setErrorMsg('Informe um email valido.');
+      return;
+    }
+    setErrorMsg('');
+    setBusy(true);
+    try {
+      const resp = await publicVoluntariado.register({
+        cpf: clean,
+        full_name: regName.trim(),
+        email: regEmail.trim().toLowerCase(),
+        phone: regPhone.replace(/\D+/g, '') || undefined,
+        serviceId: serviceId || undefined,
+      });
+      setMaskedEmail(resp.maskedEmail || '');
+      setState('sent');
+    } catch (err: any) {
+      setErrorMsg(err.message || 'Erro ao cadastrar');
+    } finally {
+      setBusy(false);
+    }
+  };
+
   return (
     <div className="min-h-screen bg-gradient-to-b from-gray-900 to-gray-950 text-white flex items-center justify-center p-4">
       <Card className="w-full max-w-sm bg-gray-800/50 border-gray-700">
@@ -110,7 +200,9 @@ export default function VolSelfCheckin() {
           {(state === 'loading' || state === 'checking') && (
             <>
               <Loader2 className="h-16 w-16 animate-spin text-[#00B39D] mb-4" />
-              <p className="text-lg text-white">Fazendo check-in...</p>
+              <p className="text-lg text-white">
+                {state === 'checking' ? 'Fazendo check-in...' : 'Carregando...'}
+              </p>
               {serviceName && <p className="text-sm text-white/60 mt-1">{serviceName}</p>}
             </>
           )}
@@ -152,10 +244,126 @@ export default function VolSelfCheckin() {
                 <Button variant="outline" className="border-white/20 text-white" onClick={() => navigate('/voluntariado/checkin')}>
                   Voltar
                 </Button>
-                <Button className="bg-[#00B39D] hover:bg-[#00B39D]/80" onClick={doCheckin}>
-                  Tentar novamente
-                </Button>
+                {user && (
+                  <Button className="bg-[#00B39D] hover:bg-[#00B39D]/80" onClick={doCheckin}>
+                    Tentar novamente
+                  </Button>
+                )}
               </div>
+            </>
+          )}
+
+          {state === 'cpf' && (
+            <div className="w-full text-left">
+              <div className="flex flex-col items-center text-center mb-6">
+                <IdCard className="h-12 w-12 text-[#00B39D] mb-2" />
+                <h2 className="text-xl font-bold text-white">Check-in de voluntario</h2>
+                <p className="text-sm text-white/60 mt-1">
+                  Digite seu CPF para acessar o sistema
+                </p>
+              </div>
+              <div className="space-y-3">
+                <div>
+                  <Label className="text-white/80">CPF</Label>
+                  <Input
+                    inputMode="numeric"
+                    autoFocus
+                    value={cpf}
+                    onChange={(e) => setCpf(formatCpf(e.target.value))}
+                    placeholder="000.000.000-00"
+                    className="bg-gray-900/60 border-gray-700 text-white"
+                  />
+                </div>
+                {errorMsg && <p className="text-sm text-red-400">{errorMsg}</p>}
+                <Button
+                  className="w-full bg-[#00B39D] hover:bg-[#00B39D]/80 min-h-[48px]"
+                  onClick={handleCpfSubmit}
+                  disabled={busy}
+                >
+                  {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Continuar'}
+                </Button>
+                <p className="text-[11px] text-white/40 text-center pt-2">
+                  Ja tem conta? Faca login primeiro e escaneie novamente.
+                </p>
+              </div>
+            </div>
+          )}
+
+          {state === 'register' && (
+            <div className="w-full text-left">
+              <div className="flex flex-col items-center text-center mb-6">
+                <UserPlus className="h-12 w-12 text-[#00B39D] mb-2" />
+                <h2 className="text-xl font-bold text-white">Cadastro de voluntario</h2>
+                <p className="text-sm text-white/60 mt-1">
+                  Nao encontramos seu CPF. Preencha para criar seu cadastro.
+                </p>
+              </div>
+              <div className="space-y-3">
+                <div>
+                  <Label className="text-white/80">Nome completo</Label>
+                  <Input
+                    autoFocus
+                    value={regName}
+                    onChange={(e) => setRegName(e.target.value)}
+                    placeholder="Seu nome"
+                    className="bg-gray-900/60 border-gray-700 text-white"
+                  />
+                </div>
+                <div>
+                  <Label className="text-white/80">Email</Label>
+                  <Input
+                    type="email"
+                    inputMode="email"
+                    value={regEmail}
+                    onChange={(e) => setRegEmail(e.target.value)}
+                    placeholder="seu@email.com"
+                    className="bg-gray-900/60 border-gray-700 text-white"
+                  />
+                </div>
+                <div>
+                  <Label className="text-white/80">Telefone (opcional)</Label>
+                  <Input
+                    inputMode="tel"
+                    value={regPhone}
+                    onChange={(e) => setRegPhone(e.target.value)}
+                    placeholder="(21) 99999-9999"
+                    className="bg-gray-900/60 border-gray-700 text-white"
+                  />
+                </div>
+                {errorMsg && <p className="text-sm text-red-400">{errorMsg}</p>}
+                <div className="flex gap-2">
+                  <Button
+                    variant="outline"
+                    className="border-white/20 text-white flex-1"
+                    onClick={() => { setState('cpf'); setErrorMsg(''); }}
+                    disabled={busy}
+                  >
+                    Voltar
+                  </Button>
+                  <Button
+                    className="flex-[2] bg-[#00B39D] hover:bg-[#00B39D]/80 min-h-[48px]"
+                    onClick={handleRegister}
+                    disabled={busy}
+                  >
+                    {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Cadastrar'}
+                  </Button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {state === 'sent' && (
+            <>
+              <MailCheck className="h-20 w-20 text-[#00B39D] mb-4" />
+              <h2 className="text-2xl font-bold text-white">Link enviado!</h2>
+              <p className="text-sm text-white/60 mt-2">
+                Enviamos um link de acesso para
+                <br />
+                <span className="text-white font-medium">{maskedEmail}</span>
+              </p>
+              <p className="text-xs text-white/40 mt-4">
+                Abra o email, clique no link e voce sera redirecionado para o check-in.
+              </p>
             </>
           )}
         </CardContent>
