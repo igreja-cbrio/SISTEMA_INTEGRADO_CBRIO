@@ -21,8 +21,8 @@ const router = require('express').Router();
 const { supabase } = require('../utils/supabase');
 
 function getOAuthCredentials() {
-  const clientId = process.env.PC_OAUTH_CLIENT_ID || process.env.PLANNING_CENTER_APP_ID;
-  const clientSecret = process.env.PC_OAUTH_CLIENT_SECRET || process.env.PLANNING_CENTER_SECRET;
+  const clientId = (process.env.PC_OAUTH_CLIENT_ID || process.env.PLANNING_CENTER_APP_ID || '').trim();
+  const clientSecret = (process.env.PC_OAUTH_CLIENT_SECRET || process.env.PLANNING_CENTER_SECRET || '').trim();
   return { clientId, clientSecret };
 }
 
