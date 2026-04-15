@@ -216,10 +216,11 @@ router.get('/callback', async (req, res) => {
 
     // ── 5. Link to vol_profiles if exists ───────────────────────────
     // Update the vol_profiles record to link the supabase user
+    // (coluna correta e auth_user_id, nao user_id)
     await supabase.from('vol_profiles')
-      .update({ user_id: supaUserId })
+      .update({ auth_user_id: supaUserId })
       .eq('planning_center_id', pcId)
-      .is('user_id', null);
+      .is('auth_user_id', null);
 
     // ── 6. Generate magic-link token ────────────────────────────────
     const { data: linkData, error: linkErr } = await supabase.auth.admin.generateLink({
