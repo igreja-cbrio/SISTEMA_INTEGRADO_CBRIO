@@ -89,7 +89,7 @@ CREATE INDEX IF NOT EXISTS vol_availability_dates_idx ON vol_availability(unavai
 -- ── Alter vol_services — make planning_center_id optional ───────────────────
 -- This allows manual service creation without PC sync
 ALTER TABLE vol_services ALTER COLUMN planning_center_id DROP NOT NULL;
-DROP INDEX IF EXISTS vol_services_planning_center_id_key;
+ALTER TABLE vol_services DROP CONSTRAINT IF EXISTS vol_services_planning_center_id_key;
 CREATE UNIQUE INDEX IF NOT EXISTS vol_services_pc_id_unique
   ON vol_services(planning_center_id) WHERE planning_center_id IS NOT NULL;
 
