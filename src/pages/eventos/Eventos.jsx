@@ -322,6 +322,9 @@ export default function Eventos() {
   const [kpiTipo, setKpiTipo] = useState('all');
   const [kpiEventDetail, setKpiEventDetail] = useState(null);
   const [kpiLoading, setKpiLoading] = useState(false);
+  const [kpiConfigOpen, setKpiConfigOpen] = useState(false);
+  const [kpiTemplates, setKpiTemplates] = useState([]);
+  const [kpiWeights, setKpiWeights] = useState([]);
   const [eventList, setEventList] = useState([]);
   const [categories, setCategories] = useState([]);
   const [dash, setDash] = useState(null);
@@ -780,8 +783,8 @@ export default function Eventos() {
     // Cross-eventos
     return (
       <div>
-        {/* Filtro */}
-        <div style={{ display: 'flex', gap: 8, marginBottom: 20, alignItems: 'center' }}>
+        {/* Filtro + Config */}
+        <div style={{ display: 'flex', gap: 8, marginBottom: 20, alignItems: 'center', flexWrap: 'wrap' }}>
           {['all', 'serie', 'evento'].map(t => (
             <button key={t} onClick={() => { setKpiTipo(t); loadKpis(t); }} style={{
               padding: '8px 20px', borderRadius: 8, fontSize: 13, fontWeight: kpiTipo === t ? 700 : 400, cursor: 'pointer',
@@ -789,6 +792,14 @@ export default function Eventos() {
               background: kpiTipo === t ? C.primaryBg : 'transparent', color: kpiTipo === t ? C.primary : C.t3,
             }}>{t === 'all' ? 'Todos' : t === 'serie' ? 'Series' : 'Eventos'}</button>
           ))}
+          {accessLevel >= 5 && (
+            <button onClick={async () => {
+              const [t, w] = await Promise.all([cyclesApi.kpiTemplates(), cyclesApi.kpiAreaWeights()]);
+              setKpiTemplates(t || []); setKpiWeights(w || []); setKpiConfigOpen(true);
+            }} style={{ marginLeft: 'auto', padding: '6px 14px', borderRadius: 8, fontSize: 12, fontWeight: 600, border: `1px solid ${C.border}`, background: 'transparent', color: C.t3, cursor: 'pointer' }}>
+              Configurar Templates
+            </button>
+          )}
         </div>
 
         {kpiLoading ? (
@@ -858,6 +869,91 @@ export default function Eventos() {
             </div>
           </>
         )}
+      </div>
+    );
+  }
+
+  function renderKpiConfig() {
+    if (!kpiConfigOpen) return null;
+    const AREAS = ['marketing', 'producao', 'compras', 'financeiro', 'manutencao', 'limpeza', 'cozinha', 'adm'];
+    const PHASES = ['Pré Briefing', 'Briefing', 'Brainstorming e Conceito', 'Identidade e Estratégia', 'Aprovação', 'Execução Estratégica', 'Pré-Testes', 'Finalizações', 'Alinhamentos Operacionais Finais', 'Dia D', 'Debrief'];
+    const [newTpl, setNewTpl] = useState({ category_id: '', phase_name: '', area: '', document_name: '', is_critical: false });
+
+    return (
+      <div style={{ position: 'fixed', inset: 0, zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(0,0,0,0.6)' }}>
+        <div style={{ background: 'var(--cbrio-modal-bg)', borderRadius: 16, padding: 24, maxWidth: 700, width: '90%', maxHeight: '85vh', overflowY: 'auto', boxShadow: '0 20px 60px rgba(0,0,0,0.3)' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+            <span style={{ fontSize: 16, fontWeight: 700, color: C.text }}>Configurar Templates de Documentos</span>
+            <button onClick={() => setKpiConfigOpen(false)} style={{ background: 'none', border: 'none', fontSize: 18, color: C.t3, cursor: 'pointer' }}>{'\u2715'}</button>
+          </div>
+
+          {/* Novo template */}
+          <div style={{ background: C.bg, borderRadius: 10, padding: 14, marginBottom: 16, border: `1px solid ${C.border}` }}>
+            <div style={{ fontSize: 12, fontWeight: 600, color: C.t2, marginBottom: 8 }}>Novo documento esperado</div>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+              <select value={newTpl.category_id} onChange={e => setNewTpl(t => ({ ...t, category_id: e.target.value }))} style={{ padding: 6, borderRadius: 6, border: `1px solid ${C.border}`, background: C.card, color: C.text, fontSize: 12 }}>
+                <option value="">Categoria do evento</option>
+                {categories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+              </select>
+              <select value={newTpl.phase_name} onChange={e => setNewTpl(t => ({ ...t, phase_name: e.target.value }))} style={{ padding: 6, borderRadius: 6, border: `1px solid ${C.border}`, background: C.card, color: C.text, fontSize: 12 }}>
+                <option value="">Fase</option>
+                {PHASES.map(p => <option key={p} value={p}>{p}</option>)}
+              </select>
+              <select value={newTpl.area} onChange={e => setNewTpl(t => ({ ...t, area: e.target.value }))} style={{ padding: 6, borderRadius: 6, border: `1px solid ${C.border}`, background: C.card, color: C.text, fontSize: 12 }}>
+                <option value="">Area</option>
+                {AREAS.map(a => <option key={a} value={a}>{a}</option>)}
+              </select>
+              <input placeholder="Nome do documento" value={newTpl.document_name} onChange={e => setNewTpl(t => ({ ...t, document_name: e.target.value }))} style={{ padding: 6, borderRadius: 6, border: `1px solid ${C.border}`, background: C.card, color: C.text, fontSize: 12 }} />
+            </div>
+            <div style={{ display: 'flex', gap: 10, marginTop: 8, alignItems: 'center' }}>
+              <label style={{ fontSize: 11, color: C.t2, display: 'flex', alignItems: 'center', gap: 4 }}>
+                <input type="checkbox" checked={newTpl.is_critical} onChange={e => setNewTpl(t => ({ ...t, is_critical: e.target.checked }))} /> Critico (peso 2x)
+              </label>
+              <button onClick={async () => {
+                if (!newTpl.category_id || !newTpl.phase_name || !newTpl.area || !newTpl.document_name) return;
+                await cyclesApi.createTemplate(newTpl);
+                const t = await cyclesApi.kpiTemplates();
+                setKpiTemplates(t || []);
+                setNewTpl({ category_id: '', phase_name: '', area: '', document_name: '', is_critical: false });
+              }} style={{ marginLeft: 'auto', padding: '4px 14px', borderRadius: 6, fontSize: 11, fontWeight: 600, border: 'none', background: C.primary, color: '#fff', cursor: 'pointer' }}>Adicionar</button>
+            </div>
+          </div>
+
+          {/* Lista de templates */}
+          <div style={{ fontSize: 12, fontWeight: 600, color: C.t2, marginBottom: 8 }}>Templates cadastrados ({kpiTemplates.length})</div>
+          {kpiTemplates.length === 0 ? (
+            <div style={{ padding: 20, textAlign: 'center', color: C.t3, fontSize: 12 }}>Nenhum template cadastrado. Adicione acima.</div>
+          ) : (
+            <div style={{ maxHeight: 300, overflowY: 'auto' }}>
+              {kpiTemplates.map(t => (
+                <div key={t.id} style={{ padding: '8px 12px', borderBottom: `1px solid ${C.border}`, display: 'flex', alignItems: 'center', gap: 8, fontSize: 12 }}>
+                  <span style={{ color: C.t3, width: 90, flexShrink: 0 }}>{t.event_categories?.name || '-'}</span>
+                  <span style={{ color: C.t3, width: 70, flexShrink: 0 }}>{t.area}</span>
+                  <span style={{ color: C.text, flex: 1, fontWeight: 500 }}>{t.document_name}</span>
+                  <span style={{ color: C.t3, fontSize: 10 }}>{t.phase_name}</span>
+                  {t.is_critical && <span style={{ fontSize: 9, padding: '1px 6px', borderRadius: 99, background: '#ef444420', color: '#ef4444' }}>critico</span>}
+                  <button onClick={async () => { await cyclesApi.deleteTemplate(t.id); setKpiTemplates(prev => prev.filter(x => x.id !== t.id)); }} style={{ background: 'none', border: 'none', color: C.red, cursor: 'pointer', fontSize: 11 }}>{'\u2715'}</button>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Pesos de area */}
+          <div style={{ fontSize: 12, fontWeight: 600, color: C.t2, marginTop: 16, marginBottom: 8 }}>Pesos de area por categoria</div>
+          <div style={{ maxHeight: 200, overflowY: 'auto' }}>
+            {kpiWeights.map(w => (
+              <div key={w.id} style={{ padding: '6px 12px', borderBottom: `1px solid ${C.border}`, display: 'flex', alignItems: 'center', gap: 8, fontSize: 12 }}>
+                <span style={{ color: C.t3, width: 100, flexShrink: 0 }}>{w.event_categories?.name || '-'}</span>
+                <span style={{ color: C.text, flex: 1 }}>{w.area}</span>
+                <input type="number" min="0" max="10" step="1" value={w.weight} onChange={async (e) => {
+                  const val = parseFloat(e.target.value) || 1;
+                  setKpiWeights(prev => prev.map(x => x.id === w.id ? { ...x, weight: val } : x));
+                  await cyclesApi.updateAreaWeight(w.id, val);
+                }} style={{ width: 50, padding: 4, borderRadius: 4, border: `1px solid ${C.border}`, background: C.card, color: C.text, fontSize: 12, textAlign: 'center' }} />
+              </div>
+            ))}
+          </div>
+        </div>
       </div>
     );
   }
@@ -2786,6 +2882,9 @@ export default function Eventos() {
       {tab === 3 && renderGantt()}
       {tab === 4 && renderDetail()}
       {tab === 5 && renderKPIs()}
+
+      {/* KPI Config Modal */}
+      {renderKpiConfig()}
 
       {/* Modals */}
       {renderEventModal()}
