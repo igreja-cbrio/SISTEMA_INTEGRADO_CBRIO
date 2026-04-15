@@ -33,7 +33,11 @@ async function request(path, opts = {}) {
   }
   if (!res.ok) {
     const err = await res.json().catch(() => ({ error: 'Erro desconhecido' }));
-    throw new Error(err.error || `HTTP ${res.status}`);
+    const error = new Error(err.error || `HTTP ${res.status}`);
+    // Preserve all extra fields from error body (alreadyCheckedIn, volunteerName, etc.)
+    Object.assign(error, err);
+    error.status = res.status;
+    throw error;
   }
   return res.json();
 }

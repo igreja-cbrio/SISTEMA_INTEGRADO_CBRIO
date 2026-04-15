@@ -364,7 +364,43 @@ router.post('/check-ins', async (req, res) => {
       }).select().single();
 
     if (error) {
-      if (error.code === '23505') return res.status(409).json({ error: 'Check-in ja foi realizado', alreadyCheckedIn: true });
+      if (error.code === '23505') {
+        // Fetch volunteer name from the existing check-in for a better UX message
+        let volunteerName = null;
+        let checkedInAt = null;
+        let existingMethod = null;
+        try {
+          let existing = null;
+          if (schedule_id) {
+            const r = await supabase.from('vol_check_ins')
+              .select('checked_in_at, method, volunteer:vol_profiles(full_name), schedule:vol_schedules(volunteer_name)')
+              .eq('schedule_id', schedule_id).maybeSingle();
+            existing = r.data;
+            volunteerName = existing?.volunteer?.full_name || existing?.schedule?.volunteer_name || null;
+          } else if (volunteer_id && service_id) {
+            const r = await supabase.from('vol_check_ins')
+              .select('checked_in_at, method, volunteer:vol_profiles(full_name)')
+              .eq('volunteer_id', volunteer_id).eq('service_id', service_id)
+              .eq('is_unscheduled', true).maybeSingle();
+            existing = r.data;
+            volunteerName = existing?.volunteer?.full_name || null;
+          }
+          checkedInAt = existing?.checked_in_at || null;
+          existingMethod = existing?.method || null;
+          // Fallback: fetch name from vol_profiles if still null
+          if (!volunteerName && volunteer_id) {
+            const { data: v } = await supabase.from('vol_profiles').select('full_name').eq('id', volunteer_id).maybeSingle();
+            volunteerName = v?.full_name || null;
+          }
+        } catch {}
+        return res.status(409).json({
+          error: 'Check-in ja foi realizado',
+          alreadyCheckedIn: true,
+          volunteerName,
+          checkedInAt,
+          method: existingMethod,
+        });
+      }
       return res.status(400).json({ error: error.message });
     }
 

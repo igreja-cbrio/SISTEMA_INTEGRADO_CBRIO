@@ -39,56 +39,62 @@ export default function VolSelfCheckin() {
         return;
       }
 
-      // Try to check in via QR lookup using the profile's QR code
+      // Show the name immediately (used in both success and already states)
+      setResultName(profile.full_name);
+
+      // Try scheduled check-in first (if qr_code is set and lookup finds a schedule)
       if (profile.qr_code) {
         try {
           const lookup = await voluntariado.qrLookup(profile.qr_code);
           setServiceName(lookup.schedule?.service?.name || 'Culto');
 
-          if (lookup.isUnscheduled) {
-            // Unscheduled check-in
-            await voluntariado.checkIns.create({
-              volunteer_id: profile.id,
-              service_id: serviceId,
-              method: 'self_service',
-              is_unscheduled: true,
-            });
-            setResultName(profile.full_name);
-            setState('success');
-            return;
-          }
-
           if (lookup.schedule) {
-            await voluntariado.checkIns.create({
-              schedule_id: lookup.schedule.id,
-              volunteer_id: profile.id,
-              service_id: serviceId,
-              method: 'self_service',
-            });
-            setResultName(profile.full_name);
-            setState('success');
-            return;
+            try {
+              await voluntariado.checkIns.create({
+                schedule_id: lookup.schedule.id,
+                volunteer_id: profile.id,
+                service_id: serviceId,
+                method: 'self_service',
+              });
+              setState('success');
+              return;
+            } catch (ciErr: any) {
+              if (ciErr.alreadyCheckedIn || ciErr.status === 409) {
+                setState('already');
+                return;
+              }
+              throw ciErr;
+            }
           }
-        } catch (err: any) {
-          if (err.message?.includes('ja fez check-in') || err.message?.includes('ja foi realizado')) {
-            setResultName(profile.full_name);
+          // lookup.isUnscheduled = true → fall through to direct check-in below
+        } catch (lookupErr: any) {
+          // Duplicate check-in from qr-lookup path
+          if (lookupErr.alreadyCheckedIn || lookupErr.status === 409) {
             setState('already');
             return;
           }
+          // qr-lookup 404 or any other error → silently fall through to direct check-in
         }
       }
 
-      // Fallback: direct unscheduled check-in
-      await voluntariado.checkIns.create({
-        volunteer_id: profile.id,
-        service_id: serviceId,
-        method: 'self_service',
-        is_unscheduled: true,
-      });
-      setResultName(profile.full_name);
-      setState('success');
+      // Fallback: direct unscheduled check-in (works even without qr_code / schedule)
+      try {
+        await voluntariado.checkIns.create({
+          volunteer_id: profile.id,
+          service_id: serviceId,
+          method: 'self_service',
+          is_unscheduled: true,
+        });
+        setState('success');
+      } catch (ciErr: any) {
+        if (ciErr.alreadyCheckedIn || ciErr.status === 409) {
+          setState('already');
+        } else {
+          throw ciErr;
+        }
+      }
     } catch (err: any) {
-      if (err.message?.includes('ja') || err.message?.includes('already')) {
+      if (err.alreadyCheckedIn || err.status === 409) {
         setState('already');
       } else {
         setErrorMsg(err.message || 'Erro no check-in');
