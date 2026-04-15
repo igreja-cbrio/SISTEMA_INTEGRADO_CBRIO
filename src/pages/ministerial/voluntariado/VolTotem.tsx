@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
-import { Html5Qrcode } from 'html5-qrcode';
+import { Html5Qrcode, Html5QrcodeSupportedFormats } from 'html5-qrcode';
 import { QRCodeSVG } from 'qrcode.react';
 import { Button } from '@/components/ui/button';
 import { voluntariado } from '@/api';
@@ -107,11 +107,27 @@ export default function VolTotem() {
       await new Promise(r => setTimeout(r, 150));
       const el = document.getElementById(containerId);
       if (!el) return;
-      const scanner = new Html5Qrcode(containerId);
+      const scanner = new Html5Qrcode(containerId, {
+        verbose: false,
+        // So QR — evita tentar outros formatos e acelera a decodificacao
+        formatsToSupport: [Html5QrcodeSupportedFormats.QR_CODE],
+        // Native BarcodeDetector quando disponivel (Chrome/Edge/Safari 17+) — ~10x mais rapido
+        useBarCodeDetectorIfSupported: true,
+      });
       scannerRef.current = scanner;
       await scanner.start(
-        { facingMode: 'environment' },
-        { fps: 10, qrbox: { width: 300, height: 300 } },
+        {
+          facingMode: 'environment',
+          // Resolucao maior = QR menor detectado de mais longe
+          width: { ideal: 1280 },
+          height: { ideal: 720 },
+        },
+        {
+          fps: 30,
+          qrbox: { width: 300, height: 300 },
+          aspectRatio: 1,
+          disableFlip: true,
+        },
         handleQrScan,
         () => {}
       );
