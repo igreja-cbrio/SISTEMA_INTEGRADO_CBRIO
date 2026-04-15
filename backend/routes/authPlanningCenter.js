@@ -69,22 +69,29 @@ router.get('/callback', async (req, res) => {
     const callbackUrl = `${frontendUrl}/api/auth/planning-center/callback`;
 
     // ── 1. Exchange code for access token ────────────────────────────
+    // PC OAuth 2.0 expects application/x-www-form-urlencoded body and
+    // HTTP Basic Auth for client credentials (RFC 6749 §2.3.1).
+    const basicAuth = Buffer.from(`${clientId}:${clientSecret}`).toString('base64');
+    const tokenBody = new URLSearchParams({
+      grant_type: 'authorization_code',
+      code,
+      redirect_uri: callbackUrl,
+    });
+
     const tokenRes = await fetch('https://api.planningcenteronline.com/oauth/token', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        grant_type: 'authorization_code',
-        code,
-        client_id: clientId,
-        client_secret: clientSecret,
-        redirect_uri: callbackUrl,
-      }),
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+        Authorization: `Basic ${basicAuth}`,
+        Accept: 'application/json',
+      },
+      body: tokenBody.toString(),
     });
 
     if (!tokenRes.ok) {
       const body = await tokenRes.text();
       console.error('[PC OAuth] Token exchange failed:', tokenRes.status, body);
-      throw new Error('Failed to exchange authorization code');
+      throw new Error(`Failed to exchange authorization code (${tokenRes.status})`);
     }
 
     const tokenData = await tokenRes.json();
