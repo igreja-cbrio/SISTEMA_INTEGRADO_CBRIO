@@ -317,7 +317,11 @@ export default function Eventos() {
   const urlStatus = urlParams.get('status') || '';
   const urlEventId = urlParams.get('id') || '';
 
-  const [tab, setTab] = useState(urlStatus ? 1 : urlEventId ? 4 : 0); // 0=Home, 1=Lista, 4=Detail
+  const [tab, setTab] = useState(urlStatus ? 1 : urlEventId ? 4 : 0); // 0=Home, 1=Lista, 2=Kanban, 3=Gantt, 4=Detail, 5=KPIs
+  const [kpiData, setKpiData] = useState(null);
+  const [kpiTipo, setKpiTipo] = useState('all');
+  const [kpiEventDetail, setKpiEventDetail] = useState(null);
+  const [kpiLoading, setKpiLoading] = useState(false);
   const [eventList, setEventList] = useState([]);
   const [categories, setCategories] = useState([]);
   const [dash, setDash] = useState(null);
@@ -677,6 +681,187 @@ export default function Eventos() {
   // ═══════════════════════════════════════════════════════════
   // RENDER — KANBAN (dois níveis: fases + kanban por fase)
   // ═══════════════════════════════════════════════════════════
+  async function loadKpis(tipo) {
+    setKpiLoading(true);
+    try {
+      const params = tipo && tipo !== 'all' ? { tipo } : {};
+      const data = await cyclesApi.kpiCross(params);
+      setKpiData(data);
+    } catch (e) { console.error('KPI:', e); }
+    finally { setKpiLoading(false); }
+  }
+
+  async function loadKpiEventDetail(eventId) {
+    try {
+      const data = await cyclesApi.kpiEvento(eventId);
+      setKpiEventDetail(data);
+    } catch (e) { console.error('KPI evento:', e); }
+  }
+
+  function renderKPIs() {
+    const d = kpiData;
+    const CAT_COLORS = { marketing: '#00B39D', producao: '#6366f1', compras: '#3b82f6', financeiro: '#10b981', manutencao: '#f59e0b', limpeza: '#8b5cf6', cozinha: '#ec4899', adm: '#0ea5e9' };
+    const CAT_LABELS = { marketing: 'Marketing', producao: 'Producao', compras: 'Compras', financeiro: 'Financeiro', manutencao: 'Manutencao', limpeza: 'Limpeza', cozinha: 'Cozinha', adm: 'Administrativo' };
+    const scoreColor = (s) => s >= 80 ? '#10b981' : s >= 60 ? '#f59e0b' : s >= 40 ? '#ef4444' : '#6b7280';
+
+    // Detalhe de um evento
+    if (kpiEventDetail) {
+      const ev = kpiEventDetail;
+      const kpiVal = ev.kpi_evento?.kpi_evento || 0;
+      return (
+        <div>
+          <button onClick={() => setKpiEventDetail(null)} style={{ background: 'none', border: 'none', color: C.primary, cursor: 'pointer', fontSize: 13, fontWeight: 600, marginBottom: 16 }}>{'\u2190'} Voltar ao ranking</button>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 16, marginBottom: 20 }}>
+            <div style={{ width: 64, height: 64, borderRadius: '50%', background: `conic-gradient(${scoreColor(kpiVal)} ${kpiVal * 3.6}deg, var(--cbrio-border) 0deg)`, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              <div style={{ width: 48, height: 48, borderRadius: '50%', background: C.card, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 18, fontWeight: 800, color: scoreColor(kpiVal) }}>{kpiVal}</div>
+            </div>
+            <div>
+              <div style={{ fontSize: 18, fontWeight: 700, color: C.text }}>KPI do Evento</div>
+              <div style={{ fontSize: 12, color: C.t3 }}>{ev.kpi_evento?.total_docs || 0} documentos | {ev.kpi_evento?.total_areas || 0} areas</div>
+            </div>
+          </div>
+
+          {/* KPI por area */}
+          <div style={{ fontSize: 14, fontWeight: 700, color: C.text, marginBottom: 10 }}>Performance por Area</div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: 10, marginBottom: 20 }}>
+            {(ev.kpi_areas || []).map(a => (
+              <div key={a.area} style={{ background: C.card, borderRadius: 10, padding: 14, border: `1px solid ${C.border}` }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
+                  <span style={{ fontSize: 13, fontWeight: 600, color: CAT_COLORS[a.area] || C.text }}>{CAT_LABELS[a.area] || a.area}</span>
+                  <span style={{ fontSize: 16, fontWeight: 800, color: scoreColor(a.kpi_area) }}>{a.kpi_area || 0}</span>
+                </div>
+                <div style={{ height: 6, background: C.border, borderRadius: 3, marginBottom: 4 }}>
+                  <div style={{ height: '100%', borderRadius: 3, width: `${a.kpi_area || 0}%`, background: scoreColor(a.kpi_area), transition: 'width 0.3s' }} />
+                </div>
+                <div style={{ fontSize: 10, color: C.t3 }}>{a.docs_ok}/{a.total_docs} docs OK | {a.docs_atrasados} atrasados | {a.docs_pendentes} pendentes</div>
+              </div>
+            ))}
+          </div>
+
+          {/* Documentos individuais */}
+          <div style={{ fontSize: 14, fontWeight: 700, color: C.text, marginBottom: 10 }}>Documentos ({(ev.documentos || []).length})</div>
+          <div style={{ background: C.card, borderRadius: 10, border: `1px solid ${C.border}`, overflow: 'hidden' }}>
+            {(ev.documentos || []).length === 0 ? (
+              <div style={{ padding: 24, textAlign: 'center', color: C.t3, fontSize: 13 }}>Nenhum documento registrado</div>
+            ) : (
+              <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                <thead><tr style={{ background: 'var(--cbrio-table-header)' }}>
+                  <th style={{ padding: '8px 12px', textAlign: 'left', fontSize: 11, fontWeight: 600, color: C.t3, textTransform: 'uppercase' }}>Documento</th>
+                  <th style={{ padding: '8px 12px', textAlign: 'left', fontSize: 11, fontWeight: 600, color: C.t3, textTransform: 'uppercase' }}>Area</th>
+                  <th style={{ padding: '8px 12px', textAlign: 'center', fontSize: 11, fontWeight: 600, color: C.t3, textTransform: 'uppercase' }}>Prazo</th>
+                  <th style={{ padding: '8px 12px', textAlign: 'center', fontSize: 11, fontWeight: 600, color: C.t3, textTransform: 'uppercase' }}>Qualidade</th>
+                  <th style={{ padding: '8px 12px', textAlign: 'center', fontSize: 11, fontWeight: 600, color: C.t3, textTransform: 'uppercase' }}>Aprovado</th>
+                  <th style={{ padding: '8px 12px', textAlign: 'center', fontSize: 11, fontWeight: 600, color: C.t3, textTransform: 'uppercase' }}>Arquivo</th>
+                  <th style={{ padding: '8px 12px', textAlign: 'center', fontSize: 11, fontWeight: 600, color: C.t3, textTransform: 'uppercase' }}>Score</th>
+                </tr></thead>
+                <tbody>
+                  {(ev.documentos || []).map(doc => {
+                    const onTime = doc.delivered_at && doc.deadline_at ? new Date(doc.delivered_at) <= new Date(doc.deadline_at) : null;
+                    return (
+                      <tr key={doc.id} style={{ borderBottom: `1px solid ${C.border}` }}>
+                        <td style={{ padding: '10px 12px', fontSize: 13, fontWeight: 600, color: C.text }}>{doc.card_titulo}</td>
+                        <td style={{ padding: '10px 12px' }}><span style={{ fontSize: 11, padding: '2px 8px', borderRadius: 99, background: (CAT_COLORS[doc.area] || '#9ca3af') + '20', color: CAT_COLORS[doc.area] || '#9ca3af', fontWeight: 500 }}>{CAT_LABELS[doc.area] || doc.area}</span></td>
+                        <td style={{ padding: '10px 12px', textAlign: 'center' }}>{onTime === null ? <span style={{ color: C.t3 }}>-</span> : onTime ? <span style={{ color: '#10b981', fontWeight: 600 }}>No prazo</span> : <span style={{ color: '#ef4444', fontWeight: 600 }}>Atrasado</span>}</td>
+                        <td style={{ padding: '10px 12px', textAlign: 'center' }}><span style={{ fontSize: 11, color: doc.quality_rating === 'ok' ? '#10b981' : doc.quality_rating === 'reprovado' ? '#ef4444' : '#f59e0b' }}>{doc.quality_rating || '-'}</span></td>
+                        <td style={{ padding: '10px 12px', textAlign: 'center' }}>{doc.approved_by ? <span style={{ color: '#10b981' }}>Sim</span> : <span style={{ color: C.t3 }}>-</span>}</td>
+                        <td style={{ padding: '10px 12px', textAlign: 'center' }}>{doc.file_name ? <span style={{ color: '#10b981' }}>Sim</span> : <span style={{ color: C.t3 }}>-</span>}</td>
+                        <td style={{ padding: '10px 12px', textAlign: 'center', fontWeight: 800, color: scoreColor(doc.score || 0) }}>{doc.score || 0}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            )}
+          </div>
+        </div>
+      );
+    }
+
+    // Cross-eventos
+    return (
+      <div>
+        {/* Filtro */}
+        <div style={{ display: 'flex', gap: 8, marginBottom: 20, alignItems: 'center' }}>
+          {['all', 'serie', 'evento'].map(t => (
+            <button key={t} onClick={() => { setKpiTipo(t); loadKpis(t); }} style={{
+              padding: '8px 20px', borderRadius: 8, fontSize: 13, fontWeight: kpiTipo === t ? 700 : 400, cursor: 'pointer',
+              border: kpiTipo === t ? `2px solid ${C.primary}` : `1px solid ${C.border}`,
+              background: kpiTipo === t ? C.primaryBg : 'transparent', color: kpiTipo === t ? C.primary : C.t3,
+            }}>{t === 'all' ? 'Todos' : t === 'serie' ? 'Series' : 'Eventos'}</button>
+          ))}
+        </div>
+
+        {kpiLoading ? (
+          <div style={{ padding: 40, textAlign: 'center', color: C.t3 }}>Carregando KPIs...</div>
+        ) : !d ? (
+          <div style={{ padding: 40, textAlign: 'center', color: C.t3 }}>Clique em um filtro para carregar</div>
+        ) : (
+          <>
+            {/* KPI Medio */}
+            <div style={{ display: 'flex', gap: 16, marginBottom: 24, flexWrap: 'wrap' }}>
+              <div style={{ background: C.card, borderRadius: 14, padding: 20, border: `1px solid ${C.border}`, flex: '1 1 200px', textAlign: 'center' }}>
+                <div style={{ fontSize: 40, fontWeight: 800, color: scoreColor(d.kpi_medio) }}>{d.kpi_medio}</div>
+                <div style={{ fontSize: 13, color: C.t3 }}>KPI Medio Institucional</div>
+                <div style={{ fontSize: 11, color: C.t3, marginTop: 4 }}>{d.eventos?.length || 0} eventos com ciclo criativo</div>
+              </div>
+
+              {/* Top 3 areas */}
+              {(d.ranking_areas || []).slice(0, 3).map((a, i) => (
+                <div key={a.area} style={{ background: C.card, borderRadius: 14, padding: 16, border: `1px solid ${C.border}`, flex: '1 1 150px' }}>
+                  <div style={{ fontSize: 10, color: C.t3, textTransform: 'uppercase', fontWeight: 600, marginBottom: 4 }}>{i === 0 ? 'Melhor area' : `#${i + 1}`}</div>
+                  <div style={{ fontSize: 13, fontWeight: 700, color: CAT_COLORS[a.area] || C.text }}>{CAT_LABELS[a.area] || a.area}</div>
+                  <div style={{ fontSize: 24, fontWeight: 800, color: scoreColor(a.kpi) }}>{a.kpi}</div>
+                  <div style={{ fontSize: 10, color: C.t3 }}>{a.docs_ok}/{a.total_docs} docs OK</div>
+                </div>
+              ))}
+            </div>
+
+            {/* Ranking de areas */}
+            <div style={{ fontSize: 14, fontWeight: 700, color: C.text, marginBottom: 10 }}>Ranking de Areas</div>
+            <div style={{ background: C.card, borderRadius: 10, border: `1px solid ${C.border}`, marginBottom: 24, overflow: 'hidden' }}>
+              {(d.ranking_areas || []).map((a, i) => (
+                <div key={a.area} style={{ padding: '12px 16px', borderBottom: `1px solid ${C.border}`, display: 'flex', alignItems: 'center', gap: 12 }}>
+                  <span style={{ fontSize: 16, fontWeight: 800, color: C.t3, width: 24 }}>{i + 1}</span>
+                  <div style={{ width: 10, height: 10, borderRadius: '50%', background: CAT_COLORS[a.area] || C.t3, flexShrink: 0 }} />
+                  <span style={{ fontSize: 13, fontWeight: 600, color: C.text, flex: 1 }}>{CAT_LABELS[a.area] || a.area}</span>
+                  <div style={{ width: 120, height: 6, background: C.border, borderRadius: 3 }}>
+                    <div style={{ height: '100%', borderRadius: 3, width: `${a.kpi}%`, background: scoreColor(a.kpi), transition: 'width 0.3s' }} />
+                  </div>
+                  <span style={{ fontSize: 16, fontWeight: 800, color: scoreColor(a.kpi), width: 40, textAlign: 'right' }}>{a.kpi}</span>
+                </div>
+              ))}
+              {(d.ranking_areas || []).length === 0 && <div style={{ padding: 24, textAlign: 'center', color: C.t3, fontSize: 13 }}>Nenhum dado de KPI ainda</div>}
+            </div>
+
+            {/* Eventos */}
+            <div style={{ fontSize: 14, fontWeight: 700, color: C.text, marginBottom: 10 }}>Eventos ({(d.eventos || []).length})</div>
+            <div style={{ background: C.card, borderRadius: 10, border: `1px solid ${C.border}`, overflow: 'hidden' }}>
+              {(d.eventos || []).length === 0 ? (
+                <div style={{ padding: 24, textAlign: 'center', color: C.t3, fontSize: 13 }}>Nenhum evento com ciclo criativo encontrado</div>
+              ) : (d.eventos || []).sort((a, b) => (b.kpi_evento || 0) - (a.kpi_evento || 0)).map(ev => (
+                <div key={ev.event_id} onClick={() => loadKpiEventDetail(ev.event_id)} style={{ padding: '14px 16px', borderBottom: `1px solid ${C.border}`, display: 'flex', alignItems: 'center', gap: 12, cursor: 'pointer' }}
+                  onMouseEnter={e => e.currentTarget.style.background = C.bg} onMouseLeave={e => e.currentTarget.style.background = 'transparent'}>
+                  <div style={{ flex: 1 }}>
+                    <div style={{ fontSize: 14, fontWeight: 600, color: C.text }}>{ev.event_name}</div>
+                    <div style={{ fontSize: 11, color: C.t3, display: 'flex', gap: 8, marginTop: 2 }}>
+                      <span>{ev.category}</span>
+                      <span>{fmtDate(ev.date)}</span>
+                      <span>{ev.total_docs || 0} docs | {ev.docs_ok || 0} OK | {ev.docs_atrasados || 0} atrasados</span>
+                    </div>
+                  </div>
+                  <div style={{ width: 80, height: 6, background: C.border, borderRadius: 3 }}>
+                    <div style={{ height: '100%', borderRadius: 3, width: `${ev.kpi_evento || 0}%`, background: scoreColor(ev.kpi_evento || 0), transition: 'width 0.3s' }} />
+                  </div>
+                  <span style={{ fontSize: 20, fontWeight: 800, color: scoreColor(ev.kpi_evento || 0), width: 40, textAlign: 'right' }}>{ev.kpi_evento || 0}</span>
+                </div>
+              ))}
+            </div>
+          </>
+        )}
+      </div>
+    );
+  }
+
   function renderKanban() {
     const CAT = {
       adm:        { label: 'Administrativo', color: '#0ea5e9', bg: '#e0f2fe' },
@@ -2590,6 +2775,7 @@ export default function Eventos() {
         <button style={styles.tab(tab === 1)} onClick={() => setTab(1)}>Lista</button>
         <button style={styles.tab(tab === 2)} onClick={() => { setTab(2); if (!kanbanCycleData) loadKanban(); }}>Kanban</button>
         <button style={styles.tab(tab === 3)} onClick={() => { setTab(3); if (!kanbanCycleData) loadKanban(); }}>Gantt</button>
+        <button style={styles.tab(tab === 5)} onClick={() => { setTab(5); if (!kpiData) loadKpis(kpiTipo); }}>KPIs</button>
         {selectedEvent && <button style={styles.tab(tab === 4)} onClick={() => setTab(4)}>Detalhes</button>}
       </div>
 
@@ -2599,6 +2785,7 @@ export default function Eventos() {
       {tab === 2 && renderKanban()}
       {tab === 3 && renderGantt()}
       {tab === 4 && renderDetail()}
+      {tab === 5 && renderKPIs()}
 
       {/* Modals */}
       {renderEventModal()}
