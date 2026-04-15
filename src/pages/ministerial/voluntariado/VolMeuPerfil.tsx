@@ -5,10 +5,14 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
+import {
+  Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
+} from '@/components/ui/dialog';
 import { voluntariado } from '@/api';
 import { toast } from 'sonner';
 import {
   User, Mail, Phone, IdCard, Scan, Camera, SwitchCamera, Loader2, CheckCircle2, Save,
+  UserPlus, AlertCircle,
 } from 'lucide-react';
 import { useFaceDetection } from './hooks';
 
@@ -28,6 +32,15 @@ function useUpdateMe() {
   });
 }
 
+function useRegisterMember() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (data: { nome: string; sobrenome: string; cpf: string; celular: string }) =>
+      (voluntariado.me as any).registerMember(data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['vol', 'me'] }),
+  });
+}
+
 function useSaveMyFace() {
   const qc = useQueryClient();
   return useMutation({
@@ -40,6 +53,7 @@ function useSaveMyFace() {
 export default function VolMeuPerfil() {
   const { data: meData, isLoading } = useMe();
   const updateMe = useUpdateMe();
+  const registerMember = useRegisterMember();
   const saveFace = useSaveMyFace();
   const {
     videoRef, canvasRef, isLoading: faceLoading, isDetecting,
@@ -54,6 +68,13 @@ export default function VolMeuPerfil() {
   const [cameraActive, setCameraActive] = useState(false);
   const [faceStatus, setFaceStatus] = useState('');
 
+  // Dialog de cadastro de membro (quando o CPF nao existe em mem_membros)
+  const [memberDialogOpen, setMemberDialogOpen] = useState(false);
+  const [regNome, setRegNome] = useState('');
+  const [regSobrenome, setRegSobrenome] = useState('');
+  const [regCpf, setRegCpf] = useState('');
+  const [regCelular, setRegCelular] = useState('');
+
   const profile = meData?.profile;
   const hasFace = !!profile?.face_descriptor;
 
@@ -64,13 +85,50 @@ export default function VolMeuPerfil() {
     setEditMode(true);
   };
 
+  const openMemberDialog = (triedCpf: string) => {
+    // pre-preenche a partir do que o usuario ja tinha digitado
+    const [first, ...rest] = (fullName.trim() || profile?.full_name || '').split(/\s+/);
+    setRegNome(first || '');
+    setRegSobrenome(rest.join(' ') || '');
+    setRegCpf(triedCpf || cpf.replace(/\D/g, ''));
+    setRegCelular(phone.replace(/\D/g, '') || profile?.phone || '');
+    setMemberDialogOpen(true);
+  };
+
   const handleSave = () => {
     if (!fullName.trim()) return toast.error('Nome obrigatorio');
     updateMe.mutate(
       { full_name: fullName.trim(), phone: phone.replace(/\D/g, '') || undefined, cpf: cpf.replace(/\D/g, '') || undefined },
       {
         onSuccess: () => { toast.success('Perfil atualizado'); setEditMode(false); },
-        onError: () => toast.error('Erro ao atualizar'),
+        onError: (err: any) => {
+          if (err?.code === 'MEMBER_NOT_FOUND') {
+            openMemberDialog(err.cpf || cpf.replace(/\D/g, ''));
+            return;
+          }
+          toast.error(err?.message || 'Erro ao atualizar');
+        },
+      }
+    );
+  };
+
+  const handleRegisterMember = () => {
+    if (!regNome.trim()) return toast.error('Nome obrigatorio');
+    if (!regSobrenome.trim()) return toast.error('Sobrenome obrigatorio');
+    const cleanCpf = regCpf.replace(/\D/g, '');
+    if (cleanCpf.length !== 11) return toast.error('CPF invalido');
+    const cleanCel = regCelular.replace(/\D/g, '');
+    if (cleanCel.length < 10) return toast.error('Celular invalido');
+
+    registerMember.mutate(
+      { nome: regNome.trim(), sobrenome: regSobrenome.trim(), cpf: cleanCpf, celular: cleanCel },
+      {
+        onSuccess: () => {
+          toast.success('Cadastro realizado e perfil vinculado');
+          setMemberDialogOpen(false);
+          setEditMode(false);
+        },
+        onError: (err: any) => toast.error(err?.message || 'Erro ao cadastrar membro'),
       }
     );
   };
@@ -251,6 +309,94 @@ export default function VolMeuPerfil() {
           </div>
         </CardContent>
       </Card>
+
+      {/* Dialog de cadastro obrigatorio de membro */}
+      <Dialog
+        open={memberDialogOpen}
+        onOpenChange={(open) => { if (!registerMember.isPending) setMemberDialogOpen(open); }}
+      >
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <UserPlus className="h-5 w-5 text-[#00B39D]" /> Cadastro de membro
+            </DialogTitle>
+            <DialogDescription>
+              Esse CPF ainda nao esta cadastrado na membresia da CBRio. Preencha os dados
+              abaixo para concluir o cadastro e vincular ao seu perfil de voluntario.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="flex items-start gap-2 rounded-md border border-yellow-200 bg-yellow-50 dark:border-yellow-900/40 dark:bg-yellow-900/10 p-3 text-sm">
+            <AlertCircle className="h-4 w-4 text-yellow-600 mt-0.5 shrink-0" />
+            <p className="text-yellow-800 dark:text-yellow-300">
+              Todos os campos sao obrigatorios.
+            </p>
+          </div>
+
+          <div className="space-y-3">
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <Label>Nome</Label>
+                <Input
+                  value={regNome}
+                  onChange={(e) => setRegNome(e.target.value)}
+                  placeholder="Maria"
+                  disabled={registerMember.isPending}
+                />
+              </div>
+              <div>
+                <Label>Sobrenome</Label>
+                <Input
+                  value={regSobrenome}
+                  onChange={(e) => setRegSobrenome(e.target.value)}
+                  placeholder="Silva"
+                  disabled={registerMember.isPending}
+                />
+              </div>
+            </div>
+            <div>
+              <Label>CPF</Label>
+              <Input
+                value={regCpf}
+                onChange={(e) => setRegCpf(e.target.value)}
+                placeholder="000.000.000-00"
+                inputMode="numeric"
+                disabled={registerMember.isPending}
+              />
+            </div>
+            <div>
+              <Label>Celular</Label>
+              <Input
+                value={regCelular}
+                onChange={(e) => setRegCelular(e.target.value)}
+                placeholder="(21) 99999-9999"
+                inputMode="tel"
+                disabled={registerMember.isPending}
+              />
+            </div>
+          </div>
+
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setMemberDialogOpen(false)}
+              disabled={registerMember.isPending}
+            >
+              Cancelar
+            </Button>
+            <Button
+              onClick={handleRegisterMember}
+              disabled={registerMember.isPending}
+              className="gap-1.5 bg-[#00B39D] hover:bg-[#00B39D]/90"
+            >
+              {registerMember.isPending
+                ? <Loader2 className="h-4 w-4 animate-spin" />
+                : <UserPlus className="h-4 w-4" />}
+              Concluir cadastro
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

@@ -7,8 +7,10 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import {
-  CheckCircle2, XCircle, Loader2, ArrowLeft, MailCheck, UserPlus, IdCard,
+  CheckCircle2, XCircle, Loader2, ArrowLeft, MailCheck, UserPlus, IdCard, AlertTriangle, Wallet,
 } from 'lucide-react';
+import { playCheckinSound } from '@/lib/sounds';
+import MemberWalletDialog from '@/components/membresia/MemberWalletDialog';
 
 type State =
   | 'loading'      // avaliando sessao / carregando perfil
@@ -39,6 +41,7 @@ export default function VolSelfCheckin() {
   const [serviceName, setServiceName] = useState('');
   const [resultName, setResultName] = useState('');
   const [errorMsg, setErrorMsg] = useState('');
+  const [wasUnscheduled, setWasUnscheduled] = useState(false);
 
   // Fluxo nao autenticado
   const [cpf, setCpf] = useState('');
@@ -47,6 +50,7 @@ export default function VolSelfCheckin() {
   const [regEmail, setRegEmail] = useState('');
   const [regPhone, setRegPhone] = useState('');
   const [busy, setBusy] = useState(false);
+  const [walletDialogOpen, setWalletDialogOpen] = useState(false);
 
   useEffect(() => {
     if (authLoading) return;
@@ -83,12 +87,14 @@ export default function VolSelfCheckin() {
 
           if (lookup.schedule) {
             try {
-              await voluntariado.checkIns.create({
+              const r = await voluntariado.checkIns.create({
                 schedule_id: lookup.schedule.id,
                 volunteer_id: profile.id,
                 service_id: serviceId,
                 method: 'self_service',
               });
+              setWasUnscheduled(!!r?.isUnscheduled);
+              playCheckinSound();
               setState('success');
               return;
             } catch (ciErr: any) {
@@ -114,6 +120,8 @@ export default function VolSelfCheckin() {
           method: 'self_service',
           is_unscheduled: true,
         });
+        setWasUnscheduled(true);
+        playCheckinSound();
         setState('success');
       } catch (ciErr: any) {
         if (ciErr.alreadyCheckedIn || ciErr.status === 409) {
@@ -212,6 +220,22 @@ export default function VolSelfCheckin() {
               <CheckCircle2 className="h-20 w-20 text-green-400 mb-4" />
               <h2 className="text-2xl font-bold text-white">Check-in realizado!</h2>
               <p className="text-lg text-white/80 mt-2">{resultName}</p>
+              {wasUnscheduled && (
+                <div className="mt-5 w-full rounded-xl border border-yellow-500/40 bg-yellow-500/10 px-4 py-3 text-left">
+                  <div className="flex items-start gap-2">
+                    <AlertTriangle className="h-5 w-5 text-yellow-300 shrink-0 mt-0.5" />
+                    <div className="space-y-1">
+                      <p className="font-semibold text-yellow-200 text-sm">
+                        Voce nao estava escalado para hoje.
+                      </p>
+                      <p className="text-xs text-yellow-100/90 leading-relaxed">
+                        A lideranca aconselha que voce se escale nas proximas vezes
+                        para ajudar na gestao dos voluntarios da CBRio.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              )}
               <Button
                 className="mt-6 bg-[#00B39D] hover:bg-[#00B39D]/80"
                 onClick={() => navigate('/voluntariado/checkin')}
@@ -282,6 +306,17 @@ export default function VolSelfCheckin() {
                 >
                   {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Continuar'}
                 </Button>
+                <div className="pt-3 border-t border-white/10">
+                  <Button
+                    variant="outline"
+                    className="w-full gap-2 border-white/20 text-white bg-transparent hover:bg-white/10 min-h-[44px]"
+                    onClick={() => setWalletDialogOpen(true)}
+                    disabled={busy}
+                  >
+                    <Wallet className="h-4 w-4" />
+                    Ja sou membro — quero meu QR na wallet
+                  </Button>
+                </div>
                 <p className="text-[11px] text-white/40 text-center pt-2">
                   Ja tem conta? Faca login primeiro e escaneie novamente.
                 </p>
@@ -368,6 +403,12 @@ export default function VolSelfCheckin() {
           )}
         </CardContent>
       </Card>
+
+      <MemberWalletDialog
+        open={walletDialogOpen}
+        onOpenChange={setWalletDialogOpen}
+        initialCpf={cpf.replace(/\D+/g, '')}
+      />
     </div>
   );
 }

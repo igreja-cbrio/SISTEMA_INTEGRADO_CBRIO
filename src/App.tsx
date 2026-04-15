@@ -16,6 +16,14 @@ const queryClient = new QueryClient({
 // Quando há um novo deploy, o browser pode tentar carregar um chunk antigo
 // que não existe mais, causando tela branca. Esta função tenta recarregar
 // a página automaticamente na primeira falha para pegar os novos chunks.
+//
+// Mensagens cobertas por navegador:
+//   Chrome/Edge : "Failed to fetch dynamically imported module"
+//   Firefox     : "error loading dynamically imported module"
+//   Safari/iOS  : "Importing a module script failed" + "'text/html' is not a valid JavaScript MIME type"
+//   Webpack     : "Loading chunk X failed" / "ChunkLoadError"
+const CHUNK_ERROR_RE = /Loading chunk|ChunkLoadError|Failed to fetch dynamically imported module|error loading dynamically imported module|Importing a module script failed|valid JavaScript MIME type|Expected a JavaScript(?: \w+)? module script|Unexpected token '?<'?/i;
+
 function lazyWithRetry<T extends ComponentType<any>>(factory: () => Promise<{ default: T }>) {
   return lazy(async () => {
     const key = 'chunk-retry-' + factory.toString().slice(0, 50);
@@ -23,7 +31,7 @@ function lazyWithRetry<T extends ComponentType<any>>(factory: () => Promise<{ de
       return await factory();
     } catch (err: any) {
       const alreadyRetried = sessionStorage.getItem(key);
-      const isChunkError = /Loading chunk|ChunkLoadError|Failed to fetch dynamically imported module|Importing a module script failed/i.test(err?.message || '');
+      const isChunkError = CHUNK_ERROR_RE.test(err?.message || '');
       if (isChunkError && !alreadyRetried) {
         sessionStorage.setItem(key, '1');
         window.location.reload();
@@ -44,7 +52,7 @@ class ErrorBoundary extends Component<{ children: ReactNode }, { hasError: boole
   }
   componentDidCatch(error: Error) {
     // Se for chunk load error, tenta recarregar automaticamente
-    const isChunkError = /Loading chunk|ChunkLoadError|Failed to fetch dynamically imported module|Importing a module script failed/i.test(error?.message || '');
+    const isChunkError = CHUNK_ERROR_RE.test(error?.message || '');
     if (isChunkError && !sessionStorage.getItem('boundary-chunk-retry')) {
       sessionStorage.setItem('boundary-chunk-retry', '1');
       window.location.reload();

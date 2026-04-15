@@ -39,6 +39,33 @@ export function playNotificationSound() {
   } catch { /* audio not available */ }
 }
 
+/** Single "PLIM" — breve sino de confirmacao de check-in */
+export function playCheckinSound() {
+  try {
+    const ctx = getCtx();
+    // Alguns navegadores iniciam o AudioContext em estado "suspended";
+    // resume() precisa ser chamado apos gesto do usuario (o proprio clique
+    // que dispara o check-in vale como gesto)
+    if (ctx.state === 'suspended') ctx.resume().catch(() => {});
+    const t = ctx.currentTime;
+
+    // Tom principal com fade-out natural
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.type = 'sine';
+    // Sol agudo -> Do mais alto (cai levemente como um "plim")
+    osc.frequency.setValueAtTime(1568, t);        // G6
+    osc.frequency.exponentialRampToValueAtTime(2093, t + 0.08); // C7
+    gain.gain.setValueAtTime(0, t);
+    gain.gain.linearRampToValueAtTime(0.35, t + 0.015);
+    gain.gain.exponentialRampToValueAtTime(0.001, t + 0.45);
+    osc.start(t);
+    osc.stop(t + 0.5);
+  } catch { /* audio not available */ }
+}
+
 /** Ascending chime for task/solicitation completion */
 export function playSuccessSound() {
   try {
