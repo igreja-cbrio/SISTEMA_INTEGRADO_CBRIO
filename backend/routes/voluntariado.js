@@ -115,15 +115,29 @@ router.get('/me/wallet/google', async (req, res) => {
     const classId = `${issuerId}.cbrio_voluntario_v1`;
     const objectId = `${issuerId}.vol_${profile.id.replace(/-/g, '_')}`;
 
+    // ID legivel derivado do UUID do vol_profile (estavel, sem migration)
+    const voluntarioId = `CBR-${profile.id.replace(/-/g, '').slice(0, 8).toUpperCase()}`;
+
+    // Logo publica servida pelo frontend (Google busca pela internet para renderizar)
+    const frontendUrl = (process.env.FRONTEND_URL || (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : '')).replace(/\/+$/, '');
+    const logoUrl = frontendUrl ? `${frontendUrl}/logo-cbrio-text.png` : 'https://sistema-cbrio.vercel.app/logo-cbrio-text.png';
+
     const genericObject = {
       id: objectId,
       classId: classId,
       genericType: 'GENERIC_OTHER',
       hexBackgroundColor: '#00B39D',
+      logo: {
+        sourceUri: { uri: logoUrl },
+        contentDescription: { defaultValue: { language: 'pt-BR', value: 'CBRio' } },
+      },
       cardTitle: { defaultValue: { language: 'pt-BR', value: 'CBRio' } },
-      subheader: { defaultValue: { language: 'pt-BR', value: 'Voluntario' } },
+      subheader: { defaultValue: { language: 'pt-BR', value: 'NOME' } },
       header: { defaultValue: { language: 'pt-BR', value: profile.full_name || 'Voluntario' } },
-      barcode: { type: 'QR_CODE', value: profile.qr_code, alternateText: profile.qr_code },
+      textModulesData: [
+        { id: 'vol_id', header: 'VOLUNTARIO ID', body: voluntarioId },
+      ],
+      barcode: { type: 'QR_CODE', value: profile.qr_code, alternateText: voluntarioId },
       state: 'ACTIVE',
     };
 
@@ -136,7 +150,7 @@ router.get('/me/wallet/google', async (req, res) => {
     };
 
     const token = jwt.sign(claims, privateKey, { algorithm: 'RS256' });
-    res.json({ url: `https://pay.google.com/gp/v/save/${token}` });
+    res.json({ url: `https://pay.google.com/gp/v/save/${token}`, voluntarioId });
   } catch (err) {
     console.error('[Wallet] Google error:', err.message);
     res.status(500).json({ error: err.message });
