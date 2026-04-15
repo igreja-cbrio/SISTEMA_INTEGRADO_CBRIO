@@ -1,12 +1,13 @@
 const router = require('express').Router();
-const { authenticate, authorizeModule } = require('../middleware/auth');
+const { authenticate, authorize } = require('../middleware/auth');
 const { supabase } = require('../utils/supabase');
 const {
   getPCCredentials, fetchWithRetry, fetchAllPlans, fetchPlansInRange,
   processServiceType, upsertVolunteerQrCodes, upsertVolunteerProfiles, PC_SERVICES_BASE,
 } = require('../services/planningCenter');
 
-router.use(authenticate, authorizeModule('membresia', 1));
+// Sync do Planning Center e operacoes administrativas pesadas — apenas admin/diretor.
+router.use(authenticate, authorize('admin', 'diretor'));
 
 // ══════════════════════════════════════════════════════════════
 // SYNC — MANUAL (future + recent past)

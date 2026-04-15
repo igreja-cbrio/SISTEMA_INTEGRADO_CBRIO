@@ -44,6 +44,34 @@ router.get('/me', async (req, res) => {
   } catch (e) { res.status(500).json({ error: 'Erro ao buscar perfil do voluntario' }); }
 });
 
+// Save face descriptor for MY OWN volunteer profile (self-service enrollment)
+router.post('/me/face', async (req, res) => {
+  try {
+    const userId = req.user.userId;
+    const { descriptor, photo_url } = req.body;
+    if (!descriptor || !Array.isArray(descriptor)) {
+      return res.status(400).json({ error: 'descriptor obrigatorio' });
+    }
+
+    const { data: profile } = await supabase.from('vol_profiles')
+      .select('id').eq('auth_user_id', userId).maybeSingle();
+    if (!profile) {
+      return res.status(404).json({ error: 'Perfil de voluntario nao encontrado' });
+    }
+
+    const { data, error } = await supabase.rpc('vol_save_profile_face_descriptor', {
+      p_profile_id: profile.id,
+      descriptor,
+      photo_url: photo_url || null,
+    });
+    if (error) return res.status(400).json({ error: error.message });
+    res.json(data);
+  } catch (e) {
+    console.error('[Vol] save my face error:', e.message);
+    res.status(500).json({ error: 'Erro ao salvar reconhecimento facial' });
+  }
+});
+
 // Complete/update my volunteer profile
 router.put('/me', async (req, res) => {
   try {

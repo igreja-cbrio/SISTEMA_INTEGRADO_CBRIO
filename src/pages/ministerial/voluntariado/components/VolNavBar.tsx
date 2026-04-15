@@ -1,5 +1,5 @@
 import { useNavigate, useLocation } from 'react-router-dom';
-import { Home, QrCode, ClipboardCheck, Calendar, BarChart3, Settings, Monitor, Users, CalendarPlus, Church, CalendarOff, LayoutDashboard, List, ScanLine } from 'lucide-react';
+import { Home, QrCode, ClipboardCheck, Calendar, BarChart3, Settings, Monitor, Users, CalendarPlus, Church, CalendarOff, LayoutDashboard, List, ScanLine, User } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 
 // Staff navigation — all management tabs
@@ -20,21 +20,25 @@ const STAFF_NAV_ITEMS = [
 // Volunteer navigation — only their portal tabs
 const VOL_NAV_ITEMS = [
   { label: 'Meu Painel', icon: LayoutDashboard, path: '/voluntariado/checkin/painel' },
-  { label: 'Fazer Check-in', icon: ScanLine, path: '/voluntariado/checkin/checkin' },
+  { label: 'Check-in', icon: ScanLine, path: '/voluntariado/checkin/checkin' },
+  { label: 'Meu Perfil', icon: User, path: '/voluntariado/checkin/perfil' },
 ];
 
 export default function VolNavBar() {
   const navigate = useNavigate();
   const location = useLocation();
-  const { isVoluntario } = useAuth();
+  const { isAdmin, isColaborador } = useAuth();
 
-  const NAV_ITEMS = isVoluntario ? VOL_NAV_ITEMS : STAFF_NAV_ITEMS;
+  // Se o usuario nao e admin/colaborador, e um voluntario — mostra navegacao simples.
+  // Tambem, se a URL ja e de voluntario (/voluntariado/checkin/*), mostra navegacao simples.
+  const isSimpleView = !isAdmin && !isColaborador || location.pathname.startsWith('/voluntariado/checkin');
+  const NAV_ITEMS = isSimpleView ? VOL_NAV_ITEMS : STAFF_NAV_ITEMS;
 
   return (
     <div className="border-b border-border bg-card/50 mb-4 md:mb-6 -mx-4 md:-mx-6 px-2">
       <div className="flex gap-1 overflow-x-auto py-1 scrollbar-hide">
         {NAV_ITEMS.map(item => {
-          const basePath = isVoluntario ? '/voluntariado/checkin' : '/ministerial/voluntariado';
+          const basePath = isSimpleView ? '/voluntariado/checkin' : '/ministerial/voluntariado';
           const isActive = location.pathname === item.path ||
             (item.path !== basePath && location.pathname.startsWith(item.path));
           const Icon = item.icon;

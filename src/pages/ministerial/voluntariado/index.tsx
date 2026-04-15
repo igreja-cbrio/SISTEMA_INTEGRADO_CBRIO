@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Routes, Route, Navigate } from 'react-router-dom';
+import { Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { useAuth } from '@/contexts/AuthContext';
 import { voluntariado } from '@/api';
@@ -14,16 +14,25 @@ import VolTiposCulto from './VolTiposCulto';
 import VolScheduleBuilder from './VolScheduleBuilder';
 import VolDisponibilidade from './VolDisponibilidade';
 import VolMeuPainel from './VolMeuPainel';
+import VolMeuPerfil from './VolMeuPerfil';
 import VolProfileComplete from './VolProfileComplete';
 import VolLista from './VolLista';
 import VolScanTotem from './VolScanTotem';
 import VolNavBar from './components/VolNavBar';
 
 export default function Voluntariado() {
-  const { isVoluntario } = useAuth();
+  const { isAdmin, isColaborador } = useAuth();
+  const location = useLocation();
 
-  // Volunteers see their portal (check-in + my schedules + availability)
-  if (isVoluntario) {
+  // Se URL começa com /voluntariado/checkin → portal do voluntario SEMPRE,
+  // independente do role (VolunteerShell ja foi aplicada pelo App.tsx).
+  const isVolunteerRoute = location.pathname.startsWith('/voluntariado/checkin');
+
+  // Usuarios sem permissoes de gestao (nao-admin, nao-colaborador) veem
+  // sempre o portal simples, mesmo em /ministerial/voluntariado.
+  const shouldShowVolunteerPortal = isVolunteerRoute || (!isAdmin && !isColaborador);
+
+  if (shouldShowVolunteerPortal) {
     return <VolunteerPortal />;
   }
 
@@ -92,6 +101,7 @@ function VolunteerPortal() {
         <Route index element={<Navigate to="painel" replace />} />
         <Route path="painel" element={<VolMeuPainel />} />
         <Route path="checkin" element={<VolScanTotem />} />
+        <Route path="perfil" element={<VolMeuPerfil />} />
         <Route path="*" element={<Navigate to="painel" replace />} />
       </Routes>
     </div>
