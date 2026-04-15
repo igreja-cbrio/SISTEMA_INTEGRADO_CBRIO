@@ -42,6 +42,142 @@ function calcularNivelServico(ultimoCheckinDate) {
   return 'ausente';
 }
 
+// ── QR Lookup (identidade do membro) ──
+
+// GET /api/membresia/qr-lookup/:token
+// Resolve o token do QR de identidade → perfil resumido do membro.
+// Usado pelo scanner do staff ("crachá digital"): ao escanear o QR
+// do membro, apresenta cartão com dados essenciais + handles para
+// ações futuras (inscrição em evento, etc.).
+//
+// O token vem da tabela mem_qrcodes (mapeamento token→cpf gravado
+// quando o membro gera o passe da wallet). Com o CPF resolvemos o
+// registro em mem_membros ou, como fallback, em mem_cadastros_pendentes.
+router.get('/qr-lookup/:token', async (req, res) => {
+  try {
+    const token = String(req.params.token || '').trim();
+    if (!token || token.length < 8 || token.length > 64) {
+      return res.status(400).json({ error: 'Token invalido' });
+    }
+
+    const { data: mapping } = await supabase
+      .from('mem_qrcodes')
+      .select('cpf')
+      .eq('token', token)
+      .maybeSingle();
+
+    if (!mapping || !mapping.cpf) {
+      return res.status(404).json({ error: 'QR nao encontrado' });
+    }
+
+    // Marca uso (opcional, nao-critico)
+    supabase
+      .from('mem_qrcodes')
+      .update({ last_seen_at: new Date().toISOString() })
+      .eq('token', token)
+      .then(() => {}, () => {});
+
+    // 1) Tenta membro ativo em mem_membros
+    const { data: membro } = await supabase
+      .from('mem_membros')
+      .select(`
+        id, nome, foto_url, status, email, telefone, data_nascimento, cpf,
+        endereco, bairro, cidade, estado_civil,
+        familia:mem_familias(id, nome)
+      `)
+      .eq('cpf', mapping.cpf)
+      .eq('active', true)
+      .maybeSingle();
+
+    if (membro) {
+      // Enriquecer com dados "cartão de identidade":
+      // - grupo de conexão atual
+      // - ministérios ativos
+      // - última contribuição (para nível de generosidade)
+      // - último check-in (para nível de serviço)
+      const [grupoAtualRes, ministeriosRes, ultContribRes, ultCheckinRes] = await Promise.all([
+        supabase
+          .from('mem_grupo_membros')
+          .select('grupo:mem_grupos(id, nome, categoria, local, dia_semana, horario)')
+          .eq('membro_id', membro.id)
+          .is('saiu_em', null)
+          .maybeSingle(),
+        supabase
+          .from('mem_voluntarios')
+          .select('ministerio:mem_ministerios(id, nome, cor)')
+          .eq('membro_id', membro.id)
+          .is('ate', null),
+        supabase
+          .from('mem_contribuicoes')
+          .select('data')
+          .eq('membro_id', membro.id)
+          .order('data', { ascending: false })
+          .limit(1)
+          .maybeSingle(),
+        supabase
+          .from('mem_checkins')
+          .select('data')
+          .eq('membro_id', membro.id)
+          .order('data', { ascending: false })
+          .limit(1)
+          .maybeSingle(),
+      ]);
+
+      const ultimaContribuicao = ultContribRes?.data?.data || null;
+      const ultimoCheckin = ultCheckinRes?.data?.data || null;
+      const ministerios = (ministeriosRes?.data || [])
+        .map((v) => v.ministerio)
+        .filter(Boolean);
+
+      return res.json({
+        found: true,
+        pending: false,
+        membro: {
+          id: membro.id,
+          nome: membro.nome,
+          foto_url: membro.foto_url,
+          status: membro.status,
+          email: membro.email,
+          telefone: membro.telefone,
+          data_nascimento: membro.data_nascimento,
+          cpf: membro.cpf,
+          endereco: membro.endereco,
+          bairro: membro.bairro,
+          cidade: membro.cidade,
+          estado_civil: membro.estado_civil,
+          familia: membro.familia || null,
+          grupo_atual: grupoAtualRes?.data?.grupo || null,
+          ministerios,
+          ultima_contribuicao: ultimaContribuicao,
+          nivel_generosidade: calcularNivelGenerosidade(ultimaContribuicao),
+          ultimo_checkin: ultimoCheckin,
+          nivel_servico: calcularNivelServico(ultimoCheckin),
+        },
+      });
+    }
+
+    // 2) Fallback: cadastro pendente
+    const { data: pendente } = await supabase
+      .from('mem_cadastros_pendentes')
+      .select('id, nome, foto_url, email, telefone, data_nascimento, cpf, endereco, bairro, cidade, estado_civil, status, created_at')
+      .eq('cpf', mapping.cpf)
+      .maybeSingle();
+
+    if (pendente) {
+      return res.json({
+        found: true,
+        pending: true,
+        cadastro: pendente,
+      });
+    }
+
+    return res.status(404).json({ error: 'Cadastro nao encontrado' });
+  } catch (e) {
+    console.error('[MEMBRESIA] qr-lookup error:', e.message);
+    res.status(500).json({ error: 'Erro ao consultar QR' });
+  }
+});
+
 // ── Membros ──
 
 // GET /api/membresia/membros

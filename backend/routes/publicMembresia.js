@@ -302,6 +302,18 @@ function memberIdFromCpf(cpfLimpo) {
   return `CBR-M-${hash}`;
 }
 
+// Registra o mapeamento token → CPF para permitir lookup reverso quando
+// o staff escaneia o QR. Idempotente (upsert por token).
+async function registerQrToken(token, cpfLimpo) {
+  try {
+    await supabase
+      .from('mem_qrcodes')
+      .upsert({ token, cpf: cpfLimpo }, { onConflict: 'token' });
+  } catch (err) {
+    console.error('[PUBLIC MEM WALLET] registerQrToken falhou:', err.message);
+  }
+}
+
 // Busca cadastro por CPF+DOB em mem_membros e, como fallback, em mem_cadastros_pendentes
 // Retorna { found, nome, pending } — resposta neutra quando nao encontra
 async function lookupCadastro(cpfLimpo, dataNascimento) {
@@ -368,8 +380,11 @@ router.post('/wallet/qr-token', cadastroLimiter, async (req, res) => {
     const r = await lookupCadastro(cleanCpf, data_nascimento);
     if (!r.found) return res.status(404).json({ error: 'Cadastro nao encontrado' });
 
+    const qr = memberQrToken(cleanCpf);
+    await registerQrToken(qr, cleanCpf);
+
     res.json({
-      qr: memberQrToken(cleanCpf),
+      qr,
       memberId: memberIdFromCpf(cleanCpf),
       nome: r.nome,
     });
@@ -403,6 +418,7 @@ router.post('/wallet/google', cadastroLimiter, async (req, res) => {
     const jwt = require('jsonwebtoken');
     const qrToken = memberQrToken(cleanCpf);
     const memberId = memberIdFromCpf(cleanCpf);
+    await registerQrToken(qrToken, cleanCpf);
 
     const classId = `${issuerId}.cbrio_membro_v1`;
     // objectId precisa ser unico por passe — hash do CPF mantem estabilidade sem expor PII
