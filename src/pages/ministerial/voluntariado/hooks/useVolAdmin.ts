@@ -2,6 +2,15 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { voluntariado } from '@/api';
 import type { VolProfile, VolUserRole } from '../types';
 
+// All vol_profiles with their team memberships. 5-min stale cache.
+export function useVolunteersPool() {
+  return useQuery({
+    queryKey: ['vol', 'volunteers-pool'],
+    queryFn: () => voluntariado.volunteersPool(),
+    staleTime: 5 * 60 * 1000,
+  });
+}
+
 interface UserWithRoles {
   profile: VolProfile;
   roles: VolUserRole[];

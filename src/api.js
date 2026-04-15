@@ -690,6 +690,8 @@ export const voluntariado = {
   syncAuto: () => post('/voluntariado/sync-auto'),
   // Sync logs
   syncLogs: () => get('/voluntariado/sync-logs'),
+  // Volunteers pool (all vol_profiles with team memberships, cached 5 min on client)
+  volunteersPool: () => get('/voluntariado/volunteers-pool'),
   // Teams (legacy — unique names from schedules)
   teams: () => get('/voluntariado/teams'),
   // Teams Management (formal CRUD)

@@ -276,6 +276,28 @@ router.delete('/roles/:profileId/:role', async (req, res) => {
 });
 
 // ══════════════════════════════════════════════════════════════
+// VOLUNTEERS POOL — all active vol_profiles with team memberships
+// Used by the schedule builder popup. Cached on the client (5 min staleTime).
+// ══════════════════════════════════════════════════════════════
+router.get('/volunteers-pool', async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('vol_profiles')
+      .select(`
+        id, full_name, email, avatar_url, planning_center_id, qr_code,
+        team_members:vol_team_members(
+          id, team_id, position_id,
+          team:vol_teams(id, name, color),
+          position:vol_positions(id, name)
+        )
+      `)
+      .order('full_name');
+    if (error) return res.status(400).json({ error: error.message });
+    res.json(data);
+  } catch (e) { res.status(500).json({ error: 'Erro ao listar pool de voluntarios' }); }
+});
+
+// ══════════════════════════════════════════════════════════════
 // SERVICES
 // ══════════════════════════════════════════════════════════════
 router.get('/services', async (req, res) => {

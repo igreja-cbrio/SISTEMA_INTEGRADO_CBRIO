@@ -1,7 +1,7 @@
 export * from './useVolServices';
 export * from './useVolSchedules';
 export * from './useVolSync';
-export * from './useVolAdmin';
+export * from './useVolAdmin'; // includes useVolunteersPool
 export * from './useVolTeams';
 export * from './useVolQrCodes';
 export * from './useVolCheckInHistory';
