@@ -90,7 +90,7 @@ function TodosList() {
     sync.mutate(undefined, {
       onSuccess: (data: any) => {
         queryClient.invalidateQueries({ queryKey: ['vol', 'volunteers-pool'] });
-        toast.success(`Sincronizado: ${data.services ?? 0} cultos, ${data.newSchedules ?? 0} escalas`);
+        toast.success(`Sincronizado: ${data.volunteersSynced ?? 0} voluntarios, ${data.services ?? 0} cultos, ${data.newSchedules ?? 0} escalas`);
       },
       onError: (err: any) => toast.error(err.message || 'Erro ao sincronizar'),
     });

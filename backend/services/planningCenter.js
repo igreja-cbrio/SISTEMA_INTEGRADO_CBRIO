@@ -193,10 +193,12 @@ async function processServiceType(supabase, serviceType, plans, credentials) {
       }
 
       if (personId && volunteerName !== 'Sem nome') {
+        const email = personData?.attributes?.email_address || personData?.attributes?.email || null;
         volunteers.set(personId, {
           planning_center_person_id: personId,
           volunteer_name: volunteerName,
           avatar_url: avatarUrl,
+          email,
         });
       }
     }
@@ -229,6 +231,33 @@ async function upsertVolunteerQrCodes(supabase, volunteersMap) {
   return codes.length;
 }
 
+// ── Batch upsert vol_profiles (the volunteer pool) ──────────────────────────
+async function upsertVolunteerProfiles(supabase, volunteersMap) {
+  const entries = Array.from(volunteersMap.values());
+  if (entries.length === 0) return 0;
+
+  const profiles = entries.map(v => ({
+    planning_center_id: v.planning_center_person_id,
+    full_name: v.volunteer_name,
+    email: v.email || null,
+    avatar_url: v.avatar_url || null,
+    origem: 'planning_center',
+    allocation_status: 'active',
+  }));
+
+  let upserted = 0;
+  const batchSize = 100;
+  for (let i = 0; i < profiles.length; i += batchSize) {
+    const batch = profiles.slice(i, i + batchSize);
+    const { error, count } = await supabase
+      .from('vol_profiles')
+      .upsert(batch, { onConflict: 'planning_center_id', ignoreDuplicates: false, count: 'exact' });
+    if (error) console.error('[PC] upsert vol_profiles error:', error.message);
+    else upserted += (count ?? batch.length);
+  }
+  return upserted;
+}
+
 module.exports = {
   STATUS_PRIORITY,
   STATUS_MAP,
@@ -242,4 +271,5 @@ module.exports = {
   getVolunteerName,
   processServiceType,
   upsertVolunteerQrCodes,
+  upsertVolunteerProfiles,
 };

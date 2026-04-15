@@ -3,7 +3,7 @@ const { authenticate, authorizeModule } = require('../middleware/auth');
 const { supabase } = require('../utils/supabase');
 const {
   getPCCredentials, fetchWithRetry, fetchAllPlans, fetchPlansInRange,
-  processServiceType, upsertVolunteerQrCodes, PC_SERVICES_BASE,
+  processServiceType, upsertVolunteerQrCodes, upsertVolunteerProfiles, PC_SERVICES_BASE,
 } = require('../services/planningCenter');
 
 router.use(authenticate, authorizeModule('membresia', 1));
@@ -36,6 +36,7 @@ router.post('/sync', async (req, res) => {
     }
 
     const qrCount = await upsertVolunteerQrCodes(supabase, allVolunteers);
+    const profilesCount = await upsertVolunteerProfiles(supabase, allVolunteers);
     const avatarsImported = Array.from(allVolunteers.values()).filter(v => v.avatar_url).length;
 
     await supabase.from('vol_sync_logs').insert({
@@ -43,7 +44,7 @@ router.post('/sync', async (req, res) => {
       qrcodes_generated: qrCount, status: 'success', triggered_by: req.user.userId,
     });
 
-    res.json({ success: true, services: totalServices, newSchedules: totalSchedules, qrCodesGenerated: qrCount, avatarsImported, totalMembersFound, totalMembersProcessed });
+    res.json({ success: true, services: totalServices, newSchedules: totalSchedules, qrCodesGenerated: qrCount, volunteersSynced: profilesCount, avatarsImported, totalMembersFound, totalMembersProcessed });
   } catch (e) {
     console.error('[VOL SYNC] Error:', e.message);
     res.status(500).json({ error: 'Erro durante sincronizacao' });
@@ -78,13 +79,14 @@ router.post('/sync-historical', async (req, res) => {
     }
 
     const qrCount = await upsertVolunteerQrCodes(supabase, allVolunteers);
+    const profilesCount = await upsertVolunteerProfiles(supabase, allVolunteers);
 
     await supabase.from('vol_sync_logs').insert({
       sync_type: 'historical', services_synced: totalServices, schedules_synced: totalSchedules,
       qrcodes_generated: qrCount, status: 'success', triggered_by: req.user.userId,
     });
 
-    res.json({ success: true, services: totalServices, schedules: totalSchedules, qrCodesGenerated: qrCount });
+    res.json({ success: true, services: totalServices, schedules: totalSchedules, qrCodesGenerated: qrCount, volunteersSynced: profilesCount });
   } catch (e) {
     console.error('[VOL SYNC HIST] Error:', e.message);
     res.status(500).json({ error: 'Erro durante sincronizacao historica' });
@@ -125,6 +127,7 @@ router.post('/sync-auto', async (req, res) => {
     }
 
     const qrCount = await upsertVolunteerQrCodes(supabase, allVolunteers);
+    const profilesCount = await upsertVolunteerProfiles(supabase, allVolunteers);
     const avatarsImported = Array.from(allVolunteers.values()).filter(v => v.avatar_url).length;
 
     await supabase.from('vol_sync_logs').insert({
@@ -132,7 +135,7 @@ router.post('/sync-auto', async (req, res) => {
       qrcodes_generated: qrCount, status: 'success',
     });
 
-    res.json({ success: true, services: totalServices, schedules: totalSchedules, qrCodesGenerated: qrCount, avatarsImported, totalMembersFound, totalMembersProcessed, timestamp: new Date().toISOString() });
+    res.json({ success: true, services: totalServices, schedules: totalSchedules, qrCodesGenerated: qrCount, volunteersSynced: profilesCount, avatarsImported, totalMembersFound, totalMembersProcessed, timestamp: new Date().toISOString() });
   } catch (e) {
     console.error('[VOL SYNC AUTO] Error:', e.message);
     res.status(500).json({ error: 'Erro durante sincronizacao automatica' });
