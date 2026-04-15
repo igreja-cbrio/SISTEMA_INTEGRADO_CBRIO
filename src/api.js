@@ -610,6 +610,17 @@ export const arquivei = {
 
 // ── Voluntariado ──
 export const voluntariado = {
+  // Volunteer Portal (self-service)
+  me: {
+    get: () => get('/voluntariado/me'),
+    update: (data) => put('/voluntariado/me', data),
+    schedules: () => get('/voluntariado/my-schedules'),
+    respondSchedule: (id, status) => post(`/voluntariado/my-schedules/${id}/respond`, { status }),
+    availability: () => get('/voluntariado/my-availability'),
+    addAvailability: (data) => post('/voluntariado/my-availability', data),
+    removeAvailability: (id) => del(`/voluntariado/my-availability/${id}`),
+  },
+  selfCheckinQr: (serviceId) => get(`/voluntariado/self-checkin-qr/${serviceId}`),
   // Profiles
   profiles: {
     list: () => get('/voluntariado/profiles'),

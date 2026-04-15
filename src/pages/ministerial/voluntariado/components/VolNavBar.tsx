@@ -1,19 +1,26 @@
 import { useNavigate, useLocation } from 'react-router-dom';
-import { Home, QrCode, ClipboardCheck, Calendar, BarChart3, Settings, Monitor, Users, CalendarPlus, Church, CalendarOff } from 'lucide-react';
+import { Home, QrCode, ClipboardCheck, Calendar, BarChart3, Settings, Monitor, Users, CalendarPlus, Church, CalendarOff, LayoutDashboard } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 
-const ALL_NAV_ITEMS = [
-  { label: 'Inicio', icon: Home, path: '/ministerial/voluntariado', volOnly: false },
-  { label: 'Check-in', icon: ClipboardCheck, path: '/ministerial/voluntariado/checkin', volOnly: true },
-  { label: 'Modo Totem', icon: Monitor, path: '/voluntariado/totem', volOnly: true },
-  { label: 'Montar Escala', icon: CalendarPlus, path: '/ministerial/voluntariado/montar-escala', volOnly: false },
-  { label: 'Escalas', icon: Calendar, path: '/ministerial/voluntariado/escalas', volOnly: false },
-  { label: 'Equipes', icon: Users, path: '/ministerial/voluntariado/equipes', volOnly: false },
-  { label: 'Tipos de Culto', icon: Church, path: '/ministerial/voluntariado/tipos-culto', volOnly: false },
-  { label: 'Disponibilidade', icon: CalendarOff, path: '/ministerial/voluntariado/disponibilidade', volOnly: false },
-  { label: 'QR Codes', icon: QrCode, path: '/ministerial/voluntariado/qrcodes', volOnly: false },
-  { label: 'Relatorios', icon: BarChart3, path: '/ministerial/voluntariado/relatorios', volOnly: false },
-  { label: 'Admin', icon: Settings, path: '/ministerial/voluntariado/admin', volOnly: false },
+// Staff navigation — all management tabs
+const STAFF_NAV_ITEMS = [
+  { label: 'Inicio', icon: Home, path: '/ministerial/voluntariado' },
+  { label: 'Check-in', icon: ClipboardCheck, path: '/ministerial/voluntariado/checkin' },
+  { label: 'Montar Escala', icon: CalendarPlus, path: '/ministerial/voluntariado/montar-escala' },
+  { label: 'Escalas', icon: Calendar, path: '/ministerial/voluntariado/escalas' },
+  { label: 'Equipes', icon: Users, path: '/ministerial/voluntariado/equipes' },
+  { label: 'Tipos de Culto', icon: Church, path: '/ministerial/voluntariado/tipos-culto' },
+  { label: 'Disponibilidade', icon: CalendarOff, path: '/ministerial/voluntariado/disponibilidade' },
+  { label: 'QR Codes', icon: QrCode, path: '/ministerial/voluntariado/qrcodes' },
+  { label: 'Relatorios', icon: BarChart3, path: '/ministerial/voluntariado/relatorios' },
+  { label: 'Admin', icon: Settings, path: '/ministerial/voluntariado/admin' },
+];
+
+// Volunteer navigation — only their portal tabs
+const VOL_NAV_ITEMS = [
+  { label: 'Meu Painel', icon: LayoutDashboard, path: '/voluntariado/checkin/painel' },
+  { label: 'Check-in', icon: ClipboardCheck, path: '/voluntariado/checkin/checkin' },
+  { label: 'Modo Totem', icon: Monitor, path: '/voluntariado/totem' },
 ];
 
 export default function VolNavBar() {
@@ -21,16 +28,15 @@ export default function VolNavBar() {
   const location = useLocation();
   const { isVoluntario } = useAuth();
 
-  const NAV_ITEMS = isVoluntario
-    ? ALL_NAV_ITEMS.filter(item => item.volOnly)
-    : ALL_NAV_ITEMS.filter(item => item.label !== 'Modo Totem');
+  const NAV_ITEMS = isVoluntario ? VOL_NAV_ITEMS : STAFF_NAV_ITEMS;
 
   return (
     <div className="border-b border-border bg-card/50 mb-4 md:mb-6 -mx-4 md:-mx-6 px-2">
       <div className="flex gap-1 overflow-x-auto py-1 scrollbar-hide">
         {NAV_ITEMS.map(item => {
+          const basePath = isVoluntario ? '/voluntariado/checkin' : '/ministerial/voluntariado';
           const isActive = location.pathname === item.path ||
-            (item.path !== '/ministerial/voluntariado' && location.pathname.startsWith(item.path));
+            (item.path !== basePath && location.pathname.startsWith(item.path));
           const Icon = item.icon;
           return (
             <button
