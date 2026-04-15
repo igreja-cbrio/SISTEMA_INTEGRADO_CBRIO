@@ -1,5 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
+import { AnimatePresence, motion } from 'framer-motion';
 import { StatisticsCard } from '../../components/ui/statistics-card';
+import { MultistepFormShell } from '../../components/ui/multistep-form';
 import { useAuth } from '../../contexts/AuthContext';
 import { membresia } from '../../api';
 import {
