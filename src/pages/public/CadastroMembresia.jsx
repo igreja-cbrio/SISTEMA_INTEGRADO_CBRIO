@@ -2,6 +2,8 @@ import { useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import { cadastroPublico } from '../../api';
 import { LoginShapesBackground } from '../../components/ui/shape-landing-hero';
 import { MultistepFormShell } from '../../components/ui/multistep-form';
+import MemberWalletPass from '../../components/membresia/MemberWalletPass';
+import MemberWalletDialog from '../../components/membresia/MemberWalletDialog';
 
 // ── Helpers de máscara ──
 function soDigitos(v) { return (v || '').toString().replace(/\D+/g, ''); }
@@ -211,6 +213,7 @@ export default function CadastroMembresia() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [sent, setSent] = useState(false);
+  const [walletDialogOpen, setWalletDialogOpen] = useState(false);
 
   // Foto
   const [fotoPreview, setFotoPreview] = useState(null);
@@ -395,7 +398,7 @@ export default function CadastroMembresia() {
 
         {sent ? (
           <div style={{
-            padding: '36px 20px', textAlign: 'center',
+            padding: '32px 20px', textAlign: 'center',
             background: '#00B39D18', border: '1px solid #00B39D40', borderRadius: 14,
           }}>
             <div style={{
@@ -410,6 +413,19 @@ export default function CadastroMembresia() {
             <p style={{ fontSize: 13, color: '#a3a3a3', marginTop: 10, lineHeight: 1.5 }}>
               Obrigado por se conectar com a CBRio. Em breve nossa equipe entrará em contato com você.
             </p>
+
+            {/* QR de membro — adicionar na wallet do dispositivo */}
+            <div style={{
+              marginTop: 24, paddingTop: 20,
+              borderTop: '1px solid rgba(255,255,255,0.08)',
+            }}>
+              <MemberWalletPass
+                cpf={soDigitos(form.cpf)}
+                dataNascimento={form.data_nascimento}
+                title="Seu QR de membro CBRio"
+                inline
+              />
+            </div>
           </div>
         ) : showFamiliaStep ? (
           <div style={{
@@ -617,9 +633,34 @@ export default function CadastroMembresia() {
                 </div>
               )}
             </MultistepFormShell>
+
+            {/* "Ja fiz meu cadastro e quero meu QR de membro" */}
+            <div style={{
+              marginTop: 20, padding: '16px 0 0',
+              borderTop: '1px solid rgba(255,255,255,0.06)',
+              textAlign: 'center',
+            }}>
+              <button
+                type="button"
+                onClick={() => setWalletDialogOpen(true)}
+                style={{
+                  background: 'transparent', border: 'none',
+                  color: '#00B39D', fontSize: 13, fontWeight: 600,
+                  cursor: 'pointer', textDecoration: 'underline',
+                  padding: 4,
+                }}
+              >
+                Ja fiz meu cadastro e quero meu QR de membro
+              </button>
+            </div>
           </>
         )}
       </div>
+
+      <MemberWalletDialog
+        open={walletDialogOpen}
+        onOpenChange={setWalletDialogOpen}
+      />
     </div>
   );
 }

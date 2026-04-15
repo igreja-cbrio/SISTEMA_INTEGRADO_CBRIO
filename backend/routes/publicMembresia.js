@@ -1,5 +1,6 @@
 const router = require('express').Router();
 const multer = require('multer');
+const crypto = require('crypto');
 const rateLimit = require('express-rate-limit');
 const { supabase } = require('../utils/supabase');
 const { notificar } = require('../services/notificar');
@@ -272,6 +273,176 @@ router.post('/cadastro', cadastroLimiter, async (req, res) => {
   } catch (e) {
     console.error('[PUBLIC CADASTRO] exception:', e.message);
     res.status(500).json({ error: 'Erro ao processar cadastro.' });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════
+//  WALLET PASS (Google Wallet / QR) — membros
+// ═══════════════════════════════════════════════════════════════════
+// Arquitetura: token do QR eh deterministico (SHA256 CPF + salt), entao
+// nao precisa de coluna nova em mem_membros. Quem conhece CPF + data de
+// nascimento pode gerar/regenerar o passe — usado em 2 fluxos:
+//   1. Logo apos o cadastro (CadastroMembresia.jsx) — temos CPF+DOB
+//   2. "Ja fiz meu cadastro" — usuario digita CPF+DOB para recuperar
+
+function primeiroNome(nomeCompleto) {
+  if (!nomeCompleto) return 'Membro';
+  const parts = String(nomeCompleto).trim().split(/\s+/);
+  return parts[0] || 'Membro';
+}
+
+function memberQrToken(cpfLimpo) {
+  const salt = process.env.MEM_QR_SALT || 'cbrio-mem-v1';
+  return crypto.createHash('sha256').update(salt + cpfLimpo).digest('hex').slice(0, 24);
+}
+
+function memberIdFromCpf(cpfLimpo) {
+  // ID legivel derivado do hash (estavel, nao expoe CPF)
+  const hash = crypto.createHash('sha256').update(cpfLimpo).digest('hex').slice(0, 8).toUpperCase();
+  return `CBR-M-${hash}`;
+}
+
+// Busca cadastro por CPF+DOB em mem_membros e, como fallback, em mem_cadastros_pendentes
+// Retorna { found, nome, pending } — resposta neutra quando nao encontra
+async function lookupCadastro(cpfLimpo, dataNascimento) {
+  if (!cpfLimpo || cpfLimpo.length !== 11 || !dataNascimento) {
+    return { found: false };
+  }
+
+  // mem_membros (ativo)
+  const { data: membro } = await supabase
+    .from('mem_membros')
+    .select('id, nome, data_nascimento, active')
+    .eq('cpf', cpfLimpo)
+    .eq('active', true)
+    .maybeSingle();
+  if (membro && membro.data_nascimento === dataNascimento) {
+    return { found: true, nome: membro.nome, pending: false };
+  }
+
+  // mem_cadastros_pendentes (ainda nao aprovado)
+  const { data: pendente } = await supabase
+    .from('mem_cadastros_pendentes')
+    .select('id, nome, data_nascimento')
+    .eq('cpf', cpfLimpo)
+    .maybeSingle();
+  if (pendente && pendente.data_nascimento === dataNascimento) {
+    return { found: true, nome: pendente.nome, pending: true };
+  }
+
+  return { found: false };
+}
+
+// POST /api/public/membresia/wallet/verify
+// Body: { cpf, data_nascimento } — valida se existe cadastro com esse par.
+// Usado pelo fluxo "Ja fiz meu cadastro" antes de oferecer o botao da wallet.
+router.post('/wallet/verify', cadastroLimiter, async (req, res) => {
+  try {
+    const { cpf, data_nascimento } = req.body || {};
+    const cleanCpf = soDigitos(cpf);
+    if (!cpfValido(cleanCpf)) return res.status(400).json({ error: 'CPF invalido' });
+    if (!data_nascimento) return res.status(400).json({ error: 'Data de nascimento obrigatoria' });
+
+    const r = await lookupCadastro(cleanCpf, data_nascimento);
+    if (!r.found) {
+      // Resposta neutra — nao revela se CPF existe com DOB diferente
+      return res.json({ found: false });
+    }
+    res.json({ found: true, nome: primeiroNome(r.nome), pending: r.pending });
+  } catch (e) {
+    console.error('[PUBLIC MEM WALLET] verify error:', e.message);
+    res.status(500).json({ error: 'Erro ao verificar cadastro' });
+  }
+});
+
+// POST /api/public/membresia/wallet/qr-token
+// Body: { cpf, data_nascimento } — retorna o token do QR para renderizar
+// inline (fallback iPhone — salva como imagem da foto).
+router.post('/wallet/qr-token', cadastroLimiter, async (req, res) => {
+  try {
+    const { cpf, data_nascimento } = req.body || {};
+    const cleanCpf = soDigitos(cpf);
+    if (!cpfValido(cleanCpf)) return res.status(400).json({ error: 'CPF invalido' });
+    if (!data_nascimento) return res.status(400).json({ error: 'Data de nascimento obrigatoria' });
+
+    const r = await lookupCadastro(cleanCpf, data_nascimento);
+    if (!r.found) return res.status(404).json({ error: 'Cadastro nao encontrado' });
+
+    res.json({
+      qr: memberQrToken(cleanCpf),
+      memberId: memberIdFromCpf(cleanCpf),
+      nome: r.nome,
+    });
+  } catch (e) {
+    console.error('[PUBLIC MEM WALLET] qr-token error:', e.message);
+    res.status(500).json({ error: 'Erro ao gerar QR' });
+  }
+});
+
+// POST /api/public/membresia/wallet/google
+// Body: { cpf, data_nascimento } — retorna URL do Google Wallet (Android)
+router.post('/wallet/google', cadastroLimiter, async (req, res) => {
+  try {
+    const issuerId = process.env.GOOGLE_WALLET_ISSUER_ID;
+    const serviceAccountEmail = process.env.GOOGLE_WALLET_SERVICE_ACCOUNT_EMAIL;
+    const rawKey = process.env.GOOGLE_WALLET_PRIVATE_KEY || '';
+    const privateKey = rawKey.replace(/\\n/g, '\n');
+
+    if (!issuerId || !serviceAccountEmail || !privateKey) {
+      return res.status(503).json({ error: 'Google Wallet nao configurado' });
+    }
+
+    const { cpf, data_nascimento } = req.body || {};
+    const cleanCpf = soDigitos(cpf);
+    if (!cpfValido(cleanCpf)) return res.status(400).json({ error: 'CPF invalido' });
+    if (!data_nascimento) return res.status(400).json({ error: 'Data de nascimento obrigatoria' });
+
+    const r = await lookupCadastro(cleanCpf, data_nascimento);
+    if (!r.found) return res.status(404).json({ error: 'Cadastro nao encontrado' });
+
+    const jwt = require('jsonwebtoken');
+    const qrToken = memberQrToken(cleanCpf);
+    const memberId = memberIdFromCpf(cleanCpf);
+
+    const classId = `${issuerId}.cbrio_membro_v1`;
+    // objectId precisa ser unico por passe — hash do CPF mantem estabilidade sem expor PII
+    const objectId = `${issuerId}.mem_${qrToken}`;
+
+    const frontendUrl = (process.env.FRONTEND_URL || (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : '')).replace(/\/+$/, '');
+    const logoUrl = frontendUrl ? `${frontendUrl}/logo-cbrio-text.png` : 'https://sistema-cbrio.vercel.app/logo-cbrio-text.png';
+
+    const genericObject = {
+      id: objectId,
+      classId,
+      genericType: 'GENERIC_OTHER',
+      hexBackgroundColor: '#00B39D',
+      logo: {
+        sourceUri: { uri: logoUrl },
+        contentDescription: { defaultValue: { language: 'pt-BR', value: 'CBRio' } },
+      },
+      cardTitle: { defaultValue: { language: 'pt-BR', value: 'CBRio' } },
+      subheader: { defaultValue: { language: 'pt-BR', value: 'MEMBRO' } },
+      header: { defaultValue: { language: 'pt-BR', value: r.nome || 'Membro' } },
+      textModulesData: [
+        { id: 'membro_id', header: 'MEMBRO ID', body: memberId },
+      ],
+      barcode: { type: 'QR_CODE', value: qrToken, alternateText: memberId },
+      state: 'ACTIVE',
+    };
+
+    const claims = {
+      iss: serviceAccountEmail,
+      aud: 'google',
+      typ: 'savetowallet',
+      iat: Math.floor(Date.now() / 1000),
+      payload: { genericObjects: [genericObject] },
+    };
+
+    const token = jwt.sign(claims, privateKey, { algorithm: 'RS256' });
+    res.json({ url: `https://pay.google.com/gp/v/save/${token}`, memberId });
+  } catch (err) {
+    console.error('[PUBLIC MEM WALLET] google error:', err.message);
+    res.status(500).json({ error: err.message });
   }
 });
 

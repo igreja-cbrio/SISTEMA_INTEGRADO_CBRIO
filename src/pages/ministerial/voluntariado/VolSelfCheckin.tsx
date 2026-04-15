@@ -7,9 +7,10 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import {
-  CheckCircle2, XCircle, Loader2, ArrowLeft, MailCheck, UserPlus, IdCard, AlertTriangle,
+  CheckCircle2, XCircle, Loader2, ArrowLeft, MailCheck, UserPlus, IdCard, AlertTriangle, Wallet,
 } from 'lucide-react';
 import { playCheckinSound } from '@/lib/sounds';
+import MemberWalletDialog from '@/components/membresia/MemberWalletDialog';
 
 type State =
   | 'loading'      // avaliando sessao / carregando perfil
@@ -49,6 +50,7 @@ export default function VolSelfCheckin() {
   const [regEmail, setRegEmail] = useState('');
   const [regPhone, setRegPhone] = useState('');
   const [busy, setBusy] = useState(false);
+  const [walletDialogOpen, setWalletDialogOpen] = useState(false);
 
   useEffect(() => {
     if (authLoading) return;
@@ -304,6 +306,17 @@ export default function VolSelfCheckin() {
                 >
                   {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Continuar'}
                 </Button>
+                <div className="pt-3 border-t border-white/10">
+                  <Button
+                    variant="outline"
+                    className="w-full gap-2 border-white/20 text-white bg-transparent hover:bg-white/10 min-h-[44px]"
+                    onClick={() => setWalletDialogOpen(true)}
+                    disabled={busy}
+                  >
+                    <Wallet className="h-4 w-4" />
+                    Ja sou membro — quero meu QR na wallet
+                  </Button>
+                </div>
                 <p className="text-[11px] text-white/40 text-center pt-2">
                   Ja tem conta? Faca login primeiro e escaneie novamente.
                 </p>
@@ -390,6 +403,12 @@ export default function VolSelfCheckin() {
           )}
         </CardContent>
       </Card>
+
+      <MemberWalletDialog
+        open={walletDialogOpen}
+        onOpenChange={setWalletDialogOpen}
+        initialCpf={cpf.replace(/\D+/g, '')}
+      />
     </div>
   );
 }

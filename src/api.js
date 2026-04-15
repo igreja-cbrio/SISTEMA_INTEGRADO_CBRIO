@@ -568,6 +568,43 @@ export const cadastroPublico = {
     }
     return res.json();
   },
+  // ── QR Code/Wallet do membro (publico, sem auth) ──
+  walletVerify: async (cpf, data_nascimento) => {
+    const res = await fetch(`${API}/public/membresia/wallet/verify`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ cpf, data_nascimento }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || `HTTP ${res.status}`);
+    }
+    return res.json();
+  },
+  walletQrToken: async (cpf, data_nascimento) => {
+    const res = await fetch(`${API}/public/membresia/wallet/qr-token`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ cpf, data_nascimento }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || `HTTP ${res.status}`);
+    }
+    return res.json();
+  },
+  walletGoogle: async (cpf, data_nascimento) => {
+    const res = await fetch(`${API}/public/membresia/wallet/google`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ cpf, data_nascimento }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || `HTTP ${res.status}`);
+    }
+    return res.json();
+  },
 };
 
 async function requestFile(path, formData) {
