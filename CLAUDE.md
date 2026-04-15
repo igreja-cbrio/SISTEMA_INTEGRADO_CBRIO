@@ -277,6 +277,144 @@ ANTHROPIC_API_KEY
 CRON_SECRET
 ```
 
+## Eventos — Arquitetura de KPIs (a implementar)
+
+Arquitetura aprovada em discussão (15/04/2026) para metrificação do módulo
+de Eventos. **NÃO implementada ainda — aguardando sinal do usuário.**
+
+### Princípio central (rollup hierárquico)
+
+Cada documento entregue em cada fase alimenta o KPI da área; a soma dos
+KPIs das áreas forma o KPI do evento; a agregação cross-eventos forma o
+KPI institucional. **A unidade atômica de medição é o documento.**
+
+```
+Nível 4: Institucional (cross-eventos)   ← média dos eventos
+Nível 3: Evento                          ← média ponderada das áreas
+Nível 2: Área (dentro do evento)         ← média ponderada dos docs
+Nível 1: Documento (score 0-100)         ← unidade atômica
+```
+
+### Nível 1 — Score do documento (0-100)
+
+| Critério | Peso | Fonte |
+|----------|------|-------|
+| Entrega no prazo | 40pts | `delivered_at <= deadline_at` |
+| Aprovado | 30pts | `approved_by IS NOT NULL` |
+| Qualidade OK | 20pts | `quality_rating = 'ok'` |
+| Documento anexado | 10pts | `file_name IS NOT NULL` |
+
+Documentos críticos (`is_critical = true`) pesam 2x na área.
+
+### Nível 2 — KPI da área
+
+`KPI_AREA = Σ(score_doc × peso_doc) / Σ(peso_doc)` dentro de um evento.
+
+### Nível 3 — KPI do evento
+
+`KPI_EVENTO = Σ(KPI_AREA × peso_area) / Σ(peso_area)`
+
+Pesos sugeridos de área (configuráveis por categoria de evento via
+`event_area_weights`):
+- Produção: 3
+- Marketing, Logística, Financeiro: 2
+- Cozinha, Limpeza, Manutenção: 1
+
+### Nível 4 — KPI institucional
+
+Dashboard cross-eventos: média no período, ranking de áreas cross-eventos,
+ranking de responsáveis, evolução temporal.
+
+### Mudanças de schema necessárias
+
+```sql
+-- 1. Template de documentos esperados por fase+área+categoria
+CREATE TABLE event_document_templates (
+  id uuid PRIMARY KEY,
+  category_id uuid REFERENCES event_categories(id),
+  phase_name text NOT NULL,
+  area text NOT NULL,
+  document_name text NOT NULL,
+  is_critical boolean DEFAULT false,
+  is_required boolean DEFAULT true,
+  expected_format text,
+  description text,
+  sort_order int DEFAULT 0
+);
+
+-- 2. Campos de scoring em card_completions
+ALTER TABLE card_completions
+  ADD COLUMN delivered_at timestamptz,
+  ADD COLUMN deadline_at timestamptz,
+  ADD COLUMN approved_by uuid REFERENCES auth.users(id),
+  ADD COLUMN approved_at timestamptz,
+  ADD COLUMN quality_rating text CHECK (quality_rating IN ('ok','incompleto','reprovado')),
+  ADD COLUMN score int,
+  ADD COLUMN weight numeric DEFAULT 1;
+
+-- 3. Pesos de área por categoria de evento
+CREATE TABLE event_area_weights (
+  category_id uuid REFERENCES event_categories(id),
+  area text NOT NULL,
+  weight numeric DEFAULT 1,
+  PRIMARY KEY (category_id, area)
+);
+
+-- 4. Views de agregação
+CREATE VIEW vw_event_area_kpi AS
+  SELECT event_id, area,
+    SUM(score * weight) / NULLIF(SUM(weight), 0) AS kpi_area,
+    COUNT(*) AS total_docs,
+    SUM(CASE WHEN score >= 70 THEN 1 ELSE 0 END) AS docs_ok,
+    SUM(CASE WHEN delivered_at > deadline_at THEN 1 ELSE 0 END) AS docs_atrasados
+  FROM card_completions
+  GROUP BY event_id, area;
+
+CREATE VIEW vw_event_kpi AS
+  SELECT a.event_id,
+    SUM(a.kpi_area * COALESCE(w.weight, 1)) /
+      NULLIF(SUM(COALESCE(w.weight, 1)), 0) AS kpi_evento
+  FROM vw_event_area_kpi a
+  LEFT JOIN events e ON e.id = a.event_id
+  LEFT JOIN event_area_weights w
+    ON w.category_id = e.category_id AND w.area = a.area
+  GROUP BY a.event_id;
+```
+
+### Fluxo operacional
+
+1. Admin configura templates de documento por categoria de evento
+2. Ao criar evento, sistema gera cards automaticamente dos templates
+3. Área entrega → anexa arquivo + informa qualidade
+4. Líder aprova → `approved_by` + `approved_at` preenchidos
+5. Score recalculado automaticamente (trigger ou backend)
+6. Dashboard reflete em tempo real via views
+
+### Dashboard (3 abas + drill-down)
+
+```
+/eventos/kpis
+├─ Institucional   → KPI médio, ranking cross-eventos
+├─ Por Evento      → lista de eventos com KPI_evento
+│   └─ Detalhe     → cards de áreas → lista de docs + score
+└─ Por Área        → performance cross-eventos de cada área
+```
+
+### Perguntas pendentes antes de implementar
+
+1. Escala de score: 0-100 ou A/B/C/D/F? (sugerido: 0-100)
+2. Pesos do score: manter 40/30/20/10 ou ajustar?
+3. Templates iniciais: genéricos ou por categoria (Culto/Conferência/Retiro)?
+4. Aprovador: sempre responsável da área ou papel "supervisor" separado?
+5. Escopo PR: tudo junto ou dividir (schema → dashboard)?
+
+### Lacunas adicionais identificadas
+
+- `event_expenses` não linka com `cycle_phase_tasks` (despesas isoladas)
+- Voluntariado/escalas sem FK com eventos
+- Patrimônio/logística sem integração com eventos
+- `reopened_count` ausente em cards (para medir rework)
+
 ## Contexto do projeto
 
 Sistema ERP interno da CBRio (Igreja). Stack: React 18 + Vite +

@@ -263,8 +263,10 @@ export default function VolTotem() {
 
   const handleCheckinError = (err: any, afterReset: () => void) => {
     const msg = err.message || 'Erro no check-in';
-    if (msg.includes('ja') || msg.includes('already') || msg.includes('realizado')) {
-      setResult({ name: result?.name || '' });
+    const isDuplicate = err.alreadyCheckedIn || err.status === 409
+      || msg.includes('ja') || msg.includes('already') || msg.includes('realizado');
+    if (isDuplicate) {
+      setResult({ name: err.volunteerName || result?.name || '' });
       setState('already');
     } else {
       setErrorMsg(msg);
