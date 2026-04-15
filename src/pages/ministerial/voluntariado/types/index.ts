@@ -20,9 +20,10 @@ export interface VolUserRole {
 
 export interface VolService {
   id: string;
-  planning_center_id: string;
+  planning_center_id: string | null;
   name: string;
   service_type_name: string | null;
+  service_type_id: string | null;
   scheduled_at: string;
   created_at: string;
   updated_at: string;
@@ -32,11 +33,15 @@ export interface VolSchedule {
   id: string;
   service_id: string;
   volunteer_id: string | null;
-  planning_center_person_id: string;
+  planning_center_person_id: string | null;
   volunteer_name: string;
+  team_id: string | null;
   team_name: string | null;
+  position_id: string | null;
   position_name: string | null;
   confirmation_status: 'confirmed' | 'pending' | 'declined' | 'scheduled' | null;
+  source: 'planning_center' | 'manual' | 'auto_rotation';
+  notes: string | null;
   created_at: string;
   service?: VolService;
   check_in?: VolCheckIn | null;
@@ -107,4 +112,71 @@ export interface SyncResult {
   totalMembersFound?: number;
   totalMembersProcessed?: number;
   error?: string;
+}
+
+// ── Schedule Management Types ──────────────────────────────────────
+
+export interface VolServiceType {
+  id: string;
+  name: string;
+  description: string | null;
+  recurrence_day: number | null;
+  recurrence_time: string | null;
+  is_active: boolean;
+  color: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface VolTeam {
+  id: string;
+  name: string;
+  description: string | null;
+  color: string | null;
+  leader_profile_id: string | null;
+  is_active: boolean;
+  sort_order: number;
+  created_at: string;
+  updated_at: string;
+  leader?: { id: string; full_name: string; avatar_url: string | null } | null;
+  positions?: VolPosition[];
+  members?: { count: number }[];
+}
+
+export interface VolPosition {
+  id: string;
+  team_id: string;
+  name: string;
+  description: string | null;
+  min_volunteers: number;
+  max_volunteers: number | null;
+  is_active: boolean;
+  sort_order: number;
+  created_at: string;
+  team?: { id: string; name: string } | null;
+}
+
+export interface VolTeamMember {
+  id: string;
+  team_id: string;
+  position_id: string | null;
+  volunteer_profile_id: string | null;
+  planning_center_person_id: string | null;
+  volunteer_name: string;
+  is_active: boolean;
+  joined_at: string;
+  created_at: string;
+  team?: { id: string; name: string; color: string | null } | null;
+  position?: { id: string; name: string } | null;
+  profile?: { id: string; full_name: string; avatar_url: string | null; planning_center_id: string | null } | null;
+}
+
+export interface VolAvailability {
+  id: string;
+  volunteer_profile_id: string | null;
+  planning_center_person_id: string | null;
+  unavailable_from: string;
+  unavailable_to: string;
+  reason: string | null;
+  created_at: string;
 }

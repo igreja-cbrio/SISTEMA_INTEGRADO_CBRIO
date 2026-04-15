@@ -622,15 +622,32 @@ export const voluntariado = {
     add: (profile_id, role) => post('/voluntariado/roles', { profile_id, role }),
     remove: (profileId, role) => del(`/voluntariado/roles/${profileId}/${role}`),
   },
+  // Service Types (recurring templates)
+  serviceTypes: {
+    list: () => get('/voluntariado/service-types'),
+    create: (data) => post('/voluntariado/service-types', data),
+    update: (id, data) => put(`/voluntariado/service-types/${id}`, data),
+    remove: (id) => del(`/voluntariado/service-types/${id}`),
+    generate: (id, weeks) => post(`/voluntariado/service-types/${id}/generate`, { weeks }),
+  },
   // Services
   services: {
     list: () => get('/voluntariado/services'),
     upcoming: () => get('/voluntariado/services/upcoming'),
     today: () => get('/voluntariado/services/today'),
+    create: (data) => post('/voluntariado/services', data),
+    update: (id, data) => put(`/voluntariado/services/${id}`, data),
+    remove: (id) => del(`/voluntariado/services/${id}`),
   },
   // Schedules
   schedules: {
     list: (params) => get('/voluntariado/schedules' + (params ? '?' + new URLSearchParams(params) : '')),
+    create: (data) => post('/voluntariado/schedules', data),
+    update: (id, data) => put(`/voluntariado/schedules/${id}`, data),
+    remove: (id) => del(`/voluntariado/schedules/${id}`),
+    bulk: (service_id, assignments) => post('/voluntariado/schedules/bulk', { service_id, assignments }),
+    copy: (from_service_id, to_service_id) => post('/voluntariado/schedules/copy', { from_service_id, to_service_id }),
+    autoFill: (service_id, team_id) => post('/voluntariado/schedules/auto-fill', { service_id, team_id }),
   },
   // Check-ins
   checkIns: {
@@ -658,8 +675,36 @@ export const voluntariado = {
   syncAuto: () => post('/voluntariado/sync-auto'),
   // Sync logs
   syncLogs: () => get('/voluntariado/sync-logs'),
-  // Teams
+  // Teams (legacy — unique names from schedules)
   teams: () => get('/voluntariado/teams'),
+  // Teams Management (formal CRUD)
+  teamsManage: {
+    list: () => get('/voluntariado/teams-manage'),
+    create: (data) => post('/voluntariado/teams-manage', data),
+    update: (id, data) => put(`/voluntariado/teams-manage/${id}`, data),
+    remove: (id) => del(`/voluntariado/teams-manage/${id}`),
+    importFromSchedules: () => post('/voluntariado/teams-manage/import-from-schedules'),
+  },
+  // Positions (within teams)
+  positions: {
+    list: (params) => get('/voluntariado/positions' + (params ? '?' + new URLSearchParams(params) : '')),
+    create: (data) => post('/voluntariado/positions', data),
+    update: (id, data) => put(`/voluntariado/positions/${id}`, data),
+    remove: (id) => del(`/voluntariado/positions/${id}`),
+  },
+  // Team Members
+  teamMembers: {
+    list: (params) => get('/voluntariado/team-members' + (params ? '?' + new URLSearchParams(params) : '')),
+    create: (data) => post('/voluntariado/team-members', data),
+    update: (id, data) => put(`/voluntariado/team-members/${id}`, data),
+    remove: (id) => del(`/voluntariado/team-members/${id}`),
+  },
+  // Availability
+  availability: {
+    list: (params) => get('/voluntariado/availability' + (params ? '?' + new URLSearchParams(params) : '')),
+    create: (data) => post('/voluntariado/availability', data),
+    remove: (id) => del(`/voluntariado/availability/${id}`),
+  },
   // Training
   trainingCheckins: {
     list: (params) => get('/voluntariado/training-checkins' + (params ? '?' + new URLSearchParams(params) : '')),

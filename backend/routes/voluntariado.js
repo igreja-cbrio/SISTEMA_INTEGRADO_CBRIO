@@ -437,4 +437,532 @@ router.post('/pc/get-person', async (req, res) => {
   } catch (e) { res.status(500).json({ error: 'Erro ao buscar pessoa no PC' }); }
 });
 
+// ══════════════════════════════════════════════════════════════
+// SERVICE TYPES (recurring service templates)
+// ══════════════════════════════════════════════════════════════
+router.get('/service-types', async (req, res) => {
+  try {
+    const { data, error } = await supabase.from('vol_service_types').select('*').order('name');
+    if (error) return res.status(400).json({ error: error.message });
+    res.json(data);
+  } catch (e) { res.status(500).json({ error: 'Erro ao listar tipos de culto' }); }
+});
+
+router.post('/service-types', async (req, res) => {
+  try {
+    const { name, description, recurrence_day, recurrence_time, color } = req.body;
+    if (!name) return res.status(400).json({ error: 'name obrigatorio' });
+    const { data, error } = await supabase.from('vol_service_types')
+      .insert({ name, description, recurrence_day, recurrence_time, color }).select().single();
+    if (error) return res.status(400).json({ error: error.message });
+    res.json(data);
+  } catch (e) { res.status(500).json({ error: 'Erro ao criar tipo de culto' }); }
+});
+
+router.put('/service-types/:id', async (req, res) => {
+  try {
+    const { name, description, recurrence_day, recurrence_time, color, is_active } = req.body;
+    const { data, error } = await supabase.from('vol_service_types')
+      .update({ name, description, recurrence_day, recurrence_time, color, is_active })
+      .eq('id', req.params.id).select().single();
+    if (error) return res.status(400).json({ error: error.message });
+    res.json(data);
+  } catch (e) { res.status(500).json({ error: 'Erro ao atualizar tipo de culto' }); }
+});
+
+router.delete('/service-types/:id', async (req, res) => {
+  try {
+    const { error } = await supabase.from('vol_service_types').delete().eq('id', req.params.id);
+    if (error) return res.status(400).json({ error: error.message });
+    res.json({ success: true });
+  } catch (e) { res.status(500).json({ error: 'Erro ao remover tipo de culto' }); }
+});
+
+// Generate services from service type recurrence pattern
+router.post('/service-types/:id/generate', async (req, res) => {
+  try {
+    const { weeks } = req.body; // How many weeks ahead to generate (default 4)
+    const weeksAhead = weeks || 4;
+
+    const { data: sType, error: stErr } = await supabase.from('vol_service_types')
+      .select('*').eq('id', req.params.id).single();
+    if (stErr || !sType) return res.status(404).json({ error: 'Tipo de culto nao encontrado' });
+    if (sType.recurrence_day == null || !sType.recurrence_time) {
+      return res.status(400).json({ error: 'Tipo de culto sem recorrencia configurada' });
+    }
+
+    const generated = [];
+    const now = new Date();
+    for (let w = 0; w < weeksAhead; w++) {
+      const target = new Date(now);
+      target.setDate(target.getDate() + ((sType.recurrence_day - target.getDay() + 7) % 7) + (w * 7));
+      // Skip if in the past
+      if (target < now && w === 0) {
+        target.setDate(target.getDate() + 7);
+      }
+      const [hours, minutes] = sType.recurrence_time.split(':');
+      target.setHours(parseInt(hours), parseInt(minutes), 0, 0);
+
+      const scheduledAt = target.toISOString();
+      // Check if service already exists for this date/type
+      const dayStart = new Date(target.getFullYear(), target.getMonth(), target.getDate()).toISOString();
+      const dayEnd = new Date(target.getFullYear(), target.getMonth(), target.getDate() + 1).toISOString();
+      const { data: existing } = await supabase.from('vol_services')
+        .select('id').eq('service_type_id', sType.id)
+        .gte('scheduled_at', dayStart).lt('scheduled_at', dayEnd);
+      if (existing && existing.length > 0) continue;
+
+      const { data: svc, error: svcErr } = await supabase.from('vol_services')
+        .insert({
+          name: sType.name,
+          service_type_name: sType.name,
+          service_type_id: sType.id,
+          scheduled_at: scheduledAt,
+        }).select().single();
+      if (!svcErr && svc) generated.push(svc);
+    }
+    res.json({ generated: generated.length, services: generated });
+  } catch (e) { res.status(500).json({ error: 'Erro ao gerar cultos' }); }
+});
+
+// ══════════════════════════════════════════════════════════════
+// SERVICES — Manual creation/update/delete
+// ══════════════════════════════════════════════════════════════
+router.post('/services', async (req, res) => {
+  try {
+    const { name, service_type_name, service_type_id, scheduled_at } = req.body;
+    if (!name || !scheduled_at) return res.status(400).json({ error: 'name e scheduled_at obrigatorios' });
+    const { data, error } = await supabase.from('vol_services')
+      .insert({ name, service_type_name, service_type_id, scheduled_at }).select().single();
+    if (error) return res.status(400).json({ error: error.message });
+    res.json(data);
+  } catch (e) { res.status(500).json({ error: 'Erro ao criar culto' }); }
+});
+
+router.put('/services/:id', async (req, res) => {
+  try {
+    const { name, service_type_name, scheduled_at } = req.body;
+    const { data, error } = await supabase.from('vol_services')
+      .update({ name, service_type_name, scheduled_at }).eq('id', req.params.id).select().single();
+    if (error) return res.status(400).json({ error: error.message });
+    res.json(data);
+  } catch (e) { res.status(500).json({ error: 'Erro ao atualizar culto' }); }
+});
+
+router.delete('/services/:id', async (req, res) => {
+  try {
+    const { error } = await supabase.from('vol_services').delete().eq('id', req.params.id);
+    if (error) return res.status(400).json({ error: error.message });
+    res.json({ success: true });
+  } catch (e) { res.status(500).json({ error: 'Erro ao remover culto' }); }
+});
+
+// ══════════════════════════════════════════════════════════════
+// TEAMS (formal team management)
+// ══════════════════════════════════════════════════════════════
+router.get('/teams-manage', async (req, res) => {
+  try {
+    const { data, error } = await supabase.from('vol_teams')
+      .select('*, leader:vol_profiles!vol_teams_leader_profile_id_fkey(id, full_name, avatar_url), positions:vol_positions(*), members:vol_team_members(count)')
+      .order('sort_order').order('name');
+    if (error) return res.status(400).json({ error: error.message });
+    res.json(data);
+  } catch (e) { res.status(500).json({ error: 'Erro ao listar equipes' }); }
+});
+
+router.post('/teams-manage', async (req, res) => {
+  try {
+    const { name, description, color, leader_profile_id, sort_order } = req.body;
+    if (!name) return res.status(400).json({ error: 'name obrigatorio' });
+    const { data, error } = await supabase.from('vol_teams')
+      .insert({ name, description, color, leader_profile_id, sort_order: sort_order || 0 }).select().single();
+    if (error) return res.status(400).json({ error: error.message });
+    res.json(data);
+  } catch (e) { res.status(500).json({ error: 'Erro ao criar equipe' }); }
+});
+
+router.put('/teams-manage/:id', async (req, res) => {
+  try {
+    const { name, description, color, leader_profile_id, is_active, sort_order } = req.body;
+    const { data, error } = await supabase.from('vol_teams')
+      .update({ name, description, color, leader_profile_id, is_active, sort_order })
+      .eq('id', req.params.id).select().single();
+    if (error) return res.status(400).json({ error: error.message });
+    res.json(data);
+  } catch (e) { res.status(500).json({ error: 'Erro ao atualizar equipe' }); }
+});
+
+router.delete('/teams-manage/:id', async (req, res) => {
+  try {
+    const { error } = await supabase.from('vol_teams').delete().eq('id', req.params.id);
+    if (error) return res.status(400).json({ error: error.message });
+    res.json({ success: true });
+  } catch (e) { res.status(500).json({ error: 'Erro ao remover equipe' }); }
+});
+
+// ══════════════════════════════════════════════════════════════
+// POSITIONS (within teams)
+// ══════════════════════════════════════════════════════════════
+router.get('/positions', async (req, res) => {
+  try {
+    const { team_id } = req.query;
+    let q = supabase.from('vol_positions').select('*, team:vol_teams(id, name)').order('sort_order').order('name');
+    if (team_id) q = q.eq('team_id', team_id);
+    const { data, error } = await q;
+    if (error) return res.status(400).json({ error: error.message });
+    res.json(data);
+  } catch (e) { res.status(500).json({ error: 'Erro ao listar posicoes' }); }
+});
+
+router.post('/positions', async (req, res) => {
+  try {
+    const { team_id, name, description, min_volunteers, max_volunteers, sort_order } = req.body;
+    if (!team_id || !name) return res.status(400).json({ error: 'team_id e name obrigatorios' });
+    const { data, error } = await supabase.from('vol_positions')
+      .insert({ team_id, name, description, min_volunteers, max_volunteers, sort_order: sort_order || 0 }).select().single();
+    if (error) return res.status(400).json({ error: error.message });
+    res.json(data);
+  } catch (e) { res.status(500).json({ error: 'Erro ao criar posicao' }); }
+});
+
+router.put('/positions/:id', async (req, res) => {
+  try {
+    const { name, description, min_volunteers, max_volunteers, is_active, sort_order } = req.body;
+    const { data, error } = await supabase.from('vol_positions')
+      .update({ name, description, min_volunteers, max_volunteers, is_active, sort_order })
+      .eq('id', req.params.id).select().single();
+    if (error) return res.status(400).json({ error: error.message });
+    res.json(data);
+  } catch (e) { res.status(500).json({ error: 'Erro ao atualizar posicao' }); }
+});
+
+router.delete('/positions/:id', async (req, res) => {
+  try {
+    const { error } = await supabase.from('vol_positions').delete().eq('id', req.params.id);
+    if (error) return res.status(400).json({ error: error.message });
+    res.json({ success: true });
+  } catch (e) { res.status(500).json({ error: 'Erro ao remover posicao' }); }
+});
+
+// ══════════════════════════════════════════════════════════════
+// TEAM MEMBERS (volunteer ↔ team assignments)
+// ══════════════════════════════════════════════════════════════
+router.get('/team-members', async (req, res) => {
+  try {
+    const { team_id } = req.query;
+    let q = supabase.from('vol_team_members')
+      .select('*, team:vol_teams(id, name, color), position:vol_positions(id, name), profile:vol_profiles(id, full_name, avatar_url, planning_center_id)')
+      .eq('is_active', true).order('volunteer_name');
+    if (team_id) q = q.eq('team_id', team_id);
+    const { data, error } = await q;
+    if (error) return res.status(400).json({ error: error.message });
+    res.json(data);
+  } catch (e) { res.status(500).json({ error: 'Erro ao listar membros da equipe' }); }
+});
+
+router.post('/team-members', async (req, res) => {
+  try {
+    const { team_id, position_id, volunteer_profile_id, planning_center_person_id, volunteer_name } = req.body;
+    if (!team_id || !volunteer_name) return res.status(400).json({ error: 'team_id e volunteer_name obrigatorios' });
+    if (!volunteer_profile_id && !planning_center_person_id) {
+      return res.status(400).json({ error: 'volunteer_profile_id ou planning_center_person_id obrigatorio' });
+    }
+    const { data, error } = await supabase.from('vol_team_members')
+      .insert({ team_id, position_id, volunteer_profile_id, planning_center_person_id, volunteer_name })
+      .select().single();
+    if (error) {
+      if (error.code === '23505') return res.status(409).json({ error: 'Voluntario ja esta nesta equipe' });
+      return res.status(400).json({ error: error.message });
+    }
+    res.json(data);
+  } catch (e) { res.status(500).json({ error: 'Erro ao adicionar membro a equipe' }); }
+});
+
+router.put('/team-members/:id', async (req, res) => {
+  try {
+    const { position_id, is_active } = req.body;
+    const { data, error } = await supabase.from('vol_team_members')
+      .update({ position_id, is_active }).eq('id', req.params.id).select().single();
+    if (error) return res.status(400).json({ error: error.message });
+    res.json(data);
+  } catch (e) { res.status(500).json({ error: 'Erro ao atualizar membro' }); }
+});
+
+router.delete('/team-members/:id', async (req, res) => {
+  try {
+    const { error } = await supabase.from('vol_team_members').delete().eq('id', req.params.id);
+    if (error) return res.status(400).json({ error: error.message });
+    res.json({ success: true });
+  } catch (e) { res.status(500).json({ error: 'Erro ao remover membro da equipe' }); }
+});
+
+// ══════════════════════════════════════════════════════════════
+// AVAILABILITY (volunteer unavailability dates)
+// ══════════════════════════════════════════════════════════════
+router.get('/availability', async (req, res) => {
+  try {
+    const { volunteer_profile_id, from, to } = req.query;
+    let q = supabase.from('vol_availability').select('*').order('unavailable_from');
+    if (volunteer_profile_id) q = q.eq('volunteer_profile_id', volunteer_profile_id);
+    if (from) q = q.gte('unavailable_to', from);
+    if (to) q = q.lte('unavailable_from', to);
+    const { data, error } = await q;
+    if (error) return res.status(400).json({ error: error.message });
+    res.json(data);
+  } catch (e) { res.status(500).json({ error: 'Erro ao listar disponibilidade' }); }
+});
+
+router.post('/availability', async (req, res) => {
+  try {
+    const { volunteer_profile_id, planning_center_person_id, unavailable_from, unavailable_to, reason } = req.body;
+    if (!unavailable_from || !unavailable_to) return res.status(400).json({ error: 'Datas obrigatorias' });
+    if (!volunteer_profile_id && !planning_center_person_id) {
+      return res.status(400).json({ error: 'volunteer_profile_id ou planning_center_person_id obrigatorio' });
+    }
+    const { data, error } = await supabase.from('vol_availability')
+      .insert({ volunteer_profile_id, planning_center_person_id, unavailable_from, unavailable_to, reason })
+      .select().single();
+    if (error) return res.status(400).json({ error: error.message });
+    res.json(data);
+  } catch (e) { res.status(500).json({ error: 'Erro ao registrar indisponibilidade' }); }
+});
+
+router.delete('/availability/:id', async (req, res) => {
+  try {
+    const { error } = await supabase.from('vol_availability').delete().eq('id', req.params.id);
+    if (error) return res.status(400).json({ error: error.message });
+    res.json({ success: true });
+  } catch (e) { res.status(500).json({ error: 'Erro ao remover indisponibilidade' }); }
+});
+
+// ══════════════════════════════════════════════════════════════
+// SCHEDULE MANAGEMENT (CRUD for schedules)
+// ══════════════════════════════════════════════════════════════
+
+// Create a schedule entry (assign volunteer to service)
+router.post('/schedules', async (req, res) => {
+  try {
+    const { service_id, volunteer_id, volunteer_name, team_id, team_name, position_id, position_name, planning_center_person_id, notes } = req.body;
+    if (!service_id || !volunteer_name) return res.status(400).json({ error: 'service_id e volunteer_name obrigatorios' });
+
+    const { data, error } = await supabase.from('vol_schedules')
+      .insert({
+        service_id,
+        volunteer_id: volunteer_id || null,
+        volunteer_name,
+        team_id: team_id || null,
+        team_name: team_name || null,
+        position_id: position_id || null,
+        position_name: position_name || null,
+        planning_center_person_id: planning_center_person_id || null,
+        confirmation_status: 'pending',
+        source: 'manual',
+        notes: notes || null,
+      }).select().single();
+
+    if (error) {
+      if (error.code === '23505') return res.status(409).json({ error: 'Voluntario ja escalado neste culto' });
+      return res.status(400).json({ error: error.message });
+    }
+    res.json(data);
+  } catch (e) { res.status(500).json({ error: 'Erro ao criar escala' }); }
+});
+
+// Update schedule entry
+router.put('/schedules/:id', async (req, res) => {
+  try {
+    const { team_id, team_name, position_id, position_name, confirmation_status, notes } = req.body;
+    const updates = {};
+    if (team_id !== undefined) updates.team_id = team_id;
+    if (team_name !== undefined) updates.team_name = team_name;
+    if (position_id !== undefined) updates.position_id = position_id;
+    if (position_name !== undefined) updates.position_name = position_name;
+    if (confirmation_status !== undefined) updates.confirmation_status = confirmation_status;
+    if (notes !== undefined) updates.notes = notes;
+
+    const { data, error } = await supabase.from('vol_schedules')
+      .update(updates).eq('id', req.params.id).select().single();
+    if (error) return res.status(400).json({ error: error.message });
+    res.json(data);
+  } catch (e) { res.status(500).json({ error: 'Erro ao atualizar escala' }); }
+});
+
+// Delete schedule entry
+router.delete('/schedules/:id', async (req, res) => {
+  try {
+    const { error } = await supabase.from('vol_schedules').delete().eq('id', req.params.id);
+    if (error) return res.status(400).json({ error: error.message });
+    res.json({ success: true });
+  } catch (e) { res.status(500).json({ error: 'Erro ao remover escala' }); }
+});
+
+// Bulk schedule — assign multiple volunteers to a service at once
+router.post('/schedules/bulk', async (req, res) => {
+  try {
+    const { service_id, assignments } = req.body;
+    if (!service_id || !Array.isArray(assignments) || !assignments.length) {
+      return res.status(400).json({ error: 'service_id e assignments[] obrigatorios' });
+    }
+
+    const rows = assignments.map(a => ({
+      service_id,
+      volunteer_id: a.volunteer_id || null,
+      volunteer_name: a.volunteer_name,
+      team_id: a.team_id || null,
+      team_name: a.team_name || null,
+      position_id: a.position_id || null,
+      position_name: a.position_name || null,
+      planning_center_person_id: a.planning_center_person_id || null,
+      confirmation_status: 'pending',
+      source: a.source || 'manual',
+      notes: a.notes || null,
+    }));
+
+    const { data, error } = await supabase.from('vol_schedules')
+      .upsert(rows, { onConflict: 'service_id,planning_center_person_id', ignoreDuplicates: true })
+      .select();
+    if (error) return res.status(400).json({ error: error.message });
+    res.json({ created: data.length, schedules: data });
+  } catch (e) { res.status(500).json({ error: 'Erro ao criar escalas em lote' }); }
+});
+
+// Copy schedules from one service to another
+router.post('/schedules/copy', async (req, res) => {
+  try {
+    const { from_service_id, to_service_id } = req.body;
+    if (!from_service_id || !to_service_id) {
+      return res.status(400).json({ error: 'from_service_id e to_service_id obrigatorios' });
+    }
+
+    const { data: source } = await supabase.from('vol_schedules')
+      .select('*').eq('service_id', from_service_id);
+    if (!source || !source.length) return res.status(404).json({ error: 'Nenhuma escala encontrada no culto de origem' });
+
+    const rows = source.map(s => ({
+      service_id: to_service_id,
+      volunteer_id: s.volunteer_id,
+      volunteer_name: s.volunteer_name,
+      team_id: s.team_id,
+      team_name: s.team_name,
+      position_id: s.position_id,
+      position_name: s.position_name,
+      planning_center_person_id: s.planning_center_person_id,
+      confirmation_status: 'pending',
+      source: 'manual',
+    }));
+
+    const { data, error } = await supabase.from('vol_schedules')
+      .insert(rows).select();
+    if (error) return res.status(400).json({ error: error.message });
+    res.json({ copied: data.length, schedules: data });
+  } catch (e) { res.status(500).json({ error: 'Erro ao copiar escalas' }); }
+});
+
+// Auto-fill schedule from team roster with rotation
+router.post('/schedules/auto-fill', async (req, res) => {
+  try {
+    const { service_id, team_id } = req.body;
+    if (!service_id || !team_id) return res.status(400).json({ error: 'service_id e team_id obrigatorios' });
+
+    // Get service date
+    const { data: service } = await supabase.from('vol_services')
+      .select('scheduled_at').eq('id', service_id).single();
+    if (!service) return res.status(404).json({ error: 'Culto nao encontrado' });
+
+    const serviceDate = new Date(service.scheduled_at).toISOString().split('T')[0];
+
+    // Get team members
+    const { data: members } = await supabase.from('vol_team_members')
+      .select('*, position:vol_positions(id, name)')
+      .eq('team_id', team_id).eq('is_active', true);
+    if (!members || !members.length) return res.status(404).json({ error: 'Nenhum membro ativo na equipe' });
+
+    // Get team info
+    const { data: team } = await supabase.from('vol_teams')
+      .select('name').eq('id', team_id).single();
+
+    // Check availability — exclude unavailable volunteers
+    const { data: unavailable } = await supabase.from('vol_availability')
+      .select('volunteer_profile_id, planning_center_person_id')
+      .lte('unavailable_from', serviceDate)
+      .gte('unavailable_to', serviceDate);
+
+    const unavailableIds = new Set(
+      (unavailable || []).map(u => u.volunteer_profile_id || u.planning_center_person_id)
+    );
+
+    // Check who's already scheduled for this service
+    const { data: existing } = await supabase.from('vol_schedules')
+      .select('volunteer_id, planning_center_person_id').eq('service_id', service_id);
+    const alreadyScheduled = new Set(
+      (existing || []).map(e => e.volunteer_id || e.planning_center_person_id)
+    );
+
+    // Get recent schedule counts for rotation (last 4 weeks)
+    const fourWeeksAgo = new Date();
+    fourWeeksAgo.setDate(fourWeeksAgo.getDate() - 28);
+    const { data: recentSchedules } = await supabase.from('vol_schedules')
+      .select('volunteer_id, planning_center_person_id, service:vol_services!inner(scheduled_at)')
+      .eq('team_name', team?.name)
+      .gte('service.scheduled_at', fourWeeksAgo.toISOString());
+
+    const scheduleCount = new Map();
+    (recentSchedules || []).forEach(s => {
+      const key = s.volunteer_id || s.planning_center_person_id;
+      scheduleCount.set(key, (scheduleCount.get(key) || 0) + 1);
+    });
+
+    // Filter available members and sort by least recently scheduled (rotation)
+    const available = members.filter(m => {
+      const id = m.volunteer_profile_id || m.planning_center_person_id;
+      return !unavailableIds.has(id) && !alreadyScheduled.has(id);
+    }).sort((a, b) => {
+      const countA = scheduleCount.get(a.volunteer_profile_id || a.planning_center_person_id) || 0;
+      const countB = scheduleCount.get(b.volunteer_profile_id || b.planning_center_person_id) || 0;
+      return countA - countB;
+    });
+
+    if (!available.length) return res.json({ created: 0, schedules: [], message: 'Todos os membros estao indisponiveis ou ja escalados' });
+
+    const rows = available.map(m => ({
+      service_id,
+      volunteer_id: m.volunteer_profile_id || null,
+      volunteer_name: m.volunteer_name,
+      team_id,
+      team_name: team?.name || null,
+      position_id: m.position_id || null,
+      position_name: m.position?.name || null,
+      planning_center_person_id: m.planning_center_person_id || null,
+      confirmation_status: 'pending',
+      source: 'auto_rotation',
+    }));
+
+    const { data: created, error } = await supabase.from('vol_schedules')
+      .insert(rows).select();
+    if (error) return res.status(400).json({ error: error.message });
+    res.json({ created: created.length, schedules: created });
+  } catch (e) { res.status(500).json({ error: 'Erro ao auto-preencher escala' }); }
+});
+
+// Import teams from existing schedule data (migration helper)
+router.post('/teams-manage/import-from-schedules', async (req, res) => {
+  try {
+    // Extract unique team names from vol_schedules
+    const { data: schedData } = await supabase.from('vol_schedules')
+      .select('team_name').not('team_name', 'is', null);
+    const teamNames = new Set();
+    (schedData || []).forEach(s => {
+      if (s.team_name) s.team_name.split(',').forEach(t => { const trimmed = t.trim(); if (trimmed) teamNames.add(trimmed); });
+    });
+
+    const created = [];
+    for (const name of teamNames) {
+      const { data, error } = await supabase.from('vol_teams')
+        .upsert({ name }, { onConflict: 'name', ignoreDuplicates: true }).select().single();
+      if (data && !error) created.push(data);
+    }
+    res.json({ imported: created.length, teams: created });
+  } catch (e) { res.status(500).json({ error: 'Erro ao importar equipes' }); }
+});
+
 module.exports = router;
