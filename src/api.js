@@ -230,6 +230,17 @@ export const cycles = {
   registerExpense: (data) => post('/cycles/expenses', data),
   summaryAll: () => get('/cycles/summary/all'),
   kanbanAll: () => get('/cycles/kanban/all'),
+  // KPIs
+  kpiEvento: (eventId) => get(`/cycles/kpis/evento/${eventId}`),
+  kpiCross: (params) => get('/cycles/kpis/cross' + (params ? '?' + new URLSearchParams(params) : '')),
+  deliverCard: (cardId, data) => post(`/cycles/card-completions/${cardId}/deliver`, data),
+  approveCard: (cardId) => patch(`/cycles/card-completions/${cardId}/approve`, {}),
+  qualityCard: (cardId, rating) => patch(`/cycles/card-completions/${cardId}/quality`, { quality_rating: rating }),
+  kpiTemplates: () => get('/cycles/kpis/templates'),
+  createTemplate: (data) => post('/cycles/kpis/templates', data),
+  deleteTemplate: (id) => del(`/cycles/kpis/templates/${id}`),
+  kpiAreaWeights: () => get('/cycles/kpis/area-weights'),
+  updateAreaWeight: (id, weight) => put(`/cycles/kpis/area-weights/${id}`, { weight }),
 };
 
 export const agents = {
