@@ -1,34 +1,46 @@
 
 
-## Plan: Add geometric shape animation to login page
+## Plan: Multistep form layout for membership forms
 
 ### Summary
-Add the KokonutUI "Shape Landing Hero" animation to the login page background, adapted to CBRio's identity (teal `#00B39D` palette). The animation will play on page load with floating geometric shapes and fade-in effects, replacing the current WebGL smokey background.
+Refactor both the internal (`MembroFormModal` in Membresia.jsx) and external (`CadastroMembresia.jsx`) membership forms to use a multistep layout with animated transitions, progress indicators, and step navigation -- adapted to CBRio's visual identity (`#00B39D` teal palette).
 
-### What will change
+### Steps
 
-1. **Create `src/components/ui/shape-landing-hero.tsx`**
-   - Port the HeroGeometric component with ElegantShape sub-component
-   - Uses `framer-motion` (already installed) and `lucide-react` (already installed)
-   - Adapt colors: replace white/indigo gradients with CBRio teal (`#00B39D` / `#00736B`) tones
-   - Dark background matching current login aesthetic (`#0a0a0a` / dark theme)
+1. **Create reusable `MultistepFormShell` component** (`src/components/ui/multistep-form.tsx`)
+   - Progress dots/bar at top with step titles
+   - Animated transitions between steps using `framer-motion` (`AnimatePresence`)
+   - Back/Next navigation footer with CBRio primary color
+   - Step indicator text at bottom
+   - Fully adapted to CBRio dark theme and teal palette
 
-2. **Update `src/pages/Login.jsx`**
-   - Remove the `SmokeyBackground` WebGL component (canvas shader)
-   - Remove all shader code (`vertexSource`, `fragmentSource`, `SmokeyBackground` function)
-   - Import and render the geometric shapes animation as the background layer behind the login card
-   - The animation plays automatically on page load
-   - Login form card remains centered on top with the glassmorphism style
+2. **Refactor external form (`CadastroMembresia.jsx`)**
+   - Split the current single-page form into 4 steps:
+     - **Step 1 - Dados Pessoais**: foto, nome, sobrenome, CPF, telefone
+     - **Step 2 - Informacoes**: data nascimento, email, estado civil, profissao, como conheceu
+     - **Step 3 - Endereco**: endereco, bairro, cidade, CEP
+     - **Step 4 - Termos**: consentimento LGPD, checkboxes, submit
+   - Replace `SmokeyBackground` with the geometric shapes animation (already on login)
+   - Keep all existing logic: validation, honeypot, family suggestion step, photo upload
+   - Step validation gates the "Next" button per step
 
-### Visual result
-- On entering `/login`, animated geometric rounded-rectangle shapes float in from edges with rotation and blur effects
-- Shapes use CBRio teal gradients instead of the original white/indigo
-- The login card fades in on top with the existing glassmorphism design
-- Interactive mouse hover on the WebGL canvas is removed (the new animation is CSS/framer-motion based)
+3. **Refactor internal form (`MembroFormModal` in Membresia.jsx)**
+   - Split the Dialog content into 3 steps:
+     - **Step 1 - Dados Pessoais**: foto, nome, sobrenome, CPF, data nascimento, email, telefone, estado civil
+     - **Step 2 - Endereco e Profissao**: endereco, bairro, cidade, CEP, profissao, ministerio, grupo
+     - **Step 3 - Vinculo e Status**: status, familia, parentesco, observacoes
+   - Add progress indicator and animated transitions inside the Dialog
+   - Keep all existing save/edit logic intact
+
+4. **Fix pre-existing build errors** (unrelated but blocking):
+   - `VolAdmin.tsx` line 44: change `.schedules` to `.newSchedules`
+   - `FaceScanner.tsx` line 33: add type assertion for `.length`
 
 ### Technical details
-- No new dependencies needed (`framer-motion` and `lucide-react` already in `package.json`)
-- No database changes
-- Files modified: `src/pages/Login.jsx`
-- Files created: `src/components/ui/shape-landing-hero.tsx`
+- `framer-motion` already installed
+- All shadcn components (Button, Card, Input, etc.) already present
+- No database changes needed
+- No new dependencies
+- Files created: `src/components/ui/multistep-form.tsx`
+- Files modified: `src/pages/public/CadastroMembresia.jsx`, `src/pages/ministerial/Membresia.jsx`, `src/pages/ministerial/voluntariado/VolAdmin.tsx`, `src/pages/ministerial/voluntariado/components/checkin/FaceScanner.tsx`
 
