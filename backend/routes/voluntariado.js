@@ -79,44 +79,146 @@ router.put('/me', async (req, res) => {
     const { full_name, cpf, phone, email } = req.body;
     if (!full_name) return res.status(400).json({ error: 'Nome obrigatorio' });
 
-    // Check if vol_profile exists
+    // Check if vol_profile exists (and fetch current cpf to detect changes)
     let { data: existing } = await supabase.from('vol_profiles')
-      .select('id').eq('auth_user_id', userId).maybeSingle();
+      .select('id, cpf').eq('auth_user_id', userId).maybeSingle();
+
+    const cleanCpf = cpf ? cpf.replace(/\D/g, '') : '';
+    const currentCpf = existing?.cpf ? existing.cpf.replace(/\D/g, '') : '';
+    const cpfChanged = cleanCpf && cleanCpf !== currentCpf;
+
+    // Quando o CPF for alterado (ou definido pela primeira vez), vincular com
+    // o cadastro de membros. Se o CPF nao existir em mem_membros, devolver
+    // MEMBER_NOT_FOUND para que o frontend peca o cadastro obrigatorio.
+    let membroMatch = null;
+    if (cpfChanged) {
+      if (cleanCpf.length !== 11) {
+        return res.status(400).json({ error: 'CPF invalido' });
+      }
+      const { data: membro } = await supabase.from('mem_membros')
+        .select('id, nome, telefone, email').eq('cpf', cleanCpf).maybeSingle();
+      if (!membro) {
+        return res.status(409).json({
+          error: 'CPF nao encontrado no cadastro de membros. Complete o cadastro para continuar.',
+          code: 'MEMBER_NOT_FOUND',
+          cpf: cleanCpf,
+        });
+      }
+      membroMatch = membro;
+    }
 
     let profileId;
     if (existing) {
       profileId = existing.id;
-      await supabase.from('vol_profiles').update({
-        full_name, cpf: cpf || null, phone: phone || null, email: email || null, profile_complete: true,
-      }).eq('id', profileId);
+      const update = {
+        full_name,
+        cpf: cleanCpf || null,
+        phone: phone || null,
+        email: email || null,
+        profile_complete: true,
+      };
+      if (membroMatch) update.membresia_id = membroMatch.id;
+      await supabase.from('vol_profiles').update(update).eq('id', profileId);
     } else {
-      // Create new vol_profile
-      const { data: created, error } = await supabase.from('vol_profiles').insert({
-        auth_user_id: userId, full_name, cpf: cpf || null, phone: phone || null, email: email || null, profile_complete: true,
-      }).select().single();
+      const insert = {
+        auth_user_id: userId,
+        full_name,
+        cpf: cleanCpf || null,
+        phone: phone || null,
+        email: email || null,
+        profile_complete: true,
+      };
+      if (membroMatch) insert.membresia_id = membroMatch.id;
+      const { data: created, error } = await supabase.from('vol_profiles').insert(insert).select().single();
       if (error) return res.status(400).json({ error: error.message });
       profileId = created.id;
-    }
-
-    // CPF matching: link to membresia if CPF matches
-    let membresiaMatch = null;
-    if (cpf) {
-      const cleanCpf = cpf.replace(/\D/g, '');
-      if (cleanCpf.length === 11) {
-        const { data: membro } = await supabase.from('mem_membros')
-          .select('id, nome').eq('cpf', cleanCpf).maybeSingle();
-        if (membro) {
-          await supabase.from('vol_profiles').update({ membresia_id: membro.id }).eq('id', profileId);
-          membresiaMatch = { id: membro.id, nome: membro.nome };
-        }
-      }
     }
 
     const { data: updated } = await supabase.from('vol_profiles')
       .select('*').eq('id', profileId).single();
 
-    res.json({ profile: updated, membresiaMatch });
-  } catch (e) { res.status(500).json({ error: 'Erro ao atualizar perfil' }); }
+    res.json({
+      profile: updated,
+      membresiaMatch: membroMatch ? { id: membroMatch.id, nome: membroMatch.nome } : null,
+    });
+  } catch (e) {
+    console.error('[Vol] update me error:', e.message);
+    res.status(500).json({ error: 'Erro ao atualizar perfil' });
+  }
+});
+
+// Cadastro obrigatorio de membro disparado quando o CPF informado em PUT /me
+// nao existe em mem_membros. Cria o membro e vincula o vol_profile.
+router.post('/me/register-member', async (req, res) => {
+  try {
+    const userId = req.user.userId;
+    const { nome, sobrenome, cpf, celular } = req.body || {};
+
+    if (!nome || !nome.trim()) return res.status(400).json({ error: 'Nome obrigatorio' });
+    if (!sobrenome || !sobrenome.trim()) return res.status(400).json({ error: 'Sobrenome obrigatorio' });
+    if (!cpf) return res.status(400).json({ error: 'CPF obrigatorio' });
+    if (!celular || !celular.trim()) return res.status(400).json({ error: 'Celular obrigatorio' });
+
+    const cleanCpf = String(cpf).replace(/\D/g, '');
+    if (cleanCpf.length !== 11) return res.status(400).json({ error: 'CPF invalido' });
+    const cleanPhone = String(celular).replace(/\D/g, '');
+    if (cleanPhone.length < 10) return res.status(400).json({ error: 'Celular invalido' });
+
+    const fullName = `${nome.trim()} ${sobrenome.trim()}`.replace(/\s+/g, ' ');
+
+    // Se ja existe membro com esse CPF, reutilizar em vez de duplicar
+    let { data: membro } = await supabase.from('mem_membros')
+      .select('id, nome, telefone, email').eq('cpf', cleanCpf).maybeSingle();
+
+    if (!membro) {
+      const { data: created, error } = await supabase.from('mem_membros').insert({
+        nome: fullName,
+        cpf: cleanCpf,
+        telefone: cleanPhone,
+        status: 'visitante',
+        active: true,
+      }).select('id, nome, telefone, email').single();
+      if (error) return res.status(400).json({ error: error.message });
+      membro = created;
+    }
+
+    // Buscar ou criar vol_profile e vincular
+    let { data: profile } = await supabase.from('vol_profiles')
+      .select('id').eq('auth_user_id', userId).maybeSingle();
+
+    if (profile) {
+      await supabase.from('vol_profiles').update({
+        full_name: fullName,
+        cpf: cleanCpf,
+        phone: cleanPhone,
+        membresia_id: membro.id,
+        profile_complete: true,
+      }).eq('id', profile.id);
+    } else {
+      const { data: created, error } = await supabase.from('vol_profiles').insert({
+        auth_user_id: userId,
+        full_name: fullName,
+        cpf: cleanCpf,
+        phone: cleanPhone,
+        membresia_id: membro.id,
+        profile_complete: true,
+      }).select('id').single();
+      if (error) return res.status(400).json({ error: error.message });
+      profile = created;
+    }
+
+    const { data: updated } = await supabase.from('vol_profiles')
+      .select('*').eq('id', profile.id).single();
+
+    res.json({
+      profile: updated,
+      membresiaMatch: { id: membro.id, nome: membro.nome },
+      created: true,
+    });
+  } catch (e) {
+    console.error('[Vol] register member error:', e.message);
+    res.status(500).json({ error: 'Erro ao cadastrar membro' });
+  }
 });
 
 // Google Wallet — gera URL "Save to Google Wallet" com o QR pessoal do voluntario

@@ -643,6 +643,7 @@ export const voluntariado = {
     removeAvailability: (id) => del(`/voluntariado/my-availability/${id}`),
     walletGoogle: () => get('/voluntariado/me/wallet/google'),
     saveFace: (descriptor, photo_url) => post('/voluntariado/me/face', { descriptor, photo_url }),
+    registerMember: (data) => post('/voluntariado/me/register-member', data),
   },
   selfCheckinQr: (serviceId) => get(`/voluntariado/self-checkin-qr/${serviceId}`),
   // Profiles
