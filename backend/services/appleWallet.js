@@ -241,7 +241,7 @@ async function buildVoluntarioPass({ nome, qrCode, voluntarioId }) {
     teamIdentifier: teamId,
     organizationName: 'CBRio',
     description: 'CBRio — Cracha de Voluntario',
-    backgroundColor: 'rgb(0, 179, 157)',
+    backgroundColor: 'rgb(64, 128, 151)',
     foregroundColor: 'rgb(255, 255, 255)',
     labelColor: 'rgb(255, 255, 255)',
     generic: {
@@ -273,7 +273,7 @@ async function buildVoluntarioPass({ nome, qrCode, voluntarioId }) {
 
   const pass = new PKPass(
     {
-      ...ICONS,
+      ...ICONS_VOLUNTARIO,
       'pass.json': Buffer.from(JSON.stringify(passJson)),
     },
     {
