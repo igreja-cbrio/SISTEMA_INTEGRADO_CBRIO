@@ -1,7 +1,7 @@
 const router = require('express').Router();
 const { authenticate, authorizeModule } = require('../middleware/auth');
 const { supabase } = require('../utils/supabase');
-const { getPCCredentials, fetchWithRetry, PC_SERVICES_BASE } = require('../services/planningCenter');
+const { getPCCredentials, fetchWithRetry, PC_SERVICES_BASE, assignVolunteersToTeams } = require('../services/planningCenter');
 
 router.use(authenticate, authorizeModule('membresia', 1));
 
@@ -1797,6 +1797,32 @@ router.post('/teams-manage/import-from-schedules', async (req, res) => {
     }
     res.json({ imported: created.length, teams: created });
   } catch (e) { res.status(500).json({ error: 'Erro ao importar equipes' }); }
+});
+
+// Opção B: backfill — varre vol_schedules existentes e atribui voluntarios às equipes
+router.post('/teams-manage/sync-members-from-schedules', async (req, res) => {
+  try {
+    const { data: schedules } = await supabase.from('vol_schedules')
+      .select('planning_center_person_id, team_name')
+      .not('team_name', 'is', null)
+      .not('planning_center_person_id', 'is', null);
+
+    const memberTeamMap = new Map();
+    for (const s of (schedules || [])) {
+      if (!memberTeamMap.has(s.planning_center_person_id))
+        memberTeamMap.set(s.planning_center_person_id, new Set());
+      s.team_name.split(',').forEach(t => {
+        const trimmed = t.trim();
+        if (trimmed) memberTeamMap.get(s.planning_center_person_id).add(trimmed);
+      });
+    }
+
+    const assigned = await assignVolunteersToTeams(supabase, memberTeamMap);
+    res.json({ assigned, volunteers: memberTeamMap.size });
+  } catch (e) {
+    console.error('[sync-members]', e.message);
+    res.status(500).json({ error: 'Erro ao sincronizar membros de equipe' });
+  }
 });
 
 module.exports = router;

@@ -44,6 +44,17 @@ export function useImportTeamsFromSchedules() {
   });
 }
 
+export function useSyncTeamMembersFromSchedules() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => voluntariado.teamsManage.syncMembersFromSchedules(),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['vol', 'teams-managed'] });
+      qc.invalidateQueries({ queryKey: ['vol', 'volunteers'] });
+    },
+  });
+}
+
 // ── Positions ──────────────────────────────────────────────────────────
 
 export function useVolPositions(teamId?: string) {
