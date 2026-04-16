@@ -14,6 +14,8 @@ const { PKPass } = require('passkit-generator');
 const forge = require('node-forge');
 const zlib = require('zlib');
 const crypto = require('crypto');
+const fs = require('fs');
+const path = require('path');
 
 // ── Geracao de PNG minimalista (sem lib externa) ──────────────────────────
 
@@ -78,21 +80,24 @@ function makeSolidPng(w, h, r, g, b) {
 // Membro: bege #eae3da = rgb(234, 227, 218)
 // Voluntario: azul escuro #408097 = rgb(64, 128, 151)
 
+// Logo CBRio (iBrand font) — lido do filesystem (incluido via vercel.json templates/**)
+const LOGO_CBRIO = fs.readFileSync(path.join(__dirname, '..', 'templates', 'logo-cbrio-text.png'));
+
 // Icones pre-gerados por tipo (cached — gerados uma vez no startup)
 const ICONS_MEMBRO = {
   'icon.png':    makeSolidPng(29,  29,  234, 227, 218),
   'icon@2x.png': makeSolidPng(58,  58,  234, 227, 218),
   'icon@3x.png': makeSolidPng(87,  87,  234, 227, 218),
-  'logo.png':    makeSolidPng(160, 50,  234, 227, 218),
-  'logo@2x.png': makeSolidPng(320, 100, 234, 227, 218),
+  'logo.png':    LOGO_CBRIO,
+  'logo@2x.png': LOGO_CBRIO,
 };
 
 const ICONS_VOLUNTARIO = {
   'icon.png':    makeSolidPng(29,  29,  64, 128, 151),
   'icon@2x.png': makeSolidPng(58,  58,  64, 128, 151),
   'icon@3x.png': makeSolidPng(87,  87,  64, 128, 151),
-  'logo.png':    makeSolidPng(160, 50,  64, 128, 151),
-  'logo@2x.png': makeSolidPng(320, 100, 64, 128, 151),
+  'logo.png':    LOGO_CBRIO,
+  'logo@2x.png': LOGO_CBRIO,
 };
 
 // ── Conversao de certificados ─────────────────────────────────────────────
@@ -145,9 +150,22 @@ function getCerts() {
     throw new Error('Apple Wallet nao configurado (env vars ausentes)');
   }
 
-  const wwdrPem = wwdrToPem(wwdrBase64);
-  const membro = p12ToPem(membroBase64, password);
-  const voluntario = p12ToPem(voluntarioBase64, password);
+  let wwdrPem, membro, voluntario;
+  try {
+    wwdrPem = wwdrToPem(wwdrBase64);
+  } catch (e) {
+    throw new Error('Certificado WWDR invalido — verifique APPLE_WALLET_WWDR_BASE64');
+  }
+  try {
+    membro = p12ToPem(membroBase64, password);
+  } catch (e) {
+    throw new Error('Certificado membro .p12 invalido — verifique APPLE_WALLET_MEMBRO_P12_BASE64 e a senha');
+  }
+  try {
+    voluntario = p12ToPem(voluntarioBase64, password);
+  } catch (e) {
+    throw new Error('Certificado voluntario .p12 invalido — verifique APPLE_WALLET_VOLUNTARIO_P12_BASE64 e a senha');
+  }
 
   _certCache = {
     wwdrPem,

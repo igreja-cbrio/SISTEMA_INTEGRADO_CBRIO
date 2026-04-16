@@ -34,6 +34,17 @@ function downloadBlob(blob: Blob, filename: string) {
   document.body.removeChild(a);
   URL.revokeObjectURL(url);
 }
+
+function AppleWalletIcon({ className }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" className={className} xmlns="http://www.w3.org/2000/svg">
+      <rect x="2" y="6" width="20" height="14" rx="2" fill="currentColor" opacity="0.3" />
+      <rect x="3" y="4" width="18" height="14" rx="2" fill="currentColor" opacity="0.5" />
+      <rect x="4" y="2" width="16" height="14" rx="2" fill="currentColor" opacity="0.8" />
+      <rect x="4" y="2" width="16" height="14" rx="2" stroke="currentColor" strokeWidth="1.5" fill="none" />
+    </svg>
+  );
+}
 import type { VolSchedule, VolAvailability } from './types';
 
 function useMySchedules() {

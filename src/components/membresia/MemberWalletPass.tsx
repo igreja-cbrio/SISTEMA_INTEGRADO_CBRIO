@@ -4,6 +4,7 @@ import { Loader2, Download, AlertCircle, Wifi } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { AddToWalletButtons } from '@/components/ui/wallet-buttons';
 import { cadastroPublico } from '@/api';
+import { toast } from 'sonner';
 
 interface Props {
   cpf: string;
@@ -62,7 +63,7 @@ export default function MemberWalletPass({ cpf, dataNascimento, inline = false, 
       const r = await cadastroPublico.walletGoogle(cpf, dataNascimento);
       window.open(r.url, '_blank');
     } catch (err: any) {
-      setError(err.message || 'Erro ao gerar passe do Google Wallet');
+      toast.error(err.message || 'Erro ao gerar passe do Google Wallet');
     } finally {
       setGoogleBusy(false);
     }
@@ -74,7 +75,7 @@ export default function MemberWalletPass({ cpf, dataNascimento, inline = false, 
       const blob = await cadastroPublico.walletApple(cpf, dataNascimento);
       downloadBlob(blob, 'cbrio-membro.pkpass');
     } catch (err: any) {
-      setError(err.message || 'Erro ao gerar passe Apple Wallet');
+      toast.error(err.message || 'Erro ao gerar passe Apple Wallet');
     } finally {
       setAppleBusy(false);
     }

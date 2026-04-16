@@ -491,7 +491,7 @@ router.post('/wallet/apple', cadastroLimiter, async (req, res) => {
     res.send(pkpassBuffer);
   } catch (err) {
     console.error('[PUBLIC MEM WALLET] apple error:', err.message);
-    res.status(500).json({ error: err.message || 'Erro ao gerar passe Apple Wallet' });
+    res.status(503).json({ error: 'Apple Wallet indisponivel no momento. Use o QR acima.' });
   }
 });
 
