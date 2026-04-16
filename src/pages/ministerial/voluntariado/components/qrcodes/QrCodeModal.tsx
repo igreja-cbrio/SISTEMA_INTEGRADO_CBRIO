@@ -132,7 +132,7 @@ export default function QrCodeModal({ open, onClose, qrCode, volunteerName }: Qr
           {/* Wallet Card */}
           <div
             ref={cardRef}
-            className="w-full rounded-3xl bg-[#00B39D] p-6 shadow-2xl"
+            className="w-full rounded-3xl bg-[#408097] p-6 shadow-2xl"
             style={{ minHeight: 420 }}
           >
             {/* Header */}

@@ -110,7 +110,7 @@ export default function MemberWalletPass({ cpf, dataNascimento, inline = false, 
   if (loading) {
     return (
       <div className={`flex flex-col items-center gap-3 py-6 ${inline ? '' : 'px-4'}`}>
-        <Loader2 className="h-6 w-6 animate-spin text-[#00B39D]" />
+        <Loader2 className="h-6 w-6 animate-spin text-[#408097]" />
         <p className="text-sm text-white/70">Preparando seu QR de membro...</p>
       </div>
     );
@@ -130,21 +130,21 @@ export default function MemberWalletPass({ cpf, dataNascimento, inline = false, 
   return (
     <div className={`flex flex-col items-center gap-4 ${inline ? '' : 'px-2 py-2'}`}>
       {/* Wallet Card */}
-      <div className="w-full max-w-xs rounded-3xl bg-[#00B39D] p-5 shadow-2xl">
+      <div className="w-full max-w-xs rounded-3xl bg-[#eae3da] p-5 shadow-2xl">
         {/* Header */}
         <div className="flex items-center justify-between mb-6">
           <div className="flex items-center gap-2">
             <img src="/logo-cbrio-icon.png" alt="CBRio" className="h-6 w-6 object-contain" />
-            <span className="text-white font-bold text-base tracking-tight" style={{ fontFamily: 'iBrand, system-ui, sans-serif' }}>CBRio</span>
+            <span className="text-[#408097] font-bold text-base tracking-tight" style={{ fontFamily: 'iBrand, system-ui, sans-serif' }}>CBRio</span>
           </div>
-          <span className="text-[10px] font-semibold tracking-widest text-white/80 bg-white/15 px-2.5 py-0.5 rounded-full uppercase">
+          <span className="text-[10px] font-semibold tracking-widest text-[#408097] bg-[#408097]/15 px-2.5 py-0.5 rounded-full uppercase">
             Membro
           </span>
         </div>
 
         {/* Member label */}
         <div className="mb-4">
-          <p className="text-[10px] font-medium tracking-widest text-white/70 uppercase mb-0.5">
+          <p className="text-[10px] font-medium tracking-widest text-[#408097]/70 uppercase mb-0.5">
             {title || 'Seu QR de membro esta pronto'}
           </p>
         </div>
@@ -157,13 +157,13 @@ export default function MemberWalletPass({ cpf, dataNascimento, inline = false, 
         </div>
 
         {memberId && (
-          <p className="text-center text-[10px] font-mono text-white/50 tracking-wide mb-3">{memberId}</p>
+          <p className="text-center text-[10px] font-mono text-[#408097]/50 tracking-wide mb-3">{memberId}</p>
         )}
 
         {/* Footer */}
         <div className="flex items-center justify-between">
           <img src="/logo-cbrio-icon.png" alt="" className="h-4 w-4 object-contain opacity-40" />
-          <Wifi className="h-4 w-4 text-white/40 rotate-90" />
+          <Wifi className="h-4 w-4 text-[#408097]/40 rotate-90" />
         </div>
       </div>
 
