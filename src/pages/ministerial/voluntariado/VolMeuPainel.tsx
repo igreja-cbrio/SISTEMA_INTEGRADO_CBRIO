@@ -1,21 +1,20 @@
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { voluntariado } from '@/api';
-import { format } from 'date-fns';
+import { format, parseISO } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { toast } from 'sonner';
 import {
-  Calendar, Check, X, Clock, CalendarOff, ChevronRight,
-  CheckCircle2, XCircle, Loader2, Users, ScanLine,
+  Calendar, Check, X, Clock, CalendarOff,
+  CheckCircle2, XCircle, Loader2, ScanLine, Search,
 } from 'lucide-react';
+import { useMyServices, useToggleServiceUnavailability } from './hooks';
 import { AddToWalletButtons } from '@/components/ui/wallet-buttons';
 
 function isIOSLike() {
@@ -45,19 +44,12 @@ function AppleWalletIcon({ className }: { className?: string }) {
     </svg>
   );
 }
-import type { VolSchedule, VolAvailability } from './types';
+import type { VolSchedule } from './types';
 
 function useMySchedules() {
   return useQuery({
     queryKey: ['vol', 'my-schedules'],
     queryFn: () => voluntariado.me.schedules() as Promise<(VolSchedule & { has_checkin: boolean })[]>,
-  });
-}
-
-function useMyAvailability() {
-  return useQuery({
-    queryKey: ['vol', 'my-availability'],
-    queryFn: () => voluntariado.me.availability() as Promise<VolAvailability[]>,
   });
 }
 
@@ -67,23 +59,6 @@ function useRespondSchedule() {
     mutationFn: ({ id, status }: { id: string; status: 'confirmed' | 'declined' }) =>
       voluntariado.me.respondSchedule(id, status),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['vol', 'my-schedules'] }),
-  });
-}
-
-function useAddMyAvailability() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (data: { unavailable_from: string; unavailable_to: string; reason?: string }) =>
-      voluntariado.me.addAvailability(data),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['vol', 'my-availability'] }),
-  });
-}
-
-function useRemoveMyAvailability() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (id: string) => voluntariado.me.removeAvailability(id),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['vol', 'my-availability'] }),
   });
 }
 
@@ -319,36 +294,74 @@ function MySchedulesTab() {
   );
 }
 
+const SERVICE_COLORS: Record<string, string> = {
+  'Quarta com Deus': '#6366f1',
+  'AMI': '#f59e0b',
+  'Bridge': '#ec4899',
+  'Domingo 08:30': '#00B39D',
+  'Domingo 10:00': '#10b981',
+  'Domingo 11:30': '#3b82f6',
+  'Domingo 19:00': '#8b5cf6',
+};
+function svcColor(name: string) { return SERVICE_COLORS[name] ?? '#00B39D'; }
+
 function MyAvailabilityTab() {
-  const { data: availability = [], isLoading } = useMyAvailability();
-  const addAvailability = useAddMyAvailability();
-  const removeAvailability = useRemoveMyAvailability();
-  const [showAdd, setShowAdd] = useState(false);
-  const [fromDate, setFromDate] = useState('');
-  const [toDate, setToDate] = useState('');
-  const [reason, setReason] = useState('');
+  const [searchDate, setSearchDate] = useState('');
+  const { data: services = [], isLoading } = useMyServices(2026);
+  const toggle = useToggleServiceUnavailability();
 
-  const handleAdd = () => {
-    if (!fromDate || !toDate) return toast.error('Selecione as datas');
-    if (new Date(toDate) < new Date(fromDate)) return toast.error('Data final deve ser maior que a inicial');
+  // Usa format para comparar datas no fuso local, evitando off-by-one de UTC
+  const filtered = useMemo(() => {
+    if (!searchDate) return null;
+    return services.filter(s => format(parseISO(s.scheduled_at), 'yyyy-MM-dd') === searchDate);
+  }, [services, searchDate]);
 
-    addAvailability.mutate({ unavailable_from: fromDate, unavailable_to: toDate, reason: reason || undefined }, {
-      onSuccess: () => {
-        toast.success('Ausencia registrada');
-        setShowAdd(false);
-        setFromDate('');
-        setToDate('');
-        setReason('');
-      },
-      onError: () => toast.error('Erro ao registrar'),
-    });
+  const byMonth = useMemo(() => {
+    const map = new Map<string, typeof services>();
+    for (const s of services) {
+      const key = format(parseISO(s.scheduled_at), 'yyyy-MM');
+      if (!map.has(key)) map.set(key, []);
+      map.get(key)!.push(s);
+    }
+    return Array.from(map.entries()).sort(([a], [b]) => a.localeCompare(b));
+  }, [services]);
+
+  const handleToggle = (service: typeof services[0]) => {
+    toggle.mutate(
+      { serviceId: service.id, isUnavailable: service.is_unavailable, availabilityId: service.availability_id },
+      {
+        onSuccess: () => toast.success(service.is_unavailable ? 'Disponibilidade restaurada' : 'Ausencia registrada'),
+        onError: (err: any) => toast.error(err.message || 'Erro ao atualizar'),
+      }
+    );
   };
 
-  const handleRemove = (id: string) => {
-    removeAvailability.mutate(id, {
-      onSuccess: () => toast.success('Ausencia removida'),
-      onError: () => toast.error('Erro ao remover'),
-    });
+  const ServiceChip = ({ service }: { service: typeof services[0] }) => {
+    const date = parseISO(service.scheduled_at);
+    const color = svcColor(service.service_type_name || service.name);
+    const unavailable = service.is_unavailable;
+    return (
+      <button
+        onClick={() => handleToggle(service)}
+        disabled={toggle.isPending}
+        className={`flex flex-col items-center px-3 py-2 rounded-lg border text-xs font-medium transition-all
+          ${unavailable
+            ? 'bg-red-50 border-red-300 text-red-700 dark:bg-red-950/30 dark:border-red-700 dark:text-red-300'
+            : 'bg-background border-border text-foreground hover:border-primary/50 hover:bg-primary/5'
+          }`}
+      >
+        <span className="h-2 w-2 rounded-full mb-1" style={{ backgroundColor: unavailable ? '#ef4444' : color }} />
+        <span>{format(date, 'EEE dd', { locale: ptBR })}</span>
+        <span className="text-[10px] opacity-70">{format(date, 'HH:mm')}</span>
+        <span className="text-[10px] max-w-[80px] text-center leading-tight mt-0.5 opacity-80 truncate">
+          {service.service_type_name || service.name}
+        </span>
+        {unavailable
+          ? <span className="text-[9px] text-red-500 mt-0.5 font-bold">ausente</span>
+          : <Check className="h-2.5 w-2.5 text-[#00B39D] mt-0.5" />
+        }
+      </button>
+    );
   };
 
   if (isLoading) {
@@ -357,72 +370,78 @@ function MyAvailabilityTab() {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <p className="text-sm text-muted-foreground">Informe os dias que voce nao podera servir</p>
-        <Button size="sm" onClick={() => setShowAdd(true)} className="gap-1.5 bg-[#00B39D] hover:bg-[#00B39D]/90">
-          <CalendarOff className="h-4 w-4" /> Nova ausencia
-        </Button>
+      <p className="text-sm text-muted-foreground">
+        Toque nos cultos que voce <strong>nao podera comparecer</strong>. Os demais indicam disponibilidade.
+      </p>
+
+      {/* Busca por data */}
+      <div className="relative">
+        <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
+        <Input
+          type="date"
+          value={searchDate}
+          onChange={e => setSearchDate(e.target.value)}
+          className="pl-9 pr-8"
+        />
+        {searchDate && (
+          <button
+            onClick={() => setSearchDate('')}
+            className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        )}
       </div>
 
-      {showAdd && (
-        <Card>
-          <CardContent className="p-4 space-y-3">
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <Label>De</Label>
-                <Input type="date" value={fromDate} onChange={e => setFromDate(e.target.value)} />
-              </div>
-              <div>
-                <Label>Ate</Label>
-                <Input type="date" value={toDate} onChange={e => setToDate(e.target.value)} />
-              </div>
-            </div>
-            <div>
-              <Label>Motivo (opcional)</Label>
-              <Input value={reason} onChange={e => setReason(e.target.value)} placeholder="Ex: Viagem, compromisso pessoal..." />
-            </div>
-            <div className="flex gap-2 justify-end">
-              <Button variant="outline" size="sm" onClick={() => setShowAdd(false)}>Cancelar</Button>
-              <Button size="sm" onClick={handleAdd} disabled={addAvailability.isPending} className="bg-[#00B39D] hover:bg-[#00B39D]/90">
-                Salvar
-              </Button>
-            </div>
-          </CardContent>
-        </Card>
-      )}
-
-      {availability.length === 0 ? (
+      {services.length === 0 ? (
         <Card>
           <CardContent className="flex flex-col items-center py-12 text-center">
             <CalendarOff className="h-12 w-12 text-muted-foreground/30 mb-4" />
-            <p className="text-muted-foreground">Nenhuma ausencia registrada</p>
-            <p className="text-sm text-muted-foreground/60 mt-1">Registre os dias que nao pode servir para os lideres saberem</p>
+            <p className="text-muted-foreground">Nenhum culto cadastrado para 2026</p>
+            <p className="text-sm text-muted-foreground/60 mt-1">Peca para o lider gerar os cultos do ano</p>
           </CardContent>
         </Card>
+      ) : filtered !== null ? (
+        // Resultado da busca por data
+        filtered.length === 0 ? (
+          <Card>
+            <CardContent className="flex flex-col items-center py-8 text-center">
+              <CalendarOff className="h-10 w-10 text-muted-foreground/30 mb-3" />
+              <p className="text-sm text-muted-foreground">
+                Nenhum culto em {format(parseISO(searchDate), "dd 'de' MMMM 'de' yyyy", { locale: ptBR })}
+              </p>
+            </CardContent>
+          </Card>
+        ) : (
+          <div>
+            <p className="text-xs font-medium text-muted-foreground mb-2">
+              {filtered.length} culto(s) em {format(parseISO(searchDate), "dd 'de' MMMM", { locale: ptBR })}
+            </p>
+            <div className="flex flex-wrap gap-2">
+              {filtered.map(s => <ServiceChip key={s.id} service={s} />)}
+            </div>
+          </div>
+        )
       ) : (
-        <div className="space-y-2">
-          {availability.map(a => (
-            <Card key={a.id}>
-              <CardContent className="p-3 flex items-center justify-between">
-                <div className="flex items-center gap-3">
-                  <div className="h-8 w-8 rounded-full bg-red-100 dark:bg-red-900/30 flex items-center justify-center">
-                    <CalendarOff className="h-4 w-4 text-red-600" />
-                  </div>
-                  <div>
-                    <p className="text-sm font-medium">
-                      {format(new Date(a.unavailable_from + 'T00:00:00'), 'dd/MM/yyyy')}
-                      {a.unavailable_from !== a.unavailable_to && (
-                        <> a {format(new Date(a.unavailable_to + 'T00:00:00'), 'dd/MM/yyyy')}</>
-                      )}
-                    </p>
-                    {a.reason && <p className="text-xs text-muted-foreground">{a.reason}</p>}
-                  </div>
-                </div>
-                <Button variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground hover:text-destructive" onClick={() => handleRemove(a.id)}>
-                  <X className="h-3.5 w-3.5" />
-                </Button>
-              </CardContent>
-            </Card>
+        // Lista completa por mes
+        <div className="space-y-5">
+          <div className="flex gap-3 flex-wrap">
+            <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+              <div className="h-2 w-2 rounded-full bg-[#00B39D]" /> Disponivel
+            </div>
+            <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+              <div className="h-2 w-2 rounded-full bg-red-500" /> Ausente ({services.filter(s => s.is_unavailable).length})
+            </div>
+          </div>
+          {byMonth.map(([monthKey, monthServices]) => (
+            <div key={monthKey}>
+              <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2 capitalize">
+                {format(parseISO(`${monthKey}-01`), 'MMMM yyyy', { locale: ptBR })}
+              </h3>
+              <div className="flex flex-wrap gap-2">
+                {monthServices.map(s => <ServiceChip key={s.id} service={s} />)}
+              </div>
+            </div>
           ))}
         </div>
       )}
