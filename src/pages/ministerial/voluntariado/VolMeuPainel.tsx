@@ -14,8 +14,9 @@ import { ptBR } from 'date-fns/locale';
 import { toast } from 'sonner';
 import {
   Calendar, Check, X, Clock, CalendarOff, ChevronRight,
-  CheckCircle2, XCircle, Loader2, Users, ScanLine, Wallet, Apple,
+  CheckCircle2, XCircle, Loader2, Users, ScanLine,
 } from 'lucide-react';
+import { AddToWalletButtons } from '@/components/ui/wallet-buttons';
 
 function isIOSLike() {
   if (typeof navigator === 'undefined') return false;
@@ -120,32 +121,14 @@ export default function VolMeuPainel() {
         <ScanLine className="h-5 w-5" /> Escanear QR do Totem para Check-in
       </Button>
 
-      {iOS ? (
-        <Button
-          size="lg"
-          className="w-full gap-2 min-h-[56px] text-base bg-black hover:bg-black/80 text-white"
-          onClick={handleAddToAppleWallet}
-          disabled={appleBusy}
-        >
-          {appleBusy ? <Loader2 className="h-5 w-5 animate-spin" /> : <Apple className="h-5 w-5" />}
-          Adicionar ao Apple Wallet
-        </Button>
-      ) : (
-        <Button
-          size="lg"
-          variant="outline"
-          className="w-full gap-2 min-h-[56px] text-base border-2"
-          onClick={handleAddToGoogleWallet}
-          disabled={googleWallet.isPending}
-        >
-          {googleWallet.isPending ? (
-            <Loader2 className="h-5 w-5 animate-spin" />
-          ) : (
-            <Wallet className="h-5 w-5" />
-          )}
-          Adicionar ao Google Wallet
-        </Button>
-      )}
+      <AddToWalletButtons
+        onApple={handleAddToAppleWallet}
+        onGoogle={handleAddToGoogleWallet}
+        appleBusy={appleBusy}
+        googleBusy={googleWallet.isPending}
+        showApple={iOS}
+        className="w-full"
+      />
 
       <Tabs defaultValue="escalas" className="w-full">
         <TabsList className="w-full grid grid-cols-2 h-auto p-1.5 bg-muted/60 rounded-xl gap-1.5">
