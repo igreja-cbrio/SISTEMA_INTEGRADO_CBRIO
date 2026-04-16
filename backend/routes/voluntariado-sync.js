@@ -2,15 +2,15 @@ const router = require('express').Router();
 const { authenticate, authorize } = require('../middleware/auth');
 const { supabase } = require('../utils/supabase');
 const {
-  getPCCredentials, fetchWithRetry, fetchAllPlans, fetchPlansInRange,
-  processServiceType, fetchAllTeamPersons, upsertVolunteerQrCodes, upsertVolunteerProfiles, PC_SERVICES_BASE,
+  getPCCredentials, fetchWithRetry, fetchPlansInRange,
+  processServiceType, upsertVolunteerQrCodes, upsertVolunteerProfiles, PC_SERVICES_BASE,
 } = require('../services/planningCenter');
 
 // Sync do Planning Center e operacoes administrativas pesadas — apenas admin/diretor.
 router.use(authenticate, authorize('admin', 'diretor'));
 
 // ══════════════════════════════════════════════════════════════
-// SYNC — MANUAL (future + recent past)
+// SYNC — MANUAL (voluntarios escalados nos ultimos 6 meses)
 // ══════════════════════════════════════════════════════════════
 router.post('/sync', async (req, res) => {
   try {
@@ -23,18 +23,20 @@ router.post('/sync', async (req, res) => {
     const serviceTypes = typesData.data || [];
     console.log(`[VOL SYNC] Found ${serviceTypes.length} service types`);
 
+    // Window: 6 months back → 1 month forward (captures active volunteers)
+    const start = new Date(); start.setMonth(start.getMonth() - 6);
+    const end = new Date(); end.setMonth(end.getMonth() + 1);
+    const startDate = start.toISOString().split('T')[0];
+    const endDate = end.toISOString().split('T')[0];
+
     let totalServices = 0, totalSchedules = 0, totalMembersFound = 0, totalMembersProcessed = 0;
     const allVolunteers = new Map();
 
-    // Process all service types in parallel — previously sequential, which caused
-    // timeouts (17 types × 10 plans × 1 HTTP request = ~170 sequential calls to PCO).
+    // All service types in parallel
     const settled = await Promise.allSettled(serviceTypes.map(async (st) => {
-      const [plans, teamPersons] = await Promise.all([
-        fetchAllPlans(PC_SERVICES_BASE, st.id, credentials),
-        fetchAllTeamPersons(st.id, credentials),
-      ]);
+      const plans = await fetchPlansInRange(PC_SERVICES_BASE, st.id, credentials, startDate, endDate);
       const result = await processServiceType(supabase, st, plans, credentials);
-      return { result, teamPersons };
+      return result;
     }));
 
     for (const item of settled) {
@@ -42,15 +44,12 @@ router.post('/sync', async (req, res) => {
         console.error('[VOL SYNC] Service type error:', item.reason?.message || item.reason);
         continue;
       }
-      const { result, teamPersons } = item.value;
+      const result = item.value;
       totalServices += result.services;
       totalSchedules += result.schedules;
       totalMembersFound += result.membersFound;
       totalMembersProcessed += result.membersProcessed;
       for (const [k, v] of result.volunteers) allVolunteers.set(k, v);
-      for (const [k, v] of teamPersons) {
-        if (!allVolunteers.has(k)) allVolunteers.set(k, v);
-      }
     }
 
     const qrCount = await upsertVolunteerQrCodes(supabase, allVolunteers);
@@ -131,16 +130,18 @@ router.post('/sync-auto', async (req, res) => {
     const typesData = await testRes.json();
     const serviceTypes = typesData.data || [];
 
+    const start = new Date(); start.setMonth(start.getMonth() - 6);
+    const end = new Date(); end.setMonth(end.getMonth() + 1);
+    const startDate = start.toISOString().split('T')[0];
+    const endDate = end.toISOString().split('T')[0];
+
     let totalServices = 0, totalSchedules = 0, totalMembersFound = 0, totalMembersProcessed = 0;
     const allVolunteers = new Map();
 
     const settled = await Promise.allSettled(serviceTypes.map(async (st) => {
-      const [plans, teamPersons] = await Promise.all([
-        fetchAllPlans(PC_SERVICES_BASE, st.id, credentials),
-        fetchAllTeamPersons(st.id, credentials),
-      ]);
+      const plans = await fetchPlansInRange(PC_SERVICES_BASE, st.id, credentials, startDate, endDate);
       const result = await processServiceType(supabase, st, plans, credentials);
-      return { result, teamPersons };
+      return result;
     }));
 
     for (const item of settled) {
@@ -148,15 +149,12 @@ router.post('/sync-auto', async (req, res) => {
         console.error('[VOL SYNC AUTO] Service type error:', item.reason?.message || item.reason);
         continue;
       }
-      const { result, teamPersons } = item.value;
+      const result = item.value;
       totalServices += result.services;
       totalSchedules += result.schedules;
       totalMembersFound += result.membersFound;
       totalMembersProcessed += result.membersProcessed;
       for (const [k, v] of result.volunteers) allVolunteers.set(k, v);
-      for (const [k, v] of teamPersons) {
-        if (!allVolunteers.has(k)) allVolunteers.set(k, v);
-      }
     }
 
     const qrCount = await upsertVolunteerQrCodes(supabase, allVolunteers);
