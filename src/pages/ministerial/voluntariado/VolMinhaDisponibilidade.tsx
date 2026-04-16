@@ -1,65 +1,109 @@
 import { useState, useMemo } from 'react';
 import { format, parseISO } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
-import { RefreshCw, CalendarOff, Check } from 'lucide-react';
+import { RefreshCw, CalendarOff, Check, Search, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { useMyServices, useToggleServiceUnavailability } from './hooks';
 
-const TYPE_COLORS: Record<string, string> = {};
+const TYPE_COLORS: Record<string, string> = {
+  'Quarta com Deus': '#6366f1',
+  'AMI': '#f59e0b',
+  'Bridge': '#ec4899',
+  'Domingo 08:30': '#00B39D',
+  'Domingo 10:00': '#10b981',
+  'Domingo 11:30': '#3b82f6',
+  'Domingo 19:00': '#8b5cf6',
+};
+function typeColor(name: string) { return TYPE_COLORS[name] ?? '#00B39D'; }
 
-function serviceColor(typeName: string) {
-  if (!TYPE_COLORS[typeName]) {
-    const palette = ['#00B39D', '#6366f1', '#f59e0b', '#ec4899', '#10b981', '#3b82f6', '#ef4444'];
-    TYPE_COLORS[typeName] = palette[Object.keys(TYPE_COLORS).length % palette.length];
-  }
-  return TYPE_COLORS[typeName];
+// Extrai apenas a parte da data (sem timezone) para evitar desvio de UTC
+function dateOnly(scheduledAt: string) { return parseISO(scheduledAt.slice(0, 10)); }
+function timeOnly(scheduledAt: string) { return scheduledAt.slice(11, 16); }
+
+type Service = {
+  id: string; name: string; service_type_name: string;
+  service_type_id: string | null; scheduled_at: string;
+  is_unavailable: boolean; availability_id: string | null;
+};
+
+function ServiceChip({ service, onToggle, disabled }: {
+  service: Service; onToggle: (s: Service) => void; disabled: boolean;
+}) {
+  const d = dateOnly(service.scheduled_at);
+  const t = timeOnly(service.scheduled_at);
+  const color = typeColor(service.service_type_name || service.name);
+  const unavailable = service.is_unavailable;
+
+  return (
+    <button
+      onClick={() => onToggle(service)}
+      disabled={disabled}
+      title={unavailable ? 'Toque para marcar como disponivel' : 'Toque para marcar ausencia'}
+      className={`flex flex-col items-center w-[58px] py-2 rounded-xl border text-xs font-medium transition-all shrink-0
+        ${unavailable
+          ? 'bg-red-50 border-red-300 text-red-700 dark:bg-red-950/30 dark:border-red-700 dark:text-red-300'
+          : 'bg-background border-border text-foreground hover:border-primary/50 hover:bg-primary/5'
+        }`}
+    >
+      <span className="text-[10px] opacity-60 capitalize">{format(d, 'EEE', { locale: ptBR })}</span>
+      <span className="text-base font-bold leading-tight">{format(d, 'dd')}</span>
+      <span className="text-[10px] opacity-60 capitalize">{format(d, 'MMM', { locale: ptBR })}</span>
+      <span className="text-[9px] opacity-50 mt-0.5">{t}</span>
+      {unavailable
+        ? <span className="text-[8px] text-red-400 font-bold mt-0.5">ausente</span>
+        : <Check className="h-2.5 w-2.5 mt-0.5" style={{ color }} />
+      }
+    </button>
+  );
 }
 
 export default function VolMinhaDisponibilidade() {
   const [year, setYear] = useState(2026);
+  const [searchDate, setSearchDate] = useState('');
   const { data: services = [], isLoading, refetch } = useMyServices(year);
   const toggle = useToggleServiceUnavailability();
 
-  // Agrupa os cultos por mes (chave: 'yyyy-MM')
-  const byMonth = useMemo(() => {
-    const map = new Map<string, typeof services>();
-    for (const s of services) {
-      const key = s.scheduled_at.slice(0, 7); // 'yyyy-MM'
-      if (!map.has(key)) map.set(key, []);
-      map.get(key)!.push(s);
-    }
-    return Array.from(map.entries()).sort(([a], [b]) => a.localeCompare(b));
-  }, [services]);
-
-  const handleToggle = (service: typeof services[0]) => {
+  const handleToggle = (service: Service) => {
     toggle.mutate(
       { serviceId: service.id, isUnavailable: service.is_unavailable, availabilityId: service.availability_id },
       {
-        onSuccess: () => {
-          if (service.is_unavailable) {
-            toast.success('Disponibilidade restaurada');
-          } else {
-            toast.error('Ausencia registrada');
-          }
-        },
+        onSuccess: () => toast.success(service.is_unavailable ? 'Disponibilidade restaurada' : 'Ausencia registrada'),
         onError: (err: any) => toast.error(err.message || 'Erro ao atualizar'),
       }
     );
   };
 
+  // Busca por data: compara apenas yyyy-MM-dd, sem timezone
+  const searchResults = useMemo(() => {
+    if (!searchDate) return null;
+    return services.filter(s => s.scheduled_at.slice(0, 10) === searchDate);
+  }, [services, searchDate]);
+
+  // Agrupa por tipo de culto, ordenado pela data do primeiro culto de cada tipo
+  const byType = useMemo(() => {
+    const map = new Map<string, Service[]>();
+    for (const s of services) {
+      const key = s.service_type_name || s.name;
+      if (!map.has(key)) map.set(key, []);
+      map.get(key)!.push(s);
+    }
+    return Array.from(map.entries())
+      .sort(([, a], [, b]) => a[0].scheduled_at.localeCompare(b[0].scheduled_at));
+  }, [services]);
+
   const unavailableCount = services.filter(s => s.is_unavailable).length;
-  const totalCount = services.length;
 
   return (
-    <div className="space-y-6">
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+    <div className="space-y-4">
+      {/* Header */}
+      <div className="flex items-center justify-between gap-2">
         <div>
           <h1 className="text-xl font-bold text-foreground">Minha Disponibilidade</h1>
           <p className="text-sm text-muted-foreground">
-            Marque os cultos que voce <strong>nao pode comparecer</strong>. Os demais indicam que voce esta disponivel.
+            Toque nos cultos que voce <strong>nao pode comparecer</strong>
           </p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 shrink-0">
           <select
             value={year}
             onChange={e => setYear(Number(e.target.value))}
@@ -71,86 +115,99 @@ export default function VolMinhaDisponibilidade() {
             onClick={() => refetch()}
             className="h-9 w-9 rounded-md border border-input bg-background flex items-center justify-center text-muted-foreground hover:bg-accent"
           >
-            <RefreshCw className="h-4 w-4" />
+            <RefreshCw className={`h-4 w-4 ${isLoading ? 'animate-spin' : ''}`} />
           </button>
         </div>
       </div>
 
-      {/* Resumo */}
-      {totalCount > 0 && (
-        <div className="flex gap-3 flex-wrap">
-          <div className="flex items-center gap-2 text-sm">
-            <div className="h-3 w-3 rounded-full bg-[#00B39D]" />
-            <span className="text-muted-foreground">{totalCount - unavailableCount} disponivel(is)</span>
-          </div>
-          <div className="flex items-center gap-2 text-sm">
-            <div className="h-3 w-3 rounded-full bg-red-500" />
-            <span className="text-muted-foreground">{unavailableCount} ausencia(s) marcada(s)</span>
-          </div>
-        </div>
-      )}
+      {/* Busca por data */}
+      <div className="relative">
+        <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
+        <input
+          type="date"
+          value={searchDate}
+          onChange={e => setSearchDate(e.target.value)}
+          className="w-full h-10 rounded-md border border-input bg-background pl-9 pr-8 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+        />
+        {searchDate && (
+          <button
+            onClick={() => setSearchDate('')}
+            className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        )}
+      </div>
 
       {isLoading ? (
-        <div className="flex items-center justify-center py-20">
+        <div className="flex justify-center py-20">
           <RefreshCw className="h-6 w-6 animate-spin text-muted-foreground" />
         </div>
-      ) : totalCount === 0 ? (
-        <div className="flex flex-col items-center justify-center py-20 text-center">
+      ) : services.length === 0 ? (
+        <div className="flex flex-col items-center py-20 text-center">
           <CalendarOff className="h-12 w-12 text-muted-foreground/30 mb-4" />
           <p className="font-medium text-muted-foreground">Nenhum culto cadastrado para {year}</p>
           <p className="text-sm text-muted-foreground/60 mt-1">
-            Peca para o lider gerar os cultos do ano em "Tipos de Culto"
+            Peca para o lider gerar os cultos em "Tipos de Culto"
           </p>
         </div>
+      ) : searchDate ? (
+        // Resultado da busca por data
+        !searchResults || searchResults.length === 0 ? (
+          <div className="flex flex-col items-center py-12 text-center">
+            <CalendarOff className="h-10 w-10 text-muted-foreground/30 mb-3" />
+            <p className="text-sm text-muted-foreground">
+              Nenhum culto em {format(parseISO(searchDate), "dd 'de' MMMM 'de' yyyy", { locale: ptBR })}
+            </p>
+          </div>
+        ) : (
+          <div className="space-y-2">
+            <p className="text-xs text-muted-foreground">
+              {searchResults.length} culto(s) em {format(parseISO(searchDate), "dd 'de' MMMM", { locale: ptBR })}
+            </p>
+            <div className="flex flex-wrap gap-2">
+              {searchResults.map(s => (
+                <ServiceChip key={s.id} service={s} onToggle={handleToggle} disabled={toggle.isPending} />
+              ))}
+            </div>
+          </div>
+        )
       ) : (
+        // Lista agrupada por tipo de culto
         <div className="space-y-6">
-          {byMonth.map(([monthKey, monthServices]) => {
-            const monthDate = parseISO(`${monthKey}-01`);
-            return (
-              <div key={monthKey}>
-                <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide mb-3">
-                  {format(monthDate, 'MMMM yyyy', { locale: ptBR })}
-                </h2>
-                <div className="flex flex-wrap gap-2">
-                  {monthServices.map(service => {
-                    const date = parseISO(service.scheduled_at);
-                    const color = serviceColor(service.service_type_name || service.name);
-                    const unavailable = service.is_unavailable;
-                    const isLoading = toggle.isPending;
+          {/* Resumo */}
+          <div className="flex gap-4 text-sm flex-wrap">
+            <div className="flex items-center gap-1.5">
+              <div className="h-2.5 w-2.5 rounded-full bg-[#00B39D]" />
+              <span className="text-muted-foreground">{services.length - unavailableCount} disponivel(is)</span>
+            </div>
+            <div className="flex items-center gap-1.5">
+              <div className="h-2.5 w-2.5 rounded-full bg-red-500" />
+              <span className={unavailableCount > 0 ? 'text-red-500 font-medium' : 'text-muted-foreground'}>
+                {unavailableCount} ausencia(s)
+              </span>
+            </div>
+          </div>
 
-                    return (
-                      <button
-                        key={service.id}
-                        onClick={() => handleToggle(service)}
-                        disabled={isLoading}
-                        title={unavailable ? 'Clique para marcar como disponivel' : 'Clique para marcar ausencia'}
-                        className={`
-                          flex flex-col items-center px-3 py-2 rounded-lg border text-xs font-medium transition-all
-                          ${unavailable
-                            ? 'bg-red-50 border-red-300 text-red-700 dark:bg-red-950/30 dark:border-red-700 dark:text-red-300 line-through opacity-70'
-                            : 'bg-background border-border text-foreground hover:border-primary/50 hover:bg-primary/5'
-                          }
-                        `}
-                      >
-                        {/* Dot colorido do tipo de culto */}
-                        <span
-                          className="h-2 w-2 rounded-full mb-1"
-                          style={{ backgroundColor: unavailable ? '#ef4444' : color }}
-                        />
-                        <span>{format(date, 'EEE dd', { locale: ptBR })}</span>
-                        <span className="text-[10px] opacity-70">{format(date, 'HH:mm')}</span>
-                        <span className="text-[10px] max-w-[80px] text-center leading-tight mt-0.5 opacity-80 truncate">
-                          {service.service_type_name || service.name}
-                        </span>
-                        {unavailable && (
-                          <span className="text-[9px] text-red-500 mt-0.5 font-bold">ausente</span>
-                        )}
-                        {!unavailable && (
-                          <Check className="h-2.5 w-2.5 text-[#00B39D] mt-0.5" />
-                        )}
-                      </button>
-                    );
-                  })}
+          {byType.map(([typeName, typeServices]) => {
+            const color = typeColor(typeName);
+            const unavailInType = typeServices.filter(s => s.is_unavailable).length;
+            return (
+              <div key={typeName}>
+                <div className="flex items-center gap-2 mb-3">
+                  <div className="h-3 w-3 rounded-full shrink-0" style={{ backgroundColor: color }} />
+                  <h2 className="text-sm font-semibold text-foreground">{typeName}</h2>
+                  <div className="ml-auto flex items-center gap-2 text-xs text-muted-foreground">
+                    <span>{typeServices.length}x</span>
+                    {unavailInType > 0 && (
+                      <span className="text-red-500 font-medium">{unavailInType} ausente(s)</span>
+                    )}
+                  </div>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  {typeServices.map(s => (
+                    <ServiceChip key={s.id} service={s} onToggle={handleToggle} disabled={toggle.isPending} />
+                  ))}
                 </div>
               </div>
             );
