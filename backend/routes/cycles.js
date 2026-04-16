@@ -518,27 +518,46 @@ router.post('/card-completions/:id/deliver', async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// POST /api/cycles/card-completions/:id/approve — aprovar documento
-router.patch('/card-completions/:id/approve', async (req, res) => {
+// Helper: buscar ou criar card_completion para um task
+async function getOrCreateCompletion(taskId, userId, userName) {
+  const { data: existing } = await supabase.from('card_completions').select('*').eq('task_id', taskId).maybeSingle();
+  if (existing) return existing;
+
+  // Buscar dados do task
+  const { data: task } = await supabase.from('cycle_phase_tasks').select('*, event_cycle_phases(numero_fase, nome_fase)').eq('id', taskId).single();
+  if (!task) throw new Error('Task nao encontrada');
+
+  const { data: cc, error } = await supabase.from('card_completions').insert({
+    task_id: taskId, event_id: task.event_id, event_phase_id: task.event_phase_id,
+    phase_number: task.event_cycle_phases?.numero_fase, area: task.area,
+    card_titulo: task.titulo, completed_by: userId, completed_by_name: userName,
+    completed_at: new Date().toISOString(), quality_rating: 'ok',
+  }).select().single();
+  if (error) throw error;
+  return cc;
+}
+
+// PATCH /api/cycles/card-completions/:taskId/approve — aprovar (usa task ID)
+router.patch('/card-completions/:taskId/approve', async (req, res) => {
   try {
-    const { data: cc } = await supabase.from('card_completions').select('*').eq('id', req.params.id).single();
+    const cc = await getOrCreateCompletion(req.params.taskId, req.user.userId, req.user.name);
     const updates = { approved_by: req.user.userId, approved_at: new Date().toISOString() };
     updates.score = calcScore({ ...cc, ...updates });
 
-    const { data, error } = await supabase.from('card_completions').update(updates).eq('id', req.params.id).select().single();
+    const { data, error } = await supabase.from('card_completions').update(updates).eq('id', cc.id).select().single();
     if (error) throw error;
     res.json(data);
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// PATCH /api/cycles/card-completions/:id/quality — atualizar qualidade
-router.patch('/card-completions/:id/quality', async (req, res) => {
+// PATCH /api/cycles/card-completions/:taskId/quality — qualidade (usa task ID)
+router.patch('/card-completions/:taskId/quality', async (req, res) => {
   try {
-    const { data: cc } = await supabase.from('card_completions').select('*').eq('id', req.params.id).single();
+    const cc = await getOrCreateCompletion(req.params.taskId, req.user.userId, req.user.name);
     const updates = { quality_rating: req.body.quality_rating || 'ok' };
     updates.score = calcScore({ ...cc, ...updates });
 
-    const { data, error } = await supabase.from('card_completions').update(updates).eq('id', req.params.id).select().single();
+    const { data, error } = await supabase.from('card_completions').update(updates).eq('id', cc.id).select().single();
     if (error) throw error;
     res.json(data);
   } catch (err) { res.status(500).json({ error: err.message }); }
