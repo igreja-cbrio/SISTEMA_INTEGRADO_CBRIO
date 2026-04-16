@@ -97,8 +97,8 @@ const ICONS_VOLUNTARIO = {
   'icon.png':    makeSolidPng(29,  29,  64, 128, 151),
   'icon@2x.png': makeSolidPng(58,  58,  64, 128, 151),
   'icon@3x.png': makeSolidPng(87,  87,  64, 128, 151),
-  'logo.png':    LOGO_CBRIO,
-  'logo@2x.png': LOGO_CBRIO,
+  'logo.png':    LOGO_CBRIO_WHITE,
+  'logo@2x.png': LOGO_CBRIO_WHITE,
 };
 
 // ── Conversao de certificados ─────────────────────────────────────────────
