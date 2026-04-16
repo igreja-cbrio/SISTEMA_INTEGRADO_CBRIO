@@ -184,6 +184,7 @@ async function processServiceType(supabase, serviceType, plans, credentials) {
   let typeMembersFound = 0;
   let typeMembersProcessed = 0;
   const volunteers = new Map();
+  const memberTeamMap = new Map(); // personId -> Set<teamName> — acumulado em todos os planos
 
   for (const plan of plans) {
     const serviceDate = plan.attributes.sort_date;
@@ -297,8 +298,21 @@ async function processServiceType(supabase, serviceType, plans, credentials) {
         .upsert(schedule, { onConflict: 'service_id,planning_center_person_id' });
       if (!error) typeSchedules++;
       else console.error('[PC] upsert schedule error:', error.message);
+
+      // Acumula atribuicoes de equipe para processar ao final
+      const personId = schedule.planning_center_person_id;
+      if (personId && schedule.team_name) {
+        if (!memberTeamMap.has(personId)) memberTeamMap.set(personId, new Set());
+        schedule.team_name.split(',').forEach(t => {
+          const trimmed = t.trim();
+          if (trimmed) memberTeamMap.get(personId).add(trimmed);
+        });
+      }
     }
   }
+
+  // Opção A: atribui voluntários às equipes com base nas escalas sincronizadas
+  await assignVolunteersToTeams(supabase, memberTeamMap);
 
   return { services: typeServices, schedules: typeSchedules, membersFound: typeMembersFound, membersProcessed: typeMembersProcessed, volunteers };
 }
@@ -351,6 +365,56 @@ async function upsertVolunteerProfiles(supabase, volunteersMap) {
   return { count: upserted, dbError: firstError };
 }
 
+// ── Assign volunteers to teams based on schedule data ───────────────────────
+// memberTeamMap: Map<planning_center_person_id, Set<teamName>>
+async function assignVolunteersToTeams(supabase, memberTeamMap) {
+  if (!memberTeamMap.size) return 0;
+
+  const personIds = Array.from(memberTeamMap.keys());
+  const allTeamNames = new Set();
+  for (const names of memberTeamMap.values()) names.forEach(n => allTeamNames.add(n));
+
+  // Fetch matching profiles
+  const { data: profiles } = await supabase.from('vol_profiles')
+    .select('id, planning_center_id')
+    .in('planning_center_id', personIds);
+  if (!profiles?.length) return 0;
+  const profileMap = new Map(profiles.map(p => [p.planning_center_id, p.id]));
+
+  // Ensure all teams exist
+  await supabase.from('vol_teams')
+    .upsert(Array.from(allTeamNames).map(name => ({ name })), { onConflict: 'name', ignoreDuplicates: true });
+
+  const { data: teams } = await supabase.from('vol_teams')
+    .select('id, name').in('name', Array.from(allTeamNames));
+  const teamMap = new Map((teams || []).map(t => [t.name, t.id]));
+
+  // Build memberships
+  const memberships = [];
+  for (const [personId, names] of memberTeamMap.entries()) {
+    const profileId = profileMap.get(personId);
+    if (!profileId) continue;
+    for (const teamName of names) {
+      const teamId = teamMap.get(teamName);
+      if (teamId) memberships.push({ volunteer_profile_id: profileId, team_id: teamId });
+    }
+  }
+  if (!memberships.length) return 0;
+
+  // Upsert in batches
+  const batchSize = 100;
+  for (let i = 0; i < memberships.length; i += batchSize) {
+    await supabase.from('vol_team_members')
+      .upsert(memberships.slice(i, i + batchSize), { onConflict: 'volunteer_profile_id,team_id', ignoreDuplicates: true });
+  }
+
+  // Mark these volunteers as active
+  const profileIds = [...new Set(memberships.map(m => m.volunteer_profile_id))];
+  await supabase.from('vol_profiles').update({ allocation_status: 'active' }).in('id', profileIds);
+
+  return memberships.length;
+}
+
 module.exports = {
   STATUS_PRIORITY,
   STATUS_MAP,
@@ -366,4 +430,5 @@ module.exports = {
   fetchAllTeamPersons,
   upsertVolunteerQrCodes,
   upsertVolunteerProfiles,
+  assignVolunteersToTeams,
 };

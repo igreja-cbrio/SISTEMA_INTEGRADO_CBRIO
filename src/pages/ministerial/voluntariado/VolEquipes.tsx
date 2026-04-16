@@ -9,7 +9,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import {
   useVolTeamsManaged, useCreateTeam, useUpdateTeam, useDeleteTeam,
-  useImportTeamsFromSchedules, useVolTeamMembers, useAddTeamMember,
+  useImportTeamsFromSchedules, useSyncTeamMembersFromSchedules, useVolTeamMembers, useAddTeamMember,
   useRemoveTeamMember, useVolPositions, useCreatePosition, useDeletePosition,
 } from './hooks';
 import { Plus, Users, Trash2, Edit2, UserPlus, X, Download, Briefcase } from 'lucide-react';
@@ -36,6 +36,7 @@ export default function VolEquipes() {
         <h1 className="text-2xl font-bold text-foreground">Equipes</h1>
         <div className="flex gap-2">
           <ImportTeamsButton />
+          <SyncMembersButton />
           <Button onClick={() => setShowCreateDialog(true)} className="gap-1.5 bg-[#00B39D] hover:bg-[#00B39D]/90">
             <Plus className="h-4 w-4" /> Nova Equipe
           </Button>
@@ -132,6 +133,27 @@ function ImportTeamsButton() {
     >
       <Download className="h-4 w-4" />
       <span className="hidden sm:inline">Importar do PC</span>
+    </Button>
+  );
+}
+
+function SyncMembersButton() {
+  const syncMut = useSyncTeamMembersFromSchedules();
+  return (
+    <Button
+      variant="outline"
+      className="gap-1.5"
+      disabled={syncMut.isPending}
+      onClick={() => {
+        syncMut.mutate(undefined, {
+          onSuccess: (data: any) =>
+            toast.success(`${data.assigned} atribuicoes sincronizadas (${data.volunteers} voluntarios)`),
+          onError: () => toast.error('Erro ao sincronizar membros'),
+        });
+      }}
+    >
+      <Download className="h-4 w-4" />
+      <span className="hidden sm:inline">Sincronizar membros</span>
     </Button>
   );
 }

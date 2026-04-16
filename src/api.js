@@ -815,6 +815,7 @@ export const voluntariado = {
     update: (id, data) => put(`/voluntariado/teams-manage/${id}`, data),
     remove: (id) => del(`/voluntariado/teams-manage/${id}`),
     importFromSchedules: () => post('/voluntariado/teams-manage/import-from-schedules'),
+    syncMembersFromSchedules: () => post('/voluntariado/teams-manage/sync-members-from-schedules'),
   },
   // Positions (within teams)
   positions: {
