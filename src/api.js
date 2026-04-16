@@ -576,9 +576,16 @@ export const cadastroPublico = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ cpf, data_nascimento }),
     });
+    const ct = res.headers.get('content-type') || '';
     if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      throw new Error(err.error || `HTTP ${res.status}`);
+      if (ct.includes('application/json')) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || `HTTP ${res.status}`);
+      }
+      throw new Error(`Erro no servidor (HTTP ${res.status}). Tente novamente.`);
+    }
+    if (!ct.includes('application/json')) {
+      throw new Error('Resposta inesperada do servidor. Tente novamente.');
     }
     return res.json();
   },
@@ -588,9 +595,16 @@ export const cadastroPublico = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ cpf, data_nascimento }),
     });
+    const ct = res.headers.get('content-type') || '';
     if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      throw new Error(err.error || `HTTP ${res.status}`);
+      if (ct.includes('application/json')) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || `HTTP ${res.status}`);
+      }
+      throw new Error(`Erro no servidor (HTTP ${res.status}). Tente novamente.`);
+    }
+    if (!ct.includes('application/json')) {
+      throw new Error('Resposta inesperada do servidor. Tente novamente.');
     }
     return res.json();
   },
@@ -600,22 +614,32 @@ export const cadastroPublico = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ cpf, data_nascimento }),
     });
+    const ct = res.headers.get('content-type') || '';
     if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      throw new Error(err.error || `HTTP ${res.status}`);
+      if (ct.includes('application/json')) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || `HTTP ${res.status}`);
+      }
+      throw new Error(`Erro no servidor (HTTP ${res.status}). Tente novamente.`);
+    }
+    if (!ct.includes('application/json')) {
+      throw new Error('Resposta inesperada do servidor. Tente novamente.');
     }
     return res.json();
   },
-  // Retorna Blob (.pkpass) — chamar com walletApple(...).then(blob => downloadBlob(blob, 'membro.pkpass'))
   walletApple: async (cpf, data_nascimento) => {
     const res = await fetch(`${API}/public/membresia/wallet/apple`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ cpf, data_nascimento }),
     });
+    const ct = res.headers.get('content-type') || '';
     if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      throw new Error(err.error || `HTTP ${res.status}`);
+      if (ct.includes('application/json')) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || `HTTP ${res.status}`);
+      }
+      throw new Error(`Erro no servidor (HTTP ${res.status}). Tente novamente.`);
     }
     return res.blob();
   },
