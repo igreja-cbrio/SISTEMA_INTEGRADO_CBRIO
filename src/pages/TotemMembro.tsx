@@ -502,21 +502,7 @@ function OptionHeader({ opt, member, onBack }: { opt: (typeof MENU_OPTIONS)[numb
   );
 }
 
-// ── Leaflet icon fix (Vite) ───────────────────────────────────────────────────
-
-const makePin = (color: string) => L.divIcon({
-  html: `<svg xmlns="http://www.w3.org/2000/svg" width="28" height="36" viewBox="0 0 28 36">
-    <path d="M14 0C6.3 0 0 6.3 0 14c0 10.5 14 22 14 22S28 24.5 28 14C28 6.3 21.7 0 14 0z" fill="${color}" stroke="white" stroke-width="2"/>
-    <circle cx="14" cy="14" r="6" fill="white"/>
-  </svg>`,
-  className: '',
-  iconSize: [28, 36],
-  iconAnchor: [14, 36],
-  popupAnchor: [0, -38],
-});
-
-const memberPin = makePin('#3B82F6');
-const groupPin  = makePin('#00B39D');
+// ── Map pins now rendered by GruposMapView (MapLibre) ──────────────────────
 
 // ── Haversine distance ────────────────────────────────────────────────────────
 
