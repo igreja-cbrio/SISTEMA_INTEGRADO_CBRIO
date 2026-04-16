@@ -80,8 +80,9 @@ function makeSolidPng(w, h, r, g, b) {
 // Membro: bege #eae3da = rgb(234, 227, 218)
 // Voluntario: azul escuro #408097 = rgb(64, 128, 151)
 
-// Logo CBRio (iBrand font) — lido do filesystem (incluido via vercel.json templates/**)
+// Logo CBRio — lido do filesystem (incluido via vercel.json templates/**)
 const LOGO_CBRIO = fs.readFileSync(path.join(__dirname, '..', 'templates', 'logo-cbrio-text.png'));
+const LOGO_CBRIO_WHITE = fs.readFileSync(path.join(__dirname, '..', 'templates', 'logo-cbrio-text-white.png'));
 
 // Icones pre-gerados por tipo (cached — gerados uma vez no startup)
 const ICONS_MEMBRO = {
