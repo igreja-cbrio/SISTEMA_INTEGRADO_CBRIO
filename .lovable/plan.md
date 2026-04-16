@@ -1,33 +1,28 @@
 
 
-## Plan: Implementar botoes oficiais Apple Wallet e Google Wallet (HIG-compliant)
+## Plan: Ajustar badges Apple/Google Wallet para proporcoes e cores oficiais
 
-### Resumo
-Substituir os botoes genéricos de "Adicionar ao Apple/Google Wallet" por SVGs oficiais seguindo as Human Interface Guidelines da Apple e o branding do Google Wallet.
+### Problema atual
+Os badges SVG atuais tem proporcoes incorretas (280x44 viewBox), icones simplificados que nao correspondem aos oficiais, e o icone do Apple Wallet e uma aproximacao generica com retangulos coloridos.
 
-### O que muda
+### Mudancas
 
-**1. Criar componente `AddToWalletButtons.tsx`** em `src/components/ui/`
+**Arquivo: `src/components/ui/wallet-buttons.tsx`**
 
-Componente reutilizavel com:
-- **Apple Wallet**: SVG oficial preto com icone do Wallet + texto "Add to Apple Wallet" (ou versao PT "Adicionar ao Apple Wallet"). Fundo preto, cantos arredondados, proporcoes conforme HIG (altura minima 44px, aspect ratio ~3.5:1).
-- **Google Wallet**: SVG/botao oficial com logo Google Wallet colorido, fundo preto, texto "Add to Google Wallet". Segue as guidelines do Google Pay brand.
-- Props: `onApple`, `onGoogle`, `appleBusy`, `googleBusy`, `showApple` (auto-detecta iOS)
+1. **Apple Wallet Badge** — Corrigir para proporcoes oficiais HIG:
+   - ViewBox: `0 0 187 56` (aspect ratio ~3.34:1, conforme badge oficial Apple)
+   - Fundo preto com borda arredondada (`rx=6`)
+   - Icone Wallet oficial: stack de 3 cards coloridos (vermelho `#FC3D3A`, amarelo `#F5A623`, verde `#4CD964`, azul `#5AC8FA`) com bordas arredondadas
+   - Texto em 2 linhas: "Adicionar ao" (fontSize 10, regular) + "Apple Wallet" (fontSize 16, semibold)
+   - Fonte: `-apple-system, SF Pro Text` / `SF Pro Display`
 
-**2. Atualizar `VolMeuPainel.tsx`** (linhas 123-148)
-- Substituir os `<Button>` genericos pelo componente `AddToWalletButtons`
-- Remover imports de `Apple`, `Wallet` do lucide
+2. **Google Wallet Badge** — Corrigir proporcoes e icone:
+   - Mesmo viewBox `0 0 187 56`
+   - Icone Google "G" multicolorido oficial (4 cores: azul `#4285F4`, vermelho `#EA4335`, amarelo `#FBBC04`, verde `#34A853`)
+   - Texto: "Adicionar ao" + "Google Wallet"
 
-**3. Atualizar `MemberWalletPass.tsx`** (linhas 188-206)
-- Mesmo: substituir botoes genericos pelo componente oficial
-- Manter botao "Baixar imagem do QR" separado
+3. **Botoes wrapper** — Ajustar `min-h-[56px]` para corresponder a nova proporcao, `max-w-[240px]` para nao esticar demais em containers largos
 
-### SVGs utilizados
-- Apple Wallet: inline SVG reproduzindo o badge oficial (preto com icone wallet colorido + texto branco). Nao usaremos imagem externa — SVG inline garante qualidade em qualquer resolucao.
-- Google Wallet: inline SVG com logo G colorido + texto "Add to Google Wallet" em fundo escuro.
-
-### Arquivos
-- `src/components/ui/wallet-buttons.tsx` — novo componente
-- `src/pages/ministerial/voluntariado/VolMeuPainel.tsx` — usar novo componente
-- `src/components/membresia/MemberWalletPass.tsx` — usar novo componente
+### Arquivos modificados
+- `src/components/ui/wallet-buttons.tsx` — unico arquivo
 
