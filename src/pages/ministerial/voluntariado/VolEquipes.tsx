@@ -56,8 +56,8 @@ export default function VolEquipes() {
           {teams.map(team => (
             <Card
               key={team.id}
-              className={`cursor-pointer transition-all hover:shadow-md ${selectedTeamId === team.id ? 'ring-2 ring-primary' : ''}`}
-              onClick={() => setSelectedTeamId(selectedTeamId === team.id ? null : team.id)}
+              className="cursor-pointer transition-all hover:shadow-md hover:ring-2 hover:ring-primary/40"
+              onClick={() => setSelectedTeamId(team.id)}
             >
               <CardHeader className="pb-2">
                 <div className="flex items-center justify-between">
@@ -103,9 +103,7 @@ export default function VolEquipes() {
         </div>
       )}
 
-      {selectedTeam && (
-        <TeamDetail team={selectedTeam} onClose={() => setSelectedTeamId(null)} />
-      )}
+      <TeamDetailDialog teamId={selectedTeamId} team={selectedTeam ?? null} onClose={() => setSelectedTeamId(null)} />
 
       {(showCreateDialog || editTeam) && (
         <TeamFormDialog
@@ -229,38 +227,37 @@ function TeamFormDialog({ team, onClose }: { team: VolTeam | null; onClose: () =
   );
 }
 
-function TeamDetail({ team, onClose }: { team: VolTeam; onClose: () => void }) {
-  const { data: members = [], isLoading: membersLoading } = useVolTeamMembers(team.id);
-  const { data: positions = [] } = useVolPositions(team.id);
+function TeamDetailDialog({ teamId, team, onClose }: { teamId: string | null; team: VolTeam | null; onClose: () => void }) {
+  const { data: members = [], isLoading: membersLoading } = useVolTeamMembers(teamId ?? undefined);
+  const { data: positions = [] } = useVolPositions(teamId ?? undefined);
 
   return (
-    <Card>
-      <CardHeader>
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            {team.color && <div className="h-4 w-4 rounded-full" style={{ backgroundColor: team.color }} />}
-            <CardTitle>{team.name}</CardTitle>
-          </div>
-          <Button variant="ghost" size="icon" onClick={onClose}><X className="h-4 w-4" /></Button>
-        </div>
-      </CardHeader>
-      <CardContent>
-        <Tabs defaultValue="members">
-          <TabsList>
-            <TabsTrigger value="members">Membros ({members.length})</TabsTrigger>
-            <TabsTrigger value="positions">Posicoes ({positions.length})</TabsTrigger>
-          </TabsList>
+    <Dialog open={!!teamId} onOpenChange={open => { if (!open) onClose(); }}>
+      <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            {team?.color && <div className="h-4 w-4 rounded-full shrink-0" style={{ backgroundColor: team.color }} />}
+            {team?.name}
+          </DialogTitle>
+        </DialogHeader>
+        {team && (
+          <Tabs defaultValue="members">
+            <TabsList>
+              <TabsTrigger value="members">Membros ({members.length})</TabsTrigger>
+              <TabsTrigger value="positions">Posicoes ({positions.length})</TabsTrigger>
+            </TabsList>
 
-          <TabsContent value="members" className="mt-4">
-            <TeamMembersList teamId={team.id} members={members} loading={membersLoading} positions={positions} />
-          </TabsContent>
+            <TabsContent value="members" className="mt-4">
+              <TeamMembersList teamId={team.id} members={members} loading={membersLoading} positions={positions} />
+            </TabsContent>
 
-          <TabsContent value="positions" className="mt-4">
-            <PositionsList teamId={team.id} positions={positions} />
-          </TabsContent>
-        </Tabs>
-      </CardContent>
-    </Card>
+            <TabsContent value="positions" className="mt-4">
+              <PositionsList teamId={team.id} positions={positions} />
+            </TabsContent>
+          </Tabs>
+        )}
+      </DialogContent>
+    </Dialog>
   );
 }
 

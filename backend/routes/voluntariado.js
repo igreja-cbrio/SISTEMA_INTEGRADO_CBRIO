@@ -1330,7 +1330,7 @@ router.delete('/services/:id', async (req, res) => {
 router.get('/teams-manage', async (req, res) => {
   try {
     const { data, error } = await supabase.from('vol_teams')
-      .select('*, leader:vol_profiles!vol_teams_leader_profile_id_fkey(id, full_name, avatar_url), positions:vol_positions(*), members:vol_team_members(count)')
+      .select('*, leader:vol_profiles!vol_teams_leader_profile_id_fkey(id, full_name, avatar_url), positions:vol_positions(*), members:vol_team_members!team_id(count)')
       .order('sort_order').order('name');
     if (error) return res.status(400).json({ error: error.message });
     res.json(data);
