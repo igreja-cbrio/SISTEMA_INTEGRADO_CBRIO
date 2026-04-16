@@ -30,3 +30,34 @@ export function useDeleteAvailability() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ['vol', 'availability'] }),
   });
 }
+
+// Retorna todos os cultos do ano com flag is_unavailable para o voluntario logado
+export function useMyServices(year: number) {
+  return useQuery({
+    queryKey: ['vol', 'my-services', year],
+    queryFn: () => voluntariado.me.services(year) as Promise<{
+      id: string; name: string; service_type_name: string;
+      service_type_id: string | null; scheduled_at: string;
+      is_unavailable: boolean; availability_id: string | null;
+    }[]>,
+  });
+}
+
+// Toggle indisponibilidade para um culto especifico (marca/desmarca)
+export function useToggleServiceUnavailability() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ serviceId, isUnavailable, availabilityId }: {
+      serviceId: string; isUnavailable: boolean; availabilityId: string | null;
+    }) => {
+      if (isUnavailable && availabilityId) {
+        return voluntariado.me.removeAvailability(availabilityId);
+      }
+      return voluntariado.me.addAvailability({ service_id: serviceId });
+    },
+    onSuccess: (_data, vars) => {
+      // Optimistic invalidation — recarrega my-services de todos os anos em cache
+      qc.invalidateQueries({ queryKey: ['vol', 'my-services'] });
+    },
+  });
+}

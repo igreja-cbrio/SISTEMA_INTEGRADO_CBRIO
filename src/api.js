@@ -714,6 +714,7 @@ export const voluntariado = {
     availability: () => get('/voluntariado/my-availability'),
     addAvailability: (data) => post('/voluntariado/my-availability', data),
     removeAvailability: (id) => del(`/voluntariado/my-availability/${id}`),
+    services: (year) => get(`/voluntariado/my-services?year=${year}`),
     walletGoogle: () => get('/voluntariado/me/wallet/google'),
     walletApple: async () => {
       const token = await getToken();
@@ -749,7 +750,7 @@ export const voluntariado = {
     create: (data) => post('/voluntariado/service-types', data),
     update: (id, data) => put(`/voluntariado/service-types/${id}`, data),
     remove: (id) => del(`/voluntariado/service-types/${id}`),
-    generate: (id, weeks) => post(`/voluntariado/service-types/${id}/generate`, { weeks }),
+    generate: (id, weeks, year) => post(`/voluntariado/service-types/${id}/generate`, { weeks, year }),
   },
   // Services
   services: {

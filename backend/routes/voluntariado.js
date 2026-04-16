@@ -375,6 +375,42 @@ router.post('/my-schedules/:id/respond', async (req, res) => {
   } catch (e) { res.status(500).json({ error: 'Erro ao responder escala' }); }
 });
 
+// Get all services for a year with my unavailability flags
+router.get('/my-services', async (req, res) => {
+  try {
+    const { year } = req.query;
+    const targetYear = parseInt(year || new Date().getFullYear());
+    const userId = req.user.userId;
+
+    const { data: volProfile } = await supabase.from('vol_profiles')
+      .select('id').eq('auth_user_id', userId).maybeSingle();
+
+    const { data: services, error } = await supabase.from('vol_services')
+      .select('id, name, service_type_name, service_type_id, scheduled_at')
+      .gte('scheduled_at', `${targetYear}-01-01T00:00:00`)
+      .lte('scheduled_at', `${targetYear}-12-31T23:59:59`)
+      .order('scheduled_at');
+    if (error) return res.status(400).json({ error: error.message });
+
+    if (!volProfile) {
+      return res.json((services || []).map(s => ({ ...s, is_unavailable: false, availability_id: null })));
+    }
+
+    const { data: unavailabilities } = await supabase.from('vol_availability')
+      .select('id, service_id')
+      .eq('volunteer_profile_id', volProfile.id)
+      .not('service_id', 'is', null);
+
+    const availabilityMap = new Map((unavailabilities || []).map(u => [u.service_id, u.id]));
+
+    res.json((services || []).map(s => ({
+      ...s,
+      is_unavailable: availabilityMap.has(s.id),
+      availability_id: availabilityMap.get(s.id) || null,
+    })));
+  } catch (e) { res.status(500).json({ error: 'Erro ao buscar cultos do voluntario' }); }
+});
+
 // Get my availability
 router.get('/my-availability', async (req, res) => {
   try {
@@ -391,18 +427,32 @@ router.get('/my-availability', async (req, res) => {
 });
 
 // Set my availability (create unavailability)
+// Aceita service_id (culto especifico) ou unavailable_from/unavailable_to (faixa de datas)
 router.post('/my-availability', async (req, res) => {
   try {
     const userId = req.user.userId;
-    const { unavailable_from, unavailable_to, reason } = req.body;
-    if (!unavailable_from || !unavailable_to) return res.status(400).json({ error: 'Datas obrigatorias' });
+    const { service_id, unavailable_from, unavailable_to, reason } = req.body;
 
     const { data: volProfile } = await supabase.from('vol_profiles')
       .select('id').eq('auth_user_id', userId).maybeSingle();
     if (!volProfile) return res.status(404).json({ error: 'Perfil de voluntario nao encontrado' });
 
+    let fromDate = unavailable_from;
+    let toDate = unavailable_to;
+
+    if (service_id) {
+      // Disponibilidade por culto especifico: busca a data do culto
+      const { data: service } = await supabase.from('vol_services')
+        .select('scheduled_at').eq('id', service_id).single();
+      if (!service) return res.status(404).json({ error: 'Culto nao encontrado' });
+      fromDate = service.scheduled_at.split('T')[0];
+      toDate = fromDate;
+    }
+
+    if (!fromDate) return res.status(400).json({ error: 'service_id ou datas obrigatorios' });
+
     const { data, error } = await supabase.from('vol_availability')
-      .insert({ volunteer_profile_id: volProfile.id, unavailable_from, unavailable_to, reason })
+      .insert({ volunteer_profile_id: volProfile.id, service_id: service_id || null, unavailable_from: fromDate, unavailable_to: toDate, reason: reason || null })
       .select().single();
     if (error) return res.status(400).json({ error: error.message });
     res.json(data);
@@ -1171,8 +1221,7 @@ router.delete('/service-types/:id', async (req, res) => {
 // Generate services from service type recurrence pattern
 router.post('/service-types/:id/generate', async (req, res) => {
   try {
-    const { weeks } = req.body; // How many weeks ahead to generate (default 4)
-    const weeksAhead = weeks || 4;
+    const { weeks, year } = req.body;
 
     const { data: sType, error: stErr } = await supabase.from('vol_service_types')
       .select('*').eq('id', req.params.id).single();
@@ -1181,36 +1230,62 @@ router.post('/service-types/:id/generate', async (req, res) => {
       return res.status(400).json({ error: 'Tipo de culto sem recorrencia configurada' });
     }
 
+    const [hours, minutes] = sType.recurrence_time.split(':').map(Number);
     const generated = [];
-    const now = new Date();
-    for (let w = 0; w < weeksAhead; w++) {
-      const target = new Date(now);
-      target.setDate(target.getDate() + ((sType.recurrence_day - target.getDay() + 7) % 7) + (w * 7));
-      // Skip if in the past
-      if (target < now && w === 0) {
-        target.setDate(target.getDate() + 7);
+
+    if (year) {
+      // Gera todas as ocorrencias do tipo no ano inteiro
+      const rangeStart = new Date(`${year}-01-01T00:00:00`);
+      const rangeEnd = new Date(`${year}-12-31T23:59:59`);
+
+      // Avan�a ate o primeiro dia da semana correto no ano
+      let current = new Date(rangeStart);
+      while (current.getDay() !== sType.recurrence_day) {
+        current.setDate(current.getDate() + 1);
       }
-      const [hours, minutes] = sType.recurrence_time.split(':');
-      target.setHours(parseInt(hours), parseInt(minutes), 0, 0);
 
-      const scheduledAt = target.toISOString();
-      // Check if service already exists for this date/type
-      const dayStart = new Date(target.getFullYear(), target.getMonth(), target.getDate()).toISOString();
-      const dayEnd = new Date(target.getFullYear(), target.getMonth(), target.getDate() + 1).toISOString();
-      const { data: existing } = await supabase.from('vol_services')
-        .select('id').eq('service_type_id', sType.id)
-        .gte('scheduled_at', dayStart).lt('scheduled_at', dayEnd);
-      if (existing && existing.length > 0) continue;
+      while (current <= rangeEnd) {
+        const target = new Date(current);
+        target.setHours(hours, minutes, 0, 0);
 
-      const { data: svc, error: svcErr } = await supabase.from('vol_services')
-        .insert({
-          name: sType.name,
-          service_type_name: sType.name,
-          service_type_id: sType.id,
-          scheduled_at: scheduledAt,
-        }).select().single();
-      if (!svcErr && svc) generated.push(svc);
+        const dayStart = new Date(target.getFullYear(), target.getMonth(), target.getDate()).toISOString();
+        const dayEnd = new Date(target.getFullYear(), target.getMonth(), target.getDate() + 1).toISOString();
+        const { data: existing } = await supabase.from('vol_services')
+          .select('id').eq('service_type_id', sType.id)
+          .gte('scheduled_at', dayStart).lt('scheduled_at', dayEnd);
+
+        if (!existing || existing.length === 0) {
+          const { data: svc, error: svcErr } = await supabase.from('vol_services')
+            .insert({ name: sType.name, service_type_name: sType.name, service_type_id: sType.id, scheduled_at: target.toISOString() })
+            .select().single();
+          if (!svcErr && svc) generated.push(svc);
+        }
+        current.setDate(current.getDate() + 7);
+      }
+    } else {
+      // Gera N semanas a partir de hoje (comportamento original)
+      const weeksAhead = weeks || 4;
+      const now = new Date();
+      for (let w = 0; w < weeksAhead; w++) {
+        const target = new Date(now);
+        target.setDate(target.getDate() + ((sType.recurrence_day - target.getDay() + 7) % 7) + (w * 7));
+        if (target < now && w === 0) target.setDate(target.getDate() + 7);
+        target.setHours(hours, minutes, 0, 0);
+
+        const dayStart = new Date(target.getFullYear(), target.getMonth(), target.getDate()).toISOString();
+        const dayEnd = new Date(target.getFullYear(), target.getMonth(), target.getDate() + 1).toISOString();
+        const { data: existing } = await supabase.from('vol_services')
+          .select('id').eq('service_type_id', sType.id)
+          .gte('scheduled_at', dayStart).lt('scheduled_at', dayEnd);
+        if (existing && existing.length > 0) continue;
+
+        const { data: svc, error: svcErr } = await supabase.from('vol_services')
+          .insert({ name: sType.name, service_type_name: sType.name, service_type_id: sType.id, scheduled_at: target.toISOString() })
+          .select().single();
+        if (!svcErr && svc) generated.push(svc);
+      }
     }
+
     res.json({ generated: generated.length, services: generated });
   } catch (e) { res.status(500).json({ error: 'Erro ao gerar cultos' }); }
 });

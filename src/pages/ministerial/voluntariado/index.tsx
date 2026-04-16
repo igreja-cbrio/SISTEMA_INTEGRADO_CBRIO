@@ -18,6 +18,7 @@ import VolMeuPainel from './VolMeuPainel';
 import VolMeuPerfil from './VolMeuPerfil';
 import VolMeusCheckins from './VolMeusCheckins';
 import VolProfileComplete from './VolProfileComplete';
+import VolMinhaDisponibilidade from './VolMinhaDisponibilidade';
 import VolLista from './VolLista';
 import VolScanTotem from './VolScanTotem';
 import VolNavBar from './components/VolNavBar';
@@ -104,6 +105,7 @@ function VolunteerPortal() {
         <Route index element={<Navigate to="painel" replace />} />
         <Route path="painel" element={<VolMeuPainel />} />
         <Route path="checkin" element={<VolScanTotem />} />
+        <Route path="disponibilidade" element={<VolMinhaDisponibilidade />} />
         <Route path="historico" element={<VolMeusCheckins />} />
         <Route path="perfil" element={<VolMeuPerfil />} />
         <Route path="*" element={<Navigate to="painel" replace />} />
