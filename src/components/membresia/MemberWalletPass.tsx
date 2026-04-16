@@ -1,15 +1,13 @@
 import { useEffect, useRef, useState } from 'react';
 import { QRCodeSVG } from 'qrcode.react';
-import { Loader2, Wallet, Apple, Download, CheckCircle2, AlertCircle } from 'lucide-react';
+import { Loader2, Wallet, Apple, Download, AlertCircle, Wifi } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { cadastroPublico } from '@/api';
 
 interface Props {
   cpf: string;
   dataNascimento: string;
-  /** Show inline on page (not inside modal). */
   inline?: boolean;
-  /** Optional title override. */
   title?: string;
 }
 
@@ -28,6 +26,23 @@ function downloadBlob(blob: Blob, filename: string) {
   a.click();
   document.body.removeChild(a);
   URL.revokeObjectURL(url);
+}
+
+function CbrioLogo({ className = '' }: { className?: string }) {
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      viewBox="0 0 200 200"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="22"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={className}
+    >
+      <path d="M 40 78 C 40 50, 72 42, 100 72 C 128 42, 160 50, 160 80 C 160 112, 118 142, 100 160 L 138 188" />
+    </svg>
+  );
 }
 
 export default function MemberWalletPass({ cpf, dataNascimento, inline = false, title }: Props) {
@@ -130,27 +145,45 @@ export default function MemberWalletPass({ cpf, dataNascimento, inline = false, 
 
   return (
     <div className={`flex flex-col items-center gap-4 ${inline ? '' : 'px-2 py-2'}`}>
-      <div className="text-center space-y-1">
-        <div className="flex items-center justify-center gap-2">
-          <CheckCircle2 className="h-5 w-5 text-[#00B39D]" />
-          <p className="font-semibold text-white">{title || 'Seu QR de membro esta pronto'}</p>
+      {/* Wallet Card */}
+      <div className="w-full max-w-xs rounded-3xl bg-[#00B39D] p-5 shadow-2xl">
+        {/* Header */}
+        <div className="flex items-center justify-between mb-6">
+          <div className="flex items-center gap-2">
+            <CbrioLogo className="h-6 w-6 text-white" />
+            <span className="text-white font-bold text-base tracking-tight">CBRio</span>
+          </div>
+          <span className="text-[10px] font-semibold tracking-widest text-white/80 bg-white/15 px-2.5 py-0.5 rounded-full uppercase">
+            Membro
+          </span>
         </div>
-        <p className="text-xs text-white/60">
-          {iOS
-            ? 'Adicione ao Apple Wallet ou salve a imagem do QR.'
-            : 'Adicione ao Google Wallet ou salve a imagem do QR.'}
-        </p>
+
+        {/* Member label */}
+        <div className="mb-4">
+          <p className="text-[10px] font-medium tracking-widest text-white/70 uppercase mb-0.5">
+            {title || 'Seu QR de membro esta pronto'}
+          </p>
+        </div>
+
+        {/* QR Code */}
+        <div ref={svgRef} className="flex justify-center mb-4">
+          <div className="bg-white rounded-2xl p-3">
+            <QRCodeSVG value={qrToken} size={180} level="M" includeMargin={false} />
+          </div>
+        </div>
+
+        {memberId && (
+          <p className="text-center text-[10px] font-mono text-white/50 tracking-wide mb-3">{memberId}</p>
+        )}
+
+        {/* Footer */}
+        <div className="flex items-center justify-between">
+          <CbrioLogo className="h-4 w-4 text-white/40" />
+          <Wifi className="h-4 w-4 text-white/40 rotate-90" />
+        </div>
       </div>
 
-      {/* QR inline */}
-      <div ref={svgRef} className="rounded-xl bg-white p-4">
-        <QRCodeSVG value={qrToken} size={180} level="M" includeMargin={false} />
-      </div>
-      {memberId && (
-        <p className="text-[11px] font-mono text-white/50 tracking-wide">{memberId}</p>
-      )}
-
-      {/* Botoes */}
+      {/* Action buttons */}
       <div className="w-full max-w-xs flex flex-col gap-2">
         {iOS ? (
           <Button
