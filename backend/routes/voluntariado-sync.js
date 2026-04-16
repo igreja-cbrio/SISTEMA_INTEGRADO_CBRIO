@@ -181,9 +181,29 @@ router.get('/diagnostics', async (req, res) => {
       if (teamsRes.ok) {
         const teamsData = await teamsRes.json();
         for (const team of (teamsData.data || [])) {
-          const membersRes = await fetchWithRetry(`${PC_SERVICES_BASE}/service_types/${st.id}/teams/${team.id}/team_members?per_page=1`, { Authorization: `Basic ${credentials}` });
-          const totalMembers = membersRes.ok ? ((await membersRes.json()).meta?.total_count ?? '?') : '?';
-          entry.teams.push({ id: team.id, name: team.attributes.name, memberCount: totalMembers });
+          const membersRes = await fetchWithRetry(
+            `${PC_SERVICES_BASE}/service_types/${st.id}/teams/${team.id}/team_members?per_page=5&include=person`,
+            { Authorization: `Basic ${credentials}` }
+          );
+          let memberCount = '?';
+          let sampleMembers = [];
+          if (membersRes.ok) {
+            const membersData = await membersRes.json();
+            memberCount = membersData.meta?.total_count ?? (membersData.data?.length ?? '?');
+            const personMap = new Map();
+            for (const inc of (membersData.included || [])) {
+              if (inc.type === 'Person') personMap.set(inc.id, inc);
+            }
+            for (const m of (membersData.data || [])) {
+              const personId = m.relationships?.person?.data?.id;
+              const person = personId ? personMap.get(personId) : null;
+              const name = m.attributes?.name
+                || (person ? `${person.attributes?.first_name || ''} ${person.attributes?.last_name || ''}`.trim() : null)
+                || '(sem nome)';
+              sampleMembers.push(name);
+            }
+          }
+          entry.teams.push({ id: team.id, name: team.attributes.name, memberCount, sampleMembers });
         }
       }
 
