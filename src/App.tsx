@@ -96,6 +96,7 @@ const CadastroMembresia = lazyWithRetry(() => import('./pages/public/CadastroMem
 const Motion = lazyWithRetry(() => import('./pages/public/Motion'));
 const Voluntariado = lazyWithRetry(() => import('./pages/ministerial/voluntariado'));
 const VolTotem = lazyWithRetry(() => import('./pages/ministerial/voluntariado/VolTotem'));
+const TotemMembro = lazyWithRetry(() => import('./pages/TotemMembro'));
 const VolSelfCheckin = lazyWithRetry(() => import('./pages/ministerial/voluntariado/VolSelfCheckin'));
 const PcCallback = lazyWithRetry(() => import('./pages/auth/PcCallback'));
 
@@ -200,6 +201,7 @@ function AppRoutes() {
 
       {/* Totem — fullscreen, sem shell nenhum */}
       <Route path="/voluntariado/totem" element={<ProtectedRoute><Suspense fallback={<Loading />}><VolTotem /></Suspense></ProtectedRoute>} />
+      <Route path="/totem" element={<ProtectedRoute><Suspense fallback={<Loading />}><TotemMembro /></Suspense></ProtectedRoute>} />
 
       {/* Self check-in — voluntario escaneia QR do totem com celular.
           Rota PUBLICA: se nao estiver autenticado, a propria pagina oferece
