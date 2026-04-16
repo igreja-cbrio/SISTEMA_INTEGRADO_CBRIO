@@ -142,9 +142,28 @@ router.all('/processar', async (req, res) => {
   }
 
   try {
-    // Processar pendentes na fila (max 5)
-    const resultado = await processarFilaLimitada(5);
-    res.json({ sucesso: true, ...resultado });
+    // 1. Detectar arquivos novos em todos os drives monitorados
+    let totalDetectados = 0;
+    try {
+      const token = await getGraphToken();
+      const { data: cfg } = await supabase.from('cerebro_config').select('valor').eq('chave', 'bibliotecas_monitoradas').single();
+      const monitoradas = String(cfg?.valor || '').split(',').map(s => s.trim().replace(/["\[\]]/g, '')).filter(Boolean);
+
+      const drivesRes = await fetch(`https://graph.microsoft.com/v1.0/sites/${HUB_SITE_ID}/drives`, { headers: { Authorization: `Bearer ${token}` } });
+      const drives = (await drivesRes.json()).value || [];
+
+      for (const drive of drives) {
+        if (monitoradas.length > 0 && !monitoradas.includes(drive.name)) continue;
+        const d = await detectarMudancasNoDrive(drive.id);
+        totalDetectados += d;
+      }
+    } catch (detectErr) {
+      console.error('[CEREBRO CRON] Erro na deteccao:', detectErr.message);
+    }
+
+    // 2. Processar pendentes na fila
+    const resultado = await processarFilaLimitada(10);
+    res.json({ sucesso: true, detectados: totalDetectados, ...resultado });
   } catch (e) {
     res.status(500).json({ sucesso: false, erro: e.message });
   }
