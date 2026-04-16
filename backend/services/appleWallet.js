@@ -74,16 +74,25 @@ function makeSolidPng(w, h, r, g, b) {
   ]);
 }
 
-// Cor CBRio: #00B39D = rgb(0, 179, 157)
-const TEAL_R = 0, TEAL_G = 179, TEAL_B = 157;
+// Cores por tipo de passe
+// Membro: bege #eae3da = rgb(234, 227, 218)
+// Voluntario: azul escuro #408097 = rgb(64, 128, 151)
 
-// Icones pre-gerados (cached — gerados uma vez no startup)
-const ICONS = {
-  'icon.png':    makeSolidPng(29,  29,  TEAL_R, TEAL_G, TEAL_B),
-  'icon@2x.png': makeSolidPng(58,  58,  TEAL_R, TEAL_G, TEAL_B),
-  'icon@3x.png': makeSolidPng(87,  87,  TEAL_R, TEAL_G, TEAL_B),
-  'logo.png':    makeSolidPng(160, 50,  TEAL_R, TEAL_G, TEAL_B),
-  'logo@2x.png': makeSolidPng(320, 100, TEAL_R, TEAL_G, TEAL_B),
+// Icones pre-gerados por tipo (cached — gerados uma vez no startup)
+const ICONS_MEMBRO = {
+  'icon.png':    makeSolidPng(29,  29,  234, 227, 218),
+  'icon@2x.png': makeSolidPng(58,  58,  234, 227, 218),
+  'icon@3x.png': makeSolidPng(87,  87,  234, 227, 218),
+  'logo.png':    makeSolidPng(160, 50,  234, 227, 218),
+  'logo@2x.png': makeSolidPng(320, 100, 234, 227, 218),
+};
+
+const ICONS_VOLUNTARIO = {
+  'icon.png':    makeSolidPng(29,  29,  64, 128, 151),
+  'icon@2x.png': makeSolidPng(58,  58,  64, 128, 151),
+  'icon@3x.png': makeSolidPng(87,  87,  64, 128, 151),
+  'logo.png':    makeSolidPng(160, 50,  64, 128, 151),
+  'logo@2x.png': makeSolidPng(320, 100, 64, 128, 151),
 };
 
 // ── Conversao de certificados ─────────────────────────────────────────────
