@@ -371,9 +371,10 @@ router.delete('/phases/:phaseId', authorize('admin', 'diretor'), async (req, res
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// DELETE /api/cycles/tasks/:taskId — excluir tarefa
+// DELETE /api/cycles/tasks/:taskId — excluir tarefa (limpa completions e subtarefas)
 router.delete('/tasks/:taskId', authorize('admin', 'diretor'), async (req, res) => {
   try {
+    await supabase.from('card_completions').delete().eq('task_id', req.params.taskId);
     await supabase.from('cycle_task_subtasks').delete().eq('task_id', req.params.taskId);
     await supabase.from('cycle_phase_tasks').delete().eq('id', req.params.taskId);
     res.json({ success: true });
