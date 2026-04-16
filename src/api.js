@@ -834,6 +834,7 @@ export const voluntariado = {
     list: (params) => get('/voluntariado/availability' + (params ? '?' + new URLSearchParams(params) : '')),
     create: (data) => post('/voluntariado/availability', data),
     remove: (id) => del(`/voluntariado/availability/${id}`),
+    byService: (from, to) => get(`/voluntariado/services-availability?from=${from}&to=${to}`),
   },
   // Training
   trainingCheckins: {
