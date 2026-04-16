@@ -325,6 +325,7 @@ export default function Eventos() {
   const [kpiLoading, setKpiLoading] = useState(false);
   const [kpiConfigOpen, setKpiConfigOpen] = useState(false);
   const [kpiDocModal, setKpiDocModal] = useState(null); // { doc, resumo, loading }
+  const scoreColor = (s) => s >= 80 ? '#10b981' : s >= 60 ? '#f59e0b' : s >= 40 ? '#ef4444' : '#6b7280';
   const [kpiWeights, setKpiWeights] = useState([]);
   const [eventList, setEventList] = useState([]);
   const [categories, setCategories] = useState([]);
@@ -706,7 +707,7 @@ export default function Eventos() {
     const d = kpiData;
     const CAT_COLORS = { marketing: '#00B39D', producao: '#6366f1', compras: '#3b82f6', financeiro: '#10b981', manutencao: '#f59e0b', limpeza: '#8b5cf6', cozinha: '#ec4899', adm: '#0ea5e9' };
     const CAT_LABELS = { marketing: 'Marketing', producao: 'Producao', compras: 'Compras', financeiro: 'Financeiro', manutencao: 'Manutencao', limpeza: 'Limpeza', cozinha: 'Cozinha', adm: 'Administrativo' };
-    const scoreColor = (s) => s >= 80 ? '#10b981' : s >= 60 ? '#f59e0b' : s >= 40 ? '#ef4444' : '#6b7280';
+    // scoreColor movido para nivel do componente
 
     const ScoreLegend = () => (
       <div style={{ display: 'flex', gap: 12, padding: '10px 16px', background: C.bg, borderRadius: 10, marginBottom: 16, flexWrap: 'wrap', alignItems: 'center', border: `1px solid ${C.border}` }}>
