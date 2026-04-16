@@ -11,7 +11,7 @@
   "crons": [
     {
       "path": "/api/cerebro/processar",
-      "schedule": "0 8 * * *"
+      "schedule": "0 */4 * * *"
     }
   ],
   "rewrites": [
