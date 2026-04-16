@@ -12,9 +12,7 @@ import {
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
-import { MapContainer, TileLayer, Marker, Popup } from 'react-leaflet';
-import L from 'leaflet';
-import 'leaflet/dist/leaflet.css';
+import { GruposMapView } from '@/components/grupos/GruposMapView';
 
 // ── Menu ──────────────────────────────────────────────────────────────────────
 
@@ -504,21 +502,7 @@ function OptionHeader({ opt, member, onBack }: { opt: (typeof MENU_OPTIONS)[numb
   );
 }
 
-// ── Leaflet icon fix (Vite) ───────────────────────────────────────────────────
-
-const makePin = (color: string) => L.divIcon({
-  html: `<svg xmlns="http://www.w3.org/2000/svg" width="28" height="36" viewBox="0 0 28 36">
-    <path d="M14 0C6.3 0 0 6.3 0 14c0 10.5 14 22 14 22S28 24.5 28 14C28 6.3 21.7 0 14 0z" fill="${color}" stroke="white" stroke-width="2"/>
-    <circle cx="14" cy="14" r="6" fill="white"/>
-  </svg>`,
-  className: '',
-  iconSize: [28, 36],
-  iconAnchor: [14, 36],
-  popupAnchor: [0, -38],
-});
-
-const memberPin = makePin('#3B82F6');
-const groupPin  = makePin('#00B39D');
+// ── Map pins now rendered by GruposMapView (MapLibre) ──────────────────────
 
 // ── Haversine distance ────────────────────────────────────────────────────────
 
@@ -687,42 +671,16 @@ function GruposFlow({ opt, member, onBack, onDone, onActivity }: {
           <Loader2 className="h-8 w-8 animate-spin text-[#00B39D]" />
         </div>
       ) : showMap ? (
-        /* ── Map view ── */
+        /* ── Map view (MapLibre) ── */
         <div className="flex-1 relative">
-          <MapContainer
-            center={memberCoords ? [memberCoords.lat, memberCoords.lng] : [-22.9068, -43.1729]}
-            zoom={12}
-            style={{ height: '100%', width: '100%', background: '#111' }}
-            zoomControl={true}
-          >
-            <TileLayer
-              url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
-              attribution='&copy; <a href="https://carto.com/">CARTO</a>'
-            />
-            {memberCoords && (
-              <Marker position={[memberCoords.lat, memberCoords.lng]} icon={memberPin}>
-                <Popup><strong>Você está aqui</strong></Popup>
-              </Marker>
-            )}
-            {filtered.filter(g => g.lat && g.lng).map(g => (
-              <Marker key={g.id} position={[g.lat, g.lng]} icon={groupPin}>
-                <Popup>
-                  <div style={{ minWidth: 180 }}>
-                    <p style={{ fontWeight: 700, marginBottom: 4 }}>{g.nome}</p>
-                    {g.lider?.nome && <p style={{ fontSize: 12, color: '#666' }}>Líder: {g.lider.nome}</p>}
-                    {g.dia_semana != null && <p style={{ fontSize: 12 }}>{DIAS_MAP[g.dia_semana]}{g.horario ? ` às ${String(g.horario).slice(0,5)}` : ''}</p>}
-                    {g.dist !== null && g.dist !== undefined && <p style={{ fontSize: 12, color: '#00B39D' }}>{fmtDist(g.dist)} de você</p>}
-                    <button
-                      onClick={() => { setSelected(g); setShowMap(false); onActivity(); }}
-                      style={{ marginTop: 8, padding: '6px 14px', background: '#00B39D', color: '#fff', border: 'none', borderRadius: 8, cursor: 'pointer', fontSize: 13, width: '100%' }}
-                    >
-                      Quero participar
-                    </button>
-                  </div>
-                </Popup>
-              </Marker>
-            ))}
-          </MapContainer>
+          <GruposMapView
+            grupos={filtered}
+            memberCoords={memberCoords}
+            variant="kiosk"
+            defaultTheme="dark"
+            onGroupSelect={(g) => { setSelected(g); setShowMap(false); onActivity(); }}
+            onGroupSelectLabel="Quero participar"
+          />
         </div>
       ) : (
         /* ── List view ── */
