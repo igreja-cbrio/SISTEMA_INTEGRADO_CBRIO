@@ -71,18 +71,18 @@ async function fetchAllPlans(baseUrl, serviceTypeId, credentials) {
   const headers = { Authorization: `Basic ${credentials}` };
   const planMap = new Map();
 
-  const futureRes = await fetchWithRetry(`${baseUrl}/service_types/${serviceTypeId}/plans?filter=future&per_page=10`, headers);
+  const futureRes = await fetchWithRetry(`${baseUrl}/service_types/${serviceTypeId}/plans?filter=future&per_page=5`, headers);
   if (futureRes.ok) {
     const d = await futureRes.json();
     for (const p of d.data || []) planMap.set(p.id, p);
   }
 
-  const pastRes = await fetchWithRetry(`${baseUrl}/service_types/${serviceTypeId}/plans?filter=past&per_page=5&order=-sort_date`, headers);
+  const pastRes = await fetchWithRetry(`${baseUrl}/service_types/${serviceTypeId}/plans?filter=past&per_page=3&order=-sort_date`, headers);
   if (pastRes.ok) {
     const d = await pastRes.json();
-    const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+    const threeDaysAgo = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000);
     for (const p of d.data || []) {
-      if (new Date(p.attributes.sort_date) >= sevenDaysAgo) planMap.set(p.id, p);
+      if (new Date(p.attributes.sort_date) >= threeDaysAgo) planMap.set(p.id, p);
     }
   }
 
