@@ -109,11 +109,18 @@ export default function VolAdmin() {
                     <div className="px-3 py-2 space-y-1">
                       {st.teams.length === 0 && <p className="text-muted-foreground italic">Nenhuma equipe configurada neste tipo de servico.</p>}
                       {st.teams.map((team: any) => (
-                        <div key={team.id} className="flex items-center justify-between py-1 border-b last:border-0">
-                          <span>{team.name}</span>
-                          <Badge variant={team.memberCount > 0 ? 'default' : 'outline'} className="text-xs">
-                            {team.memberCount} membro(s)
-                          </Badge>
+                        <div key={team.id} className="py-1 border-b last:border-0">
+                          <div className="flex items-center justify-between">
+                            <span>{team.name}</span>
+                            <Badge variant={team.memberCount > 0 ? 'default' : 'outline'} className="text-xs">
+                              {team.memberCount} membro(s)
+                            </Badge>
+                          </div>
+                          {team.sampleMembers?.length > 0 && (
+                            <p className="text-[11px] text-muted-foreground mt-0.5 pl-2">
+                              Ex: {team.sampleMembers.join(', ')}{team.memberCount > team.sampleMembers.length ? '...' : ''}
+                            </p>
+                          )}
                         </div>
                       ))}
                     </div>
