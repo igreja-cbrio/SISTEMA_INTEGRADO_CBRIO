@@ -7,11 +7,14 @@ import {
   Users, UserCheck, Droplets, Mountain, Heart, CalendarDays,
   ArrowRight, HandHeart, Lock, Eye, EyeOff, ChevronLeft,
   QrCode, Loader2, CheckCircle2, Maximize, Minimize,
-  MapPin, Clock, Star,
+  MapPin, Clock, Star, Map, List, Navigation,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
+import { MapContainer, TileLayer, Marker, Popup } from 'react-leaflet';
+import L from 'leaflet';
+import 'leaflet/dist/leaflet.css';
 
 // ── Menu ──────────────────────────────────────────────────────────────────────
 
@@ -501,12 +504,38 @@ function OptionHeader({ opt, member, onBack }: { opt: (typeof MENU_OPTIONS)[numb
   );
 }
 
+// ── Leaflet icon fix (Vite) ───────────────────────────────────────────────────
+
+const makePin = (color: string) => L.divIcon({
+  html: `<svg xmlns="http://www.w3.org/2000/svg" width="28" height="36" viewBox="0 0 28 36">
+    <path d="M14 0C6.3 0 0 6.3 0 14c0 10.5 14 22 14 22S28 24.5 28 14C28 6.3 21.7 0 14 0z" fill="${color}" stroke="white" stroke-width="2"/>
+    <circle cx="14" cy="14" r="6" fill="white"/>
+  </svg>`,
+  className: '',
+  iconSize: [28, 36],
+  iconAnchor: [14, 36],
+  popupAnchor: [0, -38],
+});
+
+const memberPin = makePin('#3B82F6');
+const groupPin  = makePin('#00B39D');
+
+// ── Haversine distance ────────────────────────────────────────────────────────
+
+function distKm(lat1: number, lng1: number, lat2: number, lng2: number) {
+  const R = 6371, d2r = Math.PI / 180;
+  const dLat = (lat2 - lat1) * d2r, dLng = (lng2 - lng1) * d2r;
+  const a = Math.sin(dLat / 2) ** 2 + Math.cos(lat1 * d2r) * Math.cos(lat2 * d2r) * Math.sin(dLng / 2) ** 2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+function fmtDist(km: number) {
+  return km < 1 ? `${Math.round(km * 1000)}m` : `${km.toFixed(1)}km`;
+}
+
 // ── Grupos de Conexão flow ────────────────────────────────────────────────────
 
-const DIAS: Record<string, string> = {
-  domingo: 'Dom', segunda: 'Seg', terca: 'Ter', quarta: 'Qua',
-  quinta: 'Qui', sexta: 'Sex', sabado: 'Sáb',
-};
+const DIAS_MAP: Record<number, string> = { 0:'Dom', 1:'Seg', 2:'Ter', 3:'Qua', 4:'Qui', 5:'Sex', 6:'Sáb' };
 
 function GruposFlow({ opt, member, onBack, onDone, onActivity }: {
   opt: (typeof MENU_OPTIONS)[number];
@@ -517,25 +546,48 @@ function GruposFlow({ opt, member, onBack, onDone, onActivity }: {
 }) {
   const [grupos, setGrupos] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [memberCoords, setMemberCoords] = useState<{ lat: number; lng: number } | null>(null);
+  const [filterCat, setFilterCat] = useState<string>('');
+  const [showMap, setShowMap] = useState(false);
   const [selected, setSelected] = useState<any>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
 
   const grupoAtualId: string | undefined =
-    member.raw?.grupo_atual?.id ||
-    member.raw?.grupo_atual?.grupo?.id;
+    member.raw?.grupo_atual?.id ?? member.raw?.grupo_atual?.grupo?.id;
 
+  // Load groups + geocode member CEP
   useEffect(() => {
     membresia.grupos.list({ ativo: 'true' })
       .then((data: any[]) => setGrupos(data || []))
       .catch(() => {})
       .finally(() => setLoading(false));
+
+    const cep = (member as any).cep || member.raw?.membro?.cep;
+    if (cep) {
+      membresia.totem.geocodeCep(cep)
+        .then((geo: any) => { if (geo.lat && geo.lng) setMemberCoords({ lat: geo.lat, lng: geo.lng }); })
+        .catch(() => {});
+    }
   }, []);
+
+  // Enrich groups with distance
+  const gruposEnriched = grupos.map(g => ({
+    ...g,
+    dist: memberCoords && g.lat && g.lng ? distKm(memberCoords.lat, memberCoords.lng, g.lat, g.lng) : null,
+  })).sort((a, b) => {
+    if (a.dist !== null && b.dist !== null) return a.dist - b.dist;
+    if (a.dist !== null) return -1;
+    if (b.dist !== null) return 1;
+    return (a.nome || '').localeCompare(b.nome || '');
+  });
+
+  const categories = [...new Set(grupos.map(g => g.categoria).filter(Boolean))] as string[];
+  const filtered = filterCat ? gruposEnriched.filter(g => g.categoria === filterCat) : gruposEnriched;
 
   const handleConfirm = async () => {
     if (!selected || !member.id) return;
-    setSaving(true);
-    setError('');
+    setSaving(true); setError('');
     try {
       await membresia.totem.entrarGrupo(selected.id, member.id);
       onDone();
@@ -545,7 +597,7 @@ function GruposFlow({ opt, member, onBack, onDone, onActivity }: {
     }
   };
 
-  // Confirmation screen
+  // ── Confirmation screen ──────────────────────────────────────────────────────
   if (selected) {
     const isChanging = !!grupoAtualId && grupoAtualId !== selected.id;
     const grupoAtual = grupos.find(g => g.id === grupoAtualId);
@@ -554,56 +606,32 @@ function GruposFlow({ opt, member, onBack, onDone, onActivity }: {
         <OptionHeader opt={opt} member={member} onBack={() => { setSelected(null); setError(''); }} />
         <div className="flex-1 flex items-center justify-center p-8">
           <div className="w-full max-w-md space-y-6">
-            <div className="text-center space-y-2">
-              <div className="h-16 w-16 rounded-2xl bg-[#00B39D]/20 flex items-center justify-center mx-auto">
+            <div className="text-center">
+              <div className="h-16 w-16 rounded-2xl bg-[#00B39D]/20 flex items-center justify-center mx-auto mb-4">
                 <Users className="h-8 w-8 text-[#00B39D]" />
               </div>
-              <h3 className="text-2xl font-bold mt-3">Confirmar inscrição</h3>
+              <h3 className="text-2xl font-bold">Confirmar inscrição</h3>
               {isChanging && grupoAtual && (
-                <p className="text-white/50 text-sm">
-                  Você sairá de <span className="text-white/80">{grupoAtual.nome}</span>
-                </p>
+                <p className="text-white/50 text-sm mt-1">Você sairá de <span className="text-white/80">{grupoAtual.nome}</span></p>
               )}
             </div>
-
             <div className="rounded-2xl border border-white/20 bg-white/5 p-5 space-y-2">
               <p className="text-lg font-semibold">{selected.nome}</p>
-              {selected.lider?.nome && (
-                <p className="text-sm text-white/50">Líder: {selected.lider.nome}</p>
-              )}
-              <div className="flex gap-3 text-sm text-white/50">
-                {selected.dia_semana && (
-                  <span className="flex items-center gap-1">
-                    <Clock className="h-3.5 w-3.5" />
-                    {DIAS[selected.dia_semana] || selected.dia_semana}
-                    {selected.horario ? ` às ${selected.horario}` : ''}
-                  </span>
+              {selected.lider?.nome && <p className="text-sm text-white/50">Líder: {selected.lider.nome}</p>}
+              <div className="flex flex-wrap gap-3 text-sm text-white/50">
+                {selected.dia_semana != null && (
+                  <span className="flex items-center gap-1"><Clock className="h-3.5 w-3.5" />{DIAS_MAP[selected.dia_semana]}{selected.horario ? ` às ${String(selected.horario).slice(0, 5)}` : ''}</span>
                 )}
-                {selected.local && (
-                  <span className="flex items-center gap-1">
-                    <MapPin className="h-3.5 w-3.5" />
-                    {selected.local}
-                  </span>
+                {selected.local && <span className="flex items-center gap-1"><MapPin className="h-3.5 w-3.5" />{selected.local}</span>}
+                {selected.dist !== null && selected.dist !== undefined && (
+                  <span className="flex items-center gap-1"><Navigation className="h-3.5 w-3.5 text-[#00B39D]" />{fmtDist(selected.dist)} de você</span>
                 )}
               </div>
             </div>
-
             {error && <p className="text-red-400 text-sm text-center">{error}</p>}
-
             <div className="flex gap-3">
-              <Button
-                variant="outline"
-                onClick={() => { setSelected(null); setError(''); }}
-                className="flex-1 border-white/20 text-white hover:bg-white/10"
-                disabled={saving}
-              >
-                Cancelar
-              </Button>
-              <Button
-                onClick={handleConfirm}
-                disabled={saving}
-                className="flex-1 bg-[#00B39D] hover:bg-[#00B39D]/90"
-              >
+              <Button variant="outline" onClick={() => { setSelected(null); setError(''); }} className="flex-1 border-white/20 text-white hover:bg-white/10" disabled={saving}>Cancelar</Button>
+              <Button onClick={handleConfirm} disabled={saving} className="flex-1 bg-[#00B39D] hover:bg-[#00B39D]/90">
                 {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Confirmar'}
               </Button>
             </div>
@@ -613,76 +641,136 @@ function GruposFlow({ opt, member, onBack, onDone, onActivity }: {
     );
   }
 
-  // Group list screen
+  // ── List / Map screen ────────────────────────────────────────────────────────
   return (
     <div className="min-h-screen bg-gray-950 text-white flex flex-col" onClick={onActivity}>
       <OptionHeader opt={opt} member={member} onBack={onBack} />
 
-      <div className="flex-1 overflow-y-auto p-6">
-        {loading ? (
-          <div className="flex items-center justify-center py-20">
-            <Loader2 className="h-8 w-8 animate-spin text-[#00B39D]" />
-          </div>
-        ) : grupos.length === 0 ? (
-          <div className="text-center py-20 text-white/40">Nenhum grupo disponível no momento.</div>
-        ) : (
-          <div className="max-w-2xl mx-auto space-y-3">
-            {grupoAtualId && (
-              <p className="text-white/40 text-sm mb-4">
-                Seu grupo atual está marcado com <Star className="h-3.5 w-3.5 inline text-[#00B39D]" />
-              </p>
-            )}
-            {grupos.map((g: any) => {
-              const isCurrent = g.id === grupoAtualId;
-              return (
-                <button
-                  key={g.id}
-                  onClick={() => { setSelected(g); onActivity(); }}
-                  className={`w-full text-left rounded-2xl border p-5 transition-all hover:scale-[1.01] active:scale-[0.99] ${
-                    isCurrent
-                      ? 'border-[#00B39D]/60 bg-[#00B39D]/10'
-                      : 'border-white/10 bg-white/5 hover:bg-white/10'
-                  }`}
-                >
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="space-y-1.5 flex-1">
-                      <div className="flex items-center gap-2">
-                        <p className="font-semibold text-lg leading-tight">{g.nome}</p>
-                        {isCurrent && <Star className="h-4 w-4 text-[#00B39D] shrink-0" fill="currentColor" />}
-                      </div>
-                      {g.lider?.nome && (
-                        <p className="text-sm text-white/50">Líder: {g.lider.nome}</p>
-                      )}
-                      <div className="flex flex-wrap gap-3 text-sm text-white/40">
-                        {g.dia_semana && (
-                          <span className="flex items-center gap-1">
-                            <Clock className="h-3.5 w-3.5" />
-                            {DIAS[g.dia_semana] || g.dia_semana}{g.horario ? ` às ${g.horario}` : ''}
-                          </span>
-                        )}
-                        {g.local && (
-                          <span className="flex items-center gap-1">
-                            <MapPin className="h-3.5 w-3.5" />
-                            {g.local}
-                          </span>
-                        )}
-                      </div>
-                    </div>
-                    <div className="text-right shrink-0">
-                      <Badge variant="outline" className="border-white/20 text-white/50 text-xs">
-                        {g.total_ativos ?? 0} membros
-                      </Badge>
-                      {isCurrent && (
-                        <p className="text-xs text-[#00B39D] mt-1">Meu grupo</p>
-                      )}
-                    </div>
-                  </div>
-                </button>
-              );
-            })}
-          </div>
-        )}
+      {/* Filters bar */}
+      <div className="px-5 py-3 border-b border-white/10 flex items-center gap-2 flex-wrap shrink-0">
+        {/* Category chips */}
+        <button
+          onClick={() => setFilterCat('')}
+          className={`px-3 py-1.5 rounded-full text-sm transition-colors ${!filterCat ? 'bg-[#00B39D] text-white' : 'bg-white/10 text-white/60 hover:bg-white/15'}`}
+        >
+          Todos
+        </button>
+        {categories.map(cat => (
+          <button
+            key={cat}
+            onClick={() => setFilterCat(cat === filterCat ? '' : cat)}
+            className={`px-3 py-1.5 rounded-full text-sm transition-colors ${filterCat === cat ? 'bg-[#00B39D] text-white' : 'bg-white/10 text-white/60 hover:bg-white/15'}`}
+          >
+            {cat}
+          </button>
+        ))}
+
+        <div className="ml-auto flex items-center gap-2">
+          {memberCoords && (
+            <span className="text-xs text-white/30 flex items-center gap-1">
+              <Navigation className="h-3 w-3 text-[#00B39D]" /> ordenado por distância
+            </span>
+          )}
+          {/* Map/List toggle */}
+          <button
+            onClick={() => setShowMap(v => !v)}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm transition-colors ${showMap ? 'bg-[#00B39D] text-white' : 'bg-white/10 text-white/60 hover:bg-white/15'}`}
+          >
+            {showMap ? <List className="h-3.5 w-3.5" /> : <Map className="h-3.5 w-3.5" />}
+            {showMap ? 'Lista' : 'Mapa'}
+          </button>
+        </div>
       </div>
+
+      {loading ? (
+        <div className="flex-1 flex items-center justify-center">
+          <Loader2 className="h-8 w-8 animate-spin text-[#00B39D]" />
+        </div>
+      ) : showMap ? (
+        /* ── Map view ── */
+        <div className="flex-1 relative">
+          <MapContainer
+            center={memberCoords ? [memberCoords.lat, memberCoords.lng] : [-22.9068, -43.1729]}
+            zoom={12}
+            style={{ height: '100%', width: '100%', background: '#111' }}
+            zoomControl={true}
+          >
+            <TileLayer
+              url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
+              attribution='&copy; <a href="https://carto.com/">CARTO</a>'
+            />
+            {memberCoords && (
+              <Marker position={[memberCoords.lat, memberCoords.lng]} icon={memberPin}>
+                <Popup><strong>Você está aqui</strong></Popup>
+              </Marker>
+            )}
+            {filtered.filter(g => g.lat && g.lng).map(g => (
+              <Marker key={g.id} position={[g.lat, g.lng]} icon={groupPin}>
+                <Popup>
+                  <div style={{ minWidth: 180 }}>
+                    <p style={{ fontWeight: 700, marginBottom: 4 }}>{g.nome}</p>
+                    {g.lider?.nome && <p style={{ fontSize: 12, color: '#666' }}>Líder: {g.lider.nome}</p>}
+                    {g.dia_semana != null && <p style={{ fontSize: 12 }}>{DIAS_MAP[g.dia_semana]}{g.horario ? ` às ${String(g.horario).slice(0,5)}` : ''}</p>}
+                    {g.dist !== null && g.dist !== undefined && <p style={{ fontSize: 12, color: '#00B39D' }}>{fmtDist(g.dist)} de você</p>}
+                    <button
+                      onClick={() => { setSelected(g); setShowMap(false); onActivity(); }}
+                      style={{ marginTop: 8, padding: '6px 14px', background: '#00B39D', color: '#fff', border: 'none', borderRadius: 8, cursor: 'pointer', fontSize: 13, width: '100%' }}
+                    >
+                      Quero participar
+                    </button>
+                  </div>
+                </Popup>
+              </Marker>
+            ))}
+          </MapContainer>
+        </div>
+      ) : (
+        /* ── List view ── */
+        <div className="flex-1 overflow-y-auto p-5">
+          {filtered.length === 0 ? (
+            <div className="text-center py-20 text-white/40">Nenhum grupo encontrado.</div>
+          ) : (
+            <div className="max-w-2xl mx-auto space-y-3">
+              {filtered.map(g => {
+                const isCurrent = g.id === grupoAtualId;
+                return (
+                  <button
+                    key={g.id}
+                    onClick={() => { setSelected(g); onActivity(); }}
+                    className={`w-full text-left rounded-2xl border p-4 transition-all hover:scale-[1.01] active:scale-[0.99] ${
+                      isCurrent ? 'border-[#00B39D]/60 bg-[#00B39D]/10' : 'border-white/10 bg-white/5 hover:bg-white/10'
+                    }`}
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="space-y-1 flex-1">
+                        <div className="flex items-center gap-2">
+                          <p className="font-semibold text-base leading-tight">{g.nome}</p>
+                          {isCurrent && <Star className="h-3.5 w-3.5 text-[#00B39D] shrink-0" fill="currentColor" />}
+                          {g.categoria && <span className="text-xs px-2 py-0.5 rounded-full bg-white/10 text-white/50">{g.categoria}</span>}
+                        </div>
+                        {g.lider?.nome && <p className="text-sm text-white/50">Líder: {g.lider.nome}</p>}
+                        <div className="flex flex-wrap gap-2 text-xs text-white/40 mt-1">
+                          {g.dia_semana != null && (
+                            <span className="flex items-center gap-1"><Clock className="h-3 w-3" />{DIAS_MAP[g.dia_semana]}{g.horario ? ` às ${String(g.horario).slice(0,5)}` : ''}</span>
+                          )}
+                          {g.local && <span className="flex items-center gap-1"><MapPin className="h-3 w-3" />{g.local}</span>}
+                          {g.dist !== null && g.dist !== undefined && (
+                            <span className="flex items-center gap-1 text-[#00B39D]"><Navigation className="h-3 w-3" />{fmtDist(g.dist)}</span>
+                          )}
+                        </div>
+                      </div>
+                      <div className="text-right shrink-0 space-y-1">
+                        <Badge variant="outline" className="border-white/20 text-white/50 text-xs">{g.total_ativos ?? 0} membros</Badge>
+                        {isCurrent && <p className="text-xs text-[#00B39D]">Meu grupo</p>}
+                      </div>
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }

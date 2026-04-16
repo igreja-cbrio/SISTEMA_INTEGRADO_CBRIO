@@ -653,11 +653,15 @@ function GrupoFormModal({ open, onClose, data, onSave, saving, gruposForSelect, 
   const handleSubmit = (e) => {
     e.preventDefault();
     if (!form.nome?.trim()) { toast.error('Nome e obrigatorio'); return; }
+    const { _geocoding, ...rest } = form;
     onSave({
-      ...form,
-      dia_semana: form.dia_semana === '' ? null : Number(form.dia_semana),
-      lider_id: form.lider_id || null,
-      grupo_origem_id: form.grupo_origem_id || null,
+      ...rest,
+      dia_semana: rest.dia_semana === '' ? null : Number(rest.dia_semana),
+      lider_id: rest.lider_id || null,
+      grupo_origem_id: rest.grupo_origem_id || null,
+      lat: rest.lat || null,
+      lng: rest.lng || null,
+      cep: rest.cep || null,
     });
   };
 
@@ -719,6 +723,44 @@ function GrupoFormModal({ open, onClose, data, onSave, saving, gruposForSelect, 
               <Label>Endereco</Label>
               <Input value={form.endereco || ''} onChange={e => set('endereco', e.target.value)} placeholder="Rua, numero" />
             </div>
+          </div>
+
+          <div>
+            <Label>CEP (para localizar no mapa)</Label>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <Input
+                value={form.cep || ''}
+                onChange={e => set('cep', e.target.value.replace(/\D/g, '').slice(0, 8))}
+                placeholder="00000000"
+                maxLength={8}
+                style={{ flex: 1 }}
+              />
+              <Button
+                type="button"
+                variant="outline"
+                disabled={!form.cep || form.cep.length < 8 || form._geocoding}
+                onClick={async () => {
+                  set('_geocoding', true);
+                  try {
+                    const { membresia: mApi } = await import('../../api');
+                    const geo = await mApi.totem.geocodeCep(form.cep);
+                    set('lat', geo.lat);
+                    set('lng', geo.lng);
+                    if (geo.logradouro && !form.endereco) set('endereco', geo.logradouro);
+                    if (geo.cidade && !form.local) set('local', geo.cidade);
+                    toast.success('Localização encontrada');
+                  } catch { toast.error('CEP não encontrado'); }
+                  set('_geocoding', false);
+                }}
+              >
+                {form._geocoding ? 'Buscando...' : 'Localizar'}
+              </Button>
+            </div>
+            {form.lat && form.lng && (
+              <div style={{ fontSize: 11, color: C.primary, marginTop: 4 }}>
+                Coordenadas salvas: {Number(form.lat).toFixed(5)}, {Number(form.lng).toFixed(5)}
+              </div>
+            )}
           </div>
 
           <div>

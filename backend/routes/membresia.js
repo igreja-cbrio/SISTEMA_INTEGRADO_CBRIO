@@ -82,7 +82,7 @@ router.get('/qr-lookup/:token', async (req, res) => {
       .from('mem_membros')
       .select(`
         id, nome, foto_url, status, email, telefone, data_nascimento, cpf,
-        endereco, bairro, cidade, estado_civil,
+        endereco, bairro, cidade, estado_civil, cep, lat, lng,
         familia:mem_familias(id, nome)
       `)
       .eq('cpf', mapping.cpf)
@@ -675,6 +675,28 @@ router.post('/grupos/:id/membros', authorize('admin', 'diretor'), async (req, re
   } catch (e) {
     res.status(500).json({ error: 'Erro ao adicionar membro ao grupo' });
   }
+});
+
+// GET /api/membresia/geocode-cep?cep=XXXXXXXX — geocodifica um CEP brasileiro (ViaCEP + Nominatim)
+router.get('/geocode-cep', async (req, res) => {
+  try {
+    const cep = (req.query.cep || '').replace(/\D/g, '');
+    if (cep.length !== 8) return res.status(400).json({ error: 'CEP invalido' });
+    const viaCepRes = await fetch(`https://viacep.com.br/ws/${cep}/json/`);
+    const viaCep = await viaCepRes.json();
+    if (viaCep.erro) return res.status(404).json({ error: 'CEP nao encontrado' });
+    const q = encodeURIComponent(`${viaCep.logradouro || ''} ${viaCep.localidade} ${viaCep.uf} Brasil`.trim());
+    const nomRes = await fetch(`https://nominatim.openstreetmap.org/search?q=${q}&format=json&limit=1`, {
+      headers: { 'User-Agent': 'CBRio-Sistema/1.0 (contato@cbrio.com.br)' },
+    });
+    const nom = await nomRes.json();
+    res.json({
+      cep, logradouro: viaCep.logradouro, bairro: viaCep.bairro,
+      cidade: viaCep.localidade, uf: viaCep.uf,
+      lat: nom?.[0] ? parseFloat(nom[0].lat) : null,
+      lng: nom?.[0] ? parseFloat(nom[0].lon) : null,
+    });
+  } catch (e) { res.status(500).json({ error: 'Erro ao geocodificar' }); }
 });
 
 // POST /api/membresia/totem/grupos/:id/entrar — qualquer staff autenticado (via totem)
