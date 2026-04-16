@@ -76,6 +76,34 @@ function FlyToTarget({ target }: { target: MapGroup | null }) {
   return null;
 }
 
+function CentralizeMember({ coords, theme }: { coords: Coords; theme: "light" | "dark" }) {
+  const { map, isLoaded } = useMap();
+  if (!isLoaded) return null;
+  return (
+    <div style={{ position: "absolute", bottom: 70, right: 12, zIndex: 20 }}>
+      <button
+        onClick={() => map?.flyTo({ center: [coords.lng, coords.lat], zoom: 14, duration: 1200 })}
+        style={{
+          background: theme === "dark" ? "#1e293b" : "#fff",
+          color: "#3B82F6",
+          border: "2px solid #3B82F6",
+          borderRadius: 10,
+          padding: "8px 14px",
+          fontSize: 13,
+          fontWeight: 600,
+          cursor: "pointer",
+          display: "flex",
+          alignItems: "center",
+          gap: 6,
+          boxShadow: "0 2px 8px rgba(0,0,0,0.35)",
+        }}
+      >
+        <span style={{ fontSize: 16 }}>⊕</span> Centralizar
+      </button>
+    </div>
+  );
+}
+
 const PIN_COLOR = "#00B39D";
 const PIN_MEMBER_COLOR = "#3B82F6";
 
@@ -97,6 +125,43 @@ function GroupPin({ active = false, color = PIN_COLOR }: { active?: boolean; col
           style={{ backgroundColor: color, opacity: 0.6 }}
         />
       )}
+    </div>
+  );
+}
+
+function MemberPin() {
+  return (
+    <div style={{ position: "relative", width: 28, height: 28 }}>
+      <style>{`
+        @keyframes cbrio-member-pulse {
+          0%   { transform: translate(-50%,-50%) scale(1); opacity: 0.6; }
+          100% { transform: translate(-50%,-50%) scale(3.8); opacity: 0; }
+        }
+        .cbrio-member-ring {
+          position: absolute; top: 50%; left: 50%;
+          width: 22px; height: 22px; border-radius: 50%;
+          background: rgba(59,130,246,0.4);
+          animation: cbrio-member-pulse 1.8s ease-out infinite;
+        }
+        .cbrio-member-ring-2 {
+          position: absolute; top: 50%; left: 50%;
+          width: 22px; height: 22px; border-radius: 50%;
+          background: rgba(59,130,246,0.3);
+          animation: cbrio-member-pulse 1.8s ease-out infinite;
+          animation-delay: 0.6s;
+        }
+        .cbrio-member-dot {
+          position: absolute; top: 50%; left: 50%;
+          transform: translate(-50%,-50%);
+          width: 18px; height: 18px; border-radius: 50%;
+          background: #3B82F6;
+          border: 2.5px solid white;
+          box-shadow: 0 0 8px rgba(59,130,246,0.8);
+        }
+      `}</style>
+      <div className="cbrio-member-ring" />
+      <div className="cbrio-member-ring-2" />
+      <div className="cbrio-member-dot" />
     </div>
   );
 }
@@ -328,11 +393,12 @@ export function GruposMapView({
           zoom={memberCoords ? 13 : 12}
         >
           <FlyToTarget target={flyTarget} />
+          {memberCoords && <CentralizeMember coords={memberCoords} theme={theme} />}
 
           {memberCoords && (
             <MapMarker longitude={memberCoords.lng} latitude={memberCoords.lat}>
               <MarkerContent>
-                <GroupPin color={PIN_MEMBER_COLOR} />
+                <MemberPin />
               </MarkerContent>
               <MarkerPopup>
                 <p className="text-sm font-semibold">Você está aqui</p>
