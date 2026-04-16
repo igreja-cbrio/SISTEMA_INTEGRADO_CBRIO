@@ -547,15 +547,35 @@ router.patch('/card-completions/:id/quality', async (req, res) => {
 // GET /api/cycles/kpis/evento/:eventId — KPI de um evento especifico (nivel 2+3)
 router.get('/kpis/evento/:eventId', async (req, res) => {
   try {
-    // KPI por area (nivel 2)
+    // KPI por area (nivel 2) — vem da view que calcula direto dos cards
     const { data: areas } = await supabase.from('vw_event_area_kpi').select('*').eq('event_id', req.params.eventId);
     // KPI do evento (nivel 3)
     const { data: evento } = await supabase.from('vw_event_kpi').select('*').eq('event_id', req.params.eventId).maybeSingle();
-    // Docs individuais
-    const { data: docs } = await supabase.from('card_completions').select('*').eq('event_id', req.params.eventId).order('area').order('phase_number');
+    // Cards individuais (as entregas reais)
+    const { data: tasks } = await supabase.from('cycle_phase_tasks').select('*, event_cycle_phases(nome_fase, data_fim_prevista)').eq('event_id', req.params.eventId).order('area');
+    // Card completions para dados de aprovacao/qualidade/arquivo
+    const { data: completions } = await supabase.from('card_completions').select('*').eq('event_id', req.params.eventId);
+    const compMap = {};
+    (completions || []).forEach(c => { compMap[c.task_id] = c; });
 
-    res.json({ kpi_evento: evento, kpi_areas: areas || [], documentos: docs || [] });
-  } catch (err) { res.status(500).json({ error: err.message }); }
+    // Enriquecer tasks com dados de completion
+    const docs = (tasks || []).map(t => {
+      const cc = compMap[t.id] || {};
+      const prazofase = t.event_cycle_phases?.data_fim_prevista;
+      const onTime = t.status === 'concluida' && prazofase ? t.updated_at <= prazofase + 'T23:59:59' : null;
+      return {
+        id: t.id, card_titulo: t.titulo, area: t.area, status: t.status,
+        fase: t.event_cycle_phases?.nome_fase, prazo_fase: prazofase,
+        is_critical: t.is_critical,
+        approved_by: cc.approved_by, quality_rating: cc.quality_rating || 'ok',
+        file_name: cc.file_name, delivered_at: cc.delivered_at || cc.completed_at,
+        on_time: onTime,
+        score: (onTime !== false && t.status === 'concluida' ? 40 : 0) + (cc.approved_by ? 30 : 0) + ((cc.quality_rating || 'ok') === 'ok' ? 20 : 0) + (cc.file_name ? 10 : 0),
+      };
+    });
+
+    res.json({ kpi_evento: evento, kpi_areas: areas || [], documentos: docs });
+  } catch (err) { console.error('[KPI evento]', err.message); res.status(500).json({ error: err.message }); }
 });
 
 // GET /api/cycles/kpis/cross — KPI cross-eventos (nivel 4) com filtro serie/evento
@@ -611,35 +631,14 @@ router.get('/kpis/cross', async (req, res) => {
   } catch (err) { console.error('[KPI cross]', err.message); res.status(500).json({ error: err.message }); }
 });
 
-// GET /api/cycles/kpis/templates — listar templates de documentos
-router.get('/kpis/templates', async (req, res) => {
+// PATCH /api/cycles/tasks/:taskId/critical — toggle critico
+router.patch('/tasks/:taskId/critical', authorize('admin', 'diretor'), async (req, res) => {
   try {
-    const { data, error } = await supabase.from('event_document_templates').select('*, event_categories(name)').order('phase_name').order('area').order('sort_order');
-    if (error) throw error;
-    res.json(data || []);
-  } catch (err) { res.status(500).json({ error: err.message }); }
-});
-
-// POST /api/cycles/kpis/templates — criar template
-router.post('/kpis/templates', authorize('admin', 'diretor'), async (req, res) => {
-  try {
-    const d = req.body;
-    const { data, error } = await supabase.from('event_document_templates').insert({
-      category_id: d.category_id, phase_name: d.phase_name, area: d.area,
-      document_name: d.document_name, is_critical: d.is_critical || false,
-      is_required: d.is_required ?? true, expected_format: d.expected_format || '',
-      description: d.description || '',
-    }).select().single();
+    const { data, error } = await supabase.from('cycle_phase_tasks')
+      .update({ is_critical: req.body.is_critical ?? false })
+      .eq('id', req.params.taskId).select().single();
     if (error) throw error;
     res.json(data);
-  } catch (err) { res.status(500).json({ error: err.message }); }
-});
-
-// DELETE /api/cycles/kpis/templates/:id
-router.delete('/kpis/templates/:id', authorize('admin', 'diretor'), async (req, res) => {
-  try {
-    await supabase.from('event_document_templates').delete().eq('id', req.params.id);
-    res.json({ success: true });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
