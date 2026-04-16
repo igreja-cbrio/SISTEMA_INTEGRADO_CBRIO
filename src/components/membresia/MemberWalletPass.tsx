@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
 import { QRCodeSVG } from 'qrcode.react';
-import { Loader2, Wallet, Apple, Download, CheckCircle2, AlertCircle } from 'lucide-react';
+import { Loader2, Wallet, Download, CheckCircle2, AlertCircle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { cadastroPublico } from '@/api';
+import { toast } from 'sonner';
 
 interface Props {
   cpf: string;
@@ -28,6 +29,18 @@ function downloadBlob(blob: Blob, filename: string) {
   a.click();
   document.body.removeChild(a);
   URL.revokeObjectURL(url);
+}
+
+/** Apple Wallet icon (overlapping cards fan) */
+function AppleWalletIcon({ className }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" className={className} xmlns="http://www.w3.org/2000/svg">
+      <rect x="2" y="6" width="20" height="14" rx="2" fill="currentColor" opacity="0.3" />
+      <rect x="3" y="4" width="18" height="14" rx="2" fill="currentColor" opacity="0.5" />
+      <rect x="4" y="2" width="16" height="14" rx="2" fill="currentColor" opacity="0.8" />
+      <rect x="4" y="2" width="16" height="14" rx="2" stroke="currentColor" strokeWidth="1.5" fill="none" />
+    </svg>
+  );
 }
 
 export default function MemberWalletPass({ cpf, dataNascimento, inline = false, title }: Props) {
@@ -63,7 +76,7 @@ export default function MemberWalletPass({ cpf, dataNascimento, inline = false, 
       const r = await cadastroPublico.walletGoogle(cpf, dataNascimento);
       window.open(r.url, '_blank');
     } catch (err: any) {
-      setError(err.message || 'Erro ao gerar passe do Google Wallet');
+      toast.error(err.message || 'Erro ao gerar passe do Google Wallet');
     } finally {
       setGoogleBusy(false);
     }
@@ -75,7 +88,7 @@ export default function MemberWalletPass({ cpf, dataNascimento, inline = false, 
       const blob = await cadastroPublico.walletApple(cpf, dataNascimento);
       downloadBlob(blob, 'cbrio-membro.pkpass');
     } catch (err: any) {
-      setError(err.message || 'Erro ao gerar passe Apple Wallet');
+      toast.error(err.message || 'Erro ao gerar passe Apple Wallet');
     } finally {
       setAppleBusy(false);
     }
@@ -158,7 +171,7 @@ export default function MemberWalletPass({ cpf, dataNascimento, inline = false, 
             onClick={handleApple}
             disabled={appleBusy}
           >
-            {appleBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Apple className="h-4 w-4" />}
+            {appleBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <AppleWalletIcon className="h-5 w-5" />}
             Adicionar ao Apple Wallet
           </Button>
         ) : (

@@ -136,9 +136,22 @@ function getCerts() {
     throw new Error('Apple Wallet nao configurado (env vars ausentes)');
   }
 
-  const wwdrPem = wwdrToPem(wwdrBase64);
-  const membro = p12ToPem(membroBase64, password);
-  const voluntario = p12ToPem(voluntarioBase64, password);
+  let wwdrPem, membro, voluntario;
+  try {
+    wwdrPem = wwdrToPem(wwdrBase64);
+  } catch (e) {
+    throw new Error('Certificado WWDR invalido — verifique APPLE_WALLET_WWDR_BASE64');
+  }
+  try {
+    membro = p12ToPem(membroBase64, password);
+  } catch (e) {
+    throw new Error('Certificado membro .p12 invalido — verifique APPLE_WALLET_MEMBRO_P12_BASE64 e a senha');
+  }
+  try {
+    voluntario = p12ToPem(voluntarioBase64, password);
+  } catch (e) {
+    throw new Error('Certificado voluntario .p12 invalido — verifique APPLE_WALLET_VOLUNTARIO_P12_BASE64 e a senha');
+  }
 
   _certCache = {
     wwdrPem,
