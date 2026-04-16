@@ -294,7 +294,7 @@ function MySchedulesTab() {
   );
 }
 
-const SERVICE_COLORS: Record<string, string> = {
+const SVC_COLORS: Record<string, string> = {
   'Quarta com Deus': '#6366f1',
   'AMI': '#f59e0b',
   'Bridge': '#ec4899',
@@ -303,28 +303,15 @@ const SERVICE_COLORS: Record<string, string> = {
   'Domingo 11:30': '#3b82f6',
   'Domingo 19:00': '#8b5cf6',
 };
-function svcColor(name: string) { return SERVICE_COLORS[name] ?? '#00B39D'; }
+function svcColor(name: string) { return SVC_COLORS[name] ?? '#00B39D'; }
+// Extrai data/hora sem conversao de fuso
+function svcDateOnly(at: string) { return parseISO(at.slice(0, 10)); }
+function svcTimeOnly(at: string) { return at.slice(11, 16); }
 
 function MyAvailabilityTab() {
   const [searchDate, setSearchDate] = useState('');
   const { data: services = [], isLoading } = useMyServices(2026);
   const toggle = useToggleServiceUnavailability();
-
-  // Usa format para comparar datas no fuso local, evitando off-by-one de UTC
-  const filtered = useMemo(() => {
-    if (!searchDate) return null;
-    return services.filter(s => format(parseISO(s.scheduled_at), 'yyyy-MM-dd') === searchDate);
-  }, [services, searchDate]);
-
-  const byMonth = useMemo(() => {
-    const map = new Map<string, typeof services>();
-    for (const s of services) {
-      const key = format(parseISO(s.scheduled_at), 'yyyy-MM');
-      if (!map.has(key)) map.set(key, []);
-      map.get(key)!.push(s);
-    }
-    return Array.from(map.entries()).sort(([a], [b]) => a.localeCompare(b));
-  }, [services]);
 
   const handleToggle = (service: typeof services[0]) => {
     toggle.mutate(
@@ -336,29 +323,46 @@ function MyAvailabilityTab() {
     );
   };
 
-  const ServiceChip = ({ service }: { service: typeof services[0] }) => {
-    const date = parseISO(service.scheduled_at);
+  // Busca compara apenas a parte da data (sem timezone)
+  const searchResults = useMemo(() => {
+    if (!searchDate) return null;
+    return services.filter(s => s.scheduled_at.slice(0, 10) === searchDate);
+  }, [services, searchDate]);
+
+  // Agrupa por tipo de culto
+  const byType = useMemo(() => {
+    const map = new Map<string, typeof services>();
+    for (const s of services) {
+      const key = s.service_type_name || s.name;
+      if (!map.has(key)) map.set(key, []);
+      map.get(key)!.push(s);
+    }
+    return Array.from(map.entries())
+      .sort(([, a], [, b]) => a[0].scheduled_at.localeCompare(b[0].scheduled_at));
+  }, [services]);
+
+  const SvcChip = ({ service }: { service: typeof services[0] }) => {
+    const d = svcDateOnly(service.scheduled_at);
+    const t = svcTimeOnly(service.scheduled_at);
     const color = svcColor(service.service_type_name || service.name);
     const unavailable = service.is_unavailable;
     return (
       <button
         onClick={() => handleToggle(service)}
         disabled={toggle.isPending}
-        className={`flex flex-col items-center px-3 py-2 rounded-lg border text-xs font-medium transition-all
+        className={`flex flex-col items-center w-[58px] py-2 rounded-xl border text-xs font-medium transition-all shrink-0
           ${unavailable
             ? 'bg-red-50 border-red-300 text-red-700 dark:bg-red-950/30 dark:border-red-700 dark:text-red-300'
             : 'bg-background border-border text-foreground hover:border-primary/50 hover:bg-primary/5'
           }`}
       >
-        <span className="h-2 w-2 rounded-full mb-1" style={{ backgroundColor: unavailable ? '#ef4444' : color }} />
-        <span>{format(date, 'EEE dd', { locale: ptBR })}</span>
-        <span className="text-[10px] opacity-70">{format(date, 'HH:mm')}</span>
-        <span className="text-[10px] max-w-[80px] text-center leading-tight mt-0.5 opacity-80 truncate">
-          {service.service_type_name || service.name}
-        </span>
+        <span className="text-[10px] opacity-60 capitalize">{format(d, 'EEE', { locale: ptBR })}</span>
+        <span className="text-base font-bold leading-tight">{format(d, 'dd')}</span>
+        <span className="text-[10px] opacity-60 capitalize">{format(d, 'MMM', { locale: ptBR })}</span>
+        <span className="text-[9px] opacity-50 mt-0.5">{t}</span>
         {unavailable
-          ? <span className="text-[9px] text-red-500 mt-0.5 font-bold">ausente</span>
-          : <Check className="h-2.5 w-2.5 text-[#00B39D] mt-0.5" />
+          ? <span className="text-[8px] text-red-400 font-bold mt-0.5">ausente</span>
+          : <Check className="h-2.5 w-2.5 mt-0.5" style={{ color }} />
         }
       </button>
     );
@@ -371,7 +375,7 @@ function MyAvailabilityTab() {
   return (
     <div className="space-y-4">
       <p className="text-sm text-muted-foreground">
-        Toque nos cultos que voce <strong>nao podera comparecer</strong>. Os demais indicam disponibilidade.
+        Toque nos cultos que voce <strong>nao pode comparecer</strong>
       </p>
 
       {/* Busca por data */}
@@ -384,10 +388,7 @@ function MyAvailabilityTab() {
           className="pl-9 pr-8"
         />
         {searchDate && (
-          <button
-            onClick={() => setSearchDate('')}
-            className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-          >
+          <button onClick={() => setSearchDate('')} className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground">
             <X className="h-4 w-4" />
           </button>
         )}
@@ -401,9 +402,9 @@ function MyAvailabilityTab() {
             <p className="text-sm text-muted-foreground/60 mt-1">Peca para o lider gerar os cultos do ano</p>
           </CardContent>
         </Card>
-      ) : filtered !== null ? (
-        // Resultado da busca por data
-        filtered.length === 0 ? (
+      ) : searchResults !== null ? (
+        // Resultado da busca
+        searchResults.length === 0 ? (
           <Card>
             <CardContent className="flex flex-col items-center py-8 text-center">
               <CalendarOff className="h-10 w-10 text-muted-foreground/30 mb-3" />
@@ -414,35 +415,45 @@ function MyAvailabilityTab() {
           </Card>
         ) : (
           <div>
-            <p className="text-xs font-medium text-muted-foreground mb-2">
-              {filtered.length} culto(s) em {format(parseISO(searchDate), "dd 'de' MMMM", { locale: ptBR })}
+            <p className="text-xs text-muted-foreground mb-2">
+              {searchResults.length} culto(s) em {format(parseISO(searchDate), "dd 'de' MMMM", { locale: ptBR })}
             </p>
             <div className="flex flex-wrap gap-2">
-              {filtered.map(s => <ServiceChip key={s.id} service={s} />)}
+              {searchResults.map(s => <SvcChip key={s.id} service={s} />)}
             </div>
           </div>
         )
       ) : (
-        // Lista completa por mes
+        // Lista agrupada por tipo de culto
         <div className="space-y-5">
-          <div className="flex gap-3 flex-wrap">
-            <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+          <div className="flex gap-3 flex-wrap text-xs text-muted-foreground">
+            <div className="flex items-center gap-1.5">
               <div className="h-2 w-2 rounded-full bg-[#00B39D]" /> Disponivel
             </div>
-            <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-              <div className="h-2 w-2 rounded-full bg-red-500" /> Ausente ({services.filter(s => s.is_unavailable).length})
+            <div className="flex items-center gap-1.5">
+              <div className="h-2 w-2 rounded-full bg-red-500" />
+              Ausente ({services.filter(s => s.is_unavailable).length})
             </div>
           </div>
-          {byMonth.map(([monthKey, monthServices]) => (
-            <div key={monthKey}>
-              <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2 capitalize">
-                {format(parseISO(`${monthKey}-01`), 'MMMM yyyy', { locale: ptBR })}
-              </h3>
-              <div className="flex flex-wrap gap-2">
-                {monthServices.map(s => <ServiceChip key={s.id} service={s} />)}
+          {byType.map(([typeName, typeServices]) => {
+            const color = svcColor(typeName);
+            const unavailInType = typeServices.filter(s => s.is_unavailable).length;
+            return (
+              <div key={typeName}>
+                <div className="flex items-center gap-2 mb-2">
+                  <div className="h-2.5 w-2.5 rounded-full shrink-0" style={{ backgroundColor: color }} />
+                  <span className="text-xs font-semibold">{typeName}</span>
+                  <span className="ml-auto text-xs text-muted-foreground">
+                    {typeServices.length}x
+                    {unavailInType > 0 && <span className="text-red-500 ml-1">{unavailInType} ausente(s)</span>}
+                  </span>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  {typeServices.map(s => <SvcChip key={s.id} service={s} />)}
+                </div>
               </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
     </div>
