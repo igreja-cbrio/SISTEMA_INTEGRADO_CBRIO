@@ -1,6 +1,7 @@
 const router = require('express').Router();
 const { authenticate, authorizeModule } = require('../middleware/auth');
 const { supabase } = require('../utils/supabase');
+const { getPCCredentials, fetchWithRetry, PC_SERVICES_BASE } = require('../services/planningCenter');
 
 router.use(authenticate, authorizeModule('membresia', 1));
 
@@ -1758,14 +1759,36 @@ router.post('/schedules/auto-fill', async (req, res) => {
 // Import teams from existing schedule data (migration helper)
 router.post('/teams-manage/import-from-schedules', async (req, res) => {
   try {
-    // Extract unique team names from vol_schedules
+    const teamNames = new Set();
+
+    // 1. Busca equipes direto do PCO (fonte primaria)
+    try {
+      const { basic: credentials } = getPCCredentials();
+      const typesRes = await fetchWithRetry(`${PC_SERVICES_BASE}/service_types?per_page=100`, { Authorization: `Basic ${credentials}` });
+      const serviceTypes = typesRes?.data || [];
+
+      for (const st of serviceTypes) {
+        const teamsRes = await fetchWithRetry(
+          `${PC_SERVICES_BASE}/service_types/${st.id}/teams?per_page=100`,
+          { Authorization: `Basic ${credentials}` }
+        );
+        for (const team of (teamsRes?.data || [])) {
+          const name = team.attributes?.name;
+          if (name) teamNames.add(name.trim());
+        }
+      }
+    } catch (pcoErr) {
+      console.warn('[import-teams] PCO indisponivel, usando vol_schedules:', pcoErr.message);
+    }
+
+    // 2. Complementa com nomes ja existentes em vol_schedules (fallback)
     const { data: schedData } = await supabase.from('vol_schedules')
       .select('team_name').not('team_name', 'is', null);
-    const teamNames = new Set();
     (schedData || []).forEach(s => {
       if (s.team_name) s.team_name.split(',').forEach(t => { const trimmed = t.trim(); if (trimmed) teamNames.add(trimmed); });
     });
 
+    // 3. Upsert em vol_teams
     const created = [];
     for (const name of teamNames) {
       const { data, error } = await supabase.from('vol_teams')
