@@ -1,16 +1,15 @@
 import { useEffect, useRef, useState } from 'react';
 import { QRCodeSVG } from 'qrcode.react';
-import { Loader2, Wallet, Download, CheckCircle2, AlertCircle } from 'lucide-react';
+import { Loader2, Download, AlertCircle, Wifi } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { AddToWalletButtons } from '@/components/ui/wallet-buttons';
 import { cadastroPublico } from '@/api';
 import { toast } from 'sonner';
 
 interface Props {
   cpf: string;
   dataNascimento: string;
-  /** Show inline on page (not inside modal). */
   inline?: boolean;
-  /** Optional title override. */
   title?: string;
 }
 
@@ -29,18 +28,6 @@ function downloadBlob(blob: Blob, filename: string) {
   a.click();
   document.body.removeChild(a);
   URL.revokeObjectURL(url);
-}
-
-/** Apple Wallet icon (overlapping cards fan) */
-function AppleWalletIcon({ className }: { className?: string }) {
-  return (
-    <svg viewBox="0 0 24 24" fill="none" className={className} xmlns="http://www.w3.org/2000/svg">
-      <rect x="2" y="6" width="20" height="14" rx="2" fill="currentColor" opacity="0.3" />
-      <rect x="3" y="4" width="18" height="14" rx="2" fill="currentColor" opacity="0.5" />
-      <rect x="4" y="2" width="16" height="14" rx="2" fill="currentColor" opacity="0.8" />
-      <rect x="4" y="2" width="16" height="14" rx="2" stroke="currentColor" strokeWidth="1.5" fill="none" />
-    </svg>
-  );
 }
 
 export default function MemberWalletPass({ cpf, dataNascimento, inline = false, title }: Props) {
@@ -124,7 +111,7 @@ export default function MemberWalletPass({ cpf, dataNascimento, inline = false, 
   if (loading) {
     return (
       <div className={`flex flex-col items-center gap-3 py-6 ${inline ? '' : 'px-4'}`}>
-        <Loader2 className="h-6 w-6 animate-spin text-[#00B39D]" />
+        <Loader2 className="h-6 w-6 animate-spin text-[#408097]" />
         <p className="text-sm text-white/70">Preparando seu QR de membro...</p>
       </div>
     );
@@ -143,47 +130,54 @@ export default function MemberWalletPass({ cpf, dataNascimento, inline = false, 
 
   return (
     <div className={`flex flex-col items-center gap-4 ${inline ? '' : 'px-2 py-2'}`}>
-      <div className="text-center space-y-1">
-        <div className="flex items-center justify-center gap-2">
-          <CheckCircle2 className="h-5 w-5 text-[#00B39D]" />
-          <p className="font-semibold text-white">{title || 'Seu QR de membro esta pronto'}</p>
+      {/* Wallet Card */}
+      <div className="w-full max-w-xs rounded-3xl bg-[#eae3da] p-5 shadow-2xl">
+        {/* Header */}
+        <div className="flex items-center justify-between mb-6">
+          <div className="flex items-center gap-2">
+            <img src="/logo-cbrio-icon.png" alt="CBRio" className="h-6 w-6 object-contain" />
+            <span className="text-[#408097] font-bold text-base tracking-tight" style={{ fontFamily: 'iBrand, system-ui, sans-serif' }}>CBRio</span>
+          </div>
+          <span className="text-[10px] font-semibold tracking-widest text-[#408097] bg-[#408097]/15 px-2.5 py-0.5 rounded-full uppercase">
+            Membro
+          </span>
         </div>
-        <p className="text-xs text-white/60">
-          {iOS
-            ? 'Adicione ao Apple Wallet ou salve a imagem do QR.'
-            : 'Adicione ao Google Wallet ou salve a imagem do QR.'}
-        </p>
-      </div>
 
-      {/* QR inline */}
-      <div ref={svgRef} className="rounded-xl bg-white p-4">
-        <QRCodeSVG value={qrToken} size={180} level="M" includeMargin={false} />
-      </div>
-      {memberId && (
-        <p className="text-[11px] font-mono text-white/50 tracking-wide">{memberId}</p>
-      )}
+        {/* Member label */}
+        <div className="mb-4">
+          <p className="text-[10px] font-medium tracking-widest text-[#408097]/70 uppercase mb-0.5">
+            {title || 'Seu QR de membro esta pronto'}
+          </p>
+        </div>
 
-      {/* Botoes */}
-      <div className="w-full max-w-xs flex flex-col gap-2">
-        {iOS ? (
-          <Button
-            className="w-full gap-2 bg-black hover:bg-black/80 min-h-[48px] text-white"
-            onClick={handleApple}
-            disabled={appleBusy}
-          >
-            {appleBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <AppleWalletIcon className="h-5 w-5" />}
-            Adicionar ao Apple Wallet
-          </Button>
-        ) : (
-          <Button
-            className="w-full gap-2 bg-[#00B39D] hover:bg-[#00B39D]/90 min-h-[48px] text-white"
-            onClick={handleGoogle}
-            disabled={googleBusy}
-          >
-            {googleBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Wallet className="h-4 w-4" />}
-            Adicionar ao Google Wallet
-          </Button>
+        {/* QR Code */}
+        <div ref={svgRef} className="flex justify-center mb-4">
+          <div className="bg-white rounded-2xl p-3">
+            <QRCodeSVG value={qrToken} size={180} level="M" includeMargin={false} />
+          </div>
+        </div>
+
+        {memberId && (
+          <p className="text-center text-[10px] font-mono text-[#408097]/50 tracking-wide mb-3">{memberId}</p>
         )}
+
+        {/* Footer */}
+        <div className="flex items-center justify-between">
+          <img src="/logo-cbrio-icon.png" alt="" className="h-4 w-4 object-contain opacity-40" />
+          <Wifi className="h-4 w-4 text-[#408097]/40 rotate-90" />
+        </div>
+      </div>
+
+      {/* Action buttons */}
+      <div className="w-full max-w-xs flex flex-col gap-2">
+        <AddToWalletButtons
+          onApple={handleApple}
+          onGoogle={handleGoogle}
+          appleBusy={appleBusy}
+          googleBusy={googleBusy}
+          showApple={iOS}
+          className="w-full"
+        />
         <Button
           variant="outline"
           className="w-full gap-2 min-h-[48px] border-white/20 text-white bg-transparent hover:bg-white/10"
