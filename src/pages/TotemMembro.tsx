@@ -12,9 +12,7 @@ import {
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
-import { MapContainer, TileLayer, Marker, Popup, useMap } from 'react-leaflet';
-import L from 'leaflet';
-import 'leaflet/dist/leaflet.css';
+import { GruposMapView } from '@/components/grupos/GruposMapView';
 
 // ── Menu ──────────────────────────────────────────────────────────────────────
 
@@ -504,79 +502,7 @@ function OptionHeader({ opt, member, onBack }: { opt: (typeof MENU_OPTIONS)[numb
   );
 }
 
-// ── Leaflet icons ─────────────────────────────────────────────────────────────
-
-const groupPin = L.divIcon({
-  html: `<svg xmlns="http://www.w3.org/2000/svg" width="28" height="36" viewBox="0 0 28 36">
-    <path d="M14 0C6.3 0 0 6.3 0 14c0 10.5 14 22 14 22S28 24.5 28 14C28 6.3 21.7 0 14 0z" fill="#00B39D" stroke="white" stroke-width="2"/>
-    <circle cx="14" cy="14" r="6" fill="white"/>
-  </svg>`,
-  className: '',
-  iconSize: [28, 36],
-  iconAnchor: [14, 36],
-  popupAnchor: [0, -38],
-});
-
-// Marcador pulsante para localização do membro
-const memberPin = L.divIcon({
-  html: `
-    <style>
-      @keyframes cbrio-pulse {
-        0%   { transform: translate(-50%,-50%) scale(1); opacity: 0.7; }
-        100% { transform: translate(-50%,-50%) scale(3.5); opacity: 0; }
-      }
-      .cbrio-pulse-ring {
-        position: absolute; top: 50%; left: 50%;
-        width: 20px; height: 20px; border-radius: 50%;
-        background: rgba(59,130,246,0.45);
-        animation: cbrio-pulse 1.8s ease-out infinite;
-      }
-      .cbrio-pulse-ring-2 {
-        position: absolute; top: 50%; left: 50%;
-        width: 20px; height: 20px; border-radius: 50%;
-        background: rgba(59,130,246,0.3);
-        animation: cbrio-pulse 1.8s ease-out infinite 0.6s;
-      }
-      .cbrio-pulse-dot {
-        position: absolute; top: 50%; left: 50%;
-        transform: translate(-50%,-50%);
-        width: 16px; height: 16px; border-radius: 50%;
-        background: #3B82F6;
-        border: 2.5px solid white;
-        box-shadow: 0 0 6px rgba(59,130,246,0.8);
-      }
-    </style>
-    <div style="position:relative;width:20px;height:20px;">
-      <div class="cbrio-pulse-ring"></div>
-      <div class="cbrio-pulse-ring-2"></div>
-      <div class="cbrio-pulse-dot"></div>
-    </div>`,
-  className: '',
-  iconSize: [20, 20],
-  iconAnchor: [10, 10],
-  popupAnchor: [0, -14],
-});
-
-// ── Centralizar button (inside MapContainer context) ─────────────────────────
-
-function CentralizeButton({ coords }: { coords: { lat: number; lng: number } }) {
-  const map = useMap();
-  return (
-    <div style={{ position: 'absolute', bottom: 24, right: 12, zIndex: 1000 }}>
-      <button
-        onClick={() => map.flyTo([coords.lat, coords.lng], 14, { duration: 1 })}
-        style={{
-          background: '#1e293b', color: '#3B82F6', border: '2px solid #3B82F6',
-          borderRadius: 10, padding: '8px 14px', fontSize: 13, fontWeight: 600,
-          cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6,
-          boxShadow: '0 2px 8px rgba(0,0,0,0.5)',
-        }}
-      >
-        <span style={{ fontSize: 16 }}>⊕</span> Centralizar
-      </button>
-    </div>
-  );
-}
+// ── Map pins now rendered by GruposMapView (MapLibre) ──────────────────────
 
 // ── Haversine distance ────────────────────────────────────────────────────────
 
@@ -745,45 +671,16 @@ function GruposFlow({ opt, member, onBack, onDone, onActivity }: {
           <Loader2 className="h-8 w-8 animate-spin text-[#00B39D]" />
         </div>
       ) : showMap ? (
-        /* ── Map view ── */
+        /* ── Map view (MapLibre) ── */
         <div className="flex-1 relative">
-          <MapContainer
-            center={memberCoords ? [memberCoords.lat, memberCoords.lng] : [-22.9068, -43.1729]}
-            zoom={12}
-            style={{ height: '100%', width: '100%', background: '#111' }}
-            zoomControl={true}
-          >
-            <TileLayer
-              url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
-              attribution='&copy; <a href="https://carto.com/">CARTO</a>'
-            />
-            {memberCoords && (
-              <>
-                <Marker position={[memberCoords.lat, memberCoords.lng]} icon={memberPin}>
-                  <Popup><strong>Você está aqui</strong></Popup>
-                </Marker>
-                <CentralizeButton coords={memberCoords} />
-              </>
-            )}
-            {filtered.filter(g => g.lat && g.lng).map(g => (
-              <Marker key={g.id} position={[g.lat, g.lng]} icon={groupPin}>
-                <Popup>
-                  <div style={{ minWidth: 180 }}>
-                    <p style={{ fontWeight: 700, marginBottom: 4 }}>{g.nome}</p>
-                    {g.lider?.nome && <p style={{ fontSize: 12, color: '#666' }}>Líder: {g.lider.nome}</p>}
-                    {g.dia_semana != null && <p style={{ fontSize: 12 }}>{DIAS_MAP[g.dia_semana]}{g.horario ? ` às ${String(g.horario).slice(0,5)}` : ''}</p>}
-                    {g.dist !== null && g.dist !== undefined && <p style={{ fontSize: 12, color: '#00B39D' }}>{fmtDist(g.dist)} de você</p>}
-                    <button
-                      onClick={() => { setSelected(g); setShowMap(false); onActivity(); }}
-                      style={{ marginTop: 8, padding: '6px 14px', background: '#00B39D', color: '#fff', border: 'none', borderRadius: 8, cursor: 'pointer', fontSize: 13, width: '100%' }}
-                    >
-                      Quero participar
-                    </button>
-                  </div>
-                </Popup>
-              </Marker>
-            ))}
-          </MapContainer>
+          <GruposMapView
+            grupos={filtered}
+            memberCoords={memberCoords}
+            variant="kiosk"
+            defaultTheme="dark"
+            onGroupSelect={(g) => { setSelected(g); setShowMap(false); onActivity(); }}
+            onGroupSelectLabel="Quero participar"
+          />
         </div>
       ) : (
         /* ── List view ── */
