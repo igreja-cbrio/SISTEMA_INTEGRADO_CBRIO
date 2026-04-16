@@ -236,6 +236,7 @@ export const cycles = {
   deliverCard: (cardId, data) => post(`/cycles/card-completions/${cardId}/deliver`, data),
   approveCard: (cardId) => patch(`/cycles/card-completions/${cardId}/approve`, {}),
   qualityCard: (cardId, rating) => patch(`/cycles/card-completions/${cardId}/quality`, { quality_rating: rating }),
+  docResumo: (taskId) => get(`/cycles/kpis/doc-resumo/${taskId}`),
   toggleCritical: (taskId, isCritical) => patch(`/cycles/tasks/${taskId}/critical`, { is_critical: isCritical }),
   kpiAreaWeights: () => get('/cycles/kpis/area-weights'),
   updateAreaWeight: (id, weight) => put(`/cycles/kpis/area-weights/${id}`, { weight }),

@@ -668,6 +668,39 @@ router.get('/kpis/cross', async (req, res) => {
   } catch (err) { console.error('[KPI cross]', err.message); res.status(500).json({ error: err.message }); }
 });
 
+// GET /api/cycles/kpis/doc-resumo/:taskId — resumo do Cerebro para o documento do card
+router.get('/kpis/doc-resumo/:taskId', async (req, res) => {
+  try {
+    // Buscar card_completion com arquivo
+    const { data: rows } = await supabase.from('card_completions').select('file_name, file_url, file_sharepoint_path').eq('task_id', req.params.taskId).order('completed_at', { ascending: false }).limit(1);
+    const cc = rows?.[0];
+    if (!cc?.file_name) return res.json({ resumo: null, message: 'Nenhum arquivo anexado a este card' });
+
+    // Buscar na fila do Cerebro pelo nome do arquivo
+    const { data: cerebro } = await supabase.from('cerebro_fila')
+      .select('resumo, tags, nota_path, status, nome_arquivo, processado_em')
+      .or(`nome_arquivo.ilike.%${cc.file_name.replace(/[^a-zA-Z0-9]/g, '%')}%`)
+      .order('processado_em', { ascending: false }).limit(1);
+
+    if (cerebro?.length && cerebro[0].resumo) {
+      return res.json({ resumo: cerebro[0].resumo, tags: cerebro[0].tags, nota_path: cerebro[0].nota_path, status: cerebro[0].status, file_name: cc.file_name, file_url: cc.file_url });
+    }
+
+    // Fallback: buscar pelo path do SharePoint
+    if (cc.file_sharepoint_path) {
+      const { data: byPath } = await supabase.from('cerebro_fila')
+        .select('resumo, tags, nota_path, status, nome_arquivo')
+        .ilike('sharepoint_url', `%${cc.file_sharepoint_path.split('/').pop()}%`)
+        .order('processado_em', { ascending: false }).limit(1);
+      if (byPath?.length && byPath[0].resumo) {
+        return res.json({ resumo: byPath[0].resumo, tags: byPath[0].tags, nota_path: byPath[0].nota_path, file_name: cc.file_name, file_url: cc.file_url });
+      }
+    }
+
+    res.json({ resumo: null, file_name: cc.file_name, file_url: cc.file_url, message: 'Documento ainda nao processado pelo Cerebro' });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 // PATCH /api/cycles/tasks/:taskId/critical — toggle critico
 router.patch('/tasks/:taskId/critical', authorize('admin', 'diretor'), async (req, res) => {
   try {

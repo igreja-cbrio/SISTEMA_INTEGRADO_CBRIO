@@ -324,6 +324,7 @@ export default function Eventos() {
   const [kpiEventName, setKpiEventName] = useState('');
   const [kpiLoading, setKpiLoading] = useState(false);
   const [kpiConfigOpen, setKpiConfigOpen] = useState(false);
+  const [kpiDocModal, setKpiDocModal] = useState(null); // { doc, resumo, loading }
   const [kpiWeights, setKpiWeights] = useState([]);
   const [eventList, setEventList] = useState([]);
   const [categories, setCategories] = useState([]);
@@ -803,7 +804,8 @@ export default function Eventos() {
                     const onTime = doc.on_time != null ? doc.on_time : (entregue && prazoFase ? new Date(doc.delivered_at || doc.updated_at || Date.now()) <= new Date(prazoFase + 'T23:59:59') : null);
                     const prazoPassou = prazoFase && !entregue && new Date(prazoFase) < new Date();
                     return (
-                      <tr key={doc.id} style={{ borderBottom: `1px solid ${C.border}` }}>
+                      <tr key={doc.id} onClick={async () => { setKpiDocModal({ doc, resumo: null, loading: true }); try { const r = await cyclesApi.docResumo(doc.id); setKpiDocModal({ doc, ...r, loading: false }); } catch { setKpiDocModal(m => ({ ...m, loading: false })); } }} style={{ borderBottom: `1px solid ${C.border}`, cursor: 'pointer' }}
+                        onMouseEnter={e => e.currentTarget.style.background = C.bg} onMouseLeave={e => e.currentTarget.style.background = 'transparent'}>
                         <td style={{ padding: '10px 12px', fontSize: 13, fontWeight: 600, color: C.text }}>{doc.card_titulo}{doc.is_critical && <span style={{ fontSize: 9, marginLeft: 6, padding: '1px 5px', borderRadius: 99, background: '#ef444420', color: '#ef4444' }}>critico</span>}</td>
                         <td style={{ padding: '10px 12px' }}><span style={{ fontSize: 11, padding: '2px 8px', borderRadius: 99, background: (CAT_COLORS[doc.area] || '#9ca3af') + '20', color: CAT_COLORS[doc.area] || '#9ca3af', fontWeight: 500 }}>{CAT_LABELS[doc.area] || doc.area}</span></td>
                         <td style={{ padding: '10px 12px', textAlign: 'center' }}>
@@ -2902,6 +2904,68 @@ export default function Eventos() {
       {tab === 3 && renderGantt()}
       {tab === 4 && renderDetail()}
       {tab === 5 && renderKPIs()}
+
+      {/* KPI Doc Resumo Modal */}
+      {kpiDocModal && (
+        <div style={{ position: 'fixed', inset: 0, zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(0,0,0,0.6)' }} onClick={() => setKpiDocModal(null)}>
+          <div style={{ background: 'var(--cbrio-modal-bg)', borderRadius: 16, padding: 24, maxWidth: 550, width: '90%', maxHeight: '80vh', overflowY: 'auto', boxShadow: '0 20px 60px rgba(0,0,0,0.3)' }} onClick={e => e.stopPropagation()}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+              <span style={{ fontSize: 16, fontWeight: 700, color: C.text }}>{kpiDocModal.doc?.card_titulo}</span>
+              <button onClick={() => setKpiDocModal(null)} style={{ background: 'none', border: 'none', fontSize: 18, color: C.t3, cursor: 'pointer' }}>{'\u2715'}</button>
+            </div>
+
+            {/* Info do documento */}
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 12 }}>
+              <span style={{ fontSize: 11, padding: '2px 8px', borderRadius: 99, background: C.primaryBg, color: C.primary }}>{kpiDocModal.doc?.area}</span>
+              <span style={{ fontSize: 11, padding: '2px 8px', borderRadius: 99, background: C.bg, color: C.t3, border: `1px solid ${C.border}` }}>{kpiDocModal.doc?.fase}</span>
+              <span style={{ fontSize: 11, padding: '2px 8px', borderRadius: 99, background: scoreColor(kpiDocModal.doc?.score || 0) + '20', color: scoreColor(kpiDocModal.doc?.score || 0), fontWeight: 700 }}>Score: {kpiDocModal.doc?.score || 0}%</span>
+            </div>
+
+            {/* Score breakdown do doc */}
+            <div style={{ background: C.bg, borderRadius: 10, padding: 12, marginBottom: 16, border: `1px solid ${C.border}` }}>
+              <div style={{ fontSize: 11, fontWeight: 600, color: C.t2, marginBottom: 8 }}>Composicao do Score</div>
+              {[
+                { label: 'Entrega no prazo', pts: 40, ok: kpiDocModal.doc?.on_time !== false && kpiDocModal.doc?.status === 'concluida', icon: '\u23f0' },
+                { label: 'Aprovado', pts: 30, ok: !!kpiDocModal.doc?.approved_by, icon: '\u2705' },
+                { label: 'Qualidade OK', pts: 20, ok: kpiDocModal.doc?.quality_rating === 'ok', icon: '\u2b50' },
+                { label: 'Arquivo anexado', pts: 10, ok: !!kpiDocModal.doc?.file_name, icon: '\ud83d\udcce' },
+              ].map(s => (
+                <div key={s.label} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4, fontSize: 12 }}>
+                  <span>{s.icon}</span>
+                  <span style={{ flex: 1, color: C.text }}>{s.label}</span>
+                  <span style={{ fontWeight: 700, color: s.ok ? '#10b981' : C.t3 }}>{s.ok ? `+${s.pts}%` : '0%'}</span>
+                </div>
+              ))}
+            </div>
+
+            {/* Resumo do Cerebro */}
+            <div style={{ fontSize: 12, fontWeight: 600, color: C.t2, marginBottom: 8 }}>Resumo do Documento (Cerebro)</div>
+            {kpiDocModal.loading ? (
+              <div style={{ padding: 16, textAlign: 'center', color: C.t3, fontSize: 12 }}>Carregando resumo...</div>
+            ) : kpiDocModal.resumo ? (
+              <div style={{ background: C.bg, borderRadius: 10, padding: 14, border: `1px solid ${C.border}` }}>
+                <div style={{ fontSize: 13, color: C.text, lineHeight: 1.6, whiteSpace: 'pre-wrap' }}>{kpiDocModal.resumo}</div>
+                {kpiDocModal.tags?.length > 0 && (
+                  <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginTop: 10 }}>
+                    {kpiDocModal.tags.map(t => (
+                      <span key={t} style={{ fontSize: 10, padding: '1px 6px', borderRadius: 99, background: C.primaryBg, color: C.primary }}>{t}</span>
+                    ))}
+                  </div>
+                )}
+              </div>
+            ) : (
+              <div style={{ padding: 16, textAlign: 'center', color: C.t3, fontSize: 12, background: C.bg, borderRadius: 10, border: `1px solid ${C.border}` }}>
+                {kpiDocModal.file_name ? 'Documento ainda nao processado pelo Cerebro. O resumo aparece apos o proximo ciclo do agente.' : 'Nenhum arquivo anexado a este card.'}
+              </div>
+            )}
+
+            {/* Link para arquivo */}
+            {kpiDocModal.file_url && (
+              <a href={kpiDocModal.file_url} target="_blank" rel="noopener noreferrer" style={{ display: 'inline-block', marginTop: 12, fontSize: 12, color: C.primary, fontWeight: 600 }}>Abrir arquivo original</a>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* KPI Config Modal */}
       {renderKpiConfig()}
