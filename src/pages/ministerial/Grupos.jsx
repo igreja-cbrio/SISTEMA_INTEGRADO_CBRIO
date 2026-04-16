@@ -8,7 +8,8 @@ import { Textarea } from '../../components/ui/textarea';
 import { Select as ShadSelect, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../components/ui/select';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../../components/ui/dialog';
 import { toast } from 'sonner';
-import { Users, MapPin, Clock, Plus, Search, ChevronLeft, UserPlus, X, ArrowRightLeft, FileUp, Trash2, FileText, Image, File as FileIcon } from 'lucide-react';
+import { Users, MapPin, Clock, Plus, Search, ChevronLeft, UserPlus, X, ArrowRightLeft, FileUp, Trash2, FileText, Image, File as FileIcon, Map as MapIcon } from 'lucide-react';
+import { GruposMapView } from '@/components/grupos/GruposMapView';
 
 const C = {
   bg: 'var(--cbrio-bg)', card: 'var(--cbrio-card)', primary: '#00B39D', primaryBg: '#00B39D18',
@@ -366,10 +367,11 @@ export default function Grupos() {
         {pageTab === 'grupos' && <Button onClick={openCreate}><Plus size={16} style={{ marginRight: 6 }} /> Novo Grupo</Button>}
       </div>
 
-      {/* Tabs principais: Grupos | Materiais */}
+      {/* Tabs principais: Grupos | Mapa | Materiais */}
       <div style={{ display: 'flex', gap: 0, marginBottom: 16, borderBottom: `1px solid ${C.border}` }}>
         {[
           { key: 'grupos', label: 'Grupos', icon: Users },
+          { key: 'mapa', label: 'Mapa', icon: MapIcon },
           { key: 'materiais', label: 'Materiais', icon: FileText },
         ].map(tab => (
           <button key={tab.key} onClick={() => setPageTab(tab.key)} style={{
