@@ -1464,6 +1464,50 @@ router.delete('/team-members/:id', async (req, res) => {
 // ══════════════════════════════════════════════════════════════
 // AVAILABILITY (volunteer unavailability dates)
 // ══════════════════════════════════════════════════════════════
+
+// Cultos de um periodo com contagem/lista de quem esta indisponivel em cada um
+router.get('/services-availability', async (req, res) => {
+  try {
+    const { from, to } = req.query;
+    if (!from || !to) return res.status(400).json({ error: 'from e to obrigatorios' });
+
+    const { data: services, error: svcErr } = await supabase
+      .from('vol_services')
+      .select('id, name, service_type_name, scheduled_at')
+      .gte('scheduled_at', `${from}T00:00:00`)
+      .lte('scheduled_at', `${to}T23:59:59`)
+      .order('scheduled_at');
+    if (svcErr) return res.status(400).json({ error: svcErr.message });
+
+    if (!services || services.length === 0) return res.json([]);
+
+    const serviceIds = services.map(s => s.id);
+
+    // Busca todas as indisponibilidades ligadas a esses cultos
+    const { data: unavail } = await supabase
+      .from('vol_availability')
+      .select('service_id, volunteer_profile_id, vol_profiles(full_name, avatar_url)')
+      .in('service_id', serviceIds)
+      .not('service_id', 'is', null);
+
+    // Agrupa por service_id
+    const unavailByService = new Map();
+    for (const u of (unavail || [])) {
+      if (!unavailByService.has(u.service_id)) unavailByService.set(u.service_id, []);
+      unavailByService.get(u.service_id).push({
+        profile_id: u.volunteer_profile_id,
+        name: u.vol_profiles?.full_name || 'Voluntario',
+        avatar_url: u.vol_profiles?.avatar_url || null,
+      });
+    }
+
+    res.json(services.map(s => ({
+      ...s,
+      unavailable: unavailByService.get(s.id) || [],
+    })));
+  } catch (e) { res.status(500).json({ error: 'Erro ao buscar disponibilidade dos cultos' }); }
+});
+
 router.get('/availability', async (req, res) => {
   try {
     const { volunteer_profile_id, from, to } = req.query;
