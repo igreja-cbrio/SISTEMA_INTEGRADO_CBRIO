@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { LoginShapesBackground } from '../components/ui/shape-landing-hero';
 
+
 function FloatingInput({ id, type, icon, label, value, onChange }) {
   const [focused, setFocused] = useState(false);
   const active = focused || value.length > 0;
@@ -47,9 +48,6 @@ const LockIcon = () => (
 const ArrowIcon = () => (
   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
 );
-const GoogleIcon = () => (
-  <svg width="18" height="18" viewBox="0 0 48 48"><path fill="#EA4335" d="M24 9.5c3.5 0 6.6 1.2 9.1 3.6l6.8-6.8C35.9 2.5 30.5 0 24 0 14.6 0 6.6 5.6 2.7 13.7l7.9 6.2C12.4 13.4 17.7 9.5 24 9.5z"/><path fill="#4285F4" d="M46.1 24.6c0-1.8-.2-3.5-.5-5.2H24v9.9h12.4c-.5 2.9-2.1 5.3-4.5 7l7 5.5c4.1-3.8 6.5-9.4 6.5-16.1z"/><path fill="#34A853" d="M10.6 28.6c-1-2.9-1-6 0-8.9l-7.9-6.2C.3 18.3-.4 24.1 1.3 29.4l9.3-1z"/><path fill="#FBBC05" d="M24 48c6.5 0 11.9-2.1 15.9-5.8l-7-5.5c-2.4 1.6-5.4 2.5-8.9 2.5-6.3 0-11.6-3.9-13.5-9.5l-7.9 6.2C6.6 42.4 14.6 48 24 48z"/></svg>
-);
 const MicrosoftIcon = () => (
   <svg width="18" height="18" viewBox="0 0 21 21"><rect x="1" y="1" width="9" height="9" fill="#f25022"/><rect x="11" y="1" width="9" height="9" fill="#7fba00"/><rect x="1" y="11" width="9" height="9" fill="#00a4ef"/><rect x="11" y="11" width="9" height="9" fill="#ffb900"/></svg>
 );
@@ -58,7 +56,7 @@ const PlanningCenterIcon = () => (
 );
 
 export default function Login() {
-  const { signInWithEmail, signInWithGoogle, signInWithMicrosoft, user } = useAuth();
+  const { signInWithEmail, signInWithMicrosoft, user } = useAuth();
   const navigate = useNavigate();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -76,6 +74,7 @@ export default function Login() {
         pc_no_email: 'Nenhum e-mail encontrado na sua conta do Planning Center.',
         pc_oauth_failed: 'Erro ao autenticar com Planning Center. Tente novamente.',
         verify_failed: 'Erro ao verificar sessao. Tente novamente.',
+        use_email_login: 'Voce ja possui uma conta criada com este e-mail. Entre com seu e-mail e senha.',
       };
       setError(msgs[oauthError] || 'Erro na autenticacao.');
       // Clean the URL
@@ -97,10 +96,9 @@ export default function Login() {
     navigate('/');
   }
 
-  async function handleOAuth(provider) {
+  async function handleMicrosoft() {
     setError('');
-    const fn = provider === 'google' ? signInWithGoogle : signInWithMicrosoft;
-    const { error: err } = await fn();
+    const { error: err } = await signInWithMicrosoft();
     if (err) setError(err.message);
   }
 
@@ -156,9 +154,8 @@ export default function Login() {
           <div style={{ flex: 1, height: 1, background: 'var(--cbrio-border)' }} />
         </div>
 
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-          <OAuthButton icon={<GoogleIcon />} label="Google" onClick={() => handleOAuth('google')} />
-          <OAuthButton icon={<MicrosoftIcon />} label="Microsoft" onClick={() => handleOAuth('microsoft')} />
+        <div>
+          <OAuthButton icon={<MicrosoftIcon />} label="Microsoft" onClick={handleMicrosoft} />
         </div>
 
         <div style={{ display: 'flex', alignItems: 'center', gap: 12, margin: '20px 0 0' }}>
