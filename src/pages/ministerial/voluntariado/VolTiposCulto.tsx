@@ -68,11 +68,11 @@ function ServiceTypeCard({ serviceType, onEdit }: { serviceType: VolServiceType;
   const generateServices = useGenerateServices();
   const [generating, setGenerating] = useState(false);
 
-  const handleGenerate = async (weeks: number) => {
+  const handleGenerate = async (year: number) => {
     setGenerating(true);
-    generateServices.mutate({ id: serviceType.id, weeks }, {
+    generateServices.mutate({ id: serviceType.id, year }, {
       onSuccess: (data: any) => {
-        toast.success(`${data.generated} culto(s) gerado(s)`);
+        toast.success(`${data.generated} culto(s) gerado(s) para ${year}`);
         setGenerating(false);
       },
       onError: () => { toast.error('Erro ao gerar cultos'); setGenerating(false); },
@@ -107,14 +107,9 @@ function ServiceTypeCard({ serviceType, onEdit }: { serviceType: VolServiceType;
         </div>
 
         {serviceType.recurrence_day != null && serviceType.recurrence_time && (
-          <div className="flex gap-2">
-            <Button size="sm" variant="outline" className="gap-1 text-xs flex-1" disabled={generating} onClick={() => handleGenerate(4)}>
-              <RefreshCw className={`h-3 w-3 ${generating ? 'animate-spin' : ''}`} /> 4 semanas
-            </Button>
-            <Button size="sm" variant="outline" className="gap-1 text-xs flex-1" disabled={generating} onClick={() => handleGenerate(8)}>
-              <RefreshCw className={`h-3 w-3 ${generating ? 'animate-spin' : ''}`} /> 8 semanas
-            </Button>
-          </div>
+          <Button size="sm" variant="outline" className="gap-1 text-xs w-full" disabled={generating} onClick={() => handleGenerate(2026)}>
+            <RefreshCw className={`h-3 w-3 ${generating ? 'animate-spin' : ''}`} /> Gerar 2026 inteiro
+          </Button>
         )}
       </CardContent>
     </Card>

@@ -37,11 +37,12 @@ export function useDeleteServiceType() {
 export function useGenerateServices() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ id, weeks }: { id: string; weeks?: number }) =>
-      voluntariado.serviceTypes.generate(id, weeks),
+    mutationFn: ({ id, weeks, year }: { id: string; weeks?: number; year?: number }) =>
+      voluntariado.serviceTypes.generate(id, weeks, year),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['vol', 'services'] });
       qc.invalidateQueries({ queryKey: ['vol', 'service-types'] });
+      qc.invalidateQueries({ queryKey: ['vol', 'my-services'] });
     },
   });
 }
