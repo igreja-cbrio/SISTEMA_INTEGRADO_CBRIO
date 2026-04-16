@@ -188,19 +188,49 @@ async function processServiceType(supabase, serviceType, plans, credentials) {
   for (const plan of plans) {
     const serviceDate = plan.attributes.sort_date;
     const serviceName = plan.attributes.title || serviceType.attributes.name;
+    const serviceTypeName = serviceType.attributes.name;
+    const dateOnly = serviceDate.slice(0, 10); // 'yyyy-MM-dd'
 
-    const { data: service, error: serviceError } = await supabase
+    // Busca servico gerado internamente com mesmo tipo e data
+    const { data: internalService } = await supabase
       .from('vol_services')
-      .upsert({
-        planning_center_id: plan.id,
-        name: serviceName,
-        service_type_name: serviceType.attributes.name,
-        scheduled_at: serviceDate,
-      }, { onConflict: 'planning_center_id' })
-      .select()
-      .single();
+      .select('id')
+      .not('service_type_id', 'is', null)
+      .eq('service_type_name', serviceTypeName)
+      .gte('scheduled_at', `${dateOnly}T00:00:00`)
+      .lte('scheduled_at', `${dateOnly}T23:59:59`)
+      .maybeSingle();
 
-    if (serviceError) { console.error('[PC] upsert service error:', serviceError.message); continue; }
+    let service;
+    if (internalService) {
+      // Remove o servico PCO-only com esse plan.id, se existir (evita conflito de unique)
+      await supabase.from('vol_services')
+        .delete()
+        .eq('planning_center_id', plan.id)
+        .is('service_type_id', null);
+
+      // Vincula o plan ID do PCO ao servico interno para proximas sincronizacoes
+      await supabase.from('vol_services')
+        .update({ planning_center_id: plan.id })
+        .eq('id', internalService.id);
+
+      service = internalService;
+    } else {
+      // Sem servico interno para esse tipo+data: cria/atualiza pelo planning_center_id
+      const { data: svc, error: serviceError } = await supabase
+        .from('vol_services')
+        .upsert({
+          planning_center_id: plan.id,
+          name: serviceName,
+          service_type_name: serviceTypeName,
+          scheduled_at: serviceDate,
+        }, { onConflict: 'planning_center_id' })
+        .select()
+        .single();
+      if (serviceError) { console.error('[PC] upsert service error:', serviceError.message); continue; }
+      service = svc;
+    }
+
     typeServices++;
 
     const teamData = await fetchAllTeamMembers(baseUrl, serviceType.id, plan.id, credentials);
