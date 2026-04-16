@@ -1,28 +1,39 @@
 
 
-## Plan: Ajustar badges Apple/Google Wallet para proporcoes e cores oficiais
+## Plan: Logo coracao oficial + fonte iBrand nos cards wallet
 
-### Problema atual
-Os badges SVG atuais tem proporcoes incorretas (280x44 viewBox), icones simplificados que nao correspondem aos oficiais, e o icone do Apple Wallet e uma aproximacao generica com retangulos coloridos.
+### Resumo
+Substituir o SVG de coracao "stroke" pelo PNG oficial (`logo-cbrio-icon.png`) e registrar a fonte iBrand para o texto "CBRio" nos cards de QR Code (voluntario e membro).
 
 ### Mudancas
 
-**Arquivo: `src/components/ui/wallet-buttons.tsx`**
+**1. Copiar fonte iBrand para o projeto**
+- Copiar `user-uploads://ibrand.otf` para `public/fonts/ibrand.otf`
 
-1. **Apple Wallet Badge** — Corrigir para proporcoes oficiais HIG:
-   - ViewBox: `0 0 187 56` (aspect ratio ~3.34:1, conforme badge oficial Apple)
-   - Fundo preto com borda arredondada (`rx=6`)
-   - Icone Wallet oficial: stack de 3 cards coloridos (vermelho `#FC3D3A`, amarelo `#F5A623`, verde `#4CD964`, azul `#5AC8FA`) com bordas arredondadas
-   - Texto em 2 linhas: "Adicionar ao" (fontSize 10, regular) + "Apple Wallet" (fontSize 16, semibold)
-   - Fonte: `-apple-system, SF Pro Text` / `SF Pro Display`
+**2. Registrar @font-face em `src/index.css`**
+```css
+@font-face {
+  font-family: 'iBrand';
+  src: url('/fonts/ibrand.otf') format('opentype');
+  font-weight: normal;
+  font-style: normal;
+  font-display: swap;
+}
+```
 
-2. **Google Wallet Badge** — Corrigir proporcoes e icone:
-   - Mesmo viewBox `0 0 187 56`
-   - Icone Google "G" multicolorido oficial (4 cores: azul `#4285F4`, vermelho `#EA4335`, amarelo `#FBBC04`, verde `#34A853`)
-   - Texto: "Adicionar ao" + "Google Wallet"
+**3. Atualizar `QrCodeModal.tsx`**
+- Remover componente `CbrioLogo` SVG
+- Substituir por `<img src="/logo-cbrio-icon.png">` (coracao preenchido oficial)
+- Aplicar `font-family: 'iBrand'` no texto "CBRio" via style inline
+- Atualizar o `handleDownload` (canvas) para carregar a fonte iBrand e a imagem PNG do logo antes de desenhar
 
-3. **Botoes wrapper** — Ajustar `min-h-[56px]` para corresponder a nova proporcao, `max-w-[240px]` para nao esticar demais em containers largos
+**4. Atualizar `MemberWalletPass.tsx`**
+- Mesma substituicao: remover `CbrioLogo` SVG, usar `<img src="/logo-cbrio-icon.png">`
+- Aplicar fonte iBrand no texto "CBRio" via style inline
 
 ### Arquivos modificados
-- `src/components/ui/wallet-buttons.tsx` — unico arquivo
+- `public/fonts/ibrand.otf` — novo (fonte)
+- `src/index.css` — adicionar @font-face
+- `src/pages/ministerial/voluntariado/components/qrcodes/QrCodeModal.tsx`
+- `src/components/membresia/MemberWalletPass.tsx`
 
