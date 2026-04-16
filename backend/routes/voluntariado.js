@@ -256,7 +256,7 @@ router.get('/me/wallet/google', async (req, res) => {
       id: objectId,
       classId: classId,
       genericType: 'GENERIC_OTHER',
-      hexBackgroundColor: '#00B39D',
+      hexBackgroundColor: '#408097',
       logo: {
         sourceUri: { uri: logoUrl },
         contentDescription: { defaultValue: { language: 'pt-BR', value: 'CBRio' } },
