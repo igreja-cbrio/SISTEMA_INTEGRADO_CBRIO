@@ -25,6 +25,7 @@ import VolNavBar from './components/VolNavBar';
 export default function Voluntariado() {
   const { isAdmin, isColaborador } = useAuth();
   const location = useLocation();
+  useHomeScreenMeta('checkin');
 
   // Se URL começa com /voluntariado/checkin → portal do voluntario SEMPRE,
   // independente do role (VolunteerShell ja foi aplicada pelo App.tsx).

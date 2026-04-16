@@ -202,6 +202,7 @@ function CheckboxField({ id, checked, onChange, label }) {
 }
 
 export default function CadastroMembresia() {
+  useHomeScreenMeta('membresia');
   const [currentStep, setCurrentStep] = useState(0);
   const [form, setForm] = useState({
     nome: '', sobrenome: '', cpf: '', email: '', telefone: '',
