@@ -14,8 +14,25 @@ import { ptBR } from 'date-fns/locale';
 import { toast } from 'sonner';
 import {
   Calendar, Check, X, Clock, CalendarOff, ChevronRight,
-  CheckCircle2, XCircle, Loader2, Users, ScanLine, Wallet,
+  CheckCircle2, XCircle, Loader2, Users, ScanLine, Wallet, Apple,
 } from 'lucide-react';
+
+function isIOSLike() {
+  if (typeof navigator === 'undefined') return false;
+  const ua = navigator.userAgent || navigator.vendor || '';
+  return /iPad|iPhone|iPod/.test(ua) || (ua.includes('Mac') && 'ontouchend' in document);
+}
+
+function downloadBlob(blob: Blob, filename: string) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
 import type { VolSchedule, VolAvailability } from './types';
 
 function useMySchedules() {
@@ -67,6 +84,8 @@ function useGoogleWalletUrl() {
 export default function VolMeuPainel() {
   const navigate = useNavigate();
   const googleWallet = useGoogleWalletUrl();
+  const [appleBusy, setAppleBusy] = useState(false);
+  const iOS = isIOSLike();
 
   const handleAddToGoogleWallet = async () => {
     try {
@@ -74,6 +93,18 @@ export default function VolMeuPainel() {
       window.open(data.url, '_blank');
     } catch (err: any) {
       toast.error(err.message || 'Erro ao gerar passe do Google Wallet');
+    }
+  };
+
+  const handleAddToAppleWallet = async () => {
+    setAppleBusy(true);
+    try {
+      const blob = await voluntariado.me.walletApple();
+      downloadBlob(blob, 'cbrio-voluntario.pkpass');
+    } catch (err: any) {
+      toast.error(err.message || 'Erro ao gerar passe Apple Wallet');
+    } finally {
+      setAppleBusy(false);
     }
   };
 
@@ -89,20 +120,32 @@ export default function VolMeuPainel() {
         <ScanLine className="h-5 w-5" /> Escanear QR do Totem para Check-in
       </Button>
 
-      <Button
-        size="lg"
-        variant="outline"
-        className="w-full gap-2 min-h-[56px] text-base border-2"
-        onClick={handleAddToGoogleWallet}
-        disabled={googleWallet.isPending}
-      >
-        {googleWallet.isPending ? (
-          <Loader2 className="h-5 w-5 animate-spin" />
-        ) : (
-          <Wallet className="h-5 w-5" />
-        )}
-        Adicionar ao Google Wallet
-      </Button>
+      {iOS ? (
+        <Button
+          size="lg"
+          className="w-full gap-2 min-h-[56px] text-base bg-black hover:bg-black/80 text-white"
+          onClick={handleAddToAppleWallet}
+          disabled={appleBusy}
+        >
+          {appleBusy ? <Loader2 className="h-5 w-5 animate-spin" /> : <Apple className="h-5 w-5" />}
+          Adicionar ao Apple Wallet
+        </Button>
+      ) : (
+        <Button
+          size="lg"
+          variant="outline"
+          className="w-full gap-2 min-h-[56px] text-base border-2"
+          onClick={handleAddToGoogleWallet}
+          disabled={googleWallet.isPending}
+        >
+          {googleWallet.isPending ? (
+            <Loader2 className="h-5 w-5 animate-spin" />
+          ) : (
+            <Wallet className="h-5 w-5" />
+          )}
+          Adicionar ao Google Wallet
+        </Button>
+      )}
 
       <Tabs defaultValue="escalas" className="w-full">
         <TabsList className="w-full grid grid-cols-2 h-auto p-1.5 bg-muted/60 rounded-xl gap-1.5">

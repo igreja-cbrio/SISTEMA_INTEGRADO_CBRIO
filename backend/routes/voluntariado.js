@@ -287,6 +287,35 @@ router.get('/me/wallet/google', async (req, res) => {
   }
 });
 
+// GET /api/voluntariado/me/wallet/apple — gera .pkpass para Apple Wallet (iOS)
+router.get('/me/wallet/apple', async (req, res) => {
+  try {
+    const { buildVoluntarioPass } = require('../services/appleWallet');
+    const userId = req.user.userId;
+
+    const { data: profile } = await supabase.from('vol_profiles')
+      .select('id, full_name, qr_code').eq('auth_user_id', userId).maybeSingle();
+
+    if (!profile) return res.status(404).json({ error: 'Perfil nao encontrado' });
+    if (!profile.qr_code) return res.status(400).json({ error: 'QR Code ainda nao gerado para este perfil' });
+
+    const voluntarioId = `CBR-${profile.id.replace(/-/g, '').slice(0, 8).toUpperCase()}`;
+
+    const pkpassBuffer = await buildVoluntarioPass({
+      nome: profile.full_name,
+      qrCode: profile.qr_code,
+      voluntarioId,
+    });
+
+    res.setHeader('Content-Type', 'application/vnd.apple.pkpass');
+    res.setHeader('Content-Disposition', `attachment; filename="cbrio-voluntario.pkpass"`);
+    res.send(pkpassBuffer);
+  } catch (err) {
+    console.error('[Wallet] Apple error:', err.message);
+    res.status(500).json({ error: err.message || 'Erro ao gerar passe Apple Wallet' });
+  }
+});
+
 // Get my upcoming schedules
 router.get('/my-schedules', async (req, res) => {
   try {
