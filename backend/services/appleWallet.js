@@ -80,8 +80,9 @@ function makeSolidPng(w, h, r, g, b) {
 // Membro: bege #eae3da = rgb(234, 227, 218)
 // Voluntario: azul escuro #408097 = rgb(64, 128, 151)
 
-// Logo CBRio (iBrand font) — lido do filesystem (incluido via vercel.json templates/**)
+// Logo CBRio — lido do filesystem (incluido via vercel.json templates/**)
 const LOGO_CBRIO = fs.readFileSync(path.join(__dirname, '..', 'templates', 'logo-cbrio-text.png'));
+const LOGO_CBRIO_WHITE = fs.readFileSync(path.join(__dirname, '..', 'templates', 'logo-cbrio-text-white.png'));
 
 // Icones pre-gerados por tipo (cached — gerados uma vez no startup)
 const ICONS_MEMBRO = {
@@ -96,8 +97,8 @@ const ICONS_VOLUNTARIO = {
   'icon.png':    makeSolidPng(29,  29,  64, 128, 151),
   'icon@2x.png': makeSolidPng(58,  58,  64, 128, 151),
   'icon@3x.png': makeSolidPng(87,  87,  64, 128, 151),
-  'logo.png':    LOGO_CBRIO,
-  'logo@2x.png': LOGO_CBRIO,
+  'logo.png':    LOGO_CBRIO_WHITE,
+  'logo@2x.png': LOGO_CBRIO_WHITE,
 };
 
 // ── Conversao de certificados ─────────────────────────────────────────────
