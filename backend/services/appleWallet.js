@@ -261,13 +261,13 @@ async function buildVoluntarioPass({ nome, qrCode, voluntarioId }) {
     serialNumber: `vol-${crypto.createHash('sha256').update(qrCode).digest('hex').slice(0, 16)}`,
     teamIdentifier: teamId,
     organizationName: 'CBRio',
-    description: 'CBRio — Cracha de Voluntario',
+    description: 'CBRio — Crachá de Voluntário',
     backgroundColor: 'rgb(64, 128, 151)',
     foregroundColor: 'rgb(255, 255, 255)',
     labelColor: 'rgb(255, 255, 255)',
     generic: {
       primaryFields: [
-        { key: 'name', label: 'VOLUNTARIO', value: nome || 'Voluntario' },
+        { key: 'name', label: 'VOLUNTÁRIO', value: nome || 'Voluntário' },
       ],
       secondaryFields: [
         { key: 'org', label: 'IGREJA', value: 'CBRio' },
