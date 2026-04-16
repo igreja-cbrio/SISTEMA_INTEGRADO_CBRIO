@@ -759,13 +759,34 @@ export default function Eventos() {
                 </tr></thead>
                 <tbody>
                   {(ev.documentos || []).map(doc => {
-                    const onTime = doc.delivered_at && doc.deadline_at ? new Date(doc.delivered_at) <= new Date(doc.deadline_at) : null;
+                    const prazoFase = doc.prazo_fase;
+                    const entregue = doc.status === 'concluida';
+                    const onTime = doc.on_time != null ? doc.on_time : (entregue && prazoFase ? new Date(doc.delivered_at || doc.updated_at || Date.now()) <= new Date(prazoFase + 'T23:59:59') : null);
+                    const prazoPassou = prazoFase && !entregue && new Date(prazoFase) < new Date();
                     return (
                       <tr key={doc.id} style={{ borderBottom: `1px solid ${C.border}` }}>
-                        <td style={{ padding: '10px 12px', fontSize: 13, fontWeight: 600, color: C.text }}>{doc.card_titulo}</td>
+                        <td style={{ padding: '10px 12px', fontSize: 13, fontWeight: 600, color: C.text }}>{doc.card_titulo}{doc.is_critical && <span style={{ fontSize: 9, marginLeft: 6, padding: '1px 5px', borderRadius: 99, background: '#ef444420', color: '#ef4444' }}>critico</span>}</td>
                         <td style={{ padding: '10px 12px' }}><span style={{ fontSize: 11, padding: '2px 8px', borderRadius: 99, background: (CAT_COLORS[doc.area] || '#9ca3af') + '20', color: CAT_COLORS[doc.area] || '#9ca3af', fontWeight: 500 }}>{CAT_LABELS[doc.area] || doc.area}</span></td>
-                        <td style={{ padding: '10px 12px', textAlign: 'center' }}>{onTime === null ? <span style={{ color: C.t3 }}>-</span> : onTime ? <span style={{ color: '#10b981', fontWeight: 600 }}>No prazo</span> : <span style={{ color: '#ef4444', fontWeight: 600 }}>Atrasado</span>}</td>
-                        <td style={{ padding: '10px 12px', textAlign: 'center' }}><span style={{ fontSize: 11, color: doc.quality_rating === 'ok' ? '#10b981' : doc.quality_rating === 'reprovado' ? '#ef4444' : '#f59e0b' }}>{doc.quality_rating || '-'}</span></td>
+                        <td style={{ padding: '10px 12px', textAlign: 'center' }}>
+                          {entregue ? (
+                            onTime ? <span style={{ fontSize: 11, fontWeight: 600, color: '#10b981' }}>No prazo</span> : <span style={{ fontSize: 11, fontWeight: 600, color: '#ef4444' }}>Atrasado</span>
+                          ) : prazoPassou ? (
+                            <span style={{ fontSize: 11, fontWeight: 600, color: '#ef4444' }}>Vencido</span>
+                          ) : prazoFase ? (
+                            <span style={{ fontSize: 11, color: C.t3 }}>{fmtDate(prazoFase)}</span>
+                          ) : <span style={{ color: C.t3 }}>-</span>}
+                        </td>
+                        <td style={{ padding: '10px 12px', textAlign: 'center' }}>
+                          {!doc.quality_rating || doc.quality_rating === 'pendente' ? (
+                            <span style={{ fontSize: 11, color: C.t3 }}>Pendente</span>
+                          ) : doc.quality_rating === 'ok' ? (
+                            <span style={{ fontSize: 11, color: '#10b981', fontWeight: 600 }}>OK</span>
+                          ) : doc.quality_rating === 'incompleto' ? (
+                            <span style={{ fontSize: 11, color: '#f59e0b', fontWeight: 600 }}>Incompleto</span>
+                          ) : (
+                            <span style={{ fontSize: 11, color: '#ef4444', fontWeight: 600 }}>Reprovado</span>
+                          )}
+                        </td>
                         <td style={{ padding: '10px 12px', textAlign: 'center' }}>{doc.approved_by ? <span style={{ color: '#10b981' }}>Sim</span> : <span style={{ color: C.t3 }}>-</span>}</td>
                         <td style={{ padding: '10px 12px', textAlign: 'center' }}>{doc.file_name ? <span style={{ color: '#10b981' }}>Sim</span> : <span style={{ color: C.t3 }}>-</span>}</td>
                         <td style={{ padding: '10px 12px', textAlign: 'center', fontWeight: 800, color: scoreColor(doc.score || 0) }}>{doc.score || 0}</td>
@@ -774,7 +795,7 @@ export default function Eventos() {
                             {doc.approved_by ? (
                               <span style={{ fontSize: 10, padding: '2px 8px', borderRadius: 99, background: '#10b98120', color: '#10b981', fontWeight: 600 }}>Aprovado</span>
                             ) : (
-                              <button onClick={async () => { try { await cyclesApi.approveCard(doc.id); } catch {} loadKpiEventDetail(doc.event_id); }} style={{ padding: '3px 8px', fontSize: 10, borderRadius: 4, border: 'none', background: '#10b98120', color: '#10b981', cursor: 'pointer', fontWeight: 600 }}>Aprovar</button>
+                              <button onClick={async (e) => { e.stopPropagation(); e.preventDefault(); try { await cyclesApi.approveCard(doc.id); } catch {} loadKpiEventDetail(doc.event_id); }} style={{ padding: '3px 8px', fontSize: 10, borderRadius: 4, border: 'none', background: '#10b98120', color: '#10b981', cursor: 'pointer', fontWeight: 600 }}>Aprovar</button>
                             )}
                             {doc.quality_rating === 'incompleto' ? (
                               <span style={{ fontSize: 10, padding: '2px 8px', borderRadius: 99, background: '#f59e0b20', color: '#f59e0b', fontWeight: 600 }}>Incompleto</span>
@@ -782,7 +803,7 @@ export default function Eventos() {
                               <span style={{ fontSize: 10, padding: '2px 8px', borderRadius: 99, background: '#ef444420', color: '#ef4444', fontWeight: 600 }}>Reprovado</span>
                             ) : null}
                             {!doc.approved_by && (
-                              <button onClick={async () => { try { await cyclesApi.qualityCard(doc.id, doc.quality_rating === 'ok' ? 'incompleto' : 'ok'); } catch {} loadKpiEventDetail(doc.event_id); }} style={{ padding: '3px 8px', fontSize: 10, borderRadius: 4, border: 'none', background: doc.quality_rating === 'ok' ? '#f59e0b20' : '#10b98120', color: doc.quality_rating === 'ok' ? '#f59e0b' : '#10b981', cursor: 'pointer', fontWeight: 600 }}>
+                              <button onClick={async (e) => { e.stopPropagation(); e.preventDefault(); try { await cyclesApi.qualityCard(doc.id, doc.quality_rating === 'ok' ? 'incompleto' : 'ok'); } catch {} loadKpiEventDetail(doc.event_id); }} style={{ padding: '3px 8px', fontSize: 10, borderRadius: 4, border: 'none', background: doc.quality_rating === 'ok' ? '#f59e0b20' : '#10b98120', color: doc.quality_rating === 'ok' ? '#f59e0b' : '#10b981', cursor: 'pointer', fontWeight: 600 }}>
                                 {doc.quality_rating === 'ok' ? 'Marcar incompleto' : 'Marcar OK'}
                               </button>
                             )}

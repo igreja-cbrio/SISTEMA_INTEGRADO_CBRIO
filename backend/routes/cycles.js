@@ -531,7 +531,7 @@ async function getOrCreateCompletion(taskId, userId, userName) {
     task_id: taskId, event_id: task.event_id, event_phase_id: task.event_phase_id,
     phase_number: task.event_cycle_phases?.numero_fase, area: task.area,
     card_titulo: task.titulo, completed_by: userId, completed_by_name: userName,
-    completed_at: new Date().toISOString(), quality_rating: 'ok',
+    completed_at: new Date().toISOString(), quality_rating: 'pendente',
   }).select().single();
   if (error) throw error;
   return cc;
@@ -586,10 +586,10 @@ router.get('/kpis/evento/:eventId', async (req, res) => {
         id: t.id, card_titulo: t.titulo, area: t.area, status: t.status,
         fase: t.event_cycle_phases?.nome_fase, prazo_fase: prazofase,
         is_critical: t.is_critical,
-        approved_by: cc.approved_by, quality_rating: cc.quality_rating || 'ok',
+        approved_by: cc.approved_by, quality_rating: cc.quality_rating || null,
         file_name: cc.file_name, delivered_at: cc.delivered_at || cc.completed_at,
-        on_time: onTime,
-        score: (onTime !== false && t.status === 'concluida' ? 40 : 0) + (cc.approved_by ? 30 : 0) + ((cc.quality_rating || 'ok') === 'ok' ? 20 : 0) + (cc.file_name ? 10 : 0),
+        on_time: onTime, updated_at: t.updated_at,
+        score: (onTime !== false && t.status === 'concluida' ? 40 : 0) + (cc.approved_by ? 30 : 0) + (cc.quality_rating === 'ok' ? 20 : 0) + (cc.file_name ? 10 : 0),
       };
     });
 
