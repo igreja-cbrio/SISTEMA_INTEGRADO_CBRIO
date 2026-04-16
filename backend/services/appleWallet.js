@@ -212,6 +212,8 @@ async function buildMembroPass({ nome, qrToken, memberId, pending = false }) {
   const pass = new PKPass(
     {
       ...ICONS_MEMBRO,
+      'pass.json': Buffer.from(JSON.stringify(passJson)),
+    },
     {
       wwdr:                 Buffer.from(certs.wwdrPem),
       signerCert:           Buffer.from(certs.membro.certPem),
