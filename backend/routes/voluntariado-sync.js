@@ -2,15 +2,18 @@ const router = require('express').Router();
 const { authenticate, authorize } = require('../middleware/auth');
 const { supabase } = require('../utils/supabase');
 const {
-  getPCCredentials, fetchWithRetry, fetchPlansInRange,
-  processServiceType, upsertVolunteerQrCodes, upsertVolunteerProfiles, PC_SERVICES_BASE,
+  getPCCredentials, fetchWithRetry, fetchAllPlans,
+  processServiceType, fetchAllTeamPersons, upsertVolunteerQrCodes, upsertVolunteerProfiles, PC_SERVICES_BASE,
 } = require('../services/planningCenter');
 
 // Sync do Planning Center e operacoes administrativas pesadas — apenas admin/diretor.
 router.use(authenticate, authorize('admin', 'diretor'));
 
 // ══════════════════════════════════════════════════════════════
-// SYNC — MANUAL (voluntarios escalados nos ultimos 6 meses)
+// SYNC — MANUAL
+// Estrategia dupla:
+//   1. fetchAllPlans  → 5 cultos futuros + 3 passados (para escalas/check-in)
+//   2. fetchAllTeamPersons → todas as pessoas das equipes (para vol_profiles)
 // ══════════════════════════════════════════════════════════════
 router.post('/sync', async (req, res) => {
   try {
@@ -23,20 +26,17 @@ router.post('/sync', async (req, res) => {
     const serviceTypes = typesData.data || [];
     console.log(`[VOL SYNC] Found ${serviceTypes.length} service types`);
 
-    // Window: 2 months back → 1 month forward (captures active volunteers within Vercel 60s limit)
-    const start = new Date(); start.setMonth(start.getMonth() - 2);
-    const end = new Date(); end.setMonth(end.getMonth() + 1);
-    const startDate = start.toISOString().split('T')[0];
-    const endDate = end.toISOString().split('T')[0];
-
     let totalServices = 0, totalSchedules = 0, totalMembersFound = 0, totalMembersProcessed = 0;
     const allVolunteers = new Map();
 
     // All service types in parallel
     const settled = await Promise.allSettled(serviceTypes.map(async (st) => {
-      const plans = await fetchPlansInRange(PC_SERVICES_BASE, st.id, credentials, startDate, endDate);
+      const [plans, teamPersons] = await Promise.all([
+        fetchAllPlans(PC_SERVICES_BASE, st.id, credentials),
+        fetchAllTeamPersons(st.id, credentials),
+      ]);
       const result = await processServiceType(supabase, st, plans, credentials);
-      return result;
+      return { result, teamPersons };
     }));
 
     for (const item of settled) {
@@ -44,12 +44,16 @@ router.post('/sync', async (req, res) => {
         console.error('[VOL SYNC] Service type error:', item.reason?.message || item.reason);
         continue;
       }
-      const result = item.value;
+      const { result, teamPersons } = item.value;
       totalServices += result.services;
       totalSchedules += result.schedules;
       totalMembersFound += result.membersFound;
       totalMembersProcessed += result.membersProcessed;
       for (const [k, v] of result.volunteers) allVolunteers.set(k, v);
+      // teamPersons complementa com quem nao aparece nos planos recentes
+      for (const [k, v] of teamPersons) {
+        if (!allVolunteers.has(k)) allVolunteers.set(k, v);
+      }
     }
 
     const qrCount = await upsertVolunteerQrCodes(supabase, allVolunteers);
@@ -130,18 +134,16 @@ router.post('/sync-auto', async (req, res) => {
     const typesData = await testRes.json();
     const serviceTypes = typesData.data || [];
 
-    const start = new Date(); start.setMonth(start.getMonth() - 2);
-    const end = new Date(); end.setMonth(end.getMonth() + 1);
-    const startDate = start.toISOString().split('T')[0];
-    const endDate = end.toISOString().split('T')[0];
-
     let totalServices = 0, totalSchedules = 0, totalMembersFound = 0, totalMembersProcessed = 0;
     const allVolunteers = new Map();
 
     const settled = await Promise.allSettled(serviceTypes.map(async (st) => {
-      const plans = await fetchPlansInRange(PC_SERVICES_BASE, st.id, credentials, startDate, endDate);
+      const [plans, teamPersons] = await Promise.all([
+        fetchAllPlans(PC_SERVICES_BASE, st.id, credentials),
+        fetchAllTeamPersons(st.id, credentials),
+      ]);
       const result = await processServiceType(supabase, st, plans, credentials);
-      return result;
+      return { result, teamPersons };
     }));
 
     for (const item of settled) {
@@ -149,12 +151,15 @@ router.post('/sync-auto', async (req, res) => {
         console.error('[VOL SYNC AUTO] Service type error:', item.reason?.message || item.reason);
         continue;
       }
-      const result = item.value;
+      const { result, teamPersons } = item.value;
       totalServices += result.services;
       totalSchedules += result.schedules;
       totalMembersFound += result.membersFound;
       totalMembersProcessed += result.membersProcessed;
       for (const [k, v] of result.volunteers) allVolunteers.set(k, v);
+      for (const [k, v] of teamPersons) {
+        if (!allVolunteers.has(k)) allVolunteers.set(k, v);
+      }
     }
 
     const qrCount = await upsertVolunteerQrCodes(supabase, allVolunteers);
