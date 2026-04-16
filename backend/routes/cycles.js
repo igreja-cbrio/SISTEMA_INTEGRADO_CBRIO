@@ -186,7 +186,7 @@ router.post('/activate/:eventId', authorize('admin', 'diretor'), async (req, res
     const { data: event, error: evErr } = await supabase.from('events').select('id, date, name').eq('id', eventId).single();
     if (evErr || !event) return res.status(404).json({ error: 'Evento não encontrado' });
 
-    const { data: existing } = await supabase.from('event_cycles').select('id').eq('event_id', eventId).single();
+    const { data: existing } = await supabase.from('event_cycles').select('id').eq('event_id', eventId).maybeSingle();
     if (existing) return res.status(409).json({ error: 'Ciclo já ativado para este evento' });
 
     const diaDDate = event.date;
