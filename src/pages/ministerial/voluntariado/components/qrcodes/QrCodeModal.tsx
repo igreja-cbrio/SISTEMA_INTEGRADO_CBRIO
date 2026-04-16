@@ -61,7 +61,7 @@ export default function QrCodeModal({ open, onClose, qrCode, volunteerName }: Qr
     ctx.lineTo(0, radius);
     ctx.quadraticCurveTo(0, 0, radius, 0);
     ctx.closePath();
-    ctx.fillStyle = '#00B39D';
+    ctx.fillStyle = '#408097';
     ctx.fill();
 
     // Header: logo image + text
