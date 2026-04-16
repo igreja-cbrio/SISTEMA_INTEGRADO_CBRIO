@@ -1,28 +1,43 @@
 
 
-## Plan: Corrigir centralização do MemberWalletDialog no mobile com teclado aberto
+## Plan: Corrigir erro "Unexpected token '{'" no MemberWalletPass
 
 ### Problema
-No mobile, quando o teclado abre (ao focar no input de CPF), o `DialogContent` usa `top: 50% + translate-y: -50%` relativo ao viewport fixo. O teclado reduz o viewport visível, mas o dialog não se ajusta, ficando cortado no topo.
+Quando o usuario confirma o cadastro e o componente `MemberWalletPass` tenta chamar `/api/public/membresia/wallet/qr-token`, a resposta nao e JSON valido (provavelmente HTML de erro do Vercel ou resposta malformada), e `res.json()` lanca "Unexpected token '{'". O erro aparece cru para o usuario sem mensagem util.
 
-### Solução
-Trocar o posicionamento do `DialogContent` para usar `top-auto` com alinhamento seguro que respeite o viewport visível quando o teclado está aberto. A abordagem é usar classes que sobrescrevam o posicionamento padrão do dialog para usar `items-end` ou `items-center` com scroll seguro no mobile.
+### Causa raiz
+As funcoes `walletQrToken`, `walletGoogle` e `walletApple` em `src/api.js` nao validam o `Content-Type` da resposta antes de chamar `res.json()`. Se o backend retornar HTML (404 do Vercel, erro de startup, rate limit HTML), o parse falha com mensagem criptica.
 
-### Mudança
+### Mudanca
 
-**Arquivo: `src/components/membresia/MemberWalletDialog.tsx`**
+**Arquivo: `src/api.js`** — linhas 585-620
 
-- No `DialogContent`, adicionar classes para sobrescrever o posicionamento fixo padrão:
-  - `top-[50%]` → `max-sm:top-auto max-sm:bottom-0 max-sm:translate-y-0` (bottom sheet no mobile)
-  - Ou alternativamente: usar `fixed inset-0 flex items-center justify-center` no overlay e tornar o content `relative` dentro de um container scrollável
-- Abordagem mais simples e robusta: transformar em **bottom sheet** no mobile (o dialog sobe do fundo), que é o padrão iOS/Android para modais com input — o teclado simplesmente empurra o conteúdo visível para cima sem cortar nada
-- No desktop mantém centralizado normalmente
+Adicionar validacao de `Content-Type` antes de `res.json()` nos 4 metodos wallet (`walletVerify`, `walletQrToken`, `walletGoogle`, `walletApple`):
 
-Classes a adicionar no `DialogContent`:
+```javascript
+walletQrToken: async (cpf, data_nascimento) => {
+  const res = await fetch(`${API}/public/membresia/wallet/qr-token`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ cpf, data_nascimento }),
+  });
+  const ct = res.headers.get('content-type') || '';
+  if (!res.ok) {
+    if (ct.includes('application/json')) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || `HTTP ${res.status}`);
+    }
+    throw new Error(`Erro no servidor (HTTP ${res.status}). Tente novamente.`);
+  }
+  if (!ct.includes('application/json')) {
+    throw new Error('Resposta inesperada do servidor. Tente novamente.');
+  }
+  return res.json();
+},
 ```
-max-sm:top-auto max-sm:bottom-4 max-sm:translate-y-0 max-sm:rounded-b-2xl
-```
+
+Aplicar o mesmo padrao nos outros 3 metodos (`walletVerify`, `walletGoogle`, `walletApple` — exceto Apple que espera blob).
 
 ### Arquivo modificado
-- `src/components/membresia/MemberWalletDialog.tsx`
+- `src/api.js`
 
