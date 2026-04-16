@@ -73,7 +73,20 @@ export function AuthProvider({ children }) {
       setLoading(false);
     });
 
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (_event, session) => {
+      if (_event === 'SIGNED_IN' && session?.user) {
+        const u = session.user;
+        const provider = u.app_metadata?.provider;
+        if (provider === 'azure') {
+          const identities = u.identities || [];
+          const hasEmailIdentity = identities.some(i => i.provider === 'email');
+          if (hasEmailIdentity) {
+            await supabase.auth.signOut();
+            window.location.href = '/login?error=use_email_login';
+            return;
+          }
+        }
+      }
       setUser(session?.user ?? null);
       if (session?.user) {
         fetchProfile(session.user.id);
@@ -170,7 +183,6 @@ export function AuthProvider({ children }) {
     getAccessLevel,
     userAreas,
     userSetores,
-    signInWithGoogle,
     signInWithMicrosoft,
     signInWithEmail,
     signOut,
@@ -191,7 +203,7 @@ export function useAuth() {
       canPatrimonio: false, canMembresia: false, canProjetos: false,
       canExpansao: false, canAgenda: false, canIA: false,
       userAreas: [], userSetores: [],
-      signInWithGoogle: async () => ({}), signInWithMicrosoft: async () => ({}),
+      signInWithMicrosoft: async () => ({}),
       signInWithEmail: async () => ({}), signOut: async () => {},
     };
   }
