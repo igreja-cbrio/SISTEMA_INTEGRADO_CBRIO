@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { QRCodeSVG } from 'qrcode.react';
-import { Loader2, Wallet, Apple, Download, AlertCircle, Wifi } from 'lucide-react';
+import { Loader2, Download, AlertCircle, Wifi } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { AddToWalletButtons } from '@/components/ui/wallet-buttons';
 import { cadastroPublico } from '@/api';
 
 interface Props {
@@ -185,25 +186,14 @@ export default function MemberWalletPass({ cpf, dataNascimento, inline = false, 
 
       {/* Action buttons */}
       <div className="w-full max-w-xs flex flex-col gap-2">
-        {iOS ? (
-          <Button
-            className="w-full gap-2 bg-black hover:bg-black/80 min-h-[48px] text-white"
-            onClick={handleApple}
-            disabled={appleBusy}
-          >
-            {appleBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Apple className="h-4 w-4" />}
-            Adicionar ao Apple Wallet
-          </Button>
-        ) : (
-          <Button
-            className="w-full gap-2 bg-[#00B39D] hover:bg-[#00B39D]/90 min-h-[48px] text-white"
-            onClick={handleGoogle}
-            disabled={googleBusy}
-          >
-            {googleBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Wallet className="h-4 w-4" />}
-            Adicionar ao Google Wallet
-          </Button>
-        )}
+        <AddToWalletButtons
+          onApple={handleApple}
+          onGoogle={handleGoogle}
+          appleBusy={appleBusy}
+          googleBusy={googleBusy}
+          showApple={iOS}
+          className="w-full"
+        />
         <Button
           variant="outline"
           className="w-full gap-2 min-h-[48px] border-white/20 text-white bg-transparent hover:bg-white/10"
