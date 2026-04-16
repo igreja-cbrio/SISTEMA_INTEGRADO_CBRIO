@@ -23,8 +23,8 @@ router.post('/sync', async (req, res) => {
     const serviceTypes = typesData.data || [];
     console.log(`[VOL SYNC] Found ${serviceTypes.length} service types`);
 
-    // Window: 6 months back → 1 month forward (captures active volunteers)
-    const start = new Date(); start.setMonth(start.getMonth() - 6);
+    // Window: 2 months back → 1 month forward (captures active volunteers within Vercel 60s limit)
+    const start = new Date(); start.setMonth(start.getMonth() - 2);
     const end = new Date(); end.setMonth(end.getMonth() + 1);
     const startDate = start.toISOString().split('T')[0];
     const endDate = end.toISOString().split('T')[0];
@@ -130,7 +130,7 @@ router.post('/sync-auto', async (req, res) => {
     const typesData = await testRes.json();
     const serviceTypes = typesData.data || [];
 
-    const start = new Date(); start.setMonth(start.getMonth() - 6);
+    const start = new Date(); start.setMonth(start.getMonth() - 2);
     const end = new Date(); end.setMonth(end.getMonth() + 1);
     const startDate = start.toISOString().split('T')[0];
     const endDate = end.toISOString().split('T')[0];
