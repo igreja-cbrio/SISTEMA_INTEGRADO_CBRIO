@@ -11,27 +11,10 @@ interface QrCodeModalProps {
   volunteerName: string;
 }
 
-function CbrioLogo({ className = '' }: { className?: string }) {
-  return (
-    <svg
-      xmlns="http://www.w3.org/2000/svg"
-      viewBox="0 0 200 200"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="22"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      className={className}
-    >
-      <path d="M 40 78 C 40 50, 72 42, 100 72 C 128 42, 160 50, 160 80 C 160 112, 118 142, 100 160 L 138 188" />
-    </svg>
-  );
-}
-
 export default function QrCodeModal({ open, onClose, qrCode, volunteerName }: QrCodeModalProps) {
   const cardRef = useRef<HTMLDivElement>(null);
 
-  const handleDownload = () => {
+  const handleDownload = async () => {
     const card = cardRef.current;
     if (!card) return;
 
@@ -43,6 +26,26 @@ export default function QrCodeModal({ open, onClose, qrCode, volunteerName }: Qr
     canvas.height = h * scale;
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
+
+    // Pre-load logo image and font
+    const logoImg = new Image();
+    logoImg.crossOrigin = 'anonymous';
+    const logoLoaded = new Promise<void>((res) => {
+      logoImg.onload = () => res();
+      logoImg.onerror = () => res();
+      logoImg.src = '/logo-cbrio-icon.png';
+    });
+
+    // Load iBrand font for canvas
+    let fontLoaded = false;
+    try {
+      const font = new FontFace('iBrand', "url('/fonts/ibrand.otf')");
+      await font.load();
+      document.fonts.add(font);
+      fontLoaded = true;
+    } catch { /* fallback to system font */ }
+
+    await logoLoaded;
 
     // Draw card background
     ctx.scale(scale, scale);
@@ -61,10 +64,13 @@ export default function QrCodeModal({ open, onClose, qrCode, volunteerName }: Qr
     ctx.fillStyle = '#00B39D';
     ctx.fill();
 
-    // Header: logo + text
+    // Header: logo image + text
+    if (logoImg.complete && logoImg.naturalWidth > 0) {
+      ctx.drawImage(logoImg, 20, 20, 28, 28);
+    }
     ctx.fillStyle = '#ffffff';
-    ctx.font = 'bold 18px system-ui, -apple-system, sans-serif';
-    ctx.fillText('CBRio', 52, 40);
+    ctx.font = fontLoaded ? 'bold 18px iBrand' : 'bold 18px system-ui, -apple-system, sans-serif';
+    ctx.fillText('CBRio', 54, 42);
     ctx.font = '500 11px system-ui, -apple-system, sans-serif';
     ctx.fillStyle = 'rgba(255,255,255,0.8)';
     ctx.fillText('VOLUNTÁRIO', w - 100, 40);
@@ -132,8 +138,8 @@ export default function QrCodeModal({ open, onClose, qrCode, volunteerName }: Qr
             {/* Header */}
             <div className="flex items-center justify-between mb-8">
               <div className="flex items-center gap-2">
-                <CbrioLogo className="h-7 w-7 text-white" />
-                <span className="text-white font-bold text-lg tracking-tight">CBRio</span>
+                <img src="/logo-cbrio-icon.png" alt="CBRio" className="h-7 w-7 object-contain" />
+                <span className="text-white font-bold text-lg tracking-tight" style={{ fontFamily: 'iBrand, system-ui, sans-serif' }}>CBRio</span>
               </div>
               <span className="text-[11px] font-semibold tracking-widest text-white/80 bg-white/15 px-3 py-1 rounded-full uppercase">
                 Voluntário
@@ -159,7 +165,7 @@ export default function QrCodeModal({ open, onClose, qrCode, volunteerName }: Qr
 
             {/* Footer */}
             <div className="flex items-center justify-between">
-              <CbrioLogo className="h-5 w-5 text-white/40" />
+              <img src="/logo-cbrio-icon.png" alt="" className="h-5 w-5 object-contain opacity-40" />
               <Wifi className="h-5 w-5 text-white/40 rotate-90" />
             </div>
           </div>

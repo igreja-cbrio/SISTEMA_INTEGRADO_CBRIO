@@ -29,23 +29,6 @@ function downloadBlob(blob: Blob, filename: string) {
   URL.revokeObjectURL(url);
 }
 
-function CbrioLogo({ className = '' }: { className?: string }) {
-  return (
-    <svg
-      xmlns="http://www.w3.org/2000/svg"
-      viewBox="0 0 200 200"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="22"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      className={className}
-    >
-      <path d="M 40 78 C 40 50, 72 42, 100 72 C 128 42, 160 50, 160 80 C 160 112, 118 142, 100 160 L 138 188" />
-    </svg>
-  );
-}
-
 export default function MemberWalletPass({ cpf, dataNascimento, inline = false, title }: Props) {
   const [qrToken, setQrToken] = useState<string | null>(null);
   const [memberId, setMemberId] = useState<string>('');
@@ -151,8 +134,8 @@ export default function MemberWalletPass({ cpf, dataNascimento, inline = false, 
         {/* Header */}
         <div className="flex items-center justify-between mb-6">
           <div className="flex items-center gap-2">
-            <CbrioLogo className="h-6 w-6 text-white" />
-            <span className="text-white font-bold text-base tracking-tight">CBRio</span>
+            <img src="/logo-cbrio-icon.png" alt="CBRio" className="h-6 w-6 object-contain" />
+            <span className="text-white font-bold text-base tracking-tight" style={{ fontFamily: 'iBrand, system-ui, sans-serif' }}>CBRio</span>
           </div>
           <span className="text-[10px] font-semibold tracking-widest text-white/80 bg-white/15 px-2.5 py-0.5 rounded-full uppercase">
             Membro
@@ -179,7 +162,7 @@ export default function MemberWalletPass({ cpf, dataNascimento, inline = false, 
 
         {/* Footer */}
         <div className="flex items-center justify-between">
-          <CbrioLogo className="h-4 w-4 text-white/40" />
+          <img src="/logo-cbrio-icon.png" alt="" className="h-4 w-4 object-contain opacity-40" />
           <Wifi className="h-4 w-4 text-white/40 rotate-90" />
         </div>
       </div>
