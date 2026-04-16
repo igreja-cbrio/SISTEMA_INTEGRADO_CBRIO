@@ -707,6 +707,35 @@ export default function Eventos() {
     const CAT_LABELS = { marketing: 'Marketing', producao: 'Producao', compras: 'Compras', financeiro: 'Financeiro', manutencao: 'Manutencao', limpeza: 'Limpeza', cozinha: 'Cozinha', adm: 'Administrativo' };
     const scoreColor = (s) => s >= 80 ? '#10b981' : s >= 60 ? '#f59e0b' : s >= 40 ? '#ef4444' : '#6b7280';
 
+    const ScoreLegend = () => (
+      <div style={{ display: 'flex', gap: 12, padding: '10px 16px', background: C.bg, borderRadius: 10, marginBottom: 16, flexWrap: 'wrap', alignItems: 'center', border: `1px solid ${C.border}` }}>
+        <span style={{ fontSize: 11, fontWeight: 600, color: C.t2 }}>Score =</span>
+        {[
+          { label: 'Prazo', pts: 40, color: '#3b82f6', icon: '\u23f0' },
+          { label: 'Aprovacao', pts: 30, color: '#10b981', icon: '\u2705' },
+          { label: 'Qualidade', pts: 20, color: '#f59e0b', icon: '\u2b50' },
+          { label: 'Arquivo', pts: 10, color: '#8b5cf6', icon: '\ud83d\udcce' },
+        ].map((s, i) => (
+          <span key={s.label} style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+            {i > 0 && <span style={{ color: C.t3, fontSize: 11 }}>+</span>}
+            <span style={{ fontSize: 12 }}>{s.icon}</span>
+            <span style={{ fontSize: 11, color: s.color, fontWeight: 600 }}>{s.label} ({s.pts}%)</span>
+          </span>
+        ))}
+      </div>
+    );
+
+    const BreakdownBar = ({ label, icon, value, max, count, total }) => (
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
+        <span style={{ fontSize: 11, width: 14 }}>{icon}</span>
+        <span style={{ fontSize: 10, color: C.t3, width: 65 }}>{label}</span>
+        <div style={{ flex: 1, height: 5, background: C.border, borderRadius: 3 }}>
+          <div style={{ height: '100%', borderRadius: 3, width: total > 0 ? `${(count / total) * 100}%` : '0%', background: count === total && total > 0 ? '#10b981' : count > 0 ? '#f59e0b' : C.border, transition: 'width 0.3s' }} />
+        </div>
+        <span style={{ fontSize: 10, fontWeight: 600, color: count === total && total > 0 ? '#10b981' : count > 0 ? C.t2 : C.t3, width: 45, textAlign: 'right' }}>{count}/{total}</span>
+      </div>
+    );
+
     // Detalhe de um evento
     if (kpiEventDetail) {
       const ev = kpiEventDetail;
@@ -724,21 +753,30 @@ export default function Eventos() {
             </div>
           </div>
 
-          {/* KPI por area */}
+          <ScoreLegend />
+
+          {/* KPI por area com breakdown */}
           <div style={{ fontSize: 14, fontWeight: 700, color: C.text, marginBottom: 10 }}>Performance por Area</div>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: 10, marginBottom: 20 }}>
-            {(ev.kpi_areas || []).map(a => (
-              <div key={a.area} style={{ background: C.card, borderRadius: 10, padding: 14, border: `1px solid ${C.border}` }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
-                  <span style={{ fontSize: 13, fontWeight: 600, color: CAT_COLORS[a.area] || C.text }}>{CAT_LABELS[a.area] || a.area}</span>
-                  <span style={{ fontSize: 16, fontWeight: 800, color: scoreColor(a.kpi_area) }}>{a.kpi_area || 0}%</span>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 12, marginBottom: 20 }}>
+            {(ev.kpi_areas || []).map(a => {
+              const b = a.breakdown || {};
+              return (
+                <div key={a.area} style={{ background: C.card, borderRadius: 12, padding: 16, border: `1px solid ${C.border}` }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <div style={{ width: 10, height: 10, borderRadius: '50%', background: CAT_COLORS[a.area] || C.t3 }} />
+                      <span style={{ fontSize: 14, fontWeight: 700, color: C.text }}>{CAT_LABELS[a.area] || a.area}</span>
+                    </div>
+                    <span style={{ fontSize: 20, fontWeight: 800, color: scoreColor(a.kpi_area) }}>{a.kpi_area || 0}%</span>
+                  </div>
+                  <BreakdownBar label="Prazo" icon={'\u23f0'} value={b.score_prazo || 0} max={b.total * 40} count={b.no_prazo || 0} total={b.total || 0} />
+                  <BreakdownBar label="Aprovacao" icon={'\u2705'} value={b.score_aprovacao || 0} max={b.total * 30} count={b.aprovados || 0} total={b.total || 0} />
+                  <BreakdownBar label="Qualidade" icon={'\u2b50'} value={b.score_qualidade || 0} max={b.total * 20} count={b.qualidade_ok || 0} total={b.total || 0} />
+                  <BreakdownBar label="Arquivo" icon={'\ud83d\udcce'} value={b.score_arquivo || 0} max={b.total * 10} count={b.com_arquivo || 0} total={b.total || 0} />
+                  <div style={{ fontSize: 10, color: C.t3, marginTop: 6, paddingTop: 6, borderTop: `1px solid ${C.border}` }}>{a.docs_ok}/{a.total_docs} entregues | {a.docs_atrasados} atrasados | {a.docs_pendentes} pendentes</div>
                 </div>
-                <div style={{ height: 6, background: C.border, borderRadius: 3, marginBottom: 4 }}>
-                  <div style={{ height: '100%', borderRadius: 3, width: `${a.kpi_area || 0}%`, background: scoreColor(a.kpi_area), transition: 'width 0.3s' }} />
-                </div>
-                <div style={{ fontSize: 10, color: C.t3 }}>{a.docs_ok}/{a.total_docs} docs OK | {a.docs_atrasados} atrasados | {a.docs_pendentes} pendentes</div>
-              </div>
-            ))}
+              );
+            })}
           </div>
 
           {/* Documentos individuais */}
@@ -835,6 +873,8 @@ export default function Eventos() {
             </button>
           )}
         </div>
+
+        <ScoreLegend />
 
         {kpiLoading ? (
           <div style={{ padding: 40, textAlign: 'center', color: C.t3 }}>Carregando KPIs...</div>

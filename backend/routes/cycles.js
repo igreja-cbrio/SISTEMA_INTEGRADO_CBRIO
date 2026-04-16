@@ -593,7 +593,25 @@ router.get('/kpis/evento/:eventId', async (req, res) => {
       };
     });
 
-    res.json({ kpi_evento: evento, kpi_areas: areas || [], documentos: docs });
+    // Calcular breakdown por area
+    const breakdownMap = {};
+    docs.forEach(d => {
+      if (!breakdownMap[d.area]) breakdownMap[d.area] = { total: 0, no_prazo: 0, aprovados: 0, qualidade_ok: 0, com_arquivo: 0, score_prazo: 0, score_aprovacao: 0, score_qualidade: 0, score_arquivo: 0 };
+      const b = breakdownMap[d.area];
+      b.total++;
+      if (d.on_time !== false && d.status === 'concluida') { b.no_prazo++; b.score_prazo += 40; }
+      if (d.approved_by) { b.aprovados++; b.score_aprovacao += 30; }
+      if (d.quality_rating === 'ok') { b.qualidade_ok++; b.score_qualidade += 20; }
+      if (d.file_name) { b.com_arquivo++; b.score_arquivo += 10; }
+    });
+
+    // Enriquecer areas com breakdown
+    const areasComBreakdown = (areas || []).map(a => ({
+      ...a,
+      breakdown: breakdownMap[a.area] || { total: 0, no_prazo: 0, aprovados: 0, qualidade_ok: 0, com_arquivo: 0, score_prazo: 0, score_aprovacao: 0, score_qualidade: 0, score_arquivo: 0 },
+    }));
+
+    res.json({ kpi_evento: evento, kpi_areas: areasComBreakdown, documentos: docs });
   } catch (err) { console.error('[KPI evento]', err.message); res.status(500).json({ error: err.message }); }
 });
 
