@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import { cadastroPublico } from '../../api';
+import { useHomeScreenMeta } from '@/hooks/useHomeScreenMeta';
 import { LoginShapesBackground } from '../../components/ui/shape-landing-hero';
 import { MultistepFormShell } from '../../components/ui/multistep-form';
 import MemberWalletPass from '../../components/membresia/MemberWalletPass';
