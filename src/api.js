@@ -796,6 +796,7 @@ export const voluntariado = {
   sync: () => post('/voluntariado/sync'),
   syncHistorical: (startDate, endDate) => post('/voluntariado/sync-historical', { startDate, endDate }),
   syncAuto: () => post('/voluntariado/sync-auto'),
+  syncDiagnostics: () => get('/voluntariado/diagnostics'),
   // Sync logs
   syncLogs: () => get('/voluntariado/sync-logs'),
   // Volunteers pool (all vol_profiles with team memberships, cached 5 min on client)

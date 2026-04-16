@@ -157,4 +157,51 @@ router.post('/sync-auto', async (req, res) => {
   }
 });
 
+// ══════════════════════════════════════════════════════════════
+// DIAGNOSTICS — what does Planning Center actually have?
+// ══════════════════════════════════════════════════════════════
+router.get('/diagnostics', async (req, res) => {
+  try {
+    const { basic: credentials } = getPCCredentials();
+
+    // 1. Service types
+    const typesRes = await fetchWithRetry(`${PC_SERVICES_BASE}/service_types`, { Authorization: `Basic ${credentials}` });
+    if (!typesRes.ok) return res.status(400).json({ error: 'Falha ao conectar ao Planning Center', status: typesRes.status });
+
+    const typesData = await typesRes.json();
+    const serviceTypes = typesData.data || [];
+
+    const report = [];
+
+    for (const st of serviceTypes) {
+      const entry = { id: st.id, name: st.attributes.name, teams: [], plans: 0 };
+
+      // 2. Teams in this service type
+      const teamsRes = await fetchWithRetry(`${PC_SERVICES_BASE}/service_types/${st.id}/teams?per_page=100`, { Authorization: `Basic ${credentials}` });
+      if (teamsRes.ok) {
+        const teamsData = await teamsRes.json();
+        for (const team of (teamsData.data || [])) {
+          const membersRes = await fetchWithRetry(`${PC_SERVICES_BASE}/service_types/${st.id}/teams/${team.id}/team_members?per_page=1`, { Authorization: `Basic ${credentials}` });
+          const totalMembers = membersRes.ok ? ((await membersRes.json()).meta?.total_count ?? '?') : '?';
+          entry.teams.push({ id: team.id, name: team.attributes.name, memberCount: totalMembers });
+        }
+      }
+
+      // 3. Future plans count
+      const plansRes = await fetchWithRetry(`${PC_SERVICES_BASE}/service_types/${st.id}/plans?filter=future&per_page=1`, { Authorization: `Basic ${credentials}` });
+      if (plansRes.ok) {
+        const plansData = await plansRes.json();
+        entry.plans = plansData.meta?.total_count ?? 0;
+      }
+
+      report.push(entry);
+    }
+
+    res.json({ serviceTypeCount: serviceTypes.length, serviceTypes: report });
+  } catch (e) {
+    console.error('[VOL DIAG] Error:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 module.exports = router;

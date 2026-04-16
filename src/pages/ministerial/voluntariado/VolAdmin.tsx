@@ -4,9 +4,10 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Search, UserPlus, UserMinus, History, Loader2 } from 'lucide-react';
+import { Search, UserMinus, History, Loader2, Stethoscope, ChevronDown, ChevronRight } from 'lucide-react';
 import { useAllVolUsers, useAddVolRole, useRemoveVolRole, useSyncHistorical } from './hooks';
 import { toast } from 'sonner';
+import { voluntariado } from '@/api';
 
 export default function VolAdmin() {
   const { data: users = [], isLoading } = useAllVolUsers();
@@ -16,6 +17,9 @@ export default function VolAdmin() {
   const [search, setSearch] = useState('');
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
+  const [diagLoading, setDiagLoading] = useState(false);
+  const [diagData, setDiagData] = useState<any>(null);
+  const [diagOpen, setDiagOpen] = useState<Record<string, boolean>>({});
 
   const filtered = users.filter(u => u.profile.full_name.toLowerCase().includes(search.toLowerCase()) || u.profile.email?.toLowerCase().includes(search.toLowerCase()));
 
@@ -47,6 +51,19 @@ export default function VolAdmin() {
     }
   };
 
+  const handleDiagnostics = async () => {
+    setDiagLoading(true);
+    setDiagData(null);
+    try {
+      const result = await voluntariado.syncDiagnostics();
+      setDiagData(result);
+    } catch (err: any) {
+      toast.error('Erro ao buscar diagnostico: ' + err.message);
+    } finally {
+      setDiagLoading(false);
+    }
+  };
+
   const roleColor = (role: string) => {
     if (role === 'admin') return 'bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-300';
     if (role === 'leader') return 'bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-300';
@@ -56,6 +73,57 @@ export default function VolAdmin() {
   return (
     <div className="space-y-6">
       <h1 className="text-2xl font-bold text-foreground">Administracao</h1>
+
+      {/* PC Diagnostics */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2"><Stethoscope className="h-5 w-5" /> Diagnostico Planning Center</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <p className="text-sm text-muted-foreground">Verifica o que o Planning Center tem configurado (tipos de servico, equipes e membros).</p>
+          <Button variant="outline" onClick={handleDiagnostics} disabled={diagLoading}>
+            {diagLoading ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Stethoscope className="h-4 w-4 mr-2" />}
+            Rodar Diagnostico
+          </Button>
+
+          {diagData && (
+            <div className="mt-3 space-y-2 text-sm">
+              <p className="font-medium">{diagData.serviceTypeCount} tipo(s) de servico encontrado(s) no Planning Center</p>
+              {diagData.serviceTypeCount === 0 && (
+                <p className="text-destructive">Nenhum tipo de servico encontrado. Verifique as credenciais ou configure servicos no Planning Center.</p>
+              )}
+              {(diagData.serviceTypes || []).map((st: any) => (
+                <div key={st.id} className="border rounded-lg overflow-hidden">
+                  <button
+                    className="w-full flex items-center justify-between px-3 py-2 bg-muted/50 hover:bg-muted text-left font-medium"
+                    onClick={() => setDiagOpen(p => ({ ...p, [st.id]: !p[st.id] }))}
+                  >
+                    <span>{st.name}</span>
+                    <span className="flex items-center gap-3 text-muted-foreground text-xs">
+                      <span>{st.plans} plano(s) futuro(s)</span>
+                      <span>{st.teams.length} equipe(s)</span>
+                      {diagOpen[st.id] ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+                    </span>
+                  </button>
+                  {diagOpen[st.id] && (
+                    <div className="px-3 py-2 space-y-1">
+                      {st.teams.length === 0 && <p className="text-muted-foreground italic">Nenhuma equipe configurada neste tipo de servico.</p>}
+                      {st.teams.map((team: any) => (
+                        <div key={team.id} className="flex items-center justify-between py-1 border-b last:border-0">
+                          <span>{team.name}</span>
+                          <Badge variant={team.memberCount > 0 ? 'default' : 'outline'} className="text-xs">
+                            {team.memberCount} membro(s)
+                          </Badge>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </CardContent>
+      </Card>
 
       {/* Historical Sync */}
       <Card>
