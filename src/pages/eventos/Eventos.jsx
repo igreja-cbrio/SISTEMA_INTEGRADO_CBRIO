@@ -770,14 +770,21 @@ export default function Eventos() {
                         <td style={{ padding: '10px 12px', textAlign: 'center' }}>{doc.file_name ? <span style={{ color: '#10b981' }}>Sim</span> : <span style={{ color: C.t3 }}>-</span>}</td>
                         <td style={{ padding: '10px 12px', textAlign: 'center', fontWeight: 800, color: scoreColor(doc.score || 0) }}>{doc.score || 0}</td>
                         <td style={{ padding: '10px 12px', textAlign: 'center' }}>
-                          <div style={{ display: 'flex', gap: 4, justifyContent: 'center' }}>
-                            {!doc.approved_by && (
-                              <button onClick={async () => { await cyclesApi.approveCard(doc.id); loadKpiEventDetail(doc.event_id); }} style={{ padding: '3px 8px', fontSize: 10, borderRadius: 4, border: 'none', background: '#10b98120', color: '#10b981', cursor: 'pointer', fontWeight: 600 }}>Aprovar</button>
-                            )}
-                            {doc.quality_rating !== 'ok' ? (
-                              <button onClick={async () => { await cyclesApi.qualityCard(doc.id, 'ok'); loadKpiEventDetail(doc.event_id); }} style={{ padding: '3px 8px', fontSize: 10, borderRadius: 4, border: 'none', background: '#10b98120', color: '#10b981', cursor: 'pointer', fontWeight: 600 }}>Qualidade OK</button>
+                          <div style={{ display: 'flex', gap: 4, justifyContent: 'center', flexWrap: 'wrap' }}>
+                            {doc.approved_by ? (
+                              <span style={{ fontSize: 10, padding: '2px 8px', borderRadius: 99, background: '#10b98120', color: '#10b981', fontWeight: 600 }}>Aprovado</span>
                             ) : (
-                              <button onClick={async () => { await cyclesApi.qualityCard(doc.id, 'incompleto'); loadKpiEventDetail(doc.event_id); }} style={{ padding: '3px 8px', fontSize: 10, borderRadius: 4, border: 'none', background: '#f59e0b20', color: '#f59e0b', cursor: 'pointer', fontWeight: 600 }}>Incompleto</button>
+                              <button onClick={async () => { try { await cyclesApi.approveCard(doc.id); } catch {} loadKpiEventDetail(doc.event_id); }} style={{ padding: '3px 8px', fontSize: 10, borderRadius: 4, border: 'none', background: '#10b98120', color: '#10b981', cursor: 'pointer', fontWeight: 600 }}>Aprovar</button>
+                            )}
+                            {doc.quality_rating === 'incompleto' ? (
+                              <span style={{ fontSize: 10, padding: '2px 8px', borderRadius: 99, background: '#f59e0b20', color: '#f59e0b', fontWeight: 600 }}>Incompleto</span>
+                            ) : doc.quality_rating === 'reprovado' ? (
+                              <span style={{ fontSize: 10, padding: '2px 8px', borderRadius: 99, background: '#ef444420', color: '#ef4444', fontWeight: 600 }}>Reprovado</span>
+                            ) : null}
+                            {!doc.approved_by && (
+                              <button onClick={async () => { try { await cyclesApi.qualityCard(doc.id, doc.quality_rating === 'ok' ? 'incompleto' : 'ok'); } catch {} loadKpiEventDetail(doc.event_id); }} style={{ padding: '3px 8px', fontSize: 10, borderRadius: 4, border: 'none', background: doc.quality_rating === 'ok' ? '#f59e0b20' : '#10b98120', color: doc.quality_rating === 'ok' ? '#f59e0b' : '#10b981', cursor: 'pointer', fontWeight: 600 }}>
+                                {doc.quality_rating === 'ok' ? 'Marcar incompleto' : 'Marcar OK'}
+                              </button>
                             )}
                           </div>
                         </td>
