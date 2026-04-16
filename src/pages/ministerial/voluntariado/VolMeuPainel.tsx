@@ -12,7 +12,7 @@ import { ptBR } from 'date-fns/locale';
 import { toast } from 'sonner';
 import {
   Calendar, Check, X, Clock, CalendarOff,
-  CheckCircle2, XCircle, Loader2, ScanLine, Search,
+  CheckCircle2, XCircle, Loader2, ScanLine, Search, ChevronDown, ChevronRight,
 } from 'lucide-react';
 import { useMyServices, useToggleServiceUnavailability } from './hooks';
 import { AddToWalletButtons } from '@/components/ui/wallet-buttons';
@@ -310,8 +310,16 @@ function svcTimeOnly(at: string) { return at.slice(11, 16); }
 
 function MyAvailabilityTab() {
   const [searchDate, setSearchDate] = useState('');
+  const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const { data: services = [], isLoading } = useMyServices(2026);
   const toggle = useToggleServiceUnavailability();
+
+  const toggleCollapse = (typeName: string) =>
+    setCollapsed(prev => {
+      const next = new Set(prev);
+      next.has(typeName) ? next.delete(typeName) : next.add(typeName);
+      return next;
+    });
 
   const handleToggle = (service: typeof services[0]) => {
     toggle.mutate(
@@ -438,19 +446,29 @@ function MyAvailabilityTab() {
           {byType.map(([typeName, typeServices]) => {
             const color = svcColor(typeName);
             const unavailInType = typeServices.filter(s => s.is_unavailable).length;
+            const isCollapsed = collapsed.has(typeName);
             return (
               <div key={typeName}>
-                <div className="flex items-center gap-2 mb-2">
+                <button
+                  onClick={() => toggleCollapse(typeName)}
+                  className="w-full flex items-center gap-2 mb-2 hover:opacity-80 transition-opacity text-left"
+                >
                   <div className="h-2.5 w-2.5 rounded-full shrink-0" style={{ backgroundColor: color }} />
                   <span className="text-xs font-semibold">{typeName}</span>
-                  <span className="ml-auto text-xs text-muted-foreground">
+                  <span className="ml-auto flex items-center gap-1 text-xs text-muted-foreground">
                     {typeServices.length}x
                     {unavailInType > 0 && <span className="text-red-500 ml-1">{unavailInType} ausente(s)</span>}
+                    {isCollapsed
+                      ? <ChevronRight className="h-3.5 w-3.5 ml-1" />
+                      : <ChevronDown className="h-3.5 w-3.5 ml-1" />
+                    }
                   </span>
-                </div>
-                <div className="flex flex-wrap gap-2">
-                  {typeServices.map(s => <SvcChip key={s.id} service={s} />)}
-                </div>
+                </button>
+                {!isCollapsed && (
+                  <div className="flex flex-wrap gap-2">
+                    {typeServices.map(s => <SvcChip key={s.id} service={s} />)}
+                  </div>
+                )}
               </div>
             );
           })}

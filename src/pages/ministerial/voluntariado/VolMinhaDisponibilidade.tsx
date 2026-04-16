@@ -1,7 +1,7 @@
 import { useState, useMemo } from 'react';
 import { format, parseISO } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
-import { RefreshCw, CalendarOff, Check, Search, X } from 'lucide-react';
+import { RefreshCw, CalendarOff, Check, Search, X, ChevronDown, ChevronRight } from 'lucide-react';
 import { toast } from 'sonner';
 import { useMyServices, useToggleServiceUnavailability } from './hooks';
 
@@ -60,7 +60,15 @@ function ServiceChip({ service, onToggle, disabled }: {
 export default function VolMinhaDisponibilidade() {
   const [year, setYear] = useState(2026);
   const [searchDate, setSearchDate] = useState('');
+  const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const { data: services = [], isLoading, refetch } = useMyServices(year);
+
+  const toggleCollapse = (typeName: string) =>
+    setCollapsed(prev => {
+      const next = new Set(prev);
+      next.has(typeName) ? next.delete(typeName) : next.add(typeName);
+      return next;
+    });
   const toggle = useToggleServiceUnavailability();
 
   const handleToggle = (service: Service) => {
@@ -192,9 +200,13 @@ export default function VolMinhaDisponibilidade() {
           {byType.map(([typeName, typeServices]) => {
             const color = typeColor(typeName);
             const unavailInType = typeServices.filter(s => s.is_unavailable).length;
+            const isCollapsed = collapsed.has(typeName);
             return (
               <div key={typeName}>
-                <div className="flex items-center gap-2 mb-3">
+                <button
+                  onClick={() => toggleCollapse(typeName)}
+                  className="w-full flex items-center gap-2 mb-3 hover:opacity-80 transition-opacity text-left"
+                >
                   <div className="h-3 w-3 rounded-full shrink-0" style={{ backgroundColor: color }} />
                   <h2 className="text-sm font-semibold text-foreground">{typeName}</h2>
                   <div className="ml-auto flex items-center gap-2 text-xs text-muted-foreground">
@@ -202,13 +214,19 @@ export default function VolMinhaDisponibilidade() {
                     {unavailInType > 0 && (
                       <span className="text-red-500 font-medium">{unavailInType} ausente(s)</span>
                     )}
+                    {isCollapsed
+                      ? <ChevronRight className="h-4 w-4" />
+                      : <ChevronDown className="h-4 w-4" />
+                    }
                   </div>
-                </div>
-                <div className="flex flex-wrap gap-2">
-                  {typeServices.map(s => (
-                    <ServiceChip key={s.id} service={s} onToggle={handleToggle} disabled={toggle.isPending} />
-                  ))}
-                </div>
+                </button>
+                {!isCollapsed && (
+                  <div className="flex flex-wrap gap-2">
+                    {typeServices.map(s => (
+                      <ServiceChip key={s.id} service={s} onToggle={handleToggle} disabled={toggle.isPending} />
+                    ))}
+                  </div>
+                )}
               </div>
             );
           })}
