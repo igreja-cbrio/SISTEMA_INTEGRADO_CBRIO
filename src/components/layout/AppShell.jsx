@@ -11,7 +11,7 @@ import {
   CalendarDays, FolderKanban, Map,
   UserCheck, UsersRound, Heart, HandHelping, BookOpen,
   Megaphone, BrainCircuit, ShoppingCart,
-  Sun, Moon, Bell, LogOut, Search, CheckCheck, Settings,
+  Sun, Moon, Bell, LogOut, Search, CheckCheck, Settings, MonitorSmartphone,
 } from 'lucide-react';
 import {
   DropdownMenu, DropdownMenuTrigger, DropdownMenuContent,
@@ -78,6 +78,12 @@ const NAV_ITEMS = [
           { label: 'Cuidados', description: 'Capelania e aconselhamento', icon: Heart, path: '/ministerial/cuidados' },
           { label: 'Voluntariado', description: 'Check-in, escalas e QR codes', icon: HandHelping, path: '/ministerial/voluntariado', perm: 'canMembresia' },
           { label: 'Membresia', description: 'Cadastro e trilha dos valores', icon: BookOpen, path: '/ministerial/membresia', perm: 'canMembresia' },
+        ],
+      },
+      {
+        title: 'Ferramentas',
+        items: [
+          { label: 'Totem Membro', description: 'Modo kiosk para self-service no hall', icon: MonitorSmartphone, path: '/totem', perm: 'canMembresia' },
         ],
       },
     ],
