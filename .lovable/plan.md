@@ -1,39 +1,30 @@
 
 
-## Plan: Logo coracao oficial + fonte iBrand nos cards wallet
+## Plan: Diferenciar cards Voluntariado vs Membresia + logo no check-in
 
 ### Resumo
-Substituir o SVG de coracao "stroke" pelo PNG oficial (`logo-cbrio-icon.png`) e registrar a fonte iBrand para o texto "CBRio" nos cards de QR Code (voluntario e membro).
+Trocar as cores dos cards de QR Code para distinguir visualmente voluntariado (azul escuro `#408097`) e membresia (bege `#eae3da`), e adicionar a logo CBRio no overlay de check-in.
 
 ### Mudancas
 
-**1. Copiar fonte iBrand para o projeto**
-- Copiar `user-uploads://ibrand.otf` para `public/fonts/ibrand.otf`
+**1. `QrCodeModal.tsx` (voluntariado) — cor azul escuro**
+- Trocar `bg-[#00B39D]` para `bg-[#408097]`
+- Canvas `handleDownload`: trocar `fillStyle: '#00B39D'` para `'#408097'`
+- Badge pill: manter texto "VOLUNTARIO" mas com destaque mais visivel (bg-white/20)
 
-**2. Registrar @font-face em `src/index.css`**
-```css
-@font-face {
-  font-family: 'iBrand';
-  src: url('/fonts/ibrand.otf') format('opentype');
-  font-weight: normal;
-  font-style: normal;
-  font-display: swap;
-}
-```
+**2. `MemberWalletPass.tsx` (membresia) — cor bege**
+- Trocar `bg-[#00B39D]` para `bg-[#eae3da]`
+- Textos: trocar de branco para escuro (`text-[#408097]`) pois o fundo bege e claro
+- Badge pill "Membro": fundo `bg-[#408097]/15` com texto `text-[#408097]`
+- Footer icons: opacidade com cor escura em vez de branca
+- Spinner de loading: trocar cor teal para `#408097`
 
-**3. Atualizar `QrCodeModal.tsx`**
-- Remover componente `CbrioLogo` SVG
-- Substituir por `<img src="/logo-cbrio-icon.png">` (coracao preenchido oficial)
-- Aplicar `font-family: 'iBrand'` no texto "CBRio" via style inline
-- Atualizar o `handleDownload` (canvas) para carregar a fonte iBrand e a imagem PNG do logo antes de desenhar
-
-**4. Atualizar `MemberWalletPass.tsx`**
-- Mesma substituicao: remover `CbrioLogo` SVG, usar `<img src="/logo-cbrio-icon.png">`
-- Aplicar fonte iBrand no texto "CBRio" via style inline
+**3. `SuccessOverlay.tsx` (check-in) — adicionar logo CBRio**
+- Adicionar `<img src="/logo-cbrio-icon.png">` acima do icone de check (ou abaixo do titulo)
+- Texto "CBRio" com fonte iBrand ao lado do logo, no mesmo padrao dos cards
 
 ### Arquivos modificados
-- `public/fonts/ibrand.otf` — novo (fonte)
-- `src/index.css` — adicionar @font-face
 - `src/pages/ministerial/voluntariado/components/qrcodes/QrCodeModal.tsx`
 - `src/components/membresia/MemberWalletPass.tsx`
+- `src/pages/ministerial/voluntariado/components/checkin/SuccessOverlay.tsx`
 
