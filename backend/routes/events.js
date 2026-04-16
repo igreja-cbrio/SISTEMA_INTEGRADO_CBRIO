@@ -156,18 +156,24 @@ router.put('/:id', authorize('diretor', 'admin'), async (req, res) => {
     const { data: oldEvent } = await supabase.from('events').select('date, name').eq('id', req.params.id).single();
     if (!oldEvent) return res.status(404).json({ error: 'Evento não encontrado' });
 
-    const { data, error } = await supabase.from('events').update({
-      name: d.name || oldEvent.name, date: d.date, category_id: d.category_id || null,
-      description: d.description || '', location: d.location || '', responsible: d.responsible || '',
-      budget_planned: Math.max(0, parseFloat(d.budget_planned) || 0),
-      budget_spent: Math.max(0, parseFloat(d.budget_spent) || 0),
-      expected_attendance: d.expected_attendance ? Math.max(0, parseInt(d.expected_attendance)) : null,
-      actual_attendance: d.actual_attendance ? Math.max(0, parseInt(d.actual_attendance)) : null,
-      recurrence: VALID_RECURRENCE.includes(d.recurrence) ? d.recurrence : 'unico',
-      notes: d.notes || '', lessons_learned: d.lessons_learned || '',
-      project_id: d.project_id || null,
-      status: VALID_EVENT_STATUS.includes(d.status) ? d.status : (d.status || 'no-prazo'),
-    }).eq('id', req.params.id).select().single();
+    const updatePayload = {};
+    if (d.name !== undefined) updatePayload.name = d.name || oldEvent.name;
+    if (d.date !== undefined) updatePayload.date = d.date;
+    if (d.category_id !== undefined) updatePayload.category_id = d.category_id || null;
+    if (d.description !== undefined) updatePayload.description = d.description || '';
+    if (d.location !== undefined) updatePayload.location = d.location || '';
+    if (d.responsible !== undefined) updatePayload.responsible = d.responsible || '';
+    if (d.budget_planned !== undefined) updatePayload.budget_planned = Math.max(0, parseFloat(d.budget_planned) || 0);
+    if (d.budget_spent !== undefined) updatePayload.budget_spent = Math.max(0, parseFloat(d.budget_spent) || 0);
+    if (d.expected_attendance !== undefined) updatePayload.expected_attendance = d.expected_attendance ? Math.max(0, parseInt(d.expected_attendance)) : null;
+    if (d.actual_attendance !== undefined) updatePayload.actual_attendance = d.actual_attendance ? Math.max(0, parseInt(d.actual_attendance)) : null;
+    if (d.recurrence !== undefined) updatePayload.recurrence = VALID_RECURRENCE.includes(d.recurrence) ? d.recurrence : 'unico';
+    if (d.notes !== undefined) updatePayload.notes = d.notes || '';
+    if (d.lessons_learned !== undefined) updatePayload.lessons_learned = d.lessons_learned || '';
+    if (d.project_id !== undefined) updatePayload.project_id = d.project_id || null;
+    if (d.status !== undefined && VALID_EVENT_STATUS.includes(d.status)) updatePayload.status = d.status;
+
+    const { data, error } = await supabase.from('events').update(updatePayload).eq('id', req.params.id).select().single();
     if (error) throw error;
 
     // Se a data mudou, recalcular ciclo criativo
