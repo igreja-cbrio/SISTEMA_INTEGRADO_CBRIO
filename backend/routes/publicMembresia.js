@@ -462,4 +462,37 @@ router.post('/wallet/google', cadastroLimiter, async (req, res) => {
   }
 });
 
+// POST /api/public/membresia/wallet/apple
+// Body: { cpf, data_nascimento } — retorna .pkpass para Apple Wallet (iOS)
+router.post('/wallet/apple', cadastroLimiter, async (req, res) => {
+  try {
+    const { buildMembroPass } = require('../services/appleWallet');
+    const { cpf, data_nascimento } = req.body || {};
+    const cleanCpf = soDigitos(cpf);
+    if (!cpfValido(cleanCpf)) return res.status(400).json({ error: 'CPF invalido' });
+    if (!data_nascimento) return res.status(400).json({ error: 'Data de nascimento obrigatoria' });
+
+    const r = await lookupCadastro(cleanCpf, data_nascimento);
+    if (!r.found) return res.status(404).json({ error: 'Cadastro nao encontrado' });
+
+    const qrToken = memberQrToken(cleanCpf);
+    const memberId = memberIdFromCpf(cleanCpf);
+    await registerQrToken(qrToken, cleanCpf);
+
+    const pkpassBuffer = await buildMembroPass({
+      nome: r.nome,
+      qrToken,
+      memberId,
+      pending: r.pending,
+    });
+
+    res.setHeader('Content-Type', 'application/vnd.apple.pkpass');
+    res.setHeader('Content-Disposition', `attachment; filename="cbrio-membro.pkpass"`);
+    res.send(pkpassBuffer);
+  } catch (err) {
+    console.error('[PUBLIC MEM WALLET] apple error:', err.message);
+    res.status(500).json({ error: err.message || 'Erro ao gerar passe Apple Wallet' });
+  }
+});
+
 module.exports = router;

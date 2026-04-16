@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Html5Qrcode } from 'html5-qrcode';
+import { Html5Qrcode, Html5QrcodeSupportedFormats } from 'html5-qrcode';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { membresia } from '@/api';
@@ -146,11 +146,24 @@ export default function MemberScan() {
       await new Promise((r) => setTimeout(r, 150));
       const el = document.getElementById(containerId);
       if (!el) return;
-      const scanner = new Html5Qrcode(containerId);
+      const scanner = new Html5Qrcode(containerId, {
+        verbose: false,
+        formatsToSupport: [Html5QrcodeSupportedFormats.QR_CODE],
+        useBarCodeDetectorIfSupported: true,
+      });
       scannerRef.current = scanner;
       await scanner.start(
-        { facingMode: 'environment' },
-        { fps: 10, qrbox: { width: 280, height: 280 } },
+        {
+          facingMode: 'environment',
+          width: { ideal: 1280 },
+          height: { ideal: 720 },
+        },
+        {
+          fps: 30,
+          qrbox: { width: 280, height: 280 },
+          aspectRatio: 1,
+          disableFlip: true,
+        },
         handleScan,
         () => {},
       );

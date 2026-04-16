@@ -606,6 +606,19 @@ export const cadastroPublico = {
     }
     return res.json();
   },
+  // Retorna Blob (.pkpass) — chamar com walletApple(...).then(blob => downloadBlob(blob, 'membro.pkpass'))
+  walletApple: async (cpf, data_nascimento) => {
+    const res = await fetch(`${API}/public/membresia/wallet/apple`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ cpf, data_nascimento }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || `HTTP ${res.status}`);
+    }
+    return res.blob();
+  },
 };
 
 async function requestFile(path, formData) {
@@ -680,6 +693,17 @@ export const voluntariado = {
     addAvailability: (data) => post('/voluntariado/my-availability', data),
     removeAvailability: (id) => del(`/voluntariado/my-availability/${id}`),
     walletGoogle: () => get('/voluntariado/me/wallet/google'),
+    walletApple: async () => {
+      const token = await getToken();
+      const res = await fetch(`${API}/voluntariado/me/wallet/apple`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || `HTTP ${res.status}`);
+      }
+      return res.blob();
+    },
     saveFace: (descriptor, photo_url) => post('/voluntariado/me/face', { descriptor, photo_url }),
     registerMember: (data) => post('/voluntariado/me/register-member', data),
     checkIns: () => get('/voluntariado/my-check-ins'),

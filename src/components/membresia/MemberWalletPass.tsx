@@ -19,20 +19,24 @@ function isIOSLike() {
   return /iPad|iPhone|iPod/.test(ua) || (ua.includes('Mac') && 'ontouchend' in document);
 }
 
-/**
- * Renderiza opcoes de wallet para um membro ja cadastrado:
- *  - Botao Google Wallet (Android) — gera JWT no backend
- *  - QR inline + botao "Salvar imagem" (iPhone / fallback)
- *
- * O componente carrega o token do QR assim que monta; o botao do Google
- * Wallet e disparado sob demanda (evita gerar JWT se o usuario nao clicar).
- */
+function downloadBlob(blob: Blob, filename: string) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
 export default function MemberWalletPass({ cpf, dataNascimento, inline = false, title }: Props) {
   const [qrToken, setQrToken] = useState<string | null>(null);
   const [memberId, setMemberId] = useState<string>('');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [googleBusy, setGoogleBusy] = useState(false);
+  const [appleBusy, setAppleBusy] = useState(false);
   const svgRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -65,8 +69,19 @@ export default function MemberWalletPass({ cpf, dataNascimento, inline = false, 
     }
   };
 
+  const handleApple = async () => {
+    setAppleBusy(true);
+    try {
+      const blob = await cadastroPublico.walletApple(cpf, dataNascimento);
+      downloadBlob(blob, 'cbrio-membro.pkpass');
+    } catch (err: any) {
+      setError(err.message || 'Erro ao gerar passe Apple Wallet');
+    } finally {
+      setAppleBusy(false);
+    }
+  };
+
   const handleDownloadPng = () => {
-    // Converte o SVG do QR em PNG e dispara download (iPhone salva em Fotos)
     const svg = svgRef.current?.querySelector('svg');
     if (!svg) return;
     const serializer = new XMLSerializer();
@@ -86,13 +101,7 @@ export default function MemberWalletPass({ cpf, dataNascimento, inline = false, 
       ctx.drawImage(img, 40, 40, size - 80, size - 80);
       canvas.toBlob((blob) => {
         if (!blob) return;
-        const a = document.createElement('a');
-        a.href = URL.createObjectURL(blob);
-        a.download = `cbrio-membro-${memberId || 'qr'}.png`;
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        URL.revokeObjectURL(a.href);
+        downloadBlob(blob, `cbrio-membro-${memberId || 'qr'}.png`);
       }, 'image/png');
       URL.revokeObjectURL(url);
     };
@@ -128,8 +137,8 @@ export default function MemberWalletPass({ cpf, dataNascimento, inline = false, 
         </div>
         <p className="text-xs text-white/60">
           {iOS
-            ? 'No iPhone, use "Salvar imagem" e adicione a foto a wallet do seu app preferido.'
-            : 'Adicione o passe ao Google Wallet ou salve a imagem do QR.'}
+            ? 'Adicione ao Apple Wallet ou salve a imagem do QR.'
+            : 'Adicione ao Google Wallet ou salve a imagem do QR.'}
         </p>
       </div>
 
@@ -143,21 +152,32 @@ export default function MemberWalletPass({ cpf, dataNascimento, inline = false, 
 
       {/* Botoes */}
       <div className="w-full max-w-xs flex flex-col gap-2">
-        <Button
-          className="w-full gap-2 bg-[#00B39D] hover:bg-[#00B39D]/90 min-h-[48px] text-white"
-          onClick={handleGoogle}
-          disabled={googleBusy}
-        >
-          {googleBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Wallet className="h-4 w-4" />}
-          Adicionar ao Google Wallet
-        </Button>
+        {iOS ? (
+          <Button
+            className="w-full gap-2 bg-black hover:bg-black/80 min-h-[48px] text-white"
+            onClick={handleApple}
+            disabled={appleBusy}
+          >
+            {appleBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Apple className="h-4 w-4" />}
+            Adicionar ao Apple Wallet
+          </Button>
+        ) : (
+          <Button
+            className="w-full gap-2 bg-[#00B39D] hover:bg-[#00B39D]/90 min-h-[48px] text-white"
+            onClick={handleGoogle}
+            disabled={googleBusy}
+          >
+            {googleBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Wallet className="h-4 w-4" />}
+            Adicionar ao Google Wallet
+          </Button>
+        )}
         <Button
           variant="outline"
           className="w-full gap-2 min-h-[48px] border-white/20 text-white bg-transparent hover:bg-white/10"
           onClick={handleDownloadPng}
         >
-          {iOS ? <Apple className="h-4 w-4" /> : <Download className="h-4 w-4" />}
-          {iOS ? 'Salvar no iPhone (imagem)' : 'Baixar imagem do QR'}
+          <Download className="h-4 w-4" />
+          Baixar imagem do QR
         </Button>
       </div>
     </div>
