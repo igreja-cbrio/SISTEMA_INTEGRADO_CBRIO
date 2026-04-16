@@ -3,7 +3,7 @@ const { authenticate, authorize } = require('../middleware/auth');
 const { supabase } = require('../utils/supabase');
 const {
   getPCCredentials, fetchWithRetry, fetchAllPlans, fetchPlansInRange,
-  processServiceType, upsertVolunteerQrCodes, upsertVolunteerProfiles, PC_SERVICES_BASE,
+  processServiceType, fetchAllTeamPersons, upsertVolunteerQrCodes, upsertVolunteerProfiles, PC_SERVICES_BASE,
 } = require('../services/planningCenter');
 
 // Sync do Planning Center e operacoes administrativas pesadas — apenas admin/diretor.
@@ -27,6 +27,7 @@ router.post('/sync', async (req, res) => {
     const allVolunteers = new Map();
 
     for (const st of serviceTypes) {
+      // 1. Sync via plans (scheduled team members)
       const plans = await fetchAllPlans(PC_SERVICES_BASE, st.id, credentials);
       const result = await processServiceType(supabase, st, plans, credentials);
       totalServices += result.services;
@@ -34,6 +35,12 @@ router.post('/sync', async (req, res) => {
       totalMembersFound += result.membersFound;
       totalMembersProcessed += result.membersProcessed;
       for (const [k, v] of result.volunteers) allVolunteers.set(k, v);
+
+      // 2. Also sync all team members regardless of being scheduled in a plan
+      const teamPersons = await fetchAllTeamPersons(st.id, credentials);
+      for (const [k, v] of teamPersons) {
+        if (!allVolunteers.has(k)) allVolunteers.set(k, v);
+      }
     }
 
     const qrCount = await upsertVolunteerQrCodes(supabase, allVolunteers);
@@ -118,6 +125,7 @@ router.post('/sync-auto', async (req, res) => {
     const allVolunteers = new Map();
 
     for (const st of serviceTypes) {
+      // 1. Sync via plans (scheduled team members)
       const plans = await fetchAllPlans(PC_SERVICES_BASE, st.id, credentials);
       const result = await processServiceType(supabase, st, plans, credentials);
       totalServices += result.services;
@@ -125,6 +133,12 @@ router.post('/sync-auto', async (req, res) => {
       totalMembersFound += result.membersFound;
       totalMembersProcessed += result.membersProcessed;
       for (const [k, v] of result.volunteers) allVolunteers.set(k, v);
+
+      // 2. Also sync all team members regardless of being scheduled in a plan
+      const teamPersons = await fetchAllTeamPersons(st.id, credentials);
+      for (const [k, v] of teamPersons) {
+        if (!allVolunteers.has(k)) allVolunteers.set(k, v);
+      }
     }
 
     const qrCount = await upsertVolunteerQrCodes(supabase, allVolunteers);
