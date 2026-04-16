@@ -386,6 +386,21 @@ export default function Grupos() {
         ))}
       </div>
 
+      {/* ═══ TAB MAPA ═══ */}
+      {pageTab === 'mapa' && (
+        <div style={{ height: 'calc(100vh - 220px)', minHeight: 500, borderRadius: 12, overflow: 'hidden', border: `1px solid ${C.border}` }}>
+          {loading ? (
+            <div style={{ padding: 40, textAlign: 'center', color: C.t3 }}>Carregando...</div>
+          ) : (
+            <GruposMapView
+              grupos={gruposList.filter(g => g.ativo)}
+              variant="admin"
+              defaultTheme="dark"
+            />
+          )}
+        </div>
+      )}
+
       {/* ═══ TAB MATERIAIS ═══ */}
       {pageTab === 'materiais' && (
         <div>
