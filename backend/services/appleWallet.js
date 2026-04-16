@@ -14,6 +14,8 @@ const { PKPass } = require('passkit-generator');
 const forge = require('node-forge');
 const zlib = require('zlib');
 const crypto = require('crypto');
+const fs = require('fs');
+const path = require('path');
 
 // ── Geracao de PNG minimalista (sem lib externa) ──────────────────────────
 
@@ -74,16 +76,28 @@ function makeSolidPng(w, h, r, g, b) {
   ]);
 }
 
-// Cor CBRio: #00B39D = rgb(0, 179, 157)
-const TEAL_R = 0, TEAL_G = 179, TEAL_B = 157;
+// Cores por tipo de passe
+// Membro: bege #eae3da = rgb(234, 227, 218)
+// Voluntario: azul escuro #408097 = rgb(64, 128, 151)
 
-// Icones pre-gerados (cached — gerados uma vez no startup)
-const ICONS = {
-  'icon.png':    makeSolidPng(29,  29,  TEAL_R, TEAL_G, TEAL_B),
-  'icon@2x.png': makeSolidPng(58,  58,  TEAL_R, TEAL_G, TEAL_B),
-  'icon@3x.png': makeSolidPng(87,  87,  TEAL_R, TEAL_G, TEAL_B),
-  'logo.png':    makeSolidPng(160, 50,  TEAL_R, TEAL_G, TEAL_B),
-  'logo@2x.png': makeSolidPng(320, 100, TEAL_R, TEAL_G, TEAL_B),
+// Logo CBRio (iBrand font) — lido do filesystem (incluido via vercel.json templates/**)
+const LOGO_CBRIO = fs.readFileSync(path.join(__dirname, '..', 'templates', 'logo-cbrio-text.png'));
+
+// Icones pre-gerados por tipo (cached — gerados uma vez no startup)
+const ICONS_MEMBRO = {
+  'icon.png':    makeSolidPng(29,  29,  234, 227, 218),
+  'icon@2x.png': makeSolidPng(58,  58,  234, 227, 218),
+  'icon@3x.png': makeSolidPng(87,  87,  234, 227, 218),
+  'logo.png':    LOGO_CBRIO,
+  'logo@2x.png': LOGO_CBRIO,
+};
+
+const ICONS_VOLUNTARIO = {
+  'icon.png':    makeSolidPng(29,  29,  64, 128, 151),
+  'icon@2x.png': makeSolidPng(58,  58,  64, 128, 151),
+  'icon@3x.png': makeSolidPng(87,  87,  64, 128, 151),
+  'logo.png':    LOGO_CBRIO,
+  'logo@2x.png': LOGO_CBRIO,
 };
 
 // ── Conversao de certificados ─────────────────────────────────────────────
@@ -183,9 +197,9 @@ async function buildMembroPass({ nome, qrToken, memberId, pending = false }) {
     teamIdentifier: teamId,
     organizationName: 'CBRio',
     description: 'CBRio — Cartao de Membro',
-    backgroundColor: 'rgb(0, 179, 157)',
-    foregroundColor: 'rgb(255, 255, 255)',
-    labelColor: 'rgb(255, 255, 255)',
+    backgroundColor: 'rgb(234, 227, 218)',
+    foregroundColor: 'rgb(64, 128, 151)',
+    labelColor: 'rgb(64, 128, 151)',
     generic: {
       primaryFields: [
         { key: 'name', label: 'MEMBRO', value: nome || 'Membro' },
@@ -215,7 +229,7 @@ async function buildMembroPass({ nome, qrToken, memberId, pending = false }) {
 
   const pass = new PKPass(
     {
-      ...ICONS,
+      ...ICONS_MEMBRO,
       'pass.json': Buffer.from(JSON.stringify(passJson)),
     },
     {
@@ -247,7 +261,7 @@ async function buildVoluntarioPass({ nome, qrCode, voluntarioId }) {
     teamIdentifier: teamId,
     organizationName: 'CBRio',
     description: 'CBRio — Cracha de Voluntario',
-    backgroundColor: 'rgb(0, 179, 157)',
+    backgroundColor: 'rgb(64, 128, 151)',
     foregroundColor: 'rgb(255, 255, 255)',
     labelColor: 'rgb(255, 255, 255)',
     generic: {
@@ -279,7 +293,7 @@ async function buildVoluntarioPass({ nome, qrCode, voluntarioId }) {
 
   const pass = new PKPass(
     {
-      ...ICONS,
+      ...ICONS_VOLUNTARIO,
       'pass.json': Buffer.from(JSON.stringify(passJson)),
     },
     {
