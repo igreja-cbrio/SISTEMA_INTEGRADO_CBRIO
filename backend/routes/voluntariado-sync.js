@@ -3,7 +3,7 @@ const { authenticate, authorize } = require('../middleware/auth');
 const { supabase } = require('../utils/supabase');
 const {
   getPCCredentials, fetchWithRetry, fetchAllPlans, fetchPlansInRange,
-  processServiceType, upsertVolunteerQrCodes, upsertVolunteerProfiles, PC_SERVICES_BASE,
+  processServiceType, fetchAllTeamPersons, upsertVolunteerQrCodes, upsertVolunteerProfiles, PC_SERVICES_BASE,
 } = require('../services/planningCenter');
 
 // Sync do Planning Center e operacoes administrativas pesadas — apenas admin/diretor.
@@ -27,6 +27,7 @@ router.post('/sync', async (req, res) => {
     const allVolunteers = new Map();
 
     for (const st of serviceTypes) {
+      // 1. Sync via plans (scheduled team members)
       const plans = await fetchAllPlans(PC_SERVICES_BASE, st.id, credentials);
       const result = await processServiceType(supabase, st, plans, credentials);
       totalServices += result.services;
@@ -34,6 +35,12 @@ router.post('/sync', async (req, res) => {
       totalMembersFound += result.membersFound;
       totalMembersProcessed += result.membersProcessed;
       for (const [k, v] of result.volunteers) allVolunteers.set(k, v);
+
+      // 2. Also sync all team members regardless of being scheduled in a plan
+      const teamPersons = await fetchAllTeamPersons(st.id, credentials);
+      for (const [k, v] of teamPersons) {
+        if (!allVolunteers.has(k)) allVolunteers.set(k, v);
+      }
     }
 
     const qrCount = await upsertVolunteerQrCodes(supabase, allVolunteers);
@@ -118,6 +125,7 @@ router.post('/sync-auto', async (req, res) => {
     const allVolunteers = new Map();
 
     for (const st of serviceTypes) {
+      // 1. Sync via plans (scheduled team members)
       const plans = await fetchAllPlans(PC_SERVICES_BASE, st.id, credentials);
       const result = await processServiceType(supabase, st, plans, credentials);
       totalServices += result.services;
@@ -125,6 +133,12 @@ router.post('/sync-auto', async (req, res) => {
       totalMembersFound += result.membersFound;
       totalMembersProcessed += result.membersProcessed;
       for (const [k, v] of result.volunteers) allVolunteers.set(k, v);
+
+      // 2. Also sync all team members regardless of being scheduled in a plan
+      const teamPersons = await fetchAllTeamPersons(st.id, credentials);
+      for (const [k, v] of teamPersons) {
+        if (!allVolunteers.has(k)) allVolunteers.set(k, v);
+      }
     }
 
     const qrCount = await upsertVolunteerQrCodes(supabase, allVolunteers);
@@ -140,6 +154,53 @@ router.post('/sync-auto', async (req, res) => {
   } catch (e) {
     console.error('[VOL SYNC AUTO] Error:', e.message);
     res.status(500).json({ error: 'Erro durante sincronizacao automatica' });
+  }
+});
+
+// ══════════════════════════════════════════════════════════════
+// DIAGNOSTICS — what does Planning Center actually have?
+// ══════════════════════════════════════════════════════════════
+router.get('/diagnostics', async (req, res) => {
+  try {
+    const { basic: credentials } = getPCCredentials();
+
+    // 1. Service types
+    const typesRes = await fetchWithRetry(`${PC_SERVICES_BASE}/service_types`, { Authorization: `Basic ${credentials}` });
+    if (!typesRes.ok) return res.status(400).json({ error: 'Falha ao conectar ao Planning Center', status: typesRes.status });
+
+    const typesData = await typesRes.json();
+    const serviceTypes = typesData.data || [];
+
+    const report = [];
+
+    for (const st of serviceTypes) {
+      const entry = { id: st.id, name: st.attributes.name, teams: [], plans: 0 };
+
+      // 2. Teams in this service type
+      const teamsRes = await fetchWithRetry(`${PC_SERVICES_BASE}/service_types/${st.id}/teams?per_page=100`, { Authorization: `Basic ${credentials}` });
+      if (teamsRes.ok) {
+        const teamsData = await teamsRes.json();
+        for (const team of (teamsData.data || [])) {
+          const membersRes = await fetchWithRetry(`${PC_SERVICES_BASE}/service_types/${st.id}/teams/${team.id}/team_members?per_page=1`, { Authorization: `Basic ${credentials}` });
+          const totalMembers = membersRes.ok ? ((await membersRes.json()).meta?.total_count ?? '?') : '?';
+          entry.teams.push({ id: team.id, name: team.attributes.name, memberCount: totalMembers });
+        }
+      }
+
+      // 3. Future plans count
+      const plansRes = await fetchWithRetry(`${PC_SERVICES_BASE}/service_types/${st.id}/plans?filter=future&per_page=1`, { Authorization: `Basic ${credentials}` });
+      if (plansRes.ok) {
+        const plansData = await plansRes.json();
+        entry.plans = plansData.meta?.total_count ?? 0;
+      }
+
+      report.push(entry);
+    }
+
+    res.json({ serviceTypeCount: serviceTypes.length, serviceTypes: report });
+  } catch (e) {
+    console.error('[VOL DIAG] Error:', e.message);
+    res.status(500).json({ error: e.message });
   }
 });
 

@@ -119,7 +119,64 @@ function getVolunteerName(member, personData) {
   return 'Sem nome';
 }
 
-// ── Process a single service type (shared by manual, auto, historical) ──────
+// ── Fetch all persons from all teams of a service type (independent of plans) ─
+async function fetchAllTeamPersons(serviceTypeId, credentials) {
+  const headers = { Authorization: `Basic ${credentials}` };
+  const volunteers = new Map();
+
+  // 1. Get all teams for this service type
+  const teamsRes = await fetchWithRetry(`${PC_SERVICES_BASE}/service_types/${serviceTypeId}/teams?per_page=100`, headers);
+  if (!teamsRes.ok) return volunteers;
+
+  const teamsData = await teamsRes.json();
+  const teams = teamsData.data || [];
+
+  // 2. For each team, fetch all team members (people with positions)
+  for (const team of teams) {
+    let offset = 0;
+    const perPage = 100;
+    let pageCount = 0;
+    while (true) {
+      const url = `${PC_SERVICES_BASE}/service_types/${serviceTypeId}/teams/${team.id}/team_members?per_page=${perPage}&offset=${offset}&include=person`;
+      const res = await fetchWithRetry(url, headers);
+      if (!res.ok) break;
+
+      const data = await res.json();
+      pageCount++;
+
+      const personMap = new Map();
+      for (const item of (data.included || [])) {
+        if (item.type === 'Person') personMap.set(item.id, item);
+      }
+
+      for (const member of (data.data || [])) {
+        const personId = member.relationships?.person?.data?.id || member.id;
+        const personData = personMap.get(personId);
+        const volunteerName = getVolunteerName(member, personData);
+
+        if (personId && volunteerName !== 'Sem nome') {
+          const email = personData?.attributes?.email_address || personData?.attributes?.email || null;
+          const avatarUrl = personData?.attributes?.avatar || member.attributes?.photo_thumbnail || null;
+          if (!volunteers.has(personId)) {
+            volunteers.set(personId, {
+              planning_center_person_id: personId,
+              volunteer_name: volunteerName,
+              avatar_url: avatarUrl,
+              email,
+            });
+          }
+        }
+      }
+
+      if (!data.data || data.data.length < perPage || pageCount >= 50) break;
+      offset += perPage;
+    }
+  }
+
+  return volunteers;
+}
+
+
 async function processServiceType(supabase, serviceType, plans, credentials) {
   const baseUrl = PC_SERVICES_BASE;
   let typeServices = 0;
@@ -270,6 +327,7 @@ module.exports = {
   fetchPlansInRange,
   getVolunteerName,
   processServiceType,
+  fetchAllTeamPersons,
   upsertVolunteerQrCodes,
   upsertVolunteerProfiles,
 };
