@@ -44,7 +44,7 @@ router.post('/sync', async (req, res) => {
     }
 
     const qrCount = await upsertVolunteerQrCodes(supabase, allVolunteers);
-    const profilesCount = await upsertVolunteerProfiles(supabase, allVolunteers);
+    const { count: profilesCount, dbError } = await upsertVolunteerProfiles(supabase, allVolunteers);
     const avatarsImported = Array.from(allVolunteers.values()).filter(v => v.avatar_url).length;
 
     await supabase.from('vol_sync_logs').insert({
@@ -52,7 +52,7 @@ router.post('/sync', async (req, res) => {
       qrcodes_generated: qrCount, status: 'success', triggered_by: req.user.userId,
     });
 
-    res.json({ success: true, services: totalServices, newSchedules: totalSchedules, qrCodesGenerated: qrCount, volunteersSynced: profilesCount, avatarsImported, totalMembersFound, totalMembersProcessed });
+    res.json({ success: true, services: totalServices, newSchedules: totalSchedules, qrCodesGenerated: qrCount, volunteersSynced: profilesCount, avatarsImported, totalMembersFound, totalMembersProcessed, ...(dbError ? { dbError } : {}) });
   } catch (e) {
     console.error('[VOL SYNC] Error:', e.message);
     res.status(500).json({ error: 'Erro durante sincronizacao' });
@@ -142,7 +142,7 @@ router.post('/sync-auto', async (req, res) => {
     }
 
     const qrCount = await upsertVolunteerQrCodes(supabase, allVolunteers);
-    const profilesCount = await upsertVolunteerProfiles(supabase, allVolunteers);
+    const { count: profilesCount, dbError } = await upsertVolunteerProfiles(supabase, allVolunteers);
     const avatarsImported = Array.from(allVolunteers.values()).filter(v => v.avatar_url).length;
 
     await supabase.from('vol_sync_logs').insert({
@@ -150,7 +150,7 @@ router.post('/sync-auto', async (req, res) => {
       qrcodes_generated: qrCount, status: 'success',
     });
 
-    res.json({ success: true, services: totalServices, schedules: totalSchedules, qrCodesGenerated: qrCount, volunteersSynced: profilesCount, avatarsImported, totalMembersFound, totalMembersProcessed, timestamp: new Date().toISOString() });
+    res.json({ success: true, services: totalServices, schedules: totalSchedules, qrCodesGenerated: qrCount, volunteersSynced: profilesCount, avatarsImported, totalMembersFound, totalMembersProcessed, timestamp: new Date().toISOString(), ...(dbError ? { dbError } : {}) });
   } catch (e) {
     console.error('[VOL SYNC AUTO] Error:', e.message);
     res.status(500).json({ error: 'Erro durante sincronizacao automatica' });

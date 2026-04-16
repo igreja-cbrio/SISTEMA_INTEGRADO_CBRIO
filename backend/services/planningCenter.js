@@ -289,9 +289,10 @@ async function upsertVolunteerQrCodes(supabase, volunteersMap) {
 }
 
 // ── Batch upsert vol_profiles (the volunteer pool) ──────────────────────────
+// Returns { count, dbError } so callers can surface DB errors to the user.
 async function upsertVolunteerProfiles(supabase, volunteersMap) {
   const entries = Array.from(volunteersMap.values());
-  if (entries.length === 0) return 0;
+  if (entries.length === 0) return { count: 0, dbError: null };
 
   const profiles = entries.map(v => ({
     planning_center_id: v.planning_center_person_id,
@@ -303,16 +304,21 @@ async function upsertVolunteerProfiles(supabase, volunteersMap) {
   }));
 
   let upserted = 0;
+  let firstError = null;
   const batchSize = 100;
   for (let i = 0; i < profiles.length; i += batchSize) {
     const batch = profiles.slice(i, i + batchSize);
     const { error, count } = await supabase
       .from('vol_profiles')
       .upsert(batch, { onConflict: 'planning_center_id', ignoreDuplicates: false, count: 'exact' });
-    if (error) console.error('[PC] upsert vol_profiles error:', error.message);
-    else upserted += (count ?? batch.length);
+    if (error) {
+      console.error('[PC] upsert vol_profiles error:', error.message);
+      if (!firstError) firstError = error.message;
+    } else {
+      upserted += (count ?? batch.length);
+    }
   }
-  return upserted;
+  return { count: upserted, dbError: firstError };
 }
 
 module.exports = {
