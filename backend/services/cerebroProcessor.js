@@ -18,6 +18,20 @@ const MAPA_VAULT = {
   'CRM e Pessoas':'crm-pessoas',
 };
 
+// Subclassificacao dentro de planejamento baseada na pasta de origem
+function resolverSubpastaplanejamento(pastaOrigem, areaVaultSugerida) {
+  const pasta = (pastaOrigem || '').toLowerCase();
+  if (pasta.includes('expans')) return 'expansao';
+  if (pasta.includes('evento') || pasta.includes('serie') || pasta.includes('fase_')) return 'eventos';
+  if (pasta.includes('projeto') || pasta.includes('project')) return 'projetos';
+  // Fallback pelo area_vault sugerido pelo Haiku
+  const area = (areaVaultSugerida || '').toLowerCase();
+  if (area.includes('expans') || area.includes('estrateg')) return 'expansao';
+  if (area.includes('evento') || area.includes('02-evento')) return 'eventos';
+  if (area.includes('projeto') || area.includes('03-projeto')) return 'projetos';
+  return 'projetos'; // default
+}
+
 // Cache das regras do agente (recarrega a cada execucao do cron)
 let _cachedRegras = null;
 
@@ -207,9 +221,15 @@ async function salvarNoVault(item, notaConteudo, analise) {
   const vaultDrive = drives.value?.find(d => d.name === 'Cerebro CBRio');
   if (!vaultDrive) throw new Error('Biblioteca "Cerebro CBRio" nao encontrada');
 
-  const pastaVault = MAPA_VAULT[item.biblioteca] || '_dados-brutos';
-  const subpasta = analise.area_vault || '';
-  const nomeNota = item.nome_arquivo.replace(/\.[^.]+$/, '').toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9\-]/g, '').slice(0, 80);
+  let pastaVault = MAPA_VAULT[item.biblioteca] || '_dados-brutos';
+  let subpasta = analise.area_vault || '';
+
+  // Planejamento: organizar em projetos/expansao/eventos
+  if (item.biblioteca === 'Planejamento') {
+    subpasta = resolverSubpastaplanejamento(item.pasta_origem, analise.area_vault);
+  }
+
+  const nomeNota = (analise.nome_arquivo_sugerido || item.nome_arquivo).replace(/\.[^.]+$/, '').toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9\-]/g, '').slice(0, 80);
   const caminho = subpasta ? `${pastaVault}/${subpasta}/${nomeNota}.md` : `${pastaVault}/${nomeNota}.md`;
 
   const upRes = await fetch(`https://graph.microsoft.com/v1.0/drives/${vaultDrive.id}/root:/${caminho}:/content`, {
