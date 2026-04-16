@@ -26,25 +26,35 @@ router.post('/sync', async (req, res) => {
     let totalServices = 0, totalSchedules = 0, totalMembersFound = 0, totalMembersProcessed = 0;
     const allVolunteers = new Map();
 
-    for (const st of serviceTypes) {
-      // 1. Sync via plans (scheduled team members)
-      const plans = await fetchAllPlans(PC_SERVICES_BASE, st.id, credentials);
+    // Process all service types in parallel — previously sequential, which caused
+    // timeouts (17 types × 10 plans × 1 HTTP request = ~170 sequential calls to PCO).
+    const settled = await Promise.allSettled(serviceTypes.map(async (st) => {
+      const [plans, teamPersons] = await Promise.all([
+        fetchAllPlans(PC_SERVICES_BASE, st.id, credentials),
+        fetchAllTeamPersons(st.id, credentials),
+      ]);
       const result = await processServiceType(supabase, st, plans, credentials);
+      return { result, teamPersons };
+    }));
+
+    for (const item of settled) {
+      if (item.status === 'rejected') {
+        console.error('[VOL SYNC] Service type error:', item.reason?.message || item.reason);
+        continue;
+      }
+      const { result, teamPersons } = item.value;
       totalServices += result.services;
       totalSchedules += result.schedules;
       totalMembersFound += result.membersFound;
       totalMembersProcessed += result.membersProcessed;
       for (const [k, v] of result.volunteers) allVolunteers.set(k, v);
-
-      // 2. Also sync all team members regardless of being scheduled in a plan
-      const teamPersons = await fetchAllTeamPersons(st.id, credentials);
       for (const [k, v] of teamPersons) {
         if (!allVolunteers.has(k)) allVolunteers.set(k, v);
       }
     }
 
     const qrCount = await upsertVolunteerQrCodes(supabase, allVolunteers);
-    const profilesCount = await upsertVolunteerProfiles(supabase, allVolunteers);
+    const { count: profilesCount, dbError } = await upsertVolunteerProfiles(supabase, allVolunteers);
     const avatarsImported = Array.from(allVolunteers.values()).filter(v => v.avatar_url).length;
 
     await supabase.from('vol_sync_logs').insert({
@@ -52,7 +62,7 @@ router.post('/sync', async (req, res) => {
       qrcodes_generated: qrCount, status: 'success', triggered_by: req.user.userId,
     });
 
-    res.json({ success: true, services: totalServices, newSchedules: totalSchedules, qrCodesGenerated: qrCount, volunteersSynced: profilesCount, avatarsImported, totalMembersFound, totalMembersProcessed });
+    res.json({ success: true, services: totalServices, newSchedules: totalSchedules, qrCodesGenerated: qrCount, volunteersSynced: profilesCount, avatarsImported, totalMembersFound, totalMembersProcessed, ...(dbError ? { dbError } : {}) });
   } catch (e) {
     console.error('[VOL SYNC] Error:', e.message);
     res.status(500).json({ error: 'Erro durante sincronizacao' });
@@ -124,25 +134,33 @@ router.post('/sync-auto', async (req, res) => {
     let totalServices = 0, totalSchedules = 0, totalMembersFound = 0, totalMembersProcessed = 0;
     const allVolunteers = new Map();
 
-    for (const st of serviceTypes) {
-      // 1. Sync via plans (scheduled team members)
-      const plans = await fetchAllPlans(PC_SERVICES_BASE, st.id, credentials);
+    const settled = await Promise.allSettled(serviceTypes.map(async (st) => {
+      const [plans, teamPersons] = await Promise.all([
+        fetchAllPlans(PC_SERVICES_BASE, st.id, credentials),
+        fetchAllTeamPersons(st.id, credentials),
+      ]);
       const result = await processServiceType(supabase, st, plans, credentials);
+      return { result, teamPersons };
+    }));
+
+    for (const item of settled) {
+      if (item.status === 'rejected') {
+        console.error('[VOL SYNC AUTO] Service type error:', item.reason?.message || item.reason);
+        continue;
+      }
+      const { result, teamPersons } = item.value;
       totalServices += result.services;
       totalSchedules += result.schedules;
       totalMembersFound += result.membersFound;
       totalMembersProcessed += result.membersProcessed;
       for (const [k, v] of result.volunteers) allVolunteers.set(k, v);
-
-      // 2. Also sync all team members regardless of being scheduled in a plan
-      const teamPersons = await fetchAllTeamPersons(st.id, credentials);
       for (const [k, v] of teamPersons) {
         if (!allVolunteers.has(k)) allVolunteers.set(k, v);
       }
     }
 
     const qrCount = await upsertVolunteerQrCodes(supabase, allVolunteers);
-    const profilesCount = await upsertVolunteerProfiles(supabase, allVolunteers);
+    const { count: profilesCount, dbError } = await upsertVolunteerProfiles(supabase, allVolunteers);
     const avatarsImported = Array.from(allVolunteers.values()).filter(v => v.avatar_url).length;
 
     await supabase.from('vol_sync_logs').insert({
@@ -150,7 +168,7 @@ router.post('/sync-auto', async (req, res) => {
       qrcodes_generated: qrCount, status: 'success',
     });
 
-    res.json({ success: true, services: totalServices, schedules: totalSchedules, qrCodesGenerated: qrCount, volunteersSynced: profilesCount, avatarsImported, totalMembersFound, totalMembersProcessed, timestamp: new Date().toISOString() });
+    res.json({ success: true, services: totalServices, schedules: totalSchedules, qrCodesGenerated: qrCount, volunteersSynced: profilesCount, avatarsImported, totalMembersFound, totalMembersProcessed, timestamp: new Date().toISOString(), ...(dbError ? { dbError } : {}) });
   } catch (e) {
     console.error('[VOL SYNC AUTO] Error:', e.message);
     res.status(500).json({ error: 'Erro durante sincronizacao automatica' });
