@@ -3,7 +3,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } f
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Loader2, IdCard, AlertCircle } from 'lucide-react';
+import { Loader2, AlertCircle } from 'lucide-react';
 import { cadastroPublico } from '@/api';
 import MemberWalletPass from './MemberWalletPass';
 
@@ -79,11 +79,12 @@ export default function MemberWalletDialog({ open, onOpenChange, initialCpf = ''
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
-      <DialogContent className="max-w-sm bg-gray-900 border-gray-700 text-white">
+      <DialogContent className="max-w-sm bg-gray-900 border-gray-700 text-white rounded-3xl p-6">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
-            <IdCard className="h-5 w-5 text-[#00B39D]" />
-            Meu QR de membro
+            <img src="/logo-cbrio-icon.png" alt="CBRio" className="h-6 w-6" />
+            <span style={{ fontFamily: 'iBrand, sans-serif' }}>CBRio</span>
+            <span className="text-white/60 text-sm font-normal">— Meu QR de membro</span>
           </DialogTitle>
           <DialogDescription className="text-white/60">
             {verified
@@ -102,7 +103,7 @@ export default function MemberWalletDialog({ open, onOpenChange, initialCpf = ''
                 value={cpf}
                 onChange={(e) => setCpf(maskCpf(e.target.value))}
                 placeholder="000.000.000-00"
-                className="bg-gray-800 border-gray-700 text-white"
+                className="bg-gray-800 border-gray-700 text-white rounded-xl"
               />
             </div>
             <div>
@@ -111,7 +112,7 @@ export default function MemberWalletDialog({ open, onOpenChange, initialCpf = ''
                 type="date"
                 value={dob}
                 onChange={(e) => setDob(e.target.value)}
-                className="bg-gray-800 border-gray-700 text-white"
+                className="bg-gray-800 border-gray-700 text-white rounded-xl"
               />
             </div>
             {error && (
@@ -121,7 +122,7 @@ export default function MemberWalletDialog({ open, onOpenChange, initialCpf = ''
               </div>
             )}
             <Button
-              className="w-full bg-[#00B39D] hover:bg-[#00B39D]/90 min-h-[48px]"
+              className="w-full bg-[#00B39D] hover:bg-[#00B39D]/90 min-h-[48px] rounded-xl"
               onClick={handleVerify}
               disabled={busy}
             >
