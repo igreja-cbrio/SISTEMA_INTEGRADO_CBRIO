@@ -677,6 +677,24 @@ router.post('/grupos/:id/membros', authorize('admin', 'diretor'), async (req, re
   }
 });
 
+// POST /api/membresia/totem/grupos/:id/entrar — qualquer staff autenticado (via totem)
+router.post('/totem/grupos/:id/entrar', async (req, res) => {
+  try {
+    const grupoId = req.params.id;
+    const { membro_id } = req.body;
+    if (!membro_id) return res.status(400).json({ error: 'membro_id obrigatorio' });
+    const hoje = new Date().toISOString().slice(0, 10);
+    await supabase.from('mem_grupo_membros')
+      .update({ saiu_em: hoje, motivo_saida: 'Transferido via totem' })
+      .eq('membro_id', membro_id).is('saiu_em', null);
+    const { data, error } = await supabase.from('mem_grupo_membros')
+      .insert({ grupo_id: grupoId, membro_id, entrou_em: hoje })
+      .select().single();
+    if (error) throw error;
+    res.status(201).json(data);
+  } catch (e) { res.status(500).json({ error: 'Erro ao entrar no grupo' }); }
+});
+
 // PATCH /api/membresia/grupo-membros/:id/sair — remover membro do grupo (marca saiu_em)
 router.patch('/grupo-membros/:id/sair', authorize('admin', 'diretor'), async (req, res) => {
   try {

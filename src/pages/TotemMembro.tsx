@@ -7,9 +7,11 @@ import {
   Users, UserCheck, Droplets, Mountain, Heart, CalendarDays,
   ArrowRight, HandHeart, Lock, Eye, EyeOff, ChevronLeft,
   QrCode, Loader2, CheckCircle2, Maximize, Minimize,
+  MapPin, Clock, Star,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { Badge } from '@/components/ui/badge';
 
 // ── Menu ──────────────────────────────────────────────────────────────────────
 
@@ -443,7 +445,7 @@ export default function TotemMembro() {
   );
 }
 
-// ── Option Flow shell ─────────────────────────────────────────────────────────
+// ── Option Flow router ────────────────────────────────────────────────────────
 
 function OptionFlow({ optionId, member, onBack, onDone, onActivity }: {
   optionId: OptionId;
@@ -453,23 +455,16 @@ function OptionFlow({ optionId, member, onBack, onDone, onActivity }: {
   onActivity: () => void;
 }) {
   const opt = MENU_OPTIONS.find(o => o.id === optionId)!;
-  const Icon = opt.icon;
 
+  if (optionId === 'grupos') {
+    return <GruposFlow opt={opt} member={member} onBack={onBack} onDone={onDone} onActivity={onActivity} />;
+  }
+
+  // Demais opções — placeholder até implementação
+  const Icon = opt.icon;
   return (
     <div className="min-h-screen bg-gray-950 text-white flex flex-col" onClick={onActivity}>
-      {/* Option header */}
-      <div className="flex items-center gap-3 px-6 py-4 border-b border-white/10">
-        <button onClick={onBack} className="text-white/40 hover:text-white transition-colors p-1 -ml-1">
-          <ChevronLeft className="h-6 w-6" />
-        </button>
-        <div className="h-8 w-8 rounded-lg flex items-center justify-center" style={{ backgroundColor: opt.color + '30' }}>
-          <Icon className="h-5 w-5" style={{ color: opt.color }} />
-        </div>
-        <h2 className="text-xl font-semibold">{opt.label}</h2>
-        <div className="ml-auto text-sm text-white/30">{member.nome.split(' ')[0]}</div>
-      </div>
-
-      {/* Placeholder — each option will be implemented here */}
+      <OptionHeader opt={opt} member={member} onBack={onBack} />
       <div className="flex-1 flex items-center justify-center p-8">
         <div className="text-center space-y-5 max-w-sm">
           <div className="h-20 w-20 rounded-2xl flex items-center justify-center mx-auto" style={{ backgroundColor: opt.color + '20' }}>
@@ -483,6 +478,210 @@ function OptionFlow({ optionId, member, onBack, onDone, onActivity }: {
             Voltar ao menu
           </Button>
         </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Shared header ─────────────────────────────────────────────────────────────
+
+function OptionHeader({ opt, member, onBack }: { opt: (typeof MENU_OPTIONS)[number]; member: MemberData; onBack: () => void }) {
+  const Icon = opt.icon;
+  return (
+    <div className="flex items-center gap-3 px-6 py-4 border-b border-white/10 shrink-0">
+      <button onClick={onBack} className="text-white/40 hover:text-white transition-colors p-1 -ml-1">
+        <ChevronLeft className="h-6 w-6" />
+      </button>
+      <div className="h-8 w-8 rounded-lg flex items-center justify-center" style={{ backgroundColor: opt.color + '30' }}>
+        <Icon className="h-5 w-5" style={{ color: opt.color }} />
+      </div>
+      <h2 className="text-xl font-semibold">{opt.label}</h2>
+      <div className="ml-auto text-sm text-white/30">{member.nome.split(' ')[0]}</div>
+    </div>
+  );
+}
+
+// ── Grupos de Conexão flow ────────────────────────────────────────────────────
+
+const DIAS: Record<string, string> = {
+  domingo: 'Dom', segunda: 'Seg', terca: 'Ter', quarta: 'Qua',
+  quinta: 'Qui', sexta: 'Sex', sabado: 'Sáb',
+};
+
+function GruposFlow({ opt, member, onBack, onDone, onActivity }: {
+  opt: (typeof MENU_OPTIONS)[number];
+  member: MemberData;
+  onBack: () => void;
+  onDone: () => void;
+  onActivity: () => void;
+}) {
+  const [grupos, setGrupos] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [selected, setSelected] = useState<any>(null);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+
+  const grupoAtualId: string | undefined =
+    member.raw?.grupo_atual?.id ||
+    member.raw?.grupo_atual?.grupo?.id;
+
+  useEffect(() => {
+    membresia.grupos.list({ ativo: 'true' })
+      .then((data: any[]) => setGrupos(data || []))
+      .catch(() => {})
+      .finally(() => setLoading(false));
+  }, []);
+
+  const handleConfirm = async () => {
+    if (!selected || !member.id) return;
+    setSaving(true);
+    setError('');
+    try {
+      await membresia.totem.entrarGrupo(selected.id, member.id);
+      onDone();
+    } catch {
+      setError('Não foi possível registrar. Tente novamente.');
+      setSaving(false);
+    }
+  };
+
+  // Confirmation screen
+  if (selected) {
+    const isChanging = !!grupoAtualId && grupoAtualId !== selected.id;
+    const grupoAtual = grupos.find(g => g.id === grupoAtualId);
+    return (
+      <div className="min-h-screen bg-gray-950 text-white flex flex-col" onClick={onActivity}>
+        <OptionHeader opt={opt} member={member} onBack={() => { setSelected(null); setError(''); }} />
+        <div className="flex-1 flex items-center justify-center p-8">
+          <div className="w-full max-w-md space-y-6">
+            <div className="text-center space-y-2">
+              <div className="h-16 w-16 rounded-2xl bg-[#00B39D]/20 flex items-center justify-center mx-auto">
+                <Users className="h-8 w-8 text-[#00B39D]" />
+              </div>
+              <h3 className="text-2xl font-bold mt-3">Confirmar inscrição</h3>
+              {isChanging && grupoAtual && (
+                <p className="text-white/50 text-sm">
+                  Você sairá de <span className="text-white/80">{grupoAtual.nome}</span>
+                </p>
+              )}
+            </div>
+
+            <div className="rounded-2xl border border-white/20 bg-white/5 p-5 space-y-2">
+              <p className="text-lg font-semibold">{selected.nome}</p>
+              {selected.lider?.nome && (
+                <p className="text-sm text-white/50">Líder: {selected.lider.nome}</p>
+              )}
+              <div className="flex gap-3 text-sm text-white/50">
+                {selected.dia_semana && (
+                  <span className="flex items-center gap-1">
+                    <Clock className="h-3.5 w-3.5" />
+                    {DIAS[selected.dia_semana] || selected.dia_semana}
+                    {selected.horario ? ` às ${selected.horario}` : ''}
+                  </span>
+                )}
+                {selected.local && (
+                  <span className="flex items-center gap-1">
+                    <MapPin className="h-3.5 w-3.5" />
+                    {selected.local}
+                  </span>
+                )}
+              </div>
+            </div>
+
+            {error && <p className="text-red-400 text-sm text-center">{error}</p>}
+
+            <div className="flex gap-3">
+              <Button
+                variant="outline"
+                onClick={() => { setSelected(null); setError(''); }}
+                className="flex-1 border-white/20 text-white hover:bg-white/10"
+                disabled={saving}
+              >
+                Cancelar
+              </Button>
+              <Button
+                onClick={handleConfirm}
+                disabled={saving}
+                className="flex-1 bg-[#00B39D] hover:bg-[#00B39D]/90"
+              >
+                {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Confirmar'}
+              </Button>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // Group list screen
+  return (
+    <div className="min-h-screen bg-gray-950 text-white flex flex-col" onClick={onActivity}>
+      <OptionHeader opt={opt} member={member} onBack={onBack} />
+
+      <div className="flex-1 overflow-y-auto p-6">
+        {loading ? (
+          <div className="flex items-center justify-center py-20">
+            <Loader2 className="h-8 w-8 animate-spin text-[#00B39D]" />
+          </div>
+        ) : grupos.length === 0 ? (
+          <div className="text-center py-20 text-white/40">Nenhum grupo disponível no momento.</div>
+        ) : (
+          <div className="max-w-2xl mx-auto space-y-3">
+            {grupoAtualId && (
+              <p className="text-white/40 text-sm mb-4">
+                Seu grupo atual está marcado com <Star className="h-3.5 w-3.5 inline text-[#00B39D]" />
+              </p>
+            )}
+            {grupos.map((g: any) => {
+              const isCurrent = g.id === grupoAtualId;
+              return (
+                <button
+                  key={g.id}
+                  onClick={() => { setSelected(g); onActivity(); }}
+                  className={`w-full text-left rounded-2xl border p-5 transition-all hover:scale-[1.01] active:scale-[0.99] ${
+                    isCurrent
+                      ? 'border-[#00B39D]/60 bg-[#00B39D]/10'
+                      : 'border-white/10 bg-white/5 hover:bg-white/10'
+                  }`}
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="space-y-1.5 flex-1">
+                      <div className="flex items-center gap-2">
+                        <p className="font-semibold text-lg leading-tight">{g.nome}</p>
+                        {isCurrent && <Star className="h-4 w-4 text-[#00B39D] shrink-0" fill="currentColor" />}
+                      </div>
+                      {g.lider?.nome && (
+                        <p className="text-sm text-white/50">Líder: {g.lider.nome}</p>
+                      )}
+                      <div className="flex flex-wrap gap-3 text-sm text-white/40">
+                        {g.dia_semana && (
+                          <span className="flex items-center gap-1">
+                            <Clock className="h-3.5 w-3.5" />
+                            {DIAS[g.dia_semana] || g.dia_semana}{g.horario ? ` às ${g.horario}` : ''}
+                          </span>
+                        )}
+                        {g.local && (
+                          <span className="flex items-center gap-1">
+                            <MapPin className="h-3.5 w-3.5" />
+                            {g.local}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                    <div className="text-right shrink-0">
+                      <Badge variant="outline" className="border-white/20 text-white/50 text-xs">
+                        {g.total_ativos ?? 0} membros
+                      </Badge>
+                      {isCurrent && (
+                        <p className="text-xs text-[#00B39D] mt-1">Meu grupo</p>
+                      )}
+                    </div>
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+        )}
       </div>
     </div>
   );

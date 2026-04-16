@@ -501,6 +501,9 @@ export const membresia = {
     adicionarMembro: (grupoId, data) => post(`/membresia/grupos/${grupoId}/membros`, data),
     sairMembro: (participacaoId, data) => patch(`/membresia/grupo-membros/${participacaoId}/sair`, data),
   },
+  totem: {
+    entrarGrupo: (grupoId, membroId) => post(`/membresia/totem/grupos/${grupoId}/entrar`, { membro_id: membroId }),
+  },
   contribuicoes: {
     list: (params) => get('/membresia/contribuicoes' + (params ? '?' + new URLSearchParams(params) : '')),
     create: (data) => post('/membresia/contribuicoes', data),
