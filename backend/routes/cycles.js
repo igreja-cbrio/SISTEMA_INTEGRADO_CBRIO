@@ -520,8 +520,8 @@ router.post('/card-completions/:id/deliver', async (req, res) => {
 
 // Helper: buscar ou criar card_completion para um task
 async function getOrCreateCompletion(taskId, userId, userName) {
-  const { data: existing } = await supabase.from('card_completions').select('*').eq('task_id', taskId).maybeSingle();
-  if (existing) return existing;
+  const { data: rows } = await supabase.from('card_completions').select('*').eq('task_id', taskId).order('completed_at', { ascending: false }).limit(1);
+  if (rows?.length) return rows[0];
 
   // Buscar dados do task
   const { data: task } = await supabase.from('cycle_phase_tasks').select('*, event_cycle_phases(numero_fase, nome_fase)').eq('id', taskId).single();
