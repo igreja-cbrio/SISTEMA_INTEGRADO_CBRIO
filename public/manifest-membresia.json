@@ -1,0 +1,12 @@
+{
+  "name": "Membresia CBRio",
+  "short_name": "Membresia",
+  "start_url": "/cadastro-membresia",
+  "display": "standalone",
+  "background_color": "#eae3da",
+  "theme_color": "#3E7E8E",
+  "icons": [
+    { "src": "/icons/membresia-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "/icons/membresia-512.png", "sizes": "512x512", "type": "image/png" }
+  ]
+}

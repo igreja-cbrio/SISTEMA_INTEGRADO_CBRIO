@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { Routes, Route, Navigate, useLocation } from 'react-router-dom';
+import { useHomeScreenMeta } from '@/hooks/useHomeScreenMeta';
 import { useQuery } from '@tanstack/react-query';
 import { useAuth } from '@/contexts/AuthContext';
 import { voluntariado } from '@/api';
@@ -24,6 +25,7 @@ import VolNavBar from './components/VolNavBar';
 export default function Voluntariado() {
   const { isAdmin, isColaborador } = useAuth();
   const location = useLocation();
+  useHomeScreenMeta('checkin');
 
   // Se URL começa com /voluntariado/checkin → portal do voluntario SEMPRE,
   // independente do role (VolunteerShell ja foi aplicada pelo App.tsx).

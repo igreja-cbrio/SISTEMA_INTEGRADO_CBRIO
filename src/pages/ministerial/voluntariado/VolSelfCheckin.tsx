@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
+import { useHomeScreenMeta } from '@/hooks/useHomeScreenMeta';
 import { voluntariado, publicVoluntariado } from '@/api';
 import { useAuth } from '@/contexts/AuthContext';
 import { Button } from '@/components/ui/button';
@@ -35,6 +36,7 @@ export default function VolSelfCheckin() {
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
   const { user, loading: authLoading } = useAuth();
+  useHomeScreenMeta('checkin');
   const serviceId = searchParams.get('serviceId');
 
   const [state, setState] = useState<State>('loading');
