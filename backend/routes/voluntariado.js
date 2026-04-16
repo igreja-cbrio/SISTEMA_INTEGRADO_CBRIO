@@ -387,6 +387,7 @@ router.get('/my-services', async (req, res) => {
 
     const { data: services, error } = await supabase.from('vol_services')
       .select('id, name, service_type_name, service_type_id, scheduled_at')
+      .not('service_type_id', 'is', null)
       .gte('scheduled_at', `${targetYear}-01-01T00:00:00`)
       .lte('scheduled_at', `${targetYear}-12-31T23:59:59`)
       .order('scheduled_at');
@@ -1474,6 +1475,7 @@ router.get('/services-availability', async (req, res) => {
     const { data: services, error: svcErr } = await supabase
       .from('vol_services')
       .select('id, name, service_type_name, scheduled_at')
+      .not('service_type_id', 'is', null)
       .gte('scheduled_at', `${from}T00:00:00`)
       .lte('scheduled_at', `${to}T23:59:59`)
       .order('scheduled_at');
