@@ -179,9 +179,9 @@ async function buildMembroPass({ nome, qrToken, memberId, pending = false }) {
     teamIdentifier: teamId,
     organizationName: 'CBRio',
     description: 'CBRio — Cartao de Membro',
-    backgroundColor: 'rgb(0, 179, 157)',
-    foregroundColor: 'rgb(255, 255, 255)',
-    labelColor: 'rgb(255, 255, 255)',
+    backgroundColor: 'rgb(234, 227, 218)',
+    foregroundColor: 'rgb(64, 128, 151)',
+    labelColor: 'rgb(64, 128, 151)',
     generic: {
       primaryFields: [
         { key: 'name', label: 'MEMBRO', value: nome || 'Membro' },
@@ -211,9 +211,7 @@ async function buildMembroPass({ nome, qrToken, memberId, pending = false }) {
 
   const pass = new PKPass(
     {
-      ...ICONS,
-      'pass.json': Buffer.from(JSON.stringify(passJson)),
-    },
+      ...ICONS_MEMBRO,
     {
       wwdr:                 Buffer.from(certs.wwdrPem),
       signerCert:           Buffer.from(certs.membro.certPem),
