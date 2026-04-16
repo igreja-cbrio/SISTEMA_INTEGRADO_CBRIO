@@ -321,6 +321,7 @@ export default function Eventos() {
   const [kpiData, setKpiData] = useState(null);
   const [kpiTipo, setKpiTipo] = useState('all');
   const [kpiEventDetail, setKpiEventDetail] = useState(null);
+  const [kpiEventName, setKpiEventName] = useState('');
   const [kpiLoading, setKpiLoading] = useState(false);
   const [kpiConfigOpen, setKpiConfigOpen] = useState(false);
   const [kpiWeights, setKpiWeights] = useState([]);
@@ -718,8 +719,8 @@ export default function Eventos() {
               <div style={{ width: 48, height: 48, borderRadius: '50%', background: C.card, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 18, fontWeight: 800, color: scoreColor(kpiVal) }}>{kpiVal}</div>
             </div>
             <div>
-              <div style={{ fontSize: 18, fontWeight: 700, color: C.text }}>KPI do Evento</div>
-              <div style={{ fontSize: 12, color: C.t3 }}>{ev.kpi_evento?.total_docs || 0} documentos | {ev.kpi_evento?.total_areas || 0} areas</div>
+              <div style={{ fontSize: 18, fontWeight: 700, color: C.text }}>{kpiEventName || 'Evento'}</div>
+              <div style={{ fontSize: 12, color: C.t3 }}>{kpiVal}% score | {ev.kpi_evento?.total_docs || 0} documentos | {ev.kpi_evento?.total_areas || 0} areas</div>
             </div>
           </div>
 
@@ -730,7 +731,7 @@ export default function Eventos() {
               <div key={a.area} style={{ background: C.card, borderRadius: 10, padding: 14, border: `1px solid ${C.border}` }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
                   <span style={{ fontSize: 13, fontWeight: 600, color: CAT_COLORS[a.area] || C.text }}>{CAT_LABELS[a.area] || a.area}</span>
-                  <span style={{ fontSize: 16, fontWeight: 800, color: scoreColor(a.kpi_area) }}>{a.kpi_area || 0}</span>
+                  <span style={{ fontSize: 16, fontWeight: 800, color: scoreColor(a.kpi_area) }}>{a.kpi_area || 0}%</span>
                 </div>
                 <div style={{ height: 6, background: C.border, borderRadius: 3, marginBottom: 4 }}>
                   <div style={{ height: '100%', borderRadius: 3, width: `${a.kpi_area || 0}%`, background: scoreColor(a.kpi_area), transition: 'width 0.3s' }} />
@@ -777,35 +778,28 @@ export default function Eventos() {
                           ) : <span style={{ color: C.t3 }}>-</span>}
                         </td>
                         <td style={{ padding: '10px 12px', textAlign: 'center' }}>
-                          {!doc.quality_rating || doc.quality_rating === 'pendente' ? (
-                            <span style={{ fontSize: 11, color: C.t3 }}>Pendente</span>
-                          ) : doc.quality_rating === 'ok' ? (
+                          {doc.approved_by && doc.quality_rating === 'ok' ? (
                             <span style={{ fontSize: 11, color: '#10b981', fontWeight: 600 }}>OK</span>
                           ) : doc.quality_rating === 'incompleto' ? (
                             <span style={{ fontSize: 11, color: '#f59e0b', fontWeight: 600 }}>Incompleto</span>
-                          ) : (
+                          ) : doc.quality_rating === 'reprovado' ? (
                             <span style={{ fontSize: 11, color: '#ef4444', fontWeight: 600 }}>Reprovado</span>
+                          ) : (
+                            <span style={{ fontSize: 11, color: C.t3 }}>-</span>
                           )}
                         </td>
                         <td style={{ padding: '10px 12px', textAlign: 'center' }}>{doc.approved_by ? <span style={{ color: '#10b981' }}>Sim</span> : <span style={{ color: C.t3 }}>-</span>}</td>
                         <td style={{ padding: '10px 12px', textAlign: 'center' }}>{doc.file_name ? <span style={{ color: '#10b981' }}>Sim</span> : <span style={{ color: C.t3 }}>-</span>}</td>
-                        <td style={{ padding: '10px 12px', textAlign: 'center', fontWeight: 800, color: scoreColor(doc.score || 0) }}>{doc.score || 0}</td>
+                        <td style={{ padding: '10px 12px', textAlign: 'center', fontWeight: 800, color: scoreColor(doc.score || 0) }}>{doc.score || 0}%</td>
                         <td style={{ padding: '10px 12px', textAlign: 'center' }}>
                           <div style={{ display: 'flex', gap: 4, justifyContent: 'center', flexWrap: 'wrap' }}>
                             {doc.approved_by ? (
                               <span style={{ fontSize: 10, padding: '2px 8px', borderRadius: 99, background: '#10b98120', color: '#10b981', fontWeight: 600 }}>Aprovado</span>
                             ) : (
-                              <button onClick={async (e) => { e.stopPropagation(); e.preventDefault(); try { await cyclesApi.approveCard(doc.id); } catch {} loadKpiEventDetail(doc.event_id); }} style={{ padding: '3px 8px', fontSize: 10, borderRadius: 4, border: 'none', background: '#10b98120', color: '#10b981', cursor: 'pointer', fontWeight: 600 }}>Aprovar</button>
-                            )}
-                            {doc.quality_rating === 'incompleto' ? (
-                              <span style={{ fontSize: 10, padding: '2px 8px', borderRadius: 99, background: '#f59e0b20', color: '#f59e0b', fontWeight: 600 }}>Incompleto</span>
-                            ) : doc.quality_rating === 'reprovado' ? (
-                              <span style={{ fontSize: 10, padding: '2px 8px', borderRadius: 99, background: '#ef444420', color: '#ef4444', fontWeight: 600 }}>Reprovado</span>
-                            ) : null}
-                            {!doc.approved_by && (
-                              <button onClick={async (e) => { e.stopPropagation(); e.preventDefault(); try { await cyclesApi.qualityCard(doc.id, doc.quality_rating === 'ok' ? 'incompleto' : 'ok'); } catch {} loadKpiEventDetail(doc.event_id); }} style={{ padding: '3px 8px', fontSize: 10, borderRadius: 4, border: 'none', background: doc.quality_rating === 'ok' ? '#f59e0b20' : '#10b98120', color: doc.quality_rating === 'ok' ? '#f59e0b' : '#10b981', cursor: 'pointer', fontWeight: 600 }}>
-                                {doc.quality_rating === 'ok' ? 'Marcar incompleto' : 'Marcar OK'}
-                              </button>
+                              <>
+                                <button onClick={async (e) => { e.stopPropagation(); e.preventDefault(); try { await cyclesApi.approveCard(doc.id); await cyclesApi.qualityCard(doc.id, 'ok'); } catch {} loadKpiEventDetail(doc.event_id); }} style={{ padding: '3px 8px', fontSize: 10, borderRadius: 4, border: 'none', background: '#10b98120', color: '#10b981', cursor: 'pointer', fontWeight: 600 }}>Aprovar</button>
+                                <button onClick={async (e) => { e.stopPropagation(); e.preventDefault(); try { await cyclesApi.qualityCard(doc.id, 'incompleto'); } catch {} loadKpiEventDetail(doc.event_id); }} style={{ padding: '3px 8px', fontSize: 10, borderRadius: 4, border: 'none', background: '#f59e0b20', color: '#f59e0b', cursor: 'pointer', fontWeight: 600 }}>Incompleto</button>
+                              </>
                             )}
                           </div>
                         </td>
@@ -878,7 +872,7 @@ export default function Eventos() {
                   <div style={{ width: 120, height: 6, background: C.border, borderRadius: 3 }}>
                     <div style={{ height: '100%', borderRadius: 3, width: `${a.kpi}%`, background: scoreColor(a.kpi), transition: 'width 0.3s' }} />
                   </div>
-                  <span style={{ fontSize: 16, fontWeight: 800, color: scoreColor(a.kpi), width: 40, textAlign: 'right' }}>{a.kpi}</span>
+                  <span style={{ fontSize: 16, fontWeight: 800, color: scoreColor(a.kpi), width: 50, textAlign: 'right' }}>{a.kpi}%</span>
                 </div>
               ))}
               {(d.ranking_areas || []).length === 0 && <div style={{ padding: 24, textAlign: 'center', color: C.t3, fontSize: 13 }}>Nenhum dado de KPI ainda</div>}
@@ -890,7 +884,7 @@ export default function Eventos() {
               {(d.eventos || []).length === 0 ? (
                 <div style={{ padding: 24, textAlign: 'center', color: C.t3, fontSize: 13 }}>Nenhum evento com ciclo criativo encontrado</div>
               ) : (d.eventos || []).sort((a, b) => (b.kpi_evento || 0) - (a.kpi_evento || 0)).map(ev => (
-                <div key={ev.event_id} onClick={() => loadKpiEventDetail(ev.event_id)} style={{ padding: '14px 16px', borderBottom: `1px solid ${C.border}`, display: 'flex', alignItems: 'center', gap: 12, cursor: 'pointer' }}
+                <div key={ev.event_id} onClick={() => { setKpiEventName(ev.event_name); loadKpiEventDetail(ev.event_id); }} style={{ padding: '14px 16px', borderBottom: `1px solid ${C.border}`, display: 'flex', alignItems: 'center', gap: 12, cursor: 'pointer' }}
                   onMouseEnter={e => e.currentTarget.style.background = C.bg} onMouseLeave={e => e.currentTarget.style.background = 'transparent'}>
                   <div style={{ flex: 1 }}>
                     <div style={{ fontSize: 14, fontWeight: 600, color: C.text }}>{ev.event_name}</div>
@@ -903,7 +897,7 @@ export default function Eventos() {
                   <div style={{ width: 80, height: 6, background: C.border, borderRadius: 3 }}>
                     <div style={{ height: '100%', borderRadius: 3, width: `${ev.kpi_evento || 0}%`, background: scoreColor(ev.kpi_evento || 0), transition: 'width 0.3s' }} />
                   </div>
-                  <span style={{ fontSize: 20, fontWeight: 800, color: scoreColor(ev.kpi_evento || 0), width: 40, textAlign: 'right' }}>{ev.kpi_evento || 0}</span>
+                  <span style={{ fontSize: 20, fontWeight: 800, color: scoreColor(ev.kpi_evento || 0), width: 50, textAlign: 'right' }}>{ev.kpi_evento || 0}%</span>
                 </div>
               ))}
             </div>
