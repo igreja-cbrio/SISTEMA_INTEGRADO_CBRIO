@@ -76,7 +76,7 @@ function useRemoveMyAvailability() {
 }
 
 function useGoogleWalletUrl() {
-  return useMutation({
+  return useMutation<{ url: string }>({
     mutationFn: () => voluntariado.me.walletGoogle(),
   });
 }
