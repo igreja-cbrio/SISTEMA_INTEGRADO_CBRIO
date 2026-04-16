@@ -1,43 +1,33 @@
 
 
-## Plan: Redesign do Organograma no estilo do wireframe de referencia
+## Plan: Implementar botoes oficiais Apple Wallet e Google Wallet (HIG-compliant)
 
-### Summary
-Reescrever o componente `OrgChartTab` dentro de `RH.jsx` (linhas 1215-1366) com um layout visual inspirado no wireframe: cards arredondados com avatar circular + borda colorida, badge de area/setor, contagem de subordinados, conectores finos (linhas cinza), filtro por departamento no topo, painel lateral de perfil ao clicar, e controles de zoom flutuantes no canto inferior direito. Tudo adaptado a paleta CBRio (teal `#00B39D`, dark theme vars).
+### Resumo
+Substituir os botoes genéricos de "Adicionar ao Apple/Google Wallet" por SVGs oficiais seguindo as Human Interface Guidelines da Apple e o branding do Google Wallet.
 
 ### O que muda
 
-**1. Toolbar superior do organograma**
-- Filtro por area/setor em pills horizontais (estilo `rounded-full`, pill ativa em `bg-primary text-white`)
-- Busca por nome
-- Botao "Expandir Tudo" / toggle arvore vs lista
-- Controles de zoom movidos para canto inferior direito (floating pill vertical com +, -, reset)
+**1. Criar componente `AddToWalletButtons.tsx`** em `src/components/ui/`
 
-**2. Cards dos nos (3 niveis visuais)**
-- **Nivel raiz (CEO/Diretor)**: card 280px, `rounded-3xl`, avatar 80px com borda de cor do setor, nome grande, cargo, badge de contagem subordinados + subordinados diretos no footer
-- **Nivel gerencial**: card 260px, layout horizontal (avatar esquerda + badge de area direita), nome, cargo, contagem reports
-- **Nivel folha**: card compacto 180px, avatar 40px, nome, cargo truncado
+Componente reutilizavel com:
+- **Apple Wallet**: SVG oficial preto com icone do Wallet + texto "Add to Apple Wallet" (ou versao PT "Adicionar ao Apple Wallet"). Fundo preto, cantos arredondados, proporcoes conforme HIG (altura minima 44px, aspect ratio ~3.5:1).
+- **Google Wallet**: SVG/botao oficial com logo Google Wallet colorido, fundo preto, texto "Add to Google Wallet". Segue as guidelines do Google Pay brand.
+- Props: `onApple`, `onGoogle`, `appleBusy`, `googleBusy`, `showApple` (auto-detecta iOS)
 
-**3. Conectores**
-- Linhas finas `1px bg-border` verticais e horizontais entre niveis (em vez das barras grossas atuais)
-- Calculados dinamicamente com base na quantidade de filhos
+**2. Atualizar `VolMeuPainel.tsx`** (linhas 123-148)
+- Substituir os `<Button>` genericos pelo componente `AddToWalletButtons`
+- Remover imports de `Apple`, `Wallet` do lucide
 
-**4. Painel lateral de perfil (slide-in)**
-- Ao clicar um card, abre painel lateral direito (reutilizando o pattern do `FuncionarioDetailPanel` existente) mostrando: foto, nome, cargo, email, telefone, gestor, area, e subordinados diretos
-- Nao substitui o `onDetail` existente, apenas adiciona um preview rapido
+**3. Atualizar `MemberWalletPass.tsx`** (linhas 188-206)
+- Mesmo: substituir botoes genericos pelo componente oficial
+- Manter botao "Baixar imagem do QR" separado
 
-**5. Adaptacao visual CBRio**
-- Cards: `bg-card border-border rounded-3xl`
-- Texto: `text-foreground`, `text-muted-foreground`
-- Borda avatar: `border-primary` (teal)
-- Badge area: `bg-primary/10 text-primary`
-- Hover: `hover:border-primary/30 shadow-lg`
-- Zoom controls: `bg-card border-border rounded-2xl shadow-lg`
+### SVGs utilizados
+- Apple Wallet: inline SVG reproduzindo o badge oficial (preto com icone wallet colorido + texto branco). Nao usaremos imagem externa — SVG inline garante qualidade em qualquer resolucao.
+- Google Wallet: inline SVG com logo G colorido + texto "Add to Google Wallet" em fundo escuro.
 
-### Arquivos modificados
-- `src/pages/admin/rh/RH.jsx` — reescrever `OrgChartTab` (linhas 1215-1366) e adicionar `OrgProfilePanel`
-
-### Sem dependencias novas
-- Usa Tailwind + CSS vars ja existentes
-- Sem mudancas de banco de dados
+### Arquivos
+- `src/components/ui/wallet-buttons.tsx` — novo componente
+- `src/pages/ministerial/voluntariado/VolMeuPainel.tsx` — usar novo componente
+- `src/components/membresia/MemberWalletPass.tsx` — usar novo componente
 
