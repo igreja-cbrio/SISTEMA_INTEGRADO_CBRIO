@@ -79,7 +79,7 @@ export default function MemberWalletDialog({ open, onOpenChange, initialCpf = ''
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
-      <DialogContent className="max-w-sm bg-gray-900 border-gray-700 text-white rounded-3xl p-6">
+      <DialogContent className="max-w-sm bg-gray-900 border-gray-700 text-white rounded-3xl p-6 max-sm:top-auto max-sm:bottom-4 max-sm:translate-y-0 max-sm:left-4 max-sm:right-4 max-sm:translate-x-0 max-sm:w-[calc(100%-2rem)]">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <img src="/logo-cbrio-icon.png" alt="CBRio" className="h-6 w-6" />
