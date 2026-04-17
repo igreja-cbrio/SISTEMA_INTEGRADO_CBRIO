@@ -504,6 +504,8 @@ export const membresia = {
   totem: {
     entrarGrupo: (grupoId, membroId) => post(`/membresia/totem/grupos/${grupoId}/entrar`, { membro_id: membroId }),
     geocodeCep: (cep) => get(`/membresia/geocode-cep?cep=${encodeURIComponent(cep)}`),
+    updateMembro: (id, data) => put(`/membresia/totem/membros/${id}`, data),
+    uploadFoto: (id, formData) => requestFile(`/membresia/totem/membros/${id}/foto`, formData),
   },
   contribuicoes: {
     list: (params) => get('/membresia/contribuicoes' + (params ? '?' + new URLSearchParams(params) : '')),

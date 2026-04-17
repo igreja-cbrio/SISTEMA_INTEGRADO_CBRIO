@@ -7,7 +7,8 @@ import {
   Users, UserCheck, Droplets, Mountain, Heart, CalendarDays,
   ArrowRight, HandHeart, Lock, Eye, EyeOff, ChevronLeft,
   QrCode, Loader2, CheckCircle2, Maximize, Minimize,
-  MapPin, Clock, Star, Map, List, Navigation,
+  MapPin, Clock, Star, Map, List, Navigation, Sun, Moon,
+  Camera, RotateCcw, Save, X,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -42,6 +43,7 @@ interface MemberData {
 }
 
 const PIN_KEY = 'cbrio-totem-pin';
+const THEME_KEY = 'cbrio-totem-theme';
 
 // ── Root component ────────────────────────────────────────────────────────────
 
@@ -53,6 +55,8 @@ export default function TotemMembro() {
   const [clock, setClock] = useState(new Date());
   const [scanError, setScanError] = useState('');
   const [isFullscreen, setIsFullscreen] = useState(false);
+  const [isDark, setIsDark] = useState(() => localStorage.getItem(THEME_KEY) !== 'light');
+  const toggleTheme = () => setIsDark(v => { const n = !v; localStorage.setItem(THEME_KEY, n ? 'dark' : 'light'); return n; });
 
   // PIN
   const [storedPin, setStoredPin] = useState('');
@@ -315,6 +319,7 @@ export default function TotemMembro() {
     <OptionFlow
       optionId={selectedOption}
       member={member}
+      isDark={isDark}
       onBack={() => { setState('greeting'); setSelectedOption(null); resetInactivity(); }}
       onDone={() => setState('done')}
       onActivity={resetInactivity}
@@ -338,9 +343,14 @@ export default function TotemMembro() {
   );
 
   // ── Greeting / menu ───────────────────────────────────────────────────────
+  const greetBg = isDark ? 'bg-gray-950 text-white' : 'bg-gray-50 text-gray-900';
+  const greetBorder = isDark ? 'border-white/10' : 'border-gray-200';
+  const greetMuted = isDark ? 'text-white/50' : 'text-gray-500';
+  const greetCardBg = isDark ? 'bg-white/5 border-white/10 hover:bg-white/10' : 'bg-white border-gray-200 hover:bg-gray-100';
+
   if (state === 'greeting' && member) return (
-    <div className="min-h-screen bg-gray-950 text-white flex flex-col">
-      <div className="flex items-center justify-between px-6 py-4 border-b border-white/10">
+    <div className={`min-h-screen flex flex-col ${greetBg}`}>
+      <div className={`flex items-center justify-between px-6 py-4 border-b ${greetBorder}`}>
         <div className="flex items-center gap-4">
           {member.foto_url ? (
             <img src={member.foto_url} alt="" className="h-14 w-14 rounded-full object-cover ring-2 ring-[#00B39D]" />
@@ -350,19 +360,24 @@ export default function TotemMembro() {
             </div>
           )}
           <div>
-            <p className="text-white/50 text-sm">Que bom te ver!</p>
+            <p className={`${greetMuted} text-sm`}>Que bom te ver!</p>
             <h2 className="text-2xl font-bold">{member.nome.split(' ')[0]}</h2>
           </div>
         </div>
-        <div className="text-right">
-          <p className="text-white/40 text-xs hidden sm:block">{format(clock, "EEEE, dd 'de' MMMM", { locale: ptBR })}</p>
-          <p className="text-xl font-mono font-bold tabular-nums">{format(clock, 'HH:mm')}</p>
+        <div className="flex items-center gap-3">
+          <button onClick={toggleTheme} className={`p-2 rounded-lg transition-colors ${isDark ? 'text-white/40 hover:text-white/80 hover:bg-white/10' : 'text-gray-400 hover:text-gray-700 hover:bg-gray-200'}`}>
+            {isDark ? <Sun className="h-5 w-5" /> : <Moon className="h-5 w-5" />}
+          </button>
+          <div className="text-right">
+            <p className={`${greetMuted} text-xs hidden sm:block`}>{format(clock, "EEEE, dd 'de' MMMM", { locale: ptBR })}</p>
+            <p className="text-xl font-mono font-bold tabular-nums">{format(clock, 'HH:mm')}</p>
+          </div>
         </div>
       </div>
 
       <div className="flex-1 flex items-center justify-center p-6">
         <div className="w-full max-w-2xl">
-          <p className="text-center text-white/50 text-base mb-6">O que você gostaria de fazer?</p>
+          <p className={`text-center ${greetMuted} text-base mb-6`}>O que você gostaria de fazer?</p>
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
             {MENU_OPTIONS.map(opt => {
               const Icon = opt.icon;
@@ -370,23 +385,23 @@ export default function TotemMembro() {
                 <button
                   key={opt.id}
                   onClick={() => goToOption(opt.id)}
-                  className="flex flex-col items-center gap-2.5 p-4 rounded-2xl border border-white/10 bg-white/5 hover:bg-white/10 hover:scale-[1.03] active:scale-[0.98] transition-all duration-150 group"
+                  className={`flex flex-col items-center gap-2.5 p-4 rounded-2xl border hover:scale-[1.03] active:scale-[0.98] transition-all duration-150 ${greetCardBg}`}
                 >
                   <div className="h-12 w-12 rounded-xl flex items-center justify-center" style={{ backgroundColor: opt.color + '25' }}>
                     <Icon className="h-6 w-6" style={{ color: opt.color }} />
                   </div>
                   <p className="text-sm font-semibold text-center leading-tight">{opt.label}</p>
-                  <p className="text-xs text-white/35 text-center leading-tight hidden sm:block">{opt.desc}</p>
+                  <p className={`text-xs ${greetMuted} text-center leading-tight hidden sm:block`}>{opt.desc}</p>
                 </button>
               );
             })}
           </div>
-          <p className="text-center text-white/20 text-xs mt-5">Toque em uma opção para continuar</p>
+          <p className={`text-center ${isDark ? 'text-white/20' : 'text-gray-400'} text-xs mt-5`}>Toque em uma opção para continuar</p>
         </div>
       </div>
 
       <div className="flex items-center justify-between px-6 py-3">
-        <button onClick={() => { setState('idle'); setMember(null); }} className="text-white/30 text-sm hover:text-white/60 flex items-center gap-1 transition-colors">
+        <button onClick={() => { setState('idle'); setMember(null); }} className={`${greetMuted} text-sm hover:opacity-80 flex items-center gap-1 transition-colors`}>
           <ChevronLeft className="h-4 w-4" /> Voltar
         </button>
         <button onClick={() => setState('exit_confirm')} className="text-transparent hover:text-white/10 text-xs transition-colors select-none">
@@ -448,9 +463,10 @@ export default function TotemMembro() {
 
 // ── Option Flow router ────────────────────────────────────────────────────────
 
-function OptionFlow({ optionId, member, onBack, onDone, onActivity }: {
+function OptionFlow({ optionId, member, isDark, onBack, onDone, onActivity }: {
   optionId: OptionId;
   member: MemberData;
+  isDark: boolean;
   onBack: () => void;
   onDone: () => void;
   onActivity: () => void;
@@ -459,6 +475,9 @@ function OptionFlow({ optionId, member, onBack, onDone, onActivity }: {
 
   if (optionId === 'grupos') {
     return <GruposFlow opt={opt} member={member} onBack={onBack} onDone={onDone} onActivity={onActivity} />;
+  }
+  if (optionId === 'membresia') {
+    return <MeusDadosFlow opt={opt} member={member} isDark={isDark} onBack={onBack} onDone={onDone} onActivity={onActivity} />;
   }
 
   // Demais opções — placeholder até implementação
@@ -486,18 +505,279 @@ function OptionFlow({ optionId, member, onBack, onDone, onActivity }: {
 
 // ── Shared header ─────────────────────────────────────────────────────────────
 
-function OptionHeader({ opt, member, onBack }: { opt: (typeof MENU_OPTIONS)[number]; member: MemberData; onBack: () => void }) {
+function OptionHeader({ opt, member, isDark = true, onBack }: { opt: (typeof MENU_OPTIONS)[number]; member: MemberData; isDark?: boolean; onBack: () => void }) {
   const Icon = opt.icon;
+  const border = isDark ? 'border-white/10' : 'border-gray-200';
+  const back   = isDark ? 'text-white/40 hover:text-white' : 'text-gray-400 hover:text-gray-700';
+  const name   = isDark ? 'text-white/30' : 'text-gray-400';
   return (
-    <div className="flex items-center gap-3 px-6 py-4 border-b border-white/10 shrink-0">
-      <button onClick={onBack} className="text-white/40 hover:text-white transition-colors p-1 -ml-1">
+    <div className={`flex items-center gap-3 px-6 py-4 border-b ${border} shrink-0`}>
+      <button onClick={onBack} className={`${back} transition-colors p-1 -ml-1`}>
         <ChevronLeft className="h-6 w-6" />
       </button>
       <div className="h-8 w-8 rounded-lg flex items-center justify-center" style={{ backgroundColor: opt.color + '30' }}>
         <Icon className="h-5 w-5" style={{ color: opt.color }} />
       </div>
       <h2 className="text-xl font-semibold">{opt.label}</h2>
-      <div className="ml-auto text-sm text-white/30">{member.nome.split(' ')[0]}</div>
+      <div className={`ml-auto text-sm ${name}`}>{member.nome.split(' ')[0]}</div>
+    </div>
+  );
+}
+
+// ── Meus Dados flow ───────────────────────────────────────────────────────────
+
+function MeusDadosFlow({ opt, member, isDark, onBack, onDone, onActivity }: {
+  opt: (typeof MENU_OPTIONS)[number];
+  member: MemberData;
+  isDark: boolean;
+  onBack: () => void;
+  onDone: () => void;
+  onActivity: () => void;
+}) {
+  const src = member.raw?.membro || member.raw?.cadastro || {};
+  const [form, setForm] = useState({
+    email:        member.email        || src.email        || '',
+    telefone:     member.telefone     || src.telefone     || '',
+    data_nascimento: src.data_nascimento || '',
+    estado_civil: src.estado_civil    || '',
+    endereco:     src.endereco        || '',
+    bairro:       src.bairro          || '',
+    cidade:       src.cidade          || '',
+    cep:          src.cep             || '',
+  });
+  const [saving, setSaving] = useState(false);
+  const [saveMsg, setSaveMsg] = useState('');
+  const [fotoUrl, setFotoUrl] = useState<string>(member.foto_url || src.foto_url || '');
+
+  // Camera
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const streamRef = useRef<MediaStream | null>(null);
+  const [camActive, setCamActive] = useState(false);
+  const [camLoading, setCamLoading] = useState(false);
+  const [camError, setCamError] = useState('');
+  const [capturedBlob, setCapturedBlob] = useState<Blob | null>(null);
+  const [capturedPreview, setCapturedPreview] = useState('');
+
+  const bg    = isDark ? 'bg-gray-950 text-white'    : 'bg-gray-50 text-gray-900';
+  const card  = isDark ? 'bg-white/5 border-white/10' : 'bg-white border-gray-200';
+  const input = isDark ? 'bg-white/10 border-white/15 text-white placeholder:text-white/30 focus:border-[#00B39D]'
+                       : 'bg-white border-gray-300 text-gray-900 placeholder:text-gray-400 focus:border-[#00B39D]';
+  const label = isDark ? 'text-white/50' : 'text-gray-500';
+
+  const startCamera = async () => {
+    setCamError('');
+    setCamLoading(true);
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user', width: 640, height: 480 } });
+      streamRef.current = stream;
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream;
+        await videoRef.current.play();
+      }
+      setCamActive(true);
+      setCapturedBlob(null);
+      setCapturedPreview('');
+    } catch {
+      setCamError('Câmera não disponível ou sem permissão.');
+    }
+    setCamLoading(false);
+  };
+
+  const stopCamera = () => {
+    streamRef.current?.getTracks().forEach(t => t.stop());
+    streamRef.current = null;
+    setCamActive(false);
+  };
+
+  const capture = () => {
+    if (!videoRef.current || !canvasRef.current) return;
+    const v = videoRef.current;
+    const c = canvasRef.current;
+    c.width = v.videoWidth;
+    c.height = v.videoHeight;
+    c.getContext('2d')!.drawImage(v, 0, 0);
+    c.toBlob(blob => {
+      if (!blob) return;
+      setCapturedBlob(blob);
+      setCapturedPreview(URL.createObjectURL(blob));
+      stopCamera();
+    }, 'image/jpeg', 0.92);
+  };
+
+  const uploadPhoto = async () => {
+    if (!capturedBlob || !member.id) return;
+    const fd = new FormData();
+    fd.append('foto', capturedBlob, 'foto.jpg');
+    const res = await membresia.totem.uploadFoto(member.id, fd);
+    if (res.foto_url) setFotoUrl(res.foto_url);
+    return res.foto_url;
+  };
+
+  const handleSave = async () => {
+    if (!member.id) return;
+    setSaving(true);
+    setSaveMsg('');
+    onActivity();
+    try {
+      if (capturedBlob) await uploadPhoto();
+      await membresia.totem.updateMembro(member.id, form);
+      setSaveMsg('Dados salvos com sucesso!');
+      setTimeout(onDone, 1800);
+    } catch {
+      setSaveMsg('Erro ao salvar. Tente novamente.');
+    }
+    setSaving(false);
+  };
+
+  // Cleanup camera on unmount
+  useEffect(() => () => stopCamera(), []);
+
+  const setField = (k: keyof typeof form) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
+    setForm(f => ({ ...f, [k]: e.target.value }));
+    onActivity();
+  };
+
+  const ESTADO_CIVIL_OPTS = ['Solteiro(a)', 'Casado(a)', 'Divorciado(a)', 'Viúvo(a)', 'União estável'];
+
+  return (
+    <div className={`min-h-screen flex flex-col ${bg}`} onClick={onActivity}>
+      <OptionHeader opt={opt} member={member} isDark={isDark} onBack={onBack} />
+
+      <div className="flex-1 overflow-y-auto p-6">
+        <div className="max-w-3xl mx-auto grid grid-cols-1 md:grid-cols-[260px_1fr] gap-6">
+
+          {/* Photo column */}
+          <div className="flex flex-col items-center gap-4">
+            <div className={`w-full rounded-2xl border p-4 flex flex-col items-center gap-3 ${card}`}>
+              <p className={`text-xs font-semibold uppercase tracking-wider ${label}`}>Foto do Rosto</p>
+
+              {/* Photo preview */}
+              {capturedPreview ? (
+                <img src={capturedPreview} className="h-48 w-48 rounded-2xl object-cover ring-2 ring-[#00B39D]" alt="Nova foto" />
+              ) : fotoUrl ? (
+                <img src={fotoUrl} className="h-48 w-48 rounded-2xl object-cover ring-2 ring-[#00B39D]/50" alt="Foto atual" />
+              ) : (
+                <div className="h-48 w-48 rounded-2xl bg-[#00B39D]/10 flex items-center justify-center text-6xl font-bold text-[#00B39D]">
+                  {member.nome.charAt(0)}
+                </div>
+              )}
+
+              {/* Camera or capture */}
+              {camActive ? (
+                <div className="w-full space-y-2">
+                  <video ref={videoRef} className="w-full rounded-xl object-cover" autoPlay muted playsInline style={{ maxHeight: 200 }} />
+                  <div className="flex gap-2">
+                    <button onClick={capture} className="flex-1 py-2 rounded-xl bg-[#00B39D] text-white text-sm font-semibold flex items-center justify-center gap-2">
+                      <Camera className="h-4 w-4" /> Capturar
+                    </button>
+                    <button onClick={stopCamera} className="p-2 rounded-xl border border-red-500/40 text-red-400">
+                      <X className="h-4 w-4" />
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <button
+                  onClick={startCamera}
+                  disabled={camLoading}
+                  className={`w-full py-2.5 rounded-xl border text-sm font-medium flex items-center justify-center gap-2 transition-colors ${isDark ? 'border-white/20 text-white/70 hover:bg-white/10' : 'border-gray-300 text-gray-600 hover:bg-gray-100'}`}
+                >
+                  {camLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Camera className="h-4 w-4" />}
+                  {capturedPreview ? 'Tirar outra foto' : 'Abrir câmera'}
+                </button>
+              )}
+              {camError && <p className="text-xs text-red-400 text-center">{camError}</p>}
+              {capturedPreview && (
+                <p className="text-xs text-[#00B39D] text-center">Nova foto pronta para salvar</p>
+              )}
+            </div>
+            <canvas ref={canvasRef} className="hidden" />
+          </div>
+
+          {/* Form column */}
+          <div className={`rounded-2xl border p-5 space-y-4 ${card}`}>
+            <p className={`text-xs font-semibold uppercase tracking-wider ${label}`}>Informações Pessoais</p>
+
+            {/* Nome — read only */}
+            <div>
+              <label className={`block text-xs mb-1 ${label}`}>Nome completo</label>
+              <div className={`px-3 py-2 rounded-xl border text-sm ${isDark ? 'bg-white/5 border-white/10 text-white/60' : 'bg-gray-100 border-gray-200 text-gray-500'}`}>
+                {src.nome || member.nome}
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className={`block text-xs mb-1 ${label}`}>E-mail</label>
+                <input value={form.email} onChange={setField('email')} type="email"
+                  className={`w-full px-3 py-2 rounded-xl border text-sm outline-none transition-colors ${input}`} />
+              </div>
+              <div>
+                <label className={`block text-xs mb-1 ${label}`}>Telefone</label>
+                <input value={form.telefone} onChange={setField('telefone')} type="tel"
+                  className={`w-full px-3 py-2 rounded-xl border text-sm outline-none transition-colors ${input}`} />
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className={`block text-xs mb-1 ${label}`}>Data de nascimento</label>
+                <input value={form.data_nascimento} onChange={setField('data_nascimento')} type="date"
+                  className={`w-full px-3 py-2 rounded-xl border text-sm outline-none transition-colors ${input}`} />
+              </div>
+              <div>
+                <label className={`block text-xs mb-1 ${label}`}>Estado civil</label>
+                <select value={form.estado_civil} onChange={setField('estado_civil')}
+                  className={`w-full px-3 py-2 rounded-xl border text-sm outline-none transition-colors ${input}`}>
+                  <option value="">Selecionar</option>
+                  {ESTADO_CIVIL_OPTS.map(o => <option key={o} value={o}>{o}</option>)}
+                </select>
+              </div>
+            </div>
+
+            <p className={`text-xs font-semibold uppercase tracking-wider pt-2 ${label}`}>Endereço</p>
+
+            <div>
+              <label className={`block text-xs mb-1 ${label}`}>Endereço</label>
+              <input value={form.endereco} onChange={setField('endereco')}
+                className={`w-full px-3 py-2 rounded-xl border text-sm outline-none transition-colors ${input}`} />
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className={`block text-xs mb-1 ${label}`}>Bairro</label>
+                <input value={form.bairro} onChange={setField('bairro')}
+                  className={`w-full px-3 py-2 rounded-xl border text-sm outline-none transition-colors ${input}`} />
+              </div>
+              <div>
+                <label className={`block text-xs mb-1 ${label}`}>CEP</label>
+                <input value={form.cep} onChange={setField('cep')}
+                  className={`w-full px-3 py-2 rounded-xl border text-sm outline-none transition-colors ${input}`} />
+              </div>
+            </div>
+            <div>
+              <label className={`block text-xs mb-1 ${label}`}>Cidade</label>
+              <input value={form.cidade} onChange={setField('cidade')}
+                className={`w-full px-3 py-2 rounded-xl border text-sm outline-none transition-colors ${input}`} />
+            </div>
+          </div>
+        </div>
+
+        {/* Save */}
+        <div className="max-w-3xl mx-auto mt-6 flex items-center justify-between gap-4">
+          {saveMsg && (
+            <p className={`text-sm ${saveMsg.includes('Erro') ? 'text-red-400' : 'text-[#00B39D]'}`}>{saveMsg}</p>
+          )}
+          <div className="ml-auto flex gap-3">
+            <Button variant="outline" onClick={onBack} className={isDark ? 'border-white/20 text-white hover:bg-white/10' : ''}>
+              Cancelar
+            </Button>
+            <Button onClick={handleSave} disabled={saving} className="bg-[#00B39D] hover:bg-[#00B39D]/90 text-white gap-2 min-w-[140px]">
+              {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+              {saving ? 'Salvando...' : 'Salvar dados'}
+            </Button>
+          </div>
+        </div>
+      </div>
     </div>
   );
 }

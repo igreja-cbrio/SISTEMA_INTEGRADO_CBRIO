@@ -717,6 +717,45 @@ router.post('/totem/grupos/:id/entrar', async (req, res) => {
   } catch (e) { res.status(500).json({ error: 'Erro ao entrar no grupo' }); }
 });
 
+// PUT /api/membresia/totem/membros/:id — self-update pelo totem (campos seguros)
+router.put('/totem/membros/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const allowed = ['email', 'telefone', 'endereco', 'bairro', 'cidade', 'cep', 'estado_civil'];
+    const updates = {};
+    for (const f of allowed) {
+      if (req.body[f] !== undefined) updates[f] = req.body[f];
+    }
+    if (Object.keys(updates).length === 0) return res.status(400).json({ error: 'Nenhum campo para atualizar' });
+    updates.updated_at = new Date().toISOString();
+    const { data, error } = await supabase.from('mem_membros').update(updates).eq('id', id).select().single();
+    if (error) throw error;
+    res.json(data);
+  } catch (e) { res.status(500).json({ error: 'Erro ao atualizar dados' }); }
+});
+
+// POST /api/membresia/totem/membros/:id/foto — upload de foto via totem
+router.post('/totem/membros/:id/foto', uploadMw.single('foto'), async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ error: 'Imagem não fornecida' });
+    const { id } = req.params;
+    const ext = req.file.mimetype === 'image/png' ? 'png' : req.file.mimetype === 'image/webp' ? 'webp' : 'jpg';
+    const path = `membros/${id}.${ext}`;
+    const { error: upErr } = await supabase.storage
+      .from('fotos-membros')
+      .upload(path, req.file.buffer, { contentType: req.file.mimetype, upsert: true });
+    if (upErr) throw upErr;
+    const { data: urlData } = supabase.storage.from('fotos-membros').getPublicUrl(path);
+    const foto_url = `${urlData.publicUrl}?t=${Date.now()}`;
+    const { error: dbErr } = await supabase.from('mem_membros').update({ foto_url }).eq('id', id);
+    if (dbErr) throw dbErr;
+    res.json({ foto_url });
+  } catch (e) {
+    console.error('[TOTEM] foto upload error:', e.message);
+    res.status(500).json({ error: `Erro ao enviar foto: ${e.message}` });
+  }
+});
+
 // PATCH /api/membresia/grupo-membros/:id/sair — remover membro do grupo (marca saiu_em)
 router.patch('/grupo-membros/:id/sair', authorize('admin', 'diretor'), async (req, res) => {
   try {
