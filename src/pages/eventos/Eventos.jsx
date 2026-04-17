@@ -331,6 +331,9 @@ export default function Eventos() {
   const [newTplForm, setNewTplForm] = useState({ area: '', etapa: '', titulo: '', offset_start: -30, offset_end: -15 });
   const [newSubName, setNewSubName] = useState('');
   const [expandedTpl, setExpandedTpl] = useState(null);
+  const [simpleKanban, setSimpleKanban] = useState({ events: [], tasks: [] });
+  const [simpleKanbanEvent, setSimpleKanbanEvent] = useState('all');
+  const [simpleNewTask, setSimpleNewTask] = useState('');
   const [kpiWeights, setKpiWeights] = useState([]);
   const [eventList, setEventList] = useState([]);
   const [categories, setCategories] = useState([]);
@@ -981,6 +984,82 @@ export default function Eventos() {
               </div>
             ))}
           </div>
+        </div>
+      </div>
+    );
+  }
+
+  async function loadSimpleKanban() {
+    try {
+      const data = await cyclesApi.kanbanAll();
+      const simpleEvs = (data.events || []).filter(e => e._simple);
+      const simpleTks = (data.tasks || []).filter(t => t._source === 'simple');
+      setSimpleKanban({ events: simpleEvs, tasks: simpleTks });
+    } catch {}
+  }
+
+  function renderSimpleKanban() {
+    const { events: evs, tasks: tks } = simpleKanban;
+    const STATUS_COLS = [
+      { key: 'pendente', mapped: ['pendente', 'a_fazer'], label: 'A fazer', color: '#9ca3af' },
+      { key: 'em-andamento', mapped: ['em-andamento', 'em_andamento'], label: 'Em andamento', color: '#3b82f6' },
+      { key: 'concluida', mapped: ['concluida', 'concluido'], label: 'Concluida', color: '#10b981' },
+    ];
+    const filtered = simpleKanbanEvent === 'all' ? tks : tks.filter(t => t.event_id === simpleKanbanEvent);
+
+    return (
+      <div>
+        {/* Event filter + Add task */}
+        <div style={{ display: 'flex', gap: 10, marginBottom: 16, flexWrap: 'wrap', alignItems: 'flex-end' }}>
+          <div>
+            <div style={{ fontSize: 10, color: C.t3, marginBottom: 2 }}>Evento</div>
+            <select value={simpleKanbanEvent} onChange={e => setSimpleKanbanEvent(e.target.value)} style={{ padding: 6, borderRadius: 6, border: `1px solid ${C.border}`, background: C.card, color: C.text, fontSize: 12, minWidth: 200 }}>
+              <option value="all">Todos os eventos ({evs.length})</option>
+              {evs.map(ev => <option key={ev.id} value={ev.id}>{ev.name}</option>)}
+            </select>
+          </div>
+          {simpleKanbanEvent !== 'all' && (
+            <div style={{ display: 'flex', gap: 6, flex: 1, minWidth: 200 }}>
+              <input placeholder="Nova tarefa..." value={simpleNewTask} onChange={e => setSimpleNewTask(e.target.value)} style={{ flex: 1, padding: 6, borderRadius: 6, border: `1px solid ${C.border}`, background: C.card, color: C.text, fontSize: 12 }} onKeyDown={async e => {
+                if (e.key === 'Enter' && simpleNewTask.trim()) {
+                  try { await events.createTask(simpleKanbanEvent, { name: simpleNewTask.trim() }); setSimpleNewTask(''); await loadSimpleKanban(); } catch {}
+                }
+              }} />
+              <button onClick={async () => { if (simpleNewTask.trim()) { try { await events.createTask(simpleKanbanEvent, { name: simpleNewTask.trim() }); setSimpleNewTask(''); await loadSimpleKanban(); } catch {} } }} style={{ padding: '6px 14px', borderRadius: 6, border: 'none', background: C.primary, color: '#fff', fontSize: 12, fontWeight: 600, cursor: 'pointer', whiteSpace: 'nowrap' }}>+ Tarefa</button>
+            </div>
+          )}
+          <span style={{ fontSize: 11, color: C.t3, marginLeft: 'auto' }}>{filtered.length} tarefas | {evs.length} eventos sem ciclo</span>
+        </div>
+
+        {/* Kanban 3 columns */}
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12 }}>
+          {STATUS_COLS.map(col => {
+            const colTasks = filtered.filter(t => col.mapped.includes(t.status));
+            return (
+              <div key={col.key} style={{ background: C.bg, borderRadius: 12, padding: 10, minHeight: 200 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10, paddingBottom: 6, borderBottom: `2px solid ${col.color}` }}>
+                  <span style={{ fontSize: 12, fontWeight: 700, color: col.color, textTransform: 'uppercase' }}>{col.label}</span>
+                  <span style={{ fontSize: 10, padding: '2px 8px', borderRadius: 99, background: C.card, border: `1px solid ${C.border}`, color: C.t3 }}>{colTasks.length}</span>
+                </div>
+                {colTasks.length === 0 && <div style={{ padding: 16, textAlign: 'center', fontSize: 10, color: C.t3, border: '1.5px dashed var(--cbrio-border)', borderRadius: 8 }}>{'\u2014'}</div>}
+                {colTasks.map(t => {
+                  const evName = evs.find(e => e.id === t.event_id)?.name || '';
+                  return (
+                    <div key={t.id} style={{ background: C.card, borderRadius: 8, padding: 10, marginBottom: 6, border: `1px solid ${C.border}` }}>
+                      <div style={{ fontSize: 13, fontWeight: 600, color: C.text, marginBottom: 4 }}>{t.titulo || t.name}</div>
+                      {evName && <div style={{ fontSize: 10, color: C.t3, marginBottom: 4 }}>{evName}</div>}
+                      {t.responsible || t.responsavel_nome ? <div style={{ fontSize: 10, color: C.t2 }}>{t.responsible || t.responsavel_nome}</div> : null}
+                      <div style={{ display: 'flex', gap: 4, marginTop: 6 }}>
+                        {col.key !== 'pendente' && <button onClick={async () => { try { await events.updateTaskStatus(t.id, 'pendente'); await loadSimpleKanban(); } catch {} }} style={{ padding: '2px 6px', fontSize: 9, borderRadius: 4, border: `1px solid ${C.border}`, background: 'transparent', color: C.t3, cursor: 'pointer' }}>A fazer</button>}
+                        {col.key !== 'em-andamento' && <button onClick={async () => { try { await events.updateTaskStatus(t.id, 'em-andamento'); await loadSimpleKanban(); } catch {} }} style={{ padding: '2px 6px', fontSize: 9, borderRadius: 4, border: 'none', background: '#3b82f620', color: '#3b82f6', cursor: 'pointer' }}>Andamento</button>}
+                        {col.key !== 'concluida' && <button onClick={async () => { try { await events.updateTaskStatus(t.id, 'concluida'); await loadSimpleKanban(); } catch {} }} style={{ padding: '2px 6px', fontSize: 9, borderRadius: 4, border: 'none', background: '#10b98120', color: '#10b981', cursor: 'pointer' }}>Concluir</button>}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            );
+          })}
         </div>
       </div>
     );
@@ -3032,6 +3111,7 @@ export default function Eventos() {
         <button style={styles.tab(tab === 1)} onClick={() => setTab(1)}>Lista</button>
         <button style={styles.tab(tab === 2)} onClick={() => { setTab(2); if (!kanbanCycleData) loadKanban(); }}>Kanban</button>
         <button style={styles.tab(tab === 3)} onClick={() => { setTab(3); if (!kanbanCycleData) loadKanban(); }}>Gantt</button>
+        <button style={styles.tab(tab === 7)} onClick={() => { setTab(7); loadSimpleKanban(); }}>Tarefas</button>
         <button style={styles.tab(tab === 5)} onClick={() => { setTab(5); if (!kpiData) loadKpis(kpiTipo); }}>KPIs</button>
         {accessLevel >= 5 && <button style={styles.tab(tab === 6)} onClick={async () => { setTab(6); try { const d = await cyclesApi.admTemplates(); setAdmTemplates(Array.isArray(d) ? d : []); } catch (e) { console.error('Templates load error:', e); } }}>Templates</button>}
         {selectedEvent && <button style={styles.tab(tab === 4)} onClick={() => setTab(4)}>Detalhes</button>}
@@ -3044,6 +3124,7 @@ export default function Eventos() {
       {tab === 3 && renderGantt()}
       {tab === 4 && renderDetail()}
       {tab === 5 && renderKPIs()}
+      {tab === 7 && renderSimpleKanban()}
       {tab === 6 && renderTemplates()}
 
       {/* KPI Doc Resumo Modal */}
