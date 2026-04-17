@@ -740,16 +740,43 @@ router.get('/adm-templates', async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// POST /api/cycles/adm-templates — criar template
+// Helper: propagar template para todos os eventos ativos com ciclo
+async function propagarParaEventosAtivos(tmpl) {
+  const etapaToFase = { 'Pré-Briefing': 'Pré Briefing', 'Aprovação': 'Aprovação', 'Execução Estratégica': 'Execução Estratégica', 'Pré-Testes': 'Pré-Testes', 'Finalizações': 'Finalizações', 'Alinhamentos Operacionais Finais': 'Alinhamentos Operacionais Finais', 'Dia D': 'Dia D', 'Debriefing': 'Debrief' };
+  const faseNome = etapaToFase[tmpl.etapa] || tmpl.etapa;
+
+  const { data: cycles } = await supabase.from('event_cycles').select('event_id, data_dia_d').eq('status', 'ativo');
+  let propagados = 0;
+  for (const c of (cycles || [])) {
+    const { data: phase } = await supabase.from('event_cycle_phases').select('id').eq('event_id', c.event_id).eq('nome_fase', faseNome).maybeSingle();
+    if (!phase) continue;
+    const diaD = new Date(c.data_dia_d);
+    const dataFim = new Date(diaD); dataFim.setDate(diaD.getDate() + tmpl.offset_end);
+    const { data: task } = await supabase.from('cycle_phase_tasks').insert({
+      event_phase_id: phase.id, event_id: c.event_id, titulo: tmpl.titulo,
+      area: tmpl.area, prazo: dataFim.toISOString().split('T')[0], status: 'a_fazer', prioridade: 'normal',
+    }).select().single();
+    if (task && tmpl.adm_task_template_subtasks?.length) {
+      await supabase.from('cycle_task_subtasks').insert(tmpl.adm_task_template_subtasks.map((s, i) => ({ task_id: task.id, name: s.name, sort_order: i })));
+    }
+    propagados++;
+  }
+  return propagados;
+}
+
+// POST /api/cycles/adm-templates — criar template + propagar para eventos ativos
 router.post('/adm-templates', authorize('admin', 'diretor'), async (req, res) => {
   try {
     const d = req.body;
     const { data, error } = await supabase.from('adm_task_templates').insert({
       area: d.area, etapa: d.etapa, titulo: d.titulo,
       offset_start: d.offset_start || 0, offset_end: d.offset_end || 0, sort_order: d.sort_order || 0,
-    }).select().single();
+    }).select('*, adm_task_template_subtasks(*)').single();
     if (error) throw error;
-    res.json(data);
+
+    // Propagar para eventos ativos nao concluidos
+    const propagados = await propagarParaEventosAtivos(data);
+    res.json({ ...data, propagados });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
@@ -766,9 +793,28 @@ router.put('/adm-templates/:id', authorize('admin', 'diretor'), async (req, res)
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// DELETE /api/cycles/adm-templates/:id
+// DELETE /api/cycles/adm-templates/:id — remove template + tarefas nao concluidas dos eventos ativos
 router.delete('/adm-templates/:id', authorize('admin', 'diretor'), async (req, res) => {
   try {
+    // Buscar template antes de deletar pra saber titulo/area
+    const { data: tmpl } = await supabase.from('adm_task_templates').select('titulo, area').eq('id', req.params.id).single();
+
+    // Remover tarefas nao concluidas de eventos ativos que batem com esse template
+    if (tmpl) {
+      const { data: cycles } = await supabase.from('event_cycles').select('event_id').eq('status', 'ativo');
+      const eventIds = (cycles || []).map(c => c.event_id);
+      if (eventIds.length > 0) {
+        // Buscar tasks que batem titulo+area e nao estao concluidas
+        const { data: tasks } = await supabase.from('cycle_phase_tasks').select('id').in('event_id', eventIds).eq('titulo', tmpl.titulo).eq('area', tmpl.area).neq('status', 'concluida');
+        const taskIds = (tasks || []).map(t => t.id);
+        if (taskIds.length > 0) {
+          await supabase.from('card_completions').delete().in('task_id', taskIds);
+          await supabase.from('cycle_task_subtasks').delete().in('task_id', taskIds);
+          await supabase.from('cycle_phase_tasks').delete().in('id', taskIds);
+        }
+      }
+    }
+
     await supabase.from('adm_task_template_subtasks').delete().eq('template_id', req.params.id);
     await supabase.from('adm_task_templates').delete().eq('id', req.params.id);
     res.json({ success: true });
