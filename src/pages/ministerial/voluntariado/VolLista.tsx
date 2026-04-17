@@ -1,5 +1,5 @@
 import { useState, useMemo } from 'react';
-import { useQueryClient } from '@tanstack/react-query';
+import { useQueryClient, useMutation } from '@tanstack/react-query';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -7,8 +7,9 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
-import { RefreshCw, Search, Users, QrCode, Clock, CheckCircle2, UserCheck } from 'lucide-react';
+import { RefreshCw, Search, Users, QrCode, Clock, CheckCircle2, UserCheck, UserPlus } from 'lucide-react';
 import { toast } from 'sonner';
+import { voluntariado } from '@/api';
 import {
   useVolunteersPool, useSyncPlanningCenter, useWaitingAllocation,
   useAllocateVolunteer, useVolTeamsManaged,
@@ -55,6 +56,19 @@ function TodosList() {
   const [search, setSearch] = useState('');
   const [teamFilter, setTeamFilter] = useState('all');
   const [sourceFilter, setSourceFilter] = useState('all');
+  const [showAdd, setShowAdd] = useState(false);
+  const [addForm, setAddForm] = useState({ full_name: '', email: '', phone: '', cpf: '' });
+
+  const createVol = useMutation({
+    mutationFn: (data: typeof addForm) => voluntariado.profiles.create(data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['vol', 'volunteers-pool'] });
+      toast.success('Voluntario adicionado com sucesso');
+      setShowAdd(false);
+      setAddForm({ full_name: '', email: '', phone: '', cpf: '' });
+    },
+    onError: (err: any) => toast.error(err.message || 'Erro ao adicionar voluntario'),
+  });
 
   const allTeams = useMemo(() => {
     const map = new Map<string, { id: string; name: string; color?: string }>();
@@ -107,10 +121,15 @@ function TodosList() {
           <h1 className="text-xl font-bold text-foreground">Voluntarios</h1>
           <p className="text-sm text-muted-foreground">{pool.length} voluntario(s) no sistema</p>
         </div>
-        <Button size="sm" variant="outline" className="gap-2 w-full sm:w-auto" onClick={handleSync} disabled={sync.isPending}>
-          {sync.isPending ? <RefreshCw className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
-          Sincronizar
-        </Button>
+        <div className="flex gap-2 w-full sm:w-auto">
+          <Button size="sm" className="gap-2 flex-1 sm:flex-none bg-[#00B39D] hover:bg-[#00B39D]/80" onClick={() => setShowAdd(true)}>
+            <UserPlus className="h-4 w-4" /> Adicionar
+          </Button>
+          <Button size="sm" variant="outline" className="gap-2 flex-1 sm:flex-none" onClick={handleSync} disabled={sync.isPending}>
+            {sync.isPending ? <RefreshCw className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+            Sincronizar
+          </Button>
+        </div>
       </div>
 
       <div className="flex flex-col sm:flex-row gap-2">
@@ -194,6 +213,44 @@ function TodosList() {
           })}
         </div>
       )}
+
+      {/* Modal: adicionar voluntario manualmente */}
+      <Dialog open={showAdd} onOpenChange={open => { if (!open) { setShowAdd(false); setAddForm({ full_name: '', email: '', phone: '', cpf: '' }); } }}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Adicionar Voluntario</DialogTitle>
+          </DialogHeader>
+          <div className="py-2 space-y-3">
+            <div>
+              <Label>Nome completo *</Label>
+              <Input className="mt-1" placeholder="Nome e sobrenome" value={addForm.full_name} onChange={e => setAddForm(f => ({ ...f, full_name: e.target.value }))} />
+            </div>
+            <div>
+              <Label>E-mail</Label>
+              <Input className="mt-1" type="email" placeholder="email@exemplo.com" value={addForm.email} onChange={e => setAddForm(f => ({ ...f, email: e.target.value }))} />
+            </div>
+            <div>
+              <Label>Telefone</Label>
+              <Input className="mt-1" placeholder="(21) 99999-9999" value={addForm.phone} onChange={e => setAddForm(f => ({ ...f, phone: e.target.value }))} />
+            </div>
+            <div>
+              <Label>CPF</Label>
+              <Input className="mt-1" placeholder="000.000.000-00" value={addForm.cpf} onChange={e => setAddForm(f => ({ ...f, cpf: e.target.value }))} />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowAdd(false)}>Cancelar</Button>
+            <Button
+              className="bg-[#00B39D] hover:bg-[#00B39D]/80"
+              disabled={!addForm.full_name.trim() || createVol.isPending}
+              onClick={() => createVol.mutate(addForm)}
+            >
+              {createVol.isPending ? <RefreshCw className="h-4 w-4 animate-spin mr-2" /> : null}
+              Salvar
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </>
   );
 }

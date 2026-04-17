@@ -751,6 +751,7 @@ export const voluntariado = {
   profiles: {
     list: () => get('/voluntariado/profiles'),
     get: (id) => get(`/voluntariado/profiles/${id}`),
+    create: (data) => post('/voluntariado/profiles', data),
     update: (id, data) => put(`/voluntariado/profiles/${id}`, data),
   },
   // Roles

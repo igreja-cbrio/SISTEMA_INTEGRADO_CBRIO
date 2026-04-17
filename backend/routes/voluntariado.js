@@ -512,6 +512,19 @@ router.get('/profiles/:id', async (req, res) => {
   } catch (e) { res.status(500).json({ error: 'Erro ao buscar perfil' }); }
 });
 
+router.post('/profiles', async (req, res) => {
+  try {
+    const { full_name, email, phone, cpf } = req.body;
+    if (!full_name || !full_name.trim()) return res.status(400).json({ error: 'Nome obrigatorio' });
+    const cleanCpf = cpf ? cpf.replace(/\D/g, '') : null;
+    const { data, error } = await supabase.from('vol_profiles')
+      .insert({ full_name: full_name.trim(), email: email || null, phone: phone || null, cpf: cleanCpf || null, origem: 'manual', allocation_status: 'active', profile_complete: true })
+      .select().single();
+    if (error) return res.status(400).json({ error: error.message });
+    res.json(data);
+  } catch (e) { res.status(500).json({ error: 'Erro ao criar perfil' }); }
+});
+
 router.put('/profiles/:id', async (req, res) => {
   try {
     const { full_name, email, planning_center_id, avatar_url } = req.body;
