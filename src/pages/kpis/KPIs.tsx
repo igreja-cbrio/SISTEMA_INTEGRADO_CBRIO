@@ -2,17 +2,23 @@ import { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { kpis as kpisApi } from '@/api';
 import { useAuth } from '@/contexts/AuthContext';
-import { format, startOfWeek } from 'date-fns';
+import {
+  format, startOfWeek, endOfWeek, startOfMonth, endOfMonth,
+  eachDayOfInterval, isSameMonth, isSameDay, subWeeks,
+  addMonths, subMonths, isWithinInterval, parseISO,
+} from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import {
   LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid,
-  Tooltip, ResponsiveContainer, Legend,
+  Tooltip, ResponsiveContainer, Legend, AreaChart, Area,
+  RadialBarChart, RadialBar, Cell, PieChart, Pie,
 } from 'recharts';
 import {
   Users, TrendingUp, Droplets, Youtube, HandHeart,
   Plus, RefreshCw, CheckCircle2, BookOpen, Baby,
   Target, Edit2, Save, X, Loader2, ArrowRight, UserCheck,
-  Heart, Building2, DoorOpen, Activity,
+  Heart, Building2, DoorOpen, Activity, ChevronLeft, ChevronRight,
+  LayoutGrid, List, FileText,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -326,15 +332,109 @@ function ModalBatismo({ onClose, onSaved }: { onClose: () => void; onSaved: () =
 
 // ── Tab: Cultos ────────────────────────────────────────────────────────────────
 
+type FilterId = 'semana_passada' | 'esta_semana' | 'mes_atual' | 'todas';
+
+const FILTERS: { id: FilterId; label: string }[] = [
+  { id: 'semana_passada', label: 'Semana passada' },
+  { id: 'esta_semana',    label: 'Esta semana' },
+  { id: 'mes_atual',      label: 'Este mês' },
+  { id: 'todas',          label: 'Todas' },
+];
+
+function filterCultos(cultos: any[], filterId: FilterId) {
+  const now = new Date();
+  if (filterId === 'semana_passada') {
+    const semPassada = subWeeks(now, 1);
+    const ini = startOfWeek(semPassada, { weekStartsOn: 0 });
+    const fim = endOfWeek(semPassada, { weekStartsOn: 0 });
+    return cultos.filter(c => isWithinInterval(parseISO(c.data), { start: ini, end: fim }));
+  }
+  if (filterId === 'esta_semana') {
+    const ini = startOfWeek(now, { weekStartsOn: 0 });
+    const fim = endOfWeek(now, { weekStartsOn: 0 });
+    return cultos.filter(c => isWithinInterval(parseISO(c.data), { start: ini, end: fim }));
+  }
+  if (filterId === 'mes_atual') {
+    const ini = startOfMonth(now);
+    const fim = endOfMonth(now);
+    return cultos.filter(c => isWithinInterval(parseISO(c.data), { start: ini, end: fim }));
+  }
+  return cultos;
+}
+
+function CalendarioCultos({ cultos, serviceTypes, calMes, onDayClick, selectedDay }: {
+  cultos: any[]; serviceTypes: any[]; calMes: Date;
+  onDayClick: (d: Date) => void; selectedDay: Date | null;
+}) {
+  const primeiroDia = startOfMonth(calMes);
+  const ultimoDia = endOfMonth(calMes);
+  const grid = eachDayOfInterval({
+    start: startOfWeek(primeiroDia, { weekStartsOn: 0 }),
+    end: endOfWeek(ultimoDia, { weekStartsOn: 0 }),
+  });
+  const cultosNodia = (d: Date) => cultos.filter(c => isSameDay(parseISO(c.data), d));
+  const stColor = (id: string) => serviceTypes.find(s => s.id === id)?.color || '#6B7280';
+  const semanas = [];
+  for (let i = 0; i < grid.length; i += 7) semanas.push(grid.slice(i, i + 7));
+
+  return (
+    <div className="rounded-2xl border border-border bg-card overflow-hidden">
+      <div className="grid grid-cols-7 border-b border-border">
+        {['Dom','Seg','Ter','Qua','Qui','Sex','Sáb'].map(d => (
+          <div key={d} className="py-2 text-center text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">{d}</div>
+        ))}
+      </div>
+      {semanas.map((semana, si) => (
+        <div key={si} className="grid grid-cols-7 border-b border-border last:border-0">
+          {semana.map((dia, di) => {
+            const cultosDia = cultosNodia(dia);
+            const isHoje = isSameDay(dia, new Date());
+            const isSelected = selectedDay && isSameDay(dia, selectedDay);
+            const isOutro = !isSameMonth(dia, calMes);
+            return (
+              <div
+                key={di}
+                onClick={() => cultosDia.length > 0 && onDayClick(dia)}
+                className={`min-h-[72px] p-1.5 border-r border-border last:border-r-0 transition-colors
+                  ${cultosDia.length > 0 ? 'cursor-pointer hover:bg-muted/30' : ''}
+                  ${isSelected ? 'bg-primary/5' : ''}
+                  ${isOutro ? 'bg-muted/20' : ''}
+                `}
+              >
+                <span className={`text-xs font-medium inline-flex h-5 w-5 items-center justify-center rounded-full
+                  ${isHoje ? 'bg-primary text-white' : isOutro ? 'text-muted-foreground/40' : 'text-foreground'}`}>
+                  {format(dia, 'd')}
+                </span>
+                <div className="mt-1 space-y-0.5">
+                  {cultosDia.map(c => (
+                    <div key={c.id} className="text-[9px] leading-tight px-1 py-0.5 rounded font-medium truncate text-white"
+                      style={{ background: stColor(c.service_type_id) }}>
+                      {c.nome.split('—')[0].trim()}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function TabCultos({ serviceTypes }: { serviceTypes: any[] }) {
   const [cultos, setCultos] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [showModal, setShowModal] = useState(false);
   const [editing, setEditing] = useState<any>(null);
+  const [filtro, setFiltro] = useState<FilterId>('semana_passada');
+  const [view, setView] = useState<'calendar' | 'table'>('calendar');
+  const [calMes, setCalMes] = useState(new Date());
+  const [selectedDay, setSelectedDay] = useState<Date | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
-    try { setCultos(await kpisApi.cultos.list({ limit: 50 })); } catch {}
+    try { setCultos(await kpisApi.cultos.list({ limit: 200 })); } catch {}
     setLoading(false);
   }, []);
 
@@ -346,78 +446,239 @@ function TabCultos({ serviceTypes }: { serviceTypes: any[] }) {
   };
 
   const stColor = (id: string) => serviceTypes.find(s => s.id === id)?.color || '#6B7280';
+  const filtered = view === 'table' ? filterCultos(cultos, filtro) : cultos;
+  const listaCal = selectedDay
+    ? cultos.filter(c => isSameDay(parseISO(c.data), selectedDay))
+    : cultos.filter(c => isSameMonth(parseISO(c.data), calMes));
+
+  // Chart data: frequência por semana
+  const chartData = (() => {
+    const map: Record<string, any> = {};
+    cultos.slice().reverse().forEach(c => {
+      const sem = format(startOfWeek(parseISO(c.data), { weekStartsOn: 0 }), 'dd/MM', { locale: ptBR });
+      if (!map[sem]) map[sem] = { semana: sem, adulto: 0, kids: 0, decisoes: 0 };
+      map[sem].adulto   += c.presencial_adulto || 0;
+      map[sem].kids     += c.presencial_kids   || 0;
+      map[sem].decisoes += (c.decisoes_presenciais || 0) + (c.decisoes_online || 0);
+    });
+    return Object.values(map).slice(-12);
+  })();
+
+  const CultoRow = ({ c, i }: { c: any; i: number }) => (
+    <tr className={`border-b border-border last:border-0 hover:bg-muted/20 transition-colors ${i % 2 === 0 ? '' : 'bg-muted/10'}`}>
+      <td className="px-4 py-3">
+        <div className="flex items-center gap-2">
+          <span className="h-2 w-2 rounded-full shrink-0" style={{ background: stColor(c.service_type_id) }} />
+          <span className="font-medium text-foreground text-xs leading-tight">{c.nome}</span>
+        </div>
+      </td>
+      <td className="px-4 py-3 text-muted-foreground whitespace-nowrap text-xs">
+        {format(parseISO(c.data), "dd/MM/yy", { locale: ptBR })}
+      </td>
+      <td className="px-4 py-3 font-mono tabular-nums text-sm">{(c.presencial_adulto || 0).toLocaleString()}</td>
+      <td className="px-4 py-3 font-mono tabular-nums text-muted-foreground text-sm">{c.presencial_kids || 0}</td>
+      <td className="px-4 py-3">
+        <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${
+          (c.taxa_ocupacao || 0) >= 80 ? 'bg-red-500/15 text-red-500'
+          : (c.taxa_ocupacao || 0) >= 60 ? 'bg-amber-500/15 text-amber-500'
+          : 'bg-emerald-500/15 text-emerald-500'
+        }`}>
+          {c.taxa_ocupacao ? `${c.taxa_ocupacao}%` : '—'}
+        </span>
+      </td>
+      <td className="px-4 py-3 font-mono tabular-nums text-sm">
+        {((c.decisoes_presenciais || 0) + (c.decisoes_online || 0)) || 0}
+        <span className="text-muted-foreground text-[10px] ml-1">({c.decisoes_presenciais || 0}+{c.decisoes_online || 0})</span>
+      </td>
+      <td className="px-4 py-3 font-mono tabular-nums text-muted-foreground text-sm">{c.online_pico ?? '—'}</td>
+      <td className="px-4 py-3 font-mono tabular-nums text-muted-foreground text-sm">
+        {c.online_ds ? c.online_ds.toLocaleString() : (c.youtube_video_id ? <span className="text-amber-500 text-xs">Pendente</span> : '—')}
+      </td>
+      <td className="px-4 py-3 font-mono tabular-nums text-muted-foreground text-sm">
+        {c.online_ddus ? c.online_ddus.toLocaleString() : (c.online_ds ? <span className="text-amber-500 text-xs">Pendente</span> : '—')}
+      </td>
+      <td className="px-4 py-3">
+        <div className="flex items-center gap-1">
+          <button onClick={() => { setEditing(c); setShowModal(true); }} className="p-1.5 rounded-lg hover:bg-muted text-muted-foreground hover:text-foreground transition-colors">
+            <Edit2 className="h-3.5 w-3.5" />
+          </button>
+          <button onClick={() => handleDelete(c.id)} className="p-1.5 rounded-lg hover:bg-red-500/10 text-muted-foreground hover:text-red-500 transition-colors">
+            <X className="h-3.5 w-3.5" />
+          </button>
+        </div>
+      </td>
+    </tr>
+  );
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <p className="text-sm text-muted-foreground">{cultos.length} cultos registrados</p>
+      {/* Toolbar */}
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex items-center gap-1">
+          {/* View toggle */}
+          <div className="flex rounded-xl border border-border overflow-hidden">
+            <button onClick={() => setView('calendar')} className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium transition-colors ${view === 'calendar' ? 'bg-primary text-white' : 'text-muted-foreground hover:bg-muted'}`}>
+              <LayoutGrid className="h-3.5 w-3.5" /> Calendário
+            </button>
+            <button onClick={() => setView('table')} className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium transition-colors ${view === 'table' ? 'bg-primary text-white' : 'text-muted-foreground hover:bg-muted'}`}>
+              <List className="h-3.5 w-3.5" /> Tabela
+            </button>
+          </div>
+          {/* Filters (table only) */}
+          {view === 'table' && (
+            <div className="flex items-center gap-1 ml-2">
+              {FILTERS.map(f => (
+                <button key={f.id} onClick={() => setFiltro(f.id)}
+                  className={`px-3 py-1.5 rounded-xl text-xs font-medium transition-colors border ${
+                    filtro === f.id ? 'bg-primary text-white border-primary' : 'border-border text-muted-foreground hover:bg-muted'
+                  }`}>
+                  {f.label}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
         <Button onClick={() => { setEditing(null); setShowModal(true); }} className="bg-[#00B39D] hover:bg-[#00B39D]/90 text-white gap-2 text-sm">
           <Plus className="h-4 w-4" /> Registrar Culto
         </Button>
       </div>
 
       {loading ? (
-        <div className="flex items-center justify-center py-12"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>
-      ) : cultos.length === 0 ? (
-        <div className="text-center py-12 text-muted-foreground text-sm">Nenhum culto registrado ainda.</div>
-      ) : (
-        <div className="rounded-2xl border border-border overflow-hidden">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-border bg-muted/30">
-                {['Culto','Data','Presencial Adulto','Kids','Taxa Ocup.','Decisões','Online Pico','DS (D+1)','DDUS (D+7)',''].map(h => (
-                  <th key={h} className="px-4 py-3 text-left text-xs font-semibold text-muted-foreground whitespace-nowrap">{h}</th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {cultos.map((c, i) => (
-                <tr key={c.id} className={`border-b border-border last:border-0 hover:bg-muted/20 transition-colors ${i % 2 === 0 ? '' : 'bg-muted/10'}`}>
-                  <td className="px-4 py-3">
-                    <div className="flex items-center gap-2">
-                      <span className="h-2 w-2 rounded-full shrink-0" style={{ background: stColor(c.service_type_id) }} />
-                      <span className="font-medium text-foreground text-xs leading-tight">{c.nome}</span>
+        <div className="flex items-center justify-center py-16"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>
+      ) : view === 'calendar' ? (
+        /* ── Calendar view ── */
+        <div className="grid grid-cols-1 lg:grid-cols-[1fr_300px] gap-4">
+          <div className="space-y-3">
+            {/* Month nav */}
+            <div className="flex items-center justify-between px-1">
+              <button onClick={() => { setCalMes(m => subMonths(m, 1)); setSelectedDay(null); }}
+                className="p-1.5 rounded-lg hover:bg-muted transition-colors text-muted-foreground">
+                <ChevronLeft className="h-4 w-4" />
+              </button>
+              <span className="text-sm font-semibold text-foreground capitalize">
+                {format(calMes, 'MMMM yyyy', { locale: ptBR })}
+              </span>
+              <button onClick={() => { setCalMes(m => addMonths(m, 1)); setSelectedDay(null); }}
+                className="p-1.5 rounded-lg hover:bg-muted transition-colors text-muted-foreground">
+                <ChevronRight className="h-4 w-4" />
+              </button>
+            </div>
+            <CalendarioCultos
+              cultos={cultos} serviceTypes={serviceTypes}
+              calMes={calMes} onDayClick={setSelectedDay} selectedDay={selectedDay}
+            />
+          </div>
+
+          {/* Sidebar list */}
+          <div className="rounded-2xl border border-border bg-card overflow-hidden flex flex-col">
+            <div className="px-4 py-3 border-b border-border flex items-center justify-between">
+              <span className="text-sm font-semibold text-foreground">
+                {selectedDay ? format(selectedDay, "dd 'de' MMMM", { locale: ptBR }) : format(calMes, 'MMMM', { locale: ptBR })}
+              </span>
+              {selectedDay && (
+                <button onClick={() => setSelectedDay(null)} className="text-xs text-muted-foreground hover:text-foreground">
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              )}
+            </div>
+            <div className="flex-1 overflow-y-auto divide-y divide-border">
+              {listaCal.length === 0 ? (
+                <div className="flex flex-col items-center py-10 gap-2 text-muted-foreground">
+                  <span className="text-xs">Nenhum culto neste período</span>
+                </div>
+              ) : listaCal.map(c => (
+                <div key={c.id} className="p-3 hover:bg-muted/20 transition-colors group">
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="flex items-start gap-2 min-w-0">
+                      <span className="h-2.5 w-2.5 rounded-full shrink-0 mt-1" style={{ background: stColor(c.service_type_id) }} />
+                      <div className="min-w-0">
+                        <p className="text-xs font-semibold text-foreground truncate">{c.nome}</p>
+                        <p className="text-[10px] text-muted-foreground">
+                          {format(parseISO(c.data), 'dd/MM', { locale: ptBR })} · {c.hora?.slice(0, 5)}
+                        </p>
+                      </div>
                     </div>
-                  </td>
-                  <td className="px-4 py-3 text-muted-foreground whitespace-nowrap">
-                    {format(new Date(c.data + 'T12:00:00'), "dd/MM/yy", { locale: ptBR })}
-                  </td>
-                  <td className="px-4 py-3 font-mono tabular-nums">{(c.presencial_adulto || 0).toLocaleString()}</td>
-                  <td className="px-4 py-3 font-mono tabular-nums text-muted-foreground">{c.presencial_kids || 0}</td>
-                  <td className="px-4 py-3">
-                    <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${
-                      (c.taxa_ocupacao || 0) >= 80 ? 'bg-red-500/15 text-red-500'
-                      : (c.taxa_ocupacao || 0) >= 60 ? 'bg-amber-500/15 text-amber-500'
-                      : 'bg-emerald-500/15 text-emerald-500'
-                    }`}>
-                      {c.taxa_ocupacao ? `${c.taxa_ocupacao}%` : '—'}
-                    </span>
-                  </td>
-                  <td className="px-4 py-3 font-mono tabular-nums">
-                    {((c.decisoes_presenciais || 0) + (c.decisoes_online || 0)) || 0}
-                    <span className="text-muted-foreground text-[10px] ml-1">({c.decisoes_presenciais || 0}+{c.decisoes_online || 0})</span>
-                  </td>
-                  <td className="px-4 py-3 font-mono tabular-nums text-muted-foreground">{c.online_pico ?? '—'}</td>
-                  <td className="px-4 py-3 font-mono tabular-nums text-muted-foreground">
-                    {c.online_ds ? c.online_ds.toLocaleString() : (c.youtube_video_id ? <span className="text-amber-500 text-xs">Pendente</span> : '—')}
-                  </td>
-                  <td className="px-4 py-3 font-mono tabular-nums text-muted-foreground">
-                    {c.online_ddus ? c.online_ddus.toLocaleString() : (c.online_ds ? <span className="text-amber-500 text-xs">Pendente</span> : '—')}
-                  </td>
-                  <td className="px-4 py-3">
-                    <div className="flex items-center gap-1">
-                      <button onClick={() => { setEditing(c); setShowModal(true); }} className="p-1.5 rounded-lg hover:bg-muted text-muted-foreground hover:text-foreground transition-colors">
-                        <Edit2 className="h-3.5 w-3.5" />
-                      </button>
-                      <button onClick={() => handleDelete(c.id)} className="p-1.5 rounded-lg hover:bg-red-500/10 text-muted-foreground hover:text-red-500 transition-colors">
-                        <X className="h-3.5 w-3.5" />
-                      </button>
+                    <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
+                      <button onClick={() => { setEditing(c); setShowModal(true); }} className="p-1 rounded hover:bg-muted"><Edit2 className="h-3 w-3 text-muted-foreground" /></button>
+                      <button onClick={() => handleDelete(c.id)} className="p-1 rounded hover:bg-red-500/10"><X className="h-3 w-3 text-muted-foreground hover:text-red-500" /></button>
                     </div>
-                  </td>
-                </tr>
+                  </div>
+                  <div className="mt-2 grid grid-cols-3 gap-1">
+                    <div className="rounded-lg bg-muted/50 px-2 py-1 text-center">
+                      <p className="text-xs font-bold tabular-nums">{(c.presencial_adulto || 0).toLocaleString()}</p>
+                      <p className="text-[9px] text-muted-foreground">Adultos</p>
+                    </div>
+                    <div className="rounded-lg bg-muted/50 px-2 py-1 text-center">
+                      <p className="text-xs font-bold tabular-nums">{c.presencial_kids || 0}</p>
+                      <p className="text-[9px] text-muted-foreground">Kids</p>
+                    </div>
+                    <div className="rounded-lg bg-muted/50 px-2 py-1 text-center">
+                      <p className="text-xs font-bold tabular-nums">{((c.decisoes_presenciais || 0) + (c.decisoes_online || 0))}</p>
+                      <p className="text-[9px] text-muted-foreground">Decisões</p>
+                    </div>
+                  </div>
+                  {c.taxa_ocupacao && (
+                    <div className="mt-1.5 flex items-center gap-1.5">
+                      <div className="flex-1 h-1 rounded-full bg-muted overflow-hidden">
+                        <div className="h-full rounded-full" style={{
+                          width: `${Math.min(c.taxa_ocupacao, 100)}%`,
+                          background: c.taxa_ocupacao >= 80 ? '#EF4444' : c.taxa_ocupacao >= 60 ? '#F59E0B' : C.primary,
+                        }} />
+                      </div>
+                      <span className="text-[9px] text-muted-foreground tabular-nums">{c.taxa_ocupacao}%</span>
+                    </div>
+                  )}
+                </div>
               ))}
-            </tbody>
-          </table>
+            </div>
+          </div>
+        </div>
+      ) : (
+        /* ── Table view ── */
+        filtered.length === 0 ? (
+          <div className="text-center py-12 text-muted-foreground text-sm">Nenhum culto neste período.</div>
+        ) : (
+          <div className="rounded-2xl border border-border overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-border bg-muted/30">
+                  {['Culto','Data','Adultos','Kids','Taxa Ocup.','Decisões','Online Pico','DS (D+1)','DDUS (D+7)',''].map(h => (
+                    <th key={h} className="px-4 py-3 text-left text-xs font-semibold text-muted-foreground whitespace-nowrap">{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>{filtered.map((c, i) => <CultoRow key={c.id} c={c} i={i} />)}</tbody>
+            </table>
+          </div>
+        )
+      )}
+
+      {/* Chart */}
+      {!loading && chartData.length > 1 && (
+        <div className="rounded-2xl border border-border bg-card p-5">
+          <p className="text-sm font-semibold text-foreground mb-5">Frequência por Semana (últimas 12 semanas)</p>
+          <ResponsiveContainer width="100%" height={220}>
+            <AreaChart data={chartData} margin={{ top: 5, right: 20, left: 0, bottom: 5 }}>
+              <defs>
+                <linearGradient id="gradAdulto" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="5%" stopColor={C.primary} stopOpacity={0.3} />
+                  <stop offset="95%" stopColor={C.primary} stopOpacity={0} />
+                </linearGradient>
+                <linearGradient id="gradKids" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="5%" stopColor={C.info} stopOpacity={0.3} />
+                  <stop offset="95%" stopColor={C.info} stopOpacity={0} />
+                </linearGradient>
+              </defs>
+              <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
+              <XAxis dataKey="semana" tick={{ fontSize: 11, fill: 'var(--muted-foreground)' }} />
+              <YAxis tick={{ fontSize: 11, fill: 'var(--muted-foreground)' }} />
+              <Tooltip contentStyle={{ background: 'var(--card)', border: '1px solid var(--border)', borderRadius: 12, fontSize: 12 }} />
+              <Legend wrapperStyle={{ fontSize: 12 }} />
+              <Area type="monotone" dataKey="adulto" stroke={C.primary} strokeWidth={2} fill="url(#gradAdulto)" name="Adultos" />
+              <Area type="monotone" dataKey="kids" stroke={C.info} strokeWidth={2} fill="url(#gradKids)" name="Kids" />
+              <Bar dataKey="decisoes" fill={C.purple} name="Decisões" radius={[4, 4, 0, 0]} />
+            </AreaChart>
+          </ResponsiveContainer>
         </div>
       )}
 
@@ -707,23 +968,72 @@ function TabVisaoGeral({ data: dash, loading, onTab }: { data: any; loading: boo
         </div>
       </div>
 
-      {/* Gráfico evolução */}
+      {/* Gráficos */}
       {chartData.length > 0 && (
-        <div className="rounded-2xl border border-border bg-card p-5">
-          <p className="text-sm font-semibold text-foreground mb-5">Evolução de Frequência por Semana</p>
-          <ResponsiveContainer width="100%" height={260}>
-            <LineChart data={chartData} margin={{ top: 5, right: 20, left: 0, bottom: 5 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
-              <XAxis dataKey="semana" tick={{ fontSize: 11, fill: 'var(--muted-foreground)' }} />
-              <YAxis tick={{ fontSize: 11, fill: 'var(--muted-foreground)' }} />
-              <Tooltip contentStyle={{ background: 'var(--card)', border: '1px solid var(--border)', borderRadius: 12, fontSize: 12 }} />
-              <Legend wrapperStyle={{ fontSize: 12 }} />
-              <Line type="monotone" dataKey="adulto"   stroke={C.primary} strokeWidth={2} dot={false} name="Adultos" />
-              <Line type="monotone" dataKey="kids"     stroke={C.info}    strokeWidth={2} dot={false} name="Kids" />
-              <Line type="monotone" dataKey="decisoes" stroke={C.purple}  strokeWidth={2} dot={false} name="Decisões" strokeDasharray="4 4" />
-              <Line type="monotone" dataKey="online"   stroke="#EF4444"   strokeWidth={1.5} dot={false} name="Online Pico" strokeDasharray="2 4" />
-            </LineChart>
-          </ResponsiveContainer>
+        <div className="grid grid-cols-1 lg:grid-cols-[1fr_340px] gap-4">
+          {/* Area chart frequência */}
+          <div className="rounded-2xl border border-border bg-card p-5">
+            <p className="text-sm font-semibold text-foreground mb-5">Frequência Semanal</p>
+            <ResponsiveContainer width="100%" height={240}>
+              <AreaChart data={chartData} margin={{ top: 5, right: 10, left: 0, bottom: 5 }}>
+                <defs>
+                  <linearGradient id="gAdulto" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="5%" stopColor={C.primary} stopOpacity={0.25} />
+                    <stop offset="95%" stopColor={C.primary} stopOpacity={0} />
+                  </linearGradient>
+                  <linearGradient id="gKids" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="5%" stopColor={C.info} stopOpacity={0.2} />
+                    <stop offset="95%" stopColor={C.info} stopOpacity={0} />
+                  </linearGradient>
+                </defs>
+                <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
+                <XAxis dataKey="semana" tick={{ fontSize: 10, fill: 'var(--muted-foreground)' }} />
+                <YAxis tick={{ fontSize: 10, fill: 'var(--muted-foreground)' }} />
+                <Tooltip contentStyle={{ background: 'var(--card)', border: '1px solid var(--border)', borderRadius: 12, fontSize: 12 }} />
+                <Legend wrapperStyle={{ fontSize: 11 }} />
+                <Area type="monotone" dataKey="adulto" stroke={C.primary} strokeWidth={2} fill="url(#gAdulto)" name="Adultos" dot={false} />
+                <Area type="monotone" dataKey="kids" stroke={C.info} strokeWidth={2} fill="url(#gKids)" name="Kids" dot={false} />
+                <Line type="monotone" dataKey="decisoes" stroke={C.purple} strokeWidth={2} dot={false} name="Decisões" strokeDasharray="4 4" />
+              </AreaChart>
+            </ResponsiveContainer>
+          </div>
+          {/* Batismos donut */}
+          <div className="rounded-2xl border border-border bg-card p-5">
+            <p className="text-sm font-semibold text-foreground mb-1">Batismos — Status</p>
+            <p className="text-xs text-muted-foreground mb-4">Visão consolidada das inscrições</p>
+            {(() => {
+              const total = (dash?.batismos?.pendentes || 0) + (dash?.batismos?.realizados || 0);
+              if (!total) return <div className="flex items-center justify-center h-44 text-muted-foreground text-xs">Sem dados</div>;
+              const pieData = [
+                { name: 'Realizados', value: dash?.batismos?.realizados || 0, color: C.primary },
+                { name: 'Pendentes',  value: dash?.batismos?.pendentes  || 0, color: '#6366F1' },
+              ];
+              return (
+                <div className="flex flex-col items-center gap-3">
+                  <ResponsiveContainer width="100%" height={160}>
+                    <PieChart>
+                      <Pie data={pieData} cx="50%" cy="50%" innerRadius={50} outerRadius={70} paddingAngle={3} dataKey="value">
+                        {pieData.map((entry, i) => <Cell key={i} fill={entry.color} />)}
+                      </Pie>
+                      <Tooltip contentStyle={{ background: 'var(--card)', border: '1px solid var(--border)', borderRadius: 12, fontSize: 12 }} />
+                    </PieChart>
+                  </ResponsiveContainer>
+                  <div className="flex gap-4 text-xs">
+                    {pieData.map(d => (
+                      <div key={d.name} className="flex items-center gap-1.5">
+                        <span className="h-2.5 w-2.5 rounded-full" style={{ background: d.color }} />
+                        <span className="text-muted-foreground">{d.name}: <strong className="text-foreground">{d.value}</strong></span>
+                      </div>
+                    ))}
+                  </div>
+                  <div className="w-full rounded-xl bg-muted/30 p-3 text-center">
+                    <p className="text-xl font-bold tabular-nums">{total}</p>
+                    <p className="text-xs text-muted-foreground">inscrições totais</p>
+                  </div>
+                </div>
+              );
+            })()}
+          </div>
         </div>
       )}
     </div>
@@ -769,11 +1079,40 @@ function TabVoluntariado({ data: dash, loading }: { data: any; loading: boolean 
         <KpiCard label="% Desaparecidos Recuperados" value={null} unit="%" icon={Activity} color={C.purple}
           meta={getMeta('pct_desaparecidos_recuperados')} sublabel="Meta contínua: 60%" />
       </div>
+      {/* Radial progress chart */}
       <div className="rounded-2xl border border-border bg-card p-5">
-        <p className="text-sm text-muted-foreground">
-          Os dados de % da Igreja Servindo são calculados com base na frequência média vs voluntários ativos.
-          Para ver a lista completa de voluntários, acesse o módulo de Voluntariado.
-        </p>
+        <p className="text-sm font-semibold text-foreground mb-4">Progresso das Metas de Voluntariado</p>
+        <div className="grid grid-cols-3 gap-4">
+          {[
+            { label: '6 meses', meta: getMeta('voluntarios_ativos'), atual: dash?.voluntarios_ativos, color: C.primary },
+            { label: '12 meses', meta: getMeta('voluntarios_ativos', 'meta_12m'), atual: dash?.voluntarios_ativos, color: C.info },
+            { label: '24 meses', meta: getMeta('voluntarios_ativos', 'meta_24m'), atual: dash?.voluntarios_ativos, color: C.warn },
+          ].map(({ label, meta, atual, color }) => {
+            const pct = meta && atual ? Math.min(Math.round(atual / meta * 100), 100) : 0;
+            const radData = [{ value: pct }, { value: 100 - pct }];
+            return (
+              <div key={label} className="flex flex-col items-center gap-2">
+                <div className="relative">
+                  <ResponsiveContainer width={100} height={100}>
+                    <PieChart>
+                      <Pie data={radData} cx="50%" cy="50%" innerRadius={32} outerRadius={44} startAngle={90} endAngle={-270} dataKey="value" strokeWidth={0}>
+                        <Cell fill={color} />
+                        <Cell fill="var(--muted)" />
+                      </Pie>
+                    </PieChart>
+                  </ResponsiveContainer>
+                  <div className="absolute inset-0 flex items-center justify-center">
+                    <span className="text-sm font-bold" style={{ color }}>{pct}%</span>
+                  </div>
+                </div>
+                <div className="text-center">
+                  <p className="text-xs font-medium text-foreground">Meta {label}</p>
+                  <p className="text-[10px] text-muted-foreground">{atual ?? '—'} / {meta ?? '—'}</p>
+                </div>
+              </div>
+            );
+          })}
+        </div>
         <Button onClick={() => navigate('/ministerial/voluntariado')} className="mt-4 gap-2 bg-[#00B39D] hover:bg-[#00B39D]/90 text-white">
           <HandHeart className="h-4 w-4" /> Ir para Voluntariado
         </Button>
@@ -1072,6 +1411,9 @@ export default function KPIs() {
               Sync YouTube
             </Button>
           )}
+          <Button variant="outline" onClick={() => navigate('/kpis/guia')} className="gap-2 text-sm">
+            <FileText className="h-4 w-4" /> Guia de Coleta
+          </Button>
           <Button variant="outline" onClick={loadDash} className="gap-2 text-sm">
             <RefreshCw className="h-4 w-4" /> Atualizar
           </Button>

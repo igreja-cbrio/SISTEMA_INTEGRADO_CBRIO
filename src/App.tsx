@@ -101,6 +101,7 @@ const TotemMembro = lazyWithRetry(() => import('./pages/TotemMembro'));
 const VolSelfCheckin = lazyWithRetry(() => import('./pages/ministerial/voluntariado/VolSelfCheckin'));
 const PcCallback = lazyWithRetry(() => import('./pages/auth/PcCallback'));
 const KPIs = lazyWithRetry(() => import('./pages/kpis/KPIs'));
+const KPIsGuia = lazyWithRetry(() => import('./pages/kpis/KPIsGuia'));
 
 // Placeholder pages for modules not yet copied
 const PlaceholderPage = ({ title }) => (
@@ -243,6 +244,7 @@ function AppRoutes() {
         <Route path="/assistente-ia" element={<ModuleGuard permKey="canIA"><Suspense fallback={<Loading />}><AssistenteIA /></Suspense></ModuleGuard>} />
         <Route path="/solicitacoes" element={<Suspense fallback={<Loading />}><Solicitacoes /></Suspense>} />
         <Route path="/kpis" element={<ModuleGuard permKey="canKPIs"><Suspense fallback={<Loading />}><KPIs /></Suspense></ModuleGuard>} />
+        <Route path="/kpis/guia" element={<ModuleGuard permKey="canKPIs"><Suspense fallback={<Loading />}><KPIsGuia /></Suspense></ModuleGuard>} />
         <Route path="/admin/notificacao-regras" element={<Suspense fallback={<Loading />}><NotificacaoRegras /></Suspense>} />
         <Route path="/ministerial/*" element={<PlaceholderPage title="Ministerial" />} />
         <Route path="/criativo/*" element={<PlaceholderPage title="Criativo" />} />
