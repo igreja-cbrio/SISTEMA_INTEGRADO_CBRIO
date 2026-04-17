@@ -3033,7 +3033,7 @@ export default function Eventos() {
         <button style={styles.tab(tab === 2)} onClick={() => { setTab(2); if (!kanbanCycleData) loadKanban(); }}>Kanban</button>
         <button style={styles.tab(tab === 3)} onClick={() => { setTab(3); if (!kanbanCycleData) loadKanban(); }}>Gantt</button>
         <button style={styles.tab(tab === 5)} onClick={() => { setTab(5); if (!kpiData) loadKpis(kpiTipo); }}>KPIs</button>
-        {accessLevel >= 5 && <button style={styles.tab(tab === 6)} onClick={async () => { setTab(6); if (!admTemplatesLoaded) { const d = await cyclesApi.admTemplates(); setAdmTemplates(d || []); setAdmTemplatesLoaded(true); } }}>Templates</button>}
+        {accessLevel >= 5 && <button style={styles.tab(tab === 6)} onClick={async () => { setTab(6); try { const d = await cyclesApi.admTemplates(); setAdmTemplates(Array.isArray(d) ? d : []); } catch (e) { console.error('Templates load error:', e); } }}>Templates</button>}
         {selectedEvent && <button style={styles.tab(tab === 4)} onClick={() => setTab(4)}>Detalhes</button>}
       </div>
 
