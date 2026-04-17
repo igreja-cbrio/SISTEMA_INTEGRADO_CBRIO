@@ -76,33 +76,6 @@ function FlyToTarget({ target }: { target: MapGroup | null }) {
   return null;
 }
 
-function CentralizeMember({ coords, theme }: { coords: Coords; theme: "light" | "dark" }) {
-  const { map, isLoaded } = useMap();
-  if (!isLoaded) return null;
-  return (
-    <div style={{ position: "absolute", bottom: 70, right: 12, zIndex: 20 }}>
-      <button
-        onClick={() => map?.flyTo({ center: [coords.lng, coords.lat], zoom: 14, duration: 1200 })}
-        style={{
-          background: theme === "dark" ? "#1e293b" : "#fff",
-          color: "#3B82F6",
-          border: "2px solid #3B82F6",
-          borderRadius: 10,
-          padding: "8px 14px",
-          fontSize: 13,
-          fontWeight: 600,
-          cursor: "pointer",
-          display: "flex",
-          alignItems: "center",
-          gap: 6,
-          boxShadow: "0 2px 8px rgba(0,0,0,0.35)",
-        }}
-      >
-        <span style={{ fontSize: 16 }}>⊕</span> Centralizar
-      </button>
-    </div>
-  );
-}
 
 const PIN_COLOR = "#00B39D";
 const PIN_MEMBER_COLOR = "#3B82F6";
@@ -393,7 +366,6 @@ export function GruposMapView({
           zoom={memberCoords ? 13 : 12}
         >
           <FlyToTarget target={flyTarget} />
-          {memberCoords && <CentralizeMember coords={memberCoords} theme={theme} />}
 
           {memberCoords && (
             <MapMarker longitude={memberCoords.lng} latitude={memberCoords.lat}>
