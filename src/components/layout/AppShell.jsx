@@ -11,7 +11,7 @@ import {
   CalendarDays, FolderKanban, Map,
   UserCheck, UsersRound, Heart, HandHelping, BookOpen,
   Megaphone, BrainCircuit, ShoppingCart,
-  Sun, Moon, Bell, LogOut, Search, CheckCheck, Settings, MonitorSmartphone,
+  Sun, Moon, Bell, LogOut, Search, CheckCheck, Settings, MonitorSmartphone, BarChart2,
 } from 'lucide-react';
 import {
   DropdownMenu, DropdownMenuTrigger, DropdownMenuContent,
@@ -46,6 +46,7 @@ const NAV_ITEMS = [
       {
         title: 'Inteligência',
         items: [
+          { label: 'KPIs e Indicadores', description: 'Frequência, batismos e métricas 2026', icon: BarChart2, path: '/kpis', perm: 'canKPIs' },
           { label: 'Assistente IA', description: 'Agentes de auditoria e análise', icon: BrainCircuit, path: '/assistente-ia', perm: 'canIA' },
         ],
       },
