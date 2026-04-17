@@ -323,7 +323,7 @@ export default function TotemMembro() {
       member={member}
       isDark={isDark}
       onBack={() => { setState('greeting'); setSelectedOption(null); resetInactivity(); }}
-      onDone={() => setState('done')}
+      onDone={() => { setState('greeting'); setSelectedOption(null); resetInactivity(); }}
       onActivity={resetInactivity}
     />
   );
