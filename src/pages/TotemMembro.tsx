@@ -540,26 +540,28 @@ function GruposFlow({ opt, member, onBack, onDone, onActivity }: {
   const grupoAtualId: string | undefined =
     member.raw?.grupo_atual?.id ?? member.raw?.grupo_atual?.grupo?.id;
 
-  // Load groups + resolve member coordinates
+  // Load groups + resolve device location (GPS first, CEP fallback)
   useEffect(() => {
     membresia.grupos.list({ ativo: 'true' })
       .then((data: any[]) => setGrupos(data || []))
       .catch(() => {})
       .finally(() => setLoading(false));
 
-    // Use stored lat/lng directly if available, otherwise geocode CEP
-    const src = member.raw?.membro || member.raw?.cadastro || {};
-    const directLat = (member as any).lat ?? src.lat;
-    const directLng = (member as any).lng ?? src.lng;
-    if (directLat && directLng) {
-      setMemberCoords({ lat: parseFloat(directLat), lng: parseFloat(directLng) });
-    } else {
-      const cep = (member as any).cep || src.cep;
-      if (cep) {
-        membresia.totem.geocodeCep(cep)
-          .then((geo: any) => { if (geo.lat && geo.lng) setMemberCoords({ lat: geo.lat, lng: geo.lng }); })
-          .catch(() => {});
-      }
+    if ('geolocation' in navigator) {
+      navigator.geolocation.getCurrentPosition(
+        (pos) => setMemberCoords({ lat: pos.coords.latitude, lng: pos.coords.longitude }),
+        () => {
+          // GPS denied/unavailable — fall back to member's CEP
+          const src = member.raw?.membro || member.raw?.cadastro || {};
+          const cep = (member as any).cep || src.cep;
+          if (cep) {
+            membresia.totem.geocodeCep(cep)
+              .then((geo: any) => { if (geo.lat && geo.lng) setMemberCoords({ lat: geo.lat, lng: geo.lng }); })
+              .catch(() => {});
+          }
+        },
+        { timeout: 8000, maximumAge: 60000 }
+      );
     }
   }, []);
 
