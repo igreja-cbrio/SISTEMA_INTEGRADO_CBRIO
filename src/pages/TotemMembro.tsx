@@ -713,8 +713,8 @@ function MeusDadosFlow({ opt, member, isDark, onBack, onDone, onActivity }: {
 
   const ESTADO_CIVIL_OPTS = ['Solteiro(a)', 'Casado(a)', 'Divorciado(a)', 'Viúvo(a)', 'União estável'];
 
-  const trilha: { etapa: string; concluido: boolean; data_conclusao?: string }[] = src.trilha || [];
-  const hasNext    = trilha.find(t => t.etapa === 'next')?.concluido;
+  const trilha: { etapa: string; concluida: boolean; data_conclusao?: string }[] = src.trilha || [];
+  const hasNext    = trilha.find(t => t.etapa === 'next')?.concluida;
   const familia    = src.familia;
   const grupoAtual = src.grupo_atual;
 
@@ -757,8 +757,8 @@ function MeusDadosFlow({ opt, member, isDark, onBack, onDone, onActivity }: {
               <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${hasNext ? chipBadgeOk : chipBadgeNo}`}>
                 Next {hasNext ? '✓' : '—'}
               </span>
-              <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${trilha.find(t => t.etapa === 'voluntariado')?.concluido ? chipBadgeOk : chipBadgeNo}`}>
-                Voluntariado {trilha.find(t => t.etapa === 'voluntariado')?.concluido ? '✓' : '—'}
+              <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${trilha.find(t => t.etapa === 'voluntariado')?.concluida ? chipBadgeOk : chipBadgeNo}`}>
+                Voluntariado {trilha.find(t => t.etapa === 'voluntariado')?.concluida ? '✓' : '—'}
               </span>
             </div>
           </div>
