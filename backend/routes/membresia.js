@@ -95,7 +95,7 @@ router.get('/qr-lookup/:token', async (req, res) => {
       // - ministérios ativos
       // - última contribuição (para nível de generosidade)
       // - último check-in (para nível de serviço)
-      const [grupoAtualRes, ministeriosRes, ultContribRes, ultCheckinRes] = await Promise.all([
+      const [grupoAtualRes, ministeriosRes, ultContribRes, ultCheckinRes, trilhaRes] = await Promise.all([
         supabase
           .from('mem_grupo_membros')
           .select('grupo:mem_grupos(id, nome, categoria, local, dia_semana, horario)')
@@ -121,6 +121,10 @@ router.get('/qr-lookup/:token', async (req, res) => {
           .order('data', { ascending: false })
           .limit(1)
           .maybeSingle(),
+        supabase
+          .from('mem_trilha_valores')
+          .select('etapa, data_conclusao, concluido')
+          .eq('membro_id', membro.id),
       ]);
 
       const ultimaContribuicao = ultContribRes?.data?.data || null;
@@ -128,6 +132,7 @@ router.get('/qr-lookup/:token', async (req, res) => {
       const ministerios = (ministeriosRes?.data || [])
         .map((v) => v.ministerio)
         .filter(Boolean);
+      const trilha = trilhaRes?.data || [];
 
       return res.json({
         found: true,
@@ -148,6 +153,7 @@ router.get('/qr-lookup/:token', async (req, res) => {
           familia: membro.familia || null,
           grupo_atual: grupoAtualRes?.data?.grupo || null,
           ministerios,
+          trilha,
           ultima_contribuicao: ultimaContribuicao,
           nivel_generosidade: calcularNivelGenerosidade(ultimaContribuicao),
           ultimo_checkin: ultimoCheckin,
@@ -721,17 +727,19 @@ router.post('/totem/grupos/:id/entrar', async (req, res) => {
 router.put('/totem/membros/:id', async (req, res) => {
   try {
     const { id } = req.params;
-    const allowed = ['email', 'telefone', 'endereco', 'bairro', 'cidade', 'cep', 'estado_civil'];
+    const allowed = ['email', 'telefone', 'data_nascimento', 'endereco', 'bairro', 'cidade', 'cep', 'estado_civil'];
     const updates = {};
     for (const f of allowed) {
-      if (req.body[f] !== undefined) updates[f] = req.body[f];
+      if (req.body[f] !== undefined && req.body[f] !== null) updates[f] = req.body[f];
     }
     if (Object.keys(updates).length === 0) return res.status(400).json({ error: 'Nenhum campo para atualizar' });
-    updates.updated_at = new Date().toISOString();
     const { data, error } = await supabase.from('mem_membros').update(updates).eq('id', id).select().single();
     if (error) throw error;
     res.json(data);
-  } catch (e) { res.status(500).json({ error: 'Erro ao atualizar dados' }); }
+  } catch (e) {
+    console.error('[TOTEM] update membro error:', e.message);
+    res.status(500).json({ error: 'Erro ao atualizar dados: ' + e.message });
+  }
 });
 
 // POST /api/membresia/totem/membros/:id/foto — upload de foto via totem

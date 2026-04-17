@@ -621,11 +621,16 @@ function MeusDadosFlow({ opt, member, isDark, onBack, onDone, onActivity }: {
     onActivity();
     try {
       if (capturedBlob) await uploadPhoto();
-      await membresia.totem.updateMembro(member.id, form);
+      // Only send non-empty editable fields
+      const payload: Record<string, string> = {};
+      for (const [k, v] of Object.entries(form)) {
+        if (v !== '' && v !== null && v !== undefined) payload[k] = v as string;
+      }
+      await membresia.totem.updateMembro(member.id, payload);
       setSaveMsg('Dados salvos com sucesso!');
       setTimeout(onDone, 1800);
-    } catch {
-      setSaveMsg('Erro ao salvar. Tente novamente.');
+    } catch (e: any) {
+      setSaveMsg('Erro ao salvar: ' + (e?.message || 'tente novamente'));
     }
     setSaving(false);
   };
@@ -640,11 +645,57 @@ function MeusDadosFlow({ opt, member, isDark, onBack, onDone, onActivity }: {
 
   const ESTADO_CIVIL_OPTS = ['Solteiro(a)', 'Casado(a)', 'Divorciado(a)', 'Viúvo(a)', 'União estável'];
 
+  const trilha: { etapa: string; concluido: boolean; data_conclusao?: string }[] = src.trilha || [];
+  const hasNext    = trilha.find(t => t.etapa === 'next')?.concluido;
+  const familia    = src.familia;
+  const grupoAtual = src.grupo_atual;
+
+  const chipDark  = isDark ? 'bg-white/5 border-white/10' : 'bg-white border-gray-200';
+  const chipBadgeOk  = 'bg-[#00B39D]/15 text-[#00B39D]';
+  const chipBadgeNo  = isDark ? 'bg-white/10 text-white/40' : 'bg-gray-100 text-gray-400';
+
   return (
     <div className={`min-h-screen flex flex-col ${bg}`} onClick={onActivity}>
       <OptionHeader opt={opt} member={member} isDark={isDark} onBack={onBack} />
 
       <div className="flex-1 overflow-y-auto p-6">
+
+        {/* Info chips row */}
+        <div className="max-w-3xl mx-auto grid grid-cols-3 gap-3 mb-5">
+          {/* Família */}
+          <div className={`rounded-2xl border p-3 flex flex-col gap-1 ${chipDark}`}>
+            <p className={`text-[10px] font-semibold uppercase tracking-wider ${label}`}>Família</p>
+            {familia ? (
+              <p className="text-sm font-semibold">{familia.nome}</p>
+            ) : (
+              <p className={`text-xs ${isDark ? 'text-white/30' : 'text-gray-400'}`}>Não vinculada</p>
+            )}
+          </div>
+
+          {/* Grupo de Conexão */}
+          <div className={`rounded-2xl border p-3 flex flex-col gap-1 ${chipDark}`}>
+            <p className={`text-[10px] font-semibold uppercase tracking-wider ${label}`}>Grupo de Conexão</p>
+            {grupoAtual ? (
+              <p className="text-sm font-semibold leading-tight">{grupoAtual.nome}</p>
+            ) : (
+              <p className={`text-xs ${isDark ? 'text-white/30' : 'text-gray-400'}`}>Sem grupo</p>
+            )}
+          </div>
+
+          {/* Jornada */}
+          <div className={`rounded-2xl border p-3 flex flex-col gap-1.5 ${chipDark}`}>
+            <p className={`text-[10px] font-semibold uppercase tracking-wider ${label}`}>Jornada</p>
+            <div className="flex gap-1.5 flex-wrap">
+              <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${hasNext ? chipBadgeOk : chipBadgeNo}`}>
+                Next {hasNext ? '✓' : '—'}
+              </span>
+              <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${trilha.find(t => t.etapa === 'voluntariado')?.concluido ? chipBadgeOk : chipBadgeNo}`}>
+                Voluntariado {trilha.find(t => t.etapa === 'voluntariado')?.concluido ? '✓' : '—'}
+              </span>
+            </div>
+          </div>
+        </div>
+
         <div className="max-w-3xl mx-auto grid grid-cols-1 md:grid-cols-[260px_1fr] gap-6">
 
           {/* Photo column */}
