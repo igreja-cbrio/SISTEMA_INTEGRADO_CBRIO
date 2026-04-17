@@ -835,20 +835,54 @@ router.patch('/adm-templates/:id/toggle', authorize('admin', 'diretor'), async (
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// POST /api/cycles/adm-templates/:id/subtasks — adicionar subtarefa
+// POST /api/cycles/adm-templates/:id/subtasks — adicionar subtarefa + propagar
 router.post('/adm-templates/:id/subtasks', authorize('admin', 'diretor'), async (req, res) => {
   try {
     const { data, error } = await supabase.from('adm_task_template_subtasks').insert({
       template_id: req.params.id, name: req.body.name, offset_start: req.body.offset_start || 0, offset_end: req.body.offset_end || 0,
     }).select().single();
     if (error) throw error;
+
+    // Propagar: adicionar subtarefa em todas as tasks nao concluidas dos eventos ativos
+    const { data: tmpl } = await supabase.from('adm_task_templates').select('titulo, area').eq('id', req.params.id).single();
+    if (tmpl) {
+      const { data: cycles } = await supabase.from('event_cycles').select('event_id').eq('status', 'ativo');
+      const eventIds = (cycles || []).map(c => c.event_id);
+      if (eventIds.length > 0) {
+        const { data: tasks } = await supabase.from('cycle_phase_tasks').select('id').in('event_id', eventIds).eq('titulo', tmpl.titulo).eq('area', tmpl.area).neq('status', 'concluida');
+        if (tasks?.length) {
+          const inserts = tasks.map(t => ({ task_id: t.id, name: req.body.name, sort_order: 99 }));
+          await supabase.from('cycle_task_subtasks').insert(inserts);
+        }
+      }
+    }
+
     res.json(data);
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// DELETE /api/cycles/adm-template-subtasks/:id
+// DELETE /api/cycles/adm-template-subtasks/:id — remover subtarefa + propagar
 router.delete('/adm-template-subtasks/:id', authorize('admin', 'diretor'), async (req, res) => {
   try {
+    // Buscar nome da subtarefa e template pai antes de deletar
+    const { data: sub } = await supabase.from('adm_task_template_subtasks').select('name, template_id').eq('id', req.params.id).single();
+    if (sub) {
+      const { data: tmpl } = await supabase.from('adm_task_templates').select('titulo, area').eq('id', sub.template_id).single();
+      if (tmpl) {
+        // Encontrar tasks nao concluidas nos eventos ativos
+        const { data: cycles } = await supabase.from('event_cycles').select('event_id').eq('status', 'ativo');
+        const eventIds = (cycles || []).map(c => c.event_id);
+        if (eventIds.length > 0) {
+          const { data: tasks } = await supabase.from('cycle_phase_tasks').select('id').in('event_id', eventIds).eq('titulo', tmpl.titulo).eq('area', tmpl.area).neq('status', 'concluida');
+          const taskIds = (tasks || []).map(t => t.id);
+          if (taskIds.length > 0) {
+            // Remover subtarefas com mesmo nome dessas tasks
+            await supabase.from('cycle_task_subtasks').delete().in('task_id', taskIds).eq('name', sub.name);
+          }
+        }
+      }
+    }
+
     await supabase.from('adm_task_template_subtasks').delete().eq('id', req.params.id);
     res.json({ success: true });
   } catch (err) { res.status(500).json({ error: err.message }); }
