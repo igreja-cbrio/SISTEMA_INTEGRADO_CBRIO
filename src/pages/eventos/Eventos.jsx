@@ -992,7 +992,7 @@ export default function Eventos() {
     const CAT_LABELS = { marketing: 'Marketing', producao: 'Producao', compras: 'Compras', financeiro: 'Financeiro', manutencao: 'Manutencao', limpeza: 'Limpeza', cozinha: 'Cozinha', adm: 'Administrativo' };
     // Agrupar por etapa
     const grouped = {};
-    admTemplates.forEach(t => { if (!grouped[t.etapa]) grouped[t.etapa] = []; grouped[t.etapa].push(t); });
+    (Array.isArray(admTemplates) ? admTemplates : []).forEach(t => { if (!grouped[t.etapa]) grouped[t.etapa] = []; grouped[t.etapa].push(t); });
 
     return (
       <div>
@@ -1068,8 +1068,8 @@ export default function Eventos() {
           </div>
         ))}
 
-        {admTemplates.length === 0 && <div style={{ padding: 40, textAlign: 'center', color: C.t3, fontSize: 13 }}>Nenhuma tarefa padrao cadastrada</div>}
-        <div style={{ fontSize: 11, color: C.t3, marginTop: 16 }}>Total: {admTemplates.length} tarefas | {admTemplates.filter(t => t.ativo).length} ativas | {admTemplates.reduce((a, t) => a + (t.adm_task_template_subtasks?.length || 0), 0)} subtarefas</div>
+        {(!admTemplates || admTemplates.length === 0) && <div style={{ padding: 40, textAlign: 'center', color: C.t3, fontSize: 13 }}>Nenhuma tarefa padrao cadastrada</div>}
+        {Array.isArray(admTemplates) && admTemplates.length > 0 && <div style={{ fontSize: 11, color: C.t3, marginTop: 16 }}>Total: {admTemplates.length} tarefas | {admTemplates.filter(t => t.ativo).length} ativas | {admTemplates.reduce((a, t) => a + (t.adm_task_template_subtasks?.length || 0), 0)} subtarefas</div>}
       </div>
     );
   }
