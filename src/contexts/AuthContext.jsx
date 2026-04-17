@@ -152,6 +152,9 @@ export function AuthProvider({ children }) {
   const userAreas = permData?.areas || [profile?.area].filter(Boolean);
   const userSetores = permData?.setores || [];
 
+  const isVoluntario = profile?.role === 'voluntario';
+  const isAdmin = ['admin', 'diretor'].includes(profile?.role);
+
   const canRH = canAccessModule(['DP', 'Pessoas']);
   const canFinanceiro = canAccessModule(['Financeiro']);
   const canLogistica = canAccessModule(['Logística']);
@@ -162,9 +165,6 @@ export function AuthProvider({ children }) {
   const canAgenda = canAccessModule(['Agenda']);
   const canIA = canAccessModule(['IA / Agentes']);
   const canKPIs = isAdmin || canAccessModule(['KPIs', 'Indicadores']);
-
-  const isVoluntario = profile?.role === 'voluntario';
-  const isAdmin = ['admin', 'diretor'].includes(profile?.role);
   // Colaborador = admin/diretor ou usuario com qualquer permissao de modulo
   // (voluntarios e membros sem permissao nao sao colaboradores)
   const isColaborador = isAdmin || canRH || canFinanceiro || canLogistica || canPatrimonio || canMembresia || canProjetos || canExpansao || canAgenda || canIA;
