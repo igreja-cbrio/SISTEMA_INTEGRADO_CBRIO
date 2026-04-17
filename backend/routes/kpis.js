@@ -236,7 +236,8 @@ router.post('/youtube/sync', async (req, res) => {
   const authHeader = req.headers.authorization;
   const cronSecret = process.env.CRON_SECRET;
   const isVercelCron = req.headers['x-vercel-cron'] === '1';
-  if (!isVercelCron && authHeader !== cronSecret && authHeader !== `Bearer ${cronSecret}`) {
+  const isAdmin = ['admin', 'diretor'].includes(req.user?.role);
+  if (!isVercelCron && authHeader !== cronSecret && authHeader !== `Bearer ${cronSecret}` && !isAdmin) {
     return res.status(401).json({ error: 'Não autorizado' });
   }
 
