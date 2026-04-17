@@ -57,6 +57,7 @@ export default function TotemMembro() {
   const [scanError, setScanError] = useState('');
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [isDark, setIsDark] = useState(() => localStorage.getItem(THEME_KEY) !== 'light');
+  const [showNovoCadastro, setShowNovoCadastro] = useState(false);
   const toggleTheme = () => setIsDark(v => { const n = !v; localStorage.setItem(THEME_KEY, n ? 'dark' : 'light'); return n; });
 
   // PIN
@@ -413,8 +414,6 @@ export default function TotemMembro() {
   );
 
   // ── Idle (default) ────────────────────────────────────────────────────────
-  const [showNovoCadastro, setShowNovoCadastro] = useState(false);
-
   if (showNovoCadastro) return (
     <NovoCadastroScreen onBack={() => setShowNovoCadastro(false)} />
   );
