@@ -5,6 +5,7 @@ import { LoginShapesBackground } from '../../components/ui/shape-landing-hero';
 import { MultistepFormShell } from '../../components/ui/multistep-form';
 import MemberWalletPass from '../../components/membresia/MemberWalletPass';
 import MemberWalletDialog from '../../components/membresia/MemberWalletDialog';
+import { QRCodeSVG } from 'qrcode.react';
 
 // ── Helpers de máscara ──
 function soDigitos(v) { return (v || '').toString().replace(/\D+/g, ''); }
@@ -203,6 +204,7 @@ function CheckboxField({ id, checked, onChange, label }) {
 
 export default function CadastroMembresia() {
   useHomeScreenMeta('membresia');
+  const fromTotem = new URLSearchParams(window.location.search).get('from') === 'totem';
   const [currentStep, setCurrentStep] = useState(0);
   const [form, setForm] = useState({
     nome: '', sobrenome: '', cpf: '', email: '', telefone: '',
@@ -386,6 +388,19 @@ export default function CadastroMembresia() {
         border: '1px solid rgba(255,255,255,0.06)', borderRadius: 20,
         padding: '40px 36px',
       }}>
+        {fromTotem && (
+          <button
+            onClick={() => window.location.href = '/totem'}
+            style={{
+              display: 'flex', alignItems: 'center', gap: 6,
+              background: 'transparent', border: 'none',
+              color: '#737373', fontSize: 13, cursor: 'pointer',
+              padding: '0 0 20px', marginBottom: 0,
+            }}
+          >
+            ← Voltar ao Totem
+          </button>
+        )}
         <div style={{ textAlign: 'center', marginBottom: 28 }}>
           <img
             src="/logo-cbrio-icon.png"
@@ -416,18 +431,45 @@ export default function CadastroMembresia() {
               Obrigado por se conectar com a CBRio. Em breve nossa equipe entrará em contato com você.
             </p>
 
-            {/* QR de membro — adicionar na wallet do dispositivo */}
-            <div style={{
-              marginTop: 24, paddingTop: 20,
-              borderTop: '1px solid rgba(255,255,255,0.08)',
-            }}>
-              <MemberWalletPass
-                cpf={soDigitos(form.cpf)}
-                dataNascimento={form.data_nascimento}
-                title="Seu QR de membro CBRio"
-                inline
-              />
-            </div>
+            {fromTotem ? (
+              /* Modo totem: exibe QR para o membro escanear com o celular e pegar a wallet */
+              <div style={{ marginTop: 24, paddingTop: 20, borderTop: '1px solid rgba(255,255,255,0.08)' }}>
+                <p style={{ fontSize: 13, color: '#a3a3a3', marginBottom: 16 }}>
+                  Escaneie o QR Code com seu celular para adicionar seu QR de membro na carteira digital:
+                </p>
+                <div style={{ display: 'inline-block', background: '#fff', padding: 12, borderRadius: 12, marginBottom: 16 }}>
+                  <QRCodeSVG
+                    value={`${window.location.origin}/wallet`}
+                    size={180}
+                    level="M"
+                    includeMargin={false}
+                  />
+                </div>
+                <p style={{ fontSize: 11, color: '#525252', marginBottom: 20 }}>
+                  {window.location.origin}/wallet
+                </p>
+                <button
+                  onClick={() => window.location.href = '/totem'}
+                  style={{
+                    padding: '10px 24px', borderRadius: 10, background: 'transparent',
+                    border: '1px solid rgba(255,255,255,0.2)', color: '#a3a3a3',
+                    fontSize: 14, cursor: 'pointer',
+                  }}
+                >
+                  ← Voltar ao Totem
+                </button>
+              </div>
+            ) : (
+              /* Modo normal: exibe wallet pass inline */
+              <div style={{ marginTop: 24, paddingTop: 20, borderTop: '1px solid rgba(255,255,255,0.08)' }}>
+                <MemberWalletPass
+                  cpf={soDigitos(form.cpf)}
+                  dataNascimento={form.data_nascimento}
+                  title="Seu QR de membro CBRio"
+                  inline
+                />
+              </div>
+            )}
           </div>
         ) : showFamiliaStep ? (
           <div style={{

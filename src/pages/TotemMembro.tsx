@@ -14,6 +14,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { GruposMapView } from '@/components/grupos/GruposMapView';
+import { QRCodeSVG } from 'qrcode.react';
 
 // ── Menu ──────────────────────────────────────────────────────────────────────
 
@@ -412,6 +413,12 @@ export default function TotemMembro() {
   );
 
   // ── Idle (default) ────────────────────────────────────────────────────────
+  const [showNovoCadastro, setShowNovoCadastro] = useState(false);
+
+  if (showNovoCadastro) return (
+    <NovoCadastroScreen onBack={() => setShowNovoCadastro(false)} />
+  );
+
   return (
     <div className="min-h-screen bg-gradient-to-b from-gray-950 via-gray-900 to-gray-950 text-white flex flex-col select-none">
       <div className="flex items-center justify-between px-6 py-4">
@@ -446,9 +453,12 @@ export default function TotemMembro() {
           </div>
         )}
 
-        <p className="text-white/20 text-sm text-center max-w-xs">
-          Não tem carteirinha digital? Acesse o app → Perfil → Carteirinha Digital
-        </p>
+        <button
+          onClick={() => setShowNovoCadastro(true)}
+          className="px-6 py-3 rounded-2xl border border-white/15 bg-white/5 hover:bg-white/10 transition-all text-sm text-white/60 hover:text-white/90"
+        >
+          Novo na CBRio? Faça seu cadastro aqui
+        </button>
       </div>
 
       <div className="flex items-center justify-between px-6 py-3">
@@ -456,6 +466,65 @@ export default function TotemMembro() {
         <button onClick={() => setState('exit_confirm')} className="text-white/5 hover:text-white/20 text-xs transition-colors">
           Sair do modo totem
         </button>
+      </div>
+    </div>
+  );
+}
+
+// ── Novo Cadastro screen ───────────────────────────────────────────────────────
+
+function NovoCadastroScreen({ onBack }: { onBack: () => void }) {
+  const navigate = useNavigate();
+  const cadastroUrl = `${window.location.origin}/cadastro-membresia`;
+
+  return (
+    <div className="min-h-screen bg-gradient-to-b from-gray-950 via-gray-900 to-gray-950 text-white flex flex-col">
+      <div className="flex items-center gap-3 px-6 py-4 border-b border-white/10">
+        <button onClick={onBack} className="text-white/40 hover:text-white transition-colors p-1 -ml-1">
+          <ChevronLeft className="h-6 w-6" />
+        </button>
+        <h2 className="text-xl font-semibold">Novo Cadastro</h2>
+      </div>
+
+      <div className="flex-1 flex items-center justify-center p-8">
+        <div className="w-full max-w-2xl grid grid-cols-1 md:grid-cols-2 gap-5">
+
+          {/* Opção 1: pelo celular */}
+          <div className="flex flex-col items-center gap-5 p-7 rounded-3xl border border-white/10 bg-white/5">
+            <div className="h-12 w-12 rounded-2xl bg-[#00B39D]/20 flex items-center justify-center">
+              <QrCode className="h-6 w-6 text-[#00B39D]" />
+            </div>
+            <div className="text-center">
+              <p className="font-semibold text-lg">Usar meu celular</p>
+              <p className="text-white/40 text-sm mt-1">Escaneie o QR Code e preencha o formulário no seu telefone</p>
+            </div>
+            <div className="bg-white p-3 rounded-2xl">
+              <QRCodeSVG value={cadastroUrl} size={160} level="M" includeMargin={false} />
+            </div>
+            <p className="text-white/20 text-xs text-center break-all">{cadastroUrl}</p>
+          </div>
+
+          {/* Opção 2: pelo totem */}
+          <div className="flex flex-col items-center justify-center gap-5 p-7 rounded-3xl border border-white/10 bg-white/5">
+            <div className="h-12 w-12 rounded-2xl bg-[#3B82F6]/20 flex items-center justify-center">
+              <UserCheck className="h-6 w-6 text-[#3B82F6]" />
+            </div>
+            <div className="text-center">
+              <p className="font-semibold text-lg">Preencher aqui</p>
+              <p className="text-white/40 text-sm mt-1">Preencha o formulário completo diretamente nesta tela</p>
+            </div>
+            <Button
+              onClick={() => navigate('/cadastro-membresia?from=totem')}
+              className="bg-[#3B82F6] hover:bg-[#3B82F6]/90 text-white w-full py-3 text-base rounded-2xl"
+            >
+              Começar cadastro
+            </Button>
+            <p className="text-white/20 text-xs text-center">
+              Após o cadastro, você receberá um QR Code para adicionar na sua carteira digital
+            </p>
+          </div>
+
+        </div>
       </div>
     </div>
   );

@@ -123,7 +123,7 @@ router.get('/qr-lookup/:token', async (req, res) => {
           .maybeSingle(),
         supabase
           .from('mem_trilha_valores')
-          .select('etapa, data_conclusao, concluido')
+          .select('etapa, data_conclusao, concluida')
           .eq('membro_id', membro.id),
       ]);
 
