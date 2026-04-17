@@ -12,6 +12,7 @@ import {
   Users, TrendingUp, Droplets, Youtube, HandHeart,
   Plus, RefreshCw, CheckCircle2, BookOpen, Baby,
   Target, Edit2, Save, X, Loader2, ArrowRight, UserCheck,
+  Heart, Building2, DoorOpen, Activity,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -678,6 +679,34 @@ function TabVisaoGeral({ data: dash, loading, onTab }: { data: any; loading: boo
         </div>
       </div>
 
+      {/* ── Integração ── */}
+      <div>
+        <SectionHeader title="Integração" onVerTudo={() => onTab('integracao')} />
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+          <KpiCard label="Visitantes/Culto" value={null} icon={DoorOpen} color={C.primary}
+            sublabel="Semanal" onClick={() => onTab('integracao')} />
+          <KpiCard label="Conversões/Culto" value={null} icon={TrendingUp} color={C.info}
+            sublabel="Semanal" onClick={() => onTab('integracao')} />
+          <KpiCard label="Voluntários na Recepção" value={null} icon={HandHeart} color={C.warn}
+            sublabel="Semanal" onClick={() => onTab('integracao')} />
+          <KpiCard label="% Voluntários Treinados" value={null} unit="%" icon={Target} color={C.purple}
+            meta={getMeta('integracao', 'pct_voluntarios_treinados')} onClick={() => onTab('integracao')} />
+        </div>
+      </div>
+
+      {/* ── Cuidados ── */}
+      <div>
+        <SectionHeader title="Cuidados" onVerTudo={() => onTab('cuidados')} />
+        <div className="grid grid-cols-2 lg:grid-cols-3 gap-4">
+          <KpiCard label="Pessoas Acompanhadas" value={null} icon={Heart} color={C.primary}
+            sublabel="Mensal" onClick={() => onTab('cuidados')} />
+          <KpiCard label="Aconselhamentos" value={null} icon={BookOpen} color={C.info}
+            sublabel="Mensal" onClick={() => onTab('cuidados')} />
+          <KpiCard label="Atendimentos Capelania" value={null} icon={HandHeart} color={C.warn}
+            sublabel="Mensal" onClick={() => onTab('cuidados')} />
+        </div>
+      </div>
+
       {/* Gráfico evolução */}
       {chartData.length > 0 && (
         <div className="rounded-2xl border border-border bg-card p-5">
@@ -732,6 +761,14 @@ function TabVoluntariado({ data: dash, loading }: { data: any; loading: boolean 
         <KpiCard label="% Igreja Servindo 24m" value={null} unit="%" icon={Target} color={C.warn}
           meta={getMeta('pct_igreja_servindo', 'meta_24m')} sublabel="Meta 24m: 50%" />
       </div>
+      <div className="grid grid-cols-2 lg:grid-cols-3 gap-4">
+        <KpiCard label="% Escalados no Services" value={null} unit="%" icon={CheckCircle2} color={C.primary}
+          meta={getMeta('pct_escalados_services')} sublabel="Meta contínua: 95%" />
+        <KpiCard label="% Interessados Integrados" value={null} unit="%" icon={UserCheck} color={C.info}
+          meta={getMeta('pct_interessados_integrados')} sublabel="Meta contínua: 90%" />
+        <KpiCard label="% Desaparecidos Recuperados" value={null} unit="%" icon={Activity} color={C.purple}
+          meta={getMeta('pct_desaparecidos_recuperados')} sublabel="Meta contínua: 60%" />
+      </div>
       <div className="rounded-2xl border border-border bg-card p-5">
         <p className="text-sm text-muted-foreground">
           Os dados de % da Igreja Servindo são calculados com base na frequência média vs voluntários ativos.
@@ -767,6 +804,14 @@ function TabGrupos({ data: dash, loading }: { data: any; loading: boolean }) {
         <KpiCard label="% Jovens — Meta 12m" value={null} unit="%" icon={Target} color={C.purple}
           meta={getMeta('pct_jovens_grupos', 'meta_12m')} sublabel="Meta 12m: 70%" />
       </div>
+      <div className="grid grid-cols-2 lg:grid-cols-3 gap-4">
+        <KpiCard label="% Igreja em Grupos (+30% anual)" value={null} unit="%" icon={TrendingUp} color={C.primary}
+          sublabel="Meta 2026: aumentar 30% ao ano" />
+        <KpiCard label="% Igreja em Grupos (2 anos)" value={null} unit="%" icon={Target} color={C.info}
+          sublabel="Meta 2 anos: 50%" />
+        <KpiCard label="% Igreja em Grupos (5 anos)" value={null} unit="%" icon={BookOpen} color={C.warn}
+          sublabel="Meta 5 anos: 70%" />
+      </div>
       <div className="rounded-2xl border border-border bg-card p-5">
         <p className="text-sm text-muted-foreground mb-4">
           Visualize todos os grupos, líderes, participantes e horários no módulo de Grupos de Conexão.
@@ -799,6 +844,16 @@ function TabKids({ data: dash, loading }: { data: any; loading: boolean }) {
           meta={getMeta('devocionais')} sublabel={`Base: ${metas.find(m => m.area === 'kids' && m.indicador === 'devocionais')?.valor_base ?? 10} famílias`} />
         <KpiCard label="Meta Devocionais 6m" value={null} icon={Target} color={C.info}
           meta={getMeta('devocionais')} sublabel="Meta 6m: 50 famílias" />
+      </div>
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        <KpiCard label="Saída Voluntários Kids" value={null} icon={Activity} color={C.danger}
+          sublabel="Base: 7 saídas/ano (jan–out/25)" />
+        <KpiCard label="Meta Redução Saídas" value={null} icon={Target} color={C.warn}
+          sublabel="Meta: -30% (máx. 4,9/ano)" />
+        <KpiCard label="Aceitações +25%/mês" value={null} unit="%" icon={TrendingUp} color={C.primary}
+          meta={getMeta('pct_aceitacoes')} sublabel="Crescimento mensal" />
+        <KpiCard label="Batismos +67%/mês" value={null} unit="%" icon={Droplets} color="#6366F1"
+          meta={getMeta('pct_batismos')} sublabel="Crescimento mensal" />
       </div>
       <div className="rounded-2xl border border-dashed border-border bg-muted/30 p-6 text-center">
         <Baby className="h-10 w-10 mx-auto text-muted-foreground/40 mb-3" />
@@ -840,10 +895,128 @@ function TabAMI({ data: dash, loading }: { data: any; loading: boolean }) {
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         <KpiCard label="Escola de Discípulos" value={null} icon={BookOpen} color={C.info}
           meta={getMeta('ami', 'escola_discipulos')} />
+        <KpiCard label="Aumento Escola (6m)" value={null} unit="%" icon={TrendingUp} color={C.primary}
+          meta={getMeta('ami_bridge', 'pct_escola_discipulos')} sublabel="Meta: +50% participantes" />
+        <KpiCard label="Aumento Freq. (6m)" value={null} unit="%" icon={Activity} color={C.warn}
+          meta={getMeta('ami_bridge', 'pct_aumento_frequencia')} sublabel="Meta: +15%" />
+        <KpiCard label="Aumento Freq. (12m)" value={null} unit="%" icon={Target} color={C.purple}
+          meta={getMeta('ami_bridge', 'pct_aumento_frequencia', 'meta_12m')} sublabel="Meta: +30%" />
       </div>
       <div className="rounded-2xl border border-dashed border-border bg-muted/30 p-6 text-center">
         <p className="text-sm font-medium text-foreground">Dados de Next e Escola de Discípulos</p>
         <p className="text-xs text-muted-foreground mt-1">Estes indicadores precisam de integração com o módulo de trilha de membros.</p>
+      </div>
+    </div>
+  );
+}
+
+// ── Tab: Integração ───────────────────────────────────────────────────────────
+
+function TabIntegracao({ data: dash, loading }: { data: any; loading: boolean }) {
+  const metas: any[] = dash?.metas || [];
+  const getMeta = (ind: string, campo: 'meta_6m' | 'meta_12m' = 'meta_6m') =>
+    metas.find(m => m.area === 'integracao' && m.indicador === ind)?.[campo] ?? null;
+
+  if (loading) return <div className="flex items-center justify-center py-16"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>;
+
+  return (
+    <div className="space-y-6">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        <KpiCard label="Visitantes/Culto" value={null} icon={DoorOpen} color={C.primary} sublabel="Semanal — via formulário" />
+        <KpiCard label="Conversões/Culto" value={null} icon={TrendingUp} color={C.info} sublabel="Semanal — via formulário" />
+        <KpiCard label="Voluntários na Recepção" value={null} icon={HandHeart} color={C.warn} sublabel="Semanal" />
+        <KpiCard label="% Voluntários Treinados" value={null} unit="%" icon={Target} color={C.purple}
+          meta={getMeta('pct_voluntarios_treinados')} sublabel="Meta: 90%" />
+      </div>
+      <div className="rounded-2xl border border-border bg-card p-5">
+        <p className="text-sm font-semibold text-foreground mb-4">Metas de Integração 2026</p>
+        <div className="space-y-2">
+          {[
+            { meta: '5 pessoas/culto', desc: 'Cada membro da recepção deve abordar 5 pessoas por culto, oferecendo acolhimento e ajuda.' },
+            { meta: '1 reunião/mês', desc: 'Encontros mensais 1x1 entre coordenadores, supervisores e voluntários. Todos devem ter feito ao menos 1 reunião/mês.' },
+            { meta: '90% treinados', desc: 'Treinamentos mensais sobre processos, envolvendo 90% dos voluntários da integração.' },
+            { meta: '1x por semestre', desc: 'Cada voluntário deve participar pelo menos 1 vez por semestre.' },
+            { meta: 'Trimestral', desc: 'Aplicar questionários trimestrais sobre processos e atendimento às dúvidas dos membros.' },
+          ].map((item, i) => (
+            <div key={i} className="flex items-start gap-3 p-3 rounded-xl bg-muted/30">
+              <span className="h-6 w-6 rounded-full bg-primary/20 text-primary text-[10px] font-bold flex items-center justify-center flex-shrink-0 mt-0.5">{i + 1}</span>
+              <div className="text-sm"><span className="font-semibold text-foreground">{item.meta}</span><span className="text-muted-foreground"> — {item.desc}</span></div>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Tab: Cuidados ─────────────────────────────────────────────────────────────
+
+function TabCuidados({ loading }: { data: any; loading: boolean }) {
+  if (loading) return <div className="flex items-center justify-center py-16"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>;
+
+  const subareas = [
+    { titulo: 'Próximos Passos — Atendimento', itens: ['Novos convertidos atendidos pós-culto', 'Novos convertidos cadastrados e contactados', 'Novos voluntários', 'Voluntários em treinamento'] },
+    { titulo: 'Jornada 180', itens: ['Encontros e reuniões semanais', 'Envio de devocionais diários', 'Atendimentos individuais', 'Treinamento de novos voluntários e lideranças'] },
+    { titulo: 'Capelania', itens: ['Atendimentos de enfermos e visitas a hospitais', 'Sepultamentos e atendimentos aos enlutados'] },
+    { titulo: 'Aconselhamentos', itens: ['Atendimentos de membros e pessoas com dificuldades espirituais', 'Papo com o Pastor (staff)'] },
+  ];
+
+  return (
+    <div className="space-y-6">
+      <div className="grid grid-cols-2 lg:grid-cols-3 gap-4">
+        <KpiCard label="Pessoas Acompanhadas" value={null} icon={Heart} color={C.primary} sublabel="Mensal" />
+        <KpiCard label="Aconselhamentos" value={null} icon={BookOpen} color={C.info} sublabel="Mensal" />
+        <KpiCard label="Atendimentos Capelania" value={null} icon={HandHeart} color={C.warn} sublabel="Mensal" />
+      </div>
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        {subareas.map(sa => (
+          <div key={sa.titulo} className="rounded-2xl border border-border bg-card p-5">
+            <p className="text-sm font-semibold text-foreground mb-3">{sa.titulo}</p>
+            <ul className="space-y-1.5">
+              {sa.itens.map(item => (
+                <li key={item} className="text-sm text-muted-foreground flex items-start gap-2">
+                  <span className="h-1.5 w-1.5 rounded-full bg-primary/60 flex-shrink-0 mt-1.5" />
+                  {item}
+                </li>
+              ))}
+            </ul>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ── Tab: CBA ──────────────────────────────────────────────────────────────────
+
+function TabCBA({ loading }: { data: any; loading: boolean }) {
+  if (loading) return <div className="flex items-center justify-center py-16"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>;
+
+  return (
+    <div className="space-y-6">
+      <div className="grid grid-cols-2 lg:grid-cols-3 gap-4">
+        <KpiCard label="Conversões (trimestral)" value={null} icon={TrendingUp} color={C.primary} sublabel="Acompanhamento trimestral" />
+        <KpiCard label="Reuniões Realizadas" value={null} icon={Building2} color={C.info} sublabel="Acompanhamento trimestral" />
+        <KpiCard label="Participantes nas Reuniões" value={null} icon={Users} color={C.warn} sublabel="Acompanhamento trimestral" />
+      </div>
+      <div className="rounded-2xl border border-border bg-card p-5">
+        <p className="text-sm font-semibold text-foreground mb-2">Sobre a CBA</p>
+        <p className="text-sm text-muted-foreground mb-4">
+          A Comunidade Batista Associada apoia igrejas estagnadas e decadentes a retornarem ao propósito da Igreja,
+          e apoia o desenvolvimento de pastores para o crescimento do Reino.
+        </p>
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+          {[
+            { label: 'N° de conversões', freq: 'Trimestral' },
+            { label: 'N° de reuniões realizadas', freq: 'Trimestral' },
+            { label: 'N° de participantes', freq: 'Trimestral' },
+          ].map(i => (
+            <div key={i.label} className="rounded-xl bg-muted/30 p-3">
+              <p className="text-sm font-medium text-foreground">{i.label}</p>
+              <p className="text-xs text-muted-foreground mt-0.5">{i.freq}</p>
+            </div>
+          ))}
+        </div>
       </div>
     </div>
   );
@@ -859,6 +1032,9 @@ const TABS = [
   { id: 'grupos',       label: 'Grupos' },
   { id: 'kids',         label: 'CBKids' },
   { id: 'ami',          label: 'AMI & Bridge' },
+  { id: 'integracao',   label: 'Integração' },
+  { id: 'cuidados',     label: 'Cuidados' },
+  { id: 'cba',          label: 'CBA' },
 ] as const;
 
 type TabId = (typeof TABS)[number]['id'];
@@ -925,7 +1101,7 @@ export default function KPIs() {
       </div>
 
       {/* Tabs */}
-      <div className="flex gap-1 border-b border-border">
+      <div className="flex gap-1 border-b border-border overflow-x-auto scrollbar-none">
         {TABS.map(t => (
           <button
             key={t.id}
@@ -949,6 +1125,9 @@ export default function KPIs() {
       {tab === 'grupos'       && <TabGrupos data={dash} loading={dashLoading} />}
       {tab === 'kids'         && <TabKids data={dash} loading={dashLoading} />}
       {tab === 'ami'          && <TabAMI data={dash} loading={dashLoading} />}
+      {tab === 'integracao'   && <TabIntegracao data={dash} loading={dashLoading} />}
+      {tab === 'cuidados'     && <TabCuidados data={dash} loading={dashLoading} />}
+      {tab === 'cba'          && <TabCBA data={dash} loading={dashLoading} />}
     </div>
   );
 }
