@@ -928,22 +928,15 @@ function TabIntegracao({ data: dash, loading }: { data: any; loading: boolean })
         <KpiCard label="% Voluntários Treinados" value={null} unit="%" icon={Target} color={C.purple}
           meta={getMeta('pct_voluntarios_treinados')} sublabel="Meta: 90%" />
       </div>
-      <div className="rounded-2xl border border-border bg-card p-5">
-        <p className="text-sm font-semibold text-foreground mb-4">Metas de Integração 2026</p>
-        <div className="space-y-2">
-          {[
-            { meta: '5 pessoas/culto', desc: 'Cada membro da recepção deve abordar 5 pessoas por culto, oferecendo acolhimento e ajuda.' },
-            { meta: '1 reunião/mês', desc: 'Encontros mensais 1x1 entre coordenadores, supervisores e voluntários. Todos devem ter feito ao menos 1 reunião/mês.' },
-            { meta: '90% treinados', desc: 'Treinamentos mensais sobre processos, envolvendo 90% dos voluntários da integração.' },
-            { meta: '1x por semestre', desc: 'Cada voluntário deve participar pelo menos 1 vez por semestre.' },
-            { meta: 'Trimestral', desc: 'Aplicar questionários trimestrais sobre processos e atendimento às dúvidas dos membros.' },
-          ].map((item, i) => (
-            <div key={i} className="flex items-start gap-3 p-3 rounded-xl bg-muted/30">
-              <span className="h-6 w-6 rounded-full bg-primary/20 text-primary text-[10px] font-bold flex items-center justify-center flex-shrink-0 mt-0.5">{i + 1}</span>
-              <div className="text-sm"><span className="font-semibold text-foreground">{item.meta}</span><span className="text-muted-foreground"> — {item.desc}</span></div>
-            </div>
-          ))}
-        </div>
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        <KpiCard label="Abordagens por Voluntário" value={null} icon={UserCheck} color={C.primary}
+          meta={getMeta('abordagens_por_voluntario')} sublabel="Meta: 5 pessoas/culto" />
+        <KpiCard label="Encontros 1x1 Mensal" value={null} icon={Users} color={C.info}
+          meta={getMeta('encontros_1x1')} sublabel="Meta: 1 encontro/mês por dupla" />
+        <KpiCard label="Participação Semestral" value={null} icon={CheckCircle2} color={C.warn}
+          sublabel="Meta: cada voluntário 1x/semestre" />
+        <KpiCard label="Questionários Trimestrais" value={null} icon={Activity} color={C.purple}
+          sublabel="Meta: aplicar trimestralmente" />
       </div>
     </div>
   );
@@ -954,34 +947,19 @@ function TabIntegracao({ data: dash, loading }: { data: any; loading: boolean })
 function TabCuidados({ loading }: { data: any; loading: boolean }) {
   if (loading) return <div className="flex items-center justify-center py-16"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>;
 
-  const subareas = [
-    { titulo: 'Próximos Passos — Atendimento', itens: ['Novos convertidos atendidos pós-culto', 'Novos convertidos cadastrados e contactados', 'Novos voluntários', 'Voluntários em treinamento'] },
-    { titulo: 'Jornada 180', itens: ['Encontros e reuniões semanais', 'Envio de devocionais diários', 'Atendimentos individuais', 'Treinamento de novos voluntários e lideranças'] },
-    { titulo: 'Capelania', itens: ['Atendimentos de enfermos e visitas a hospitais', 'Sepultamentos e atendimentos aos enlutados'] },
-    { titulo: 'Aconselhamentos', itens: ['Atendimentos de membros e pessoas com dificuldades espirituais', 'Papo com o Pastor (staff)'] },
-  ];
-
   return (
     <div className="space-y-6">
-      <div className="grid grid-cols-2 lg:grid-cols-3 gap-4">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         <KpiCard label="Pessoas Acompanhadas" value={null} icon={Heart} color={C.primary} sublabel="Mensal" />
         <KpiCard label="Aconselhamentos" value={null} icon={BookOpen} color={C.info} sublabel="Mensal" />
         <KpiCard label="Atendimentos Capelania" value={null} icon={HandHeart} color={C.warn} sublabel="Mensal" />
+        <KpiCard label="Encontros Jornada 180" value={null} icon={Users} color={C.purple} sublabel="Mensal" />
       </div>
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-        {subareas.map(sa => (
-          <div key={sa.titulo} className="rounded-2xl border border-border bg-card p-5">
-            <p className="text-sm font-semibold text-foreground mb-3">{sa.titulo}</p>
-            <ul className="space-y-1.5">
-              {sa.itens.map(item => (
-                <li key={item} className="text-sm text-muted-foreground flex items-start gap-2">
-                  <span className="h-1.5 w-1.5 rounded-full bg-primary/60 flex-shrink-0 mt-1.5" />
-                  {item}
-                </li>
-              ))}
-            </ul>
-          </div>
-        ))}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        <KpiCard label="Convertidos Atendidos Pós-Culto" value={null} icon={UserCheck} color={C.primary} sublabel="Semanal" />
+        <KpiCard label="Convertidos Cadastrados" value={null} icon={CheckCircle2} color={C.info} sublabel="Semanal" />
+        <KpiCard label="Devocionais Enviados" value={null} icon={BookOpen} color={C.warn} sublabel="Diário — Jornada 180" />
+        <KpiCard label="Papo com o Pastor (staff)" value={null} icon={Activity} color={C.purple} sublabel="Mensal" />
       </div>
     </div>
   );
