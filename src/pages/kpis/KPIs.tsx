@@ -1358,6 +1358,7 @@ type TabId = (typeof TABS)[number]['id'];
 
 export default function KPIs() {
   const { isAdmin } = useAuth();
+  const navigate = useNavigate();
   const [tab, setTab] = useState<TabId>('geral');
   const [dash, setDash] = useState<any>(null);
   const [dashLoading, setDashLoading] = useState(true);
