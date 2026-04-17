@@ -1,6 +1,7 @@
 const router = require('express').Router();
 const { authenticate, authorize } = require('../middleware/auth');
 const { supabase } = require('../utils/supabase');
+const { notificar } = require('../services/notificar');
 
 router.use(authenticate);
 
@@ -142,6 +143,17 @@ router.post('/', authorize('diretor', 'admin'), async (req, res) => {
     }
 
     await supabase.from('audit_log').insert({ table_name: 'events', record_id: ev.id, event_id: ev.id, action: 'create', description: `Evento criado: ${d.name}`, changed_by: req.user.userId, changed_by_name: req.user.name }).catch(() => {});
+
+    notificar({
+      modulo: 'eventos',
+      tipo: 'evento_criado',
+      titulo: `Novo evento: ${ev.name}`,
+      mensagem: `O evento "${ev.name}" foi criado para ${ev.date}${ev.location ? ` em ${ev.location}` : ''}.`,
+      link: `/eventos/${ev.id}`,
+      severidade: 'info',
+      chaveDedup: `evento_criado_${ev.id}`,
+    }).catch(() => {});
+
     res.json(ev);
   } catch (e) { console.error('[Events POST]', e.message); res.status(500).json({ error: 'Erro ao criar evento' }); }
 });

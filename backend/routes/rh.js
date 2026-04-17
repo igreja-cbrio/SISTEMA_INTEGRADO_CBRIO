@@ -3,6 +3,7 @@ const multer = require('multer');
 const { authenticate, authorizeModule, applyAccessFilter, getEffectiveLevel } = require('../middleware/auth');
 const { supabase } = require('../utils/supabase');
 const { uploadModuleFile, SHAREPOINT_CONFIGURED, sanitizePath } = require('../services/storageService');
+const { notificar } = require('../services/notificar');
 
 const uploadMw = multer({
   storage: multer.memoryStorage(),
@@ -151,6 +152,17 @@ router.post('/funcionarios', async (req, res) => {
       .single();
 
     if (error) return res.status(400).json({ error: error.message });
+
+    notificar({
+      modulo: 'rh',
+      tipo: 'novo_funcionario',
+      titulo: `Novo funcionário: ${data.nome}`,
+      mensagem: `${data.nome} foi admitido como ${data.cargo}${data.area ? ` na área ${data.area}` : ''}. Admissão em ${data.data_admissao}.`,
+      link: '/admin/rh',
+      severidade: 'info',
+      chaveDedup: `novo_funcionario_${data.id}`,
+    }).catch(() => {});
+
     res.status(201).json(data);
   } catch (e) {
     console.error('[RH] Criar funcionário:', e.message);
@@ -475,6 +487,20 @@ router.patch('/ferias/:id', async (req, res) => {
       const tipo = data.tipo === 'ferias' ? 'ferias' : 'licenca';
       await supabase.from('rh_funcionarios').update({ status: tipo }).eq('id', data.funcionario_id);
     }
+
+    // Busca nome do funcionário para notificação
+    const { data: func } = await supabase.from('rh_funcionarios').select('nome').eq('id', data.funcionario_id).single();
+    const tipoLabel = data.tipo === 'ferias' ? 'Férias' : 'Licença';
+    const statusLabel = status === 'aprovado' ? 'aprovada' : 'rejeitada';
+    notificar({
+      modulo: 'rh',
+      tipo: 'ferias_status',
+      titulo: `${tipoLabel} ${statusLabel}: ${func?.nome || data.funcionario_id}`,
+      mensagem: `${tipoLabel} de ${func?.nome || 'funcionário'} de ${data.data_inicio} a ${data.data_fim} foi ${statusLabel}.`,
+      link: '/admin/rh',
+      severidade: status === 'aprovado' ? 'info' : 'aviso',
+      chaveDedup: `ferias_${status}_${data.id}`,
+    }).catch(() => {});
 
     res.json(data);
   } catch (e) {

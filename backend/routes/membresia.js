@@ -3,6 +3,7 @@ const multer = require('multer');
 const { authenticate, authorize } = require('../middleware/auth');
 const { supabase } = require('../utils/supabase');
 const { uploadModuleFile, SHAREPOINT_CONFIGURED } = require('../services/storageService');
+const { notificar } = require('../services/notificar');
 
 const uploadMw = multer({
   storage: multer.memoryStorage(),
@@ -1358,6 +1359,16 @@ router.post('/cadastros/:id/aprovar', authorize('admin', 'diretor'), async (req,
       });
     } catch (_) { /* histórico é opcional */ }
 
+    notificar({
+      modulo: 'membresia',
+      tipo: 'cadastro_aprovado',
+      titulo: `Cadastro aprovado: ${cad.nome}`,
+      mensagem: `O cadastro de ${cad.nome} foi ${foiAtualizacao ? 'atualizado' : 'aprovado'} e o membro está ativo no sistema.`,
+      link: `/ministerial/membresia`,
+      severidade: 'info',
+      chaveDedup: `cadastro_aprovado_${id}`,
+    }).catch(() => {});
+
     res.status(foiAtualizacao ? 200 : 201).json({ ok: true, membro, atualizacao: foiAtualizacao });
   } catch (e) {
     console.error('[CADASTROS] aprovar exception:', e.message, e.stack);
@@ -1370,7 +1381,7 @@ router.post('/cadastros/:id/rejeitar', authorize('admin', 'diretor'), async (req
   try {
     const { id } = req.params;
     const { motivo } = req.body || {};
-    const { error } = await supabase
+    const { data: cad, error } = await supabase
       .from('mem_cadastros_pendentes')
       .update({
         status: 'rejeitado',
@@ -1378,8 +1389,21 @@ router.post('/cadastros/:id/rejeitar', authorize('admin', 'diretor'), async (req
         aprovado_por: req.user.userId,
         aprovado_em: new Date().toISOString(),
       })
-      .eq('id', id);
+      .eq('id', id)
+      .select('nome')
+      .single();
     if (error) throw error;
+
+    notificar({
+      modulo: 'membresia',
+      tipo: 'cadastro_rejeitado',
+      titulo: `Cadastro rejeitado: ${cad?.nome || id}`,
+      mensagem: `O cadastro de ${cad?.nome || 'membro'} foi rejeitado.${motivo ? ` Motivo: ${motivo}` : ''}`,
+      link: `/ministerial/membresia`,
+      severidade: 'aviso',
+      chaveDedup: `cadastro_rejeitado_${id}`,
+    }).catch(() => {});
+
     res.json({ ok: true });
   } catch (e) {
     res.status(500).json({ error: 'Erro ao rejeitar cadastro' });

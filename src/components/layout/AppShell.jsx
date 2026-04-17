@@ -20,8 +20,8 @@ import { ScrollArea } from '../ui/scroll-area';
 import { Avatar, AvatarFallback } from '../ui/avatar';
 
 const SEV_COLORS = { urgente: '#ef4444', aviso: '#f59e0b', info: '#00B39D' };
-const MOD_COLORS = { rh: '#8b5cf6', financeiro: '#10b981', logistica: '#ef4444', patrimonio: '#6366f1', membresia: '#00B39D', eventos: '#3b82f6', projetos: '#ec4899', sistema: '#6b7280' };
-const MOD_LABELS = { rh: 'RH', financeiro: 'Financeiro', logistica: 'Logistica', patrimonio: 'Patrimonio', membresia: 'Membresia', eventos: 'Eventos', projetos: 'Projetos', sistema: 'Sistema' };
+const MOD_COLORS = { rh: '#8b5cf6', financeiro: '#10b981', logistica: '#ef4444', patrimonio: '#6366f1', membresia: '#00B39D', eventos: '#3b82f6', projetos: '#ec4899', kpis: '#f97316', sistema: '#6b7280' };
+const MOD_LABELS = { rh: 'RH', financeiro: 'Financeiro', logistica: 'Logística', patrimonio: 'Patrimônio', membresia: 'Membresia', eventos: 'Eventos', projetos: 'Projetos', kpis: 'KPIs', sistema: 'Sistema' };
 
 const NAV_ITEMS = [
   {

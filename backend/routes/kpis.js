@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const { authenticate, authorize } = require('../middleware/auth');
 const { supabase } = require('../utils/supabase');
+const { notificar } = require('../services/notificar');
 
 router.use(authenticate);
 
@@ -146,6 +147,17 @@ router.post('/batismos', async (req, res) => {
     .select('*, membro:membro_id(id, nome, foto_url)')
     .single();
   if (error) return res.status(500).json({ error: error.message });
+
+  notificar({
+    modulo: 'membresia',
+    tipo: 'novo_batismo',
+    titulo: `Nova inscrição de batismo`,
+    mensagem: `${nome} ${sobrenome} se inscreveu para batismo${origem === 'totem' ? ' pelo totem' : ''}.`,
+    link: '/kpis',
+    severidade: 'info',
+    chaveDedup: `batismo_${inscricao.id}`,
+  }).catch(() => {});
+
   res.json(inscricao);
 });
 
