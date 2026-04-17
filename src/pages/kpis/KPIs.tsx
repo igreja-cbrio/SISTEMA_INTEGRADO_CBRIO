@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { kpis as kpisApi } from '@/api';
 import { useAuth } from '@/contexts/AuthContext';
@@ -820,6 +820,8 @@ function SectionHeader({ title, onVerTudo }: { title: string; onVerTudo?: () => 
 }
 
 function TabVisaoGeral({ data: dash, loading, onTab }: { data: any; loading: boolean; onTab: (t: string) => void }) {
+  const [chartGran, setChartGran] = useState<'semana' | 'dia'>('semana');
+
   if (loading) return <div className="flex items-center justify-center py-16"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>;
   if (!dash) return null;
 
@@ -828,25 +830,33 @@ function TabVisaoGeral({ data: dash, loading, onTab }: { data: any; loading: boo
   const getMeta = (area: string, ind: string, campo: 'meta_6m' | 'meta_12m' = 'meta_6m') =>
     metas.find(m => m.area === area && m.indicador === ind)?.[campo] ?? null;
 
-  // Agrupar por semana
-  const semanas = cultos.reduce((acc: any, c: any) => {
-    const semana = format(startOfWeek(new Date(c.data + 'T12:00:00'), { weekStartsOn: 0 }), 'dd/MM', { locale: ptBR });
-    if (!acc[semana]) acc[semana] = { semana, adulto: 0, kids: 0, decisoes: 0, online: 0 };
-    acc[semana].adulto   += c.presencial_adulto || 0;
-    acc[semana].kids     += c.presencial_kids   || 0;
-    acc[semana].decisoes += (c.decisoes_presenciais || 0) + (c.decisoes_online || 0);
-    acc[semana].online   += c.online_pico || 0;
-    return acc;
-  }, {});
-  const chartData = Object.values(semanas).slice(-12);
+  // Agregação completa do período
+  const totalAdulto      = cultos.reduce((s: number, c: any) => s + (c.presencial_adulto || 0), 0);
+  const totalKids        = cultos.reduce((s: number, c: any) => s + (c.presencial_kids   || 0), 0);
+  const totalDecPresenc  = cultos.reduce((s: number, c: any) => s + (c.decisoes_presenciais || 0), 0);
+  const totalDecOnline   = cultos.reduce((s: number, c: any) => s + (c.decisoes_online    || 0), 0);
+  const totalDecisoes    = totalDecPresenc + totalDecOnline;
+  const totalOnline      = cultos.reduce((s: number, c: any) => s + (c.online_pico || 0), 0);
+  const totalDS          = cultos.reduce((s: number, c: any) => s + (c.online_ds    || 0), 0);
+  const mediaOcup        = cultos.length ? Math.round(cultos.reduce((s: number, c: any) => s + (c.taxa_ocupacao || 0), 0) / cultos.length) : 0;
+  const mediaVisitantes  = cultos.length ? Math.round(cultos.reduce((s: number, c: any) => s + (c.visitantes || 0), 0) / cultos.length) : null;
+  const sublabel         = `${cultos.length} culto${cultos.length !== 1 ? 's' : ''} no período`;
 
-  const ultCultos = [...cultos].reverse().slice(0, 4);
-  const totalAdulto   = ultCultos.reduce((s: number, c: any) => s + (c.presencial_adulto || 0), 0);
-  const totalKids     = ultCultos.reduce((s: number, c: any) => s + (c.presencial_kids   || 0), 0);
-  const totalDecisoes = ultCultos.reduce((s: number, c: any) => s + (c.decisoes_presenciais || 0) + (c.decisoes_online || 0), 0);
-  const totalOnline   = ultCultos.reduce((s: number, c: any) => s + (c.online_pico || 0), 0);
-  const totalDS       = ultCultos.reduce((s: number, c: any) => s + (c.online_ds || 0), 0);
-  const mediaOcup     = ultCultos.length ? Math.round(ultCultos.reduce((s: number, c: any) => s + (c.taxa_ocupacao || 0), 0) / ultCultos.length) : 0;
+  // Dados do gráfico com granularidade configurável
+  const chartData = (() => {
+    const map: Record<string, any> = {};
+    cultos.forEach((c: any) => {
+      const key = chartGran === 'semana'
+        ? format(startOfWeek(new Date(c.data + 'T12:00:00'), { weekStartsOn: 0 }), 'dd/MM', { locale: ptBR })
+        : format(new Date(c.data + 'T12:00:00'), 'dd/MM', { locale: ptBR });
+      if (!map[key]) map[key] = { semana: key, adulto: 0, kids: 0, decisoes: 0, online: 0 };
+      map[key].adulto   += c.presencial_adulto || 0;
+      map[key].kids     += c.presencial_kids   || 0;
+      map[key].decisoes += (c.decisoes_presenciais || 0) + (c.decisoes_online || 0);
+      map[key].online   += c.online_pico || 0;
+    });
+    return Object.values(map);
+  })();
 
   return (
     <div className="space-y-8">
@@ -855,13 +865,13 @@ function TabVisaoGeral({ data: dash, loading, onTab }: { data: any; loading: boo
         <SectionHeader title="Cultos & Frequência" onVerTudo={() => onTab('cultos')} />
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
           <KpiCard label="Frequência Adultos" value={totalAdulto} icon={Users} color={C.primary}
-            sublabel={`Últimos ${ultCultos.length} cultos`} onClick={() => onTab('cultos')} />
+            sublabel={sublabel} onClick={() => onTab('cultos')} />
           <KpiCard label="Frequência Kids" value={totalKids} icon={Baby} color={C.info}
-            sublabel={`Últimos ${ultCultos.length} cultos`} onClick={() => onTab('cultos')} />
+            sublabel={sublabel} onClick={() => onTab('cultos')} />
           <KpiCard label="Taxa Ocupação Média" value={mediaOcup} unit="%" icon={Target} color={C.warn}
             sublabel="1.300 cadeiras" onClick={() => onTab('cultos')} />
           <KpiCard label="Decisões Totais" value={totalDecisoes} icon={TrendingUp} color={C.purple}
-            sublabel={`Últimos ${ultCultos.length} cultos`} onClick={() => onTab('cultos')} />
+            sublabel={sublabel} onClick={() => onTab('cultos')} />
         </div>
       </div>
 
@@ -870,13 +880,13 @@ function TabVisaoGeral({ data: dash, loading, onTab }: { data: any; loading: boo
         <SectionHeader title="Online & YouTube" onVerTudo={() => onTab('cultos')} />
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
           <KpiCard label="Pico Simultâneo" value={totalOnline || null} icon={Youtube} color="#EF4444"
-            sublabel="Últimos cultos" onClick={() => onTab('cultos')} />
+            sublabel={sublabel} onClick={() => onTab('cultos')} />
           <KpiCard label="Views D+1 (soma)" value={totalDS || null} icon={TrendingUp} color={C.warn}
             sublabel="Às 10h do dia seguinte" onClick={() => onTab('cultos')} />
-          <KpiCard label="Decisões Online" value={ultCultos.reduce((s: number, c: any) => s + (c.decisoes_online || 0), 0)} icon={CheckCircle2} color={C.primary}
-            onClick={() => onTab('cultos')} />
-          <KpiCard label="Decisões Presenciais" value={ultCultos.reduce((s: number, c: any) => s + (c.decisoes_presenciais || 0), 0)} icon={UserCheck} color={C.purple}
-            onClick={() => onTab('cultos')} />
+          <KpiCard label="Decisões Online" value={totalDecOnline} icon={CheckCircle2} color={C.primary}
+            sublabel={sublabel} onClick={() => onTab('cultos')} />
+          <KpiCard label="Decisões Presenciais" value={totalDecPresenc} icon={UserCheck} color={C.purple}
+            sublabel={sublabel} onClick={() => onTab('cultos')} />
         </div>
       </div>
 
@@ -968,12 +978,39 @@ function TabVisaoGeral({ data: dash, loading, onTab }: { data: any; loading: boo
         </div>
       </div>
 
+      {/* Integração — visitantes e conversões com dados reais */}
+      <div>
+        <SectionHeader title="Integração" onVerTudo={() => onTab('integracao')} />
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+          <KpiCard label="Visitantes/Culto (média)" value={mediaVisitantes} icon={DoorOpen} color={C.primary}
+            sublabel={sublabel} onClick={() => onTab('integracao')} />
+          <KpiCard label="Decisões/Culto (média)" value={cultos.length ? Math.round(totalDecisoes / cultos.length) : null} icon={TrendingUp} color={C.info}
+            sublabel={sublabel} onClick={() => onTab('integracao')} />
+          <KpiCard label="Visitantes (soma)" value={cultos.reduce((s: number, c: any) => s + (c.visitantes || 0), 0) || null} icon={Users} color={C.warn}
+            sublabel={sublabel} onClick={() => onTab('integracao')} />
+          <KpiCard label="Visitantes Online (soma)" value={cultos.reduce((s: number, c: any) => s + (c.visitantes_online || 0), 0) || null} icon={Youtube} color={C.purple}
+            sublabel={sublabel} onClick={() => onTab('integracao')} />
+        </div>
+      </div>
+
       {/* Gráficos */}
       {chartData.length > 0 && (
         <div className="grid grid-cols-1 lg:grid-cols-[1fr_340px] gap-4">
           {/* Area chart frequência */}
           <div className="rounded-2xl border border-border bg-card p-5">
-            <p className="text-sm font-semibold text-foreground mb-5">Frequência Semanal</p>
+            <div className="flex items-center justify-between mb-5">
+              <p className="text-sm font-semibold text-foreground">Frequência por {chartGran === 'semana' ? 'Semana' : 'Dia'}</p>
+              <div className="flex rounded-xl border border-border overflow-hidden text-xs">
+                <button onClick={() => setChartGran('semana')}
+                  className={`px-3 py-1.5 font-medium transition-colors ${chartGran === 'semana' ? 'bg-primary text-white' : 'text-muted-foreground hover:bg-muted'}`}>
+                  Semana
+                </button>
+                <button onClick={() => setChartGran('dia')}
+                  className={`px-3 py-1.5 font-medium transition-colors ${chartGran === 'dia' ? 'bg-primary text-white' : 'text-muted-foreground hover:bg-muted'}`}>
+                  Dia
+                </button>
+              </div>
+            </div>
             <ResponsiveContainer width="100%" height={240}>
               <AreaChart data={chartData} margin={{ top: 5, right: 10, left: 0, bottom: 5 }}>
                 <defs>
@@ -1258,17 +1295,26 @@ function TabIntegracao({ data: dash, loading }: { data: any; loading: boolean })
 
   if (loading) return <div className="flex items-center justify-center py-16"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>;
 
+  const cultos: any[] = dash?.cultos || [];
+  const n = cultos.length || 1;
+  const mediaVisit  = cultos.length ? Math.round(cultos.reduce((s: number, c: any) => s + (c.visitantes || 0), 0) / n) : null;
+  const mediaConv   = cultos.length ? Math.round(cultos.reduce((s: number, c: any) => s + (c.decisoes_presenciais || 0) + (c.decisoes_online || 0), 0) / n) : null;
+  const somaVisit   = cultos.reduce((s: number, c: any) => s + (c.visitantes || 0), 0) || null;
+  const somaVisitOL = cultos.reduce((s: number, c: any) => s + (c.visitantes_online || 0), 0) || null;
+  const sublabel    = `${cultos.length} cultos no período`;
+
   return (
     <div className="space-y-6">
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        <KpiCard label="Visitantes/Culto" value={null} icon={DoorOpen} color={C.primary} sublabel="Semanal — via formulário" />
-        <KpiCard label="Conversões/Culto" value={null} icon={TrendingUp} color={C.info} sublabel="Semanal — via formulário" />
-        <KpiCard label="Voluntários na Recepção" value={null} icon={HandHeart} color={C.warn} sublabel="Semanal" />
-        <KpiCard label="% Voluntários Treinados" value={null} unit="%" icon={Target} color={C.purple}
-          meta={getMeta('pct_voluntarios_treinados')} sublabel="Meta: 90%" />
+        <KpiCard label="Visitantes/Culto (média)" value={mediaVisit} icon={DoorOpen} color={C.primary} sublabel={sublabel} />
+        <KpiCard label="Conversões/Culto (média)" value={mediaConv} icon={TrendingUp} color={C.info} sublabel={sublabel} />
+        <KpiCard label="Visitantes (soma período)" value={somaVisit} icon={Users} color={C.warn} sublabel={sublabel} />
+        <KpiCard label="Visitantes Online (soma)" value={somaVisitOL} icon={Youtube} color={C.purple} sublabel={sublabel} />
       </div>
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        <KpiCard label="Abordagens por Voluntário" value={null} icon={UserCheck} color={C.primary}
+        <KpiCard label="% Voluntários Treinados" value={null} unit="%" icon={Target} color={C.primary}
+          meta={getMeta('pct_voluntarios_treinados')} sublabel="Meta: 90%" />
+        <KpiCard label="Abordagens por Voluntário" value={null} icon={UserCheck} color={C.info}
           meta={getMeta('abordagens_por_voluntario')} sublabel="Meta: 5 pessoas/culto" />
         <KpiCard label="Encontros 1x1 Mensal" value={null} icon={Users} color={C.info}
           meta={getMeta('encontros_1x1')} sublabel="Meta: 1 encontro/mês por dupla" />
@@ -1365,12 +1411,22 @@ export default function KPIs() {
   const [serviceTypes, setServiceTypes] = useState<any[]>([]);
   const [syncingYt, setSyncingYt] = useState(false);
   const [periodo, setPeriodo] = useState(12);
+  const [serviceTypeFilter, setServiceTypeFilter] = useState('');
 
   const loadDash = useCallback(async () => {
     setDashLoading(true);
     try { setDash(await kpisApi.dashboard(periodo)); } catch {}
     setDashLoading(false);
   }, [periodo]);
+
+  const filteredDash = useMemo(() => {
+    if (!dash) return dash;
+    if (!serviceTypeFilter) return dash;
+    const cultos = serviceTypeFilter === 'domingo'
+      ? (dash.cultos || []).filter((c: any) => c.service_type_name?.toLowerCase().startsWith('domingo'))
+      : (dash.cultos || []).filter((c: any) => c.service_type_id === serviceTypeFilter);
+    return { ...dash, cultos };
+  }, [dash, serviceTypeFilter]);
 
   useEffect(() => {
     loadDash();
@@ -1405,6 +1461,17 @@ export default function KPIs() {
             <option value={12}>Últimas 12 semanas</option>
             <option value={24}>Últimas 24 semanas</option>
             <option value={52}>Último ano</option>
+          </select>
+          <select
+            value={serviceTypeFilter}
+            onChange={e => setServiceTypeFilter(e.target.value)}
+            className="px-3 py-2 rounded-xl border border-border bg-input text-foreground text-sm outline-none focus:border-[#00B39D] transition-colors"
+          >
+            <option value="">Todos os cultos</option>
+            <option value="domingo">Domingos</option>
+            {serviceTypes.map(st => (
+              <option key={st.id} value={st.id}>{st.name}</option>
+            ))}
           </select>
           {isAdmin && (
             <Button variant="outline" onClick={handleYtSync} disabled={syncingYt} className="gap-2 text-sm">
@@ -1441,16 +1508,16 @@ export default function KPIs() {
       </div>
 
       {/* Content */}
-      {tab === 'geral'        && <TabVisaoGeral data={dash} loading={dashLoading} onTab={(t) => setTab(t as TabId)} />}
+      {tab === 'geral'        && <TabVisaoGeral data={filteredDash} loading={dashLoading} onTab={(t) => setTab(t as TabId)} />}
       {tab === 'cultos'       && <TabCultos serviceTypes={serviceTypes} />}
       {tab === 'batismos'     && <TabBatismos />}
-      {tab === 'voluntariado' && <TabVoluntariado data={dash} loading={dashLoading} />}
-      {tab === 'grupos'       && <TabGrupos data={dash} loading={dashLoading} />}
-      {tab === 'kids'         && <TabKids data={dash} loading={dashLoading} />}
-      {tab === 'ami'          && <TabAMI data={dash} loading={dashLoading} />}
-      {tab === 'integracao'   && <TabIntegracao data={dash} loading={dashLoading} />}
-      {tab === 'cuidados'     && <TabCuidados data={dash} loading={dashLoading} />}
-      {tab === 'cba'          && <TabCBA data={dash} loading={dashLoading} />}
+      {tab === 'voluntariado' && <TabVoluntariado data={filteredDash} loading={dashLoading} />}
+      {tab === 'grupos'       && <TabGrupos data={filteredDash} loading={dashLoading} />}
+      {tab === 'kids'         && <TabKids data={filteredDash} loading={dashLoading} />}
+      {tab === 'ami'          && <TabAMI data={filteredDash} loading={dashLoading} />}
+      {tab === 'integracao'   && <TabIntegracao data={filteredDash} loading={dashLoading} />}
+      {tab === 'cuidados'     && <TabCuidados data={filteredDash} loading={dashLoading} />}
+      {tab === 'cba'          && <TabCBA data={filteredDash} loading={dashLoading} />}
     </div>
   );
 }
