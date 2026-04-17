@@ -1,7 +1,7 @@
 const router = require('express').Router();
 const { authenticate, authorizeCycle, authorize } = require('../middleware/auth');
 const { supabase } = require('../utils/supabase');
-const ADM_TASKS_TEMPLATE = require('../adm_tasks_template.json');
+// Templates agora vem do banco (adm_task_templates)
 const { SHAREPOINT_CONFIGURED } = require('../services/storageService');
 
 router.use(authenticate);
@@ -234,8 +234,9 @@ router.post('/activate/:eventId', authorize('admin', 'diretor'), async (req, res
       'Debriefing': 'Debrief',
     };
 
-    // Criar tarefas detalhadas com subtarefas para cada área ADM
-    for (const tmpl of ADM_TASKS_TEMPLATE) {
+    // Criar tarefas detalhadas com subtarefas do banco
+    const { data: admTemplates } = await supabase.from('adm_task_templates').select('*, adm_task_template_subtasks(*)').eq('ativo', true).order('sort_order');
+    for (const tmpl of (admTemplates || [])) {
       const faseNome = etapaToFase[tmpl.etapa] || tmpl.etapa;
       const phaseId = phaseMap[faseNome] || null;
       const dataInicio = new Date(diaDObj); dataInicio.setDate(diaDObj.getDate() + tmpl.offset_start);
@@ -254,16 +255,11 @@ router.post('/activate/:eventId', authorize('admin', 'diretor'), async (req, res
 
       if (taskErr) { console.error('Erro criando tarefa ADM:', taskErr.message); continue; }
 
-      // Criar subtarefas
-      if (tmpl.subtasks.length > 0 && task) {
-        const subs = tmpl.subtasks.map((s, i) => ({
-          task_id: task.id,
-          name: s.name,
-          offset_start: s.offset_start,
-          offset_end: s.offset_end,
-          sort_order: i,
-        }));
-        await supabase.from('cycle_task_subtasks').insert(subs);
+      const subs = (tmpl.adm_task_template_subtasks || []).sort((a, b) => a.sort_order - b.sort_order);
+      if (subs.length > 0 && task) {
+        await supabase.from('cycle_task_subtasks').insert(subs.map((s, i) => ({
+          task_id: task.id, name: s.name, offset_start: s.offset_start, offset_end: s.offset_end, sort_order: i,
+        })));
       }
     }
 
@@ -728,6 +724,83 @@ router.put('/kpis/area-weights/:id', authorize('admin', 'diretor'), async (req, 
     const { data, error } = await supabase.from('event_area_weights').update({ weight: req.body.weight }).eq('id', req.params.id).select().single();
     if (error) throw error;
     res.json(data);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// ══════════════════════════════════════════════
+// TAREFAS PADRAO (templates gerenciaveis)
+// ══════════════════════════════════════════════
+
+// GET /api/cycles/adm-templates — listar todos
+router.get('/adm-templates', async (req, res) => {
+  try {
+    const { data, error } = await supabase.from('adm_task_templates').select('*, adm_task_template_subtasks(*)').order('etapa').order('area').order('sort_order');
+    if (error) throw error;
+    res.json(data || []);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// POST /api/cycles/adm-templates — criar template
+router.post('/adm-templates', authorize('admin', 'diretor'), async (req, res) => {
+  try {
+    const d = req.body;
+    const { data, error } = await supabase.from('adm_task_templates').insert({
+      area: d.area, etapa: d.etapa, titulo: d.titulo,
+      offset_start: d.offset_start || 0, offset_end: d.offset_end || 0, sort_order: d.sort_order || 0,
+    }).select().single();
+    if (error) throw error;
+    res.json(data);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// PUT /api/cycles/adm-templates/:id — atualizar
+router.put('/adm-templates/:id', authorize('admin', 'diretor'), async (req, res) => {
+  try {
+    const d = req.body;
+    const { data, error } = await supabase.from('adm_task_templates').update({
+      area: d.area, etapa: d.etapa, titulo: d.titulo,
+      offset_start: d.offset_start, offset_end: d.offset_end, ativo: d.ativo ?? true,
+    }).eq('id', req.params.id).select().single();
+    if (error) throw error;
+    res.json(data);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// DELETE /api/cycles/adm-templates/:id
+router.delete('/adm-templates/:id', authorize('admin', 'diretor'), async (req, res) => {
+  try {
+    await supabase.from('adm_task_template_subtasks').delete().eq('template_id', req.params.id);
+    await supabase.from('adm_task_templates').delete().eq('id', req.params.id);
+    res.json({ success: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// PATCH /api/cycles/adm-templates/:id/toggle — ativar/desativar
+router.patch('/adm-templates/:id/toggle', authorize('admin', 'diretor'), async (req, res) => {
+  try {
+    const { data: current } = await supabase.from('adm_task_templates').select('ativo').eq('id', req.params.id).single();
+    const { data, error } = await supabase.from('adm_task_templates').update({ ativo: !current.ativo }).eq('id', req.params.id).select().single();
+    if (error) throw error;
+    res.json(data);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// POST /api/cycles/adm-templates/:id/subtasks — adicionar subtarefa
+router.post('/adm-templates/:id/subtasks', authorize('admin', 'diretor'), async (req, res) => {
+  try {
+    const { data, error } = await supabase.from('adm_task_template_subtasks').insert({
+      template_id: req.params.id, name: req.body.name, offset_start: req.body.offset_start || 0, offset_end: req.body.offset_end || 0,
+    }).select().single();
+    if (error) throw error;
+    res.json(data);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// DELETE /api/cycles/adm-template-subtasks/:id
+router.delete('/adm-template-subtasks/:id', authorize('admin', 'diretor'), async (req, res) => {
+  try {
+    await supabase.from('adm_task_template_subtasks').delete().eq('id', req.params.id);
+    res.json({ success: true });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 

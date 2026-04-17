@@ -240,6 +240,14 @@ export const cycles = {
   toggleCritical: (taskId, isCritical) => patch(`/cycles/tasks/${taskId}/critical`, { is_critical: isCritical }),
   kpiAreaWeights: () => get('/cycles/kpis/area-weights'),
   updateAreaWeight: (id, weight) => put(`/cycles/kpis/area-weights/${id}`, { weight }),
+  // Templates de tarefas padrao
+  admTemplates: () => get('/cycles/adm-templates'),
+  createAdmTemplate: (data) => post('/cycles/adm-templates', data),
+  updateAdmTemplate: (id, data) => put(`/cycles/adm-templates/${id}`, data),
+  deleteAdmTemplate: (id) => del(`/cycles/adm-templates/${id}`),
+  toggleAdmTemplate: (id) => patch(`/cycles/adm-templates/${id}/toggle`, {}),
+  addAdmSubtask: (templateId, data) => post(`/cycles/adm-templates/${templateId}/subtasks`, data),
+  removeAdmSubtask: (id) => del(`/cycles/adm-template-subtasks/${id}`),
 };
 
 export const agents = {

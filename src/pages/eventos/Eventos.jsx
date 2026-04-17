@@ -326,6 +326,11 @@ export default function Eventos() {
   const [kpiConfigOpen, setKpiConfigOpen] = useState(false);
   const [kpiDocModal, setKpiDocModal] = useState(null); // { doc, resumo, loading }
   const scoreColor = (s) => s >= 80 ? '#10b981' : s >= 60 ? '#f59e0b' : s >= 40 ? '#ef4444' : '#6b7280';
+  const [admTemplates, setAdmTemplates] = useState([]);
+  const [admTemplatesLoaded, setAdmTemplatesLoaded] = useState(false);
+  const [newTplForm, setNewTplForm] = useState({ area: '', etapa: '', titulo: '', offset_start: -30, offset_end: -15 });
+  const [newSubName, setNewSubName] = useState('');
+  const [expandedTpl, setExpandedTpl] = useState(null);
   const [kpiWeights, setKpiWeights] = useState([]);
   const [eventList, setEventList] = useState([]);
   const [categories, setCategories] = useState([]);
@@ -977,6 +982,94 @@ export default function Eventos() {
             ))}
           </div>
         </div>
+      </div>
+    );
+  }
+
+  function renderTemplates() {
+    const AREAS = ['marketing', 'producao', 'compras', 'financeiro', 'manutencao', 'limpeza', 'cozinha', 'adm'];
+    const ETAPAS = ['Pré-Briefing', 'Briefing', 'Brainstorming e Conceito', 'Identidade e Estratégia', 'Aprovação', 'Execução Estratégica', 'Pré-Testes', 'Finalizações', 'Alinhamentos Operacionais Finais', 'Dia D', 'Debriefing'];
+    const CAT_LABELS = { marketing: 'Marketing', producao: 'Producao', compras: 'Compras', financeiro: 'Financeiro', manutencao: 'Manutencao', limpeza: 'Limpeza', cozinha: 'Cozinha', adm: 'Administrativo' };
+    // Agrupar por etapa
+    const grouped = {};
+    admTemplates.forEach(t => { if (!grouped[t.etapa]) grouped[t.etapa] = []; grouped[t.etapa].push(t); });
+
+    return (
+      <div>
+        <div style={{ fontSize: 12, color: C.t3, marginBottom: 16 }}>
+          Gerencie as tarefas padrao que sao criadas automaticamente ao ativar o ciclo criativo de um evento. Tarefas desativadas nao serao criadas.
+        </div>
+
+        {/* Novo template */}
+        <div style={{ background: C.card, borderRadius: 10, padding: 14, marginBottom: 20, border: `1px solid ${C.border}` }}>
+          <div style={{ fontSize: 13, fontWeight: 600, color: C.text, marginBottom: 8 }}>Nova tarefa padrao</div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 2fr', gap: 8 }}>
+            <select value={newTplForm.area} onChange={e => setNewTplForm(f => ({ ...f, area: e.target.value }))} style={{ padding: 6, borderRadius: 6, border: `1px solid ${C.border}`, background: C.card, color: C.text, fontSize: 12 }}>
+              <option value="">Area</option>
+              {AREAS.map(a => <option key={a} value={a}>{CAT_LABELS[a]}</option>)}
+            </select>
+            <select value={newTplForm.etapa} onChange={e => setNewTplForm(f => ({ ...f, etapa: e.target.value }))} style={{ padding: 6, borderRadius: 6, border: `1px solid ${C.border}`, background: C.card, color: C.text, fontSize: 12 }}>
+              <option value="">Etapa</option>
+              {ETAPAS.map(e => <option key={e} value={e}>{e}</option>)}
+            </select>
+            <input placeholder="Titulo da tarefa" value={newTplForm.titulo} onChange={e => setNewTplForm(f => ({ ...f, titulo: e.target.value }))} style={{ padding: 6, borderRadius: 6, border: `1px solid ${C.border}`, background: C.card, color: C.text, fontSize: 12 }} />
+          </div>
+          <div style={{ display: 'flex', gap: 8, marginTop: 8, alignItems: 'center' }}>
+            <span style={{ fontSize: 11, color: C.t3 }}>Dias antes do Dia D:</span>
+            <input type="number" placeholder="Inicio" value={newTplForm.offset_start} onChange={e => setNewTplForm(f => ({ ...f, offset_start: parseInt(e.target.value) || 0 }))} style={{ width: 60, padding: 4, borderRadius: 4, border: `1px solid ${C.border}`, background: C.card, color: C.text, fontSize: 11, textAlign: 'center' }} />
+            <span style={{ fontSize: 11, color: C.t3 }}>a</span>
+            <input type="number" placeholder="Fim" value={newTplForm.offset_end} onChange={e => setNewTplForm(f => ({ ...f, offset_end: parseInt(e.target.value) || 0 }))} style={{ width: 60, padding: 4, borderRadius: 4, border: `1px solid ${C.border}`, background: C.card, color: C.text, fontSize: 11, textAlign: 'center' }} />
+            <button onClick={async () => {
+              if (!newTplForm.area || !newTplForm.etapa || !newTplForm.titulo) return;
+              await cyclesApi.createAdmTemplate(newTplForm);
+              const d = await cyclesApi.admTemplates();
+              setAdmTemplates(d || []);
+              setNewTplForm({ area: '', etapa: '', titulo: '', offset_start: -30, offset_end: -15 });
+            }} style={{ marginLeft: 'auto', padding: '5px 14px', borderRadius: 6, fontSize: 11, fontWeight: 600, border: 'none', background: C.primary, color: '#fff', cursor: 'pointer' }}>Adicionar</button>
+          </div>
+        </div>
+
+        {/* Lista agrupada por etapa */}
+        {Object.entries(grouped).map(([etapa, templates]) => (
+          <div key={etapa} style={{ marginBottom: 16 }}>
+            <div style={{ fontSize: 13, fontWeight: 700, color: C.primary, marginBottom: 8, paddingBottom: 4, borderBottom: `1px solid ${C.border}` }}>{etapa} ({templates.length})</div>
+            {templates.map(t => (
+              <div key={t.id} style={{ background: C.card, borderRadius: 8, marginBottom: 6, border: `1px solid ${C.border}`, opacity: t.ativo ? 1 : 0.5 }}>
+                <div style={{ padding: '10px 14px', display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer' }} onClick={() => setExpandedTpl(expandedTpl === t.id ? null : t.id)}>
+                  <span style={{ fontSize: 11, padding: '2px 8px', borderRadius: 99, background: C.primaryBg, color: C.primary, fontWeight: 500 }}>{CAT_LABELS[t.area] || t.area}</span>
+                  <span style={{ fontSize: 13, fontWeight: 500, color: C.text, flex: 1 }}>{t.titulo}</span>
+                  <span style={{ fontSize: 10, color: C.t3 }}>{t.offset_start}d a {t.offset_end}d</span>
+                  <span style={{ fontSize: 10, color: C.t3 }}>{(t.adm_task_template_subtasks || []).length} sub</span>
+                  <button onClick={async (e) => { e.stopPropagation(); await cyclesApi.toggleAdmTemplate(t.id); const d = await cyclesApi.admTemplates(); setAdmTemplates(d || []); }} style={{ padding: '2px 8px', fontSize: 10, borderRadius: 4, border: 'none', background: t.ativo ? '#10b98120' : '#ef444420', color: t.ativo ? '#10b981' : '#ef4444', cursor: 'pointer', fontWeight: 600 }}>
+                    {t.ativo ? 'Ativo' : 'Inativo'}
+                  </button>
+                  <button onClick={async (e) => { e.stopPropagation(); if (window.confirm('Excluir esta tarefa padrao?')) { await cyclesApi.deleteAdmTemplate(t.id); const d = await cyclesApi.admTemplates(); setAdmTemplates(d || []); } }} style={{ background: 'none', border: 'none', color: C.red, cursor: 'pointer', fontSize: 11 }}>{'\u2715'}</button>
+                </div>
+                {/* Subtarefas expandidas */}
+                {expandedTpl === t.id && (
+                  <div style={{ padding: '0 14px 10px', borderTop: `1px solid ${C.border}` }}>
+                    {(t.adm_task_template_subtasks || []).sort((a, b) => a.sort_order - b.sort_order).map(s => (
+                      <div key={s.id} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '4px 0', fontSize: 12, color: C.t2 }}>
+                        <span style={{ color: C.t3 }}>{'\u2022'}</span>
+                        <span style={{ flex: 1 }}>{s.name}</span>
+                        <button onClick={async () => { await cyclesApi.removeAdmSubtask(s.id); const d = await cyclesApi.admTemplates(); setAdmTemplates(d || []); }} style={{ background: 'none', border: 'none', color: C.red, cursor: 'pointer', fontSize: 10 }}>{'\u2715'}</button>
+                      </div>
+                    ))}
+                    <div style={{ display: 'flex', gap: 6, marginTop: 6 }}>
+                      <input placeholder="Nova subtarefa..." value={newSubName} onChange={e => setNewSubName(e.target.value)} style={{ flex: 1, padding: 4, borderRadius: 4, border: `1px solid ${C.border}`, background: C.bg, color: C.text, fontSize: 11 }} onKeyDown={async (e) => {
+                        if (e.key === 'Enter' && newSubName.trim()) { await cyclesApi.addAdmSubtask(t.id, { name: newSubName.trim() }); setNewSubName(''); const d = await cyclesApi.admTemplates(); setAdmTemplates(d || []); }
+                      }} />
+                      <button onClick={async () => { if (newSubName.trim()) { await cyclesApi.addAdmSubtask(t.id, { name: newSubName.trim() }); setNewSubName(''); const d = await cyclesApi.admTemplates(); setAdmTemplates(d || []); } }} style={{ padding: '3px 10px', fontSize: 10, borderRadius: 4, border: 'none', background: C.primary, color: '#fff', cursor: 'pointer' }}>+</button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        ))}
+
+        {admTemplates.length === 0 && <div style={{ padding: 40, textAlign: 'center', color: C.t3, fontSize: 13 }}>Nenhuma tarefa padrao cadastrada</div>}
+        <div style={{ fontSize: 11, color: C.t3, marginTop: 16 }}>Total: {admTemplates.length} tarefas | {admTemplates.filter(t => t.ativo).length} ativas | {admTemplates.reduce((a, t) => a + (t.adm_task_template_subtasks?.length || 0), 0)} subtarefas</div>
       </div>
     );
   }
@@ -2895,6 +2988,7 @@ export default function Eventos() {
         <button style={styles.tab(tab === 2)} onClick={() => { setTab(2); if (!kanbanCycleData) loadKanban(); }}>Kanban</button>
         <button style={styles.tab(tab === 3)} onClick={() => { setTab(3); if (!kanbanCycleData) loadKanban(); }}>Gantt</button>
         <button style={styles.tab(tab === 5)} onClick={() => { setTab(5); if (!kpiData) loadKpis(kpiTipo); }}>KPIs</button>
+        {accessLevel >= 5 && <button style={styles.tab(tab === 6)} onClick={async () => { setTab(6); if (!admTemplatesLoaded) { const d = await cyclesApi.admTemplates(); setAdmTemplates(d || []); setAdmTemplatesLoaded(true); } }}>Templates</button>}
         {selectedEvent && <button style={styles.tab(tab === 4)} onClick={() => setTab(4)}>Detalhes</button>}
       </div>
 
@@ -2905,6 +2999,7 @@ export default function Eventos() {
       {tab === 3 && renderGantt()}
       {tab === 4 && renderDetail()}
       {tab === 5 && renderKPIs()}
+      {tab === 6 && renderTemplates()}
 
       {/* KPI Doc Resumo Modal */}
       {kpiDocModal && (
