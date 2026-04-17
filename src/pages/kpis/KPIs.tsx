@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, Link } from 'react-router-dom';
 import { kpis as kpisApi } from '@/api';
 import { useAuth } from '@/contexts/AuthContext';
 import {
@@ -1412,9 +1412,11 @@ export default function KPIs() {
               Sync YouTube
             </Button>
           )}
-          <Button variant="outline" onClick={() => navigate('/kpis/guia')} className="gap-2 text-sm">
-            <FileText className="h-4 w-4" /> Guia de Coleta
-          </Button>
+          <Link to="/kpis/guia">
+            <Button variant="outline" className="gap-2 text-sm">
+              <FileText className="h-4 w-4" /> Guia de Coleta
+            </Button>
+          </Link>
           <Button variant="outline" onClick={loadDash} className="gap-2 text-sm">
             <RefreshCw className="h-4 w-4" /> Atualizar
           </Button>
