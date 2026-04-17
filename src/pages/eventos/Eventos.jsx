@@ -615,13 +615,13 @@ export default function Eventos() {
 
   // ── Category helpers ──
   const catMap = {};
-  categories.forEach(c => { catMap[c.id] = c; });
+  (categories || []).forEach(c => { catMap[c.id] = c; });
   const getCatColor = (catId) => catMap[catId]?.color || C.text3;
   const getCatName = (catId) => catMap[catId]?.name || '—';
 
   // ── EventsByDate (para calendário) ──
   const eventsByDate = {};
-  eventList.forEach(ev => {
+  (eventList || []).forEach(ev => {
     const d = normDate(ev.date);
     if (d) { if (!eventsByDate[d]) eventsByDate[d] = []; eventsByDate[d].push(ev); }
     (ev.occurrence_dates || []).forEach(od => {
@@ -634,7 +634,7 @@ export default function Eventos() {
   const selectedDayEvents = selectedDate ? (eventsByDate[selectedDate] || []) : [];
 
   // ── Dashboard KPIs (PMO real + contagem local) ──
-  const counts = { total: eventList.length, 'no-prazo': 0, 'em-risco': 0, 'atrasado': 0, 'concluido': 0 };
+  const counts = { total: (eventList || []).length, 'no-prazo': 0, 'em-risco': 0, 'atrasado': 0, 'concluido': 0 };
   eventList.forEach(e => { if (counts[e.status] !== undefined) counts[e.status]++; });
   const k = pmoKpis || {};
   // Helper: navegar do KPI para a Lista com filtro de status
@@ -969,13 +969,13 @@ export default function Eventos() {
             Defina a importancia de cada area no calculo do KPI. Producao com peso 3 vale 3x mais que uma area com peso 1.
           </div>
           <div style={{ maxHeight: 400, overflowY: 'auto' }}>
-            {kpiWeights.map(w => (
+            {(kpiWeights || []).map(w => (
               <div key={w.id} style={{ padding: '8px 12px', borderBottom: `1px solid ${C.border}`, display: 'flex', alignItems: 'center', gap: 10, fontSize: 13 }}>
                 <span style={{ color: C.t3, width: 120, flexShrink: 0, fontSize: 12 }}>{w.event_categories?.name || '-'}</span>
                 <span style={{ color: C.text, flex: 1, fontWeight: 500 }}>{CAT_LABELS[w.area] || w.area}</span>
                 <input type="number" min="0" max="10" step="1" value={w.weight} onChange={async (e) => {
                   const val = parseFloat(e.target.value) || 1;
-                  setKpiWeights(prev => prev.map(x => x.id === w.id ? { ...x, weight: val } : x));
+                  setKpiWeights(prev => (prev || []).map(x => x.id === w.id ? { ...x, weight: val } : x));
                   await cyclesApi.updateAreaWeight(w.id, val);
                 }} style={{ width: 50, padding: 6, borderRadius: 6, border: `1px solid ${C.border}`, background: C.card, color: C.text, fontSize: 13, textAlign: 'center' }} />
               </div>
