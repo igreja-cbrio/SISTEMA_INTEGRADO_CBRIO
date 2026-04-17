@@ -540,18 +540,26 @@ function GruposFlow({ opt, member, onBack, onDone, onActivity }: {
   const grupoAtualId: string | undefined =
     member.raw?.grupo_atual?.id ?? member.raw?.grupo_atual?.grupo?.id;
 
-  // Load groups + geocode member CEP
+  // Load groups + resolve member coordinates
   useEffect(() => {
     membresia.grupos.list({ ativo: 'true' })
       .then((data: any[]) => setGrupos(data || []))
       .catch(() => {})
       .finally(() => setLoading(false));
 
-    const cep = (member as any).cep || member.raw?.membro?.cep;
-    if (cep) {
-      membresia.totem.geocodeCep(cep)
-        .then((geo: any) => { if (geo.lat && geo.lng) setMemberCoords({ lat: geo.lat, lng: geo.lng }); })
-        .catch(() => {});
+    // Use stored lat/lng directly if available, otherwise geocode CEP
+    const src = member.raw?.membro || member.raw?.cadastro || {};
+    const directLat = (member as any).lat ?? src.lat;
+    const directLng = (member as any).lng ?? src.lng;
+    if (directLat && directLng) {
+      setMemberCoords({ lat: parseFloat(directLat), lng: parseFloat(directLng) });
+    } else {
+      const cep = (member as any).cep || src.cep;
+      if (cep) {
+        membresia.totem.geocodeCep(cep)
+          .then((geo: any) => { if (geo.lat && geo.lng) setMemberCoords({ lat: geo.lat, lng: geo.lng }); })
+          .catch(() => {});
+      }
     }
   }, []);
 
