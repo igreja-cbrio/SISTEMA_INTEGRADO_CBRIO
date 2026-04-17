@@ -1,19 +1,19 @@
 import { useState, useEffect, useCallback } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { kpis as kpisApi } from '@/api';
 import { useAuth } from '@/contexts/AuthContext';
-import { format, subWeeks, startOfWeek } from 'date-fns';
+import { format, startOfWeek } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import {
   LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid,
   Tooltip, ResponsiveContainer, Legend,
 } from 'recharts';
 import {
-  Users, TrendingUp, TrendingDown, Droplets, Youtube,
-  Plus, RefreshCw, ChevronRight, AlertTriangle, CheckCircle2,
-  Target, Edit2, Save, X, Loader2, Calendar, Eye,
+  Users, TrendingUp, Droplets, Youtube, HandHeart,
+  Plus, RefreshCw, CheckCircle2, BookOpen, Baby,
+  Target, Edit2, Save, X, Loader2, ArrowRight, UserCheck,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { toast } from 'sonner';
 
@@ -40,19 +40,25 @@ function StatusDot({ status }: { status: 'ok' | 'warn' | 'bad' | 'none' }) {
   return <span style={{ display: 'inline-block', width: 8, height: 8, borderRadius: '50%', background: colors[status], marginRight: 6 }} />;
 }
 
-function KpiCard({ label, value, meta, unit = '', icon: Icon, color = C.primary, sublabel }: {
+function KpiCard({ label, value, meta, unit = '', icon: Icon, color = C.primary, sublabel, onClick }: {
   label: string; value: number | null; meta?: number | null; unit?: string;
-  icon: any; color?: string; sublabel?: string;
+  icon: any; color?: string; sublabel?: string; onClick?: () => void;
 }) {
   const status = kpiStatus(value, meta ?? null);
   const pct = meta && value !== null ? Math.round(value / meta * 100) : null;
   return (
-    <div className="rounded-2xl border border-border bg-card p-5 flex flex-col gap-3">
+    <div
+      onClick={onClick}
+      className={`rounded-2xl border border-border bg-card p-5 flex flex-col gap-3 transition-all ${onClick ? 'cursor-pointer hover:border-[#00B39D]/50 hover:shadow-md hover:-translate-y-0.5' : ''}`}
+    >
       <div className="flex items-center justify-between">
         <div className="h-10 w-10 rounded-xl flex items-center justify-center" style={{ background: color + '20' }}>
           <Icon className="h-5 w-5" style={{ color }} />
         </div>
-        {meta && <StatusDot status={status} />}
+        <div className="flex items-center gap-1.5">
+          {meta && <StatusDot status={status} />}
+          {onClick && <ArrowRight className="h-3.5 w-3.5 text-muted-foreground/40" />}
+        </div>
       </div>
       <div>
         <p className="text-2xl font-bold tabular-nums">
@@ -538,13 +544,29 @@ function TabBatismos() {
 
 // ── Tab: Visão Geral ──────────────────────────────────────────────────────────
 
-function TabVisaoGeral({ data: dash, loading }: { data: any; loading: boolean }) {
+function SectionHeader({ title, onVerTudo }: { title: string; onVerTudo?: () => void }) {
+  return (
+    <div className="flex items-center justify-between mb-3">
+      <p className="text-sm font-semibold text-foreground uppercase tracking-wide">{title}</p>
+      {onVerTudo && (
+        <button onClick={onVerTudo} className="flex items-center gap-1 text-xs text-[#00B39D] hover:underline font-medium">
+          Ver detalhes <ArrowRight className="h-3 w-3" />
+        </button>
+      )}
+    </div>
+  );
+}
+
+function TabVisaoGeral({ data: dash, loading, onTab }: { data: any; loading: boolean; onTab: (t: string) => void }) {
   if (loading) return <div className="flex items-center justify-center py-16"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>;
   if (!dash) return null;
 
   const cultos: any[] = dash.cultos || [];
+  const metas: any[] = dash.metas || [];
+  const getMeta = (area: string, ind: string, campo: 'meta_6m' | 'meta_12m' = 'meta_6m') =>
+    metas.find(m => m.area === area && m.indicador === ind)?.[campo] ?? null;
 
-  // Agrupar por semana para o gráfico de linha
+  // Agrupar por semana
   const semanas = cultos.reduce((acc: any, c: any) => {
     const semana = format(startOfWeek(new Date(c.data + 'T12:00:00'), { weekStartsOn: 0 }), 'dd/MM', { locale: ptBR });
     if (!acc[semana]) acc[semana] = { semana, adulto: 0, kids: 0, decisoes: 0, online: 0 };
@@ -556,37 +578,107 @@ function TabVisaoGeral({ data: dash, loading }: { data: any; loading: boolean })
   }, {});
   const chartData = Object.values(semanas).slice(-12);
 
-  // Últimos 4 cultos para cards
   const ultCultos = [...cultos].reverse().slice(0, 4);
-  const totalAdulto  = ultCultos.reduce((s, c) => s + (c.presencial_adulto || 0), 0);
-  const totalKids    = ultCultos.reduce((s, c) => s + (c.presencial_kids   || 0), 0);
-  const totalDecisoes = ultCultos.reduce((s, c) => s + (c.decisoes_presenciais || 0) + (c.decisoes_online || 0), 0);
-  const mediaOcup    = ultCultos.length ? Math.round(ultCultos.reduce((s, c) => s + (c.taxa_ocupacao || 0), 0) / ultCultos.length) : 0;
+  const totalAdulto   = ultCultos.reduce((s: number, c: any) => s + (c.presencial_adulto || 0), 0);
+  const totalKids     = ultCultos.reduce((s: number, c: any) => s + (c.presencial_kids   || 0), 0);
+  const totalDecisoes = ultCultos.reduce((s: number, c: any) => s + (c.decisoes_presenciais || 0) + (c.decisoes_online || 0), 0);
+  const totalOnline   = ultCultos.reduce((s: number, c: any) => s + (c.online_pico || 0), 0);
+  const totalDS       = ultCultos.reduce((s: number, c: any) => s + (c.online_ds || 0), 0);
+  const mediaOcup     = ultCultos.length ? Math.round(ultCultos.reduce((s: number, c: any) => s + (c.taxa_ocupacao || 0), 0) / ultCultos.length) : 0;
 
   return (
-    <div className="space-y-6">
-      {/* Summary cards */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        <KpiCard label="Frequência Adultos" value={totalAdulto} icon={Users} color={C.primary}
-          sublabel={`Últimos ${ultCultos.length} cultos`} />
-        <KpiCard label="Frequência Kids" value={totalKids} icon={Users} color={C.info}
-          sublabel={`Últimos ${ultCultos.length} cultos`} />
-        <KpiCard label="Taxa Ocupação Média" value={mediaOcup} unit="%" icon={Target} color={C.warn}
-          sublabel="1.300 cadeiras" />
-        <KpiCard label="Decisões Totais" value={totalDecisoes} icon={TrendingUp} color={C.purple}
-          sublabel={`Últimos ${ultCultos.length} cultos`} />
+    <div className="space-y-8">
+      {/* ── Cultos / Frequência ── */}
+      <div>
+        <SectionHeader title="Cultos & Frequência" onVerTudo={() => onTab('cultos')} />
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+          <KpiCard label="Frequência Adultos" value={totalAdulto} icon={Users} color={C.primary}
+            sublabel={`Últimos ${ultCultos.length} cultos`} onClick={() => onTab('cultos')} />
+          <KpiCard label="Frequência Kids" value={totalKids} icon={Baby} color={C.info}
+            sublabel={`Últimos ${ultCultos.length} cultos`} onClick={() => onTab('cultos')} />
+          <KpiCard label="Taxa Ocupação Média" value={mediaOcup} unit="%" icon={Target} color={C.warn}
+            sublabel="1.300 cadeiras" onClick={() => onTab('cultos')} />
+          <KpiCard label="Decisões Totais" value={totalDecisoes} icon={TrendingUp} color={C.purple}
+            sublabel={`Últimos ${ultCultos.length} cultos`} onClick={() => onTab('cultos')} />
+        </div>
       </div>
 
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        <KpiCard label="Batismos Pendentes" value={dash.batismos?.pendentes} icon={Droplets} color="#6366F1" />
-        <KpiCard label="Batismos Realizados" value={dash.batismos?.realizados} icon={CheckCircle2} color={C.primary}
-          meta={dash.metas?.find((m: any) => m.indicador === 'batismos_semestre1')?.meta_6m} />
-        <KpiCard label="Voluntários Ativos" value={dash.voluntarios_ativos} icon={Users} color={C.info}
-          meta={dash.metas?.find((m: any) => m.indicador === 'voluntarios_ativos')?.meta_6m} />
-        <KpiCard label="Grupos Ativos" value={dash.total_grupos} icon={Users} color={C.warn} />
+      {/* ── Online / YouTube ── */}
+      <div>
+        <SectionHeader title="Online & YouTube" onVerTudo={() => onTab('cultos')} />
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+          <KpiCard label="Pico Simultâneo" value={totalOnline || null} icon={Youtube} color="#EF4444"
+            sublabel="Últimos cultos" onClick={() => onTab('cultos')} />
+          <KpiCard label="Views D+1 (soma)" value={totalDS || null} icon={TrendingUp} color={C.warn}
+            sublabel="Às 10h do dia seguinte" onClick={() => onTab('cultos')} />
+          <KpiCard label="Decisões Online" value={ultCultos.reduce((s: number, c: any) => s + (c.decisoes_online || 0), 0)} icon={CheckCircle2} color={C.primary}
+            onClick={() => onTab('cultos')} />
+          <KpiCard label="Decisões Presenciais" value={ultCultos.reduce((s: number, c: any) => s + (c.decisoes_presenciais || 0), 0)} icon={UserCheck} color={C.purple}
+            onClick={() => onTab('cultos')} />
+        </div>
       </div>
 
-      {/* Chart */}
+      {/* ── Batismos ── */}
+      <div>
+        <SectionHeader title="Batismos" onVerTudo={() => onTab('batismos')} />
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+          <KpiCard label="Pendentes" value={dash.batismos?.pendentes} icon={Droplets} color="#6366F1"
+            onClick={() => onTab('batismos')} />
+          <KpiCard label="Realizados — 1º Sem." value={dash.batismos?.realizados} icon={CheckCircle2} color={C.primary}
+            meta={getMeta('ami', 'batismos_semestre1')} onClick={() => onTab('batismos')} />
+          <KpiCard label="Meta Anual" value={dash.batismos?.realizados} icon={Target} color={C.warn}
+            meta={getMeta('ami', 'batismos_semestre2', 'meta_12m')} onClick={() => onTab('batismos')} />
+          <KpiCard label="Confirmados" value={dash.batismos?.confirmados ?? null} icon={CheckCircle2} color={C.info}
+            onClick={() => onTab('batismos')} />
+        </div>
+      </div>
+
+      {/* ── Voluntariado ── */}
+      <div>
+        <SectionHeader title="Voluntariado" onVerTudo={() => onTab('voluntariado')} />
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+          <KpiCard label="Voluntários Ativos" value={dash.voluntarios_ativos} icon={HandHeart} color={C.primary}
+            meta={getMeta('voluntariado', 'voluntarios_ativos')} onClick={() => onTab('voluntariado')} />
+          <KpiCard label="Meta 12 meses" value={dash.voluntarios_ativos} icon={Target} color={C.info}
+            meta={getMeta('voluntariado', 'voluntarios_ativos', 'meta_12m')} onClick={() => onTab('voluntariado')} />
+          <KpiCard label="Meta 24 meses" value={dash.voluntarios_ativos} icon={TrendingUp} color={C.warn}
+            meta={getMeta('voluntariado', 'voluntarios_ativos', 'meta_24m')} onClick={() => onTab('voluntariado')} />
+          <KpiCard label="% Igreja Servindo" value={null} unit="%" icon={Users} color={C.purple}
+            meta={getMeta('voluntariado', 'pct_igreja_servindo')} onClick={() => onTab('voluntariado')} />
+        </div>
+      </div>
+
+      {/* ── Grupos ── */}
+      <div>
+        <SectionHeader title="Grupos de Conexão" onVerTudo={() => onTab('grupos')} />
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+          <KpiCard label="Grupos Ativos" value={dash.total_grupos} icon={Users} color={C.primary}
+            meta={getMeta('grupos', 'total_grupos')} onClick={() => onTab('grupos')} />
+          <KpiCard label="Participantes" value={dash.grupos_participantes ?? null} icon={Users} color={C.info}
+            meta={getMeta('grupos', 'participantes')} onClick={() => onTab('grupos')} />
+          <KpiCard label="% Jovens em Grupos" value={null} unit="%" icon={TrendingUp} color={C.warn}
+            meta={getMeta('grupos', 'pct_jovens_grupos')} onClick={() => onTab('grupos')} />
+          <KpiCard label="Meta % Jovens (12m)" value={null} unit="%" icon={Target} color={C.purple}
+            meta={getMeta('grupos', 'pct_jovens_grupos', 'meta_12m')} onClick={() => onTab('grupos')} />
+        </div>
+      </div>
+
+      {/* ── Kids ── */}
+      <div>
+        <SectionHeader title="CBKids" onVerTudo={() => onTab('kids')} />
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+          <KpiCard label="Aceitações/mês" value={null} icon={Baby} color={C.primary}
+            meta={getMeta('kids', 'aceitacoes')} onClick={() => onTab('kids')} />
+          <KpiCard label="Batismos Kids/mês" value={null} icon={Droplets} color="#6366F1"
+            meta={getMeta('kids', 'batismos')} onClick={() => onTab('kids')} />
+          <KpiCard label="Famílias c/ Devocionais" value={null} icon={BookOpen} color={C.warn}
+            meta={getMeta('kids', 'devocionais')} onClick={() => onTab('kids')} />
+          <KpiCard label="Meta Devocionais 6m" value={null} icon={Target} color={C.info}
+            meta={getMeta('kids', 'devocionais')} onClick={() => onTab('kids')} />
+        </div>
+      </div>
+
+      {/* Gráfico evolução */}
       {chartData.length > 0 && (
         <div className="rounded-2xl border border-border bg-card p-5">
           <p className="text-sm font-semibold text-foreground mb-5">Evolução de Frequência por Semana</p>
@@ -597,28 +689,11 @@ function TabVisaoGeral({ data: dash, loading }: { data: any; loading: boolean })
               <YAxis tick={{ fontSize: 11, fill: 'var(--muted-foreground)' }} />
               <Tooltip contentStyle={{ background: 'var(--card)', border: '1px solid var(--border)', borderRadius: 12, fontSize: 12 }} />
               <Legend wrapperStyle={{ fontSize: 12 }} />
-              <Line type="monotone" dataKey="adulto" stroke={C.primary} strokeWidth={2} dot={false} name="Adultos" />
-              <Line type="monotone" dataKey="kids"   stroke={C.info}    strokeWidth={2} dot={false} name="Kids" />
-              <Line type="monotone" dataKey="decisoes" stroke={C.purple} strokeWidth={2} dot={false} name="Decisões" strokeDasharray="4 4" />
+              <Line type="monotone" dataKey="adulto"   stroke={C.primary} strokeWidth={2} dot={false} name="Adultos" />
+              <Line type="monotone" dataKey="kids"     stroke={C.info}    strokeWidth={2} dot={false} name="Kids" />
+              <Line type="monotone" dataKey="decisoes" stroke={C.purple}  strokeWidth={2} dot={false} name="Decisões" strokeDasharray="4 4" />
+              <Line type="monotone" dataKey="online"   stroke="#EF4444"   strokeWidth={1.5} dot={false} name="Online Pico" strokeDasharray="2 4" />
             </LineChart>
-          </ResponsiveContainer>
-        </div>
-      )}
-
-      {/* Por tipo de culto */}
-      {chartData.length > 0 && (
-        <div className="rounded-2xl border border-border bg-card p-5">
-          <p className="text-sm font-semibold text-foreground mb-5">Frequência por Semana</p>
-          <ResponsiveContainer width="100%" height={220}>
-            <BarChart data={chartData} margin={{ top: 5, right: 20, left: 0, bottom: 5 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
-              <XAxis dataKey="semana" tick={{ fontSize: 11, fill: 'var(--muted-foreground)' }} />
-              <YAxis tick={{ fontSize: 11, fill: 'var(--muted-foreground)' }} />
-              <Tooltip contentStyle={{ background: 'var(--card)', border: '1px solid var(--border)', borderRadius: 12, fontSize: 12 }} />
-              <Legend wrapperStyle={{ fontSize: 12 }} />
-              <Bar dataKey="adulto" fill={C.primary} name="Adultos" radius={[4,4,0,0]} />
-              <Bar dataKey="kids"   fill={C.info}    name="Kids"    radius={[4,4,0,0]} />
-            </BarChart>
           </ResponsiveContainer>
         </div>
       )}
@@ -626,12 +701,164 @@ function TabVisaoGeral({ data: dash, loading }: { data: any; loading: boolean })
   );
 }
 
+// ── Tab: Voluntariado ────────────────────────────────────────────────────────
+
+function TabVoluntariado({ data: dash, loading }: { data: any; loading: boolean }) {
+  const navigate = useNavigate();
+  const metas: any[] = dash?.metas || [];
+  const getMeta = (ind: string, campo: 'meta_6m' | 'meta_12m' | 'meta_24m' = 'meta_6m') =>
+    metas.find(m => m.area === 'voluntariado' && m.indicador === ind)?.[campo] ?? null;
+
+  if (loading) return <div className="flex items-center justify-center py-16"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>;
+
+  return (
+    <div className="space-y-6">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        <KpiCard label="Voluntários Ativos" value={dash?.voluntarios_ativos ?? null} icon={HandHeart} color={C.primary}
+          meta={getMeta('voluntarios_ativos')} sublabel="Últimos 3 meses"
+          onClick={() => navigate('/ministerial/voluntariado')} />
+        <KpiCard label="Meta 6 meses" value={dash?.voluntarios_ativos ?? null} icon={Target} color={C.info}
+          meta={getMeta('voluntarios_ativos')} onClick={() => navigate('/ministerial/voluntariado')} />
+        <KpiCard label="Meta 12 meses" value={dash?.voluntarios_ativos ?? null} icon={TrendingUp} color={C.warn}
+          meta={getMeta('voluntarios_ativos', 'meta_12m')} onClick={() => navigate('/ministerial/voluntariado')} />
+        <KpiCard label="Meta 24 meses" value={dash?.voluntarios_ativos ?? null} icon={Users} color={C.purple}
+          meta={getMeta('voluntarios_ativos', 'meta_24m')} onClick={() => navigate('/ministerial/voluntariado')} />
+      </div>
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        <KpiCard label="% Igreja Servindo" value={null} unit="%" icon={Users} color={C.primary}
+          meta={getMeta('pct_igreja_servindo')} sublabel="Meta 6m: 30%" />
+        <KpiCard label="% Igreja Servindo 12m" value={null} unit="%" icon={TrendingUp} color={C.info}
+          meta={getMeta('pct_igreja_servindo', 'meta_12m')} sublabel="Meta 12m: 40%" />
+        <KpiCard label="% Igreja Servindo 24m" value={null} unit="%" icon={Target} color={C.warn}
+          meta={getMeta('pct_igreja_servindo', 'meta_24m')} sublabel="Meta 24m: 50%" />
+      </div>
+      <div className="rounded-2xl border border-border bg-card p-5">
+        <p className="text-sm text-muted-foreground">
+          Os dados de % da Igreja Servindo são calculados com base na frequência média vs voluntários ativos.
+          Para ver a lista completa de voluntários, acesse o módulo de Voluntariado.
+        </p>
+        <Button onClick={() => navigate('/ministerial/voluntariado')} className="mt-4 gap-2 bg-[#00B39D] hover:bg-[#00B39D]/90 text-white">
+          <HandHeart className="h-4 w-4" /> Ir para Voluntariado
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+// ── Tab: Grupos ───────────────────────────────────────────────────────────────
+
+function TabGrupos({ data: dash, loading }: { data: any; loading: boolean }) {
+  const navigate = useNavigate();
+  const metas: any[] = dash?.metas || [];
+  const getMeta = (ind: string, campo: 'meta_6m' | 'meta_12m' = 'meta_6m') =>
+    metas.find(m => m.area === 'grupos' && m.indicador === ind)?.[campo] ?? null;
+
+  if (loading) return <div className="flex items-center justify-center py-16"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>;
+
+  return (
+    <div className="space-y-6">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        <KpiCard label="Grupos Ativos" value={dash?.total_grupos ?? null} icon={Users} color={C.primary}
+          meta={getMeta('total_grupos')} onClick={() => navigate('/grupos')} />
+        <KpiCard label="Participantes em Grupos" value={dash?.grupos_participantes ?? null} icon={Users} color={C.info}
+          meta={getMeta('participantes')} onClick={() => navigate('/grupos')} />
+        <KpiCard label="% Jovens em Grupos" value={null} unit="%" icon={TrendingUp} color={C.warn}
+          meta={getMeta('pct_jovens_grupos')} sublabel="Meta 6m: 50%" />
+        <KpiCard label="% Jovens — Meta 12m" value={null} unit="%" icon={Target} color={C.purple}
+          meta={getMeta('pct_jovens_grupos', 'meta_12m')} sublabel="Meta 12m: 70%" />
+      </div>
+      <div className="rounded-2xl border border-border bg-card p-5">
+        <p className="text-sm text-muted-foreground mb-4">
+          Visualize todos os grupos, líderes, participantes e horários no módulo de Grupos de Conexão.
+        </p>
+        <Button onClick={() => navigate('/grupos')} className="gap-2 bg-[#00B39D] hover:bg-[#00B39D]/90 text-white">
+          <Users className="h-4 w-4" /> Ir para Grupos
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+// ── Tab: Kids ─────────────────────────────────────────────────────────────────
+
+function TabKids({ data: dash, loading }: { data: any; loading: boolean }) {
+  const metas: any[] = dash?.metas || [];
+  const getMeta = (ind: string, campo: 'meta_6m' | 'meta_12m' = 'meta_6m') =>
+    metas.find(m => m.area === 'kids' && m.indicador === ind)?.[campo] ?? null;
+
+  if (loading) return <div className="flex items-center justify-center py-16"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>;
+
+  return (
+    <div className="space-y-6">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        <KpiCard label="Aceitações/mês" value={null} icon={Baby} color={C.primary}
+          meta={getMeta('aceitacoes')} sublabel={`Base: ${metas.find(m => m.area === 'kids' && m.indicador === 'aceitacoes')?.valor_base ?? 8}/mês`} />
+        <KpiCard label="Batismos Kids/mês" value={null} icon={Droplets} color="#6366F1"
+          meta={getMeta('batismos')} sublabel={`Base: ${metas.find(m => m.area === 'kids' && m.indicador === 'batismos')?.valor_base ?? 3}/mês`} />
+        <KpiCard label="Famílias c/ Devocionais" value={null} icon={BookOpen} color={C.warn}
+          meta={getMeta('devocionais')} sublabel={`Base: ${metas.find(m => m.area === 'kids' && m.indicador === 'devocionais')?.valor_base ?? 10} famílias`} />
+        <KpiCard label="Meta Devocionais 6m" value={null} icon={Target} color={C.info}
+          meta={getMeta('devocionais')} sublabel="Meta 6m: 50 famílias" />
+      </div>
+      <div className="rounded-2xl border border-dashed border-border bg-muted/30 p-6 text-center">
+        <Baby className="h-10 w-10 mx-auto text-muted-foreground/40 mb-3" />
+        <p className="text-sm font-medium text-foreground">Registro manual de dados Kids</p>
+        <p className="text-xs text-muted-foreground mt-1 max-w-sm mx-auto">
+          Os dados de aceitações, batismos e devocionais do CBKids ainda precisam de integração com o sistema de Kids. Por enquanto, registre manualmente.
+        </p>
+      </div>
+    </div>
+  );
+}
+
+// ── Tab: AMI & Bridge ─────────────────────────────────────────────────────────
+
+function TabAMI({ data: dash, loading }: { data: any; loading: boolean }) {
+  const metas: any[] = dash?.metas || [];
+  const getMeta = (area: string, ind: string, campo: 'meta_6m' | 'meta_12m' = 'meta_6m') =>
+    metas.find(m => m.area === area && m.indicador === ind)?.[campo] ?? null;
+
+  const cultos: any[] = (dash?.cultos || []).filter((c: any) =>
+    c.nome?.toLowerCase().includes('ami') || c.nome?.toLowerCase().includes('bridge') || c.nome?.toLowerCase().includes('sábado')
+  );
+  const totalAMI = cultos.slice(-4).reduce((s: number, c: any) => s + (c.presencial_adulto || 0), 0);
+
+  if (loading) return <div className="flex items-center justify-center py-16"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>;
+
+  return (
+    <div className="space-y-6">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        <KpiCard label="Freq. AMI + Bridge" value={totalAMI || null} icon={Users} color={C.primary}
+          meta={getMeta('ami_bridge', 'frequencia_cultos')} sublabel="Últimos 4 cultos" />
+        <KpiCard label="Batismos 1º Sem." value={dash?.batismos?.realizados ?? null} icon={Droplets} color="#6366F1"
+          meta={getMeta('ami', 'batismos_semestre1')} />
+        <KpiCard label="Batismos Anual" value={dash?.batismos?.realizados ?? null} icon={CheckCircle2} color={C.primary}
+          meta={getMeta('ami', 'batismos_semestre2', 'meta_12m')} />
+        <KpiCard label="Inscritos Next" value={null} icon={ArrowRight} color={C.warn}
+          meta={getMeta('ami', 'next_inscritos')} sublabel="Jornada de membros" />
+      </div>
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        <KpiCard label="Escola de Discípulos" value={null} icon={BookOpen} color={C.info}
+          meta={getMeta('ami', 'escola_discipulos')} />
+      </div>
+      <div className="rounded-2xl border border-dashed border-border bg-muted/30 p-6 text-center">
+        <p className="text-sm font-medium text-foreground">Dados de Next e Escola de Discípulos</p>
+        <p className="text-xs text-muted-foreground mt-1">Estes indicadores precisam de integração com o módulo de trilha de membros.</p>
+      </div>
+    </div>
+  );
+}
+
 // ── Main KPIs page ────────────────────────────────────────────────────────────
 
 const TABS = [
-  { id: 'geral',    label: 'Visão Geral' },
-  { id: 'cultos',   label: 'Cultos' },
-  { id: 'batismos', label: 'Batismos' },
+  { id: 'geral',        label: 'Visão Geral' },
+  { id: 'cultos',       label: 'Cultos' },
+  { id: 'batismos',     label: 'Batismos' },
+  { id: 'voluntariado', label: 'Voluntariado' },
+  { id: 'grupos',       label: 'Grupos' },
+  { id: 'kids',         label: 'CBKids' },
+  { id: 'ami',          label: 'AMI & Bridge' },
 ] as const;
 
 type TabId = (typeof TABS)[number]['id'];
@@ -715,9 +942,13 @@ export default function KPIs() {
       </div>
 
       {/* Content */}
-      {tab === 'geral'    && <TabVisaoGeral data={dash} loading={dashLoading} />}
-      {tab === 'cultos'   && <TabCultos serviceTypes={serviceTypes} />}
-      {tab === 'batismos' && <TabBatismos />}
+      {tab === 'geral'        && <TabVisaoGeral data={dash} loading={dashLoading} onTab={(t) => setTab(t as TabId)} />}
+      {tab === 'cultos'       && <TabCultos serviceTypes={serviceTypes} />}
+      {tab === 'batismos'     && <TabBatismos />}
+      {tab === 'voluntariado' && <TabVoluntariado data={dash} loading={dashLoading} />}
+      {tab === 'grupos'       && <TabGrupos data={dash} loading={dashLoading} />}
+      {tab === 'kids'         && <TabKids data={dash} loading={dashLoading} />}
+      {tab === 'ami'          && <TabAMI data={dash} loading={dashLoading} />}
     </div>
   );
 }
