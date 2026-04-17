@@ -161,6 +161,7 @@ export function AuthProvider({ children }) {
   const canExpansao = canAccessModule(['Projetos']);
   const canAgenda = canAccessModule(['Agenda']);
   const canIA = canAccessModule(['IA / Agentes']);
+  const canKPIs = isAdmin || canAccessModule(['KPIs', 'Indicadores']);
 
   const isVoluntario = profile?.role === 'voluntario';
   const isAdmin = ['admin', 'diretor'].includes(profile?.role);
@@ -179,7 +180,7 @@ export function AuthProvider({ children }) {
     isColaborador,
     modulePerms,
     canAccessModule,
-    canRH, canFinanceiro, canLogistica, canPatrimonio, canMembresia, canProjetos, canExpansao, canAgenda, canIA,
+    canRH, canFinanceiro, canLogistica, canPatrimonio, canMembresia, canProjetos, canExpansao, canAgenda, canIA, canKPIs,
     getAccessLevel,
     userAreas,
     userSetores,

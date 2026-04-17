@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { membresia } from '@/api';
+import { membresia, kpis as kpisApi } from '@/api';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import {
@@ -8,7 +8,7 @@ import {
   ArrowRight, HandHeart, Lock, Eye, EyeOff, ChevronLeft,
   QrCode, Loader2, CheckCircle2, Maximize, Minimize,
   MapPin, Clock, Star, Map, List, Navigation, Sun, Moon,
-  Camera, RotateCcw, Save, X,
+  Camera, RotateCcw, Save, X, ChevronRight,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -546,6 +546,9 @@ function OptionFlow({ optionId, member, isDark, onBack, onDone, onActivity }: {
   }
   if (optionId === 'membresia') {
     return <MeusDadosFlow opt={opt} member={member} isDark={isDark} onBack={onBack} onDone={onDone} onActivity={onActivity} />;
+  }
+  if (optionId === 'batismo') {
+    return <BatismoFlow opt={opt} member={member} onBack={onBack} onDone={onDone} onActivity={onActivity} />;
   }
 
   // Demais opções — placeholder até implementação
@@ -1138,6 +1141,158 @@ function GruposFlow({ opt, member, onBack, onDone, onActivity }: {
           )}
         </div>
       )}
+    </div>
+  );
+}
+
+// ── Batismo Flow ──────────────────────────────────────────────────────────────
+
+function BatismoFlow({ opt, member, onBack, onDone, onActivity }: {
+  opt: (typeof MENU_OPTIONS)[number];
+  member: MemberData;
+  onBack: () => void;
+  onDone: () => void;
+  onActivity: () => void;
+}) {
+  const [step, setStep] = useState<'info' | 'form' | 'success'>('info');
+  const [form, setForm] = useState({
+    nome: (member.nome || '').split(' ')[0] || '',
+    sobrenome: (member.nome || '').split(' ').slice(1).join(' ') || '',
+    cpf: member.cpf || '',
+    data_nascimento: '',
+    telefone: '',
+    email: member.email || '',
+  });
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+
+  const maskCpf = (v: string) => {
+    const d = v.replace(/\D/g, '').slice(0, 11);
+    if (d.length <= 3) return d;
+    if (d.length <= 6) return `${d.slice(0,3)}.${d.slice(3)}`;
+    if (d.length <= 9) return `${d.slice(0,3)}.${d.slice(3,6)}.${d.slice(6)}`;
+    return `${d.slice(0,3)}.${d.slice(3,6)}.${d.slice(6,9)}-${d.slice(9)}`;
+  };
+
+  const setField = (k: string) => (e: React.ChangeEvent<HTMLInputElement>) =>
+    setForm(f => ({ ...f, [k]: k === 'cpf' ? maskCpf(e.target.value) : e.target.value }));
+
+  const handleSubmit = async () => {
+    if (!form.nome || !form.sobrenome) { setError('Nome e sobrenome são obrigatórios'); return; }
+    setSaving(true); setError('');
+    onActivity();
+    try {
+      await kpisApi.batismos.create({ ...form, origem: 'totem' });
+      setStep('success');
+      setTimeout(onDone, 4000);
+    } catch (e: any) {
+      setError(e.message || 'Não foi possível registrar. Tente novamente.');
+    }
+    setSaving(false);
+  };
+
+  const inputCls = 'w-full px-4 py-3 rounded-2xl border border-white/15 bg-white/8 text-white placeholder:text-white/30 text-sm outline-none focus:border-[#6366F1] transition-colors';
+
+  if (step === 'success') {
+    return (
+      <div className="min-h-screen bg-gray-950 text-white flex flex-col items-center justify-center gap-6 p-8">
+        <CheckCircle2 className="h-20 w-20 text-[#00B39D]" />
+        <div className="text-center">
+          <h2 className="text-3xl font-bold">Inscrição realizada!</h2>
+          <p className="text-white/60 mt-2">Nossa equipe entrará em contato, {form.nome}!</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (step === 'info') {
+    return (
+      <div className="min-h-screen bg-gray-950 text-white flex flex-col" onClick={onActivity}>
+        <OptionHeader opt={opt} member={member} onBack={onBack} />
+        <div className="flex-1 flex items-center justify-center p-8">
+          <div className="max-w-md text-center space-y-6">
+            <div className="h-20 w-20 rounded-3xl bg-[#6366F1]/20 flex items-center justify-center mx-auto">
+              <Droplets className="h-10 w-10 text-[#6366F1]" />
+            </div>
+            <div>
+              <h2 className="text-2xl font-bold">Batismo</h2>
+              <p className="text-white/50 mt-2 leading-relaxed">
+                O batismo é um passo importante na jornada de fé. Se você aceitou Jesus e quer dar esse próximo passo, registre seu interesse aqui!
+              </p>
+            </div>
+            <div className="space-y-3">
+              <Button
+                onClick={() => setStep('form')}
+                className="w-full bg-[#6366F1] hover:bg-[#6366F1]/90 text-white py-3 text-base rounded-2xl gap-2"
+              >
+                Quero me batizar <ChevronRight className="h-5 w-5" />
+              </Button>
+              <button onClick={onBack} className="w-full text-white/30 hover:text-white/60 text-sm transition-colors py-2">
+                Voltar ao menu
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="min-h-screen bg-gray-950 text-white flex flex-col" onClick={onActivity}>
+      <OptionHeader opt={opt} member={member} onBack={() => setStep('info')} />
+      <div className="flex-1 flex items-center justify-center p-6">
+        <div className="w-full max-w-md space-y-4">
+          <div className="text-center mb-2">
+            <h2 className="text-xl font-bold">Confirme seus dados</h2>
+            <p className="text-white/40 text-sm mt-1">Seus dados serão usados para registrar o batismo</p>
+          </div>
+
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs text-white/40 mb-1">Nome *</label>
+              <input value={form.nome} onChange={setField('nome')} className={inputCls} placeholder="Nome" />
+            </div>
+            <div>
+              <label className="block text-xs text-white/40 mb-1">Sobrenome *</label>
+              <input value={form.sobrenome} onChange={setField('sobrenome')} className={inputCls} placeholder="Sobrenome" />
+            </div>
+          </div>
+
+          <div>
+            <label className="block text-xs text-white/40 mb-1">CPF</label>
+            <input value={form.cpf} onChange={setField('cpf')} className={inputCls} placeholder="000.000.000-00" inputMode="numeric" />
+          </div>
+
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs text-white/40 mb-1">Data de nascimento</label>
+              <input type="date" value={form.data_nascimento} onChange={setField('data_nascimento')} className={inputCls} />
+            </div>
+            <div>
+              <label className="block text-xs text-white/40 mb-1">Telefone</label>
+              <input value={form.telefone} onChange={setField('telefone')} className={inputCls} placeholder="(21) 9..." />
+            </div>
+          </div>
+
+          <div>
+            <label className="block text-xs text-white/40 mb-1">E-mail</label>
+            <input type="email" value={form.email} onChange={setField('email')} className={inputCls} placeholder="email@exemplo.com" />
+          </div>
+
+          {error && (
+            <p className="text-red-400 text-sm text-center">{error}</p>
+          )}
+
+          <Button
+            onClick={handleSubmit}
+            disabled={saving}
+            className="w-full bg-[#6366F1] hover:bg-[#6366F1]/90 text-white py-3 text-base rounded-2xl gap-2 mt-2"
+          >
+            {saving ? <Loader2 className="h-5 w-5 animate-spin" /> : <Droplets className="h-5 w-5" />}
+            {saving ? 'Registrando...' : 'Confirmar inscrição'}
+          </Button>
+        </div>
+      </div>
     </div>
   );
 }

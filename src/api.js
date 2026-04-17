@@ -855,3 +855,28 @@ export const voluntariado = {
     getPerson: (person_id) => post('/voluntariado/pc/get-person', { person_id }),
   },
 };
+
+
+export const kpis = {
+  // Service types
+  serviceTypes: () => get('/kpis/service-types'),
+  // Cultos
+  cultos: {
+    list: (params) => get('/kpis/cultos' + (params ? '?' + new URLSearchParams(params) : '')),
+    create: (data) => post('/kpis/cultos', data),
+    update: (id, data) => put(`/kpis/cultos/${id}`, data),
+    remove: (id) => del(`/kpis/cultos/${id}`),
+  },
+  // Batismos
+  batismos: {
+    list: (params) => get('/kpis/batismos' + (params ? '?' + new URLSearchParams(params) : '')),
+    create: (data) => post('/kpis/batismos', data),
+    update: (id, data) => put(`/kpis/batismos/${id}`, data),
+  },
+  // Dashboard & metas
+  dashboard: (semanas) => get(`/kpis/dashboard?semanas=${semanas || 12}`),
+  metas: () => get('/kpis/metas'),
+  updateMeta: (id, data) => put(`/kpis/metas/${id}`, data),
+  // YouTube sync
+  youtubeSync: () => post('/kpis/youtube/sync', {}),
+};

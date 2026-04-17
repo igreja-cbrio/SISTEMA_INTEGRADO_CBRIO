@@ -72,6 +72,7 @@ app.use('/api/cerebro', require('./routes/cerebro'));
 app.use('/api/voluntariado', require('./routes/voluntariado'));
 app.use('/api/voluntariado', require('./routes/voluntariado-sync'));
 app.use('/api/grupos', require('./routes/grupos'));
+app.use('/api/kpis', require('./routes/kpis'));
 
 // ── Health check ──
 app.get('/api/health', (req, res) => res.json({ status: 'ok', timestamp: new Date().toISOString() }));

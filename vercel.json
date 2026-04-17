@@ -12,6 +12,10 @@
     {
       "path": "/api/cerebro/processar",
       "schedule": "0 3 * * *"
+    },
+    {
+      "path": "/api/kpis/youtube/sync",
+      "schedule": "0 13 * * *"
     }
   ],
   "rewrites": [
