@@ -1197,7 +1197,7 @@ function BatismoFlow({ opt, member, onBack, onDone, onActivity }: {
     setSaving(false);
   };
 
-  const inputCls = 'w-full px-4 py-3 rounded-2xl border border-white/15 bg-white/8 text-white placeholder:text-white/30 text-sm outline-none focus:border-[#6366F1] transition-colors';
+  const inputCls = 'w-full px-4 py-3 rounded-2xl border border-gray-700 bg-gray-800 text-white placeholder:text-gray-500 text-sm outline-none focus:border-[#6366F1] focus:ring-1 focus:ring-[#6366F1]/30 transition-colors';
 
   if (step === 'success') {
     return (
