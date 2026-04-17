@@ -149,6 +149,7 @@ router.get('/qr-lookup/:token', async (req, res) => {
           endereco: membro.endereco,
           bairro: membro.bairro,
           cidade: membro.cidade,
+          cep: membro.cep,
           estado_civil: membro.estado_civil,
           familia: membro.familia || null,
           grupo_atual: grupoAtualRes?.data?.grupo || null,
