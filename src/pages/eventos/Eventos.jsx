@@ -988,88 +988,126 @@ export default function Eventos() {
 
   function renderTemplates() {
     const AREAS = ['marketing', 'producao', 'compras', 'financeiro', 'manutencao', 'limpeza', 'cozinha', 'adm'];
-    const ETAPAS = ['Pré-Briefing', 'Briefing', 'Brainstorming e Conceito', 'Identidade e Estratégia', 'Aprovação', 'Execução Estratégica', 'Pré-Testes', 'Finalizações', 'Alinhamentos Operacionais Finais', 'Dia D', 'Debriefing'];
     const CAT_LABELS = { marketing: 'Marketing', producao: 'Producao', compras: 'Compras', financeiro: 'Financeiro', manutencao: 'Manutencao', limpeza: 'Limpeza', cozinha: 'Cozinha', adm: 'Administrativo' };
-    // Agrupar por etapa
-    const grouped = {};
-    (Array.isArray(admTemplates) ? admTemplates : []).forEach(t => { if (!grouped[t.etapa]) grouped[t.etapa] = []; grouped[t.etapa].push(t); });
+    const CAT_COLORS = { marketing: '#00B39D', producao: '#6366f1', compras: '#3b82f6', financeiro: '#10b981', manutencao: '#f59e0b', limpeza: '#8b5cf6', cozinha: '#ec4899', adm: '#0ea5e9' };
+
+    // Fases com seus offsets (do cycle_phase_templates)
+    const FASES = [
+      { nome: 'Pré Briefing', etapas: ['Pré-Briefing'], offset: '-92 a -85 dias' },
+      { nome: 'Briefing', etapas: ['Briefing'], offset: '-85 a -78 dias' },
+      { nome: 'Brainstorming e Conceito', etapas: ['Brainstorming e Conceito'], offset: '-78 a -64 dias' },
+      { nome: 'Identidade e Estratégia', etapas: ['Identidade e Estratégia'], offset: '-64 a -50 dias' },
+      { nome: 'Aprovação', etapas: ['Aprovação'], offset: '-50 a -43 dias' },
+      { nome: 'Execução Estratégica', etapas: ['Execução Estratégica'], offset: '-43 a -29 dias' },
+      { nome: 'Pré-Testes', etapas: ['Pré-Testes'], offset: '-29 a -22 dias' },
+      { nome: 'Finalizações', etapas: ['Finalizações'], offset: '-22 a -15 dias' },
+      { nome: 'Alinhamentos Operacionais Finais', etapas: ['Alinhamentos Operacionais Finais'], offset: '-15 a -1 dias' },
+      { nome: 'Dia D', etapas: ['Dia D'], offset: 'Dia do evento' },
+      { nome: 'Debrief', etapas: ['Debriefing', 'Debrief'], offset: '+1 a +7 dias' },
+    ];
+
+    // Mapa etapa → offset para auto-preencher
+    const ETAPA_OFFSETS = {
+      'Pré-Briefing': { start: -92, end: -85 }, 'Briefing': { start: -85, end: -78 },
+      'Brainstorming e Conceito': { start: -78, end: -64 }, 'Identidade e Estratégia': { start: -64, end: -50 },
+      'Aprovação': { start: -50, end: -43 }, 'Execução Estratégica': { start: -43, end: -29 },
+      'Pré-Testes': { start: -29, end: -22 }, 'Finalizações': { start: -22, end: -15 },
+      'Alinhamentos Operacionais Finais': { start: -15, end: -1 }, 'Dia D': { start: 0, end: 0 },
+      'Debriefing': { start: 1, end: 7 },
+    };
+
+    const tpls = Array.isArray(admTemplates) ? admTemplates : [];
+    const reloadTemplates = async () => { const d = await cyclesApi.admTemplates(); setAdmTemplates(d || []); };
 
     return (
       <div>
         <div style={{ fontSize: 12, color: C.t3, marginBottom: 16 }}>
-          Gerencie as tarefas padrao que sao criadas automaticamente ao ativar o ciclo criativo de um evento. Tarefas desativadas nao serao criadas.
+          Tarefas criadas automaticamente ao ativar o ciclo criativo. O prazo e vinculado a fase (dias antes do Dia D).
         </div>
 
         {/* Novo template */}
-        <div style={{ background: C.card, borderRadius: 10, padding: 14, marginBottom: 20, border: `1px solid ${C.border}` }}>
-          <div style={{ fontSize: 13, fontWeight: 600, color: C.text, marginBottom: 8 }}>Nova tarefa padrao</div>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 2fr', gap: 8 }}>
-            <select value={newTplForm.area} onChange={e => setNewTplForm(f => ({ ...f, area: e.target.value }))} style={{ padding: 6, borderRadius: 6, border: `1px solid ${C.border}`, background: C.card, color: C.text, fontSize: 12 }}>
-              <option value="">Area</option>
-              {AREAS.map(a => <option key={a} value={a}>{CAT_LABELS[a]}</option>)}
-            </select>
-            <select value={newTplForm.etapa} onChange={e => setNewTplForm(f => ({ ...f, etapa: e.target.value }))} style={{ padding: 6, borderRadius: 6, border: `1px solid ${C.border}`, background: C.card, color: C.text, fontSize: 12 }}>
-              <option value="">Etapa</option>
-              {ETAPAS.map(e => <option key={e} value={e}>{e}</option>)}
-            </select>
-            <input placeholder="Titulo da tarefa" value={newTplForm.titulo} onChange={e => setNewTplForm(f => ({ ...f, titulo: e.target.value }))} style={{ padding: 6, borderRadius: 6, border: `1px solid ${C.border}`, background: C.card, color: C.text, fontSize: 12 }} />
-          </div>
-          <div style={{ display: 'flex', gap: 8, marginTop: 8, alignItems: 'center' }}>
-            <span style={{ fontSize: 11, color: C.t3 }}>Dias antes do Dia D:</span>
-            <input type="number" placeholder="Inicio" value={newTplForm.offset_start} onChange={e => setNewTplForm(f => ({ ...f, offset_start: parseInt(e.target.value) || 0 }))} style={{ width: 60, padding: 4, borderRadius: 4, border: `1px solid ${C.border}`, background: C.card, color: C.text, fontSize: 11, textAlign: 'center' }} />
-            <span style={{ fontSize: 11, color: C.t3 }}>a</span>
-            <input type="number" placeholder="Fim" value={newTplForm.offset_end} onChange={e => setNewTplForm(f => ({ ...f, offset_end: parseInt(e.target.value) || 0 }))} style={{ width: 60, padding: 4, borderRadius: 4, border: `1px solid ${C.border}`, background: C.card, color: C.text, fontSize: 11, textAlign: 'center' }} />
-            <button onClick={async () => {
-              if (!newTplForm.area || !newTplForm.etapa || !newTplForm.titulo) return;
-              await cyclesApi.createAdmTemplate(newTplForm);
-              const d = await cyclesApi.admTemplates();
-              setAdmTemplates(d || []);
-              setNewTplForm({ area: '', etapa: '', titulo: '', offset_start: -30, offset_end: -15 });
-            }} style={{ marginLeft: 'auto', padding: '5px 14px', borderRadius: 6, fontSize: 11, fontWeight: 600, border: 'none', background: C.primary, color: '#fff', cursor: 'pointer' }}>Adicionar</button>
+        <div style={{ background: C.card, borderRadius: 10, padding: 14, marginBottom: 24, border: `1px solid ${C.border}` }}>
+          <div style={{ fontSize: 13, fontWeight: 600, color: C.text, marginBottom: 10 }}>Adicionar tarefa padrao</div>
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'flex-end' }}>
+            <div>
+              <div style={{ fontSize: 10, color: C.t3, marginBottom: 2 }}>Fase</div>
+              <select value={newTplForm.etapa} onChange={e => { const etapa = e.target.value; const o = ETAPA_OFFSETS[etapa] || {}; setNewTplForm(f => ({ ...f, etapa, offset_start: o.start || 0, offset_end: o.end || 0 })); }} style={{ padding: 6, borderRadius: 6, border: `1px solid ${C.border}`, background: C.card, color: C.text, fontSize: 12, minWidth: 180 }}>
+                <option value="">Selecione a fase</option>
+                {FASES.map(f => <option key={f.nome} value={f.etapas[0]}>{f.nome} ({f.offset})</option>)}
+              </select>
+            </div>
+            <div>
+              <div style={{ fontSize: 10, color: C.t3, marginBottom: 2 }}>Area</div>
+              <select value={newTplForm.area} onChange={e => setNewTplForm(f => ({ ...f, area: e.target.value }))} style={{ padding: 6, borderRadius: 6, border: `1px solid ${C.border}`, background: C.card, color: C.text, fontSize: 12, minWidth: 130 }}>
+                <option value="">Selecione</option>
+                {AREAS.map(a => <option key={a} value={a}>{CAT_LABELS[a]}</option>)}
+              </select>
+            </div>
+            <div style={{ flex: 1, minWidth: 200 }}>
+              <div style={{ fontSize: 10, color: C.t3, marginBottom: 2 }}>Titulo da tarefa</div>
+              <input value={newTplForm.titulo} onChange={e => setNewTplForm(f => ({ ...f, titulo: e.target.value }))} placeholder="Ex: Criar briefing visual do evento" style={{ width: '100%', padding: 6, borderRadius: 6, border: `1px solid ${C.border}`, background: C.card, color: C.text, fontSize: 12 }} onKeyDown={async e => {
+                if (e.key === 'Enter' && newTplForm.area && newTplForm.etapa && newTplForm.titulo) { await cyclesApi.createAdmTemplate(newTplForm); await reloadTemplates(); setNewTplForm(f => ({ ...f, titulo: '' })); }
+              }} />
+            </div>
+            <button onClick={async () => { if (!newTplForm.area || !newTplForm.etapa || !newTplForm.titulo) return; await cyclesApi.createAdmTemplate(newTplForm); await reloadTemplates(); setNewTplForm(f => ({ ...f, titulo: '' })); }} style={{ padding: '6px 16px', borderRadius: 6, fontSize: 12, fontWeight: 600, border: 'none', background: C.primary, color: '#fff', cursor: 'pointer', whiteSpace: 'nowrap' }}>Adicionar</button>
           </div>
         </div>
 
-        {/* Lista agrupada por etapa */}
-        {Object.entries(grouped).map(([etapa, templates]) => (
-          <div key={etapa} style={{ marginBottom: 16 }}>
-            <div style={{ fontSize: 13, fontWeight: 700, color: C.primary, marginBottom: 8, paddingBottom: 4, borderBottom: `1px solid ${C.border}` }}>{etapa} ({templates.length})</div>
-            {templates.map(t => (
-              <div key={t.id} style={{ background: C.card, borderRadius: 8, marginBottom: 6, border: `1px solid ${C.border}`, opacity: t.ativo ? 1 : 0.5 }}>
-                <div style={{ padding: '10px 14px', display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer' }} onClick={() => setExpandedTpl(expandedTpl === t.id ? null : t.id)}>
-                  <span style={{ fontSize: 11, padding: '2px 8px', borderRadius: 99, background: C.primaryBg, color: C.primary, fontWeight: 500 }}>{CAT_LABELS[t.area] || t.area}</span>
-                  <span style={{ fontSize: 13, fontWeight: 500, color: C.text, flex: 1 }}>{t.titulo}</span>
-                  <span style={{ fontSize: 10, color: C.t3 }}>{t.offset_start}d a {t.offset_end}d</span>
-                  <span style={{ fontSize: 10, color: C.t3 }}>{(t.adm_task_template_subtasks || []).length} sub</span>
-                  <button onClick={async (e) => { e.stopPropagation(); await cyclesApi.toggleAdmTemplate(t.id); const d = await cyclesApi.admTemplates(); setAdmTemplates(d || []); }} style={{ padding: '2px 8px', fontSize: 10, borderRadius: 4, border: 'none', background: t.ativo ? '#10b98120' : '#ef444420', color: t.ativo ? '#10b981' : '#ef4444', cursor: 'pointer', fontWeight: 600 }}>
-                    {t.ativo ? 'Ativo' : 'Inativo'}
-                  </button>
-                  <button onClick={async (e) => { e.stopPropagation(); if (window.confirm('Excluir esta tarefa padrao?')) { await cyclesApi.deleteAdmTemplate(t.id); const d = await cyclesApi.admTemplates(); setAdmTemplates(d || []); } }} style={{ background: 'none', border: 'none', color: C.red, cursor: 'pointer', fontSize: 11 }}>{'\u2715'}</button>
-                </div>
-                {/* Subtarefas expandidas */}
-                {expandedTpl === t.id && (
-                  <div style={{ padding: '0 14px 10px', borderTop: `1px solid ${C.border}` }}>
-                    {(t.adm_task_template_subtasks || []).sort((a, b) => a.sort_order - b.sort_order).map(s => (
-                      <div key={s.id} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '4px 0', fontSize: 12, color: C.t2 }}>
-                        <span style={{ color: C.t3 }}>{'\u2022'}</span>
-                        <span style={{ flex: 1 }}>{s.name}</span>
-                        <button onClick={async () => { await cyclesApi.removeAdmSubtask(s.id); const d = await cyclesApi.admTemplates(); setAdmTemplates(d || []); }} style={{ background: 'none', border: 'none', color: C.red, cursor: 'pointer', fontSize: 10 }}>{'\u2715'}</button>
-                      </div>
-                    ))}
-                    <div style={{ display: 'flex', gap: 6, marginTop: 6 }}>
-                      <input placeholder="Nova subtarefa..." value={newSubName} onChange={e => setNewSubName(e.target.value)} style={{ flex: 1, padding: 4, borderRadius: 4, border: `1px solid ${C.border}`, background: C.bg, color: C.text, fontSize: 11 }} onKeyDown={async (e) => {
-                        if (e.key === 'Enter' && newSubName.trim()) { await cyclesApi.addAdmSubtask(t.id, { name: newSubName.trim() }); setNewSubName(''); const d = await cyclesApi.admTemplates(); setAdmTemplates(d || []); }
-                      }} />
-                      <button onClick={async () => { if (newSubName.trim()) { await cyclesApi.addAdmSubtask(t.id, { name: newSubName.trim() }); setNewSubName(''); const d = await cyclesApi.admTemplates(); setAdmTemplates(d || []); } }} style={{ padding: '3px 10px', fontSize: 10, borderRadius: 4, border: 'none', background: C.primary, color: '#fff', cursor: 'pointer' }}>+</button>
-                    </div>
-                  </div>
-                )}
+        {/* Lista por fase */}
+        {FASES.map(fase => {
+          const faseTpls = tpls.filter(t => fase.etapas.includes(t.etapa));
+          if (faseTpls.length === 0) return (
+            <div key={fase.nome} style={{ marginBottom: 12 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 0', borderBottom: `1px solid ${C.border}` }}>
+                <span style={{ fontSize: 14, fontWeight: 700, color: C.text }}>{fase.nome}</span>
+                <span style={{ fontSize: 10, color: C.t3, padding: '2px 8px', borderRadius: 99, background: C.bg, border: `1px solid ${C.border}` }}>{fase.offset}</span>
+                <span style={{ fontSize: 11, color: C.t3 }}>Nenhuma tarefa</span>
               </div>
-            ))}
-          </div>
-        ))}
+            </div>
+          );
+          const ativos = faseTpls.filter(t => t.ativo).length;
+          return (
+            <div key={fase.nome} style={{ marginBottom: 16 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 0', marginBottom: 6, borderBottom: `1px solid ${C.border}` }}>
+                <span style={{ fontSize: 14, fontWeight: 700, color: C.text }}>{fase.nome}</span>
+                <span style={{ fontSize: 10, color: C.t3, padding: '2px 8px', borderRadius: 99, background: C.bg, border: `1px solid ${C.border}` }}>{fase.offset}</span>
+                <span style={{ fontSize: 11, color: C.t2, fontWeight: 600 }}>{ativos}/{faseTpls.length} ativas</span>
+              </div>
+              {faseTpls.map(t => (
+                <div key={t.id} style={{ background: C.card, borderRadius: 8, marginBottom: 4, border: `1px solid ${C.border}`, opacity: t.ativo ? 1 : 0.4 }}>
+                  <div style={{ padding: '8px 12px', display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }} onClick={() => setExpandedTpl(expandedTpl === t.id ? null : t.id)}>
+                    <span style={{ fontSize: 10, padding: '2px 6px', borderRadius: 99, background: (CAT_COLORS[t.area] || '#9ca3af') + '20', color: CAT_COLORS[t.area] || '#9ca3af', fontWeight: 600 }}>{CAT_LABELS[t.area] || t.area}</span>
+                    <span style={{ fontSize: 12, fontWeight: 500, color: C.text, flex: 1 }}>{t.titulo}</span>
+                    <span style={{ fontSize: 10, color: C.t3 }}>{(t.adm_task_template_subtasks || []).length} sub</span>
+                    <button onClick={async (e) => { e.stopPropagation(); await cyclesApi.toggleAdmTemplate(t.id); await reloadTemplates(); }} style={{ padding: '2px 8px', fontSize: 9, borderRadius: 4, border: 'none', background: t.ativo ? '#10b98118' : '#ef444418', color: t.ativo ? '#10b981' : '#ef4444', cursor: 'pointer', fontWeight: 600 }}>
+                      {t.ativo ? 'Ativo' : 'Inativo'}
+                    </button>
+                    <button onClick={async (e) => { e.stopPropagation(); if (window.confirm('Excluir?')) { await cyclesApi.deleteAdmTemplate(t.id); await reloadTemplates(); } }} style={{ background: 'none', border: 'none', color: C.red, cursor: 'pointer', fontSize: 10 }}>{'\u2715'}</button>
+                  </div>
+                  {expandedTpl === t.id && (
+                    <div style={{ padding: '4px 12px 10px', borderTop: `1px solid ${C.border}` }}>
+                      {(t.adm_task_template_subtasks || []).sort((a, b) => a.sort_order - b.sort_order).map(s => (
+                        <div key={s.id} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '3px 0', fontSize: 11, color: C.t2 }}>
+                          <span style={{ color: C.t3 }}>{'\u2022'}</span>
+                          <span style={{ flex: 1 }}>{s.name}</span>
+                          <button onClick={async () => { await cyclesApi.removeAdmSubtask(s.id); await reloadTemplates(); }} style={{ background: 'none', border: 'none', color: C.red, cursor: 'pointer', fontSize: 9 }}>{'\u2715'}</button>
+                        </div>
+                      ))}
+                      <div style={{ display: 'flex', gap: 4, marginTop: 4 }}>
+                        <input placeholder="Nova subtarefa..." value={newSubName} onChange={e => setNewSubName(e.target.value)} style={{ flex: 1, padding: 3, borderRadius: 4, border: `1px solid ${C.border}`, background: C.bg, color: C.text, fontSize: 10 }} onKeyDown={async (e) => {
+                          if (e.key === 'Enter' && newSubName.trim()) { await cyclesApi.addAdmSubtask(t.id, { name: newSubName.trim() }); setNewSubName(''); await reloadTemplates(); }
+                        }} />
+                        <button onClick={async () => { if (newSubName.trim()) { await cyclesApi.addAdmSubtask(t.id, { name: newSubName.trim() }); setNewSubName(''); await reloadTemplates(); } }} style={{ padding: '2px 8px', fontSize: 9, borderRadius: 4, border: 'none', background: C.primary, color: '#fff', cursor: 'pointer' }}>+</button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          );
+        })}
 
-        {(!admTemplates || admTemplates.length === 0) && <div style={{ padding: 40, textAlign: 'center', color: C.t3, fontSize: 13 }}>Nenhuma tarefa padrao cadastrada</div>}
-        {Array.isArray(admTemplates) && admTemplates.length > 0 && <div style={{ fontSize: 11, color: C.t3, marginTop: 16 }}>Total: {admTemplates.length} tarefas | {admTemplates.filter(t => t.ativo).length} ativas | {admTemplates.reduce((a, t) => a + (t.adm_task_template_subtasks?.length || 0), 0)} subtarefas</div>}
+        {tpls.length > 0 && <div style={{ fontSize: 11, color: C.t3, marginTop: 8, paddingTop: 8, borderTop: `1px solid ${C.border}` }}>Total: {tpls.length} tarefas | {tpls.filter(t => t.ativo).length} ativas | {tpls.reduce((a, t) => a + (t.adm_task_template_subtasks?.length || 0), 0)} subtarefas</div>}
       </div>
     );
   }
