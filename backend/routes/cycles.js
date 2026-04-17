@@ -280,6 +280,19 @@ router.post('/activate/:eventId', authorize('admin', 'diretor'), async (req, res
   }
 });
 
+// ══════════════════════════════════════════════
+// TAREFAS PADRAO (DEVE vir antes de /:eventId)
+// ══════════════════════════════════════════════
+
+// GET /api/cycles/adm-templates
+router.get('/adm-templates', async (req, res) => {
+  try {
+    const { data, error } = await supabase.from('adm_task_templates').select('*, adm_task_template_subtasks(*)').order('etapa').order('area').order('sort_order');
+    if (error) throw error;
+    res.json(data || []);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 // GET /api/cycles/:eventId
 router.get('/:eventId', async (req, res) => {
   const { eventId } = req.params;
@@ -728,17 +741,8 @@ router.put('/kpis/area-weights/:id', authorize('admin', 'diretor'), async (req, 
 });
 
 // ══════════════════════════════════════════════
-// TAREFAS PADRAO (templates gerenciaveis)
+// TAREFAS PADRAO — CRUD (GET ja registrado acima de /:eventId)
 // ══════════════════════════════════════════════
-
-// GET /api/cycles/adm-templates — listar todos
-router.get('/adm-templates', async (req, res) => {
-  try {
-    const { data, error } = await supabase.from('adm_task_templates').select('*, adm_task_template_subtasks(*)').order('etapa').order('area').order('sort_order');
-    if (error) throw error;
-    res.json(data || []);
-  } catch (err) { res.status(500).json({ error: err.message }); }
-});
 
 // Helper: propagar template para todos os eventos ativos com ciclo
 async function propagarParaEventosAtivos(tmpl) {
