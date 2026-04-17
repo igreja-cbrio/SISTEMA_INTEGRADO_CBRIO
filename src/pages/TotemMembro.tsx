@@ -714,7 +714,13 @@ function MeusDadosFlow({ opt, member, isDark, onBack, onDone, onActivity }: {
     onActivity();
   };
 
-  const ESTADO_CIVIL_OPTS = ['Solteiro(a)', 'Casado(a)', 'Divorciado(a)', 'Viúvo(a)', 'União estável'];
+  const ESTADO_CIVIL_OPTS = [
+    { value: 'solteiro', label: 'Solteiro(a)' },
+    { value: 'casado', label: 'Casado(a)' },
+    { value: 'divorciado', label: 'Divorciado(a)' },
+    { value: 'viuvo', label: 'Viúvo(a)' },
+    { value: 'uniao_estavel', label: 'União estável' },
+  ];
 
   const trilha: { etapa: string; concluida: boolean; data_conclusao?: string }[] = src.trilha || [];
   const hasNext    = trilha.find(t => t.etapa === 'next')?.concluida;
@@ -852,7 +858,7 @@ function MeusDadosFlow({ opt, member, isDark, onBack, onDone, onActivity }: {
                 <select value={form.estado_civil} onChange={setField('estado_civil')}
                   className={`w-full px-3 py-2 rounded-xl border text-sm outline-none transition-colors ${input}`}>
                   <option value="">Selecionar</option>
-                  {ESTADO_CIVIL_OPTS.map(o => <option key={o} value={o}>{o}</option>)}
+                  {ESTADO_CIVIL_OPTS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
                 </select>
               </div>
             </div>
