@@ -43,6 +43,7 @@ app.use(express.json({ limit: '1mb' }));
 if (process.env.NODE_ENV !== 'production') app.use(morgan('dev'));
 
 // ── Routes ──
+app.use('/api/app', require('./routes/app'));               // Mobile app (sem auth ERP)
 app.use('/api/auth/planning-center', require('./routes/authPlanningCenter'));
 app.use('/api/auth', require('./routes/auth'));
 app.use('/api/events', require('./routes/events'));
