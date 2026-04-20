@@ -15,6 +15,7 @@ async function gerarTodasNotificacoes() {
     total += await gerarNotificacoesPatrimonio();
     total += await gerarNotificacoesMembresia();
     total += await gerarNotificacoesKpis();
+    total += await gerarNotificacoesCuidados();
     console.log(`[Notificações] ${total} notificação(ões) gerada(s).`);
   } catch (e) {
     console.error('[Notificações] Erro:', e.message);
