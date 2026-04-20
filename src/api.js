@@ -892,3 +892,30 @@ export const kpis = {
   // Auto-criação semanal (idempotente). weeks=N para backfill retroativo
   cultosAutoCreate: (weeks) => post(`/kpis/cultos/auto-create${weeks ? `?weeks=${weeks}` : ''}`, {}),
 };
+
+export const cuidados = {
+  dashboard: () => get('/cuidados/dashboard'),
+  acompanhamentos: {
+    list: (params) => get('/cuidados/acompanhamentos' + (params ? '?' + new URLSearchParams(params) : '')),
+    create: (data) => post('/cuidados/acompanhamentos', data),
+    update: (id, data) => patch(`/cuidados/acompanhamentos/${id}`, data),
+    remove: (id) => del(`/cuidados/acompanhamentos/${id}`),
+  },
+  jornada180: {
+    list: (params) => get('/cuidados/jornada180' + (params ? '?' + new URLSearchParams(params) : '')),
+    create: (data) => post('/cuidados/jornada180', data),
+    remove: (id) => del(`/cuidados/jornada180/${id}`),
+  },
+  convertidos: {
+    list: (params) => get('/cuidados/convertidos' + (params ? '?' + new URLSearchParams(params) : '')),
+    create: (data) => post('/cuidados/convertidos', data),
+    update: (id, data) => patch(`/cuidados/convertidos/${id}`, data),
+    remove: (id) => del(`/cuidados/convertidos/${id}`),
+  },
+  agregado: {
+    list: (mes) => get(`/cuidados/agregado${mes ? `?mes=${mes}` : ''}`),
+    upsert: (data) => post('/cuidados/agregado', data),
+  },
+  buscarMembro: (cpf) => get(`/cuidados/buscar-membro?cpf=${encodeURIComponent(cpf)}`),
+  criarMembro: (data) => post('/cuidados/criar-membro', data),
+};
