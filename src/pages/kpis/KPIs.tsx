@@ -827,7 +827,7 @@ function TabVisaoGeral({ data: dash, loading, onTab }: { data: any; loading: boo
 
   const cultos: any[] = dash.cultos || [];
   const metas: any[] = dash.metas || [];
-  const getMeta = (area: string, ind: string, campo: 'meta_6m' | 'meta_12m' = 'meta_6m') =>
+  const getMeta = (area: string, ind: string, campo: 'meta_6m' | 'meta_12m' | 'meta_24m' = 'meta_6m') =>
     metas.find(m => m.area === area && m.indicador === ind)?.[campo] ?? null;
 
   // Agregação completa do período

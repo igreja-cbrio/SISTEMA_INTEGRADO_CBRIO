@@ -888,4 +888,5 @@ export const kpis = {
   updateMeta: (id, data) => put(`/kpis/metas/${id}`, data),
   // YouTube sync
   youtubeSync: () => post('/kpis/youtube/sync', {}),
+  youtubeStatus: () => get('/kpis/youtube/status'),
 };
