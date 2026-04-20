@@ -331,6 +331,7 @@ export default function Eventos() {
   const [newTplForm, setNewTplForm] = useState({ area: '', etapa: '', titulo: '', offset_start: -30, offset_end: -15 });
   const [newSubName, setNewSubName] = useState('');
   const [expandedTpl, setExpandedTpl] = useState(null);
+  const [templateSubTab, setTemplateSubTab] = useState('ciclo');
   const [simpleKanban, setSimpleKanban] = useState({ events: [], tasks: [] });
   const [simpleKanbanEvent, setSimpleKanbanEvent] = useState('all');
   const [simpleNewTask, setSimpleNewTask] = useState('');
@@ -1071,6 +1072,11 @@ export default function Eventos() {
     const CAT_COLORS = { marketing: '#00B39D', producao: '#6366f1', compras: '#3b82f6', financeiro: '#10b981', manutencao: '#f59e0b', limpeza: '#8b5cf6', cozinha: '#ec4899', adm: '#0ea5e9' };
     const cardStyle = { background: C.card, borderRadius: 12, border: `1px solid ${C.border}`, overflow: 'hidden' };
 
+    // Sub-tabs
+    if (templateSubTab === 'simples') return renderSimpleTemplatesTab();
+
+    // Tab ciclo criativo (default)
+
     // Fases com seus offsets (do cycle_phase_templates)
     const FASES = [
       { nome: 'Pré Briefing', etapas: ['Pré-Briefing'], offset: '-92 a -85 dias' },
@@ -1101,6 +1107,17 @@ export default function Eventos() {
 
     return (
       <div>
+        {/* Sub-tabs */}
+        <div style={{ display: 'flex', gap: 0, marginBottom: 16, borderBottom: `1px solid ${C.border}` }}>
+          {[{ key: 'ciclo', label: 'Ciclo criativo' }, { key: 'simples', label: 'Eventos simples' }].map(t => (
+            <button key={t.key} onClick={() => setTemplateSubTab(t.key)} style={{
+              padding: '10px 24px', background: 'none', border: 'none', cursor: 'pointer',
+              fontSize: 13, fontWeight: templateSubTab === t.key ? 700 : 400,
+              color: templateSubTab === t.key ? C.primary : C.t3,
+              borderBottom: templateSubTab === t.key ? `2px solid ${C.primary}` : '2px solid transparent',
+            }}>{t.label}</button>
+          ))}
+        </div>
         <div style={{ fontSize: 12, color: C.t3, marginBottom: 16 }}>
           Tarefas criadas automaticamente ao ativar o ciclo criativo. O prazo e vinculado a fase (dias antes do Dia D).
         </div>
@@ -1194,12 +1211,80 @@ export default function Eventos() {
             </div>
           </div>
         )}
-        {/* ═══ TEMPLATES EVENTOS SIMPLES ═══ */}
-        <div style={{ marginTop: 32, marginBottom: 8 }}>
-          <div style={{ fontSize: 18, fontWeight: 700, color: C.text, marginBottom: 4 }}>Tarefas padrao — Eventos simples</div>
-          <div style={{ fontSize: 12, color: C.t3, marginBottom: 12 }}>Para eventos sem ciclo criativo. Aplique na aba Tarefas ao selecionar um evento.</div>
+        {/* Secao de eventos simples removida — agora e uma sub-tab separada */}
+      </div>
+    );
+  }
+
+  function renderSimpleTemplatesTab() {
+    // Get simple events (no cycle)
+    const cycleEventIds = new Set((kanbanCycleData?.events || []).filter(e => !e._simple).map(e => e.id));
+    const simpleEvs = (eventList || []).filter(e => !cycleEventIds.has(e.id) && e.status !== 'concluido');
+
+    return (
+      <div>
+        {/* Sub-tabs */}
+        <div style={{ display: 'flex', gap: 0, marginBottom: 16, borderBottom: `1px solid ${C.border}` }}>
+          {[{ key: 'ciclo', label: 'Ciclo criativo' }, { key: 'simples', label: 'Eventos simples' }].map(t => (
+            <button key={t.key} onClick={() => setTemplateSubTab(t.key)} style={{
+              padding: '10px 24px', background: 'none', border: 'none', cursor: 'pointer',
+              fontSize: 13, fontWeight: templateSubTab === t.key ? 700 : 400,
+              color: templateSubTab === t.key ? C.primary : C.t3,
+              borderBottom: templateSubTab === t.key ? `2px solid ${C.primary}` : '2px solid transparent',
+            }}>{t.label}</button>
+          ))}
         </div>
-        <SimpleTemplatesSection />
+
+        <div style={{ fontSize: 12, color: C.t3, marginBottom: 16 }}>
+          Tarefas recorrentes para eventos sem ciclo criativo. Ao adicionar, a tarefa e criada automaticamente no evento e aparece na aba Tarefas toda vez.
+        </div>
+
+        {/* Lista de eventos simples com suas tarefas */}
+        {simpleEvs.map(ev => (
+          <SimpleEventTemplates key={ev.id} evento={ev} />
+        ))}
+
+        {simpleEvs.length === 0 && <div style={{ padding: 40, textAlign: 'center', color: C.t3, fontSize: 13 }}>Nenhum evento sem ciclo criativo encontrado.</div>}
+      </div>
+    );
+  }
+
+  function SimpleEventTemplates({ evento }) {
+    const [tpls, setTpls] = useState([]);
+    const [newName, setNewName] = useState('');
+    const [expanded, setExpanded] = useState(false);
+
+    useEffect(() => {
+      events.simpleTemplates({ event_id: evento.id }).then(d => setTpls(Array.isArray(d) ? d : [])).catch(() => {});
+    }, [evento.id]);
+
+    const reload = async () => { const d = await events.simpleTemplates({ event_id: evento.id }); setTpls(Array.isArray(d) ? d : []); };
+
+    return (
+      <div style={{ background: C.card, borderRadius: 12, border: `1px solid ${C.border}`, overflow: 'hidden', marginBottom: 10 }}>
+        <div style={{ padding: '10px 16px', display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer', background: 'var(--cbrio-table-header)' }} onClick={() => setExpanded(!expanded)}>
+          <span style={{ fontSize: 14, fontWeight: 600, color: C.text, flex: 1 }}>{evento.name}</span>
+          <span style={{ fontSize: 10, padding: '2px 8px', borderRadius: 99, background: C.bg, color: C.t3, border: `1px solid ${C.border}` }}>{evento.recurrence || 'unico'}</span>
+          <span style={{ fontSize: 11, color: C.t2, fontWeight: 600 }}>{tpls.length} tarefas</span>
+          <span style={{ fontSize: 12, color: C.t3 }}>{expanded ? '\u25B2' : '\u25BC'}</span>
+        </div>
+        {expanded && (
+          <div>
+            {tpls.map(t => (
+              <div key={t.id} style={{ padding: '8px 16px', borderBottom: `1px solid ${C.border}`, display: 'flex', alignItems: 'center', gap: 8, opacity: t.ativo ? 1 : 0.4 }}>
+                <span style={{ fontSize: 13, color: C.text, flex: 1 }}>{t.titulo}</span>
+                <button onClick={async () => { await events.toggleSimpleTemplate(t.id); await reload(); }} style={{ padding: '2px 8px', fontSize: 10, borderRadius: 4, border: 'none', background: t.ativo ? '#10b98118' : '#ef444418', color: t.ativo ? '#10b981' : '#ef4444', cursor: 'pointer', fontWeight: 600 }}>{t.ativo ? 'Ativo' : 'Inativo'}</button>
+                <button onClick={async () => { if (window.confirm('Excluir tarefa recorrente?')) { await events.deleteSimpleTemplate(t.id); await reload(); } }} style={{ background: 'none', border: 'none', color: C.red, cursor: 'pointer', fontSize: 11 }}>{'\u2715'}</button>
+              </div>
+            ))}
+            <div style={{ padding: '8px 16px', display: 'flex', gap: 6 }}>
+              <input placeholder="Nova tarefa recorrente..." value={newName} onChange={e => setNewName(e.target.value)} style={{ flex: 1, padding: 5, borderRadius: 6, border: `1px solid ${C.border}`, background: C.bg, color: C.text, fontSize: 12 }} onKeyDown={async e => {
+                if (e.key === 'Enter' && newName.trim()) { await events.createSimpleTemplate({ titulo: newName.trim(), event_id: evento.id }); setNewName(''); await reload(); }
+              }} />
+              <button onClick={async () => { if (newName.trim()) { await events.createSimpleTemplate({ titulo: newName.trim(), event_id: evento.id }); setNewName(''); await reload(); } }} style={{ padding: '4px 12px', borderRadius: 6, border: 'none', background: C.primary, color: '#fff', fontSize: 11, fontWeight: 600, cursor: 'pointer' }}>+</button>
+            </div>
+          </div>
+        )}
       </div>
     );
   }
