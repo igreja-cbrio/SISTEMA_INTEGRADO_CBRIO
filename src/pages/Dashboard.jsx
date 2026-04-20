@@ -23,6 +23,7 @@ const MODULES = [
   { label: 'Patrimônio', desc: 'Bens e inventário', icon: Tag, path: '/admin/patrimonio', color: '#6366f1', perm: 'canPatrimonio' },
   { label: 'Voluntariado', desc: 'Check-in, escalas e meu painel', icon: HandHelping, path: 'VOLUNTARIADO_DYNAMIC', color: '#00B39D' },
   { label: 'Membresia', desc: 'Membros e famílias', icon: BookOpen, path: '/ministerial/membresia', color: '#00B39D', perm: 'canMembresia' },
+  { label: 'Cuidados', desc: 'Acompanhamento e Jornada 180', icon: Heart, path: '/ministerial/cuidados', color: '#ec4899', perm: 'canCuidados' },
   { label: 'Solicitações', desc: 'TI, compras e reembolsos', icon: ClipboardList, path: '/solicitacoes', color: '#ec4899', perm: 'isColaborador' },
 ];
 
