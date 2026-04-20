@@ -85,7 +85,88 @@ router.delete('/cultos/:id', authorize('admin', 'diretor'), async (req, res) => 
   res.json({ ok: true });
 });
 
-// ── Batismos ──────────────────────────────────────────────────────────────────
+// ── Auto-criação semanal de cultos ────────────────────────────────────────────
+// POST /kpis/cultos/auto-create[?weeks=N]
+// Cria cultos da semana corrente a partir de vol_service_types (recurrence_day, recurrence_time).
+// Idempotente: ON CONFLICT DO NOTHING via índice único (service_type_id, data, hora).
+// weeks=N: backfill das últimas N semanas (default 1 = só semana corrente).
+router.post('/cultos/auto-create', async (req, res) => {
+  const authHeader = req.headers.authorization;
+  const cronSecret = process.env.CRON_SECRET;
+  const isVercelCron = req.headers['x-vercel-cron'] === '1';
+  const isAdmin = ['admin', 'diretor'].includes(req.user?.role);
+  if (!isVercelCron && authHeader !== cronSecret && authHeader !== `Bearer ${cronSecret}` && !isAdmin) {
+    return res.status(401).json({ error: 'Não autorizado' });
+  }
+
+  const weeks = Math.max(1, Math.min(Number(req.query.weeks) || 1, 12));
+
+  const { data: types, error: typesErr } = await supabase
+    .from('vol_service_types')
+    .select('id, name, recurrence_day, recurrence_time')
+    .eq('is_active', true)
+    .not('recurrence_day', 'is', null)
+    .not('recurrence_time', 'is', null);
+  if (typesErr) return res.status(500).json({ error: typesErr.message });
+
+  // Calcula a data do "weekStart" (domingo) para cada semana no range [hoje - (weeks-1) semanas, hoje]
+  const today = new Date();
+  today.setHours(12, 0, 0, 0);
+  const sundayThisWeek = new Date(today);
+  sundayThisWeek.setDate(today.getDate() - today.getDay()); // dow=0 → 0 dias
+
+  const weekStarts = [];
+  for (let i = weeks - 1; i >= 0; i--) {
+    const ws = new Date(sundayThisWeek);
+    ws.setDate(sundayThisWeek.getDate() - i * 7);
+    weekStarts.push(ws);
+  }
+
+  const created = [];
+  const skipped = [];
+
+  for (const ws of weekStarts) {
+    for (const t of types || []) {
+      const dayDate = new Date(ws);
+      dayDate.setDate(ws.getDate() + Number(t.recurrence_day || 0));
+      const dataStr = dayDate.toISOString().split('T')[0];
+      const horaStr = String(t.recurrence_time).slice(0, 8);
+      const dFmt = dayDate.toLocaleDateString('pt-BR');
+      const nome = `${t.name} — ${dFmt}`;
+
+      // Idempotência: verifica antes de inserir (não dependemos do índice único existir)
+      const { data: existente } = await supabase
+        .from('cultos')
+        .select('id')
+        .eq('service_type_id', t.id)
+        .eq('data', dataStr)
+        .eq('hora', horaStr)
+        .maybeSingle();
+
+      if (existente) { skipped.push({ tipo: t.name, data: dataStr, hora: horaStr }); continue; }
+
+      const { data: novo, error: insErr } = await supabase
+        .from('cultos')
+        .insert({
+          service_type_id: t.id,
+          nome,
+          data: dataStr,
+          hora: horaStr,
+          presencial_adulto: 0,
+          presencial_kids: 0,
+          decisoes_presenciais: 0,
+          decisoes_online: 0,
+          inserido_por: req.user?.id || null,
+        })
+        .select('id, nome, data, hora')
+        .single();
+      if (insErr) { skipped.push({ tipo: t.name, data: dataStr, hora: horaStr, error: insErr.message }); continue; }
+      created.push(novo);
+    }
+  }
+
+  res.json({ weeks, created: created.length, skipped: skipped.length, items: created, skippedItems: skipped });
+});
 router.get('/batismos', async (req, res) => {
   const { status } = req.query;
   let query = supabase
