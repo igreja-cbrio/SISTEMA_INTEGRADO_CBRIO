@@ -1390,6 +1390,7 @@ function TabCBA({ loading }: { data: any; loading: boolean }) {
 const TABS = [
   { id: 'geral',        label: 'Visão Geral' },
   { id: 'cultos',       label: 'Cultos' },
+  { id: 'online',       label: 'Online' },
   { id: 'batismos',     label: 'Batismos' },
   { id: 'voluntariado', label: 'Voluntariado' },
   { id: 'grupos',       label: 'Grupos' },
@@ -1510,6 +1511,7 @@ export default function KPIs() {
       {/* Content */}
       {tab === 'geral'        && <TabVisaoGeral data={filteredDash} loading={dashLoading} onTab={(t) => setTab(t as TabId)} />}
       {tab === 'cultos'       && <TabCultos serviceTypes={serviceTypes} />}
+      {tab === 'online'       && <TabOnline data={filteredDash} loading={dashLoading} serviceTypes={serviceTypes} onSync={handleYtSync} syncing={syncingYt} onReload={loadDash} />}
       {tab === 'batismos'     && <TabBatismos />}
       {tab === 'voluntariado' && <TabVoluntariado data={filteredDash} loading={dashLoading} />}
       {tab === 'grupos'       && <TabGrupos data={filteredDash} loading={dashLoading} />}
