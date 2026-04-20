@@ -46,6 +46,7 @@ if (process.env.NODE_ENV !== 'production') app.use(morgan('dev'));
 app.use('/api/app', require('./routes/app'));               // Mobile app (sem auth ERP)
 app.use('/api/auth/planning-center', require('./routes/authPlanningCenter'));
 app.use('/api/auth', require('./routes/auth'));
+app.use('/api/revisoes', require('./routes/revisoes'));
 app.use('/api/events', require('./routes/events'));
 app.use('/api/projects', require('./routes/projects'));
 app.use('/api/expansion', require('./routes/expansion'));
