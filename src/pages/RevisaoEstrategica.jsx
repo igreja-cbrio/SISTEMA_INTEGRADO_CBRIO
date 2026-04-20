@@ -28,6 +28,8 @@ export default function RevisaoEstrategica() {
   const [novoTitulo, setNovoTitulo] = useState('');
   const [filterArea, setFilterArea] = useState('all');
   const [filterTipo, setFilterTipo] = useState('all');
+  const [filterStatus, setFilterStatus] = useState('all');
+  const [filterResp, setFilterResp] = useState('all');
   const [pacoteAreas, setPacoteAreas] = useState([]);
 
   // Item form
@@ -55,14 +57,27 @@ export default function RevisaoEstrategica() {
     const { projetos: p, expansao: e, dependencias: dep } = diag;
     const hoje = new Date();
 
-    // Extrair todas as areas
-    const todasAreas = [...new Set([...(p.lista || []).map(x => x.area), ...(e.lista || []).map(x => x.area)].filter(Boolean))].sort();
+    // Extrair opcoes unicas
+    const allItems = [...(p.lista || []).map(x => ({ ...x, _tipo: 'projeto' })), ...(e.lista || []).map(x => ({ ...x, _tipo: 'expansao' }))];
+    const todasAreas = [...new Set(allItems.map(x => x.area).filter(Boolean))].sort();
+    const todosStatus = [...new Set(allItems.map(x => x.status).filter(Boolean))].sort();
+    const todosResp = [...new Set(allItems.map(x => x.responsible).filter(Boolean))].sort();
 
     // Filtrar
-    const projFiltrados = filterArea === 'all' ? (p.lista || []) : (p.lista || []).filter(x => x.area === filterArea);
-    const expFiltrados = filterArea === 'all' ? (e.lista || []) : (e.lista || []).filter(x => x.area === filterArea);
-    const projAtrasados = projFiltrados.filter(x => x.date_end && x.date_end < hoje.toISOString().split('T')[0]);
+    const applyFilters = (list) => list.filter(x => {
+      if (filterArea !== 'all' && x.area !== filterArea) return false;
+      if (filterStatus !== 'all') {
+        if (filterStatus === 'atrasado') { if (!(x.date_end && x.date_end < hoje.toISOString().split('T')[0] && x.status !== 'concluido')) return false; }
+        else if (x.status !== filterStatus) return false;
+      }
+      if (filterResp !== 'all' && x.responsible !== filterResp) return false;
+      return true;
+    });
+    const projFiltrados = applyFilters(p.lista || []);
+    const expFiltrados = applyFilters(e.lista || []);
+    const projAtrasados = projFiltrados.filter(x => x.date_end && x.date_end < hoje.toISOString().split('T')[0] && x.status !== 'concluido');
     const expAtrasados = expFiltrados.filter(x => x.date_end && x.date_end < hoje.toISOString().split('T')[0] && x.status !== 'concluido');
+    const hasFilters = filterArea !== 'all' || filterTipo !== 'all' || filterStatus !== 'all' || filterResp !== 'all';
 
     return (
       <div>
@@ -79,7 +94,18 @@ export default function RevisaoEstrategica() {
             <option value="projeto">Projetos</option>
             <option value="expansao">Expansao</option>
           </select>
-          {filterArea !== 'all' && <button onClick={() => setFilterArea('all')} style={{ fontSize: 11, color: C.red, background: 'none', border: 'none', cursor: 'pointer' }}>Limpar filtro</button>}
+          <span style={{ fontSize: 12, fontWeight: 600, color: C.t2, marginLeft: 8 }}>Status:</span>
+          <select value={filterStatus} onChange={e => setFilterStatus(e.target.value)} style={{ padding: 6, borderRadius: 6, border: `1px solid ${C.border}`, background: C.card, color: C.text, fontSize: 12 }}>
+            <option value="all">Todos</option>
+            <option value="atrasado">Atrasados</option>
+            {todosStatus.map(s => <option key={s} value={s}>{s}</option>)}
+          </select>
+          <span style={{ fontSize: 12, fontWeight: 600, color: C.t2, marginLeft: 8 }}>Responsavel:</span>
+          <select value={filterResp} onChange={e => setFilterResp(e.target.value)} style={{ padding: 6, borderRadius: 6, border: `1px solid ${C.border}`, background: C.card, color: C.text, fontSize: 12, maxWidth: 200 }}>
+            <option value="all">Todos</option>
+            {todosResp.map(r => <option key={r} value={r}>{r}</option>)}
+          </select>
+          {hasFilters && <button onClick={() => { setFilterArea('all'); setFilterTipo('all'); setFilterStatus('all'); setFilterResp('all'); }} style={{ fontSize: 11, color: C.red, background: 'none', border: 'none', cursor: 'pointer', fontWeight: 600 }}>Limpar filtros</button>}
           <span style={{ fontSize: 11, color: C.t3, marginLeft: 'auto' }}>{projFiltrados.length} proj + {expFiltrados.length} marcos</span>
         </div>
 
