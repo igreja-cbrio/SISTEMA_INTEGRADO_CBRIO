@@ -9,7 +9,7 @@ import {
   Users, DollarSign, CalendarDays, FolderKanban,
   Truck, Tag, BookOpen, ClipboardList, Bell, ArrowRight,
   Clock, AlertTriangle, Package, ChevronRight, Sparkles,
-  Activity, LayoutGrid, HandHelping,
+  Activity, LayoutGrid, HandHelping, Heart,
 } from 'lucide-react';
 
 // path='VOLUNTARIADO_DYNAMIC' e tratado no click handler (vai para painel do
