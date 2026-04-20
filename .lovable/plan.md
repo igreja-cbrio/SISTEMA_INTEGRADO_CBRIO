@@ -1,53 +1,118 @@
 
 
-## Auto-criação semanal de cultos + coleta D+1 garantida
+## Excluir culto Bridge da lógica de online
 
 ### Problema
-Os cultos de 19/04 não aparecem porque **ninguém os cadastrou manualmente**. Sem linha na tabela `cultos`, o cron das 10h não tem o que sincronizar com o YouTube. Resultado: D+1 do culto de ontem está vazio porque o culto sequer existe no sistema.
+O culto Bridge não tem transmissão online, mas o sistema atual tenta buscar métricas de YouTube e notifica "sem vídeo vinculado" para ele também.
 
-### Solução em 3 partes
+### Solução
+Adicionar flag `has_online_stream` em `vol_service_types` para marcar quais tipos de culto têm transmissão online. Bridge ficará com `false`.
 
-**1. Auto-criar cultos da semana (novo cron — domingo 00:05 BRT)**
+### Schema (migration SQL)
+```sql
+-- Rodar no SQL Editor do Supabase
+ALTER TABLE public.vol_service_types 
+  ADD COLUMN IF NOT EXISTS has_online_stream BOOLEAN DEFAULT true;
 
-Novo endpoint `POST /api/kpis/cultos/auto-create` que:
-- Lê todos `vol_service_types` ativos (já têm `recurrence_day` 0-6 e `recurrence_time`).
-- Para cada tipo, calcula a data da próxima ocorrência na semana corrente.
-- Faz `INSERT ... ON CONFLICT (service_type_id, data, hora) DO NOTHING` na tabela `cultos`, preenchendo `nome`, `data`, `hora`, `service_type_id`. Demais campos ficam zerados/null para preenchimento posterior.
-- Idempotente: pode rodar várias vezes sem duplicar.
-
-Adicionar no `vercel.json`:
-```json
-{ "path": "/api/kpis/cultos/auto-create", "schedule": "5 3 * * 0" }
+-- Marcar Bridge como sem online (ajustar o nome conforme o cadastro)
+UPDATE public.vol_service_types 
+  SET has_online_stream = false 
+  WHERE LOWER(name) LIKE '%bridge%';
 ```
-(domingo 03:05 UTC = 00:05 BRT — cria os cultos da semana logo após a virada de domingo).
 
-**Backfill imediato**: o mesmo endpoint aceita `?weeks=2` para criar retroativamente as últimas 2 semanas, cobrindo o culto de ontem (19/04).
+### Backend (`backend/routes/kpis.js`)
 
-**2. Garantir coleta D+1 mesmo sem `youtube_video_id`**
+**1. Auto-criação de cultos** — filtrar apenas tipos que têm online:
+```javascript
+const { data: types, error: typesErr } = await supabase
+  .from('vol_service_types')
+  .select('id, name, recurrence_day, recurrence_time')
+  .eq('is_active', true)
+  .eq('has_online_stream', true)  // NOVO: só cultos com online
+  .not('recurrence_day', 'is', null)
+  .not('recurrence_time', 'is', null);
+```
 
-Hoje a sync filtra `not('youtube_video_id', 'is', null)` — então culto sem vídeo nunca dispara nada. Mudar para:
-- Se `youtube_video_id` estiver presente → busca views normalmente.
-- Se ausente e culto > 24h → criar notificação "Culto X sem vídeo do YouTube vinculado" com link direto para edição.
+**2. YouTube sync** — ignorar cultos Bridge:
+```javascript
+// No POST /youtube/sync, ao buscar cultos para sincronizar
+const [{ data: cultosDS }, { data: cultosDDUS }] = await Promise.all([
+  supabase.from('cultos')
+    .select('id, youtube_video_id, service_type_id')
+    .eq('data', ontemStr)
+    .not('youtube_video_id', 'is', null)
+    .is('online_ds', null),
+  supabase.from('cultos')
+    .select('id, youtube_video_id, online_ds, service_type_id')
+    .eq('data', seteDiasStr)
+    .not('youtube_video_id', 'is', null)
+    .not('online_ds', 'is', null)
+    .is('online_ddus', null),
+]);
 
-**3. Banner na aba Online**
+// Buscar service_types que têm online para filtrar
+const { data: onlineTypes } = await supabase
+  .from('vol_service_types')
+  .select('id')
+  .eq('has_online_stream', true);
+const onlineTypeIds = new Set(onlineTypes?.map(t => t.id) || []);
 
-Quando houver cultos das últimas 48h sem `youtube_video_id`, mostrar banner amarelo na aba Online com botão "Vincular vídeo agora" abrindo o modal de edição já existente.
+// Filtrar apenas cultos com online
+const cultosDSFiltrados = (cultosDS || []).filter(c => onlineTypeIds.has(c.service_type_id));
+const cultosDDUSFiltrados = (cultosDDUS || []).filter(c => onlineTypeIds.has(c.service_type_id));
+```
 
-### Schema
-**Sem mudanças.** Tabela `cultos` já tem todas as colunas necessárias. Vai precisar apenas garantir um índice/constraint único `(service_type_id, data, hora)` — script SQL no PR para você rodar manualmente no SQL Editor (conforme sua preferência salva).
+**3. Notificação de culto sem vídeo** — ignorar Bridge:
+```javascript
+// Buscar cultos do dia anterior sem youtube_video_id
+const { data: cultosSemVideo } = await supabase
+  .from('cultos')
+  .select('id, nome, data, service_type_id')
+  .eq('data', ontemStr)
+  .is('youtube_video_id', null);
 
-### Arquivos tocados
-- `backend/routes/kpis.js` — novo endpoint `auto-create`, ajuste no `youtube/sync` para alertar cultos sem vídeo.
-- `backend/services/notificacaoGenerator.js` — nova checagem "culto sem vídeo > 24h".
-- `vercel.json` — novo cron semanal.
-- `src/pages/kpis/KPIs.tsx` — banner na aba Online + botão "Criar cultos da semana" (manual, para forçar sem esperar cron).
-- `supabase/migrations/<timestamp>_cultos_unique.sql` — constraint única (você roda no SQL Editor).
+// Filtrar apenas quem tem online
+const cultosSemVideoOnline = (cultosSemVideo || [])
+  .filter(c => onlineTypeIds.has(c.service_type_id));
+
+// Notificar apenas esses
+for (const c of cultosSemVideoOnline) { ... }
+```
+
+**4. Endpoint `/service-types`** — incluir nova coluna:
+```javascript
+router.get('/service-types', async (req, res) => {
+  const { data, error } = await supabase
+    .from('vol_service_types')
+    .select('id, name, color, recurrence_day, recurrence_time, has_online_stream')  // NOVO
+    .eq('is_active', true)
+    .order('recurrence_day')
+    .order('recurrence_time');
+  ...
+});
+```
+
+### Frontend (`src/pages/kpis/KPIs.tsx`)
+
+**Banner de alerta** — filtrar cultos que realmente precisam de vídeo:
+```typescript
+// Na verificação de cultos sem vídeo (últimas 48h)
+const cultosPrecisamVideo = recentCultos.filter(c => 
+  c.has_online_stream !== false && !c.youtube_video_id
+);
+// Só mostrar banner se houver cultosPrecisamVideo.length > 0
+```
+
+**Tabela Online** — opcional: mostrar badge "Sem online" para Bridge em vez de "Sem vídeo".
+
+### Arquivos modificados
+- `supabase/migrations_manual/20260420_vol_service_types_online.sql` — migration
+- `backend/routes/kpis.js` — filtros em auto-create, youtube sync, notificações
+- `src/pages/kpis/KPIs.tsx` — ajuste no banner de alerta
 
 ### Entrega
-Único PR `claude/kpis-auto-criar-cultos`. Após merge:
-1. Você roda o SQL da constraint no Supabase.
-2. Eu chamo `POST /api/kpis/cultos/auto-create?weeks=2` manualmente para criar os cultos retroativos (incluindo os de 19/04).
-3. Você abre /kpis → aba Online → vincula `youtube_video_id` ao culto de ontem.
-4. Clica "Sincronizar agora" → D+1 aparece.
-5. A partir de domingo que vem, cron cria automaticamente.
+PR `claude/excluir-bridge-online`. Após merge:
+1. Rode o SQL no Supabase
+2. Edite o tipo de culto Bridge marcando `has_online_stream = false`
+3. Próximo culto Bridge não gerará alerta "sem vídeo" nem aparecerá nos gráficos de online
 
