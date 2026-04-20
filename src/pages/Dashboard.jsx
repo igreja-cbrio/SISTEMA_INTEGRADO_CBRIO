@@ -2,14 +2,14 @@
 import { useState, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
-import { notificacoes as notifApi, rh, financeiro, patrimonio, logistica } from '../api';
+import { notificacoes as notifApi, rh, financeiro, patrimonio, logistica, cuidados } from '../api';
 import { StatisticsCard, StatisticsCardSkeleton } from '../components/ui/statistics-card';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
 import {
   Users, DollarSign, CalendarDays, FolderKanban,
   Truck, Tag, BookOpen, ClipboardList, Bell, ArrowRight,
   Clock, AlertTriangle, Package, ChevronRight, Sparkles,
-  Activity, LayoutGrid, HandHelping,
+  Activity, LayoutGrid, HandHelping, Heart,
 } from 'lucide-react';
 
 // path='VOLUNTARIADO_DYNAMIC' e tratado no click handler (vai para painel do
@@ -23,6 +23,7 @@ const MODULES = [
   { label: 'Patrimônio', desc: 'Bens e inventário', icon: Tag, path: '/admin/patrimonio', color: '#6366f1', perm: 'canPatrimonio' },
   { label: 'Voluntariado', desc: 'Check-in, escalas e meu painel', icon: HandHelping, path: 'VOLUNTARIADO_DYNAMIC', color: '#00B39D' },
   { label: 'Membresia', desc: 'Membros e famílias', icon: BookOpen, path: '/ministerial/membresia', color: '#00B39D', perm: 'canMembresia' },
+  { label: 'Cuidados', desc: 'Acompanhamento e Jornada 180', icon: Heart, path: '/ministerial/cuidados', color: '#ec4899', perm: 'canCuidados' },
   { label: 'Solicitações', desc: 'TI, compras e reembolsos', icon: ClipboardList, path: '/solicitacoes', color: '#ec4899', perm: 'isColaborador' },
 ];
 
@@ -62,10 +63,10 @@ function NotifItem({ n, onClick }) {
 }
 
 export default function Dashboard() {
-  const { profile, isAdmin, isVoluntario, isColaborador, canRH, canFinanceiro, canLogistica, canPatrimonio, canAgenda, canProjetos, canMembresia } = useAuth();
+  const { profile, isAdmin, isVoluntario, isColaborador, canRH, canFinanceiro, canLogistica, canPatrimonio, canAgenda, canProjetos, canMembresia, canCuidados } = useAuth();
   const navigate = useNavigate();
 
-  const permMap = { canRH, canFinanceiro, canLogistica, canPatrimonio, canAgenda, canProjetos, canMembresia, isColaborador };
+  const permMap = { canRH, canFinanceiro, canLogistica, canPatrimonio, canAgenda, canProjetos, canMembresia, canCuidados, isColaborador };
   const links = MODULES.filter(l => !l.perm || isAdmin || permMap[l.perm]);
 
   const handleModuleClick = (path) => {
@@ -81,6 +82,7 @@ export default function Dashboard() {
   const [finData, setFinData] = useState(null);
   const [patData, setPatData] = useState(null);
   const [logData, setLogData] = useState(null);
+  const [cuiData, setCuiData] = useState(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -90,6 +92,7 @@ export default function Dashboard() {
     if (canFinanceiro !== false) promises.push(financeiro.dashboard().then(setFinData).catch(() => {}));
     if (canPatrimonio !== false) promises.push(patrimonio.dashboard().then(setPatData).catch(() => {}));
     if (canLogistica !== false) promises.push(logistica.dashboard().then(setLogData).catch(() => {}));
+    if (canCuidados !== false) promises.push(cuidados.dashboard().then(setCuiData).catch(() => {}));
     Promise.allSettled(promises).finally(() => setLoading(false));
   }, []);
 
@@ -119,6 +122,13 @@ export default function Dashboard() {
   if (logData) {
     const pendentes = logData.pedidosPendentes ?? logData.pedidos_pendentes ?? 0;
     if (pendentes > 0) kpis.push({ title: 'Pedidos Pendentes', value: pendentes, icon: Truck, iconColor: '#ef4444', path: '/admin/logistica' });
+  }
+
+  if (cuiData?.atual) {
+    const a = cuiData.atual;
+    if ((a.pessoas_acompanhadas ?? 0) > 0) {
+      kpis.push({ title: 'Pessoas Acompanhadas', value: a.pessoas_acompanhadas, icon: Heart, iconColor: '#ec4899', path: '/ministerial/cuidados' });
+    }
   }
 
   if (unread.length > 0) {

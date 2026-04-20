@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { kpis as kpisApi } from '@/api';
 import { useAuth } from '@/contexts/AuthContext';
+import { supabase } from '@/integrations/supabase/client';
 import {
   format, startOfWeek, endOfWeek, startOfMonth, endOfMonth,
   eachDayOfInterval, isSameMonth, isSameDay, subWeeks,
@@ -966,17 +967,8 @@ function TabVisaoGeral({ data: dash, loading, onTab }: { data: any; loading: boo
       </div>
 
       {/* ── Cuidados ── */}
-      <div>
-        <SectionHeader title="Cuidados" onVerTudo={() => onTab('cuidados')} />
-        <div className="grid grid-cols-2 lg:grid-cols-3 gap-4">
-          <KpiCard label="Pessoas Acompanhadas" value={null} icon={Heart} color={C.primary}
-            sublabel="Mensal" onClick={() => onTab('cuidados')} />
-          <KpiCard label="Aconselhamentos" value={null} icon={BookOpen} color={C.info}
-            sublabel="Mensal" onClick={() => onTab('cuidados')} />
-          <KpiCard label="Atendimentos Capelania" value={null} icon={HandHeart} color={C.warn}
-            sublabel="Mensal" onClick={() => onTab('cuidados')} />
-        </div>
-      </div>
+      <CuidadosSectionGeral onTab={onTab} />
+
 
       {/* Integração — visitantes e conversões com dados reais */}
       <div>
@@ -1329,20 +1321,57 @@ function TabIntegracao({ data: dash, loading }: { data: any; loading: boolean })
 
 // ── Tab: Cuidados ─────────────────────────────────────────────────────────────
 
+function CuidadosSectionGeral({ onTab }: { onTab: (t: string) => void }) {
+  const { data: c } = useCuidadosMensal();
+  const v = c || {};
+  return (
+    <div>
+      <SectionHeader title="Cuidados" onVerTudo={() => onTab('cuidados')} />
+      <div className="grid grid-cols-2 lg:grid-cols-3 gap-4">
+        <KpiCard label="Pessoas Acompanhadas" value={v.pessoas_acompanhadas ?? 0} icon={Heart} color={C.primary}
+          sublabel="Mensal" onClick={() => onTab('cuidados')} />
+        <KpiCard label="Aconselhamentos" value={v.aconselhamentos ?? 0} icon={BookOpen} color={C.info}
+          sublabel="Mensal" onClick={() => onTab('cuidados')} />
+        <KpiCard label="Atendimentos Capelania" value={v.capelania ?? 0} icon={HandHeart} color={C.warn}
+          sublabel="Mensal" onClick={() => onTab('cuidados')} />
+      </div>
+    </div>
+  );
+}
+
+function useCuidadosMensal() {
+  const [data, setData] = useState<any>(null);
+  const [loading, setLoading] = useState(true);
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const { data: rows } = await supabase.from('vw_cuidados_mensal' as any).select('*').limit(1);
+        if (alive) setData(rows?.[0] ?? null);
+      } catch { /* noop */ }
+      finally { if (alive) setLoading(false); }
+    })();
+    return () => { alive = false; };
+  }, []);
+  return { data, loading };
+}
+
 function TabCuidados({ loading }: { data: any; loading: boolean }) {
-  if (loading) return <div className="flex items-center justify-center py-16"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>;
+  const { data: cui, loading: cuiLoading } = useCuidadosMensal();
+  if (loading || cuiLoading) return <div className="flex items-center justify-center py-16"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>;
+  const c = cui || {};
 
   return (
     <div className="space-y-6">
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        <KpiCard label="Pessoas Acompanhadas" value={null} icon={Heart} color={C.primary} sublabel="Mensal" />
-        <KpiCard label="Aconselhamentos" value={null} icon={BookOpen} color={C.info} sublabel="Mensal" />
-        <KpiCard label="Atendimentos Capelania" value={null} icon={HandHeart} color={C.warn} sublabel="Mensal" />
-        <KpiCard label="Encontros Jornada 180" value={null} icon={Users} color={C.purple} sublabel="Mensal" />
+        <KpiCard label="Pessoas Acompanhadas" value={c.pessoas_acompanhadas ?? 0} icon={Heart} color={C.primary} sublabel="Mensal" />
+        <KpiCard label="Aconselhamentos" value={c.aconselhamentos ?? 0} icon={BookOpen} color={C.info} sublabel="Mensal" />
+        <KpiCard label="Atendimentos Capelania" value={c.capelania ?? 0} icon={HandHeart} color={C.warn} sublabel="Mensal" />
+        <KpiCard label="Encontros Jornada 180" value={c.jornada180_encontros ?? 0} icon={Users} color={C.purple} sublabel="Mensal" />
       </div>
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        <KpiCard label="Convertidos Atendidos Pós-Culto" value={null} icon={UserCheck} color={C.primary} sublabel="Semanal" />
-        <KpiCard label="Convertidos Cadastrados" value={null} icon={CheckCircle2} color={C.info} sublabel="Semanal" />
+        <KpiCard label="Convertidos Atendidos Pós-Culto" value={c.convertidos_atendidos ?? 0} icon={UserCheck} color={C.primary} sublabel="Mensal" />
+        <KpiCard label="Convertidos Cadastrados" value={c.convertidos_cadastrados ?? 0} icon={CheckCircle2} color={C.info} sublabel="Mensal" />
         <KpiCard label="Devocionais Enviados" value={null} icon={BookOpen} color={C.warn} sublabel="Diário — Jornada 180" />
         <KpiCard label="Papo com o Pastor (staff)" value={null} icon={Activity} color={C.purple} sublabel="Mensal" />
       </div>
