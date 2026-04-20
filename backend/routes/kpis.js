@@ -10,7 +10,7 @@ router.use(authenticate);
 router.get('/service-types', async (req, res) => {
   const { data, error } = await supabase
     .from('vol_service_types')
-    .select('id, name, color, recurrence_day, recurrence_time')
+    .select('id, name, color, recurrence_day, recurrence_time, has_online_stream')
     .eq('is_active', true)
     .order('recurrence_day')
     .order('recurrence_time');
@@ -105,6 +105,7 @@ router.post('/cultos/auto-create', async (req, res) => {
     .from('vol_service_types')
     .select('id, name, recurrence_day, recurrence_time')
     .eq('is_active', true)
+    .eq('has_online_stream', true)
     .not('recurrence_day', 'is', null)
     .not('recurrence_time', 'is', null);
   if (typesErr) return res.status(500).json({ error: typesErr.message });
@@ -354,10 +355,20 @@ router.post('/youtube/sync', async (req, res) => {
   seteDias.setDate(seteDias.getDate() - 7);
   const seteDiasStr = seteDias.toISOString().split('T')[0];
 
-  const [{ data: cultosDS }, { data: cultosDDUS }] = await Promise.all([
-    supabase.from('cultos').select('id, youtube_video_id').eq('data', ontemStr).not('youtube_video_id', 'is', null).is('online_ds', null),
-    supabase.from('cultos').select('id, youtube_video_id, online_ds').eq('data', seteDiasStr).not('youtube_video_id', 'is', null).not('online_ds', 'is', null).is('online_ddus', null),
+  // Tipos de culto que têm transmissão online (filtro p/ ignorar Bridge etc.)
+  const { data: onlineTypes } = await supabase
+    .from('vol_service_types')
+    .select('id')
+    .eq('has_online_stream', true);
+  const onlineTypeIds = new Set((onlineTypes || []).map(t => t.id));
+  const isOnline = (c) => !c.service_type_id || onlineTypeIds.has(c.service_type_id);
+
+  const [{ data: cultosDSRaw }, { data: cultosDDUSRaw }] = await Promise.all([
+    supabase.from('cultos').select('id, youtube_video_id, service_type_id').eq('data', ontemStr).not('youtube_video_id', 'is', null).is('online_ds', null),
+    supabase.from('cultos').select('id, youtube_video_id, online_ds, service_type_id').eq('data', seteDiasStr).not('youtube_video_id', 'is', null).not('online_ds', 'is', null).is('online_ddus', null),
   ]);
+  const cultosDS = (cultosDSRaw || []).filter(isOnline);
+  const cultosDDUS = (cultosDDUSRaw || []).filter(isOnline);
 
   const fetchStats = async (videoId) => {
     const url = `https://www.googleapis.com/youtube/v3/videos?part=statistics&id=${videoId}&key=${apiKey}`;
@@ -394,13 +405,15 @@ router.post('/youtube/sync', async (req, res) => {
   }
 
   // Cultos do dia anterior SEM youtube_video_id → notifica para vincular
-  const { data: cultosSemVideo } = await supabase
+  // (apenas para tipos que têm transmissão online — ignora Bridge etc.)
+  const { data: cultosSemVideoRaw } = await supabase
     .from('cultos')
-    .select('id, nome, data')
+    .select('id, nome, data, service_type_id')
     .eq('data', ontemStr)
     .is('youtube_video_id', null);
+  const cultosSemVideo = (cultosSemVideoRaw || []).filter(isOnline);
 
-  for (const c of (cultosSemVideo || [])) {
+  for (const c of cultosSemVideo) {
     try {
       const fmt = new Date(c.data + 'T12:00:00').toLocaleDateString('pt-BR');
       await notificar({
@@ -418,7 +431,7 @@ router.post('/youtube/sync', async (req, res) => {
     }
   }
 
-  res.json({ synced: results.length, results, semVideo: cultosSemVideo?.length || 0 });
+  res.json({ synced: results.length, results, semVideo: cultosSemVideo.length });
 });
 
 module.exports = router;
