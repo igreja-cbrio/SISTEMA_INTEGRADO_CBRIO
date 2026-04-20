@@ -410,18 +410,38 @@ async function gerarNotificacoesKpis() {
 // ═══════════════════════════════════════════════════════════
 async function gerarNotificacoesCuidados() {
   let count = 0;
-  const limite30d = new Date(Date.now() - 30 * 86400000).toISOString();
 
   // Busca acompanhamentos ativos
   const { data: acomps } = await supabase
     .from('cui_acompanhamentos')
-    .select('id, nome, responsavel_id, data_inicio, created_at')
-    .eq('status', 'ativo');
+    .select('id, nome, responsavel_id, membro_id, created_at');
 
-  for (const a of acomps || []) {
-    // Última atualização = max(created_at do acomp, max(created_at) de mem_historico do membro relacionado)
-    // Simplificação: usar created_at do acompanhamento
-    const ultima = new Date(a.created_at).getTime();
+  const ativos = (acomps || []).filter(a => a.status !== 'encerrado');
+
+  // Busca último histórico por membro (em paralelo, só para os que têm membro_id)
+  const membroIds = [...new Set(ativos.map(a => a.membro_id).filter(Boolean))];
+  const ultimoHistPorMembro = {};
+  if (membroIds.length) {
+    const { data: hists } = await supabase
+      .from('mem_historico')
+      .select('membro_id, data, created_at')
+      .in('membro_id', membroIds)
+      .order('data', { ascending: false });
+    for (const h of hists || []) {
+      if (!ultimoHistPorMembro[h.membro_id]) {
+        ultimoHistPorMembro[h.membro_id] = h.data || h.created_at;
+      }
+    }
+  }
+
+  for (const a of ativos) {
+    const candidatos = [new Date(a.created_at).getTime()];
+    const ultimoHist = a.membro_id ? ultimoHistPorMembro[a.membro_id] : null;
+    if (ultimoHist) {
+      const t = new Date(ultimoHist + (ultimoHist.length === 10 ? 'T12:00:00' : '')).getTime();
+      if (!isNaN(t)) candidatos.push(t);
+    }
+    const ultima = Math.max(...candidatos);
     const dias = Math.floor((Date.now() - ultima) / 86400000);
     if (dias < 30) continue;
 
