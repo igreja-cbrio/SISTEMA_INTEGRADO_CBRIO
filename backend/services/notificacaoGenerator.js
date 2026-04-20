@@ -418,9 +418,12 @@ async function gerarNotificacoesCuidados() {
 
   const ativos = (acomps || []).filter(a => a.status !== 'encerrado');
 
-  // Busca último histórico por membro (em paralelo, só para os que têm membro_id)
+  // Busca último histórico por membro (mem_historico) e último atendimento por acompanhamento (cui_atendimentos)
   const membroIds = [...new Set(ativos.map(a => a.membro_id).filter(Boolean))];
+  const acompIds = ativos.map(a => a.id);
   const ultimoHistPorMembro = {};
+  const ultimoAtendPorAcomp = {};
+
   if (membroIds.length) {
     const { data: hists } = await supabase
       .from('mem_historico')
@@ -430,6 +433,19 @@ async function gerarNotificacoesCuidados() {
     for (const h of hists || []) {
       if (!ultimoHistPorMembro[h.membro_id]) {
         ultimoHistPorMembro[h.membro_id] = h.data || h.created_at;
+      }
+    }
+  }
+
+  if (acompIds.length) {
+    const { data: atends } = await supabase
+      .from('cui_atendimentos')
+      .select('acompanhamento_id, data, created_at')
+      .in('acompanhamento_id', acompIds)
+      .order('data', { ascending: false });
+    for (const a of atends || []) {
+      if (!ultimoAtendPorAcomp[a.acompanhamento_id]) {
+        ultimoAtendPorAcomp[a.acompanhamento_id] = a.data || a.created_at;
       }
     }
   }
