@@ -1,89 +1,70 @@
 
 
-## Mapa de Grupos com MapLibre, lista lateral e modo Totem
+## Nova aba "Online" — métricas de YouTube/transmissão
 
-### Objetivo
-Substituir o mapa Leaflet atual por um mapa MapLibre com layout moderno (estilo Carto), lista lateral de grupos clicável que centraliza o marcador, controles flutuantes e toggle dark/light. Aplicar nas duas telas: `/grupos` (admin) e `/totem → Grupos de Conexão` (kiosk para membros).
+### Onde adicionar
+Nova aba **"Online"** dentro de `/kpis` (`src/pages/kpis/KPIs.tsx`), entre **Cultos** e **Batismos**. É lá que vivem hoje os dados de cultos, YouTube e a sync já configurada — assim a nova aba reusa a mesma fonte (`vw_culto_stats` / tabela `cultos`) sem duplicar nada.
 
-### Arquitetura
+> Obs: o "ministerial" hoje agrupa Voluntariado, Membresia e Grupos (não tem cultos). Mantenho a aba **dentro do módulo KPIs** porque é onde o dado vive. Se preferir mover toda a área de cultos para "Ministerial", me avise depois — é mudança maior.
 
-```text
-src/components/ui/map.tsx         ← componente base MapLibre (novo)
-                                    adaptado ao ThemeContext (sem next-themes)
+### O que a aba mostra
 
-src/components/grupos/
-  GruposMapView.tsx               ← view reutilizável: mapa + lista lateral + 
-                                    toggle de tema + controles + popups
+**1. Cards de métricas agregadas (período selecionado no header)**
+- Pico simultâneo (soma)
+- Views D+1 (soma)
+- Views D+7 (soma)
+- Decisões Online (soma)
+- Cultos com vídeo vinculado / pendentes de coleta
 
-src/pages/ministerial/Grupos.jsx  ← nova aba "Mapa" usa <GruposMapView />
-src/pages/TotemMembro.tsx         ← GruposFlow usa <GruposMapView /> em vez 
-                                    de Leaflet, sempre dark, com lista lateral
-                                    colapsável (kiosk-friendly)
-```
+**2. Botão "Sincronizar agora"**
+Reusa `kpisApi.youtubeSync()` (já implementado, roda também no cron do Vercel). Mostra toast com nº de vídeos atualizados.
 
-### Etapa 1 — Componente base `map.tsx`
-- Instalar `maplibre-gl` (CSS + JS).
-- Implementar `Map`, `MapMarker`, `MapPopup`, `MapControls`, `useMap` conforme o snippet do 21st.dev, com **uma adaptação**: substituir `useTheme` de `next-themes` por um hook interno que aceita `theme?: 'light' | 'dark'` via prop **ou** lê do `ThemeContext` existente (`useTheme` de `src/contexts/ThemeContext.jsx`). Isso evita instalar `next-themes` e mantém uma só fonte de verdade.
-- Estilos padrão: Carto `dark-matter` e `positron` (já são gratuitos, sem API key).
-- Respeitar paleta CBRio nos botões/controles (`#00B39D`).
+**3. Gráfico de evolução**
+Linha temporal por culto: pico, D+1 e D+7 ao longo do período. Reaproveita `recharts` + `vw_culto_stats`.
 
-### Etapa 2 — `GruposMapView` (componente compartilhado)
-Props:
-```ts
-{
-  grupos: Grupo[];               // com lat/lng
-  memberCoords?: {lat,lng};      // opcional (totem)
-  onGroupSelect?: (g) => void;   // botão "participar" no totem
-  variant: 'admin' | 'kiosk';    // ajusta header e ações
-  defaultTheme?: 'light'|'dark'; // kiosk começa dark
-}
-```
-Estrutura:
-- Layout em duas colunas (desktop): **lista lateral 320px** (esquerda) + **mapa flex-1** (direita). No mobile/totem retrato a lista vira drawer/sheet colapsável.
-- Cada item da lista mostra nome, líder, dia/horário, local, distância (se houver) e categoria.
-- Ao clicar num item: `map.flyTo({ center: [lng, lat], zoom: 15, duration: 800 })` e abre o popup do marcador.
-- Marcadores customizados em SVG (cor `#00B39D`, marker do membro em azul).
-- Filtros de categoria (chips) acima da lista, busca por nome no topo.
-- Botão flutuante no topo direito do mapa: **toggle dark/light** (ícone Sun/Moon) — controla apenas o tema do mapa, não o app.
-- `MapControls`: zoom, locate (para o totem), fullscreen.
+**4. Tabela "Cultos online"**
+Colunas: Culto • Data • Vídeo (link YouTube) • Pico • D+1 • D+7 • Decisões Online • Status coleta • Ações.
+Status coleta: `Pendente D+1` / `Pendente D+7` / `Coletado` / `Sem vídeo`.
 
-### Etapa 3 — Integração em `/grupos` (admin)
-- No `Grupos.jsx`, adicionar nova aba `"mapa"` ao lado de `"grupos"` e `"materiais"` (já existe `pageTab`).
-- Renderizar `<GruposMapView grupos={gruposList} variant="admin" />`.
-- Filtra apenas grupos com `lat && lng`. Aviso quando há grupos sem coordenadas, com link para editar.
+**5. Formulário manual (modal)**
+Para um culto existente, preencher / corrigir:
+- ID do vídeo no YouTube
+- Pico simultâneo
+- Views D+1 (manual override)
+- Views D+7 (manual override)
+- Decisões online
 
-### Etapa 4 — Integração no Totem do Membro
-- Em `TotemMembro.tsx → GruposFlow`, **remover** o bloco Leaflet (imports, makePin, MapContainer/TileLayer).
-- Substituir por `<GruposMapView grupos={filtered} memberCoords={memberCoords} variant="kiosk" defaultTheme="dark" onGroupSelect={(g) => setSelected(g)} />`.
-- O toggle de view "Mapa/Lista" do totem é mantido — quando "Mapa", usa `GruposMapView` que **já tem lista lateral**. Em telas verticais de totem, a lista lateral pode ser fechada/aberta com botão chevron.
-- Toggle dark/light fica no canto do mapa, acessível ao membro.
+Salva via `kpisApi.cultos.update(id, payload)` (endpoint já aceita esses campos — só precisa adicionar `online_ds` e `online_ddus` à allowlist do PUT).
 
-### Etapa 5 — Permissões e roteamento
-- Sem mudanças. A aba "Mapa" em `/grupos` herda o `ModuleGuard permKey="canMembresia"`.
-- A rota `/totem` continua protegida. O modo kiosk em si **já é a rota /totem**; não preciso criar nova rota — apenas o componente respeita o estilo fullscreen.
-
-### Etapa 6 — Banco de dados
-**Sem migração.** As colunas `lat` e `lng` já existem na `mem_grupos` (usadas no formulário de edição com geocoding por CEP) e o backend já as retorna.
-
-### Dependências a instalar
-- `maplibre-gl` (engine do mapa, ~200KB gz)
-- CSS importado em `src/index.css` ou no próprio componente
+### Sincronização automática (já existe — só documentar)
+- Cron diário no Vercel chama `POST /api/kpis/youtube/sync` com `CRON_SECRET`.
+- Coleta D+1 (cultos do dia anterior) e D+7 (cultos de 7 dias atrás).
+- Requer `YOUTUBE_API_KEY` configurada na Vercel **e** `youtube_video_id` preenchido no culto.
+- A nova aba mostrará um banner amarelo se `YOUTUBE_API_KEY` estiver ausente (verificado por uma flag retornada pelo backend).
 
 ### Detalhes técnicos
-- **ThemeContext**: o componente `Map` aceitará `theme` controlado via prop. `GruposMapView` mantém um state local independente do tema do app, permitindo o usuário do totem alternar mapa dark/light sem alterar o tema do app.
-- **Performance**: marcadores via `MapMarker` com portal — OK até ~500 grupos. Acima disso considerar clustering futuramente.
-- **SSR/Hydration**: o `Map` só monta após `isMounted=true` para evitar problemas (já no snippet original).
-- **Cleanup**: `useEffect` retorna `mapInstance.remove()` ao desmontar.
 
-### Riscos e mitigações
-- **Bundle size**: MapLibre adiciona ~200KB gz. Aceitável e o módulo é lazy-loaded.
-- **Estilos Carto offline**: dependem de internet; em produção do totem isso já é assumido (Leaflet também depende). Sem mudança operacional.
-- **Coordenadas faltantes**: muitos grupos podem não ter `lat/lng`. UI mostra contador "X de Y grupos no mapa" + CTA para o admin completar.
+**Frontend (`src/pages/kpis/KPIs.tsx`)**
+- Adicionar `{ id: 'online', label: 'Online' }` em `TABS`.
+- Criar `TabOnline({ data, loading, serviceTypes, onSync })` com cards + gráfico + tabela + modal.
+- Modal `ModalEditarOnline` permite escolher culto existente (combo) ou abrir direto a partir de uma linha da tabela.
+- Bug atual a corrigir no mesmo PR: `meta_24m` no card "Meta 24 meses" (linha 917) quebra build — ajustar tipo do helper `getMeta` para aceitar `'meta_6m' | 'meta_12m' | 'meta_24m'`.
 
-### Entregáveis
-1. `src/components/ui/map.tsx` — componente base MapLibre adaptado ao ThemeContext.
-2. `src/components/grupos/GruposMapView.tsx` — view com lista lateral + controles + toggle tema.
-3. `src/pages/ministerial/Grupos.jsx` — nova aba "Mapa".
-4. `src/pages/TotemMembro.tsx` — `GruposFlow` migrado para o novo componente; remoção do Leaflet local.
-5. Atualização de `package.json` com `maplibre-gl`.
+**Backend (`backend/routes/kpis.js`)**
+- Adicionar `'online_ds'` e `'online_ddus'` ao array `allowed` no `PUT /cultos/:id` para permitir override manual.
+- Novo `GET /kpis/youtube/status` retorna `{ apiKeyConfigured: boolean, lastSync: timestamp }` para o banner.
+
+**Banco de dados**
+Sem alteração de schema — colunas `youtube_video_id`, `online_pico`, `online_ds`, `online_ddus`, `ds_coletado_em`, `ddus_coletado_em` já existem na tabela `cultos`.
+
+### Notificações
+Notificação automática diária quando a sync rodar, listando cultos com `youtube_video_id` ainda pendentes >48h após o evento (chamada via `notificacaoGenerator.js`, módulo `kpis`).
+
+### Entrega
+Um único PR `claude/kpis-aba-online`:
+1. Backend: allowlist `online_ds`/`online_ddus` no PUT + endpoint `youtube/status`.
+2. Frontend: nova aba `Online` + correção do erro de build `meta_24m`.
+3. Notificação periódica de cultos sem coleta.
+
+Após merge: confirmo no chat a URL de produção e instruções para verificar a sync manual.
 
