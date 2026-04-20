@@ -26,6 +26,9 @@ export default function RevisaoEstrategica() {
   const [selectedPacote, setSelectedPacote] = useState(null);
   const [simulacao, setSimulacao] = useState(null);
   const [novoTitulo, setNovoTitulo] = useState('');
+  const [filterArea, setFilterArea] = useState('all');
+  const [filterTipo, setFilterTipo] = useState('all');
+  const [pacoteAreas, setPacoteAreas] = useState([]);
 
   // Item form
   const [itemForm, setItemForm] = useState({ tipo: 'expansao', item_id: '', item_nome: '', campo: 'date_end', valor_atual: '', valor_proposto: '', motivo: '', lider: '' });
@@ -52,16 +55,41 @@ export default function RevisaoEstrategica() {
     const { projetos: p, expansao: e, dependencias: dep } = diag;
     const hoje = new Date();
 
+    // Extrair todas as areas
+    const todasAreas = [...new Set([...(p.lista || []).map(x => x.area), ...(e.lista || []).map(x => x.area)].filter(Boolean))].sort();
+
+    // Filtrar
+    const projFiltrados = filterArea === 'all' ? (p.lista || []) : (p.lista || []).filter(x => x.area === filterArea);
+    const expFiltrados = filterArea === 'all' ? (e.lista || []) : (e.lista || []).filter(x => x.area === filterArea);
+    const projAtrasados = projFiltrados.filter(x => x.date_end && x.date_end < hoje.toISOString().split('T')[0]);
+    const expAtrasados = expFiltrados.filter(x => x.date_end && x.date_end < hoje.toISOString().split('T')[0] && x.status !== 'concluido');
+
     return (
       <div>
+        {/* Filtros */}
+        <div style={{ display: 'flex', gap: 8, marginBottom: 16, flexWrap: 'wrap', alignItems: 'center' }}>
+          <span style={{ fontSize: 12, fontWeight: 600, color: C.t2 }}>Area:</span>
+          <select value={filterArea} onChange={e => setFilterArea(e.target.value)} style={{ padding: 6, borderRadius: 6, border: `1px solid ${C.border}`, background: C.card, color: C.text, fontSize: 12, minWidth: 180 }}>
+            <option value="all">Todas as areas</option>
+            {todasAreas.map(a => <option key={a} value={a}>{a}</option>)}
+          </select>
+          <span style={{ fontSize: 12, fontWeight: 600, color: C.t2, marginLeft: 8 }}>Tipo:</span>
+          <select value={filterTipo} onChange={e => setFilterTipo(e.target.value)} style={{ padding: 6, borderRadius: 6, border: `1px solid ${C.border}`, background: C.card, color: C.text, fontSize: 12 }}>
+            <option value="all">Todos</option>
+            <option value="projeto">Projetos</option>
+            <option value="expansao">Expansao</option>
+          </select>
+          {filterArea !== 'all' && <button onClick={() => setFilterArea('all')} style={{ fontSize: 11, color: C.red, background: 'none', border: 'none', cursor: 'pointer' }}>Limpar filtro</button>}
+          <span style={{ fontSize: 11, color: C.t3, marginLeft: 'auto' }}>{projFiltrados.length} proj + {expFiltrados.length} marcos</span>
+        </div>
+
         {/* KPIs */}
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(150px, 1fr))', gap: 12, marginBottom: 24 }}>
           {[
-            { label: 'Projetos ativos', value: p.total, color: C.primary },
-            { label: 'Proj. atrasados', value: p.atrasados.length, color: C.red },
-            { label: 'Marcos expansao', value: e.total, color: C.blue },
-            { label: 'Marcos atrasados', value: e.atrasados.length, color: C.red },
-            { label: 'Marcos pendentes', value: e.pendentes.length, color: C.amber },
+            { label: 'Projetos', value: projFiltrados.length, color: C.primary },
+            { label: 'Proj. atrasados', value: projAtrasados.length, color: C.red },
+            { label: 'Marcos', value: expFiltrados.length, color: C.blue },
+            { label: 'Marcos atrasados', value: expAtrasados.length, color: C.red },
             { label: 'Deps. impactadas', value: dep.impactados, color: '#8b5cf6' },
           ].map(k => (
             <div key={k.label} style={{ background: C.card, borderRadius: 12, padding: 16, border: `1px solid ${C.border}` }}>
@@ -71,20 +99,23 @@ export default function RevisaoEstrategica() {
           ))}
         </div>
 
-        {/* Atrasados */}
-        <div style={{ fontSize: 16, fontWeight: 700, color: C.text, marginBottom: 10 }}>Itens atrasados</div>
+        {/* Lista completa filtrada */}
+        <div style={{ fontSize: 16, fontWeight: 700, color: C.text, marginBottom: 10 }}>
+          {filterArea !== 'all' ? `Itens: ${filterArea}` : 'Itens atrasados'}
+        </div>
         <div style={{ background: C.card, borderRadius: 12, border: `1px solid ${C.border}`, overflow: 'hidden', marginBottom: 24 }}>
-          {[...p.atrasados.map(x => ({ ...x, _tipo: 'projeto', _dias: Math.ceil((hoje - new Date(x.date_end)) / 86400000) })),
-            ...e.atrasados.map(x => ({ ...x, _tipo: 'expansao', _dias: Math.ceil((hoje - new Date(x.date_end)) / 86400000) }))
+          {[...(filterTipo !== 'expansao' ? (filterArea !== 'all' ? projFiltrados : projAtrasados) : []).map(x => ({ ...x, _tipo: 'projeto', _dias: x.date_end ? Math.ceil((hoje - new Date(x.date_end)) / 86400000) : 0 })),
+            ...(filterTipo !== 'projeto' ? (filterArea !== 'all' ? expFiltrados : expAtrasados) : []).map(x => ({ ...x, _tipo: 'expansao', _dias: x.date_end ? Math.ceil((hoje - new Date(x.date_end)) / 86400000) : 0 }))
           ].sort((a, b) => b._dias - a._dias).map(item => (
             <div key={item.id} style={{ padding: '12px 16px', borderBottom: `1px solid ${C.border}`, display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer' }}
               onClick={() => simular(item._tipo, item.id)}
               onMouseEnter={e => e.currentTarget.style.background = C.bg} onMouseLeave={e => e.currentTarget.style.background = 'transparent'}>
-              <span style={{ fontSize: 10, padding: '2px 8px', borderRadius: 99, background: item._tipo === 'projeto' ? '#3b82f620' : '#8b5cf620', color: item._tipo === 'projeto' ? C.blue : '#8b5cf6', fontWeight: 600 }}>{item._tipo === 'projeto' ? 'Projeto' : 'Expansao'}</span>
+              <span style={{ fontSize: 10, padding: '2px 8px', borderRadius: 99, background: item._tipo === 'projeto' ? '#3b82f620' : '#8b5cf620', color: item._tipo === 'projeto' ? C.blue : '#8b5cf6', fontWeight: 600, flexShrink: 0 }}>{item._tipo === 'projeto' ? 'Proj' : 'Exp'}</span>
+              {item.area && <span style={{ fontSize: 10, padding: '2px 6px', borderRadius: 99, background: C.primaryBg, color: C.primary, fontWeight: 500, flexShrink: 0 }}>{item.area}</span>}
               <span style={{ fontSize: 13, fontWeight: 600, color: C.text, flex: 1 }}>{item.name}</span>
-              <span style={{ fontSize: 11, color: C.t3 }}>{item.responsible || '-'}</span>
-              <span style={{ fontSize: 11, color: C.t3 }}>{fmtDate(item.date_end)}</span>
-              <span style={{ fontSize: 12, fontWeight: 700, color: C.red }}>{item._dias}d atraso</span>
+              <span style={{ fontSize: 11, color: C.t3, flexShrink: 0 }}>{item.responsible || '-'}</span>
+              <span style={{ fontSize: 11, color: C.t3, flexShrink: 0 }}>{fmtDate(item.date_end)}</span>
+              {item._dias > 0 ? <span style={{ fontSize: 11, fontWeight: 700, color: C.red, flexShrink: 0 }}>{item._dias}d atraso</span> : <span style={{ fontSize: 11, color: C.t3, flexShrink: 0 }}>{item.status}</span>}
             </div>
           ))}
           {p.atrasados.length + e.atrasados.length === 0 && <div style={{ padding: 24, textAlign: 'center', color: C.t3 }}>Nenhum item atrasado</div>}
@@ -128,12 +159,45 @@ export default function RevisaoEstrategica() {
 
     return (
       <div>
-        {/* Criar pacote */}
-        <div style={{ display: 'flex', gap: 8, marginBottom: 20 }}>
-          <input placeholder="Titulo do pacote (ex: Revisao Q2 2026)" value={novoTitulo} onChange={e => setNovoTitulo(e.target.value)} style={{ flex: 1, padding: 8, borderRadius: 8, border: `1px solid ${C.border}`, background: C.card, color: C.text, fontSize: 13 }} onKeyDown={async e => {
-            if (e.key === 'Enter' && novoTitulo.trim()) { await revisoes.criarPacote({ titulo: novoTitulo.trim() }); setNovoTitulo(''); await loadPacotes(); toast.success('Pacote criado'); }
-          }} />
-          <button onClick={async () => { if (novoTitulo.trim()) { await revisoes.criarPacote({ titulo: novoTitulo.trim() }); setNovoTitulo(''); await loadPacotes(); toast.success('Pacote criado'); } }} style={{ padding: '8px 20px', borderRadius: 8, border: 'none', background: C.primary, color: '#fff', fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>Criar pacote</button>
+        {/* Criar pacote por area */}
+        <div style={{ background: C.card, borderRadius: 12, padding: 16, border: `1px solid ${C.border}`, marginBottom: 20 }}>
+          <div style={{ fontSize: 13, fontWeight: 600, color: C.text, marginBottom: 10 }}>Novo pacote de revisao</div>
+          <input placeholder="Titulo (ex: Revisao Infraestrutura Q2 2026)" value={novoTitulo} onChange={e => setNovoTitulo(e.target.value)} style={{ width: '100%', padding: 8, borderRadius: 8, border: `1px solid ${C.border}`, background: C.bg, color: C.text, fontSize: 13, marginBottom: 10 }} />
+          <div style={{ fontSize: 11, color: C.t3, marginBottom: 6 }}>Selecione as areas para este pacote (projetos e marcos dessas areas serao incluidos):</div>
+          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 10 }}>
+            {[...new Set([...(diag?.projetos?.lista || []).map(x => x.area), ...(diag?.expansao?.lista || []).map(x => x.area)].filter(Boolean))].sort().map(area => {
+              const active = pacoteAreas.includes(area);
+              return (
+                <button key={area} onClick={() => setPacoteAreas(prev => active ? prev.filter(a => a !== area) : [...prev, area])} style={{
+                  padding: '4px 12px', borderRadius: 20, fontSize: 11, cursor: 'pointer',
+                  border: active ? `2px solid ${C.primary}` : `1px solid ${C.border}`,
+                  background: active ? C.primaryBg : 'transparent', color: active ? C.primary : C.t3, fontWeight: active ? 600 : 400,
+                }}>{area}</button>
+              );
+            })}
+          </div>
+          {pacoteAreas.length > 0 && (
+            <div style={{ fontSize: 11, color: C.t2, marginBottom: 8 }}>
+              {(diag?.projetos?.lista || []).filter(x => pacoteAreas.includes(x.area)).length} projetos + {(diag?.expansao?.lista || []).filter(x => pacoteAreas.includes(x.area)).length} marcos selecionados
+            </div>
+          )}
+          <button onClick={async () => {
+            if (!novoTitulo.trim() || pacoteAreas.length === 0) { toast.error('Preencha titulo e selecione ao menos 1 area'); return; }
+            const pkg = await revisoes.criarPacote({ titulo: novoTitulo.trim(), descricao: `Areas: ${pacoteAreas.join(', ')}` });
+            setNovoTitulo(''); setPacoteAreas([]);
+            await loadPacotes();
+            // Abrir pacote direto
+            const d = await revisoes.pacotes();
+            const created = (d || []).find(p => p.id === pkg.id);
+            if (created) {
+              // Pre-popular com os itens das areas selecionadas
+              created._areas = pacoteAreas;
+              created._projetos = (diag?.projetos?.lista || []).filter(x => pacoteAreas.includes(x.area));
+              created._marcos = (diag?.expansao?.lista || []).filter(x => pacoteAreas.includes(x.area));
+              setSelectedPacote(created);
+            }
+            toast.success('Pacote criado');
+          }} style={{ padding: '8px 20px', borderRadius: 8, border: 'none', background: C.primary, color: '#fff', fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>Criar pacote</button>
         </div>
 
         {/* Lista */}
@@ -167,8 +231,12 @@ export default function RevisaoEstrategica() {
     const isRascunho = pkg.status === 'rascunho';
     const isAprovado = pkg.status === 'aprovado';
 
-    // Lista de itens para selecionar (diagnostico)
-    const allItems = [...(diag?.projetos?.lista || []).map(p => ({ id: p.id, name: p.name, tipo: 'projeto', date_end: p.date_end, status: p.status })), ...(diag?.expansao?.lista || []).map(m => ({ id: m.id, name: m.name, tipo: 'expansao', date_end: m.date_end, status: m.status }))];
+    // Lista de itens filtrada pelas areas do pacote
+    const pkgAreas = pkg._areas || (pkg.descricao?.startsWith('Areas:') ? pkg.descricao.replace('Areas: ', '').split(', ') : []);
+    const allItems = [
+      ...(diag?.projetos?.lista || []).filter(p => pkgAreas.length === 0 || pkgAreas.includes(p.area)).map(p => ({ id: p.id, name: p.name, tipo: 'projeto', date_end: p.date_end, status: p.status, area: p.area, responsible: p.responsible })),
+      ...(diag?.expansao?.lista || []).filter(m => pkgAreas.length === 0 || pkgAreas.includes(m.area)).map(m => ({ id: m.id, name: m.name, tipo: 'expansao', date_end: m.date_end, status: m.status, area: m.area, responsible: m.responsible })),
+    ];
 
     return (
       <div>
@@ -227,6 +295,34 @@ export default function RevisaoEstrategica() {
               setItemForm(f => ({ ...f, item_id: '', item_nome: '', valor_atual: '', valor_proposto: '', motivo: '', lider: '' }));
               toast.success('Alteracao adicionada');
             }} style={{ padding: '6px 16px', borderRadius: 6, border: 'none', background: C.primary, color: '#fff', fontSize: 12, fontWeight: 600, cursor: 'pointer' }}>Adicionar ao pacote</button>
+          </div>
+        )}
+
+        {/* Itens da area para referencia */}
+        {isRascunho && allItems.length > 0 && (
+          <div style={{ background: C.card, borderRadius: 12, border: `1px solid ${C.border}`, overflow: 'hidden', marginBottom: 16 }}>
+            <div style={{ padding: '10px 16px', borderBottom: `1px solid ${C.border}`, background: 'var(--cbrio-table-header)' }}>
+              <span style={{ fontSize: 12, fontWeight: 600, color: C.t2 }}>Itens das areas selecionadas ({allItems.length}) — clique para adicionar ao pacote</span>
+            </div>
+            <div style={{ maxHeight: 300, overflowY: 'auto' }}>
+              {allItems.map(item => {
+                const hoje2 = new Date().toISOString().split('T')[0];
+                const atrasado = item.date_end && item.date_end < hoje2 && item.status !== 'concluido';
+                const jaNoPacke = itens.some(i => i.item_id === item.id);
+                return (
+                  <div key={item.id} style={{ padding: '8px 16px', borderBottom: `1px solid ${C.border}`, display: 'flex', alignItems: 'center', gap: 8, opacity: jaNoPacke ? 0.4 : 1, cursor: jaNoPacke ? 'default' : 'pointer' }}
+                    onClick={() => { if (!jaNoPacke) setItemForm(f => ({ ...f, item_id: item.id, item_nome: item.name, tipo: item.tipo, valor_atual: item.date_end || item.status || '' })); }}
+                    onMouseEnter={e => { if (!jaNoPacke) e.currentTarget.style.background = C.bg; }} onMouseLeave={e => e.currentTarget.style.background = 'transparent'}>
+                    <span style={{ fontSize: 9, padding: '2px 6px', borderRadius: 99, background: item.tipo === 'projeto' ? '#3b82f620' : '#8b5cf620', color: item.tipo === 'projeto' ? C.blue : '#8b5cf6', fontWeight: 600 }}>{item.tipo === 'projeto' ? 'Proj' : 'Exp'}</span>
+                    <span style={{ fontSize: 12, color: C.text, flex: 1 }}>{item.name}</span>
+                    <span style={{ fontSize: 10, color: C.t3 }}>{item.area}</span>
+                    <span style={{ fontSize: 10, color: C.t3 }}>{fmtDate(item.date_end)}</span>
+                    {atrasado && <span style={{ fontSize: 9, color: C.red, fontWeight: 600 }}>atrasado</span>}
+                    {jaNoPacke && <span style={{ fontSize: 9, color: C.green, fontWeight: 600 }}>no pacote</span>}
+                  </div>
+                );
+              })}
+            </div>
           </div>
         )}
 
