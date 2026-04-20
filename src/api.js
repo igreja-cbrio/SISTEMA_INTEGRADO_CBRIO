@@ -70,6 +70,11 @@ export const events = {
   toggleSubtask: (subId, done) => patch(`/events/subtasks/${subId}`, { done }),
   removeSubtask: (subId) => del(`/events/subtasks/${subId}`),
   addComment: (taskId, text) => post(`/events/tasks/${taskId}/comments`, { text }),
+  simpleTemplates: () => get('/events/simple-templates'),
+  createSimpleTemplate: (data) => post('/events/simple-templates', data),
+  deleteSimpleTemplate: (id) => del(`/events/simple-templates/${id}`),
+  toggleSimpleTemplate: (id) => patch(`/events/simple-templates/${id}/toggle`, {}),
+  applySimpleTemplates: (eventId) => post(`/events/${eventId}/apply-simple-templates`, {}),
 };
 
 export const projects = {

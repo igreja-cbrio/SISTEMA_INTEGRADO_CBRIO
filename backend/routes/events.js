@@ -31,6 +31,15 @@ router.get('/dashboard', async (req, res) => {
   } catch (e) { res.status(500).json({ error: 'Erro ao buscar dashboard' }); }
 });
 
+// ── SIMPLE TEMPLATES (DEVE vir antes de /:id) ──
+router.get('/simple-templates', async (req, res) => {
+  try {
+    const { data, error } = await supabase.from('simple_event_task_templates').select('*').order('sort_order');
+    if (error) throw error;
+    res.json(data || []);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 // GET /api/events
 router.get('/', async (req, res) => {
   try {
@@ -581,6 +590,47 @@ router.delete('/attachments/:attachId', async (req, res) => {
     if (error) throw error;
     res.json({ success: true });
   } catch (e) { console.error('[Events Delete attach]', e.message); res.status(500).json({ error: 'Erro ao excluir anexo' }); }
+});
+
+// ══════════════════════════════════════════════
+// TEMPLATES DE TAREFAS SIMPLES (GET registrado acima de /:id)
+// ══════════════════════════════════════════════
+
+router.post('/simple-templates', authorize('admin', 'diretor'), async (req, res) => {
+  try {
+    const { data, error } = await supabase.from('simple_event_task_templates').insert({ titulo: req.body.titulo }).select().single();
+    if (error) throw error;
+    res.json(data);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+router.delete('/simple-templates/:id', authorize('admin', 'diretor'), async (req, res) => {
+  try {
+    await supabase.from('simple_event_task_templates').delete().eq('id', req.params.id);
+    res.json({ success: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+router.patch('/simple-templates/:id/toggle', authorize('admin', 'diretor'), async (req, res) => {
+  try {
+    const { data: current } = await supabase.from('simple_event_task_templates').select('ativo').eq('id', req.params.id).single();
+    const { data, error } = await supabase.from('simple_event_task_templates').update({ ativo: !current.ativo }).eq('id', req.params.id).select().single();
+    if (error) throw error;
+    res.json(data);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// POST /api/events/:id/apply-simple-templates — aplicar templates ao evento
+router.post('/:id/apply-simple-templates', authorize('admin', 'diretor'), async (req, res) => {
+  try {
+    const { data: templates } = await supabase.from('simple_event_task_templates').select('*').eq('ativo', true).order('sort_order');
+    let created = 0;
+    for (const t of (templates || [])) {
+      const { error } = await supabase.from('event_tasks').insert({ event_id: req.params.id, name: t.titulo, status: 'pendente', priority: 'media' });
+      if (!error) created++;
+    }
+    res.json({ success: true, created });
+  } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 module.exports = router;
