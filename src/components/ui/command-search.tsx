@@ -30,6 +30,7 @@ const PAGES: SearchItem[] = [
   { label: 'Planejamento', description: 'Visão consolidada PMO', path: '/planejamento', icon: FolderKanban, category: 'Projetos e Eventos' },
   { label: 'Expansão', description: 'Metas de expansão', path: '/expansao', icon: Map, category: 'Projetos e Eventos' },
   { label: 'Membresia', description: 'Cadastro e trilha dos valores', path: '/ministerial/membresia', icon: BookOpen, category: 'Ministerial' },
+  { label: 'Cuidados', description: 'Capelania, aconselhamento e Jornada 180', path: '/ministerial/cuidados', icon: Heart, category: 'Ministerial' },
 ]
 
 export function CommandSearch() {

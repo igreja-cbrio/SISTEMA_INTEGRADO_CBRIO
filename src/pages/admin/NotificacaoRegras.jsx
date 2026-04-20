@@ -16,6 +16,7 @@ const MODULOS = [
   { id: 'eventos', label: 'Eventos', desc: 'Novo evento criado, tarefas atrasadas', color: '#6366f1' },
   { id: 'projetos', label: 'Projetos', desc: 'Marcos atrasados, tarefas pendentes', color: '#ec4899' },
   { id: 'kpis', label: 'KPIs e Indicadores', desc: 'Metas atingidas, registros de culto e batismo', color: '#f97316' },
+  { id: 'cuidados', label: 'Cuidados', desc: 'Novos acompanhamentos, alertas Jornada 180 e capelania', color: '#ef476f' },
 ];
 
 export default function NotificacaoRegras() {

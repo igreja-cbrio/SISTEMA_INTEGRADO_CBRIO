@@ -165,9 +165,10 @@ export function AuthProvider({ children }) {
   const canAgenda = canAccessModule(['Agenda']);
   const canIA = canAccessModule(['IA / Agentes']);
   const canKPIs = isAdmin || canAccessModule(['KPIs', 'Indicadores']);
+  const canCuidados = isAdmin || canAccessModule(['Cuidados']);
   // Colaborador = admin/diretor ou usuario com qualquer permissao de modulo
   // (voluntarios e membros sem permissao nao sao colaboradores)
-  const isColaborador = isAdmin || canRH || canFinanceiro || canLogistica || canPatrimonio || canMembresia || canProjetos || canExpansao || canAgenda || canIA;
+  const isColaborador = isAdmin || canRH || canFinanceiro || canLogistica || canPatrimonio || canMembresia || canProjetos || canExpansao || canAgenda || canIA || canCuidados;
 
   const value = {
     user,
@@ -180,7 +181,7 @@ export function AuthProvider({ children }) {
     isColaborador,
     modulePerms,
     canAccessModule,
-    canRH, canFinanceiro, canLogistica, canPatrimonio, canMembresia, canProjetos, canExpansao, canAgenda, canIA, canKPIs,
+    canRH, canFinanceiro, canLogistica, canPatrimonio, canMembresia, canProjetos, canExpansao, canAgenda, canIA, canKPIs, canCuidados,
     getAccessLevel,
     userAreas,
     userSetores,
@@ -202,7 +203,7 @@ export function useAuth() {
       canAccessModule: () => false, getAccessLevel: () => 1,
       canRH: false, canFinanceiro: false, canLogistica: false,
       canPatrimonio: false, canMembresia: false, canProjetos: false,
-      canExpansao: false, canAgenda: false, canIA: false,
+      canExpansao: false, canAgenda: false, canIA: false, canCuidados: false,
       userAreas: [], userSetores: [],
       signInWithMicrosoft: async () => ({}),
       signInWithEmail: async () => ({}), signOut: async () => {},
