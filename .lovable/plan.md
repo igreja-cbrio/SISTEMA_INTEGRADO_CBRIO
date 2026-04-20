@@ -1,70 +1,53 @@
 
 
-## Nova aba "Online" — métricas de YouTube/transmissão
+## Auto-criação semanal de cultos + coleta D+1 garantida
 
-### Onde adicionar
-Nova aba **"Online"** dentro de `/kpis` (`src/pages/kpis/KPIs.tsx`), entre **Cultos** e **Batismos**. É lá que vivem hoje os dados de cultos, YouTube e a sync já configurada — assim a nova aba reusa a mesma fonte (`vw_culto_stats` / tabela `cultos`) sem duplicar nada.
+### Problema
+Os cultos de 19/04 não aparecem porque **ninguém os cadastrou manualmente**. Sem linha na tabela `cultos`, o cron das 10h não tem o que sincronizar com o YouTube. Resultado: D+1 do culto de ontem está vazio porque o culto sequer existe no sistema.
 
-> Obs: o "ministerial" hoje agrupa Voluntariado, Membresia e Grupos (não tem cultos). Mantenho a aba **dentro do módulo KPIs** porque é onde o dado vive. Se preferir mover toda a área de cultos para "Ministerial", me avise depois — é mudança maior.
+### Solução em 3 partes
 
-### O que a aba mostra
+**1. Auto-criar cultos da semana (novo cron — domingo 00:05 BRT)**
 
-**1. Cards de métricas agregadas (período selecionado no header)**
-- Pico simultâneo (soma)
-- Views D+1 (soma)
-- Views D+7 (soma)
-- Decisões Online (soma)
-- Cultos com vídeo vinculado / pendentes de coleta
+Novo endpoint `POST /api/kpis/cultos/auto-create` que:
+- Lê todos `vol_service_types` ativos (já têm `recurrence_day` 0-6 e `recurrence_time`).
+- Para cada tipo, calcula a data da próxima ocorrência na semana corrente.
+- Faz `INSERT ... ON CONFLICT (service_type_id, data, hora) DO NOTHING` na tabela `cultos`, preenchendo `nome`, `data`, `hora`, `service_type_id`. Demais campos ficam zerados/null para preenchimento posterior.
+- Idempotente: pode rodar várias vezes sem duplicar.
 
-**2. Botão "Sincronizar agora"**
-Reusa `kpisApi.youtubeSync()` (já implementado, roda também no cron do Vercel). Mostra toast com nº de vídeos atualizados.
+Adicionar no `vercel.json`:
+```json
+{ "path": "/api/kpis/cultos/auto-create", "schedule": "5 3 * * 0" }
+```
+(domingo 03:05 UTC = 00:05 BRT — cria os cultos da semana logo após a virada de domingo).
 
-**3. Gráfico de evolução**
-Linha temporal por culto: pico, D+1 e D+7 ao longo do período. Reaproveita `recharts` + `vw_culto_stats`.
+**Backfill imediato**: o mesmo endpoint aceita `?weeks=2` para criar retroativamente as últimas 2 semanas, cobrindo o culto de ontem (19/04).
 
-**4. Tabela "Cultos online"**
-Colunas: Culto • Data • Vídeo (link YouTube) • Pico • D+1 • D+7 • Decisões Online • Status coleta • Ações.
-Status coleta: `Pendente D+1` / `Pendente D+7` / `Coletado` / `Sem vídeo`.
+**2. Garantir coleta D+1 mesmo sem `youtube_video_id`**
 
-**5. Formulário manual (modal)**
-Para um culto existente, preencher / corrigir:
-- ID do vídeo no YouTube
-- Pico simultâneo
-- Views D+1 (manual override)
-- Views D+7 (manual override)
-- Decisões online
+Hoje a sync filtra `not('youtube_video_id', 'is', null)` — então culto sem vídeo nunca dispara nada. Mudar para:
+- Se `youtube_video_id` estiver presente → busca views normalmente.
+- Se ausente e culto > 24h → criar notificação "Culto X sem vídeo do YouTube vinculado" com link direto para edição.
 
-Salva via `kpisApi.cultos.update(id, payload)` (endpoint já aceita esses campos — só precisa adicionar `online_ds` e `online_ddus` à allowlist do PUT).
+**3. Banner na aba Online**
 
-### Sincronização automática (já existe — só documentar)
-- Cron diário no Vercel chama `POST /api/kpis/youtube/sync` com `CRON_SECRET`.
-- Coleta D+1 (cultos do dia anterior) e D+7 (cultos de 7 dias atrás).
-- Requer `YOUTUBE_API_KEY` configurada na Vercel **e** `youtube_video_id` preenchido no culto.
-- A nova aba mostrará um banner amarelo se `YOUTUBE_API_KEY` estiver ausente (verificado por uma flag retornada pelo backend).
+Quando houver cultos das últimas 48h sem `youtube_video_id`, mostrar banner amarelo na aba Online com botão "Vincular vídeo agora" abrindo o modal de edição já existente.
 
-### Detalhes técnicos
+### Schema
+**Sem mudanças.** Tabela `cultos` já tem todas as colunas necessárias. Vai precisar apenas garantir um índice/constraint único `(service_type_id, data, hora)` — script SQL no PR para você rodar manualmente no SQL Editor (conforme sua preferência salva).
 
-**Frontend (`src/pages/kpis/KPIs.tsx`)**
-- Adicionar `{ id: 'online', label: 'Online' }` em `TABS`.
-- Criar `TabOnline({ data, loading, serviceTypes, onSync })` com cards + gráfico + tabela + modal.
-- Modal `ModalEditarOnline` permite escolher culto existente (combo) ou abrir direto a partir de uma linha da tabela.
-- Bug atual a corrigir no mesmo PR: `meta_24m` no card "Meta 24 meses" (linha 917) quebra build — ajustar tipo do helper `getMeta` para aceitar `'meta_6m' | 'meta_12m' | 'meta_24m'`.
-
-**Backend (`backend/routes/kpis.js`)**
-- Adicionar `'online_ds'` e `'online_ddus'` ao array `allowed` no `PUT /cultos/:id` para permitir override manual.
-- Novo `GET /kpis/youtube/status` retorna `{ apiKeyConfigured: boolean, lastSync: timestamp }` para o banner.
-
-**Banco de dados**
-Sem alteração de schema — colunas `youtube_video_id`, `online_pico`, `online_ds`, `online_ddus`, `ds_coletado_em`, `ddus_coletado_em` já existem na tabela `cultos`.
-
-### Notificações
-Notificação automática diária quando a sync rodar, listando cultos com `youtube_video_id` ainda pendentes >48h após o evento (chamada via `notificacaoGenerator.js`, módulo `kpis`).
+### Arquivos tocados
+- `backend/routes/kpis.js` — novo endpoint `auto-create`, ajuste no `youtube/sync` para alertar cultos sem vídeo.
+- `backend/services/notificacaoGenerator.js` — nova checagem "culto sem vídeo > 24h".
+- `vercel.json` — novo cron semanal.
+- `src/pages/kpis/KPIs.tsx` — banner na aba Online + botão "Criar cultos da semana" (manual, para forçar sem esperar cron).
+- `supabase/migrations/<timestamp>_cultos_unique.sql` — constraint única (você roda no SQL Editor).
 
 ### Entrega
-Um único PR `claude/kpis-aba-online`:
-1. Backend: allowlist `online_ds`/`online_ddus` no PUT + endpoint `youtube/status`.
-2. Frontend: nova aba `Online` + correção do erro de build `meta_24m`.
-3. Notificação periódica de cultos sem coleta.
-
-Após merge: confirmo no chat a URL de produção e instruções para verificar a sync manual.
+Único PR `claude/kpis-auto-criar-cultos`. Após merge:
+1. Você roda o SQL da constraint no Supabase.
+2. Eu chamo `POST /api/kpis/cultos/auto-create?weeks=2` manualmente para criar os cultos retroativos (incluindo os de 19/04).
+3. Você abre /kpis → aba Online → vincula `youtube_video_id` ao culto de ontem.
+4. Clica "Sincronizar agora" → D+1 aparece.
+5. A partir de domingo que vem, cron cria automaticamente.
 
