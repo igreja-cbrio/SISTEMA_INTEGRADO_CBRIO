@@ -34,9 +34,12 @@ router.get('/dashboard', async (req, res) => {
 // ── SIMPLE TEMPLATES (DEVE vir antes de /:id) ──
 router.get('/simple-templates', async (req, res) => {
   try {
-    const { data, error } = await supabase.from('simple_event_task_templates').select('*').order('sort_order');
+    const { event_id } = req.query;
+    let q = supabase.from('simple_event_task_templates').select('*, events(name)').order('sort_order');
+    if (event_id) q = q.eq('event_id', event_id);
+    const { data, error } = await q;
     if (error) throw error;
-    res.json(data || []);
+    res.json((data || []).map(t => ({ ...t, event_name: t.events?.name, events: undefined })));
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
@@ -598,14 +601,32 @@ router.delete('/attachments/:attachId', async (req, res) => {
 
 router.post('/simple-templates', authorize('admin', 'diretor'), async (req, res) => {
   try {
-    const { data, error } = await supabase.from('simple_event_task_templates').insert({ titulo: req.body.titulo }).select().single();
+    const { data, error } = await supabase.from('simple_event_task_templates').insert({
+      titulo: req.body.titulo, event_id: req.body.event_id || null,
+    }).select().single();
     if (error) throw error;
+
+    // Se vinculado a um evento, criar a tarefa diretamente no evento
+    if (data.event_id) {
+      // Verificar se ja existe tarefa com mesmo nome
+      const { data: existing } = await supabase.from('event_tasks').select('id').eq('event_id', data.event_id).eq('name', data.titulo).limit(1);
+      if (!existing?.length) {
+        await supabase.from('event_tasks').insert({ event_id: data.event_id, name: data.titulo, status: 'pendente', priority: 'media' });
+      }
+    }
+
     res.json(data);
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 router.delete('/simple-templates/:id', authorize('admin', 'diretor'), async (req, res) => {
   try {
+    // Buscar template antes de deletar
+    const { data: tmpl } = await supabase.from('simple_event_task_templates').select('titulo, event_id').eq('id', req.params.id).single();
+    // Remover tarefa pendente do evento se vinculado
+    if (tmpl?.event_id) {
+      await supabase.from('event_tasks').delete().eq('event_id', tmpl.event_id).eq('name', tmpl.titulo).neq('status', 'concluida');
+    }
     await supabase.from('simple_event_task_templates').delete().eq('id', req.params.id);
     res.json({ success: true });
   } catch (err) { res.status(500).json({ error: err.message }); }
