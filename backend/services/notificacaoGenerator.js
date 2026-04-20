@@ -414,7 +414,7 @@ async function gerarNotificacoesCuidados() {
   // Busca acompanhamentos ativos
   const { data: acomps } = await supabase
     .from('cui_acompanhamentos')
-    .select('id, nome, responsavel_id, membro_id, created_at');
+    .select('id, nome, responsavel_id, membro_id, created_at, status');
 
   const ativos = (acomps || []).filter(a => a.status !== 'encerrado');
 
