@@ -63,10 +63,10 @@ function NotifItem({ n, onClick }) {
 }
 
 export default function Dashboard() {
-  const { profile, isAdmin, isVoluntario, isColaborador, canRH, canFinanceiro, canLogistica, canPatrimonio, canAgenda, canProjetos, canMembresia } = useAuth();
+  const { profile, isAdmin, isVoluntario, isColaborador, canRH, canFinanceiro, canLogistica, canPatrimonio, canAgenda, canProjetos, canMembresia, canCuidados } = useAuth();
   const navigate = useNavigate();
 
-  const permMap = { canRH, canFinanceiro, canLogistica, canPatrimonio, canAgenda, canProjetos, canMembresia, isColaborador };
+  const permMap = { canRH, canFinanceiro, canLogistica, canPatrimonio, canAgenda, canProjetos, canMembresia, canCuidados, isColaborador };
   const links = MODULES.filter(l => !l.perm || isAdmin || permMap[l.perm]);
 
   const handleModuleClick = (path) => {
