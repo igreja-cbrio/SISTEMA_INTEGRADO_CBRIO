@@ -1408,29 +1408,34 @@ export default function Eventos() {
                 {catTasks.map(task => {
                   const evName = allEvents.find(e => e.id === task.event_id)?.name || '';
                   const isDone = task.status === 'concluida';
-                  const p = normDate(task.prazo);
+                  const fase = allPhases.find(ph => ph.id === task.event_phase_id);
+                  const inicio = normDate(fase?.data_inicio_prevista);
+                  const p = normDate(task.prazo || fase?.data_fim_prevista);
                   const diff = p ? Math.ceil((new Date(p + 'T12:00:00') - new Date()) / 86400000) : null;
                   const dColor = diff === null || isDone ? null : diff < 0 ? '#ef4444' : diff <= 3 ? '#f59e0b' : '#10b981';
                   const dText = diff === null ? '' : diff < 0 ? `${Math.abs(diff)}d atrás` : diff === 0 ? 'Hoje' : `${diff}d`;
+                  // Check if should have started
+                  const inicioDate = inicio ? new Date(inicio + 'T12:00:00') : null;
+                  const shouldHaveStarted = inicioDate && !isDone && inicioDate < new Date() && task.status === 'a_fazer';
                   return (
                     <div key={task.id} onClick={() => setKanbanSelectedTask(task)}
                       style={{
                         padding: '10px 14px', display: 'flex', alignItems: 'center', gap: 10,
                         borderBottom: '1px solid var(--cbrio-border)', cursor: 'pointer',
-                        background: kanbanSelectedTask?.id === task.id ? 'rgba(0,179,157,0.06)' : 'transparent',
+                        background: kanbanSelectedTask?.id === task.id ? 'rgba(0,179,157,0.06)' : shouldHaveStarted ? 'rgba(239,68,68,0.04)' : 'transparent',
                         opacity: isDone ? 0.65 : 1, transition: 'background 0.1s',
                       }}
                       onMouseEnter={e => { if (!isDone) e.currentTarget.style.background = 'var(--cbrio-bg)'; }}
-                      onMouseLeave={e => { e.currentTarget.style.background = kanbanSelectedTask?.id === task.id ? 'rgba(0,179,157,0.06)' : 'transparent'; }}>
+                      onMouseLeave={e => { e.currentTarget.style.background = kanbanSelectedTask?.id === task.id ? 'rgba(0,179,157,0.06)' : shouldHaveStarted ? 'rgba(239,68,68,0.04)' : 'transparent'; }}>
                       {/* Status icon */}
                       <div style={{
                         width: 22, height: 22, borderRadius: '50%', flexShrink: 0,
                         display: 'flex', alignItems: 'center', justifyContent: 'center',
-                        background: isDone ? '#d1fae5' : 'var(--cbrio-bg)',
-                        border: isDone ? '2px solid #10b981' : '2px solid var(--cbrio-border)',
-                        fontSize: 11, color: isDone ? '#10b981' : 'var(--cbrio-text3)',
+                        background: isDone ? '#d1fae5' : shouldHaveStarted ? '#fef2f2' : 'var(--cbrio-bg)',
+                        border: isDone ? '2px solid #10b981' : shouldHaveStarted ? '2px solid #ef4444' : '2px solid var(--cbrio-border)',
+                        fontSize: 11, color: isDone ? '#10b981' : shouldHaveStarted ? '#ef4444' : 'var(--cbrio-text3)',
                       }}>
-                        {isDone ? '✓' : ''}
+                        {isDone ? '✓' : shouldHaveStarted ? '!' : ''}
                       </div>
                       {/* Info */}
                       <div style={{ flex: 1, minWidth: 0 }}>
@@ -1438,12 +1443,19 @@ export default function Eventos() {
                         <div style={{ fontSize: 11, color: 'var(--cbrio-text3)', marginTop: 2, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
                           <span>{task.responsavel_nome || '—'}</span>
                           {evName && <span>· {evName}</span>}
-                          {p && <span>· {fmtDate(p)}</span>}
+                          {inicio && p ? (
+                            <span>· {fmtDate(inicio)} → {fmtDate(p)}</span>
+                          ) : p ? (
+                            <span>· até {fmtDate(p)}</span>
+                          ) : null}
                         </div>
                       </div>
                       {/* Deadline badge */}
-                      {dColor && !isDone && (
-                        <span style={{ fontSize: 10, fontWeight: 700, color: dColor, padding: '2px 8px', borderRadius: 8, background: `${dColor}15`, flexShrink: 0 }}>{dText}</span>
+                      {!isDone && (
+                        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 2, flexShrink: 0 }}>
+                          {shouldHaveStarted && <span style={{ fontSize: 9, fontWeight: 600, color: '#ef4444' }}>deveria ter iniciado</span>}
+                          {dColor && <span style={{ fontSize: 10, fontWeight: 700, color: dColor, padding: '2px 8px', borderRadius: 8, background: `${dColor}15` }}>{dText}</span>}
+                        </div>
                       )}
                     </div>
                   );
@@ -1494,8 +1506,9 @@ export default function Eventos() {
                   </div>
                   <div style={{ display: 'flex', gap: 16, fontSize: 12, color: 'var(--cbrio-text2)' }}>
                     {evName && <div><span style={{ fontWeight: 600 }}>Evento:</span> {evName}</div>}
-                    <div><span style={{ fontWeight: 600 }}>Responsável:</span> {task.responsavel_nome || '—'}</div>
-                    {p && <div><span style={{ fontWeight: 600 }}>Prazo:</span> {fmtDate(p)} {daysColor && <span style={{ color: daysColor, fontWeight: 700 }}> ({diff < 0 ? `${Math.abs(diff)}d atrás` : diff === 0 ? 'Hoje' : `${diff}d`})</span>}</div>}
+                    <div><span style={{ fontWeight: 600 }}>Responsavel:</span> {task.responsavel_nome || '—'}</div>
+                    {phase?.data_inicio_prevista && <div><span style={{ fontWeight: 600 }}>Inicio:</span> {fmtDate(phase.data_inicio_prevista)}</div>}
+                    {p && <div><span style={{ fontWeight: 600 }}>Entrega:</span> {fmtDate(p)} {daysColor && <span style={{ color: daysColor, fontWeight: 700 }}> ({diff < 0 ? `${Math.abs(diff)}d atrás` : diff === 0 ? 'Hoje' : `${diff}d`})</span>}</div>}
                   </div>
                 </div>
 
