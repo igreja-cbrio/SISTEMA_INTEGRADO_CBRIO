@@ -101,11 +101,11 @@ export default function RevisaoEstrategica() {
 
         {/* Lista completa filtrada */}
         <div style={{ fontSize: 16, fontWeight: 700, color: C.text, marginBottom: 10 }}>
-          {filterArea !== 'all' ? `Itens: ${filterArea}` : 'Itens atrasados'}
+          Todos os itens {filterArea !== 'all' && `— ${filterArea}`} ({projFiltrados.length + expFiltrados.length})
         </div>
-        <div style={{ background: C.card, borderRadius: 12, border: `1px solid ${C.border}`, overflow: 'hidden', marginBottom: 24 }}>
-          {[...(filterTipo !== 'expansao' ? (filterArea !== 'all' ? projFiltrados : projAtrasados) : []).map(x => ({ ...x, _tipo: 'projeto', _dias: x.date_end ? Math.ceil((hoje - new Date(x.date_end)) / 86400000) : 0 })),
-            ...(filterTipo !== 'projeto' ? (filterArea !== 'all' ? expFiltrados : expAtrasados) : []).map(x => ({ ...x, _tipo: 'expansao', _dias: x.date_end ? Math.ceil((hoje - new Date(x.date_end)) / 86400000) : 0 }))
+        <div style={{ background: C.card, borderRadius: 12, border: `1px solid ${C.border}`, overflow: 'hidden', marginBottom: 24, maxHeight: 500, overflowY: 'auto' }}>
+          {[...(filterTipo !== 'expansao' ? projFiltrados : []).map(x => ({ ...x, _tipo: 'projeto', _dias: x.date_end ? Math.ceil((hoje - new Date(x.date_end)) / 86400000) : 0 })),
+            ...(filterTipo !== 'projeto' ? expFiltrados : []).map(x => ({ ...x, _tipo: 'expansao', _dias: x.date_end ? Math.ceil((hoje - new Date(x.date_end)) / 86400000) : 0 }))
           ].sort((a, b) => b._dias - a._dias).map(item => (
             <div key={item.id} style={{ padding: '12px 16px', borderBottom: `1px solid ${C.border}`, display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer' }}
               onClick={() => simular(item._tipo, item.id)}
@@ -115,7 +115,13 @@ export default function RevisaoEstrategica() {
               <span style={{ fontSize: 13, fontWeight: 600, color: C.text, flex: 1 }}>{item.name}</span>
               <span style={{ fontSize: 11, color: C.t3, flexShrink: 0 }}>{item.responsible || '-'}</span>
               <span style={{ fontSize: 11, color: C.t3, flexShrink: 0 }}>{fmtDate(item.date_end)}</span>
-              {item._dias > 0 ? <span style={{ fontSize: 11, fontWeight: 700, color: C.red, flexShrink: 0 }}>{item._dias}d atraso</span> : <span style={{ fontSize: 11, color: C.t3, flexShrink: 0 }}>{item.status}</span>}
+              {item._dias > 0 ? (
+                <span style={{ fontSize: 11, fontWeight: 700, color: C.red, flexShrink: 0 }}>{item._dias}d atraso</span>
+              ) : item.status === 'concluido' ? (
+                <span style={{ fontSize: 10, padding: '2px 6px', borderRadius: 99, background: '#10b98120', color: C.green, fontWeight: 600, flexShrink: 0 }}>Concluido</span>
+              ) : (
+                <span style={{ fontSize: 10, padding: '2px 6px', borderRadius: 99, background: '#9ca3af20', color: '#9ca3af', fontWeight: 500, flexShrink: 0 }}>{item.status || 'pendente'}</span>
+              )}
             </div>
           ))}
           {p.atrasados.length + e.atrasados.length === 0 && <div style={{ padding: 24, textAlign: 'center', color: C.t3 }}>Nenhum item atrasado</div>}
