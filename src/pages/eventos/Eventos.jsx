@@ -1194,6 +1194,40 @@ export default function Eventos() {
             </div>
           </div>
         )}
+        {/* ═══ TEMPLATES EVENTOS SIMPLES ═══ */}
+        <div style={{ marginTop: 32, marginBottom: 8 }}>
+          <div style={{ fontSize: 18, fontWeight: 700, color: C.text, marginBottom: 4 }}>Tarefas padrao — Eventos simples</div>
+          <div style={{ fontSize: 12, color: C.t3, marginBottom: 12 }}>Para eventos sem ciclo criativo. Aplique na aba Tarefas ao selecionar um evento.</div>
+        </div>
+        <SimpleTemplatesSection />
+      </div>
+    );
+  }
+
+  function SimpleTemplatesSection() {
+    const [stpls, setStpls] = useState([]);
+    const [newName, setNewName] = useState('');
+    useEffect(() => { events.simpleTemplates().then(d => setStpls(Array.isArray(d) ? d : [])).catch(() => {}); }, []);
+    const reload = async () => { const d = await events.simpleTemplates(); setStpls(Array.isArray(d) ? d : []); };
+
+    return (
+      <div style={{ background: C.card, borderRadius: 12, border: `1px solid ${C.border}`, overflow: 'hidden' }}>
+        <div style={{ padding: '10px 16px', borderBottom: `1px solid ${C.border}`, background: 'var(--cbrio-table-header)', display: 'flex', alignItems: 'center', gap: 8 }}>
+          <span style={{ fontSize: 13, fontWeight: 600, color: C.text, flex: 1 }}>Tarefas padrao ({stpls.length})</span>
+          <input placeholder="Nova tarefa..." value={newName} onChange={e => setNewName(e.target.value)} style={{ padding: '4px 10px', borderRadius: 6, border: `1px solid ${C.border}`, background: C.bg, color: C.text, fontSize: 12, width: 250 }} onKeyDown={async e => {
+            if (e.key === 'Enter' && newName.trim()) { await events.createSimpleTemplate({ titulo: newName.trim() }); setNewName(''); await reload(); }
+          }} />
+          <button onClick={async () => { if (newName.trim()) { await events.createSimpleTemplate({ titulo: newName.trim() }); setNewName(''); await reload(); } }} style={{ padding: '4px 12px', borderRadius: 6, border: 'none', background: C.primary, color: '#fff', fontSize: 11, fontWeight: 600, cursor: 'pointer' }}>+</button>
+        </div>
+        {stpls.length === 0 ? (
+          <div style={{ padding: 20, textAlign: 'center', color: C.t3, fontSize: 12 }}>Nenhuma tarefa padrao. Adicione acima.</div>
+        ) : stpls.map(t => (
+          <div key={t.id} style={{ padding: '8px 16px', borderBottom: `1px solid ${C.border}`, display: 'flex', alignItems: 'center', gap: 8, opacity: t.ativo ? 1 : 0.4 }}>
+            <span style={{ fontSize: 13, color: C.text, flex: 1 }}>{t.titulo}</span>
+            <button onClick={async () => { await events.toggleSimpleTemplate(t.id); await reload(); }} style={{ padding: '2px 8px', fontSize: 10, borderRadius: 4, border: 'none', background: t.ativo ? '#10b98118' : '#ef444418', color: t.ativo ? '#10b981' : '#ef4444', cursor: 'pointer', fontWeight: 600 }}>{t.ativo ? 'Ativo' : 'Inativo'}</button>
+            <button onClick={async () => { if (window.confirm('Excluir?')) { await events.deleteSimpleTemplate(t.id); await reload(); } }} style={{ background: 'none', border: 'none', color: C.red, cursor: 'pointer', fontSize: 11 }}>{'\u2715'}</button>
+          </div>
+        ))}
       </div>
     );
   }
@@ -2465,19 +2499,28 @@ export default function Eventos() {
           </div>
         )}
 
-        {/* ── ABAS FIXAS ── */}
-        <div style={styles.tabs}>
-          {[
-            ...(!hasCycle ? [{ key: 'tarefas', label: `Tarefas (${expandedOcc ? (expandedOcc.tasks?.length || 0) : taskList.length})` }] : []),
-            { key: 'reunioes', label: `Reuniões (${expandedOcc ? (expandedOcc.meetings?.length || 0) : meetingsList.length})` },
-            { key: 'riscos', label: `Riscos (${eventRisks.length})` },
-            { key: 'historico', label: `Histórico (${auditHistory.length})` },
-            { key: 'relatorios', label: 'Relatórios' },
-            ...(ev.status === 'concluido' ? [{ key: 'retro', label: 'Retrospectiva' }] : []),
-          ].map(t => (
-            <button key={t.key} style={styles.tab(detailTab === t.key)} onClick={() => { setDetailTab(t.key); setExpandedCard(null); }}>{t.label}</button>
-          ))}
-        </div>
+        {/* ── ABAS FIXAS (so para eventos com ciclo criativo) ── */}
+        {hasCycle && (
+          <div style={styles.tabs}>
+            {[
+              { key: 'reunioes', label: `Reuniões (${expandedOcc ? (expandedOcc.meetings?.length || 0) : meetingsList.length})` },
+              { key: 'riscos', label: `Riscos (${eventRisks.length})` },
+              { key: 'historico', label: `Histórico (${auditHistory.length})` },
+              { key: 'relatorios', label: 'Relatórios' },
+              ...(ev.status === 'concluido' ? [{ key: 'retro', label: 'Retrospectiva' }] : []),
+            ].map(t => (
+              <button key={t.key} style={styles.tab(detailTab === t.key)} onClick={() => { setDetailTab(t.key); setExpandedCard(null); }}>{t.label}</button>
+            ))}
+          </div>
+        )}
+
+        {/* Eventos simples: so card info, tarefas ficam na aba Tarefas */}
+        {!hasCycle && (
+          <div style={{ background: C.bg, borderRadius: 10, padding: 16, border: `1px solid ${C.border}`, textAlign: 'center' }}>
+            <div style={{ fontSize: 13, color: C.t3, marginBottom: 4 }}>Este evento nao tem ciclo criativo.</div>
+            <div style={{ fontSize: 12, color: C.t3 }}>Gerencie as tarefas na aba <strong style={{ color: C.primary }}>Tarefas</strong> do menu principal.</div>
+          </div>
+        )}
 
         {/* ── ABA: Tarefas ── */}
         {detailTab === 'tarefas' && !expandedOcc && <>
