@@ -232,6 +232,24 @@ router.put('/metas/:id', authorize('admin', 'diretor'), async (req, res) => {
   res.json(data);
 });
 
+// ── YouTube status (verifica se a API key está configurada e quando rodou a última sync) ──
+router.get('/youtube/status', async (req, res) => {
+  const apiKeyConfigured = !!process.env.YOUTUBE_API_KEY;
+  const { data: ultimo } = await supabase
+    .from('cultos')
+    .select('ds_coletado_em, ddus_coletado_em')
+    .or('ds_coletado_em.not.is.null,ddus_coletado_em.not.is.null')
+    .order('ds_coletado_em', { ascending: false, nullsFirst: false })
+    .limit(1)
+    .maybeSingle();
+  const lastSync = ultimo
+    ? (ultimo.ds_coletado_em && ultimo.ddus_coletado_em
+        ? (ultimo.ds_coletado_em > ultimo.ddus_coletado_em ? ultimo.ds_coletado_em : ultimo.ddus_coletado_em)
+        : (ultimo.ds_coletado_em || ultimo.ddus_coletado_em))
+    : null;
+  res.json({ apiKeyConfigured, lastSync });
+});
+
 // ── YouTube sync (chamado pelo cron Vercel) ───────────────────────────────────
 router.post('/youtube/sync', async (req, res) => {
   const authHeader = req.headers.authorization;
