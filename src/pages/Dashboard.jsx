@@ -2,7 +2,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
-import { notificacoes as notifApi, rh, financeiro, patrimonio, logistica } from '../api';
+import { notificacoes as notifApi, rh, financeiro, patrimonio, logistica, cuidados } from '../api';
 import { StatisticsCard, StatisticsCardSkeleton } from '../components/ui/statistics-card';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
 import {
