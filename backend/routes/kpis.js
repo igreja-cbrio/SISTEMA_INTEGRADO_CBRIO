@@ -167,6 +167,8 @@ router.post('/cultos/auto-create', async (req, res) => {
 
   res.json({ weeks, created: created.length, skipped: skipped.length, items: created, skippedItems: skipped });
 });
+
+// ── Batismos ──────────────────────────────────────────────────────────────────
 router.get('/batismos', async (req, res) => {
   const { status } = req.query;
   let query = supabase
