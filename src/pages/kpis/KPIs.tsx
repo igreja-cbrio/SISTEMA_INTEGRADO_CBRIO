@@ -1409,10 +1409,27 @@ function TabOnline({ data: dash, loading, serviceTypes, onSync, syncing, onReloa
 }) {
   const [editing, setEditing] = useState<any>(null);
   const [ytStatus, setYtStatus] = useState<{ apiKeyConfigured: boolean; lastSync: string | null } | null>(null);
+  const [creatingCultos, setCreatingCultos] = useState(false);
 
   useEffect(() => {
     kpisApi.youtubeStatus().then(setYtStatus).catch(() => setYtStatus(null));
   }, []);
+
+  const handleAutoCreate = async () => {
+    setCreatingCultos(true);
+    try {
+      const r = await kpisApi.cultosAutoCreate(2);
+      if (r.created > 0) {
+        toast.success(`${r.created} culto(s) criado(s) (${r.skipped} já existiam).`);
+        onReload();
+      } else {
+        toast.info(`Nenhum culto novo. ${r.skipped} já existiam no período.`);
+      }
+    } catch (e: any) {
+      toast.error(e.message || 'Erro ao criar cultos');
+    }
+    setCreatingCultos(false);
+  };
 
   if (loading) return <div className="flex items-center justify-center py-16"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>;
 
