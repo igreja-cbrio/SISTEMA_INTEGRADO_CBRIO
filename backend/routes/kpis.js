@@ -393,7 +393,32 @@ router.post('/youtube/sync', async (req, res) => {
     }
   }
 
-  res.json({ synced: results.length, results });
+  // Cultos do dia anterior SEM youtube_video_id → notifica para vincular
+  const { data: cultosSemVideo } = await supabase
+    .from('cultos')
+    .select('id, nome, data')
+    .eq('data', ontemStr)
+    .is('youtube_video_id', null);
+
+  for (const c of (cultosSemVideo || [])) {
+    try {
+      const fmt = new Date(c.data + 'T12:00:00').toLocaleDateString('pt-BR');
+      await notificar({
+        modulo: 'kpis',
+        tipo: 'culto_sem_video',
+        titulo: 'Culto sem vídeo do YouTube',
+        mensagem: `"${c.nome}" (${fmt}) não tem ID de vídeo vinculado. Sem isso, D+1 não será coletado.`,
+        link: '/kpis',
+        severidade: 'aviso',
+        chaveDedup: `culto_sem_video_sync_${c.id}`,
+      });
+      results.push({ id: c.id, tipo: 'ALERT', msg: 'sem video_id' });
+    } catch (e) {
+      results.push({ id: c.id, tipo: 'ALERT', error: e.message });
+    }
+  }
+
+  res.json({ synced: results.length, results, semVideo: cultosSemVideo?.length || 0 });
 });
 
 module.exports = router;
