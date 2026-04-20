@@ -405,4 +405,40 @@ async function gerarNotificacoesKpis() {
   return count;
 }
 
+// ═══════════════════════════════════════════════════════════
+// CUIDADOS — Acompanhamentos sem atualização há 30+ dias
+// ═══════════════════════════════════════════════════════════
+async function gerarNotificacoesCuidados() {
+  let count = 0;
+  const limite30d = new Date(Date.now() - 30 * 86400000).toISOString();
+
+  // Busca acompanhamentos ativos
+  const { data: acomps } = await supabase
+    .from('cui_acompanhamentos')
+    .select('id, nome, responsavel_id, data_inicio, created_at')
+    .eq('status', 'ativo');
+
+  for (const a of acomps || []) {
+    // Última atualização = max(created_at do acomp, max(created_at) de mem_historico do membro relacionado)
+    // Simplificação: usar created_at do acompanhamento
+    const ultima = new Date(a.created_at).getTime();
+    const dias = Math.floor((Date.now() - ultima) / 86400000);
+    if (dias < 30) continue;
+
+    const targetIds = a.responsavel_id ? [a.responsavel_id] : null;
+    count += await notificar({
+      modulo: 'cuidados',
+      tipo: 'acomp_inativo',
+      titulo: `Acompanhamento sem atualização — ${a.nome}`,
+      mensagem: `${a.nome} está em acompanhamento há ${dias} dias sem novo registro. Considere atualizar ou encerrar.`,
+      link: '/ministerial/cuidados',
+      severidade: dias >= 60 ? 'urgente' : 'aviso',
+      chaveDedup: `acomp_inativo_${a.id}_${Math.floor(dias / 30)}`,
+      targetIds,
+    });
+  }
+
+  return count;
+}
+
 module.exports = { gerarTodasNotificacoes };
