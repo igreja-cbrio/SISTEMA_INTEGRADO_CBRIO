@@ -1385,6 +1385,211 @@ function TabCBA({ loading }: { data: any; loading: boolean }) {
   );
 }
 
+// ── Tab: Online (YouTube / transmissão) ──────────────────────────────────────
+
+function statusColetaCulto(c: any): { label: string; color: string } {
+  if (!c.youtube_video_id) return { label: 'Sem vídeo', color: '#6B7280' };
+  if (c.online_ds && c.online_ddus) return { label: 'Coletado', color: '#00B39D' };
+  const dataCulto = new Date(c.data + 'T12:00:00');
+  const diasPassados = Math.floor((Date.now() - dataCulto.getTime()) / 86400000);
+  if (diasPassados >= 7 && !c.online_ddus) return { label: 'Pendente D+7', color: '#F59E0B' };
+  if (diasPassados >= 1 && !c.online_ds) return { label: 'Pendente D+1', color: '#F59E0B' };
+  return { label: 'Aguardando', color: '#3B82F6' };
+}
+
+function ModalEditarOnline({ culto, serviceTypes, onClose, onSaved }: {
+  culto: any; serviceTypes: any[]; onClose: () => void; onSaved: () => void;
+}) {
+  return <ModalRegistrarCulto serviceTypes={serviceTypes} onClose={onClose} onSaved={onSaved} editing={culto} />;
+}
+
+function TabOnline({ data: dash, loading, serviceTypes, onSync, syncing, onReload }: {
+  data: any; loading: boolean; serviceTypes: any[];
+  onSync: () => void; syncing: boolean; onReload: () => void;
+}) {
+  const [editing, setEditing] = useState<any>(null);
+  const [ytStatus, setYtStatus] = useState<{ apiKeyConfigured: boolean; lastSync: string | null } | null>(null);
+
+  useEffect(() => {
+    kpisApi.youtubeStatus().then(setYtStatus).catch(() => setYtStatus(null));
+  }, []);
+
+  if (loading) return <div className="flex items-center justify-center py-16"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>;
+
+  const cultos: any[] = (dash?.cultos || []).slice().sort((a: any, b: any) =>
+    (b.data || '').localeCompare(a.data || ''),
+  );
+
+  const totalPico = cultos.reduce((s, c) => s + (c.online_pico || 0), 0);
+  const totalDS   = cultos.reduce((s, c) => s + (c.online_ds || 0), 0);
+  const totalDDUS = cultos.reduce((s, c) => s + (c.online_ddus || 0), 0);
+  const totalDecOnline = cultos.reduce((s, c) => s + (c.decisoes_online || 0), 0);
+  const cultosComVideo = cultos.filter(c => c.youtube_video_id).length;
+  const cultosPendentes = cultos.filter(c => {
+    const st = statusColetaCulto(c);
+    return st.label.startsWith('Pendente');
+  }).length;
+  const sublabel = `${cultos.length} culto${cultos.length !== 1 ? 's' : ''} no período`;
+
+  // Gráfico evolução (cronológico)
+  const chartData = cultos.slice().reverse().map(c => ({
+    data: format(new Date(c.data + 'T12:00:00'), 'dd/MM', { locale: ptBR }),
+    pico: c.online_pico || 0,
+    ds: c.online_ds || 0,
+    ddus: c.online_ddus || 0,
+  }));
+
+  return (
+    <div className="space-y-6">
+      {/* Banner status YouTube API */}
+      {ytStatus && !ytStatus.apiKeyConfigured && (
+        <div className="rounded-xl border border-amber-500/40 bg-amber-500/10 p-4 flex items-start gap-3">
+          <Youtube className="h-5 w-5 text-amber-500 mt-0.5 flex-shrink-0" />
+          <div className="flex-1 text-sm">
+            <p className="font-medium text-foreground">YouTube API não configurada</p>
+            <p className="text-muted-foreground mt-0.5">
+              A variável <code className="text-xs bg-muted px-1 py-0.5 rounded">YOUTUBE_API_KEY</code> não está definida no servidor.
+              A sincronização automática de views (D+1 e D+7) está desativada. Os campos de pico e views ainda podem ser preenchidos manualmente.
+            </p>
+          </div>
+        </div>
+      )}
+
+      {/* Header da aba com botão sync */}
+      <div className="flex items-center justify-between gap-4 flex-wrap">
+        <div>
+          <h2 className="text-lg font-semibold text-foreground">Métricas de Transmissão Online</h2>
+          <p className="text-xs text-muted-foreground mt-0.5">
+            {ytStatus?.lastSync
+              ? `Última sincronização: ${format(new Date(ytStatus.lastSync), "dd/MM/yyyy 'às' HH:mm", { locale: ptBR })}`
+              : 'Sem registros de sincronização'}
+          </p>
+        </div>
+        <Button onClick={onSync} disabled={syncing || !ytStatus?.apiKeyConfigured} className="gap-2 bg-[#00B39D] hover:bg-[#00B39D]/90 text-white">
+          {syncing ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+          {syncing ? 'Sincronizando...' : 'Sincronizar agora'}
+        </Button>
+      </div>
+
+      {/* Cards agregados */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        <KpiCard label="Pico simultâneo (soma)" value={totalPico || null} icon={Youtube} color="#EF4444" sublabel={sublabel} />
+        <KpiCard label="Views D+1 (soma)" value={totalDS || null} icon={TrendingUp} color={C.warn} sublabel="24h após o culto" />
+        <KpiCard label="Views D+7 (soma)" value={totalDDUS || null} icon={TrendingUp} color={C.purple} sublabel="7 dias após o culto" />
+        <KpiCard label="Decisões Online" value={totalDecOnline || null} icon={CheckCircle2} color={C.primary} sublabel={sublabel} />
+      </div>
+
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        <KpiCard label="Cultos com vídeo" value={cultosComVideo} icon={Youtube} color={C.info} sublabel={`de ${cultos.length} cultos`} />
+        <KpiCard label="Pendentes de coleta" value={cultosPendentes} icon={Activity} color={C.warn} sublabel="Aguardando D+1 / D+7" />
+        <KpiCard label="Média Pico/culto" value={cultos.length ? Math.round(totalPico / cultos.length) : null} icon={Activity} color={C.purple} sublabel={sublabel} />
+        <KpiCard label="Média D+7/culto" value={cultosComVideo ? Math.round(totalDDUS / Math.max(cultosComVideo, 1)) : null} icon={TrendingUp} color={C.primary} sublabel="Cultos com vídeo" />
+      </div>
+
+      {/* Gráfico de evolução */}
+      {chartData.length > 0 && (
+        <div className="rounded-2xl border border-border bg-card p-5">
+          <p className="text-sm font-semibold text-foreground mb-4">Evolução por culto — Pico, D+1 e D+7</p>
+          <ResponsiveContainer width="100%" height={300}>
+            <LineChart data={chartData}>
+              <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
+              <XAxis dataKey="data" tick={{ fontSize: 11 }} />
+              <YAxis tick={{ fontSize: 11 }} />
+              <Tooltip contentStyle={{ background: 'var(--card)', border: '1px solid var(--border)', borderRadius: 12 }} />
+              <Legend wrapperStyle={{ fontSize: 12 }} />
+              <Line type="monotone" dataKey="pico" stroke="#EF4444" strokeWidth={2} name="Pico simultâneo" dot={{ r: 3 }} />
+              <Line type="monotone" dataKey="ds" stroke={C.warn} strokeWidth={2} name="Views D+1" dot={{ r: 3 }} />
+              <Line type="monotone" dataKey="ddus" stroke={C.purple} strokeWidth={2} name="Views D+7" dot={{ r: 3 }} />
+            </LineChart>
+          </ResponsiveContainer>
+        </div>
+      )}
+
+      {/* Tabela de cultos online */}
+      <div className="rounded-2xl border border-border bg-card overflow-hidden">
+        <div className="px-5 py-4 border-b border-border flex items-center justify-between">
+          <p className="text-sm font-semibold text-foreground">Cultos online</p>
+          <span className="text-xs text-muted-foreground">{cultos.length} cultos</span>
+        </div>
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead className="bg-muted/40 text-xs uppercase tracking-wide text-muted-foreground">
+              <tr>
+                <th className="px-4 py-3 text-left font-medium">Culto</th>
+                <th className="px-4 py-3 text-left font-medium">Data</th>
+                <th className="px-4 py-3 text-left font-medium">Vídeo</th>
+                <th className="px-4 py-3 text-right font-medium">Pico</th>
+                <th className="px-4 py-3 text-right font-medium">D+1</th>
+                <th className="px-4 py-3 text-right font-medium">D+7</th>
+                <th className="px-4 py-3 text-right font-medium">Decisões</th>
+                <th className="px-4 py-3 text-left font-medium">Status</th>
+                <th className="px-4 py-3 text-right font-medium">Ações</th>
+              </tr>
+            </thead>
+            <tbody>
+              {cultos.length === 0 && (
+                <tr><td colSpan={9} className="px-4 py-8 text-center text-muted-foreground">Nenhum culto no período.</td></tr>
+              )}
+              {cultos.map(c => {
+                const st = statusColetaCulto(c);
+                return (
+                  <tr key={c.id} className="border-t border-border hover:bg-muted/20 transition-colors">
+                    <td className="px-4 py-3 text-foreground">{c.nome}</td>
+                    <td className="px-4 py-3 text-muted-foreground">
+                      {format(new Date(c.data + 'T12:00:00'), 'dd/MM/yyyy', { locale: ptBR })}
+                    </td>
+                    <td className="px-4 py-3">
+                      {c.youtube_video_id ? (
+                        <a
+                          href={`https://youtu.be/${c.youtube_video_id}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-[#00B39D] hover:underline inline-flex items-center gap-1 text-xs"
+                        >
+                          <Youtube className="h-3.5 w-3.5" /> Abrir
+                        </a>
+                      ) : (
+                        <span className="text-xs text-muted-foreground/60">—</span>
+                      )}
+                    </td>
+                    <td className="px-4 py-3 text-right tabular-nums">{c.online_pico?.toLocaleString('pt-BR') || '—'}</td>
+                    <td className="px-4 py-3 text-right tabular-nums">{c.online_ds?.toLocaleString('pt-BR') || '—'}</td>
+                    <td className="px-4 py-3 text-right tabular-nums">{c.online_ddus?.toLocaleString('pt-BR') || '—'}</td>
+                    <td className="px-4 py-3 text-right tabular-nums">{c.decisoes_online?.toLocaleString('pt-BR') || '—'}</td>
+                    <td className="px-4 py-3">
+                      <span className="inline-flex items-center gap-1.5 text-xs font-medium" style={{ color: st.color }}>
+                        <span className="h-1.5 w-1.5 rounded-full" style={{ background: st.color }} />
+                        {st.label}
+                      </span>
+                    </td>
+                    <td className="px-4 py-3 text-right">
+                      <button
+                        onClick={() => setEditing(c)}
+                        className="text-xs text-[#00B39D] hover:underline inline-flex items-center gap-1"
+                      >
+                        <Edit2 className="h-3 w-3" /> Editar
+                      </button>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {editing && (
+        <ModalEditarOnline
+          culto={editing}
+          serviceTypes={serviceTypes}
+          onClose={() => setEditing(null)}
+          onSaved={() => { setEditing(null); onReload(); }}
+        />
+      )}
+    </div>
+  );
+}
+
 // ── Main KPIs page ────────────────────────────────────────────────────────────
 
 const TABS = [
