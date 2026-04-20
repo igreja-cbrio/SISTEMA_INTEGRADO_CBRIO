@@ -1477,6 +1477,7 @@ function TabOnline({ data: dash, loading, serviceTypes, onSync, syncing, onReloa
         const limite = Date.now() - 2 * 86400000;
         const recentesSemVideo = cultos.filter(c => {
           if (c.youtube_video_id) return false;
+          if (c.has_online_stream === false) return false; // ignora cultos sem online (ex.: Bridge)
           const t = new Date(c.data + 'T12:00:00').getTime();
           return t >= limite && t <= Date.now();
         });
