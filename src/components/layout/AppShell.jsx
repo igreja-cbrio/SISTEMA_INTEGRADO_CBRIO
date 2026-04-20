@@ -11,7 +11,7 @@ import {
   CalendarDays, FolderKanban, Map,
   UserCheck, UsersRound, Heart, HandHelping, BookOpen,
   Megaphone, BrainCircuit, ShoppingCart,
-  Sun, Moon, Bell, LogOut, Search, CheckCheck, Settings, MonitorSmartphone, BarChart2,
+  Sun, Moon, Bell, LogOut, Search, CheckCheck, Settings, MonitorSmartphone, BarChart2, ClipboardCheck,
 } from 'lucide-react';
 import {
   DropdownMenu, DropdownMenuTrigger, DropdownMenuContent,
@@ -63,6 +63,7 @@ const NAV_ITEMS = [
           { label: 'Eventos', description: 'Gestão de eventos da igreja', icon: CalendarDays, path: '/eventos', perm: 'canAgenda' },
           { label: 'Projetos', description: 'Acompanhamento de projetos', icon: FolderKanban, path: '/projetos', perm: 'canProjetos' },
           { label: 'Expansão', description: 'Metas de expansão', icon: Map, path: '/expansao', perm: 'canExpansao' },
+          { label: 'Revisão', description: 'Revisão estratégica com líderes', icon: ClipboardCheck, path: '/revisao' },
         ],
       },
     ],
