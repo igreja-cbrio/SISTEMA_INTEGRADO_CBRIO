@@ -301,17 +301,17 @@ export default function Cuidados() {
               <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
                 <StatisticsCard title="Pessoas Acompanhadas" value={a.pessoas_acompanhadas ?? 0} icon={Heart} iconColor={C.primary} />
                 <StatisticsCard title="Aconselhamentos" value={a.aconselhamentos ?? 0} icon={BookOpen} iconColor={C.info}
-                  description={`Mês anterior: ${ant.aconselhamentos ?? 0} (${delta(a.aconselhamentos, ant.aconselhamentos)})`} />
+                  subtitle={`Mês anterior: ${ant.aconselhamentos ?? 0} (${delta(a.aconselhamentos, ant.aconselhamentos)})`} />
                 <StatisticsCard title="Capelania" value={a.capelania ?? 0} icon={HandHelping} iconColor={C.warn}
-                  description={`Mês anterior: ${ant.capelania ?? 0} (${delta(a.capelania, ant.capelania)})`} />
+                  subtitle={`Mês anterior: ${ant.capelania ?? 0} (${delta(a.capelania, ant.capelania)})`} />
                 <StatisticsCard title="Encontros Jornada 180" value={a.jornada180_encontros ?? 0} icon={Users} iconColor={C.purple}
-                  description={`Mês anterior: ${ant.jornada180_encontros ?? 0}`} />
+                  subtitle={`Mês anterior: ${ant.jornada180_encontros ?? 0}`} />
               </div>
               <div className="grid grid-cols-2 lg:grid-cols-2 gap-4">
                 <StatisticsCard title="Convertidos Atendidos Pós-Culto" value={a.convertidos_atendidos ?? 0} icon={UserCheck} iconColor={C.primary}
-                  description={`Mês anterior: ${ant.convertidos_atendidos ?? 0}`} />
+                  subtitle={`Mês anterior: ${ant.convertidos_atendidos ?? 0}`} />
                 <StatisticsCard title="Convertidos Cadastrados" value={a.convertidos_cadastrados ?? 0} icon={CheckCircle2} iconColor={C.info}
-                  description={`Mês anterior: ${ant.convertidos_cadastrados ?? 0}`} />
+                  subtitle={`Mês anterior: ${ant.convertidos_cadastrados ?? 0}`} />
               </div>
             </>
           )}
