@@ -82,6 +82,7 @@ export default function Dashboard() {
   const [finData, setFinData] = useState(null);
   const [patData, setPatData] = useState(null);
   const [logData, setLogData] = useState(null);
+  const [cuiData, setCuiData] = useState(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -91,6 +92,7 @@ export default function Dashboard() {
     if (canFinanceiro !== false) promises.push(financeiro.dashboard().then(setFinData).catch(() => {}));
     if (canPatrimonio !== false) promises.push(patrimonio.dashboard().then(setPatData).catch(() => {}));
     if (canLogistica !== false) promises.push(logistica.dashboard().then(setLogData).catch(() => {}));
+    if (canCuidados !== false) promises.push(cuidados.dashboard().then(setCuiData).catch(() => {}));
     Promise.allSettled(promises).finally(() => setLoading(false));
   }, []);
 
