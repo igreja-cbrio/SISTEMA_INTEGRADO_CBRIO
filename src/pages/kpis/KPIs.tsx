@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { kpis as kpisApi } from '@/api';
 import { useAuth } from '@/contexts/AuthContext';
+import { supabase } from '@/integrations/supabase/client';
 import {
   format, startOfWeek, endOfWeek, startOfMonth, endOfMonth,
   eachDayOfInterval, isSameMonth, isSameDay, subWeeks,
