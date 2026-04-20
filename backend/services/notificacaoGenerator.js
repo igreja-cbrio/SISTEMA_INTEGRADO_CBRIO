@@ -457,6 +457,11 @@ async function gerarNotificacoesCuidados() {
       const t = new Date(ultimoHist + (ultimoHist.length === 10 ? 'T12:00:00' : '')).getTime();
       if (!isNaN(t)) candidatos.push(t);
     }
+    const ultimoAtend = ultimoAtendPorAcomp[a.id];
+    if (ultimoAtend) {
+      const t = new Date(ultimoAtend + (ultimoAtend.length === 10 ? 'T12:00:00' : '')).getTime();
+      if (!isNaN(t)) candidatos.push(t);
+    }
     const ultima = Math.max(...candidatos);
     const dias = Math.floor((Date.now() - ultima) / 86400000);
     if (dias < 30) continue;
