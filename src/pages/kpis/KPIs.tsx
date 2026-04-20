@@ -967,17 +967,8 @@ function TabVisaoGeral({ data: dash, loading, onTab }: { data: any; loading: boo
       </div>
 
       {/* ── Cuidados ── */}
-      <div>
-        <SectionHeader title="Cuidados" onVerTudo={() => onTab('cuidados')} />
-        <div className="grid grid-cols-2 lg:grid-cols-3 gap-4">
-          <KpiCard label="Pessoas Acompanhadas" value={null} icon={Heart} color={C.primary}
-            sublabel="Mensal" onClick={() => onTab('cuidados')} />
-          <KpiCard label="Aconselhamentos" value={null} icon={BookOpen} color={C.info}
-            sublabel="Mensal" onClick={() => onTab('cuidados')} />
-          <KpiCard label="Atendimentos Capelania" value={null} icon={HandHeart} color={C.warn}
-            sublabel="Mensal" onClick={() => onTab('cuidados')} />
-        </div>
-      </div>
+      <CuidadosSectionGeral onTab={onTab} />
+
 
       {/* Integração — visitantes e conversões com dados reais */}
       <div>
