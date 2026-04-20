@@ -67,6 +67,7 @@ router.put('/cultos/:id', async (req, res) => {
     'presencial_adulto', 'presencial_kids',
     'decisoes_presenciais', 'decisoes_online',
     'youtube_video_id', 'online_pico', 'nome',
+    'online_ds', 'online_ddus',
   ];
   const update = { updated_at: new Date().toISOString() };
   for (const [k, v] of Object.entries(req.body)) {
