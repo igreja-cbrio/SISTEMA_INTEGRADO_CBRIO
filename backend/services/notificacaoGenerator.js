@@ -14,6 +14,7 @@ async function gerarTodasNotificacoes() {
     total += await gerarNotificacoesLogistica();
     total += await gerarNotificacoesPatrimonio();
     total += await gerarNotificacoesMembresia();
+    total += await gerarNotificacoesKpis();
     console.log(`[Notificações] ${total} notificação(ões) gerada(s).`);
   } catch (e) {
     console.error('[Notificações] Erro:', e.message);
@@ -364,6 +365,39 @@ async function gerarNotificacoesMembresia() {
       link: '/ministerial/membresia',
       severidade,
       chaveDedup: `cadastro_pendente_${c.id}`,
+    });
+  }
+
+  return count;
+}
+
+// ═══════════════════════════════════════════════════════════
+// KPIs / Online (cultos sem coleta de YouTube)
+// ═══════════════════════════════════════════════════════════
+async function gerarNotificacoesKpis() {
+  let count = 0;
+  const today = new Date().toISOString().slice(0, 10);
+  // Cultos com mais de 48h sem video_id vinculado
+  const limite48h = new Date(Date.now() - 2 * 86400000).toISOString().slice(0, 10);
+  const limite30d = new Date(Date.now() - 30 * 86400000).toISOString().slice(0, 10);
+
+  const { data: semVideo } = await supabase
+    .from('cultos')
+    .select('id, nome, data')
+    .is('youtube_video_id', null)
+    .lte('data', limite48h)
+    .gte('data', limite30d);
+
+  for (const c of semVideo || []) {
+    const fmtDate = new Date(c.data + 'T12:00:00').toLocaleDateString('pt-BR');
+    count += await notificar({
+      modulo: 'kpis',
+      tipo: 'culto_sem_video',
+      titulo: `Culto sem vídeo do YouTube`,
+      mensagem: `"${c.nome}" (${fmtDate}) está sem ID de vídeo do YouTube há mais de 48h. Sincronização não vai coletar views.`,
+      link: '/kpis',
+      severidade: 'aviso',
+      chaveDedup: `culto_sem_video_${c.id}`,
     });
   }
 

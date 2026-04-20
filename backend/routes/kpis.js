@@ -67,6 +67,7 @@ router.put('/cultos/:id', async (req, res) => {
     'presencial_adulto', 'presencial_kids',
     'decisoes_presenciais', 'decisoes_online',
     'youtube_video_id', 'online_pico', 'nome',
+    'online_ds', 'online_ddus',
   ];
   const update = { updated_at: new Date().toISOString() };
   for (const [k, v] of Object.entries(req.body)) {
@@ -229,6 +230,24 @@ router.put('/metas/:id', authorize('admin', 'diretor'), async (req, res) => {
     .single();
   if (error) return res.status(500).json({ error: error.message });
   res.json(data);
+});
+
+// ── YouTube status (verifica se a API key está configurada e quando rodou a última sync) ──
+router.get('/youtube/status', async (req, res) => {
+  const apiKeyConfigured = !!process.env.YOUTUBE_API_KEY;
+  const { data: ultimo } = await supabase
+    .from('cultos')
+    .select('ds_coletado_em, ddus_coletado_em')
+    .or('ds_coletado_em.not.is.null,ddus_coletado_em.not.is.null')
+    .order('ds_coletado_em', { ascending: false, nullsFirst: false })
+    .limit(1)
+    .maybeSingle();
+  const lastSync = ultimo
+    ? (ultimo.ds_coletado_em && ultimo.ddus_coletado_em
+        ? (ultimo.ds_coletado_em > ultimo.ddus_coletado_em ? ultimo.ds_coletado_em : ultimo.ddus_coletado_em)
+        : (ultimo.ds_coletado_em || ultimo.ddus_coletado_em))
+    : null;
+  res.json({ apiKeyConfigured, lastSync });
 });
 
 // ── YouTube sync (chamado pelo cron Vercel) ───────────────────────────────────
