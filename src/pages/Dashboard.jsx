@@ -124,6 +124,13 @@ export default function Dashboard() {
     if (pendentes > 0) kpis.push({ title: 'Pedidos Pendentes', value: pendentes, icon: Truck, iconColor: '#ef4444', path: '/admin/logistica' });
   }
 
+  if (cuiData?.atual) {
+    const a = cuiData.atual;
+    if ((a.pessoas_acompanhadas ?? 0) > 0) {
+      kpis.push({ title: 'Pessoas Acompanhadas', value: a.pessoas_acompanhadas, icon: Heart, iconColor: '#ec4899', path: '/ministerial/cuidados' });
+    }
+  }
+
   if (unread.length > 0) {
     kpis.push({ title: 'Notificações', value: unread.length, icon: Bell, iconColor: '#00B39D' });
   }
