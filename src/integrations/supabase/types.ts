@@ -70,6 +70,233 @@ export type Database = {
         }
         Relationships: []
       }
+      cui_acompanhamentos: {
+        Row: {
+          cpf: string | null
+          created_at: string
+          created_by: string | null
+          data_encerramento: string | null
+          data_inicio: string
+          id: string
+          membro_id: string | null
+          motivo: string | null
+          nome: string
+          observacoes: string | null
+          responsavel_id: string | null
+          status: string
+          telefone: string | null
+        }
+        Insert: {
+          cpf?: string | null
+          created_at?: string
+          created_by?: string | null
+          data_encerramento?: string | null
+          data_inicio?: string
+          id?: string
+          membro_id?: string | null
+          motivo?: string | null
+          nome: string
+          observacoes?: string | null
+          responsavel_id?: string | null
+          status?: string
+          telefone?: string | null
+        }
+        Update: {
+          cpf?: string | null
+          created_at?: string
+          created_by?: string | null
+          data_encerramento?: string | null
+          data_inicio?: string
+          id?: string
+          membro_id?: string | null
+          motivo?: string | null
+          nome?: string
+          observacoes?: string | null
+          responsavel_id?: string | null
+          status?: string
+          telefone?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "cui_acompanhamentos_membro_id_fkey"
+            columns: ["membro_id"]
+            isOneToOne: false
+            referencedRelation: "mem_membros"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      cui_atendimentos: {
+        Row: {
+          acompanhamento_id: string
+          created_at: string
+          created_by: string | null
+          data: string
+          descricao: string | null
+          id: string
+          responsavel_id: string | null
+          tipo: string
+        }
+        Insert: {
+          acompanhamento_id: string
+          created_at?: string
+          created_by?: string | null
+          data?: string
+          descricao?: string | null
+          id?: string
+          responsavel_id?: string | null
+          tipo?: string
+        }
+        Update: {
+          acompanhamento_id?: string
+          created_at?: string
+          created_by?: string | null
+          data?: string
+          descricao?: string | null
+          id?: string
+          responsavel_id?: string | null
+          tipo?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "cui_atendimentos_acompanhamento_id_fkey"
+            columns: ["acompanhamento_id"]
+            isOneToOne: false
+            referencedRelation: "cui_acompanhamentos"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      cui_atendimentos_agregado: {
+        Row: {
+          created_at: string
+          id: string
+          mes: string
+          observacoes: string | null
+          quantidade: number
+          responsavel_id: string | null
+          tipo: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          mes: string
+          observacoes?: string | null
+          quantidade?: number
+          responsavel_id?: string | null
+          tipo: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          mes?: string
+          observacoes?: string | null
+          quantidade?: number
+          responsavel_id?: string | null
+          tipo?: string
+        }
+        Relationships: []
+      }
+      cui_convertidos: {
+        Row: {
+          atendido_apos_culto: boolean
+          cadastrado: boolean
+          cpf: string | null
+          created_at: string
+          culto_id: string | null
+          data_culto: string
+          id: string
+          membro_id: string | null
+          nome: string
+          observacoes: string | null
+          responsavel_id: string | null
+          telefone: string | null
+        }
+        Insert: {
+          atendido_apos_culto?: boolean
+          cadastrado?: boolean
+          cpf?: string | null
+          created_at?: string
+          culto_id?: string | null
+          data_culto: string
+          id?: string
+          membro_id?: string | null
+          nome: string
+          observacoes?: string | null
+          responsavel_id?: string | null
+          telefone?: string | null
+        }
+        Update: {
+          atendido_apos_culto?: boolean
+          cadastrado?: boolean
+          cpf?: string | null
+          created_at?: string
+          culto_id?: string | null
+          data_culto?: string
+          id?: string
+          membro_id?: string | null
+          nome?: string
+          observacoes?: string | null
+          responsavel_id?: string | null
+          telefone?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "cui_convertidos_membro_id_fkey"
+            columns: ["membro_id"]
+            isOneToOne: false
+            referencedRelation: "mem_membros"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      cui_jornada180: {
+        Row: {
+          cpf: string | null
+          created_at: string
+          data_encontro: string
+          etapa: number
+          id: string
+          membro_id: string | null
+          nome: string
+          observacoes: string | null
+          presente: boolean
+          responsavel_id: string | null
+        }
+        Insert: {
+          cpf?: string | null
+          created_at?: string
+          data_encontro: string
+          etapa?: number
+          id?: string
+          membro_id?: string | null
+          nome: string
+          observacoes?: string | null
+          presente?: boolean
+          responsavel_id?: string | null
+        }
+        Update: {
+          cpf?: string | null
+          created_at?: string
+          data_encontro?: string
+          etapa?: number
+          id?: string
+          membro_id?: string | null
+          nome?: string
+          observacoes?: string | null
+          presente?: boolean
+          responsavel_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "cui_jornada180_membro_id_fkey"
+            columns: ["membro_id"]
+            isOneToOne: false
+            referencedRelation: "mem_membros"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       log_fornecedores: {
         Row: {
           ativo: boolean
@@ -1060,7 +1287,18 @@ export type Database = {
       }
     }
     Views: {
-      [_ in never]: never
+      vw_cuidados_mensal: {
+        Row: {
+          aconselhamentos: number | null
+          capelania: number | null
+          convertidos_atendidos: number | null
+          convertidos_cadastrados: number | null
+          jornada180_encontros: number | null
+          mes: string | null
+          pessoas_acompanhadas: number | null
+        }
+        Relationships: []
+      }
     }
     Functions: {
       [_ in never]: never
