@@ -889,4 +889,6 @@ export const kpis = {
   // YouTube sync
   youtubeSync: () => post('/kpis/youtube/sync', {}),
   youtubeStatus: () => get('/kpis/youtube/status'),
+  // Auto-criação semanal (idempotente). weeks=N para backfill retroativo
+  cultosAutoCreate: (weeks) => post(`/kpis/cultos/auto-create${weeks ? `?weeks=${weeks}` : ''}`, {}),
 };

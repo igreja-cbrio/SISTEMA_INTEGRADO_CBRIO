@@ -16,6 +16,10 @@
     {
       "path": "/api/kpis/youtube/sync",
       "schedule": "0 13 * * *"
+    },
+    {
+      "path": "/api/kpis/cultos/auto-create",
+      "schedule": "5 3 * * 0"
     }
   ],
   "rewrites": [

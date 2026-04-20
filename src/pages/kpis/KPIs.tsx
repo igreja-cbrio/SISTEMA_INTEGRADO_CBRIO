@@ -1409,10 +1409,27 @@ function TabOnline({ data: dash, loading, serviceTypes, onSync, syncing, onReloa
 }) {
   const [editing, setEditing] = useState<any>(null);
   const [ytStatus, setYtStatus] = useState<{ apiKeyConfigured: boolean; lastSync: string | null } | null>(null);
+  const [creatingCultos, setCreatingCultos] = useState(false);
 
   useEffect(() => {
     kpisApi.youtubeStatus().then(setYtStatus).catch(() => setYtStatus(null));
   }, []);
+
+  const handleAutoCreate = async () => {
+    setCreatingCultos(true);
+    try {
+      const r = await kpisApi.cultosAutoCreate(2);
+      if (r.created > 0) {
+        toast.success(`${r.created} culto(s) criado(s) (${r.skipped} já existiam).`);
+        onReload();
+      } else {
+        toast.info(`Nenhum culto novo. ${r.skipped} já existiam no período.`);
+      }
+    } catch (e: any) {
+      toast.error(e.message || 'Erro ao criar cultos');
+    }
+    setCreatingCultos(false);
+  };
 
   if (loading) return <div className="flex items-center justify-center py-16"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>;
 
@@ -1455,7 +1472,40 @@ function TabOnline({ data: dash, loading, serviceTypes, onSync, syncing, onReloa
         </div>
       )}
 
-      {/* Header da aba com botão sync */}
+      {/* Banner: cultos recentes (últimas 48h) sem youtube_video_id */}
+      {(() => {
+        const limite = Date.now() - 2 * 86400000;
+        const recentesSemVideo = cultos.filter(c => {
+          if (c.youtube_video_id) return false;
+          const t = new Date(c.data + 'T12:00:00').getTime();
+          return t >= limite && t <= Date.now();
+        });
+        if (recentesSemVideo.length === 0) return null;
+        return (
+          <div className="rounded-xl border border-amber-500/40 bg-amber-500/10 p-4 flex items-start gap-3">
+            <Activity className="h-5 w-5 text-amber-500 mt-0.5 flex-shrink-0" />
+            <div className="flex-1 text-sm">
+              <p className="font-medium text-foreground">{recentesSemVideo.length} culto(s) recente(s) sem vídeo do YouTube</p>
+              <p className="text-muted-foreground mt-0.5">
+                Sem o ID do vídeo, a coleta D+1 não acontece amanhã às 10h. Vincule agora:
+              </p>
+              <div className="flex flex-wrap gap-2 mt-2">
+                {recentesSemVideo.map(c => (
+                  <button
+                    key={c.id}
+                    onClick={() => setEditing(c)}
+                    className="text-xs font-medium px-2.5 py-1 rounded-md border border-amber-500/40 bg-amber-500/10 hover:bg-amber-500/20 text-amber-700 dark:text-amber-300"
+                  >
+                    {c.nome} →
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* Header da aba com botões */}
       <div className="flex items-center justify-between gap-4 flex-wrap">
         <div>
           <h2 className="text-lg font-semibold text-foreground">Métricas de Transmissão Online</h2>
@@ -1465,10 +1515,16 @@ function TabOnline({ data: dash, loading, serviceTypes, onSync, syncing, onReloa
               : 'Sem registros de sincronização'}
           </p>
         </div>
-        <Button onClick={onSync} disabled={syncing || !ytStatus?.apiKeyConfigured} className="gap-2 bg-[#00B39D] hover:bg-[#00B39D]/90 text-white">
-          {syncing ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
-          {syncing ? 'Sincronizando...' : 'Sincronizar agora'}
-        </Button>
+        <div className="flex items-center gap-2 flex-wrap">
+          <Button onClick={handleAutoCreate} disabled={creatingCultos} variant="outline" className="gap-2">
+            {creatingCultos ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
+            {creatingCultos ? 'Criando...' : 'Criar cultos da semana'}
+          </Button>
+          <Button onClick={onSync} disabled={syncing || !ytStatus?.apiKeyConfigured} className="gap-2 bg-[#00B39D] hover:bg-[#00B39D]/90 text-white">
+            {syncing ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+            {syncing ? 'Sincronizando...' : 'Sincronizar agora'}
+          </Button>
+        </div>
       </div>
 
       {/* Cards agregados */}
