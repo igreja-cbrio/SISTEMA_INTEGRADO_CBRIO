@@ -1321,6 +1321,24 @@ function TabIntegracao({ data: dash, loading }: { data: any; loading: boolean })
 
 // ── Tab: Cuidados ─────────────────────────────────────────────────────────────
 
+function CuidadosSectionGeral({ onTab }: { onTab: (t: string) => void }) {
+  const { data: c } = useCuidadosMensal();
+  const v = c || {};
+  return (
+    <div>
+      <SectionHeader title="Cuidados" onVerTudo={() => onTab('cuidados')} />
+      <div className="grid grid-cols-2 lg:grid-cols-3 gap-4">
+        <KpiCard label="Pessoas Acompanhadas" value={v.pessoas_acompanhadas ?? 0} icon={Heart} color={C.primary}
+          sublabel="Mensal" onClick={() => onTab('cuidados')} />
+        <KpiCard label="Aconselhamentos" value={v.aconselhamentos ?? 0} icon={BookOpen} color={C.info}
+          sublabel="Mensal" onClick={() => onTab('cuidados')} />
+        <KpiCard label="Atendimentos Capelania" value={v.capelania ?? 0} icon={HandHeart} color={C.warn}
+          sublabel="Mensal" onClick={() => onTab('cuidados')} />
+      </div>
+    </div>
+  );
+}
+
 function useCuidadosMensal() {
   const [data, setData] = useState<any>(null);
   const [loading, setLoading] = useState(true);
