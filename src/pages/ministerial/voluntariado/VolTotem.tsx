@@ -8,12 +8,13 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useFaceDetection, useFaceMatch } from './hooks/useVolFace';
 import {
   QrCode, Scan, CheckCircle2, XCircle, RefreshCw, Maximize, ArrowLeft,
-  ScanFace, Smartphone, Camera, Loader2,
+  ScanFace, Smartphone, Camera, Loader2, Hand, Search, Check,
 } from 'lucide-react';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
+import type { VolSchedule } from './types';
 
-type CheckinMode = 'qr_scan' | 'facial' | 'qr_fixo';
+type CheckinMode = 'qr_scan' | 'facial' | 'qr_fixo' | 'manual';
 type TotemState = 'idle' | 'scanning' | 'success' | 'error' | 'already';
 
 interface CheckInResult {
@@ -47,6 +48,11 @@ export default function VolTotem() {
   // Fixed QR state
   const [fixedQrUrl, setFixedQrUrl] = useState('');
   const [fixedQrLoading, setFixedQrLoading] = useState(false);
+
+  // Manual mode state
+  const [schedules, setSchedules] = useState<VolSchedule[]>([]);
+  const [manualSearch, setManualSearch] = useState('');
+  const [manualLoading, setManualLoading] = useState(false);
 
   // Facial recognition
   const face = useFaceDetection();
@@ -93,6 +99,8 @@ export default function VolTotem() {
       startFacial();
     } else if (mode === 'qr_fixo') {
       loadFixedQr();
+    } else if (mode === 'manual') {
+      loadSchedules();
     }
   };
 
@@ -267,6 +275,45 @@ export default function VolTotem() {
 
   // ── Shared helpers ──
 
+  // ── Manual Mode ──
+
+  const loadSchedules = async () => {
+    if (!selectedServiceId) return;
+    setManualLoading(true);
+    try {
+      const data = await voluntariado.schedules.list({ service_id: selectedServiceId });
+      setSchedules(Array.isArray(data) ? data : []);
+    } catch {
+      setSchedules([]);
+    } finally {
+      setManualLoading(false);
+    }
+  };
+
+  const handleManualCheckin = async (sch: VolSchedule) => {
+    if (processingRef.current) return;
+    processingRef.current = true;
+    try {
+      await voluntariado.checkIns.create({
+        schedule_id: sch.id,
+        volunteer_id: sch.volunteer_id || undefined,
+        service_id: selectedServiceId,
+        method: 'manual',
+      });
+      setResult({
+        name: sch.volunteer_name,
+        team: sch.team_name,
+        position: sch.position_name,
+      });
+      setState('success');
+      autoReset(() => loadSchedules());
+    } catch (err: any) {
+      handleCheckinError(err, () => loadSchedules());
+    }
+  };
+
+  // ── Shared helpers ──
+
   const autoReset = (afterReset: () => void) => {
     setTimeout(() => {
       setState('idle');
@@ -311,7 +358,28 @@ export default function VolTotem() {
     { key: 'qr_scan', label: 'QR Code', icon: QrCode, desc: 'Escanear cracha' },
     { key: 'facial', label: 'Facial', icon: ScanFace, desc: 'Reconhecimento facial' },
     { key: 'qr_fixo', label: 'QR Fixo', icon: Smartphone, desc: 'Voluntario escaneia com celular' },
+    { key: 'manual', label: 'Manual', icon: Hand, desc: 'Buscar na lista' },
   ];
+
+  const normalize = (s: string) =>
+    s.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+
+  const filteredSchedules = schedules.filter(s => {
+    if (!manualSearch.trim()) return true;
+    const q = normalize(manualSearch);
+    return (
+      normalize(s.volunteer_name || '').includes(q) ||
+      normalize(s.team_name || '').includes(q) ||
+      normalize(s.position_name || '').includes(q)
+    );
+  });
+
+  const statusBadge = (s: VolSchedule) => {
+    if (s.check_in) return { label: 'Presente', cls: 'bg-green-500/20 text-green-300 border-green-500/30' };
+    if (s.confirmation_status === 'declined') return { label: 'Recusou', cls: 'bg-red-500/20 text-red-300 border-red-500/30' };
+    if (s.confirmation_status === 'pending') return { label: 'Pendente', cls: 'bg-yellow-500/20 text-yellow-300 border-yellow-500/30' };
+    return { label: 'Escalado', cls: 'bg-blue-500/20 text-blue-300 border-blue-500/30' };
+  };
 
   return (
     <div className="min-h-screen bg-gradient-to-b from-gray-900 to-gray-950 text-white flex flex-col">
@@ -523,7 +591,89 @@ export default function VolTotem() {
         </div>
       )}
 
-      {/* ═══ Success screen ═══ */}
+      {/* ═══ Manual Mode ═══ */}
+      {selectedServiceId && checkinMode === 'manual' && state !== 'success' && state !== 'error' && state !== 'already' && (
+        <div className="flex-1 flex flex-col gap-4 p-4 md:p-6 max-w-3xl w-full mx-auto">
+          <div className="relative">
+            <Search className="absolute left-4 top-1/2 -translate-y-1/2 h-5 w-5 text-white/40 pointer-events-none" />
+            <input
+              autoFocus
+              type="text"
+              value={manualSearch}
+              onChange={(e) => setManualSearch(e.target.value)}
+              placeholder="Digite seu nome..."
+              className="w-full h-14 pl-12 pr-4 rounded-2xl bg-white/5 border-2 border-white/10 text-white text-lg placeholder:text-white/30 focus:outline-none focus:border-[#00B39D] focus:bg-white/10 transition-colors"
+            />
+          </div>
+
+          <div className="flex-1 max-h-[60vh] overflow-y-auto space-y-2 pr-1">
+            {manualLoading ? (
+              <div className="flex items-center justify-center py-12">
+                <Loader2 className="h-8 w-8 animate-spin text-[#00B39D]" />
+              </div>
+            ) : filteredSchedules.length === 0 ? (
+              <div className="text-center py-12 space-y-2">
+                <p className="text-white/60 text-lg">
+                  {schedules.length === 0
+                    ? 'Nenhum voluntario escalado para este culto'
+                    : 'Nenhum voluntario encontrado'}
+                </p>
+                {schedules.length > 0 && manualSearch && (
+                  <p className="text-sm text-white/30">Tente buscar com outro termo</p>
+                )}
+              </div>
+            ) : (
+              filteredSchedules.map((sch) => {
+                const badge = statusBadge(sch);
+                const done = !!sch.check_in;
+                return (
+                  <div
+                    key={sch.id}
+                    className="min-h-[64px] flex items-center gap-3 p-3 rounded-xl bg-white/5 border border-white/10 hover:bg-white/10 transition-colors"
+                  >
+                    <div className="w-11 h-11 rounded-full bg-[#00B39D]/20 text-[#00B39D] flex items-center justify-center font-bold text-lg shrink-0">
+                      {(sch.volunteer_name || '?').trim().charAt(0).toUpperCase()}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="font-semibold text-white truncate">{sch.volunteer_name}</p>
+                      {(sch.team_name || sch.position_name) && (
+                        <p className="text-sm text-white/50 truncate">
+                          {sch.team_name}
+                          {sch.team_name && sch.position_name ? ' — ' : ''}
+                          {sch.position_name}
+                        </p>
+                      )}
+                    </div>
+                    <span className={`shrink-0 px-3 py-1 rounded-full text-xs font-medium border ${badge.cls}`}>
+                      {badge.label}
+                    </span>
+                    {!done && (
+                      <Button
+                        onClick={() => handleManualCheckin(sch)}
+                        className="shrink-0 bg-[#00B39D] hover:bg-[#00B39D]/80 text-white h-11 px-4 gap-1.5"
+                      >
+                        <Check className="h-5 w-5" />
+                        <span className="hidden sm:inline">Check-in</span>
+                      </Button>
+                    )}
+                  </div>
+                );
+              })
+            )}
+          </div>
+
+          <div className="flex justify-center pt-2">
+            <Button
+              variant="ghost"
+              className="text-white/30 hover:text-white/60"
+              onClick={() => { stopAllModes(); setSelectedServiceId(''); setState('idle'); }}
+            >
+              <RefreshCw className="h-4 w-4 mr-2" /> Trocar culto
+            </Button>
+          </div>
+        </div>
+      )}
+
       {state === 'success' && result && (
         <div className="flex-1 flex items-center justify-center animate-in fade-in zoom-in p-4">
           <div className="text-center space-y-4 md:space-y-6">
