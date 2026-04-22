@@ -254,20 +254,29 @@ async function processServiceType(supabase, serviceType, plans, credentials) {
       if (item.type === 'Person') personMap.set(item.id, item);
     }
 
+    // Uma linha por (pessoa + equipe + posição). Mesma pessoa em múltiplas
+    // posições/equipes gera múltiplas linhas — uma para cada escalação real.
     const scheduleMap = new Map();
-    const teamNamesMap = new Map();
 
     for (const member of (teamData.data || [])) {
       const memberStatus = member.attributes.status || 'unknown';
-      const personId = member.relationships?.person?.data?.id || member.id;
+      const realPersonId = member.relationships?.person?.data?.id || null;
+      // Se não houver person.id real (placeholder/visitante), usa member.id
+      // como sufixo para garantir uma chave única — desde que tenhamos nome.
+      const personId = realPersonId || member.id;
       const confirmationStatus = STATUS_MAP[memberStatus] || 'unknown';
       const teamPosition = member.attributes.team_position_name || '';
       const parts = teamPosition.split(' - ');
       const teamName = parts[0] || null;
-      const personData = personMap.get(personId);
+      const positionName = parts[1] || null;
+      const personData = realPersonId ? personMap.get(realPersonId) : null;
       const avatarUrl = personData?.attributes?.avatar || member.attributes?.photo_thumbnail || null;
       const volunteerName = getVolunteerName(member, personData);
-      const key = `${service.id}_${personId}`;
+
+      // Sem nome resolvível → não conseguimos exibir no totem; pula.
+      if (volunteerName === 'Sem nome') continue;
+
+      const key = `${service.id}_${personId}_${teamName || ''}_${positionName || ''}`;
 
       if (!scheduleMap.has(key)) {
         scheduleMap.set(key, {
@@ -275,27 +284,23 @@ async function processServiceType(supabase, serviceType, plans, credentials) {
           planning_center_person_id: personId,
           volunteer_name: volunteerName,
           team_name: teamName,
-          position_name: parts[1] || null,
+          position_name: positionName,
           confirmation_status: confirmationStatus,
         });
-        teamNamesMap.set(key, new Set(teamName ? [teamName] : []));
         typeMembersProcessed++;
       } else {
+        // Mesma pessoa+equipe+posição duplicada na resposta do PC: mantém o
+        // status de maior prioridade (confirmed > scheduled > pending > ...).
         const existing = scheduleMap.get(key);
         const ep = STATUS_PRIORITY[existing.confirmation_status] ?? 1;
         const np = STATUS_PRIORITY[confirmationStatus] ?? 1;
         if (np > ep) existing.confirmation_status = confirmationStatus;
-        const teams = teamNamesMap.get(key);
-        if (teamName && !teams.has(teamName)) {
-          teams.add(teamName);
-          existing.team_name = Array.from(teams).join(', ');
-        }
       }
 
-      if (personId && volunteerName !== 'Sem nome') {
+      if (realPersonId) {
         const email = personData?.attributes?.email_address || personData?.attributes?.email || null;
-        volunteers.set(personId, {
-          planning_center_person_id: personId,
+        volunteers.set(realPersonId, {
+          planning_center_person_id: realPersonId,
           volunteer_name: volunteerName,
           avatar_url: avatarUrl,
           email,
@@ -307,18 +312,15 @@ async function processServiceType(supabase, serviceType, plans, credentials) {
     for (const schedule of schedulesToUpsert) {
       const { error } = await supabase
         .from('vol_schedules')
-        .upsert(schedule, { onConflict: 'service_id,planning_center_person_id' });
+        .upsert(schedule, { onConflict: 'service_id,planning_center_person_id,team_name,position_name' });
       if (!error) typeSchedules++;
       else console.error('[PC] upsert schedule error:', error.message);
 
-      // Acumula atribuicoes de equipe para processar ao final
+      // Acumula atribuições de equipe para Opção A (vincular voluntários a teams)
       const personId = schedule.planning_center_person_id;
       if (personId && schedule.team_name) {
         if (!memberTeamMap.has(personId)) memberTeamMap.set(personId, new Set());
-        schedule.team_name.split(',').forEach(t => {
-          const trimmed = t.trim();
-          if (trimmed) memberTeamMap.get(personId).add(trimmed);
-        });
+        memberTeamMap.get(personId).add(schedule.team_name.trim());
       }
     }
   }
