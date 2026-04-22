@@ -72,6 +72,10 @@ export default function VolDashboard() {
                   <div className="min-w-0 flex-1">
                     <p className="font-medium text-sm md:text-base truncate">{svc.name}</p>
                     {svc.service_type_name && <p className="text-xs md:text-sm text-muted-foreground truncate">{svc.service_type_name}</p>}
+                    <p className="text-xs text-muted-foreground flex items-center gap-1 mt-0.5">
+                      <Users className="h-3 w-3" />
+                      {(svc.scheduled_count ?? 0) > 0 ? `${svc.scheduled_count} escalados` : 'Sem escala'}
+                    </p>
                   </div>
                   <span className="text-sm text-muted-foreground ml-3 shrink-0">{format(new Date(svc.scheduled_at), 'HH:mm', { locale: ptBR })}</span>
                 </div>
@@ -94,6 +98,10 @@ export default function VolDashboard() {
                   <div>
                     <p className="font-medium">{svc.name}</p>
                     {svc.service_type_name && <p className="text-sm text-muted-foreground">{svc.service_type_name}</p>}
+                    <p className="text-xs text-muted-foreground flex items-center gap-1 mt-0.5">
+                      <Users className="h-3 w-3" />
+                      {(svc.scheduled_count ?? 0) > 0 ? `${svc.scheduled_count} escalados` : 'Sem escala'}
+                    </p>
                   </div>
                   <span className="text-sm text-muted-foreground">{format(new Date(svc.scheduled_at), "dd/MM 'as' HH:mm", { locale: ptBR })}</span>
                 </div>
