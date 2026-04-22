@@ -104,6 +104,7 @@ const PcCallback = lazyWithRetry(() => import('./pages/auth/PcCallback'));
 const KPIs = lazyWithRetry(() => import('./pages/kpis/KPIs'));
 const KPIsGuia = lazyWithRetry(() => import('./pages/kpis/KPIsGuia'));
 const Cuidados = lazyWithRetry(() => import('./pages/ministerial/Cuidados'));
+const Integracao = lazyWithRetry(() => import('./pages/ministerial/Integracao'));
 
 // Placeholder pages for modules not yet copied
 const PlaceholderPage = ({ title }) => (
@@ -245,6 +246,7 @@ function AppRoutes() {
         <Route path="/ministerial/voluntariado/*" element={<VoluntariadoGuard><Suspense fallback={<Loading />}><Voluntariado /></Suspense></VoluntariadoGuard>} />
         <Route path="/grupos" element={<ModuleGuard permKey="canMembresia"><Suspense fallback={<Loading />}><Grupos /></Suspense></ModuleGuard>} />
         <Route path="/ministerial/cuidados" element={<ModuleGuard permKey="canCuidados"><Suspense fallback={<Loading />}><Cuidados /></Suspense></ModuleGuard>} />
+        <Route path="/ministerial/integracao" element={<ModuleGuard permKey="canMembresia"><Suspense fallback={<Loading />}><Integracao /></Suspense></ModuleGuard>} />
         <Route path="/assistente-ia" element={<ModuleGuard permKey="canIA"><Suspense fallback={<Loading />}><AssistenteIA /></Suspense></ModuleGuard>} />
         <Route path="/solicitacoes" element={<Suspense fallback={<Loading />}><Solicitacoes /></Suspense>} />
         <Route path="/kpis" element={<ModuleGuard permKey="canKPIs"><Suspense fallback={<Loading />}><KPIs /></Suspense></ModuleGuard>} />
