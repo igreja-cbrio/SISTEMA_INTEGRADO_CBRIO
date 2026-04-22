@@ -297,6 +297,33 @@ export type Database = {
           },
         ]
       }
+      cultura_mensal: {
+        Row: {
+          mes: string
+          observacoes: string | null
+          qtd_dizimistas: number | null
+          qtd_ofertantes: number | null
+          updated_at: string | null
+          updated_by: string | null
+        }
+        Insert: {
+          mes: string
+          observacoes?: string | null
+          qtd_dizimistas?: number | null
+          qtd_ofertantes?: number | null
+          updated_at?: string | null
+          updated_by?: string | null
+        }
+        Update: {
+          mes?: string
+          observacoes?: string | null
+          qtd_dizimistas?: number | null
+          qtd_ofertantes?: number | null
+          updated_at?: string | null
+          updated_by?: string | null
+        }
+        Relationships: []
+      }
       log_fornecedores: {
         Row: {
           ativo: boolean
@@ -871,6 +898,36 @@ export type Database = {
         }
         Relationships: []
       }
+      pense_videos: {
+        Row: {
+          ativo: boolean | null
+          created_at: string | null
+          data_publicacao: string | null
+          id: string
+          titulo: string | null
+          video_id: string | null
+          views: number | null
+        }
+        Insert: {
+          ativo?: boolean | null
+          created_at?: string | null
+          data_publicacao?: string | null
+          id?: string
+          titulo?: string | null
+          video_id?: string | null
+          views?: number | null
+        }
+        Update: {
+          ativo?: boolean | null
+          created_at?: string | null
+          data_publicacao?: string | null
+          id?: string
+          titulo?: string | null
+          video_id?: string | null
+          views?: number | null
+        }
+        Relationships: []
+      }
       permissoes_modulo: {
         Row: {
           id: string
@@ -1301,7 +1358,7 @@ export type Database = {
       }
     }
     Functions: {
-      [_ in never]: never
+      kpi_servir_comunidade: { Args: { _since: string }; Returns: number }
     }
     Enums: {
       [_ in never]: never

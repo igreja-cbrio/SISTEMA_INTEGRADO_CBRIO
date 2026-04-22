@@ -469,27 +469,28 @@ router.get('/cultura', async (req, res) => {
     noventaDias.setDate(noventaDias.getDate() - 90);
     const noventaDiasStr = noventaDias.toISOString();
 
-    const [
-      cultosRes,
-      grupoMembrosRes,
-      penseRes,
-      checkInsRes,
-      culturaMensalRes,
-    ] = await Promise.all([
+    const settled = await Promise.allSettled([
       supabase.from('cultos')
         .select('presencial_adulto, presencial_kids, decisoes_presenciais, decisoes_online, online_ds')
         .gte('data', inicioStr).lte('data', fimInclusivoStr),
-      // mem_grupo_membros (saiu_em IS NULL = ativo). Tabela pode não existir — try/catch silencioso.
+      // mem_grupo_membros (saiu_em IS NULL = ativo). Tabela pode não existir — tolerante.
       supabase.from('mem_grupo_membros').select('id', { count: 'exact', head: true }).is('saiu_em', null),
       supabase.from('pense_videos')
         .select('views')
         .eq('ativo', true)
         .gte('data_publicacao', inicioStr)
         .lte('data_publicacao', fimInclusivoStr),
-      supabase.from('vol_check_ins').select('volunteer_id', { count: 'exact', head: false })
-        .gte('checkin_at', noventaDiasStr),
+      // RPC: count(distinct volunteer_id) direto no banco — evita trafegar milhares de linhas
+      supabase.rpc('kpi_servir_comunidade', { _since: noventaDiasStr }),
       supabase.from('cultura_mensal').select('*').eq('mes', inicioStr).maybeSingle(),
     ]);
+
+    const pick = (i) => (settled[i].status === 'fulfilled' ? settled[i].value : { data: null, error: settled[i].reason });
+    const cultosRes = pick(0);
+    const grupoMembrosRes = pick(1);
+    const penseRes = pick(2);
+    const servirRes = pick(3);
+    const culturaMensalRes = pick(4);
 
     const cultos = cultosRes.data || [];
     const presencialTotal = cultos.reduce((s, c) => s + (c.presencial_adulto || 0) + (c.presencial_kids || 0), 0);
@@ -501,12 +502,8 @@ router.get('/cultura', async (req, res) => {
     const penseTotalViews = (penseRes.data || []).reduce((s, v) => s + (v.views || 0), 0);
     const investirDeus = penseRes.error ? null : Math.round(penseTotalViews / diasNoMes);
 
-    // Voluntários ativos = distinct volunteer_id em vol_check_ins últimos 90d
-    let servirComunidade = null;
-    if (!checkInsRes.error) {
-      const ids = new Set((checkInsRes.data || []).map(r => r.volunteer_id));
-      servirComunidade = ids.size;
-    }
+    // Voluntários ativos via RPC kpi_servir_comunidade(_since)
+    const servirComunidade = servirRes.error ? null : (typeof servirRes.data === 'number' ? servirRes.data : (servirRes.data ?? null));
 
     const cm = culturaMensalRes.data;
     const generosidade = {
@@ -533,7 +530,10 @@ router.get('/cultura', async (req, res) => {
     });
   } catch (e) {
     console.error('[kpis/cultura] erro:', e);
-    res.status(500).json({ error: e.message });
+    res.status(500).json({
+      error: e?.message || 'Erro ao calcular cultura',
+      stack: process.env.NODE_ENV === 'development' ? e?.stack : undefined,
+    });
   }
 });
 

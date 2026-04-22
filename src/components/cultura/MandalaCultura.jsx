@@ -32,16 +32,18 @@ export default function MandalaCultura() {
   const [error, setError] = useState(null);
   const [openPetal, setOpenPetal] = useState(null);
 
+  const [reloadKey, setReloadKey] = useState(0);
+
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
     setError(null);
     kpis.cultura(mes)
       .then((r) => { if (!cancelled) setData(r); })
-      .catch((e) => { if (!cancelled) setError(e.message || 'Erro ao carregar'); })
+      .catch((e) => { if (!cancelled) setError(e?.message || 'Não foi possível carregar a Mandala.'); })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
-  }, [mes]);
+  }, [mes, reloadKey]);
 
   return (
     <Card className="p-5 md:p-6 overflow-hidden">
@@ -83,9 +85,18 @@ export default function MandalaCultura() {
             <motion.div
               key="error"
               initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-              className="text-sm text-destructive py-12"
+              className="flex flex-col items-center gap-3 py-12"
             >
-              {error}
+              <p className="text-sm text-destructive text-center max-w-sm">
+                {error || 'Não foi possível carregar a Mandala.'}
+              </p>
+              <button
+                type="button"
+                onClick={() => setReloadKey((k) => k + 1)}
+                className="text-xs px-3 py-1.5 rounded-md border border-border hover:bg-accent transition-colors"
+              >
+                Tentar novamente
+              </button>
             </motion.div>
           ) : (
             <motion.div
