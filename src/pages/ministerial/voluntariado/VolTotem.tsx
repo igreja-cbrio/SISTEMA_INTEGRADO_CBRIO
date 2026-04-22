@@ -51,6 +51,7 @@ export default function VolTotem() {
 
   // Manual mode state
   const [schedules, setSchedules] = useState<VolSchedule[]>([]);
+  const [allProfiles, setAllProfiles] = useState<any[]>([]);
   const [manualSearch, setManualSearch] = useState('');
   const [manualLoading, setManualLoading] = useState(false);
 
