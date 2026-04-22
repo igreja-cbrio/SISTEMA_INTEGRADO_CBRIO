@@ -379,12 +379,12 @@ async function processServiceType(supabase, serviceType, plans, credentials) {
     }
 
     const schedulesToUpsert = Array.from(scheduleMap.values());
+    let okCount = 0;
+    let failCount = 0;
     for (const schedule of schedulesToUpsert) {
-      const { error } = await supabase
-        .from('vol_schedules')
-        .upsert(schedule, { onConflict: 'service_id,planning_center_person_id,team_name,position_name' });
-      if (!error) typeSchedules++;
-      else console.error('[PC] upsert schedule error:', error.message);
+      const { error } = await upsertScheduleResilient(supabase, schedule);
+      if (!error) { typeSchedules++; okCount++; }
+      else { failCount++; console.error('[PC] upsert schedule error:', error.message); }
 
       // Acumula atribuições de equipe para Opção A (vincular voluntários a teams)
       const personId = schedule.planning_center_person_id;
@@ -393,6 +393,10 @@ async function processServiceType(supabase, serviceType, plans, credentials) {
         memberTeamMap.get(personId).add(schedule.team_name.trim());
       }
     }
+    console.log(`[PC] ${serviceTypeName} | plan=${plan.id} | members=${teamData.data.length} | schedules ok=${okCount} fail=${failCount}`);
+  }
+
+  console.log(`[PC] ► ${serviceType.attributes.name}: plans=${plans.length} services=${typeServices} schedules=${typeSchedules} membersFound=${typeMembersFound} membersProcessed=${typeMembersProcessed}`);
   }
 
   // Opção A: atribui voluntários às equipes com base nas escalas sincronizadas
