@@ -20,13 +20,13 @@ const VAULT_LIBRARY_NAME = 'Cerebro CBRio';
 
 // Mapa entity_type → pasta no vault (segue AGENTE-REGRAS.md do SharePoint).
 const AREA_VAULT_BY_ENTITY = {
-  membro:        '01-crm-pessoas/membros',
-  contribuicao:  '04-financas/contribuicoes',
-  evento:        '02-eventos',
-  projeto:       '03-projetos',
-  voluntario:    '06-ministerios/voluntariado',
-  acompanhamento: '06-ministerios/cuidados',
-  funcionario:   '08-administrativo/rh',
+  membro:          '01-crm-pessoas/membros',
+  'contribuicao-mes': '04-financas/contribuicoes',
+  evento:          '02-eventos',
+  projeto:         '03-projetos',
+  voluntario:      '06-ministerios/voluntariado',
+  acompanhamento:  '06-ministerios/cuidados',
+  funcionario:     '08-administrativo/rh',
 };
 
 let _vaultDriveCache = null;
@@ -268,6 +268,92 @@ const ENTITY_LOADERS = {
       .maybeSingle();
     return data;
   },
+  projeto: async (id) => {
+    const { data } = await supabase
+      .from('projects')
+      .select('id, name, description, year, status, responsible, area, date_start, date_end, budget_planned, budget_spent, priority, notes, created_at')
+      .eq('id', id)
+      .maybeSingle();
+    return data;
+  },
+  voluntario: async (id) => {
+    const { data } = await supabase
+      .from('vol_profiles')
+      .select('id, full_name, email, planning_center_id, created_at')
+      .eq('id', id)
+      .maybeSingle();
+    if (!data) return null;
+    // Contagens auxiliares para enriquecer a nota
+    const d90 = new Date(Date.now() - 90 * 86400000).toISOString();
+    const { count: checkins90d } = await supabase
+      .from('vol_check_ins')
+      .select('id', { count: 'exact', head: true })
+      .eq('volunteer_id', id)
+      .gte('checked_in_at', d90);
+    const { data: roles } = await supabase
+      .from('vol_user_roles')
+      .select('role')
+      .eq('profile_id', id);
+    data.checkins_90d = checkins90d || 0;
+    data.roles = (roles || []).map((r) => r.role);
+    return data;
+  },
+  acompanhamento: async (id) => {
+    const { data } = await supabase
+      .from('cui_acompanhamentos')
+      .select('id, nome, telefone, motivo, status, data_inicio, data_encerramento, observacoes, membro_id, created_at')
+      .eq('id', id)
+      .maybeSingle();
+    return data;
+  },
+  funcionario: async (id) => {
+    const { data } = await supabase
+      .from('rh_funcionarios')
+      .select('id, nome, email, telefone, cargo, area, tipo_contrato, data_admissao, data_demissao, status, observacoes, created_at')
+      .eq('id', id)
+      .maybeSingle();
+    return data;
+  },
+  // Agregado mensal de contribuições. entity_id = 'YYYY-MM'.
+  'contribuicao-mes': async (yyyymm) => {
+    const match = /^(\d{4})-(\d{2})$/.exec(String(yyyymm || ''));
+    if (!match) throw new Error(`entity_id inválido para contribuicao-mes: ${yyyymm}`);
+    const [, ano, mes] = match;
+    const ini = `${ano}-${mes}-01`;
+    const proxMes = new Date(Number(ano), Number(mes), 1).toISOString().slice(0, 10);
+
+    const { data: contribs } = await supabase
+      .from('mem_contribuicoes')
+      .select('tipo, valor, data, forma_pagamento, campanha, origem, membro_id')
+      .gte('data', ini)
+      .lt('data', proxMes);
+
+    const lista = contribs || [];
+    const total = lista.reduce((s, c) => s + Number(c.valor || 0), 0);
+    const porTipo = {};
+    const porForma = {};
+    const porCampanha = {};
+    const membrosUnicos = new Set();
+    for (const c of lista) {
+      porTipo[c.tipo] = (porTipo[c.tipo] || 0) + Number(c.valor || 0);
+      if (c.forma_pagamento) porForma[c.forma_pagamento] = (porForma[c.forma_pagamento] || 0) + Number(c.valor || 0);
+      if (c.campanha) porCampanha[c.campanha] = (porCampanha[c.campanha] || 0) + Number(c.valor || 0);
+      if (c.membro_id) membrosUnicos.add(c.membro_id);
+    }
+
+    return {
+      periodo: yyyymm,
+      ano, mes,
+      data_inicio: ini,
+      data_fim: proxMes,
+      total_registros: lista.length,
+      total_valor: total,
+      membros_unicos: membrosUnicos.size,
+      por_tipo: porTipo,
+      por_forma_pagamento: porForma,
+      por_campanha: porCampanha,
+    };
+  },
 };
 
 // ─── Renderers: produzem { title, content } em markdown ────────────────
@@ -333,6 +419,314 @@ ${dados || '_Sem dados detalhados._'}
 `;
 
     return { title: m.nome || `membro-${m.id}`, content: `${frontmatter}\n${body.trim()}\n` };
+  },
+
+  projeto: (p) => {
+    const hoje = new Date().toISOString().slice(0, 10);
+    const status = p.status || 'planejamento';
+    const tags = [
+      '#tipo/projeto',
+      '#area/projetos',
+      `#status/${status}`,
+      p.year ? `#ano/${p.year}` : null,
+      p.priority ? `#prioridade/${p.priority}` : null,
+    ].filter(Boolean);
+    const frontmatter = [
+      '---',
+      `titulo: "${(p.name || '').replace(/"/g, "'")}"`,
+      'tipo: projeto',
+      `data_criacao: ${p.created_at ? p.created_at.slice(0, 10) : hoje}`,
+      `ultima_atualizacao: ${hoje}`,
+      'area_vault: 03-projetos',
+      `status: ${status}`,
+      `tags: [${tags.join(', ')}]`,
+      'processado_por: cerebro-cbrio-sync',
+      'entity_type: projeto',
+      `entity_id: ${p.id}`,
+      '---',
+    ].join('\n');
+
+    const dados = [
+      ['Status', status],
+      ['Responsável', p.responsible],
+      ['Área', p.area],
+      ['Início', p.date_start],
+      ['Término', p.date_end],
+      ['Orçamento previsto', p.budget_planned ? `R$ ${Number(p.budget_planned).toFixed(2)}` : null],
+      ['Orçamento realizado', p.budget_spent ? `R$ ${Number(p.budget_spent).toFixed(2)}` : null],
+      ['Prioridade', p.priority],
+      ['Ano', p.year],
+    ]
+      .filter(([, v]) => v !== null && v !== undefined && v !== '')
+      .map(([k, v]) => `- **${k}**: ${v}`)
+      .join('\n');
+
+    const body = `
+# ${p.name || `Projeto ${p.id}`}
+
+## Resumo
+
+${p.description || `Projeto institucional da CBRio${p.year ? ` do ciclo ${p.year}` : ''}. Status: ${status}.`}
+
+## Dados-chave
+
+${dados || '_Sem dados detalhados._'}
+
+${p.notes ? `## Notas\n\n${p.notes}\n\n` : ''}## Origem
+
+- **Sistema**: CBRio ERP — módulo Projetos
+- **ID**: \`${p.id}\`
+- **Última sincronização**: ${hoje}
+
+---
+> Nota sincronizada automaticamente pelo Cérebro CBRio a partir do ERP.
+`;
+    return { title: p.name || `projeto-${p.id}`, content: `${frontmatter}\n${body.trim()}\n` };
+  },
+
+  voluntario: (v) => {
+    const hoje = new Date().toISOString().slice(0, 10);
+    const isLider = (v.roles || []).some((r) => r === 'leader' || r === 'admin');
+    const ativo = (v.checkins_90d || 0) > 0;
+    const tags = [
+      '#tipo/voluntario',
+      '#area/ministerios',
+      ativo ? '#status/ativo' : '#status/inativo',
+      isLider ? '#status/lider' : null,
+    ].filter(Boolean);
+    const frontmatter = [
+      '---',
+      `titulo: "${(v.full_name || '').replace(/"/g, "'")}"`,
+      'tipo: voluntario',
+      `data_criacao: ${v.created_at ? v.created_at.slice(0, 10) : hoje}`,
+      `ultima_atualizacao: ${hoje}`,
+      'area_vault: 06-ministerios/voluntariado',
+      `status: ${ativo ? 'ativo' : 'inativo'}`,
+      `tags: [${tags.join(', ')}]`,
+      'processado_por: cerebro-cbrio-sync',
+      'entity_type: voluntario',
+      `entity_id: ${v.id}`,
+      '---',
+    ].join('\n');
+
+    const dados = [
+      ['Email', v.email],
+      ['Planning Center ID', v.planning_center_id],
+      ['Check-ins últimos 90 dias', v.checkins_90d],
+      ['Papéis', (v.roles || []).join(', ') || null],
+    ]
+      .filter(([, val]) => val !== null && val !== undefined && val !== '')
+      .map(([k, val]) => `- **${k}**: ${val}`)
+      .join('\n');
+
+    const body = `
+# ${v.full_name || `Voluntário ${v.id}`}
+
+## Resumo
+
+Voluntário${isLider ? ' (líder)' : ''} da CBRio cadastrado em ${v.created_at ? v.created_at.slice(0, 10) : 'data desconhecida'}. ${ativo ? `Ativo — com ${v.checkins_90d} check-in(s) nos últimos 90 dias.` : 'Sem check-ins nos últimos 90 dias.'}
+
+## Dados-chave
+
+${dados || '_Sem dados detalhados._'}
+
+## Origem
+
+- **Sistema**: CBRio ERP — módulo Voluntariado
+- **ID**: \`${v.id}\`
+- **Última sincronização**: ${hoje}
+
+---
+> Nota sincronizada automaticamente pelo Cérebro CBRio a partir do ERP.
+`;
+    return { title: v.full_name || `voluntario-${v.id}`, content: `${frontmatter}\n${body.trim()}\n` };
+  },
+
+  acompanhamento: (a) => {
+    const hoje = new Date().toISOString().slice(0, 10);
+    const status = a.status || 'ativo';
+    const tags = [
+      '#tipo/acompanhamento',
+      '#area/cuidados',
+      `#status/${status}`,
+      a.data_inicio ? `#ano/${a.data_inicio.slice(0, 4)}` : null,
+    ].filter(Boolean);
+    const frontmatter = [
+      '---',
+      `titulo: "Acompanhamento: ${(a.nome || '').replace(/"/g, "'")}"`,
+      'tipo: acompanhamento',
+      `data_criacao: ${a.created_at ? a.created_at.slice(0, 10) : hoje}`,
+      `ultima_atualizacao: ${hoje}`,
+      'area_vault: 06-ministerios/cuidados',
+      `status: ${status}`,
+      `tags: [${tags.join(', ')}]`,
+      'processado_por: cerebro-cbrio-sync',
+      'entity_type: acompanhamento',
+      `entity_id: ${a.id}`,
+      '---',
+    ].join('\n');
+
+    const dados = [
+      ['Pessoa', a.nome],
+      ['Telefone', a.telefone],
+      ['Status', status],
+      ['Data de início', a.data_inicio],
+      ['Data de encerramento', a.data_encerramento],
+      ['Motivo', a.motivo],
+    ]
+      .filter(([, v]) => v !== null && v !== undefined && v !== '')
+      .map(([k, v]) => `- **${k}**: ${v}`)
+      .join('\n');
+
+    const body = `
+# Acompanhamento de ${a.nome || 'pessoa sem nome'}
+
+## Resumo
+
+Acompanhamento pastoral iniciado em ${a.data_inicio || 'data desconhecida'}. Status atual: ${status}.${a.motivo ? ` Motivo: ${a.motivo}.` : ''}
+
+## Dados-chave
+
+${dados || '_Sem dados detalhados._'}
+
+${a.observacoes ? `## Observações\n\n${a.observacoes}\n\n` : ''}## Origem
+
+- **Sistema**: CBRio ERP — módulo Cuidados
+- **ID**: \`${a.id}\`
+- **Última sincronização**: ${hoje}
+
+---
+> Nota sincronizada automaticamente pelo Cérebro CBRio a partir do ERP.
+`;
+    return { title: `acompanhamento-${a.nome || a.id}`, content: `${frontmatter}\n${body.trim()}\n` };
+  },
+
+  funcionario: (f) => {
+    const hoje = new Date().toISOString().slice(0, 10);
+    const status = f.status || 'ativo';
+    const tags = [
+      '#tipo/funcionario',
+      '#area/rh',
+      `#status/${status}`,
+      f.tipo_contrato ? `#contrato/${f.tipo_contrato.toLowerCase()}` : null,
+    ].filter(Boolean);
+    const frontmatter = [
+      '---',
+      `titulo: "${(f.nome || '').replace(/"/g, "'")}"`,
+      'tipo: funcionario',
+      `data_criacao: ${f.created_at ? f.created_at.slice(0, 10) : hoje}`,
+      `ultima_atualizacao: ${hoje}`,
+      'area_vault: 08-administrativo/rh',
+      `status: ${status}`,
+      `tags: [${tags.join(', ')}]`,
+      'processado_por: cerebro-cbrio-sync',
+      'entity_type: funcionario',
+      `entity_id: ${f.id}`,
+      '---',
+    ].join('\n');
+
+    // Nunca incluir salário na nota — propagaria dado sensível para o vault.
+    const dados = [
+      ['Cargo', f.cargo],
+      ['Área', f.area],
+      ['Tipo de contrato', f.tipo_contrato],
+      ['Email', f.email],
+      ['Telefone', f.telefone],
+      ['Admissão', f.data_admissao],
+      ['Demissão', f.data_demissao],
+      ['Status', status],
+    ]
+      .filter(([, v]) => v !== null && v !== undefined && v !== '')
+      .map(([k, v]) => `- **${k}**: ${v}`)
+      .join('\n');
+
+    const body = `
+# ${f.nome || `Funcionário ${f.id}`}
+
+## Resumo
+
+Funcionário da CBRio${f.cargo ? ` no cargo de ${f.cargo}` : ''}${f.area ? ` (área ${f.area})` : ''}. Status: ${status}.${f.data_admissao ? ` Admitido em ${f.data_admissao}.` : ''}
+
+## Dados-chave
+
+${dados || '_Sem dados detalhados._'}
+
+${f.observacoes ? `## Observações\n\n${f.observacoes}\n\n` : ''}## Origem
+
+- **Sistema**: CBRio ERP — módulo RH
+- **ID**: \`${f.id}\`
+- **Última sincronização**: ${hoje}
+
+> Dados sensíveis (salário) não são exportados para o vault.
+
+---
+> Nota sincronizada automaticamente pelo Cérebro CBRio a partir do ERP.
+`;
+    return { title: f.nome || `funcionario-${f.id}`, content: `${frontmatter}\n${body.trim()}\n` };
+  },
+
+  'contribuicao-mes': (c) => {
+    const hoje = new Date().toISOString().slice(0, 10);
+    const nomeMes = new Date(`${c.ano}-${c.mes}-01T00:00:00Z`).toLocaleString('pt-BR', { month: 'long' });
+    const tags = [
+      '#tipo/contribuicoes',
+      '#area/financeiro',
+      `#ano/${c.ano}`,
+      `#mes/${c.ano}-${c.mes}`,
+    ];
+    const frontmatter = [
+      '---',
+      `titulo: "Contribuições ${nomeMes}/${c.ano}"`,
+      'tipo: contribuicoes-mensal',
+      `data_criacao: ${hoje}`,
+      `ultima_atualizacao: ${hoje}`,
+      'area_vault: 04-financas/contribuicoes',
+      'status: ativo',
+      `tags: [${tags.join(', ')}]`,
+      'processado_por: cerebro-cbrio-sync',
+      'entity_type: contribuicao-mes',
+      `entity_id: ${c.periodo}`,
+      `periodo: ${c.periodo}`,
+      '---',
+    ].join('\n');
+
+    const fmt = (v) => `R$ ${Number(v || 0).toFixed(2)}`;
+
+    const tipoLinhas = Object.entries(c.por_tipo || {})
+      .sort((a, b) => b[1] - a[1])
+      .map(([k, v]) => `- **${k}**: ${fmt(v)}`).join('\n');
+
+    const formaLinhas = Object.entries(c.por_forma_pagamento || {})
+      .sort((a, b) => b[1] - a[1])
+      .map(([k, v]) => `- **${k}**: ${fmt(v)}`).join('\n');
+
+    const campanhaLinhas = Object.entries(c.por_campanha || {})
+      .sort((a, b) => b[1] - a[1])
+      .map(([k, v]) => `- **${k}**: ${fmt(v)}`).join('\n');
+
+    const body = `
+# Contribuições — ${nomeMes}/${c.ano}
+
+## Resumo
+
+No mês de ${nomeMes}/${c.ano} foram registradas **${c.total_registros}** contribuições, somando **${fmt(c.total_valor)}** em ${c.membros_unicos} membros únicos.
+
+## Por tipo
+
+${tipoLinhas || '_Sem contribuições no período._'}
+
+${formaLinhas ? `## Por forma de pagamento\n\n${formaLinhas}\n\n` : ''}${campanhaLinhas ? `## Por campanha\n\n${campanhaLinhas}\n\n` : ''}## Origem
+
+- **Sistema**: CBRio ERP — módulo Membresia/Financeiro (tabela \`mem_contribuicoes\`)
+- **Período**: ${c.data_inicio} a ${c.data_fim} (exclusive)
+- **Última sincronização**: ${hoje}
+
+> Esta nota agrega todas as contribuições do mês — é atualizada a cada nova contribuição registrada. Valores individuais não são exportados para o vault.
+
+---
+> Nota sincronizada automaticamente pelo Cérebro CBRio a partir do ERP.
+`;
+    return { title: `contribuicoes-${c.periodo}`, content: `${frontmatter}\n${body.trim()}\n` };
   },
 
   evento: (e) => {

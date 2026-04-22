@@ -829,6 +829,13 @@ router.post('/contribuicoes', authorize('admin', 'diretor'), async (req, res) =>
       .select('*, membro:mem_membros(id, nome)')
       .single();
     if (error) throw error;
+
+    // Enfileira o agregado mensal (entity_id = 'YYYY-MM' da data da contribuição)
+    if (data.data) {
+      const yyyymm = String(data.data).slice(0, 7);
+      enqueueSync('contribuicao-mes', yyyymm, 'upsert').catch(() => {});
+    }
+
     res.status(201).json(data);
   } catch (e) {
     res.status(500).json({ error: 'Erro ao registrar contribuição' });

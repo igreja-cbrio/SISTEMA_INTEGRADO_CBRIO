@@ -288,41 +288,60 @@ router.post('/backfill/:entityType', authenticate, authorize('admin', 'diretor')
   }
 
   const TABLE_BY_TYPE = {
-    membro: { table: 'mem_membros', idCol: 'id', filter: (q) => q.eq('active', true) },
-    evento: { table: 'events', idCol: 'id', filter: (q) => q },
+    membro:         { table: 'mem_membros',       idCol: 'id', filter: (q) => q.eq('active', true) },
+    evento:         { table: 'events',            idCol: 'id', filter: (q) => q },
+    projeto:        { table: 'projects',          idCol: 'id', filter: (q) => q },
+    voluntario:     { table: 'vol_profiles',      idCol: 'id', filter: (q) => q },
+    acompanhamento: { table: 'cui_acompanhamentos', idCol: 'id', filter: (q) => q },
+    funcionario:    { table: 'rh_funcionarios',   idCol: 'id', filter: (q) => q.eq('status', 'ativo') },
   };
 
-  const cfg = TABLE_BY_TYPE[entityType];
-  if (!cfg) {
-    return res.status(400).json({ erro: 'Backfill não implementado para este entity_type' });
-  }
-
   try {
-    let query = supabase.from(cfg.table).select(cfg.idCol);
-    query = cfg.filter(query);
-    const { data: rows, error } = await query;
-    if (error) throw error;
+    let ids = [];
+
+    if (entityType === 'contribuicao-mes') {
+      // Enfileira todos os meses distintos que têm contribuição registrada.
+      const { data: meses } = await supabase
+        .from('mem_contribuicoes')
+        .select('data')
+        .order('data', { ascending: false });
+      const set = new Set();
+      for (const row of meses || []) {
+        if (row.data) set.add(String(row.data).slice(0, 7)); // YYYY-MM
+      }
+      ids = Array.from(set);
+    } else {
+      const cfg = TABLE_BY_TYPE[entityType];
+      if (!cfg) {
+        return res.status(400).json({ erro: 'Backfill não implementado para este entity_type' });
+      }
+      let query = supabase.from(cfg.table).select(cfg.idCol);
+      query = cfg.filter(query);
+      const { data: rows, error } = await query;
+      if (error) throw error;
+      ids = (rows || []).map((r) => r[cfg.idCol]);
+    }
 
     let enfileirados = 0;
-    for (const row of rows || []) {
+    for (const id of ids) {
       const { data: existing } = await supabase
         .from('cerebro_sync_fila')
         .select('id')
         .eq('entity_type', entityType)
-        .eq('entity_id', String(row[cfg.idCol]))
+        .eq('entity_id', String(id))
         .in('status', ['pendente', 'processando'])
         .limit(1)
         .maybeSingle();
       if (existing) continue;
       const { error: insErr } = await supabase.from('cerebro_sync_fila').insert({
         entity_type: entityType,
-        entity_id: String(row[cfg.idCol]),
+        entity_id: String(id),
         action: 'upsert',
       });
       if (!insErr) enfileirados++;
     }
 
-    res.json({ sucesso: true, entity_type: entityType, total_registros: rows?.length || 0, enfileirados });
+    res.json({ sucesso: true, entity_type: entityType, total_registros: ids.length, enfileirados });
   } catch (e) {
     console.error(`[CEREBRO BACKFILL ${entityType}] Erro:`, e.message);
     res.status(500).json({ sucesso: false, erro: e.message });

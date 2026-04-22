@@ -1,6 +1,7 @@
 const router = require('express').Router();
 const { authenticate, authorize } = require('../middleware/auth');
 const { supabase, query: dbQuery } = require('../utils/supabase');
+const { enqueueSync } = require('../services/cerebroSync');
 
 router.use(authenticate);
 
@@ -107,6 +108,7 @@ router.post('/', authorize('admin', 'diretor'), async (req, res) => {
       priority: d.priority || 'media', notes: d.notes || '', created_by: req.user.userId,
     }).select().single();
     if (error) throw error;
+    enqueueSync('projeto', data.id, 'upsert').catch(() => {});
     res.json(data);
   } catch (e) { console.error('[Projects create]', e.message); res.status(500).json({ error: 'Erro ao criar projeto' }); }
 });
@@ -124,6 +126,7 @@ router.put('/:id', authorize('admin', 'diretor'), async (req, res) => {
       category_id: d.category_id || null, priority: d.priority || 'media', notes: d.notes || '',
     }).eq('id', req.params.id).select().single();
     if (error) throw error;
+    enqueueSync('projeto', req.params.id, 'upsert').catch(() => {});
     res.json(data);
   } catch (e) { res.status(500).json({ error: 'Erro ao atualizar projeto' }); }
 });
