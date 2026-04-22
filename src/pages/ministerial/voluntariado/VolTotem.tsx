@@ -282,10 +282,12 @@ export default function VolTotem() {
     if (!selectedServiceId) return;
     setManualLoading(true);
     try {
-      const data = await voluntariado.schedules.list({ service_id: selectedServiceId });
-      setSchedules(Array.isArray(data) ? data : []);
-    } catch {
-      setSchedules([]);
+      const [schedData, profData] = await Promise.all([
+        voluntariado.schedules.list({ service_id: selectedServiceId }).catch(() => []),
+        voluntariado.profiles.list().catch(() => []),
+      ]);
+      setSchedules(Array.isArray(schedData) ? schedData : []);
+      setAllProfiles(Array.isArray(profData) ? profData : []);
     } finally {
       setManualLoading(false);
     }
@@ -306,6 +308,24 @@ export default function VolTotem() {
         team: sch.team_name,
         position: sch.position_name,
       });
+      setState('success');
+      autoReset(() => loadSchedules());
+    } catch (err: any) {
+      handleCheckinError(err, () => loadSchedules());
+    }
+  };
+
+  const handleUnscheduledCheckin = async (profile: any) => {
+    if (processingRef.current) return;
+    processingRef.current = true;
+    try {
+      await voluntariado.checkIns.create({
+        volunteer_id: profile.id,
+        service_id: selectedServiceId,
+        method: 'manual',
+        is_unscheduled: true,
+      });
+      setResult({ name: profile.full_name, unscheduled: true });
       setState('success');
       autoReset(() => loadSchedules());
     } catch (err: any) {
