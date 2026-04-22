@@ -8,12 +8,13 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useFaceDetection, useFaceMatch } from './hooks/useVolFace';
 import {
   QrCode, Scan, CheckCircle2, XCircle, RefreshCw, Maximize, ArrowLeft,
-  ScanFace, Smartphone, Camera, Loader2,
+  ScanFace, Smartphone, Camera, Loader2, Hand, Search, Check,
 } from 'lucide-react';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
+import type { VolSchedule } from './types';
 
-type CheckinMode = 'qr_scan' | 'facial' | 'qr_fixo';
+type CheckinMode = 'qr_scan' | 'facial' | 'qr_fixo' | 'manual';
 type TotemState = 'idle' | 'scanning' | 'success' | 'error' | 'already';
 
 interface CheckInResult {
