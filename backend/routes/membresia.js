@@ -4,6 +4,7 @@ const { authenticate, authorize } = require('../middleware/auth');
 const { supabase } = require('../utils/supabase');
 const { uploadModuleFile, SHAREPOINT_CONFIGURED } = require('../services/storageService');
 const { notificar } = require('../services/notificar');
+const { enqueueSync } = require('../services/cerebroSync');
 
 const uploadMw = multer({
   storage: multer.memoryStorage(),
@@ -344,6 +345,7 @@ router.post('/membros', authorize('admin', 'diretor'), async (req, res) => {
       .select()
       .single();
     if (error) throw error;
+    enqueueSync('membro', data.id, 'upsert').catch(() => {});
     res.status(201).json(data);
   } catch (e) {
     console.error('[MEMBROS] create error:', e.message);
@@ -361,6 +363,7 @@ router.put('/membros/:id', authorize('admin', 'diretor'), async (req, res) => {
       .select()
       .single();
     if (error) throw error;
+    enqueueSync('membro', req.params.id, 'upsert').catch(() => {});
     res.json(data);
   } catch (e) {
     console.error('[MEMBROS] update error:', e.message);
