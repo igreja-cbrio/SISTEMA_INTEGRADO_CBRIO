@@ -1251,58 +1251,52 @@ router.post('/service-types/:id/generate', async (req, res) => {
     }
 
     const [hours, minutes] = sType.recurrence_time.split(':').map(Number);
+    const pad = (n) => String(n).padStart(2, '0');
+    // Recurrence_time é hora local da igreja (BRT = UTC-3, sem horário de verão desde 2019).
+    // Montamos scheduled_at com offset -03:00 explícito para não depender do TZ do servidor.
+    const toBRTISO = (y, m0, d) =>
+      `${y}-${pad(m0 + 1)}-${pad(d)}T${pad(hours)}:${pad(minutes)}:00-03:00`;
+    const dayStartBRT = (y, m0, d) => `${y}-${pad(m0 + 1)}-${pad(d)}T00:00:00-03:00`;
+    const dayEndBRT = (y, m0, d) => new Date(Date.UTC(y, m0, d + 1)).toISOString().slice(0, 10) + 'T00:00:00-03:00';
+
     const generated = [];
 
+    const makeIfAbsent = async (y, m0, d) => {
+      const scheduledAt = toBRTISO(y, m0, d);
+      const { data: existing } = await supabase.from('vol_services')
+        .select('id').eq('service_type_id', sType.id)
+        .gte('scheduled_at', dayStartBRT(y, m0, d))
+        .lt('scheduled_at', dayEndBRT(y, m0, d));
+      if (existing && existing.length > 0) return;
+      const { data: svc, error: svcErr } = await supabase.from('vol_services')
+        .insert({ name: sType.name, service_type_name: sType.name, service_type_id: sType.id, scheduled_at: scheduledAt })
+        .select().single();
+      if (!svcErr && svc) generated.push(svc);
+    };
+
     if (year) {
-      // Gera todas as ocorrencias do tipo no ano inteiro
-      const rangeStart = new Date(`${year}-01-01T00:00:00`);
-      const rangeEnd = new Date(`${year}-12-31T23:59:59`);
-
-      // Avan�a ate o primeiro dia da semana correto no ano
-      let current = new Date(rangeStart);
-      while (current.getDay() !== sType.recurrence_day) {
-        current.setDate(current.getDate() + 1);
+      // Gera todas as ocorrencias do tipo no ano inteiro.
+      // Caminhamos pelos dias usando UTC para não sofrer interferência do TZ do servidor.
+      let cursor = new Date(Date.UTC(year, 0, 1));
+      while (cursor.getUTCDay() !== sType.recurrence_day) {
+        cursor.setUTCDate(cursor.getUTCDate() + 1);
       }
-
-      while (current <= rangeEnd) {
-        const target = new Date(current);
-        target.setHours(hours, minutes, 0, 0);
-
-        const dayStart = new Date(target.getFullYear(), target.getMonth(), target.getDate()).toISOString();
-        const dayEnd = new Date(target.getFullYear(), target.getMonth(), target.getDate() + 1).toISOString();
-        const { data: existing } = await supabase.from('vol_services')
-          .select('id').eq('service_type_id', sType.id)
-          .gte('scheduled_at', dayStart).lt('scheduled_at', dayEnd);
-
-        if (!existing || existing.length === 0) {
-          const { data: svc, error: svcErr } = await supabase.from('vol_services')
-            .insert({ name: sType.name, service_type_name: sType.name, service_type_id: sType.id, scheduled_at: target.toISOString() })
-            .select().single();
-          if (!svcErr && svc) generated.push(svc);
-        }
-        current.setDate(current.getDate() + 7);
+      const endMs = Date.UTC(year, 11, 31);
+      while (cursor.getTime() <= endMs) {
+        await makeIfAbsent(cursor.getUTCFullYear(), cursor.getUTCMonth(), cursor.getUTCDate());
+        cursor.setUTCDate(cursor.getUTCDate() + 7);
       }
     } else {
-      // Gera N semanas a partir de hoje (comportamento original)
+      // Gera N semanas a partir de hoje.
       const weeksAhead = weeks || 4;
-      const now = new Date();
+      // "Hoje" em BRT: pega o instante atual, subtrai 3h e extrai Y/M/D em UTC.
+      const brtNow = new Date(Date.now() - 3 * 60 * 60 * 1000);
+      let cursor = new Date(Date.UTC(brtNow.getUTCFullYear(), brtNow.getUTCMonth(), brtNow.getUTCDate()));
+      const delta = (sType.recurrence_day - cursor.getUTCDay() + 7) % 7;
+      cursor.setUTCDate(cursor.getUTCDate() + delta);
       for (let w = 0; w < weeksAhead; w++) {
-        const target = new Date(now);
-        target.setDate(target.getDate() + ((sType.recurrence_day - target.getDay() + 7) % 7) + (w * 7));
-        if (target < now && w === 0) target.setDate(target.getDate() + 7);
-        target.setHours(hours, minutes, 0, 0);
-
-        const dayStart = new Date(target.getFullYear(), target.getMonth(), target.getDate()).toISOString();
-        const dayEnd = new Date(target.getFullYear(), target.getMonth(), target.getDate() + 1).toISOString();
-        const { data: existing } = await supabase.from('vol_services')
-          .select('id').eq('service_type_id', sType.id)
-          .gte('scheduled_at', dayStart).lt('scheduled_at', dayEnd);
-        if (existing && existing.length > 0) continue;
-
-        const { data: svc, error: svcErr } = await supabase.from('vol_services')
-          .insert({ name: sType.name, service_type_name: sType.name, service_type_id: sType.id, scheduled_at: target.toISOString() })
-          .select().single();
-        if (!svcErr && svc) generated.push(svc);
+        await makeIfAbsent(cursor.getUTCFullYear(), cursor.getUTCMonth(), cursor.getUTCDate());
+        cursor.setUTCDate(cursor.getUTCDate() + 7);
       }
     }
 
