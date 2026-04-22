@@ -163,12 +163,15 @@ export function AuthProvider({ children }) {
   const canProjetos = canAccessModule(['Projetos', 'Tarefas']);
   const canExpansao = canAccessModule(['Projetos']);
   const canAgenda = canAccessModule(['Agenda']);
-  const canIA = canAccessModule(['IA / Agentes']);
+  const canIAModulo = canAccessModule(['IA / Agentes']);
   const canKPIs = isAdmin || canAccessModule(['KPIs', 'Indicadores']);
   const canCuidados = isAdmin || canAccessModule(['Cuidados']);
   // Colaborador = admin/diretor ou usuario com qualquer permissao de modulo
   // (voluntarios e membros sem permissao nao sao colaboradores)
-  const isColaborador = isAdmin || canRH || canFinanceiro || canLogistica || canPatrimonio || canMembresia || canProjetos || canExpansao || canAgenda || canIA || canCuidados;
+  const isColaborador = isAdmin || canRH || canFinanceiro || canLogistica || canPatrimonio || canMembresia || canProjetos || canExpansao || canAgenda || canIAModulo || canCuidados;
+  // Assistente IA é liberado para qualquer colaborador; o backend filtra os
+  // agentes e os dados conforme as permissões de cada usuário.
+  const canIA = isColaborador;
 
   const value = {
     user,
