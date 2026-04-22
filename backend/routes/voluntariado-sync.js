@@ -4,6 +4,7 @@ const { supabase } = require('../utils/supabase');
 const {
   getPCCredentials, fetchWithRetry, fetchAllPlans,
   processServiceType, fetchAllTeamPersons, upsertVolunteerQrCodes, upsertVolunteerProfiles, PC_SERVICES_BASE,
+  fetchAllServiceTypes,
 } = require('../services/planningCenter');
 
 // Sync do Planning Center e operacoes administrativas pesadas — apenas admin/diretor.
@@ -19,11 +20,8 @@ router.post('/sync', async (req, res) => {
   try {
     const { basic: credentials } = getPCCredentials();
 
-    const testRes = await fetchWithRetry(`${PC_SERVICES_BASE}/service_types`, { Authorization: `Basic ${credentials}` });
-    if (!testRes.ok) return res.status(400).json({ error: 'Falha ao conectar ao Planning Center' });
-
-    const typesData = await testRes.json();
-    const serviceTypes = typesData.data || [];
+    const serviceTypes = await fetchAllServiceTypes(credentials);
+    if (!serviceTypes.length) return res.status(400).json({ error: 'Falha ao conectar ao Planning Center ou nenhum tipo encontrado' });
     console.log(`[VOL SYNC] Found ${serviceTypes.length} service types`);
 
     let totalServices = 0, totalSchedules = 0, totalMembersFound = 0, totalMembersProcessed = 0;
@@ -82,11 +80,8 @@ router.post('/sync-historical', async (req, res) => {
 
     const { basic: credentials } = getPCCredentials();
 
-    const typesRes = await fetchWithRetry(`${PC_SERVICES_BASE}/service_types`, { Authorization: `Basic ${credentials}` });
-    if (!typesRes.ok) return res.status(400).json({ error: 'Falha ao conectar ao Planning Center' });
-
-    const typesData = await typesRes.json();
-    const serviceTypes = typesData.data || [];
+    const serviceTypes = await fetchAllServiceTypes(credentials);
+    if (!serviceTypes.length) return res.status(400).json({ error: 'Falha ao conectar ao Planning Center ou nenhum tipo encontrado' });
 
     let totalServices = 0, totalSchedules = 0;
     const allVolunteers = new Map();
@@ -128,11 +123,8 @@ router.post('/sync-auto', async (req, res) => {
     // Otherwise normal auth already validated by middleware
 
     const { basic: credentials } = getPCCredentials();
-    const testRes = await fetchWithRetry(`${PC_SERVICES_BASE}/service_types`, { Authorization: `Basic ${credentials}` });
-    if (!testRes.ok) return res.status(400).json({ error: 'Falha ao conectar ao Planning Center' });
-
-    const typesData = await testRes.json();
-    const serviceTypes = typesData.data || [];
+    const serviceTypes = await fetchAllServiceTypes(credentials);
+    if (!serviceTypes.length) return res.status(400).json({ error: 'Falha ao conectar ao Planning Center ou nenhum tipo encontrado' });
 
     let totalServices = 0, totalSchedules = 0, totalMembersFound = 0, totalMembersProcessed = 0;
     const allVolunteers = new Map();
@@ -185,12 +177,9 @@ router.get('/diagnostics', async (req, res) => {
   try {
     const { basic: credentials } = getPCCredentials();
 
-    // 1. Service types
-    const typesRes = await fetchWithRetry(`${PC_SERVICES_BASE}/service_types`, { Authorization: `Basic ${credentials}` });
-    if (!typesRes.ok) return res.status(400).json({ error: 'Falha ao conectar ao Planning Center', status: typesRes.status });
-
-    const typesData = await typesRes.json();
-    const serviceTypes = typesData.data || [];
+    // 1. Service types (paginated)
+    const serviceTypes = await fetchAllServiceTypes(credentials);
+    if (!serviceTypes.length) return res.status(400).json({ error: 'Falha ao conectar ao Planning Center ou nenhum tipo encontrado' });
 
     const report = [];
 
