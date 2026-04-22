@@ -1,101 +1,108 @@
 
+# Corrigir de vez o sync do Kids no Voluntariado
 
-# Garantir que TODOS os tipos de culto do Planning Center sejam sincronizados (incluindo Kids)
+Vou atacar o problema em dois pontos que ainda podem impedir o Kids de aparecer mesmo depois da paginação dos tipos de culto:
 
-## Diagnóstico
+1. o sync ainda busca **poucos planos por tipo de culto**;
+2. o backend pode estar tentando gravar escalas com uma `onConflict` que **depende de uma constraint nova no banco**, e se esse SQL manual não tiver sido aplicado, os schedules do Kids continuam falhando silenciosamente.
 
-A listagem de "service types" no Planning Center está **paginada e não estamos paginando**. Em `backend/routes/voluntariado-sync.js`, todas as 4 rotas (`/sync`, `/sync-historical`, `/sync-auto`, `/diagnostics`) chamam:
+## O que será ajustado
+
+### 1. Buscar todos os planos relevantes do service type Kids
+Hoje `fetchAllPlans()` em `backend/services/planningCenter.js` ainda está limitado a:
+
+- `future&per_page=5`
+- `past&per_page=3`
+
+Isso é pouco para um service type movimentado como Kids.
+
+Vou substituir por uma versão paginada por janela de datas, por exemplo:
+- próximos 30-60 dias
+- últimos 7 dias
+
+Assim o sync deixa de depender de “só os 5 próximos” e passa a trazer todos os cultos Kids do período operacional real.
+
+### 2. Tornar o upsert de schedules compatível com banco antigo e banco novo
+Hoje o código usa:
 
 ```js
-fetchWithRetry(`${PC_SERVICES_BASE}/service_types`, …)
+onConflict: 'service_id,planning_center_person_id,team_name,position_name'
 ```
 
-Sem `per_page` e sem loop de offset. O Planning Center retorna **25 por página por padrão** — qualquer service type além disso (provavelmente o **CBKids**, dependendo da ordem) é silenciosamente ignorado. Consequência: nenhum plano/voluntário do Kids entra em `vol_services` / `vol_schedules` / `vol_profiles`.
+Mas no repositório a migration antiga ainda mostra índices/constraints diferentes para `vol_schedules`. Se o SQL manual da constraint nova não foi aplicado no banco real, o upsert falha e as escalas não entram.
 
-A página `/api/voluntariado-sync/diagnostics` confirma o problema rapidamente: ela só lista os primeiros 25 service types.
+Vou implementar um helper de persistência no sync com esta lógica:
 
-## O que muda
+- primeiro tenta o modo novo:  
+  `(service_id, planning_center_person_id, team_name, position_name)`
+- se o banco não suportar essa constraint, faz fallback seguro para o modo legado:  
+  `(service_id, planning_center_person_id)`
 
-### 1. Helper paginado no `planningCenter.js`
+Resultado:
+- o sync volta a gravar escalas do Kids imediatamente;
+- quando a constraint nova existir, continua suportando múltiplas posições/equipes por pessoa.
 
-Criar uma função reutilizável `fetchAllServiceTypes(credentials)` que itera com `per_page=100` + `offset` até esgotar:
+### 3. Melhorar o log por tipo de culto no sync
+Vou adicionar logs claros por `service type`, incluindo:
 
-```js
-async function fetchAllServiceTypes(credentials) {
-  const headers = { Authorization: `Basic ${credentials}` };
-  const all = [];
-  let offset = 0;
-  const perPage = 100;
-  while (true) {
-    const res = await fetchWithRetry(
-      `${PC_SERVICES_BASE}/service_types?per_page=${perPage}&offset=${offset}`,
-      headers
-    );
-    if (!res.ok) break;
-    const data = await res.json();
-    all.push(...(data.data || []));
-    if ((data.data || []).length < perPage) break;
-    offset += perPage;
-    if (offset > 5000) break; // safety
-  }
-  return all;
-}
-```
+- nome do tipo (`Kids`, etc.)
+- quantidade de planos encontrados
+- quantidade de team members retornados pelo Planning Center
+- quantidade de schedules gravados com sucesso
+- quantidade de falhas de persistência
 
-Exportar do módulo.
+Isso evita continuar “no escuro” se o Planning Center estiver trazendo dados mas o banco não estiver aceitando.
 
-### 2. Substituir as 4 chamadas em `voluntariado-sync.js`
+### 4. Expor diagnóstico útil para conferir o Kids
+No endpoint de diagnóstico do sync, vou enriquecer a resposta para mostrar por tipo de culto:
 
-Trocar cada bloco do tipo:
-```js
-const testRes = await fetchWithRetry(`${PC_SERVICES_BASE}/service_types`, …);
-const typesData = await testRes.json();
-const serviceTypes = typesData.data || [];
-```
-por:
-```js
-const serviceTypes = await fetchAllServiceTypes(credentials);
-if (!serviceTypes.length) return res.status(400).json({ error: 'Falha ao conectar ao Planning Center ou nenhum tipo encontrado' });
-```
+- total de planos futuros
+- total de equipes
+- amostra de membros
+- status do sync desse tipo
 
-Locais: linhas 22-26 (`/sync`), 85-89 (`/sync-historical`), 131-135 (`/sync-auto`), 189-193 (`/diagnostics`).
+Assim fica fácil validar se o problema é:
+- o Kids não veio do Planning Center;
+- o Kids veio, mas sem membros;
+- ou veio tudo e falhou só na gravação.
 
-### 3. Garantir que outros pontos também paginem
+## Arquivos que serão alterados
 
-Há mais 1 ocorrência sem paginação em `backend/routes/voluntariado.js` linha 1810 (importa equipes do PC para a tela de Equipes):
-```js
-const typesRes = await fetchWithRetry(`${PC_SERVICES_BASE}/service_types?per_page=100`, …);
-```
-Já tem `per_page=100`, mas sem loop. Substituir também por `fetchAllServiceTypes(credentials)` por consistência (mesmo helper).
+- `backend/services/planningCenter.js`
+  - paginar planos relevantes por tipo de culto
+  - criar helper de upsert compatível
+  - melhorar logs do sync
 
-### 4. Log explícito
+- `backend/routes/voluntariado-sync.js`
+  - usar a nova coleta paginada
+  - retornar diagnóstico mais explícito por service type
 
-Logar no console do backend a quantidade total encontrada após paginar:
-```
-[VOL SYNC] Found N service types (after pagination)
-```
-para confirmar nos logs da Vercel que o Kids está sendo coletado.
+## SQL manual que vou entregar junto
+Como você já pediu esse padrão no projeto, vou te devolver também o SQL manual consolidado para o banco real, deixando a constraint ideal de `vol_schedules` pronta para o modo “uma linha por equipe/posição”.
 
-### 5. Verificação após deploy
+A implementação ficará tolerante mesmo antes desse SQL, mas o SQL continua sendo o estado correto/final.
 
-1. Acionar **Sincronizar Planning Center** no `/voluntariado/dashboard`.
-2. Conferir resposta: `services` e `volunteersSynced` devem aumentar.
-3. Abrir um culto Kids no totem (modo Manual) — voluntários do Kids devem aparecer na lista de escalados.
+## Resultado esperado
+Depois disso, o fluxo correto será:
 
-## Arquivos alterados
-
-- `backend/services/planningCenter.js` — nova função `fetchAllServiceTypes` (e export).
-- `backend/routes/voluntariado-sync.js` — usa o helper nas 4 rotas.
-- `backend/routes/voluntariado.js` — linha 1810 usa o helper.
+1. backend sincroniza todos os planos relevantes do Kids;
+2. grava as escalas mesmo se o banco ainda estiver com a constraint antiga;
+3. o Kids passa a aparecer na lista de escalados do sistema;
+4. com o SQL novo aplicado, continua funcionando também para casos com múltiplas posições da mesma pessoa.
 
 ## Sem mudanças
+- UI do totem
+- check-in manual/facial/QR
+- relatórios
+- autenticação
 
-- Banco de dados (sem migration).
-- Frontend.
-- Lógica de processamento por tipo (`processServiceType` continua igual — agora apenas recebe a lista completa).
-- Autenticação, RLS, endpoints públicos.
+## Validação após implementar
+Depois do deploy, a checagem será:
 
-## Risco
+1. clicar em **Sincronizar** no dashboard do voluntariado;
+2. confirmar no retorno/log que o `service type` Kids foi processado;
+3. abrir um culto Kids e verificar se os escalados aparecem;
+4. conferir que os check-ins continuam entrando normalmente.
 
-Mínimo. A paginação é aditiva: tipos que já vinham continuam vindo; passamos a coletar também os que estavam fora das primeiras 25 entradas. O custo extra são 1-2 requisições HTTP adicionais por sync — desprezível frente ao trabalho que já fazemos por service type.
-
+## Observação técnica importante
+No contexto atual, o backend do voluntariado não está refletido nas tabelas disponíveis do banco conectado ao Lovable Cloud, então a correção precisa ser tratada no código do backend e com o SQL manual do banco real usado por esse módulo.
