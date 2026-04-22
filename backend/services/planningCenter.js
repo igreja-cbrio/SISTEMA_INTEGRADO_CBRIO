@@ -13,6 +13,18 @@
 const STATUS_PRIORITY = { confirmed: 4, scheduled: 3, pending: 2, unknown: 1, declined: 0 };
 const STATUS_MAP = { C: 'confirmed', U: 'pending', D: 'declined', S: 'scheduled', P: 'pending', N: 'pending' };
 
+// PC's sort_date returns the local datetime labeled with a 'Z' (UTC) suffix,
+// but the hours/minutes reflect the organization's local timezone (BRT). Parsing
+// it as UTC drops 3 hours off the real time. We extract the date/time portion
+// and re-label it as America/Sao_Paulo (UTC-3, stable since 2019). Works for
+// any ISO 8601 format PC may return.
+function pcDateToBRT(pcDate) {
+  if (!pcDate) return pcDate;
+  const m = String(pcDate).match(/^(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2}:\d{2})/);
+  if (!m) return pcDate;
+  return `${m[1]}T${m[2]}-03:00`;
+}
+
 function getPCCredentials() {
   const appId = process.env.PLANNING_CENTER_APP_ID;
   const secret = process.env.PLANNING_CENTER_SECRET;
@@ -187,7 +199,7 @@ async function processServiceType(supabase, serviceType, plans, credentials) {
   const memberTeamMap = new Map(); // personId -> Set<teamName> — acumulado em todos os planos
 
   for (const plan of plans) {
-    const serviceDate = plan.attributes.sort_date;
+    const serviceDate = pcDateToBRT(plan.attributes.sort_date);
     const serviceName = plan.attributes.title || serviceType.attributes.name;
     const serviceTypeName = serviceType.attributes.name;
     const dateOnly = serviceDate.slice(0, 10); // 'yyyy-MM-dd'
@@ -198,8 +210,8 @@ async function processServiceType(supabase, serviceType, plans, credentials) {
       .select('id')
       .not('service_type_id', 'is', null)
       .eq('service_type_name', serviceTypeName)
-      .gte('scheduled_at', `${dateOnly}T00:00:00`)
-      .lte('scheduled_at', `${dateOnly}T23:59:59`)
+      .gte('scheduled_at', `${dateOnly}T00:00:00-03:00`)
+      .lte('scheduled_at', `${dateOnly}T23:59:59-03:00`)
       .maybeSingle();
 
     let service;
