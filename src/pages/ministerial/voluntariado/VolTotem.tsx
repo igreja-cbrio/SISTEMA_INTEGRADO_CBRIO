@@ -49,6 +49,11 @@ export default function VolTotem() {
   const [fixedQrUrl, setFixedQrUrl] = useState('');
   const [fixedQrLoading, setFixedQrLoading] = useState(false);
 
+  // Manual mode state
+  const [schedules, setSchedules] = useState<VolSchedule[]>([]);
+  const [manualSearch, setManualSearch] = useState('');
+  const [manualLoading, setManualLoading] = useState(false);
+
   // Facial recognition
   const face = useFaceDetection();
   const faceMatch = useFaceMatch();
