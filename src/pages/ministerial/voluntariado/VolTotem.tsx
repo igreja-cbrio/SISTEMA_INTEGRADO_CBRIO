@@ -645,54 +645,98 @@ export default function VolTotem() {
               <div className="flex items-center justify-center py-12">
                 <Loader2 className="h-8 w-8 animate-spin text-[#00B39D]" />
               </div>
-            ) : filteredSchedules.length === 0 ? (
+            ) : filteredSchedules.length === 0 && unscheduledMatches.length === 0 ? (
               <div className="text-center py-12 space-y-2">
                 <p className="text-white/60 text-lg">
-                  {schedules.length === 0
+                  {schedules.length === 0 && !manualSearch.trim()
                     ? 'Nenhum voluntario escalado para este culto'
-                    : 'Nenhum voluntario encontrado'}
+                    : manualSearch.trim()
+                      ? 'Voluntario nao encontrado. Procure um lider.'
+                      : 'Nenhum voluntario encontrado'}
                 </p>
-                {schedules.length > 0 && manualSearch && (
+                {manualSearch && (
                   <p className="text-sm text-white/30">Tente buscar com outro termo</p>
                 )}
               </div>
             ) : (
-              filteredSchedules.map((sch) => {
-                const badge = statusBadge(sch);
-                const done = !!sch.check_in;
-                return (
-                  <div
-                    key={sch.id}
-                    className="min-h-[64px] flex items-center gap-3 p-3 rounded-xl bg-white/5 border border-white/10 hover:bg-white/10 transition-colors"
-                  >
-                    <div className="w-11 h-11 rounded-full bg-[#00B39D]/20 text-[#00B39D] flex items-center justify-center font-bold text-lg shrink-0">
-                      {(sch.volunteer_name || '?').trim().charAt(0).toUpperCase()}
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <p className="font-semibold text-white truncate">{sch.volunteer_name}</p>
-                      {(sch.team_name || sch.position_name) && (
-                        <p className="text-sm text-white/50 truncate">
-                          {sch.team_name}
-                          {sch.team_name && sch.position_name ? ' — ' : ''}
-                          {sch.position_name}
-                        </p>
-                      )}
-                    </div>
-                    <span className={`shrink-0 px-3 py-1 rounded-full text-xs font-medium border ${badge.cls}`}>
-                      {badge.label}
-                    </span>
-                    {!done && (
-                      <Button
-                        onClick={() => handleManualCheckin(sch)}
-                        className="shrink-0 bg-[#00B39D] hover:bg-[#00B39D]/80 text-white h-11 px-4 gap-1.5"
-                      >
-                        <Check className="h-5 w-5" />
-                        <span className="hidden sm:inline">Check-in</span>
-                      </Button>
+              <>
+                {filteredSchedules.length > 0 && (
+                  <>
+                    {manualSearch.trim() && (
+                      <p className="text-xs uppercase tracking-wider text-white/40 px-1 pt-1 pb-0.5">
+                        Escalados
+                      </p>
                     )}
-                  </div>
-                );
-              })
+                    {filteredSchedules.map((sch) => {
+                      const badge = statusBadge(sch);
+                      const done = !!sch.check_in;
+                      return (
+                        <div
+                          key={sch.id}
+                          className="min-h-[64px] flex items-center gap-3 p-3 rounded-xl bg-white/5 border border-white/10 hover:bg-white/10 transition-colors"
+                        >
+                          <div className="w-11 h-11 rounded-full bg-[#00B39D]/20 text-[#00B39D] flex items-center justify-center font-bold text-lg shrink-0">
+                            {(sch.volunteer_name || '?').trim().charAt(0).toUpperCase()}
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <p className="font-semibold text-white truncate">{sch.volunteer_name}</p>
+                            {(sch.team_name || sch.position_name) && (
+                              <p className="text-sm text-white/50 truncate">
+                                {sch.team_name}
+                                {sch.team_name && sch.position_name ? ' — ' : ''}
+                                {sch.position_name}
+                              </p>
+                            )}
+                          </div>
+                          <span className={`shrink-0 px-3 py-1 rounded-full text-xs font-medium border ${badge.cls}`}>
+                            {badge.label}
+                          </span>
+                          {!done && (
+                            <Button
+                              onClick={() => handleManualCheckin(sch)}
+                              className="shrink-0 bg-[#00B39D] hover:bg-[#00B39D]/80 text-white h-11 px-4 gap-1.5"
+                            >
+                              <Check className="h-5 w-5" />
+                              <span className="hidden sm:inline">Check-in</span>
+                            </Button>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </>
+                )}
+
+                {unscheduledMatches.length > 0 && (
+                  <>
+                    <p className="text-xs uppercase tracking-wider text-white/40 px-1 pt-3 pb-0.5">
+                      Nao escalado neste culto
+                    </p>
+                    {unscheduledMatches.map((p) => (
+                      <div
+                        key={p.id}
+                        className="min-h-[64px] flex items-center gap-3 p-3 rounded-xl bg-white/5 border border-white/10 hover:bg-white/10 transition-colors"
+                      >
+                        <div className="w-11 h-11 rounded-full bg-yellow-500/15 text-yellow-300 flex items-center justify-center font-bold text-lg shrink-0">
+                          {(p.full_name || '?').trim().charAt(0).toUpperCase()}
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <p className="font-semibold text-white truncate">{p.full_name}</p>
+                        </div>
+                        <span className="shrink-0 px-3 py-1 rounded-full text-xs font-medium border bg-yellow-500/20 text-yellow-300 border-yellow-500/30">
+                          Sem escala
+                        </span>
+                        <Button
+                          onClick={() => handleUnscheduledCheckin(p)}
+                          className="shrink-0 bg-[#00B39D] hover:bg-[#00B39D]/80 text-white h-11 px-4 gap-1.5"
+                        >
+                          <UserPlus className="h-5 w-5" />
+                          <span className="hidden sm:inline">Check-in sem escala</span>
+                        </Button>
+                      </div>
+                    ))}
+                  </>
+                )}
+              </>
             )}
           </div>
 
