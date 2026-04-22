@@ -99,27 +99,76 @@ async function fetchAllTeamMembers(baseUrl, serviceTypeId, planId, credentials) 
   return { data: allMembers, included: allIncluded, meta: { total_count: allMembers.length } };
 }
 
-// ── Future + recent past plans (deduplicated) ───────────────────────────────
+// ── Future + recent past plans (paginated by window) ──────────────────────
+// Janela ampla por padrão: próximos 60 dias + últimos 7 dias. Pagina por
+// `offset` até esgotar — assim service types movimentados (Kids, Domingo etc.)
+// não ficam limitados a 5 cultos futuros.
 async function fetchAllPlans(baseUrl, serviceTypeId, credentials) {
   const headers = { Authorization: `Basic ${credentials}` };
   const planMap = new Map();
 
-  const futureRes = await fetchWithRetry(`${baseUrl}/service_types/${serviceTypeId}/plans?filter=future&per_page=5`, headers);
-  if (futureRes.ok) {
-    const d = await futureRes.json();
-    for (const p of d.data || []) planMap.set(p.id, p);
+  const today = new Date();
+  const past = new Date(today.getTime() - 7 * 24 * 60 * 60 * 1000);
+  const future = new Date(today.getTime() + 60 * 24 * 60 * 60 * 1000);
+  const fmt = (d) => d.toISOString().slice(0, 10);
+
+  const perPage = 50;
+  let offset = 0;
+  let pageCount = 0;
+  while (true) {
+    const url = `${baseUrl}/service_types/${serviceTypeId}/plans?filter=after,before&after=${fmt(past)}&before=${fmt(future)}&per_page=${perPage}&offset=${offset}&order=sort_date`;
+    const res = await fetchWithRetry(url, headers);
+    if (!res || !res.ok) break;
+    const d = await res.json();
+    pageCount++;
+    const batch = d.data || [];
+    for (const p of batch) planMap.set(p.id, p);
+    if (batch.length < perPage || pageCount >= 20) break;
+    offset += perPage;
   }
 
-  const pastRes = await fetchWithRetry(`${baseUrl}/service_types/${serviceTypeId}/plans?filter=past&per_page=3&order=-sort_date`, headers);
-  if (pastRes.ok) {
-    const d = await pastRes.json();
-    const threeDaysAgo = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000);
-    for (const p of d.data || []) {
-      if (new Date(p.attributes.sort_date) >= threeDaysAgo) planMap.set(p.id, p);
+  // Fallback: se a janela não retornou nada (service type sem datas no range),
+  // ainda assim tenta pegar os próximos cultos via filter=future.
+  if (planMap.size === 0) {
+    const fr = await fetchWithRetry(`${baseUrl}/service_types/${serviceTypeId}/plans?filter=future&per_page=25`, headers);
+    if (fr && fr.ok) {
+      const d = await fr.json();
+      for (const p of d.data || []) planMap.set(p.id, p);
     }
   }
 
   return Array.from(planMap.values());
+}
+
+// ── Upsert resiliente de vol_schedules ─────────────────────────────────────
+// Tenta primeiro a constraint nova (4 colunas: service_id + person_id +
+// team_name + position_name). Se o banco ainda estiver com a constraint
+// antiga (apenas service_id + person_id), faz fallback automático para não
+// perder o sync. Mantém um cache de "modo" para não tentar a versão nova
+// múltiplas vezes na mesma execução depois de detectar incompatibilidade.
+let _scheduleUpsertMode = 'auto'; // 'auto' | 'new' | 'legacy'
+async function upsertScheduleResilient(supabase, schedule) {
+  const tryNew = async () => supabase
+    .from('vol_schedules')
+    .upsert(schedule, { onConflict: 'service_id,planning_center_person_id,team_name,position_name' });
+  const tryLegacy = async () => supabase
+    .from('vol_schedules')
+    .upsert(schedule, { onConflict: 'service_id,planning_center_person_id' });
+
+  if (_scheduleUpsertMode === 'legacy') return tryLegacy();
+  if (_scheduleUpsertMode === 'new') return tryNew();
+
+  const r = await tryNew();
+  if (!r.error) { _scheduleUpsertMode = 'new'; return r; }
+  // Erros típicos quando a constraint nova não existe:
+  //   "no unique or exclusion constraint matching the ON CONFLICT specification"
+  const msg = (r.error.message || '').toLowerCase();
+  if (msg.includes('on conflict') || msg.includes('unique') || msg.includes('exclusion')) {
+    console.warn('[PC] Constraint nova de vol_schedules ausente — usando fallback legado.');
+    _scheduleUpsertMode = 'legacy';
+    return tryLegacy();
+  }
+  return r;
 }
 
 // ── Historical plans in a date range ────────────────────────────────────────
@@ -330,12 +379,12 @@ async function processServiceType(supabase, serviceType, plans, credentials) {
     }
 
     const schedulesToUpsert = Array.from(scheduleMap.values());
+    let okCount = 0;
+    let failCount = 0;
     for (const schedule of schedulesToUpsert) {
-      const { error } = await supabase
-        .from('vol_schedules')
-        .upsert(schedule, { onConflict: 'service_id,planning_center_person_id,team_name,position_name' });
-      if (!error) typeSchedules++;
-      else console.error('[PC] upsert schedule error:', error.message);
+      const { error } = await upsertScheduleResilient(supabase, schedule);
+      if (!error) { typeSchedules++; okCount++; }
+      else { failCount++; console.error('[PC] upsert schedule error:', error.message); }
 
       // Acumula atribuições de equipe para Opção A (vincular voluntários a teams)
       const personId = schedule.planning_center_person_id;
@@ -344,6 +393,10 @@ async function processServiceType(supabase, serviceType, plans, credentials) {
         memberTeamMap.get(personId).add(schedule.team_name.trim());
       }
     }
+    console.log(`[PC] ${serviceTypeName} | plan=${plan.id} | members=${teamData.data.length} | schedules ok=${okCount} fail=${failCount}`);
+  }
+
+  console.log(`[PC] ► ${serviceType.attributes.name}: plans=${plans.length} services=${typeServices} schedules=${typeSchedules} membersFound=${typeMembersFound} membersProcessed=${typeMembersProcessed}`);
   }
 
   // Opção A: atribui voluntários às equipes com base nas escalas sincronizadas
