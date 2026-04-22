@@ -26,6 +26,31 @@ function mascaraTelefone(v) {
   return `(${d.slice(0, 2)}) ${d.slice(2, 7)}-${d.slice(7)}`;
 }
 
+function mascaraCep(v) {
+  const d = soDigitos(v).slice(0, 8);
+  if (d.length <= 5) return d;
+  return `${d.slice(0, 5)}-${d.slice(5)}`;
+}
+
+async function buscarCep(cep) {
+  const d = soDigitos(cep);
+  if (d.length !== 8) return null;
+  try {
+    const res = await fetch(`https://viacep.com.br/ws/${d}/json/`);
+    if (!res.ok) return null;
+    const data = await res.json();
+    if (data?.erro) return null;
+    return {
+      logradouro: data.logradouro || '',
+      bairro: data.bairro || '',
+      cidade: data.localidade || '',
+      uf: data.uf || '',
+    };
+  } catch {
+    return null;
+  }
+}
+
 function cpfValido(v) {
   const d = soDigitos(v);
   if (d.length !== 11) return false;
@@ -241,6 +266,25 @@ export default function CadastroMembresia() {
 
   const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
   const setMasked = (k, mask) => (e) => setForm((f) => ({ ...f, [k]: mask(e.target.value) }));
+
+  const [cepBuscando, setCepBuscando] = useState(false);
+  const handleCepChange = async (e) => {
+    const masked = mascaraCep(e.target.value);
+    setForm((f) => ({ ...f, cep: masked }));
+    if (soDigitos(masked).length === 8) {
+      setCepBuscando(true);
+      const result = await buscarCep(masked);
+      setCepBuscando(false);
+      if (result) {
+        setForm((f) => ({
+          ...f,
+          endereco: result.logradouro && !f.endereco ? result.logradouro : f.endereco,
+          bairro: result.bairro || f.bairro,
+          cidade: result.cidade || f.cidade,
+        }));
+      }
+    }
+  };
 
   const [fotoDragOver, setFotoDragOver] = useState(false);
 
@@ -640,12 +684,12 @@ export default function CadastroMembresia() {
               {currentStep === 2 && (
                 <div>
                   <SectionTitle>Endereço</SectionTitle>
+                  <Field id="cep" label={cepBuscando ? 'CEP (buscando...)' : 'CEP'} value={form.cep} onChange={handleCepChange} autoComplete="postal-code" inputMode="numeric" maxLength={9} />
                   <Field id="endereco" label="Endereço (rua e número)" value={form.endereco} onChange={set('endereco')} autoComplete="street-address" maxLength={200} />
                   <Row>
                     <Field id="bairro" label="Bairro" value={form.bairro} onChange={set('bairro')} maxLength={80} />
                     <Field id="cidade" label="Cidade" value={form.cidade} onChange={set('cidade')} maxLength={80} />
                   </Row>
-                  <Field id="cep" label="CEP" value={form.cep} onChange={set('cep')} autoComplete="postal-code" maxLength={12} />
                 </div>
               )}
 

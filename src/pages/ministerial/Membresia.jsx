@@ -105,6 +105,33 @@ function fmtMoeda(v) {
   return (Number(v) || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 }
 
+function soDigitosCep(v) { return (v || '').toString().replace(/\D+/g, ''); }
+
+function mascaraCep(v) {
+  const d = soDigitosCep(v).slice(0, 8);
+  if (d.length <= 5) return d;
+  return `${d.slice(0, 5)}-${d.slice(5)}`;
+}
+
+async function buscarCep(cep) {
+  const d = soDigitosCep(cep);
+  if (d.length !== 8) return null;
+  try {
+    const res = await fetch(`https://viacep.com.br/ws/${d}/json/`);
+    if (!res.ok) return null;
+    const data = await res.json();
+    if (data?.erro) return null;
+    return {
+      logradouro: data.logradouro || '',
+      bairro: data.bairro || '',
+      cidade: data.localidade || '',
+      uf: data.uf || '',
+    };
+  } catch {
+    return null;
+  }
+}
+
 const EMPTY_FORM = {
   nome: '', sobrenome: '', cpf: '', email: '', telefone: '', data_nascimento: '', estado_civil: '',
   endereco: '', bairro: '', cidade: '', cep: '', profissao: '',
@@ -272,6 +299,25 @@ function MembroFormModal({ open, onOpenChange, editData, familias, onSaved }) {
   }, [editData, open]);
 
   const set = (k, v) => setForm(prev => ({ ...prev, [k]: v }));
+
+  const [cepBuscando, setCepBuscando] = useState(false);
+  const handleCepChange = async (value) => {
+    const masked = mascaraCep(value);
+    setForm(prev => ({ ...prev, cep: masked }));
+    if (soDigitosCep(masked).length === 8) {
+      setCepBuscando(true);
+      const result = await buscarCep(masked);
+      setCepBuscando(false);
+      if (result) {
+        setForm(prev => ({
+          ...prev,
+          endereco: result.logradouro && !prev.endereco ? result.logradouro : prev.endereco,
+          bairro: result.bairro || prev.bairro,
+          cidade: result.cidade || prev.cidade,
+        }));
+      }
+    }
+  };
 
   const handleFotoSelect = (e) => {
     const file = e.target.files?.[0];
@@ -462,6 +508,17 @@ function MembroFormModal({ open, onOpenChange, editData, familias, onSaved }) {
           {/* Step 2: Endereço e Profissão */}
           {currentStep === 1 && (
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div className="space-y-1.5">
+                <Label>CEP {cepBuscando && <span className="text-xs text-muted-foreground">(buscando...)</span>}</Label>
+                <Input
+                  value={form.cep}
+                  onChange={e => handleCepChange(e.target.value)}
+                  placeholder="00000-000"
+                  inputMode="numeric"
+                  maxLength={9}
+                  autoComplete="postal-code"
+                />
+              </div>
               <div className="sm:col-span-2 space-y-1.5">
                 <Label>Endereço</Label>
                 <Input value={form.endereco} onChange={e => set('endereco', e.target.value)} placeholder="Rua, número" />
@@ -473,10 +530,6 @@ function MembroFormModal({ open, onOpenChange, editData, familias, onSaved }) {
               <div className="space-y-1.5">
                 <Label>Cidade</Label>
                 <Input value={form.cidade} onChange={e => set('cidade', e.target.value)} />
-              </div>
-              <div className="space-y-1.5">
-                <Label>CEP</Label>
-                <Input value={form.cep} onChange={e => set('cep', e.target.value)} placeholder="00000-000" />
               </div>
               <div className="space-y-1.5">
                 <Label>Profissão</Label>
