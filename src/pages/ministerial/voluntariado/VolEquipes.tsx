@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -52,54 +52,60 @@ export default function VolEquipes() {
           </CardContent>
         </Card>
       ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          {teams.map(team => (
-            <Card
-              key={team.id}
-              className="cursor-pointer transition-all hover:shadow-md hover:ring-2 hover:ring-primary/40"
-              onClick={() => setSelectedTeamId(team.id)}
-            >
-              <CardHeader className="pb-2">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    {team.color && (
-                      <div className="h-3 w-3 rounded-full shrink-0" style={{ backgroundColor: team.color }} />
+        <div className="rounded-lg border bg-card divide-y">
+          {teams.map(team => {
+            const memberCount = team.members?.length ?? 0;
+            const positionCount = team.positions?.length ?? 0;
+            return (
+              <div
+                key={team.id}
+                role="button"
+                tabIndex={0}
+                className="flex items-center gap-3 px-4 py-3 hover:bg-accent/40 cursor-pointer transition-colors"
+                onClick={() => setSelectedTeamId(team.id)}
+                onKeyDown={e => { if (e.key === 'Enter') setSelectedTeamId(team.id); }}
+              >
+                <div
+                  className="h-2.5 w-2.5 rounded-full shrink-0"
+                  style={{ backgroundColor: team.color || '#737373' }}
+                />
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <p className="text-sm font-medium truncate">{team.name}</p>
+                    {!team.is_active && (
+                      <Badge variant="outline" className="text-[10px] px-1.5 py-0">Inativa</Badge>
                     )}
-                    <CardTitle className="text-base">{team.name}</CardTitle>
                   </div>
-                  <div className="flex gap-1">
-                    <Button
-                      variant="ghost" size="icon" className="h-7 w-7"
-                      onClick={e => { e.stopPropagation(); setEditTeam(team); }}
-                    >
-                      <Edit2 className="h-3.5 w-3.5" />
-                    </Button>
-                  </div>
+                  {team.leader && (
+                    <p className="text-xs text-muted-foreground truncate">
+                      Lider: {team.leader.full_name}
+                    </p>
+                  )}
                 </div>
-              </CardHeader>
-              <CardContent className="pt-0">
-                {team.description && <p className="text-sm text-muted-foreground mb-2">{team.description}</p>}
-                <div className="flex items-center gap-4 text-sm text-muted-foreground">
-                  <span className="flex items-center gap-1">
+                <div className="flex items-center gap-4 text-xs text-muted-foreground shrink-0">
+                  <span className="flex items-center gap-1" title="Membros">
                     <Users className="h-3.5 w-3.5" />
-                    {team.members?.[0]?.count ?? 0} membros
+                    {memberCount}
                   </span>
-                  {team.positions && team.positions.length > 0 && (
-                    <span className="flex items-center gap-1">
+                  {positionCount > 0 && (
+                    <span className="hidden sm:flex items-center gap-1" title="Posicoes">
                       <Briefcase className="h-3.5 w-3.5" />
-                      {team.positions.length} posicoes
+                      {positionCount}
                     </span>
                   )}
                 </div>
-                {team.leader && (
-                  <p className="text-xs text-muted-foreground mt-2">
-                    Lider: {team.leader.full_name}
-                  </p>
-                )}
-                {!team.is_active && <Badge variant="outline" className="mt-2 text-xs">Inativa</Badge>}
-              </CardContent>
-            </Card>
-          ))}
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-8 w-8 shrink-0"
+                  onClick={e => { e.stopPropagation(); setEditTeam(team); }}
+                  title="Editar equipe"
+                >
+                  <Edit2 className="h-3.5 w-3.5" />
+                </Button>
+              </div>
+            );
+          })}
         </div>
       )}
 
