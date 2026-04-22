@@ -32,16 +32,18 @@ export default function MandalaCultura() {
   const [error, setError] = useState(null);
   const [openPetal, setOpenPetal] = useState(null);
 
+  const [reloadKey, setReloadKey] = useState(0);
+
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
     setError(null);
     kpis.cultura(mes)
       .then((r) => { if (!cancelled) setData(r); })
-      .catch((e) => { if (!cancelled) setError(e.message || 'Erro ao carregar'); })
+      .catch((e) => { if (!cancelled) setError(e?.message || 'Não foi possível carregar a Mandala.'); })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
-  }, [mes]);
+  }, [mes, reloadKey]);
 
   return (
     <Card className="p-5 md:p-6 overflow-hidden">
