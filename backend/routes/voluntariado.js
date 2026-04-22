@@ -761,11 +761,30 @@ router.get('/volunteers-pool', async (req, res) => {
 // ══════════════════════════════════════════════════════════════
 // SERVICES
 // ══════════════════════════════════════════════════════════════
+// Anexa scheduled_count em cada culto consultando vol_schedules de uma vez.
+async function attachScheduledCount(services) {
+  if (!services || services.length === 0) return services || [];
+  const ids = services.map(s => s.id);
+  try {
+    const { data: counts } = await supabase
+      .from('vol_schedules')
+      .select('service_id')
+      .in('service_id', ids);
+    const countMap = (counts || []).reduce((acc, r) => {
+      acc[r.service_id] = (acc[r.service_id] || 0) + 1;
+      return acc;
+    }, {});
+    return services.map(s => ({ ...s, scheduled_count: countMap[s.id] || 0 }));
+  } catch {
+    return services.map(s => ({ ...s, scheduled_count: 0 }));
+  }
+}
+
 router.get('/services', async (req, res) => {
   try {
     const { data, error } = await supabase.from('vol_services').select('*').order('scheduled_at', { ascending: true });
     if (error) return res.status(400).json({ error: error.message });
-    res.json(data);
+    res.json(await attachScheduledCount(data));
   } catch (e) { res.status(500).json({ error: 'Erro ao listar cultos' }); }
 });
 
@@ -774,7 +793,7 @@ router.get('/services/upcoming', async (req, res) => {
     const { data, error } = await supabase.from('vol_services').select('*')
       .gte('scheduled_at', new Date().toISOString()).order('scheduled_at').limit(10);
     if (error) return res.status(400).json({ error: error.message });
-    res.json(data);
+    res.json(await attachScheduledCount(data));
   } catch (e) { res.status(500).json({ error: 'Erro ao listar proximos cultos' }); }
 });
 
@@ -790,7 +809,7 @@ router.get('/services/today', async (req, res) => {
     const { data, error } = await supabase.from('vol_services').select('*')
       .gte('scheduled_at', start).lte('scheduled_at', end).order('scheduled_at');
     if (error) return res.status(400).json({ error: error.message });
-    res.json(data);
+    res.json(await attachScheduledCount(data));
   } catch (e) { res.status(500).json({ error: 'Erro ao listar cultos de hoje' }); }
 });
 
