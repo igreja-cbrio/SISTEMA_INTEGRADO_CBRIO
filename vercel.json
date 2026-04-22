@@ -15,7 +15,7 @@
     },
     {
       "path": "/api/cerebro/sync-erp",
-      "schedule": "*/15 * * * *"
+      "schedule": "30 3 * * *"
     },
     {
       "path": "/api/kpis/youtube/sync",
