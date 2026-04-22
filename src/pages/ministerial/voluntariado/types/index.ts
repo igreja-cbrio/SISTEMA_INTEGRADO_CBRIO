@@ -142,7 +142,7 @@ export interface VolTeam {
   updated_at: string;
   leader?: { id: string; full_name: string; avatar_url: string | null } | null;
   positions?: VolPosition[];
-  members?: { count: number }[];
+  members?: { id: string }[];
 }
 
 export interface VolPosition {

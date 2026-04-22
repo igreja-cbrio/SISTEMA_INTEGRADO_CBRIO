@@ -687,8 +687,7 @@ router.get('/waiting-allocation', async (req, res) => {
     const { data, error } = await supabase
       .from('vol_profiles')
       .select(`
-        id, full_name, email, cpf, avatar_url, origem, created_at,
-        membro:mem_membros!membresia_id(id, nome, status),
+        id, full_name, email, cpf, avatar_url, origem, membresia_id, created_at,
         team_members:vol_team_members(id, team:vol_teams(id, name, color))
       `)
       .eq('allocation_status', 'waiting_allocation')
@@ -705,8 +704,12 @@ router.post('/allocate/:id', async (req, res) => {
     const { team_id, position_id } = req.body;
     if (!team_id) return res.status(400).json({ error: 'team_id obrigatorio' });
 
-    // Verify vol_profile exists
-    const { data: vol } = await supabase.from('vol_profiles').select('id').eq('id', id).maybeSingle();
+    // Verify vol_profile exists and get name (required by vol_team_members.volunteer_name NOT NULL)
+    const { data: vol } = await supabase
+      .from('vol_profiles')
+      .select('id, full_name, planning_center_id')
+      .eq('id', id)
+      .maybeSingle();
     if (!vol) return res.status(404).json({ error: 'Voluntario nao encontrado' });
 
     // Add to team (upsert to avoid duplicate)
@@ -715,6 +718,8 @@ router.post('/allocate/:id', async (req, res) => {
         volunteer_profile_id: id,
         team_id,
         position_id: position_id || null,
+        volunteer_name: vol.full_name || 'Sem nome',
+        planning_center_person_id: vol.planning_center_id || null,
       }, { onConflict: 'volunteer_profile_id,team_id', ignoreDuplicates: false });
     if (tmErr) return res.status(400).json({ error: tmErr.message });
 
@@ -1343,7 +1348,7 @@ router.delete('/services/:id', async (req, res) => {
 router.get('/teams-manage', async (req, res) => {
   try {
     const { data, error } = await supabase.from('vol_teams')
-      .select('*, leader:vol_profiles!vol_teams_leader_profile_id_fkey(id, full_name, avatar_url), positions:vol_positions(*), members:vol_team_members!team_id(count)')
+      .select('*, leader:vol_profiles!vol_teams_leader_profile_id_fkey(id, full_name, avatar_url), positions:vol_positions(*), members:vol_team_members!team_id(id)')
       .order('sort_order').order('name');
     if (error) return res.status(400).json({ error: error.message });
     res.json(data);
