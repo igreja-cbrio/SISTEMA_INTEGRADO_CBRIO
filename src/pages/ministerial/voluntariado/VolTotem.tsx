@@ -395,6 +395,19 @@ export default function VolTotem() {
     );
   });
 
+  const scheduledIds = new Set(
+    schedules.map(s => s.volunteer_id).filter(Boolean) as string[]
+  );
+  const unscheduledMatches = manualSearch.trim()
+    ? allProfiles
+        .filter(p =>
+          p?.id &&
+          !scheduledIds.has(p.id) &&
+          normalize(p.full_name || '').includes(normalize(manualSearch))
+        )
+        .slice(0, 20)
+    : [];
+
   const statusBadge = (s: VolSchedule) => {
     if (s.check_in) return { label: 'Presente', cls: 'bg-green-500/20 text-green-300 border-green-500/30' };
     if (s.confirmation_status === 'declined') return { label: 'Recusou', cls: 'bg-red-500/20 text-red-300 border-red-500/30' };
