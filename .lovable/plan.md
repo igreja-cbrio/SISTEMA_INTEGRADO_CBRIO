@@ -1,150 +1,78 @@
 
 
-# Mandala Cultura CBRio — Home interativa com 5 valores
+# Modo Manual no Totem do Voluntariado
 
-Substituir a Home atual por uma **mandala animada** que reflete os 5 valores da cultura CBRio em tempo real, com filtro por mês. KPIs e notificações continuam abaixo, atalhos preservados na parte inferior.
+Adicionar uma quarta aba **"Manual"** ao totem (`VolTotem.tsx`) onde o voluntário busca o próprio nome na lista de escalados do culto e faz o check-in com um toque.
 
-## Layout final da Home
+## Onde entra
+
+Tela `/voluntariado/totem` (`src/pages/ministerial/voluntariado/VolTotem.tsx`) — junto das opções **QR Code**, **Facial** e **QR Fixo**.
 
 ```
-┌───────────────────────────────────────────────┐
-│   Saudação + filtro de mês [▼ Abril 2026]    │
-│                                                │
-│         ╭─────────────────────╮               │
-│      ╱ Seguir   Conectar  Generosidade ╲      │
-│     ╱  Jesus    Pessoas              ╲       │
-│    │     ╲   Investir Tempo  ╱          │     │
-│    │       ╲     com Deus  ╱            │     │
-│    │         ╲   Servir   ╱             │     │
-│    │           ╲ Comunidade             │     │
-│    │              ┌──────┐              │     │
-│    │              │1.704 │ DECISÕES     │     │
-│    │              └──────┘              │     │
-│     ╲                                  ╱      │
-│       ╲────────────────────────────╱         │
-│                                                │
-│   [Acesso Rápido — atalhos atuais]           │
-│   [Atividade Recente — notificações]         │
-└───────────────────────────────────────────────┘
+[ QR Code ] [ Facial ] [ QR Fixo ] [ Manual ]   ← nova
 ```
 
-## Os 5 valores (cálculo, fonte de dados)
+## Comportamento da nova aba
 
-Filtro: **mês selecionado** (default = mês atual).
+1. Ao selecionar "Manual", carrega `voluntariado.schedules.list({ service_id })` do culto já escolhido.
+2. Mostra um **campo de busca grande** (autofocus, friendly para tela touch) + lista rolável de escalados:
+   - Avatar/inicial + nome do voluntário
+   - Equipe — Posição (subtexto)
+   - Badge de status: **Presente** (verde, sem botão), **Pendente** (amarelo), **Recusou** (vermelho), **Escalado** (azul)
+   - Botão grande **"Check-in"** à direita para quem ainda não fez.
+3. Filtro local por nome/equipe (`includes` case-insensitive, sem acento).
+4. Ao tocar **Check-in**:
+   - Chama `voluntariado.checkIns.create({ schedule_id, volunteer_id, service_id, method: 'manual' })`
+   - Dispara a tela de sucesso já existente (`state = 'success'`, mesmo overlay verde grande do totem) com nome/equipe/posição.
+   - Após o auto-reset (4s) volta para a lista atualizada.
+5. Tratamento de erro reaproveita `handleCheckinError` (duplicado vira tela "Já fez check-in").
+6. Botão **"Trocar culto"** no rodapé, igual aos outros modos.
 
-| Pétala | Métrica | Fórmula | Fonte |
-|---|---|---|---|
-| **Seguir a Jesus** | Frequência média semanal | • Presencial: SUM(presencial_adulto + presencial_kids) ÷ semanas do mês<br/>• Online (DS): SUM(online_ds) ÷ semanas do mês | `cultos` (mês selecionado) |
-| **Conectar-se com Pessoas** | Pessoas em grupos | COUNT(membros ativos em mem_grupo_membros, saiu_em IS NULL) | `mem_grupo_membros` |
-| **Investir tempo com Deus** | Views diárias médias do PENSE | SUM(views) dos vídeos PENSE no mês ÷ dias do mês | `pense_videos` (nova) |
-| **Servir em Comunidade** | Voluntários ativos últimos 3 meses | COUNT DISTINCT volunteer_id em vol_check_ins onde checkin_at ≥ hoje–90d | `vol_check_ins` |
-| **Generosidade** | Ofertantes + Dizimistas do mês | Lançamento mensal manual (qtd_ofertantes, qtd_dizimistas) | `cultura_mensal` (nova) |
-| **Centro: Decisões** | SUM(decisoes_presenciais + decisoes_online) do mês | `cultos` |
+## Mudanças de código
 
-## Mudanças no banco (SQL para SQL Editor — produção CBRio)
+**`src/pages/ministerial/voluntariado/VolTotem.tsx`** (único arquivo alterado):
 
-```sql
--- 1. Tabela para vídeos do PENSE (cron coleta views via YouTube API)
-CREATE TABLE IF NOT EXISTS public.pense_videos (
-  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  video_id text NOT NULL UNIQUE,
-  titulo text,
-  data_publicacao date NOT NULL,
-  views int NOT NULL DEFAULT 0,
-  views_atualizado_em timestamptz,
-  ativo boolean NOT NULL DEFAULT true,
-  created_at timestamptz NOT NULL DEFAULT now(),
-  created_by uuid REFERENCES auth.users(id)
-);
-CREATE INDEX idx_pense_data ON public.pense_videos(data_publicacao);
-ALTER TABLE public.pense_videos ENABLE ROW LEVEL SECURITY;
-CREATE POLICY pense_select ON public.pense_videos FOR SELECT TO authenticated USING (true);
-CREATE POLICY pense_write  ON public.pense_videos FOR ALL    TO authenticated USING (true) WITH CHECK (true);
-
--- 2. Lançamento mensal de generosidade (entrada manual)
-CREATE TABLE IF NOT EXISTS public.cultura_mensal (
-  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  mes date NOT NULL UNIQUE,           -- sempre dia 01
-  qtd_ofertantes int NOT NULL DEFAULT 0,
-  qtd_dizimistas int NOT NULL DEFAULT 0,
-  observacoes text,
-  updated_at timestamptz NOT NULL DEFAULT now(),
-  updated_by uuid REFERENCES auth.users(id)
-);
-ALTER TABLE public.cultura_mensal ENABLE ROW LEVEL SECURITY;
-CREATE POLICY cultura_select ON public.cultura_mensal FOR SELECT TO authenticated USING (true);
-CREATE POLICY cultura_write  ON public.cultura_mensal FOR ALL    TO authenticated USING (true) WITH CHECK (true);
-
--- 3. Registrar módulo no painel de notificações (opcional)
-INSERT INTO public.modulos (nome, ativo) VALUES ('Cultura', true) ON CONFLICT DO NOTHING;
-```
-
-## Backend — novo endpoint
-
-**`backend/routes/kpis.js`** — adicionar:
-
-- **GET `/api/kpis/cultura?mes=YYYY-MM`** — retorna JSON consolidado:
-  ```json
-  {
-    "mes": "2026-04",
-    "semanas_no_mes": 4,
-    "dias_no_mes": 30,
-    "seguir_jesus": { "presencial": 2362, "online": 5997 },
-    "conectar_pessoas": 1090,
-    "investir_deus": 8365,
-    "servir_comunidade": 523,
-    "generosidade": { "dizimistas": 867, "ofertantes": 1103 },
-    "decisoes": 1704
-  }
-  ```
-- **POST/PUT `/api/kpis/cultura/mensal`** — upsert em `cultura_mensal` (ofertantes, dizimistas).
-- **GET/POST/DELETE `/api/kpis/cultura/pense`** — CRUD básico de vídeos PENSE.
-- **POST `/api/kpis/cultura/pense/sync`** — cron diário usa YOUTUBE_API_KEY existente para atualizar `views` de cada vídeo.
-
-Cálculo de "semanas no mês" = ceil(dias / 7). Dias = total de dias do mês.
-
-## Frontend — componentes novos
-
-1. **`src/pages/Index.tsx`** — substituir placeholder; rota `/dashboard` permanece em `Dashboard.jsx` mas vamos importar a Mandala lá no topo.
-
-2. **`src/pages/Dashboard.jsx`** — adicionar `<MandalaCultura />` antes da seção "Visão Geral". Manter KPIs e notificações.
-
-3. **Novos arquivos**:
-   - `src/components/cultura/MandalaCultura.jsx` — orquestrador com filtro de mês, fetch via `kpis.cultura(mes)`.
-   - `src/components/cultura/MandalaSVG.jsx` — SVG da semicírculo com 5 pétalas, animações framer-motion (fade-in escalonado, hover-scale, contador animado via `number-ticker.tsx` existente, ripple no centro).
-   - `src/components/cultura/PetalDetailDialog.jsx` — ao clicar em uma pétala, abre Dialog mostrando breakdown (ex.: "Presencial 2.362 / Online 5.997 / 4 semanas").
-   - `src/pages/admin/CulturaMensal.jsx` — formulário em `/admin/cultura` para lançar ofertantes/dizimistas e gerenciar vídeos PENSE.
-
-4. **`src/api.js`** — adicionar em `kpis`:
-   ```js
-   cultura: (mes) => get(`/kpis/cultura?mes=${mes}`),
-   culturaMensalUpsert: (data) => post('/kpis/cultura/mensal', data),
-   pense: { list, create, remove, sync }
+1. Importar `Hand` (lucide) e tipo `VolSchedule`.
+2. Adicionar `'manual'` ao tipo `CheckinMode`.
+3. Adicionar à `MODE_OPTIONS`: `{ key: 'manual', label: 'Manual', icon: Hand, desc: 'Buscar na lista' }`.
+4. Estados novos:
+   ```ts
+   const [schedules, setSchedules] = useState<VolSchedule[]>([]);
+   const [manualSearch, setManualSearch] = useState('');
+   const [manualLoading, setManualLoading] = useState(false);
    ```
+5. Em `startMode('manual')`: chamar `loadSchedules()` que faz `voluntariado.schedules.list({ service_id: selectedServiceId })` e popula `schedules`.
+6. Função `handleManualCheckin(sch: VolSchedule)`:
+   ```ts
+   processingRef.current = true;
+   try {
+     await voluntariado.checkIns.create({
+       schedule_id: sch.id,
+       volunteer_id: sch.volunteer_id,
+       service_id: selectedServiceId,
+       method: 'manual',
+     });
+     setResult({ name: sch.volunteer_name, team: sch.team_name, position: sch.position_name });
+     setState('success');
+     autoReset(() => loadSchedules());
+   } catch (err) {
+     handleCheckinError(err, () => loadSchedules());
+   }
+   ```
+7. Bloco JSX novo (mesma condição visual dos outros modos):
+   - Campo de busca em fundo escuro (`bg-white/5`, texto branco, altura 56px).
+   - Lista `max-h-[60vh] overflow-y-auto` com cards de 64px de altura mínima (touch-friendly).
+   - Cores seguindo o tema escuro do totem (`bg-white/5`, hover `bg-white/10`, border `white/10`, primária `#00B39D`).
+   - Empty state se a busca não retornar nada.
+   - Skeleton durante `manualLoading`.
 
-5. **`src/App.tsx`** — registrar rota `/admin/cultura` (admin/diretor).
+## Sem mudanças
 
-## Design — Mandala interativa
+- Backend, banco de dados, API client (`voluntariado.schedules.list` e `voluntariado.checkIns.create` já existem).
+- Demais modos do totem (QR/Facial/QR Fixo) ficam intactos.
+- Tela `VolCheckin.tsx` (manual interno do gestor) também permanece.
 
-- **Forma**: meio-círculo (igual print) usando 5 setores SVG (`<path>` em arco). 3 pétalas verdes/teal (#00B39D — Conectar/Investir/Servir), 2 azuis (#3B82F6 — Seguir/Generosidade). Centro grande branco com "Decisões".
-- **Animações**:
-  - Entrada: cada pétala faz `scale-in` + `fade-in` em cascata (delay 80ms).
-  - Hover: pétala expande 1.05x, sombra suave; cursor pointer.
-  - Números: `<NumberTicker>` (já existente) anima de 0 → valor.
-  - Troca de mês: pétalas dão fade-out → novo fetch → fade-in com novos números.
-  - Centro: pulso sutil contínuo (animate-pulse no contorno).
-- **Filtro de mês**: Select shadcn (`__current__` como default) com últimos 12 meses; ao mudar, refetch.
-- **Responsivo**: mobile vira layout vertical (stack de cards) com mesma identidade visual.
-- **Loading**: skeleton pulsante na forma de meio-círculo.
-- **Empty state**: se `cultura_mensal` ou `pense_videos` vazio, pétala mostra "—" + tooltip "Configure em /admin/cultura".
+## Risco
 
-## Fluxo de execução (após aprovação)
-
-1. **PR 1 — Schema + backend**: SQL manual + endpoint `/api/kpis/cultura` + cron PENSE.
-2. **PR 2 — Mandala UI**: componentes Mandala* + integração no Dashboard.
-3. **PR 3 — Admin Cultura**: tela `/admin/cultura` para inputs manuais + lista PENSE.
-
-Pendências para confirmar antes do PR 1:
-- Você me passa o **link/IDs do canal ou playlist do PENSE** para eu cadastrar os primeiros vídeos no admin (ou já me autoriza a deixar o cadastro 100% manual via interface).
-- Confirma que o módulo `Cultura` (admin) deve ficar visível só para admin/diretor.
+Mínimo — só adiciona uma aba opcional. Se o endpoint de schedules retornar vazio (culto sem escala), exibimos mensagem clara: *"Nenhum voluntário escalado para este culto"*.
 
