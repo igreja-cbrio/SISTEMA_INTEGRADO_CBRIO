@@ -57,6 +57,27 @@ async function fetchWithRetry(url, headers, maxRetries = 3) {
   return lastResponse;
 }
 
+// ── Paginated service types ─────────────────────────────────────────────────
+async function fetchAllServiceTypes(credentials) {
+  const headers = { Authorization: `Basic ${credentials}` };
+  const all = [];
+  let offset = 0;
+  const perPage = 100;
+  while (true) {
+    const url = `${PC_SERVICES_BASE}/service_types?per_page=${perPage}&offset=${offset}`;
+    const response = await fetchWithRetry(url, headers);
+    if (!response || !response.ok) break;
+    const data = await response.json();
+    const batch = data.data || [];
+    all.push(...batch);
+    if (batch.length < perPage) break;
+    offset += perPage;
+    if (offset > 5000) break; // safety
+  }
+  console.log(`[PC] Found ${all.length} service types (after pagination)`);
+  return all;
+}
+
 // ── Paginated team members ──────────────────────────────────────────────────
 async function fetchAllTeamMembers(baseUrl, serviceTypeId, planId, credentials) {
   const allMembers = [];
@@ -539,6 +560,7 @@ module.exports = {
   PC_PEOPLE_BASE,
   getPCCredentials,
   fetchWithRetry,
+  fetchAllServiceTypes,
   fetchAllTeamMembers,
   fetchAllPlans,
   fetchPlansInRange,
