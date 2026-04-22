@@ -99,6 +99,8 @@ export default function VolTotem() {
       startFacial();
     } else if (mode === 'qr_fixo') {
       loadFixedQr();
+    } else if (mode === 'manual') {
+      loadSchedules();
     }
   };
 
