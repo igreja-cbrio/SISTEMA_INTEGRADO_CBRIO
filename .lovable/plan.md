@@ -1,162 +1,150 @@
 
 
-## Módulo Cuidados — implementação v1
+# Mandala Cultura CBRio — Home interativa com 5 valores
 
-Página nova em `/ministerial/cuidados` com dashboard, registros de atendimento, Jornada 180, convertidos pós-culto e sincronização automática com KPIs e Membresia.
+Substituir a Home atual por uma **mandala animada** que reflete os 5 valores da cultura CBRio em tempo real, com filtro por mês. KPIs e notificações continuam abaixo, atalhos preservados na parte inferior.
 
-### Princípios
-- **Confidencialidade híbrida**: nomes apenas para Pessoas Acompanhadas, Jornada 180 e Convertidos. Aconselhamentos e Capelania = só contagens agregadas (campos numéricos).
-- **Sincronização com Membresia por CPF**: ao registrar pessoa, se CPF já existe em `mem_membros`, vincula automaticamente (nada de duplicar). Caso contrário, oferece "Criar novo membro" no mesmo formulário.
-- **Sincronização com KPIs**: cada registro alimenta as métricas mensais consumidas pela aba Cuidados em `/kpis` e pelo card no `/dashboard`.
-- **Permissão**: nova chave `canCuidados` baseada em módulo "Cuidados" + admin/diretor.
+## Layout final da Home
 
-### Schema (SQL para rodar no SQL Editor)
+```
+┌───────────────────────────────────────────────┐
+│   Saudação + filtro de mês [▼ Abril 2026]    │
+│                                                │
+│         ╭─────────────────────╮               │
+│      ╱ Seguir   Conectar  Generosidade ╲      │
+│     ╱  Jesus    Pessoas              ╲       │
+│    │     ╲   Investir Tempo  ╱          │     │
+│    │       ╲     com Deus  ╱            │     │
+│    │         ╲   Servir   ╱             │     │
+│    │           ╲ Comunidade             │     │
+│    │              ┌──────┐              │     │
+│    │              │1.704 │ DECISÕES     │     │
+│    │              └──────┘              │     │
+│     ╲                                  ╱      │
+│       ╲────────────────────────────╱         │
+│                                                │
+│   [Acesso Rápido — atalhos atuais]           │
+│   [Atividade Recente — notificações]         │
+└───────────────────────────────────────────────┘
+```
+
+## Os 5 valores (cálculo, fonte de dados)
+
+Filtro: **mês selecionado** (default = mês atual).
+
+| Pétala | Métrica | Fórmula | Fonte |
+|---|---|---|---|
+| **Seguir a Jesus** | Frequência média semanal | • Presencial: SUM(presencial_adulto + presencial_kids) ÷ semanas do mês<br/>• Online (DS): SUM(online_ds) ÷ semanas do mês | `cultos` (mês selecionado) |
+| **Conectar-se com Pessoas** | Pessoas em grupos | COUNT(membros ativos em mem_grupo_membros, saiu_em IS NULL) | `mem_grupo_membros` |
+| **Investir tempo com Deus** | Views diárias médias do PENSE | SUM(views) dos vídeos PENSE no mês ÷ dias do mês | `pense_videos` (nova) |
+| **Servir em Comunidade** | Voluntários ativos últimos 3 meses | COUNT DISTINCT volunteer_id em vol_check_ins onde checkin_at ≥ hoje–90d | `vol_check_ins` |
+| **Generosidade** | Ofertantes + Dizimistas do mês | Lançamento mensal manual (qtd_ofertantes, qtd_dizimistas) | `cultura_mensal` (nova) |
+| **Centro: Decisões** | SUM(decisoes_presenciais + decisoes_online) do mês | `cultos` |
+
+## Mudanças no banco (SQL para SQL Editor — produção CBRio)
 
 ```sql
--- Módulo de permissão
-INSERT INTO public.modulos (nome, ativo) VALUES ('Cuidados', true)
-  ON CONFLICT DO NOTHING;
-
--- 1. Pessoas em acompanhamento ativo (com nome — vinculadas a mem_membros)
-CREATE TABLE public.cui_acompanhamentos (
+-- 1. Tabela para vídeos do PENSE (cron coleta views via YouTube API)
+CREATE TABLE IF NOT EXISTS public.pense_videos (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  membro_id uuid REFERENCES public.mem_membros(id) ON DELETE SET NULL,
-  nome text NOT NULL,           -- snapshot p/ casos sem membro vinculado
-  cpf text,                     -- usado p/ tentar match com mem_membros
-  telefone text,
-  responsavel_id uuid REFERENCES auth.users(id),
-  motivo text,                  -- "luto", "casal", "espiritual", etc.
-  status text NOT NULL DEFAULT 'ativo', -- ativo | concluido | pausado
-  data_inicio date NOT NULL DEFAULT CURRENT_DATE,
-  data_encerramento date,
-  observacoes text,             -- restrito por RLS
+  video_id text NOT NULL UNIQUE,
+  titulo text,
+  data_publicacao date NOT NULL,
+  views int NOT NULL DEFAULT 0,
+  views_atualizado_em timestamptz,
+  ativo boolean NOT NULL DEFAULT true,
   created_at timestamptz NOT NULL DEFAULT now(),
   created_by uuid REFERENCES auth.users(id)
 );
+CREATE INDEX idx_pense_data ON public.pense_videos(data_publicacao);
+ALTER TABLE public.pense_videos ENABLE ROW LEVEL SECURITY;
+CREATE POLICY pense_select ON public.pense_videos FOR SELECT TO authenticated USING (true);
+CREATE POLICY pense_write  ON public.pense_videos FOR ALL    TO authenticated USING (true) WITH CHECK (true);
 
--- 2. Atendimentos agregados (sem nomes) — capelania e aconselhamento
-CREATE TABLE public.cui_atendimentos_agregado (
+-- 2. Lançamento mensal de generosidade (entrada manual)
+CREATE TABLE IF NOT EXISTS public.cultura_mensal (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  mes date NOT NULL,            -- sempre dia 1 do mês
-  tipo text NOT NULL,           -- 'aconselhamento' | 'capelania'
-  quantidade int NOT NULL DEFAULT 0,
-  responsavel_id uuid REFERENCES auth.users(id),
+  mes date NOT NULL UNIQUE,           -- sempre dia 01
+  qtd_ofertantes int NOT NULL DEFAULT 0,
+  qtd_dizimistas int NOT NULL DEFAULT 0,
   observacoes text,
-  created_at timestamptz NOT NULL DEFAULT now(),
-  UNIQUE (mes, tipo, responsavel_id)
+  updated_at timestamptz NOT NULL DEFAULT now(),
+  updated_by uuid REFERENCES auth.users(id)
 );
+ALTER TABLE public.cultura_mensal ENABLE ROW LEVEL SECURITY;
+CREATE POLICY cultura_select ON public.cultura_mensal FOR SELECT TO authenticated USING (true);
+CREATE POLICY cultura_write  ON public.cultura_mensal FOR ALL    TO authenticated USING (true) WITH CHECK (true);
 
--- 3. Jornada 180 — encontros (com nomes)
-CREATE TABLE public.cui_jornada180 (
-  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  membro_id uuid REFERENCES public.mem_membros(id) ON DELETE SET NULL,
-  nome text NOT NULL,
-  cpf text,
-  etapa int NOT NULL DEFAULT 1,         -- 1..6 ou conforme trilha
-  data_encontro date NOT NULL,
-  presente boolean NOT NULL DEFAULT true,
-  responsavel_id uuid REFERENCES auth.users(id),
-  observacoes text,
-  created_at timestamptz NOT NULL DEFAULT now()
-);
-
--- 4. Convertidos pós-culto (semanal)
-CREATE TABLE public.cui_convertidos (
-  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  culto_id uuid REFERENCES public.cultos(id) ON DELETE SET NULL,
-  data_culto date NOT NULL,
-  membro_id uuid REFERENCES public.mem_membros(id) ON DELETE SET NULL,
-  nome text NOT NULL,
-  cpf text,
-  telefone text,
-  atendido_apos_culto boolean NOT NULL DEFAULT false,
-  cadastrado boolean NOT NULL DEFAULT false,
-  responsavel_id uuid REFERENCES auth.users(id),
-  observacoes text,
-  created_at timestamptz NOT NULL DEFAULT now()
-);
-
--- View consolidada p/ KPIs (consumida pelo backend /api/kpis)
-CREATE OR REPLACE VIEW public.vw_cuidados_mensal AS
-SELECT
-  date_trunc('month', CURRENT_DATE)::date AS mes,
-  (SELECT count(*) FROM cui_acompanhamentos WHERE status='ativo') AS pessoas_acompanhadas,
-  (SELECT coalesce(sum(quantidade),0) FROM cui_atendimentos_agregado
-     WHERE tipo='aconselhamento' AND mes = date_trunc('month', CURRENT_DATE)) AS aconselhamentos,
-  (SELECT coalesce(sum(quantidade),0) FROM cui_atendimentos_agregado
-     WHERE tipo='capelania' AND mes = date_trunc('month', CURRENT_DATE)) AS capelania,
-  (SELECT count(*) FROM cui_jornada180
-     WHERE date_trunc('month', data_encontro) = date_trunc('month', CURRENT_DATE)) AS jornada180_encontros,
-  (SELECT count(*) FROM cui_convertidos
-     WHERE atendido_apos_culto = true
-     AND date_trunc('month', data_culto) = date_trunc('month', CURRENT_DATE)) AS convertidos_atendidos,
-  (SELECT count(*) FROM cui_convertidos
-     WHERE cadastrado = true
-     AND date_trunc('month', data_culto) = date_trunc('month', CURRENT_DATE)) AS convertidos_cadastrados;
-
--- RLS — só Cuidados + admin/diretor
-ALTER TABLE cui_acompanhamentos       ENABLE ROW LEVEL SECURITY;
-ALTER TABLE cui_atendimentos_agregado ENABLE ROW LEVEL SECURITY;
-ALTER TABLE cui_jornada180            ENABLE ROW LEVEL SECURITY;
-ALTER TABLE cui_convertidos           ENABLE ROW LEVEL SECURITY;
--- (políticas idênticas ao padrão dos outros módulos: authenticated read/write/update/delete = true; backend valida via canCuidados)
+-- 3. Registrar módulo no painel de notificações (opcional)
+INSERT INTO public.modulos (nome, ativo) VALUES ('Cultura', true) ON CONFLICT DO NOTHING;
 ```
 
-### Backend — `backend/routes/cuidados.js` (novo)
+## Backend — novo endpoint
 
-Rotas (todas `authenticate` + checagem de `canCuidados`/admin/diretor):
+**`backend/routes/kpis.js`** — adicionar:
 
-```
-GET  /api/cuidados/dashboard            → KPIs do mês (consome vw_cuidados_mensal + comparativo mês anterior)
-GET  /api/cuidados/acompanhamentos      → list (filtros status, responsavel, search)
-POST /api/cuidados/acompanhamentos      → cria (com lookup CPF em mem_membros)
-PATCH /api/cuidados/acompanhamentos/:id → edita / encerra
-GET  /api/cuidados/jornada180           → list por etapa/mês
-POST /api/cuidados/jornada180           → registra encontro
-GET  /api/cuidados/convertidos          → list por culto/semana
-POST /api/cuidados/convertidos          → registra (com lookup CPF)
-GET  /api/cuidados/agregado?mes=YYYY-MM → totais aconselhamento/capelania do mês
-POST /api/cuidados/agregado             → upsert do total mensal por tipo
-GET  /api/cuidados/buscar-membro?cpf=   → helper p/ frontend (retorna mem_membros se existir)
-POST /api/cuidados/criar-membro         → cria em mem_membros + retorna id (usado quando CPF não existe)
-```
+- **GET `/api/kpis/cultura?mes=YYYY-MM`** — retorna JSON consolidado:
+  ```json
+  {
+    "mes": "2026-04",
+    "semanas_no_mes": 4,
+    "dias_no_mes": 30,
+    "seguir_jesus": { "presencial": 2362, "online": 5997 },
+    "conectar_pessoas": 1090,
+    "investir_deus": 8365,
+    "servir_comunidade": 523,
+    "generosidade": { "dizimistas": 867, "ofertantes": 1103 },
+    "decisoes": 1704
+  }
+  ```
+- **POST/PUT `/api/kpis/cultura/mensal`** — upsert em `cultura_mensal` (ofertantes, dizimistas).
+- **GET/POST/DELETE `/api/kpis/cultura/pense`** — CRUD básico de vídeos PENSE.
+- **POST `/api/kpis/cultura/pense/sync`** — cron diário usa YOUTUBE_API_KEY existente para atualizar `views` de cada vídeo.
 
-Lógica de **sincronização Membresia**: ao gravar acompanhamento/jornada/convertido com `cpf`, primeiro `SELECT id FROM mem_membros WHERE cpf = $1`. Se existir → grava `membro_id`. Se não existir e usuário marcou "criar membro" → INSERT em `mem_membros` (status = 'visitante') e usa o id retornado.
+Cálculo de "semanas no mês" = ceil(dias / 7). Dias = total de dias do mês.
 
-Lógica de **KPIs**: ampliar `backend/routes/kpis.js` (endpoint que retorna dados da aba Cuidados) para ler de `vw_cuidados_mensal`. Hoje os cards estão zerados (`value={null}`); passa a vir do backend.
+## Frontend — componentes novos
 
-### Frontend
+1. **`src/pages/Index.tsx`** — substituir placeholder; rota `/dashboard` permanece em `Dashboard.jsx` mas vamos importar a Mandala lá no topo.
 
-**Nova página** `src/pages/ministerial/Cuidados.jsx` com 4 tabs:
-1. **Dashboard** — 4 KPIs do mês + comparativo + gráfico de evolução (últimos 6 meses).
-2. **Acompanhamentos** — tabela CRUD (nome, motivo, responsável, data início, status), modal de cadastro com busca de CPF em tempo real.
-3. **Jornada 180** — lista de pessoas + frequência por etapa, botão "Registrar encontro".
-4. **Convertidos** — agrupado por data de culto, registro por linha (atendido / cadastrado), select de culto vem de `cultos`.
-5. **Aconselhamento/Capelania (agregado)** — formulário simples mensal: "quantos atendimentos em abril?" por tipo.
+2. **`src/pages/Dashboard.jsx`** — adicionar `<MandalaCultura />` antes da seção "Visão Geral". Manter KPIs e notificações.
 
-**Componente de busca de CPF** reutilizável: input com máscara CPF → `GET /cuidados/buscar-membro?cpf=` → mostra "✓ Vinculado a João Silva" ou botão "+ Criar novo membro".
+3. **Novos arquivos**:
+   - `src/components/cultura/MandalaCultura.jsx` — orquestrador com filtro de mês, fetch via `kpis.cultura(mes)`.
+   - `src/components/cultura/MandalaSVG.jsx` — SVG da semicírculo com 5 pétalas, animações framer-motion (fade-in escalonado, hover-scale, contador animado via `number-ticker.tsx` existente, ripple no centro).
+   - `src/components/cultura/PetalDetailDialog.jsx` — ao clicar em uma pétala, abre Dialog mostrando breakdown (ex.: "Presencial 2.362 / Online 5.997 / 4 semanas").
+   - `src/pages/admin/CulturaMensal.jsx` — formulário em `/admin/cultura` para lançar ofertantes/dizimistas e gerenciar vídeos PENSE.
 
-**Integrações**:
-- `src/api.js` — novo namespace `cuidados`.
-- `src/App.tsx` — rota `/ministerial/cuidados` com `ModuleGuard permKey="canCuidados"`.
-- `src/contexts/AuthContext.jsx` — adicionar `canCuidados = canAccessModule(['Cuidados'])`.
-- `src/pages/Dashboard.jsx` — habilitar card "Cuidados" (já existe a estrutura) usando `canCuidados`.
-- `src/pages/kpis/KPIs.tsx` — `TabCuidados` consome dados reais (substitui `value={null}`); cards Cuidados na home dos KPIs também viram clicáveis com valor real.
-- `src/components/layout/AppShell.jsx` e `modern-side-bar.tsx` — adicionar `perm: 'canCuidados'` no item Cuidados.
+4. **`src/api.js`** — adicionar em `kpis`:
+   ```js
+   cultura: (mes) => get(`/kpis/cultura?mes=${mes}`),
+   culturaMensalUpsert: (data) => post('/kpis/cultura/mensal', data),
+   pense: { list, create, remove, sync }
+   ```
 
-### Notificações
-Registrar módulo `cuidados` em `src/pages/admin/NotificacaoRegras.jsx` (array `MODULOS`). Disparos:
-- Imediato: novo acompanhamento criado → notifica coord.
-- Periódico (em `notificacaoGenerator.js`): pessoa em acompanhamento >60 dias sem atualização → alerta.
+5. **`src/App.tsx`** — registrar rota `/admin/cultura` (admin/diretor).
 
-### Arquivos tocados
-- **Migration manual**: `supabase/migrations_manual/20260420_cuidados_modulo.sql` (você roda)
-- **Backend**: `backend/routes/cuidados.js` (novo), `backend/server.js` (mount), `backend/routes/kpis.js` (leitura da view), `backend/services/notificacaoGenerator.js` (alerta 60d)
-- **Frontend**: `src/pages/ministerial/Cuidados.jsx` (novo), `src/api.js`, `src/App.tsx`, `src/contexts/AuthContext.jsx`, `src/pages/Dashboard.jsx`, `src/pages/kpis/KPIs.tsx`, `src/components/layout/AppShell.jsx`, `src/components/ui/modern-side-bar.tsx`, `src/components/ui/command-search.tsx`, `src/pages/admin/NotificacaoRegras.jsx`
+## Design — Mandala interativa
 
-### Entrega
-PR `claude/modulo-cuidados-v1`. Após merge:
-1. Rodar SQL no Supabase.
-2. Em Permissões, dar acesso ao módulo "Cuidados" para Wesley + admins.
-3. Acessar `/ministerial/cuidados` → registrar primeiros dados → ver refletido em `/kpis` aba Cuidados e no `/dashboard`.
+- **Forma**: meio-círculo (igual print) usando 5 setores SVG (`<path>` em arco). 3 pétalas verdes/teal (#00B39D — Conectar/Investir/Servir), 2 azuis (#3B82F6 — Seguir/Generosidade). Centro grande branco com "Decisões".
+- **Animações**:
+  - Entrada: cada pétala faz `scale-in` + `fade-in` em cascata (delay 80ms).
+  - Hover: pétala expande 1.05x, sombra suave; cursor pointer.
+  - Números: `<NumberTicker>` (já existente) anima de 0 → valor.
+  - Troca de mês: pétalas dão fade-out → novo fetch → fade-in com novos números.
+  - Centro: pulso sutil contínuo (animate-pulse no contorno).
+- **Filtro de mês**: Select shadcn (`__current__` como default) com últimos 12 meses; ao mudar, refetch.
+- **Responsivo**: mobile vira layout vertical (stack de cards) com mesma identidade visual.
+- **Loading**: skeleton pulsante na forma de meio-círculo.
+- **Empty state**: se `cultura_mensal` ou `pense_videos` vazio, pétala mostra "—" + tooltip "Configure em /admin/cultura".
+
+## Fluxo de execução (após aprovação)
+
+1. **PR 1 — Schema + backend**: SQL manual + endpoint `/api/kpis/cultura` + cron PENSE.
+2. **PR 2 — Mandala UI**: componentes Mandala* + integração no Dashboard.
+3. **PR 3 — Admin Cultura**: tela `/admin/cultura` para inputs manuais + lista PENSE.
+
+Pendências para confirmar antes do PR 1:
+- Você me passa o **link/IDs do canal ou playlist do PENSE** para eu cadastrar os primeiros vídeos no admin (ou já me autoriza a deixar o cadastro 100% manual via interface).
+- Confirma que o módulo `Cultura` (admin) deve ficar visível só para admin/diretor.
 
