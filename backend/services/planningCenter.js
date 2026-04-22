@@ -365,54 +365,157 @@ async function upsertVolunteerProfiles(supabase, volunteersMap) {
   return { count: upserted, dbError: firstError };
 }
 
-// ── Assign volunteers to teams based on schedule data ───────────────────────
-// memberTeamMap: Map<planning_center_person_id, Set<teamName>>
-async function assignVolunteersToTeams(supabase, memberTeamMap) {
-  if (!memberTeamMap.size) return 0;
+// ── Sync team members from vol_schedules ────────────────────────────────────
+// Reads vol_schedules (source of truth) and populates vol_teams, vol_positions,
+// and vol_team_members. Supports both membresia-linked (volunteer_profile_id)
+// and PC-only (planning_center_person_id) volunteers.
+//
+// If restrictPersonIds is provided, only syncs schedules for those PC person IDs
+// (used during per-service-type PC sync). Otherwise syncs everything.
+async function syncTeamMembersFromSchedules(supabase, restrictPersonIds = null) {
+  let q = supabase.from('vol_schedules')
+    .select('planning_center_person_id, volunteer_id, volunteer_name, team_name, position_name')
+    .not('team_name', 'is', null);
+  if (restrictPersonIds && restrictPersonIds.length) {
+    q = q.in('planning_center_person_id', restrictPersonIds);
+  }
+  const { data: schedules, error } = await q;
+  if (error) {
+    console.error('[sync-members] fetch schedules:', error.message);
+    return { assigned: 0, volunteers: 0, teams: 0 };
+  }
+  if (!schedules?.length) return { assigned: 0, volunteers: 0, teams: 0 };
 
-  const personIds = Array.from(memberTeamMap.keys());
-  const allTeamNames = new Set();
-  for (const names of memberTeamMap.values()) names.forEach(n => allTeamNames.add(n));
-
-  // Fetch matching profiles
-  const { data: profiles } = await supabase.from('vol_profiles')
-    .select('id, planning_center_id')
-    .in('planning_center_id', personIds);
-  if (!profiles?.length) return 0;
-  const profileMap = new Map(profiles.map(p => [p.planning_center_id, p.id]));
-
-  // Ensure all teams exist
-  await supabase.from('vol_teams')
-    .upsert(Array.from(allTeamNames).map(name => ({ name })), { onConflict: 'name', ignoreDuplicates: true });
-
-  const { data: teams } = await supabase.from('vol_teams')
-    .select('id, name').in('name', Array.from(allTeamNames));
-  const teamMap = new Map((teams || []).map(t => [t.name, t.id]));
-
-  // Build memberships
-  const memberships = [];
-  for (const [personId, names] of memberTeamMap.entries()) {
-    const profileId = profileMap.get(personId);
-    if (!profileId) continue;
-    for (const teamName of names) {
-      const teamId = teamMap.get(teamName);
-      if (teamId) memberships.push({ volunteer_profile_id: profileId, team_id: teamId });
+  // Collapse to distinct (person, team, position) assignments
+  const assignments = new Map();
+  for (const s of schedules) {
+    const name = (s.volunteer_name || '').trim();
+    if (!name) continue; // volunteer_name is NOT NULL in vol_team_members
+    const teams = (s.team_name || '').split(',').map(t => t.trim()).filter(Boolean);
+    for (const team of teams) {
+      const pos = (s.position_name || '').trim() || null;
+      const personKey = s.volunteer_id || `pc:${s.planning_center_person_id}`;
+      const key = `${personKey}:${team}:${pos || ''}`;
+      if (!assignments.has(key)) {
+        assignments.set(key, {
+          volunteer_name: name,
+          volunteer_profile_id: s.volunteer_id || null,
+          planning_center_person_id: s.planning_center_person_id || null,
+          team_name: team,
+          position_name: pos,
+        });
+      }
     }
   }
-  if (!memberships.length) return 0;
+  if (!assignments.size) return { assigned: 0, volunteers: 0, teams: 0 };
 
-  // Upsert in batches
-  const batchSize = 100;
-  for (let i = 0; i < memberships.length; i += batchSize) {
-    await supabase.from('vol_team_members')
-      .upsert(memberships.slice(i, i + batchSize), { onConflict: 'volunteer_profile_id,team_id', ignoreDuplicates: true });
+  // Ensure teams
+  const allTeamNames = [...new Set([...assignments.values()].map(a => a.team_name))];
+  await supabase.from('vol_teams')
+    .upsert(allTeamNames.map(name => ({ name })), { onConflict: 'name', ignoreDuplicates: true });
+  const { data: teamRows } = await supabase.from('vol_teams')
+    .select('id, name').in('name', allTeamNames);
+  const teamByName = new Map((teamRows || []).map(t => [t.name, t.id]));
+
+  // Ensure positions
+  const positionsSeen = new Set();
+  const positionsToInsert = [];
+  for (const a of assignments.values()) {
+    if (!a.position_name) continue;
+    const teamId = teamByName.get(a.team_name);
+    if (!teamId) continue;
+    const k = `${teamId}:${a.position_name}`;
+    if (positionsSeen.has(k)) continue;
+    positionsSeen.add(k);
+    positionsToInsert.push({ team_id: teamId, name: a.position_name });
+  }
+  if (positionsToInsert.length) {
+    await supabase.from('vol_positions')
+      .upsert(positionsToInsert, { onConflict: 'team_id,name', ignoreDuplicates: true });
+  }
+  const teamIds = [...teamByName.values()];
+  const { data: posRows } = teamIds.length
+    ? await supabase.from('vol_positions').select('id, team_id, name').in('team_id', teamIds)
+    : { data: [] };
+  const posByKey = new Map((posRows || []).map(p => [`${p.team_id}:${p.name}`, p.id]));
+
+  // Build memberships — one per (team, person); if multiple positions collide,
+  // keep the first that has a position_id (vol_team_members doesn't support multi-position per team).
+  const membershipByKey = new Map();
+  for (const a of assignments.values()) {
+    const teamId = teamByName.get(a.team_name);
+    if (!teamId) continue;
+    const personKey = a.volunteer_profile_id || `pc:${a.planning_center_person_id}`;
+    const key = `${teamId}:${personKey}`;
+    const positionId = a.position_name ? posByKey.get(`${teamId}:${a.position_name}`) || null : null;
+    const existing = membershipByKey.get(key);
+    if (!existing) {
+      membershipByKey.set(key, {
+        team_id: teamId,
+        volunteer_profile_id: a.volunteer_profile_id,
+        planning_center_person_id: a.planning_center_person_id,
+        volunteer_name: a.volunteer_name,
+        position_id: positionId,
+        is_active: true,
+      });
+    } else if (positionId && !existing.position_id) {
+      existing.position_id = positionId;
+    }
   }
 
-  // Mark these volunteers as active
-  const profileIds = [...new Set(memberships.map(m => m.volunteer_profile_id))];
-  await supabase.from('vol_profiles').update({ allocation_status: 'active' }).in('id', profileIds);
+  const memberships = [...membershipByKey.values()];
+  const withProfile = memberships.filter(m => m.volunteer_profile_id);
+  const pcOnly = memberships.filter(m => !m.volunteer_profile_id && m.planning_center_person_id);
 
-  return memberships.length;
+  let assigned = 0;
+
+  // Upsert profile-linked (unique: team_id, volunteer_profile_id)
+  for (let i = 0; i < withProfile.length; i += 100) {
+    const batch = withProfile.slice(i, i + 100);
+    const { error: e } = await supabase.from('vol_team_members')
+      .upsert(batch, { onConflict: 'team_id,volunteer_profile_id', ignoreDuplicates: false });
+    if (e) console.error('[sync-members] profile batch:', e.message);
+    else assigned += batch.length;
+  }
+
+  // PC-only: check existing first to avoid duplicates (partial unique index covers the case
+  // but PostgREST can't always target it, so we dedup manually).
+  if (pcOnly.length) {
+    const pcTeamIds = [...new Set(pcOnly.map(m => m.team_id))];
+    const pcIds = [...new Set(pcOnly.map(m => m.planning_center_person_id))];
+    const { data: existing } = await supabase.from('vol_team_members')
+      .select('team_id, planning_center_person_id')
+      .is('volunteer_profile_id', null)
+      .in('team_id', pcTeamIds)
+      .in('planning_center_person_id', pcIds);
+    const existingKeys = new Set((existing || []).map(e => `${e.team_id}:${e.planning_center_person_id}`));
+    const toInsert = pcOnly.filter(m => !existingKeys.has(`${m.team_id}:${m.planning_center_person_id}`));
+    for (let i = 0; i < toInsert.length; i += 100) {
+      const batch = toInsert.slice(i, i + 100);
+      const { error: e } = await supabase.from('vol_team_members').insert(batch);
+      if (e) console.error('[sync-members] pc-only batch:', e.message);
+      else assigned += batch.length;
+    }
+  }
+
+  // Mark profile-linked volunteers as active
+  const profileIds = [...new Set(withProfile.map(m => m.volunteer_profile_id))];
+  if (profileIds.length) {
+    await supabase.from('vol_profiles')
+      .update({ allocation_status: 'active' }).in('id', profileIds);
+  }
+
+  const volunteerCount = new Set(memberships.map(m => m.volunteer_profile_id || `pc:${m.planning_center_person_id}`)).size;
+  return { assigned, volunteers: volunteerCount, teams: allTeamNames.length };
+}
+
+// Legacy signature kept for PC sync caller — delegates to syncTeamMembersFromSchedules
+// restricted to the person IDs that just had schedules upserted.
+async function assignVolunteersToTeams(supabase, memberTeamMap) {
+  if (!memberTeamMap.size) return 0;
+  const personIds = Array.from(memberTeamMap.keys()).filter(Boolean);
+  const result = await syncTeamMembersFromSchedules(supabase, personIds);
+  return result.assigned;
 }
 
 module.exports = {
@@ -431,4 +534,5 @@ module.exports = {
   upsertVolunteerQrCodes,
   upsertVolunteerProfiles,
   assignVolunteersToTeams,
+  syncTeamMembersFromSchedules,
 };
