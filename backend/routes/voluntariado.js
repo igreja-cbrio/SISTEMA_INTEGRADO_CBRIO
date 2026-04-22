@@ -1,7 +1,7 @@
 const router = require('express').Router();
 const { authenticate, authorizeModule } = require('../middleware/auth');
 const { supabase } = require('../utils/supabase');
-const { getPCCredentials, fetchWithRetry, PC_SERVICES_BASE, assignVolunteersToTeams, syncTeamMembersFromSchedules } = require('../services/planningCenter');
+const { getPCCredentials, fetchWithRetry, PC_SERVICES_BASE, assignVolunteersToTeams, syncTeamMembersFromSchedules, fetchAllServiceTypes } = require('../services/planningCenter');
 const { enqueueSync } = require('../services/cerebroSync');
 
 router.use(authenticate, authorizeModule('membresia', 1));
@@ -1807,8 +1807,7 @@ router.post('/teams-manage/import-from-schedules', async (req, res) => {
     // 1. Busca equipes direto do PCO (fonte primaria)
     try {
       const { basic: credentials } = getPCCredentials();
-      const typesRes = await fetchWithRetry(`${PC_SERVICES_BASE}/service_types?per_page=100`, { Authorization: `Basic ${credentials}` });
-      const serviceTypes = typesRes?.data || [];
+      const serviceTypes = await fetchAllServiceTypes(credentials);
 
       for (const st of serviceTypes) {
         const teamsRes = await fetchWithRetry(
