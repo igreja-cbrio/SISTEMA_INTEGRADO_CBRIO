@@ -1,91 +1,101 @@
 
 
-# Coletar TODOS os escalados (uma linha por equipe/posição)
+# Garantir que TODOS os tipos de culto do Planning Center sejam sincronizados (incluindo Kids)
 
 ## Diagnóstico
 
-Hoje o sync do Planning Center está **deduplicando por pessoa**, então uma pessoa escalada em mais de uma posição/equipe no mesmo culto aparece como **1 só voluntário** no totem.
+A listagem de "service types" no Planning Center está **paginada e não estamos paginando**. Em `backend/routes/voluntariado-sync.js`, todas as 4 rotas (`/sync`, `/sync-historical`, `/sync-auto`, `/diagnostics`) chamam:
 
-**Trecho problemático** (`backend/services/planningCenter.js`, linha ~270):
 ```js
-const key = `${service.id}_${personId}`;  // dedup por pessoa
+fetchWithRetry(`${PC_SERVICES_BASE}/service_types`, …)
 ```
-E o banco reforça isso: `vol_schedules` tem unique `(service_id, planning_center_person_id)` — só permite 1 linha por pessoa/culto.
 
-Adicionalmente:
-- Membros sem `personId` válido são **silenciosamente ignorados** (linha 295).
-- Membros com nome "Sem nome" são descartados do pool de voluntários (mas ainda viram schedule — ok).
-- O `getVolunteerName` cai em "Sem nome" se PC não retorna `attributes.name` e `included` não traz a Person — o que acontece em alguns membros (visitantes, scheduled placeholders).
+Sem `per_page` e sem loop de offset. O Planning Center retorna **25 por página por padrão** — qualquer service type além disso (provavelmente o **CBKids**, dependendo da ordem) é silenciosamente ignorado. Consequência: nenhum plano/voluntário do Kids entra em `vol_services` / `vol_schedules` / `vol_profiles`.
+
+A página `/api/voluntariado-sync/diagnostics` confirma o problema rapidamente: ela só lista os primeiros 25 service types.
 
 ## O que muda
 
-### 1. Banco — permitir 1 linha por (culto, pessoa, equipe, posição)
+### 1. Helper paginado no `planningCenter.js`
 
-Trocar a unique constraint de `vol_schedules` para incluir `team_name` e `position_name`. Assim, a mesma pessoa em 2 posições gera 2 linhas e cada uma aparece no totem com sua equipe.
+Criar uma função reutilizável `fetchAllServiceTypes(credentials)` que itera com `per_page=100` + `offset` até esgotar:
 
-```sql
--- Remove a antiga
-ALTER TABLE vol_schedules
-  DROP CONSTRAINT IF EXISTS vol_schedules_service_id_planning_center_person_id_key;
-
--- Cria a nova (NULLs distintos para suportar volunteer_id manual sem PC id)
-CREATE UNIQUE INDEX vol_schedules_unique_assignment
-  ON vol_schedules (
-    service_id,
-    COALESCE(planning_center_person_id, ''),
-    COALESCE(team_name, ''),
-    COALESCE(position_name, '')
-  );
+```js
+async function fetchAllServiceTypes(credentials) {
+  const headers = { Authorization: `Basic ${credentials}` };
+  const all = [];
+  let offset = 0;
+  const perPage = 100;
+  while (true) {
+    const res = await fetchWithRetry(
+      `${PC_SERVICES_BASE}/service_types?per_page=${perPage}&offset=${offset}`,
+      headers
+    );
+    if (!res.ok) break;
+    const data = await res.json();
+    all.push(...(data.data || []));
+    if ((data.data || []).length < perPage) break;
+    offset += perPage;
+    if (offset > 5000) break; // safety
+  }
+  return all;
+}
 ```
 
-(SQL é enviado para o usuário executar no editor Supabase, conforme regra do projeto.)
+Exportar do módulo.
 
-### 2. Sync — uma linha por (pessoa + equipe + posição)
+### 2. Substituir as 4 chamadas em `voluntariado-sync.js`
 
-Em `backend/services/planningCenter.js`, função `processServiceType`:
+Trocar cada bloco do tipo:
+```js
+const testRes = await fetchWithRetry(`${PC_SERVICES_BASE}/service_types`, …);
+const typesData = await testRes.json();
+const serviceTypes = typesData.data || [];
+```
+por:
+```js
+const serviceTypes = await fetchAllServiceTypes(credentials);
+if (!serviceTypes.length) return res.status(400).json({ error: 'Falha ao conectar ao Planning Center ou nenhum tipo encontrado' });
+```
 
-- Trocar a chave de dedup de `${service.id}_${personId}` para `${service.id}_${personId}_${teamName}_${positionName}`.
-- Trocar `onConflict: 'service_id,planning_center_person_id'` por `onConflict: 'service_id,planning_center_person_id,team_name,position_name'` — ou usar índice nomeado.
-- Remover a fusão "concatenar team_names em vírgula" — agora cada equipe é uma linha real.
+Locais: linhas 22-26 (`/sync`), 85-89 (`/sync-historical`), 131-135 (`/sync-auto`), 189-193 (`/diagnostics`).
 
-### 3. Sync — não descartar quem não tem personId
+### 3. Garantir que outros pontos também paginem
 
-Quando `member.relationships.person.data.id` está vazio, hoje o `personId` cai para `member.id` (id do `team_member`, não da pessoa). Isso ainda funciona como chave única mas pode dar falso positivo.
+Há mais 1 ocorrência sem paginação em `backend/routes/voluntariado.js` linha 1810 (importa equipes do PC para a tela de Equipes):
+```js
+const typesRes = await fetchWithRetry(`${PC_SERVICES_BASE}/service_types?per_page=100`, …);
+```
+Já tem `per_page=100`, mas sem loop. Substituir também por `fetchAllServiceTypes(credentials)` por consistência (mesmo helper).
 
-Mudança: se não houver `personId` real, gerar a linha mesmo assim usando `member.id` como sufixo, mas **garantir** que o nome venha de `member.attributes.name` (PC quase sempre preenche). Só descarta se nem `member.attributes.name` nem o include `Person` resolverem o nome.
+### 4. Log explícito
 
-### 4. Backend — suporte ao novo schema
+Logar no console do backend a quantidade total encontrada após paginar:
+```
+[VOL SYNC] Found N service types (after pagination)
+```
+para confirmar nos logs da Vercel que o Kids está sendo coletado.
 
-Em `backend/routes/voluntariado.js`:
-- Endpoint `/schedules` (linha 819): nada muda no SELECT, só passa a retornar mais linhas naturalmente.
-- Endpoint `/check-ins` POST (linha 857): a lógica de "auto-detectar sem escala" usa `volunteer_id + service_id` (`maybeSingle`). Trocar `maybeSingle` por `limit(1).select('id')` para não quebrar quando houver 2+ linhas (mesma pessoa em 2 posições).
+### 5. Verificação após deploy
 
-### 5. Frontend (totem) — mostrar uma entrada por escalação
-
-`src/pages/ministerial/voluntariado/VolTotem.tsx` no modo Manual:
-- Hoje a busca lista `schedules` direto — já vai mostrar todas as escalações automaticamente após a mudança no banco/sync.
-- Ajustar o filtro `unscheduledMatches` para considerar a pessoa "já escalada" se aparece em **qualquer** linha de `schedules` (set de `volunteer_id`/`planning_center_person_id`) — já é o comportamento atual, só confirmar.
-
-### 6. Re-sync após migration
-
-Plano de execução:
-1. Usuário roda o SQL no Supabase.
-2. Deploy do backend com a nova lógica.
-3. Usuário aciona **"Sincronizar Planning Center"** uma vez no `/voluntariado/dashboard` para reprocessar e gravar as linhas que estavam fundidas.
+1. Acionar **Sincronizar Planning Center** no `/voluntariado/dashboard`.
+2. Conferir resposta: `services` e `volunteersSynced` devem aumentar.
+3. Abrir um culto Kids no totem (modo Manual) — voluntários do Kids devem aparecer na lista de escalados.
 
 ## Arquivos alterados
 
-- `backend/services/planningCenter.js` — dedup por (pessoa+equipe+posição), `onConflict` novo, fallback de nome resiliente.
-- `backend/routes/voluntariado.js` — POST `/check-ins` tolerante a múltiplas escalas.
-- `supabase/migrations/<timestamp>_vol_schedules_unique_per_position.sql` — nova migration (e SQL avulso enviado no chat).
+- `backend/services/planningCenter.js` — nova função `fetchAllServiceTypes` (e export).
+- `backend/routes/voluntariado-sync.js` — usa o helper nas 4 rotas.
+- `backend/routes/voluntariado.js` — linha 1810 usa o helper.
 
 ## Sem mudanças
 
-- UI do totem (modo Manual já lista todas as linhas que recebe).
-- Endpoints públicos, autenticação, RLS.
-- Tabelas `vol_check_ins`, `vol_profiles`, `vol_volunteer_qrcodes`.
+- Banco de dados (sem migration).
+- Frontend.
+- Lógica de processamento por tipo (`processServiceType` continua igual — agora apenas recebe a lista completa).
+- Autenticação, RLS, endpoints públicos.
 
 ## Risco
 
-Baixo. A migration apenas troca a unique constraint (`DROP + CREATE INDEX`); não há perda de dados. Se um sync antigo já fundiu linhas, o próximo sync recria as linhas separadas (upsert idempotente). O check-in continua aceitando `schedule_id` específico, então tocar "Check-in" em qualquer das linhas registra presença para aquela equipe/posição correta.
+Mínimo. A paginação é aditiva: tipos que já vinham continuam vindo; passamos a coletar também os que estavam fora das primeiras 25 entradas. O custo extra são 1-2 requisições HTTP adicionais por sync — desprezível frente ao trabalho que já fazemos por service type.
 
