@@ -900,8 +900,8 @@ router.post('/check-ins', async (req, res) => {
             const r = await supabase.from('vol_check_ins')
               .select('checked_in_at, method, volunteer:vol_profiles(full_name)')
               .eq('volunteer_id', volunteer_id).eq('service_id', service_id)
-              .eq('is_unscheduled', true).maybeSingle();
-            existing = r.data;
+              .eq('is_unscheduled', true).limit(1);
+            existing = r.data?.[0] || null;
             volunteerName = existing?.volunteer?.full_name || null;
           }
           checkedInAt = existing?.checked_in_at || null;
