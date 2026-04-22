@@ -25,6 +25,7 @@ export interface VolService {
   service_type_name: string | null;
   service_type_id: string | null;
   scheduled_at: string;
+  scheduled_count?: number;
   created_at: string;
   updated_at: string;
 }
