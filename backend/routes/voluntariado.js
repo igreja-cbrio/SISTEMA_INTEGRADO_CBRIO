@@ -777,11 +777,15 @@ router.get('/services/upcoming', async (req, res) => {
 
 router.get('/services/today', async (req, res) => {
   try {
-    const today = new Date();
-    const start = new Date(today.getFullYear(), today.getMonth(), today.getDate()).toISOString();
-    const end = new Date(today.getFullYear(), today.getMonth(), today.getDate() + 1).toISOString();
+    // "Hoje" em BRT: derivado da data atual na TZ America/Sao_Paulo (UTC-3 estavel).
+    const nowBRT = new Date(Date.now() - 3 * 60 * 60 * 1000);
+    const y = nowBRT.getUTCFullYear();
+    const m = String(nowBRT.getUTCMonth() + 1).padStart(2, '0');
+    const d = String(nowBRT.getUTCDate()).padStart(2, '0');
+    const start = `${y}-${m}-${d}T00:00:00-03:00`;
+    const end = `${y}-${m}-${d}T23:59:59-03:00`;
     const { data, error } = await supabase.from('vol_services').select('*')
-      .gte('scheduled_at', start).lt('scheduled_at', end).order('scheduled_at');
+      .gte('scheduled_at', start).lte('scheduled_at', end).order('scheduled_at');
     if (error) return res.status(400).json({ error: error.message });
     res.json(data);
   } catch (e) { res.status(500).json({ error: 'Erro ao listar cultos de hoje' }); }
@@ -948,10 +952,13 @@ router.post('/qr-lookup', async (req, res) => {
       volunteerData = { type: 'volunteer_qrcode', id: null, planning_center_id: vqr.planning_center_person_id, name: vqr.volunteer_name };
     }
 
-    // Find today's schedules
-    const today = new Date();
-    const startOfDay = new Date(today.getFullYear(), today.getMonth(), today.getDate()).toISOString();
-    const endOfDay = new Date(today.getFullYear(), today.getMonth(), today.getDate() + 1).toISOString();
+    // Find today's schedules (BRT day boundary, not server-UTC)
+    const nowBRT = new Date(Date.now() - 3 * 60 * 60 * 1000);
+    const by = nowBRT.getUTCFullYear();
+    const bm = String(nowBRT.getUTCMonth() + 1).padStart(2, '0');
+    const bd = String(nowBRT.getUTCDate()).padStart(2, '0');
+    const startOfDay = `${by}-${bm}-${bd}T00:00:00-03:00`;
+    const endOfDay = `${by}-${bm}-${bd}T23:59:59-03:00`;
 
     let scheduleQuery = supabase.from('vol_schedules').select('*, service:vol_services!inner(*)')
       .gte('service.scheduled_at', startOfDay).lt('service.scheduled_at', endOfDay);
