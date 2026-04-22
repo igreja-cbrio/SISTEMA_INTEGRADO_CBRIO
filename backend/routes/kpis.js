@@ -530,7 +530,10 @@ router.get('/cultura', async (req, res) => {
     });
   } catch (e) {
     console.error('[kpis/cultura] erro:', e);
-    res.status(500).json({ error: e.message });
+    res.status(500).json({
+      error: e?.message || 'Erro ao calcular cultura',
+      stack: process.env.NODE_ENV === 'development' ? e?.stack : undefined,
+    });
   }
 });
 
