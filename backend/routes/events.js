@@ -2,6 +2,7 @@ const router = require('express').Router();
 const { authenticate, authorize } = require('../middleware/auth');
 const { supabase } = require('../utils/supabase');
 const { notificar } = require('../services/notificar');
+const { enqueueSync } = require('../services/cerebroSync');
 
 router.use(authenticate);
 
@@ -166,6 +167,8 @@ router.post('/', authorize('diretor', 'admin'), async (req, res) => {
       chaveDedup: `evento_criado_${ev.id}`,
     }).catch(() => {});
 
+    enqueueSync('evento', ev.id, 'upsert').catch(() => {});
+
     res.json(ev);
   } catch (e) { console.error('[Events POST]', e.message); res.status(500).json({ error: 'Erro ao criar evento' }); }
 });
@@ -217,6 +220,9 @@ router.put('/:id', authorize('diretor', 'admin'), async (req, res) => {
     }
 
     await supabase.from('audit_log').insert({ table_name: 'events', record_id: req.params.id, event_id: req.params.id, action: 'update', description: `Evento "${oldEvent.name}" atualizado`, changed_by: req.user.userId, changed_by_name: req.user.name }).catch(() => {});
+
+    enqueueSync('evento', req.params.id, 'upsert').catch(() => {});
+
     res.json(data);
   } catch (e) { console.error('[Events PUT]', e.message); res.status(500).json({ error: 'Erro ao atualizar evento' }); }
 });

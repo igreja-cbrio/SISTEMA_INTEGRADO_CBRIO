@@ -2,6 +2,8 @@ const router = require('express').Router();
 const { supabase } = require('../utils/supabase');
 const { getGraphToken } = require('../services/storageService');
 const { processarFila } = require('../services/cerebroProcessor');
+const { processSyncFila, upsertNoteForEntity, getSupportedEntityTypes } = require('../services/cerebroSync');
+const { authenticate, authorize } = require('../middleware/auth');
 
 const CRON_SECRET = process.env.CRON_SECRET;
 const HUB_SITE_ID = 'infracbrio.sharepoint.com,04b50f10-ea32-40ba-84bd-44a3b38ee2a7,94fe6af6-f064-455d-afc5-67a377f5e82c';
@@ -252,5 +254,89 @@ async function processarFilaLimitada(limite) {
 
   return await processarFila();
 }
+
+// ══════════════════════════════════════════════
+// SYNC REVERSO — ERP → vault (cron + backfill)
+// ══════════════════════════════════════════════
+
+// POST/GET /api/cerebro/sync-erp — cron que consome a fila de sync reverso
+router.all('/sync-erp', async (req, res) => {
+  const auth = req.headers['x-cron-secret'] || req.headers['authorization'];
+  const isVercelCron = req.headers['user-agent']?.includes('vercel-cron');
+  if (!isVercelCron && auth !== CRON_SECRET && auth !== `Bearer ${CRON_SECRET}`) {
+    return res.status(401).json({ erro: 'Nao autorizado' });
+  }
+
+  try {
+    const limite = Math.min(parseInt(req.query.limite) || 8, 20);
+    const resultado = await processSyncFila(limite);
+    res.json({ sucesso: true, ...resultado });
+  } catch (e) {
+    console.error('[CEREBRO SYNC-ERP] Erro:', e.message);
+    res.status(500).json({ sucesso: false, erro: e.message });
+  }
+});
+
+// POST /api/cerebro/backfill/:entityType — admin dispara backfill por módulo
+// Enfileira TODAS as entidades já cadastradas do tipo informado. Usar com cuidado:
+// gera N notas no vault (pode disparar rate limit). Processe aos poucos via cron.
+router.post('/backfill/:entityType', authenticate, authorize('admin', 'diretor'), async (req, res) => {
+  const { entityType } = req.params;
+  const supported = getSupportedEntityTypes();
+  if (!supported.includes(entityType)) {
+    return res.status(400).json({ erro: `entity_type inválido`, suportados: supported });
+  }
+
+  const TABLE_BY_TYPE = {
+    membro: { table: 'mem_membros', idCol: 'id', filter: (q) => q.eq('active', true) },
+    evento: { table: 'events', idCol: 'id', filter: (q) => q },
+  };
+
+  const cfg = TABLE_BY_TYPE[entityType];
+  if (!cfg) {
+    return res.status(400).json({ erro: 'Backfill não implementado para este entity_type' });
+  }
+
+  try {
+    let query = supabase.from(cfg.table).select(cfg.idCol);
+    query = cfg.filter(query);
+    const { data: rows, error } = await query;
+    if (error) throw error;
+
+    let enfileirados = 0;
+    for (const row of rows || []) {
+      const { data: existing } = await supabase
+        .from('cerebro_sync_fila')
+        .select('id')
+        .eq('entity_type', entityType)
+        .eq('entity_id', String(row[cfg.idCol]))
+        .in('status', ['pendente', 'processando'])
+        .limit(1)
+        .maybeSingle();
+      if (existing) continue;
+      const { error: insErr } = await supabase.from('cerebro_sync_fila').insert({
+        entity_type: entityType,
+        entity_id: String(row[cfg.idCol]),
+        action: 'upsert',
+      });
+      if (!insErr) enfileirados++;
+    }
+
+    res.json({ sucesso: true, entity_type: entityType, total_registros: rows?.length || 0, enfileirados });
+  } catch (e) {
+    console.error(`[CEREBRO BACKFILL ${entityType}] Erro:`, e.message);
+    res.status(500).json({ sucesso: false, erro: e.message });
+  }
+});
+
+// POST /api/cerebro/sync-now/:entityType/:id — força sync imediato de uma entidade (debug)
+router.post('/sync-now/:entityType/:id', authenticate, authorize('admin', 'diretor'), async (req, res) => {
+  try {
+    const result = await upsertNoteForEntity(req.params.entityType, req.params.id);
+    res.json({ sucesso: true, ...result });
+  } catch (e) {
+    res.status(500).json({ sucesso: false, erro: e.message });
+  }
+});
 
 module.exports = router;
