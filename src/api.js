@@ -127,6 +127,23 @@ export const expansion = {
   getDependencies: (id) => get(`/expansion/milestones/${id}/dependencies`),
 };
 
+export const integracao = {
+  visitantes: {
+    list: (params) => get('/integracao/visitantes' + (params ? '?' + new URLSearchParams(params) : '')),
+    get: (id) => get(`/integracao/visitantes/${id}`),
+    create: (data) => post('/integracao/visitantes', data),
+    update: (id, data) => put(`/integracao/visitantes/${id}`, data),
+    remove: (id) => del(`/integracao/visitantes/${id}`),
+    changeStatus: (id, status) => post(`/integracao/visitantes/${id}/status`, { status }),
+    addAcompanhamento: (id, data) => post(`/integracao/visitantes/${id}/acompanhamentos`, data),
+  },
+  acompanhamentos: {
+    pendentes: () => get('/integracao/acompanhamentos/pendentes'),
+    remove: (id) => del(`/integracao/acompanhamentos/${id}`),
+  },
+  dashboard: () => get('/integracao/dashboard'),
+};
+
 export const grupos = {
   list: (params) => get('/grupos' + (params ? '?' + new URLSearchParams(params) : '')),
   get: (id) => get(`/grupos/${id}`),
