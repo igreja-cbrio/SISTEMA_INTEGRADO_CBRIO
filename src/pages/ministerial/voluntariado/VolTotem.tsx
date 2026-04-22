@@ -358,7 +358,28 @@ export default function VolTotem() {
     { key: 'qr_scan', label: 'QR Code', icon: QrCode, desc: 'Escanear cracha' },
     { key: 'facial', label: 'Facial', icon: ScanFace, desc: 'Reconhecimento facial' },
     { key: 'qr_fixo', label: 'QR Fixo', icon: Smartphone, desc: 'Voluntario escaneia com celular' },
+    { key: 'manual', label: 'Manual', icon: Hand, desc: 'Buscar na lista' },
   ];
+
+  const normalize = (s: string) =>
+    s.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+
+  const filteredSchedules = schedules.filter(s => {
+    if (!manualSearch.trim()) return true;
+    const q = normalize(manualSearch);
+    return (
+      normalize(s.volunteer_name || '').includes(q) ||
+      normalize(s.team_name || '').includes(q) ||
+      normalize(s.position_name || '').includes(q)
+    );
+  });
+
+  const statusBadge = (s: VolSchedule) => {
+    if (s.check_in) return { label: 'Presente', cls: 'bg-green-500/20 text-green-300 border-green-500/30' };
+    if (s.confirmation_status === 'declined') return { label: 'Recusou', cls: 'bg-red-500/20 text-red-300 border-red-500/30' };
+    if (s.confirmation_status === 'pending') return { label: 'Pendente', cls: 'bg-yellow-500/20 text-yellow-300 border-yellow-500/30' };
+    return { label: 'Escalado', cls: 'bg-blue-500/20 text-blue-300 border-blue-500/30' };
+  };
 
   return (
     <div className="min-h-screen bg-gradient-to-b from-gray-900 to-gray-950 text-white flex flex-col">
