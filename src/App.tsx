@@ -105,6 +105,7 @@ const KPIs = lazyWithRetry(() => import('./pages/kpis/KPIs'));
 const KPIsGuia = lazyWithRetry(() => import('./pages/kpis/KPIsGuia'));
 const Cuidados = lazyWithRetry(() => import('./pages/ministerial/Cuidados'));
 const Integracao = lazyWithRetry(() => import('./pages/ministerial/Integracao'));
+const CulturaMensal = lazyWithRetry(() => import('./pages/admin/CulturaMensal'));
 
 // Placeholder pages for modules not yet copied
 const PlaceholderPage = ({ title }) => (
@@ -252,6 +253,7 @@ function AppRoutes() {
         <Route path="/kpis" element={<ModuleGuard permKey="canKPIs"><Suspense fallback={<Loading />}><KPIs /></Suspense></ModuleGuard>} />
         <Route path="/kpis/guia" element={<ModuleGuard permKey="canKPIs"><Suspense fallback={<Loading />}><KPIsGuia /></Suspense></ModuleGuard>} />
         <Route path="/admin/notificacao-regras" element={<Suspense fallback={<Loading />}><NotificacaoRegras /></Suspense>} />
+        <Route path="/admin/cultura" element={<Suspense fallback={<Loading />}><CulturaMensal /></Suspense>} />
         <Route path="/ministerial/*" element={<PlaceholderPage title="Ministerial" />} />
         <Route path="/criativo/*" element={<PlaceholderPage title="Criativo" />} />
 

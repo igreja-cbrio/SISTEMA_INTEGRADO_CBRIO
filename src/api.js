@@ -925,6 +925,16 @@ export const kpis = {
   youtubeStatus: () => get('/kpis/youtube/status'),
   // Auto-criação semanal (idempotente). weeks=N para backfill retroativo
   cultosAutoCreate: (weeks) => post(`/kpis/cultos/auto-create${weeks ? `?weeks=${weeks}` : ''}`, {}),
+  // ── Mandala Cultura ──
+  cultura: (mes) => get(`/kpis/cultura${mes ? `?mes=${mes}` : ''}`),
+  culturaMensalList: () => get('/kpis/cultura/mensal'),
+  culturaMensalUpsert: (data) => post('/kpis/cultura/mensal', data),
+  pense: {
+    list: () => get('/kpis/cultura/pense'),
+    create: (data) => post('/kpis/cultura/pense', data),
+    remove: (id) => del(`/kpis/cultura/pense/${id}`),
+    sync: () => post('/kpis/cultura/pense/sync', {}),
+  },
 };
 
 export const cuidados = {

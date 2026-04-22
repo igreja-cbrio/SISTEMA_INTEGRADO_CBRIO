@@ -11,6 +11,7 @@ import {
   Clock, AlertTriangle, Package, ChevronRight, Sparkles,
   Activity, LayoutGrid, HandHelping, Heart,
 } from 'lucide-react';
+import MandalaCultura from '../components/cultura/MandalaCultura';
 
 // path='VOLUNTARIADO_DYNAMIC' e tratado no click handler (vai para painel do
 // voluntario ou visao admin conforme o perfil do usuario logado)
@@ -145,6 +146,9 @@ export default function Dashboard() {
         <p className="text-xs text-muted-foreground capitalize">{dateStr}</p>
         <h1 className="text-2xl font-bold text-foreground mt-1">{greeting}, {firstName}</h1>
       </div>
+
+      {/* Mandala Cultura CBRio */}
+      <MandalaCultura />
 
       {/* KPI Cards */}
       <section>
