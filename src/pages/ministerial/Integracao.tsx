@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { integracao as intApi } from '../../api';
+import { integracao as intApi, voluntariado as volApi } from '../../api';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '../../components/ui/tabs';
 import { Button } from '../../components/ui/button';
 import { Input } from '../../components/ui/input';
@@ -12,7 +12,7 @@ import { Badge } from '../../components/ui/badge';
 import { StatisticsCard } from '../../components/ui/statistics-card';
 import {
   UserPlus, Users, Search, Loader2, Phone, Mail, Calendar, ChevronRight,
-  CheckCircle2, Heart, TrendingUp, Clock,
+  CheckCircle2, Heart, TrendingUp, Clock, Plus, Trash2, MessageCircle,
 } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -37,6 +37,31 @@ const ORIGEM_OPTS = [
   { value: 'busca', label: 'Busca / Google Maps' },
   { value: 'outro', label: 'Outro' },
 ];
+
+const TIPO_CONTATO_OPTS = [
+  { value: 'whatsapp', label: 'WhatsApp' },
+  { value: 'ligacao', label: 'Ligação' },
+  { value: 'visita', label: 'Visita' },
+  { value: 'cafe', label: 'Café / encontro' },
+  { value: 'culto', label: 'Conversa no culto' },
+  { value: 'presencial', label: 'Presencial' },
+  { value: 'outro', label: 'Outro' },
+];
+
+const RESULTADO_OPTS = [
+  { value: 'sucesso', label: 'Conseguiu conversar' },
+  { value: 'sem_resposta', label: 'Sem resposta' },
+  { value: 'reagendou', label: 'Reagendou' },
+  { value: 'recusou', label: 'Recusou contato' },
+];
+
+function tipoLabel(v: string) {
+  return TIPO_CONTATO_OPTS.find(o => o.value === v)?.label || v;
+}
+function resultadoLabel(v: string | null) {
+  if (!v) return null;
+  return RESULTADO_OPTS.find(o => o.value === v)?.label || v;
+}
 
 function statusMeta(status: string) {
   return STATUS_OPTS.find(s => s.value === status) || { label: status, color: C.gray };
@@ -369,6 +394,7 @@ function VisitanteDetailDialog({
   const [data, setData] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [changingStatus, setChangingStatus] = useState(false);
+  const [showAddContato, setShowAddContato] = useState(false);
 
   const reload = useCallback(async () => {
     setLoading(true);
@@ -390,6 +416,18 @@ function VisitanteDetailDialog({
       toast.error(e.message || 'Erro ao mudar status');
     } finally {
       setChangingStatus(false);
+    }
+  };
+
+  const removeAcompanhamento = async (id: string) => {
+    if (!confirm('Remover este contato do histórico?')) return;
+    try {
+      await intApi.acompanhamentos.remove(id);
+      toast.success('Contato removido');
+      await reload();
+      onChanged();
+    } catch (e: any) {
+      toast.error(e.message || 'Erro ao remover');
     }
   };
 
@@ -445,20 +483,51 @@ function VisitanteDetailDialog({
             </div>
 
             <div>
-              <p className="text-xs font-medium text-muted-foreground mb-2 uppercase">Acompanhamentos</p>
+              <div className="flex items-center justify-between mb-2">
+                <p className="text-xs font-medium text-muted-foreground uppercase">Acompanhamentos</p>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => setShowAddContato(true)}
+                  className="h-7 gap-1 text-xs"
+                >
+                  <Plus className="h-3 w-3" /> Registrar contato
+                </Button>
+              </div>
               {data.acompanhamentos?.length === 0 ? (
                 <p className="text-sm text-muted-foreground py-2">Nenhum contato registrado ainda.</p>
               ) : (
                 <div className="space-y-2">
                   {data.acompanhamentos.map((a: any) => (
                     <div key={a.id} className="rounded-lg border p-2.5 text-sm">
-                      <div className="flex items-center justify-between">
-                        <span className="font-medium capitalize">{a.tipo.replace('_', ' ')}</span>
-                        <span className="text-xs text-muted-foreground">
-                          {new Date(a.data_contato).toLocaleDateString('pt-BR')}
-                        </span>
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <MessageCircle className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+                          <span className="font-medium">{tipoLabel(a.tipo)}</span>
+                          {a.resultado && (
+                            <Badge variant="outline" className="text-[10px] px-1.5 py-0">
+                              {resultadoLabel(a.resultado)}
+                            </Badge>
+                          )}
+                          {a.voluntario && (
+                            <span className="text-xs text-muted-foreground">• {a.voluntario.full_name}</span>
+                          )}
+                        </div>
+                        <div className="flex items-center gap-1 shrink-0">
+                          <span className="text-xs text-muted-foreground">
+                            {new Date(a.data_contato).toLocaleDateString('pt-BR')}
+                          </span>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-6 w-6 text-muted-foreground hover:text-destructive"
+                            onClick={() => removeAcompanhamento(a.id)}
+                          >
+                            <Trash2 className="h-3 w-3" />
+                          </Button>
+                        </div>
                       </div>
-                      {a.observacoes && <p className="text-xs text-muted-foreground mt-1">{a.observacoes}</p>}
+                      {a.observacoes && <p className="text-xs text-muted-foreground mt-1 whitespace-pre-wrap">{a.observacoes}</p>}
                       {a.proximo_passo && (
                         <p className="text-xs text-[#00B39D] mt-1">
                           Próximo passo: {a.proximo_passo}
@@ -469,12 +538,149 @@ function VisitanteDetailDialog({
                   ))}
                 </div>
               )}
-              <p className="text-xs text-muted-foreground mt-2 italic">
-                Registro de contatos 1:1 será habilitado na próxima entrega.
-              </p>
             </div>
           </div>
         ) : null}
+
+        {showAddContato && (
+          <AcompanhamentoFormDialog
+            visitanteId={visitanteId}
+            onClose={() => setShowAddContato(false)}
+            onSaved={() => { setShowAddContato(false); reload(); onChanged(); }}
+          />
+        )}
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function AcompanhamentoFormDialog({
+  visitanteId, onClose, onSaved,
+}: { visitanteId: string; onClose: () => void; onSaved: () => void }) {
+  const [form, setForm] = useState<any>({
+    tipo: 'whatsapp',
+    data_contato: new Date().toISOString().slice(0, 16),
+    voluntario_id: '',
+    resultado: '',
+    observacoes: '',
+    proximo_passo: '',
+    data_proximo_contato: '',
+  });
+  const [saving, setSaving] = useState(false);
+  const [voluntarios, setVoluntarios] = useState<any[]>([]);
+
+  useEffect(() => {
+    volApi.volunteersPool()
+      .then((d: any) => setVoluntarios(d || []))
+      .catch(() => { /* dropdown permanece vazio, campo é opcional */ });
+  }, []);
+
+  const set = (k: string, v: any) => setForm((f: any) => ({ ...f, [k]: v }));
+
+  const save = async () => {
+    if (!form.tipo) return toast.error('Tipo obrigatório');
+    setSaving(true);
+    try {
+      const payload: any = {
+        tipo: form.tipo,
+        data_contato: new Date(form.data_contato).toISOString(),
+      };
+      if (form.voluntario_id) payload.voluntario_id = form.voluntario_id;
+      if (form.resultado) payload.resultado = form.resultado;
+      if (form.observacoes.trim()) payload.observacoes = form.observacoes.trim();
+      if (form.proximo_passo.trim()) payload.proximo_passo = form.proximo_passo.trim();
+      if (form.data_proximo_contato) payload.data_proximo_contato = form.data_proximo_contato;
+      await intApi.visitantes.addAcompanhamento(visitanteId, payload);
+      toast.success('Contato registrado');
+      onSaved();
+    } catch (e: any) {
+      toast.error(e.message || 'Erro ao registrar contato');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Dialog open onOpenChange={open => !open && onClose()}>
+      <DialogContent className="max-w-md z-[1100]">
+        <DialogHeader><DialogTitle>Registrar contato</DialogTitle></DialogHeader>
+        <div className="space-y-3 py-2">
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <Label>Tipo *</Label>
+              <Select value={form.tipo} onValueChange={v => set('tipo', v)}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent className="z-[1101]">
+                  {TIPO_CONTATO_OPTS.map(o => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
+              <Label>Data e hora</Label>
+              <Input
+                type="datetime-local"
+                value={form.data_contato}
+                onChange={e => set('data_contato', e.target.value)}
+              />
+            </div>
+          </div>
+          <div>
+            <Label>Quem fez o contato</Label>
+            <Select value={form.voluntario_id} onValueChange={v => set('voluntario_id', v === '__none__' ? '' : v)}>
+              <SelectTrigger>
+                <SelectValue placeholder="Selecionar voluntário (opcional)" />
+              </SelectTrigger>
+              <SelectContent className="z-[1101]">
+                <SelectItem value="__none__">Não especificar</SelectItem>
+                {voluntarios.map(v => (
+                  <SelectItem key={v.id} value={v.id}>{v.full_name}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <div>
+            <Label>Resultado</Label>
+            <Select value={form.resultado} onValueChange={v => set('resultado', v === '__none__' ? '' : v)}>
+              <SelectTrigger>
+                <SelectValue placeholder="Como foi? (opcional)" />
+              </SelectTrigger>
+              <SelectContent className="z-[1101]">
+                <SelectItem value="__none__">Não especificar</SelectItem>
+                {RESULTADO_OPTS.map(o => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}
+              </SelectContent>
+            </Select>
+          </div>
+          <div>
+            <Label>Observações</Label>
+            <Textarea
+              rows={3}
+              value={form.observacoes}
+              onChange={e => set('observacoes', e.target.value)}
+              placeholder="O que foi conversado, como reagiu, pontos a lembrar…"
+            />
+          </div>
+          <div className="pt-2 border-t">
+            <p className="text-xs font-medium text-muted-foreground uppercase mb-2">Próximo passo (opcional)</p>
+            <div className="space-y-2">
+              <Input
+                placeholder="Ex: Convidar pro culto de domingo"
+                value={form.proximo_passo}
+                onChange={e => set('proximo_passo', e.target.value)}
+              />
+              <Input
+                type="date"
+                value={form.data_proximo_contato}
+                onChange={e => set('data_proximo_contato', e.target.value)}
+              />
+            </div>
+          </div>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose}>Cancelar</Button>
+          <Button onClick={save} disabled={saving} className="bg-[#00B39D] hover:bg-[#00B39D]/90">
+            {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Registrar'}
+          </Button>
+        </DialogFooter>
       </DialogContent>
     </Dialog>
   );
