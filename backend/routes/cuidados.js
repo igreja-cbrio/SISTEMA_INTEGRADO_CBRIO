@@ -2,6 +2,7 @@ const router = require('express').Router();
 const { authenticate, authorize, authorizeModule } = require('../middleware/auth');
 const { supabase } = require('../utils/supabase');
 const { notificar } = require('../services/notificar');
+const { enqueueSync } = require('../services/cerebroSync');
 
 router.use(authenticate);
 
@@ -127,6 +128,8 @@ router.post('/acompanhamentos', async (req, res) => {
       chaveDedup: `cui_novo_${data.id}`,
     }).catch(() => {});
 
+    enqueueSync('acompanhamento', data.id, 'upsert').catch(() => {});
+
     res.status(201).json(data);
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -143,6 +146,7 @@ router.patch('/acompanhamentos/:id', async (req, res) => {
       .select()
       .single();
     if (error) throw error;
+    enqueueSync('acompanhamento', req.params.id, 'upsert').catch(() => {});
     res.json(data);
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -153,6 +157,7 @@ router.delete('/acompanhamentos/:id', async (req, res) => {
   try {
     const { error } = await supabase.from('cui_acompanhamentos').delete().eq('id', req.params.id);
     if (error) throw error;
+    enqueueSync('acompanhamento', req.params.id, 'delete').catch(() => {});
     res.json({ ok: true });
   } catch (e) {
     res.status(500).json({ error: e.message });

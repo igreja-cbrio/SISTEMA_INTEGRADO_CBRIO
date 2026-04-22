@@ -2,6 +2,7 @@ const router = require('express').Router();
 const { authenticate, authorizeModule } = require('../middleware/auth');
 const { supabase } = require('../utils/supabase');
 const { getPCCredentials, fetchWithRetry, PC_SERVICES_BASE, assignVolunteersToTeams, syncTeamMembersFromSchedules } = require('../services/planningCenter');
+const { enqueueSync } = require('../services/cerebroSync');
 
 router.use(authenticate, authorizeModule('membresia', 1));
 
@@ -521,6 +522,7 @@ router.post('/profiles', async (req, res) => {
       .insert({ full_name: full_name.trim(), email: email || null, phone: phone || null, cpf: cleanCpf || null, origem: 'manual', allocation_status: 'active', profile_complete: true })
       .select().single();
     if (error) return res.status(400).json({ error: error.message });
+    enqueueSync('voluntario', data.id, 'upsert').catch(() => {});
     res.json(data);
   } catch (e) { res.status(500).json({ error: 'Erro ao criar perfil' }); }
 });
@@ -531,6 +533,7 @@ router.put('/profiles/:id', async (req, res) => {
     const { data, error } = await supabase.from('vol_profiles')
       .update({ full_name, email, planning_center_id, avatar_url }).eq('id', req.params.id).select().single();
     if (error) return res.status(400).json({ error: error.message });
+    enqueueSync('voluntario', req.params.id, 'upsert').catch(() => {});
     res.json(data);
   } catch (e) { res.status(500).json({ error: 'Erro ao atualizar perfil' }); }
 });

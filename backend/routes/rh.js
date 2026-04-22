@@ -4,6 +4,7 @@ const { authenticate, authorizeModule, applyAccessFilter, getEffectiveLevel } = 
 const { supabase } = require('../utils/supabase');
 const { uploadModuleFile, SHAREPOINT_CONFIGURED, sanitizePath } = require('../services/storageService');
 const { notificar } = require('../services/notificar');
+const { enqueueSync } = require('../services/cerebroSync');
 
 const uploadMw = multer({
   storage: multer.memoryStorage(),
@@ -163,6 +164,8 @@ router.post('/funcionarios', async (req, res) => {
       chaveDedup: `novo_funcionario_${data.id}`,
     }).catch(() => {});
 
+    enqueueSync('funcionario', data.id, 'upsert').catch(() => {});
+
     res.status(201).json(data);
   } catch (e) {
     console.error('[RH] Criar funcionário:', e.message);
@@ -187,6 +190,7 @@ router.put('/funcionarios/:id', async (req, res) => {
       .single();
 
     if (error) return res.status(400).json({ error: error.message });
+    enqueueSync('funcionario', req.params.id, 'upsert').catch(() => {});
     res.json(data);
   } catch (e) {
     console.error('[RH] Atualizar funcionário:', e.message);
