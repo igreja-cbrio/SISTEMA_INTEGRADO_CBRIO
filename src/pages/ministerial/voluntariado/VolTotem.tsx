@@ -8,7 +8,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useFaceDetection, useFaceMatch } from './hooks/useVolFace';
 import {
   QrCode, Scan, CheckCircle2, XCircle, RefreshCw, Maximize, ArrowLeft,
-  ScanFace, Smartphone, Camera, Loader2, Hand, Search, Check,
+  ScanFace, Smartphone, Camera, Loader2, Hand, Search, Check, UserPlus,
 } from 'lucide-react';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
