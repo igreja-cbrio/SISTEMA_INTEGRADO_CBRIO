@@ -1,10 +1,10 @@
 const router = require('express').Router();
 const rateLimit = require('express-rate-limit');
-const { authenticate, authorize } = require('../middleware/auth');
+const { authenticate, authorize, getEffectiveLevel } = require('../middleware/auth');
 const db = require('../utils/db');
 const { supabase } = require('../utils/supabase');
 const { sanitizeObj, isValidUUID } = require('../utils/sanitize');
-const { ENVIRONMENT_ID, getAgentId, listModules } = require('../config/managedAgents');
+const { ENVIRONMENT_ID, getAgentId, listModulesForUser, canUseAgent } = require('../config/managedAgents');
 const { buildContext, serializeContext } = require('../services/agentContext');
 
 // Helper: persist to DB with supabase fallback
@@ -39,7 +39,10 @@ async function dbQuery(text, params) {
   }
 }
 
-router.use(authenticate, authorize('admin', 'diretor'));
+// Autenticação é obrigatória em todas as rotas.
+// Authorization (admin/diretor) é aplicada por rota onde necessário — o acesso ao
+// chat é filtrado pelo agente (cada usuário só vê/usa agentes dos módulos que pode ler).
+router.use(authenticate);
 
 const aiLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
@@ -55,9 +58,9 @@ const chatLimiter = rateLimit({
 
 // ─── MANAGED AGENTS: Chat via Sessions API ─────────────────────────────
 
-// GET /api/agents/modules — lista módulos disponíveis
+// GET /api/agents/modules — lista módulos disponíveis para o usuário atual
 router.get('/modules', (req, res) => {
-  res.json(listModules());
+  res.json(listModulesForUser(req, getEffectiveLevel));
 });
 
 // POST /api/agents/chat — SSE streaming via Anthropic Sessions API
@@ -69,6 +72,12 @@ router.post('/chat', chatLimiter, async (req, res) => {
   if (!message) return res.status(400).json({ error: 'Mensagem obrigatória' });
 
   const agentModule = module || 'supervisor';
+
+  // Bloquear se o usuário não tem permissão para esse agente
+  if (!canUseAgent(req, agentModule, getEffectiveLevel)) {
+    return res.status(403).json({ error: 'Sem permissão para usar este agente' });
+  }
+
   const agentId = getAgentId(agentModule);
 
   // Set SSE headers
@@ -139,11 +148,14 @@ router.post('/chat', chatLimiter, async (req, res) => {
       } catch (e) { console.warn('[AGENTS] Failed to update session timestamp:', e.message); }
     }
 
-    // 2. Build context from DB
+    // 2. Build context from DB (filtrado pela permissão do usuário)
     let contextStr = '';
     try {
-      const ctx = await buildContext([agentModule === 'supervisor' ? 'all' : agentModule]);
-      contextStr = serializeContext(ctx, 12000);
+      const ctx = await buildContext(
+        [agentModule === 'supervisor' ? 'all' : agentModule],
+        req,
+      );
+      contextStr = serializeContext(ctx, 24000);
     } catch (e) {
       console.warn('[AGENTS] Context build failed:', e.message);
     }
@@ -417,8 +429,8 @@ router.delete('/sessions/:id', async (req, res) => {
 
 // ─── LEGACY: Anthropic Messages API (auditorias) ──────────────────────
 
-// POST /api/agents/generate — proxy para Anthropic API
-router.post('/generate', aiLimiter, async (req, res) => {
+// POST /api/agents/generate — proxy para Anthropic API (auditorias, restrito)
+router.post('/generate', authorize('admin', 'diretor'), aiLimiter, async (req, res) => {
   try {
     const apiKey = process.env.ANTHROPIC_API_KEY;
     if (!apiKey) return res.status(503).json({ error: 'API da Anthropic não configurada' });
@@ -458,7 +470,7 @@ router.post('/generate', aiLimiter, async (req, res) => {
 });
 
 // GET /api/agents/queue
-router.get('/queue', async (req, res) => {
+router.get('/queue', authorize('admin', 'diretor'), async (req, res) => {
   try {
     const r = await db.query('SELECT * FROM agent_queue WHERE status = $1 ORDER BY created_at DESC LIMIT 20', ['pending']);
     res.json(r.rows);
@@ -466,7 +478,7 @@ router.get('/queue', async (req, res) => {
 });
 
 // PATCH /api/agents/queue/:id/approve
-router.patch('/queue/:id/approve', async (req, res) => {
+router.patch('/queue/:id/approve', authorize('admin', 'diretor'), async (req, res) => {
   try {
     await db.query(
       'UPDATE agent_queue SET status=$1, reviewed_by=$2, reviewed_at=NOW() WHERE id=$3',
@@ -477,7 +489,7 @@ router.patch('/queue/:id/approve', async (req, res) => {
 });
 
 // PATCH /api/agents/queue/:id/reject
-router.patch('/queue/:id/reject', async (req, res) => {
+router.patch('/queue/:id/reject', authorize('admin', 'diretor'), async (req, res) => {
   try {
     await db.query(
       'UPDATE agent_queue SET status=$1, reviewed_by=$2, reviewed_at=NOW() WHERE id=$3',
@@ -488,7 +500,7 @@ router.patch('/queue/:id/reject', async (req, res) => {
 });
 
 // GET /api/agents/log
-router.get('/log', async (req, res) => {
+router.get('/log', authorize('admin', 'diretor'), async (req, res) => {
   try {
     const r = await db.query('SELECT * FROM agent_log ORDER BY created_at DESC LIMIT 50');
     res.json(r.rows);

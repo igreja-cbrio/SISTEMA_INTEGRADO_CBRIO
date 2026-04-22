@@ -124,12 +124,26 @@ function ChatTab() {
   const [sessions, setSessions] = useState([]);
   const [streaming, setStreaming] = useState(false);
   const [showSessions, setShowSessions] = useState(true);
+  const [availableModules, setAvailableModules] = useState(MODULE_OPTIONS);
   const messagesEndRef = useRef(null);
   const textareaRef = useRef(null);
 
   useEffect(() => {
     loadSessions();
+    loadAvailableModules();
   }, []);
+
+  async function loadAvailableModules() {
+    try {
+      const data = await agents.modules();
+      if (Array.isArray(data) && data.length > 0) {
+        setAvailableModules(data);
+        setModule((current) => (data.some((m) => m.value === current) ? current : data[0].value));
+      }
+    } catch (e) {
+      console.warn('[CHAT] Falha ao carregar módulos permitidos, usando fallback:', e);
+    }
+  }
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -263,7 +277,9 @@ function ChatTab() {
     }
   }
 
-  const selectedModuleLabel = MODULE_OPTIONS.find(m => m.value === module)?.label || '🧠 Supervisor';
+  const selectedModuleLabel = availableModules.find(m => m.value === module)?.label
+    || MODULE_OPTIONS.find(m => m.value === module)?.label
+    || '🧠 Supervisor';
 
   return (
     <div style={{ display: 'flex', gap: 16, height: 'calc(100vh - 220px)', minHeight: 500 }}>
@@ -287,7 +303,7 @@ function ChatTab() {
                     {sess.title || 'Sem título'}
                   </div>
                   <div style={{ fontSize: 11, color: C.text3, marginTop: 2 }}>
-                    {MODULE_OPTIONS.find(m => m.value === sess.agent_module)?.label || sess.agent_module} · {fmtDate(sess.last_message_at)}
+                    {availableModules.find(m => m.value === sess.agent_module)?.label || MODULE_OPTIONS.find(m => m.value === sess.agent_module)?.label || sess.agent_module} · {fmtDate(sess.last_message_at)}
                   </div>
                 </div>
                 <button onClick={(e) => { e.stopPropagation(); deleteSession(sess.id); }}
@@ -322,7 +338,7 @@ function ChatTab() {
                 background: C.primaryBg, color: C.primary, border: `1px solid ${C.primary}40`,
                 cursor: 'pointer',
               }}>
-              {MODULE_OPTIONS.map(m => (
+              {availableModules.map(m => (
                 <option key={m.value} value={m.value}>{m.label}</option>
               ))}
             </select>

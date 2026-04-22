@@ -1,22 +1,89 @@
 const { supabase } = require('../utils/supabase');
+const { getEffectiveLevel } = require('../middleware/auth');
+
+/**
+ * Mapeia cada módulo de agente para a routeKey usada no sistema de permissões
+ * (ver ROUTE_MODULE_MAP em backend/middleware/auth.js).
+ * Se o usuário não tem nível >= 2 na routeKey, o módulo é OMITIDO do contexto.
+ */
+const MODULE_ROUTE_KEY = {
+  rh: 'rh',
+  financeiro: 'financeiro',
+  logistica: 'logistica',
+  solicitarCompra: 'logistica',
+  patrimonio: 'patrimonio',
+  eventos: 'events',
+  projetos: 'projects',
+  expansao: 'expansion',
+  membresia: 'membresia',
+  voluntariado: 'voluntariado',
+  cuidados: 'cuidados',
+  grupos: 'membresia',
+  integracao: 'membresia',
+  marketing: null, // sem módulo granular — só admin/diretor
+};
+
+const ALL_MODULES = [
+  'rh', 'financeiro', 'logistica', 'solicitarCompra', 'patrimonio',
+  'eventos', 'projetos', 'expansao', 'membresia', 'voluntariado',
+  'cuidados', 'grupos', 'marketing',
+];
+
+/**
+ * Retorna true se o usuário pode ver o módulo (nível >= 2).
+ * Admin/diretor sempre retorna true. Sem req.user retorna true (compat legacy).
+ */
+function canSeeModule(req, mod) {
+  if (!req || !req.user) return true;
+  if (['admin', 'diretor'].includes(req.user.role)) return true;
+
+  const routeKey = MODULE_ROUTE_KEY[mod];
+  if (routeKey === null) return false; // marketing: só admin
+  if (!routeKey) return true;            // módulo sem mapeamento: liberar
+
+  return getEffectiveLevel(req, routeKey) >= 2;
+}
+
+/**
+ * Retorna a lista de módulos a consultar, filtrando por permissão.
+ */
+function resolveModules(targetModules, req) {
+  const requested = targetModules.includes('all') ? ALL_MODULES : targetModules;
+  return requested.filter((m) => canSeeModule(req, m));
+}
 
 /**
  * Constrói o contexto RAG para os agentes com dados reais do sistema.
- * Cada módulo traz métricas agregadas (nunca dados pessoais sensíveis em massa).
+ * Respeita permissões: cada usuário só recebe dados dos módulos aos quais tem acesso.
+ *
+ * @param {string[]} targetModules - ['all'] ou lista de módulos
+ * @param {object} req - Express request (com req.user para filtrar permissões)
  */
-async function buildContext(targetModules = ['all']) {
-  const modules = targetModules.includes('all')
-    ? ['rh', 'financeiro', 'logistica', 'patrimonio', 'eventos', 'projetos', 'membresia']
-    : targetModules;
+async function buildContext(targetModules = ['all'], req = null) {
+  const modules = resolveModules(targetModules, req);
 
-  const ctx = { sistema: getSystemDoc(), modulos: {} };
+  const ctx = {
+    sistema: getSystemDoc(),
+    usuario: req?.user ? {
+      nome: req.user.name,
+      email: req.user.email,
+      role: req.user.role,
+      area: req.user.area,
+    } : null,
+    modulos_disponiveis: modules,
+    modulos: {},
+  };
 
-  for (const mod of modules) {
+  const results = await Promise.all(modules.map(async (mod) => {
     try {
-      ctx.modulos[mod] = await fetchModuleContext(mod);
+      return [mod, await fetchModuleContext(mod)];
     } catch (e) {
-      ctx.modulos[mod] = { error: e.message };
+      return [mod, { error: e.message }];
     }
+  }));
+
+  for (const [mod, data] of results) {
+    ctx.modulos[mod] = data;
   }
 
   return ctx;
@@ -25,24 +92,28 @@ async function buildContext(targetModules = ['all']) {
 function getSystemDoc() {
   return `
 CBRio ERP — Sistema de gestão interno da Igreja Comunidade Batista do Rio de Janeiro.
-Stack: React 18 + Express + Supabase (PostgreSQL).
-Deploy: Vercel (frontend + backend serverless).
+Stack: React 18 + Express + Supabase (PostgreSQL). Deploy: Vercel.
 
 Módulos:
-- RH: funcionários, documentos, treinamentos, férias/licenças, escalas de extras, benefícios, admissões
+- RH: funcionários, documentos, treinamentos, férias/licenças, escalas, benefícios, admissões
 - Financeiro: contas bancárias, transações, contas a pagar, reembolsos, arrecadação
-- Logística: fornecedores, solicitações de compra, pedidos, notas fiscais, integração Mercado Livre
+- Logística: fornecedores, solicitações de compra, pedidos, notas fiscais
 - Patrimônio: bens, categorias, localizações, movimentações, inventários
 - Eventos: projetos de eventos, tarefas, reuniões, ciclos criativos
 - Projetos: projetos institucionais com milestones
-- Membresia: membros da igreja, famílias, trilha dos valores, grupos de vida, contribuições, voluntariado, cadastros pendentes
+- Expansão: plantação de igrejas, milestones, tarefas e subtarefas
+- Membresia: membros, famílias, grupos de vida, contribuições, ministérios, cadastros pendentes
+- Voluntariado: voluntários, escalas, check-ins, serviços (Planning Center)
+- Cuidados: aconselhamento, capelania, acompanhamentos, jornada 180, convertidos
+- Grupos: grupos de vida, membros dos grupos, documentos
+- Marketing: campanhas e comunicação
 
-Regras de negócio importantes:
+Regras importantes:
 - Transferências entre contas devem ser filtradas nas análises financeiras
-- Férias CLT: período de experiência = 90 dias
 - Documentos com data_expiracao devem ser monitorados
 - Bens extraviados são urgentes
 - Notificações automáticas rodam a cada 6h
+- Voluntariado usa Planning Center para sincronizar escalas
 `.trim();
 }
 
@@ -51,13 +122,21 @@ async function fetchModuleContext(mod) {
     case 'rh': return fetchRHContext();
     case 'financeiro': return fetchFinanceiroContext();
     case 'logistica': return fetchLogisticaContext();
+    case 'solicitarCompra': return fetchSolicitarCompraContext();
     case 'patrimonio': return fetchPatrimonioContext();
     case 'eventos': return fetchEventosContext();
     case 'projetos': return fetchProjetosContext();
+    case 'expansao': return fetchExpansaoContext();
     case 'membresia': return fetchMembresiaContext();
+    case 'voluntariado': return fetchVoluntariadoContext();
+    case 'cuidados': return fetchCuidadosContext();
+    case 'grupos': return fetchGruposContext();
+    case 'marketing': return fetchMarketingContext();
     default: return { info: 'Módulo não reconhecido' };
   }
 }
+
+// ─── RH ────────────────────────────────────────────────────────────────
 
 async function fetchRHContext() {
   const { count: total } = await supabase.from('rh_funcionarios').select('id', { count: 'exact', head: true });
@@ -68,7 +147,6 @@ async function fetchRHContext() {
   const { count: feriasPend } = await supabase.from('rh_ferias_licencas').select('id', { count: 'exact', head: true }).eq('status', 'pendente');
   const { count: admissoes } = await supabase.from('rh_admissoes').select('id', { count: 'exact', head: true }).neq('status', 'concluido');
 
-  // Campos nulos em funcionários ativos
   const { data: funcsComProblemas } = await supabase.from('rh_funcionarios')
     .select('id, nome, cpf, email, cargo, data_admissao')
     .eq('status', 'ativo')
@@ -84,6 +162,8 @@ async function fetchRHContext() {
     },
   };
 }
+
+// ─── Financeiro ────────────────────────────────────────────────────────
 
 async function fetchFinanceiroContext() {
   const { count: contas } = await supabase.from('fin_contas').select('id', { count: 'exact', head: true }).eq('ativa', true);
@@ -101,6 +181,8 @@ async function fetchFinanceiroContext() {
   };
 }
 
+// ─── Logística ─────────────────────────────────────────────────────────
+
 async function fetchLogisticaContext() {
   const { count: fornecedores } = await supabase.from('log_fornecedores').select('id', { count: 'exact', head: true }).eq('ativo', true);
   const { count: pedidos } = await supabase.from('log_pedidos').select('id', { count: 'exact', head: true });
@@ -110,6 +192,25 @@ async function fetchLogisticaContext() {
     resumo: { fornecedores_ativos: fornecedores, pedidos_total: pedidos, solicitacoes_pendentes: solicPend },
   };
 }
+
+async function fetchSolicitarCompraContext() {
+  const { count: total } = await supabase.from('log_solicitacoes_compra').select('id', { count: 'exact', head: true });
+  const { count: pendentes } = await supabase.from('log_solicitacoes_compra').select('id', { count: 'exact', head: true }).eq('status', 'pendente');
+  const { count: aprovadas } = await supabase.from('log_solicitacoes_compra').select('id', { count: 'exact', head: true }).eq('status', 'aprovada');
+  const { count: rejeitadas } = await supabase.from('log_solicitacoes_compra').select('id', { count: 'exact', head: true }).eq('status', 'rejeitada');
+
+  const { data: recentes } = await supabase.from('log_solicitacoes_compra')
+    .select('id, titulo, status, valor_estimado, created_at')
+    .order('created_at', { ascending: false })
+    .limit(20);
+
+  return {
+    resumo: { total, pendentes, aprovadas, rejeitadas },
+    recentes: recentes || [],
+  };
+}
+
+// ─── Patrimônio ────────────────────────────────────────────────────────
 
 async function fetchPatrimonioContext() {
   const { count: bens } = await supabase.from('pat_bens').select('id', { count: 'exact', head: true });
@@ -122,15 +223,72 @@ async function fetchPatrimonioContext() {
   };
 }
 
+// ─── Eventos ───────────────────────────────────────────────────────────
+
 async function fetchEventosContext() {
   const { count: total } = await supabase.from('events').select('id', { count: 'exact', head: true });
-  return { resumo: { total_eventos: total } };
+
+  const hoje = new Date().toISOString().slice(0, 10);
+  const { data: proximos } = await supabase.from('events')
+    .select('id, name, start_date, end_date, status')
+    .gte('start_date', hoje)
+    .order('start_date', { ascending: true })
+    .limit(10);
+
+  const { data: recentes } = await supabase.from('events')
+    .select('id, name, start_date, status')
+    .lt('start_date', hoje)
+    .order('start_date', { ascending: false })
+    .limit(10);
+
+  return {
+    resumo: { total_eventos: total },
+    proximos: proximos || [],
+    recentes: recentes || [],
+  };
 }
+
+// ─── Projetos ──────────────────────────────────────────────────────────
 
 async function fetchProjetosContext() {
   const { count: total } = await supabase.from('projects').select('id', { count: 'exact', head: true });
-  return { resumo: { total_projetos: total } };
+
+  const { data: ativos } = await supabase.from('projects')
+    .select('id, name, status, start_date, end_date')
+    .neq('status', 'concluido')
+    .order('start_date', { ascending: false })
+    .limit(20);
+
+  return {
+    resumo: { total_projetos: total, em_andamento: (ativos || []).length },
+    projetos: ativos || [],
+  };
 }
+
+// ─── Expansão ──────────────────────────────────────────────────────────
+
+async function fetchExpansaoContext() {
+  const { count: milestones } = await supabase.from('expansion_milestones').select('id', { count: 'exact', head: true });
+  const { count: tasks } = await supabase.from('expansion_tasks').select('id', { count: 'exact', head: true });
+  const { count: tasksPend } = await supabase.from('expansion_tasks').select('id', { count: 'exact', head: true }).neq('status', 'concluida');
+
+  const { data: milestonesAbertos } = await supabase.from('expansion_milestones')
+    .select('id, title, status, due_date')
+    .neq('status', 'concluido')
+    .order('due_date', { ascending: true })
+    .limit(20);
+
+  return {
+    resumo: {
+      total_milestones: milestones,
+      total_tasks: tasks,
+      tasks_pendentes: tasksPend,
+    },
+    milestones_abertos: milestonesAbertos || [],
+  };
+}
+
+// ─── Membresia ─────────────────────────────────────────────────────────
 
 async function fetchMembresiaContext() {
   const { count: total } = await supabase.from('mem_membros').select('id', { count: 'exact', head: true }).eq('active', true);
@@ -143,7 +301,6 @@ async function fetchMembresiaContext() {
   const { count: contribuicoes } = await supabase.from('mem_contribuicoes').select('id', { count: 'exact', head: true });
   const { count: ministerios } = await supabase.from('mem_ministerios').select('id', { count: 'exact', head: true }).eq('ativo', true);
 
-  // Dados reais dos membros para consultas especificas
   const { data: membros } = await supabase
     .from('mem_membros')
     .select('id, nome, status, email, telefone, data_nascimento, estado_civil, cidade, profissao, familia_id, created_at')
@@ -151,14 +308,12 @@ async function fetchMembresiaContext() {
     .order('nome')
     .limit(200);
 
-  // Familias com nomes
   const { data: familiasData } = await supabase
     .from('mem_familias')
     .select('id, nome')
     .order('nome')
     .limit(100);
 
-  // Cadastros pendentes
   const { data: cadastros } = await supabase
     .from('mem_cadastros_pendentes')
     .select('id, nome, email, telefone, status, created_at')
@@ -166,7 +321,6 @@ async function fetchMembresiaContext() {
     .order('created_at', { ascending: false })
     .limit(50);
 
-  // Contribuicoes recentes (ultimos 90 dias)
   const d90 = new Date(Date.now() - 90 * 86400000).toISOString().slice(0, 10);
   const { data: contribRecentes } = await supabase
     .from('mem_contribuicoes')
@@ -175,7 +329,6 @@ async function fetchMembresiaContext() {
     .order('data', { ascending: false })
     .limit(100);
 
-  // Grupos ativos
   const { data: gruposData } = await supabase
     .from('mem_grupos')
     .select('id, nome, dia_semana, lider_id')
@@ -183,11 +336,9 @@ async function fetchMembresiaContext() {
     .order('nome')
     .limit(50);
 
-  // Mapa familia_id -> nome
   const famMap = {};
   (familiasData || []).forEach(f => { famMap[f.id] = f.nome; });
 
-  // Enriquece membros com nome da familia
   const membrosEnriquecidos = (membros || []).map(m => ({
     ...m,
     familia: famMap[m.familia_id] || null,
@@ -213,14 +364,155 @@ async function fetchMembresiaContext() {
   };
 }
 
+// ─── Voluntariado ──────────────────────────────────────────────────────
+
+async function fetchVoluntariadoContext() {
+  const { count: totalVoluntarios } = await supabase.from('vol_profiles').select('id', { count: 'exact', head: true });
+  const { count: totalServicos } = await supabase.from('vol_services').select('id', { count: 'exact', head: true });
+  const { count: totalEscalas } = await supabase.from('vol_schedules').select('id', { count: 'exact', head: true });
+  const { count: totalTeams } = await supabase.from('vol_teams').select('id', { count: 'exact', head: true });
+
+  // Voluntários ativos = que têm pelo menos um check-in nos últimos 90 dias
+  const d90 = new Date(Date.now() - 90 * 86400000).toISOString();
+  const { data: checkins90d } = await supabase
+    .from('vol_check_ins')
+    .select('volunteer_id')
+    .gte('checked_in_at', d90)
+    .not('volunteer_id', 'is', null);
+
+  const ativosSet = new Set((checkins90d || []).map(c => c.volunteer_id));
+  const voluntariosAtivos = ativosSet.size;
+
+  // Check-ins nos últimos 30 dias (métricas de engajamento)
+  const d30 = new Date(Date.now() - 30 * 86400000).toISOString();
+  const { count: checkins30d } = await supabase
+    .from('vol_check_ins')
+    .select('id', { count: 'exact', head: true })
+    .gte('checked_in_at', d30);
+
+  // Próximos serviços (futuros)
+  const agora = new Date().toISOString();
+  const { data: proximosServicos } = await supabase
+    .from('vol_services')
+    .select('id, name, service_type_name, scheduled_at')
+    .gte('scheduled_at', agora)
+    .order('scheduled_at', { ascending: true })
+    .limit(10);
+
+  // Teams (equipes) com contagem de membros
+  const { data: teams } = await supabase
+    .from('vol_teams')
+    .select('id, name')
+    .order('name')
+    .limit(30);
+
+  // Últimos voluntários cadastrados
+  const { data: recentes } = await supabase
+    .from('vol_profiles')
+    .select('id, full_name, email, created_at')
+    .order('created_at', { ascending: false })
+    .limit(30);
+
+  // Sync recente do Planning Center
+  const { data: ultimoSync } = await supabase
+    .from('vol_sync_logs')
+    .select('sync_type, services_synced, schedules_synced, status, created_at')
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  return {
+    resumo: {
+      total_voluntarios: totalVoluntarios,
+      voluntarios_ativos_90d: voluntariosAtivos,
+      total_servicos: totalServicos,
+      total_escalas: totalEscalas,
+      total_equipes: totalTeams,
+      checkins_30d: checkins30d,
+    },
+    proximos_servicos: proximosServicos || [],
+    equipes: teams || [],
+    voluntarios_recentes: recentes || [],
+    ultimo_sync_planning_center: ultimoSync || null,
+  };
+}
+
+// ─── Cuidados ──────────────────────────────────────────────────────────
+
+async function fetchCuidadosContext() {
+  const mesAtual = new Date();
+  mesAtual.setDate(1);
+  const iniMes = mesAtual.toISOString().slice(0, 10);
+
+  const { count: acompAtivos } = await supabase.from('cui_acompanhamentos').select('id', { count: 'exact', head: true }).neq('status', 'concluido');
+  const { count: acompTotal } = await supabase.from('cui_acompanhamentos').select('id', { count: 'exact', head: true });
+  const { count: convertidosMes } = await supabase.from('cui_convertidos').select('id', { count: 'exact', head: true }).gte('data_culto', iniMes);
+  const { count: convertidosCadastrados } = await supabase.from('cui_convertidos').select('id', { count: 'exact', head: true }).eq('cadastrado', true).gte('data_culto', iniMes);
+
+  const { data: atendimentosMes } = await supabase
+    .from('cui_atendimentos_agregado')
+    .select('tipo, quantidade')
+    .eq('mes', iniMes);
+
+  const { data: acompRecentes } = await supabase
+    .from('cui_acompanhamentos')
+    .select('id, tipo, status, created_at')
+    .order('created_at', { ascending: false })
+    .limit(30);
+
+  return {
+    resumo: {
+      acompanhamentos_ativos: acompAtivos,
+      acompanhamentos_total: acompTotal,
+      convertidos_mes_atual: convertidosMes,
+      convertidos_cadastrados_mes: convertidosCadastrados,
+    },
+    atendimentos_mes_atual: atendimentosMes || [],
+    acompanhamentos_recentes: acompRecentes || [],
+  };
+}
+
+// ─── Grupos ────────────────────────────────────────────────────────────
+
+async function fetchGruposContext() {
+  const { count: total } = await supabase.from('mem_grupos').select('id', { count: 'exact', head: true });
+  const { count: ativos } = await supabase.from('mem_grupos').select('id', { count: 'exact', head: true }).eq('ativo', true);
+  const { count: totalMembros } = await supabase.from('mem_grupo_membros').select('id', { count: 'exact', head: true });
+
+  const { data: grupos } = await supabase
+    .from('mem_grupos')
+    .select('id, nome, dia_semana, horario, lider_id, ativo, endereco')
+    .eq('ativo', true)
+    .order('nome')
+    .limit(80);
+
+  return {
+    resumo: {
+      total_grupos: total,
+      grupos_ativos: ativos,
+      total_participantes: totalMembros,
+    },
+    grupos: grupos || [],
+  };
+}
+
+// ─── Marketing ─────────────────────────────────────────────────────────
+
+async function fetchMarketingContext() {
+  // Marketing não tem tabela dedicada ainda — entrega estrutura vazia com indicação.
+  return {
+    resumo: { info: 'Módulo de marketing sem tabelas dedicadas ainda.' },
+    observacao: 'Peças de comunicação vivem em eventos/projetos; campanhas não têm schema próprio.',
+  };
+}
+
 /**
- * Serializa contexto para incluir no prompt (controla tamanho)
+ * Serializa contexto para incluir no prompt (controla tamanho).
  */
-function serializeContext(ctx, maxChars = 12000) {
+function serializeContext(ctx, maxChars = 24000) {
   const json = JSON.stringify(ctx, null, 2);
   if (json.length <= maxChars) return json;
-  // Trunca contexto para caber no budget
   return json.slice(0, maxChars) + '\n... (contexto truncado por limite de tamanho)';
 }
 
-module.exports = { buildContext, serializeContext };
+module.exports = { buildContext, serializeContext, canSeeModule, MODULE_ROUTE_KEY };
