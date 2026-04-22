@@ -1,108 +1,90 @@
 
-# Corrigir de vez o sync do Kids no Voluntariado
 
-Vou atacar o problema em dois pontos que ainda podem impedir o Kids de aparecer mesmo depois da paginação dos tipos de culto:
+# Corrigir erro "Erro desconhecido" na Mandala Cultura
 
-1. o sync ainda busca **poucos planos por tipo de culto**;
-2. o backend pode estar tentando gravar escalas com uma `onConflict` que **depende de uma constraint nova no banco**, e se esse SQL manual não tiver sido aplicado, os schedules do Kids continuam falhando silenciosamente.
+## Diagnóstico
 
-## O que será ajustado
+A mensagem **"Erro desconhecido"** no card da Mandala vem do wrapper de API do frontend (`src/api.js` linha 35). Ele aparece quando a resposta do `/api/kpis/cultura` **não é JSON parseável** — caso típico em Vercel quando a função serverless **estoura o timeout** (504) ou o body retorna vazio.
 
-### 1. Buscar todos os planos relevantes do service type Kids
-Hoje `fetchAllPlans()` em `backend/services/planningCenter.js` ainda está limitado a:
-
-- `future&per_page=5`
-- `past&per_page=3`
-
-Isso é pouco para um service type movimentado como Kids.
-
-Vou substituir por uma versão paginada por janela de datas, por exemplo:
-- próximos 30-60 dias
-- últimos 7 dias
-
-Assim o sync deixa de depender de “só os 5 próximos” e passa a trazer todos os cultos Kids do período operacional real.
-
-### 2. Tornar o upsert de schedules compatível com banco antigo e banco novo
-Hoje o código usa:
+Olhando `backend/routes/kpis.js` (linhas 462-538), o endpoint `/kpis/cultura` dispara 5 queries em paralelo. O ponto problemático é:
 
 ```js
-onConflict: 'service_id,planning_center_person_id,team_name,position_name'
+supabase.from('vol_check_ins')
+  .select('volunteer_id', { count: 'exact', head: false })
+  .gte('checkin_at', noventaDiasStr),
 ```
 
-Mas no repositório a migration antiga ainda mostra índices/constraints diferentes para `vol_schedules`. Se o SQL manual da constraint nova não foi aplicado no banco real, o upsert falha e as escalas não entram.
+Isso **traz todas as linhas de check-in dos últimos 90 dias** apenas para deduplicar voluntários no JS — com o módulo de voluntariado em produção há semanas, isso pode passar dos milhares de rows e levar o pooler do Supabase a estourar o limite de 1000 rows + custo de transferência. Em paralelo, `pense_videos` e `cultura_mensal` podem nem existir, retornando `.error` silenciosamente — funcional, mas adiciona latência.
 
-Vou implementar um helper de persistência no sync com esta lógica:
+Combinado com o limite serverless da Vercel, a função estoura, retorna 504 sem JSON, e o frontend cai no fallback "Erro desconhecido".
 
-- primeiro tenta o modo novo:  
-  `(service_id, planning_center_person_id, team_name, position_name)`
-- se o banco não suportar essa constraint, faz fallback seguro para o modo legado:  
-  `(service_id, planning_center_person_id)`
+## O que muda
 
-Resultado:
-- o sync volta a gravar escalas do Kids imediatamente;
-- quando a constraint nova existir, continua suportando múltiplas posições/equipes por pessoa.
+### 1. Trocar a contagem de voluntários ativos por uma RPC server-side
 
-### 3. Melhorar o log por tipo de culto no sync
-Vou adicionar logs claros por `service type`, incluindo:
+Criar função SQL `kpi_servir_comunidade(_since timestamptz)` que retorna apenas `count(distinct volunteer_id)` direto no banco — uma única linha, sem trafegar dados.
 
-- nome do tipo (`Kids`, etc.)
-- quantidade de planos encontrados
-- quantidade de team members retornados pelo Planning Center
-- quantidade de schedules gravados com sucesso
-- quantidade de falhas de persistência
+```sql
+create or replace function public.kpi_servir_comunidade(_since timestamptz)
+returns int
+language sql stable security definer set search_path = public as $$
+  select count(distinct volunteer_id)::int
+  from vol_check_ins
+  where checkin_at >= _since;
+$$;
+grant execute on function public.kpi_servir_comunidade(timestamptz) to authenticated, service_role;
+```
 
-Isso evita continuar “no escuro” se o Planning Center estiver trazendo dados mas o banco não estiver aceitando.
+No backend, trocar a query por `supabase.rpc('kpi_servir_comunidade', { _since: noventaDiasStr })`.
 
-### 4. Expor diagnóstico útil para conferir o Kids
-No endpoint de diagnóstico do sync, vou enriquecer a resposta para mostrar por tipo de culto:
+### 2. Tornar cada query do `Promise.all` resiliente
 
-- total de planos futuros
-- total de equipes
-- amostra de membros
-- status do sync desse tipo
+Hoje o `Promise.all` resolve mesmo com `.error`, mas se qualquer uma rejeitar (ex.: timeout de uma table), tudo morre. Trocar por `Promise.allSettled` e tratar cada slot individualmente, devolvendo `null` em qualquer um que falhe — a Mandala mostra "—" naquela pétala em vez de quebrar a tela inteira.
 
-Assim fica fácil validar se o problema é:
-- o Kids não veio do Planning Center;
-- o Kids veio, mas sem membros;
-- ou veio tudo e falhou só na gravação.
+### 3. Garantir resposta JSON mesmo em erro inesperado
 
-## Arquivos que serão alterados
+No `catch` final, garantir:
+```js
+res.status(500).json({ error: e?.message || 'Erro ao calcular cultura', stack: process.env.NODE_ENV === 'development' ? e.stack : undefined });
+```
+Hoje, se `e` for um objeto sem `.message` (raro, mas possível em rejections de fetch), o body fica `{ error: undefined }` → JSON inválido para o frontend ler como string.
 
-- `backend/services/planningCenter.js`
-  - paginar planos relevantes por tipo de culto
-  - criar helper de upsert compatível
-  - melhorar logs do sync
+### 4. Frontend — mensagem mais útil
 
-- `backend/routes/voluntariado-sync.js`
-  - usar a nova coleta paginada
-  - retornar diagnóstico mais explícito por service type
+Em `src/components/cultura/MandalaCultura.jsx`, quando `error` vier vazio, mostrar texto explicativo e botão "Tentar novamente":
+```jsx
+{error || 'Não foi possível carregar a Mandala.'}
+```
+e um pequeno botão que dispara o `useEffect` novamente.
 
-## SQL manual que vou entregar junto
-Como você já pediu esse padrão no projeto, vou te devolver também o SQL manual consolidado para o banco real, deixando a constraint ideal de `vol_schedules` pronta para o modo “uma linha por equipe/posição”.
+### 5. SQL manual para o usuário aplicar
 
-A implementação ficará tolerante mesmo antes desse SQL, mas o SQL continua sendo o estado correto/final.
+Junto da PR, entregar bloco SQL idempotente:
+- `create or replace function kpi_servir_comunidade(...)`
+- `create table if not exists cultura_mensal (...)` (caso ainda não exista — schema mínimo: `mes date primary key, qtd_dizimistas int, qtd_ofertantes int, observacoes text, updated_at timestamptz default now()`)
+- `create table if not exists pense_videos (...)` (id uuid pk, video_id text, titulo text, data_publicacao date, views bigint default 0, ativo bool default true)
 
-## Resultado esperado
-Depois disso, o fluxo correto será:
+Marcar tudo com `IF NOT EXISTS` para ser seguro rodar várias vezes.
 
-1. backend sincroniza todos os planos relevantes do Kids;
-2. grava as escalas mesmo se o banco ainda estiver com a constraint antiga;
-3. o Kids passa a aparecer na lista de escalados do sistema;
-4. com o SQL novo aplicado, continua funcionando também para casos com múltiplas posições da mesma pessoa.
+## Arquivos alterados
+
+- `backend/routes/kpis.js` — usar RPC, `Promise.allSettled`, response de erro garantida.
+- `src/components/cultura/MandalaCultura.jsx` — fallback de mensagem + retry.
+- `supabase/migrations/<timestamp>_kpi_cultura_rpc.sql` — função RPC e tabelas idempotentes.
 
 ## Sem mudanças
-- UI do totem
-- check-in manual/facial/QR
-- relatórios
-- autenticação
 
-## Validação após implementar
-Depois do deploy, a checagem será:
+- Estrutura visual da Mandala (`MandalaSVG`, `PetalDetailDialog`).
+- Cálculos de pétalas (presencial/online/decisões/etc.).
+- Outros endpoints `/kpis/*`.
 
-1. clicar em **Sincronizar** no dashboard do voluntariado;
-2. confirmar no retorno/log que o `service type` Kids foi processado;
-3. abrir um culto Kids e verificar se os escalados aparecem;
-4. conferir que os check-ins continuam entrando normalmente.
+## Validação após deploy
 
-## Observação técnica importante
-No contexto atual, o backend do voluntariado não está refletido nas tabelas disponíveis do banco conectado ao Lovable Cloud, então a correção precisa ser tratada no código do backend e com o SQL manual do banco real usado por esse módulo.
+1. Rodar o SQL no editor do Supabase de produção.
+2. Recarregar `/dashboard` — Mandala deve carregar (mesmo que algumas pétalas mostrem "—" se faltarem dados).
+3. Conferir nos logs da Vercel que `/api/kpis/cultura` responde em < 2s.
+
+## Risco
+
+Baixo. A RPC apenas substitui uma query pesada por uma agregação no banco; o `Promise.allSettled` é estritamente mais tolerante que o `Promise.all` atual; o SQL é todo idempotente.
+
