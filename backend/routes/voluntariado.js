@@ -865,9 +865,11 @@ router.post('/check-ins', async (req, res) => {
     // - nao ha escala no vol_schedules pra esse volunteer+service
     let resolvedUnscheduled = is_unscheduled;
     if (resolvedUnscheduled === undefined && !schedule_id && volunteer_id && service_id) {
+      // Pode haver múltiplas linhas (mesma pessoa em mais de uma posição) —
+      // basta saber se existe ao menos uma escala.
       const { data: sched } = await supabase.from('vol_schedules')
-        .select('id').eq('volunteer_id', volunteer_id).eq('service_id', service_id).maybeSingle();
-      resolvedUnscheduled = !sched;
+        .select('id').eq('volunteer_id', volunteer_id).eq('service_id', service_id).limit(1);
+      resolvedUnscheduled = !(sched && sched.length > 0);
     }
 
     const { data, error } = await supabase.from('vol_check_ins')
@@ -898,8 +900,8 @@ router.post('/check-ins', async (req, res) => {
             const r = await supabase.from('vol_check_ins')
               .select('checked_in_at, method, volunteer:vol_profiles(full_name)')
               .eq('volunteer_id', volunteer_id).eq('service_id', service_id)
-              .eq('is_unscheduled', true).maybeSingle();
-            existing = r.data;
+              .eq('is_unscheduled', true).limit(1);
+            existing = r.data?.[0] || null;
             volunteerName = existing?.volunteer?.full_name || null;
           }
           checkedInAt = existing?.checked_in_at || null;
