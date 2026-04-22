@@ -1,5 +1,6 @@
 const { supabase } = require('../utils/supabase');
 const { getEffectiveLevel } = require('../middleware/auth');
+const { searchVault } = require('./cerebroSearch');
 
 /**
  * Mapeia cada módulo de agente para a routeKey usada no sistema de permissões
@@ -55,11 +56,14 @@ function resolveModules(targetModules, req) {
 /**
  * Constrói o contexto RAG para os agentes com dados reais do sistema.
  * Respeita permissões: cada usuário só recebe dados dos módulos aos quais tem acesso.
+ * Se options.query estiver presente, também busca notas relevantes no vault
+ * (Cérebro CBRio) e injeta em ctx.cerebro_vault.
  *
  * @param {string[]} targetModules - ['all'] ou lista de módulos
  * @param {object} req - Express request (com req.user para filtrar permissões)
+ * @param {object} options - { query?: string, vaultLimit?: number }
  */
-async function buildContext(targetModules = ['all'], req = null) {
+async function buildContext(targetModules = ['all'], req = null, options = {}) {
   const modules = resolveModules(targetModules, req);
 
   const ctx = {
@@ -74,7 +78,7 @@ async function buildContext(targetModules = ['all'], req = null) {
     modulos: {},
   };
 
-  const results = await Promise.all(modules.map(async (mod) => {
+  const modulesPromise = Promise.all(modules.map(async (mod) => {
     try {
       return [mod, await fetchModuleContext(mod)];
     } catch (e) {
@@ -82,8 +86,26 @@ async function buildContext(targetModules = ['all'], req = null) {
     }
   }));
 
-  for (const [mod, data] of results) {
+  // Busca no Cérebro em paralelo com as consultas de módulos.
+  const vaultPromise = options.query
+    ? searchVault(options.query, req, options.vaultLimit || 5).catch((e) => {
+        console.warn('[AGENT CONTEXT] vault search failed:', e.message);
+        return [];
+      })
+    : Promise.resolve([]);
+
+  const [moduleResults, vaultResults] = await Promise.all([modulesPromise, vaultPromise]);
+
+  for (const [mod, data] of moduleResults) {
     ctx.modulos[mod] = data;
+  }
+
+  if (vaultResults.length) {
+    ctx.cerebro_vault = {
+      descricao: 'Notas relevantes do Cérebro CBRio (vault Obsidian no SharePoint). Use como conhecimento adicional; cite o note_path quando referenciar.',
+      total: vaultResults.length,
+      notas: vaultResults,
+    };
   }
 
   return ctx;
