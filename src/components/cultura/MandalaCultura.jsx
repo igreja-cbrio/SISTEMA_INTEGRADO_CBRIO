@@ -85,9 +85,18 @@ export default function MandalaCultura() {
             <motion.div
               key="error"
               initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-              className="text-sm text-destructive py-12"
+              className="flex flex-col items-center gap-3 py-12"
             >
-              {error}
+              <p className="text-sm text-destructive text-center max-w-sm">
+                {error || 'Não foi possível carregar a Mandala.'}
+              </p>
+              <button
+                type="button"
+                onClick={() => setReloadKey((k) => k + 1)}
+                className="text-xs px-3 py-1.5 rounded-md border border-border hover:bg-accent transition-colors"
+              >
+                Tentar novamente
+              </button>
             </motion.div>
           ) : (
             <motion.div
