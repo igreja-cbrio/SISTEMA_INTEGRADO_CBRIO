@@ -275,6 +275,45 @@ export default function VolTotem() {
 
   // ── Shared helpers ──
 
+  // ── Manual Mode ──
+
+  const loadSchedules = async () => {
+    if (!selectedServiceId) return;
+    setManualLoading(true);
+    try {
+      const data = await voluntariado.schedules.list({ service_id: selectedServiceId });
+      setSchedules(Array.isArray(data) ? data : []);
+    } catch {
+      setSchedules([]);
+    } finally {
+      setManualLoading(false);
+    }
+  };
+
+  const handleManualCheckin = async (sch: VolSchedule) => {
+    if (processingRef.current) return;
+    processingRef.current = true;
+    try {
+      await voluntariado.checkIns.create({
+        schedule_id: sch.id,
+        volunteer_id: sch.volunteer_id || undefined,
+        service_id: selectedServiceId,
+        method: 'manual',
+      });
+      setResult({
+        name: sch.volunteer_name,
+        team: sch.team_name,
+        position: sch.position_name,
+      });
+      setState('success');
+      autoReset(() => loadSchedules());
+    } catch (err: any) {
+      handleCheckinError(err, () => loadSchedules());
+    }
+  };
+
+  // ── Shared helpers ──
+
   const autoReset = (afterReset: () => void) => {
     setTimeout(() => {
       setState('idle');
