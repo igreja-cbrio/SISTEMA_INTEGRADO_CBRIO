@@ -149,11 +149,13 @@ router.post('/chat', chatLimiter, async (req, res) => {
     }
 
     // 2. Build context from DB (filtrado pela permissão do usuário)
+    //    + busca relevante no Cérebro (vault Obsidian)
     let contextStr = '';
     try {
       const ctx = await buildContext(
         [agentModule === 'supervisor' ? 'all' : agentModule],
         req,
+        { query: message, vaultLimit: 5 },
       );
       contextStr = serializeContext(ctx, 24000);
     } catch (e) {
