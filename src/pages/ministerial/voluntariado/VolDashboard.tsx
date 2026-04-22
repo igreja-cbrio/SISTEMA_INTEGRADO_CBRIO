@@ -1,6 +1,6 @@
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { RefreshCw, Users, Calendar, QrCode, BarChart3, ClipboardCheck, Loader2, Monitor, Users as UsersIcon } from 'lucide-react';
+import { RefreshCw, Users, Calendar, QrCode, BarChart3, ClipboardCheck, Loader2, Monitor } from 'lucide-react';
 import { useTodaysServices, useUpcomingServices } from './hooks';
 import { useSyncPlanningCenter, useLastSync } from './hooks';
 import LastSyncIndicator from './components/dashboard/LastSyncIndicator';
