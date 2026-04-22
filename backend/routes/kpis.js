@@ -434,4 +434,216 @@ router.post('/youtube/sync', async (req, res) => {
   res.json({ synced: results.length, results, semVideo: cultosSemVideo.length });
 });
 
+// ═══════════════════════════════════════════════════════════════════════════
+// MANDALA CULTURA — 5 valores CBRio + Decisões (centro)
+// ═══════════════════════════════════════════════════════════════════════════
+
+function parseMes(input) {
+  // Aceita 'YYYY-MM' ou 'YYYY-MM-DD'. Default: mês corrente.
+  let y, m;
+  if (input && /^\d{4}-\d{2}/.test(input)) {
+    const [yy, mm] = input.split('-');
+    y = Number(yy); m = Number(mm);
+  } else {
+    const now = new Date();
+    y = now.getFullYear(); m = now.getMonth() + 1;
+  }
+  const inicio = new Date(Date.UTC(y, m - 1, 1));
+  const fimExclusivo = new Date(Date.UTC(y, m, 1));
+  const diasNoMes = new Date(Date.UTC(y, m, 0)).getUTCDate();
+  const semanasNoMes = Math.max(1, Math.ceil(diasNoMes / 7));
+  const mesISO = `${y}-${String(m).padStart(2, '0')}`;
+  const inicioStr = inicio.toISOString().split('T')[0];
+  const fimExclusivoStr = fimExclusivo.toISOString().split('T')[0];
+  const fimInclusivoStr = new Date(Date.UTC(y, m, 0)).toISOString().split('T')[0];
+  return { y, m, mesISO, inicioStr, fimExclusivoStr, fimInclusivoStr, diasNoMes, semanasNoMes };
+}
+
+// GET /kpis/cultura?mes=YYYY-MM
+router.get('/cultura', async (req, res) => {
+  try {
+    const { mesISO, inicioStr, fimInclusivoStr, diasNoMes, semanasNoMes } = parseMes(req.query.mes);
+
+    // Hoje - 90d para Servir
+    const noventaDias = new Date();
+    noventaDias.setDate(noventaDias.getDate() - 90);
+    const noventaDiasStr = noventaDias.toISOString();
+
+    const [
+      cultosRes,
+      grupoMembrosRes,
+      penseRes,
+      checkInsRes,
+      culturaMensalRes,
+    ] = await Promise.all([
+      supabase.from('cultos')
+        .select('presencial_adulto, presencial_kids, decisoes_presenciais, decisoes_online, online_ds')
+        .gte('data', inicioStr).lte('data', fimInclusivoStr),
+      // mem_grupo_membros (saiu_em IS NULL = ativo). Tabela pode não existir — try/catch silencioso.
+      supabase.from('mem_grupo_membros').select('id', { count: 'exact', head: true }).is('saiu_em', null),
+      supabase.from('pense_videos')
+        .select('views')
+        .eq('ativo', true)
+        .gte('data_publicacao', inicioStr)
+        .lte('data_publicacao', fimInclusivoStr),
+      supabase.from('vol_check_ins').select('volunteer_id', { count: 'exact', head: false })
+        .gte('checkin_at', noventaDiasStr),
+      supabase.from('cultura_mensal').select('*').eq('mes', inicioStr).maybeSingle(),
+    ]);
+
+    const cultos = cultosRes.data || [];
+    const presencialTotal = cultos.reduce((s, c) => s + (c.presencial_adulto || 0) + (c.presencial_kids || 0), 0);
+    const onlineDsTotal   = cultos.reduce((s, c) => s + (c.online_ds || 0), 0);
+    const decisoesTotal   = cultos.reduce((s, c) => s + (c.decisoes_presenciais || 0) + (c.decisoes_online || 0), 0);
+
+    const conectarPessoas = grupoMembrosRes.error ? null : (grupoMembrosRes.count || 0);
+
+    const penseTotalViews = (penseRes.data || []).reduce((s, v) => s + (v.views || 0), 0);
+    const investirDeus = penseRes.error ? null : Math.round(penseTotalViews / diasNoMes);
+
+    // Voluntários ativos = distinct volunteer_id em vol_check_ins últimos 90d
+    let servirComunidade = null;
+    if (!checkInsRes.error) {
+      const ids = new Set((checkInsRes.data || []).map(r => r.volunteer_id));
+      servirComunidade = ids.size;
+    }
+
+    const cm = culturaMensalRes.data;
+    const generosidade = {
+      dizimistas: cm?.qtd_dizimistas ?? null,
+      ofertantes: cm?.qtd_ofertantes ?? null,
+    };
+
+    res.json({
+      mes: mesISO,
+      semanas_no_mes: semanasNoMes,
+      dias_no_mes: diasNoMes,
+      seguir_jesus: {
+        presencial: Math.round(presencialTotal / semanasNoMes),
+        online: Math.round(onlineDsTotal / semanasNoMes),
+        presencial_total: presencialTotal,
+        online_total: onlineDsTotal,
+      },
+      conectar_pessoas: conectarPessoas,
+      investir_deus: investirDeus,
+      investir_deus_total: penseTotalViews,
+      servir_comunidade: servirComunidade,
+      generosidade,
+      decisoes: decisoesTotal,
+    });
+  } catch (e) {
+    console.error('[kpis/cultura] erro:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// POST /kpis/cultura/mensal — upsert (mes, qtd_dizimistas, qtd_ofertantes, observacoes)
+router.post('/cultura/mensal', authorize('admin', 'diretor'), async (req, res) => {
+  const { mes, qtd_dizimistas, qtd_ofertantes, observacoes } = req.body || {};
+  if (!mes || !/^\d{4}-\d{2}/.test(mes)) {
+    return res.status(400).json({ error: 'Campo "mes" obrigatório no formato YYYY-MM' });
+  }
+  // Sempre dia 01
+  const mesDate = `${mes.slice(0, 7)}-01`;
+  const payload = {
+    mes: mesDate,
+    qtd_dizimistas: Number(qtd_dizimistas) || 0,
+    qtd_ofertantes: Number(qtd_ofertantes) || 0,
+    observacoes: observacoes || null,
+    updated_at: new Date().toISOString(),
+    updated_by: req.user?.id || null,
+  };
+  const { data, error } = await supabase
+    .from('cultura_mensal')
+    .upsert(payload, { onConflict: 'mes' })
+    .select()
+    .single();
+  if (error) return res.status(500).json({ error: error.message });
+  res.json(data);
+});
+
+router.get('/cultura/mensal', async (req, res) => {
+  const { data, error } = await supabase
+    .from('cultura_mensal').select('*').order('mes', { ascending: false });
+  if (error) return res.status(500).json({ error: error.message });
+  res.json(data || []);
+});
+
+// PENSE — CRUD vídeos
+router.get('/cultura/pense', async (req, res) => {
+  const { data, error } = await supabase
+    .from('pense_videos').select('*').order('data_publicacao', { ascending: false });
+  if (error) return res.status(500).json({ error: error.message });
+  res.json(data || []);
+});
+
+router.post('/cultura/pense', authorize('admin', 'diretor'), async (req, res) => {
+  const { video_id, titulo, data_publicacao, views, ativo } = req.body || {};
+  if (!video_id || !data_publicacao) {
+    return res.status(400).json({ error: 'video_id e data_publicacao são obrigatórios' });
+  }
+  const { data, error } = await supabase
+    .from('pense_videos')
+    .upsert({
+      video_id,
+      titulo: titulo || null,
+      data_publicacao,
+      views: Number(views) || 0,
+      ativo: ativo !== false,
+      created_by: req.user?.id || null,
+    }, { onConflict: 'video_id' })
+    .select()
+    .single();
+  if (error) return res.status(500).json({ error: error.message });
+  res.json(data);
+});
+
+router.delete('/cultura/pense/:id', authorize('admin', 'diretor'), async (req, res) => {
+  const { error } = await supabase.from('pense_videos').delete().eq('id', req.params.id);
+  if (error) return res.status(500).json({ error: error.message });
+  res.json({ ok: true });
+});
+
+// POST /kpis/cultura/pense/sync — atualiza views via YouTube API
+router.post('/cultura/pense/sync', async (req, res) => {
+  const authHeader = req.headers.authorization;
+  const cronSecret = process.env.CRON_SECRET;
+  const isVercelCron = req.headers['x-vercel-cron'] === '1';
+  const isAdmin = ['admin', 'diretor'].includes(req.user?.role);
+  if (!isVercelCron && authHeader !== cronSecret && authHeader !== `Bearer ${cronSecret}` && !isAdmin) {
+    return res.status(401).json({ error: 'Não autorizado' });
+  }
+
+  const apiKey = process.env.YOUTUBE_API_KEY;
+  if (!apiKey) return res.status(500).json({ error: 'YOUTUBE_API_KEY não configurada' });
+
+  const { data: videos, error } = await supabase
+    .from('pense_videos').select('id, video_id').eq('ativo', true);
+  if (error) return res.status(500).json({ error: error.message });
+
+  // YouTube API aceita até 50 IDs por request
+  const ids = (videos || []).map(v => v.video_id);
+  const chunks = [];
+  for (let i = 0; i < ids.length; i += 50) chunks.push(ids.slice(i, i + 50));
+
+  const results = [];
+  for (const chunk of chunks) {
+    try {
+      const url = `https://www.googleapis.com/youtube/v3/videos?part=statistics&id=${chunk.join(',')}&key=${apiKey}`;
+      const r = await fetch(url);
+      const json = await r.json();
+      for (const item of (json.items || [])) {
+        const views = parseInt(item.statistics?.viewCount || '0', 10);
+        await supabase.from('pense_videos')
+          .update({ views, views_atualizado_em: new Date().toISOString() })
+          .eq('video_id', item.id);
+        results.push({ video_id: item.id, views });
+      }
+    } catch (e) {
+      results.push({ error: e.message });
+    }
+  }
+  res.json({ synced: results.length, results });
+});
+
 module.exports = router;
