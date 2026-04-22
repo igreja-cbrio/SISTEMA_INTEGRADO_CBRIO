@@ -184,7 +184,7 @@ router.get('/diagnostics', async (req, res) => {
     const report = [];
 
     for (const st of serviceTypes) {
-      const entry = { id: st.id, name: st.attributes.name, teams: [], plans: 0 };
+      const entry = { id: st.id, name: st.attributes.name, teams: [], plans: 0, plans_in_window: 0, total_team_members: 0 };
 
       // 2. Teams in this service type
       const teamsRes = await fetchWithRetry(`${PC_SERVICES_BASE}/service_types/${st.id}/teams?per_page=100`, { Authorization: `Basic ${credentials}` });
@@ -200,6 +200,7 @@ router.get('/diagnostics', async (req, res) => {
           if (membersRes.ok) {
             const membersData = await membersRes.json();
             memberCount = membersData.meta?.total_count ?? (membersData.data?.length ?? '?');
+            if (typeof memberCount === 'number') entry.total_team_members += memberCount;
             const personMap = new Map();
             for (const inc of (membersData.included || [])) {
               if (inc.type === 'Person') personMap.set(inc.id, inc);
@@ -217,11 +218,19 @@ router.get('/diagnostics', async (req, res) => {
         }
       }
 
-      // 3. Future plans count
+      // 3. Future plans count (total no PC)
       const plansRes = await fetchWithRetry(`${PC_SERVICES_BASE}/service_types/${st.id}/plans?filter=future&per_page=1`, { Authorization: `Basic ${credentials}` });
       if (plansRes.ok) {
         const plansData = await plansRes.json();
         entry.plans = plansData.meta?.total_count ?? 0;
+      }
+
+      // 4. Plans dentro da janela operacional usada pelo sync (-7d / +60d)
+      try {
+        const janela = await fetchAllPlans(PC_SERVICES_BASE, st.id, credentials);
+        entry.plans_in_window = janela.length;
+      } catch (e) {
+        entry.plans_in_window_error = e.message;
       }
 
       report.push(entry);
