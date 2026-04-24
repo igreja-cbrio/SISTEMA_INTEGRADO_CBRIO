@@ -38,8 +38,8 @@ function DependencyGraph({ item, dependentes, deltaDias, fullscreen, onToggleFul
   const affected = deltaDias !== 0;
   const numCols = 1 + (diretos.length > 0 ? 1 : 0) + (cascata.length > 0 ? 1 : 0);
 
-  const COL_W = 230;
-  const NODE_H = 58;
+  const COL_W = 280;
+  const NODE_H = 72;
   const GAP_Y = 14;
   const LABEL_H = 22;
   const COL_GAP = 90;
@@ -83,26 +83,26 @@ function DependencyGraph({ item, dependentes, deltaDias, fullscreen, onToggleFul
   });
 
   // Nó clicavel — navega para a pagina do marco
-  const ClickableNode = ({ d, x, y, color, isAffected }) => (
-    <g style={{ cursor: 'pointer' }} onClick={(e) => { e.stopPropagation(); navigate(`/revisao/expansao/${d.id}`); }}>
-      <rect x={x} y={y - NODE_H / 2} width={COL_W} height={NODE_H} rx={9} {...nodeStyle(color, isAffected)} />
-      {/* Hover overlay */}
-      <rect x={x} y={y - NODE_H / 2} width={COL_W} height={NODE_H} rx={9} fill="transparent" className="dep-node-hover" />
-      <text x={x + 11} y={y - 10} fontSize={11} fontWeight={600} fill={C.text} style={{ pointerEvents: 'none' }}>
-        {d.name?.slice(0, 28)}{(d.name || '').length > 28 ? '...' : ''}
-      </text>
-      <text x={x + 11} y={y + 5} fontSize={10} fill={C.t3} style={{ pointerEvents: 'none' }}>
-        Prazo: {fmtDate(d.date_end)} {d.responsible ? `| ${d.responsible}` : ''}
-      </text>
-      {isAffected && d.data_projetada && d.data_projetada !== d.date_end ? (
-        <text x={x + 11} y={y + 20} fontSize={10} fontWeight={700} fill={color} style={{ pointerEvents: 'none' }}>
-          {'\u2192'} {fmtDate(d.data_projetada)} ({deltaDias > 0 ? '+' : ''}{deltaDias}d)
-        </text>
-      ) : d.budget_planned > 0 ? (
-        <text x={x + 11} y={y + 20} fontSize={9} fill={C.t3} style={{ pointerEvents: 'none' }}>{fmtMoney(d.budget_planned)}</text>
-      ) : null}
-    </g>
-  );
+  const ClickableNode = ({ d, x, y, color, isAffected }) => {
+    const top = y - NODE_H / 2;
+    const impactLine = isAffected && d.data_projetada && d.data_projetada !== d.date_end
+      ? `\u2192 ${fmtDate(d.data_projetada)} (${deltaDias > 0 ? '+' : ''}${deltaDias}d)`
+      : d.budget_planned > 0 ? fmtMoney(d.budget_planned) : null;
+    const impactColor = isAffected && d.data_projetada && d.data_projetada !== d.date_end ? color : C.t3;
+    return (
+      <g style={{ cursor: 'pointer' }} onClick={(e) => { e.stopPropagation(); navigate(`/revisao/expansao/${d.id}`); }}>
+        <rect x={x} y={top} width={COL_W} height={NODE_H} rx={9} {...nodeStyle(color, isAffected)} />
+        <rect x={x} y={top} width={COL_W} height={NODE_H} rx={9} fill="transparent" className="dep-node-hover" />
+        <foreignObject x={x} y={top} width={COL_W} height={NODE_H} style={{ pointerEvents: 'none' }}>
+          <div xmlns="http://www.w3.org/1999/xhtml" style={{ padding: '7px 11px', height: '100%', display: 'flex', flexDirection: 'column', justifyContent: 'center', gap: 1 }}>
+            <div style={{ fontSize: 11, fontWeight: 600, color: C.text, lineHeight: 1.25, wordBreak: 'break-word' }}>{d.name}</div>
+            <div style={{ fontSize: 10, color: C.t3 }}>Prazo: {fmtDate(d.date_end)} {d.responsible ? `| ${d.responsible}` : ''}</div>
+            {impactLine && <div style={{ fontSize: 10, fontWeight: 700, color: impactColor }}>{impactLine}</div>}
+          </div>
+        </foreignObject>
+      </g>
+    );
+  };
 
   const wrapperStyle = fullscreen
     ? { position: 'fixed', inset: 0, zIndex: 9999, background: 'var(--cbrio-bg)', overflow: 'auto', padding: 24 }
@@ -138,12 +138,12 @@ function DependencyGraph({ item, dependentes, deltaDias, fullscreen, onToggleFul
         <g>
           <rect x={col1X} y={mainY - NODE_H / 2} width={COL_W} height={NODE_H} rx={10}
             fill={C.primaryBg} stroke={C.primary} strokeWidth={2.5} />
-          <text x={col1X + 12} y={mainY - 8} fontSize={12} fontWeight={700} fill={C.primary}>
-            {(item?.name || '').slice(0, 28)}{(item?.name || '').length > 28 ? '...' : ''}
-          </text>
-          <text x={col1X + 12} y={mainY + 10} fontSize={10} fill={C.t2}>
-            {fmtDate(item?.date_end)} {item?.responsible ? `| ${item.responsible}` : ''}
-          </text>
+          <foreignObject x={col1X} y={mainY - NODE_H / 2} width={COL_W} height={NODE_H}>
+            <div xmlns="http://www.w3.org/1999/xhtml" style={{ padding: '8px 12px', height: '100%', display: 'flex', flexDirection: 'column', justifyContent: 'center', gap: 2 }}>
+              <div style={{ fontSize: 12, fontWeight: 700, color: C.primary, lineHeight: 1.25, wordBreak: 'break-word' }}>{item?.name}</div>
+              <div style={{ fontSize: 10, color: C.t2 }}>{fmtDate(item?.date_end)} {item?.responsible ? `| ${item.responsible}` : ''}</div>
+            </div>
+          </foreignObject>
         </g>
 
         {/* Label diretos */}
