@@ -122,7 +122,7 @@ function DependencyGraph({ item, dependentes, deltaDias, fullscreen, onToggleFul
         {col2X && diretos.map((_, i) => (
           <path key={'l1-' + i}
             d={`M${col1X + COL_W},${mainY} C${col1X + COL_W + COL_GAP / 2},${mainY} ${col2X - COL_GAP / 2},${directYs[i]} ${col2X},${directYs[i]}`}
-            stroke={affected ? C.red : C.border} strokeWidth={affected ? 2 : 1} fill="none" strokeDasharray={affected ? '' : '6'} opacity={0.5} />
+            stroke={affected ? C.red : C.border} strokeWidth={affected ? 3 : 2} fill="none" strokeDasharray={affected ? '' : '6'} opacity={0.6} />
         ))}
         {/* Linhas: diretos → cascata */}
         {col2X && col3X && cascata.map((_, ci) => {
@@ -130,7 +130,7 @@ function DependencyGraph({ item, dependentes, deltaDias, fullscreen, onToggleFul
           return (
             <path key={'l2-' + ci}
               d={`M${col2X + COL_W},${closestDY} C${col2X + COL_W + COL_GAP / 2},${closestDY} ${col3X - COL_GAP / 2},${cascataYs[ci]} ${col3X},${cascataYs[ci]}`}
-              stroke={affected ? C.amber : C.border} strokeWidth={affected ? 1.5 : 1} fill="none" strokeDasharray="6" opacity={0.4} />
+              stroke={affected ? C.amber : C.border} strokeWidth={affected ? 2.5 : 2} fill="none" strokeDasharray="6" opacity={0.55} />
           );
         })}
 
