@@ -234,6 +234,11 @@ router.post('/activate/:eventId', authorize('admin', 'diretor'), async (req, res
       'Debriefing': 'Debrief',
     };
 
+    // Buscar responsáveis padrão por área
+    const { data: areaResp } = await supabase.from('area_responsaveis').select('area, responsavel_nome');
+    const respMap = {};
+    (areaResp || []).forEach(r => { respMap[r.area] = r.responsavel_nome; });
+
     // Criar tarefas detalhadas com subtarefas do banco
     const { data: admTemplates } = await supabase.from('adm_task_templates').select('*, adm_task_template_subtasks(*)').eq('ativo', true).order('sort_order');
     for (const tmpl of (admTemplates || [])) {
@@ -250,6 +255,7 @@ router.post('/activate/:eventId', authorize('admin', 'diretor'), async (req, res
         prazo: dataFim.toISOString().split('T')[0],
         status: 'a_fazer',
         prioridade: 'normal',
+        responsavel_nome: respMap[tmpl.area] || null,
         observacoes: `Área: ${tmpl.area} | Início: ${dataInicio.toISOString().split('T')[0]} | Fim: ${dataFim.toISOString().split('T')[0]}`,
       }).select().single();
 
@@ -749,6 +755,10 @@ async function propagarParaEventosAtivos(tmpl) {
   const etapaToFase = { 'Pré-Briefing': 'Pré Briefing', 'Aprovação': 'Aprovação', 'Execução Estratégica': 'Execução Estratégica', 'Pré-Testes': 'Pré-Testes', 'Finalizações': 'Finalizações', 'Alinhamentos Operacionais Finais': 'Alinhamentos Operacionais Finais', 'Dia D': 'Dia D', 'Debriefing': 'Debrief' };
   const faseNome = etapaToFase[tmpl.etapa] || tmpl.etapa;
 
+  // Buscar responsável padrão da área
+  const { data: areaResp } = await supabase.from('area_responsaveis').select('responsavel_nome').eq('area', tmpl.area).maybeSingle();
+  const responsavel = areaResp?.responsavel_nome || null;
+
   const { data: cycles } = await supabase.from('event_cycles').select('event_id, data_dia_d').eq('status', 'ativo');
   let propagados = 0;
   for (const c of (cycles || [])) {
@@ -759,6 +769,7 @@ async function propagarParaEventosAtivos(tmpl) {
     const { data: task } = await supabase.from('cycle_phase_tasks').insert({
       event_phase_id: phase.id, event_id: c.event_id, titulo: tmpl.titulo,
       area: tmpl.area, prazo: dataFim.toISOString().split('T')[0], status: 'a_fazer', prioridade: 'normal',
+      responsavel_nome: responsavel,
     }).select().single();
     if (task && tmpl.adm_task_template_subtasks?.length) {
       await supabase.from('cycle_task_subtasks').insert(tmpl.adm_task_template_subtasks.map((s, i) => ({ task_id: task.id, name: s.name, sort_order: i })));
@@ -885,6 +896,32 @@ router.delete('/adm-template-subtasks/:id', authorize('admin', 'diretor'), async
 
     await supabase.from('adm_task_template_subtasks').delete().eq('id', req.params.id);
     res.json({ success: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// ══════════════════════════════════════════════
+// RESPONSÁVEIS POR ÁREA (configuração)
+// ══════════════════════════════════════════════
+
+// GET /api/cycles/area-responsaveis
+router.get('/area-responsaveis', async (req, res) => {
+  try {
+    const { data, error } = await supabase.from('area_responsaveis').select('*').order('area');
+    if (error) throw error;
+    res.json(data || []);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// PUT /api/cycles/area-responsaveis/:area — atualizar responsável de uma área
+router.put('/area-responsaveis/:area', authorize('admin', 'diretor'), async (req, res) => {
+  try {
+    const { responsavel_nome } = req.body;
+    if (!responsavel_nome?.trim()) return res.status(400).json({ error: 'responsavel_nome é obrigatório' });
+    const { data, error } = await supabase.from('area_responsaveis')
+      .upsert({ area: req.params.area, responsavel_nome: responsavel_nome.trim(), updated_at: new Date().toISOString() }, { onConflict: 'area' })
+      .select().single();
+    if (error) throw error;
+    res.json(data);
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 

@@ -457,6 +457,28 @@ CREATE VIEW vw_event_kpi AS
 - Patrimônio/logística sem integração com eventos
 - `reopened_count` ausente em cards (para medir rework)
 
+## Responsáveis por área (ciclo criativo)
+
+A tabela `area_responsaveis` define quem é o líder padrão de cada área.
+Ao ativar um ciclo criativo ou propagar um novo template, o sistema
+preenche `responsavel_nome` automaticamente com o valor dessa tabela.
+
+| Área | Responsável |
+|------|-------------|
+| cozinha | Jéssica Salviano |
+| limpeza | Jéssica Salviano |
+| manutencao | Amaury |
+| compras | Amaury |
+| producao | Pedro Fernandes |
+| marketing | Pedro Paiva |
+| financeiro | Yago Torres |
+| adm | Marcos Paulo |
+
+Para alterar: `PUT /api/cycles/area-responsaveis/:area` com
+`{ "responsavel_nome": "Novo Nome" }`. Os eventos futuros usarão
+o novo responsável; tarefas já criadas não são afetadas
+retroativamente.
+
 ## Contexto do projeto
 
 Sistema ERP interno da CBRio (Igreja). Stack: React 18 + Vite +
