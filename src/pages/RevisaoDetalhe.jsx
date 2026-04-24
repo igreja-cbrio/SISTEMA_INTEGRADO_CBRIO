@@ -21,7 +21,9 @@ const STATUS_EXP = ['pendente', 'em_andamento', 'bloqueado', 'cancelado', 'concl
 // GRAFO SVG DE DEPENDENCIAS
 // ══════════════════════════════════════════════
 
-function DependencyGraph({ item, dependentes, deltaDias }) {
+function DependencyGraph({ item, dependentes, deltaDias, fullscreen, onToggleFullscreen }) {
+  const navigate = useNavigate();
+
   if (!dependentes || dependentes.length === 0) {
     return (
       <div style={{ padding: 40, textAlign: 'center', color: C.t3, fontSize: 13 }}>
@@ -34,123 +36,137 @@ function DependencyGraph({ item, dependentes, deltaDias }) {
   const diretos = dependentes.filter(d => d.is_direct);
   const cascata = dependentes.filter(d => !d.is_direct);
   const affected = deltaDias !== 0;
+  const numCols = 1 + (diretos.length > 0 ? 1 : 0) + (cascata.length > 0 ? 1 : 0);
 
-  // Layout: item central à esquerda, dependentes diretos no meio, cascata à direita
-  const COL_W = 220;
-  const NODE_H = 56;
-  const GAP_Y = 16;
-  const PAD = 20;
+  const COL_W = 230;
+  const NODE_H = 58;
+  const GAP_Y = 14;
+  const LABEL_H = 22;
+  const COL_GAP = 90;
+  const PAD = 24;
 
-  const col1X = PAD;
-  const col2X = PAD + COL_W + 80;
-  const col3X = cascata.length > 0 ? col2X + COL_W + 80 : col2X;
+  // Calcular largura total e posicionar colunas centradas
+  const totalW = numCols * COL_W + (numCols - 1) * COL_GAP;
+  const svgW = totalW + PAD * 2;
 
-  const svgW = (cascata.length > 0 ? col3X + COL_W + PAD : col2X + COL_W + PAD);
-  const maxRows = Math.max(diretos.length, cascata.length, 1);
-  const svgH = Math.max(maxRows * (NODE_H + GAP_Y) + PAD * 2, 200);
+  // Posicoes X das colunas
+  const colXs = [];
+  let curX = PAD;
+  colXs.push(curX); // col item principal
+  if (diretos.length > 0) { curX += COL_W + COL_GAP; colXs.push(curX); }
+  if (cascata.length > 0) { curX += COL_W + COL_GAP; colXs.push(curX); }
+  const col1X = colXs[0];
+  const col2X = diretos.length > 0 ? colXs[1] : null;
+  const col3X = cascata.length > 0 ? colXs[colXs.length - 1] : null;
 
-  // Y center do item principal
-  const centerY = svgH / 2;
-  // Y dos dependentes diretos — distribuir verticalmente centrado
-  const directYs = diretos.map((_, i) => PAD + i * (NODE_H + GAP_Y) + NODE_H / 2);
-  const cascataYs = cascata.map((_, i) => PAD + i * (NODE_H + GAP_Y) + NODE_H / 2);
+  // Altura: a coluna mais alta define
+  const maxNodes = Math.max(diretos.length, cascata.length, 1);
+  const contentH = maxNodes * (NODE_H + GAP_Y) - GAP_Y;
+  const svgH = contentH + PAD * 2 + LABEL_H;
+
+  // Centrar cada coluna verticalmente
+  const centerY = PAD + LABEL_H + contentH / 2;
+  const centerCol = (count) => {
+    const totalColH = count * NODE_H + (count - 1) * GAP_Y;
+    const startY = centerY - totalColH / 2;
+    return Array.from({ length: count }, (_, i) => startY + i * (NODE_H + GAP_Y) + NODE_H / 2);
+  };
+
+  const mainY = centerY;
+  const directYs = centerCol(diretos.length);
+  const cascataYs = centerCol(cascata.length);
 
   const nodeStyle = (color, isAffected) => ({
-    fill: isAffected ? color + '20' : 'var(--cbrio-card)',
+    fill: isAffected ? color + '15' : 'var(--cbrio-card)',
     stroke: isAffected ? color : 'var(--cbrio-border)',
     strokeWidth: isAffected ? 2 : 1,
   });
 
+  // Nó clicavel — navega para a pagina do marco
+  const ClickableNode = ({ d, x, y, color, isAffected }) => (
+    <g style={{ cursor: 'pointer' }} onClick={(e) => { e.stopPropagation(); navigate(`/revisao/expansao/${d.id}`); }}>
+      <rect x={x} y={y - NODE_H / 2} width={COL_W} height={NODE_H} rx={9} {...nodeStyle(color, isAffected)} />
+      {/* Hover overlay */}
+      <rect x={x} y={y - NODE_H / 2} width={COL_W} height={NODE_H} rx={9} fill="transparent" className="dep-node-hover" />
+      <text x={x + 11} y={y - 10} fontSize={11} fontWeight={600} fill={C.text} style={{ pointerEvents: 'none' }}>
+        {d.name?.slice(0, 28)}{(d.name || '').length > 28 ? '...' : ''}
+      </text>
+      <text x={x + 11} y={y + 5} fontSize={10} fill={C.t3} style={{ pointerEvents: 'none' }}>
+        Prazo: {fmtDate(d.date_end)} {d.responsible ? `| ${d.responsible}` : ''}
+      </text>
+      {isAffected && d.data_projetada && d.data_projetada !== d.date_end ? (
+        <text x={x + 11} y={y + 20} fontSize={10} fontWeight={700} fill={color} style={{ pointerEvents: 'none' }}>
+          {'\u2192'} {fmtDate(d.data_projetada)} ({deltaDias > 0 ? '+' : ''}{deltaDias}d)
+        </text>
+      ) : d.budget_planned > 0 ? (
+        <text x={x + 11} y={y + 20} fontSize={9} fill={C.t3} style={{ pointerEvents: 'none' }}>{fmtMoney(d.budget_planned)}</text>
+      ) : null}
+    </g>
+  );
+
+  const wrapperStyle = fullscreen
+    ? { position: 'fixed', inset: 0, zIndex: 9999, background: 'var(--cbrio-bg)', overflow: 'auto', padding: 24 }
+    : { overflowX: 'auto', overflowY: 'auto', maxHeight: 380 };
+
   return (
-    <div style={{ overflowX: 'auto', overflowY: 'auto', maxHeight: 420 }}>
+    <div style={wrapperStyle}>
+      {fullscreen && (
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+          <span style={{ fontSize: 16, fontWeight: 700, color: C.text }}>Mapa de dependencias — {item?.name}</span>
+          <button onClick={onToggleFullscreen} style={{ padding: '6px 18px', borderRadius: 8, border: `1px solid ${C.border}`, background: C.card, color: C.text, fontSize: 12, fontWeight: 600, cursor: 'pointer' }}>Fechar tela cheia</button>
+        </div>
+      )}
+      <style>{`.dep-node-hover:hover { fill: var(--cbrio-bg); opacity: 0.5; }`}</style>
       <svg width={svgW} height={svgH} style={{ display: 'block', minWidth: svgW }}>
-        {/* Linhas: item central → diretos */}
-        {diretos.map((_, i) => (
-          <line key={'l1-' + i} x1={col1X + COL_W} y1={centerY} x2={col2X} y2={directYs[i]}
-            stroke={affected ? C.red : C.border} strokeWidth={affected ? 2 : 1} strokeDasharray={affected ? '' : '4'} opacity={0.6} />
+        {/* Linhas: item principal → diretos */}
+        {col2X && diretos.map((_, i) => (
+          <path key={'l1-' + i}
+            d={`M${col1X + COL_W},${mainY} C${col1X + COL_W + COL_GAP / 2},${mainY} ${col2X - COL_GAP / 2},${directYs[i]} ${col2X},${directYs[i]}`}
+            stroke={affected ? C.red : C.border} strokeWidth={affected ? 2 : 1} fill="none" strokeDasharray={affected ? '' : '6'} opacity={0.5} />
         ))}
         {/* Linhas: diretos → cascata */}
-        {cascata.map((c, ci) => {
-          // Encontrar qual direto leva a este cascata (simplificado: conecta ao mais proximo)
-          const closestDY = directYs.reduce((best, y) => Math.abs(y - cascataYs[ci]) < Math.abs(best - cascataYs[ci]) ? y : best, directYs[0] || centerY);
+        {col2X && col3X && cascata.map((_, ci) => {
+          const closestDY = directYs.reduce((best, y) => Math.abs(y - cascataYs[ci]) < Math.abs(best - cascataYs[ci]) ? y : best, directYs[0] || mainY);
           return (
-            <line key={'l2-' + ci} x1={col2X + COL_W} y1={closestDY} x2={col3X} y2={cascataYs[ci]}
-              stroke={affected ? C.amber : C.border} strokeWidth={affected ? 1.5 : 1} strokeDasharray="4" opacity={0.5} />
+            <path key={'l2-' + ci}
+              d={`M${col2X + COL_W},${closestDY} C${col2X + COL_W + COL_GAP / 2},${closestDY} ${col3X - COL_GAP / 2},${cascataYs[ci]} ${col3X},${cascataYs[ci]}`}
+              stroke={affected ? C.amber : C.border} strokeWidth={affected ? 1.5 : 1} fill="none" strokeDasharray="6" opacity={0.4} />
           );
         })}
 
         {/* Item principal */}
         <g>
-          <rect x={col1X} y={centerY - NODE_H / 2} width={COL_W} height={NODE_H} rx={10}
+          <rect x={col1X} y={mainY - NODE_H / 2} width={COL_W} height={NODE_H} rx={10}
             fill={C.primaryBg} stroke={C.primary} strokeWidth={2.5} />
-          <text x={col1X + 12} y={centerY - 8} fontSize={12} fontWeight={700} fill={C.primary}>
+          <text x={col1X + 12} y={mainY - 8} fontSize={12} fontWeight={700} fill={C.primary}>
             {(item?.name || '').slice(0, 28)}{(item?.name || '').length > 28 ? '...' : ''}
           </text>
-          <text x={col1X + 12} y={centerY + 10} fontSize={10} fill={C.t2}>
+          <text x={col1X + 12} y={mainY + 10} fontSize={10} fill={C.t2}>
             {fmtDate(item?.date_end)} {item?.responsible ? `| ${item.responsible}` : ''}
           </text>
         </g>
 
-        {/* Label coluna diretos */}
-        {diretos.length > 0 && (
-          <text x={col2X + COL_W / 2} y={10} fontSize={10} fontWeight={700} fill={affected ? C.red : C.t3} textAnchor="middle">
+        {/* Label diretos */}
+        {col2X && (
+          <text x={col2X + COL_W / 2} y={PAD + 12} fontSize={10} fontWeight={700} fill={affected ? C.red : C.t3} textAnchor="middle">
             Dependentes diretos ({diretos.length})
           </text>
         )}
-
         {/* Dependentes diretos */}
-        {diretos.map((d, i) => {
-          const y = directYs[i] - NODE_H / 2;
-          const ns = nodeStyle(C.red, affected);
-          return (
-            <g key={d.id}>
-              <rect x={col2X} y={y} width={COL_W} height={NODE_H} rx={8} {...ns} />
-              <text x={col2X + 10} y={y + 18} fontSize={11} fontWeight={600} fill={C.text}>
-                {d.name?.slice(0, 26)}{(d.name || '').length > 26 ? '...' : ''}
-              </text>
-              <text x={col2X + 10} y={y + 33} fontSize={10} fill={C.t3}>
-                Prazo: {fmtDate(d.date_end)}
-              </text>
-              {affected && d.data_projetada && d.data_projetada !== d.date_end && (
-                <text x={col2X + 10} y={y + 47} fontSize={10} fontWeight={700} fill={C.red}>
-                  {'\u2192'} {fmtDate(d.data_projetada)} ({deltaDias > 0 ? '+' : ''}{deltaDias}d)
-                </text>
-              )}
-              {!affected && d.budget_planned > 0 && (
-                <text x={col2X + 10} y={y + 47} fontSize={9} fill={C.t3}>{fmtMoney(d.budget_planned)}</text>
-              )}
-            </g>
-          );
-        })}
+        {col2X && diretos.map((d, i) => (
+          <ClickableNode key={d.id} d={d} x={col2X} y={directYs[i]} color={C.red} isAffected={affected} />
+        ))}
 
-        {/* Label coluna cascata */}
-        {cascata.length > 0 && (
-          <text x={col3X + COL_W / 2} y={10} fontSize={10} fontWeight={700} fill={affected ? C.amber : C.t3} textAnchor="middle">
+        {/* Label cascata */}
+        {col3X && (
+          <text x={col3X + COL_W / 2} y={PAD + 12} fontSize={10} fontWeight={700} fill={affected ? C.amber : C.t3} textAnchor="middle">
             Cascata ({cascata.length})
           </text>
         )}
-
         {/* Cascata */}
-        {cascata.map((d, i) => {
-          const y = cascataYs[i] - NODE_H / 2;
-          const ns = nodeStyle(C.amber, affected);
-          return (
-            <g key={d.id}>
-              <rect x={col3X} y={y} width={COL_W} height={NODE_H} rx={8} {...ns} />
-              <text x={col3X + 10} y={y + 18} fontSize={11} fontWeight={600} fill={C.text}>
-                {d.name?.slice(0, 26)}{(d.name || '').length > 26 ? '...' : ''}
-              </text>
-              <text x={col3X + 10} y={y + 33} fontSize={10} fill={C.t3}>
-                Prazo: {fmtDate(d.date_end)}
-              </text>
-              {affected && d.data_projetada && d.data_projetada !== d.date_end && (
-                <text x={col3X + 10} y={y + 47} fontSize={10} fontWeight={700} fill={C.amber}>
-                  {'\u2192'} {fmtDate(d.data_projetada)} ({deltaDias > 0 ? '+' : ''}{deltaDias}d)
-                </text>
-              )}
-            </g>
-          );
-        })}
+        {col3X && cascata.map((d, i) => (
+          <ClickableNode key={d.id} d={d} x={col3X} y={cascataYs[i]} color={C.amber} isAffected={affected} />
+        ))}
       </svg>
     </div>
   );
@@ -171,6 +187,7 @@ export default function RevisaoDetalhe() {
   const [historico, setHistorico] = useState([]);
   const [saving, setSaving] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [graphFullscreen, setGraphFullscreen] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -242,12 +259,17 @@ export default function RevisaoDetalhe() {
             <span style={{ fontSize: 11, color: C.t3 }}>Orcamento afetado: <strong style={{ color: C.red }}>{fmtMoney(impacto.custo_impactado)}</strong></span>
           )}
           {dateChanged && impacto?.delta_dias !== 0 && (
-            <span style={{ fontSize: 11, padding: '2px 10px', borderRadius: 99, background: impacto.delta_dias > 0 ? C.red + '20' : C.green + '20', color: impacto.delta_dias > 0 ? C.red : C.green, fontWeight: 700, marginLeft: 'auto' }}>
+            <span style={{ fontSize: 11, padding: '2px 10px', borderRadius: 99, background: impacto.delta_dias > 0 ? C.red + '20' : C.green + '20', color: impacto.delta_dias > 0 ? C.red : C.green, fontWeight: 700 }}>
               {impacto.delta_dias > 0 ? '+' : ''}{impacto.delta_dias} dias
             </span>
           )}
+          {impacto?.dependentes?.length > 0 && (
+            <button onClick={() => setGraphFullscreen(f => !f)} style={{ marginLeft: 'auto', padding: '4px 14px', borderRadius: 6, border: `1px solid ${C.border}`, background: 'transparent', color: C.t2, fontSize: 11, fontWeight: 600, cursor: 'pointer' }}>
+              {graphFullscreen ? 'Sair tela cheia' : 'Expandir'}
+            </button>
+          )}
         </div>
-        <DependencyGraph item={{ ...item, date_end: form.date_end }} dependentes={impacto?.dependentes || []} deltaDias={dateChanged ? (impacto?.delta_dias || 0) : 0} />
+        <DependencyGraph item={{ ...item, date_end: form.date_end }} dependentes={impacto?.dependentes || []} deltaDias={dateChanged ? (impacto?.delta_dias || 0) : 0} fullscreen={graphFullscreen} onToggleFullscreen={() => setGraphFullscreen(f => !f)} />
       </div>
 
       {/* ═══ FORMULARIO DE EDICAO ═══ */}
