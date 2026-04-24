@@ -185,8 +185,12 @@ export default function RevisaoEstrategica() {
                 <span style={{ fontSize: 11, color: C.t3, flexShrink: 0, minWidth: 80 }}>{fmtDate(item.date_end)}</span>
                 {atrasado ? (
                   <span style={{ fontSize: 11, fontWeight: 700, color: C.red, flexShrink: 0, minWidth: 65, textAlign: 'right' }}>{item._dias}d atraso</span>
+                ) : item.status === 'concluido' ? (
+                  <span style={{ fontSize: 10, padding: '2px 8px', borderRadius: 99, background: '#10b98118', color: C.green, fontWeight: 600, flexShrink: 0 }}>Concluido</span>
+                ) : item.date_end && item._dias <= 0 ? (
+                  <span style={{ fontSize: 11, fontWeight: 700, color: C.green, flexShrink: 0, minWidth: 65, textAlign: 'right' }}>{Math.abs(item._dias)}d restantes</span>
                 ) : (
-                  <span style={{ fontSize: 10, padding: '2px 8px', borderRadius: 99, background: item.status === 'concluido' ? '#10b98118' : '#9ca3af18', color: item.status === 'concluido' ? C.green : '#9ca3af', fontWeight: 600, flexShrink: 0 }}>{item.status || 'pendente'}</span>
+                  <span style={{ fontSize: 10, padding: '2px 8px', borderRadius: 99, background: '#9ca3af18', color: '#9ca3af', fontWeight: 600, flexShrink: 0 }}>{item.status || 'pendente'}</span>
                 )}
               </div>
             );
