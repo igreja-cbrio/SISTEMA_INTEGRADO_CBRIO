@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
 import { events, meetings, cycles as cyclesApi, occurrences as occApi, dashboard as dashApi, risks as risksApi, retrospective as retroApi, history as historyApi, users as usersApi, reports as reportsApi, governanca as govApi } from '../../api';
+// govApi usado apenas para aba Governança (relatórios)
 import { supabase } from '../../supabaseClient';
 import { resolveApiBaseUrl } from '../../lib/api-base';
 import CycleView from './components/CycleView';
@@ -384,9 +385,10 @@ export default function Eventos() {
   const [hasCycle, setHasCycle] = useState(false);
   const [detailTab, setDetailTab] = useState('info');
 
-  // Governança (calendário Home)
-  const [govCalendar, setGovCalendar] = useState([]);
-  const [kanbanCatFilter, setKanbanCatFilter] = useState('all'); // 'all' | 'eventos' | 'governanca'
+  // Governança (aba de relatórios)
+  const [govTab, setGovTab] = useState(null); // null | sigla do tipo selecionado
+  const [govRelatorio, setGovRelatorio] = useState(null);
+  const [govLoading, setGovLoading] = useState(false);
 
   // Modais
   const [modalEvent, setModalEvent] = useState(null);
@@ -458,7 +460,6 @@ export default function Eventos() {
     dashApi.pmo().then(d => setPmoKpis(d)).catch(() => {});
     dashApi.workload().then(d => setWorkload(d)).catch(() => {});
     usersApi.list().then(d => setUsersList(Array.isArray(d) ? d : [])).catch(() => setUsersList([]));
-    govApi.calendar(new Date().getFullYear()).then(d => setGovCalendar(Array.isArray(d) ? d : [])).catch(() => {});
     if (urlEventId) loadDetail(urlEventId);
   }, []);
   useEffect(() => { loadEvents(); }, [filtroStatus, filtroCategoria]);
@@ -636,14 +637,6 @@ export default function Eventos() {
       const odn = normDate(od);
       if (odn && odn !== d) { if (!eventsByDate[odn]) eventsByDate[odn] = []; eventsByDate[odn].push(ev); }
     });
-  });
-  // Reuniões de governança no calendário
-  (govCalendar || []).forEach(gm => {
-    const d = normDate(gm.date);
-    if (d) {
-      if (!eventsByDate[d]) eventsByDate[d] = [];
-      eventsByDate[d].push({ id: `gov-${gm.id}`, name: gm.name, date: gm.date, category_color: gm.color, status: gm.status === 'realizada' ? 'concluido' : 'no-prazo', _gov: true });
-    }
   });
 
   // ── Eventos do dia selecionado ──
@@ -1003,6 +996,138 @@ export default function Eventos() {
   }
 
 
+  // ══════════════════════════════════════════════
+  // GOVERNANCA — Relatórios automáticos
+  // ══════════════════════════════════════════════
+
+  const GOV_TIPOS = [
+    { sigla: 'OKR', nome: 'OKR', cor: '#3b82f6', desc: 'Objectives & Key Results', recorrencia: 'Mensal — 1a quarta' },
+    { sigla: 'DRE', nome: 'DRE', cor: '#10b981', desc: 'Demonstrativo de Resultado', recorrencia: 'Mensal — 2a quarta' },
+    { sigla: 'KPI', nome: 'KPI', cor: '#f59e0b', desc: 'Indicadores de Performance', recorrencia: 'Mensal — 3a quarta' },
+    { sigla: 'CC',  nome: 'Conselho Consultivo', cor: '#8b5cf6', desc: 'Conselho Consultivo', recorrencia: 'Mensal — 4a quarta' },
+    { sigla: 'DE',  nome: 'Diretoria Estatutaria', cor: '#ef4444', desc: 'Diretoria Estatutaria', recorrencia: 'Quadrimestral' },
+    { sigla: 'AG',  nome: 'Assembleia Geral', cor: '#06b6d4', desc: 'Assembleia com a Igreja', recorrencia: 'Semestral' },
+  ];
+
+  async function loadGovRelatorio(sigla) {
+    setGovLoading(true);
+    try { setGovRelatorio(await govApi.relatorio(sigla)); } catch { setGovRelatorio(null); }
+    finally { setGovLoading(false); }
+  }
+
+  function renderGovernanca() {
+    // Se nenhum tipo selecionado: mostrar cards
+    if (!govTab) {
+      return (
+        <div>
+          <p style={{ fontSize: 13, color: C.text2, marginBottom: 16 }}>Reunioes recorrentes de governanca. Selecione uma para ver o relatorio com dados ao vivo do sistema.</p>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: 14 }}>
+            {GOV_TIPOS.map(t => (
+              <div key={t.sigla} onClick={() => { setGovTab(t.sigla); loadGovRelatorio(t.sigla); }} style={{ ...styles.card, padding: 20, cursor: 'pointer', borderLeft: `4px solid ${t.cor}`, transition: 'transform 0.1s' }}
+                onMouseEnter={e => e.currentTarget.style.transform = 'translateY(-2px)'} onMouseLeave={e => e.currentTarget.style.transform = 'none'}>
+                <div style={{ fontSize: 18, fontWeight: 800, color: t.cor, marginBottom: 4 }}>{t.sigla}</div>
+                <div style={{ fontSize: 13, fontWeight: 600, color: C.text, marginBottom: 2 }}>{t.nome}</div>
+                <div style={{ fontSize: 11, color: C.text3 }}>{t.recorrencia}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      );
+    }
+
+    // Tipo selecionado: mostrar relatório
+    const tipo = GOV_TIPOS.find(t => t.sigla === govTab);
+    if (govLoading) return <div style={{ padding: 40, textAlign: 'center', color: C.text3 }}>Carregando relatorio {govTab}...</div>;
+    const r = govRelatorio;
+
+    return (
+      <div>
+        <button onClick={() => { setGovTab(null); setGovRelatorio(null); }} style={styles.backBtn}>{'\u2190'} Voltar</button>
+
+        {/* Header */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 20 }}>
+          <div style={{ width: 44, height: 44, borderRadius: 10, background: tipo.cor, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: 16, fontWeight: 800 }}>{tipo.sigla}</div>
+          <div>
+            <div style={{ fontSize: 18, fontWeight: 700, color: C.text }}>{tipo.nome}</div>
+            <div style={{ fontSize: 12, color: C.text3 }}>{tipo.recorrencia} | Dados de {new Date().toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' })}</div>
+          </div>
+        </div>
+
+        {r && (
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20 }}>
+            {/* Checklist de preparo */}
+            <div style={styles.card}>
+              <div style={{ padding: '12px 16px', borderBottom: `1px solid ${C.border}`, background: 'var(--cbrio-table-header)' }}>
+                <span style={{ fontSize: 13, fontWeight: 700, color: C.text }}>Checklist de preparo</span>
+                <span style={{ fontSize: 11, color: C.text3, marginLeft: 8 }}>
+                  {r.checklist.filter(c => c.ok).length}/{r.checklist.length} ok
+                </span>
+              </div>
+              <div style={{ padding: 16 }}>
+                {r.checklist.map((c, i) => (
+                  <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 0', borderBottom: i < r.checklist.length - 1 ? `1px solid ${C.border}` : 'none' }}>
+                    <span style={{ fontSize: 18 }}>{c.ok ? '\u2705' : '\u26A0\uFE0F'}</span>
+                    <div style={{ flex: 1 }}>
+                      <div style={{ fontSize: 13, fontWeight: 600, color: C.text }}>{c.item}</div>
+                      <div style={{ fontSize: 11, color: c.ok ? C.green : C.amber }}>{c.valor}</div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Preview dos dados */}
+            <div style={styles.card}>
+              <div style={{ padding: '12px 16px', borderBottom: `1px solid ${C.border}`, background: 'var(--cbrio-table-header)' }}>
+                <span style={{ fontSize: 13, fontWeight: 700, color: C.text }}>Dados da apresentacao</span>
+              </div>
+              <div style={{ padding: 16 }}>
+                {r.resumo && Object.entries(r.resumo).map(([key, val]) => (
+                  <div key={key} style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 0', borderBottom: `1px solid ${C.border}` }}>
+                    <span style={{ fontSize: 12, color: C.text2 }}>{key.replace(/_/g, ' ')}</span>
+                    <span style={{ fontSize: 13, fontWeight: 700, color: typeof val === 'number' && val < 0 ? C.red : C.text }}>
+                      {typeof val === 'number' && (key.includes('receita') || key.includes('despesa') || key.includes('resultado') || key.includes('saldo'))
+                        ? `R$ ${val.toLocaleString('pt-BR')}`
+                        : val}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Itens detalhados (projetos atrasados, transacoes, etc.) */}
+        {r?.dados?.projAtrasados?.length > 0 && (
+          <div style={{ ...styles.card, marginTop: 16 }}>
+            <div style={{ padding: '10px 16px', borderBottom: `1px solid ${C.border}`, background: C.redBg }}>
+              <span style={{ fontSize: 12, fontWeight: 700, color: C.red }}>Projetos atrasados ({r.dados.projAtrasados.length})</span>
+            </div>
+            {r.dados.projAtrasados.map(p => (
+              <div key={p.id} style={{ padding: '8px 16px', borderBottom: `1px solid ${C.border}`, fontSize: 12, display: 'flex', justifyContent: 'space-between' }}>
+                <span style={{ color: C.text, fontWeight: 500 }}>{p.name}</span>
+                <span style={{ color: C.red }}>{fmtDate(p.date_end)} | {p.responsible || 'sem resp.'}</span>
+              </div>
+            ))}
+          </div>
+        )}
+        {r?.dados?.marcosAtrasados?.length > 0 && (
+          <div style={{ ...styles.card, marginTop: 12 }}>
+            <div style={{ padding: '10px 16px', borderBottom: `1px solid ${C.border}`, background: C.amberBg }}>
+              <span style={{ fontSize: 12, fontWeight: 700, color: C.amber }}>Marcos atrasados ({r.dados.marcosAtrasados.length})</span>
+            </div>
+            {r.dados.marcosAtrasados.map(m => (
+              <div key={m.id} style={{ padding: '8px 16px', borderBottom: `1px solid ${C.border}`, fontSize: 12, display: 'flex', justifyContent: 'space-between' }}>
+                <span style={{ color: C.text, fontWeight: 500 }}>{m.name}</span>
+                <span style={{ color: C.amber }}>{fmtDate(m.date_end)}</span>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    );
+  }
+
   async function loadSimpleKanban() {
     try {
       const data = await cyclesApi.kanbanAll();
@@ -1331,23 +1456,6 @@ export default function Eventos() {
   }
 
   function renderKanban() {
-    // Toggle Todos | Eventos | Governança (filtra por categoria)
-    const catToggle = (
-      <div style={{ display: 'flex', gap: 6, marginBottom: 14, alignItems: 'center' }}>
-        {[
-          { key: 'all', label: 'Todos' },
-          { key: 'eventos', label: 'Eventos' },
-          { key: 'governanca', label: 'Governanca' },
-        ].map(v => (
-          <button key={v.key} onClick={() => setKanbanCatFilter(v.key)} style={{
-            padding: '6px 18px', borderRadius: 8, fontSize: 13, fontWeight: kanbanCatFilter === v.key ? 700 : 400, cursor: 'pointer',
-            border: kanbanCatFilter === v.key ? '2px solid #00B39D' : '1px solid var(--cbrio-border)',
-            background: kanbanCatFilter === v.key ? '#00B39D15' : 'transparent',
-            color: kanbanCatFilter === v.key ? '#00B39D' : 'var(--cbrio-text3)',
-          }}>{v.label}</button>
-        ))}
-      </div>
-    );
     const CAT = {
       adm:        { label: 'Administrativo', color: '#0ea5e9', bg: '#e0f2fe' },
       marketing:  { label: 'Marketing',  color: '#00B39D', bg: '#d1fae5' },
@@ -1364,17 +1472,9 @@ export default function Eventos() {
     const d = kanbanCycleData;
     if (!d) return <div style={{ padding: 20, textAlign: 'center', color: 'var(--cbrio-text3)' }}>{kanbanLoading ? 'Carregando...' : 'Nenhum ciclo criativo ativo'}</div>;
 
-    const rawEvents = d.events || [];
-
-    // Filtrar por categoria (Todos / Eventos / Governança)
-    const GOV_CAT = 'Governanca';
-    const catFilteredEventIds = kanbanCatFilter === 'all' ? null
-      : kanbanCatFilter === 'governanca' ? new Set(rawEvents.filter(e => e.category_name === GOV_CAT).map(e => e.id))
-      : new Set(rawEvents.filter(e => e.category_name !== GOV_CAT).map(e => e.id));
-
-    const allEvents = catFilteredEventIds ? rawEvents.filter(e => catFilteredEventIds.has(e.id)) : rawEvents;
-    const allPhases = catFilteredEventIds ? (d.phases || []).filter(p => catFilteredEventIds.has(p.event_id)) : (d.phases || []);
-    const allTasks = catFilteredEventIds ? (d.tasks || []).filter(t => catFilteredEventIds.has(t.event_id)) : (d.tasks || []);
+    const allPhases = d.phases || [];
+    const allTasks = d.tasks || [];
+    const allEvents = d.events || [];
 
     // Agrupar fases por numero_fase (unificando de todos os eventos)
     const phaseNums = [...new Set(allPhases.map(p => p.numero_fase))].sort((a, b) => a - b);
@@ -1413,7 +1513,6 @@ export default function Eventos() {
 
     return (
       <div style={{ margin: '0 -32px', padding: '0 16px' }}>
-        {catToggle}
         {/* Header com botão relatório */}
         {accessLevel >= 5 && (
           <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 8 }}>
@@ -3013,7 +3112,7 @@ export default function Eventos() {
         {detailTab === 'ciclo' && (
           <div>
             <BudgetPanel eventId={ev.id} budget={null} onReload={() => refreshDetail()} />
-            <CycleView eventId={ev.id} eventName={ev.name} categoryName={ev.category_name} />
+            <CycleView eventId={ev.id} eventName={ev.name} />
           </div>
         )}
 
@@ -3180,28 +3279,18 @@ export default function Eventos() {
           <Textarea label="Observações" name="notes" defaultValue={modalEvent?.notes || ''} />
           {isEdit && <Textarea label="Lições Aprendidas" name="lessons_learned" defaultValue={modalEvent?.lessons_learned || ''} />}
 
-          {/* Ciclo — não mostra checkbox para governança (auto-ativa) */}
-          {(() => {
-            const govCat = categories.find(c => c.name === 'Governanca');
-            const isGovModal = modalEvent?.category_id === govCat?.id;
-            if (isGovModal) return (
-              <div style={{ padding: '12px 14px', background: '#7c3aed15', borderRadius: 8, border: '1px solid #7c3aed40', display: 'flex', alignItems: 'center', gap: 8, marginTop: 12 }}>
-                <span style={{ fontSize: 14, fontWeight: 600, color: '#7c3aed' }}>Ciclo de Governanca — ativado automaticamente ao criar</span>
-              </div>
-            );
-            if (isEdit && hasCycle && selectedEvent?.id === modalEvent?.id) return (
-              <div style={{ padding: '12px 14px', background: '#10b98120', borderRadius: 8, border: '1px solid #10b98140', display: 'flex', alignItems: 'center', gap: 8, marginTop: 12 }}>
-                <span style={{ fontSize: 14, fontWeight: 600, color: '#10b981' }}>Ciclo Criativo ativado</span>
-              </div>
-            );
-            return (
-              <div style={{ padding: '12px 14px', background: '#00B39D15', borderRadius: 8, border: '1px solid #00B39D40', display: 'flex', alignItems: 'center', gap: 8, marginTop: 12 }}>
-                <input type="checkbox" name="ativar_ciclo" id="ciclo-modal" value="true" style={{ width: 18, height: 18, cursor: 'pointer' }} />
-                <label htmlFor="ciclo-modal" style={{ fontSize: 14, color: '#00B39D', fontWeight: 600, cursor: 'pointer' }}>Ativar Ciclo Criativo</label>
-                <span style={{ fontSize: 12, color: C.text3 }}>— fases de producao + trilha administrativa</span>
-              </div>
-            );
-          })()}
+          {/* Ciclo Criativo */}
+          {isEdit && hasCycle && selectedEvent?.id === modalEvent?.id ? (
+            <div style={{ padding: '12px 14px', background: '#10b98120', borderRadius: 8, border: '1px solid #10b98140', display: 'flex', alignItems: 'center', gap: 8, marginTop: 12 }}>
+              <span style={{ fontSize: 14, fontWeight: 600, color: '#10b981' }}>✓ Ciclo Criativo ativado</span>
+            </div>
+          ) : (
+            <div style={{ padding: '12px 14px', background: '#00B39D15', borderRadius: 8, border: '1px solid #00B39D40', display: 'flex', alignItems: 'center', gap: 8, marginTop: 12 }}>
+              <input type="checkbox" name="ativar_ciclo" id="ciclo-modal" value="true" style={{ width: 18, height: 18, cursor: 'pointer' }} />
+              <label htmlFor="ciclo-modal" style={{ fontSize: 14, color: '#00B39D', fontWeight: 600, cursor: 'pointer' }}>Ativar Ciclo Criativo</label>
+              <span style={{ fontSize: 12, color: C.text3 }}>— 11 fases de produção + trilha administrativa</span>
+            </div>
+          )}
         </form>
       </Modal>
     );
@@ -3300,6 +3389,7 @@ export default function Eventos() {
         <button style={styles.tab(tab === 2)} onClick={() => { setTab(2); if (!kanbanCycleData) loadKanban(); }}>Kanban</button>
         <button style={styles.tab(tab === 3)} onClick={() => { setTab(3); if (!kanbanCycleData) loadKanban(); }}>Gantt</button>
         <button style={styles.tab(tab === 7)} onClick={() => { setTab(7); loadSimpleKanban(); }}>Tarefas</button>
+        <button style={styles.tab(tab === 8)} onClick={() => setTab(8)}>Governanca</button>
         <button style={styles.tab(tab === 5)} onClick={() => { setTab(5); if (!kpiData) loadKpis(kpiTipo); }}>KPIs</button>
         {accessLevel >= 5 && <button style={styles.tab(tab === 6)} onClick={async () => { setTab(6); try { const d = await cyclesApi.admTemplates(); setAdmTemplates(Array.isArray(d) ? d : []); } catch (e) { console.error('Templates load error:', e); } }}>Templates</button>}
         {selectedEvent && <button style={styles.tab(tab === 4)} onClick={() => setTab(4)}>Detalhes</button>}
@@ -3313,6 +3403,7 @@ export default function Eventos() {
       {tab === 4 && renderDetail()}
       {tab === 5 && renderKPIs()}
       {tab === 7 && renderSimpleKanban()}
+      {tab === 8 && renderGovernanca()}
       {tab === 6 && renderTemplates()}
 
       {/* KPI Doc Resumo Modal */}

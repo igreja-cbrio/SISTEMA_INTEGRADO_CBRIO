@@ -46,8 +46,7 @@ function taskBelongsToSetor(task, setor) {
   return areas.includes(getCategory(task));
 }
 
-export default function CycleView({ eventId, eventName, categoryName }) {
-  const isGov = categoryName === 'Governanca';
+export default function CycleView({ eventId, eventName }) {
   const { profile, user } = useAuth();
   const userRole = profile?.role || '';
   const userArea = profile?.area || '';
@@ -138,10 +137,10 @@ export default function CycleView({ eventId, eventName, categoryName }) {
   if (!data?.cycle) return (
     <div style={{ padding: 24, textAlign: 'center' }}>
       <p style={{ color: C.t2, fontSize: 14, marginBottom: 12 }}>
-        {isGov ? 'Este evento ainda nao tem o ciclo de governanca ativado.' : 'Este evento ainda nao tem um ciclo criativo ativado.'}
+        Este evento ainda não tem um ciclo criativo ativado.
       </p>
       <button onClick={handleActivate} disabled={activating} style={{ padding: '10px 24px', borderRadius: 8, border: 'none', cursor: 'pointer', background: C.accent, color: '#fff', fontWeight: 600, fontSize: 14, opacity: activating ? 0.6 : 1 }}>
-        {activating ? 'Ativando...' : isGov ? 'Ativar Ciclo de Governanca' : 'Ativar Ciclo Criativo'}
+        {activating ? 'Ativando...' : 'Ativar Ciclo Criativo'}
       </button>
     </div>
   );
