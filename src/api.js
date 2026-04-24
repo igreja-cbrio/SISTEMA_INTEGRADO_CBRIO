@@ -277,6 +277,8 @@ export const revisoes = {
   simular: (tipo, id, params) => get(`/revisoes/simular/${tipo}/${id}` + (params ? '?' + new URLSearchParams(params) : '')),
   updateProjeto: (id, data) => put(`/revisoes/projeto/${id}`, data),
   updateExpansao: (id, data) => put(`/revisoes/expansao/${id}`, data),
+  deleteProjeto: (id, motivo) => request(`/revisoes/projeto/${id}`, { method: 'DELETE', body: JSON.stringify({ motivo }) }),
+  deleteExpansao: (id, motivo) => request(`/revisoes/expansao/${id}`, { method: 'DELETE', body: JSON.stringify({ motivo }) }),
   historico: (params) => get('/revisoes/historico' + (params ? '?' + new URLSearchParams(params) : '')),
 };
 
