@@ -296,6 +296,7 @@ export const governanca = {
   taskTemplates: () => get('/governanca/task-templates'),
   createTaskTemplate: (data) => post('/governanca/task-templates', data),
   deleteTaskTemplate: (id) => del(`/governanca/task-templates/${id}`),
+  calendar: (year) => get(`/governanca/calendar?year=${year}`),
 };
 
 export const agents = {
