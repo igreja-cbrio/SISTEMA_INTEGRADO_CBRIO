@@ -479,6 +479,28 @@ Para alterar: `PUT /api/cycles/area-responsaveis/:area` com
 o novo responsável; tarefas já criadas não são afetadas
 retroativamente.
 
+## Revisao Estrategica — edicao direta com impacto
+
+Modulo para revisar projetos e marcos de expansao com visualizacao de
+cascata. **Nao usa workflow de aprovacao** — o PMO edita direto.
+
+### Fluxo
+1. Diagnostico: KPIs + lista filtrada de itens atrasados/pendentes
+2. Clicar num item: abre painel split (edicao + impacto)
+3. Ao alterar `date_end` de um marco: recalcula cascata em tempo real
+4. Salvar aplica direto e loga em `revision_log`
+
+### Endpoints
+- `GET /api/revisoes/diagnostico` — radar completo
+- `GET /api/revisoes/simular/:tipo/:id?nova_data=X` — cascata de impacto
+- `PUT /api/revisoes/projeto/:id` — editar projeto + log
+- `PUT /api/revisoes/expansao/:id` — editar marco + log
+- `GET /api/revisoes/historico?tipo=&item_id=` — log de alteracoes
+
+### Tabelas
+- `revision_log` — audit trail de cada campo alterado (campo, valor
+  anterior, valor novo, motivo, quem, quando)
+
 ## Contexto do projeto
 
 Sistema ERP interno da CBRio (Igreja). Stack: React 18 + Vite +

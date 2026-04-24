@@ -275,13 +275,9 @@ export const cycles = {
 export const revisoes = {
   diagnostico: () => get('/revisoes/diagnostico'),
   simular: (tipo, id, params) => get(`/revisoes/simular/${tipo}/${id}` + (params ? '?' + new URLSearchParams(params) : '')),
-  pacotes: () => get('/revisoes/pacotes'),
-  criarPacote: (data) => post('/revisoes/pacotes', data),
-  addItem: (pacoteId, data) => post(`/revisoes/pacotes/${pacoteId}/itens`, data),
-  removeItem: (id) => del(`/revisoes/itens/${id}`),
-  mudarStatus: (pacoteId, status) => patch(`/revisoes/pacotes/${pacoteId}/status`, { status }),
-  aplicar: (pacoteId) => post(`/revisoes/pacotes/${pacoteId}/aplicar`, {}),
-  deletePacote: (id) => del(`/revisoes/pacotes/${id}`),
+  updateProjeto: (id, data) => put(`/revisoes/projeto/${id}`, data),
+  updateExpansao: (id, data) => put(`/revisoes/expansao/${id}`, data),
+  historico: (params) => get('/revisoes/historico' + (params ? '?' + new URLSearchParams(params) : '')),
 };
 
 export const agents = {
