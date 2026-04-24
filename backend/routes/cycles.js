@@ -121,7 +121,7 @@ router.get('/summary/all', async (req, res) => {
 // GET /api/cycles/kanban/all — todos os ciclos com fases + tarefas + subtarefas
 router.get('/kanban/all', async (req, res) => {
   try {
-    const { data: cycles } = await supabase.from('event_cycles').select('event_id, status, events(name, status)').eq('status', 'ativo');
+    const { data: cycles } = await supabase.from('event_cycles').select('event_id, status, events(name, status, category_id, event_categories(name))').eq('status', 'ativo');
     // Filtrar eventos concluídos
     const activeCycles = (cycles || []).filter(c => c.events?.status !== 'concluido');
     if (!activeCycles || activeCycles.length === 0) return res.json({ events: [], phases: [], tasks: [] });
@@ -146,7 +146,7 @@ router.get('/kanban/all', async (req, res) => {
       cycle_phase_templates: undefined,
     }));
 
-    const events = activeCycles.map(c => ({ id: c.event_id, name: c.events?.name || '—' }));
+    const events = activeCycles.map(c => ({ id: c.event_id, name: c.events?.name || '—', category_id: c.events?.category_id || null, category_name: c.events?.event_categories?.name || null }));
 
     // Buscar eventos SEM ciclo (simples) que não estão concluídos
     const { data: allActiveEvents } = await supabase.from('events').select('id, name').neq('status', 'concluido');
@@ -183,7 +183,7 @@ router.post('/activate/:eventId', authorize('admin', 'diretor'), async (req, res
   const { eventId } = req.params;
   const userId = req.user.userId;
   try {
-    const { data: event, error: evErr } = await supabase.from('events').select('id, date, name').eq('id', eventId).single();
+    const { data: event, error: evErr } = await supabase.from('events').select('id, date, name, category_id').eq('id', eventId).single();
     if (evErr || !event) return res.status(404).json({ error: 'Evento não encontrado' });
 
     const { data: existing } = await supabase.from('event_cycles').select('id').eq('event_id', eventId).maybeSingle();
@@ -195,7 +195,11 @@ router.post('/activate/:eventId', authorize('admin', 'diretor'), async (req, res
       .select().single();
     if (cycleErr) throw cycleErr;
 
-    const { data: templates } = await supabase.from('cycle_phase_templates').select('*').order('numero');
+    // Filtrar templates por categoria do evento (NULL = criativo padrão)
+    let tplQuery = supabase.from('cycle_phase_templates').select('*').order('numero');
+    if (event.category_id) tplQuery = tplQuery.eq('category_id', event.category_id);
+    else tplQuery = tplQuery.is('category_id', null);
+    const { data: templates } = await tplQuery;
     const phases = templates.map(t => ({
       event_id: eventId, template_id: t.id, numero_fase: t.numero,
       nome_fase: t.nome, area: t.area, momento_chave: t.momento_chave, status: 'pendente',
@@ -239,8 +243,11 @@ router.post('/activate/:eventId', authorize('admin', 'diretor'), async (req, res
     const respMap = {};
     (areaResp || []).forEach(r => { respMap[r.area] = r.responsavel_nome; });
 
-    // Criar tarefas detalhadas com subtarefas do banco
-    const { data: admTemplates } = await supabase.from('adm_task_templates').select('*, adm_task_template_subtasks(*)').eq('ativo', true).order('sort_order');
+    // Criar tarefas detalhadas com subtarefas do banco (filtrado por categoria)
+    let admTplQuery = supabase.from('adm_task_templates').select('*, adm_task_template_subtasks(*)').eq('ativo', true).order('sort_order');
+    if (event.category_id) admTplQuery = admTplQuery.eq('category_id', event.category_id);
+    else admTplQuery = admTplQuery.is('category_id', null);
+    const { data: admTemplates } = await admTplQuery;
     for (const tmpl of (admTemplates || [])) {
       const faseNome = etapaToFase[tmpl.etapa] || tmpl.etapa;
       const phaseId = phaseMap[faseNome] || null;
