@@ -282,6 +282,22 @@ export const revisoes = {
   historico: (params) => get('/revisoes/historico' + (params ? '?' + new URLSearchParams(params) : '')),
 };
 
+export const governanca = {
+  types: () => get('/governanca/types'),
+  cycles: (params) => get('/governanca/cycles' + (params ? '?' + new URLSearchParams(params) : '')),
+  createCycle: (data) => post('/governanca/cycles', data),
+  generateYear: (year) => post('/governanca/cycles/generate-year', { year }),
+  cycle: (year, month) => get(`/governanca/cycle/${year}/${month}`),
+  updateMeeting: (id, data) => put(`/governanca/meetings/${id}`, data),
+  meetingDados: (id) => get(`/governanca/meetings/${id}/dados`),
+  createTask: (data) => post('/governanca/tasks', data),
+  updateTask: (id, data) => patch(`/governanca/tasks/${id}`, data),
+  deleteTask: (id) => del(`/governanca/tasks/${id}`),
+  taskTemplates: () => get('/governanca/task-templates'),
+  createTaskTemplate: (data) => post('/governanca/task-templates', data),
+  deleteTaskTemplate: (id) => del(`/governanca/task-templates/${id}`),
+};
+
 export const agents = {
   generate: (data) => post('/agents/generate', data),
   queue: () => get('/agents/queue'),

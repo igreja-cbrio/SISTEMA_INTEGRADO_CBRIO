@@ -501,6 +501,40 @@ cascata. **Nao usa workflow de aprovacao** — o PMO edita direto.
 - `revision_log` — audit trail de cada campo alterado (campo, valor
   anterior, valor novo, motivo, quem, quando)
 
+## Governanca — Ciclo mensal de reunioes
+
+4 reunioes mensais interligadas que formam um ciclo de governanca:
+```
+Sem 1: OKR → Sem 2: DRE → Sem 3: KPI → Sem 4: Conselho
+```
+
+Extras (nao mensais): Diretoria Estatutaria (quadrimestral),
+Assembleia Geral (semestral).
+
+### Tabelas
+- `governance_cycles` — um por mes (year, month, status)
+- `governance_meeting_types` — tipos de reuniao (OKR, DRE, KPI, CC, DE, AG)
+- `governance_meetings` — 4+ por ciclo, com pauta, ata, deliberacoes
+- `governance_tasks` — demandas por reuniao
+- `governance_task_templates` — demandas padrao por tipo
+
+### Endpoints
+- `POST /api/governanca/cycles` — criar ciclo mensal + reunioes + tarefas
+- `POST /api/governanca/cycles/generate-year` — gerar ano inteiro
+- `GET /api/governanca/cycle/:year/:month` — ciclo completo
+- `PUT /api/governanca/meetings/:id` — atualizar reuniao
+- `GET /api/governanca/meetings/:id/dados` — dados automaticos do sistema
+- CRUD tarefas e templates
+
+### Frontend
+- `/governanca` — navegacao mensal, pipeline visual das 4 reunioes
+- Detalhe: formulario (pauta/ata/deliberacoes) + demandas + dados automaticos
+
+### KPIs
+Marcos vai definir os KPIs especificos de cada reuniao. Estrutura
+pronta para receber — por enquanto os dados automaticos puxam
+resumos dos modulos (projetos, financeiro, cultos, pendencias).
+
 ## Contexto do projeto
 
 Sistema ERP interno da CBRio (Igreja). Stack: React 18 + Vite +

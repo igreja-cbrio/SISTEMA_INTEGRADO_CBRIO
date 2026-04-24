@@ -88,6 +88,7 @@ const Patrimonio = lazyWithRetry(() => import('./pages/admin/patrimonio/Patrimon
 const Expansao = lazyWithRetry(() => import('./pages/Expansao'));
 const RevisaoEstrategica = lazyWithRetry(() => import('./pages/RevisaoEstrategica'));
 const RevisaoDetalhe = lazyWithRetry(() => import('./pages/RevisaoDetalhe'));
+const Governanca = lazyWithRetry(() => import('./pages/Governanca'));
 const RH = lazyWithRetry(() => import('./pages/admin/rh/RH'));
 const Logistica = lazyWithRetry(() => import('./pages/admin/logistica/Logistica'));
 const Planejamento = lazyWithRetry(() => import('./pages/Planejamento'));
@@ -240,6 +241,7 @@ function AppRoutes() {
         <Route path="/expansao" element={<ModuleGuard permKey="canExpansao"><Suspense fallback={<Loading />}><Expansao /></Suspense></ModuleGuard>} />
         <Route path="/revisao" element={<Suspense fallback={<Loading />}><RevisaoEstrategica /></Suspense>} />
         <Route path="/revisao/:tipo/:id" element={<Suspense fallback={<Loading />}><RevisaoDetalhe /></Suspense>} />
+        <Route path="/governanca" element={<Suspense fallback={<Loading />}><Governanca /></Suspense>} />
         <Route path="/admin/rh" element={<ModuleGuard permKey="canRH"><Suspense fallback={<Loading />}><RH /></Suspense></ModuleGuard>} />
         <Route path="/admin/financeiro" element={<ModuleGuard permKey="canFinanceiro"><Suspense fallback={<Loading />}><Financeiro /></Suspense></ModuleGuard>} />
         <Route path="/admin/logistica" element={<ModuleGuard permKey="canLogistica"><Suspense fallback={<Loading />}><Logistica /></Suspense></ModuleGuard>} />
