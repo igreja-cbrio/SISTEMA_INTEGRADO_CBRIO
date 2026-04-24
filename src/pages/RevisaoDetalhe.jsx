@@ -348,9 +348,20 @@ export default function RevisaoDetalhe() {
           <input value={motivo} onChange={ev => setMotivo(ev.target.value)} placeholder="Ex: Reuniao com Pedro 24/04 — decidido postergar para Q3" style={INPUT} />
         </div>
 
-        <div style={{ marginTop: 18, display: 'flex', gap: 10 }}>
+        <div style={{ marginTop: 18, display: 'flex', gap: 10, alignItems: 'center' }}>
           <button onClick={salvar} disabled={saving} style={{ padding: '10px 32px', borderRadius: 8, border: 'none', background: C.primary, color: '#fff', fontSize: 14, fontWeight: 700, cursor: 'pointer', opacity: saving ? 0.6 : 1 }}>{saving ? 'Salvando...' : 'Salvar alteracoes'}</button>
           <button onClick={() => navigate('/revisao')} style={{ padding: '10px 24px', borderRadius: 8, border: `1px solid ${C.border}`, background: 'transparent', color: C.t2, fontSize: 13, cursor: 'pointer' }}>Cancelar</button>
+          <button onClick={async () => {
+            const label = tipo === 'projeto' ? 'projeto' : 'marco';
+            if (!window.confirm(`Tem certeza que deseja excluir este ${label}?\n\n"${item.name}"\n\nEssa acao nao pode ser desfeita.`)) return;
+            const motivoExclusao = window.prompt('Motivo da exclusao (opcional):') || '';
+            try {
+              const fn = tipo === 'projeto' ? revisoes.deleteProjeto : revisoes.deleteExpansao;
+              await fn(id, motivoExclusao);
+              toast.success(`${label.charAt(0).toUpperCase() + label.slice(1)} excluido`);
+              navigate('/revisao');
+            } catch (err) { toast.error(err.message || 'Erro ao excluir'); }
+          }} style={{ marginLeft: 'auto', padding: '10px 24px', borderRadius: 8, border: `1px solid ${C.red}`, background: 'transparent', color: C.red, fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>Excluir {tipo === 'projeto' ? 'projeto' : 'marco'}</button>
         </div>
       </div>
 

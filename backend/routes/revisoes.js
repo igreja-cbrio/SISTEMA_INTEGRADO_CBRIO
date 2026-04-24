@@ -225,4 +225,68 @@ router.get('/historico', async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// ══════════════════════════════════════════════
+// EXCLUIR PROJETO OU MARCO
+// ══════════════════════════════════════════════
+
+// DELETE /api/revisoes/projeto/:id
+router.delete('/projeto/:id', authorize('admin', 'diretor'), async (req, res) => {
+  try {
+    const { data: item } = await supabase.from('projects').select('id, name').eq('id', req.params.id).single();
+    if (!item) return res.status(404).json({ error: 'Projeto nao encontrado' });
+
+    // Cascade: tarefas, fases, milestones, riscos, kpis, budget, retrospectiva
+    const { data: tasks } = await supabase.from('project_tasks').select('id').eq('project_id', req.params.id);
+    const taskIds = (tasks || []).map(t => t.id);
+    if (taskIds.length > 0) {
+      await supabase.from('project_task_subtasks').delete().in('task_id', taskIds).catch(() => {});
+      await supabase.from('project_task_comments').delete().in('task_id', taskIds).catch(() => {});
+      await supabase.from('project_tasks').delete().eq('project_id', req.params.id);
+    }
+    await supabase.from('project_phases').delete().eq('project_id', req.params.id).catch(() => {});
+    await supabase.from('project_milestones').delete().eq('project_id', req.params.id).catch(() => {});
+    await supabase.from('project_risks').delete().eq('project_id', req.params.id).catch(() => {});
+    await supabase.from('project_kpis').delete().eq('project_id', req.params.id).catch(() => {});
+    await supabase.from('project_budget_items').delete().eq('project_id', req.params.id).catch(() => {});
+    await supabase.from('project_retrospectives').delete().eq('project_id', req.params.id).catch(() => {});
+    await supabase.from('projects').delete().eq('id', req.params.id);
+
+    // Log
+    await supabase.from('revision_log').insert({
+      tipo: 'projeto', item_id: req.params.id, item_nome: item.name,
+      campo: 'exclusao', valor_anterior: item.name, valor_novo: 'EXCLUIDO',
+      motivo: req.body?.motivo || null, changed_by: req.user.userId, changed_by_name: req.user.name,
+    });
+
+    res.json({ success: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// DELETE /api/revisoes/expansao/:id
+router.delete('/expansao/:id', authorize('admin', 'diretor'), async (req, res) => {
+  try {
+    const { data: item } = await supabase.from('expansion_milestones').select('id, name').eq('id', req.params.id).single();
+    if (!item) return res.status(404).json({ error: 'Marco nao encontrado' });
+
+    // Cascade: tarefas, subtarefas, dependencias
+    const { data: tasks } = await supabase.from('expansion_tasks').select('id').eq('milestone_id', req.params.id);
+    const taskIds = (tasks || []).map(t => t.id);
+    if (taskIds.length > 0) {
+      await supabase.from('expansion_subtasks').delete().in('task_id', taskIds).catch(() => {});
+      await supabase.from('expansion_tasks').delete().eq('milestone_id', req.params.id);
+    }
+    await supabase.from('expansion_milestone_dependencies').delete().or(`milestone_id.eq.${req.params.id},depends_on_id.eq.${req.params.id}`).catch(() => {});
+    await supabase.from('expansion_milestones').delete().eq('id', req.params.id);
+
+    // Log
+    await supabase.from('revision_log').insert({
+      tipo: 'expansao', item_id: req.params.id, item_nome: item.name,
+      campo: 'exclusao', valor_anterior: item.name, valor_novo: 'EXCLUIDO',
+      motivo: req.body?.motivo || null, changed_by: req.user.userId, changed_by_name: req.user.name,
+    });
+
+    res.json({ success: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 module.exports = router;
