@@ -169,18 +169,6 @@ router.post('/', authorize('diretor', 'admin'), async (req, res) => {
 
     enqueueSync('evento', ev.id, 'upsert').catch(() => {});
 
-    // Auto-ativar ciclo para eventos de governança
-    if (d.category_id) {
-      const { data: cat } = await supabase.from('event_categories').select('name').eq('id', d.category_id).maybeSingle();
-      if (cat?.name === 'Governanca') {
-        try {
-          const { activateCycleForEvent } = require('./cycles');
-          await activateCycleForEvent(ev.id, req.user.userId);
-          console.log(`[Events] Ciclo de governanca auto-ativado para ${ev.name}`);
-        } catch (actErr) { console.error('[Events] Auto-activate gov cycle:', actErr.message); }
-      }
-    }
-
     res.json(ev);
   } catch (e) { console.error('[Events POST]', e.message); res.status(500).json({ error: 'Erro ao criar evento' }); }
 });
