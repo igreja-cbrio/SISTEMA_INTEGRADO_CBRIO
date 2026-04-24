@@ -393,6 +393,7 @@ export default function Eventos() {
   const [govMeetingForm, setGovMeetingForm] = useState({});
   const [govDados, setGovDados] = useState(null);
   const [govNewTask, setGovNewTask] = useState('');
+  const [govCalendar, setGovCalendar] = useState([]);
 
   // Modais
   const [modalEvent, setModalEvent] = useState(null);
@@ -464,7 +465,7 @@ export default function Eventos() {
     dashApi.pmo().then(d => setPmoKpis(d)).catch(() => {});
     dashApi.workload().then(d => setWorkload(d)).catch(() => {});
     usersApi.list().then(d => setUsersList(Array.isArray(d) ? d : [])).catch(() => setUsersList([]));
-    // Abrir evento direto se veio via URL param
+    govApi.calendar(new Date().getFullYear()).then(d => setGovCalendar(Array.isArray(d) ? d : [])).catch(() => {});
     if (urlEventId) loadDetail(urlEventId);
   }, []);
   useEffect(() => { loadEvents(); }, [filtroStatus, filtroCategoria]);
@@ -642,6 +643,14 @@ export default function Eventos() {
       const odn = normDate(od);
       if (odn && odn !== d) { if (!eventsByDate[odn]) eventsByDate[odn] = []; eventsByDate[odn].push(ev); }
     });
+  });
+  // Reuniões de governança no calendário
+  (govCalendar || []).forEach(gm => {
+    const d = normDate(gm.date);
+    if (d) {
+      if (!eventsByDate[d]) eventsByDate[d] = [];
+      eventsByDate[d].push({ id: `gov-${gm.id}`, name: gm.name, date: gm.date, category_color: gm.color, status: gm.status === 'realizada' ? 'concluido' : 'no-prazo', _gov: true });
+    }
   });
 
   // ── Eventos do dia selecionado ──
@@ -1035,19 +1044,30 @@ export default function Eventos() {
     try { setGovDados(await govApi.meetingDados(mtg.id)); } catch { setGovDados(null); }
   }
 
-  function renderGovernanca() {
+  function renderGovernancaKanban() {
     const meetings = govData?.meetings || [];
     const hoje = new Date().toISOString().split('T')[0];
+
+    const monthNav = (
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 16 }}>
+        <button onClick={() => govNavMonth(-1)} style={{ background: 'none', border: 'none', color: C.primary, cursor: 'pointer', fontSize: 20, fontWeight: 700 }}>{'\u2039'}</button>
+        <span style={{ fontSize: 15, fontWeight: 700, color: C.text }}>{GOV_MESES[govMonth]} {govYear}</span>
+        <button onClick={() => govNavMonth(1)} style={{ background: 'none', border: 'none', color: C.primary, cursor: 'pointer', fontSize: 20, fontWeight: 700 }}>{'\u203A'}</button>
+      </div>
+    );
 
     // Se nao tem ciclo
     if (!govData?.cycle) {
       return (
-        <div style={{ ...styles.card, padding: 40, textAlign: 'center' }}>
+        <div>
+          {monthNav}
+          <div style={{ ...styles.card, padding: 40, textAlign: 'center' }}>
           <div style={{ fontSize: 14, color: C.text2, marginBottom: 16 }}>Nenhum ciclo de governanca para {GOV_MESES[govMonth]} {govYear}</div>
           <div style={{ display: 'flex', gap: 12, justifyContent: 'center' }}>
             <button onClick={async () => { await govApi.createCycle({ year: govYear, month: govMonth }); loadGovernanca(); }} className="inline-flex items-center justify-center rounded-lg font-semibold text-sm px-4 py-2 bg-primary text-primary-foreground hover:bg-primary/90">Criar ciclo de {GOV_MESES[govMonth]}</button>
             <button onClick={async () => { const r = await govApi.generateYear(govYear); toast.success(`${r.created} ciclos criados`); loadGovernanca(); }} className="inline-flex items-center justify-center rounded-lg font-semibold text-sm px-4 py-2 border border-input bg-background hover:bg-accent">Gerar {govYear} inteiro</button>
           </div>
+        </div>
         </div>
       );
     }
@@ -1065,6 +1085,7 @@ export default function Eventos() {
     if (!govSelectedType) {
       return (
         <div>
+          {monthNav}
           <div style={{ display: 'grid', gridTemplateColumns: `repeat(auto-fill, minmax(200px, 1fr))`, gap: 14 }}>
             {typeList.map(t => {
               const total = t.meetings.length;
@@ -1532,7 +1553,29 @@ export default function Eventos() {
     );
   }
 
+  const [kanbanMode, setKanbanMode] = useState('eventos'); // 'eventos' | 'governanca'
+
   function renderKanban() {
+    // Toggle Eventos | Governança (antes de tudo)
+    const modeToggle = (
+      <div style={{ display: 'flex', gap: 6, marginBottom: 14, alignItems: 'center' }}>
+        {[
+          { key: 'eventos', label: 'Eventos' },
+          { key: 'governanca', label: 'Governanca' },
+        ].map(v => (
+          <button key={v.key} onClick={() => { setKanbanMode(v.key); if (v.key === 'governanca' && !govData) loadGovernanca(); }} style={{
+            padding: '6px 18px', borderRadius: 8, fontSize: 13, fontWeight: kanbanMode === v.key ? 700 : 400, cursor: 'pointer',
+            border: kanbanMode === v.key ? '2px solid #00B39D' : '1px solid var(--cbrio-border)',
+            background: kanbanMode === v.key ? '#00B39D15' : 'transparent',
+            color: kanbanMode === v.key ? '#00B39D' : 'var(--cbrio-text3)',
+          }}>{v.label}</button>
+        ))}
+      </div>
+    );
+
+    if (kanbanMode === 'governanca') return <div>{modeToggle}{renderGovernancaKanban()}</div>;
+
+    // === Kanban de eventos (código existente abaixo) ===
     const CAT = {
       adm:        { label: 'Administrativo', color: '#0ea5e9', bg: '#e0f2fe' },
       marketing:  { label: 'Marketing',  color: '#00B39D', bg: '#d1fae5' },
@@ -1590,6 +1633,7 @@ export default function Eventos() {
 
     return (
       <div style={{ margin: '0 -32px', padding: '0 16px' }}>
+        {modeToggle}
         {/* Header com botão relatório */}
         {accessLevel >= 5 && (
           <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 8 }}>
@@ -3468,7 +3512,6 @@ export default function Eventos() {
         <button style={styles.tab(tab === 2)} onClick={() => { setTab(2); if (!kanbanCycleData) loadKanban(); }}>Kanban</button>
         <button style={styles.tab(tab === 3)} onClick={() => { setTab(3); if (!kanbanCycleData) loadKanban(); }}>Gantt</button>
         <button style={styles.tab(tab === 7)} onClick={() => { setTab(7); loadSimpleKanban(); }}>Tarefas</button>
-        <button style={styles.tab(tab === 8)} onClick={() => { setTab(8); loadGovernanca(); }}>Governanca</button>
         <button style={styles.tab(tab === 5)} onClick={() => { setTab(5); if (!kpiData) loadKpis(kpiTipo); }}>KPIs</button>
         {accessLevel >= 5 && <button style={styles.tab(tab === 6)} onClick={async () => { setTab(6); try { const d = await cyclesApi.admTemplates(); setAdmTemplates(Array.isArray(d) ? d : []); } catch (e) { console.error('Templates load error:', e); } }}>Templates</button>}
         {selectedEvent && <button style={styles.tab(tab === 4)} onClick={() => setTab(4)}>Detalhes</button>}
@@ -3482,16 +3525,6 @@ export default function Eventos() {
       {tab === 4 && renderDetail()}
       {tab === 5 && renderKPIs()}
       {tab === 7 && renderSimpleKanban()}
-      {tab === 8 && (
-        <div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16 }}>
-            <button onClick={() => govNavMonth(-1)} style={{ background: 'none', border: 'none', color: C.primary, cursor: 'pointer', fontSize: 20, fontWeight: 700 }}>{'\u2039'}</button>
-            <span style={{ fontSize: 16, fontWeight: 700, color: C.text }}>{GOV_MESES[govMonth]} {govYear}</span>
-            <button onClick={() => govNavMonth(1)} style={{ background: 'none', border: 'none', color: C.primary, cursor: 'pointer', fontSize: 20, fontWeight: 700 }}>{'\u203A'}</button>
-          </div>
-          {renderGovernanca()}
-        </div>
-      )}
       {tab === 6 && renderTemplates()}
 
       {/* KPI Doc Resumo Modal */}

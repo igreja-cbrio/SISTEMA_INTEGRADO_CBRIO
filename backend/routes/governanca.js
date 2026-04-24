@@ -6,11 +6,11 @@ router.use(authenticate);
 
 // ── Helpers ──
 function getWeekDate(year, month, weekNum) {
-  // Retorna a data da segunda-feira da semana N do mes
+  // Retorna a data da quarta-feira da semana N do mes
   const first = new Date(year, month - 1, 1);
-  const dayOfWeek = first.getDay(); // 0=dom, 1=seg
-  const firstMonday = dayOfWeek <= 1 ? 1 + (1 - dayOfWeek) : 1 + (8 - dayOfWeek);
-  const day = firstMonday + (weekNum - 1) * 7;
+  const dayOfWeek = first.getDay(); // 0=dom, 3=qua
+  const firstWed = dayOfWeek <= 3 ? 1 + (3 - dayOfWeek) : 1 + (10 - dayOfWeek);
+  const day = firstWed + (weekNum - 1) * 7;
   const d = new Date(year, month - 1, day);
   return d.toISOString().split('T')[0];
 }
@@ -226,6 +226,27 @@ router.delete('/tasks/:id', async (req, res) => {
   try {
     await supabase.from('governance_tasks').delete().eq('id', req.params.id);
     res.json({ success: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// GET /api/governanca/calendar — reunioes para o calendario (por ano)
+router.get('/calendar', async (req, res) => {
+  try {
+    const { year } = req.query;
+    if (!year) return res.status(400).json({ error: 'year obrigatorio' });
+    const { data: cycles } = await supabase.from('governance_cycles').select('id').eq('year', Number(year));
+    if (!cycles?.length) return res.json([]);
+    const cycleIds = cycles.map(c => c.id);
+    const { data, error } = await supabase.from('governance_meetings')
+      .select('id, date, status, governance_meeting_types(nome, sigla, cor)')
+      .in('cycle_id', cycleIds).order('date');
+    if (error) throw error;
+    res.json((data || []).map(m => ({
+      id: m.id, date: m.date, status: m.status,
+      name: m.governance_meeting_types?.nome || '',
+      sigla: m.governance_meeting_types?.sigla || '',
+      color: m.governance_meeting_types?.cor || '#00B39D',
+    })));
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
