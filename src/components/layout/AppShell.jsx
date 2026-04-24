@@ -65,7 +65,6 @@ const NAV_ITEMS = [
           { label: 'Projetos', description: 'Acompanhamento de projetos', icon: FolderKanban, path: '/projetos', perm: 'canProjetos' },
           { label: 'Expansão', description: 'Metas de expansão', icon: Map, path: '/expansao', perm: 'canExpansao' },
           { label: 'Revisão', description: 'Revisão estratégica com líderes', icon: ClipboardCheck, path: '/revisao' },
-          { label: 'Governança', description: 'Ciclo mensal de reuniões de governança', icon: ClipboardCheck, path: '/governanca' },
         ],
       },
     ],
