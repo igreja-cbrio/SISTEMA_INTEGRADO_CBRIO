@@ -397,7 +397,6 @@ async function processServiceType(supabase, serviceType, plans, credentials) {
   }
 
   console.log(`[PC] ► ${serviceType.attributes.name}: plans=${plans.length} services=${typeServices} schedules=${typeSchedules} membersFound=${typeMembersFound} membersProcessed=${typeMembersProcessed}`);
-  }
 
   // Opção A: atribui voluntários às equipes com base nas escalas sincronizadas
   await assignVolunteersToTeams(supabase, memberTeamMap);
