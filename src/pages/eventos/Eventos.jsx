@@ -3009,11 +3009,11 @@ export default function Eventos() {
           </div>
         )}
 
-        {/* ── ABA: Ciclo Criativo (só se ativado) ── */}
+        {/* ── ABA: Ciclo (criativo ou governanca, conforme categoria) ── */}
         {detailTab === 'ciclo' && (
           <div>
             <BudgetPanel eventId={ev.id} budget={null} onReload={() => refreshDetail()} />
-            <CycleView eventId={ev.id} eventName={ev.name} />
+            <CycleView eventId={ev.id} eventName={ev.name} categoryName={ev.category_name} />
           </div>
         )}
 
@@ -3180,20 +3180,28 @@ export default function Eventos() {
           <Textarea label="Observações" name="notes" defaultValue={modalEvent?.notes || ''} />
           {isEdit && <Textarea label="Lições Aprendidas" name="lessons_learned" defaultValue={modalEvent?.lessons_learned || ''} />}
 
-          {/* Ciclo Criativo */}
-          {isEdit && hasCycle && selectedEvent?.id === modalEvent?.id ? (
-            <div style={{ padding: '12px 14px', background: '#10b98120', borderRadius: 8, border: '1px solid #10b98140', display: 'flex', alignItems: 'center', gap: 8, marginTop: 12 }}>
-              <span style={{ fontSize: 14, fontWeight: 600, color: '#10b981' }}>✓ Ciclo Criativo ativado</span>
-            </div>
-          ) : (
-            <div style={{ padding: '12px 14px', background: '#00B39D15', borderRadius: 8, border: '1px solid #00B39D40', display: 'flex', alignItems: 'center', gap: 8, marginTop: 12 }}>
-              <input type="checkbox" name="ativar_ciclo" id="ciclo-modal" value="true" style={{ width: 18, height: 18, cursor: 'pointer' }} />
-              <label htmlFor="ciclo-modal" style={{ fontSize: 14, color: '#00B39D', fontWeight: 600, cursor: 'pointer' }}>
-                Ativar Ciclo Criativo
-              </label>
-              <span style={{ fontSize: 12, color: C.text3 }}>— 11 fases de produção + trilha administrativa</span>
-            </div>
-          )}
+          {/* Ciclo — não mostra checkbox para governança (auto-ativa) */}
+          {(() => {
+            const govCat = categories.find(c => c.name === 'Governanca');
+            const isGovModal = modalEvent?.category_id === govCat?.id;
+            if (isGovModal) return (
+              <div style={{ padding: '12px 14px', background: '#7c3aed15', borderRadius: 8, border: '1px solid #7c3aed40', display: 'flex', alignItems: 'center', gap: 8, marginTop: 12 }}>
+                <span style={{ fontSize: 14, fontWeight: 600, color: '#7c3aed' }}>Ciclo de Governanca — ativado automaticamente ao criar</span>
+              </div>
+            );
+            if (isEdit && hasCycle && selectedEvent?.id === modalEvent?.id) return (
+              <div style={{ padding: '12px 14px', background: '#10b98120', borderRadius: 8, border: '1px solid #10b98140', display: 'flex', alignItems: 'center', gap: 8, marginTop: 12 }}>
+                <span style={{ fontSize: 14, fontWeight: 600, color: '#10b981' }}>Ciclo Criativo ativado</span>
+              </div>
+            );
+            return (
+              <div style={{ padding: '12px 14px', background: '#00B39D15', borderRadius: 8, border: '1px solid #00B39D40', display: 'flex', alignItems: 'center', gap: 8, marginTop: 12 }}>
+                <input type="checkbox" name="ativar_ciclo" id="ciclo-modal" value="true" style={{ width: 18, height: 18, cursor: 'pointer' }} />
+                <label htmlFor="ciclo-modal" style={{ fontSize: 14, color: '#00B39D', fontWeight: 600, cursor: 'pointer' }}>Ativar Ciclo Criativo</label>
+                <span style={{ fontSize: 12, color: C.text3 }}>— fases de producao + trilha administrativa</span>
+              </div>
+            );
+          })()}
         </form>
       </Modal>
     );

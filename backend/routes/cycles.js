@@ -179,15 +179,14 @@ router.get('/kanban/all', async (req, res) => {
 });
 
 // POST /api/cycles/activate/:eventId
-router.post('/activate/:eventId', authorize('admin', 'diretor'), async (req, res) => {
-  const { eventId } = req.params;
-  const userId = req.user.userId;
+// Função core de ativação (usada pelo endpoint e pela auto-ativação de governança)
+async function activateCycleForEvent(eventId, userId) {
   try {
     const { data: event, error: evErr } = await supabase.from('events').select('id, date, name, category_id').eq('id', eventId).single();
-    if (evErr || !event) return res.status(404).json({ error: 'Evento não encontrado' });
+    if (evErr || !event) throw new Error('Evento nao encontrado');
 
     const { data: existing } = await supabase.from('event_cycles').select('id').eq('event_id', eventId).maybeSingle();
-    if (existing) return res.status(409).json({ error: 'Ciclo já ativado para este evento' });
+    if (existing) throw new Error('Ciclo ja ativado para este evento');
 
     const diaDDate = event.date;
     const { data: cycle, error: cycleErr } = await supabase.from('event_cycles')
@@ -286,11 +285,19 @@ router.post('/activate/:eventId', authorize('admin', 'diretor'), async (req, res
       }
     }
 
-    res.json({ success: true, cycle, message: `Ciclo criativo ativado para ${event.name}` });
+    return { success: true, cycle, message: `Ciclo ativado para ${event.name}` };
   } catch (err) {
     console.error('[CYCLE ACTIVATE]', err);
-    res.status(500).json({ error: err.message });
+    throw err;
   }
+}
+
+// Endpoint HTTP que chama a função core
+router.post('/activate/:eventId', authorize('admin', 'diretor'), async (req, res) => {
+  try {
+    const result = await activateCycleForEvent(req.params.eventId, req.user.userId);
+    res.json(result);
+  } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 // ══════════════════════════════════════════════
@@ -933,3 +940,4 @@ router.put('/area-responsaveis/:area', authorize('admin', 'diretor'), async (req
 });
 
 module.exports = router;
+module.exports.activateCycleForEvent = activateCycleForEvent;
