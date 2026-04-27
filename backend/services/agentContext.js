@@ -252,15 +252,15 @@ async function fetchEventosContext() {
 
   const hoje = new Date().toISOString().slice(0, 10);
   const { data: proximos } = await supabase.from('events')
-    .select('id, name, start_date, end_date, status')
-    .gte('start_date', hoje)
-    .order('start_date', { ascending: true })
+    .select('id, name, date, status, location, responsible')
+    .gte('date', hoje)
+    .order('date', { ascending: true })
     .limit(10);
 
   const { data: recentes } = await supabase.from('events')
-    .select('id, name, start_date, status')
-    .lt('start_date', hoje)
-    .order('start_date', { ascending: false })
+    .select('id, name, date, status, location')
+    .lt('date', hoje)
+    .order('date', { ascending: false })
     .limit(10);
 
   return {
@@ -276,9 +276,9 @@ async function fetchProjetosContext() {
   const { count: total } = await supabase.from('projects').select('id', { count: 'exact', head: true });
 
   const { data: ativos } = await supabase.from('projects')
-    .select('id, name, status, start_date, end_date')
+    .select('id, name, status, date_start, date_end, responsible, area, priority')
     .neq('status', 'concluido')
-    .order('start_date', { ascending: false })
+    .order('date_start', { ascending: false })
     .limit(20);
 
   return {

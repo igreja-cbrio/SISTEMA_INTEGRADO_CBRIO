@@ -263,7 +263,7 @@ const ENTITY_LOADERS = {
   evento: async (id) => {
     const { data } = await supabase
       .from('events')
-      .select('id, name, description, start_date, end_date, status, location, created_at')
+      .select('id, name, description, date, status, location, responsible, recurrence, budget_planned, budget_spent, expected_attendance, actual_attendance, created_at')
       .eq('id', id)
       .maybeSingle();
     return data;
@@ -731,12 +731,13 @@ ${formaLinhas ? `## Por forma de pagamento\n\n${formaLinhas}\n\n` : ''}${campanh
 
   evento: (e) => {
     const hoje = new Date().toISOString().slice(0, 10);
-    const status = e.status || 'planejado';
+    const status = e.status || 'no-prazo';
     const tags = [
       '#tipo/evento',
       '#area/eventos',
       `#status/${status}`,
-      e.start_date ? `#ano/${e.start_date.slice(0, 4)}` : null,
+      e.date ? `#ano/${e.date.slice(0, 4)}` : null,
+      e.recurrence && e.recurrence !== 'unico' ? `#recorrencia/${e.recurrence}` : null,
     ].filter(Boolean);
     const frontmatter = [
       '---',
@@ -750,18 +751,22 @@ ${formaLinhas ? `## Por forma de pagamento\n\n${formaLinhas}\n\n` : ''}${campanh
       'processado_por: cerebro-cbrio-sync',
       `entity_type: evento`,
       `entity_id: ${e.id}`,
-      e.start_date ? `data_inicio: ${e.start_date}` : null,
-      e.end_date ? `data_fim: ${e.end_date}` : null,
+      e.date ? `data_evento: ${e.date}` : null,
       '---',
     ].filter(Boolean).join('\n');
 
     const dados = [
-      ['Início', e.start_date],
-      ['Término', e.end_date],
+      ['Data', e.date],
       ['Status', status],
       ['Local', e.location],
+      ['Responsável', e.responsible],
+      ['Recorrência', e.recurrence],
+      ['Público esperado', e.expected_attendance],
+      ['Público real', e.actual_attendance],
+      ['Orçamento previsto', e.budget_planned ? `R$ ${Number(e.budget_planned).toFixed(2)}` : null],
+      ['Orçamento gasto', e.budget_spent ? `R$ ${Number(e.budget_spent).toFixed(2)}` : null],
     ]
-      .filter(([, v]) => v)
+      .filter(([, v]) => v !== null && v !== undefined && v !== '')
       .map(([k, v]) => `- **${k}**: ${v}`)
       .join('\n');
 
@@ -770,7 +775,7 @@ ${formaLinhas ? `## Por forma de pagamento\n\n${formaLinhas}\n\n` : ''}${campanh
 
 ## Resumo
 
-${e.description || `Evento da CBRio${e.start_date ? ` previsto para ${e.start_date}` : ''}. Status: ${status}.`}
+${e.description || `Evento da CBRio${e.date ? ` em ${e.date}` : ''}. Status: ${status}.`}
 
 ## Dados-chave
 
@@ -804,10 +809,18 @@ function makeSlug(title, fallbackId) {
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-+|-+$/g, '');
-  const trimmed = base.slice(0, 60).replace(/-+$/, '');
-  if (trimmed) return trimmed;
-  // Fallback determinístico quando o título é vazio — evita colisão entre entidades.
-  return `sem-titulo-${String(fallbackId).slice(0, 8)}`;
+  const trimmed = base.slice(0, 50).replace(/-+$/, '');
+
+  // Se o entity_id parece UUID, anexa sufixo curto ao slug para evitar que dois
+  // registros com nomes idênticos (homônimos) colidam no mesmo note_path.
+  // Para entity_ids que já são únicos por natureza (ex: 'YYYY-MM' no agregado
+  // mensal de contribuições), mantém o slug puro.
+  const idStr = String(fallbackId || '');
+  const looksLikeUUID = /^[0-9a-f]{8}-[0-9a-f]{4}/i.test(idStr);
+  const idSuffix = looksLikeUUID ? idStr.replace(/-/g, '').slice(0, 8) : '';
+
+  if (!trimmed) return `sem-titulo-${idSuffix || 'x'}`;
+  return idSuffix ? `${trimmed}-${idSuffix}` : trimmed;
 }
 
 /**
