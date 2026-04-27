@@ -1038,30 +1038,57 @@ export default function Eventos() {
   function renderGovOKR(r) {
     const { resumo: s, dados: d } = r;
     const areas = Object.entries(d.projetos_por_area || {});
+    const KR_COLOR = { on_track: C.green, at_risk: C.amber, off_track: C.red, sem_meta: C.text3 };
+    const KR_LABEL = { on_track: 'No alvo', at_risk: 'Em risco', off_track: 'Critico', sem_meta: 'Sem meta' };
     return (<div>
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12, marginBottom: 20 }}>
-        <GovKpiCard label="Objetivos ativos" value={s.total_objetivos} color={C.blue} />
+      {/* KPI bar — objetivos + key results */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))', gap: 12, marginBottom: 20 }}>
+        <GovKpiCard label="Objetivos" value={s.total_objetivos} color={C.blue} />
         <GovKpiCard label="No prazo" value={s.no_prazo} color={C.green} />
         <GovKpiCard label="Atrasados" value={s.atrasados} color={s.atrasados > 0 ? C.red : C.green} />
+        <GovKpiCard label="Key Results" value={s.total_krs} color={C.primary} sub={s.total_krs > 0 ? `${s.krs_on_track} ok | ${s.krs_at_risk} risco | ${s.krs_off_track} critico` : 'Nenhum cadastrado'} />
         <GovKpiCard label="Conclusao media" value={`${s.pct_conclusao_media}%`} color={C.primary} />
       </div>
+
+      {/* Projetos por area com KRs expandidos */}
       {areas.map(([area, projs]) => (
         <div key={area} style={{ ...styles.card, marginBottom: 12 }}>
           <div style={{ padding: '10px 16px', borderBottom: `1px solid ${C.border}`, background: 'var(--cbrio-table-header)', display: 'flex', justifyContent: 'space-between' }}>
             <span style={{ fontSize: 13, fontWeight: 700, color: C.text }}>{area} ({projs.length})</span>
           </div>
           {projs.map(p => (
-            <div key={p.id} style={{ padding: '10px 16px', borderBottom: `1px solid ${C.border}`, display: 'flex', alignItems: 'center', gap: 10 }}>
-              <div style={{ flex: 1 }}>
-                <div style={{ fontSize: 13, fontWeight: 600, color: C.text }}>{p.name}</div>
-                <div style={{ fontSize: 11, color: C.text3 }}>{p.responsible || 'Sem resp.'} | {fmtDate(p.date_end)}</div>
+            <div key={p.id} style={{ borderBottom: `1px solid ${C.border}` }}>
+              {/* Linha do projeto/objetivo */}
+              <div style={{ padding: '10px 16px', display: 'flex', alignItems: 'center', gap: 10 }}>
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontSize: 13, fontWeight: 600, color: C.text }}>{p.name}</div>
+                  <div style={{ fontSize: 11, color: C.text3 }}>{p.responsible || 'Sem resp.'} | {fmtDate(p.date_end)}</div>
+                </div>
+                <div style={{ width: 80, display: 'flex', alignItems: 'center', gap: 4 }}>
+                  <GovProgressBar pct={p.pct_completion} color={p.at_risk ? C.red : C.green} />
+                  <span style={{ fontSize: 10, fontWeight: 700, color: p.at_risk ? C.red : C.text3 }}>{p.pct_completion}%</span>
+                </div>
+                {p.krs_total > 0 && <span style={{ fontSize: 9, padding: '2px 8px', borderRadius: 99, background: p.krs_at_risk > 0 ? C.amberBg : C.greenBg, color: p.krs_at_risk > 0 ? C.amber : C.green, fontWeight: 700 }}>{p.krs_on_track}/{p.krs_total} KRs</span>}
+                {p.atrasado && <span style={{ fontSize: 9, padding: '2px 8px', borderRadius: 99, background: C.redBg, color: C.red, fontWeight: 700 }}>Atrasado</span>}
               </div>
-              <div style={{ width: 80, display: 'flex', alignItems: 'center', gap: 4 }}>
-                <GovProgressBar pct={p.pct_completion} color={p.at_risk ? C.red : C.green} />
-                <span style={{ fontSize: 10, fontWeight: 700, color: p.at_risk ? C.red : C.text3 }}>{p.pct_completion}%</span>
-              </div>
-              {p.risks?.length > 0 && <span style={{ fontSize: 9, padding: '2px 8px', borderRadius: 99, background: C.redBg, color: C.red, fontWeight: 700 }}>{p.risks.length} riscos</span>}
-              {p.atrasado && <span style={{ fontSize: 9, padding: '2px 8px', borderRadius: 99, background: C.redBg, color: C.red, fontWeight: 700 }}>Atrasado</span>}
+              {/* Key Results do projeto */}
+              {(p.key_results || []).length > 0 && (
+                <div style={{ padding: '0 16px 10px 32px' }}>
+                  {p.key_results.map(kr => (
+                    <div key={kr.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '4px 0' }}>
+                      <span style={{ fontSize: 10, width: 8, height: 8, borderRadius: '50%', background: KR_COLOR[kr.status], flexShrink: 0 }} />
+                      <span style={{ fontSize: 12, color: C.text, flex: 1 }}>{kr.name}</span>
+                      <div style={{ width: 60, display: 'flex', alignItems: 'center', gap: 3 }}>
+                        <GovProgressBar pct={kr.pct} color={KR_COLOR[kr.status]} />
+                      </div>
+                      <span style={{ fontSize: 11, fontWeight: 600, color: KR_COLOR[kr.status], minWidth: 70, textAlign: 'right' }}>
+                        {kr.current_value ?? 0}/{kr.target_value} {kr.unit || ''}
+                      </span>
+                      <span style={{ fontSize: 9, padding: '1px 6px', borderRadius: 99, background: KR_COLOR[kr.status] + '20', color: KR_COLOR[kr.status], fontWeight: 600 }}>{KR_LABEL[kr.status]}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           ))}
         </div>
