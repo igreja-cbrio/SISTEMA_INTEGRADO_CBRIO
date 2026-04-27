@@ -47,30 +47,49 @@ router.get('/tipos', (req, res) => res.json(TIPOS));
 
 async function buildOKR() {
   const h = hoje();
-  const [projRes, tasksRes, risksRes, marcosRes] = await Promise.all([
+  const [projRes, tasksRes, risksRes, kpisRes, marcosRes] = await Promise.all([
     supabase.from('projects').select('id, name, status, date_end, responsible, area, budget_planned, budget_spent, priority, description').neq('status', 'concluido').neq('status', 'cancelado').order('name'),
     supabase.from('project_tasks').select('id, project_id, status'),
     supabase.from('project_risks').select('id, project_id, title, probability, impact, score, owner_name, status, mitigation').neq('status', 'mitigado').order('score', { ascending: false }),
+    supabase.from('project_kpis').select('id, project_id, name, target_value, current_value, unit'),
     supabase.from('expansion_milestones').select('id, name, status, date_end, responsible, area, phase, budget_planned').neq('status', 'concluido').neq('status', 'cancelado').order('sort_order'),
   ]);
 
   const proj = projRes.data || [];
   const tasks = tasksRes.data || [];
   const risks = risksRes.data || [];
+  const allKpis = kpisRes.data || [];
   const marcos = marcosRes.data || [];
 
-  // Enriquecer projetos
+  // Classificar KR: on_track (>=80%), at_risk (50-79%), off_track (<50%)
+  function krStatus(kr) {
+    if (!kr.target_value || kr.target_value === 0) return 'sem_meta';
+    const pct = Math.round((Number(kr.current_value || 0) / Number(kr.target_value)) * 100);
+    if (pct >= 80) return 'on_track';
+    if (pct >= 50) return 'at_risk';
+    return 'off_track';
+  }
+
+  // Enriquecer projetos com KRs (Key Results = project_kpis)
   const projEnriched = proj.map(p => {
     const pTasks = tasks.filter(t => t.project_id === p.id);
     const done = pTasks.filter(t => t.status === 'concluida' || t.status === 'concluido').length;
     const pRisks = risks.filter(r => r.project_id === p.id);
+    const pKRs = allKpis.filter(k => k.project_id === p.id).map(kr => ({
+      ...kr,
+      pct: kr.target_value > 0 ? Math.round((Number(kr.current_value || 0) / Number(kr.target_value)) * 100) : 0,
+      status: krStatus(kr),
+    }));
     const budgetPct = p.budget_planned > 0 ? Math.round((Number(p.budget_spent || 0) / Number(p.budget_planned)) * 100) : 0;
     const atrasado = p.date_end && p.date_end < h;
+    const krsAtRisk = pKRs.filter(k => k.status === 'at_risk' || k.status === 'off_track');
     return {
       ...p, total_tasks: pTasks.length, tasks_done: done,
       pct_completion: pTasks.length > 0 ? Math.round((done / pTasks.length) * 100) : 0,
-      budget_pct: budgetPct, risks: pRisks,
-      at_risk: atrasado || pRisks.some(r => r.score >= 12) || budgetPct > 90,
+      budget_pct: budgetPct, risks: pRisks, key_results: pKRs,
+      krs_total: pKRs.length, krs_on_track: pKRs.filter(k => k.status === 'on_track').length,
+      krs_at_risk: krsAtRisk.length,
+      at_risk: atrasado || krsAtRisk.length > 0 || pRisks.some(r => r.score >= 12) || budgetPct > 90,
       atrasado,
     };
   });
@@ -83,11 +102,20 @@ async function buildOKR() {
     porArea[a].push(p);
   });
 
+  // Totais de KRs
+  const totalKRs = allKpis.length;
+  const krsOnTrack = allKpis.filter(k => krStatus(k) === 'on_track').length;
+  const krsAtRisk = allKpis.filter(k => krStatus(k) === 'at_risk').length;
+  const krsOffTrack = allKpis.filter(k => krStatus(k) === 'off_track').length;
+
   // Alertas
   const alertas = [
     ...projEnriched.filter(p => p.atrasado).map(p => ({ tipo: 'atrasado', item: p.name, responsavel: p.responsible, data: p.date_end })),
     ...projEnriched.filter(p => !p.responsible).map(p => ({ tipo: 'sem_responsavel', item: p.name })),
-    ...projEnriched.filter(p => p.budget_pct > 90).map(p => ({ tipo: 'orcamento_excedido', item: p.name, pct: p.budget_pct })),
+    ...allKpis.filter(k => krStatus(k) === 'off_track').map(k => {
+      const pj = proj.find(p => p.id === k.project_id);
+      return { tipo: 'kr_off_track', item: `${k.name}: ${k.current_value || 0}/${k.target_value} ${k.unit || ''}`, responsavel: pj?.responsible, projeto: pj?.name };
+    }),
     ...risks.filter(r => r.score >= 12).slice(0, 5).map(r => ({ tipo: 'risco_alto', item: r.title, score: r.score, responsavel: r.owner_name })),
   ];
 
@@ -98,17 +126,18 @@ async function buildOKR() {
 
   return {
     checklist: [
-      { item: 'Projetos com status atualizado', ok: atrasados.length === 0, valor: `${proj.length - atrasados.length}/${proj.length} no prazo` },
+      { item: 'Key Results cadastrados', ok: totalKRs > 0, valor: totalKRs > 0 ? `${totalKRs} KRs em ${projEnriched.filter(p => p.krs_total > 0).length} objetivos` : 'Nenhum KR cadastrado' },
+      { item: 'KRs com valor atual preenchido', ok: allKpis.every(k => k.current_value != null), valor: `${allKpis.filter(k => k.current_value != null).length}/${totalKRs} atualizados` },
+      { item: 'Projetos no prazo', ok: atrasados.length === 0, valor: `${proj.length - atrasados.length}/${proj.length}` },
       { item: 'Todos com responsavel', ok: projEnriched.every(p => p.responsible), valor: projEnriched.filter(p => !p.responsible).length === 0 ? 'OK' : `${projEnriched.filter(p => !p.responsible).length} sem resp.` },
-      { item: 'Todos com data de entrega', ok: proj.every(p => p.date_end), valor: proj.filter(p => !p.date_end).length === 0 ? 'OK' : `${proj.filter(p => !p.date_end).length} sem data` },
-      { item: 'Tarefas cadastradas', ok: projEnriched.every(p => p.total_tasks > 0), valor: `${projEnriched.filter(p => p.total_tasks > 0).length}/${proj.length} com tarefas` },
       { item: 'Marcos de expansao atualizados', ok: marcosAtrasados.length === 0, valor: `${marcos.length - marcosAtrasados.length}/${marcos.length} no prazo` },
-      { item: 'Sem riscos altos nao mitigados', ok: risks.filter(r => r.score >= 12).length === 0, valor: `${risks.filter(r => r.score >= 12).length} riscos altos` },
+      { item: 'Sem KRs criticos', ok: krsOffTrack === 0, valor: krsOffTrack === 0 ? 'OK' : `${krsOffTrack} KRs abaixo de 50%` },
     ],
     resumo: {
       total_objetivos: proj.length, no_prazo: proj.length - atrasados.length - emRisco.length,
       atrasados: atrasados.length, em_risco: emRisco.length,
-      pct_conclusao_media: pctMedia, riscos_altos: risks.filter(r => r.score >= 12).length,
+      pct_conclusao_media: pctMedia,
+      total_krs: totalKRs, krs_on_track: krsOnTrack, krs_at_risk: krsAtRisk, krs_off_track: krsOffTrack,
       marcos_ativos: marcos.length, marcos_atrasados: marcosAtrasados.length,
     },
     dados: { projetos_por_area: porArea, marcos, alertas, marcosAtrasados },
