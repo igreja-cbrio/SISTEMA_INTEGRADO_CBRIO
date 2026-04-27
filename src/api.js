@@ -285,6 +285,7 @@ export const revisoes = {
 export const governanca = {
   tipos: () => get('/governanca/tipos'),
   relatorio: (sigla) => get(`/governanca/relatorio/${sigla}`),
+  salvarObservacoes: (sigla, observacoes) => post(`/governanca/relatorio/${sigla}/observacoes`, { observacoes }),
 };
 
 export const agents = {
