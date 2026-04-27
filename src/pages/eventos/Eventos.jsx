@@ -386,9 +386,11 @@ export default function Eventos() {
   const [detailTab, setDetailTab] = useState('info');
 
   // Governança (aba de relatórios)
-  const [govTab, setGovTab] = useState(null); // null | sigla do tipo selecionado
+  const [govTab, setGovTab] = useState(null);
   const [govRelatorio, setGovRelatorio] = useState(null);
   const [govLoading, setGovLoading] = useState(false);
+  const [govObs, setGovObs] = useState('');
+  const [govSaving, setGovSaving] = useState(false);
 
   // Modais
   const [modalEvent, setModalEvent] = useState(null);
@@ -1011,23 +1013,230 @@ export default function Eventos() {
 
   async function loadGovRelatorio(sigla) {
     setGovLoading(true);
-    try { setGovRelatorio(await govApi.relatorio(sigla)); } catch { setGovRelatorio(null); }
+    try {
+      const r = await govApi.relatorio(sigla);
+      setGovRelatorio(r);
+      setGovObs(r.observacoes || '');
+    } catch { setGovRelatorio(null); }
     finally { setGovLoading(false); }
   }
 
+  const GovKpiCard = ({ label, value, color, sub }) => (
+    <div style={{ ...styles.card, padding: 14, textAlign: 'center' }}>
+      <div style={{ fontSize: 24, fontWeight: 800, color }}>{value}</div>
+      <div style={{ fontSize: 11, color: C.text3 }}>{label}</div>
+      {sub && <div style={{ fontSize: 10, color: C.text2, marginTop: 2 }}>{sub}</div>}
+    </div>
+  );
+
+  const GovProgressBar = ({ pct, color }) => (
+    <div style={{ height: 6, borderRadius: 3, background: C.border, flex: 1 }}>
+      <div style={{ height: '100%', borderRadius: 3, background: color || C.primary, width: `${Math.min(100, pct)}%`, transition: 'width 0.3s' }} />
+    </div>
+  );
+
+  function renderGovOKR(r) {
+    const { resumo: s, dados: d } = r;
+    const areas = Object.entries(d.projetos_por_area || {});
+    return (<div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12, marginBottom: 20 }}>
+        <GovKpiCard label="Objetivos ativos" value={s.total_objetivos} color={C.blue} />
+        <GovKpiCard label="No prazo" value={s.no_prazo} color={C.green} />
+        <GovKpiCard label="Atrasados" value={s.atrasados} color={s.atrasados > 0 ? C.red : C.green} />
+        <GovKpiCard label="Conclusao media" value={`${s.pct_conclusao_media}%`} color={C.primary} />
+      </div>
+      {areas.map(([area, projs]) => (
+        <div key={area} style={{ ...styles.card, marginBottom: 12 }}>
+          <div style={{ padding: '10px 16px', borderBottom: `1px solid ${C.border}`, background: 'var(--cbrio-table-header)', display: 'flex', justifyContent: 'space-between' }}>
+            <span style={{ fontSize: 13, fontWeight: 700, color: C.text }}>{area} ({projs.length})</span>
+          </div>
+          {projs.map(p => (
+            <div key={p.id} style={{ padding: '10px 16px', borderBottom: `1px solid ${C.border}`, display: 'flex', alignItems: 'center', gap: 10 }}>
+              <div style={{ flex: 1 }}>
+                <div style={{ fontSize: 13, fontWeight: 600, color: C.text }}>{p.name}</div>
+                <div style={{ fontSize: 11, color: C.text3 }}>{p.responsible || 'Sem resp.'} | {fmtDate(p.date_end)}</div>
+              </div>
+              <div style={{ width: 80, display: 'flex', alignItems: 'center', gap: 4 }}>
+                <GovProgressBar pct={p.pct_completion} color={p.at_risk ? C.red : C.green} />
+                <span style={{ fontSize: 10, fontWeight: 700, color: p.at_risk ? C.red : C.text3 }}>{p.pct_completion}%</span>
+              </div>
+              {p.risks?.length > 0 && <span style={{ fontSize: 9, padding: '2px 8px', borderRadius: 99, background: C.redBg, color: C.red, fontWeight: 700 }}>{p.risks.length} riscos</span>}
+              {p.atrasado && <span style={{ fontSize: 9, padding: '2px 8px', borderRadius: 99, background: C.redBg, color: C.red, fontWeight: 700 }}>Atrasado</span>}
+            </div>
+          ))}
+        </div>
+      ))}
+      {(d.alertas || []).length > 0 && (
+        <div style={{ ...styles.card, marginTop: 4 }}>
+          <div style={{ padding: '10px 16px', borderBottom: `1px solid ${C.border}`, background: C.amberBg }}>
+            <span style={{ fontSize: 12, fontWeight: 700, color: C.amber }}>Alertas ({d.alertas.length})</span>
+          </div>
+          {d.alertas.slice(0, 10).map((a, i) => (
+            <div key={i} style={{ padding: '6px 16px', borderBottom: `1px solid ${C.border}`, fontSize: 12, color: C.text2 }}>
+              <strong style={{ color: a.tipo === 'risco_alto' ? C.red : C.amber }}>{a.tipo.replace(/_/g, ' ')}</strong>: {a.item} {a.responsavel ? `(${a.responsavel})` : ''}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>);
+  }
+
+  function renderGovDRE(r) {
+    const { resumo: s, dados: d } = r;
+    const varArrow = (pct) => pct == null ? '' : pct > 0 ? `+${pct}%` : `${pct}%`;
+    return (<div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12, marginBottom: 20 }}>
+        <GovKpiCard label="Receitas" value={fmtMoney(s.receitas)} color={C.green} sub={varArrow(s.variacao_receita_pct)} />
+        <GovKpiCard label="Despesas" value={fmtMoney(s.despesas)} color={C.red} sub={varArrow(s.variacao_despesa_pct)} />
+        <GovKpiCard label="Resultado" value={fmtMoney(s.resultado)} color={s.resultado >= 0 ? C.green : C.red} sub={`Anterior: ${fmtMoney(s.resultado_anterior)}`} />
+        <GovKpiCard label="Saldo Total" value={fmtMoney(s.saldo_total)} color={C.blue} />
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginBottom: 16 }}>
+        {[{ title: 'Receitas por categoria', data: d.receitas_por_categoria, color: C.green },
+          { title: 'Despesas por categoria', data: d.despesas_por_categoria, color: C.red }].map(col => (
+          <div key={col.title} style={styles.card}>
+            <div style={{ padding: '10px 16px', borderBottom: `1px solid ${C.border}`, background: 'var(--cbrio-table-header)' }}>
+              <span style={{ fontSize: 12, fontWeight: 700, color: C.text }}>{col.title}</span>
+            </div>
+            {(col.data || []).map((c, i) => (
+              <div key={i} style={{ padding: '6px 16px', borderBottom: `1px solid ${C.border}`, display: 'flex', alignItems: 'center', gap: 8 }}>
+                <span style={{ fontSize: 12, color: C.text, flex: 1 }}>{c.categoria}</span>
+                <GovProgressBar pct={c.pct} color={col.color} />
+                <span style={{ fontSize: 11, fontWeight: 600, color: C.text, minWidth: 60, textAlign: 'right' }}>{fmtMoney(c.valor)}</span>
+                <span style={{ fontSize: 10, color: C.text3, minWidth: 30 }}>{c.pct}%</span>
+              </div>
+            ))}
+          </div>
+        ))}
+      </div>
+      {(d.contas_pagar || []).length > 0 && (
+        <div style={{ ...styles.card, marginBottom: 12 }}>
+          <div style={{ padding: '10px 16px', borderBottom: `1px solid ${C.border}`, background: 'var(--cbrio-table-header)' }}>
+            <span style={{ fontSize: 12, fontWeight: 700, color: C.text }}>Contas a pagar ({d.contas_pagar.length}) — Total: {fmtMoney(d.total_pagar)}</span>
+          </div>
+          {d.contas_pagar.map((p, i) => (
+            <div key={i} style={{ padding: '6px 16px', borderBottom: `1px solid ${C.border}`, fontSize: 12, display: 'flex', justifyContent: 'space-between', color: p.vencida ? C.red : C.text }}>
+              <span>{p.descricao} {p.fornecedor ? `(${p.fornecedor})` : ''}</span>
+              <span style={{ fontWeight: 600 }}>{fmtMoney(Number(p.valor))} | {fmtDate(p.data_vencimento)} {p.vencida ? '(VENCIDA)' : ''}</span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>);
+  }
+
+  function renderGovKPI(r) {
+    const { resumo: s, dados: d } = r;
+    const trendIcon = d.culto_trend?.trend === 'up' ? '\u2197' : d.culto_trend?.trend === 'down' ? '\u2198' : '\u2192';
+    const trendColor = d.culto_trend?.trend === 'up' ? C.green : d.culto_trend?.trend === 'down' ? C.red : C.text3;
+    return (<div>
+      {/* Mandala — 5 pilares */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: 14, marginBottom: 20 }}>
+        {Object.values(d.mandala || {}).map(p => (
+          <div key={p.label} style={{ ...styles.card, padding: 16, borderLeft: `4px solid ${p.cor}` }}>
+            <div style={{ fontSize: 11, fontWeight: 700, color: p.cor, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 4 }}>{p.label}</div>
+            <div style={{ fontSize: 24, fontWeight: 800, color: C.text }}>{p.valor}</div>
+            <div style={{ fontSize: 11, color: C.text3, marginTop: 2 }}>{p.detalhe}</div>
+          </div>
+        ))}
+      </div>
+      {/* Cultos + tendência */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12, marginBottom: 16 }}>
+        <GovKpiCard label="Cultos no mes" value={s.cultos_no_mes} color={C.primary} />
+        <GovKpiCard label="Presenca media" value={s.presenca_media} color={C.blue} sub={`${trendIcon} ${d.culto_trend?.trendPct > 0 ? '+' : ''}${d.culto_trend?.trendPct || 0}% vs mes anterior`} />
+        <GovKpiCard label="Decisoes" value={s.decisoes} color={C.green} />
+        <GovKpiCard label="Membros ativos" value={s.membros_ativos} color={C.primary} />
+      </div>
+      {/* Metas */}
+      {(d.metas || []).length > 0 && (
+        <div style={styles.card}>
+          <div style={{ padding: '10px 16px', borderBottom: `1px solid ${C.border}`, background: 'var(--cbrio-table-header)' }}>
+            <span style={{ fontSize: 12, fontWeight: 700, color: C.text }}>Metas estrategicas ({d.metas.length})</span>
+          </div>
+          {d.metas.map((m, i) => (
+            <div key={i} style={{ padding: '8px 16px', borderBottom: `1px solid ${C.border}`, display: 'flex', alignItems: 'center', gap: 8 }}>
+              <span style={{ fontSize: 10, padding: '2px 8px', borderRadius: 99, background: C.primaryBg, color: C.primary, fontWeight: 600 }}>{m.area}</span>
+              <span style={{ fontSize: 12, color: C.text, flex: 1 }}>{m.indicador}</span>
+              <span style={{ fontSize: 11, color: C.text3 }}>Meta 6m: {m.meta_6m} | 12m: {m.meta_12m}</span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>);
+  }
+
+  function renderGovCC(r) {
+    const { resumo: s, dados: d } = r;
+    return (<div>
+      {/* Dashboard executivo — 3 resumos lado a lado */}
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 14, marginBottom: 20 }}>
+        <div style={{ ...styles.card, padding: 16, borderTop: `3px solid #3b82f6` }}>
+          <div style={{ fontSize: 11, fontWeight: 700, color: '#3b82f6', marginBottom: 6 }}>OKR</div>
+          <div style={{ fontSize: 13, color: C.text }}><strong>{s.okr?.total_objetivos}</strong> objetivos | <strong style={{ color: s.okr?.atrasados > 0 ? C.red : C.green }}>{s.okr?.atrasados}</strong> atrasados</div>
+          <div style={{ fontSize: 11, color: C.text3, marginTop: 2 }}>Conclusao media: {s.okr?.pct_conclusao_media}%</div>
+        </div>
+        <div style={{ ...styles.card, padding: 16, borderTop: `3px solid #10b981` }}>
+          <div style={{ fontSize: 11, fontWeight: 700, color: '#10b981', marginBottom: 6 }}>DRE</div>
+          <div style={{ fontSize: 13, color: s.dre?.resultado >= 0 ? C.green : C.red, fontWeight: 700 }}>{fmtMoney(s.dre?.resultado)}</div>
+          <div style={{ fontSize: 11, color: C.text3, marginTop: 2 }}>Rec: {fmtMoney(s.dre?.receitas)} | Desp: {fmtMoney(s.dre?.despesas)}</div>
+        </div>
+        <div style={{ ...styles.card, padding: 16, borderTop: `3px solid #f59e0b` }}>
+          <div style={{ fontSize: 11, fontWeight: 700, color: '#f59e0b', marginBottom: 6 }}>KPI</div>
+          <div style={{ fontSize: 13, color: C.text }}>Presenca: <strong>{s.kpi?.presenca_media}</strong> | Decisoes: <strong>{s.kpi?.decisoes}</strong></div>
+          <div style={{ fontSize: 11, color: C.text3, marginTop: 2 }}>{s.kpi?.membros_ativos} membros | {s.kpi?.voluntarios_ativos} voluntarios</div>
+        </div>
+      </div>
+      {/* Top riscos */}
+      {(d.top_riscos || []).length > 0 && (
+        <div style={{ ...styles.card, marginBottom: 16 }}>
+          <div style={{ padding: '10px 16px', borderBottom: `1px solid ${C.border}`, background: C.redBg }}>
+            <span style={{ fontSize: 12, fontWeight: 700, color: C.red }}>Top riscos ({d.top_riscos.length})</span>
+          </div>
+          {d.top_riscos.map((r, i) => (
+            <div key={i} style={{ padding: '8px 16px', borderBottom: `1px solid ${C.border}`, fontSize: 12 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span style={{ fontWeight: 600, color: C.text }}>{r.title}</span>
+                <span style={{ fontWeight: 700, color: r.score >= 12 ? C.red : C.amber }}>Score: {r.score}</span>
+              </div>
+              <div style={{ fontSize: 11, color: C.text3 }}>Projeto: {r.projeto_nome} | Dono: {r.owner_name || '-'}</div>
+            </div>
+          ))}
+        </div>
+      )}
+      {/* Alertas OKR */}
+      {(d.okr_alertas || []).length > 0 && (
+        <div style={{ ...styles.card, marginBottom: 16 }}>
+          <div style={{ padding: '10px 16px', borderBottom: `1px solid ${C.border}`, background: C.amberBg }}>
+            <span style={{ fontSize: 12, fontWeight: 700, color: C.amber }}>Pontos de atencao</span>
+          </div>
+          {d.okr_alertas.map((a, i) => (
+            <div key={i} style={{ padding: '6px 16px', borderBottom: `1px solid ${C.border}`, fontSize: 12, color: C.text2 }}>
+              <strong>{a.tipo.replace(/_/g, ' ')}</strong>: {a.item}
+            </div>
+          ))}
+        </div>
+      )}
+      {/* Regra de ouro */}
+      <div style={{ ...styles.card, padding: 16, borderLeft: `4px solid ${C.primary}`, background: C.primaryBg }}>
+        <div style={{ fontSize: 13, fontWeight: 700, color: C.primary }}>Regra de ouro</div>
+        <div style={{ fontSize: 12, color: C.text, marginTop: 4 }}>Todo desvio deve gerar: <strong>causa</strong>, <strong>decisao</strong>, <strong>responsavel</strong> e <strong>proximo passo</strong>.</div>
+      </div>
+    </div>);
+  }
+
   function renderGovernanca() {
-    // Se nenhum tipo selecionado: mostrar cards
     if (!govTab) {
       return (
         <div>
-          <p style={{ fontSize: 13, color: C.text2, marginBottom: 16 }}>Reunioes recorrentes de governanca. Selecione uma para ver o relatorio com dados ao vivo do sistema.</p>
+          <p style={{ fontSize: 13, color: C.text2, marginBottom: 16 }}>Reunioes de gestao estrategica. Selecione para ver relatorio com dados ao vivo.</p>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: 14 }}>
             {GOV_TIPOS.map(t => (
               <div key={t.sigla} onClick={() => { setGovTab(t.sigla); loadGovRelatorio(t.sigla); }} style={{ ...styles.card, padding: 20, cursor: 'pointer', borderLeft: `4px solid ${t.cor}`, transition: 'transform 0.1s' }}
                 onMouseEnter={e => e.currentTarget.style.transform = 'translateY(-2px)'} onMouseLeave={e => e.currentTarget.style.transform = 'none'}>
                 <div style={{ fontSize: 18, fontWeight: 800, color: t.cor, marginBottom: 4 }}>{t.sigla}</div>
                 <div style={{ fontSize: 13, fontWeight: 600, color: C.text, marginBottom: 2 }}>{t.nome}</div>
-                <div style={{ fontSize: 11, color: C.text3 }}>{t.recorrencia}</div>
+                <div style={{ fontSize: 11, color: C.text3, marginBottom: 4 }}>{t.recorrencia}</div>
+                <div style={{ fontSize: 10, color: C.text2 }}>{t.desc}</div>
               </div>
             ))}
           </div>
@@ -1035,95 +1244,57 @@ export default function Eventos() {
       );
     }
 
-    // Tipo selecionado: mostrar relatório
     const tipo = GOV_TIPOS.find(t => t.sigla === govTab);
-    if (govLoading) return <div style={{ padding: 40, textAlign: 'center', color: C.text3 }}>Carregando relatorio {govTab}...</div>;
+    if (govLoading) return <div style={{ padding: 40, textAlign: 'center', color: C.text3 }}>Carregando {govTab}...</div>;
     const r = govRelatorio;
+    if (!r) return <div style={{ padding: 40, textAlign: 'center', color: C.text3 }}>Erro ao carregar relatorio.</div>;
 
     return (
       <div>
         <button onClick={() => { setGovTab(null); setGovRelatorio(null); }} style={styles.backBtn}>{'\u2190'} Voltar</button>
 
         {/* Header */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 20 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16 }}>
           <div style={{ width: 44, height: 44, borderRadius: 10, background: tipo.cor, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: 16, fontWeight: 800 }}>{tipo.sigla}</div>
-          <div>
+          <div style={{ flex: 1 }}>
             <div style={{ fontSize: 18, fontWeight: 700, color: C.text }}>{tipo.nome}</div>
-            <div style={{ fontSize: 12, color: C.text3 }}>{tipo.recorrencia} | Dados de {new Date().toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' })}</div>
+            <div style={{ fontSize: 12, color: C.text3 }}>{tipo.recorrencia} | {new Date().toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' })}</div>
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, background: r.checklist.every(c => c.ok) ? C.greenBg : C.amberBg, padding: '6px 14px', borderRadius: 99 }}>
+            <span style={{ fontSize: 12, fontWeight: 700, color: r.checklist.every(c => c.ok) ? C.green : C.amber }}>{r.checklist.filter(c => c.ok).length}/{r.checklist.length} checklist</span>
           </div>
         </div>
 
-        {r && (
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20 }}>
-            {/* Checklist de preparo */}
-            <div style={styles.card}>
-              <div style={{ padding: '12px 16px', borderBottom: `1px solid ${C.border}`, background: 'var(--cbrio-table-header)' }}>
-                <span style={{ fontSize: 13, fontWeight: 700, color: C.text }}>Checklist de preparo</span>
-                <span style={{ fontSize: 11, color: C.text3, marginLeft: 8 }}>
-                  {r.checklist.filter(c => c.ok).length}/{r.checklist.length} ok
-                </span>
-              </div>
-              <div style={{ padding: 16 }}>
-                {r.checklist.map((c, i) => (
-                  <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 0', borderBottom: i < r.checklist.length - 1 ? `1px solid ${C.border}` : 'none' }}>
-                    <span style={{ fontSize: 18 }}>{c.ok ? '\u2705' : '\u26A0\uFE0F'}</span>
-                    <div style={{ flex: 1 }}>
-                      <div style={{ fontSize: 13, fontWeight: 600, color: C.text }}>{c.item}</div>
-                      <div style={{ fontSize: 11, color: c.ok ? C.green : C.amber }}>{c.valor}</div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            {/* Preview dos dados */}
-            <div style={styles.card}>
-              <div style={{ padding: '12px 16px', borderBottom: `1px solid ${C.border}`, background: 'var(--cbrio-table-header)' }}>
-                <span style={{ fontSize: 13, fontWeight: 700, color: C.text }}>Dados da apresentacao</span>
-              </div>
-              <div style={{ padding: 16 }}>
-                {r.resumo && Object.entries(r.resumo).map(([key, val]) => (
-                  <div key={key} style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 0', borderBottom: `1px solid ${C.border}` }}>
-                    <span style={{ fontSize: 12, color: C.text2 }}>{key.replace(/_/g, ' ')}</span>
-                    <span style={{ fontSize: 13, fontWeight: 700, color: typeof val === 'number' && val < 0 ? C.red : C.text }}>
-                      {typeof val === 'number' && (key.includes('receita') || key.includes('despesa') || key.includes('resultado') || key.includes('saldo'))
-                        ? `R$ ${val.toLocaleString('pt-BR')}`
-                        : val}
-                    </span>
-                  </div>
-                ))}
-              </div>
-            </div>
+        {/* Checklist colapsado */}
+        <div style={{ ...styles.card, marginBottom: 16 }}>
+          <div style={{ padding: '10px 16px', display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+            {r.checklist.map((c, i) => (
+              <span key={i} style={{ fontSize: 11, padding: '4px 10px', borderRadius: 99, background: c.ok ? C.greenBg : C.amberBg, color: c.ok ? C.green : C.amber, fontWeight: 600 }}>
+                {c.ok ? '\u2713' : '!'} {c.item}
+              </span>
+            ))}
           </div>
-        )}
+        </div>
 
-        {/* Itens detalhados (projetos atrasados, transacoes, etc.) */}
-        {r?.dados?.projAtrasados?.length > 0 && (
-          <div style={{ ...styles.card, marginTop: 16 }}>
-            <div style={{ padding: '10px 16px', borderBottom: `1px solid ${C.border}`, background: C.redBg }}>
-              <span style={{ fontSize: 12, fontWeight: 700, color: C.red }}>Projetos atrasados ({r.dados.projAtrasados.length})</span>
-            </div>
-            {r.dados.projAtrasados.map(p => (
-              <div key={p.id} style={{ padding: '8px 16px', borderBottom: `1px solid ${C.border}`, fontSize: 12, display: 'flex', justifyContent: 'space-between' }}>
-                <span style={{ color: C.text, fontWeight: 500 }}>{p.name}</span>
-                <span style={{ color: C.red }}>{fmtDate(p.date_end)} | {p.responsible || 'sem resp.'}</span>
-              </div>
+        {/* Conteudo especifico por tipo */}
+        {govTab === 'OKR' && renderGovOKR(r)}
+        {govTab === 'DRE' && renderGovDRE(r)}
+        {govTab === 'KPI' && renderGovKPI(r)}
+        {govTab === 'CC' && renderGovCC(r)}
+        {(govTab === 'DE' || govTab === 'AG') && (
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: 12 }}>
+            {Object.entries(r.resumo || {}).map(([k, v]) => (
+              <GovKpiCard key={k} label={k.replace(/_/g, ' ')} value={typeof v === 'number' && (k.includes('receita') || k.includes('despesa') || k.includes('resultado')) ? fmtMoney(v) : v} color={C.primary} />
             ))}
           </div>
         )}
-        {r?.dados?.marcosAtrasados?.length > 0 && (
-          <div style={{ ...styles.card, marginTop: 12 }}>
-            <div style={{ padding: '10px 16px', borderBottom: `1px solid ${C.border}`, background: C.amberBg }}>
-              <span style={{ fontSize: 12, fontWeight: 700, color: C.amber }}>Marcos atrasados ({r.dados.marcosAtrasados.length})</span>
-            </div>
-            {r.dados.marcosAtrasados.map(m => (
-              <div key={m.id} style={{ padding: '8px 16px', borderBottom: `1px solid ${C.border}`, fontSize: 12, display: 'flex', justifyContent: 'space-between' }}>
-                <span style={{ color: C.text, fontWeight: 500 }}>{m.name}</span>
-                <span style={{ color: C.amber }}>{fmtDate(m.date_end)}</span>
-              </div>
-            ))}
-          </div>
-        )}
+
+        {/* Observacoes da reuniao */}
+        <div style={{ ...styles.card, marginTop: 20, padding: 16 }}>
+          <div style={{ fontSize: 13, fontWeight: 700, color: C.text, marginBottom: 8 }}>Observacoes da reuniao</div>
+          <textarea value={govObs} onChange={e => setGovObs(e.target.value)} rows={4} placeholder="Registre aqui decisoes, pendencias e proximos passos..." style={{ width: '100%', padding: 10, borderRadius: 8, border: `1px solid ${C.border}`, background: 'var(--cbrio-input-bg)', color: C.text, fontSize: 13, resize: 'vertical' }} />
+          <button onClick={async () => { setGovSaving(true); try { await govApi.salvarObservacoes(govTab, govObs); toast.success('Observacoes salvas'); } catch { toast.error('Erro'); } finally { setGovSaving(false); } }} disabled={govSaving} style={{ marginTop: 8, padding: '8px 24px', borderRadius: 8, border: 'none', background: C.primary, color: '#fff', fontSize: 13, fontWeight: 600, cursor: 'pointer', opacity: govSaving ? 0.6 : 1 }}>{govSaving ? 'Salvando...' : 'Salvar observacoes'}</button>
+        </div>
       </div>
     );
   }
