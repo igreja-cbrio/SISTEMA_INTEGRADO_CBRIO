@@ -9,7 +9,7 @@ import { CommandSearch } from '../ui/command-search';
 import {
   Users, DollarSign, Truck, Tag,
   CalendarDays, FolderKanban, Map,
-  UserCheck, UsersRound, Heart, HandHelping, BookOpen,
+  UserCheck, UsersRound, Heart, HandHelping, BookOpen, ArrowRight,
   Megaphone, BrainCircuit, ShoppingCart,
   Sun, Moon, Bell, LogOut, Search, CheckCheck, Settings, MonitorSmartphone, BarChart2, ClipboardCheck, Sparkles,
 } from 'lucide-react';
@@ -77,6 +77,7 @@ const NAV_ITEMS = [
         title: 'Áreas',
         items: [
           { label: 'Integração', description: 'Batismo, apresentação e cultos', icon: UserCheck, path: '/ministerial/integracao' },
+          { label: 'NEXT', description: 'Porta de entrada — inscrições, check-in e indicações', icon: ArrowRight, path: '/ministerial/next', perm: 'canMembresia' },
           { label: 'Grupos', description: 'Grupos de conexao da igreja', icon: UsersRound, path: '/grupos' },
           { label: 'Cuidados', description: 'Capelania e aconselhamento', icon: Heart, path: '/ministerial/cuidados', perm: 'canCuidados' },
           { label: 'Voluntariado', description: 'Check-in, escalas e QR codes', icon: HandHelping, path: '/ministerial/voluntariado', perm: 'canMembresia' },
