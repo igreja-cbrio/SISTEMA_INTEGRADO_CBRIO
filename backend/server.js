@@ -74,6 +74,7 @@ app.use('/api/cerebro', require('./routes/cerebro'));
 app.use('/api/voluntariado', require('./routes/voluntariado'));
 app.use('/api/voluntariado', require('./routes/voluntariado-sync'));
 app.use('/api/grupos', require('./routes/grupos'));
+app.use('/api/kpis/v2', require('./routes/kpisV2'));
 app.use('/api/kpis', require('./routes/kpis'));
 app.use('/api/cuidados', require('./routes/cuidados'));
 app.use('/api/integracao', require('./routes/integracao'));

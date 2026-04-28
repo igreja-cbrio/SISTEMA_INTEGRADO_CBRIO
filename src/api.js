@@ -939,6 +939,22 @@ export const kpis = {
     remove: (id) => del(`/kpis/cultura/pense/${id}`),
     sync: () => post('/kpis/cultura/pense/sync', {}),
   },
+  // ── V2: Hierarquia estrategica (NSM -> Direcionadores -> KPIs -> Taticos) ──
+  v2: {
+    nsm: (ano) => get(`/kpis/v2/nsm${ano ? `?ano=${ano}` : ''}`),
+    direcionadores: (ano) => get(`/kpis/v2/direcionadores${ano ? `?ano=${ano}` : ''}`),
+    estrategicos: (ano) => get(`/kpis/v2/estrategicos${ano ? `?ano=${ano}` : ''}`),
+    taticos: (params) => get('/kpis/v2/taticos' + (params ? '?' + new URLSearchParams(params) : '')),
+    taticoDetail: (id, limit) => get(`/kpis/v2/taticos/${id}${limit ? `?limit=${limit}` : ''}`),
+    areas: () => get('/kpis/v2/areas'),
+    periodoAtual: (periodicidade) => get(`/kpis/v2/periodo-atual?periodicidade=${periodicidade}`),
+    registros: {
+      list: (params) => get('/kpis/v2/registros' + (params ? '?' + new URLSearchParams(params) : '')),
+      create: (data) => post('/kpis/v2/registros', data),
+      update: (id, data) => put(`/kpis/v2/registros/${id}`, data),
+      remove: (id) => del(`/kpis/v2/registros/${id}`),
+    },
+  },
 };
 
 export const cuidados = {
