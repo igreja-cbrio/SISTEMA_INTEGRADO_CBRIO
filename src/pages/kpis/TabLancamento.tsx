@@ -1,8 +1,9 @@
 import { useState, useEffect, useCallback } from 'react';
 import { kpis as kpisApi } from '@/api';
+import { useAuth } from '@/contexts/AuthContext';
 import {
   Loader2, Save, X, ChevronRight, AlertCircle, CheckCircle2, Clock,
-  Calendar, MessageSquare, Edit2, History, ArrowLeft, Bot,
+  Calendar, MessageSquare, Edit2, History, ArrowLeft, Bot, Pencil,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { toast } from 'sonner';
@@ -176,6 +177,138 @@ function PeriodoInput({ periodicidade, value, onChange, inputCls }: {
 // ────────────────────────────────────────────────────────────────────────────
 // Modal de lançamento
 // ────────────────────────────────────────────────────────────────────────────
+// ────────────────────────────────────────────────────────────────────────────
+// Modal de edicao do indicador (apenas admin/diretor)
+// ────────────────────────────────────────────────────────────────────────────
+function ModalEditarIndicador({ tatico, onClose, onSaved }: {
+  tatico: Tatico;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const [form, setForm] = useState({
+    indicador: tatico.indicador || '',
+    meta_descricao: tatico.meta_descricao || '',
+    meta_valor: tatico.meta_valor != null ? String(tatico.meta_valor) : '',
+    unidade: tatico.unidade || '',
+    responsavel_area: tatico.responsavel_area || '',
+  });
+  const [saving, setSaving] = useState(false);
+
+  const handleSave = async () => {
+    if (!form.indicador.trim()) {
+      toast.error('Nome do indicador e obrigatorio');
+      return;
+    }
+    setSaving(true);
+    try {
+      await kpisApi.v2.taticoUpdate(tatico.id, {
+        indicador: form.indicador.trim(),
+        meta_descricao: form.meta_descricao.trim() || null,
+        meta_valor: form.meta_valor === '' ? null : Number(form.meta_valor),
+        unidade: form.unidade.trim() || null,
+        responsavel_area: form.responsavel_area.trim() || null,
+      });
+      toast.success('Indicador atualizado!');
+      onSaved();
+      onClose();
+    } catch (e: any) {
+      toast.error(e?.message || 'Erro ao salvar');
+    }
+    setSaving(false);
+  };
+
+  const inputCls = 'w-full px-3 py-2 rounded-xl border border-border bg-input text-foreground text-sm outline-none focus:border-[#00B39D] transition-colors';
+  const labelCls = 'block text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-1.5';
+
+  return (
+    <div
+      className="fixed inset-0 z-[1100] flex items-center justify-center p-4"
+      style={{ background: 'var(--cbrio-overlay)' }}
+    >
+      <div className="w-full max-w-lg rounded-2xl border border-border bg-card shadow-2xl overflow-hidden">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-border">
+          <div className="flex items-center gap-2 min-w-0">
+            <Pencil className="h-4 w-4 text-muted-foreground" />
+            <h3 className="font-semibold text-foreground truncate">Editar indicador {tatico.id}</h3>
+          </div>
+          <button onClick={onClose} className="text-muted-foreground hover:text-foreground transition-colors">
+            <X className="h-5 w-5" />
+          </button>
+        </div>
+
+        <div className="p-6 space-y-4">
+          <div>
+            <label className={labelCls}>Nome do indicador *</label>
+            <input
+              value={form.indicador}
+              onChange={e => setForm(f => ({ ...f, indicador: e.target.value }))}
+              className={inputCls}
+              autoFocus
+            />
+          </div>
+          <div>
+            <label className={labelCls}>Meta (descricao)</label>
+            <input
+              value={form.meta_descricao}
+              onChange={e => setForm(f => ({ ...f, meta_descricao: e.target.value }))}
+              className={inputCls}
+              placeholder="Ex: +15% em 6m, +30% em 12m (base 200)"
+            />
+          </div>
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className={labelCls}>Meta (valor numerico)</label>
+              <input
+                type="number"
+                step="any"
+                value={form.meta_valor}
+                onChange={e => setForm(f => ({ ...f, meta_valor: e.target.value }))}
+                className={inputCls}
+                placeholder="Ex: 15"
+              />
+            </div>
+            <div>
+              <label className={labelCls}>Unidade</label>
+              <input
+                value={form.unidade}
+                onChange={e => setForm(f => ({ ...f, unidade: e.target.value }))}
+                className={inputCls}
+                placeholder="%, #, R$, nota..."
+              />
+            </div>
+          </div>
+          <div>
+            <label className={labelCls}>Responsavel da area</label>
+            <input
+              value={form.responsavel_area}
+              onChange={e => setForm(f => ({ ...f, responsavel_area: e.target.value }))}
+              className={inputCls}
+              placeholder="Ex: Lideranca AMI"
+            />
+          </div>
+          <div className="rounded-xl bg-muted/30 border border-border p-3">
+            <p className="text-[11px] text-muted-foreground">
+              <strong className="text-foreground">Periodicidade</strong> e <strong className="text-foreground">area</strong> nao podem ser alterados pelo formulario (afetam estrutura). Para mudar, contate o administrador.
+            </p>
+          </div>
+        </div>
+
+        <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-border">
+          <Button variant="outline" onClick={onClose}>Cancelar</Button>
+          <Button
+            onClick={handleSave}
+            disabled={saving}
+            className="bg-[#00B39D] hover:bg-[#00B39D]/90 text-white gap-2"
+          >
+            {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+            {saving ? 'Salvando...' : 'Salvar alteracoes'}
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function ModalLancar({ tatico, onClose, onSaved }: {
   tatico: Tatico;
   onClose: () => void;
@@ -365,9 +498,12 @@ function ModalLancar({ tatico, onClose, onSaved }: {
 // Lista de táticos de uma área
 // ────────────────────────────────────────────────────────────────────────────
 function AreaDetail({ area, onBack, onChanged }: { area: string; onBack: () => void; onChanged: () => void }) {
+  const { isAdmin, user } = useAuth() as any;
+  const podeEditar = isAdmin || user?.role === 'diretor';
   const [taticos, setTaticos] = useState<Tatico[]>([]);
   const [loading, setLoading] = useState(true);
   const [editing, setEditing] = useState<Tatico | null>(null);
+  const [editingConfig, setEditingConfig] = useState<Tatico | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -473,13 +609,24 @@ function AreaDetail({ area, onBack, onChanged }: { area: string; onBack: () => v
                   )}
                 </td>
                 <td className="px-4 py-3 text-right">
-                  <Button
-                    size="sm"
-                    onClick={() => setEditing(t)}
-                    className="gap-1.5 bg-[#00B39D] hover:bg-[#00B39D]/90 text-white text-xs"
-                  >
-                    <Edit2 className="h-3 w-3" /> Lançar
-                  </Button>
+                  <div className="flex items-center gap-2 justify-end">
+                    {podeEditar && (
+                      <button
+                        onClick={() => setEditingConfig(t)}
+                        title="Editar nome / meta do indicador"
+                        className="p-1.5 rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
+                      >
+                        <Pencil className="h-3.5 w-3.5" />
+                      </button>
+                    )}
+                    <Button
+                      size="sm"
+                      onClick={() => setEditing(t)}
+                      className="gap-1.5 bg-[#00B39D] hover:bg-[#00B39D]/90 text-white text-xs"
+                    >
+                      <Edit2 className="h-3 w-3" /> Lançar
+                    </Button>
+                  </div>
                 </td>
               </tr>
             ))}
@@ -491,6 +638,14 @@ function AreaDetail({ area, onBack, onChanged }: { area: string; onBack: () => v
         <ModalLancar
           tatico={editing}
           onClose={() => setEditing(null)}
+          onSaved={() => { load(); onChanged(); }}
+        />
+      )}
+
+      {editingConfig && (
+        <ModalEditarIndicador
+          tatico={editingConfig}
+          onClose={() => setEditingConfig(null)}
           onSaved={() => { load(); onChanged(); }}
         />
       )}
