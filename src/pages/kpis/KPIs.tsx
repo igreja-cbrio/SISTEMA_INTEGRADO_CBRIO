@@ -24,6 +24,7 @@ import {
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { toast } from 'sonner';
+import TabEstrategico from './TabEstrategico';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -1679,6 +1680,7 @@ function TabOnline({ data: dash, loading, serviceTypes, onSync, syncing, onReloa
 // ── Main KPIs page ────────────────────────────────────────────────────────────
 
 const TABS = [
+  { id: 'estrategico',  label: 'Estratégico' },
   { id: 'geral',        label: 'Visão Geral' },
   { id: 'cultos',       label: 'Cultos' },
   { id: 'online',       label: 'Online' },
@@ -1697,7 +1699,7 @@ type TabId = (typeof TABS)[number]['id'];
 export default function KPIs() {
   const { isAdmin } = useAuth();
   const navigate = useNavigate();
-  const [tab, setTab] = useState<TabId>('geral');
+  const [tab, setTab] = useState<TabId>('estrategico');
   const [dash, setDash] = useState<any>(null);
   const [dashLoading, setDashLoading] = useState(true);
   const [serviceTypes, setServiceTypes] = useState<any[]>([]);
@@ -1800,6 +1802,7 @@ export default function KPIs() {
       </div>
 
       {/* Content */}
+      {tab === 'estrategico'  && <TabEstrategico />}
       {tab === 'geral'        && <TabVisaoGeral data={filteredDash} loading={dashLoading} onTab={(t) => setTab(t as TabId)} />}
       {tab === 'cultos'       && <TabCultos serviceTypes={serviceTypes} />}
       {tab === 'online'       && <TabOnline data={filteredDash} loading={dashLoading} serviceTypes={serviceTypes} onSync={handleYtSync} syncing={syncingYt} onReload={loadDash} />}
