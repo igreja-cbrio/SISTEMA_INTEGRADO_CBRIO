@@ -25,6 +25,7 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { toast } from 'sonner';
 import TabEstrategico from './TabEstrategico';
+import TabLancamento from './TabLancamento';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -1681,6 +1682,7 @@ function TabOnline({ data: dash, loading, serviceTypes, onSync, syncing, onReloa
 
 const TABS = [
   { id: 'estrategico',  label: 'Estratégico' },
+  { id: 'lancamento',   label: 'Lançamento' },
   { id: 'geral',        label: 'Visão Geral' },
   { id: 'cultos',       label: 'Cultos' },
   { id: 'online',       label: 'Online' },
@@ -1803,6 +1805,7 @@ export default function KPIs() {
 
       {/* Content */}
       {tab === 'estrategico'  && <TabEstrategico />}
+      {tab === 'lancamento'   && <TabLancamento />}
       {tab === 'geral'        && <TabVisaoGeral data={filteredDash} loading={dashLoading} onTab={(t) => setTab(t as TabId)} />}
       {tab === 'cultos'       && <TabCultos serviceTypes={serviceTypes} />}
       {tab === 'online'       && <TabOnline data={filteredDash} loading={dashLoading} serviceTypes={serviceTypes} onSync={handleYtSync} syncing={syncingYt} onReload={loadDash} />}
