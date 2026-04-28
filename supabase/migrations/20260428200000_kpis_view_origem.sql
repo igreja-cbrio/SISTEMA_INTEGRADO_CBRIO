@@ -1,8 +1,14 @@
 -- ============================================================================
 -- Atualiza vw_kpi_taticos_status para incluir fonte_auto e ultima_origem
+--
+-- DROP + CREATE em vez de CREATE OR REPLACE porque a view ganha colunas
+-- no meio (Postgres so permite REPLACE quando colunas sao adicionadas
+-- somente no final).
 -- ============================================================================
 
-CREATE OR REPLACE VIEW vw_kpi_taticos_status AS
+DROP VIEW IF EXISTS vw_kpi_taticos_status;
+
+CREATE VIEW vw_kpi_taticos_status AS
 WITH ultimo_registro AS (
   SELECT DISTINCT ON (indicador_id)
     indicador_id,
