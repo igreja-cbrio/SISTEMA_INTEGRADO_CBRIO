@@ -18,8 +18,57 @@ const express = require('express');
 const router = express.Router();
 const { authenticate } = require('../middleware/auth');
 const { supabase } = require('../utils/supabase');
+const { coletarTodos } = require('../services/kpiAutoCollector');
+
+const CRON_SECRET = process.env.CRON_SECRET;
+
+// ----------------------------------------------------------------------------
+// Cron / coletor automatico (publico com auth de cron)
+// Definido ANTES do router.use(authenticate) para nao exigir login.
+// ----------------------------------------------------------------------------
+async function autorizaCron(req, res, next) {
+  const auth = req.headers['x-cron-secret'] || req.headers['authorization'];
+  const isVercelCron = req.headers['user-agent']?.includes('vercel-cron');
+  if (!isVercelCron && auth !== CRON_SECRET && auth !== `Bearer ${CRON_SECRET}`) {
+    return res.status(401).json({ error: 'unauthorized' });
+  }
+  next();
+}
+
+router.get('/cron/coletar', autorizaCron, async (_req, res) => {
+  try {
+    const resultados = await coletarTodos();
+    const ok = resultados.filter(r => r.status === 'ok').length;
+    res.json({ ok, total: resultados.length, resultados });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+router.post('/cron/coletar', autorizaCron, async (_req, res) => {
+  try {
+    const resultados = await coletarTodos();
+    const ok = resultados.filter(r => r.status === 'ok').length;
+    res.json({ ok, total: resultados.length, resultados });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
 
 router.use(authenticate);
+
+// ----------------------------------------------------------------------------
+// Trigger manual (admin) - dry-run ou execucao
+// ----------------------------------------------------------------------------
+router.post('/coletar', async (req, res) => {
+  try {
+    const dryRun = req.query.dry_run === 'true' || req.body?.dry_run === true;
+    const resultados = await coletarTodos({ dryRun });
+    res.json({ dryRun, total: resultados.length, resultados });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
 
 // ----------------------------------------------------------------------------
 // Helpers de periodo
