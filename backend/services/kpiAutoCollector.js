@@ -335,12 +335,24 @@ const COLLECTORS = {
 
 // ── Coletor master ──────────────────────────────────────────────────────────
 
-async function coletarTodos({ dryRun = false } = {}) {
-  const { data: indicadores, error } = await supabase
+async function coletarTodos({ dryRun = false, fontes = null, areas = null } = {}) {
+  let query = supabase
     .from('kpi_indicadores_taticos')
     .select('id, periodicidade, fonte_auto, indicador, area')
     .eq('ativo', true)
     .not('fonte_auto', 'is', null);
+
+  // Filtro por prefixos de fonte_auto (ex: ['next.', 'integracao.'])
+  if (Array.isArray(fontes) && fontes.length > 0) {
+    const ors = fontes.map(f => `fonte_auto.ilike.${f}%`).join(',');
+    query = query.or(ors);
+  }
+  // Filtro por areas (ex: ['next', 'integracao'])
+  if (Array.isArray(areas) && areas.length > 0) {
+    query = query.in('area', areas);
+  }
+
+  const { data: indicadores, error } = await query;
 
   if (error) throw error;
 

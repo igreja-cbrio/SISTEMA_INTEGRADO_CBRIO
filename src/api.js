@@ -998,7 +998,15 @@ export const kpis = {
       remove: (id) => del(`/kpis/v2/registros/${id}`),
     },
     // Trigger manual do coletor automatico (admin)
-    coletarAuto: (dryRun) => post(`/kpis/v2/coletar${dryRun ? '?dry_run=true' : ''}`, {}),
+    // opts: { dryRun, fontes: ['next.', 'integracao.'], areas: ['next'] }
+    coletarAuto: (opts = {}) => {
+      const params = new URLSearchParams();
+      if (opts.dryRun) params.set('dry_run', 'true');
+      if (opts.fontes?.length) params.set('fontes', opts.fontes.join(','));
+      if (opts.areas?.length) params.set('areas', opts.areas.join(','));
+      const qs = params.toString();
+      return post(`/kpis/v2/coletar${qs ? `?${qs}` : ''}`, {});
+    },
   },
 };
 
