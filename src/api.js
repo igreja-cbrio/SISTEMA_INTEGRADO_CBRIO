@@ -758,6 +758,13 @@ export const publicVoluntariado = {
 
 // ── Voluntariado ──
 export const voluntariado = {
+  // Encontros 1x1 mensais (lider <-> voluntario)
+  teamMembers: (teamId, yearMonth) =>
+    get(`/voluntariado/team/${teamId}/members${yearMonth ? `?year_month=${yearMonth}` : ''}`),
+  oneOnOne: {
+    create: (data) => post('/voluntariado/1x1', data),
+    remove: (id) => del(`/voluntariado/1x1/${id}`),
+  },
   // Volunteer Portal (self-service)
   me: {
     get: () => get('/voluntariado/me'),
