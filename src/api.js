@@ -954,6 +954,8 @@ export const kpis = {
       update: (id, data) => put(`/kpis/v2/registros/${id}`, data),
       remove: (id) => del(`/kpis/v2/registros/${id}`),
     },
+    // Trigger manual do coletor automatico (admin)
+    coletarAuto: (dryRun) => post(`/kpis/v2/coletar${dryRun ? '?dry_run=true' : ''}`, {}),
   },
 };
 
