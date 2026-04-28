@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { kpis as kpisApi } from '@/api';
 import {
   Loader2, Save, X, ChevronRight, AlertCircle, CheckCircle2, Clock,
-  Calendar, MessageSquare, Edit2, History, ArrowLeft,
+  Calendar, MessageSquare, Edit2, History, ArrowLeft, Bot,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { toast } from 'sonner';
@@ -58,6 +58,8 @@ interface Tatico {
   ultimo_periodo?: string;
   ultimo_valor?: number;
   ultima_data?: string;
+  ultima_origem?: 'manual' | 'auto' | null;
+  fonte_auto?: string | null;
   status: 'verde' | 'vermelho' | 'pendente';
   sort_order?: number;
 }
@@ -264,6 +266,16 @@ function ModalLancar({ tatico, onClose, onSaved }: {
                 <span className="font-medium">{tatico.responsavel_area}</span>
               </div>
             )}
+            {tatico.fonte_auto && (
+              <div className="flex items-start gap-2 text-xs pt-1.5 mt-1.5 border-t border-border">
+                <Bot className="h-3.5 w-3.5 mt-0.5 shrink-0" style={{ color: C.primary }} />
+                <span className="text-muted-foreground">
+                  Este indicador é preenchido automaticamente pelo sistema todo dia às 04h.
+                  {tatico.ultima_origem === 'auto' && ' O último valor veio do sistema.'}
+                  {' '}Você pode sobrescrever manualmente.
+                </span>
+              </div>
+            )}
           </div>
 
           {/* Form */}
@@ -421,7 +433,18 @@ function AreaDetail({ area, onBack, onChanged }: { area: string; onBack: () => v
                 </td>
                 <td className="px-4 py-3">
                   <div>
-                    <span className="text-[10px] font-mono text-muted-foreground/60">{t.id}</span>
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-[10px] font-mono text-muted-foreground/60">{t.id}</span>
+                      {t.fonte_auto && (
+                        <span
+                          title={`Lancado automaticamente pelo sistema (fonte: ${t.fonte_auto})`}
+                          className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full text-[9px] font-semibold uppercase"
+                          style={{ background: `${C.primary}15`, color: C.primary }}
+                        >
+                          <Bot className="h-2.5 w-2.5" /> auto
+                        </span>
+                      )}
+                    </div>
                     <p className="font-medium text-foreground">{t.indicador}</p>
                   </div>
                 </td>
@@ -434,10 +457,15 @@ function AreaDetail({ area, onBack, onChanged }: { area: string; onBack: () => v
                 <td className="px-4 py-3">
                   {t.ultimo_valor != null ? (
                     <div>
-                      <p className="font-bold tabular-nums text-foreground">
-                        {Number(t.ultimo_valor).toLocaleString('pt-BR')}
-                        {t.unidade ? ` ${t.unidade}` : ''}
-                      </p>
+                      <div className="flex items-center gap-1.5">
+                        <p className="font-bold tabular-nums text-foreground">
+                          {Number(t.ultimo_valor).toLocaleString('pt-BR')}
+                          {t.unidade ? ` ${t.unidade}` : ''}
+                        </p>
+                        {t.ultima_origem === 'auto' && (
+                          <Bot className="h-3 w-3 text-muted-foreground" />
+                        )}
+                      </div>
                       <p className="text-[10px] text-muted-foreground/60 font-mono">{t.ultimo_periodo}</p>
                     </div>
                   ) : (
