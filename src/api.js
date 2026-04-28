@@ -1036,3 +1036,11 @@ export const cuidados = {
   buscarMembro: (cpf) => get(`/cuidados/buscar-membro?cpf=${encodeURIComponent(cpf)}`),
   criarMembro: (data) => post('/cuidados/criar-membro', data),
 };
+
+export const processos = {
+  list:   (p) => get('/processos' + (p ? '?' + new URLSearchParams(p) : '')),
+  get:    (id) => get(`/processos/${id}`),
+  create: (d) => post('/processos', d),
+  update: (id, d) => put(`/processos/${id}`, d),
+  remove: (id) => del(`/processos/${id}`),
+};

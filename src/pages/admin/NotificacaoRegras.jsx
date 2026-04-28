@@ -22,6 +22,7 @@ const MODULOS = [
   { id: 'grupos', label: 'Grupos', desc: 'Novos interessados em grupos, indicações via NEXT', color: '#a855f7' },
   { id: 'generosidade', label: 'Generosidade', desc: 'Indicações de dízimo/oferta via NEXT', color: '#eab308' },
   { id: 'integracao', label: 'Integração', desc: 'Visitantes novos, indicações de batismo via NEXT', color: '#0ea5e9' },
+  { id: 'processos', label: 'Processos', desc: 'Novos processos, OKRs e acompanhamento de indicadores', color: '#00B39D' },
 ];
 
 export default function NotificacaoRegras() {

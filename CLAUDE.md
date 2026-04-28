@@ -544,4 +544,48 @@ serverless functions via `api/index.js`).
 
 Módulos principais: Dashboard, Eventos, Projetos, Planejamento,
 Expansão, RH, Financeiro, Logística, Patrimônio, **Membresia**,
-Solicitações, Assistente IA, Permissões, **Cérebro CBRio**.
+Solicitações, Assistente IA, Permissões, **Cérebro CBRio**,
+**Processos**.
+
+## Processos — Modulo de gestao operacional
+
+Modulo para gestao de processos operacionais que alimentam KPIs.
+Seção do menu renomeada de "Projetos e Eventos" para "Acompanhamento".
+
+### Arquitetura
+
+- **Tabela**: `processos` (Supabase) com campos nome, descricao,
+  area, categoria, responsavel_id/nome, indicador_ids (TEXT[]),
+  is_okr, status
+- **Backend**: `backend/routes/processos.js` — CRUD padrao com
+  authenticate + authorize('admin','diretor')
+- **Frontend**: `src/pages/Processos.jsx` — 4 tabs (Home, Lista,
+  OKR, KPIs)
+- **KPIs**: 69 indicadores hardcoded em `src/data/indicadores.js`
+  (dados da planilha "Metas e Indicadores 2026")
+- **Permissão**: `canProcessos` via modulo "Processos" em
+  `permissoes_modulo`
+
+### Categorias de processo
+
+| Categoria | Areas |
+|-----------|-------|
+| Ministerial | CBA, Cuidados, Grupos, Integracao, Voluntariado, NEXT, Generosidade |
+| Geracional | AMI, CBKids |
+| Criativo | (futuro) |
+| Operacoes | (futuro) |
+
+### OKR
+
+Processos podem ser marcados como OKR (Objetivo Estrategico).
+A aba OKR mostra apenas esses processos com seus indicadores
+vinculados como resultados-chave. Futuramente alimenta o
+planejamento estrategico.
+
+### Decisoes de design
+
+- `indicador_ids` é TEXT[] (nao junction table) porque KPIs sao
+  constantes no frontend — sem tabela de KPIs no banco
+- Soft delete: DELETE arquiva (status='arquivado'), nao remove
+- Areas filtradas por categoria no modal de criacao
+- Sem migration de KPIs — dados vivem em `src/data/indicadores.js`
