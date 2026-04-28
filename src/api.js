@@ -946,6 +946,7 @@ export const kpis = {
     estrategicos: (ano) => get(`/kpis/v2/estrategicos${ano ? `?ano=${ano}` : ''}`),
     taticos: (params) => get('/kpis/v2/taticos' + (params ? '?' + new URLSearchParams(params) : '')),
     taticoDetail: (id, limit) => get(`/kpis/v2/taticos/${id}${limit ? `?limit=${limit}` : ''}`),
+    taticoUpdate: (id, data) => put(`/kpis/v2/taticos/${id}`, data),
     areas: () => get('/kpis/v2/areas'),
     periodoAtual: (periodicidade) => get(`/kpis/v2/periodo-atual?periodicidade=${periodicidade}`),
     registros: {

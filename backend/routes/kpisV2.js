@@ -16,7 +16,7 @@
 
 const express = require('express');
 const router = express.Router();
-const { authenticate } = require('../middleware/auth');
+const { authenticate, authorize } = require('../middleware/auth');
 const { supabase } = require('../utils/supabase');
 const { coletarTodos } = require('../services/kpiAutoCollector');
 
@@ -229,6 +229,40 @@ router.get('/taticos/:id', async (req, res) => {
     periodo_atual: periodoAtual(tatico.periodicidade),
     status: statusFromPeriodo(tatico.periodicidade, ultimo?.periodo_referencia),
   });
+});
+
+// ----------------------------------------------------------------------------
+// PUT /taticos/:id - editar indicador (apenas admin/diretor)
+// Campos editaveis: indicador, meta_descricao, meta_valor, unidade,
+//                   responsavel_area, apuracao, sort_order, ativo
+// ----------------------------------------------------------------------------
+router.put('/taticos/:id', authorize('diretor', 'admin'), async (req, res) => {
+  const { id } = req.params;
+  const allowed = [
+    'indicador', 'meta_descricao', 'meta_valor', 'unidade',
+    'responsavel_area', 'apuracao', 'sort_order', 'ativo',
+  ];
+  const update = { updated_at: new Date().toISOString() };
+  for (const [k, v] of Object.entries(req.body || {})) {
+    if (!allowed.includes(k)) continue;
+    if (k === 'meta_valor') {
+      update[k] = (v === '' || v == null) ? null : Number(v);
+    } else if (k === 'sort_order') {
+      update[k] = (v === '' || v == null) ? 0 : Number(v);
+    } else if (k === 'ativo') {
+      update[k] = !!v;
+    } else {
+      update[k] = v === '' ? null : v;
+    }
+  }
+  const { data, error } = await supabase
+    .from('kpi_indicadores_taticos')
+    .update(update)
+    .eq('id', id)
+    .select()
+    .single();
+  if (error) return res.status(500).json({ error: error.message });
+  res.json(data);
 });
 
 // ----------------------------------------------------------------------------
