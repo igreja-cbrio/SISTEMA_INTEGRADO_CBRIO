@@ -127,6 +127,41 @@ export const expansion = {
   getDependencies: (id) => get(`/expansion/milestones/${id}/dependencies`),
 };
 
+export const next = {
+  // Public (sem auth) — para o formulario
+  publicEventos: () => fetch(`${API}/public/next/eventos`).then(r => r.json()),
+  publicInscrever: (data) => fetch(`${API}/public/next/inscrever`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+  }).then(async r => {
+    const j = await r.json();
+    if (!r.ok) throw new Error(j.error || 'Erro');
+    return j;
+  }),
+  // Admin
+  dashboard: () => get('/next/dashboard'),
+  eventos: {
+    list: (params) => get('/next/eventos' + (params ? '?' + new URLSearchParams(params) : '')),
+    create: (data) => post('/next/eventos', data),
+    update: (id, data) => put(`/next/eventos/${id}`, data),
+    autoCreateMes: (data) => post('/next/eventos/auto-create-mes', data || {}),
+  },
+  inscricoes: {
+    list: (params) => get('/next/inscricoes' + (params ? '?' + new URLSearchParams(params) : '')),
+    get: (id) => get(`/next/inscricoes/${id}`),
+    create: (data) => post('/next/inscricoes', data),
+    update: (id, data) => put(`/next/inscricoes/${id}`, data),
+    checkin: (id) => post(`/next/inscricoes/${id}/checkin`, {}),
+    descheckin: (id) => del(`/next/inscricoes/${id}/checkin`),
+    indicacoes: (id, data) => post(`/next/inscricoes/${id}/indicacoes`, data),
+  },
+  indicacoes: {
+    list: (params) => get('/next/indicacoes' + (params ? '?' + new URLSearchParams(params) : '')),
+    update: (id, data) => put(`/next/indicacoes/${id}`, data),
+  },
+};
+
 export const integracao = {
   visitantes: {
     list: (params) => get('/integracao/visitantes' + (params ? '?' + new URLSearchParams(params) : '')),
