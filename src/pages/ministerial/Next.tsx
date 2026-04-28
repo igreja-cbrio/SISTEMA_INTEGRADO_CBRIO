@@ -12,7 +12,10 @@ import { StatisticsCard } from '../../components/ui/statistics-card';
 import {
   Calendar, Users, CheckCircle2, Clock, Plus, Loader2, Search, ChevronRight,
   Droplets, HandHeart, UsersRound, Wallet, X, AlertCircle, Phone, Mail, Copy,
+  Share2, MessageCircle, RefreshCw,
 } from 'lucide-react';
+import QRCode from 'qrcode';
+import { kpis as kpisApi } from '../../api';
 import { toast } from 'sonner';
 
 const C = { primary: '#00B39D', info: '#3b82f6', warn: '#f59e0b', purple: '#8b5cf6', danger: '#ef4444' };
@@ -41,6 +44,8 @@ type Indicacao = {
 export default function Next() {
   const [tab, setTab] = useState('eventos');
   const [dashboard, setDashboard] = useState<any>(null);
+  const [shareOpen, setShareOpen] = useState(false);
+  const [recalcLoading, setRecalcLoading] = useState(false);
 
   const reload = useCallback(async () => {
     try { setDashboard(await nextApi.dashboard()); } catch {}
@@ -54,14 +59,40 @@ export default function Next() {
     if (t && ['eventos', 'inscritos', 'indicacoes'].includes(t)) setTab(t);
   }, []);
 
+  const handleRecalcular = async () => {
+    setRecalcLoading(true);
+    try {
+      const r = await kpisApi.v2.coletarAuto({ fontes: ['next.'] });
+      const ok = (r.resultados || []).filter((x: any) => x.status === 'ok').length;
+      toast.success(`KPIs do NEXT recalculados (${ok} indicador(es) atualizados)`);
+      reload();
+    } catch (e: any) {
+      toast.error(e?.message || 'Erro ao recalcular');
+    }
+    setRecalcLoading(false);
+  };
+
   return (
     <div className="space-y-6 p-6 max-w-[1400px] mx-auto">
-      <div>
-        <h1 className="text-2xl font-bold text-foreground">NEXT</h1>
-        <p className="text-sm text-muted-foreground mt-0.5">
-          Porta de entrada da CBRio — 3 primeiros domingos do mes
-        </p>
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+        <div>
+          <h1 className="text-2xl font-bold text-foreground">NEXT</h1>
+          <p className="text-sm text-muted-foreground mt-0.5">
+            Porta de entrada da CBRio — 3 primeiros domingos do mes
+          </p>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <Button onClick={() => setShareOpen(true)} className="gap-2 bg-[#00B39D] hover:bg-[#00B39D]/90 text-white">
+            <Share2 className="h-4 w-4" /> Compartilhar inscricao
+          </Button>
+          <Button variant="outline" onClick={handleRecalcular} disabled={recalcLoading} className="gap-2">
+            {recalcLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+            Recalcular KPIs
+          </Button>
+        </div>
       </div>
+
+      {shareOpen && <ModalCompartilhar onClose={() => setShareOpen(false)} />}
 
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         <StatisticsCard
@@ -566,5 +597,87 @@ function TabIndicacoes() {
         </div>
       )}
     </div>
+  );
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Modal de compartilhar link de inscricao
+// ──────────────────────────────────────────────────────────────────────────
+function ModalCompartilhar({ onClose }: { onClose: () => void }) {
+  const url = `${window.location.origin}/next/inscrever`;
+  const [qrDataUrl, setQrDataUrl] = useState<string>('');
+  const mensagem = `Voce esta convidado(a) para o NEXT da CBRio - a porta de entrada da igreja!\n\nInscreva-se: ${url}`;
+
+  useEffect(() => {
+    QRCode.toDataURL(url, { width: 320, margin: 2, color: { dark: '#000000', light: '#ffffff' } })
+      .then(setQrDataUrl)
+      .catch(() => {});
+  }, [url]);
+
+  const copy = (text: string) => {
+    navigator.clipboard.writeText(text);
+    toast.success('Copiado!');
+  };
+
+  const whatsappUrl = `https://wa.me/?text=${encodeURIComponent(mensagem)}`;
+
+  return (
+    <Dialog open onOpenChange={onClose}>
+      <DialogContent className="max-w-md">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <Share2 className="h-5 w-5" /> Compartilhar inscricao no NEXT
+          </DialogTitle>
+        </DialogHeader>
+
+        <div className="space-y-4">
+          {/* Link */}
+          <div>
+            <Label className="text-xs">Link publico</Label>
+            <div className="flex gap-2 mt-1">
+              <Input value={url} readOnly className="font-mono text-xs" />
+              <Button size="sm" variant="outline" onClick={() => copy(url)} className="shrink-0 gap-1.5">
+                <Copy className="h-3.5 w-3.5" />
+              </Button>
+            </div>
+          </div>
+
+          {/* QR Code */}
+          {qrDataUrl && (
+            <div className="text-center">
+              <Label className="text-xs block mb-2">QR code</Label>
+              <img src={qrDataUrl} alt="QR Code" className="mx-auto rounded-lg border border-border" style={{ width: 220, height: 220 }} />
+              <p className="text-[10px] text-muted-foreground mt-2">
+                Escaneie com a camera do celular para abrir o formulario
+              </p>
+            </div>
+          )}
+
+          {/* Botoes de compartilhar */}
+          <div className="grid grid-cols-2 gap-2">
+            <a
+              href={whatsappUrl}
+              target="_blank"
+              rel="noreferrer"
+              className="flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold text-white"
+              style={{ background: '#25D366' }}
+            >
+              <MessageCircle className="h-4 w-4" /> WhatsApp
+            </a>
+            <Button variant="outline" onClick={() => copy(mensagem)} className="gap-2">
+              <Copy className="h-4 w-4" /> Copiar mensagem
+            </Button>
+          </div>
+
+          <div className="rounded-xl bg-muted/30 border border-border p-3">
+            <p className="text-[11px] text-muted-foreground whitespace-pre-line">{mensagem}</p>
+          </div>
+        </div>
+
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose}>Fechar</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }

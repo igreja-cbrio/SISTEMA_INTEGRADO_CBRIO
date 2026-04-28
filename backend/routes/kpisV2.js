@@ -63,8 +63,10 @@ router.use(authenticate);
 router.post('/coletar', async (req, res) => {
   try {
     const dryRun = req.query.dry_run === 'true' || req.body?.dry_run === true;
-    const resultados = await coletarTodos({ dryRun });
-    res.json({ dryRun, total: resultados.length, resultados });
+    const fontes = req.query.fontes ? String(req.query.fontes).split(',').filter(Boolean) : null;
+    const areas = req.query.areas ? String(req.query.areas).split(',').filter(Boolean) : null;
+    const resultados = await coletarTodos({ dryRun, fontes, areas });
+    res.json({ dryRun, fontes, areas, total: resultados.length, resultados });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }

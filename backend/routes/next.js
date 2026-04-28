@@ -27,6 +27,19 @@ const router = express.Router();
 const { authenticate } = require('../middleware/auth');
 const { supabase } = require('../utils/supabase');
 const { notificar } = require('../services/notificar');
+const { coletarTodos } = require('../services/kpiAutoCollector');
+
+// Re-calcula KPIs do NEXT em background (nao bloqueia a resposta).
+// Chamado apos qualquer mudanca em inscricoes ou indicacoes.
+function recalcularKpisNext() {
+  setImmediate(async () => {
+    try {
+      await coletarTodos({ fontes: ['next.'] });
+    } catch (e) {
+      console.error('[next] erro ao recalcular KPIs:', e.message);
+    }
+  });
+}
 
 router.use(authenticate);
 
@@ -276,6 +289,9 @@ router.post('/inscricoes/:id/indicacoes', async (req, res) => {
         });
       } catch (e) { console.error('[next] notificar:', e.message); }
     }
+
+    // Recalcula KPIs do NEXT em background (nao bloqueia)
+    recalcularKpisNext();
 
     res.json({ ok: true, indicacoes: linhas.length });
   } catch (e) {
