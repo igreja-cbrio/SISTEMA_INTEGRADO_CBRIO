@@ -1173,6 +1173,118 @@ router.post('/training-checkins', async (req, res) => {
 });
 
 // ══════════════════════════════════════════════════════════════
+// REUNIOES 1x1 MENSAIS (lider/coordenador <-> voluntario)
+// ══════════════════════════════════════════════════════════════
+
+// GET /api/voluntariado/team/:teamId/members - lista voluntarios de uma equipe
+// com info de 1x1 no mes corrente (ou ?year_month=YYYY-MM)
+router.get('/team/:teamId/members', async (req, res) => {
+  try {
+    const { teamId } = req.params;
+    const yearMonth = req.query.year_month || new Date().toISOString().slice(0, 7);
+    const inicio = `${yearMonth}-01`;
+    const [y, m] = yearMonth.split('-').map(Number);
+    const fim = new Date(Date.UTC(y, m, 1)).toISOString().slice(0, 10);
+
+    // Voluntarios da equipe
+    const { data: members, error: e1 } = await supabase
+      .from('vol_team_members')
+      .select('id, volunteer_profile_id, volunteer_name, position_id, position:vol_positions(id, name)')
+      .eq('team_id', teamId);
+    if (e1) return res.status(400).json({ error: e1.message });
+
+    const profileIds = [...new Set((members || []).map(m => m.volunteer_profile_id).filter(Boolean))];
+
+    // Profiles (allocation_status, training info)
+    const profilesMap = {};
+    if (profileIds.length) {
+      const { data: profiles } = await supabase
+        .from('vol_profiles')
+        .select('id, full_name, email, phone, allocation_status, profile_complete')
+        .in('id', profileIds);
+      for (const p of (profiles || [])) profilesMap[p.id] = p;
+    }
+
+    // 1x1 do mes
+    let oneOnOneMap = {};
+    if (profileIds.length) {
+      const { data: meetings } = await supabase
+        .from('vol_1x1_meetings')
+        .select('id, volunteer_profile_id, meeting_date, observacoes, registered_by, created_at')
+        .eq('team_id', teamId)
+        .gte('meeting_date', inicio)
+        .lt('meeting_date', fim);
+      for (const meeting of (meetings || [])) {
+        oneOnOneMap[meeting.volunteer_profile_id] = meeting;
+      }
+    }
+
+    const result = (members || []).map(m => ({
+      ...m,
+      profile: profilesMap[m.volunteer_profile_id] || null,
+      meeting_1x1: oneOnOneMap[m.volunteer_profile_id] || null,
+    }));
+
+    res.json({ year_month: yearMonth, total: result.length, members: result });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// POST /api/voluntariado/1x1 - registrar reuniao 1x1
+router.post('/1x1', async (req, res) => {
+  try {
+    const { volunteer_profile_id, team_id, meeting_date, observacoes } = req.body;
+    if (!volunteer_profile_id || !team_id) {
+      return res.status(400).json({ error: 'volunteer_profile_id e team_id obrigatorios' });
+    }
+    const date = meeting_date || new Date().toISOString().slice(0, 10);
+
+    // Upsert por (voluntario, mes) - evita duplicar no mesmo mes
+    // Estrategia: deletar qualquer 1x1 do mes e inserir novo
+    const ym = date.slice(0, 7);
+    const inicio = `${ym}-01`;
+    const [y, m] = ym.split('-').map(Number);
+    const fim = new Date(Date.UTC(y, m, 1)).toISOString().slice(0, 10);
+
+    await supabase
+      .from('vol_1x1_meetings')
+      .delete()
+      .eq('volunteer_profile_id', volunteer_profile_id)
+      .eq('team_id', team_id)
+      .gte('meeting_date', inicio)
+      .lt('meeting_date', fim);
+
+    const { data, error } = await supabase
+      .from('vol_1x1_meetings')
+      .insert({
+        volunteer_profile_id,
+        team_id,
+        meeting_date: date,
+        observacoes: observacoes || null,
+        registered_by: req.user?.userId || req.user?.id || null,
+      })
+      .select()
+      .single();
+    if (error) return res.status(400).json({ error: error.message });
+    res.json(data);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// DELETE /api/voluntariado/1x1/:id - desfazer marcacao
+router.delete('/1x1/:id', async (req, res) => {
+  try {
+    const { error } = await supabase.from('vol_1x1_meetings').delete().eq('id', req.params.id);
+    if (error) return res.status(400).json({ error: error.message });
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ══════════════════════════════════════════════════════════════
 // TEAMS (unique names from schedules)
 // ══════════════════════════════════════════════════════════════
 router.get('/teams', async (req, res) => {

@@ -50,11 +50,13 @@ interface Tatico {
   id: string;
   area: string;
   indicador: string;
+  descricao?: string;
   periodicidade: string;
   meta_descricao?: string;
   meta_valor?: number;
   unidade?: string;
   responsavel_area?: string;
+  apuracao?: string;
   periodo_atual?: string;
   ultimo_periodo?: string;
   ultimo_valor?: number;
@@ -187,6 +189,7 @@ function ModalEditarIndicador({ tatico, onClose, onSaved }: {
 }) {
   const [form, setForm] = useState({
     indicador: tatico.indicador || '',
+    descricao: tatico.descricao || '',
     meta_descricao: tatico.meta_descricao || '',
     meta_valor: tatico.meta_valor != null ? String(tatico.meta_valor) : '',
     unidade: tatico.unidade || '',
@@ -203,6 +206,7 @@ function ModalEditarIndicador({ tatico, onClose, onSaved }: {
     try {
       await kpisApi.v2.taticoUpdate(tatico.id, {
         indicador: form.indicador.trim(),
+        descricao: form.descricao.trim() || null,
         meta_descricao: form.meta_descricao.trim() || null,
         meta_valor: form.meta_valor === '' ? null : Number(form.meta_valor),
         unidade: form.unidade.trim() || null,
@@ -244,6 +248,16 @@ function ModalEditarIndicador({ tatico, onClose, onSaved }: {
               onChange={e => setForm(f => ({ ...f, indicador: e.target.value }))}
               className={inputCls}
               autoFocus
+            />
+          </div>
+          <div>
+            <label className={labelCls}>Descricao (o que mede / contexto)</label>
+            <textarea
+              value={form.descricao}
+              onChange={e => setForm(f => ({ ...f, descricao: e.target.value }))}
+              rows={3}
+              className={inputCls}
+              placeholder="Explique o que este indicador mede e por que e importante"
             />
           </div>
           <div>
@@ -382,6 +396,11 @@ function ModalLancar({ tatico, onClose, onSaved }: {
         <div className="p-6 space-y-4 overflow-y-auto max-h-[70vh]">
           {/* Info do indicador */}
           <div className="rounded-xl bg-muted/30 border border-border p-3 space-y-1.5">
+            {tatico.descricao && (
+              <p className="text-sm text-foreground leading-relaxed mb-2 pb-2 border-b border-border">
+                {tatico.descricao}
+              </p>
+            )}
             <div className="flex items-center gap-2 text-xs">
               <Calendar className="h-3.5 w-3.5 text-muted-foreground" />
               <span className="text-muted-foreground">Periodicidade:</span>

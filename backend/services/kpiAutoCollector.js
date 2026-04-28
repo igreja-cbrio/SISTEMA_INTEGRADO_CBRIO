@@ -183,6 +183,42 @@ const COLLECTORS = {
     return { valor: count || 0, observacao: 'Novos membros (aprox. funil)' };
   },
 
+  // ── Integracao - 1x1 mensal ──
+  // % = (voluntarios da Integracao com reuniao 1x1 no mes)
+  //     / (total voluntarios ativos da Integracao) * 100
+  'integracao.1x1_mensal': async ({ inicio, fim }) => {
+    const { data: teams } = await supabase
+      .from('vol_teams')
+      .select('id')
+      .ilike('name', '%integ%');
+    const teamIds = (teams || []).map(t => t.id);
+    if (teamIds.length === 0) return { valor: 0, observacao: 'Equipe Integracao nao encontrada' };
+
+    // Voluntarios ativos na Integracao
+    const { data: members } = await supabase
+      .from('vol_team_members')
+      .select('volunteer_profile_id')
+      .in('team_id', teamIds);
+    const profileIds = [...new Set((members || []).map(m => m.volunteer_profile_id).filter(Boolean))];
+    if (profileIds.length === 0) return { valor: 0, observacao: 'Sem voluntarios na Integracao' };
+
+    // Voluntarios com 1x1 no periodo
+    const { data: meetings } = await supabase
+      .from('vol_1x1_meetings')
+      .select('volunteer_profile_id')
+      .in('team_id', teamIds)
+      .gte('meeting_date', inicio)
+      .lt('meeting_date', fim);
+    const comReuniaoSet = new Set((meetings || []).map(m => m.volunteer_profile_id));
+    const comReuniao = profileIds.filter(id => comReuniaoSet.has(id)).length;
+
+    const pct = Math.round((comReuniao / profileIds.length) * 100);
+    return {
+      valor: pct,
+      observacao: `${comReuniao} de ${profileIds.length} voluntarios da Integracao com 1x1 no mes`,
+    };
+  },
+
   // ── Integracao - voluntarios em treinamento ──
   // % = (voluntarios da Integracao que fizeram check-in de treinamento no periodo)
   //     / (total de voluntarios ativos na equipe Integracao) * 100

@@ -239,7 +239,7 @@ router.get('/taticos/:id', async (req, res) => {
 router.put('/taticos/:id', authorize('diretor', 'admin'), async (req, res) => {
   const { id } = req.params;
   const allowed = [
-    'indicador', 'meta_descricao', 'meta_valor', 'unidade',
+    'indicador', 'descricao', 'meta_descricao', 'meta_valor', 'unidade',
     'responsavel_area', 'apuracao', 'sort_order', 'ativo',
   ];
   const update = { updated_at: new Date().toISOString() };
