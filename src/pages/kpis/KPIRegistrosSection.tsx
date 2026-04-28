@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { kpis as kpisApi } from '@/api';
 import {
-  Loader2, AlertCircle, CheckCircle2, Clock, Edit2, RefreshCw, FileText,
+  Loader2, AlertCircle, CheckCircle2, Clock, Edit2, RefreshCw, FileText, Bot,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 
@@ -31,6 +31,8 @@ interface Tatico {
   ultimo_periodo?: string;
   ultimo_valor?: number;
   ultima_data?: string;
+  ultima_origem?: 'manual' | 'auto' | null;
+  fonte_auto?: string | null;
   status: 'verde' | 'vermelho' | 'pendente';
 }
 
@@ -155,7 +157,14 @@ export default function KPIRegistrosSection({ area, onLancarClick }: {
                   </div>
                 </td>
                 <td className="px-4 py-2.5">
-                  <span className="text-[10px] font-mono text-muted-foreground/60">{t.id}</span>
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-[10px] font-mono text-muted-foreground/60">{t.id}</span>
+                    {t.fonte_auto && (
+                      <span title="Lancado automaticamente pelo sistema" className="inline-flex items-center">
+                        <Bot className="h-3 w-3" style={{ color: C.primary }} />
+                      </span>
+                    )}
+                  </div>
                   <p className="text-sm text-foreground">{t.indicador}</p>
                 </td>
                 <td className="px-4 py-2.5 text-xs text-muted-foreground">
@@ -166,10 +175,15 @@ export default function KPIRegistrosSection({ area, onLancarClick }: {
                 </td>
                 <td className="px-4 py-2.5">
                   {t.ultimo_valor != null ? (
-                    <span className="font-bold tabular-nums text-foreground">
-                      {Number(t.ultimo_valor).toLocaleString('pt-BR')}
-                      {t.unidade ? ` ${t.unidade}` : ''}
-                    </span>
+                    <div className="flex items-center gap-1.5">
+                      <span className="font-bold tabular-nums text-foreground">
+                        {Number(t.ultimo_valor).toLocaleString('pt-BR')}
+                        {t.unidade ? ` ${t.unidade}` : ''}
+                      </span>
+                      {t.ultima_origem === 'auto' && (
+                        <Bot className="h-3 w-3 text-muted-foreground" />
+                      )}
+                    </div>
                   ) : (
                     <span className="text-xs text-muted-foreground/50">—</span>
                   )}
