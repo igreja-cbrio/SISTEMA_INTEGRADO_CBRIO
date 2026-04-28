@@ -82,6 +82,96 @@ function statusLabel(s: string): string {
 }
 
 // ────────────────────────────────────────────────────────────────────────────
+// Picker de periodo adaptado a periodicidade
+// ────────────────────────────────────────────────────────────────────────────
+function periodoToDateString(periodo: string, periodicidade: string): string {
+  if (!periodo) return '';
+  if (periodicidade === 'trimestral' && periodo.includes('Q')) {
+    const [y, q] = periodo.split('-Q').map(Number);
+    const month = (q - 1) * 3;
+    return `${y}-${String(month + 1).padStart(2, '0')}-01`;
+  }
+  if (periodicidade === 'semestral' && periodo.includes('S')) {
+    const [y, s] = periodo.split('-S').map(Number);
+    const month = (s - 1) * 6;
+    return `${y}-${String(month + 1).padStart(2, '0')}-01`;
+  }
+  return '';
+}
+
+function PeriodoInput({ periodicidade, value, onChange, inputCls }: {
+  periodicidade: string;
+  value: string;
+  onChange: (v: string) => void;
+  inputCls: string;
+}) {
+  if (periodicidade === 'semanal') {
+    return (
+      <input
+        type="week"
+        value={value}
+        onChange={e => onChange(e.target.value)}
+        className={inputCls}
+      />
+    );
+  }
+  if (periodicidade === 'mensal') {
+    return (
+      <input
+        type="month"
+        value={value}
+        onChange={e => onChange(e.target.value)}
+        className={inputCls}
+      />
+    );
+  }
+  if (periodicidade === 'trimestral' || periodicidade === 'semestral') {
+    return (
+      <div className="space-y-1">
+        <input
+          type="date"
+          value={periodoToDateString(value, periodicidade)}
+          onChange={e => {
+            const [y, m] = e.target.value.split('-').map(Number);
+            if (!y || !m) return;
+            const periodo = periodicidade === 'trimestral'
+              ? `${y}-Q${Math.floor((m - 1) / 3) + 1}`
+              : `${y}-S${m <= 6 ? 1 : 2}`;
+            onChange(periodo);
+          }}
+          className={inputCls}
+        />
+        {value && (
+          <p className="text-[10px] text-muted-foreground/80">
+            Periodo: <strong className="text-foreground font-mono">{value}</strong>
+          </p>
+        )}
+      </div>
+    );
+  }
+  if (periodicidade === 'anual') {
+    return (
+      <input
+        type="number"
+        min={2020}
+        max={2100}
+        value={value}
+        onChange={e => onChange(e.target.value)}
+        className={inputCls}
+      />
+    );
+  }
+  return (
+    <input
+      type="text"
+      value={value}
+      onChange={e => onChange(e.target.value)}
+      className={inputCls}
+    />
+  );
+}
+
+// ────────────────────────────────────────────────────────────────────────────
 // Modal de lançamento
 // ────────────────────────────────────────────────────────────────────────────
 function ModalLancar({ tatico, onClose, onSaved }: {
@@ -180,11 +270,11 @@ function ModalLancar({ tatico, onClose, onSaved }: {
           <div className="grid grid-cols-2 gap-4">
             <div>
               <label className={labelCls}>Período de referência</label>
-              <input
+              <PeriodoInput
+                periodicidade={tatico.periodicidade}
                 value={form.periodo_referencia}
-                onChange={e => setForm(f => ({ ...f, periodo_referencia: e.target.value }))}
-                className={inputCls}
-                placeholder={`Ex: ${periodoSugerido}`}
+                onChange={v => setForm(f => ({ ...f, periodo_referencia: v }))}
+                inputCls={inputCls}
               />
               <p className="text-[10px] text-muted-foreground/60 mt-1">
                 Sugerido: <strong>{periodoSugerido}</strong>
