@@ -69,14 +69,17 @@ app.use('/api/permissoes', require('./routes/permissoes'));
 app.use('/api/membresia', require('./routes/membresia'));
 app.use('/api/public/membresia', require('./routes/publicMembresia'));
 app.use('/api/public/voluntariado', require('./routes/publicVoluntariado'));
+app.use('/api/public/next', require('./routes/publicNext'));
 app.use('/api/solicitacoes', require('./routes/solicitacoes'));
 app.use('/api/cerebro', require('./routes/cerebro'));
 app.use('/api/voluntariado', require('./routes/voluntariado'));
 app.use('/api/voluntariado', require('./routes/voluntariado-sync'));
 app.use('/api/grupos', require('./routes/grupos'));
+app.use('/api/kpis/v2', require('./routes/kpisV2'));
 app.use('/api/kpis', require('./routes/kpis'));
 app.use('/api/cuidados', require('./routes/cuidados'));
 app.use('/api/integracao', require('./routes/integracao'));
+app.use('/api/next', require('./routes/next'));
 app.use('/api/governanca', require('./routes/governanca'));
 app.use('/api/processos', require('./routes/processos'));
 

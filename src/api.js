@@ -127,6 +127,41 @@ export const expansion = {
   getDependencies: (id) => get(`/expansion/milestones/${id}/dependencies`),
 };
 
+export const next = {
+  // Public (sem auth) — para o formulario
+  publicEventos: () => fetch(`${API}/public/next/eventos`).then(r => r.json()),
+  publicInscrever: (data) => fetch(`${API}/public/next/inscrever`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+  }).then(async r => {
+    const j = await r.json();
+    if (!r.ok) throw new Error(j.error || 'Erro');
+    return j;
+  }),
+  // Admin
+  dashboard: () => get('/next/dashboard'),
+  eventos: {
+    list: (params) => get('/next/eventos' + (params ? '?' + new URLSearchParams(params) : '')),
+    create: (data) => post('/next/eventos', data),
+    update: (id, data) => put(`/next/eventos/${id}`, data),
+    autoCreateMes: (data) => post('/next/eventos/auto-create-mes', data || {}),
+  },
+  inscricoes: {
+    list: (params) => get('/next/inscricoes' + (params ? '?' + new URLSearchParams(params) : '')),
+    get: (id) => get(`/next/inscricoes/${id}`),
+    create: (data) => post('/next/inscricoes', data),
+    update: (id, data) => put(`/next/inscricoes/${id}`, data),
+    checkin: (id) => post(`/next/inscricoes/${id}/checkin`, {}),
+    descheckin: (id) => del(`/next/inscricoes/${id}/checkin`),
+    indicacoes: (id, data) => post(`/next/inscricoes/${id}/indicacoes`, data),
+  },
+  indicacoes: {
+    list: (params) => get('/next/indicacoes' + (params ? '?' + new URLSearchParams(params) : '')),
+    update: (id, data) => put(`/next/indicacoes/${id}`, data),
+  },
+};
+
 export const integracao = {
   visitantes: {
     list: (params) => get('/integracao/visitantes' + (params ? '?' + new URLSearchParams(params) : '')),
@@ -758,6 +793,13 @@ export const publicVoluntariado = {
 
 // ── Voluntariado ──
 export const voluntariado = {
+  // Encontros 1x1 mensais (lider <-> voluntario)
+  teamMembers: (teamId, yearMonth) =>
+    get(`/voluntariado/team/${teamId}/members${yearMonth ? `?year_month=${yearMonth}` : ''}`),
+  oneOnOne: {
+    create: (data) => post('/voluntariado/1x1', data),
+    remove: (id) => del(`/voluntariado/1x1/${id}`),
+  },
   // Volunteer Portal (self-service)
   me: {
     get: () => get('/voluntariado/me'),
@@ -938,6 +980,33 @@ export const kpis = {
     create: (data) => post('/kpis/cultura/pense', data),
     remove: (id) => del(`/kpis/cultura/pense/${id}`),
     sync: () => post('/kpis/cultura/pense/sync', {}),
+  },
+  // ── V2: Hierarquia estrategica (NSM -> Direcionadores -> KPIs -> Taticos) ──
+  v2: {
+    nsm: (ano) => get(`/kpis/v2/nsm${ano ? `?ano=${ano}` : ''}`),
+    direcionadores: (ano) => get(`/kpis/v2/direcionadores${ano ? `?ano=${ano}` : ''}`),
+    estrategicos: (ano) => get(`/kpis/v2/estrategicos${ano ? `?ano=${ano}` : ''}`),
+    taticos: (params) => get('/kpis/v2/taticos' + (params ? '?' + new URLSearchParams(params) : '')),
+    taticoDetail: (id, limit) => get(`/kpis/v2/taticos/${id}${limit ? `?limit=${limit}` : ''}`),
+    taticoUpdate: (id, data) => put(`/kpis/v2/taticos/${id}`, data),
+    areas: () => get('/kpis/v2/areas'),
+    periodoAtual: (periodicidade) => get(`/kpis/v2/periodo-atual?periodicidade=${periodicidade}`),
+    registros: {
+      list: (params) => get('/kpis/v2/registros' + (params ? '?' + new URLSearchParams(params) : '')),
+      create: (data) => post('/kpis/v2/registros', data),
+      update: (id, data) => put(`/kpis/v2/registros/${id}`, data),
+      remove: (id) => del(`/kpis/v2/registros/${id}`),
+    },
+    // Trigger manual do coletor automatico (admin)
+    // opts: { dryRun, fontes: ['next.', 'integracao.'], areas: ['next'] }
+    coletarAuto: (opts = {}) => {
+      const params = new URLSearchParams();
+      if (opts.dryRun) params.set('dry_run', 'true');
+      if (opts.fontes?.length) params.set('fontes', opts.fontes.join(','));
+      if (opts.areas?.length) params.set('areas', opts.areas.join(','));
+      const qs = params.toString();
+      return post(`/kpis/v2/coletar${qs ? `?${qs}` : ''}`, {});
+    },
   },
 };
 

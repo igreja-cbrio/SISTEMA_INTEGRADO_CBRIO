@@ -107,6 +107,8 @@ const KPIs = lazyWithRetry(() => import('./pages/kpis/KPIs'));
 const KPIsGuia = lazyWithRetry(() => import('./pages/kpis/KPIsGuia'));
 const Cuidados = lazyWithRetry(() => import('./pages/ministerial/Cuidados'));
 const Integracao = lazyWithRetry(() => import('./pages/ministerial/Integracao'));
+const Next = lazyWithRetry(() => import('./pages/ministerial/Next'));
+const InscricaoNext = lazyWithRetry(() => import('./pages/public/InscricaoNext'));
 const CulturaMensal = lazyWithRetry(() => import('./pages/admin/CulturaMensal'));
 
 // Placeholder pages for modules not yet copied
@@ -205,6 +207,8 @@ function AppRoutes() {
 
       {/* Rotas publicas */}
       <Route path="/cadastro-membresia" element={<Suspense fallback={<Loading />}><CadastroMembresia /></Suspense>} />
+      <Route path="/next" element={<Suspense fallback={<Loading />}><InscricaoNext /></Suspense>} />
+      <Route path="/next/inscrever" element={<Suspense fallback={<Loading />}><InscricaoNext /></Suspense>} />
       <Route path="/wallet" element={<Suspense fallback={<Loading />}><WalletPage /></Suspense>} />
       <Route path="/motion" element={<Suspense fallback={<Loading />}><Motion /></Suspense>} />
       <Route path="/auth/pc-callback" element={<Suspense fallback={<Loading />}><PcCallback /></Suspense>} />
@@ -252,6 +256,7 @@ function AppRoutes() {
         <Route path="/grupos" element={<ModuleGuard permKey="canMembresia"><Suspense fallback={<Loading />}><Grupos /></Suspense></ModuleGuard>} />
         <Route path="/ministerial/cuidados" element={<ModuleGuard permKey="canCuidados"><Suspense fallback={<Loading />}><Cuidados /></Suspense></ModuleGuard>} />
         <Route path="/ministerial/integracao" element={<ModuleGuard permKey="canMembresia"><Suspense fallback={<Loading />}><Integracao /></Suspense></ModuleGuard>} />
+        <Route path="/ministerial/next" element={<ModuleGuard permKey="canMembresia"><Suspense fallback={<Loading />}><Next /></Suspense></ModuleGuard>} />
         <Route path="/assistente-ia" element={<ModuleGuard permKey="canIA"><Suspense fallback={<Loading />}><AssistenteIA /></Suspense></ModuleGuard>} />
         <Route path="/solicitacoes" element={<Suspense fallback={<Loading />}><Solicitacoes /></Suspense>} />
         <Route path="/kpis" element={<ModuleGuard permKey="canKPIs"><Suspense fallback={<Loading />}><KPIs /></Suspense></ModuleGuard>} />
