@@ -1036,19 +1036,36 @@ export default function Eventos() {
   );
 
   function renderGovOKR(r) {
-    const { resumo: s, dados: d } = r;
+    const { resumo: s, dados: d, ourico: o } = r;
     const areas = Object.entries(d.projetos_por_area || {});
     const KR_COLOR = { on_track: C.green, at_risk: C.amber, off_track: C.red, sem_meta: C.text3 };
     const KR_LABEL = { on_track: 'No alvo', at_risk: 'Em risco', off_track: 'Critico', sem_meta: 'Sem meta' };
     return (<div>
       {/* KPI bar — objetivos + key results */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))', gap: 12, marginBottom: 20 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))', gap: 12, marginBottom: 16 }}>
         <GovKpiCard label="Objetivos" value={s.total_objetivos} color={C.blue} />
         <GovKpiCard label="No prazo" value={s.no_prazo} color={C.green} />
         <GovKpiCard label="Atrasados" value={s.atrasados} color={s.atrasados > 0 ? C.red : C.green} />
         <GovKpiCard label="Key Results" value={s.total_krs} color={C.primary} sub={s.total_krs > 0 ? `${s.krs_on_track} ok | ${s.krs_at_risk} risco | ${s.krs_off_track} critico` : 'Nenhum cadastrado'} />
         <GovKpiCard label="Conclusao media" value={`${s.pct_conclusao_media}%`} color={C.primary} />
       </div>
+
+      {/* Tripé do Ouriço */}
+      {o && (
+        <div style={{ ...styles.card, padding: 14, marginBottom: 16, display: 'flex', alignItems: 'center', gap: 16 }}>
+          <span style={{ fontSize: 12, fontWeight: 700, color: C.text }}>Ourico:</span>
+          {[
+            { label: 'Passam no Ourico', val: o.passam, color: '#8b5cf6' },
+            { label: 'Geram Unidade', val: o.geram_unidade, color: C.blue },
+            { label: 'Colaboram Expansao', val: o.colaboram_expansao, color: C.green },
+          ].map(item => (
+            <span key={item.label} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              <span style={{ fontSize: 16, fontWeight: 800, color: item.color }}>{item.val}</span>
+              <span style={{ fontSize: 11, color: C.text3 }}>/{o.total} {item.label}</span>
+            </span>
+          ))}
+        </div>
+      )}
 
       {/* Projetos por area com KRs expandidos */}
       {areas.map(([area, projs]) => (
@@ -1062,12 +1079,27 @@ export default function Eventos() {
               <div style={{ padding: '10px 16px', display: 'flex', alignItems: 'center', gap: 10 }}>
                 <div style={{ flex: 1 }}>
                   <div style={{ fontSize: 13, fontWeight: 600, color: C.text }}>{p.name}</div>
-                  <div style={{ fontSize: 11, color: C.text3 }}>{p.responsible || 'Sem resp.'} | {fmtDate(p.date_end)}</div>
+                  <div style={{ fontSize: 11, color: C.text3, display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
+                    <span>{p.responsible || 'Sem resp.'}</span>
+                    {p.publico_alvo && <span>| Publico: {p.publico_alvo}</span>}
+                    <span>| {fmtDate(p.date_end)}</span>
+                    {p.ourico_passa && <span style={{ fontSize: 9, padding: '1px 6px', borderRadius: 99, background: '#8b5cf620', color: '#8b5cf6', fontWeight: 600 }}>Ourico</span>}
+                    {p.gera_unidade && <span style={{ fontSize: 9, padding: '1px 6px', borderRadius: 99, background: C.blueBg, color: C.blue, fontWeight: 600 }}>Unidade</span>}
+                    {p.colabora_expansao && <span style={{ fontSize: 9, padding: '1px 6px', borderRadius: 99, background: C.greenBg, color: C.green, fontWeight: 600 }}>Expansao</span>}
+                  </div>
                 </div>
+                {/* Prazo automático */}
                 <div style={{ width: 80, display: 'flex', alignItems: 'center', gap: 4 }}>
                   <GovProgressBar pct={p.pct_completion} color={p.at_risk ? C.red : C.green} />
                   <span style={{ fontSize: 10, fontWeight: 700, color: p.at_risk ? C.red : C.text3 }}>{p.pct_completion}%</span>
                 </div>
+                {/* Orçamento automático */}
+                {p.budget_planned > 0 && (
+                  <div style={{ width: 70, display: 'flex', alignItems: 'center', gap: 3 }}>
+                    <GovProgressBar pct={p.budget_pct} color={p.budget_pct > 90 ? C.red : p.budget_pct > 70 ? C.amber : C.green} />
+                    <span style={{ fontSize: 9, fontWeight: 600, color: p.budget_pct > 90 ? C.red : C.text3 }}>{p.budget_pct}%$</span>
+                  </div>
+                )}
                 {p.krs_total > 0 && <span style={{ fontSize: 9, padding: '2px 8px', borderRadius: 99, background: p.krs_at_risk > 0 ? C.amberBg : C.greenBg, color: p.krs_at_risk > 0 ? C.amber : C.green, fontWeight: 700 }}>{p.krs_on_track}/{p.krs_total} KRs</span>}
                 {p.atrasado && <span style={{ fontSize: 9, padding: '2px 8px', borderRadius: 99, background: C.redBg, color: C.red, fontWeight: 700 }}>Atrasado</span>}
               </div>

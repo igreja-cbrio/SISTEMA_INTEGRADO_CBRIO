@@ -48,7 +48,7 @@ router.get('/tipos', (req, res) => res.json(TIPOS));
 async function buildOKR() {
   const h = hoje();
   const [projRes, tasksRes, risksRes, kpisRes, marcosRes] = await Promise.all([
-    supabase.from('projects').select('id, name, status, date_end, responsible, area, budget_planned, budget_spent, priority, description').neq('status', 'concluido').neq('status', 'cancelado').order('name'),
+    supabase.from('projects').select('id, name, status, date_end, responsible, area, budget_planned, budget_spent, priority, description, ourico_passa, gera_unidade, colabora_expansao, macro_eixo, publico_alvo, complexidade, impacto').neq('status', 'concluido').neq('status', 'cancelado').order('name'),
     supabase.from('project_tasks').select('id, project_id, status'),
     supabase.from('project_risks').select('id, project_id, title, probability, impact, score, owner_name, status, mitigation').neq('status', 'mitigado').order('score', { ascending: false }),
     supabase.from('project_kpis').select('id, project_id, name, target_value, current_value, unit'),
@@ -139,6 +139,12 @@ async function buildOKR() {
       pct_conclusao_media: pctMedia,
       total_krs: totalKRs, krs_on_track: krsOnTrack, krs_at_risk: krsAtRisk, krs_off_track: krsOffTrack,
       marcos_ativos: marcos.length, marcos_atrasados: marcosAtrasados.length,
+    },
+    ourico: {
+      passam: proj.filter(p => p.ourico_passa).length,
+      geram_unidade: proj.filter(p => p.gera_unidade).length,
+      colaboram_expansao: proj.filter(p => p.colabora_expansao).length,
+      total: proj.length,
     },
     dados: { projetos_por_area: porArea, marcos, alertas, marcosAtrasados },
   };
@@ -414,6 +420,54 @@ router.post('/relatorio/:sigla/observacoes', async (req, res) => {
     // Update
     await supabase.from('governance_meetings').update({ observacoes, updated_at: new Date().toISOString() }).eq('id', meeting.id);
     res.json({ success: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// ══════════════════════════════════════════════
+// CRON: LEMBRETE PRE-REUNIAO (segunda antes da 1a quarta)
+// ══════════════════════════════════════════════
+
+router.get('/cron/lembrete', async (req, res) => {
+  // Verificar CRON_SECRET
+  const secret = req.headers['x-cron-secret'] || req.query.secret;
+  if (secret !== process.env.CRON_SECRET) return res.status(401).json({ error: 'Unauthorized' });
+
+  try {
+    const h = hoje();
+    const dayOfWeek = new Date().getDay(); // 0=dom, 1=seg
+
+    // Só roda na segunda-feira
+    if (dayOfWeek !== 1) return res.json({ skipped: true, reason: 'Nao e segunda-feira' });
+
+    // Verificar se a proxima quarta é a 1a quarta do mês
+    const nextWed = new Date();
+    nextWed.setDate(nextWed.getDate() + 2); // segunda + 2 = quarta
+    if (nextWed.getDate() > 7) return res.json({ skipped: true, reason: 'Nao e a 1a quarta do mes' });
+
+    // Gerar checklist
+    const okr = await buildOKR();
+    const krsNaoPreenchidos = (okr.checklist.find(c => c.item.includes('valor atual')) || {});
+    const projSemResp = (okr.checklist.find(c => c.item.includes('responsavel')) || {});
+
+    const mensagem = [
+      `Reuniao OKR em 2 dias (${nextWed.toLocaleDateString('pt-BR')}).`,
+      `Checklist de preparo:`,
+      ...okr.checklist.map(c => `${c.ok ? '  ✓' : '  ✗'} ${c.item}: ${c.valor}`),
+    ].join('\n');
+
+    // Notificar via sistema
+    const { notificar } = require('../services/notificar');
+    await notificar({
+      modulo: 'governanca',
+      tipo: 'lembrete_okr',
+      titulo: `Reuniao OKR em 2 dias`,
+      mensagem,
+      link: '/eventos',
+      severidade: okr.checklist.every(c => c.ok) ? 'info' : 'warning',
+      chaveDedup: `gov_okr_${h}`,
+    });
+
+    res.json({ success: true, checklist: okr.checklist });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
