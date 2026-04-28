@@ -26,6 +26,7 @@ import { Badge } from '@/components/ui/badge';
 import { toast } from 'sonner';
 import TabEstrategico from './TabEstrategico';
 import TabLancamento from './TabLancamento';
+import KPIRegistrosSection from './KPIRegistrosSection';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -1148,6 +1149,7 @@ function TabVoluntariado({ data: dash, loading }: { data: any; loading: boolean 
           <HandHeart className="h-4 w-4" /> Ir para Voluntariado
         </Button>
       </div>
+      <KPIRegistrosSection area="voluntariado" />
     </div>
   );
 }
@@ -1190,6 +1192,7 @@ function TabGrupos({ data: dash, loading }: { data: any; loading: boolean }) {
           <Users className="h-4 w-4" /> Ir para Grupos
         </Button>
       </div>
+      <KPIRegistrosSection area="grupos" />
     </div>
   );
 }
@@ -1232,6 +1235,7 @@ function TabKids({ data: dash, loading }: { data: any; loading: boolean }) {
           Os dados de aceitações, batismos e devocionais do CBKids ainda precisam de integração com o sistema de Kids. Por enquanto, registre manualmente.
         </p>
       </div>
+      <KPIRegistrosSection area="kids" />
     </div>
   );
 }
@@ -1276,6 +1280,7 @@ function TabAMI({ data: dash, loading }: { data: any; loading: boolean }) {
         <p className="text-sm font-medium text-foreground">Dados de Next e Escola de Discípulos</p>
         <p className="text-xs text-muted-foreground mt-1">Estes indicadores precisam de integração com o módulo de trilha de membros.</p>
       </div>
+      <KPIRegistrosSection area="ami" />
     </div>
   );
 }
@@ -1317,6 +1322,7 @@ function TabIntegracao({ data: dash, loading }: { data: any; loading: boolean })
         <KpiCard label="Questionários Trimestrais" value={null} icon={Activity} color={C.purple}
           sublabel="Meta: aplicar trimestralmente" />
       </div>
+      <KPIRegistrosSection area="integracao" />
     </div>
   );
 }
@@ -1377,6 +1383,7 @@ function TabCuidados({ loading }: { data: any; loading: boolean }) {
         <KpiCard label="Devocionais Enviados" value={null} icon={BookOpen} color={C.warn} sublabel="Diário — Jornada 180" />
         <KpiCard label="Papo com o Pastor (staff)" value={null} icon={Activity} color={C.purple} sublabel="Mensal" />
       </div>
+      <KPIRegistrosSection area="cuidados" />
     </div>
   );
 }
@@ -1412,6 +1419,7 @@ function TabCBA({ loading }: { data: any; loading: boolean }) {
           ))}
         </div>
       </div>
+      <KPIRegistrosSection area="cba" />
     </div>
   );
 }
