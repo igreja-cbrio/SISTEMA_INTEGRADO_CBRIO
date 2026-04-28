@@ -183,6 +183,49 @@ const COLLECTORS = {
     return { valor: count || 0, observacao: 'Novos membros (aprox. funil)' };
   },
 
+  // ── Integracao - voluntarios em treinamento ──
+  // % = (voluntarios da Integracao que fizeram check-in de treinamento no periodo)
+  //     / (total de voluntarios ativos na equipe Integracao) * 100
+  'integracao.treinamento': async ({ inicio, fim }) => {
+    // Buscar a equipe Integracao
+    const { data: teams } = await supabase
+      .from('vol_teams')
+      .select('id, name')
+      .ilike('name', '%integ%');
+
+    const teamIds = (teams || []).map(t => t.id);
+    if (teamIds.length === 0) {
+      return { valor: 0, observacao: 'Equipe Integracao nao encontrada em vol_teams' };
+    }
+
+    // Denominador: voluntarios ativos na equipe Integracao
+    const { count: ativos } = await supabase
+      .from('vol_team_members')
+      .select('id', { count: 'exact', head: true })
+      .in('team_id', teamIds);
+
+    if (!ativos) {
+      return { valor: 0, observacao: 'Sem voluntarios na equipe Integracao' };
+    }
+
+    // Numerador: voluntarios distintos com check-in de treinamento (team Integracao) no periodo
+    const { data: checkins } = await supabase
+      .from('vol_training_checkins')
+      .select('volunteer_name')
+      .gte('created_at', inicio)
+      .lt('created_at', fim)
+      .ilike('team_name', '%integ%');
+
+    const treinandoSet = new Set((checkins || []).map(c => c.volunteer_name?.toLowerCase().trim()).filter(Boolean));
+    const treinando = treinandoSet.size;
+
+    const pct = Math.round((treinando / ativos) * 100);
+    return {
+      valor: pct,
+      observacao: `${treinando} em treinamento de ${ativos} voluntarios ativos da Integracao`,
+    };
+  },
+
   // ── Batismos ──
   'batismos.kids': async ({ inicio, fim }) => {
     // Aceitacoes + batismos de criancas no periodo
