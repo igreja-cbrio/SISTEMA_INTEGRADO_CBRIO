@@ -17,6 +17,7 @@ const MODULOS = [
   { id: 'projetos', label: 'Projetos', desc: 'Marcos atrasados, tarefas pendentes', color: '#ec4899' },
   { id: 'kpis', label: 'KPIs e Indicadores', desc: 'Metas atingidas, registros de culto e batismo', color: '#f97316' },
   { id: 'cuidados', label: 'Cuidados', desc: 'Novos acompanhamentos, alertas Jornada 180 e capelania', color: '#ef476f' },
+  { id: 'processos', label: 'Processos', desc: 'Novos processos, OKRs e acompanhamento de indicadores', color: '#00B39D' },
 ];
 
 export default function NotificacaoRegras() {

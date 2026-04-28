@@ -78,6 +78,7 @@ app.use('/api/kpis', require('./routes/kpis'));
 app.use('/api/cuidados', require('./routes/cuidados'));
 app.use('/api/integracao', require('./routes/integracao'));
 app.use('/api/governanca', require('./routes/governanca'));
+app.use('/api/processos', require('./routes/processos'));
 
 // ── Health check ──
 app.get('/api/health', (req, res) => res.json({ status: 'ok', timestamp: new Date().toISOString() }));
