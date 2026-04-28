@@ -262,6 +262,62 @@ const COLLECTORS = {
     };
   },
 
+  // ── NEXT - automatizacoes pos-NEXT ──
+  // NEXT-01: % inscritos NAO batizados pre-NEXT que viraram batizandos
+  //          (indicaram batismo no NEXT do mes)
+  'next.batismos': async ({ inicio, fim }) => {
+    // Inscritos no periodo que estavam ja_batizado=false
+    const { data: inscritos } = await supabase
+      .from('next_inscricoes')
+      .select('id, indicou_batismo')
+      .eq('ja_batizado', false)
+      .gte('created_at', inicio)
+      .lt('created_at', fim);
+    const total = (inscritos || []).length;
+    if (!total) return { valor: 0, observacao: 'Nenhum inscrito nao-batizado no periodo' };
+    const indicaram = (inscritos || []).filter(i => i.indicou_batismo).length;
+    const pct = Math.round((indicaram / total) * 100);
+    return {
+      valor: pct,
+      observacao: `${indicaram} de ${total} inscritos nao-batizados indicaram batismo`,
+    };
+  },
+
+  // NEXT-02: % inscritos NAO voluntarios pre-NEXT que indicaram servir
+  'next.voluntarios': async ({ inicio, fim }) => {
+    const { data: inscritos } = await supabase
+      .from('next_inscricoes')
+      .select('id, indicou_servir')
+      .eq('ja_voluntario', false)
+      .gte('created_at', inicio)
+      .lt('created_at', fim);
+    const total = (inscritos || []).length;
+    if (!total) return { valor: 0, observacao: 'Nenhum inscrito nao-voluntario no periodo' };
+    const indicaram = (inscritos || []).filter(i => i.indicou_servir).length;
+    const pct = Math.round((indicaram / total) * 100);
+    return {
+      valor: pct,
+      observacao: `${indicaram} de ${total} inscritos nao-voluntarios indicaram servir`,
+    };
+  },
+
+  // NEXT-03: % inscritos com indicacao de dizimo pos-NEXT
+  'next.dizimo': async ({ inicio, fim }) => {
+    const { data: inscritos } = await supabase
+      .from('next_inscricoes')
+      .select('id, indicou_dizimo')
+      .gte('created_at', inicio)
+      .lt('created_at', fim);
+    const total = (inscritos || []).length;
+    if (!total) return { valor: 0, observacao: 'Nenhum inscrito no periodo' };
+    const indicaram = (inscritos || []).filter(i => i.indicou_dizimo).length;
+    const pct = Math.round((indicaram / total) * 100);
+    return {
+      valor: pct,
+      observacao: `${indicaram} de ${total} inscritos indicaram dizimo`,
+    };
+  },
+
   // ── Batismos ──
   'batismos.kids': async ({ inicio, fim }) => {
     // Aceitacoes + batismos de criancas no periodo
