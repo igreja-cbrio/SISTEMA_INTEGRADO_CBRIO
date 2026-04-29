@@ -227,7 +227,7 @@ export default function SpotifyPlayer() {
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState<any>(null);
   const [searching, setSearching] = useState(false);
-  const [activeTab, setActiveTab] = useState<'atalhos' | 'buscar' | 'minhas'>('atalhos');
+  const [activeTab, setActiveTab] = useState<'buscar' | 'minhas' | 'recentes'>('buscar');
   const searchTimerRef = useRef<any>(null);
 
   useEffect(() => { localStorage.setItem(STORAGE_KEYS.open, open ? '1' : '0'); }, [open]);
@@ -367,13 +367,22 @@ export default function SpotifyPlayer() {
                   <Music2 className="h-3 w-3" style={{ color: SPOTIFY_GREEN }} />
                   <span className="text-[10px] font-bold text-white">PREMIUM</span>
                 </div>
-                <button
-                  onClick={() => setOpen(false)}
-                  className="p-1 rounded-full bg-black/40 backdrop-blur-sm text-white/80 hover:text-white pointer-events-auto"
-                  title="Minimizar (continua tocando)"
-                >
-                  <ChevronDown className="h-3.5 w-3.5" />
-                </button>
+                <div className="flex items-center gap-1 pointer-events-auto">
+                  <button
+                    onClick={sp.logout}
+                    className="p-1 rounded-full bg-black/40 backdrop-blur-sm text-white/80 hover:text-white"
+                    title="Sair da conta Spotify"
+                  >
+                    <LogOut className="h-3.5 w-3.5" />
+                  </button>
+                  <button
+                    onClick={() => setOpen(false)}
+                    className="p-1 rounded-full bg-black/40 backdrop-blur-sm text-white/80 hover:text-white"
+                    title="Minimizar (continua tocando)"
+                  >
+                    <ChevronDown className="h-3.5 w-3.5" />
+                  </button>
+                </div>
               </div>
             </div>
           )}
@@ -442,10 +451,10 @@ export default function SpotifyPlayer() {
           >
             {/* Tabs */}
             <div className="flex gap-1 border-b border-white/10 -mt-1">
-              {([
-                ['atalhos', 'Atalhos'],
-                ...(sp.authed ? [['buscar', 'Buscar'], ['minhas', 'Minhas']] : []),
-              ] as Array<[typeof activeTab, string]>).map(([id, label]) => (
+              {(sp.authed
+                ? ([['buscar', 'Buscar'], ['minhas', 'Minhas'], ['recentes', 'Recentes']] as Array<[typeof activeTab, string]>)
+                : []
+              ).map(([id, label]) => (
                 <button
                   key={id}
                   onClick={() => setActiveTab(id)}
@@ -460,27 +469,6 @@ export default function SpotifyPlayer() {
                 </button>
               ))}
             </div>
-
-            {/* Tab: Atalhos */}
-            {activeTab === 'atalhos' && (
-              <div className="grid grid-cols-2 gap-1.5">
-                {PRESETS.map(p => (
-                  <button
-                    key={p.uri}
-                    onClick={() => playSmart(p.uri)}
-                    className={cn(
-                      'text-[11px] px-2 py-1.5 rounded-lg border transition-colors text-left flex items-center gap-1 text-white',
-                      !usingSdk && embedUri === p.uri
-                        ? 'border-[#1DB954] bg-[#1DB954]/15'
-                        : 'border-white/10 hover:border-[#1DB954] hover:bg-[#1DB954]/10',
-                    )}
-                  >
-                    <span>{p.emoji}</span>
-                    <span className="truncate">{p.label}</span>
-                  </button>
-                ))}
-              </div>
-            )}
 
             {/* Tab: Buscar */}
             {activeTab === 'buscar' && sp.authed && (
@@ -574,6 +562,69 @@ export default function SpotifyPlayer() {
                         <Play className="h-3 w-3 shrink-0 opacity-60" style={{ color: SPOTIFY_GREEN }} />
                       </button>
                     ))}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Tab: Tocadas Recentemente */}
+            {activeTab === 'recentes' && sp.authed && (
+              <div className="space-y-1">
+                {sp.recentScopeMissing ? (
+                  <div className="space-y-2 py-3 text-center">
+                    <p className="text-[10px] text-white/60 leading-relaxed">
+                      Reconecte para liberar o histórico (permissão nova).
+                    </p>
+                    <button
+                      onClick={() => { sp.logout(); setTimeout(sp.login, 200); }}
+                      className="text-[10px] px-2.5 py-1 rounded-lg text-white"
+                      style={{ background: SPOTIFY_GREEN }}
+                    >
+                      Reconectar
+                    </button>
+                  </div>
+                ) : sp.loadingRecent ? (
+                  <div className="flex items-center justify-center py-3">
+                    <Loader2 className="h-4 w-4 animate-spin text-white/50" />
+                  </div>
+                ) : sp.recentlyPlayed.length === 0 ? (
+                  <div className="space-y-2 py-3 text-center">
+                    <p className="text-[10px] text-white/50">Nada tocado ainda.</p>
+                    <button
+                      onClick={sp.loadRecentlyPlayed}
+                      className="text-[10px] text-white/70 hover:text-white underline"
+                    >
+                      Recarregar
+                    </button>
+                  </div>
+                ) : (
+                  <div className="max-h-52 overflow-y-auto space-y-0.5">
+                    {sp.recentlyPlayed.map((r: any, idx: number) => {
+                      const t = r.track;
+                      if (!t) return null;
+                      const cover = t.album?.images?.[t.album.images.length - 1]?.url || t.album?.images?.[0]?.url;
+                      return (
+                        <button
+                          key={`${t.id}-${idx}`}
+                          onClick={() => playSmart(t.uri)}
+                          className="w-full text-left px-1.5 py-1 rounded hover:bg-white/10 text-[11px] text-white flex items-center gap-2"
+                        >
+                          <div
+                            className="w-7 h-7 rounded shrink-0 bg-white/10 overflow-hidden"
+                            style={cover ? { backgroundImage: `url(${cover})`, backgroundSize: 'cover', backgroundPosition: 'center' } : undefined}
+                          >
+                            {!cover && <Music2 className="w-full h-full p-1.5 text-white/30" />}
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <p className="font-medium truncate">{t.name}</p>
+                            <p className="text-white/50 text-[9px] truncate">
+                              {t.artists?.map((a: any) => a.name).join(', ')}
+                            </p>
+                          </div>
+                          <Play className="h-3 w-3 shrink-0 opacity-60" style={{ color: SPOTIFY_GREEN }} />
+                        </button>
+                      );
+                    })}
                   </div>
                 )}
               </div>
