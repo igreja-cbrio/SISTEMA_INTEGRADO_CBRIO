@@ -433,7 +433,7 @@ export function GruposMapView({
           <MapControls
             position="bottom-right"
             showZoom
-            showLocate={isKiosk || !!memberCoords}
+            showLocate
             showFullscreen={isKiosk}
           />
 
