@@ -144,6 +144,18 @@ export default function Processos() {
     try { await api.remove(id); loadList(); } catch (e) { console.error(e); }
   };
 
+  const [coletando, setColetando] = useState(false);
+  const handleColetar = async () => {
+    if (!confirm('Rodar coletor automatico agora? Os indicadores com fonte automatica serao atualizados.')) return;
+    setColetando(true);
+    try {
+      const r = await api.coletar();
+      alert(`Coletor: ${r.ok}/${r.total} indicadores atualizados.`);
+      if (detail?.id) setRegistros(await api.registros.list({ processo_id: detail.id }));
+    } catch (e) { console.error(e); alert('Erro ao coletar: ' + (e.message || 'desconhecido')); }
+    setColetando(false);
+  };
+
   const availableAreas = form.categoria ? (CATEGORIA_AREAS[form.categoria] || []) : AREAS.map(a => a.id);
   const availableKpis = form.area ? getIndicadoresByArea(form.area) : [];
   const toggleKpi = (id) => setForm(f => ({ ...f, indicador_ids: f.indicador_ids.includes(id) ? f.indicador_ids.filter(x => x !== id) : [...f.indicador_ids, id] }));
@@ -165,7 +177,14 @@ export default function Processos() {
           <h1 style={{ margin: 0, fontSize: 24, fontWeight: 700, color: C.text }}>Processos</h1>
           <p style={{ margin: '4px 0 0', fontSize: 14, color: C.t3 }}>Processos operacionais, OKRs e indicadores</p>
         </div>
-        {canWrite && tab !== 5 && <Btn onClick={openCreate}>+ Novo Processo</Btn>}
+        {canWrite && tab !== 5 && (
+          <div style={{ display: 'flex', gap: 8 }}>
+            <Btn variant="ghost" onClick={handleColetar} disabled={coletando}>
+              {coletando ? 'Coletando...' : 'Coletar agora'}
+            </Btn>
+            <Btn onClick={openCreate}>+ Novo Processo</Btn>
+          </div>
+        )}
       </div>
 
       {/* Tabs */}

@@ -1057,4 +1057,5 @@ export const processos = {
     toggle: (id, done) => patch(`/processos/tarefas/${id}`, { done }),
     remove: (id) => del(`/processos/tarefas/${id}`),
   },
+  coletar: (dryRun = false) => post(`/processos/coletar${dryRun ? '?dry_run=true' : ''}`, {}),
 };
