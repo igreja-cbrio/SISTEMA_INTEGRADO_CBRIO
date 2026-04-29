@@ -1431,8 +1431,10 @@ function statusColetaCulto(c: any): { label: string; color: string } {
   if (c.online_ds && c.online_ddus) return { label: 'Coletado', color: '#00B39D' };
   const dataCulto = new Date(c.data + 'T12:00:00');
   const diasPassados = Math.floor((Date.now() - dataCulto.getTime()) / 86400000);
-  if (diasPassados >= 7 && !c.online_ddus) return { label: 'Pendente D+7', color: '#F59E0B' };
+  // D+1 sempre tem prioridade — se ainda nao tem, mostrar pendente D+1
+  // (mesmo que ja tenham passado 7 dias e D+7 tambem esteja pendente).
   if (diasPassados >= 1 && !c.online_ds) return { label: 'Pendente D+1', color: '#F59E0B' };
+  if (diasPassados >= 7 && !c.online_ddus) return { label: 'Pendente D+7', color: '#F59E0B' };
   return { label: 'Aguardando', color: '#3B82F6' };
 }
 
