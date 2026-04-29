@@ -103,6 +103,7 @@ const VolTotem = lazyWithRetry(() => import('./pages/ministerial/voluntariado/Vo
 const TotemMembro = lazyWithRetry(() => import('./pages/TotemMembro'));
 const VolSelfCheckin = lazyWithRetry(() => import('./pages/ministerial/voluntariado/VolSelfCheckin'));
 const PcCallback = lazyWithRetry(() => import('./pages/auth/PcCallback'));
+const SpotifyCallback = lazyWithRetry(() => import('./pages/auth/SpotifyCallback'));
 const KPIs = lazyWithRetry(() => import('./pages/kpis/KPIs'));
 const KPIsGuia = lazyWithRetry(() => import('./pages/kpis/KPIsGuia'));
 const Cuidados = lazyWithRetry(() => import('./pages/ministerial/Cuidados'));
@@ -213,6 +214,7 @@ function AppRoutes() {
       <Route path="/wallet" element={<Suspense fallback={<Loading />}><WalletPage /></Suspense>} />
       <Route path="/motion" element={<Suspense fallback={<Loading />}><Motion /></Suspense>} />
       <Route path="/auth/pc-callback" element={<Suspense fallback={<Loading />}><PcCallback /></Suspense>} />
+      <Route path="/spotify/callback" element={<Suspense fallback={<Loading />}><SpotifyCallback /></Suspense>} />
 
       {/* Totem — fullscreen, sem shell nenhum */}
       <Route path="/voluntariado/totem" element={<ProtectedRoute><Suspense fallback={<Loading />}><VolTotem /></Suspense></ProtectedRoute>} />

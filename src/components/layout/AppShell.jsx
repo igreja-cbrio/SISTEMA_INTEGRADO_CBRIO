@@ -3,6 +3,7 @@ import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
 import { useTheme } from '../../contexts/ThemeContext';
 import { notificacoes as notifApi } from '../../api';
+import SpotifyPlayer from './SpotifyPlayer';
 import { playNotificationSound } from '../../lib/sounds';
 import MegaMenu from '../ui/mega-menu';
 import { CommandSearch } from '../ui/command-search';
@@ -331,6 +332,8 @@ export default function AppShell() {
       <main className="max-w-[1800px] mx-auto">
         <Outlet />
       </main>
+
+      <SpotifyPlayer />
     </div>
   );
 }
