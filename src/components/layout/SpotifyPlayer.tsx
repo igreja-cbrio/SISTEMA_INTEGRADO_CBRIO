@@ -264,9 +264,12 @@ export default function SpotifyPlayer() {
     }
   };
 
-  // Botao flutuante (fechado)
-  if (!open) {
-    return (
+  // IMPORTANTE: o painel fica SEMPRE montado (mesmo minimizado) pra que o
+  // iframe do embed continue tocando. Usamos opacity + pointer-events em
+  // vez de unmount.
+  return (
+    <>
+      {/* Botao flutuante (visivel quando minimizado) */}
       <motion.button
         onClick={() => setOpen(true)}
         title="Abrir player Spotify"
@@ -279,26 +282,38 @@ export default function SpotifyPlayer() {
           height: 48,
           background: SPOTIFY_GREEN,
           color: 'white',
+          pointerEvents: open ? 'none' : 'auto',
         }}
-        whileHover={{ scale: 1.1 }}
-        whileTap={{ scale: 0.9 }}
+        animate={{
+          opacity: open ? 0 : 1,
+          scale: open ? 0.5 : 1,
+        }}
+        whileHover={open ? undefined : { scale: 1.1 }}
+        whileTap={open ? undefined : { scale: 0.9 }}
         initial={{ opacity: 0, y: 20 }}
-        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.2 }}
       >
         <Music2 className="h-5 w-5" />
       </motion.button>
-    );
-  }
 
-  return (
-    <AnimatePresence>
+      {/* Painel — sempre montado pra preservar audio */}
       <motion.div
         initial={{ opacity: 0, y: 20, filter: 'blur(8px)' }}
-        animate={{ opacity: 1, y: 0, filter: 'blur(0px)' }}
-        exit={{ opacity: 0, y: 20, filter: 'blur(8px)' }}
+        animate={{
+          opacity: open ? 1 : 0,
+          y: open ? 0 : 20,
+          filter: open ? 'blur(0px)' : 'blur(8px)',
+          scale: open ? 1 : 0.95,
+        }}
         transition={{ duration: 0.25, type: 'spring' }}
         className="fixed z-40"
-        style={{ right: 16, bottom: 16, width: 304, maxHeight: 'calc(100vh - 32px)' }}
+        style={{
+          right: 16,
+          bottom: 16,
+          width: 304,
+          maxHeight: 'calc(100vh - 32px)',
+          pointerEvents: open ? 'auto' : 'none',
+        }}
       >
         <div className="flex flex-col gap-2 max-h-[calc(100vh-32px)]">
           {/* Card principal: SDK ou estado de auth */}
@@ -525,6 +540,6 @@ export default function SpotifyPlayer() {
           </motion.div>
         </div>
       </motion.div>
-    </AnimatePresence>
+    </>
   );
 }

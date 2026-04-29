@@ -467,6 +467,27 @@ export function useSpotify() {
     return spotifyApi(`/search?${params.toString()}`);
   }, []);
 
+  // Playlists do usuario
+  const [myPlaylists, setMyPlaylists] = useState<any[]>([]);
+  const [loadingPlaylists, setLoadingPlaylists] = useState(false);
+
+  const loadMyPlaylists = useCallback(async () => {
+    if (!authed) return;
+    setLoadingPlaylists(true);
+    try {
+      const r = await spotifyApi<{ items: any[] }>('/me/playlists?limit=50');
+      setMyPlaylists(r.items || []);
+    } catch (e: any) {
+      setError(e.message);
+    }
+    setLoadingPlaylists(false);
+  }, [authed]);
+
+  useEffect(() => {
+    if (authed) loadMyPlaylists();
+    else setMyPlaylists([]);
+  }, [authed, loadMyPlaylists]);
+
   // Atualiza authed se localStorage mudar (outro tab fez login)
   useEffect(() => {
     const onStorage = (e: StorageEvent) => {
@@ -502,6 +523,9 @@ export function useSpotify() {
     cycleRepeat,
     playUri,
     search,
+    myPlaylists,
+    loadingPlaylists,
+    loadMyPlaylists,
     // utilitarios
     clearError: () => setError(null),
     configured: !!CLIENT_ID,
