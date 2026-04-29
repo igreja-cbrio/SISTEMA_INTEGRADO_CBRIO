@@ -131,14 +131,56 @@ const COLLECTORS = {
     return { valor: total, observacao: partes.join(' | ') || 'Sem atendimentos' };
   },
 
-  'cuidados.engajados_valor': async ({ inicio, fim }) => {
-    // Convertidos no periodo que aparecem em pelo menos 1 valor (grupos OR voluntariado OR doadores)
-    // Approximacao: convertidos cadastrados / total de convertidos
-    const { count: total } = await supabase.from('cui_convertidos').select('id', { count: 'exact', head: true }).gte('data_culto', inicio).lt('data_culto', fim);
-    const { count: cadastrados } = await supabase.from('cui_convertidos').select('id', { count: 'exact', head: true }).eq('cadastrado', true).gte('data_culto', inicio).lt('data_culto', fim);
-    if (!total) return { valor: 0, observacao: 'Sem convertidos' };
-    const pct = Math.round((cadastrados / total) * 100);
-    return { valor: pct, observacao: `${cadastrados} de ${total} cadastrados (proxy de engajamento)` };
+  'cuidados.engajados_valor': async () => {
+    // CUID-05: % novos convertidos engajados em ao menos 1 dos 5 valores
+    // Calcula real: convertidos com pelo menos 1 valor ativo
+    const d90 = new Date(Date.now() - 90 * 86400000).toISOString().slice(0, 10);
+    const { data: convertidos } = await supabase.from('cui_convertidos').select('membro_id').not('membro_id', 'is', null);
+    const membroIds = [...new Set((convertidos || []).map(c => c.membro_id).filter(Boolean))];
+    if (membroIds.length === 0) return { valor: 0, observacao: 'Sem convertidos com membro vinculado' };
+
+    const [grupos, vols, contribs] = await Promise.all([
+      supabase.from('mem_grupo_membros').select('membro_id').in('membro_id', membroIds).is('saiu_em', null),
+      supabase.from('mem_voluntarios').select('membro_id').in('membro_id', membroIds).is('ate', null),
+      supabase.from('mem_contribuicoes').select('membro_id').in('membro_id', membroIds).gte('data', d90),
+    ]);
+    const engajados = new Set([
+      ...(grupos.data || []).map(g => g.membro_id),
+      ...(vols.data || []).map(v => v.membro_id),
+      ...(contribs.data || []).map(c => c.membro_id),
+    ]);
+    const pct = Math.round((engajados.size / membroIds.length) * 100);
+    return { valor: pct, observacao: `${engajados.size} de ${membroIds.length} convertidos com 1+ valor` };
+  },
+
+  'cuidados.membros_2mais_valores': async () => {
+    // CUID-06: % de membros envolvidos em 2+ valores
+    const d90 = new Date(Date.now() - 90 * 86400000).toISOString().slice(0, 10);
+    const { data: membros } = await supabase.from('mem_membros').select('id').eq('active', true);
+    if (!membros || membros.length === 0) return { valor: 0, observacao: 'Sem membros ativos' };
+
+    const ids = membros.map(m => m.id);
+    const [trilha, grupos, j180, vols, contribs] = await Promise.all([
+      supabase.from('mem_trilha_valores').select('membro_id').in('membro_id', ids).in('etapa', ['conversao', 'primeiro_contato']).eq('concluida', true),
+      supabase.from('mem_grupo_membros').select('membro_id').in('membro_id', ids).is('saiu_em', null),
+      supabase.from('cui_jornada180').select('membro_id').in('membro_id', ids).gte('data_encontro', d90),
+      supabase.from('mem_voluntarios').select('membro_id').in('membro_id', ids).is('ate', null),
+      supabase.from('mem_contribuicoes').select('membro_id').in('membro_id', ids).gte('data', d90),
+    ]);
+    const sets = {
+      seguir: new Set((trilha.data || []).map(t => t.membro_id)),
+      conectar: new Set((grupos.data || []).map(g => g.membro_id)),
+      investir: new Set((j180.data || []).map(j => j.membro_id)),
+      servir: new Set((vols.data || []).map(v => v.membro_id)),
+      generosidade: new Set((contribs.data || []).map(c => c.membro_id)),
+    };
+    let com2mais = 0;
+    for (const id of ids) {
+      const count = Object.values(sets).filter(s => s.has(id)).length;
+      if (count >= 2) com2mais++;
+    }
+    const pct = Math.round((com2mais / ids.length) * 100);
+    return { valor: pct, observacao: `${com2mais} de ${ids.length} membros com 2+ valores` };
   },
 
   // ── Grupos ──
@@ -330,6 +372,81 @@ const COLLECTORS = {
     } catch (e) {
       return null;
     }
+  },
+
+  // ── Voluntariado extras (Onda 3) ──
+
+  // VOLT-01: voluntarios ativos na semana (check-ins ultimos 7 dias)
+  'voluntariado.ativos_semanal': async ({ inicio, fim }) => {
+    const { data } = await supabase.from('vol_check_ins').select('volunteer_id').gte('checked_in_at', inicio).lt('checked_in_at', fim);
+    const unique = new Set((data || []).map(d => d.volunteer_id).filter(Boolean)).size;
+    return { valor: unique, observacao: `${unique} voluntarios com check-in na semana` };
+  },
+
+  // VOLT-03: voluntarios ativos no trimestre
+  'voluntariado.ativos_trimestral': async ({ inicio, fim }) => {
+    const { data } = await supabase.from('vol_check_ins').select('volunteer_id').gte('checked_in_at', inicio).lt('checked_in_at', fim);
+    const unique = new Set((data || []).map(d => d.volunteer_id).filter(Boolean)).size;
+    return { valor: unique, observacao: `${unique} voluntarios com check-in no trimestre` };
+  },
+
+  // VOLT-05: voluntarios integrados (entraram e completaram onboarding)
+  'voluntariado.integrados': async ({ inicio, fim }) => {
+    const { count } = await supabase.from('mem_voluntarios').select('id', { count: 'exact', head: true })
+      .gte('desde', inicio).lt('desde', fim);
+    return { valor: count || 0, observacao: `${count || 0} voluntarios integrados no periodo` };
+  },
+
+  // VOLT-07: voluntarios desaparecidos (sem check-in 90+ dias, ate IS NULL)
+  'voluntariado.desaparecidos': async () => {
+    const d90 = new Date(Date.now() - 90 * 86400000).toISOString();
+    const { data: ativos } = await supabase.from('mem_voluntarios').select('membro_id').is('ate', null);
+    if (!ativos || ativos.length === 0) return { valor: 0 };
+    const ids = ativos.map(a => a.membro_id).filter(Boolean);
+    const { data: recentes } = await supabase.from('vol_check_ins').select('volunteer_id').gte('checked_in_at', d90);
+    const recentSet = new Set((recentes || []).map(r => r.volunteer_id));
+    const desaparecidos = ids.filter(id => !recentSet.has(id)).length;
+    return { valor: desaparecidos, observacao: `${desaparecidos} voluntarios sem check-in 90+ dias` };
+  },
+
+  // VOLT-08: % interessados integrados
+  'voluntariado.interessados_integrados': async ({ inicio, fim }) => {
+    const { data: indicacoes } = await supabase.from('next_indicacoes').select('id, status')
+      .eq('tipo', 'servir').gte('created_at', inicio).lt('created_at', fim);
+    const total = (indicacoes || []).length;
+    if (!total) return { valor: 0, observacao: 'Sem indicacoes de servir no periodo' };
+    const concluidos = (indicacoes || []).filter(i => i.status === 'concluido').length;
+    const pct = Math.round((concluidos / total) * 100);
+    return { valor: pct, observacao: `${concluidos} de ${total} indicacoes concluidas` };
+  },
+
+  // ── Generosidade (Onda 3) ──
+
+  // GEN-02: % doadores ativos com recorrencia >= 3 meses
+  'generosidade.recorrencia': async () => {
+    const d90 = new Date(Date.now() - 90 * 86400000).toISOString().slice(0, 10);
+    const { data: recentes } = await supabase.from('mem_contribuicoes').select('membro_id, data').gte('data', d90);
+    const doadores = {};
+    (recentes || []).forEach(c => {
+      if (!doadores[c.membro_id]) doadores[c.membro_id] = new Set();
+      doadores[c.membro_id].add(c.data.slice(0, 7)); // YYYY-MM
+    });
+    const totalDoadores = Object.keys(doadores).length;
+    if (!totalDoadores) return { valor: 0, observacao: 'Sem doadores no periodo' };
+    const recorrentes = Object.values(doadores).filter(meses => meses.size >= 3).length;
+    const pct = Math.round((recorrentes / totalDoadores) * 100);
+    return { valor: pct, observacao: `${recorrentes} de ${totalDoadores} doadores com 3+ meses` };
+  },
+
+  // GEN-04: % participantes Next convertidos em doadores
+  'generosidade.next_doadores': async ({ inicio, fim }) => {
+    const { data: indicacoes } = await supabase.from('next_indicacoes').select('id, status')
+      .eq('tipo', 'dizimo').gte('created_at', inicio).lt('created_at', fim);
+    const total = (indicacoes || []).length;
+    if (!total) return { valor: 0, observacao: 'Sem indicacoes de dizimo no periodo' };
+    const concluidos = (indicacoes || []).filter(i => i.status === 'concluido').length;
+    const pct = Math.round((concluidos / total) * 100);
+    return { valor: pct, observacao: `${concluidos} de ${total} convertidos em doadores` };
   },
 };
 
