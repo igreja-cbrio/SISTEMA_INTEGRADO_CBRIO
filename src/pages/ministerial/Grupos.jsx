@@ -8,7 +8,8 @@ import { Textarea } from '../../components/ui/textarea';
 import { Select as ShadSelect, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../components/ui/select';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../../components/ui/dialog';
 import { toast } from 'sonner';
-import { Users, MapPin, Clock, Plus, Search, ChevronLeft, UserPlus, X, ArrowRightLeft, FileUp, Trash2, FileText, Image, File as FileIcon, Map as MapIcon } from 'lucide-react';
+import { Users, MapPin, Clock, Plus, Search, ChevronLeft, UserPlus, X, ArrowRightLeft, FileUp, Trash2, FileText, Image, File as FileIcon, Map as MapIcon, ListChecks } from 'lucide-react';
+import ProcessosTarefas from '../../components/ProcessosTarefas';
 import { GruposMapView } from '@/components/grupos/GruposMapView';
 
 const C = {
@@ -373,6 +374,7 @@ export default function Grupos() {
           { key: 'grupos', label: 'Grupos', icon: Users },
           { key: 'mapa', label: 'Mapa', icon: MapIcon },
           { key: 'materiais', label: 'Materiais', icon: FileText },
+          { key: 'tarefas', label: 'Tarefas', icon: ListChecks },
         ].map(tab => (
           <button key={tab.key} onClick={() => setPageTab(tab.key)} style={{
             padding: '10px 24px', background: 'none', border: 'none', cursor: 'pointer',
@@ -538,6 +540,9 @@ export default function Grupos() {
           </div>
         </div>
       )}
+
+      {/* ═══ TAB TAREFAS ═══ */}
+      {pageTab === 'tarefas' && <ProcessosTarefas area="Grupos" />}
 
       {/* ═══ TAB GRUPOS ═══ */}
       {pageTab === 'grupos' && <>

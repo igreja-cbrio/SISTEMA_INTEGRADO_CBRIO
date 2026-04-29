@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { next as nextApi } from '../../api';
+import ProcessosTarefas from '../../components/ProcessosTarefas';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '../../components/ui/tabs';
 import { Button } from '../../components/ui/button';
 import { Input } from '../../components/ui/input';
@@ -126,6 +127,7 @@ export default function Next() {
           <TabsTrigger value="eventos">Eventos</TabsTrigger>
           <TabsTrigger value="inscritos">Inscritos</TabsTrigger>
           <TabsTrigger value="indicacoes">Indicacoes</TabsTrigger>
+          <TabsTrigger value="tarefas">Tarefas</TabsTrigger>
         </TabsList>
 
         <TabsContent value="eventos" className="mt-4">
@@ -136,6 +138,9 @@ export default function Next() {
         </TabsContent>
         <TabsContent value="indicacoes" className="mt-4">
           <TabIndicacoes />
+        </TabsContent>
+        <TabsContent value="tarefas" className="mt-4">
+          <ProcessosTarefas area="NEXT" />
         </TabsContent>
       </Tabs>
     </div>
