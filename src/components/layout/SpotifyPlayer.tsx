@@ -227,6 +227,7 @@ export default function SpotifyPlayer() {
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState<any>(null);
   const [searching, setSearching] = useState(false);
+  const [activeTab, setActiveTab] = useState<'atalhos' | 'buscar' | 'minhas'>('atalhos');
   const searchTimerRef = useRef<any>(null);
 
   useEffect(() => { localStorage.setItem(STORAGE_KEYS.open, open ? '1' : '0'); }, [open]);
@@ -236,8 +237,9 @@ export default function SpotifyPlayer() {
   const usingSdk = sp.authed && sp.isPremium && sp.isReady;
   const showEmbed = !usingSdk;
 
+  // Busca funciona pra qualquer usuario authed (Free ou Premium) — so precisa de OAuth
   useEffect(() => {
-    if (!usingSdk || !searchQuery.trim()) {
+    if (!sp.authed || !searchQuery.trim()) {
       setSearchResults(null);
       return;
     }
@@ -254,7 +256,16 @@ export default function SpotifyPlayer() {
       }
     }, 400);
     return () => { if (searchTimerRef.current) clearTimeout(searchTimerRef.current); };
-  }, [searchQuery, usingSdk, sp]);
+  }, [searchQuery, sp.authed, sp]);
+
+  // Play universal: SDK se Premium ready, senao embed
+  const playSmart = (uri: string) => {
+    if (usingSdk) {
+      sp.playUri(uri);
+    } else {
+      setEmbedUri(uri);
+    }
+  };
 
   const handlePaste = () => {
     const url = toEmbedUrl(pasteInput.trim());
@@ -423,66 +434,40 @@ export default function SpotifyPlayer() {
             </motion.div>
           )}
 
-          {/* Painel de atalhos / busca / paste — colapsado em scroll */}
+          {/* Painel de atalhos / busca / minhas playlists com tabs */}
           <motion.div
             className="rounded-2xl bg-[#11111198] backdrop-blur-sm p-3 space-y-3 overflow-y-auto"
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
           >
-            {usingSdk && (
-              <div className="space-y-2">
-                <div className="relative">
-                  <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-white/50" />
-                  <input
-                    value={searchQuery}
-                    onChange={e => setSearchQuery(e.target.value)}
-                    placeholder="Buscar música ou playlist..."
-                    className="w-full pl-7 pr-2 py-1.5 text-xs rounded-lg border border-white/10 bg-white/5 text-white placeholder:text-white/40 outline-none focus:border-[#1DB954]"
-                  />
-                  {searching && (
-                    <Loader2 className="absolute right-2 top-1/2 -translate-y-1/2 h-3 w-3 animate-spin text-white/50" />
+            {/* Tabs */}
+            <div className="flex gap-1 border-b border-white/10 -mt-1">
+              {([
+                ['atalhos', 'Atalhos'],
+                ...(sp.authed ? [['buscar', 'Buscar'], ['minhas', 'Minhas']] : []),
+              ] as Array<[typeof activeTab, string]>).map(([id, label]) => (
+                <button
+                  key={id}
+                  onClick={() => setActiveTab(id)}
+                  className={cn(
+                    'px-2.5 py-1.5 text-[11px] font-medium border-b-2 -mb-px transition-colors',
+                    activeTab === id
+                      ? 'border-[#1DB954] text-white'
+                      : 'border-transparent text-white/50 hover:text-white',
                   )}
-                </div>
-                {searchResults && (
-                  <div className="space-y-0.5 max-h-40 overflow-y-auto">
-                    {searchResults.tracks?.items?.slice(0, 4).map((t: any) => (
-                      <button
-                        key={t.id}
-                        onClick={() => sp.playUri(t.uri)}
-                        className="w-full text-left px-2 py-1 rounded hover:bg-white/10 text-[11px] text-white flex items-center gap-1.5"
-                      >
-                        <Play className="h-2.5 w-2.5" style={{ color: SPOTIFY_GREEN }} />
-                        <span className="flex-1 truncate">
-                          <span className="font-medium">{t.name}</span>
-                          <span className="text-white/50"> · {t.artists?.[0]?.name}</span>
-                        </span>
-                      </button>
-                    ))}
-                    {searchResults.playlists?.items?.slice(0, 2).map((p: any) => (
-                      <button
-                        key={p.id}
-                        onClick={() => sp.playUri(p.uri)}
-                        className="w-full text-left px-2 py-1 rounded hover:bg-white/10 text-[11px] text-white flex items-center gap-1.5"
-                      >
-                        <Music2 className="h-2.5 w-2.5" style={{ color: SPOTIFY_GREEN }} />
-                        <span className="flex-1 truncate">
-                          <span className="font-medium">{p.name}</span>
-                          <span className="text-white/50"> · playlist</span>
-                        </span>
-                      </button>
-                    ))}
-                  </div>
-                )}
-              </div>
-            )}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
 
-            <div className="space-y-1.5">
-              <p className="text-[10px] uppercase tracking-wider text-white/50">Atalhos</p>
+            {/* Tab: Atalhos */}
+            {activeTab === 'atalhos' && (
               <div className="grid grid-cols-2 gap-1.5">
                 {PRESETS.map(p => (
                   <button
                     key={p.uri}
-                    onClick={() => usingSdk ? sp.playUri(p.uri) : setEmbedUri(p.uri)}
+                    onClick={() => playSmart(p.uri)}
                     className={cn(
                       'text-[11px] px-2 py-1.5 rounded-lg border transition-colors text-left flex items-center gap-1 text-white',
                       !usingSdk && embedUri === p.uri
@@ -495,30 +480,126 @@ export default function SpotifyPlayer() {
                   </button>
                 ))}
               </div>
-            </div>
+            )}
 
-            {showEmbed && (
-              <div className="space-y-1.5">
-                <p className="text-[10px] uppercase tracking-wider text-white/50">Cole URL ou ID</p>
-                <div className="flex gap-1.5">
+            {/* Tab: Buscar */}
+            {activeTab === 'buscar' && sp.authed && (
+              <div className="space-y-2">
+                <div className="relative">
+                  <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-white/50" />
                   <input
-                    value={pasteInput}
-                    onChange={e => setPasteInput(e.target.value)}
-                    placeholder="open.spotify.com/playlist/..."
-                    className="flex-1 px-2 py-1.5 text-xs rounded-lg border border-white/10 bg-white/5 text-white placeholder:text-white/40 outline-none focus:border-[#1DB954]"
-                    onKeyDown={e => { if (e.key === 'Enter') handlePaste(); }}
+                    value={searchQuery}
+                    onChange={e => setSearchQuery(e.target.value)}
+                    placeholder="Buscar música ou playlist..."
+                    autoFocus
+                    className="w-full pl-7 pr-2 py-1.5 text-xs rounded-lg border border-white/10 bg-white/5 text-white placeholder:text-white/40 outline-none focus:border-[#1DB954]"
                   />
-                  <Button
-                    onClick={handlePaste}
-                    disabled={!pasteInput.trim()}
-                    className="h-7 px-2.5 text-xs text-white"
-                    style={{ background: SPOTIFY_GREEN }}
-                  >
-                    OK
-                  </Button>
+                  {searching && (
+                    <Loader2 className="absolute right-2 top-1/2 -translate-y-1/2 h-3 w-3 animate-spin text-white/50" />
+                  )}
                 </div>
+                {searchResults && (
+                  <div className="space-y-0.5 max-h-44 overflow-y-auto">
+                    {searchResults.tracks?.items?.slice(0, 5).map((t: any) => (
+                      <button
+                        key={t.id}
+                        onClick={() => playSmart(t.uri)}
+                        className="w-full text-left px-2 py-1 rounded hover:bg-white/10 text-[11px] text-white flex items-center gap-1.5"
+                      >
+                        <Play className="h-2.5 w-2.5 shrink-0" style={{ color: SPOTIFY_GREEN }} />
+                        <span className="flex-1 truncate">
+                          <span className="font-medium">{t.name}</span>
+                          <span className="text-white/50"> · {t.artists?.[0]?.name}</span>
+                        </span>
+                      </button>
+                    ))}
+                    {searchResults.playlists?.items?.slice(0, 3).map((p: any) => (
+                      <button
+                        key={p.id}
+                        onClick={() => playSmart(p.uri)}
+                        className="w-full text-left px-2 py-1 rounded hover:bg-white/10 text-[11px] text-white flex items-center gap-1.5"
+                      >
+                        <Music2 className="h-2.5 w-2.5 shrink-0" style={{ color: SPOTIFY_GREEN }} />
+                        <span className="flex-1 truncate">
+                          <span className="font-medium">{p.name}</span>
+                          <span className="text-white/50"> · playlist</span>
+                        </span>
+                      </button>
+                    ))}
+                    {!searchResults.tracks?.items?.length && !searchResults.playlists?.items?.length && (
+                      <p className="text-[10px] text-white/40 text-center py-2">Nenhum resultado</p>
+                    )}
+                  </div>
+                )}
               </div>
             )}
+
+            {/* Tab: Minhas Playlists */}
+            {activeTab === 'minhas' && sp.authed && (
+              <div className="space-y-1">
+                {sp.loadingPlaylists ? (
+                  <div className="flex items-center justify-center py-3">
+                    <Loader2 className="h-4 w-4 animate-spin text-white/50" />
+                  </div>
+                ) : sp.myPlaylists.length === 0 ? (
+                  <div className="space-y-2 py-3 text-center">
+                    <p className="text-[10px] text-white/50">Nenhuma playlist.</p>
+                    <button
+                      onClick={sp.loadMyPlaylists}
+                      className="text-[10px] text-white/70 hover:text-white underline"
+                    >
+                      Recarregar
+                    </button>
+                  </div>
+                ) : (
+                  <div className="max-h-52 overflow-y-auto space-y-0.5">
+                    {sp.myPlaylists.map((p: any) => (
+                      <button
+                        key={p.id}
+                        onClick={() => playSmart(p.uri)}
+                        className="w-full text-left px-1.5 py-1 rounded hover:bg-white/10 text-[11px] text-white flex items-center gap-2"
+                      >
+                        <div
+                          className="w-7 h-7 rounded shrink-0 bg-white/10 overflow-hidden"
+                          style={p.images?.[0]?.url ? { backgroundImage: `url(${p.images[0].url})`, backgroundSize: 'cover', backgroundPosition: 'center' } : undefined}
+                        >
+                          {!p.images?.[0]?.url && <Music2 className="w-full h-full p-1.5 text-white/30" />}
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <p className="font-medium truncate">{p.name}</p>
+                          <p className="text-white/50 text-[9px] truncate">
+                            {p.tracks?.total || 0} faixas
+                          </p>
+                        </div>
+                        <Play className="h-3 w-3 shrink-0 opacity-60" style={{ color: SPOTIFY_GREEN }} />
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Cole URL — sempre disponivel pra qualquer modo */}
+            <div className="space-y-1.5 border-t border-white/10 pt-2.5">
+              <p className="text-[10px] uppercase tracking-wider text-white/50">Cole URL ou ID</p>
+              <div className="flex gap-1.5">
+                <input
+                  value={pasteInput}
+                  onChange={e => setPasteInput(e.target.value)}
+                  placeholder="open.spotify.com/playlist/..."
+                  className="flex-1 px-2 py-1.5 text-xs rounded-lg border border-white/10 bg-white/5 text-white placeholder:text-white/40 outline-none focus:border-[#1DB954]"
+                  onKeyDown={e => { if (e.key === 'Enter') handlePaste(); }}
+                />
+                <Button
+                  onClick={handlePaste}
+                  disabled={!pasteInput.trim()}
+                  className="h-7 px-2.5 text-xs text-white"
+                  style={{ background: SPOTIFY_GREEN }}
+                >
+                  OK
+                </Button>
+              </div>
+            </div>
 
             {sp.user && (
               <div className="border-t border-white/10 pt-2 flex items-center justify-between text-[10px] text-white/60">
