@@ -105,7 +105,19 @@ export const INDICADORES = [
   { id: 'GEN-05', area: 'Generosidade', nome: 'Valor total arrecadado no ciclo', periodicidade: 'Mensal', unidade: 'R$', pilar: 'Impacto', meta_2026: 'Base 2027' },
 ];
 
+// KPIs com coleta automatica (fonte_auto no banco)
+export const KPI_AUTO = new Set([
+  'AMI-01', 'AMI-02', 'KID-01', 'KID-02',              // cultos/batismos
+  'INTG-01', 'INTG-04', 'INTG-05',                      // integracao
+  'CUID-01', 'CUID-05', 'CUID-06', 'CUID-07', 'CUID-10', // cuidados + jornada
+  'GRUP-01', 'GRUP-04',                                  // grupos
+  'VOLT-01', 'VOLT-02', 'VOLT-03', 'VOLT-04', 'VOLT-05', 'VOLT-06', 'VOLT-07', 'VOLT-08', // voluntariado
+  'NEXT-01', 'NEXT-02', 'NEXT-03',                       // next
+  'GEN-02', 'GEN-04',                                    // generosidade
+]);
+
 export const getIndicadoresByArea = (area) => INDICADORES.filter(k => k.area === area);
 export const getIndicadorById = (id) => INDICADORES.find(k => k.id === id);
 export const getAreasForCategoria = (cat) => CATEGORIA_AREAS[cat] || [];
 export const getAreaNome = (id) => AREAS.find(a => a.id === id)?.nome || id;
+export const isAutoCollected = (id) => KPI_AUTO.has(id);
