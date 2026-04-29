@@ -1059,3 +1059,9 @@ export const processos = {
   },
   coletar: (dryRun = false) => post(`/processos/coletar${dryRun ? '?dry_run=true' : ''}`, {}),
 };
+
+export const jornada = {
+  dashboard: () => get('/jornada/dashboard'),
+  membros: (p) => get('/jornada/membros' + (p ? '?' + new URLSearchParams(p) : '')),
+  membro: (id) => get(`/jornada/membro/${id}`),
+};

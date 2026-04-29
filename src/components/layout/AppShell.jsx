@@ -9,7 +9,7 @@ import { CommandSearch } from '../ui/command-search';
 import {
   Users, DollarSign, Truck, Tag,
   CalendarDays, FolderKanban, Map, ListChecks,
-  UserCheck, UsersRound, Heart, HandHelping, BookOpen, ArrowRight,
+  UserCheck, UsersRound, Heart, HandHelping, BookOpen, ArrowRight, TrendingUp,
   Megaphone, BrainCircuit, ShoppingCart,
   Sun, Moon, Bell, LogOut, Search, CheckCheck, Settings, MonitorSmartphone, BarChart2, ClipboardCheck, Sparkles,
 } from 'lucide-react';
@@ -83,6 +83,7 @@ const NAV_ITEMS = [
           { label: 'Cuidados', description: 'Capelania e aconselhamento', icon: Heart, path: '/ministerial/cuidados', perm: 'canCuidados' },
           { label: 'Voluntariado', description: 'Check-in, escalas e QR codes', icon: HandHelping, path: '/ministerial/voluntariado', perm: 'canMembresia' },
           { label: 'Membresia', description: 'Cadastro e trilha dos valores', icon: BookOpen, path: '/ministerial/membresia', perm: 'canMembresia' },
+          { label: 'Jornada', description: 'Progresso nos 5 valores', icon: TrendingUp, path: '/ministerial/jornada', perm: 'canMembresia' },
         ],
       },
       {
