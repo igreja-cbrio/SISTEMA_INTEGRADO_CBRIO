@@ -155,6 +155,7 @@ export function GruposMapView({
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const flyTargetRef = useRef<MapGroup | null>(null);
   const [flyTarget, setFlyTarget] = useState<MapGroup | null>(null);
+  const [locatedCoords, setLocatedCoords] = useState<Coords | null>(null);
 
   const isKiosk = variant === "kiosk";
 
@@ -378,6 +379,17 @@ export function GruposMapView({
             </MapMarker>
           )}
 
+          {locatedCoords && (
+            <MapMarker longitude={locatedCoords.lng} latitude={locatedCoords.lat}>
+              <MarkerContent>
+                <MemberPin />
+              </MarkerContent>
+              <MarkerPopup>
+                <p className="text-sm font-semibold">Você está aqui</p>
+              </MarkerPopup>
+            </MapMarker>
+          )}
+
           {withCoords.map((g) => (
             <MapMarker
               key={g.id}
@@ -435,6 +447,7 @@ export function GruposMapView({
             showZoom
             showLocate
             showFullscreen={isKiosk}
+            onLocate={(c) => setLocatedCoords({ lat: c.latitude, lng: c.longitude })}
           />
 
           {/* Theme toggle */}
