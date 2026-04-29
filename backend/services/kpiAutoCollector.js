@@ -411,9 +411,53 @@ async function coletarTodos({ dryRun = false, fontes = null, areas = null } = {}
 
       if (upErr) {
         resultados.push({ id: ind.id, status: 'erro', erro: upErr.message });
-      } else {
-        resultados.push({ id: ind.id, status: 'ok', periodo, valor });
+        continue;
       }
+
+      // Tambem grava em processo_registros: 1 linha por processo que rastreia
+      // este indicador (processo.indicador_ids @> [ind.id]). Marcos's UI le
+      // de processo_registros filtrado por processo_id.
+      const { data: processosVinculados } = await supabase
+        .from('processos')
+        .select('id, responsavel_nome')
+        .contains('indicador_ids', [ind.id])
+        .neq('status', 'arquivado');
+
+      const processosCount = (processosVinculados || []).length;
+
+      for (const p of (processosVinculados || [])) {
+        const procPayload = {
+          processo_id: p.id,
+          indicador_id: ind.id,
+          valor: valor,
+          periodo: periodo,
+          periodo_referencia: periodo,
+          data_preenchimento: new Date().toISOString().slice(0, 10),
+          responsavel_nome: 'sistema',
+          observacoes: observacao || null,
+          origem: 'auto',
+        };
+
+        // Upsert manual: como o unique index e parcial (origem='auto'),
+        // primeiro deleta auto existente do mesmo (processo, indicador, periodo)
+        await supabase
+          .from('processo_registros')
+          .delete()
+          .eq('processo_id', p.id)
+          .eq('indicador_id', ind.id)
+          .eq('periodo_referencia', periodo)
+          .eq('origem', 'auto');
+
+        await supabase.from('processo_registros').insert(procPayload);
+      }
+
+      resultados.push({
+        id: ind.id,
+        status: 'ok',
+        periodo,
+        valor,
+        processos_alimentados: processosCount,
+      });
     } catch (e) {
       resultados.push({ id: ind.id, status: 'erro', erro: e.message });
     }

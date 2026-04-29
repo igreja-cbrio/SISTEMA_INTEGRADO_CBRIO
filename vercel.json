@@ -30,7 +30,7 @@
       "schedule": "5 3 * * 0"
     },
     {
-      "path": "/api/kpis/v2/cron/coletar",
+      "path": "/api/processos/cron/coletar",
       "schedule": "0 4 * * *"
     }
   ],
