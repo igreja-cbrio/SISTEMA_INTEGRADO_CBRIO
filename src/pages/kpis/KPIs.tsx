@@ -25,7 +25,7 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { toast } from 'sonner';
 import TabEstrategico from './TabEstrategico';
-import TabLancamento from './TabLancamento';
+import TabPorArea from './TabPorArea';
 import KPIRegistrosSection from './KPIRegistrosSection';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -1690,7 +1690,7 @@ function TabOnline({ data: dash, loading, serviceTypes, onSync, syncing, onReloa
 
 const TABS = [
   { id: 'estrategico',  label: 'Estratégico' },
-  { id: 'lancamento',   label: 'Lançamento' },
+  { id: 'por_area',     label: 'Por Área' },
   { id: 'geral',        label: 'Visão Geral' },
   { id: 'cultos',       label: 'Cultos' },
   { id: 'online',       label: 'Online' },
@@ -1752,7 +1752,12 @@ export default function KPIs() {
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
           <h1 className="text-2xl font-bold text-foreground">KPIs & Indicadores</h1>
-          <p className="text-sm text-muted-foreground mt-0.5">Metas e Indicadores 2026 — CBRio</p>
+          <p className="text-sm text-muted-foreground mt-0.5">
+            Visualização — Metas e Indicadores 2026.{' '}
+            <Link to="/processos" className="text-[#00B39D] hover:underline">
+              Lançar valores no módulo Processos →
+            </Link>
+          </p>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
           <select
@@ -1813,7 +1818,7 @@ export default function KPIs() {
 
       {/* Content */}
       {tab === 'estrategico'  && <TabEstrategico />}
-      {tab === 'lancamento'   && <TabLancamento />}
+      {tab === 'por_area'     && <TabPorArea />}
       {tab === 'geral'        && <TabVisaoGeral data={filteredDash} loading={dashLoading} onTab={(t) => setTab(t as TabId)} />}
       {tab === 'cultos'       && <TabCultos serviceTypes={serviceTypes} />}
       {tab === 'online'       && <TabOnline data={filteredDash} loading={dashLoading} serviceTypes={serviceTypes} onSync={handleYtSync} syncing={syncingYt} onReload={loadDash} />}
