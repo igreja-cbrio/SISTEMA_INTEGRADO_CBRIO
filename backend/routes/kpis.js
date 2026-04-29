@@ -363,9 +363,16 @@ router.post('/youtube/sync', async (req, res) => {
   const onlineTypeIds = new Set((onlineTypes || []).map(t => t.id));
   const isOnline = (c) => !c.service_type_id || onlineTypeIds.has(c.service_type_id);
 
+  // Backfill-friendly: pega TODOS os cultos com video pendente ate a data limite,
+  // nao so a data exata. Se o cron falhou em algum dia, na proxima execucao ele
+  // ainda recupera o dado (best-effort com viewCount atual). O cron diario
+  // limita o backlog a poucos itens.
+  //
+  // D+1 (online_ds): cultos com data <= ontem, com video, sem online_ds
+  // D+7 (online_ddus): cultos com data <= 7 dias atras, com video, com online_ds, sem online_ddus
   const [{ data: cultosDSRaw }, { data: cultosDDUSRaw }] = await Promise.all([
-    supabase.from('cultos').select('id, youtube_video_id, service_type_id').eq('data', ontemStr).not('youtube_video_id', 'is', null).is('online_ds', null),
-    supabase.from('cultos').select('id, youtube_video_id, online_ds, service_type_id').eq('data', seteDiasStr).not('youtube_video_id', 'is', null).not('online_ds', 'is', null).is('online_ddus', null),
+    supabase.from('cultos').select('id, data, youtube_video_id, service_type_id').lte('data', ontemStr).not('youtube_video_id', 'is', null).is('online_ds', null).order('data', { ascending: false }).limit(50),
+    supabase.from('cultos').select('id, data, youtube_video_id, online_ds, service_type_id').lte('data', seteDiasStr).not('youtube_video_id', 'is', null).not('online_ds', 'is', null).is('online_ddus', null).order('data', { ascending: false }).limit(50),
   ]);
   const cultosDS = (cultosDSRaw || []).filter(isOnline);
   const cultosDDUS = (cultosDDUSRaw || []).filter(isOnline);
