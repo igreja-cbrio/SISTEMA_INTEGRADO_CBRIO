@@ -60,13 +60,13 @@ export default function Jornada() {
 
   const openDetail = async (id) => {
     setDetailLoading(true); setTab('detalhe');
-    try { setDetail(await api.membro(id)); } catch (e) { console.error(e); }
+    try { setDetail(await api.membro(id)); } catch (e) { console.error(e); setDetail(null); }
     setDetailLoading(false);
   };
 
   const openValorDrill = (key) => {
     setValorDrill(key);
-    setFiltroValor(''); // mostra todos os que TEM esse valor
+    setFiltroValor(key); // FIX: seta filtro pro backend retornar membros SEM esse valor
     setSearch('');
     setPage(1);
     setTab('valor-drill');
@@ -303,8 +303,8 @@ function TabMembros({ membros, total, search, setSearch, filtro, setFiltro, page
 
 // ═══ DETALHE DO MEMBRO ═══
 function TabDetalhe({ detail, loading, onBack }) {
-  if (loading || !detail) return <div style={{ padding: 40, textAlign: 'center', color: C.t3 }}>Carregando...</div>;
-  const { membro: m, valores, trilha, grupos, jornada180, voluntariado, contribuicoes } = detail;
+  if (loading || !detail?.membro) return <div style={{ padding: 40, textAlign: 'center', color: C.t3 }}>Carregando...</div>;
+  const { membro: m, valores = {}, trilha = [], grupos = [], jornada180 = [], voluntariado = [], contribuicoes = [] } = detail;
 
   return (
     <div>
