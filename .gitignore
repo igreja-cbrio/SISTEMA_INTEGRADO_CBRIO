@@ -26,3 +26,9 @@ backend/.env
 .env
 .env.*
 !.env.example
+
+# Playwright
+e2e/.report/
+e2e/.results/
+playwright-report/
+test-results/
