@@ -1043,4 +1043,12 @@ export const processos = {
   create: (d) => post('/processos', d),
   update: (id, d) => put(`/processos/${id}`, d),
   remove: (id) => del(`/processos/${id}`),
+  agenda: {
+    list:   (p) => get('/processos/agenda/all' + (p ? '?' + new URLSearchParams(p) : '')),
+    saveBulk: (items) => put('/processos/agenda/bulk', { items }),
+  },
+  registros: {
+    list:   (p) => get('/processos/registros/list' + (p ? '?' + new URLSearchParams(p) : '')),
+    create: (d) => post('/processos/registros', d),
+  },
 };
