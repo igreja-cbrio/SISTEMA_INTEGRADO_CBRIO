@@ -57,8 +57,8 @@ export default function ProcessosTarefas({ area }) {
   const [registros, setRegistros] = useState([]);
   const [tarefas, setTarefas] = useState([]);
   const [usersList, setUsersList] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [modalDay, setModalDay] = useState(null); // grid index (0-6) to open modal for
+  const [initialLoading, setInitialLoading] = useState(true);
+  const [modalDay, setModalDay] = useState(null);
   const [fillTarget, setFillTarget] = useState(null);
   const [fillVal, setFillVal] = useState('');
   const [saving, setSaving] = useState(false);
@@ -70,23 +70,26 @@ export default function ProcessosTarefas({ area }) {
   const weekEnd = weekDates[6];
   const todayStr = fmtDate(new Date());
 
-  const load = useCallback(async () => {
-    setLoading(true);
-    try {
-      const di = fmtDate(weekStart), df = fmtDate(weekEnd);
-      const [procs, ag, regs, tars] = await Promise.all([
-        api.list({ area, status: 'ativo' }),
-        api.agenda.list({ area }).catch(() => []),
-        api.registros.list({ data_inicio: di, data_fim: df }).catch(() => []),
-        api.tarefas.list({ area, data_inicio: di, data_fim: df }).catch(() => []),
-      ]);
-      setProcessos(procs); setAgenda(ag); setRegistros(regs); setTarefas(tars);
-    } catch (e) { console.error(e); }
-    setLoading(false);
+  // Dados estaveis: processos + agenda + users (carrega 1x)
+  useEffect(() => {
+    Promise.all([
+      api.list({ area, status: 'ativo' }).then(setProcessos),
+      api.agenda.list({ area }).catch(() => []).then(setAgenda),
+      usersApi.list().then(setUsersList).catch(() => {}),
+    ]).finally(() => setInitialLoading(false));
+  }, [area]);
+
+  // Dados da semana: registros + tarefas (carrega ao trocar semana)
+  const loadWeek = useCallback(async () => {
+    const di = fmtDate(weekStart), df = fmtDate(weekEnd);
+    const [regs, tars] = await Promise.all([
+      api.registros.list({ data_inicio: di, data_fim: df }).catch(() => []),
+      api.tarefas.list({ area, data_inicio: di, data_fim: df }).catch(() => []),
+    ]);
+    setRegistros(regs); setTarefas(tars);
   }, [area, weekStart, weekEnd]);
 
-  useEffect(() => { load(); }, [load]);
-  useEffect(() => { usersApi.list().then(setUsersList).catch(() => {}); }, []);
+  useEffect(() => { if (!initialLoading) loadWeek(); }, [loadWeek, initialLoading]);
 
   const agendaMap = useMemo(() => { const m = {}; agenda.forEach(a => { m[a.indicador_id] = a.dia_semana; }); return m; }, [agenda]);
   const fillMap = useMemo(() => { const m = {}; registros.forEach(r => { m[`${r.indicador_id}|${r.data_preenchimento}`] = r; }); return m; }, [registros]);
@@ -106,29 +109,48 @@ export default function ProcessosTarefas({ area }) {
 
   const dayTarefas = useMemo(() => weekDates.map(date => tarefas.filter(t => t.data === fmtDate(date))), [weekDates, tarefas]);
 
+  // ── Operacoes otimistas (atualiza state local, sync no background) ──
+
   const submitFill = async () => {
     if (!fillTarget || !fillVal) return;
-    setSaving(true);
-    try { await api.registros.create({ processo_id: fillTarget.processoId, indicador_id: fillTarget.indicadorId, valor: Number(fillVal), data_preenchimento: fillTarget.date }); setFillTarget(null); setFillVal(''); load(); } catch (e) { console.error(e); }
-    setSaving(false);
+    const val = Number(fillVal);
+    // Otimista: adiciona ao state imediatamente
+    setRegistros(prev => [...prev, { indicador_id: fillTarget.indicadorId, data_preenchimento: fillTarget.date, valor: val, id: 'temp-' + Date.now() }]);
+    setFillTarget(null); setFillVal('');
+    // Sync com server em background
+    api.registros.create({ processo_id: fillTarget.processoId, indicador_id: fillTarget.indicadorId, valor: val, data_preenchimento: fillTarget.date }).catch(e => { console.error(e); loadWeek(); });
   };
 
-  const toggleTarefa = async (id, done) => { try { await api.tarefas.toggle(id, !done); load(); } catch (e) { console.error(e); } };
-  const removeTarefa = async (id) => { try { await api.tarefas.remove(id); load(); } catch (e) { console.error(e); } };
+  const toggleTarefa = async (id, done) => {
+    // Otimista
+    setTarefas(prev => prev.map(t => t.id === id ? { ...t, done: !done } : t));
+    api.tarefas.toggle(id, !done).catch(e => { console.error(e); loadWeek(); });
+  };
+
+  const removeTarefa = async (id) => {
+    // Otimista
+    setTarefas(prev => prev.filter(t => t.id !== id));
+    api.tarefas.remove(id).catch(e => { console.error(e); loadWeek(); });
+  };
 
   const openModal = (gi) => { setForm(emptyForm); setModalDay(gi); };
 
   const submitTarefa = async () => {
     if (!form.titulo.trim() || modalDay === null) return;
     setSaving(true);
+    const dateStr = fmtDate(weekDates[modalDay]);
+    // Otimista: adiciona placeholder ao state
+    const tempId = 'temp-' + Date.now();
+    setTarefas(prev => [...prev, { ...form, id: tempId, data: dateStr, area, done: false }]);
+    setModalDay(null);
     try {
-      await api.tarefas.create({ ...form, data: fmtDate(weekDates[modalDay]), area });
-      setModalDay(null); load();
-    } catch (e) { console.error(e); }
+      await api.tarefas.create({ ...form, data: dateStr, area });
+      loadWeek(); // reload pra pegar o id real e instancias de recorrencia
+    } catch (e) { console.error(e); setTarefas(prev => prev.filter(t => t.id !== tempId)); }
     setSaving(false);
   };
 
-  if (loading) return <div style={{ padding: 40, textAlign: 'center', color: C.t3 }}>Carregando...</div>;
+  if (initialLoading) return <div style={{ padding: 40, textAlign: 'center', color: C.t3 }}>Carregando...</div>;
 
   return (
     <div>
