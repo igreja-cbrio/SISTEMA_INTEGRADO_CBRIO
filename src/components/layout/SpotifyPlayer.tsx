@@ -223,7 +223,6 @@ export default function SpotifyPlayer() {
   const sp = useSpotify();
   const [open, setOpen] = useState<boolean>(() => localStorage.getItem(STORAGE_KEYS.open) === '1');
   const [embedUri, setEmbedUri] = useState<string>(() => localStorage.getItem(STORAGE_KEYS.embedUri) || PRESETS[0].uri);
-  const [pasteInput, setPasteInput] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState<any>(null);
   const [searching, setSearching] = useState(false);
@@ -264,14 +263,6 @@ export default function SpotifyPlayer() {
       sp.playUri(uri);
     } else {
       setEmbedUri(uri);
-    }
-  };
-
-  const handlePaste = () => {
-    const url = toEmbedUrl(pasteInput.trim());
-    if (url) {
-      setEmbedUri(pasteInput.trim());
-      setPasteInput('');
     }
   };
 
@@ -629,28 +620,6 @@ export default function SpotifyPlayer() {
                 )}
               </div>
             )}
-
-            {/* Cole URL — sempre disponivel pra qualquer modo */}
-            <div className="space-y-1.5 border-t border-white/10 pt-2.5">
-              <p className="text-[10px] uppercase tracking-wider text-white/50">Cole URL ou ID</p>
-              <div className="flex gap-1.5">
-                <input
-                  value={pasteInput}
-                  onChange={e => setPasteInput(e.target.value)}
-                  placeholder="open.spotify.com/playlist/..."
-                  className="flex-1 px-2 py-1.5 text-xs rounded-lg border border-white/10 bg-white/5 text-white placeholder:text-white/40 outline-none focus:border-[#1DB954]"
-                  onKeyDown={e => { if (e.key === 'Enter') handlePaste(); }}
-                />
-                <Button
-                  onClick={handlePaste}
-                  disabled={!pasteInput.trim()}
-                  className="h-7 px-2.5 text-xs text-white"
-                  style={{ background: SPOTIFY_GREEN }}
-                >
-                  OK
-                </Button>
-              </div>
-            </div>
 
             {sp.user && (
               <div className="border-t border-white/10 pt-2 flex items-center justify-between text-[10px] text-white/60">
