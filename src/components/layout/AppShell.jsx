@@ -203,7 +203,7 @@ export default function AppShell() {
           {/* Left: Logo + Nav */}
           {/* Left: Logo */}
           <div className="flex items-center gap-2 min-w-[140px]">
-            <button onClick={() => navigate('/')} className="flex items-center gap-2 hover:opacity-80 transition-opacity">
+            <button onClick={() => navigate('/dashboard')} className="flex items-center gap-2 hover:opacity-80 transition-opacity">
               <img src="/logo-cbrio-text.png" alt="CBRio" className="h-8 object-contain" />
             </button>
           </div>
