@@ -31,6 +31,7 @@ const SCOPES = [
   'user-modify-playback-state',
   'user-read-playback-state',
   'user-read-currently-playing',
+  'user-read-recently-played',
 ].join(' ');
 
 const STORAGE_KEYS = {
@@ -488,6 +489,34 @@ export function useSpotify() {
     else setMyPlaylists([]);
   }, [authed, loadMyPlaylists]);
 
+  // Tocadas recentemente
+  const [recentlyPlayed, setRecentlyPlayed] = useState<any[]>([]);
+  const [loadingRecent, setLoadingRecent] = useState(false);
+  const [recentScopeMissing, setRecentScopeMissing] = useState(false);
+
+  const loadRecentlyPlayed = useCallback(async () => {
+    if (!authed) return;
+    setLoadingRecent(true);
+    setRecentScopeMissing(false);
+    try {
+      const r = await spotifyApi<{ items: any[] }>('/me/player/recently-played?limit=20');
+      setRecentlyPlayed(r.items || []);
+    } catch (e: any) {
+      const msg = e.message || '';
+      if (msg.includes('403') || msg.toLowerCase().includes('insufficient')) {
+        setRecentScopeMissing(true);
+      } else {
+        setError(msg);
+      }
+    }
+    setLoadingRecent(false);
+  }, [authed]);
+
+  useEffect(() => {
+    if (authed) loadRecentlyPlayed();
+    else { setRecentlyPlayed([]); setRecentScopeMissing(false); }
+  }, [authed, loadRecentlyPlayed]);
+
   // Atualiza authed se localStorage mudar (outro tab fez login)
   useEffect(() => {
     const onStorage = (e: StorageEvent) => {
@@ -526,6 +555,10 @@ export function useSpotify() {
     myPlaylists,
     loadingPlaylists,
     loadMyPlaylists,
+    recentlyPlayed,
+    loadingRecent,
+    loadRecentlyPlayed,
+    recentScopeMissing,
     // utilitarios
     clearError: () => setError(null),
     configured: !!CLIENT_ID,
