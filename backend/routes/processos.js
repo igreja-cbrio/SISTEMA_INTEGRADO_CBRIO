@@ -134,6 +134,9 @@ router.get('/tarefas/list', async (req, res) => {
   try {
     const { area, data_inicio, data_fim } = req.query;
     let q = supabase.from('tarefas_pessoais').select('*').order('data');
+    // FIX: admin/diretor ve todas; demais so as proprias
+    const isAdmin = ['admin', 'diretor'].includes(req.user.role);
+    if (!isAdmin) q = q.eq('created_by', req.user.userId);
     if (area) q = q.eq('area', area);
     if (data_inicio) q = q.gte('data', data_inicio);
     if (data_fim) q = q.lte('data', data_fim);
@@ -146,11 +149,13 @@ router.get('/tarefas/list', async (req, res) => {
   }
 });
 
+const crypto = require('crypto');
+
 router.post('/tarefas', async (req, res) => {
   try {
     const d = req.body;
     const recorrenciaId = d.recorrencia && d.recorrencia !== 'unica'
-      ? require('crypto').randomUUID() : null;
+      ? crypto.randomUUID() : null;
 
     const base = {
       titulo: d.titulo, area: d.area || null, created_by: req.user.userId,
@@ -191,12 +196,13 @@ router.post('/tarefas', async (req, res) => {
 router.patch('/tarefas/:id', async (req, res) => {
   try {
     const { done } = req.body;
-    const { data, error } = await supabase
-      .from('tarefas_pessoais')
-      .update({ done })
-      .eq('id', req.params.id)
-      .select().single();
+    // FIX: verifica ownership (dono ou admin/diretor)
+    let q = supabase.from('tarefas_pessoais').update({ done }).eq('id', req.params.id);
+    const isAdmin = ['admin', 'diretor'].includes(req.user.role);
+    if (!isAdmin) q = q.eq('created_by', req.user.userId);
+    const { data, error } = await q.select().single();
     if (error) throw error;
+    if (!data) return res.status(403).json({ error: 'Sem permissao' });
     res.json(data);
   } catch (e) {
     console.error('tarefas toggle:', e.message);
@@ -206,7 +212,11 @@ router.patch('/tarefas/:id', async (req, res) => {
 
 router.delete('/tarefas/:tid', async (req, res) => {
   try {
-    const { error } = await supabase.from('tarefas_pessoais').delete().eq('id', req.params.tid);
+    // FIX: verifica ownership (dono ou admin/diretor)
+    let q = supabase.from('tarefas_pessoais').delete().eq('id', req.params.tid);
+    const isAdmin = ['admin', 'diretor'].includes(req.user.role);
+    if (!isAdmin) q = q.eq('created_by', req.user.userId);
+    const { error } = await q;
     if (error) throw error;
     res.json({ success: true });
   } catch (e) {

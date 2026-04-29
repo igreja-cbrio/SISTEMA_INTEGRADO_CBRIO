@@ -8,64 +8,55 @@ router.use(authenticate);
  * Calcula os 5 valores para cada membro:
  * 1. Seguir a Jesus: conversao/batismo (trilha_valores, batismo_inscricoes, cui_convertidos)
  * 2. Conectar-se com Pessoas: em grupo ativo (mem_grupo_membros)
- * 3. Investir Tempo com Deus: jornada 180 ativa (cui_jornada180)
- * 4. Servir em Comunidade: voluntario ativo (mem_voluntarios + checkin recente)
- * 5. Viver Generosamente: contribuicao recente (mem_contribuicoes)
+ * 3. Investir Tempo com Deus: jornada 180 com encontro nos ultimos 90 dias (cui_jornada180)
+ * 4. Servir em Comunidade: voluntario ativo (mem_voluntarios ate IS NULL)
+ * 5. Viver Generosamente: contribuicao nos ultimos 90 dias (mem_contribuicoes)
  */
+
+function daysAgo(n) { return new Date(Date.now() - n * 86400000).toISOString().slice(0, 10); }
 
 // ── GET /api/jornada/dashboard ──
 router.get('/dashboard', async (req, res) => {
   try {
-    // Total membros ativos
     const { count: totalMembros } = await supabase
       .from('mem_membros').select('id', { count: 'exact', head: true })
       .eq('active', true);
 
-    // 1. Seguir a Jesus: tem etapa conversao OU batismo realizado
-    const { count: seguir } = await supabase.rpc('count_valor_seguir').single().then(r => ({ count: r.data })).catch(() => ({ count: 0 }));
-    // Fallback: contar via trilha_valores
-    let seguirCount = seguir;
-    if (!seguirCount) {
-      const { count } = await supabase.from('mem_trilha_valores')
-        .select('membro_id', { count: 'exact', head: true })
-        .in('etapa', ['conversao', 'primeiro_contato'])
-        .eq('concluida', true);
-      seguirCount = count || 0;
-    }
+    // 1. Seguir a Jesus: trilha_valores com conversao/primeiro_contato concluida
+    let seguirCount = 0;
+    const { count: seguirQ } = await supabase.from('mem_trilha_valores')
+      .select('membro_id', { count: 'exact', head: true })
+      .in('etapa', ['conversao', 'primeiro_contato'])
+      .eq('concluida', true);
+    seguirCount = seguirQ || 0;
 
     // 2. Conectar: em grupo ativo
     const { count: conectar } = await supabase
       .from('mem_grupo_membros').select('membro_id', { count: 'exact', head: true })
       .is('saiu_em', null);
 
-    // 3. Investir: jornada 180 com registro recente (90 dias)
-    const j180Date = new Date();
-    j180Date.setDate(j180Date.getDate() - 90);
+    // 3. Investir: jornada 180 com encontro nos ultimos 90 dias (usa data_encontro)
     const { data: j180Ids } = await supabase
       .from('cui_jornada180').select('membro_id')
-      .gte('created_at', j180Date.toISOString());
+      .gte('data_encontro', daysAgo(90));
     const investirCount = new Set((j180Ids || []).map(r => r.membro_id).filter(Boolean)).size;
 
-    // 4. Servir: voluntario ativo com checkin nos ultimos 60 dias
-    const servirDate = new Date();
-    servirDate.setDate(servirDate.getDate() - 60);
+    // 4. Servir: voluntario ativo (ate IS NULL)
     const { count: servir } = await supabase
       .from('mem_voluntarios').select('membro_id', { count: 'exact', head: true })
       .is('ate', null);
 
     // 5. Generosidade: contribuicao nos ultimos 90 dias
-    const genDate = new Date();
-    genDate.setDate(genDate.getDate() - 90);
     const { data: genIds } = await supabase
       .from('mem_contribuicoes').select('membro_id')
-      .gte('data', genDate.toISOString().slice(0, 10));
+      .gte('data', daysAgo(90));
     const genCount = new Set((genIds || []).map(r => r.membro_id).filter(Boolean)).size;
 
     const total = totalMembros || 1;
     res.json({
       total_membros: totalMembros || 0,
       valores: {
-        seguir:       { total: seguirCount || 0, pct: Math.round(((seguirCount || 0) / total) * 100) },
+        seguir:       { total: seguirCount, pct: Math.round((seguirCount / total) * 100) },
         conectar:     { total: conectar || 0, pct: Math.round(((conectar || 0) / total) * 100) },
         investir:     { total: investirCount, pct: Math.round((investirCount / total) * 100) },
         servir:       { total: servir || 0, pct: Math.round(((servir || 0) / total) * 100) },
@@ -84,7 +75,6 @@ router.get('/membros', async (req, res) => {
     const { search, valor, page = 1, limit = 50 } = req.query;
     const offset = (page - 1) * limit;
 
-    // Buscar membros ativos
     let q = supabase.from('mem_membros').select('id, nome, email, telefone, status, foto_url', { count: 'exact' })
       .eq('active', true).order('nome').range(offset, offset + parseInt(limit) - 1);
     if (search) q = q.ilike('nome', `%${search}%`);
@@ -95,17 +85,14 @@ router.get('/membros', async (req, res) => {
 
     const ids = membros.map(m => m.id);
 
-    // Buscar dados dos 5 valores em paralelo
     const [trilha, grupos, j180, voluntarios, contribuicoes] = await Promise.all([
       supabase.from('mem_trilha_valores').select('membro_id, etapa, concluida').in('membro_id', ids).eq('concluida', true),
       supabase.from('mem_grupo_membros').select('membro_id').in('membro_id', ids).is('saiu_em', null),
-      supabase.from('cui_jornada180').select('membro_id').in('membro_id', ids),
+      supabase.from('cui_jornada180').select('membro_id').in('membro_id', ids).gte('data_encontro', daysAgo(90)),
       supabase.from('mem_voluntarios').select('membro_id').in('membro_id', ids).is('ate', null),
-      supabase.from('mem_contribuicoes').select('membro_id, data').in('membro_id', ids)
-        .gte('data', new Date(Date.now() - 90 * 86400000).toISOString().slice(0, 10)),
+      supabase.from('mem_contribuicoes').select('membro_id').in('membro_id', ids).gte('data', daysAgo(90)),
     ]);
 
-    // Sets para lookup rapido
     const trilhaSet = new Set((trilha.data || []).filter(t => ['conversao', 'primeiro_contato'].includes(t.etapa)).map(t => t.membro_id));
     const grupoSet = new Set((grupos.data || []).map(g => g.membro_id));
     const j180Set = new Set((j180.data || []).map(j => j.membro_id));
@@ -123,15 +110,12 @@ router.get('/membros', async (req, res) => {
       return { ...m, valores: v, total_valores: Object.values(v).filter(Boolean).length };
     });
 
-    // Filtrar por valor se solicitado
+    // FIX: filtro "Sem: X" = membros que NAO tem o valor (! correto)
     let filtered = result;
-    if (valor === 'seguir') filtered = result.filter(m => !m.valores.seguir);
-    else if (valor === 'conectar') filtered = result.filter(m => !m.valores.conectar);
-    else if (valor === 'investir') filtered = result.filter(m => !m.valores.investir);
-    else if (valor === 'servir') filtered = result.filter(m => !m.valores.servir);
-    else if (valor === 'generosidade') filtered = result.filter(m => !m.valores.generosidade);
+    if (valor) filtered = result.filter(m => !m.valores[valor]);
 
-    res.json({ membros: filtered, total: totalCount || 0 });
+    // FIX: total reflete resultado filtrado, nao o total geral
+    res.json({ membros: filtered, total: valor ? filtered.length : (totalCount || 0) });
   } catch (e) {
     console.error('jornada membros:', e.message);
     res.status(500).json({ error: 'Erro ao listar membros' });
@@ -147,7 +131,7 @@ router.get('/membro/:id', async (req, res) => {
       supabase.from('mem_membros').select('*').eq('id', id).single(),
       supabase.from('mem_trilha_valores').select('*').eq('membro_id', id).order('created_at'),
       supabase.from('mem_grupo_membros').select('*, mem_grupos(nome)').eq('membro_id', id).order('entrou_em', { ascending: false }),
-      supabase.from('cui_jornada180').select('*').eq('membro_id', id).order('created_at', { ascending: false }),
+      supabase.from('cui_jornada180').select('*').eq('membro_id', id).order('data_encontro', { ascending: false }),
       supabase.from('mem_voluntarios').select('*, mem_ministerios(nome)').eq('membro_id', id).order('desde', { ascending: false }),
       supabase.from('mem_contribuicoes').select('*').eq('membro_id', id).order('data', { ascending: false }).limit(10),
     ]);
@@ -160,7 +144,10 @@ router.get('/membro/:id', async (req, res) => {
       const diff = (Date.now() - new Date(c.data).getTime()) / 86400000;
       return diff <= 90;
     });
-    const j180Recente = (j180.data || [])[0];
+    const j180Recente = (j180.data || []).find(j => {
+      const diff = (Date.now() - new Date(j.data_encontro).getTime()) / 86400000;
+      return diff <= 90;
+    });
     const trilhaConversao = (trilha.data || []).find(t => ['conversao', 'primeiro_contato'].includes(t.etapa) && t.concluida);
 
     res.json({
