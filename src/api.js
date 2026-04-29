@@ -1051,4 +1051,10 @@ export const processos = {
     list:   (p) => get('/processos/registros/list' + (p ? '?' + new URLSearchParams(p) : '')),
     create: (d) => post('/processos/registros', d),
   },
+  tarefas: {
+    list:   (p) => get('/processos/tarefas/list' + (p ? '?' + new URLSearchParams(p) : '')),
+    create: (d) => post('/processos/tarefas', d),
+    toggle: (id, done) => patch(`/processos/tarefas/${id}`, { done }),
+    remove: (id) => del(`/processos/tarefas/${id}`),
+  },
 };

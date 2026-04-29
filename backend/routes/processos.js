@@ -4,119 +4,9 @@ const { supabase } = require('../utils/supabase');
 
 router.use(authenticate);
 
-// GET /api/processos — lista com filtros
-router.get('/', async (req, res) => {
-  try {
-    const { area, categoria, is_okr, status } = req.query;
-    let q = supabase.from('processos').select('*').order('area').order('nome');
+// ═══ Rotas ESPECIFICAS primeiro (antes de /:id) ═══
 
-    if (area) q = q.eq('area', area);
-    if (categoria) q = q.eq('categoria', categoria);
-    if (is_okr === 'true') q = q.eq('is_okr', true);
-    if (status) q = q.eq('status', status);
-    else q = q.neq('status', 'arquivado');
-
-    const { data, error } = await q;
-    if (error) throw error;
-    res.json(data);
-  } catch (e) {
-    console.error('processos list:', e.message);
-    res.status(500).json({ error: 'Erro ao listar processos' });
-  }
-});
-
-// GET /api/processos/:id
-router.get('/:id', async (req, res) => {
-  try {
-    const { data, error } = await supabase
-      .from('processos')
-      .select('*')
-      .eq('id', req.params.id)
-      .single();
-    if (error) throw error;
-    if (!data) return res.status(404).json({ error: 'Processo nao encontrado' });
-    res.json(data);
-  } catch (e) {
-    console.error('processos get:', e.message);
-    res.status(500).json({ error: 'Erro ao buscar processo' });
-  }
-});
-
-// POST /api/processos
-router.post('/', authorize('admin', 'diretor'), async (req, res) => {
-  try {
-    const d = req.body;
-    const { data, error } = await supabase
-      .from('processos')
-      .insert({
-        nome: d.nome,
-        descricao: d.descricao || null,
-        responsavel_id: d.responsavel_id || null,
-        responsavel_nome: d.responsavel_nome || null,
-        area: d.area,
-        categoria: d.categoria,
-        indicador_ids: d.indicador_ids || [],
-        is_okr: d.is_okr || false,
-        status: d.status || 'ativo',
-        created_by: req.user.userId,
-      })
-      .select()
-      .single();
-    if (error) throw error;
-    res.status(201).json(data);
-  } catch (e) {
-    console.error('processos create:', e.message);
-    res.status(500).json({ error: 'Erro ao criar processo' });
-  }
-});
-
-// PUT /api/processos/:id
-router.put('/:id', authorize('admin', 'diretor'), async (req, res) => {
-  try {
-    const d = req.body;
-    const { data, error } = await supabase
-      .from('processos')
-      .update({
-        nome: d.nome,
-        descricao: d.descricao,
-        responsavel_id: d.responsavel_id,
-        responsavel_nome: d.responsavel_nome,
-        area: d.area,
-        categoria: d.categoria,
-        indicador_ids: d.indicador_ids,
-        is_okr: d.is_okr,
-        status: d.status,
-        updated_at: new Date().toISOString(),
-      })
-      .eq('id', req.params.id)
-      .select()
-      .single();
-    if (error) throw error;
-    res.json(data);
-  } catch (e) {
-    console.error('processos update:', e.message);
-    res.status(500).json({ error: 'Erro ao atualizar processo' });
-  }
-});
-
-// DELETE /api/processos/:id — soft delete (arquiva)
-router.delete('/:id', authorize('admin', 'diretor'), async (req, res) => {
-  try {
-    const { error } = await supabase
-      .from('processos')
-      .update({ status: 'arquivado', updated_at: new Date().toISOString() })
-      .eq('id', req.params.id);
-    if (error) throw error;
-    res.json({ success: true });
-  } catch (e) {
-    console.error('processos delete:', e.message);
-    res.status(500).json({ error: 'Erro ao arquivar processo' });
-  }
-});
-
-// ── Agenda semanal (template de preenchimento) ──
-
-// GET /api/processos/agenda/all — toda a agenda
+// ── Agenda semanal ──
 router.get('/agenda/all', async (req, res) => {
   try {
     const { area } = req.query;
@@ -131,28 +21,19 @@ router.get('/agenda/all', async (req, res) => {
   }
 });
 
-// PUT /api/processos/agenda/bulk — salvar agenda inteira (upsert)
 router.put('/agenda/bulk', authorize('admin', 'diretor'), async (req, res) => {
   try {
-    const items = req.body.items; // [{indicador_id, dia_semana, area}]
+    const items = req.body.items;
     if (!Array.isArray(items)) return res.status(400).json({ error: 'items deve ser array' });
-
-    // Limpa agenda existente e recria
     const areas = [...new Set(items.map(i => i.area))];
     for (const a of areas) {
       await supabase.from('indicador_agenda').delete().eq('area', a);
     }
-
     if (items.length > 0) {
-      const rows = items.map(i => ({
-        indicador_id: i.indicador_id,
-        dia_semana: i.dia_semana,
-        area: i.area,
-      }));
+      const rows = items.map(i => ({ indicador_id: i.indicador_id, dia_semana: i.dia_semana, area: i.area }));
       const { error } = await supabase.from('indicador_agenda').insert(rows);
       if (error) throw error;
     }
-
     res.json({ success: true, count: items.length });
   } catch (e) {
     console.error('agenda bulk:', e.message);
@@ -161,14 +42,14 @@ router.put('/agenda/bulk', authorize('admin', 'diretor'), async (req, res) => {
 });
 
 // ── Registros de preenchimento ──
-
-// GET /api/processos/registros?processo_id=&indicador_id=
 router.get('/registros/list', async (req, res) => {
   try {
-    const { processo_id, indicador_id } = req.query;
-    let q = supabase.from('processo_registros').select('*').order('data_preenchimento', { ascending: false }).limit(50);
+    const { processo_id, indicador_id, data_inicio, data_fim } = req.query;
+    let q = supabase.from('processo_registros').select('*').order('data_preenchimento', { ascending: false }).limit(200);
     if (processo_id) q = q.eq('processo_id', processo_id);
     if (indicador_id) q = q.eq('indicador_id', indicador_id);
+    if (data_inicio) q = q.gte('data_preenchimento', data_inicio);
+    if (data_fim) q = q.lte('data_preenchimento', data_fim);
     const { data, error } = await q;
     if (error) throw error;
     res.json(data);
@@ -178,7 +59,6 @@ router.get('/registros/list', async (req, res) => {
   }
 });
 
-// POST /api/processos/registros
 router.post('/registros', authorize('admin', 'diretor'), async (req, res) => {
   try {
     const d = req.body;
@@ -194,13 +74,150 @@ router.post('/registros', authorize('admin', 'diretor'), async (req, res) => {
         responsavel_nome: req.user.name || null,
         observacoes: d.observacoes || null,
       })
-      .select()
-      .single();
+      .select().single();
     if (error) throw error;
     res.status(201).json(data);
   } catch (e) {
     console.error('registros create:', e.message);
     res.status(500).json({ error: 'Erro ao criar registro' });
+  }
+});
+
+// ── Tarefas pessoais ──
+router.get('/tarefas/list', async (req, res) => {
+  try {
+    const { area, data_inicio, data_fim } = req.query;
+    let q = supabase.from('tarefas_pessoais').select('*').order('data');
+    if (area) q = q.eq('area', area);
+    if (data_inicio) q = q.gte('data', data_inicio);
+    if (data_fim) q = q.lte('data', data_fim);
+    const { data, error } = await q;
+    if (error) throw error;
+    res.json(data);
+  } catch (e) {
+    console.error('tarefas list:', e.message);
+    res.status(500).json({ error: 'Erro ao listar tarefas' });
+  }
+});
+
+router.post('/tarefas', async (req, res) => {
+  try {
+    const d = req.body;
+    const { data, error } = await supabase
+      .from('tarefas_pessoais')
+      .insert({ titulo: d.titulo, data: d.data, area: d.area || null, created_by: req.user.userId })
+      .select().single();
+    if (error) throw error;
+    res.status(201).json(data);
+  } catch (e) {
+    console.error('tarefas create:', e.message);
+    res.status(500).json({ error: 'Erro ao criar tarefa' });
+  }
+});
+
+router.patch('/tarefas/:id', async (req, res) => {
+  try {
+    const { done } = req.body;
+    const { data, error } = await supabase
+      .from('tarefas_pessoais')
+      .update({ done })
+      .eq('id', req.params.id)
+      .select().single();
+    if (error) throw error;
+    res.json(data);
+  } catch (e) {
+    console.error('tarefas toggle:', e.message);
+    res.status(500).json({ error: 'Erro ao atualizar tarefa' });
+  }
+});
+
+router.delete('/tarefas/:tid', async (req, res) => {
+  try {
+    const { error } = await supabase.from('tarefas_pessoais').delete().eq('id', req.params.tid);
+    if (error) throw error;
+    res.json({ success: true });
+  } catch (e) {
+    console.error('tarefas delete:', e.message);
+    res.status(500).json({ error: 'Erro ao remover tarefa' });
+  }
+});
+
+// ═══ Rotas GENERICAS (/:id por ultimo) ═══
+
+router.get('/', async (req, res) => {
+  try {
+    const { area, categoria, is_okr, status } = req.query;
+    let q = supabase.from('processos').select('*').order('area').order('nome');
+    if (area) q = q.eq('area', area);
+    if (categoria) q = q.eq('categoria', categoria);
+    if (is_okr === 'true') q = q.eq('is_okr', true);
+    if (status) q = q.eq('status', status);
+    else q = q.neq('status', 'arquivado');
+    const { data, error } = await q;
+    if (error) throw error;
+    res.json(data);
+  } catch (e) {
+    console.error('processos list:', e.message);
+    res.status(500).json({ error: 'Erro ao listar processos' });
+  }
+});
+
+router.get('/:id', async (req, res) => {
+  try {
+    const { data, error } = await supabase.from('processos').select('*').eq('id', req.params.id).single();
+    if (error) throw error;
+    if (!data) return res.status(404).json({ error: 'Processo nao encontrado' });
+    res.json(data);
+  } catch (e) {
+    console.error('processos get:', e.message);
+    res.status(500).json({ error: 'Erro ao buscar processo' });
+  }
+});
+
+router.post('/', authorize('admin', 'diretor'), async (req, res) => {
+  try {
+    const d = req.body;
+    const { data, error } = await supabase.from('processos').insert({
+      nome: d.nome, descricao: d.descricao || null, responsavel_id: d.responsavel_id || null,
+      responsavel_nome: d.responsavel_nome || null, area: d.area, categoria: d.categoria,
+      indicador_ids: d.indicador_ids || [], is_okr: d.is_okr || false,
+      status: d.status || 'ativo', created_by: req.user.userId,
+    }).select().single();
+    if (error) throw error;
+    res.status(201).json(data);
+  } catch (e) {
+    console.error('processos create:', e.message);
+    res.status(500).json({ error: 'Erro ao criar processo' });
+  }
+});
+
+router.put('/:id', authorize('admin', 'diretor'), async (req, res) => {
+  try {
+    const d = req.body;
+    const { data, error } = await supabase.from('processos').update({
+      nome: d.nome, descricao: d.descricao, responsavel_id: d.responsavel_id,
+      responsavel_nome: d.responsavel_nome, area: d.area, categoria: d.categoria,
+      indicador_ids: d.indicador_ids, is_okr: d.is_okr, status: d.status,
+      updated_at: new Date().toISOString(),
+    }).eq('id', req.params.id).select().single();
+    if (error) throw error;
+    res.json(data);
+  } catch (e) {
+    console.error('processos update:', e.message);
+    res.status(500).json({ error: 'Erro ao atualizar processo' });
+  }
+});
+
+router.delete('/:id', authorize('admin', 'diretor'), async (req, res) => {
+  try {
+    const { error } = await supabase.from('processos')
+      .update({ status: 'arquivado', updated_at: new Date().toISOString() })
+      .eq('id', req.params.id);
+    if (error) throw error;
+    res.json({ success: true });
+  } catch (e) {
+    console.error('processos delete:', e.message);
+    res.status(500).json({ error: 'Erro ao arquivar processo' });
   }
 });
 
