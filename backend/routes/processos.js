@@ -114,4 +114,94 @@ router.delete('/:id', authorize('admin', 'diretor'), async (req, res) => {
   }
 });
 
+// ── Agenda semanal (template de preenchimento) ──
+
+// GET /api/processos/agenda/all — toda a agenda
+router.get('/agenda/all', async (req, res) => {
+  try {
+    const { area } = req.query;
+    let q = supabase.from('indicador_agenda').select('*').order('dia_semana').order('area');
+    if (area) q = q.eq('area', area);
+    const { data, error } = await q;
+    if (error) throw error;
+    res.json(data);
+  } catch (e) {
+    console.error('agenda list:', e.message);
+    res.status(500).json({ error: 'Erro ao listar agenda' });
+  }
+});
+
+// PUT /api/processos/agenda/bulk — salvar agenda inteira (upsert)
+router.put('/agenda/bulk', authorize('admin', 'diretor'), async (req, res) => {
+  try {
+    const items = req.body.items; // [{indicador_id, dia_semana, area}]
+    if (!Array.isArray(items)) return res.status(400).json({ error: 'items deve ser array' });
+
+    // Limpa agenda existente e recria
+    const areas = [...new Set(items.map(i => i.area))];
+    for (const a of areas) {
+      await supabase.from('indicador_agenda').delete().eq('area', a);
+    }
+
+    if (items.length > 0) {
+      const rows = items.map(i => ({
+        indicador_id: i.indicador_id,
+        dia_semana: i.dia_semana,
+        area: i.area,
+      }));
+      const { error } = await supabase.from('indicador_agenda').insert(rows);
+      if (error) throw error;
+    }
+
+    res.json({ success: true, count: items.length });
+  } catch (e) {
+    console.error('agenda bulk:', e.message);
+    res.status(500).json({ error: 'Erro ao salvar agenda' });
+  }
+});
+
+// ── Registros de preenchimento ──
+
+// GET /api/processos/registros?processo_id=&indicador_id=
+router.get('/registros/list', async (req, res) => {
+  try {
+    const { processo_id, indicador_id } = req.query;
+    let q = supabase.from('processo_registros').select('*').order('data_preenchimento', { ascending: false }).limit(50);
+    if (processo_id) q = q.eq('processo_id', processo_id);
+    if (indicador_id) q = q.eq('indicador_id', indicador_id);
+    const { data, error } = await q;
+    if (error) throw error;
+    res.json(data);
+  } catch (e) {
+    console.error('registros list:', e.message);
+    res.status(500).json({ error: 'Erro ao listar registros' });
+  }
+});
+
+// POST /api/processos/registros
+router.post('/registros', authorize('admin', 'diretor'), async (req, res) => {
+  try {
+    const d = req.body;
+    const { data, error } = await supabase
+      .from('processo_registros')
+      .insert({
+        processo_id: d.processo_id,
+        indicador_id: d.indicador_id,
+        valor: d.valor,
+        periodo: d.periodo || null,
+        data_preenchimento: d.data_preenchimento || new Date().toISOString().slice(0, 10),
+        responsavel_id: req.user.userId,
+        responsavel_nome: req.user.name || null,
+        observacoes: d.observacoes || null,
+      })
+      .select()
+      .single();
+    if (error) throw error;
+    res.status(201).json(data);
+  } catch (e) {
+    console.error('registros create:', e.message);
+    res.status(500).json({ error: 'Erro ao criar registro' });
+  }
+});
+
 module.exports = router;
