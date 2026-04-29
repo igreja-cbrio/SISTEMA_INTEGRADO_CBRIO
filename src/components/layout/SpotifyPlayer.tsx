@@ -318,6 +318,21 @@ export default function SpotifyPlayer() {
         }}
       >
         <div className="flex flex-col gap-2 max-h-[calc(100vh-32px)]">
+          {/* Diagnostic: env var ausente do bundle */}
+          {!sp.configured && (
+            <motion.div
+              className="rounded-2xl bg-amber-500/10 border border-amber-500/30 p-3 text-xs text-foreground space-y-2"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+            >
+              <p className="font-semibold text-amber-600">⚠ Player não configurado</p>
+              <p className="text-foreground/80 leading-relaxed">
+                <code className="text-[10px] bg-muted px-1 rounded">VITE_SPOTIFY_CLIENT_ID</code> não está no bundle.
+                Adicione em Vercel <strong>Settings → Environment Variables → Production</strong> e <strong>redeploy</strong>.
+              </p>
+            </motion.div>
+          )}
+
           {/* Card principal: SDK ou estado de auth */}
           {sp.configured && !sp.authed && (
             <motion.div
