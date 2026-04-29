@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { integracao as intApi, voluntariado as volApi } from '../../api';
+import ProcessosTarefas from '../../components/ProcessosTarefas';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '../../components/ui/tabs';
 import { Button } from '../../components/ui/button';
 import { Input } from '../../components/ui/input';
@@ -134,6 +135,7 @@ export default function Integracao() {
           <TabsTrigger value="visitantes">Visitantes</TabsTrigger>
           <TabsTrigger value="pendentes">Pendentes</TabsTrigger>
           <TabsTrigger value="1x1">Encontros 1x1</TabsTrigger>
+          <TabsTrigger value="tarefas">Tarefas</TabsTrigger>
         </TabsList>
 
         <TabsContent value="visitantes" className="mt-4">
@@ -146,6 +148,9 @@ export default function Integracao() {
 
         <TabsContent value="1x1" className="mt-4">
           <TabEncontros1x1 />
+        </TabsContent>
+        <TabsContent value="tarefas" className="mt-4">
+          <ProcessosTarefas area="Integracao" />
         </TabsContent>
       </Tabs>
     </div>

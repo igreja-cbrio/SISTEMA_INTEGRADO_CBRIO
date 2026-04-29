@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo } from 'react';
 import { cuidados as cuidadosApi } from '../../api';
+import ProcessosTarefas from '../../components/ProcessosTarefas';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '../../components/ui/tabs';
 import { Button } from '../../components/ui/button';
 import { Input } from '../../components/ui/input';
@@ -290,6 +291,7 @@ export default function Cuidados() {
           <TabsTrigger value="jornada">Jornada 180</TabsTrigger>
           <TabsTrigger value="convertidos">Convertidos</TabsTrigger>
           <TabsTrigger value="agregado">Aconselhamento / Capelania</TabsTrigger>
+          <TabsTrigger value="tarefas">Tarefas</TabsTrigger>
         </TabsList>
 
         {/* Dashboard */}
@@ -441,6 +443,10 @@ export default function Cuidados() {
               Última atualização: {new Date(agregado[0].updated_at || agregado[0].created_at).toLocaleString('pt-BR')}
             </div>
           )}
+        </TabsContent>
+
+        <TabsContent value="tarefas" className="space-y-4">
+          <ProcessosTarefas area="Cuidados" />
         </TabsContent>
       </Tabs>
 
