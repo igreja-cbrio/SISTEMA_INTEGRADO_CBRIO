@@ -149,12 +149,39 @@ router.get('/tarefas/list', async (req, res) => {
 router.post('/tarefas', async (req, res) => {
   try {
     const d = req.body;
-    const { data, error } = await supabase
-      .from('tarefas_pessoais')
-      .insert({ titulo: d.titulo, data: d.data, area: d.area || null, created_by: req.user.userId })
-      .select().single();
+    const recorrenciaId = d.recorrencia && d.recorrencia !== 'unica'
+      ? require('crypto').randomUUID() : null;
+
+    const base = {
+      titulo: d.titulo, area: d.area || null, created_by: req.user.userId,
+      prioridade: d.prioridade || 'media', recorrencia: d.recorrencia || 'unica',
+      horario: d.horario || null, responsavel_id: d.responsavel_id || null,
+      responsavel_nome: d.responsavel_nome || null, tipo: d.tipo || 'outro',
+      descricao: d.descricao || null, processo_id: d.processo_id || null,
+      recorrencia_id: recorrenciaId,
+    };
+
+    // Gerar instancias para recorrencia
+    const dates = [d.data];
+    if (recorrenciaId) {
+      const start = new Date(d.data);
+      const weeks = 12; // gera 12 semanas futuras
+      for (let i = 1; i <= weeks * 7; i++) {
+        const next = new Date(start);
+        next.setDate(next.getDate() + i);
+        const match =
+          (d.recorrencia === 'diaria') ||
+          (d.recorrencia === 'semanal' && i % 7 === 0) ||
+          (d.recorrencia === 'quinzenal' && i % 14 === 0) ||
+          (d.recorrencia === 'mensal' && next.getDate() === start.getDate());
+        if (match) dates.push(next.toISOString().slice(0, 10));
+      }
+    }
+
+    const rows = dates.map(dt => ({ ...base, data: dt }));
+    const { data, error } = await supabase.from('tarefas_pessoais').insert(rows).select();
     if (error) throw error;
-    res.status(201).json(data);
+    res.status(201).json(data[0]); // retorna primeira instancia
   } catch (e) {
     console.error('tarefas create:', e.message);
     res.status(500).json({ error: 'Erro ao criar tarefa' });
