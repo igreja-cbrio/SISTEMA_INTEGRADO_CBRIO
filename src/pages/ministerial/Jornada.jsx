@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { jornada as api } from '../../api';
 import { useKpis } from '../../hooks/useKpis';
+import { useAuth } from '../../contexts/AuthContext';
 
 const C = {
   bg: 'var(--cbrio-bg)', card: 'var(--cbrio-card)', text: 'var(--cbrio-text)',
@@ -23,7 +24,9 @@ const VALOR_META = [
 ];
 
 export default function Jornada() {
-  const { byValor } = useKpis();
+  const { byValor, kpis: allKpis, update: updateKpi } = useKpis();
+  const { isAdmin, isDiretor } = useAuth();
+  const canEdit = isAdmin || isDiretor;
   const [tab, setTab] = useState('dashboard');
   const [dashboard, setDashboard] = useState(null);
   const [membros, setMembros] = useState([]);
@@ -91,7 +94,7 @@ export default function Jornada() {
 
       {tab === 'dashboard' && dashboard && <TabDashboard data={dashboard} onValorClick={openValorDrill} />}
       {tab === 'membros' && <TabMembros membros={membros} total={totalMembros} search={search} setSearch={setSearch} filtro={filtroValor} setFiltro={setFiltroValor} page={page} setPage={setPage} loading={loading} onDetail={openDetail} />}
-      {tab === 'valor-drill' && <ValorDrillDown valorKey={valorDrill} membros={membros} total={totalMembros} search={search} setSearch={setSearch} page={page} setPage={setPage} loading={loading} onDetail={openDetail} onBack={() => setTab('dashboard')} loadMembros={loadMembros} kpisDoValor={byValor[valorDrill] || []} />}
+      {tab === 'valor-drill' && <ValorDrillDown valorKey={valorDrill} membros={membros} total={totalMembros} search={search} setSearch={setSearch} page={page} setPage={setPage} loading={loading} onDetail={openDetail} onBack={() => setTab('dashboard')} loadMembros={loadMembros} kpisDoValor={byValor[valorDrill] || []} allKpis={allKpis} updateKpi={updateKpi} canEdit={canEdit} />}
       {tab === 'detalhe' && <TabDetalhe detail={detail} loading={detailLoading} onBack={() => { setTab(valorDrill ? 'valor-drill' : 'membros'); setDetail(null); }} />}
     </div>
   );
@@ -137,16 +140,60 @@ function TabDashboard({ data, onValorClick }) {
 }
 
 // ═══ VALOR DRILL-DOWN ═══
-function ValorDrillDown({ valorKey, membros, total, search, setSearch, page, setPage, loading, onDetail, onBack, loadMembros, kpisDoValor }) {
+function ValorDrillDown({ valorKey, membros, total, search, setSearch, page, setPage, loading, onDetail, onBack, loadMembros, kpisDoValor, allKpis = [], updateKpi, canEdit = false }) {
   const valor = VALOR_META.find(v => v.key === valorKey);
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [busy, setBusy] = useState(null); // id do KPI sendo mutado
   if (!valor) return null;
 
   // KPIs vinculados a esse valor (vindos do banco via prop kpisDoValor)
-  // Recebido por prop pra evitar duplo fetch.
+  // KPIs disponiveis pra promover (todos ativos que NAO tem esse valor)
+  const linkedIds = new Set((kpisDoValor || []).map(k => k.id));
+  const candidatosPromover = (allKpis || []).filter(k => k.ativo !== false && !linkedIds.has(k.id));
 
   // Membros que TEM esse valor ativo
   const comValor = membros.filter(m => m.valores?.[valorKey]);
   const semValor = membros.filter(m => !m.valores?.[valorKey]);
+
+  const promoverKpi = async (kpi) => {
+    if (!updateKpi || busy) return;
+    setBusy(kpi.id);
+    try {
+      const novosValores = Array.from(new Set([...(kpi.valores || []), valorKey]));
+      await updateKpi(kpi.id, { valores: novosValores });
+      setPickerOpen(false);
+    } catch (e) {
+      alert(e?.message || 'Erro ao promover KPI');
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const retirarKpi = async (kpi) => {
+    if (!updateKpi || busy) return;
+    if (!window.confirm(`Tirar "${kpi.id} — ${kpi.indicador || kpi.nome}" deste valor?`)) return;
+    setBusy(kpi.id);
+    try {
+      const novosValores = (kpi.valores || []).filter(v => v !== valorKey);
+      if (novosValores.length === 0) {
+        // Backend exige pelo menos 1 valor — se fica sem nenhum, avisa
+        if (!window.confirm('Esse KPI ficaria sem nenhum valor vinculado. Tirar mesmo assim? (vai virar erro do servidor)')) {
+          setBusy(null);
+          return;
+        }
+      }
+      if (kpi.is_okr && novosValores.length === 0) {
+        alert('Nao da: KPI esta marcado como OKR e precisa de pelo menos 1 valor. Edite o KPI e desmarque OKR primeiro.');
+        setBusy(null);
+        return;
+      }
+      await updateKpi(kpi.id, { valores: novosValores });
+    } catch (e) {
+      alert(e?.message || 'Erro ao retirar KPI');
+    } finally {
+      setBusy(null);
+    }
+  };
 
   return (
     <div>
@@ -169,21 +216,78 @@ function ValorDrillDown({ valorKey, membros, total, search, setSearch, page, set
       </div>
 
       {/* KPIs vinculados */}
-      <h3 style={{ fontSize: 16, fontWeight: 600, color: C.text, marginBottom: 12 }}>KPIs que medem este valor</h3>
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: 8, marginBottom: 24 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+        <h3 style={{ fontSize: 16, fontWeight: 600, color: C.text, margin: 0 }}>KPIs que medem este valor ({(kpisDoValor || []).length})</h3>
+        {canEdit && (
+          <button onClick={() => setPickerOpen(true)}
+            style={{ padding: '6px 12px', borderRadius: 8, border: `1px solid ${valor.color}`, background: valor.bg, color: valor.color, fontSize: 12, fontWeight: 600, cursor: 'pointer' }}>
+            + Promover KPI a este valor
+          </button>
+        )}
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: 8, marginBottom: 24 }}>
+        {(kpisDoValor || []).length === 0 && (
+          <div style={{ gridColumn: '1/-1', padding: 20, textAlign: 'center', background: C.card, border: `1px dashed ${C.border}`, borderRadius: 8, color: C.t3, fontSize: 13 }}>
+            Nenhum KPI vinculado a este valor ainda. {canEdit && 'Use "+ Promover KPI" pra adicionar.'}
+          </div>
+        )}
         {(kpisDoValor || []).map(kpi => (
-          <div key={kpi.id} style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 8, padding: 12, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <div>
-              <span style={{ fontWeight: 600, color: valor.color, fontSize: 13 }}>{kpi.id}</span>
-              <span style={{ color: C.t2, marginLeft: 8, fontSize: 13 }}>{kpi.indicador || kpi.nome}</span>
-              <div style={{ fontSize: 11, color: C.t3, marginTop: 2 }}>{kpi.area} | {kpi.periodicidade}</div>
+          <div key={kpi.id} style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 8, padding: 12, display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                <span style={{ fontWeight: 600, color: valor.color, fontSize: 13 }}>{kpi.id}</span>
+                {kpi.is_okr && <span style={{ fontSize: 9, padding: '1px 6px', borderRadius: 8, background: '#fef3c7', color: '#b45309', fontWeight: 700 }}>OKR</span>}
+                <span style={{ color: C.t2, fontSize: 13 }}>{kpi.indicador || kpi.nome}</span>
+              </div>
+              <div style={{ fontSize: 11, color: C.t3, marginTop: 2 }}>{kpi.area} | {kpi.periodicidade} | Meta: {kpi.meta_descricao || kpi.meta_2026 || '-'}</div>
             </div>
-            <div style={{ textAlign: 'right' }}>
-              <span style={{ fontSize: 11, padding: '2px 8px', borderRadius: 6, background: C.bg, color: C.t3 }}>Meta: {kpi.meta_descricao || kpi.meta_2026 || '-'}</span>
-            </div>
+            {canEdit && (
+              <button onClick={() => retirarKpi(kpi)} disabled={busy === kpi.id}
+                title="Retirar deste valor"
+                style={{ background: 'none', border: `1px solid ${C.border}`, color: C.red, fontSize: 11, fontWeight: 600, padding: '4px 10px', borderRadius: 6, cursor: busy === kpi.id ? 'wait' : 'pointer', whiteSpace: 'nowrap' }}>
+                {busy === kpi.id ? '...' : '× Retirar'}
+              </button>
+            )}
           </div>
         ))}
       </div>
+
+      {/* Picker de KPIs disponiveis pra promover */}
+      {pickerOpen && (
+        <div style={{ position: 'fixed', inset: 0, zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--cbrio-overlay)' }} onClick={() => setPickerOpen(false)}>
+          <div style={{ background: 'var(--cbrio-modal-bg)', borderRadius: 12, width: 600, maxHeight: '80vh', overflow: 'auto', padding: 24 }} onClick={e => e.stopPropagation()}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+              <h2 style={{ margin: 0, fontSize: 18, color: C.text }}>Promover KPI ao valor: {valor.nome}</h2>
+              <button onClick={() => setPickerOpen(false)} style={{ background: 'none', border: 'none', fontSize: 22, cursor: 'pointer', color: C.t3 }}>×</button>
+            </div>
+            <p style={{ fontSize: 13, color: C.t3, marginTop: 0, marginBottom: 16 }}>{candidatosPromover.length} KPIs disponíveis. Clique em um pra adicioná-lo a "{valor.nome}".</p>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6, maxHeight: '55vh', overflow: 'auto' }}>
+              {candidatosPromover.length === 0 && (
+                <p style={{ color: C.t3, fontSize: 13, textAlign: 'center', padding: 20 }}>Todos os KPIs já estão neste valor.</p>
+              )}
+              {candidatosPromover.map(kpi => (
+                <button key={kpi.id} onClick={() => promoverKpi(kpi)} disabled={!!busy}
+                  style={{ textAlign: 'left', padding: '10px 12px', borderRadius: 8, border: `1px solid ${C.border}`, background: 'transparent', cursor: busy ? 'wait' : 'pointer', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}
+                  onMouseEnter={e => { if (!busy) e.currentTarget.style.borderColor = valor.color; }}
+                  onMouseLeave={e => e.currentTarget.style.borderColor = C.border}>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                      <span style={{ fontWeight: 600, fontSize: 13, color: C.text }}>{kpi.id}</span>
+                      {kpi.is_okr && <span style={{ fontSize: 9, padding: '1px 6px', borderRadius: 8, background: '#fef3c7', color: '#b45309', fontWeight: 700 }}>OKR</span>}
+                      <span style={{ color: C.t2, fontSize: 13 }}>{kpi.indicador || kpi.nome}</span>
+                    </div>
+                    <div style={{ fontSize: 11, color: C.t3, marginTop: 2 }}>
+                      {kpi.area} | {kpi.periodicidade}
+                      {kpi.valores?.length > 0 && ` | já em: ${kpi.valores.join(', ')}`}
+                    </div>
+                  </div>
+                  <span style={{ fontSize: 11, fontWeight: 700, color: valor.color }}>{busy === kpi.id ? '...' : '+ Adicionar'}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Membros */}
       <h3 style={{ fontSize: 16, fontWeight: 600, color: C.text, marginBottom: 12 }}>Membros</h3>
