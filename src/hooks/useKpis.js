@@ -13,12 +13,28 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { kpis as kpisApi } from '../api';
 
+// DB usa areas em lowercase ('ami','cba','kids',...) mas o frontend e o
+// AREAS const usam mixed case ('AMI','CBA','CBKids',...). Mapeia.
+const AREA_DB_TO_FRONTEND = {
+  ami: 'AMI', cba: 'CBA', kids: 'CBKids', cuidados: 'Cuidados',
+  grupos: 'Grupos', integracao: 'Integracao', voluntariado: 'Voluntariado',
+  next: 'NEXT', generosidade: 'Generosidade',
+  jornada: 'Jornada', igreja: 'Igreja',
+};
+
+function normalizeArea(area) {
+  if (!area) return area;
+  const lower = String(area).toLowerCase();
+  return AREA_DB_TO_FRONTEND[lower] || area;
+}
+
 // Mapeia o formato vindo do banco (vw_kpi_taticos_status) para o formato
 // "amigavel" que os componentes esperam (compatible com indicadores.js antigo).
 function fromDb(row) {
   return {
     id: row.id,
-    area: row.area,
+    area: normalizeArea(row.area),             // 'ami' -> 'AMI', etc.
+    area_db: row.area,                         // valor original (lowercase)
     nome: row.indicador,                       // alias para retrocompat
     indicador: row.indicador,
     descricao: row.descricao || '',
@@ -34,6 +50,7 @@ function fromDb(row) {
     sort_order: row.sort_order ?? 0,
     fonte_auto: row.fonte_auto,
     is_auto: !!row.fonte_auto,
+    is_okr: !!row.is_okr,
     valores: row.valores || [],
     ativo: row.ativo !== false,
     kpi_estrategico_id: row.kpi_estrategico_id,

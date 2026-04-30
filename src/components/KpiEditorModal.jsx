@@ -84,7 +84,7 @@ const EMPTY = {
   periodicidade: 'mensal', periodo_offset_meses: 0,
   meta_descricao: '', meta_valor: '', unidade: '', pilar: '',
   responsavel_area: '', apuracao: '', sort_order: 0, ativo: true,
-  valores: [],
+  valores: [], is_okr: false,
 };
 
 export default function KpiEditorModal({ open, kpi, onClose, onSaved }) {
@@ -114,6 +114,7 @@ export default function KpiEditorModal({ open, kpi, onClose, onSaved }) {
         sort_order: kpi.sort_order ?? 0,
         ativo: kpi.ativo !== false,
         valores: kpi.valores || [],
+        is_okr: !!kpi.is_okr,
       });
     } else {
       setForm(EMPTY);
@@ -137,6 +138,14 @@ export default function KpiEditorModal({ open, kpi, onClose, onSaved }) {
     if (!form.indicador.trim()) { setErr('Nome do indicador obrigatório'); return; }
     if (!form.area) { setErr('Área obrigatória'); return; }
     if (!isEdit && !form.id.trim()) { setErr('ID obrigatório (ex: GRUP-06)'); return; }
+    if (form.is_okr && form.valores.length === 0) {
+      setErr('KPI marcado como OKR precisa ter pelo menos 1 valor da jornada vinculado');
+      return;
+    }
+    if (form.valores.length === 0) {
+      setErr('Selecione pelo menos 1 valor da jornada (todo KPI deve estar vinculado a um valor)');
+      return;
+    }
     setSaving(true);
     try {
       const payload = {
@@ -250,9 +259,21 @@ export default function KpiEditorModal({ open, kpi, onClose, onSaved }) {
             </label>
           </Field>
 
+          {/* OKR toggle (span full) */}
+          <div style={{ gridColumn: '1/-1' }}>
+            <Field label="Marcar como OKR (objetivo estratégico chave)" hint="Quando OKR, é obrigatório vincular pelo menos 1 valor da jornada abaixo.">
+              <label style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 14px', borderRadius: 10, border: `2px solid ${form.is_okr ? '#f59e0b' : C.border}`, background: form.is_okr ? '#fef3c7' : C.inputBg, cursor: 'pointer' }}>
+                <input type="checkbox" checked={form.is_okr} onChange={e => set('is_okr', e.target.checked)} />
+                <span style={{ fontSize: 13, fontWeight: 600, color: form.is_okr ? '#b45309' : C.text }}>
+                  {form.is_okr ? '⭐ É um OKR — destaque na visão estratégica' : 'KPI operacional comum'}
+                </span>
+              </label>
+            </Field>
+          </div>
+
           {/* Valores (5 chips) */}
           <div style={{ gridColumn: '1/-1' }}>
-            <Field label="Valores da jornada que este KPI alimenta">
+            <Field label={`Valores da jornada que este KPI alimenta * ${form.valores.length === 0 ? '(obrigatório)' : `(${form.valores.length} selecionado${form.valores.length > 1 ? 's' : ''})`}`}>
               <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
                 {VALORES_KEYS.map(v => {
                   const sel = form.valores.includes(v.key);
