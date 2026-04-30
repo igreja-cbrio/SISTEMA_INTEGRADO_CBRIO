@@ -24,11 +24,13 @@ const STATUS_MAP = {
 };
 
 const CAT_MAP = {
-  Ministerial: { c: C.primary, bg: C.primaryBg },
-  Geracional:  { c: C.purple,  bg: C.purpleBg },
-  Criativo:    { c: C.amber,   bg: C.amberBg },
-  Operacoes:   { c: C.blue,    bg: C.blueBg },
+  Ministerial:    { c: C.primary, bg: C.primaryBg },
+  Geracional:     { c: C.purple,  bg: C.purpleBg },
+  Institucional:  { c: C.red,     bg: C.redBg },
+  Criativo:       { c: C.amber,   bg: C.amberBg },
+  Operacoes:      { c: C.blue,    bg: C.blueBg },
 };
+const FALLBACK_CAT = { c: C.t2, bg: C.border };
 
 const PERIOD_COLORS = { Semanal: '#3b82f6', Mensal: '#10b981', Trimestral: '#f59e0b', Semestral: '#8b5cf6' };
 const DIAS = ['Domingo', 'Segunda', 'Ter\u00e7a', 'Quarta', 'Quinta', 'Sexta', 'S\u00e1bado'];
@@ -260,7 +262,7 @@ function TabHome({ stats, list }) {
       </div>
       <h3 style={{ fontSize: 16, fontWeight: 600, color: C.text, marginBottom: 12 }}>Por Categoria</h3>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 12, marginBottom: 24 }}>
-        {CATEGORIAS.map(cat => { const cm = CAT_MAP[cat]; return (
+        {CATEGORIAS.map(cat => { const cm = CAT_MAP[cat] || FALLBACK_CAT; return (
           <div key={cat} style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 12, padding: 16 }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}><Badge label={cat} color={cm.c} bg={cm.bg} /><span style={{ fontSize: 24, fontWeight: 700, color: cm.c }}>{stats.byCat[cat] || 0}</span></div>
             <div style={{ fontSize: 12, color: C.t3 }}>{(CATEGORIA_AREAS[cat] || []).map(a => getAreaNome(a)).join(', ') || 'Sem \u00e1reas'}</div>
