@@ -568,6 +568,49 @@ Seção do menu renomeada de "Projetos e Eventos" para "Acompanhamento".
   **Planilha = fonte de verdade**: ao adicionar/remover/renomear KPI,
   atualizar a planilha primeiro, depois `indicadores.js`, depois banco
   via migration. Nunca divergir entre os 3.
+
+## Membro Modelo — Fluxo da jornada nos 5 valores
+
+A migration `20260430130000_membro_modelo_completo.sql` fechou os 4 gaps
+do fluxo de membro, conectando os módulos ponta a ponta:
+
+```
+visitante (int_visitantes)
+   ├── fez_decisao=true → [trigger] cria mem_membros + trilha 'conversao'
+   │                          → KPI INTG-01, CBA-01 sobem (auto)
+   │                          → Jornada mostra +1 em "Seguir Jesus"
+   ├── inscreve no batismo (batismo_inscricoes)
+   │
+   └── batismo realizado (status='realizado')
+                              → [trigger] trilha 'batismo'
+                              → mem_membros.status = 'membro_ativo'
+                              → int_visitantes.status = 'batizado'
+```
+
+**Tabela nova:** `mem_devocionais` (gap 3) — alimenta KID-04 via
+`devocionais.familias` collector. Endpoint: `/api/devocionais` (CRUD +
+stats). Cliente: `devocionais` em `src/api.js`.
+
+**Cálculo dos 5 valores** (em `backend/routes/jornada.js`):
+- **Seguir Jesus**: `mem_trilha_valores.etapa IN ('conversao','primeiro_contato','batismo')` + concluida
+- **Conectar**: `mem_grupo_membros.saiu_em IS NULL`
+- **Investir Tempo**: `cui_jornada180.data_encontro` nos últimos 90d (futuro: também `mem_devocionais`)
+- **Servir**: `mem_voluntarios.ate IS NULL`
+- **Generosidade**: `mem_contribuicoes.data` nos últimos 90d
+
+**Membro Modelo**: derivado em tempo real pelo Jornada como
+`COUNT(valores) >= 2` por membro. Não tem flag/coluna — é calculado.
+
+## KPI Auto-Collector (separação AMI/Bridge)
+
+`backend/services/kpiAutoCollector.js` agora tem coletores separados:
+- `cultos.ami_freq` / `cultos.ami_conv` → AMI-01 / AMI-02
+- `cultos.bridge_freq` / `cultos.bridge_conv` → AMI-05 / AMI-06
+- `cultos.amibridge_*` ficam como DEPRECATED (não usar em fonte_auto novos)
+
+Filtros em `isAmiCulto` (AMI ou sábado, exclui Bridge) e `isBridgeCulto`
+(qualquer culto com 'bridge' no nome). Ajustar se nomenclatura de
+cultos mudar.
 - **Permissão**: `canProcessos` via modulo "Processos" em
   `permissoes_modulo`
 

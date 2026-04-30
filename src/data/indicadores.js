@@ -107,13 +107,15 @@ export const INDICADORES = [
 
 // KPIs com coleta automatica (fonte_auto no banco)
 export const KPI_AUTO = new Set([
-  'AMI-01', 'AMI-02', 'KID-01', 'KID-02',              // cultos/batismos
-  'INTG-01', 'INTG-04', 'INTG-05',                      // integracao
+  'AMI-01', 'AMI-02', 'AMI-05', 'AMI-06',                // cultos AMI/Bridge separados
+  'KID-01', 'KID-02', 'KID-04',                          // cultos/batismos kids + devocionais
+  'INTG-01', 'INTG-04', 'INTG-05',                       // integracao
   'CUID-01', 'CUID-05', 'CUID-06', 'CUID-07', 'CUID-10', // cuidados + jornada
   'GRUP-01', 'GRUP-04',                                  // grupos
   'VOLT-01', 'VOLT-02', 'VOLT-03', 'VOLT-04', 'VOLT-05', 'VOLT-06', 'VOLT-07', 'VOLT-08', // voluntariado
   'NEXT-01', 'NEXT-02', 'NEXT-03',                       // next
   'GEN-02', 'GEN-04',                                    // generosidade
+  'CBA-01', 'CBA-04',                                    // cba batismo/contato 5 dias
 ]);
 
 export const getIndicadoresByArea = (area) => INDICADORES.filter(k => k.area === area);

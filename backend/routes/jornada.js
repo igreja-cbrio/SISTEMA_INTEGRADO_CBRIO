@@ -26,7 +26,7 @@ router.get('/dashboard', async (req, res) => {
     let seguirCount = 0;
     const { count: seguirQ } = await supabase.from('mem_trilha_valores')
       .select('membro_id', { count: 'exact', head: true })
-      .in('etapa', ['conversao', 'primeiro_contato'])
+      .in('etapa', ['conversao', 'primeiro_contato', 'batismo'])
       .eq('concluida', true);
     seguirCount = seguirQ || 0;
 
@@ -93,7 +93,7 @@ router.get('/membros', async (req, res) => {
       supabase.from('mem_contribuicoes').select('membro_id').in('membro_id', ids).gte('data', daysAgo(90)),
     ]);
 
-    const trilhaSet = new Set((trilha.data || []).filter(t => ['conversao', 'primeiro_contato'].includes(t.etapa)).map(t => t.membro_id));
+    const trilhaSet = new Set((trilha.data || []).filter(t => ['conversao', 'primeiro_contato', 'batismo'].includes(t.etapa)).map(t => t.membro_id));
     const grupoSet = new Set((grupos.data || []).map(g => g.membro_id));
     const j180Set = new Set((j180.data || []).map(j => j.membro_id));
     const volSet = new Set((voluntarios.data || []).map(v => v.membro_id));
@@ -148,7 +148,7 @@ router.get('/membro/:id', async (req, res) => {
       const diff = (Date.now() - new Date(j.data_encontro).getTime()) / 86400000;
       return diff <= 90;
     });
-    const trilhaConversao = (trilha.data || []).find(t => ['conversao', 'primeiro_contato'].includes(t.etapa) && t.concluida);
+    const trilhaConversao = (trilha.data || []).find(t => ['conversao', 'primeiro_contato', 'batismo'].includes(t.etapa) && t.concluida);
 
     res.json({
       membro: membro.data,
