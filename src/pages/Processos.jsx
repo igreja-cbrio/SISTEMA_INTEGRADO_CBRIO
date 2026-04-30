@@ -32,7 +32,17 @@ const CAT_MAP = {
 };
 const FALLBACK_CAT = { c: C.t2, bg: C.border };
 
-const PERIOD_COLORS = { Semanal: '#3b82f6', Mensal: '#10b981', Trimestral: '#f59e0b', Semestral: '#8b5cf6' };
+// Case-insensitive: banco usa lowercase, codigo legacy capitalizado.
+const PERIOD_COLORS_RAW = { semanal: '#3b82f6', mensal: '#10b981', trimestral: '#f59e0b', semestral: '#8b5cf6', anual: '#ef4444' };
+const PERIOD_COLORS = new Proxy(PERIOD_COLORS_RAW, {
+  get(t, k) { return t[String(k || '').toLowerCase()]; },
+});
+function periodLabelOf(kpi) {
+  const p = kpi?.periodicidade;
+  if (!p) return '—';
+  const offset = kpi.periodo_offset_meses ?? 0;
+  return offset > 0 ? `${p} +${offset}m` : String(p);
+}
 const DIAS = ['Domingo', 'Segunda', 'Ter\u00e7a', 'Quarta', 'Quinta', 'Sexta', 'S\u00e1bado'];
 
 function Badge({ label, color, bg }) {
@@ -413,7 +423,7 @@ function DetailView({ processo: p, registros, canWrite, onBack, onEdit, detailTa
               <div key={kpi.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 16px', background: C.card, border: `1px solid ${C.border}`, borderRadius: 8 }}>
                 <div><span style={{ fontWeight: 600, color: C.text }}>{kpi.id}</span><span style={{ color: C.t2, marginLeft: 8 }}>{kpi.nome}</span></div>
                 <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                  <Badge label={kpi.periodicidade} color={PERIOD_COLORS[kpi.periodicidade] || C.t3} bg={(PERIOD_COLORS[kpi.periodicidade] || C.t3) + '20'} />
+                  <Badge label={periodLabelOf(kpi)} color={PERIOD_COLORS[kpi.periodicidade] || C.t3} bg={(PERIOD_COLORS[kpi.periodicidade] || C.t3) + '20'} />
                   <span style={{ fontSize: 12, color: C.t3 }}>Meta: {kpi.meta_2026}</span>
                 </div>
               </div>
@@ -522,7 +532,7 @@ function TabKPIs({ list, onDetail }) {
                 <tr key={kpi.id} style={{ borderTop: `1px solid ${C.border}` }}>
                   <td style={{ padding: '8px 12px', fontWeight: 600, color: C.text }}>{kpi.id}</td>
                   <td style={{ padding: '8px 12px', color: C.t2 }}>{kpi.nome}</td>
-                  <td style={{ padding: '8px 12px' }}><Badge label={kpi.periodicidade} color={PERIOD_COLORS[kpi.periodicidade] || C.t3} bg={(PERIOD_COLORS[kpi.periodicidade] || C.t3) + '20'} /></td>
+                  <td style={{ padding: '8px 12px' }}><Badge label={periodLabelOf(kpi)} color={PERIOD_COLORS[kpi.periodicidade] || C.t3} bg={(PERIOD_COLORS[kpi.periodicidade] || C.t3) + '20'} /></td>
                   <td style={{ padding: '8px 12px', color: C.t3, fontSize: 12 }}>{kpi.meta_2026}</td>
                   <td style={{ padding: '8px 12px' }}>{procs.length > 0 ? procs.map(pr => <span key={pr.id} onClick={() => onDetail(pr)} style={{ cursor: 'pointer', color: C.primary, textDecoration: 'underline', marginRight: 6, fontSize: 12 }}>{pr.nome}</span>) : <span style={{ fontSize: 12, color: C.t3 }}>-</span>}</td>
                 </tr>
@@ -613,8 +623,7 @@ function TabAgenda({ agenda, canWrite, onSave }) {
                 </tr></thead>
                 <tbody>
                   {kpis.map(kpi => {
-                    const offsetMonths = kpi.periodo_offset_meses ?? 0;
-                    const periodLabel = kpi.periodicidade + (offsetMonths > 0 ? ` +${offsetMonths}m` : '');
+                    const periodLabel = periodLabelOf(kpi);
                     return (
                       <tr key={kpi.id} style={{ borderTop: `1px solid ${C.border}` }}>
                         <td style={{ padding: '8px 12px' }}>
