@@ -235,24 +235,29 @@ router.get('/taticos/:id', async (req, res) => {
 
 // ----------------------------------------------------------------------------
 // PUT /taticos/:id - editar indicador (apenas admin/diretor)
-// Campos editaveis: indicador, meta_descricao, meta_valor, unidade,
-//                   responsavel_area, apuracao, sort_order, ativo
+// Campos editaveis: indicador, descricao, area, periodicidade, periodo_offset_meses,
+//                   meta_descricao, meta_valor, unidade, responsavel_area,
+//                   apuracao, sort_order, ativo, kpi_estrategico_id, fonte_auto,
+//                   valores, pilar
 // ----------------------------------------------------------------------------
 router.put('/taticos/:id', authorize('diretor', 'admin'), async (req, res) => {
   const { id } = req.params;
   const allowed = [
-    'indicador', 'descricao', 'meta_descricao', 'meta_valor', 'unidade',
-    'responsavel_area', 'apuracao', 'sort_order', 'ativo',
+    'indicador', 'descricao', 'area', 'periodicidade', 'periodo_offset_meses',
+    'meta_descricao', 'meta_valor', 'unidade', 'responsavel_area', 'apuracao',
+    'sort_order', 'ativo', 'kpi_estrategico_id', 'fonte_auto', 'valores', 'pilar',
   ];
   const update = { updated_at: new Date().toISOString() };
   for (const [k, v] of Object.entries(req.body || {})) {
     if (!allowed.includes(k)) continue;
     if (k === 'meta_valor') {
       update[k] = (v === '' || v == null) ? null : Number(v);
-    } else if (k === 'sort_order') {
+    } else if (k === 'sort_order' || k === 'periodo_offset_meses') {
       update[k] = (v === '' || v == null) ? 0 : Number(v);
     } else if (k === 'ativo') {
       update[k] = !!v;
+    } else if (k === 'valores') {
+      update[k] = Array.isArray(v) ? v.filter(Boolean) : [];
     } else {
       update[k] = v === '' ? null : v;
     }
@@ -260,6 +265,82 @@ router.put('/taticos/:id', authorize('diretor', 'admin'), async (req, res) => {
   const { data, error } = await supabase
     .from('kpi_indicadores_taticos')
     .update(update)
+    .eq('id', id)
+    .select()
+    .single();
+  if (error) return res.status(500).json({ error: error.message });
+  res.json(data);
+});
+
+// ----------------------------------------------------------------------------
+// POST /taticos - criar novo indicador (apenas admin/diretor)
+// Body: { id, indicador, area, periodicidade, ... }
+// id deve ser unico (ex: 'GRUP-06') e respeita PK existente.
+// ----------------------------------------------------------------------------
+router.post('/taticos', authorize('diretor', 'admin'), async (req, res) => {
+  const b = req.body || {};
+  if (!b.id || !b.indicador || !b.area || !b.periodicidade) {
+    return res.status(400).json({ error: 'id, indicador, area e periodicidade sao obrigatorios' });
+  }
+  const VALID = ['semanal','mensal','trimestral','semestral','anual'];
+  if (!VALID.includes(b.periodicidade)) {
+    return res.status(400).json({ error: `periodicidade deve ser: ${VALID.join('|')}` });
+  }
+  const payload = {
+    id: b.id,
+    indicador: b.indicador,
+    descricao: b.descricao ?? null,
+    area: b.area,
+    periodicidade: b.periodicidade,
+    periodo_offset_meses: Number.isFinite(Number(b.periodo_offset_meses)) ? Number(b.periodo_offset_meses) : 0,
+    meta_descricao: b.meta_descricao ?? null,
+    meta_valor: (b.meta_valor === '' || b.meta_valor == null) ? null : Number(b.meta_valor),
+    unidade: b.unidade ?? null,
+    responsavel_area: b.responsavel_area ?? null,
+    apuracao: b.apuracao ?? null,
+    sort_order: Number.isFinite(Number(b.sort_order)) ? Number(b.sort_order) : 0,
+    ativo: b.ativo === false ? false : true,
+    kpi_estrategico_id: b.kpi_estrategico_id ?? null,
+    fonte_auto: b.fonte_auto ?? null,
+    valores: Array.isArray(b.valores) ? b.valores.filter(Boolean) : [],
+    pilar: b.pilar ?? null,
+  };
+  const { data, error } = await supabase
+    .from('kpi_indicadores_taticos')
+    .insert(payload)
+    .select()
+    .single();
+  if (error) {
+    if (error.code === '23505') return res.status(409).json({ error: 'id ja existe' });
+    return res.status(500).json({ error: error.message });
+  }
+  res.status(201).json(data);
+});
+
+// ----------------------------------------------------------------------------
+// DELETE /taticos/:id - soft delete (ativo=false). Preserva historico.
+// Use ?hard=true para remover de fato (requer admin e nenhum registro vinculado).
+// ----------------------------------------------------------------------------
+router.delete('/taticos/:id', authorize('diretor', 'admin'), async (req, res) => {
+  const { id } = req.params;
+  const hard = req.query.hard === 'true';
+  if (hard) {
+    if (req.user.role !== 'admin') {
+      return res.status(403).json({ error: 'hard delete requer admin' });
+    }
+    const { count } = await supabase
+      .from('kpi_registros').select('id', { count: 'exact', head: true })
+      .eq('indicador_id', id);
+    if ((count || 0) > 0) {
+      return res.status(409).json({ error: `KPI tem ${count} registros. Use soft delete (sem ?hard=true).` });
+    }
+    const { error } = await supabase.from('kpi_indicadores_taticos').delete().eq('id', id);
+    if (error) return res.status(500).json({ error: error.message });
+    return res.status(204).end();
+  }
+  const { data, error } = await supabase
+    .from('kpi_indicadores_taticos')
+    .update({ ativo: false, updated_at: new Date().toISOString() })
     .eq('id', id)
     .select()
     .single();

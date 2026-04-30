@@ -6,7 +6,8 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { processos as api, users as usersApi } from '../api';
-import { INDICADORES, getAreaNome, getIndicadorById } from '../data/indicadores';
+import { getAreaNome } from '../data/indicadores';
+import { useKpis } from '../hooks/useKpis';
 
 const C = {
   bg: 'var(--cbrio-bg)', card: 'var(--cbrio-card)', text: 'var(--cbrio-text)',
@@ -64,19 +65,28 @@ function getPeriodKey(date, periodicidade) {
 
 // Esta semana (weekStart = segunda-feira) e a "janela de exibicao" do KPI?
 // Semanal -> sempre. Demais -> apenas semana que contem dia 1..7 do mes
-// inicial do periodo.
-function isShowingWeekFor(weekStart, periodicidade) {
+// inicial do periodo (com offset configuravel via periodo_offset_meses).
+//
+// offsetMeses:
+//   trimestral 0 -> jan/abr/jul/out (padrao)
+//   trimestral 1 -> fev/mai/ago/nov
+//   trimestral 2 -> mar/jun/set/dez
+//   semestral 0  -> jan/jul (padrao)
+//   semestral 1  -> fev/ago, ..., 5 -> jun/dez
+//   anual N      -> mes N (0=jan, 11=dez)
+function isShowingWeekFor(weekStart, periodicidade, offsetMeses = 0) {
   const p = String(periodicidade || '').toLowerCase();
   if (p === 'semanal') return true;
+  const off = Number.isFinite(Number(offsetMeses)) ? Number(offsetMeses) : 0;
   for (let i = 0; i < 7; i++) {
     const d = new Date(weekStart); d.setDate(d.getDate() + i);
     const day = d.getDate();
     if (day > 7) continue;
     const month = d.getMonth();
     if (p === 'mensal') return true;
-    if (p === 'trimestral' && month % 3 === 0) return true;
-    if (p === 'semestral' && (month === 0 || month === 6)) return true;
-    if (p === 'anual' && month === 0) return true;
+    if (p === 'trimestral' && ((month - off + 12) % 3 === 0)) return true;
+    if (p === 'semestral' && ((month - off + 12) % 6 === 0)) return true;
+    if (p === 'anual' && month === (off % 12)) return true;
   }
   return false;
 }
@@ -98,6 +108,7 @@ function PrioBadge({ p }) {
 export default function ProcessosTarefas({ area }) {
   const { isAdmin, isDiretor } = useAuth();
   const canWrite = isAdmin || isDiretor;
+  const { byId: kpiById, isLoading: kpisLoading } = useKpis();
 
   const [weekStart, setWeekStart] = useState(() => getMonday(new Date()));
   const [processos, setProcessos] = useState([]);
@@ -146,13 +157,13 @@ export default function ProcessosTarefas({ area }) {
   const fillByPeriod = useMemo(() => {
     const m = {};
     registros.forEach(r => {
-      const kpi = getIndicadorById(r.indicador_id);
+      const kpi = kpiById[r.indicador_id];
       if (!kpi) return;
       const periodKey = getPeriodKey(r.data_preenchimento, kpi.periodicidade);
       m[`${r.indicador_id}|${periodKey}`] = r;
     });
     return m;
-  }, [registros]);
+  }, [registros, kpiById]);
 
   const dayKpis = useMemo(() => weekDates.map((date, gi) => {
     const bankDay = gi === 6 ? 0 : gi + 1;
@@ -160,10 +171,10 @@ export default function ProcessosTarefas({ area }) {
     const items = [];
     processos.forEach(p => (p.indicador_ids || []).forEach(indId => {
       if (agendaMap[indId] !== bankDay) return;
-      const kpi = INDICADORES.find(k => k.id === indId);
+      const kpi = kpiById[indId];
       if (!kpi) return;
-      // So mostra se a janela do periodo cobre esta semana
-      if (!isShowingWeekFor(weekStart, kpi.periodicidade)) return;
+      // So mostra se a janela do periodo cobre esta semana (com offset)
+      if (!isShowingWeekFor(weekStart, kpi.periodicidade, kpi.periodo_offset_meses)) return;
       const periodKey = getPeriodKey(date, kpi.periodicidade);
       const reg = fillByPeriod[`${indId}|${periodKey}`];
       items.push({
@@ -178,7 +189,7 @@ export default function ProcessosTarefas({ area }) {
       });
     }));
     return items;
-  }), [weekDates, weekStart, processos, agendaMap, fillByPeriod]);
+  }), [weekDates, weekStart, processos, agendaMap, fillByPeriod, kpiById]);
 
   const dayTarefas = useMemo(() => weekDates.map(date => tarefas.filter(t => t.data === fmtDate(date))), [weekDates, tarefas]);
 
@@ -233,7 +244,7 @@ export default function ProcessosTarefas({ area }) {
     setSaving(false);
   };
 
-  if (initialLoading) return <div style={{ padding: 40, textAlign: 'center', color: C.t3 }}>Carregando...</div>;
+  if (initialLoading || kpisLoading) return <div style={{ padding: 40, textAlign: 'center', color: C.t3 }}>Carregando...</div>;
 
   return (
     <div>

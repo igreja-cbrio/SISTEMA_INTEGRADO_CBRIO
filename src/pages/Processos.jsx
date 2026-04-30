@@ -2,6 +2,8 @@ import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { processos as api, users as usersApi } from '../api';
 import { CATEGORIAS, AREAS, CATEGORIA_AREAS, INDICADORES, getIndicadoresByArea, getAreaNome } from '../data/indicadores';
+import { useKpis } from '../hooks/useKpis';
+import KpiEditorModal from '../components/KpiEditorModal';
 
 const C = {
   bg: 'var(--cbrio-bg)', card: 'var(--cbrio-card)', text: 'var(--cbrio-text)',
@@ -533,10 +535,12 @@ function TabKPIs({ list, onDetail }) {
 
 // ════ TAB AGENDA ════
 function TabAgenda({ agenda, canWrite, onSave }) {
+  const { kpis: dbKpis, byArea, isLoading: kpisLoading, remove } = useKpis();
   const [local, setLocal] = useState({});
   const [dirty, setDirty] = useState(false);
   const [saving, setSaving] = useState(false);
   const [filterArea, setFilterArea] = useState('');
+  const [editor, setEditor] = useState(null); // null | { mode:'create' } | { mode:'edit', kpi }
 
   useEffect(() => {
     const m = {};
@@ -558,75 +562,112 @@ function TabAgenda({ agenda, canWrite, onSave }) {
   const handleSave = async () => {
     setSaving(true);
     const items = Object.entries(local).map(([indicador_id, dia_semana]) => {
-      const ind = INDICADORES.find(k => k.id === indicador_id);
-      return { indicador_id, dia_semana, area: ind?.area || '' };
+      const k = dbKpis.find(x => x.id === indicador_id);
+      return { indicador_id, dia_semana, area: k?.area || '' };
     });
     await onSave(items);
     setDirty(false);
     setSaving(false);
   };
 
+  const handleDelete = async (kpi) => {
+    if (!window.confirm(`Desativar "${kpi.id} \u2014 ${kpi.indicador}"? (soft delete: dados ficam no historico)`)) return;
+    try { await remove(kpi.id, false); } catch (e) { console.error(e); alert('Erro ao desativar KPI'); }
+  };
+
   const areasToShow = filterArea ? AREAS.filter(a => a.id === filterArea) : AREAS;
+
+  if (kpisLoading) return <div style={{ padding: 40, textAlign: 'center', color: C.t3 }}>Carregando KPIs...</div>;
 
   return (
     <div>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
         <div>
-          <p style={{ fontSize: 14, color: C.t3, margin: 0 }}>Configure em qual dia da semana cada indicador deve ser preenchido. Todos os colaboradores veem esta agenda.</p>
+          <p style={{ fontSize: 14, color: C.t3, margin: 0 }}>{'Configure em qual dia da semana cada indicador deve ser preenchido. KPIs aparecem na aba de tarefas conforme a periodicidade (semanal/mensal/...).'}</p>
         </div>
         <div style={{ display: 'flex', gap: 8 }}>
           <select value={filterArea} onChange={e => setFilterArea(e.target.value)} style={{ ...inp, width: 'auto' }}>
             <option value="">{`Todas \u00e1reas`}</option>
             {AREAS.map(a => <option key={a.id} value={a.id}>{a.nome}</option>)}
           </select>
+          {canWrite && <Btn variant="ghost" onClick={() => setEditor({ mode: 'create' })}>+ Novo KPI</Btn>}
           {canWrite && dirty && <Btn onClick={handleSave} disabled={saving}>{saving ? 'Salvando...' : 'Salvar agenda'}</Btn>}
         </div>
       </div>
 
       {areasToShow.map(area => {
-        const kpis = getIndicadoresByArea(area.id);
+        const kpis = byArea[area.id] || [];
         if (kpis.length === 0) return null;
         return (
           <div key={area.id} style={{ marginBottom: 24 }}>
             <h3 style={{ fontSize: 15, fontWeight: 600, color: C.text, marginBottom: 8 }}>{area.nome}</h3>
             <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 12, overflow: 'auto' }}>
-              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13, minWidth: 700 }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13, minWidth: 800 }}>
                 <thead><tr style={{ background: C.tableHeader }}>
-                  <th style={{ padding: '8px 12px', textAlign: 'left', color: C.t2, fontWeight: 600, fontSize: 12, minWidth: 200 }}>Indicador</th>
-                  {DIAS.map((d, i) => <th key={i} style={{ padding: '8px 10px', textAlign: 'center', color: C.t2, fontWeight: 600, fontSize: 11, minWidth: 60 }}>{d}</th>)}
+                  <th style={{ padding: '8px 12px', textAlign: 'left', color: C.t2, fontWeight: 600, fontSize: 12, minWidth: 220 }}>Indicador</th>
+                  <th style={{ padding: '8px 8px', textAlign: 'center', color: C.t2, fontWeight: 600, fontSize: 11, minWidth: 90 }}>Periodicidade</th>
+                  {DIAS.map((d, i) => <th key={i} style={{ padding: '8px 6px', textAlign: 'center', color: C.t2, fontWeight: 600, fontSize: 11, minWidth: 50 }}>{d.slice(0, 3)}</th>)}
+                  {canWrite && <th style={{ padding: '8px 6px', textAlign: 'center', color: C.t2, fontWeight: 600, fontSize: 11, minWidth: 80 }}>A\u00e7\u00f5es</th>}
                 </tr></thead>
                 <tbody>
-                  {kpis.map(kpi => (
-                    <tr key={kpi.id} style={{ borderTop: `1px solid ${C.border}` }}>
-                      <td style={{ padding: '8px 12px' }}>
-                        <span style={{ fontWeight: 600, color: C.text, fontSize: 12 }}>{kpi.id}</span>
-                        <span style={{ color: C.t2, marginLeft: 6, fontSize: 12 }}>{kpi.nome}</span>
-                      </td>
-                      {DIAS.map((_, di) => {
-                        const selected = local[kpi.id] === di;
-                        return (
-                          <td key={di} style={{ padding: '4px', textAlign: 'center' }}>
-                            <button
-                              onClick={() => canWrite && setDay(kpi.id, area.id, di)}
-                              disabled={!canWrite}
-                              style={{
-                                width: 32, height: 32, borderRadius: 8, border: 'none', cursor: canWrite ? 'pointer' : 'default',
-                                background: selected ? C.primary : 'transparent',
-                                color: selected ? '#fff' : C.t3, fontSize: 16, fontWeight: 700,
-                              }}>
-                              {selected ? '\u2713' : '\u00b7'}
-                            </button>
+                  {kpis.map(kpi => {
+                    const offsetMonths = kpi.periodo_offset_meses ?? 0;
+                    const periodLabel = kpi.periodicidade + (offsetMonths > 0 ? ` +${offsetMonths}m` : '');
+                    return (
+                      <tr key={kpi.id} style={{ borderTop: `1px solid ${C.border}` }}>
+                        <td style={{ padding: '8px 12px' }}>
+                          <span style={{ fontWeight: 600, color: C.text, fontSize: 12 }}>{kpi.id}</span>
+                          <span style={{ color: C.t2, marginLeft: 6, fontSize: 12 }}>{kpi.indicador}</span>
+                          {kpi.valores && kpi.valores.length > 0 && (
+                            <div style={{ display: 'flex', gap: 4, marginTop: 3, flexWrap: 'wrap' }}>
+                              {kpi.valores.map(v => <span key={v} style={{ fontSize: 9, padding: '1px 6px', borderRadius: 8, background: C.primaryBg, color: C.primary, fontWeight: 600 }}>{v}</span>)}
+                            </div>
+                          )}
+                        </td>
+                        <td style={{ padding: '8px 8px', textAlign: 'center', fontSize: 11, color: C.t3 }}>{periodLabel}</td>
+                        {DIAS.map((_, di) => {
+                          const selected = local[kpi.id] === di;
+                          return (
+                            <td key={di} style={{ padding: '4px', textAlign: 'center' }}>
+                              <button
+                                onClick={() => canWrite && setDay(kpi.id, area.id, di)}
+                                disabled={!canWrite}
+                                style={{
+                                  width: 30, height: 30, borderRadius: 8, border: 'none', cursor: canWrite ? 'pointer' : 'default',
+                                  background: selected ? C.primary : 'transparent',
+                                  color: selected ? '#fff' : C.t3, fontSize: 14, fontWeight: 700,
+                                }}>
+                                {selected ? '\u2713' : '\u00b7'}
+                              </button>
+                            </td>
+                          );
+                        })}
+                        {canWrite && (
+                          <td style={{ padding: '4px 6px', textAlign: 'center' }}>
+                            <button onClick={() => setEditor({ mode: 'edit', kpi })} title="Editar"
+                              style={{ background: 'none', border: 'none', cursor: 'pointer', color: C.t2, fontSize: 13, padding: 4 }}>\u270e</button>
+                            <button onClick={() => handleDelete(kpi)} title="Desativar"
+                              style={{ background: 'none', border: 'none', cursor: 'pointer', color: C.red, fontSize: 14, padding: 4 }}>\u00d7</button>
                           </td>
-                        );
-                      })}
-                    </tr>
-                  ))}
+                        )}
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
           </div>
         );
       })}
+
+      {editor && (
+        <KpiEditorModal
+          open
+          kpi={editor.mode === 'edit' ? editor.kpi : null}
+          onClose={() => setEditor(null)}
+          onSaved={() => setEditor(null)}
+        />
+      )}
     </div>
   );
 }
