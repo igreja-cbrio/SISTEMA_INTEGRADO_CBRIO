@@ -1,30 +1,21 @@
 -- ============================================================================
--- mem_trilha_valores.etapa: corrige CHECK constraint
+-- mem_trilha_valores.etapa: dropa CHECK constraint
 --
--- Outro schema drift: a migration original (20260413145129) criou a tabela
--- com etapa como TEXT sem CHECK. Em algum momento foi adicionado um CHECK
--- direto no Supabase Studio que nao inclui os valores usados pelo codigo
--- (jornada.js usa 'conversao', 'primeiro_contato', 'batismo').
+-- A migration original (20260413145129) criou etapa como TEXT sem CHECK.
+-- O CHECK foi adicionado direto no Supabase Studio em algum momento
+-- (schema drift) com uma lista que nao bate nem com (a) os valores ja
+-- existentes na tabela nem com (b) os valores que o codigo backend usa
+-- ('conversao', 'primeiro_contato', 'batismo').
 --
--- Solucao: substituir o CHECK pelo que o codigo realmente usa.
+-- Solucao: dropar o constraint. A camada de aplicacao (jornada.js,
+-- triggers) controla os valores aceitos. Sem enforcement no banco
+-- evita-se conflito com dados historicos.
 -- ============================================================================
 
--- Drop constraint antigo (nome padrao do Postgres)
 ALTER TABLE mem_trilha_valores
   DROP CONSTRAINT IF EXISTS mem_trilha_valores_etapa_check;
 
--- Recria com os valores aceitos pelo codigo (backend/routes/jornada.js +
--- triggers de visitante e batismo).
-ALTER TABLE mem_trilha_valores
-  ADD CONSTRAINT mem_trilha_valores_etapa_check
-  CHECK (etapa IN (
-    'conversao',         -- visitante fez decisao
-    'primeiro_contato',  -- pos-conversao, acolhimento
-    'batismo',           -- batismo realizado
-    'membresia',         -- oficializou membresia
-    'discipulado'        -- entrou em jornada de discipulado
-  ));
-
 -- Validacao:
--- SELECT conname, pg_get_constraintdef(oid) FROM pg_constraint
+-- SELECT conname FROM pg_constraint
 -- WHERE conrelid = 'mem_trilha_valores'::regclass AND contype='c';
+-- Esperado: nao retorna mem_trilha_valores_etapa_check
