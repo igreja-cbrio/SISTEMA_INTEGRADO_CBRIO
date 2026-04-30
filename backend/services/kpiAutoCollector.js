@@ -69,25 +69,67 @@ function periodoRange(periodo, periodicidade) {
   return { inicio: `${y}-01-01`, fim: `${y + 1}-01-01` };
 }
 
-function isAmiBridgeCulto(c) {
+function isAmiCulto(c) {
   const n = (c.nome || '').toLowerCase();
-  return n.includes('ami') || n.includes('bridge') || n.includes('sabado') || n.includes('sábado');
+  // AMI sozinho ou com sabado (publico AMI no culto de sabado).
+  // Bridge fica EXCLUIDO.
+  return (n.includes('ami') || n.includes('sabado') || n.includes('sábado')) && !n.includes('bridge');
+}
+
+function isBridgeCulto(c) {
+  const n = (c.nome || '').toLowerCase();
+  return n.includes('bridge');
+}
+
+// Mantido por compat retroativa: cultos AMI ou Bridge (consolidacao antiga).
+function isAmiBridgeCulto(c) {
+  return isAmiCulto(c) || isBridgeCulto(c);
 }
 
 // ── Coletores por fonte ─────────────────────────────────────────────────────
 
 const COLLECTORS = {
-  // ── Cultos ──
+  // ── Cultos: AMI (separado de Bridge) ──
+  'cultos.ami_freq': async ({ inicio, fim }) => {
+    const { data } = await supabase.from('vw_culto_stats').select('nome, presencial_adulto').gte('data', inicio).lt('data', fim);
+    const ami = (data || []).filter(isAmiCulto);
+    const total = ami.reduce((s, c) => s + (c.presencial_adulto || 0), 0);
+    return { valor: total, observacao: `${ami.length} culto(s) AMI` };
+  },
+
+  'cultos.ami_conv': async ({ inicio, fim }) => {
+    const { data } = await supabase.from('vw_culto_stats').select('nome, decisoes_presenciais, decisoes_online').gte('data', inicio).lt('data', fim);
+    const ami = (data || []).filter(isAmiCulto);
+    const total = ami.reduce((s, c) => s + (c.decisoes_presenciais || 0) + (c.decisoes_online || 0), 0);
+    return { valor: total, observacao: `${ami.length} culto(s) AMI` };
+  },
+
+  // ── Cultos: Bridge (separado de AMI) ──
+  'cultos.bridge_freq': async ({ inicio, fim }) => {
+    const { data } = await supabase.from('vw_culto_stats').select('nome, presencial_adulto').gte('data', inicio).lt('data', fim);
+    const bridge = (data || []).filter(isBridgeCulto);
+    const total = bridge.reduce((s, c) => s + (c.presencial_adulto || 0), 0);
+    return { valor: total, observacao: `${bridge.length} culto(s) Bridge` };
+  },
+
+  'cultos.bridge_conv': async ({ inicio, fim }) => {
+    const { data } = await supabase.from('vw_culto_stats').select('nome, decisoes_presenciais, decisoes_online').gte('data', inicio).lt('data', fim);
+    const bridge = (data || []).filter(isBridgeCulto);
+    const total = bridge.reduce((s, c) => s + (c.decisoes_presenciais || 0) + (c.decisoes_online || 0), 0);
+    return { valor: total, observacao: `${bridge.length} culto(s) Bridge` };
+  },
+
+  // ── Cultos: AMI+Bridge consolidado (DEPRECATED — manter ate cleanup) ──
   'cultos.amibridge_freq': async ({ inicio, fim }) => {
     const { data } = await supabase.from('vw_culto_stats').select('nome, presencial_adulto').gte('data', inicio).lt('data', fim);
     const total = (data || []).filter(isAmiBridgeCulto).reduce((s, c) => s + (c.presencial_adulto || 0), 0);
-    return { valor: total, observacao: `${(data || []).filter(isAmiBridgeCulto).length} culto(s) AMI/Bridge` };
+    return { valor: total, observacao: `${(data || []).filter(isAmiBridgeCulto).length} culto(s) AMI/Bridge (DEPRECATED)` };
   },
 
   'cultos.amibridge_conv': async ({ inicio, fim }) => {
     const { data } = await supabase.from('vw_culto_stats').select('nome, decisoes_presenciais, decisoes_online').gte('data', inicio).lt('data', fim);
     const total = (data || []).filter(isAmiBridgeCulto).reduce((s, c) => s + (c.decisoes_presenciais || 0) + (c.decisoes_online || 0), 0);
-    return { valor: total };
+    return { valor: total, observacao: 'DEPRECATED: usar cultos.ami_conv ou cultos.bridge_conv' };
   },
 
   'cultos.kids_freq': async ({ inicio, fim }) => {
@@ -161,7 +203,7 @@ const COLLECTORS = {
 
     const ids = membros.map(m => m.id);
     const [trilha, grupos, j180, vols, contribs] = await Promise.all([
-      supabase.from('mem_trilha_valores').select('membro_id').in('membro_id', ids).in('etapa', ['conversao', 'primeiro_contato']).eq('concluida', true),
+      supabase.from('mem_trilha_valores').select('membro_id').in('membro_id', ids).in('etapa', ['conversao', 'primeiro_contato', 'batismo']).eq('concluida', true),
       supabase.from('mem_grupo_membros').select('membro_id').in('membro_id', ids).is('saiu_em', null),
       supabase.from('cui_jornada180').select('membro_id').in('membro_id', ids).gte('data_encontro', d90),
       supabase.from('mem_voluntarios').select('membro_id').in('membro_id', ids).is('ate', null),
@@ -447,6 +489,67 @@ const COLLECTORS = {
     const concluidos = (indicacoes || []).filter(i => i.status === 'concluido').length;
     const pct = Math.round((concluidos / total) * 100);
     return { valor: pct, observacao: `${concluidos} de ${total} convertidos em doadores` };
+  },
+
+  // ── Devocionais (Gap 3) ──
+  // KID-04: famílias fazendo devocionais — conta familias distintas com
+  // ao menos 1 devocional do tipo 'familiar' no periodo.
+  'devocionais.familias': async ({ inicio, fim }) => {
+    const { data } = await supabase.from('mem_devocionais')
+      .select('membro_id, mem_membros(familia_id)')
+      .eq('tipo', 'familiar')
+      .gte('data_devocional', inicio)
+      .lt('data_devocional', fim);
+    const familias = new Set();
+    (data || []).forEach(d => {
+      const fid = d.mem_membros?.familia_id;
+      if (fid) familias.add(fid);
+    });
+    return { valor: familias.size, observacao: `${familias.size} familias com devocionais no periodo` };
+  },
+
+  // ── CBA — fluxo batismo ──
+  // CBA-01: % batismos realizados / decisoes no periodo
+  'cba.batismos_conversoes': async ({ inicio, fim }) => {
+    const { count: decisoes } = await supabase.from('int_visitantes')
+      .select('id', { count: 'exact', head: true })
+      .eq('fez_decisao', true)
+      .gte('data_visita', inicio).lt('data_visita', fim);
+    if (!decisoes) return { valor: 0, observacao: 'Sem decisoes no periodo' };
+    const { count: batismos } = await supabase.from('batismo_inscricoes')
+      .select('id', { count: 'exact', head: true })
+      .eq('status', 'realizado')
+      .gte('data_batismo', inicio).lt('data_batismo', fim);
+    const pct = Math.round(((batismos || 0) / decisoes) * 100);
+    return { valor: pct, observacao: `${batismos || 0} batismos / ${decisoes} decisoes` };
+  },
+
+  // CBA-04: % visitantes com primeiro contato em <=5 dias da visita
+  'cba.contato_5dias': async ({ inicio, fim }) => {
+    const { data: visitantes } = await supabase.from('int_visitantes')
+      .select('id, data_visita')
+      .eq('fez_decisao', true)
+      .gte('data_visita', inicio).lt('data_visita', fim);
+    const total = (visitantes || []).length;
+    if (!total) return { valor: 0, observacao: 'Sem visitantes com decisao no periodo' };
+    const ids = visitantes.map(v => v.id);
+    const { data: contatos } = await supabase.from('int_acompanhamentos')
+      .select('visitante_id, data_contato')
+      .in('visitante_id', ids)
+      .order('data_contato', { ascending: true });
+    const primeiroContato = {};
+    (contatos || []).forEach(c => {
+      if (!primeiroContato[c.visitante_id]) primeiroContato[c.visitante_id] = c.data_contato;
+    });
+    let dentro5 = 0;
+    visitantes.forEach(v => {
+      const c = primeiroContato[v.id];
+      if (!c) return;
+      const dias = (new Date(c) - new Date(v.data_visita)) / 86400000;
+      if (dias <= 5) dentro5++;
+    });
+    const pct = Math.round((dentro5 / total) * 100);
+    return { valor: pct, observacao: `${dentro5} de ${total} visitantes contactados em <=5 dias` };
   },
 };
 

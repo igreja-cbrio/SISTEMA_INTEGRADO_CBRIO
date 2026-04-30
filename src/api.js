@@ -1065,3 +1065,12 @@ export const jornada = {
   membros: (p) => get('/jornada/membros' + (p ? '?' + new URLSearchParams(p) : '')),
   membro: (id) => get(`/jornada/membro/${id}`),
 };
+
+export const devocionais = {
+  list: (p) => get('/devocionais' + (p ? '?' + new URLSearchParams(p) : '')),
+  byMembro: (id) => get(`/devocionais/membro/${id}`),
+  stats: (p) => get('/devocionais/stats' + (p ? '?' + new URLSearchParams(p) : '')),
+  create: (body) => post('/devocionais', body),
+  update: (id, body) => put(`/devocionais/${id}`, body),
+  remove: (id) => del(`/devocionais/${id}`),
+};
