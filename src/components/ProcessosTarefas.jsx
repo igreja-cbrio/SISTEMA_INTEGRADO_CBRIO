@@ -40,8 +40,19 @@ const RECORRENCIAS = [
 
 function getMonday(d) { const dt = new Date(d); const day = dt.getDay(); dt.setDate(dt.getDate() - (day === 0 ? 6 : day - 1)); dt.setHours(0,0,0,0); return dt; }
 function addDays(d, n) { const r = new Date(d); r.setDate(r.getDate() + n); return r; }
-function fmtDate(d) { return d.toISOString().slice(0, 10); }
-function fmtShort(d) { return `${String(d.getDate()).padStart(2,'0')}/${String(d.getMonth()+1).padStart(2,'0')}`; }
+// fmtDate: usa data LOCAL (nao UTC) pra evitar off-by-one em fusos negativos.
+// `d.toISOString().slice(0,10)` daria a data UTC, que em UTC-3 a noite vira amanha.
+function fmtDate(d) {
+  if (!d || !(d instanceof Date) || isNaN(d.getTime())) return '';
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+function fmtShort(d) {
+  if (!d || !(d instanceof Date) || isNaN(d.getTime())) return '--/--';
+  return `${String(d.getDate()).padStart(2,'0')}/${String(d.getMonth()+1).padStart(2,'0')}`;
+}
 
 // Periodicidade -> chave de periodo (para matchar registros do mesmo periodo)
 function getPeriodKey(date, periodicidade) {
@@ -157,9 +168,10 @@ export default function ProcessosTarefas({ area }) {
   const fillByPeriod = useMemo(() => {
     const m = {};
     registros.forEach(r => {
+      if (!r || !r.indicador_id || !r.data_preenchimento) return;
       const kpi = kpiById[r.indicador_id];
-      if (!kpi) return;
-      const periodKey = getPeriodKey(r.data_preenchimento, kpi.periodicidade);
+      const periodicidade = kpi?.periodicidade || 'mensal'; // fallback seguro
+      const periodKey = getPeriodKey(r.data_preenchimento, periodicidade);
       m[`${r.indicador_id}|${periodKey}`] = r;
     });
     return m;
@@ -342,7 +354,7 @@ export default function ProcessosTarefas({ area }) {
         <div style={{ position: 'fixed', inset: 0, zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', background: C.overlay }} onClick={() => setModalDay(null)}>
           <div style={{ background: C.modalBg, borderRadius: 12, width: 560, maxHeight: '90vh', overflow: 'auto', padding: 24, boxShadow: '0 20px 60px rgba(0,0,0,.3)' }} onClick={e => e.stopPropagation()}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
-              <h2 style={{ margin: 0, fontSize: 18, color: C.text }}>Nova Tarefa - {DIAS[modalDay]} {weekDates[modalDay].getDate()}/{weekDates[modalDay].getMonth()+1}</h2>
+              <h2 style={{ margin: 0, fontSize: 18, color: C.text }}>Nova Tarefa - {DIAS[modalDay]} {weekDates[modalDay] ? `${weekDates[modalDay].getDate()}/${weekDates[modalDay].getMonth()+1}` : ''}</h2>
               <button onClick={() => setModalDay(null)} style={{ background: 'none', border: 'none', fontSize: 20, cursor: 'pointer', color: C.t3 }}>&times;</button>
             </div>
 
