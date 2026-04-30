@@ -21,6 +21,11 @@ BEGIN;
 -- 1. Novas colunas
 -- ----------------------------------------------------------------------------
 
+-- Garante que descricao existe (drift: migration 20260428230000 pode nao
+-- ter rodado em prod por alguma razao). Idempotente.
+ALTER TABLE kpi_indicadores_taticos
+  ADD COLUMN IF NOT EXISTS descricao TEXT;
+
 ALTER TABLE kpi_indicadores_taticos
   ADD COLUMN IF NOT EXISTS periodo_offset_meses INT NOT NULL DEFAULT 0
     CHECK (periodo_offset_meses BETWEEN 0 AND 11);
