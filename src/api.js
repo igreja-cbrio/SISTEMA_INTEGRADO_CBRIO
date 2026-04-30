@@ -988,7 +988,9 @@ export const kpis = {
     estrategicos: (ano) => get(`/kpis/v2/estrategicos${ano ? `?ano=${ano}` : ''}`),
     taticos: (params) => get('/kpis/v2/taticos' + (params ? '?' + new URLSearchParams(params) : '')),
     taticoDetail: (id, limit) => get(`/kpis/v2/taticos/${id}${limit ? `?limit=${limit}` : ''}`),
+    taticoCreate: (data) => post('/kpis/v2/taticos', data),
     taticoUpdate: (id, data) => put(`/kpis/v2/taticos/${id}`, data),
+    taticoDelete: (id, hard = false) => del(`/kpis/v2/taticos/${id}${hard ? '?hard=true' : ''}`),
     areas: () => get('/kpis/v2/areas'),
     periodoAtual: (periodicidade) => get(`/kpis/v2/periodo-atual?periodicidade=${periodicidade}`),
     registros: {

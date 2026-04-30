@@ -1,6 +1,6 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { jornada as api } from '../../api';
-import { INDICADORES } from '../../data/indicadores';
+import { useKpis } from '../../hooks/useKpis';
 
 const C = {
   bg: 'var(--cbrio-bg)', card: 'var(--cbrio-card)', text: 'var(--cbrio-text)',
@@ -12,20 +12,18 @@ const C = {
 };
 const inp = { padding: '8px 12px', borderRadius: 8, border: '1px solid var(--cbrio-border)', background: 'var(--cbrio-input-bg)', color: 'var(--cbrio-text)', fontSize: 14, boxSizing: 'border-box', fontFamily: 'inherit' };
 
-const VALORES = [
-  { key: 'seguir', nome: 'Seguir a Jesus', desc: 'Fez decisao/conversao ou foi batizado', color: '#3b82f6', bg: '#dbeafe',
-    kpis: ['INTG-01', 'AMI-02', 'AMI-06', 'AMI-09', 'CBA-01', 'KID-02', 'KID-03', 'CUID-01'] },
-  { key: 'conectar', nome: 'Conectar-se com Pessoas', desc: 'Participa de um grupo ativo', color: '#8b5cf6', bg: '#ede9fe',
-    kpis: ['GRUP-01', 'GRUP-02', 'GRUP-03', 'GRUP-04', 'GRUP-05', 'AMI-08'] },
-  { key: 'investir', nome: 'Investir Tempo com Deus', desc: 'Participa da Jornada 180 / Discipulado', color: '#f59e0b', bg: '#fef3c7',
-    kpis: ['CUID-07', 'AMI-03'] },
-  { key: 'servir', nome: 'Servir em Comunidade', desc: 'Voluntario ativo com check-in recente', color: '#10b981', bg: '#d1fae5',
-    kpis: ['VOLT-01', 'VOLT-02', 'VOLT-04', 'VOLT-05', 'VOLT-06', 'VOLT-07', 'VOLT-08', 'INTG-04', 'INTG-05', 'KID-05', 'CUID-10', 'CUID-12', 'CUID-14'] },
-  { key: 'generosidade', nome: 'Viver Generosamente', desc: 'Contribuiu nos ultimos 90 dias', color: '#ef4444', bg: '#fee2e2',
-    kpis: ['GEN-02', 'GEN-03', 'GEN-04', 'GEN-05'] },
+// Metadados visuais dos 5 valores. Os KPIs vinculados a cada valor sao lidos
+// do banco (kpi_indicadores_taticos.valores) via useKpis().byValor.
+const VALOR_META = [
+  { key: 'seguir', nome: 'Seguir a Jesus', desc: 'Fez decisao/conversao ou foi batizado', color: '#3b82f6', bg: '#dbeafe' },
+  { key: 'conectar', nome: 'Conectar-se com Pessoas', desc: 'Participa de um grupo ativo', color: '#8b5cf6', bg: '#ede9fe' },
+  { key: 'investir', nome: 'Investir Tempo com Deus', desc: 'Participa da Jornada 180 / Discipulado', color: '#f59e0b', bg: '#fef3c7' },
+  { key: 'servir', nome: 'Servir em Comunidade', desc: 'Voluntario ativo com check-in recente', color: '#10b981', bg: '#d1fae5' },
+  { key: 'generosidade', nome: 'Viver Generosamente', desc: 'Contribuiu nos ultimos 90 dias', color: '#ef4444', bg: '#fee2e2' },
 ];
 
 export default function Jornada() {
+  const { byValor } = useKpis();
   const [tab, setTab] = useState('dashboard');
   const [dashboard, setDashboard] = useState(null);
   const [membros, setMembros] = useState([]);
@@ -93,7 +91,7 @@ export default function Jornada() {
 
       {tab === 'dashboard' && dashboard && <TabDashboard data={dashboard} onValorClick={openValorDrill} />}
       {tab === 'membros' && <TabMembros membros={membros} total={totalMembros} search={search} setSearch={setSearch} filtro={filtroValor} setFiltro={setFiltroValor} page={page} setPage={setPage} loading={loading} onDetail={openDetail} />}
-      {tab === 'valor-drill' && <ValorDrillDown valorKey={valorDrill} membros={membros} total={totalMembros} search={search} setSearch={setSearch} page={page} setPage={setPage} loading={loading} onDetail={openDetail} onBack={() => setTab('dashboard')} loadMembros={loadMembros} />}
+      {tab === 'valor-drill' && <ValorDrillDown valorKey={valorDrill} membros={membros} total={totalMembros} search={search} setSearch={setSearch} page={page} setPage={setPage} loading={loading} onDetail={openDetail} onBack={() => setTab('dashboard')} loadMembros={loadMembros} kpisDoValor={byValor[valorDrill] || []} />}
       {tab === 'detalhe' && <TabDetalhe detail={detail} loading={detailLoading} onBack={() => { setTab(valorDrill ? 'valor-drill' : 'membros'); setDetail(null); }} />}
     </div>
   );
@@ -110,7 +108,7 @@ function TabDashboard({ data, onValorClick }) {
       </div>
 
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(250px, 1fr))', gap: 16 }}>
-        {VALORES.map(v => {
+        {VALOR_META.map(v => {
           const d = valores[v.key] || { total: 0, pct: 0 };
           return (
             <div key={v.key} onClick={() => onValorClick(v.key)}
@@ -139,12 +137,12 @@ function TabDashboard({ data, onValorClick }) {
 }
 
 // ═══ VALOR DRILL-DOWN ═══
-function ValorDrillDown({ valorKey, membros, total, search, setSearch, page, setPage, loading, onDetail, onBack, loadMembros }) {
-  const valor = VALORES.find(v => v.key === valorKey);
+function ValorDrillDown({ valorKey, membros, total, search, setSearch, page, setPage, loading, onDetail, onBack, loadMembros, kpisDoValor }) {
+  const valor = VALOR_META.find(v => v.key === valorKey);
   if (!valor) return null;
 
-  // KPIs vinculados a esse valor
-  const kpisDoValor = valor.kpis.map(id => INDICADORES.find(k => k.id === id)).filter(Boolean);
+  // KPIs vinculados a esse valor (vindos do banco via prop kpisDoValor)
+  // Recebido por prop pra evitar duplo fetch.
 
   // Membros que TEM esse valor ativo
   const comValor = membros.filter(m => m.valores?.[valorKey]);
@@ -173,15 +171,15 @@ function ValorDrillDown({ valorKey, membros, total, search, setSearch, page, set
       {/* KPIs vinculados */}
       <h3 style={{ fontSize: 16, fontWeight: 600, color: C.text, marginBottom: 12 }}>KPIs que medem este valor</h3>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: 8, marginBottom: 24 }}>
-        {kpisDoValor.map(kpi => (
+        {(kpisDoValor || []).map(kpi => (
           <div key={kpi.id} style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 8, padding: 12, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
             <div>
               <span style={{ fontWeight: 600, color: valor.color, fontSize: 13 }}>{kpi.id}</span>
-              <span style={{ color: C.t2, marginLeft: 8, fontSize: 13 }}>{kpi.nome}</span>
+              <span style={{ color: C.t2, marginLeft: 8, fontSize: 13 }}>{kpi.indicador || kpi.nome}</span>
               <div style={{ fontSize: 11, color: C.t3, marginTop: 2 }}>{kpi.area} | {kpi.periodicidade}</div>
             </div>
             <div style={{ textAlign: 'right' }}>
-              <span style={{ fontSize: 11, padding: '2px 8px', borderRadius: 6, background: C.bg, color: C.t3 }}>Meta: {kpi.meta_2026}</span>
+              <span style={{ fontSize: 11, padding: '2px 8px', borderRadius: 6, background: C.bg, color: C.t3 }}>Meta: {kpi.meta_descricao || kpi.meta_2026 || '-'}</span>
             </div>
           </div>
         ))}
@@ -244,7 +242,7 @@ function TabMembros({ membros, total, search, setSearch, filtro, setFiltro, page
         <input value={search} onChange={e => { setSearch(e.target.value); setPage(1); }} placeholder="Buscar por nome..." style={{ ...inp, width: 250 }} />
         <select value={filtro} onChange={e => { setFiltro(e.target.value); setPage(1); }} style={{ ...inp, width: 'auto' }}>
           <option value="">Todos</option>
-          {VALORES.map(v => <option key={v.key} value={v.key}>{'Sem: ' + v.nome}</option>)}
+          {VALOR_META.map(v => <option key={v.key} value={v.key}>{'Sem: ' + v.nome}</option>)}
         </select>
         <span style={{ fontSize: 13, color: C.t3 }}>{total} membros</span>
       </div>
@@ -257,7 +255,7 @@ function TabMembros({ membros, total, search, setSearch, filtro, setFiltro, page
             <thead>
               <tr style={{ background: C.tableHeader }}>
                 <th style={{ padding: '10px 12px', textAlign: 'left', color: C.t2, fontWeight: 600, fontSize: 12 }}>Membro</th>
-                {VALORES.map(v => <th key={v.key} style={{ padding: '10px 8px', textAlign: 'center', color: v.color, fontWeight: 600, fontSize: 11, minWidth: 40 }} title={v.nome}>{v.nome.split(' ')[0]}</th>)}
+                {VALOR_META.map(v => <th key={v.key} style={{ padding: '10px 8px', textAlign: 'center', color: v.color, fontWeight: 600, fontSize: 11, minWidth: 40 }} title={v.nome}>{v.nome.split(' ')[0]}</th>)}
                 <th style={{ padding: '10px 8px', textAlign: 'center', color: C.t2, fontWeight: 600, fontSize: 12 }}>Total</th>
               </tr>
             </thead>
@@ -269,7 +267,7 @@ function TabMembros({ membros, total, search, setSearch, filtro, setFiltro, page
                     <div style={{ fontWeight: 600, color: C.text }}>{m.nome}</div>
                     <div style={{ fontSize: 11, color: C.t3 }}>{m.status}</div>
                   </td>
-                  {VALORES.map(v => (
+                  {VALOR_META.map(v => (
                     <td key={v.key} style={{ textAlign: 'center', padding: '10px 8px' }}>
                       <span style={{ display: 'inline-block', width: 24, height: 24, borderRadius: 6, lineHeight: '24px', fontSize: 14, background: m.valores?.[v.key] ? v.bg : C.bg, color: m.valores?.[v.key] ? v.color : C.t3 }}>
                         {m.valores?.[v.key] ? '\u2713' : '-'}
@@ -330,7 +328,7 @@ function TabDetalhe({ detail, loading, onBack }) {
 
       {/* 5 Valores */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(250px, 1fr))', gap: 12, marginBottom: 20 }}>
-        {VALORES.map(v => {
+        {VALOR_META.map(v => {
           const data = valores[v.key];
           const ativo = data?.ativo;
           return (
