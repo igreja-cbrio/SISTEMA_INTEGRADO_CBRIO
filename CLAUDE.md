@@ -561,8 +561,13 @@ Seção do menu renomeada de "Projetos e Eventos" para "Acompanhamento".
   authenticate + authorize('admin','diretor')
 - **Frontend**: `src/pages/Processos.jsx` — 4 tabs (Home, Lista,
   OKR, KPIs)
-- **KPIs**: 69 indicadores hardcoded em `src/data/indicadores.js`
-  (dados da planilha "Metas e Indicadores 2026")
+- **KPIs**: 60 indicadores vigentes em `src/data/indicadores.js`,
+  espelhando a planilha "Metas e Indicadores 2026" (OneDrive). O banco
+  (`kpi_indicadores_taticos`) foi alinhado com a planilha em
+  `20260430090000_kpis_align_planilha.sql` — mesmos IDs, mesmas metas.
+  **Planilha = fonte de verdade**: ao adicionar/remover/renomear KPI,
+  atualizar a planilha primeiro, depois `indicadores.js`, depois banco
+  via migration. Nunca divergir entre os 3.
 - **Permissão**: `canProcessos` via modulo "Processos" em
   `permissoes_modulo`
 
