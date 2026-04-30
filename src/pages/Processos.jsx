@@ -616,8 +616,11 @@ function TabAgenda({ agenda, canWrite, onSave }) {
                     return (
                       <tr key={kpi.id} style={{ borderTop: `1px solid ${C.border}` }}>
                         <td style={{ padding: '8px 12px' }}>
-                          <span style={{ fontWeight: 600, color: C.text, fontSize: 12 }}>{kpi.id}</span>
-                          <span style={{ color: C.t2, marginLeft: 6, fontSize: 12 }}>{kpi.indicador}</span>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                            <span style={{ fontWeight: 600, color: C.text, fontSize: 12 }}>{kpi.id}</span>
+                            {kpi.is_okr && <span style={{ fontSize: 9, padding: '1px 6px', borderRadius: 8, background: '#fef3c7', color: '#b45309', fontWeight: 700 }}>{'⭐ OKR'}</span>}
+                            <span style={{ color: C.t2, fontSize: 12 }}>{kpi.indicador}</span>
+                          </div>
                           {kpi.valores && kpi.valores.length > 0 && (
                             <div style={{ display: 'flex', gap: 4, marginTop: 3, flexWrap: 'wrap' }}>
                               {kpi.valores.map(v => <span key={v} style={{ fontSize: 9, padding: '1px 6px', borderRadius: 8, background: C.primaryBg, color: C.primary, fontWeight: 600 }}>{v}</span>)}

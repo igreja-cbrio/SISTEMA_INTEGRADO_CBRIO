@@ -4,7 +4,7 @@
  * Atualizado: 29/04/2026
  */
 
-export const CATEGORIAS = ['Ministerial', 'Geracional', 'Criativo', 'Operacoes'];
+export const CATEGORIAS = ['Ministerial', 'Geracional', 'Institucional', 'Criativo', 'Operacoes'];
 
 export const AREAS = [
   { id: 'AMI', nome: 'AMI', categoria: 'Geracional' },
@@ -16,11 +16,14 @@ export const AREAS = [
   { id: 'Voluntariado', nome: 'Voluntariado', categoria: 'Ministerial' },
   { id: 'NEXT', nome: 'NEXT', categoria: 'Ministerial' },
   { id: 'Generosidade', nome: 'Generosidade', categoria: 'Ministerial' },
+  { id: 'Jornada', nome: 'Jornada (cross-cutting)', categoria: 'Institucional' },
+  { id: 'Igreja', nome: 'Igreja (institucional)', categoria: 'Institucional' },
 ];
 
 export const CATEGORIA_AREAS = {
   Ministerial: ['CBA', 'Cuidados', 'Grupos', 'Integracao', 'Voluntariado', 'NEXT', 'Generosidade'],
   Geracional: ['AMI', 'CBKids'],
+  Institucional: ['Jornada', 'Igreja'],
   Criativo: [],
   Operacoes: [],
 };

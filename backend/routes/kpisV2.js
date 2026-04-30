@@ -246,6 +246,7 @@ router.put('/taticos/:id', authorize('diretor', 'admin'), async (req, res) => {
     'indicador', 'descricao', 'area', 'periodicidade', 'periodo_offset_meses',
     'meta_descricao', 'meta_valor', 'unidade', 'responsavel_area', 'apuracao',
     'sort_order', 'ativo', 'kpi_estrategico_id', 'fonte_auto', 'valores', 'pilar',
+    'is_okr',
   ];
   const update = { updated_at: new Date().toISOString() };
   for (const [k, v] of Object.entries(req.body || {})) {
@@ -254,12 +255,26 @@ router.put('/taticos/:id', authorize('diretor', 'admin'), async (req, res) => {
       update[k] = (v === '' || v == null) ? null : Number(v);
     } else if (k === 'sort_order' || k === 'periodo_offset_meses') {
       update[k] = (v === '' || v == null) ? 0 : Number(v);
-    } else if (k === 'ativo') {
+    } else if (k === 'ativo' || k === 'is_okr') {
       update[k] = !!v;
     } else if (k === 'valores') {
       update[k] = Array.isArray(v) ? v.filter(Boolean) : [];
+    } else if (k === 'area' && typeof v === 'string') {
+      update[k] = v.toLowerCase(); // normaliza pra lowercase no DB
     } else {
       update[k] = v === '' ? null : v;
+    }
+  }
+  // Se vai marcar OKR, exige valores nao-vazio (no payload OU ja existente)
+  if (update.is_okr === true) {
+    let valores = update.valores;
+    if (!Array.isArray(valores)) {
+      const { data: cur } = await supabase
+        .from('kpi_indicadores_taticos').select('valores').eq('id', id).maybeSingle();
+      valores = cur?.valores || [];
+    }
+    if (!valores || valores.length === 0) {
+      return res.status(400).json({ error: 'KPI marcado como OKR precisa ter pelo menos 1 valor da jornada vinculado' });
     }
   }
   const { data, error } = await supabase
@@ -286,11 +301,16 @@ router.post('/taticos', authorize('diretor', 'admin'), async (req, res) => {
   if (!VALID.includes(b.periodicidade)) {
     return res.status(400).json({ error: `periodicidade deve ser: ${VALID.join('|')}` });
   }
+  const valores = Array.isArray(b.valores) ? b.valores.filter(Boolean) : [];
+  const isOkr = !!b.is_okr;
+  if (isOkr && valores.length === 0) {
+    return res.status(400).json({ error: 'KPI marcado como OKR precisa ter pelo menos 1 valor da jornada vinculado' });
+  }
   const payload = {
     id: b.id,
     indicador: b.indicador,
     descricao: b.descricao ?? null,
-    area: b.area,
+    area: String(b.area).toLowerCase(),  // DB sempre em lowercase
     periodicidade: b.periodicidade,
     periodo_offset_meses: Number.isFinite(Number(b.periodo_offset_meses)) ? Number(b.periodo_offset_meses) : 0,
     meta_descricao: b.meta_descricao ?? null,
@@ -302,8 +322,9 @@ router.post('/taticos', authorize('diretor', 'admin'), async (req, res) => {
     ativo: b.ativo === false ? false : true,
     kpi_estrategico_id: b.kpi_estrategico_id ?? null,
     fonte_auto: b.fonte_auto ?? null,
-    valores: Array.isArray(b.valores) ? b.valores.filter(Boolean) : [],
+    valores,
     pilar: b.pilar ?? null,
+    is_okr: isOkr,
   };
   const { data, error } = await supabase
     .from('kpi_indicadores_taticos')
