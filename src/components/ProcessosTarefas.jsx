@@ -6,7 +6,7 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { processos as api, users as usersApi } from '../api';
-import { INDICADORES, getAreaNome } from '../data/indicadores';
+import { INDICADORES, getAreaNome, getIndicadorById } from '../data/indicadores';
 
 const C = {
   bg: 'var(--cbrio-bg)', card: 'var(--cbrio-card)', text: 'var(--cbrio-text)',
@@ -41,6 +41,54 @@ function getMonday(d) { const dt = new Date(d); const day = dt.getDay(); dt.setD
 function addDays(d, n) { const r = new Date(d); r.setDate(r.getDate() + n); return r; }
 function fmtDate(d) { return d.toISOString().slice(0, 10); }
 function fmtShort(d) { return `${String(d.getDate()).padStart(2,'0')}/${String(d.getMonth()+1).padStart(2,'0')}`; }
+
+// Periodicidade -> chave de periodo (para matchar registros do mesmo periodo)
+function getPeriodKey(date, periodicidade) {
+  const d = typeof date === 'string' ? new Date(date) : new Date(date);
+  const y = d.getFullYear();
+  const m = d.getMonth() + 1;
+  const p = String(periodicidade || '').toLowerCase();
+  if (p === 'semanal') {
+    const tmp = new Date(d); tmp.setHours(0,0,0,0);
+    tmp.setDate(tmp.getDate() + 4 - (tmp.getDay() || 7));
+    const yearStart = new Date(tmp.getFullYear(), 0, 1);
+    const week = Math.ceil(((tmp - yearStart) / 86400000 + 1) / 7);
+    return `${tmp.getFullYear()}-W${String(week).padStart(2,'0')}`;
+  }
+  if (p === 'mensal') return `${y}-${String(m).padStart(2,'0')}`;
+  if (p === 'trimestral') return `${y}-Q${Math.ceil(m/3)}`;
+  if (p === 'semestral') return `${y}-S${m <= 6 ? 1 : 2}`;
+  if (p === 'anual') return String(y);
+  return `${y}-${String(m).padStart(2,'0')}`;
+}
+
+// Esta semana (weekStart = segunda-feira) e a "janela de exibicao" do KPI?
+// Semanal -> sempre. Demais -> apenas semana que contem dia 1..7 do mes
+// inicial do periodo.
+function isShowingWeekFor(weekStart, periodicidade) {
+  const p = String(periodicidade || '').toLowerCase();
+  if (p === 'semanal') return true;
+  for (let i = 0; i < 7; i++) {
+    const d = new Date(weekStart); d.setDate(d.getDate() + i);
+    const day = d.getDate();
+    if (day > 7) continue;
+    const month = d.getMonth();
+    if (p === 'mensal') return true;
+    if (p === 'trimestral' && month % 3 === 0) return true;
+    if (p === 'semestral' && (month === 0 || month === 6)) return true;
+    if (p === 'anual' && month === 0) return true;
+  }
+  return false;
+}
+
+// Cor/label da periodicidade no badge
+const PERIOD_BADGE = {
+  semanal:    { c: '#3b82f6', bg: '#dbeafe', label: 'sem' },
+  mensal:     { c: '#10b981', bg: '#d1fae5', label: 'mês' },
+  trimestral: { c: '#f59e0b', bg: '#fef3c7', label: 'tri' },
+  semestral:  { c: '#8b5cf6', bg: '#ede9fe', label: '6m' },
+  anual:      { c: '#ef4444', bg: '#fee2e2', label: 'ano' },
+};
 
 function PrioBadge({ p }) {
   const pr = PRIORIDADES.find(x => x.value === p) || PRIORIDADES[1];
@@ -92,20 +140,45 @@ export default function ProcessosTarefas({ area }) {
   useEffect(() => { if (!initialLoading) loadWeek(); }, [loadWeek, initialLoading]);
 
   const agendaMap = useMemo(() => { const m = {}; agenda.forEach(a => { m[a.indicador_id] = a.dia_semana; }); return m; }, [agenda]);
-  const fillMap = useMemo(() => { const m = {}; registros.forEach(r => { m[`${r.indicador_id}|${r.data_preenchimento}`] = r; }); return m; }, [registros]);
+
+  // Mapa de "ja preenchido neste periodo": { indicadorId|periodKey -> registro }
+  // Periodo derivado da periodicidade do KPI a partir de data_preenchimento.
+  const fillByPeriod = useMemo(() => {
+    const m = {};
+    registros.forEach(r => {
+      const kpi = getIndicadorById(r.indicador_id);
+      if (!kpi) return;
+      const periodKey = getPeriodKey(r.data_preenchimento, kpi.periodicidade);
+      m[`${r.indicador_id}|${periodKey}`] = r;
+    });
+    return m;
+  }, [registros]);
 
   const dayKpis = useMemo(() => weekDates.map((date, gi) => {
     const bankDay = gi === 6 ? 0 : gi + 1;
     const dateStr = fmtDate(date);
     const items = [];
     processos.forEach(p => (p.indicador_ids || []).forEach(indId => {
-      if (agendaMap[indId] === bankDay) {
-        const kpi = INDICADORES.find(k => k.id === indId);
-        if (kpi) items.push({ processoId: p.id, processoNome: p.nome, indicadorId: indId, date: dateStr, filled: !!fillMap[`${indId}|${dateStr}`], valor: fillMap[`${indId}|${dateStr}`]?.valor });
-      }
+      if (agendaMap[indId] !== bankDay) return;
+      const kpi = INDICADORES.find(k => k.id === indId);
+      if (!kpi) return;
+      // So mostra se a janela do periodo cobre esta semana
+      if (!isShowingWeekFor(weekStart, kpi.periodicidade)) return;
+      const periodKey = getPeriodKey(date, kpi.periodicidade);
+      const reg = fillByPeriod[`${indId}|${periodKey}`];
+      items.push({
+        processoId: p.id,
+        processoNome: p.nome,
+        indicadorId: indId,
+        date: dateStr,
+        periodicidade: kpi.periodicidade,
+        periodKey,
+        filled: !!reg,
+        valor: reg?.valor,
+      });
     }));
     return items;
-  }), [weekDates, processos, agendaMap, fillMap]);
+  }), [weekDates, weekStart, processos, agendaMap, fillByPeriod]);
 
   const dayTarefas = useMemo(() => weekDates.map(date => tarefas.filter(t => t.data === fmtDate(date))), [weekDates, tarefas]);
 
@@ -114,11 +187,21 @@ export default function ProcessosTarefas({ area }) {
   const submitFill = async () => {
     if (!fillTarget || !fillVal) return;
     const val = Number(fillVal);
-    // Otimista: adiciona ao state imediatamente
-    setRegistros(prev => [...prev, { indicador_id: fillTarget.indicadorId, data_preenchimento: fillTarget.date, valor: val, id: 'temp-' + Date.now() }]);
+    // Otimista: adiciona ao state imediatamente. fillByPeriod recompoe automatico.
+    setRegistros(prev => [...prev, {
+      indicador_id: fillTarget.indicadorId,
+      data_preenchimento: fillTarget.date,
+      valor: val,
+      id: 'temp-' + Date.now(),
+    }]);
     setFillTarget(null); setFillVal('');
-    // Sync com server em background
-    api.registros.create({ processo_id: fillTarget.processoId, indicador_id: fillTarget.indicadorId, valor: val, data_preenchimento: fillTarget.date }).catch(e => { console.error(e); loadWeek(); });
+    api.registros.create({
+      processo_id: fillTarget.processoId,
+      indicador_id: fillTarget.indicadorId,
+      valor: val,
+      periodo: fillTarget.periodKey, // grava o periodo no banco (util pra auditoria)
+      data_preenchimento: fillTarget.date,
+    }).catch(e => { console.error(e); loadWeek(); });
   };
 
   const toggleTarefa = async (id, done) => {
@@ -189,12 +272,19 @@ export default function ProcessosTarefas({ area }) {
                 {/* KPIs */}
                 {kpis.map((k, ki) => {
                   const isFilling = fillTarget?.indicadorId === k.indicadorId && fillTarget?.date === k.date;
+                  const pBadge = PERIOD_BADGE[String(k.periodicidade || '').toLowerCase()] || PERIOD_BADGE.semanal;
                   return (
                     <div key={ki} style={{ padding: '5px 7px', borderRadius: 6, cursor: k.filled || !canWrite ? 'default' : 'pointer', background: k.filled ? C.greenBg : C.blueBg, border: `1px solid ${k.filled ? C.green+'30' : C.blue+'30'}` }}
                       onClick={() => !k.filled && canWrite && setFillTarget(isFilling ? null : k)}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 4 }}>
                         <span style={{ fontWeight: 600, color: k.filled ? C.green : C.blue, fontSize: 11 }}>{k.indicadorId}</span>
-                        {k.filled && <span style={{ fontSize: 10, color: C.green, fontWeight: 700 }}>{'\u2713'} {k.valor}</span>}
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                          <span title={k.periodicidade || 'Semanal'}
+                            style={{ fontSize: 9, fontWeight: 700, padding: '1px 5px', borderRadius: 8, color: pBadge.c, background: pBadge.bg }}>
+                            {pBadge.label}
+                          </span>
+                          {k.filled && <span style={{ fontSize: 10, color: C.green, fontWeight: 700 }}>{'\u2713'} {k.valor}</span>}
+                        </div>
                       </div>
                       <div style={{ fontSize: 10, color: k.filled ? C.green : C.t2, marginTop: 1 }}>{k.processoNome}</div>
                       {isFilling && !k.filled && (
