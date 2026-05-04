@@ -19,7 +19,7 @@ const MODULOS = [
   { id: 'cuidados', label: 'Cuidados', desc: 'Novos acompanhamentos, alertas Jornada 180 e capelania', color: '#ef476f' },
   { id: 'next', label: 'NEXT', desc: 'Novas inscrições, indicações de batismo/servir/grupo/dízimo', color: '#06b6d4' },
   { id: 'voluntariado', label: 'Voluntariado', desc: 'Novos voluntários, indicações para servir', color: '#14b8a6' },
-  { id: 'grupos', label: 'Grupos', desc: 'Novos interessados em grupos, indicações via NEXT', color: '#a855f7' },
+  { id: 'grupos', label: 'Grupos', desc: 'Novos membros, grupos sem encontro recente, membros sem grupo, indicações via NEXT', color: '#a855f7' },
   { id: 'generosidade', label: 'Generosidade', desc: 'Indicações de dízimo/oferta via NEXT', color: '#eab308' },
   { id: 'integracao', label: 'Integração', desc: 'Visitantes novos, indicações de batismo via NEXT', color: '#0ea5e9' },
   { id: 'processos', label: 'Processos', desc: 'Novos processos, OKRs e acompanhamento de indicadores', color: '#00B39D' },

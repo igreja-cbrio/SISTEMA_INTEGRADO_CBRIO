@@ -3,6 +3,7 @@ const { authenticate, authorize } = require('../middleware/auth');
 const { supabase } = require('../utils/supabase');
 const multer = require('multer');
 const { uploadModuleFile, SHAREPOINT_CONFIGURED } = require('../services/storageService');
+const { notificar } = require('../services/notificar');
 
 const uploadMw = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
 const sanitizePath = (s) => (s || '').replace(/[^a-zA-Z0-9\-_ ]/g, '').trim();
@@ -374,6 +375,28 @@ router.post('/:id/membros', authorize('admin', 'diretor'), async (req, res) => {
       grupo_id: req.params.id, membro_id, entrou_em: new Date().toISOString().split('T')[0],
     }).select().single();
     if (error) throw error;
+
+    // Notificacao imediata: novo membro no grupo
+    (async () => {
+      try {
+        const [{ data: grupo }, { data: membro }] = await Promise.all([
+          supabase.from('mem_grupos').select('nome').eq('id', req.params.id).single(),
+          supabase.from('mem_membros').select('nome').eq('id', membro_id).single(),
+        ]);
+        if (grupo && membro) {
+          await notificar({
+            modulo: 'grupos',
+            tipo: 'novo_membro_grupo',
+            titulo: `Novo membro no grupo ${grupo.nome}`,
+            mensagem: `${membro.nome} entrou no grupo ${grupo.nome}.`,
+            link: '/grupos',
+            severidade: 'info',
+            chaveDedup: `novo_membro_${req.params.id}_${membro_id}`,
+          });
+        }
+      } catch (notifErr) { console.error('[Grupos notify add]', notifErr.message); }
+    })();
+
     res.json(data);
   } catch (e) { console.error('[Grupos add member]', e.message); res.status(500).json({ error: 'Erro ao adicionar membro' }); }
 });

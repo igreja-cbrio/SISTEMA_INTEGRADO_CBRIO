@@ -16,6 +16,7 @@ async function gerarTodasNotificacoes() {
     total += await gerarNotificacoesMembresia();
     total += await gerarNotificacoesKpis();
     total += await gerarNotificacoesCuidados();
+    total += await gerarNotificacoesGrupos();
     console.log(`[Notificações] ${total} notificação(ões) gerada(s).`);
   } catch (e) {
     console.error('[Notificações] Erro:', e.message);
@@ -477,6 +478,104 @@ async function gerarNotificacoesCuidados() {
       chaveDedup: `acomp_inativo_${a.id}_${Math.floor(dias / 30)}`,
       targetIds,
     });
+  }
+
+  return count;
+}
+
+// ═══════════════════════════════════════════════════════════
+// GRUPOS — encontros sem registro + membros sem grupo
+// ═══════════════════════════════════════════════════════════
+async function gerarNotificacoesGrupos() {
+  let count = 0;
+  const now = Date.now();
+
+  // 1. Grupos ativos sem encontro recente (limite varia com recorrencia)
+  const limites = { semanal: 14, quinzenal: 21, mensal: 45 };
+  const { data: grupos } = await supabase
+    .from('mem_grupos')
+    .select('id, nome, recorrencia, lider_id, mem_membros!lider_id(nome)')
+    .eq('ativo', true);
+
+  if (grupos?.length) {
+    const grupoIds = grupos.map(g => g.id);
+    const { data: encontros } = await supabase
+      .from('mem_grupo_encontros')
+      .select('grupo_id, data')
+      .in('grupo_id', grupoIds)
+      .order('data', { ascending: false });
+
+    // Mapeia ultimo encontro por grupo
+    const ultimoPorGrupo = {};
+    for (const e of encontros || []) {
+      if (!ultimoPorGrupo[e.grupo_id]) ultimoPorGrupo[e.grupo_id] = e.data;
+    }
+
+    for (const g of grupos) {
+      const recorrencia = g.recorrencia || 'semanal';
+      const limiteDias = limites[recorrencia] || 14;
+      const ultimo = ultimoPorGrupo[g.id];
+      let dias;
+      if (ultimo) {
+        dias = Math.floor((now - new Date(ultimo + 'T12:00:00').getTime()) / 86400000);
+      } else {
+        dias = 999; // grupo sem nenhum encontro registrado
+      }
+      if (dias < limiteDias) continue;
+
+      const lider = g.mem_membros?.nome ? ` (lider: ${g.mem_membros.nome})` : '';
+      const msg = ultimo
+        ? `Grupo ${g.nome}${lider} esta sem encontro registrado ha ${dias} dias.`
+        : `Grupo ${g.nome}${lider} ainda nao teve encontro registrado.`;
+
+      // Dedup em janelas de "limiteDias" para nao alertar todo dia o mesmo grupo
+      const janela = Math.floor(dias / limiteDias);
+      count += await notificar({
+        modulo: 'grupos',
+        tipo: 'grupo_sem_encontro',
+        titulo: `Grupo sem encontro — ${g.nome}`,
+        mensagem: msg,
+        link: '/grupos',
+        severidade: dias >= limiteDias * 2 ? 'urgente' : 'aviso',
+        chaveDedup: `grupo_sem_encontro_${g.id}_${janela}`,
+      });
+    }
+  }
+
+  // 2. Membros (status = membro_ativo) sem grupo ha 90+ dias
+  const noventaDias = new Date(now - 90 * 86400000).toISOString().slice(0, 10);
+  const { data: membros } = await supabase
+    .from('mem_membros')
+    .select('id, nome, created_at, status, active')
+    .eq('active', true)
+    .eq('status', 'membro_ativo')
+    .lte('created_at', noventaDias);
+
+  if (membros?.length) {
+    const membroIds = membros.map(m => m.id);
+    const { data: participacoes } = await supabase
+      .from('mem_grupo_membros')
+      .select('membro_id')
+      .in('membro_id', membroIds)
+      .is('saiu_em', null);
+
+    const comGrupo = new Set((participacoes || []).map(p => p.membro_id));
+    const semGrupo = membros.filter(m => !comGrupo.has(m.id));
+
+    for (const m of semGrupo) {
+      const dias = Math.floor((now - new Date(m.created_at).getTime()) / 86400000);
+      // Dedup mensal pra nao spammar
+      const janela = Math.floor(dias / 30);
+      count += await notificar({
+        modulo: 'grupos',
+        tipo: 'membro_sem_grupo',
+        titulo: `Membro sem grupo — ${m.nome}`,
+        mensagem: `${m.nome} e membro ha ${dias} dias mas ainda nao esta em nenhum grupo de conexao.`,
+        link: '/grupos',
+        severidade: dias >= 180 ? 'aviso' : 'info',
+        chaveDedup: `membro_sem_grupo_${m.id}_${janela}`,
+      });
+    }
   }
 
   return count;
