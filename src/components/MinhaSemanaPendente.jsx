@@ -74,7 +74,7 @@ const PRIORIDADES_COLOR = {
   baixa: { c: '#10b981', bg: '#d1fae5', label: 'Baixa' },
 };
 
-export default function MinhaSemanaPendente({ onFillKpi }) {
+export default function MinhaSemanaPendente({ onFillKpi, refreshKey = 0 }) {
   const { isAdmin, isDiretor } = useAuth();
   const canEdit = isAdmin || isDiretor;
   const { byId: kpiById, isLoading: kpisLoading } = useKpis();
@@ -110,7 +110,7 @@ export default function MinhaSemanaPendente({ onFillKpi }) {
     }
   }, [today]);
 
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => { load(); }, [load, refreshKey]);
 
   const pending = useMemo(() => {
     if (kpisLoading || loading) return { kpis: [], tasks: [] };
