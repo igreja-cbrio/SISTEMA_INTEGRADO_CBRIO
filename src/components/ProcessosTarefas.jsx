@@ -8,6 +8,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { processos as api, users as usersApi } from '../api';
 import { getAreaNome } from '../data/indicadores';
 import { useKpis } from '../hooks/useKpis';
+import KpiQuickFillModal from './KpiQuickFillModal';
 
 const C = {
   bg: 'var(--cbrio-bg)', card: 'var(--cbrio-card)', text: 'var(--cbrio-text)',
@@ -142,6 +143,9 @@ export default function ProcessosTarefas({ area }) {
   const [fillTarget, setFillTarget] = useState(null);
   const [fillVal, setFillVal] = useState('');
   const [saving, setSaving] = useState(false);
+  // Quando user marca tarefa done que esta linkada a KPI, abre o quick-fill
+  // antes de marcar done. Apos save, marca done automaticamente.
+  const [fillFromTask, setFillFromTask] = useState(null); // { tarefa, kpi, periodKey }
 
   const emptyForm = { titulo: '', prioridade: 'media', recorrencia: 'unica', horario: '', responsavel_id: '', responsavel_nome: '', tipo: 'outro', descricao: '', processo_id: '' };
   const [form, setForm] = useState(emptyForm);
@@ -238,10 +242,42 @@ export default function ProcessosTarefas({ area }) {
   };
 
   const toggleTarefa = async (id, done) => {
-    // Otimista
-    setTarefas(prev => prev.map(t => t.id === id ? { ...t, done: !done } : t));
-    api.tarefas.toggle(id, !done).catch(e => { console.error(e); loadWeek(); });
+    // Se ja esta done -> desmarcar (toggle visual normal)
+    if (done) {
+      setTarefas(prev => prev.map(t => t.id === id ? { ...t, done: false } : t));
+      api.tarefas.toggle(id, false).catch(e => { console.error(e); loadWeek(); });
+      return;
+    }
+
+    // Marcando como done — se a tarefa tem processo vinculado com KPI, abre
+    // QuickFillModal pra registrar valor antes de marcar feito.
+    const tarefa = tarefas.find(t => t.id === id);
+    if (tarefa?.processo_id) {
+      const processo = processos.find(p => p.id === tarefa.processo_id);
+      const firstKpiId = (processo?.indicador_ids || []).find(kid => kpiById[kid]);
+      const linkedKpi = firstKpiId ? kpiById[firstKpiId] : null;
+      if (linkedKpi) {
+        const periodicidade = String(linkedKpi.periodicidade || 'mensal').toLowerCase();
+        const periodKey = getPeriodKey(new Date(), periodicidade);
+        setFillFromTask({ tarefa, kpi: linkedKpi, periodKey });
+        return;
+      }
+    }
+    // Sem KPI vinculado: comportamento antigo
+    setTarefas(prev => prev.map(t => t.id === id ? { ...t, done: true } : t));
+    api.tarefas.toggle(id, true).catch(e => { console.error(e); loadWeek(); });
   };
+
+  // Apos QuickFillModal salvar, marca a tarefa origem como done
+  const onFillFromTaskSaved = useCallback(() => {
+    const t = fillFromTask?.tarefa;
+    if (!t) return;
+    setTarefas(prev => prev.map(x => x.id === t.id ? { ...x, done: true } : x));
+    api.tarefas.toggle(t.id, true).catch(e => { console.error(e); loadWeek(); });
+    setFillFromTask(null);
+    // Atualiza registros pra refletir o KPI preenchido
+    loadWeek();
+  }, [fillFromTask, loadWeek]);
 
   const removeTarefa = async (id) => {
     // Otimista
@@ -337,10 +373,18 @@ export default function ProcessosTarefas({ area }) {
                 {tasks.sort((a, b) => (a.horario || '99').localeCompare(b.horario || '99')).map(t => {
                   const pr = PRIORIDADES.find(x => x.value === t.prioridade) || PRIORIDADES[1];
                   const tp = TIPOS.find(x => x.value === t.tipo);
+                  const proc = t.processo_id ? processos.find(p => p.id === t.processo_id) : null;
+                  const linkedKpi = proc?.indicador_ids?.length ? kpiById[proc.indicador_ids[0]] : null;
                   return (
                     <div key={t.id} style={{ padding: '4px 6px', borderRadius: 6, background: C.bg, border: `1px solid ${C.border}`, borderLeft: `3px solid ${pr.c}` }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-                        <input type="checkbox" checked={t.done} onChange={() => toggleTarefa(t.id, t.done)} style={{ margin: 0, cursor: 'pointer' }} />
+                        <input
+                          type="checkbox"
+                          checked={t.done}
+                          onChange={() => toggleTarefa(t.id, t.done)}
+                          style={{ margin: 0, cursor: 'pointer' }}
+                          title={linkedKpi && !t.done ? `Vai abrir preenchimento de ${linkedKpi.id}` : ''}
+                        />
                         <span style={{ flex: 1, fontSize: 11, color: t.done ? C.t3 : C.text, textDecoration: t.done ? 'line-through' : 'none', fontWeight: 600 }}>{t.titulo}</span>
                         <button onClick={() => removeTarefa(t.id)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: C.t3, fontSize: 13, padding: 0, lineHeight: 1 }}>&times;</button>
                       </div>
@@ -348,6 +392,11 @@ export default function ProcessosTarefas({ area }) {
                         {t.horario && <span style={{ fontSize: 9, color: C.t2, fontWeight: 600 }}>{t.horario.slice(0,5)}</span>}
                         {tp && tp.value !== 'outro' && <span style={{ fontSize: 9, padding: '0 4px', borderRadius: 4, background: C.purpleBg, color: C.purple }}>{tp.label}</span>}
                         <PrioBadge p={t.prioridade} />
+                        {linkedKpi && (
+                          <span style={{ fontSize: 9, padding: '0 4px', borderRadius: 4, background: C.primaryBg, color: C.primary, fontWeight: 700 }} title="Marcar feita pede valor do KPI">
+                            → {linkedKpi.id}
+                          </span>
+                        )}
                         {t.responsavel_nome && <span style={{ fontSize: 9, color: C.t3 }}>{t.responsavel_nome}</span>}
                       </div>
                     </div>
@@ -447,6 +496,15 @@ export default function ProcessosTarefas({ area }) {
           </div>
         </div>
       )}
+
+      {/* Modal de fill rapido pra KPI vinculado a tarefa que vai virar done */}
+      <KpiQuickFillModal
+        open={!!fillFromTask}
+        kpi={fillFromTask?.kpi || null}
+        periodKey={fillFromTask?.periodKey || ''}
+        onClose={() => setFillFromTask(null)}
+        onSaved={onFillFromTaskSaved}
+      />
     </div>
   );
 }
