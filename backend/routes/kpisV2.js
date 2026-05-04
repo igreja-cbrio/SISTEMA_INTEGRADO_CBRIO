@@ -16,7 +16,7 @@
 
 const express = require('express');
 const router = express.Router();
-const { authenticate, authorize } = require('../middleware/auth');
+const { authenticate, authorize, authorizeKpiArea } = require('../middleware/auth');
 const { supabase } = require('../utils/supabase');
 const { coletarTodos } = require('../services/kpiAutoCollector');
 
@@ -240,7 +240,15 @@ router.get('/taticos/:id', async (req, res) => {
 //                   apuracao, sort_order, ativo, kpi_estrategico_id, fonte_auto,
 //                   valores, pilar
 // ----------------------------------------------------------------------------
-router.put('/taticos/:id', authorize('diretor', 'admin'), async (req, res) => {
+// Helper: extrai area de um indicador tatico pelo seu id
+async function fetchIndicadorArea(indicadorId) {
+  if (!indicadorId) return null;
+  const { data } = await supabase.from('kpi_indicadores_taticos')
+    .select('area').eq('id', indicadorId).maybeSingle();
+  return data?.area || null;
+}
+
+router.put('/taticos/:id', authorizeKpiArea(req => fetchIndicadorArea(req.params.id)), async (req, res) => {
   const { id } = req.params;
   const allowed = [
     'indicador', 'descricao', 'area', 'periodicidade', 'periodo_offset_meses',
@@ -292,7 +300,7 @@ router.put('/taticos/:id', authorize('diretor', 'admin'), async (req, res) => {
 // Body: { id, indicador, area, periodicidade, ... }
 // id deve ser unico (ex: 'GRUP-06') e respeita PK existente.
 // ----------------------------------------------------------------------------
-router.post('/taticos', authorize('diretor', 'admin'), async (req, res) => {
+router.post('/taticos', authorizeKpiArea(req => req.body?.area), async (req, res) => {
   const b = req.body || {};
   if (!b.id || !b.indicador || !b.area || !b.periodicidade) {
     return res.status(400).json({ error: 'id, indicador, area e periodicidade sao obrigatorios' });
@@ -343,7 +351,7 @@ router.post('/taticos', authorize('diretor', 'admin'), async (req, res) => {
 // DELETE /taticos/:id - soft delete (ativo=false). Preserva historico.
 // Use ?hard=true para remover de fato (requer admin e nenhum registro vinculado).
 // ----------------------------------------------------------------------------
-router.delete('/taticos/:id', authorize('diretor', 'admin'), async (req, res) => {
+router.delete('/taticos/:id', authorizeKpiArea(req => fetchIndicadorArea(req.params.id)), async (req, res) => {
   const { id } = req.params;
   const hard = req.query.hard === 'true';
   if (hard) {
@@ -432,6 +440,14 @@ router.post('/registros', async (req, res) => {
     .maybeSingle();
   if (eTat) return res.status(500).json({ error: eTat.message });
   if (!tatico) return res.status(404).json({ error: 'Indicador nao encontrado' });
+
+  // Autoriza por area: admin/diretor passa direto; lider so da sua kpi_area
+  if (!['admin', 'diretor'].includes(req.user?.role)) {
+    const myAreas = (req.user?.kpi_areas || []).map(a => String(a).toLowerCase());
+    if (!myAreas.includes(String(tatico.area || '').toLowerCase())) {
+      return res.status(403).json({ error: `Sem permissao para registrar KPIs da area "${tatico.area}"` });
+    }
+  }
 
   const payload = {
     indicador_id,

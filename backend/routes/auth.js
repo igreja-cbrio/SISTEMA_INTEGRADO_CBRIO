@@ -7,7 +7,7 @@ router.get('/me', authenticate, async (req, res) => {
   try {
     const { data: profile, error } = await supabase
       .from('profiles')
-      .select('id, name, email, role, area, avatar_url')
+      .select('id, name, email, role, area, kpi_areas, avatar_url')
       .eq('id', req.user.userId)
       .single();
 
@@ -19,7 +19,7 @@ router.get('/me', authenticate, async (req, res) => {
   }
 });
 
-// PATCH /api/auth/profile — atualiza perfil
+// PATCH /api/auth/profile — atualiza perfil (apenas o proprio, sem mexer em kpi_areas)
 router.patch('/profile', authenticate, async (req, res) => {
   try {
     const { name, area, avatar_url } = req.body;
@@ -33,6 +33,35 @@ router.patch('/profile', authenticate, async (req, res) => {
     if (error) return res.status(400).json({ error: error.message });
     res.json(data);
   } catch (err) {
+    res.status(500).json({ error: 'Erro interno' });
+  }
+});
+
+// PUT /api/auth/profiles/:id/kpi-areas — admin/diretor gerencia areas de KPI do usuario
+router.put('/profiles/:id/kpi-areas', authenticate, async (req, res) => {
+  try {
+    if (!['admin', 'diretor'].includes(req.user.role)) {
+      return res.status(403).json({ error: 'Apenas admin/diretor podem alterar kpi_areas' });
+    }
+    const { kpi_areas } = req.body;
+    if (!Array.isArray(kpi_areas)) {
+      return res.status(400).json({ error: 'kpi_areas deve ser array de strings' });
+    }
+    const normalized = kpi_areas
+      .map(a => String(a || '').trim().toLowerCase())
+      .filter(Boolean);
+
+    const { data, error } = await supabase
+      .from('profiles')
+      .update({ kpi_areas: normalized, updated_at: new Date().toISOString() })
+      .eq('id', req.params.id)
+      .select('id, name, email, role, kpi_areas')
+      .single();
+
+    if (error) return res.status(400).json({ error: error.message });
+    res.json(data);
+  } catch (err) {
+    console.error('[AUTH] Erro em PUT kpi-areas:', err.message);
     res.status(500).json({ error: 'Erro interno' });
   }
 });

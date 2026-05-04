@@ -50,6 +50,8 @@ const del = (path) => request(path, { method: 'DELETE' });
 
 export const users = {
   list: () => get('/auth/users'),
+  me: () => get('/auth/me'),
+  setKpiAreas: (id, kpi_areas) => put(`/auth/profiles/${id}/kpi-areas`, { kpi_areas }),
 };
 
 export const events = {

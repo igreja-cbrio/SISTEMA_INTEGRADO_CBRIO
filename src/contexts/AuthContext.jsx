@@ -19,6 +19,7 @@ const FAKE_PROFILE = {
   email: 'admin@cbrio.dev',
   role: 'admin',
   area: 'Tecnologia',
+  kpi_areas: [],
   avatar_url: null,
 };
 
@@ -33,7 +34,7 @@ export function AuthProvider({ children }) {
     if (!supabase) return;
     const { data } = await supabase
       .from('profiles')
-      .select('id, name, email, role, area, avatar_url')
+      .select('id, name, email, role, area, kpi_areas, avatar_url')
       .eq('id', userId)
       .single();
     setProfile(data ?? null);
