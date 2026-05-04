@@ -13,6 +13,7 @@ import {
 } from 'lucide-react';
 import MandalaCultura from '../components/cultura/MandalaCultura';
 import MinhaSemanaPendente from '../components/MinhaSemanaPendente';
+import KpiQuickFillModal from '../components/KpiQuickFillModal';
 
 // path='VOLUNTARIADO_DYNAMIC' e tratado no click handler (vai para painel do
 // voluntario ou visao admin conforme o perfil do usuario logado)
@@ -86,6 +87,8 @@ export default function Dashboard() {
   const [logData, setLogData] = useState(null);
   const [cuiData, setCuiData] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [fillTarget, setFillTarget] = useState(null); // { kpi, periodKey }
+  const [pendentesVersion, setPendentesVersion] = useState(0);
 
   useEffect(() => {
     const promises = [];
@@ -153,23 +156,8 @@ export default function Dashboard() {
 
       {/* Minha Semana Pendente — KPIs em vermelho + tarefas atrasadas */}
       <MinhaSemanaPendente
-        onFillKpi={({ kpi }) => {
-          // PR seguinte adiciona modal de fill rapido. Por enquanto navega
-          // pra agenda da area do KPI pra preencher la.
-          const areaPath = {
-            ami: '/ministerial/voluntariado',
-            cuidados: '/ministerial/cuidados',
-            grupos: '/ministerial/grupos',
-            integracao: '/ministerial/integracao',
-            voluntariado: '/ministerial/voluntariado',
-            next: '/ministerial/next',
-            cba: '/ministerial/cuidados',
-            kids: '/ministerial/cuidados',
-            generosidade: '/ministerial/cuidados',
-          };
-          const path = areaPath[String(kpi.area).toLowerCase()] || '/processos';
-          navigate(path);
-        }}
+        refreshKey={pendentesVersion}
+        onFillKpi={({ kpi, periodKey }) => setFillTarget({ kpi, periodKey })}
       />
 
       {/* KPI Cards */}
@@ -263,6 +251,15 @@ export default function Dashboard() {
           </div>
         )}
       </section>
+
+      {/* Modal de fill rapido (acionado por click em KPI da Minha Semana) */}
+      <KpiQuickFillModal
+        open={!!fillTarget}
+        kpi={fillTarget?.kpi || null}
+        periodKey={fillTarget?.periodKey || ''}
+        onClose={() => setFillTarget(null)}
+        onSaved={() => setPendentesVersion(v => v + 1)}
+      />
     </div>
   );
 }
