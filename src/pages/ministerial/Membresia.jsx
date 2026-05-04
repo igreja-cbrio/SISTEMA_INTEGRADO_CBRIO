@@ -1648,21 +1648,40 @@ export default function Membresia() {
                     return (
                       <>
                         {/* Card de status */}
-                        <div style={{ padding: 14, borderRadius: 12, background: nivel.bg, border: `1px solid ${nivel.cor}30`, marginBottom: 16, display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12 }}>
+                        <div style={{ padding: 14, borderRadius: 12, background: nivel.bg, border: `1px solid ${nivel.cor}30`, marginBottom: 12, display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12 }}>
                           <div style={{ flex: 1, minWidth: 0 }}>
                             <div style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: 0.5, color: nivel.cor, fontWeight: 700 }}>Nível de Serviço</div>
                             <div style={{ fontSize: 16, fontWeight: 700, color: C.text, marginTop: 2 }}>{nivel.label}</div>
                             <div style={{ fontSize: 12, color: C.text2, marginTop: 2 }}>{nivel.desc}</div>
                           </div>
-                          {selectedMembro.ultimo_checkin && (
-                            <div style={{ textAlign: 'right', flexShrink: 0 }}>
-                              <div style={{ fontSize: 10, color: C.text3, textTransform: 'uppercase', letterSpacing: 0.5 }}>Último check-in</div>
-                              <div style={{ fontSize: 13, color: C.text, fontWeight: 600, marginTop: 2 }}>
-                                {new Date(selectedMembro.ultimo_checkin).toLocaleDateString('pt-BR')}
+                          <div style={{ display: 'flex', gap: 16, flexShrink: 0 }}>
+                            {selectedMembro.total_checkins_90d > 0 && (
+                              <div style={{ textAlign: 'right' }}>
+                                <div style={{ fontSize: 10, color: C.text3, textTransform: 'uppercase', letterSpacing: 0.5 }}>Check-ins 90d</div>
+                                <div style={{ fontSize: 16, fontWeight: 700, color: C.text, marginTop: 2 }}>{selectedMembro.total_checkins_90d}</div>
                               </div>
-                            </div>
-                          )}
+                            )}
+                            {selectedMembro.ultimo_checkin && (
+                              <div style={{ textAlign: 'right' }}>
+                                <div style={{ fontSize: 10, color: C.text3, textTransform: 'uppercase', letterSpacing: 0.5 }}>Último check-in</div>
+                                <div style={{ fontSize: 13, color: C.text, fontWeight: 600, marginTop: 2 }}>
+                                  {new Date(selectedMembro.ultimo_checkin).toLocaleDateString('pt-BR')}
+                                </div>
+                              </div>
+                            )}
+                          </div>
                         </div>
+                        {/* Botão pra ir ao módulo Voluntariado */}
+                        {selectedMembro.vol_profile_id && (
+                          <Button
+                            variant="ghost"
+                            onClick={() => navigate(`/ministerial/voluntariado?vp=${selectedMembro.vol_profile_id}`)}
+                            style={{ width: '100%', marginBottom: 16, justifyContent: 'space-between' }}
+                          >
+                            <span>Abrir perfil completo no Voluntariado</span>
+                            <ChevronRight style={{ width: 16, height: 16 }} />
+                          </Button>
+                        )}
 
                         {/* Voluntariado no Sistema de Escalas */}
                         <div style={{ padding: 14, borderRadius: 12, background: 'var(--cbrio-input-bg)', border: '1px solid var(--cbrio-border)', marginBottom: 16 }}>

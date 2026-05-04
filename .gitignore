@@ -32,3 +32,8 @@ e2e/.report/
 e2e/.results/
 playwright-report/
 test-results/
+
+# Tmp/scratch (added 2026-05-04)
+tmp/
+*.zip
+guia-implementacao-cerebro-cbrio.md
