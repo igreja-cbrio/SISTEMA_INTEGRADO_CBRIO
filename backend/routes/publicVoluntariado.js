@@ -311,7 +311,19 @@ router.post('/register', publicLimiter, async (req, res) => {
       updated_at: new Date().toISOString(),
     }, { onConflict: 'id' });
 
-    // Criar vol_profile
+    // Membresia e fonte unica: garantir mem_membros antes de criar vol_profile
+    let membresiaId = null;
+    try {
+      const { findOrCreateMembro } = require('./pessoas');
+      const r = await findOrCreateMembro({
+        cpf: cleanCpf, email, telefone: phone, nome: full_name, status: 'visitante',
+      });
+      membresiaId = r.membro_id;
+    } catch (e) {
+      console.error('publicVoluntariado findOrCreateMembro:', e.message);
+    }
+
+    // Criar vol_profile vinculado a mem_membros
     await supabase.from('vol_profiles').insert({
       auth_user_id: authUserId,
       full_name,
@@ -321,6 +333,7 @@ router.post('/register', publicLimiter, async (req, res) => {
       origem: 'manual',
       profile_complete: true,
       allocation_status: 'active',
+      membresia_id: membresiaId,
     });
 
     // Magic link

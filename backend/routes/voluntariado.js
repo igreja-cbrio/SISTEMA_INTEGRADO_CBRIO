@@ -518,8 +518,26 @@ router.post('/profiles', async (req, res) => {
     const { full_name, email, phone, cpf } = req.body;
     if (!full_name || !full_name.trim()) return res.status(400).json({ error: 'Nome obrigatorio' });
     const cleanCpf = cpf ? cpf.replace(/\D/g, '') : null;
+
+    // Membresia e fonte unica: garantir mem_membros antes de criar vol_profile
+    let membresiaId = null;
+    try {
+      const { findOrCreateMembro } = require('./pessoas');
+      const r = await findOrCreateMembro({
+        cpf: cleanCpf, email, telefone: phone, nome: full_name.trim(),
+        status: 'visitante',
+      });
+      membresiaId = r.membro_id;
+    } catch (e) {
+      console.error('voluntariado/profiles findOrCreateMembro:', e.message);
+    }
+
     const { data, error } = await supabase.from('vol_profiles')
-      .insert({ full_name: full_name.trim(), email: email || null, phone: phone || null, cpf: cleanCpf || null, origem: 'manual', allocation_status: 'active', profile_complete: true })
+      .insert({
+        full_name: full_name.trim(), email: email || null, phone: phone || null,
+        cpf: cleanCpf || null, origem: 'manual', allocation_status: 'active',
+        profile_complete: true, membresia_id: membresiaId,
+      })
       .select().single();
     if (error) return res.status(400).json({ error: error.message });
     enqueueSync('voluntario', data.id, 'upsert').catch(() => {});
