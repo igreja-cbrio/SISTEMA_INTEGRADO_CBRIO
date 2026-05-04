@@ -266,6 +266,166 @@ router.delete('/encontros/:encontroId', authorize('admin', 'diretor'), async (re
 });
 
 // ══════════════════════════════════════════════
+// METRICAS / SAUDE
+// ══════════════════════════════════════════════
+
+const RECORRENCIA_DIAS = { semanal: 7, quinzenal: 14, mensal: 30 };
+
+function calcularMetricasGrupo(grupo, encontrosRaw, presencasPorEncontro, totalMembrosAtuais) {
+  // encontrosRaw esta ordenado por data DESC
+  const ultimos8 = encontrosRaw.slice(0, 8);
+  const presencasUltimos8 = ultimos8.map(e => (presencasPorEncontro[e.id] || []).length);
+
+  const freqMedia = presencasUltimos8.length
+    ? presencasUltimos8.reduce((a, b) => a + b, 0) / presencasUltimos8.length
+    : 0;
+
+  // Tendencia: 4 mais novos vs 4 anteriores
+  const recentes = presencasUltimos8.slice(0, 4);
+  const anteriores = presencasUltimos8.slice(4, 8);
+  const mediaRec = recentes.length ? recentes.reduce((a, b) => a + b, 0) / recentes.length : 0;
+  const mediaAnt = anteriores.length ? anteriores.reduce((a, b) => a + b, 0) / anteriores.length : 0;
+  let tendencia = 'estavel';
+  if (anteriores.length >= 2) {
+    if (mediaRec > mediaAnt * 1.15) tendencia = 'subindo';
+    else if (mediaRec < mediaAnt * 0.85) tendencia = 'caindo';
+  }
+
+  // Regularidade: encontros nos ultimos 90 dias / esperados
+  const recDias = RECORRENCIA_DIAS[grupo.recorrencia || 'semanal'] || 7;
+  const limite90 = new Date(Date.now() - 90 * 86400000);
+  const realizados90 = encontrosRaw.filter(e => new Date(e.data + 'T12:00:00') >= limite90).length;
+  const esperados90 = Math.floor(90 / recDias);
+  const regularidade = esperados90 > 0 ? Math.min(100, Math.round((realizados90 / esperados90) * 100)) : 0;
+
+  // Taxa de presenca (% dos membros atuais)
+  const taxaPresenca = totalMembrosAtuais > 0
+    ? Math.min(100, Math.round((freqMedia / totalMembrosAtuais) * 100))
+    : 0;
+
+  // Score de saude composto
+  const tendBonus = tendencia === 'subindo' ? 100 : tendencia === 'caindo' ? 30 : 70;
+  const score = Math.round(0.4 * regularidade + 0.4 * taxaPresenca + 0.2 * tendBonus);
+
+  return {
+    freq_media: Math.round(freqMedia * 10) / 10,
+    taxa_presenca: taxaPresenca,
+    regularidade,
+    realizados_90d: realizados90,
+    esperados_90d: esperados90,
+    tendencia,
+    score_saude: score,
+    em_risco: score < 50,
+    presencas_ultimos: presencasUltimos8.reverse(), // mais antigo primeiro pra grafico
+    datas_ultimos: ultimos8.slice().reverse().map(e => e.data),
+  };
+}
+
+// GET /api/grupos/:id/metricas — saude do grupo individual
+router.get('/:id/metricas', async (req, res) => {
+  try {
+    const id = req.params.id;
+    const [grupoRes, encontrosRes, partRes] = await Promise.all([
+      supabase.from('mem_grupos').select('id, nome, recorrencia, ativo').eq('id', id).single(),
+      supabase.from('mem_grupo_encontros').select('id, data').eq('grupo_id', id).order('data', { ascending: false }).limit(20),
+      supabase.from('mem_grupo_membros').select('membro_id', { count: 'exact', head: true }).eq('grupo_id', id).is('saiu_em', null),
+    ]);
+    if (grupoRes.error) throw grupoRes.error;
+
+    const encontrosRaw = encontrosRes.data || [];
+    let presencasPorEncontro = {};
+    if (encontrosRaw.length) {
+      const { data: presencas } = await supabase.from('mem_grupo_encontro_presencas')
+        .select('encontro_id, membro_id')
+        .in('encontro_id', encontrosRaw.map(e => e.id));
+      (presencas || []).forEach(p => {
+        if (!presencasPorEncontro[p.encontro_id]) presencasPorEncontro[p.encontro_id] = [];
+        presencasPorEncontro[p.encontro_id].push(p.membro_id);
+      });
+    }
+
+    const totalMembros = partRes.count || 0;
+    const metricas = calcularMetricasGrupo(grupoRes.data, encontrosRaw, presencasPorEncontro, totalMembros);
+    res.json({ ...metricas, total_membros: totalMembros, total_encontros: encontrosRaw.length });
+  } catch (e) { console.error('[Grupos metricas]', e.message); res.status(500).json({ error: 'Erro ao calcular metricas' }); }
+});
+
+// GET /api/grupos/saude — agregado: total ativos, em risco, ranking
+router.get('/saude/agregado', async (req, res) => {
+  try {
+    const { data: grupos } = await supabase.from('mem_grupos')
+      .select('id, nome, recorrencia, lider_id')
+      .eq('ativo', true);
+
+    if (!grupos?.length) return res.json({ total: 0, em_risco: 0, saudaveis: 0, grupos: [] });
+
+    const grupoIds = grupos.map(g => g.id);
+    const [encRes, partRes, lidRes] = await Promise.all([
+      supabase.from('mem_grupo_encontros').select('id, grupo_id, data').in('grupo_id', grupoIds).order('data', { ascending: false }),
+      supabase.from('mem_grupo_membros').select('grupo_id, membro_id').in('grupo_id', grupoIds).is('saiu_em', null),
+      supabase.from('mem_membros').select('id, nome').in('id', grupos.map(g => g.lider_id).filter(Boolean)),
+    ]);
+
+    const lideresMap = {};
+    (lidRes.data || []).forEach(l => { lideresMap[l.id] = l.nome; });
+
+    // Encontros agrupados por grupo
+    const encontrosPorGrupo = {};
+    (encRes.data || []).forEach(e => {
+      if (!encontrosPorGrupo[e.grupo_id]) encontrosPorGrupo[e.grupo_id] = [];
+      encontrosPorGrupo[e.grupo_id].push(e);
+    });
+
+    // Membros ativos por grupo
+    const membrosPorGrupo = {};
+    (partRes.data || []).forEach(p => {
+      membrosPorGrupo[p.grupo_id] = (membrosPorGrupo[p.grupo_id] || 0) + 1;
+    });
+
+    // Presencas em batch
+    const todosEncontroIds = (encRes.data || []).map(e => e.id);
+    let presencasPorEncontro = {};
+    if (todosEncontroIds.length) {
+      const { data: presencas } = await supabase.from('mem_grupo_encontro_presencas')
+        .select('encontro_id, membro_id')
+        .in('encontro_id', todosEncontroIds);
+      (presencas || []).forEach(p => {
+        if (!presencasPorEncontro[p.encontro_id]) presencasPorEncontro[p.encontro_id] = [];
+        presencasPorEncontro[p.encontro_id].push(p.membro_id);
+      });
+    }
+
+    const ranking = grupos.map(g => {
+      const m = calcularMetricasGrupo(
+        g,
+        encontrosPorGrupo[g.id] || [],
+        presencasPorEncontro,
+        membrosPorGrupo[g.id] || 0,
+      );
+      return {
+        id: g.id,
+        nome: g.nome,
+        lider_nome: lideresMap[g.lider_id] || null,
+        score_saude: m.score_saude,
+        em_risco: m.em_risco,
+        tendencia: m.tendencia,
+        regularidade: m.regularidade,
+        taxa_presenca: m.taxa_presenca,
+        total_membros: membrosPorGrupo[g.id] || 0,
+      };
+    }).sort((a, b) => b.score_saude - a.score_saude);
+
+    const emRisco = ranking.filter(r => r.em_risco).length;
+    res.json({
+      total: grupos.length,
+      em_risco: emRisco,
+      saudaveis: grupos.length - emRisco,
+      grupos: ranking,
+    });
+  } catch (e) { console.error('[Grupos saude agregado]', e.message); res.status(500).json({ error: 'Erro ao calcular saude agregada' }); }
+});
+
+// ══════════════════════════════════════════════
 // CRUD do grupo (rotas com /:id por ultimo)
 // ══════════════════════════════════════════════
 

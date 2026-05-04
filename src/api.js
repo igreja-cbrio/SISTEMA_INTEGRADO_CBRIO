@@ -194,6 +194,8 @@ export const grupos = {
   encontros: (grupoId, params) => get(`/grupos/${grupoId}/encontros` + (params ? '?' + new URLSearchParams(params) : '')),
   registrarEncontro: (grupoId, data) => post(`/grupos/${grupoId}/encontros`, data),
   removerEncontro: (encontroId) => del(`/grupos/encontros/${encontroId}`),
+  metricas: (grupoId) => get(`/grupos/${grupoId}/metricas`),
+  saudeAgregada: () => get('/grupos/saude/agregado'),
 };
 
 export const strategic = {

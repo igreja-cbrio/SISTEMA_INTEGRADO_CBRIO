@@ -8,7 +8,7 @@ import { Textarea } from '../../components/ui/textarea';
 import { Select as ShadSelect, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../components/ui/select';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../../components/ui/dialog';
 import { toast } from 'sonner';
-import { Users, MapPin, Clock, Plus, Search, ChevronLeft, UserPlus, X, ArrowRightLeft, FileUp, Trash2, FileText, Image, File as FileIcon, Map as MapIcon, ListChecks, ClipboardCheck, Calendar } from 'lucide-react';
+import { Users, MapPin, Clock, Plus, Search, ChevronLeft, UserPlus, X, ArrowRightLeft, FileUp, Trash2, FileText, Image, File as FileIcon, Map as MapIcon, ListChecks, ClipboardCheck, Calendar, Activity, TrendingUp, TrendingDown, Minus, AlertTriangle } from 'lucide-react';
 import ProcessosTarefas from '../../components/ProcessosTarefas';
 import { GruposMapView } from '@/components/grupos/GruposMapView';
 
@@ -60,6 +60,8 @@ export default function Grupos() {
   const [chamadaOpen, setChamadaOpen] = useState(false);
   const [encontros, setEncontros] = useState([]);
   const [mostrarArquivados, setMostrarArquivados] = useState(false);
+  const [metricas, setMetricas] = useState(null);
+  const [saudeAgregada, setSaudeAgregada] = useState(null);
 
   const loadList = useCallback(async () => {
     setLoading(true);
@@ -118,6 +120,20 @@ export default function Grupos() {
     } catch { setEncontros([]); }
   }, []);
 
+  const loadMetricas = useCallback(async (id) => {
+    try {
+      const data = await api.metricas(id);
+      setMetricas(data);
+    } catch { setMetricas(null); }
+  }, []);
+
+  const loadSaudeAgregada = useCallback(async () => {
+    try {
+      const data = await api.saudeAgregada();
+      setSaudeAgregada(data);
+    } catch { setSaudeAgregada(null); }
+  }, []);
+
   const handleRegistrarEncontro = async ({ data, tema, observacoes, membros_presentes }) => {
     try {
       await api.registrarEncontro(selectedGrupo, { data, tema, observacoes, membros_presentes });
@@ -148,10 +164,16 @@ export default function Grupos() {
     if (selectedGrupo) {
       loadDetail(selectedGrupo);
       loadEncontros(selectedGrupo);
+      loadMetricas(selectedGrupo);
     } else {
       setEncontros([]);
+      setMetricas(null);
     }
-  }, [selectedGrupo, loadDetail, loadEncontros]);
+  }, [selectedGrupo, loadDetail, loadEncontros, loadMetricas]);
+
+  useEffect(() => {
+    if (pageTab === 'grupos' && !selectedGrupo) loadSaudeAgregada();
+  }, [pageTab, selectedGrupo, loadSaudeAgregada, gruposList.length]);
 
   const openCreate = () => { setEditData(null); setModalOpen(true); };
   const openEdit = () => { setEditData(detailData); setModalOpen(true); };
@@ -312,7 +334,7 @@ export default function Grupos() {
         </div>
 
         {/* Info cards */}
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12, marginBottom: 24 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12, marginBottom: 16 }}>
           {[
             { label: 'Membros', value: isOptimistic ? null : regulares.length, color: C.primary },
             { label: 'Visitantes', value: isOptimistic ? null : visitantes.length, color: C.amber },
@@ -327,6 +349,16 @@ export default function Grupos() {
             </div>
           ))}
         </div>
+
+        {/* Saude do grupo */}
+        {!isOptimistic && metricas && metricas.total_encontros > 0 && (
+          <SaudeDoGrupo metricas={metricas} />
+        )}
+        {!isOptimistic && metricas && metricas.total_encontros === 0 && (
+          <div style={{ background: C.card, borderRadius: 12, padding: 16, border: `1px dashed ${C.border}`, marginBottom: 24, fontSize: 12, color: C.t3, display: 'flex', alignItems: 'center', gap: 8 }}>
+            <Activity size={14} /> Saude do grupo aparece aqui depois do primeiro encontro registrado.
+          </div>
+        )}
 
         {/* Grupo de origem e multiplicacoes */}
         {(g.grupo_origem || g.multiplicacoes?.length > 0) && (
@@ -717,6 +749,37 @@ export default function Grupos() {
 
       {/* ═══ TAB GRUPOS ═══ */}
       {pageTab === 'grupos' && <>
+      {/* Resumo de saude */}
+      {saudeAgregada && saudeAgregada.total > 0 && (
+        <div style={{ background: C.card, borderRadius: 12, padding: 14, border: `1px solid ${C.border}`, marginBottom: 12, display: 'flex', gap: 16, alignItems: 'center', flexWrap: 'wrap' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <Activity size={18} style={{ color: C.primary }} />
+            <span style={{ fontSize: 13, fontWeight: 700, color: C.text }}>Saude dos grupos</span>
+          </div>
+          <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap' }}>
+            <span style={{ fontSize: 12, color: C.t2 }}><strong style={{ color: C.green }}>{saudeAgregada.saudaveis}</strong> saudaveis</span>
+            <span style={{ fontSize: 12, color: C.t2 }}><strong style={{ color: C.red }}>{saudeAgregada.em_risco}</strong> em risco</span>
+            <span style={{ fontSize: 12, color: C.t2 }}><strong style={{ color: C.text }}>{saudeAgregada.total}</strong> ativos</span>
+          </div>
+          {saudeAgregada.em_risco > 0 && (
+            <div style={{ marginLeft: 'auto', display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+              {saudeAgregada.grupos.filter(r => r.em_risco).slice(0, 5).map(r => (
+                <button key={r.id} onClick={() => openGrupoById(r.id)} style={{
+                  fontSize: 11, padding: '3px 10px', borderRadius: 99, border: `1px solid #ef444440`,
+                  background: '#ef444412', color: C.red, cursor: 'pointer', fontWeight: 600,
+                  display: 'flex', alignItems: 'center', gap: 4,
+                }}>
+                  <AlertTriangle size={11} /> {r.nome} ({r.score_saude})
+                </button>
+              ))}
+              {saudeAgregada.em_risco > 5 && (
+                <span style={{ fontSize: 11, color: C.t3, alignSelf: 'center' }}>+{saudeAgregada.em_risco - 5}</span>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+
       <div style={{ marginBottom: 12, position: 'relative' }}>
         <Search size={16} style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', color: C.t3 }} />
         <Input placeholder="Buscar grupo, lider, local ou tema..." value={search} onChange={e => setSearch(e.target.value)} style={{ paddingLeft: 36 }} />
@@ -1141,5 +1204,75 @@ function ChamadaModal({ open, onClose, membros, onSubmit }) {
         </form>
       </DialogContent>
     </Dialog>
+  );
+}
+
+// ── SAUDE DO GRUPO (cards de metricas + sparkline) ──
+function SaudeDoGrupo({ metricas }) {
+  const C = {
+    text: 'var(--cbrio-text)', t2: 'var(--cbrio-text2)', t3: 'var(--cbrio-text3)',
+    border: 'var(--cbrio-border)', card: 'var(--cbrio-card)',
+    primary: '#00B39D', green: '#10b981', red: '#ef4444', amber: '#f59e0b',
+  };
+  const m = metricas;
+  const corScore = m.score_saude >= 70 ? C.green : m.score_saude >= 50 ? C.amber : C.red;
+  const TendIcon = m.tendencia === 'subindo' ? TrendingUp : m.tendencia === 'caindo' ? TrendingDown : Minus;
+  const corTend = m.tendencia === 'subindo' ? C.green : m.tendencia === 'caindo' ? C.red : C.t3;
+  const labelTend = m.tendencia === 'subindo' ? 'Subindo' : m.tendencia === 'caindo' ? 'Caindo' : 'Estavel';
+  const maxBar = Math.max(...(m.presencas_ultimos.length ? m.presencas_ultimos : [1]), 1);
+
+  return (
+    <div style={{ background: C.card, borderRadius: 12, padding: 16, border: `1px solid ${m.em_risco ? '#ef444460' : C.border}`, marginBottom: 24 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 14 }}>
+        <Activity size={16} style={{ color: corScore }} />
+        <span style={{ fontSize: 14, fontWeight: 700, color: C.text }}>Saude do grupo</span>
+        {m.em_risco && (
+          <span style={{ fontSize: 10, padding: '2px 8px', borderRadius: 99, background: '#ef444420', color: C.red, fontWeight: 600, display: 'flex', alignItems: 'center', gap: 4 }}>
+            <AlertTriangle size={10} /> EM RISCO
+          </span>
+        )}
+      </div>
+
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 10, marginBottom: 14 }}>
+        <MetricaCard label="Score" valor={m.score_saude} sufixo="/100" cor={corScore} />
+        <MetricaCard label="Frequencia media" valor={m.freq_media} sufixo=" pres." cor={C.primary} />
+        <MetricaCard label="Taxa de presenca" valor={m.taxa_presenca} sufixo="%" cor={C.primary} />
+        <MetricaCard label="Regularidade" valor={m.regularidade} sufixo="%" cor={m.regularidade >= 70 ? C.green : m.regularidade >= 50 ? C.amber : C.red} />
+      </div>
+
+      <div style={{ display: 'flex', gap: 16, alignItems: 'center', flexWrap: 'wrap' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          <TendIcon size={14} style={{ color: corTend }} />
+          <span style={{ fontSize: 12, color: corTend, fontWeight: 600 }}>{labelTend}</span>
+        </div>
+        <span style={{ fontSize: 11, color: C.t3 }}>
+          {m.realizados_90d}/{m.esperados_90d} encontros nos ultimos 90 dias
+        </span>
+        <div style={{ marginLeft: 'auto', display: 'flex', gap: 3, alignItems: 'flex-end', height: 28 }}>
+          {m.presencas_ultimos.map((p, i) => (
+            <div key={i} title={`${m.datas_ultimos[i]}: ${p} pres.`} style={{
+              width: 8,
+              height: `${Math.max(2, (p / maxBar) * 28)}px`,
+              borderRadius: 2,
+              background: corScore,
+              opacity: 0.4 + (i / Math.max(m.presencas_ultimos.length, 1)) * 0.6,
+            }} />
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function MetricaCard({ label, valor, sufixo, cor }) {
+  const t3 = 'var(--cbrio-text3)';
+  const border = 'var(--cbrio-border)';
+  return (
+    <div style={{ borderRadius: 10, padding: '10px 12px', border: `1px solid ${border}` }}>
+      <div style={{ fontSize: 18, fontWeight: 700, color: cor }}>
+        {valor}<span style={{ fontSize: 11, fontWeight: 500, color: t3 }}>{sufixo}</span>
+      </div>
+      <div style={{ fontSize: 10, color: t3, marginTop: 2 }}>{label}</div>
+    </div>
   );
 }
