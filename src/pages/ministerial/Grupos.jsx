@@ -603,7 +603,7 @@ export default function Grupos() {
           {search ? 'Nenhum grupo encontrado' : 'Nenhum grupo cadastrado'}
         </div>
       ) : (
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(320, 1fr))', gap: 16 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))', gap: 16 }}>
           {filtered.map(g => (
             <div key={g.id} onClick={() => setSelectedGrupo(g.id)} style={{
               background: C.card, borderRadius: 14, padding: 18, border: `1px solid ${C.border}`,
@@ -666,9 +666,13 @@ function GrupoFormModal({ open, onClose, data, onSave, saving, gruposForSelect, 
         dia_semana: '', horario: '', recorrencia: 'semanal', tema: '',
         foto_url: '', observacoes: '', grupo_origem_id: '', descricao: '',
       });
-      setLiderSearch('');
+      setLiderSearch(data?.lider?.nome || '');
     }
   }, [open, data]);
+
+  const liderNome = form.lider?.nome
+    || allMembros.find(m => m.id === form.lider_id)?.nome
+    || null;
 
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
 
@@ -799,7 +803,12 @@ function GrupoFormModal({ open, onClose, data, onSave, saving, gruposForSelect, 
                 ))}
               </div>
             )}
-            {form.lider_id && !liderSearch && <div style={{ fontSize: 12, color: C.t3, marginTop: 4 }}>Lider selecionado (ID: {form.lider_id.slice(0, 8)}...)</div>}
+            {form.lider_id && !liderSearch && (
+              <div style={{ fontSize: 12, color: C.t3, marginTop: 4, display: 'flex', alignItems: 'center', gap: 6 }}>
+                Lider selecionado: <strong style={{ color: C.text }}>{liderNome || '...'}</strong>
+                <button type="button" onClick={() => set('lider_id', '')} style={{ background: 'none', border: 'none', color: C.red, cursor: 'pointer', fontSize: 11, padding: 0 }}>remover</button>
+              </div>
+            )}
           </div>
 
           <div>
