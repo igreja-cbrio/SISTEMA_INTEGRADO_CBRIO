@@ -85,19 +85,32 @@ router.post('/inscrever', async (req, res) => {
       eventoId = prox?.id || null;
     }
 
-    // Snapshot do status atual da pessoa (cruza com base existente)
+    // Membresia e fonte unica: garante que existe mem_membros (cria se nao
+    // existe). Apos esta chamada, toda inscricao NEXT estara vinculada a
+    // /ministerial/membresia automaticamente.
     let jaBatizado = false, jaVoluntario = false, jaDoador = false;
     let membroId = null;
+    try {
+      const { findOrCreateMembro } = require('./pessoas');
+      const r = await findOrCreateMembro({
+        cpf: cleanCpf,
+        email: cleanEmail,
+        telefone,
+        nome: [nome, sobrenome].filter(Boolean).join(' '),
+        status: 'visitante',
+      });
+      membroId = r.membro_id;
+    } catch (e) {
+      console.error('publicNext findOrCreateMembro:', e.message);
+    }
+
+    // Snapshot do status pre-NEXT (pra coletor saber 'estava nao-batizado')
+    if (membroId) {
+      const { data: m } = await supabase
+        .from('mem_membros').select('batizado').eq('id', membroId).maybeSingle();
+      jaBatizado = !!m?.batizado;
+    }
     if (cleanCpf) {
-      const { data: membro } = await supabase
-        .from('mem_membros')
-        .select('id, batizado')
-        .eq('cpf', cleanCpf)
-        .maybeSingle();
-      if (membro) {
-        membroId = membro.id;
-        jaBatizado = !!membro.batizado;
-      }
       const { count: volCount } = await supabase
         .from('vol_profiles')
         .select('id', { count: 'exact', head: true })
