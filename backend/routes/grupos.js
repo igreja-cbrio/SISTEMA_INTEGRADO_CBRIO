@@ -175,6 +175,90 @@ router.patch('/participacao/:id/presenca', async (req, res) => {
 });
 
 // ══════════════════════════════════════════════
+// ENCONTROS (chamada / lista de presenca)
+// ══════════════════════════════════════════════
+
+// GET /api/grupos/:id/encontros — lista encontros do grupo (mais recentes primeiro)
+router.get('/:id/encontros', async (req, res) => {
+  try {
+    const limit = Math.min(parseInt(req.query.limit, 10) || 20, 100);
+    const { data: encontros, error } = await supabase.from('mem_grupo_encontros')
+      .select('*')
+      .eq('grupo_id', req.params.id)
+      .order('data', { ascending: false })
+      .limit(limit);
+    if (error) throw error;
+
+    const ids = (encontros || []).map(e => e.id);
+    let presencasMap = {};
+    if (ids.length > 0) {
+      const { data: presencas } = await supabase.from('mem_grupo_encontro_presencas')
+        .select('encontro_id, membro_id')
+        .in('encontro_id', ids);
+      (presencas || []).forEach(p => {
+        if (!presencasMap[p.encontro_id]) presencasMap[p.encontro_id] = [];
+        presencasMap[p.encontro_id].push(p.membro_id);
+      });
+    }
+
+    res.json((encontros || []).map(e => ({
+      ...e,
+      total_presentes: (presencasMap[e.id] || []).length,
+      membros_presentes: presencasMap[e.id] || [],
+    })));
+  } catch (e) { console.error('[Grupos encontros list]', e.message); res.status(500).json({ error: 'Erro ao buscar encontros' }); }
+});
+
+// POST /api/grupos/:id/encontros — registrar encontro com chamada
+router.post('/:id/encontros', async (req, res) => {
+  try {
+    const { data, tema, observacoes, membros_presentes } = req.body;
+    if (!data) return res.status(400).json({ error: 'data obrigatoria' });
+    if (!Array.isArray(membros_presentes)) return res.status(400).json({ error: 'membros_presentes deve ser array' });
+
+    const { data: encontroId, error } = await supabase.rpc('registrar_encontro_grupo', {
+      p_grupo_id: req.params.id,
+      p_data: data,
+      p_tema: tema || null,
+      p_observacoes: observacoes || null,
+      p_registrado_por: req.user?.userId || null,
+      p_registrado_por_nome: req.user?.name || null,
+      p_membros_presentes: membros_presentes,
+    });
+    if (error) {
+      if (error.code === '23505') return res.status(409).json({ error: 'Ja existe encontro registrado nessa data' });
+      throw error;
+    }
+    res.json({ id: encontroId, total_presentes: membros_presentes.length });
+  } catch (e) { console.error('[Grupos encontro create]', e.message); res.status(500).json({ error: 'Erro ao registrar encontro' }); }
+});
+
+// DELETE /api/grupos/encontros/:encontroId — remove encontro (decrementa contadores)
+router.delete('/encontros/:encontroId', authorize('admin', 'diretor'), async (req, res) => {
+  try {
+    // Buscar membros presentes para reverter contador
+    const { data: presencas } = await supabase.from('mem_grupo_encontro_presencas')
+      .select('membro_id, mem_grupo_encontros!inner(grupo_id)')
+      .eq('encontro_id', req.params.encontroId);
+
+    const grupoId = presencas?.[0]?.mem_grupo_encontros?.grupo_id;
+
+    // Delete cascateia presencas; antes decrementa contador de cada membro presente
+    if (grupoId && presencas?.length) {
+      for (const p of presencas) {
+        await supabase.rpc('decrementar_presenca_grupo_membro', {
+          p_grupo_id: grupoId, p_membro_id: p.membro_id,
+        }).catch(() => {});
+      }
+    }
+
+    const { error } = await supabase.from('mem_grupo_encontros').delete().eq('id', req.params.encontroId);
+    if (error) throw error;
+    res.json({ success: true });
+  } catch (e) { console.error('[Grupos encontro delete]', e.message); res.status(500).json({ error: 'Erro ao remover encontro' }); }
+});
+
+// ══════════════════════════════════════════════
 // CRUD do grupo (rotas com /:id por ultimo)
 // ══════════════════════════════════════════════
 

@@ -8,7 +8,7 @@ import { Textarea } from '../../components/ui/textarea';
 import { Select as ShadSelect, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../components/ui/select';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../../components/ui/dialog';
 import { toast } from 'sonner';
-import { Users, MapPin, Clock, Plus, Search, ChevronLeft, UserPlus, X, ArrowRightLeft, FileUp, Trash2, FileText, Image, File as FileIcon, Map as MapIcon, ListChecks } from 'lucide-react';
+import { Users, MapPin, Clock, Plus, Search, ChevronLeft, UserPlus, X, ArrowRightLeft, FileUp, Trash2, FileText, Image, File as FileIcon, Map as MapIcon, ListChecks, ClipboardCheck, Calendar } from 'lucide-react';
 import ProcessosTarefas from '../../components/ProcessosTarefas';
 import { GruposMapView } from '@/components/grupos/GruposMapView';
 
@@ -57,6 +57,8 @@ export default function Grupos() {
   const [uploadEtiquetas, setUploadEtiquetas] = useState(['Todos']);
   const [uploadGrupoIds, setUploadGrupoIds] = useState([]);
   const [customTag, setCustomTag] = useState('');
+  const [chamadaOpen, setChamadaOpen] = useState(false);
+  const [encontros, setEncontros] = useState([]);
 
   const loadList = useCallback(async () => {
     setLoading(true);
@@ -108,12 +110,47 @@ export default function Grupos() {
     } catch {}
   }, [materiaisFilter]);
 
+  const loadEncontros = useCallback(async (id) => {
+    try {
+      const data = await api.encontros(id, { limit: 10 });
+      setEncontros(data || []);
+    } catch { setEncontros([]); }
+  }, []);
+
+  const handleRegistrarEncontro = async ({ data, tema, observacoes, membros_presentes }) => {
+    try {
+      await api.registrarEncontro(selectedGrupo, { data, tema, observacoes, membros_presentes });
+      toast.success(`Encontro registrado (${membros_presentes.length} presentes)`);
+      setChamadaOpen(false);
+      loadEncontros(selectedGrupo);
+      loadDetail(selectedGrupo);
+    } catch (e) {
+      const msg = e?.response?.data?.error || e.message || 'Erro ao registrar encontro';
+      toast.error(msg);
+    }
+  };
+
+  const handleRemoverEncontro = async (encontroId) => {
+    if (!window.confirm('Remover este encontro? As presencas serao revertidas.')) return;
+    try {
+      await api.removerEncontro(encontroId);
+      toast.success('Encontro removido');
+      loadEncontros(selectedGrupo);
+      loadDetail(selectedGrupo);
+    } catch { toast.error('Erro ao remover encontro'); }
+  };
+
   useEffect(() => { loadList(); }, [loadList]);
   useEffect(() => { if (pageTab === 'materiais') loadMateriais(); }, [pageTab, loadMateriais]);
 
   useEffect(() => {
-    if (selectedGrupo) loadDetail(selectedGrupo);
-  }, [selectedGrupo, loadDetail]);
+    if (selectedGrupo) {
+      loadDetail(selectedGrupo);
+      loadEncontros(selectedGrupo);
+    } else {
+      setEncontros([]);
+    }
+  }, [selectedGrupo, loadDetail, loadEncontros]);
 
   const openCreate = () => { setEditData(null); setModalOpen(true); };
   const openEdit = () => { setEditData(detailData); setModalOpen(true); };
@@ -304,11 +341,18 @@ export default function Grupos() {
 
         {/* Membros */}
         <div style={{ background: C.card, borderRadius: 12, border: `1px solid ${C.border}`, overflow: 'hidden' }}>
-          <div style={{ padding: '12px 16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: `1px solid ${C.border}` }}>
+          <div style={{ padding: '12px 16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: `1px solid ${C.border}`, gap: 8, flexWrap: 'wrap' }}>
             <span style={{ fontSize: 14, fontWeight: 700, color: C.text }}>
               Membros ({isOptimistic ? (g.membros_count ?? '...') : membrosAtivos.length})
             </span>
-            <Button size="sm" onClick={() => { loadMembros(); setAddMembroOpen(true); }}><UserPlus size={14} style={{ marginRight: 4 }} /> Adicionar</Button>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <Button size="sm" variant="outline" disabled={isOptimistic || membrosAtivos.length === 0} onClick={() => setChamadaOpen(true)}>
+                <ClipboardCheck size={14} style={{ marginRight: 4 }} /> Registrar encontro
+              </Button>
+              <Button size="sm" onClick={() => { loadMembros(); setAddMembroOpen(true); }}>
+                <UserPlus size={14} style={{ marginRight: 4 }} /> Adicionar
+              </Button>
+            </div>
           </div>
           {isOptimistic ? (
             <div>
@@ -361,6 +405,41 @@ export default function Grupos() {
           )}
         </div>
 
+        {/* Encontros recentes */}
+        {!isOptimistic && (
+          <div style={{ background: C.card, borderRadius: 12, border: `1px solid ${C.border}`, overflow: 'hidden', marginTop: 16 }}>
+            <div style={{ padding: '12px 16px', borderBottom: `1px solid ${C.border}`, display: 'flex', alignItems: 'center', gap: 8 }}>
+              <Calendar size={14} style={{ color: C.primary }} />
+              <span style={{ fontSize: 14, fontWeight: 700, color: C.text }}>Encontros recentes ({encontros.length})</span>
+            </div>
+            {encontros.length === 0 ? (
+              <div style={{ padding: 24, textAlign: 'center', color: C.t3, fontSize: 13 }}>
+                Nenhum encontro registrado. Clique em "Registrar encontro" para fazer a primeira chamada.
+              </div>
+            ) : (
+              <div>
+                {encontros.map(enc => (
+                  <div key={enc.id} style={{ padding: '12px 16px', borderBottom: `1px solid ${C.border}`, display: 'flex', alignItems: 'center', gap: 12 }}>
+                    <div style={{ width: 44, height: 44, borderRadius: 10, background: C.primaryBg, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                      <div style={{ fontSize: 9, fontWeight: 600, color: C.primary, textTransform: 'uppercase' }}>{new Date(enc.data + 'T12:00:00').toLocaleDateString('pt-BR', { month: 'short' }).replace('.', '')}</div>
+                      <div style={{ fontSize: 16, fontWeight: 700, color: C.primary, lineHeight: 1 }}>{new Date(enc.data + 'T12:00:00').getDate()}</div>
+                    </div>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: 13, fontWeight: 600, color: C.text }}>{enc.tema || 'Encontro'}</div>
+                      <div style={{ fontSize: 11, color: C.t3, marginTop: 2 }}>
+                        {enc.total_presentes} presentes
+                        {enc.registrado_por_nome && ` · ${enc.registrado_por_nome}`}
+                      </div>
+                      {enc.observacoes && <div style={{ fontSize: 11, color: C.t2, marginTop: 4 }}>{enc.observacoes}</div>}
+                    </div>
+                    <button onClick={() => handleRemoverEncontro(enc.id)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: C.red, padding: 6 }} title="Remover encontro"><Trash2 size={14} /></button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
         {/* Observacoes */}
         {g.observacoes && (
           <div style={{ background: C.card, borderRadius: 12, padding: 16, border: `1px solid ${C.border}`, marginTop: 16 }}>
@@ -368,6 +447,15 @@ export default function Grupos() {
             <div style={{ fontSize: 13, color: C.t2, whiteSpace: 'pre-wrap' }}>{g.observacoes}</div>
           </div>
         )}
+
+        {/* Modal de chamada */}
+        <ChamadaModal
+          open={chamadaOpen}
+          onClose={() => setChamadaOpen(false)}
+          membros={membrosAtivos}
+          onSubmit={handleRegistrarEncontro}
+        />
+
         {/* Modal adicionar membro */}
         <Dialog open={addMembroOpen} onOpenChange={setAddMembroOpen}>
           <DialogContent className="max-w-md">
@@ -886,6 +974,111 @@ function GrupoFormModal({ open, onClose, data, onSave, saving, gruposForSelect, 
           <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', marginTop: 8 }}>
             <Button type="button" variant="outline" onClick={onClose}>Cancelar</Button>
             <Button type="submit" disabled={saving}>{saving ? 'Salvando...' : (data?.id ? 'Salvar' : 'Criar Grupo')}</Button>
+          </div>
+        </form>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// ── MODAL DE CHAMADA / REGISTRO DE ENCONTRO ──
+function ChamadaModal({ open, onClose, membros, onSubmit }) {
+  const [data, setData] = useState('');
+  const [tema, setTema] = useState('');
+  const [observacoes, setObservacoes] = useState('');
+  const [presentes, setPresentes] = useState(new Set());
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    if (open) {
+      setData(new Date().toISOString().split('T')[0]);
+      setTema('');
+      setObservacoes('');
+      // Default: todos selecionados (mais comum o lider desmarcar quem faltou)
+      setPresentes(new Set(membros.map(m => m.id)));
+      setSaving(false);
+    }
+  }, [open, membros]);
+
+  const toggle = (id) => {
+    setPresentes(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  };
+
+  const todosMarcados = membros.length > 0 && membros.every(m => presentes.has(m.id));
+  const toggleAll = () => {
+    if (todosMarcados) setPresentes(new Set());
+    else setPresentes(new Set(membros.map(m => m.id)));
+  };
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    if (!data) { toast.error('Data obrigatoria'); return; }
+    setSaving(true);
+    await onSubmit({
+      data,
+      tema: tema.trim(),
+      observacoes: observacoes.trim(),
+      membros_presentes: Array.from(presentes),
+    });
+    setSaving(false);
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={onClose}>
+      <DialogContent className="max-w-md max-h-[85vh] overflow-y-auto">
+        <DialogHeader><DialogTitle>Registrar encontro</DialogTitle></DialogHeader>
+        <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 2fr', gap: 10 }}>
+            <div>
+              <Label style={{ fontSize: 11 }}>Data *</Label>
+              <Input type="date" value={data} onChange={e => setData(e.target.value)} max={new Date().toISOString().split('T')[0]} />
+            </div>
+            <div>
+              <Label style={{ fontSize: 11 }}>Tema (opcional)</Label>
+              <Input value={tema} onChange={e => setTema(e.target.value)} placeholder="Ex: Mateus 5 - Bem-aventurancas" />
+            </div>
+          </div>
+
+          <div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+              <Label style={{ fontSize: 11 }}>Presentes ({presentes.size}/{membros.length})</Label>
+              <button type="button" onClick={toggleAll} style={{ fontSize: 11, background: 'none', border: 'none', color: '#00B39D', cursor: 'pointer', fontWeight: 600 }}>
+                {todosMarcados ? 'Desmarcar todos' : 'Marcar todos'}
+              </button>
+            </div>
+            <div style={{ maxHeight: 280, overflowY: 'auto', border: `1px solid var(--cbrio-border)`, borderRadius: 8 }}>
+              {membros.map(m => {
+                const ativo = presentes.has(m.id);
+                return (
+                  <label key={m.id} style={{
+                    display: 'flex', alignItems: 'center', gap: 10, padding: '10px 12px',
+                    borderBottom: `1px solid var(--cbrio-border)`, cursor: 'pointer',
+                    background: ativo ? '#00B39D12' : 'transparent',
+                  }}>
+                    <input type="checkbox" checked={ativo} onChange={() => toggle(m.id)} style={{ accentColor: '#00B39D' }} />
+                    <div style={{ width: 28, height: 28, borderRadius: '50%', background: m.foto_url ? `url(${m.foto_url}) center/cover` : '#00B39D18', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 11, fontWeight: 700, color: '#00B39D', flexShrink: 0 }}>
+                      {!m.foto_url && (m.nome?.charAt(0) || '?')}
+                    </div>
+                    <span style={{ fontSize: 13, color: 'var(--cbrio-text)', fontWeight: ativo ? 600 : 400 }}>{m.nome}</span>
+                    {m.is_visitante && <span style={{ marginLeft: 'auto', fontSize: 10, padding: '1px 6px', borderRadius: 99, background: '#f59e0b20', color: '#f59e0b', fontWeight: 600 }}>Visitante</span>}
+                  </label>
+                );
+              })}
+            </div>
+          </div>
+
+          <div>
+            <Label style={{ fontSize: 11 }}>Observacoes (opcional)</Label>
+            <Textarea value={observacoes} onChange={e => setObservacoes(e.target.value)} rows={2} placeholder="Notas do encontro, oracoes, decisoes..." />
+          </div>
+
+          <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', marginTop: 4 }}>
+            <Button type="button" variant="outline" onClick={onClose} disabled={saving}>Cancelar</Button>
+            <Button type="submit" disabled={saving}>{saving ? 'Salvando...' : `Registrar (${presentes.size} presentes)`}</Button>
           </div>
         </form>
       </DialogContent>
