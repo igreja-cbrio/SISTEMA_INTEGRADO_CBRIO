@@ -16,6 +16,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useKpis } from '../hooks/useKpis';
 import { AREAS } from '../data/indicadores';
+import { rh as rhApi } from '../api';
 
 const C = {
   bg: 'var(--cbrio-bg)', card: 'var(--cbrio-card)', text: 'var(--cbrio-text)',
@@ -84,7 +85,7 @@ const EMPTY = {
   periodicidade: 'mensal', periodo_offset_meses: 0,
   meta_descricao: '', meta_valor: '', unidade: '', pilar: '',
   responsavel_area: '', apuracao: '', sort_order: 0, ativo: true,
-  valores: [], is_okr: false,
+  valores: [], is_okr: false, lider_funcionario_id: '',
 };
 
 export default function KpiEditorModal({ open, kpi, onClose, onSaved }) {
@@ -92,7 +93,16 @@ export default function KpiEditorModal({ open, kpi, onClose, onSaved }) {
   const [form, setForm] = useState(EMPTY);
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState(null);
+  const [funcionarios, setFuncionarios] = useState([]);
   const isEdit = !!kpi;
+
+  // Carrega funcionarios ativos pra dropdown de lider
+  useEffect(() => {
+    if (!open) return;
+    rhApi.funcionarios.list({ status: 'ativo' })
+      .then(setFuncionarios)
+      .catch(() => setFuncionarios([]));
+  }, [open]);
 
   useEffect(() => {
     if (!open) return;
@@ -115,6 +125,7 @@ export default function KpiEditorModal({ open, kpi, onClose, onSaved }) {
         ativo: kpi.ativo !== false,
         valores: kpi.valores || [],
         is_okr: !!kpi.is_okr,
+        lider_funcionario_id: kpi.lider_funcionario_id || '',
       });
     } else {
       setForm(EMPTY);
@@ -241,12 +252,27 @@ export default function KpiEditorModal({ open, kpi, onClose, onSaved }) {
           </Field>
 
           {/* Responsavel + Apuracao */}
-          <Field label="Responsável (área/cargo)">
-            <input value={form.responsavel_area} onChange={e => set('responsavel_area', e.target.value)} style={inp} />
+          <Field label="Responsável (área/cargo) — descrição livre">
+            <input value={form.responsavel_area} onChange={e => set('responsavel_area', e.target.value)} style={inp} placeholder="Ex: Coord Voluntariado" />
           </Field>
           <Field label="Apuração (como calcular)">
             <input value={form.apuracao} onChange={e => set('apuracao', e.target.value)} style={inp} />
           </Field>
+
+          {/* Lider funcionario (vincula com RH) */}
+          <div style={{ gridColumn: '1/-1' }}>
+            <Field label="Líder responsável (funcionário)" hint="Quem é cobrado pelo OKR. Notificações e filtro 'meus OKRs' usam este campo.">
+              <select value={form.lider_funcionario_id || ''} onChange={e => set('lider_funcionario_id', e.target.value || null)} style={inp}>
+                <option value="">— Sem líder definido —</option>
+                {funcionarios.length === 0 && <option disabled>Carregando funcionários...</option>}
+                {funcionarios.map(f => (
+                  <option key={f.id} value={f.id}>
+                    {f.nome}{f.cargo ? ` — ${f.cargo}` : ''}{f.area ? ` (${f.area})` : ''}
+                  </option>
+                ))}
+              </select>
+            </Field>
+          </div>
 
           {/* Sort + Ativo */}
           <Field label="Ordem">
