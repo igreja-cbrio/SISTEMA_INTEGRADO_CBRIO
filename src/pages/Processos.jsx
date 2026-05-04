@@ -669,6 +669,11 @@ function TabAgenda({ agenda, canWrite, onSave }) {
                               {kpi.valores.map(v => <span key={v} style={{ fontSize: 9, padding: '1px 6px', borderRadius: 8, background: C.primaryBg, color: C.primary, fontWeight: 600 }}>{v}</span>)}
                             </div>
                           )}
+                          {kpi.lider_nome && (
+                            <div style={{ fontSize: 10, color: C.t3, marginTop: 3 }}>
+                              👤 {kpi.lider_nome}{kpi.lider_cargo ? ` · ${kpi.lider_cargo}` : ''}
+                            </div>
+                          )}
                         </td>
                         <td style={{ padding: '8px 8px', textAlign: 'center', fontSize: 11, color: C.t3 }}>{periodLabel}</td>
                         {DIAS.map((_, di) => {

@@ -54,6 +54,9 @@ function fromDb(row) {
     valores: row.valores || [],
     ativo: row.ativo !== false,
     kpi_estrategico_id: row.kpi_estrategico_id,
+    lider_funcionario_id: row.lider_funcionario_id || null,
+    lider_nome: row.lider_nome || null,
+    lider_cargo: row.lider_cargo || null,
   };
 }
 
