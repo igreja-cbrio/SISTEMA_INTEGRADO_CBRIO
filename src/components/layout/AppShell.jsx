@@ -48,6 +48,7 @@ const NAV_ITEMS = [
         title: 'Inteligência',
         items: [
           { label: 'Meus KPIs', description: 'Os indicadores da sua área para preencher', icon: Activity, path: '/meus-kpis' },
+          { label: 'Painel de KPIs', description: 'Visão consolidada cross-área, OKRs e Jornada', icon: BarChart2, path: '/painel-kpis' },
           { label: 'KPIs e Indicadores', description: 'Frequência, batismos e métricas 2026', icon: BarChart2, path: '/kpis', perm: 'canKPIs' },
           { label: 'Cultura CBRio', description: 'Mandala dos 5 valores: PENSE e generosidade', icon: Sparkles, path: '/admin/cultura' },
           { label: 'Assistente IA', description: 'Agentes de auditoria e análise', icon: BrainCircuit, path: '/assistente-ia', perm: 'canIA' },
