@@ -88,7 +88,7 @@ const EMPTY = {
   valores: [], is_okr: false, lider_funcionario_id: '',
 };
 
-export default function KpiEditorModal({ open, kpi, onClose, onSaved }) {
+export default function KpiEditorModal({ open, kpi, onClose, onSaved, defaultArea, allowedAreas }) {
   const { create, update } = useKpis();
   const [form, setForm] = useState(EMPTY);
   const [saving, setSaving] = useState(false);
@@ -128,9 +128,9 @@ export default function KpiEditorModal({ open, kpi, onClose, onSaved }) {
         lider_funcionario_id: kpi.lider_funcionario_id || '',
       });
     } else {
-      setForm(EMPTY);
+      setForm({ ...EMPTY, area: defaultArea || '' });
     }
-  }, [open, kpi]);
+  }, [open, kpi, defaultArea]);
 
   const offsetOpts = useMemo(() => offsetOptionsFor(form.periodicidade), [form.periodicidade]);
 
@@ -199,10 +199,17 @@ export default function KpiEditorModal({ open, kpi, onClose, onSaved }) {
 
           {/* Area */}
           <Field label="Área *">
-            <select value={form.area} onChange={e => set('area', e.target.value)} style={inp}>
+            <select value={form.area} onChange={e => set('area', e.target.value)} style={inp} disabled={isEdit && allowedAreas && !allowedAreas.includes(String(form.area).toLowerCase())}>
               <option value="">Selecione...</option>
-              {AREAS.map(a => <option key={a.id} value={a.id}>{a.nome}</option>)}
+              {AREAS
+                .filter(a => !allowedAreas || allowedAreas.includes(String(a.id).toLowerCase()))
+                .map(a => <option key={a.id} value={a.id}>{a.nome}</option>)}
             </select>
+            {allowedAreas && (
+              <div style={{ fontSize: 10, color: C.t3, marginTop: 4 }}>
+                Você só pode criar KPIs nas áreas que lidera.
+              </div>
+            )}
           </Field>
 
           {/* Nome (span full) */}
