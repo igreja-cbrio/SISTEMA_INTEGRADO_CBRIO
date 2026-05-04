@@ -423,6 +423,14 @@ router.get('/membros/:id', async (req, res) => {
       }));
     }
 
+    // Inscricoes NEXT desta pessoa (next_inscricoes filtrado por membro_id)
+    const { data: inscricoesNext } = await supabase
+      .from('next_inscricoes')
+      .select('id, evento_id, indicou_batismo, indicou_servir, indicou_grupo, indicou_dizimo, check_in_at, created_at, evento:next_eventos(id, data, titulo, status)')
+      .eq('membro_id', membro.id)
+      .order('created_at', { ascending: false })
+      .limit(20);
+
     res.json({
       ...membro,
       familiares,
@@ -444,6 +452,8 @@ router.get('/membros/:id', async (req, res) => {
       total_checkins_90d: totalCheckins90d,
       nivel_servico: nivelServico,
       escalas_futuras: escalasFuturas || [],
+      // NEXT
+      inscricoes_next: inscricoesNext || [],
     });
   } catch (e) {
     res.status(500).json({ error: 'Erro ao buscar membro' });
