@@ -12,6 +12,7 @@ import {
   Activity, LayoutGrid, HandHelping, Heart,
 } from 'lucide-react';
 import MandalaCultura from '../components/cultura/MandalaCultura';
+import MinhaSemanaPendente from '../components/MinhaSemanaPendente';
 
 // path='VOLUNTARIADO_DYNAMIC' e tratado no click handler (vai para painel do
 // voluntario ou visao admin conforme o perfil do usuario logado)
@@ -149,6 +150,27 @@ export default function Dashboard() {
 
       {/* Mandala Cultura CBRio */}
       <MandalaCultura />
+
+      {/* Minha Semana Pendente — KPIs em vermelho + tarefas atrasadas */}
+      <MinhaSemanaPendente
+        onFillKpi={({ kpi }) => {
+          // PR seguinte adiciona modal de fill rapido. Por enquanto navega
+          // pra agenda da area do KPI pra preencher la.
+          const areaPath = {
+            ami: '/ministerial/voluntariado',
+            cuidados: '/ministerial/cuidados',
+            grupos: '/ministerial/grupos',
+            integracao: '/ministerial/integracao',
+            voluntariado: '/ministerial/voluntariado',
+            next: '/ministerial/next',
+            cba: '/ministerial/cuidados',
+            kids: '/ministerial/cuidados',
+            generosidade: '/ministerial/cuidados',
+          };
+          const path = areaPath[String(kpi.area).toLowerCase()] || '/processos';
+          navigate(path);
+        }}
+      />
 
       {/* KPI Cards */}
       <section>
