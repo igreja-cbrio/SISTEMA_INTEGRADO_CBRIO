@@ -4,6 +4,7 @@ import { processos as api, users as usersApi } from '../api';
 import { CATEGORIAS, AREAS, CATEGORIA_AREAS, getAreaNome } from '../data/indicadores';
 import { useKpis } from '../hooks/useKpis';
 import KpiEditorModal from '../components/KpiEditorModal';
+import OkrRevisaoModal from '../components/OkrRevisaoModal';
 
 const C = {
   bg: 'var(--cbrio-bg)', card: 'var(--cbrio-card)', text: 'var(--cbrio-text)',
@@ -585,6 +586,7 @@ function TabAgenda({ agenda, canWrite, onSave }) {
   const [saving, setSaving] = useState(false);
   const [filterArea, setFilterArea] = useState('');
   const [editor, setEditor] = useState(null); // null | { mode:'create' } | { mode:'edit', kpi }
+  const [revisaoTarget, setRevisaoTarget] = useState(null); // { kpi } | null
 
   useEffect(() => {
     const m = {};
@@ -694,7 +696,12 @@ function TabAgenda({ agenda, canWrite, onSave }) {
                           );
                         })}
                         {canWrite && (
-                          <td style={{ padding: '4px 6px', textAlign: 'center' }}>
+                          <td style={{ padding: '4px 6px', textAlign: 'center', whiteSpace: 'nowrap' }}>
+                            {kpi.is_okr && (
+                              <button onClick={() => setRevisaoTarget({ kpi })}
+                                title="Registrar revis\u00e3o de OKR (causa, decis\u00e3o, pr\u00f3ximo passo)"
+                                style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#b45309', fontSize: 13, padding: 4 }}>\ud83d\udccb</button>
+                            )}
                             <button onClick={() => setEditor({ mode: 'edit', kpi })} title="Editar"
                               style={{ background: 'none', border: 'none', cursor: 'pointer', color: C.t2, fontSize: 13, padding: 4 }}>\u270e</button>
                             <button onClick={() => handleDelete(kpi)} title="Desativar"
@@ -719,6 +726,13 @@ function TabAgenda({ agenda, canWrite, onSave }) {
           onSaved={() => setEditor(null)}
         />
       )}
+
+      <OkrRevisaoModal
+        open={!!revisaoTarget}
+        kpi={revisaoTarget?.kpi || null}
+        onClose={() => setRevisaoTarget(null)}
+        onSaved={() => setRevisaoTarget(null)}
+      />
     </div>
   );
 }
