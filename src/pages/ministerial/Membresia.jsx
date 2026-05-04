@@ -1162,7 +1162,14 @@ export default function Membresia() {
                 </div>
                 <div>
                   <h2 style={{ fontSize: 22, fontWeight: 700, color: C.text, margin: 0 }}>{selectedMembro.nome}</h2>
-                  <Badge status={selectedMembro.status} />
+                  <div style={{ display: 'flex', gap: 6, marginTop: 4, flexWrap: 'wrap', alignItems: 'center' }}>
+                    <Badge status={selectedMembro.status} />
+                    {selectedMembro.papeis?.is_voluntario && <span title="Voluntário ativo" style={{ fontSize: 9, padding: '2px 6px', borderRadius: 4, background: '#ede9fe', color: '#6b21a8', fontWeight: 700 }}>VOL</span>}
+                    {selectedMembro.papeis?.is_visitante && <span title="Tem visita registrada" style={{ fontSize: 9, padding: '2px 6px', borderRadius: 4, background: '#fef3c7', color: '#92400e', fontWeight: 700 }}>VIS</span>}
+                    {selectedMembro.papeis?.in_grupo_ativo && <span title="Em grupo ativo" style={{ fontSize: 9, padding: '2px 6px', borderRadius: 4, background: '#dbeafe', color: '#1e3a8a', fontWeight: 700 }}>GRP</span>}
+                    {selectedMembro.papeis?.is_contribuinte && <span title="Contribuinte recente" style={{ fontSize: 9, padding: '2px 6px', borderRadius: 4, background: '#fce7f3', color: '#831843', fontWeight: 700 }}>CTB</span>}
+                    {selectedMembro.papeis?.is_inscrito_next && <span title={`${selectedMembro.papeis.total_inscricoes_next}× NEXT`} style={{ fontSize: 9, padding: '2px 6px', borderRadius: 4, background: '#d1fae5', color: '#065f46', fontWeight: 700 }}>NXT{selectedMembro.papeis.total_inscricoes_next > 1 ? `×${selectedMembro.papeis.total_inscricoes_next}` : ''}</span>}
+                  </div>
                 </div>
               </div>
               <div style={{ display: 'flex', gap: 4 }}>
