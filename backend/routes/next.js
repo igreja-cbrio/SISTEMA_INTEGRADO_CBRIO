@@ -168,10 +168,29 @@ router.get('/inscricoes/:id', async (req, res) => {
   res.json(data);
 });
 
+const { findOrCreateMembro } = require('./pessoas');
+
 router.post('/inscricoes', async (req, res) => {
   const { evento_id, nome, sobrenome, cpf, telefone, email, data_nascimento, observacoes } = req.body || {};
   if (!nome || !evento_id) return res.status(400).json({ error: 'nome e evento_id obrigatorios' });
   const cleanCpf = cpf ? String(cpf).replace(/\D/g, '') : null;
+
+  // ANTES de criar a inscricao: garantir que existe mem_membros (cria se necessario).
+  // Membresia e fonte unica — toda pessoa que se inscreve no NEXT vira membro
+  // (status='visitante' no minimo) e fica acessivel em /ministerial/membresia.
+  let membro_id = null;
+  try {
+    const r = await findOrCreateMembro({
+      cpf: cleanCpf, email, telefone,
+      nome: [nome, sobrenome].filter(Boolean).join(' '),
+      status: 'visitante',
+    });
+    membro_id = r.membro_id;
+  } catch (e) {
+    console.error('next/inscricoes findOrCreateMembro failed:', e.message);
+    // segue sem membro_id - inscricao ainda e criada pra nao perder dado
+  }
+
   const { data, error } = await supabase
     .from('next_inscricoes')
     .insert({
@@ -179,6 +198,7 @@ router.post('/inscricoes', async (req, res) => {
       telefone: telefone || null, email: email ? String(email).toLowerCase() : null,
       data_nascimento: data_nascimento || null, observacoes: observacoes || null,
       origem: 'manual', registered_by: req.user?.id || null,
+      membro_id,
     })
     .select().single();
   if (error) return res.status(500).json({ error: error.message });
