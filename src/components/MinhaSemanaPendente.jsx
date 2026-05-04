@@ -53,18 +53,21 @@ function getPeriodKey(date, periodicidade) {
   return `${y}-${String(m).padStart(2,'0')}`;
 }
 
-// O periodo do KPI esta "ativo" hoje? (Semanal sempre. Mensal: dia 1-7
-// do mes. Trimestral: 1-7 do mes inicial do trimestre, com offset.)
+// O periodo do KPI esta ativo hoje?
+//   Semanal     -> sempre (dia atual ja esta na semana atual)
+//   Mensal      -> qualquer dia do mes
+//   Trimestral  -> qualquer dia do mes inicial do trimestre (com offset)
+//   Semestral   -> qualquer dia do mes inicial do semestre (com offset)
+//   Anual       -> qualquer dia do mes inicial do ano (offset)
 function isInActivePeriod(date, periodicidade, offsetMeses = 0) {
   const p = String(periodicidade || '').toLowerCase();
   if (p === 'semanal') return true;
-  const day = date.getDate();
   const month = date.getMonth();
   const off = Number(offsetMeses) || 0;
-  if (p === 'mensal') return day <= 7;
-  if (p === 'trimestral') return (month - off + 12) % 3 === 0 && day <= 7;
-  if (p === 'semestral') return (month - off + 12) % 6 === 0 && day <= 7;
-  if (p === 'anual') return month === (off % 12) && day <= 7;
+  if (p === 'mensal') return true;
+  if (p === 'trimestral') return (month - off + 12) % 3 === 0;
+  if (p === 'semestral') return (month - off + 12) % 6 === 0;
+  if (p === 'anual') return month === (off % 12);
   return false;
 }
 
