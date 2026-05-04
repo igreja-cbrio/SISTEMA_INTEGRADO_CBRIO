@@ -191,6 +191,9 @@ export const grupos = {
   materiais: (params) => get('/grupos/materiais' + (params ? '?' + new URLSearchParams(params) : '')),
   uploadMaterial: (formData) => requestFile('/grupos/materiais', formData),
   removeMaterial: (docId) => del(`/grupos/materiais/${docId}`),
+  encontros: (grupoId, params) => get(`/grupos/${grupoId}/encontros` + (params ? '?' + new URLSearchParams(params) : '')),
+  registrarEncontro: (grupoId, data) => post(`/grupos/${grupoId}/encontros`, data),
+  removerEncontro: (encontroId) => del(`/grupos/encontros/${encontroId}`),
 };
 
 export const strategic = {
