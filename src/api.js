@@ -1095,3 +1095,15 @@ export const pessoas = {
   },
   findOrCreate: (body) => post('/pessoas/find-or-create', body),
 };
+
+// OKRs - revisoes (regra de ouro do ritual mensal)
+export const okrs = {
+  revisoes: {
+    list: (p) => get('/okrs/revisoes' + (p ? '?' + new URLSearchParams(p) : '')),
+    abertas: () => get('/okrs/revisoes/abertas'),
+    byKpi: (kpiId) => get(`/okrs/${kpiId}/revisoes`),
+    create: (kpiId, body) => post(`/okrs/${kpiId}/revisoes`, body),
+    update: (id, body) => patch(`/okrs/revisoes/${id}`, body),
+    remove: (id) => del(`/okrs/revisoes/${id}`),
+  },
+};
