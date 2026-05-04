@@ -327,35 +327,101 @@ router.get('/membros/:id', async (req, res) => {
       totaisAno.total += v;
     });
 
-    // Voluntariado / Ministérios
-    const { data: voluntarios } = await supabase
-      .from('mem_voluntarios')
-      .select('*, ministerio:mem_ministerios(id, nome, cor, ativo)')
-      .eq('membro_id', membro.id)
-      .order('desde', { ascending: false });
+    // ── Servico (vol_profiles e fonte unica) ───────────────────────────────
+    // Busca vol_profile linkado e enriquece com times, check-ins, escalas
+    const { data: volProfile } = await supabase
+      .from('vol_profiles')
+      .select('id, full_name, planning_center_id, allocation_status, profile_complete')
+      .eq('membresia_id', membro.id)
+      .maybeSingle();
 
-    const ministerios_ativos = (voluntarios || []).filter(v => !v.ate);
-    const ministerios_historico = (voluntarios || []).filter(v => v.ate);
+    let ministerios_ativos = [];
+    let ministerios_historico = [];
+    let checkins = [];
+    let ultimoCheckin = null;
+    let nivelServico = 'sem_servico';
+    let escalasFuturas = [];
+    let totalCheckins90d = 0;
+    const vol_profile_id = volProfile?.id || null;
+    const allocation_status = volProfile?.allocation_status || null;
 
-    // Check-ins recentes (últimos 20)
-    const { data: checkins } = await supabase
-      .from('mem_checkins')
-      .select('*, ministerio:mem_ministerios(id, nome, cor)')
-      .eq('membro_id', membro.id)
-      .order('data', { ascending: false })
-      .limit(20);
+    if (volProfile) {
+      // Times/Ministerios (vol_team_members JOIN vol_teams)
+      const { data: teamData } = await supabase
+        .from('vol_team_members')
+        .select('id, is_active, joined_at, team:vol_teams(id, name, color)')
+        .eq('volunteer_profile_id', volProfile.id);
 
-    const ultimoCheckin = checkins?.[0]?.data || null;
-    const nivelServico = calcularNivelServico(ultimoCheckin);
+      ministerios_ativos = (teamData || [])
+        .filter(t => t.is_active)
+        .map(t => ({
+          id: t.id, joined_at: t.joined_at,
+          ministerio: t.team ? { id: t.team.id, nome: t.team.name, cor: t.team.color, ativo: true } : null,
+          desde: t.joined_at,
+        }));
+      ministerios_historico = (teamData || [])
+        .filter(t => !t.is_active)
+        .map(t => ({
+          id: t.id, joined_at: t.joined_at,
+          ministerio: t.team ? { id: t.team.id, nome: t.team.name, cor: t.team.color, ativo: false } : null,
+          desde: t.joined_at,
+        }));
 
-    // Escalas futuras
-    const { data: escalasFuturas } = await supabase
-      .from('mem_escalas')
-      .select('*, ministerio:mem_ministerios(id, nome, cor)')
-      .eq('membro_id', membro.id)
-      .gte('data', new Date().toISOString().slice(0, 10))
-      .order('data')
-      .limit(10);
+      // Check-ins recentes (ultimos 20)
+      const { data: ckData } = await supabase
+        .from('vol_check_ins')
+        .select('id, checked_in_at, method, is_unscheduled, service:vol_services(id, name, scheduled_at)')
+        .eq('volunteer_id', volProfile.id)
+        .order('checked_in_at', { ascending: false })
+        .limit(20);
+
+      checkins = (ckData || []).map(c => ({
+        id: c.id,
+        data: c.checked_in_at?.slice(0, 10),
+        checked_in_at: c.checked_in_at,
+        method: c.method,
+        is_unscheduled: c.is_unscheduled,
+        ministerio: c.service ? { nome: c.service.name } : null,
+      }));
+      ultimoCheckin = checkins[0]?.checked_in_at || null;
+
+      // Total nos ultimos 90 dias (pra metrica de frequencia)
+      const d90 = new Date(Date.now() - 90 * 86400000).toISOString();
+      const { count: cnt90 } = await supabase
+        .from('vol_check_ins')
+        .select('id', { count: 'exact', head: true })
+        .eq('volunteer_id', volProfile.id)
+        .gte('checked_in_at', d90);
+      totalCheckins90d = cnt90 || 0;
+
+      // Nivel de servico (Ativo <30d / Ausente 30-90 / Sumido >90)
+      if (ultimoCheckin) {
+        const dias = Math.floor((Date.now() - new Date(ultimoCheckin).getTime()) / 86400000);
+        if (dias <= 30) nivelServico = 'ativo';
+        else if (dias <= 90) nivelServico = 'ausente';
+        else nivelServico = 'sumido';
+      } else if (allocation_status === 'waiting_allocation') {
+        nivelServico = 'aguardando_alocacao';
+      }
+
+      // Escalas futuras (vol_schedules JOIN vol_services)
+      const { data: schedData } = await supabase
+        .from('vol_schedules')
+        .select('id, confirmation_status, team_name, position_name, service:vol_services!inner(id, name, scheduled_at)')
+        .eq('volunteer_id', volProfile.id)
+        .gte('service.scheduled_at', new Date().toISOString())
+        .order('service(scheduled_at)', { ascending: true })
+        .limit(10);
+
+      escalasFuturas = (schedData || []).map(s => ({
+        id: s.id,
+        data: s.service?.scheduled_at?.slice(0, 10),
+        scheduled_at: s.service?.scheduled_at,
+        confirmation_status: s.confirmation_status,
+        ministerio: { nome: s.team_name || (s.service?.name) },
+        position: s.position_name,
+      }));
+    }
 
     res.json({
       ...membro,
@@ -368,10 +434,14 @@ router.get('/membros/:id', async (req, res) => {
       nivel_generosidade: nivelGenerosidade,
       ultima_contribuicao: ultimaContribuicao,
       totais_ano: totaisAno,
+      // Voluntariado (lido de vol_profiles - fonte unica)
+      vol_profile_id,
+      allocation_status,
       ministerios_ativos,
       ministerios_historico,
       checkins: checkins || [],
       ultimo_checkin: ultimoCheckin,
+      total_checkins_90d: totalCheckins90d,
       nivel_servico: nivelServico,
       escalas_futuras: escalasFuturas || [],
     });
