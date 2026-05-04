@@ -100,6 +100,7 @@ export default function Processos() {
   const [registros, setRegistros] = useState([]);
 
   const [form, setForm] = useState({ nome: '', descricao: '', categoria: '', area: '', responsavel_id: '', responsavel_nome: '', indicador_ids: [], is_okr: false, status: 'ativo' });
+  const [kpiSearch, setKpiSearch] = useState('');
 
   const loadList = useCallback(async () => {
     setLoading(true);
@@ -128,6 +129,7 @@ export default function Processos() {
   }, [list, search]);
 
   const openCreate = () => {
+    setKpiSearch('');
     setForm({ nome: '', descricao: '', categoria: '', area: '', responsavel_id: '', responsavel_nome: '', indicador_ids: [], is_okr: false, status: 'ativo' });
     setModal('create');
   };
@@ -239,20 +241,49 @@ export default function Processos() {
             <input type="checkbox" id="okr-toggle" checked={form.is_okr} onChange={e => setForm(f => ({ ...f, is_okr: e.target.checked }))} />
             <label htmlFor="okr-toggle" style={{ fontSize: 14, fontWeight: 600, color: C.text, cursor: 'pointer' }}>{'Objetivo Estrat\u00e9gico (OKR)'}</label>
           </div>
-          {availableKpis.length > 0 && (
-            <div style={{ gridColumn: '1/-1' }}>
-              <Field label={`Indicadores vinculados (${form.indicador_ids.length})`}>
-                <div style={{ maxHeight: 200, overflow: 'auto', border: `1px solid ${C.border}`, borderRadius: 8, padding: 8 }}>
-                  {availableKpis.map(kpi => (
-                    <label key={kpi.id} style={{ display: 'flex', alignItems: 'flex-start', gap: 8, padding: '6px 4px', cursor: 'pointer', borderRadius: 6, background: form.indicador_ids.includes(kpi.id) ? C.primaryBg : 'transparent' }}>
-                      <input type="checkbox" checked={form.indicador_ids.includes(kpi.id)} onChange={() => toggleKpi(kpi.id)} style={{ marginTop: 2 }} />
-                      <div><span style={{ fontSize: 13, fontWeight: 600, color: C.text }}>{kpi.id}</span><span style={{ fontSize: 13, color: C.t2, marginLeft: 6 }}>{kpi.nome}</span></div>
-                    </label>
-                  ))}
-                </div>
-              </Field>
-            </div>
-          )}
+          {availableKpis.length > 0 && (() => {
+            const q = kpiSearch.trim().toLowerCase();
+            const visible = q
+              ? availableKpis.filter(k =>
+                  k.id.toLowerCase().includes(q) ||
+                  String(k.indicador || k.nome || '').toLowerCase().includes(q) ||
+                  String(k.pilar || '').toLowerCase().includes(q))
+              : availableKpis;
+            return (
+              <div style={{ gridColumn: '1/-1' }}>
+                <Field label={`Indicadores vinculados (${form.indicador_ids.length} de ${availableKpis.length})`}>
+                  <input
+                    value={kpiSearch}
+                    onChange={e => setKpiSearch(e.target.value)}
+                    placeholder="Buscar por ID, nome ou pilar..."
+                    style={{ ...inp, marginBottom: 6 }}
+                  />
+                  <div style={{ maxHeight: 240, overflow: 'auto', border: `1px solid ${C.border}`, borderRadius: 8, padding: 8 }}>
+                    {visible.length === 0 && (
+                      <p style={{ color: C.t3, fontSize: 12, textAlign: 'center', padding: 12 }}>Nenhum KPI bate com a busca</p>
+                    )}
+                    {visible.map(kpi => (
+                      <label key={kpi.id} style={{ display: 'flex', alignItems: 'flex-start', gap: 8, padding: '6px 4px', cursor: 'pointer', borderRadius: 6, background: form.indicador_ids.includes(kpi.id) ? C.primaryBg : 'transparent' }}>
+                        <input type="checkbox" checked={form.indicador_ids.includes(kpi.id)} onChange={() => toggleKpi(kpi.id)} style={{ marginTop: 2 }} />
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div>
+                            <span style={{ fontSize: 13, fontWeight: 600, color: C.text }}>{kpi.id}</span>
+                            {kpi.is_okr && <span style={{ fontSize: 9, padding: '1px 5px', marginLeft: 6, borderRadius: 8, background: '#fef3c7', color: '#b45309', fontWeight: 700 }}>OKR</span>}
+                            <span style={{ fontSize: 13, color: C.t2, marginLeft: 6 }}>{kpi.indicador || kpi.nome}</span>
+                          </div>
+                          {(kpi.periodicidade || kpi.pilar) && (
+                            <div style={{ fontSize: 10, color: C.t3, marginTop: 1 }}>
+                              {kpi.periodicidade}{kpi.pilar ? ` · ${kpi.pilar}` : ''}
+                            </div>
+                          )}
+                        </div>
+                      </label>
+                    ))}
+                  </div>
+                </Field>
+              </div>
+            );
+          })()}
         </div>
       </Modal>
     </div>

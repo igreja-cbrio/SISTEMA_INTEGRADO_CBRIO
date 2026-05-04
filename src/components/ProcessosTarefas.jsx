@@ -75,15 +75,19 @@ function getPeriodKey(date, periodicidade) {
 }
 
 // Esta semana (weekStart = segunda-feira) e a "janela de exibicao" do KPI?
-// Semanal -> sempre. Demais -> apenas semana que contem dia 1..7 do mes
-// inicial do periodo (com offset configuravel via periodo_offset_meses).
 //
-// offsetMeses:
+// Regras (revisadas 2026-05-04):
+//   Semanal     -> toda semana
+//   Mensal      -> qualquer semana do mes (4 semanas pra preencher, nao 1)
+//   Trimestral  -> qualquer semana do mes inicial do trimestre (jan/abr/jul/out)
+//   Semestral   -> qualquer semana do mes inicial do semestre (jan/jul)
+//   Anual       -> qualquer semana do mes inicial do ano (janeiro)
+//
+// offsetMeses desloca o mes inicial:
 //   trimestral 0 -> jan/abr/jul/out (padrao)
 //   trimestral 1 -> fev/mai/ago/nov
-//   trimestral 2 -> mar/jun/set/dez
 //   semestral 0  -> jan/jul (padrao)
-//   semestral 1  -> fev/ago, ..., 5 -> jun/dez
+//   semestral 1  -> fev/ago
 //   anual N      -> mes N (0=jan, 11=dez)
 function isShowingWeekFor(weekStart, periodicidade, offsetMeses = 0) {
   const p = String(periodicidade || '').toLowerCase();
@@ -91,10 +95,8 @@ function isShowingWeekFor(weekStart, periodicidade, offsetMeses = 0) {
   const off = Number.isFinite(Number(offsetMeses)) ? Number(offsetMeses) : 0;
   for (let i = 0; i < 7; i++) {
     const d = new Date(weekStart); d.setDate(d.getDate() + i);
-    const day = d.getDate();
-    if (day > 7) continue;
     const month = d.getMonth();
-    if (p === 'mensal') return true;
+    if (p === 'mensal') return true; // qualquer semana do mes
     if (p === 'trimestral' && ((month - off + 12) % 3 === 0)) return true;
     if (p === 'semestral' && ((month - off + 12) % 6 === 0)) return true;
     if (p === 'anual' && month === (off % 12)) return true;
@@ -120,6 +122,14 @@ export default function ProcessosTarefas({ area }) {
   const { isAdmin, isDiretor } = useAuth();
   const canWrite = isAdmin || isDiretor;
   const { byId: kpiById, isLoading: kpisLoading } = useKpis();
+
+  // Mobile: trocar grid 7-col por lista vertical
+  const [isMobile, setIsMobile] = useState(() => typeof window !== 'undefined' && window.innerWidth < 720);
+  useEffect(() => {
+    const onResize = () => setIsMobile(window.innerWidth < 720);
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, []);
 
   const [weekStart, setWeekStart] = useState(() => getMonday(new Date()));
   const [processos, setProcessos] = useState([]);
@@ -271,8 +281,8 @@ export default function ProcessosTarefas({ area }) {
         </div>
       </div>
 
-      {/* Grid 7 colunas */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: 8 }}>
+      {/* Grid 7 colunas em desktop, lista vertical em mobile */}
+      <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : 'repeat(7, 1fr)', gap: 8 }}>
         {weekDates.map((date, gi) => {
           const dateStr = fmtDate(date);
           const isToday = dateStr === todayStr;
@@ -280,13 +290,16 @@ export default function ProcessosTarefas({ area }) {
           const tasks = dayTarefas[gi];
           const totalK = kpis.length, filledK = kpis.filter(k => k.filled).length;
 
+          // Em mobile, esconde dias sem nada pra reduzir scroll
+          if (isMobile && totalK === 0 && tasks.length === 0 && !isToday) return null;
+
           return (
-            <div key={gi} style={{ background: C.card, border: `2px solid ${isToday ? C.primary : C.border}`, borderRadius: 12, minHeight: 200, display: 'flex', flexDirection: 'column' }}>
+            <div key={gi} style={{ background: C.card, border: `2px solid ${isToday ? C.primary : C.border}`, borderRadius: 12, minHeight: isMobile ? 0 : 200, display: 'flex', flexDirection: 'column' }}>
               {/* Day header */}
               <div style={{ padding: '8px 10px', borderBottom: `1px solid ${C.border}`, background: isToday ? C.primaryBg : 'transparent', borderRadius: '10px 10px 0 0', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                   <div style={{ fontSize: 11, fontWeight: 700, color: isToday ? C.primary : C.t3, textTransform: 'uppercase' }}>{DIAS[gi]}</div>
-                  <div style={{ fontSize: 16, fontWeight: 700, color: isToday ? C.primary : C.text }}>{date.getDate()}</div>
+                  <div style={{ fontSize: 16, fontWeight: 700, color: isToday ? C.primary : C.text }}>{date.getDate()}/{date.getMonth()+1}</div>
                 </div>
                 {totalK > 0 && <span style={{ fontSize: 10, fontWeight: 600, padding: '2px 6px', borderRadius: 8, background: filledK === totalK ? C.greenBg : C.bg, color: filledK === totalK ? C.green : C.t3 }}>{filledK}/{totalK}</span>}
               </div>
