@@ -12,7 +12,7 @@ import {
   CalendarDays, FolderKanban, Map, ListChecks,
   UserCheck, UsersRound, Heart, HandHelping, BookOpen, ArrowRight, TrendingUp,
   Megaphone, BrainCircuit, ShoppingCart,
-  Sun, Moon, Bell, LogOut, Search, CheckCheck, Settings, MonitorSmartphone, BarChart2, ClipboardCheck, Sparkles,
+  Sun, Moon, Bell, LogOut, Search, CheckCheck, Settings, MonitorSmartphone, BarChart2, ClipboardCheck, Sparkles, Activity,
 } from 'lucide-react';
 import {
   DropdownMenu, DropdownMenuTrigger, DropdownMenuContent,
@@ -47,6 +47,7 @@ const NAV_ITEMS = [
       {
         title: 'Inteligência',
         items: [
+          { label: 'Meus KPIs', description: 'Os indicadores da sua área para preencher', icon: Activity, path: '/meus-kpis' },
           { label: 'KPIs e Indicadores', description: 'Frequência, batismos e métricas 2026', icon: BarChart2, path: '/kpis', perm: 'canKPIs' },
           { label: 'Cultura CBRio', description: 'Mandala dos 5 valores: PENSE e generosidade', icon: Sparkles, path: '/admin/cultura' },
           { label: 'Assistente IA', description: 'Agentes de auditoria e análise', icon: BrainCircuit, path: '/assistente-ia', perm: 'canIA' },
