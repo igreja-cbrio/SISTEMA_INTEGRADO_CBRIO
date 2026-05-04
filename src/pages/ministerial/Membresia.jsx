@@ -618,6 +618,7 @@ export default function Membresia() {
   const [error, setError] = useState('');
   const [busca, setBusca] = useState('');
   const [filterStatus, setFilterStatus] = useState('');
+  const [filterPapel, setFilterPapel] = useState('');
   const [selectedMembro, setSelectedMembro] = useState(null);
   const [showForm, setShowForm] = useState(false);
   const [editMembro, setEditMembro] = useState(null);
@@ -653,6 +654,7 @@ export default function Membresia() {
       const params = {};
       if (busca) params.busca = busca;
       if (filterStatus) params.status = filterStatus;
+      if (filterPapel) params.papel = filterPapel;
       const [m, k, f, g, mi] = await Promise.all([
         membresia.membros.list(Object.keys(params).length ? params : null),
         membresia.kpis(),
@@ -670,7 +672,7 @@ export default function Membresia() {
     } finally {
       setLoading(false);
     }
-  }, [busca, filterStatus]);
+  }, [busca, filterStatus, filterPapel]);
 
   useEffect(() => { fetchData(); }, [fetchData]);
 
@@ -1046,6 +1048,20 @@ export default function Membresia() {
             </SelectContent>
           </Select>
         </div>
+        <div style={{ minWidth: 180 }}>
+          <Select value={filterPapel || '__all__'} onValueChange={v => setFilterPapel(v === '__all__' ? '' : v)}>
+            <SelectTrigger><SelectValue placeholder="Todos os papéis" /></SelectTrigger>
+            <SelectContent className="z-[1001]">
+              <SelectItem value="__all__">Todos os papéis</SelectItem>
+              <SelectItem value="voluntario">Voluntários</SelectItem>
+              <SelectItem value="visitante">Visitantes</SelectItem>
+              <SelectItem value="grupo_ativo">Em grupo ativo</SelectItem>
+              <SelectItem value="contribuinte">Contribuintes (90d)</SelectItem>
+              <SelectItem value="inscrito_next">Inscritos no NEXT</SelectItem>
+              <SelectItem value="sem_papel">Sem papel ativo</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
       </div>
 
       {/* Table */}
@@ -1053,7 +1069,7 @@ export default function Membresia() {
         <table style={{ width: '100%', borderCollapse: 'separate', borderSpacing: 0 }}>
           <thead>
             <tr>
-              {['Nome', 'Família', 'Status', 'Telefone', 'Ministério', ''].map((h, i) => (
+              {['Nome', 'Família', 'Status', 'Papéis', 'Telefone', 'Ministério', ''].map((h, i) => (
                 <th key={i} style={{ textAlign: 'left', padding: '14px 18px', fontSize: 11, fontWeight: 600, color: C.text3, textTransform: 'uppercase', letterSpacing: 0.5, background: 'var(--cbrio-table-header)', borderBottom: `1px solid ${C.border}` }}>
                   {h}
                 </th>
@@ -1062,9 +1078,9 @@ export default function Membresia() {
           </thead>
           <tbody>
             {loading ? (
-              <tr><td colSpan={6}><div className="flex items-center justify-center py-6 gap-2"><div className="h-4 w-4 animate-spin rounded-full border-2 border-muted-foreground/25 border-t-primary" /><span className="text-xs text-muted-foreground">Carregando...</span></div></td></tr>
+              <tr><td colSpan={7}><div className="flex items-center justify-center py-6 gap-2"><div className="h-4 w-4 animate-spin rounded-full border-2 border-muted-foreground/25 border-t-primary" /><span className="text-xs text-muted-foreground">Carregando...</span></div></td></tr>
             ) : membros.length === 0 ? (
-              <tr><td colSpan={6}><div className="flex flex-col items-center py-10 gap-2"><div className="h-10 w-10 rounded-full bg-muted flex items-center justify-center mb-1"><svg className="h-5 w-5 text-muted-foreground" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M20 13V6a2 2 0 00-2-2H6a2 2 0 00-2 2v7m16 0v5a2 2 0 01-2 2H6a2 2 0 01-2-2v-5m16 0h-2.586a1 1 0 00-.707.293l-2.414 2.414a1 1 0 01-.707.293h-3.172a1 1 0 01-.707-.293l-2.414-2.414A1 1 0 006.586 13H4" /></svg></div><span className="text-sm font-medium text-foreground">Nenhum membro encontrado</span></div></td></tr>
+              <tr><td colSpan={7}><div className="flex flex-col items-center py-10 gap-2"><div className="h-10 w-10 rounded-full bg-muted flex items-center justify-center mb-1"><svg className="h-5 w-5 text-muted-foreground" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M20 13V6a2 2 0 00-2-2H6a2 2 0 00-2 2v7m16 0v5a2 2 0 01-2 2H6a2 2 0 01-2-2v-5m16 0h-2.586a1 1 0 00-.707.293l-2.414 2.414a1 1 0 01-.707.293h-3.172a1 1 0 01-.707-.293l-2.414-2.414A1 1 0 006.586 13H4" /></svg></div><span className="text-sm font-medium text-foreground">Nenhum membro encontrado</span></div></td></tr>
             ) : membros.map((m) => (
               <tr key={m.id} className="cbrio-row" onClick={() => openDetail(m.id)}>
                 <td style={{ padding: '14px 18px', borderBottom: `1px solid ${C.border}` }}>
@@ -1094,6 +1110,16 @@ export default function Membresia() {
                 </td>
                 <td style={{ padding: '14px 18px', borderBottom: `1px solid ${C.border}` }}>
                   <Badge status={m.status} />
+                </td>
+                <td style={{ padding: '14px 18px', borderBottom: `1px solid ${C.border}` }}>
+                  <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', maxWidth: 200 }}>
+                    {m.papeis?.is_voluntario && <span title="Voluntário ativo" style={{ fontSize: 9, padding: '2px 6px', borderRadius: 4, background: '#ede9fe', color: '#6b21a8', fontWeight: 700 }}>VOL</span>}
+                    {m.papeis?.is_visitante && <span title="Tem visita registrada" style={{ fontSize: 9, padding: '2px 6px', borderRadius: 4, background: '#fef3c7', color: '#92400e', fontWeight: 700 }}>VIS</span>}
+                    {m.papeis?.in_grupo_ativo && <span title="Em grupo ativo" style={{ fontSize: 9, padding: '2px 6px', borderRadius: 4, background: '#dbeafe', color: '#1e3a8a', fontWeight: 700 }}>GRP</span>}
+                    {m.papeis?.is_contribuinte && <span title="Contribuiu nos últimos 90 dias" style={{ fontSize: 9, padding: '2px 6px', borderRadius: 4, background: '#fce7f3', color: '#831843', fontWeight: 700 }}>CTB</span>}
+                    {m.papeis?.is_inscrito_next && <span title={`${m.papeis?.total_inscricoes_next || 0}× NEXT`} style={{ fontSize: 9, padding: '2px 6px', borderRadius: 4, background: '#d1fae5', color: '#065f46', fontWeight: 700 }}>NXT{m.papeis?.total_inscricoes_next > 1 ? `×${m.papeis.total_inscricoes_next}` : ''}</span>}
+                    {!m.papeis?.is_voluntario && !m.papeis?.is_visitante && !m.papeis?.in_grupo_ativo && !m.papeis?.is_contribuinte && !m.papeis?.is_inscrito_next && <span style={{ fontSize: 11, color: C.text3 }}>—</span>}
+                  </div>
                 </td>
                 <td style={{ padding: '14px 18px', fontSize: 13, color: C.text2, borderBottom: `1px solid ${C.border}` }}>
                   {m.telefone || '—'}

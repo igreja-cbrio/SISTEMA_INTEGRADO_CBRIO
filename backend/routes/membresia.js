@@ -190,9 +190,14 @@ router.get('/qr-lookup/:token', async (req, res) => {
 // ── Membros ──
 
 // GET /api/membresia/membros
+// Query params:
+//   ?status=...        filtra por status (visitante|membro_ativo|...)
+//   ?busca=...         busca por nome
+//   ?papel=...         filtra por papel: voluntario|visitante|grupo_ativo|
+//                      contribuinte|inscrito_next|sem_papel
 router.get('/membros', async (req, res) => {
   try {
-    const { status, busca } = req.query;
+    const { status, busca, papel } = req.query;
     let query = supabase
       .from('mem_membros')
       .select('*, familia:mem_familias(id, nome)')
@@ -202,10 +207,49 @@ router.get('/membros', async (req, res) => {
     if (status) query = query.eq('status', status);
     if (busca) query = query.ilike('nome', `%${busca}%`);
 
-    const { data, error } = await query;
+    const { data: membros, error } = await query;
     if (error) throw error;
-    res.json(data);
+    if (!membros || membros.length === 0) return res.json([]);
+
+    // Anotar papeis (vw_pessoas_papeis), batch — evita N+1.
+    // A view ja faz JOIN com vol_profiles, int_visitantes, etc.
+    const ids = membros.map(m => m.id);
+    const { data: papeis } = await supabase
+      .from('vw_pessoas_papeis')
+      .select('membresia_id, is_voluntario, is_visitante, is_inscrito_next, in_grupo_ativo, is_contribuinte, total_inscricoes_next')
+      .in('membresia_id', ids);
+    const papeisMap = {};
+    (papeis || []).forEach(p => { papeisMap[p.membresia_id] = p; });
+
+    const enriched = membros.map(m => ({
+      ...m,
+      papeis: papeisMap[m.id] || {
+        is_voluntario: false, is_visitante: false, is_inscrito_next: false,
+        in_grupo_ativo: false, is_contribuinte: false, total_inscricoes_next: 0,
+      },
+    }));
+
+    // Filtro por papel (depois de enriched pra suportar 'sem_papel')
+    let filtered = enriched;
+    if (papel) {
+      filtered = enriched.filter(m => {
+        const p = m.papeis;
+        if (papel === 'voluntario') return p.is_voluntario;
+        if (papel === 'visitante') return p.is_visitante;
+        if (papel === 'grupo_ativo') return p.in_grupo_ativo;
+        if (papel === 'contribuinte') return p.is_contribuinte;
+        if (papel === 'inscrito_next') return p.is_inscrito_next;
+        if (papel === 'sem_papel') {
+          return !p.is_voluntario && !p.is_visitante && !p.is_inscrito_next
+            && !p.in_grupo_ativo && !p.is_contribuinte;
+        }
+        return true;
+      });
+    }
+
+    res.json(filtered);
   } catch (e) {
+    console.error('membresia/membros:', e.message);
     res.status(500).json({ error: 'Erro ao buscar membros' });
   }
 });
