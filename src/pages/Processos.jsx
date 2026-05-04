@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { processos as api, users as usersApi } from '../api';
-import { CATEGORIAS, AREAS, CATEGORIA_AREAS, INDICADORES, getIndicadoresByArea, getAreaNome } from '../data/indicadores';
+import { CATEGORIAS, AREAS, CATEGORIA_AREAS, getAreaNome } from '../data/indicadores';
 import { useKpis } from '../hooks/useKpis';
 import KpiEditorModal from '../components/KpiEditorModal';
 
@@ -81,6 +81,7 @@ const inp = { width: '100%', padding: '8px 12px', borderRadius: 8, border: `1px 
 export default function Processos() {
   const { isAdmin, isDiretor, profile } = useAuth();
   const canWrite = isAdmin || isDiretor;
+  const { byId: kpiById, byArea: kpisByArea } = useKpis();
 
   const [list, setList] = useState([]);
   const [usersList, setUsersList] = useState([]);
@@ -171,7 +172,7 @@ export default function Processos() {
   };
 
   const availableAreas = form.categoria ? (CATEGORIA_AREAS[form.categoria] || []) : AREAS.map(a => a.id);
-  const availableKpis = form.area ? getIndicadoresByArea(form.area) : [];
+  const availableKpis = form.area ? (kpisByArea[form.area] || []) : [];
   const toggleKpi = (id) => setForm(f => ({ ...f, indicador_ids: f.indicador_ids.includes(id) ? f.indicador_ids.filter(x => x !== id) : [...f.indicador_ids, id] }));
 
   const stats = useMemo(() => {
@@ -213,12 +214,12 @@ export default function Processos() {
         </div>
       )}
 
-      {tab === 0 && <TabHome stats={stats} list={list} />}
+      {tab === 0 && <TabHome stats={stats} list={list} kpisByArea={kpisByArea} />}
       {tab === 1 && <TabLista list={filtered} search={search} setSearch={setSearch} fCat={fCat} setFCat={setFCat} fArea={fArea} setFArea={setFArea} fOkr={fOkr} setFOkr={setFOkr} fStatus={fStatus} setFStatus={setFStatus} canWrite={canWrite} onEdit={openEdit} onDelete={handleDelete} onDetail={openDetail} loading={loading} />}
-      {tab === 2 && <TabOKR list={list.filter(p => p.is_okr)} canWrite={canWrite} onEdit={openEdit} onDetail={openDetail} />}
-      {tab === 3 && <TabKPIs list={list} onDetail={openDetail} />}
+      {tab === 2 && <TabOKR list={list.filter(p => p.is_okr)} kpiById={kpiById} canWrite={canWrite} onEdit={openEdit} onDetail={openDetail} />}
+      {tab === 3 && <TabKPIs list={list} kpisByArea={kpisByArea} onDetail={openDetail} />}
       {tab === 4 && <TabAgenda agenda={agenda} canWrite={canWrite} onSave={async items => { try { await api.agenda.saveBulk(items); loadAgenda(); } catch (e) { console.error(e); } }} />}
-      {tab === 5 && detail && <DetailView processo={detail} registros={registros} canWrite={canWrite} onBack={() => { setTab(1); setDetail(null); }} onEdit={openEdit} detailTab={detailTab} setDetailTab={setDetailTab} profile={profile} onRegistroSaved={async () => { setRegistros(await api.registros.list({ processo_id: detail.id })); }} />}
+      {tab === 5 && detail && <DetailView processo={detail} registros={registros} kpiById={kpiById} canWrite={canWrite} onBack={() => { setTab(1); setDetail(null); }} onEdit={openEdit} detailTab={detailTab} setDetailTab={setDetailTab} profile={profile} onRegistroSaved={async () => { setRegistros(await api.registros.list({ processo_id: detail.id })); }} />}
 
       {/* Modal criar/editar */}
       <Modal open={!!modal} onClose={() => setModal(null)} title={modal === 'create' ? 'Novo Processo' : 'Editar Processo'} wide
@@ -259,7 +260,7 @@ export default function Processos() {
 }
 
 // ════ TAB HOME ════
-function TabHome({ stats, list }) {
+function TabHome({ stats, list, kpisByArea = {} }) {
   return (
     <div>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 16, marginBottom: 24 }}>
@@ -283,7 +284,7 @@ function TabHome({ stats, list }) {
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 8 }}>
         {AREAS.map(area => { const count = stats.byArea[area.id] || 0; return (
           <div key={area.id} style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 8, padding: 12, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <div><div style={{ fontSize: 14, fontWeight: 600, color: C.text }}>{area.nome}</div><div style={{ fontSize: 11, color: C.t3 }}>{getIndicadoresByArea(area.id).length} KPIs</div></div>
+            <div><div style={{ fontSize: 14, fontWeight: 600, color: C.text }}>{area.nome}</div><div style={{ fontSize: 11, color: C.t3 }}>{(kpisByArea[area.id] || []).length} KPIs</div></div>
             <span style={{ fontSize: 20, fontWeight: 700, color: count > 0 ? C.primary : C.t3 }}>{count}</span>
           </div>
         ); })}
@@ -347,8 +348,8 @@ function ProcessoCard({ p, canWrite, onEdit, onDelete, onDetail }) {
 }
 
 // ════ DETAIL VIEW ════
-function DetailView({ processo: p, registros, canWrite, onBack, onEdit, detailTab, setDetailTab, profile, onRegistroSaved }) {
-  const kpis = (p.indicador_ids || []).map(id => INDICADORES.find(k => k.id === id)).filter(Boolean);
+function DetailView({ processo: p, registros, kpiById = {}, canWrite, onBack, onEdit, detailTab, setDetailTab, profile, onRegistroSaved }) {
+  const kpis = (p.indicador_ids || []).map(id => kpiById[id]).filter(Boolean);
   const cat = CAT_MAP[p.categoria] || CAT_MAP.Ministerial;
   const st = STATUS_MAP[p.status] || STATUS_MAP.ativo;
   const [regForm, setRegForm] = useState({ indicador_id: '', valor: '', periodo: '', observacoes: '' });
@@ -480,7 +481,7 @@ function DetailView({ processo: p, registros, canWrite, onBack, onEdit, detailTa
 }
 
 // ════ TAB OKR ════
-function TabOKR({ list, canWrite, onEdit, onDetail }) {
+function TabOKR({ list, kpiById = {}, canWrite, onEdit, onDetail }) {
   const grouped = useMemo(() => { const g = {}; list.forEach(p => { if (!g[p.area]) g[p.area] = []; g[p.area].push(p); }); return g; }, [list]);
   if (list.length === 0) return <div style={{ textAlign: 'center', padding: 60, color: C.t3 }}><p style={{ fontSize: 16 }}>Nenhum processo marcado como OKR</p></div>;
   return (
@@ -494,7 +495,7 @@ function TabOKR({ list, canWrite, onEdit, onDetail }) {
                 <span style={{ fontSize: 15, fontWeight: 600, color: C.text }}>{p.nome}</span>
                 {p.indicador_ids?.length > 0 && (
                   <div style={{ marginTop: 8, display: 'grid', gap: 4 }}>
-                    {p.indicador_ids.map(id => { const kpi = INDICADORES.find(k => k.id === id); if (!kpi) return null; return (
+                    {p.indicador_ids.map(id => { const kpi = kpiById[id]; if (!kpi) return null; return (
                       <div key={id} style={{ display: 'flex', justifyContent: 'space-between', padding: '4px 8px', background: C.bg, borderRadius: 4, fontSize: 12 }}>
                         <span><strong>{kpi.id}</strong> {kpi.nome}</span>
                         <span style={{ color: C.t3 }}>{kpi.meta_2026}</span>
@@ -512,11 +513,11 @@ function TabOKR({ list, canWrite, onEdit, onDetail }) {
 }
 
 // ════ TAB KPIs ════
-function TabKPIs({ list, onDetail }) {
+function TabKPIs({ list, kpisByArea = {}, onDetail }) {
   const kpiMap = useMemo(() => { const m = {}; list.forEach(p => (p.indicador_ids || []).forEach(id => { if (!m[id]) m[id] = []; m[id].push(p); })); return m; }, [list]);
   return (
     <div>
-      {AREAS.map(area => { const kpis = getIndicadoresByArea(area.id); return (
+      {AREAS.map(area => { const kpis = kpisByArea[area.id] || []; return (
         <div key={area.id} style={{ marginBottom: 24 }}>
           <h3 style={{ fontSize: 16, fontWeight: 600, color: C.text, marginBottom: 8 }}>{area.nome} <span style={{ fontSize: 12, fontWeight: 400, color: C.t3 }}>{kpis.length} indicadores</span></h3>
           <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 12, overflow: 'hidden' }}>
