@@ -12,8 +12,7 @@ import {
   Activity, LayoutGrid, HandHelping, Heart,
 } from 'lucide-react';
 import MandalaCultura from '../components/cultura/MandalaCultura';
-import MinhaSemanaPendente from '../components/MinhaSemanaPendente';
-import KpiQuickFillModal from '../components/KpiQuickFillModal';
+import MeusKpisResumo from '../components/MeusKpisResumo';
 
 // path='VOLUNTARIADO_DYNAMIC' e tratado no click handler (vai para painel do
 // voluntario ou visao admin conforme o perfil do usuario logado)
@@ -87,8 +86,6 @@ export default function Dashboard() {
   const [logData, setLogData] = useState(null);
   const [cuiData, setCuiData] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [fillTarget, setFillTarget] = useState(null); // { kpi, periodKey }
-  const [pendentesVersion, setPendentesVersion] = useState(0);
 
   useEffect(() => {
     const promises = [];
@@ -154,11 +151,8 @@ export default function Dashboard() {
       {/* Mandala Cultura CBRio */}
       <MandalaCultura />
 
-      {/* Minha Semana Pendente — KPIs em vermelho + tarefas atrasadas */}
-      <MinhaSemanaPendente
-        refreshKey={pendentesVersion}
-        onFillKpi={({ kpi, periodKey }) => setFillTarget({ kpi, periodKey })}
-      />
+      {/* Resumo dos KPIs da minha area — link para /meus-kpis */}
+      <MeusKpisResumo />
 
       {/* KPI Cards */}
       <section>
@@ -252,14 +246,6 @@ export default function Dashboard() {
         )}
       </section>
 
-      {/* Modal de fill rapido (acionado por click em KPI da Minha Semana) */}
-      <KpiQuickFillModal
-        open={!!fillTarget}
-        kpi={fillTarget?.kpi || null}
-        periodKey={fillTarget?.periodKey || ''}
-        onClose={() => setFillTarget(null)}
-        onSaved={() => setPendentesVersion(v => v + 1)}
-      />
     </div>
   );
 }
