@@ -59,7 +59,7 @@ async function authenticate(req, res, next) {
   // Busca perfil do usuário (role, name, area etc.)
   const { data: profile } = await supabase
     .from('profiles')
-    .select('id, name, email, role, area, active')
+    .select('id, name, email, role, area, kpi_areas, active')
     .eq('id', user.id)
     .single();
 
@@ -191,6 +191,7 @@ async function authenticate(req, res, next) {
     permissions: PERMISSIONS[mappedRole] || {},
     name: profile.name,
     area: profile.area,
+    kpi_areas: profile.kpi_areas || [],
     granular, // null se usuário não está no sistema granular
   };
 
@@ -217,6 +218,36 @@ function authorize(...roles) {
     if (roles.includes(req.user.role)) return next();
 
     return res.status(403).json({ error: 'Acesso negado para este perfil' });
+  };
+}
+
+// Autoriza edicao/preenchimento de KPI por area:
+// - admin/diretor sempre podem (qualquer area)
+// - lideres da area (kpi_areas inclui a area do KPI) podem
+// - resto e bloqueado
+//
+// Modo de uso:
+//   authorizeKpiArea(req => req.body.area)
+//   authorizeKpiArea(req => fetchAreaFromIndicadorId(req.params.id))
+//
+// O extractor recebe o req e retorna a string da area (lowercase).
+// Se retornar Promise, aguardamos.
+function authorizeKpiArea(areaExtractor) {
+  return async (req, res, next) => {
+    if (!req.user) return res.status(401).json({ error: 'Não autenticado' });
+    if (['admin', 'diretor'].includes(req.user.role)) return next();
+    try {
+      const area = await areaExtractor(req);
+      if (!area) return res.status(400).json({ error: 'Area do KPI nao identificada' });
+      const myAreas = (req.user.kpi_areas || []).map(a => String(a).toLowerCase());
+      if (!myAreas.includes(String(area).toLowerCase())) {
+        return res.status(403).json({ error: `Sem permissao para editar KPIs da area "${area}"` });
+      }
+      next();
+    } catch (e) {
+      console.error('[authorizeKpiArea]', e.message);
+      res.status(500).json({ error: 'Erro ao verificar permissao' });
+    }
   };
 }
 
@@ -422,4 +453,4 @@ function applyAccessFilter(query, req, routeKey, opts = {}) {
   return query;
 }
 
-module.exports = { authenticate, authorize, authorizeCycle, authorizeModule, getMyPermissions, getEffectiveLevel, getUserAreas, applyAccessFilter, ROLE_MAP, PERMISSIONS, ROUTE_MODULE_MAP };
+module.exports = { authenticate, authorize, authorizeCycle, authorizeModule, authorizeKpiArea, getMyPermissions, getEffectiveLevel, getUserAreas, applyAccessFilter, ROLE_MAP, PERMISSIONS, ROUTE_MODULE_MAP };
