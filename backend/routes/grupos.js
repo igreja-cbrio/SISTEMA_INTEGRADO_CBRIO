@@ -181,38 +181,34 @@ router.patch('/participacao/:id/presenca', async (req, res) => {
 // GET /api/grupos/:id — detalhe com membros
 router.get('/:id', async (req, res) => {
   try {
-    const { data: grupo, error } = await supabase.from('mem_grupos').select('*').eq('id', req.params.id).single();
-    if (error) throw error;
+    const id = req.params.id;
 
-    // Membros ativos
-    const { data: participacoes } = await supabase.from('mem_grupo_membros')
-      .select('*, mem_membros(id, nome, telefone, email, foto_url, status, data_nascimento)')
-      .eq('grupo_id', req.params.id).is('saiu_em', null).order('entrou_em');
+    // Round 1: 4 queries que so dependem do id (em paralelo)
+    const [grupoRes, partRes, histRes, multRes] = await Promise.all([
+      supabase.from('mem_grupos').select('*').eq('id', id).single(),
+      supabase.from('mem_grupo_membros')
+        .select('*, mem_membros(id, nome, telefone, email, foto_url, status, data_nascimento)')
+        .eq('grupo_id', id).is('saiu_em', null).order('entrou_em'),
+      supabase.from('mem_grupo_membros')
+        .select('*, mem_membros(id, nome)')
+        .eq('grupo_id', id).not('saiu_em', 'is', null).order('saiu_em', { ascending: false }),
+      supabase.from('mem_grupos').select('id, nome, ativo')
+        .eq('grupo_origem_id', id).order('nome'),
+    ]);
+    if (grupoRes.error) throw grupoRes.error;
+    const grupo = grupoRes.data;
 
-    // Historico (quem saiu)
-    const { data: historico } = await supabase.from('mem_grupo_membros')
-      .select('*, mem_membros(id, nome)')
-      .eq('grupo_id', req.params.id).not('saiu_em', 'is', null).order('saiu_em', { ascending: false });
+    // Round 2: lider e grupo de origem (so se houver — em paralelo)
+    const [liderRes, origemRes] = await Promise.all([
+      grupo.lider_id
+        ? supabase.from('mem_membros').select('id, nome, telefone, email, foto_url').eq('id', grupo.lider_id).single()
+        : Promise.resolve({ data: null }),
+      grupo.grupo_origem_id
+        ? supabase.from('mem_grupos').select('id, nome').eq('id', grupo.grupo_origem_id).single()
+        : Promise.resolve({ data: null }),
+    ]);
 
-    // Lider
-    let lider = null;
-    if (grupo.lider_id) {
-      const { data } = await supabase.from('mem_membros').select('id, nome, telefone, email, foto_url').eq('id', grupo.lider_id).single();
-      lider = data;
-    }
-
-    // Grupo de origem
-    let grupoOrigem = null;
-    if (grupo.grupo_origem_id) {
-      const { data } = await supabase.from('mem_grupos').select('id, nome').eq('id', grupo.grupo_origem_id).single();
-      grupoOrigem = data;
-    }
-
-    // Multiplicacoes (grupos que nasceram deste)
-    const { data: multiplicacoes } = await supabase.from('mem_grupos').select('id, nome, ativo')
-      .eq('grupo_origem_id', req.params.id).order('nome');
-
-    const membros = (participacoes || []).map(p => ({
+    const membros = (partRes.data || []).map(p => ({
       participacao_id: p.id,
       entrou_em: p.entrou_em,
       presencas: p.presencas || 0,
@@ -222,11 +218,11 @@ router.get('/:id', async (req, res) => {
 
     res.json({
       ...grupo,
-      lider,
-      grupo_origem: grupoOrigem,
-      multiplicacoes: multiplicacoes || [],
+      lider: liderRes.data,
+      grupo_origem: origemRes.data,
+      multiplicacoes: multRes.data || [],
       membros,
-      historico: (historico || []).map(h => ({
+      historico: (histRes.data || []).map(h => ({
         ...h, membro_nome: h.mem_membros?.nome, mem_membros: undefined,
       })),
     });

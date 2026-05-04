@@ -77,6 +77,29 @@ export default function Grupos() {
     finally { setDetailLoading(false); }
   }, []);
 
+  // Render otimista: ao clicar num card, monta detailData a partir do
+  // item da lista para a transicao ser instantanea; loadDetail
+  // enriquece em segundo plano com membros/historico/multiplicacoes.
+  const openGrupo = useCallback((g) => {
+    if (!g) return;
+    setSelectedGrupo(g.id);
+    setDetailData({
+      ...g,
+      lider: g.lider_id ? { id: g.lider_id, nome: g.lider_nome, foto_url: g.lider_foto } : null,
+      grupo_origem: g.grupo_origem_id ? { id: g.grupo_origem_id, nome: g.grupo_origem_nome } : null,
+      membros: [],
+      multiplicacoes: [],
+      historico: [],
+      _optimistic: true,
+    });
+  }, []);
+
+  const openGrupoById = useCallback((id) => {
+    const g = gruposList.find(x => x.id === id);
+    if (g) openGrupo(g);
+    else setSelectedGrupo(id);
+  }, [gruposList, openGrupo]);
+
   const loadMateriais = useCallback(async () => {
     try {
       const params = materiaisFilter !== 'all' ? { etiqueta: materiaisFilter } : {};
@@ -203,12 +226,14 @@ export default function Grupos() {
   // ── DETALHE DO GRUPO ──
   if (selectedGrupo && detailData) {
     const g = detailData;
+    const isOptimistic = g._optimistic === true;
     const membrosAtivos = g.membros || [];
     const visitantes = membrosAtivos.filter(m => m.is_visitante);
     const regulares = membrosAtivos.filter(m => !m.is_visitante);
+    const totalMembros = isOptimistic ? (g.membros_count ?? null) : membrosAtivos.length;
 
     return (
-      <div style={{ padding: '24px 32px', maxWidth: 1100, margin: '0 auto' }}>
+      <div key={selectedGrupo} style={{ padding: '24px 32px', maxWidth: 1100, margin: '0 auto', animation: 'cbrio-stagger-in 0.18s ease-out' }}>
         <button onClick={() => { setSelectedGrupo(null); setDetailData(null); }} style={{ display: 'flex', alignItems: 'center', gap: 6, background: 'none', border: 'none', color: C.primary, cursor: 'pointer', fontSize: 13, fontWeight: 600, marginBottom: 16 }}>
           <ChevronLeft size={16} /> Voltar para grupos
         </button>
@@ -238,13 +263,15 @@ export default function Grupos() {
         {/* Info cards */}
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12, marginBottom: 24 }}>
           {[
-            { label: 'Membros', value: regulares.length, color: C.primary },
-            { label: 'Visitantes', value: visitantes.length, color: C.amber },
-            { label: 'Total', value: membrosAtivos.length, color: C.blue },
-            { label: 'Multiplicacoes', value: g.multiplicacoes?.length || 0, color: '#8b5cf6' },
+            { label: 'Membros', value: isOptimistic ? null : regulares.length, color: C.primary },
+            { label: 'Visitantes', value: isOptimistic ? null : visitantes.length, color: C.amber },
+            { label: 'Total', value: totalMembros, color: C.blue },
+            { label: 'Multiplicacoes', value: isOptimistic ? null : (g.multiplicacoes?.length || 0), color: '#8b5cf6' },
           ].map(k => (
             <div key={k.label} style={{ background: C.card, borderRadius: 12, padding: 16, border: `1px solid ${C.border}` }}>
-              <div style={{ fontSize: 24, fontWeight: 700, color: k.color }}>{k.value}</div>
+              <div style={{ fontSize: 24, fontWeight: 700, color: k.color, opacity: k.value == null ? 0.3 : 1 }}>
+                {k.value == null ? '—' : k.value}
+              </div>
               <div style={{ fontSize: 12, color: C.t3 }}>{k.label}</div>
             </div>
           ))}
@@ -259,7 +286,7 @@ export default function Grupos() {
             </div>
             {g.grupo_origem && (
               <div style={{ fontSize: 13, color: C.t2, marginBottom: 4 }}>
-                Nasceu de: <button onClick={() => { setSelectedGrupo(g.grupo_origem.id); }} style={{ background: 'none', border: 'none', color: C.primary, cursor: 'pointer', fontWeight: 600 }}>{g.grupo_origem.nome}</button>
+                Nasceu de: <button onClick={() => openGrupoById(g.grupo_origem.id)} style={{ background: 'none', border: 'none', color: C.primary, cursor: 'pointer', fontWeight: 600 }}>{g.grupo_origem.nome}</button>
               </div>
             )}
             {g.multiplicacoes?.length > 0 && (
@@ -267,7 +294,7 @@ export default function Grupos() {
                 Multiplicou em: {g.multiplicacoes.map((m, i) => (
                   <span key={m.id}>
                     {i > 0 && ', '}
-                    <button onClick={() => setSelectedGrupo(m.id)} style={{ background: 'none', border: 'none', color: C.primary, cursor: 'pointer', fontWeight: 600 }}>{m.nome}</button>
+                    <button onClick={() => openGrupoById(m.id)} style={{ background: 'none', border: 'none', color: C.primary, cursor: 'pointer', fontWeight: 600 }}>{m.nome}</button>
                   </span>
                 ))}
               </div>
@@ -278,10 +305,22 @@ export default function Grupos() {
         {/* Membros */}
         <div style={{ background: C.card, borderRadius: 12, border: `1px solid ${C.border}`, overflow: 'hidden' }}>
           <div style={{ padding: '12px 16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: `1px solid ${C.border}` }}>
-            <span style={{ fontSize: 14, fontWeight: 700, color: C.text }}>Membros ({membrosAtivos.length})</span>
+            <span style={{ fontSize: 14, fontWeight: 700, color: C.text }}>
+              Membros ({isOptimistic ? (g.membros_count ?? '...') : membrosAtivos.length})
+            </span>
             <Button size="sm" onClick={() => { loadMembros(); setAddMembroOpen(true); }}><UserPlus size={14} style={{ marginRight: 4 }} /> Adicionar</Button>
           </div>
-          {membrosAtivos.length === 0 ? (
+          {isOptimistic ? (
+            <div>
+              {Array.from({ length: Math.min(g.membros_count || 3, 5) }).map((_, i) => (
+                <div key={i} style={{ padding: '12px 16px', display: 'flex', alignItems: 'center', gap: 10, borderBottom: `1px solid ${C.border}`, opacity: 0.5 - (i * 0.08), animation: 'cbrio-pulse 1.4s ease-in-out infinite' }}>
+                  <div style={{ width: 32, height: 32, borderRadius: '50%', background: C.border, flexShrink: 0 }} />
+                  <div style={{ height: 12, borderRadius: 6, background: C.border, flex: 1, maxWidth: 200 }} />
+                  <div style={{ height: 10, borderRadius: 5, background: C.border, width: 80 }} />
+                </div>
+              ))}
+            </div>
+          ) : membrosAtivos.length === 0 ? (
             <div style={{ padding: 32, textAlign: 'center', color: C.t3, fontSize: 13 }}>Nenhum membro neste grupo</div>
           ) : (
             <table style={{ width: '100%', borderCollapse: 'collapse' }}>
@@ -605,10 +644,12 @@ export default function Grupos() {
       ) : (
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))', gap: 16 }}>
           {filtered.map(g => (
-            <div key={g.id} onClick={() => setSelectedGrupo(g.id)} style={{
+            <div key={g.id} onClick={() => openGrupo(g)} style={{
               background: C.card, borderRadius: 14, padding: 18, border: `1px solid ${C.border}`,
-              cursor: 'pointer', transition: 'border-color 0.15s',
+              cursor: 'pointer', transition: 'border-color 0.15s, transform 0.1s',
             }}
+              onMouseDown={e => e.currentTarget.style.transform = 'scale(0.99)'}
+              onMouseUp={e => e.currentTarget.style.transform = 'scale(1)'}
               onMouseEnter={e => e.currentTarget.style.borderColor = C.primary}
               onMouseLeave={e => e.currentTarget.style.borderColor = C.border}>
               <div style={{ display: 'flex', gap: 14, alignItems: 'flex-start' }}>
