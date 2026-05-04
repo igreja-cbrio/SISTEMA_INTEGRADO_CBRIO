@@ -240,6 +240,46 @@ router.post('/:id/encontros', async (req, res) => {
   } catch (e) { console.error('[Grupos encontro create]', e.message); res.status(500).json({ error: 'Erro ao registrar encontro' }); }
 });
 
+// GET /api/grupos/encontros/:encontroId — detalhe + presencas
+router.get('/encontros/:encontroId', async (req, res) => {
+  try {
+    const { data: encontro, error } = await supabase.from('mem_grupo_encontros')
+      .select('*').eq('id', req.params.encontroId).single();
+    if (error) throw error;
+
+    const { data: presencas } = await supabase.from('mem_grupo_encontro_presencas')
+      .select('membro_id').eq('encontro_id', req.params.encontroId).eq('presente', true);
+
+    res.json({
+      ...encontro,
+      membros_presentes: (presencas || []).map(p => p.membro_id),
+    });
+  } catch (e) { console.error('[Grupos encontro get]', e.message); res.status(500).json({ error: 'Erro ao buscar encontro' }); }
+});
+
+// PATCH /api/grupos/encontros/:encontroId — editar encontro (tema, observacoes, data, presencas)
+router.patch('/encontros/:encontroId', async (req, res) => {
+  try {
+    const { data: dataEncontro, tema, observacoes, membros_presentes } = req.body;
+    if (membros_presentes !== undefined && !Array.isArray(membros_presentes)) {
+      return res.status(400).json({ error: 'membros_presentes deve ser array' });
+    }
+
+    const { error } = await supabase.rpc('atualizar_encontro_grupo', {
+      p_encontro_id: req.params.encontroId,
+      p_data: dataEncontro || null,
+      p_tema: tema ?? null,
+      p_observacoes: observacoes ?? null,
+      p_membros_presentes: Array.isArray(membros_presentes) ? membros_presentes : null,
+    });
+    if (error) {
+      if (error.code === '23505') return res.status(409).json({ error: 'Ja existe encontro registrado nessa data' });
+      throw error;
+    }
+    res.json({ success: true });
+  } catch (e) { console.error('[Grupos encontro patch]', e.message); res.status(500).json({ error: 'Erro ao atualizar encontro' }); }
+});
+
 // DELETE /api/grupos/encontros/:encontroId — remove encontro (decrementa contadores)
 router.delete('/encontros/:encontroId', authorize('admin', 'diretor'), async (req, res) => {
   try {
