@@ -12,7 +12,7 @@ import {
   AlertCircle, LogOut, MapPin as MapPinIcon, Clock, Trash2,
   DollarSign, HandCoins, Sparkles, Activity, Inbox,
   Copy, Share2, Download, QrCode, Camera, ScanLine,
-  TrendingUp,
+  TrendingUp, ArrowRightLeft,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '../../components/ui/button';
@@ -1193,6 +1193,7 @@ export default function Membresia() {
                     { key: 'grupo', label: 'Grupo', icon: Users },
                     { key: 'generosidade', label: 'Generosidade', icon: HandCoins },
                     { key: 'servico', label: 'Serviço', icon: Sparkles },
+                    { key: 'next', label: 'NEXT', icon: ArrowRightLeft },
                     { key: 'trilha', label: 'Trilha', icon: Star },
                     { key: 'historico', label: 'Histórico', icon: Calendar },
                   ].map(t => {
@@ -1380,6 +1381,16 @@ export default function Membresia() {
 
                 {/* Aba: Grupo de Conexão */}
                 <TabsContent value="grupo" className="mt-4">
+                  {selectedMembro.grupo_atual?.grupo?.id && (
+                    <Button
+                      variant="ghost"
+                      onClick={() => navigate(`/grupos?id=${selectedMembro.grupo_atual.grupo.id}`)}
+                      style={{ width: '100%', marginBottom: 12, justifyContent: 'space-between' }}
+                    >
+                      <span>Abrir grupo no módulo Grupos</span>
+                      <ChevronRight style={{ width: 16, height: 16 }} />
+                    </Button>
+                  )}
                   {selectedMembro.grupo_atual ? (
                     <div style={{ marginBottom: 20 }}>
                       <div style={{ padding: 16, background: C.primaryBg, borderRadius: 12, border: `1px solid ${C.primary}30` }}>
@@ -1499,6 +1510,14 @@ export default function Membresia() {
 
                 {/* Aba: Generosidade */}
                 <TabsContent value="generosidade" className="mt-4">
+                  <Button
+                    variant="ghost"
+                    onClick={() => navigate('/admin/financeiro')}
+                    style={{ width: '100%', marginBottom: 12, justifyContent: 'space-between' }}
+                  >
+                    <span>Abrir módulo Financeiro</span>
+                    <ChevronRight style={{ width: 16, height: 16 }} />
+                  </Button>
                   {(() => {
                     const nivel = NIVEIS_GENEROSIDADE[selectedMembro.nivel_generosidade] || NIVEIS_GENEROSIDADE.nunca_contribuiu;
                     const totais = selectedMembro.totais_ano || { dizimo: 0, oferta: 0, campanha: 0, total: 0 };
@@ -1947,8 +1966,71 @@ export default function Membresia() {
                   })()}
                 </TabsContent>
 
+                {/* Aba: NEXT (inscricoes em eventos) */}
+                <TabsContent value="next" className="mt-4">
+                  <Button
+                    variant="ghost"
+                    onClick={() => navigate('/ministerial/next')}
+                    style={{ width: '100%', marginBottom: 12, justifyContent: 'space-between' }}
+                  >
+                    <span>Abrir módulo NEXT</span>
+                    <ChevronRight style={{ width: 16, height: 16 }} />
+                  </Button>
+                  {(selectedMembro.inscricoes_next || []).length === 0 ? (
+                    <div style={{ padding: 24, textAlign: 'center', color: C.text3, fontSize: 13, background: 'var(--cbrio-input-bg)', border: `1px dashed ${C.border}`, borderRadius: 12 }}>
+                      Nenhuma inscrição em NEXT registrada.
+                    </div>
+                  ) : (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                      {(selectedMembro.inscricoes_next || []).map(insc => {
+                        const statusEvento = insc.evento?.status || 'agendado';
+                        const dataEvento = insc.evento?.data ? new Date(insc.evento.data + 'T12:00:00').toLocaleDateString('pt-BR', { day: '2-digit', month: 'long', year: 'numeric' }) : 'Sem data';
+                        const indicacoes = [
+                          insc.indicou_batismo && 'Batismo',
+                          insc.indicou_servir && 'Servir',
+                          insc.indicou_grupo && 'Grupo',
+                          insc.indicou_dizimo && 'Dízimo',
+                        ].filter(Boolean);
+                        return (
+                          <div key={insc.id} style={{ padding: 12, borderRadius: 10, background: 'var(--cbrio-input-bg)', border: `1px solid ${C.border}` }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'start', gap: 12 }}>
+                              <div style={{ flex: 1, minWidth: 0 }}>
+                                <div style={{ fontSize: 13, fontWeight: 600, color: C.text }}>
+                                  {insc.evento?.titulo || 'NEXT'}
+                                </div>
+                                <div style={{ fontSize: 11, color: C.text3, marginTop: 2 }}>
+                                  {dataEvento}
+                                  {insc.check_in_at && ' · ✓ Check-in feito'}
+                                </div>
+                                {indicacoes.length > 0 && (
+                                  <div style={{ display: 'flex', gap: 4, marginTop: 6, flexWrap: 'wrap' }}>
+                                    {indicacoes.map(i => (
+                                      <span key={i} style={{ fontSize: 10, padding: '2px 6px', borderRadius: 4, background: C.primaryBg, color: C.primary, fontWeight: 600 }}>{i}</span>
+                                    ))}
+                                  </div>
+                                )}
+                              </div>
+                              <span style={{ fontSize: 10, padding: '2px 8px', borderRadius: 6, background: statusEvento === 'realizado' ? '#d1fae5' : '#fef3c7', color: statusEvento === 'realizado' ? '#065f46' : '#92400e', fontWeight: 700, textTransform: 'uppercase' }}>
+                                {statusEvento}
+                              </span>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </TabsContent>
+
                 {/* Aba: Trilha dos Valores */}
                 <TabsContent value="trilha" className="mt-4">
+                  <Button
+                    variant="ghost"
+                    onClick={() => { setSelectedMembro(null); setPageTab('jornada'); }}
+                    style={{ width: '100%', marginBottom: 12, justifyContent: 'space-between' }}
+                  >
+                    <span>Ver Jornada completa dos 5 valores</span>
+                    <ChevronRight style={{ width: 16, height: 16 }} />
+                  </Button>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
                     {TRILHA_ETAPAS.map((etapa, i) => {
                       const registro = selectedMembro.trilha?.find(t => t.etapa === etapa.key);
