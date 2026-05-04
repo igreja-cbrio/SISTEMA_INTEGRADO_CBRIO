@@ -1076,3 +1076,15 @@ export const devocionais = {
   update: (id, body) => put(`/devocionais/${id}`, body),
   remove: (id) => del(`/devocionais/${id}`),
 };
+
+// Pessoas - lookup unificado (Membresia como fonte unica)
+export const pessoas = {
+  lookup: ({ cpf, email, telefone } = {}) => {
+    const params = new URLSearchParams();
+    if (cpf) params.set('cpf', cpf);
+    if (email) params.set('email', email);
+    if (telefone) params.set('telefone', telefone);
+    return get('/pessoas/lookup?' + params.toString());
+  },
+  findOrCreate: (body) => post('/pessoas/find-or-create', body),
+};
