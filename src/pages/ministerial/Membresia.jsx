@@ -12,6 +12,7 @@ import {
   AlertCircle, LogOut, MapPin as MapPinIcon, Clock, Trash2,
   DollarSign, HandCoins, Sparkles, Activity, Inbox,
   Copy, Share2, Download, QrCode, Camera, ScanLine,
+  TrendingUp,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '../../components/ui/button';
@@ -28,6 +29,7 @@ import {
   Tabs, TabsList, TabsTrigger, TabsContent,
 } from '../../components/ui/tabs';
 import TabCadastros from './TabCadastros';
+import MembersJornadaPanel from '../../components/MembersJornadaPanel';
 
 const C = {
   bg: 'var(--cbrio-bg)', card: 'var(--cbrio-card)', primary: '#00B39D', primaryBg: '#00B39D18',
@@ -997,6 +999,7 @@ export default function Membresia() {
         <TabsList className="inline-flex h-auto w-auto bg-transparent p-0 gap-1 border-b border-border rounded-none mb-5">
           {[
             { key: 'membros', label: 'Membros', icon: Users },
+            { key: 'jornada', label: 'Jornada (5 valores)', icon: TrendingUp },
             { key: 'cadastros', label: 'Cadastros pendentes', icon: Inbox },
           ].map(t => {
             const Icon = t.icon;
@@ -1106,6 +1109,10 @@ export default function Membresia() {
           </tbody>
         </table>
       </div>
+        </TabsContent>
+
+        <TabsContent value="jornada">
+          <MembersJornadaPanel />
         </TabsContent>
 
         <TabsContent value="cadastros">

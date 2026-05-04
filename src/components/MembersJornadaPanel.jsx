@@ -1,7 +1,11 @@
+// MembersJornadaPanel - subview embutida em /ministerial/membresia (tab Jornada).
+// Antes vivia em /ministerial/jornada como pagina propria. Movido para evitar
+// duplicacao de "lista de membros" e centralizar gestao em Membresia.
+
 import { useState, useEffect, useCallback, useMemo } from 'react';
-import { jornada as api } from '../../api';
-import { useKpis } from '../../hooks/useKpis';
-import { useAuth } from '../../contexts/AuthContext';
+import { jornada as api } from '../api';
+import { useKpis } from '../hooks/useKpis';
+import { useAuth } from '../contexts/AuthContext';
 
 const C = {
   bg: 'var(--cbrio-bg)', card: 'var(--cbrio-card)', text: 'var(--cbrio-text)',
@@ -23,7 +27,7 @@ const VALOR_META = [
   { key: 'generosidade', nome: 'Viver Generosamente', desc: 'Contribuiu nos ultimos 90 dias', color: '#ef4444', bg: '#fee2e2' },
 ];
 
-export default function Jornada() {
+export default function MembersJornadaPanel() {
   const { byValor, kpis: allKpis, update: updateKpi } = useKpis();
   const { isAdmin, isDiretor } = useAuth();
   const canEdit = isAdmin || isDiretor;
@@ -74,18 +78,13 @@ export default function Jornada() {
   };
 
   return (
-    <div style={{ padding: 24, maxWidth: 1400, margin: '0 auto' }}>
-      <div style={{ marginBottom: 24 }}>
-        <h1 style={{ margin: 0, fontSize: 24, fontWeight: 700, color: C.text }}>Jornada</h1>
-        <p style={{ margin: '4px 0 0', fontSize: 14, color: C.t3 }}>Progresso dos membros nos 5 valores da CBRio</p>
-      </div>
-
-      {/* Tabs */}
+    <div>
+      {/* Sub-tabs internas (dashboard / matriz). Ocultas em drill-down/detalhe. */}
       {!['detalhe', 'valor-drill'].includes(tab) && (
-        <div style={{ display: 'flex', gap: 4, marginBottom: 20, borderBottom: `2px solid ${C.border}` }}>
-          {[['dashboard', 'Dashboard'], ['membros', 'Membros']].map(([k, l]) => (
+        <div style={{ display: 'flex', gap: 4, marginBottom: 16, borderBottom: `1px solid ${C.border}` }}>
+          {[['dashboard', 'Dashboard 5 valores'], ['membros', 'Matriz de membros']].map(([k, l]) => (
             <button key={k} onClick={() => setTab(k)}
-              style={{ padding: '10px 20px', background: 'none', border: 'none', cursor: 'pointer', fontSize: 14, fontWeight: tab === k ? 700 : 400, color: tab === k ? C.primary : C.t3, borderBottom: tab === k ? `2px solid ${C.primary}` : '2px solid transparent', marginBottom: -2 }}>
+              style={{ padding: '8px 14px', background: 'none', border: 'none', cursor: 'pointer', fontSize: 13, fontWeight: tab === k ? 700 : 500, color: tab === k ? C.primary : C.t3, borderBottom: tab === k ? `2px solid ${C.primary}` : '2px solid transparent', marginBottom: -1 }}>
               {l}
             </button>
           ))}

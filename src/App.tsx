@@ -109,7 +109,8 @@ const KPIsGuia = lazyWithRetry(() => import('./pages/kpis/KPIsGuia'));
 const Cuidados = lazyWithRetry(() => import('./pages/ministerial/Cuidados'));
 const Integracao = lazyWithRetry(() => import('./pages/ministerial/Integracao'));
 const Next = lazyWithRetry(() => import('./pages/ministerial/Next'));
-const Jornada = lazyWithRetry(() => import('./pages/ministerial/Jornada'));
+// Jornada virou aba dentro de Membresia (componente MembersJornadaPanel).
+// Mantido aqui apenas pra retrocompat de URL — redirect via Navigate.
 const InscricaoNext = lazyWithRetry(() => import('./pages/public/InscricaoNext'));
 const CulturaMensal = lazyWithRetry(() => import('./pages/admin/CulturaMensal'));
 
@@ -258,7 +259,7 @@ function AppRoutes() {
         <Route path="/ministerial/voluntariado/*" element={<VoluntariadoGuard><Suspense fallback={<Loading />}><Voluntariado /></Suspense></VoluntariadoGuard>} />
         <Route path="/grupos" element={<ModuleGuard permKey="canMembresia"><Suspense fallback={<Loading />}><Grupos /></Suspense></ModuleGuard>} />
         <Route path="/ministerial/cuidados" element={<ModuleGuard permKey="canCuidados"><Suspense fallback={<Loading />}><Cuidados /></Suspense></ModuleGuard>} />
-        <Route path="/ministerial/jornada" element={<ModuleGuard permKey="canMembresia"><Suspense fallback={<Loading />}><Jornada /></Suspense></ModuleGuard>} />
+        <Route path="/ministerial/jornada" element={<Navigate to="/ministerial/membresia" replace />} />
         <Route path="/ministerial/integracao" element={<ModuleGuard permKey="canMembresia"><Suspense fallback={<Loading />}><Integracao /></Suspense></ModuleGuard>} />
         <Route path="/ministerial/next" element={<ModuleGuard permKey="canMembresia"><Suspense fallback={<Loading />}><Next /></Suspense></ModuleGuard>} />
         <Route path="/assistente-ia" element={<ModuleGuard permKey="canIA"><Suspense fallback={<Loading />}><AssistenteIA /></Suspense></ModuleGuard>} />
