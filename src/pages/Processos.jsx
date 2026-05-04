@@ -140,7 +140,7 @@ export default function Processos() {
   const openDetail = async (p) => {
     setDetail(p);
     setDetailTab('info');
-    setTab(5);
+    setTab(3);
     try { setRegistros(await api.registros.list({ processo_id: p.id })); } catch (e) { console.error(e); }
   };
 
@@ -184,7 +184,9 @@ export default function Processos() {
     return { total, ativos, okrs, byCat, byArea };
   }, [list]);
 
-  const tabs = ['Home', 'Lista', 'OKR', 'KPIs', 'Agenda'];
+  // OKR e Agenda saiu para /painel-kpis (aba OKRs e Jornada) e /meus-kpis
+  // (agenda do usuario logado). KPIs foca em referencia processo->indicador.
+  const tabs = ['Home', 'Lista', 'KPIs'];
 
   return (
     <div style={{ padding: 24, maxWidth: 1400, margin: '0 auto' }}>
@@ -194,7 +196,7 @@ export default function Processos() {
           <h1 style={{ margin: 0, fontSize: 24, fontWeight: 700, color: C.text }}>Processos</h1>
           <p style={{ margin: '4px 0 0', fontSize: 14, color: C.t3 }}>Processos operacionais, OKRs e indicadores</p>
         </div>
-        {canWrite && tab !== 5 && (
+        {canWrite && tab !== 3 && (
           <div style={{ display: 'flex', gap: 8 }}>
             <Btn variant="ghost" onClick={handleColetar} disabled={coletando}>
               {coletando ? 'Coletando...' : 'Coletar agora'}
@@ -205,7 +207,7 @@ export default function Processos() {
       </div>
 
       {/* Tabs */}
-      {tab !== 5 && (
+      {tab !== 3 && (
         <div style={{ display: 'flex', gap: 4, marginBottom: 20, borderBottom: `2px solid ${C.border}` }}>
           {tabs.map((t, i) => (
             <button key={t} onClick={() => setTab(i)}
@@ -218,10 +220,8 @@ export default function Processos() {
 
       {tab === 0 && <TabHome stats={stats} list={list} kpisByArea={kpisByArea} />}
       {tab === 1 && <TabLista list={filtered} search={search} setSearch={setSearch} fCat={fCat} setFCat={setFCat} fArea={fArea} setFArea={setFArea} fOkr={fOkr} setFOkr={setFOkr} fStatus={fStatus} setFStatus={setFStatus} canWrite={canWrite} onEdit={openEdit} onDelete={handleDelete} onDetail={openDetail} loading={loading} />}
-      {tab === 2 && <TabOKR list={list.filter(p => p.is_okr)} kpiById={kpiById} canWrite={canWrite} onEdit={openEdit} onDetail={openDetail} />}
-      {tab === 3 && <TabKPIs list={list} kpisByArea={kpisByArea} onDetail={openDetail} />}
-      {tab === 4 && <TabAgenda agenda={agenda} canWrite={canWrite} onSave={async items => { try { await api.agenda.saveBulk(items); loadAgenda(); } catch (e) { console.error(e); } }} />}
-      {tab === 5 && detail && <DetailView processo={detail} registros={registros} kpiById={kpiById} canWrite={canWrite} onBack={() => { setTab(1); setDetail(null); }} onEdit={openEdit} detailTab={detailTab} setDetailTab={setDetailTab} profile={profile} onRegistroSaved={async () => { setRegistros(await api.registros.list({ processo_id: detail.id })); }} />}
+      {tab === 2 && <TabKPIs list={list} kpisByArea={kpisByArea} onDetail={openDetail} />}
+      {tab === 3 && detail && <DetailView processo={detail} registros={registros} kpiById={kpiById} canWrite={canWrite} onBack={() => { setTab(1); setDetail(null); }} onEdit={openEdit} detailTab={detailTab} setDetailTab={setDetailTab} profile={profile} onRegistroSaved={async () => { setRegistros(await api.registros.list({ processo_id: detail.id })); }} />}
 
       {/* Modal criar/editar */}
       <Modal open={!!modal} onClose={() => setModal(null)} title={modal === 'create' ? 'Novo Processo' : 'Editar Processo'} wide
@@ -548,6 +548,9 @@ function TabKPIs({ list, kpisByArea = {}, onDetail }) {
   const kpiMap = useMemo(() => { const m = {}; list.forEach(p => (p.indicador_ids || []).forEach(id => { if (!m[id]) m[id] = []; m[id].push(p); })); return m; }, [list]);
   return (
     <div>
+      <div style={{ background: C.card, border: `1px dashed ${C.border}`, borderRadius: 10, padding: '10px 14px', marginBottom: 16, fontSize: 12, color: C.t3, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, flexWrap: 'wrap' }}>
+        <span>Esta aba mostra a relação <strong style={{ color: C.text }}>processo → indicador</strong>. Para preencher KPIs vá em <a href="/meus-kpis" style={{ color: C.accent, fontWeight: 600 }}>Meus KPIs</a>; para ver o panorama institucional, <a href="/painel-kpis" style={{ color: C.accent, fontWeight: 600 }}>Painel de KPIs</a>.</span>
+      </div>
       {AREAS.map(area => { const kpis = kpisByArea[area.id] || []; return (
         <div key={area.id} style={{ marginBottom: 24 }}>
           <h3 style={{ fontSize: 16, fontWeight: 600, color: C.text, marginBottom: 8 }}>{area.nome} <span style={{ fontSize: 12, fontWeight: 400, color: C.t3 }}>{kpis.length} indicadores</span></h3>
