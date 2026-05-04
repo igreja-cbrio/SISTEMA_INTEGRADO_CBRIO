@@ -83,8 +83,7 @@ const NAV_ITEMS = [
           { label: 'Grupos', description: 'Grupos de conexao da igreja', icon: UsersRound, path: '/grupos' },
           { label: 'Cuidados', description: 'Capelania e aconselhamento', icon: Heart, path: '/ministerial/cuidados', perm: 'canCuidados' },
           { label: 'Voluntariado', description: 'Check-in, escalas e QR codes', icon: HandHelping, path: '/ministerial/voluntariado', perm: 'canMembresia' },
-          { label: 'Membresia', description: 'Cadastro e trilha dos valores', icon: BookOpen, path: '/ministerial/membresia', perm: 'canMembresia' },
-          { label: 'Jornada', description: 'Progresso nos 5 valores', icon: TrendingUp, path: '/ministerial/jornada', perm: 'canMembresia' },
+          { label: 'Membresia', description: 'Cadastros, trilha dos valores e Jornada', icon: BookOpen, path: '/ministerial/membresia', perm: 'canMembresia' },
         ],
       },
       {
