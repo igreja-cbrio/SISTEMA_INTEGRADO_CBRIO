@@ -15,8 +15,14 @@ router.get('/', async (req, res) => {
   try {
     const { ativo, categoria } = req.query;
     let q = supabase.from('mem_grupos').select('*');
-    if (ativo !== undefined) q = q.eq('ativo', ativo === 'true');
-    else q = q.eq('ativo', true);
+    // ativo=all retorna tudo (ativos + arquivados); default e so ativos
+    if (ativo === 'all') {
+      // sem filtro
+    } else if (ativo !== undefined) {
+      q = q.eq('ativo', ativo === 'true');
+    } else {
+      q = q.eq('ativo', true);
+    }
     if (categoria) q = q.eq('categoria', categoria);
     q = q.order('nome');
     const { data: grupos, error } = await q;

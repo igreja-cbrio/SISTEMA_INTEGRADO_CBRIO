@@ -59,16 +59,17 @@ export default function Grupos() {
   const [customTag, setCustomTag] = useState('');
   const [chamadaOpen, setChamadaOpen] = useState(false);
   const [encontros, setEncontros] = useState([]);
+  const [mostrarArquivados, setMostrarArquivados] = useState(false);
 
   const loadList = useCallback(async () => {
     setLoading(true);
     try {
-      const data = await api.list();
+      const data = await api.list(mostrarArquivados ? { ativo: 'all' } : undefined);
       setGruposList(data || []);
       setGruposForSelect((data || []).filter(g => g.ativo));
     } catch { toast.error('Erro ao carregar grupos'); }
     finally { setLoading(false); }
-  }, []);
+  }, [mostrarArquivados]);
 
   const loadDetail = useCallback(async (id) => {
     setDetailLoading(true);
@@ -184,6 +185,16 @@ export default function Grupos() {
     } catch { toast.error('Erro ao desativar'); }
   };
 
+  const handleReativar = async () => {
+    if (!detailData?.id) return;
+    try {
+      await api.update(detailData.id, { ...detailData, ativo: true });
+      toast.success('Grupo reativado');
+      loadDetail(detailData.id);
+      loadList();
+    } catch { toast.error('Erro ao reativar'); }
+  };
+
   const handleAddMembro = async (membroId) => {
     try {
       await api.addMembro(selectedGrupo, { membro_id: membroId });
@@ -293,7 +304,10 @@ export default function Grupos() {
           </div>
           <div style={{ display: 'flex', gap: 8, flexShrink: 0 }}>
             <Button size="sm" variant="outline" onClick={openEdit}>Editar</Button>
-            <Button size="sm" variant="destructive" onClick={handleDelete}>Desativar</Button>
+            {g.ativo
+              ? <Button size="sm" variant="destructive" onClick={handleDelete}>Desativar</Button>
+              : <Button size="sm" onClick={handleReativar}>Reativar</Button>
+            }
           </div>
         </div>
 
@@ -437,6 +451,36 @@ export default function Grupos() {
                 ))}
               </div>
             )}
+          </div>
+        )}
+
+        {/* Historico de saidas */}
+        {!isOptimistic && g.historico?.length > 0 && (
+          <div style={{ background: C.card, borderRadius: 12, border: `1px solid ${C.border}`, overflow: 'hidden', marginTop: 16 }}>
+            <div style={{ padding: '12px 16px', borderBottom: `1px solid ${C.border}`, display: 'flex', alignItems: 'center', gap: 8 }}>
+              <X size={14} style={{ color: C.t3 }} />
+              <span style={{ fontSize: 14, fontWeight: 700, color: C.text }}>Historico de saidas ({g.historico.length})</span>
+            </div>
+            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+              <thead>
+                <tr style={{ background: 'var(--cbrio-table-header)' }}>
+                  <th style={{ padding: '8px 16px', textAlign: 'left', fontSize: 11, fontWeight: 600, color: C.t3, textTransform: 'uppercase' }}>Membro</th>
+                  <th style={{ padding: '8px 16px', textAlign: 'left', fontSize: 11, fontWeight: 600, color: C.t3, textTransform: 'uppercase' }}>Entrou</th>
+                  <th style={{ padding: '8px 16px', textAlign: 'left', fontSize: 11, fontWeight: 600, color: C.t3, textTransform: 'uppercase' }}>Saiu</th>
+                  <th style={{ padding: '8px 16px', textAlign: 'left', fontSize: 11, fontWeight: 600, color: C.t3, textTransform: 'uppercase' }}>Motivo</th>
+                </tr>
+              </thead>
+              <tbody>
+                {g.historico.map(h => (
+                  <tr key={h.id} style={{ borderBottom: `1px solid ${C.border}` }}>
+                    <td style={{ padding: '10px 16px', fontSize: 13, color: C.text, fontWeight: 600 }}>{h.membro_nome || '—'}</td>
+                    <td style={{ padding: '10px 16px', fontSize: 12, color: C.t2 }}>{fmtDate(h.entrou_em)}</td>
+                    <td style={{ padding: '10px 16px', fontSize: 12, color: C.t2 }}>{fmtDate(h.saiu_em)}</td>
+                    <td style={{ padding: '10px 16px', fontSize: 12, color: C.t3 }}>{h.motivo_saida || '—'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
         )}
 
@@ -720,7 +764,17 @@ export default function Grupos() {
           </button>
         )}
 
-        <span style={{ fontSize: 11, color: C.t3, marginLeft: 'auto' }}>{filtered.length} de {gruposList.length} grupos</span>
+        <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, color: mostrarArquivados ? C.primary : C.t3, cursor: 'pointer', marginLeft: hasActiveFilters ? 0 : 'auto', fontWeight: mostrarArquivados ? 600 : 400 }}>
+          <input
+            type="checkbox"
+            checked={mostrarArquivados}
+            onChange={e => setMostrarArquivados(e.target.checked)}
+            style={{ accentColor: C.primary, cursor: 'pointer' }}
+          />
+          Mostrar arquivados
+        </label>
+
+        <span style={{ fontSize: 11, color: C.t3, marginLeft: hasActiveFilters || mostrarArquivados ? 'auto' : 0 }}>{filtered.length} de {gruposList.length} grupos</span>
       </div>
 
       {loading ? (
@@ -735,6 +789,7 @@ export default function Grupos() {
             <div key={g.id} onClick={() => openGrupo(g)} style={{
               background: C.card, borderRadius: 14, padding: 18, border: `1px solid ${C.border}`,
               cursor: 'pointer', transition: 'border-color 0.15s, transform 0.1s',
+              opacity: g.ativo ? 1 : 0.6,
             }}
               onMouseDown={e => e.currentTarget.style.transform = 'scale(0.99)'}
               onMouseUp={e => e.currentTarget.style.transform = 'scale(1)'}
@@ -745,7 +800,10 @@ export default function Grupos() {
                   {!g.foto_url && <Users size={22} style={{ color: C.primary }} />}
                 </div>
                 <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontSize: 15, fontWeight: 700, color: C.text, marginBottom: 4 }}>{g.nome}</div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+                    <div style={{ fontSize: 15, fontWeight: 700, color: C.text }}>{g.nome}</div>
+                    {!g.ativo && <span style={{ fontSize: 9, padding: '1px 6px', borderRadius: 99, background: '#ef444420', color: C.red, fontWeight: 600, textTransform: 'uppercase' }}>Arquivado</span>}
+                  </div>
                   {g.lider_nome && <div style={{ fontSize: 12, color: C.t2, marginBottom: 2 }}>Lider: {g.lider_nome}</div>}
                   <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginTop: 4 }}>
                     {g.dia_semana != null && (
