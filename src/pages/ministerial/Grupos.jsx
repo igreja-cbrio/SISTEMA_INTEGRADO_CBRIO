@@ -58,6 +58,7 @@ export default function Grupos() {
   const [uploadGrupoIds, setUploadGrupoIds] = useState([]);
   const [customTag, setCustomTag] = useState('');
   const [chamadaOpen, setChamadaOpen] = useState(false);
+  const [encontroEdit, setEncontroEdit] = useState(null);
   const [encontros, setEncontros] = useState([]);
   const [mostrarArquivados, setMostrarArquivados] = useState(false);
   const [metricas, setMetricas] = useState(null);
@@ -136,15 +137,30 @@ export default function Grupos() {
 
   const handleRegistrarEncontro = async ({ data, tema, observacoes, membros_presentes }) => {
     try {
-      await api.registrarEncontro(selectedGrupo, { data, tema, observacoes, membros_presentes });
-      toast.success(`Encontro registrado (${membros_presentes.length} presentes)`);
+      if (encontroEdit?.id) {
+        await api.atualizarEncontro(encontroEdit.id, { data, tema, observacoes, membros_presentes });
+        toast.success(`Encontro atualizado (${membros_presentes.length} presentes)`);
+      } else {
+        await api.registrarEncontro(selectedGrupo, { data, tema, observacoes, membros_presentes });
+        toast.success(`Encontro registrado (${membros_presentes.length} presentes)`);
+      }
       setChamadaOpen(false);
+      setEncontroEdit(null);
       loadEncontros(selectedGrupo);
       loadDetail(selectedGrupo);
+      loadMetricas(selectedGrupo);
     } catch (e) {
-      const msg = e?.response?.data?.error || e.message || 'Erro ao registrar encontro';
+      const msg = e?.response?.data?.error || e.message || 'Erro ao salvar encontro';
       toast.error(msg);
     }
+  };
+
+  const handleEditarEncontro = async (encontroId) => {
+    try {
+      const data = await api.encontro(encontroId);
+      setEncontroEdit(data);
+      setChamadaOpen(true);
+    } catch { toast.error('Erro ao carregar encontro'); }
   };
 
   const handleRemoverEncontro = async (encontroId) => {
@@ -154,6 +170,7 @@ export default function Grupos() {
       toast.success('Encontro removido');
       loadEncontros(selectedGrupo);
       loadDetail(selectedGrupo);
+      loadMetricas(selectedGrupo);
     } catch { toast.error('Erro ao remover encontro'); }
   };
 
@@ -465,7 +482,13 @@ export default function Grupos() {
             ) : (
               <div>
                 {encontros.map(enc => (
-                  <div key={enc.id} style={{ padding: '12px 16px', borderBottom: `1px solid ${C.border}`, display: 'flex', alignItems: 'center', gap: 12 }}>
+                  <div key={enc.id} onClick={() => handleEditarEncontro(enc.id)} style={{
+                    padding: '12px 16px', borderBottom: `1px solid ${C.border}`, display: 'flex',
+                    alignItems: 'center', gap: 12, cursor: 'pointer', transition: 'background 0.1s',
+                  }}
+                    onMouseEnter={e => e.currentTarget.style.background = C.primaryBg}
+                    onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
+                    title="Clique para editar a chamada">
                     <div style={{ width: 44, height: 44, borderRadius: 10, background: C.primaryBg, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
                       <div style={{ fontSize: 9, fontWeight: 600, color: C.primary, textTransform: 'uppercase' }}>{new Date(enc.data + 'T12:00:00').toLocaleDateString('pt-BR', { month: 'short' }).replace('.', '')}</div>
                       <div style={{ fontSize: 16, fontWeight: 700, color: C.primary, lineHeight: 1 }}>{new Date(enc.data + 'T12:00:00').getDate()}</div>
@@ -478,7 +501,7 @@ export default function Grupos() {
                       </div>
                       {enc.observacoes && <div style={{ fontSize: 11, color: C.t2, marginTop: 4 }}>{enc.observacoes}</div>}
                     </div>
-                    <button onClick={() => handleRemoverEncontro(enc.id)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: C.red, padding: 6 }} title="Remover encontro"><Trash2 size={14} /></button>
+                    <button onClick={e => { e.stopPropagation(); handleRemoverEncontro(enc.id); }} style={{ background: 'none', border: 'none', cursor: 'pointer', color: C.red, padding: 6 }} title="Remover encontro"><Trash2 size={14} /></button>
                   </div>
                 ))}
               </div>
@@ -524,12 +547,13 @@ export default function Grupos() {
           </div>
         )}
 
-        {/* Modal de chamada */}
+        {/* Modal de chamada / edicao */}
         <ChamadaModal
           open={chamadaOpen}
-          onClose={() => setChamadaOpen(false)}
+          onClose={() => { setChamadaOpen(false); setEncontroEdit(null); }}
           membros={membrosAtivos}
           onSubmit={handleRegistrarEncontro}
+          encontroEdit={encontroEdit}
         />
 
         {/* Modal adicionar membro */}
@@ -1102,24 +1126,33 @@ function GrupoFormModal({ open, onClose, data, onSave, saving, gruposForSelect, 
   );
 }
 
-// ── MODAL DE CHAMADA / REGISTRO DE ENCONTRO ──
-function ChamadaModal({ open, onClose, membros, onSubmit }) {
+// ── MODAL DE CHAMADA / REGISTRO / EDICAO DE ENCONTRO ──
+function ChamadaModal({ open, onClose, membros, onSubmit, encontroEdit }) {
   const [data, setData] = useState('');
   const [tema, setTema] = useState('');
   const [observacoes, setObservacoes] = useState('');
   const [presentes, setPresentes] = useState(new Set());
   const [saving, setSaving] = useState(false);
 
+  const editando = !!encontroEdit;
+
   useEffect(() => {
     if (open) {
-      setData(new Date().toISOString().split('T')[0]);
-      setTema('');
-      setObservacoes('');
-      // Default: todos selecionados (mais comum o lider desmarcar quem faltou)
-      setPresentes(new Set(membros.map(m => m.id)));
+      if (encontroEdit) {
+        setData(encontroEdit.data || new Date().toISOString().split('T')[0]);
+        setTema(encontroEdit.tema || '');
+        setObservacoes(encontroEdit.observacoes || '');
+        setPresentes(new Set(encontroEdit.membros_presentes || []));
+      } else {
+        setData(new Date().toISOString().split('T')[0]);
+        setTema('');
+        setObservacoes('');
+        // Default: todos selecionados (mais comum o lider desmarcar quem faltou)
+        setPresentes(new Set(membros.map(m => m.id)));
+      }
       setSaving(false);
     }
-  }, [open, membros]);
+  }, [open, membros, encontroEdit]);
 
   const toggle = (id) => {
     setPresentes(prev => {
@@ -1151,7 +1184,7 @@ function ChamadaModal({ open, onClose, membros, onSubmit }) {
   return (
     <Dialog open={open} onOpenChange={onClose}>
       <DialogContent className="max-w-md max-h-[85vh] overflow-y-auto">
-        <DialogHeader><DialogTitle>Registrar encontro</DialogTitle></DialogHeader>
+        <DialogHeader><DialogTitle>{editando ? 'Editar encontro' : 'Registrar encontro'}</DialogTitle></DialogHeader>
         <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 2fr', gap: 10 }}>
             <div>
@@ -1199,7 +1232,7 @@ function ChamadaModal({ open, onClose, membros, onSubmit }) {
 
           <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', marginTop: 4 }}>
             <Button type="button" variant="outline" onClick={onClose} disabled={saving}>Cancelar</Button>
-            <Button type="submit" disabled={saving}>{saving ? 'Salvando...' : `Registrar (${presentes.size} presentes)`}</Button>
+            <Button type="submit" disabled={saving}>{saving ? 'Salvando...' : (editando ? `Salvar (${presentes.size} presentes)` : `Registrar (${presentes.size} presentes)`)}</Button>
           </div>
         </form>
       </DialogContent>
