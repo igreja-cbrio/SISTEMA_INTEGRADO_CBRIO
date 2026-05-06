@@ -972,10 +972,21 @@ router.get('/bairros/list', async (req, res) => {
 // Retorna { ok: [...], falhas: [{id, codigo, nome, motivo, local, bairro}] }
 router.post('/geocode-batch', authorize('admin', 'diretor'), async (req, res) => {
   try {
-    const { temporada, somente_sem_coords } = req.body || {};
-    let q = supabase.from('mem_grupos').select('id, codigo, nome, local, endereco, complemento, bairro, cep, lat, lng').eq('ativo', true);
+    const { temporada, somente_sem_coords, limit, offset } = req.body || {};
+    // Limita o lote para nao estourar timeout do Vercel (60s).
+    // Cada grupo demora ~1.1s no Nominatim, entao 30 grupos = ~33s.
+    const LIMITE = Math.min(Math.max(parseInt(limit, 10) || 30, 1), 50);
+    const OFFSET = Math.max(parseInt(offset, 10) || 0, 0);
+
+    let q = supabase.from('mem_grupos')
+      .select('id, codigo, nome, local, endereco, complemento, bairro, cep, lat, lng', { count: 'exact' })
+      .eq('ativo', true)
+      .order('codigo', { ascending: true, nullsFirst: false });
     if (temporada) q = q.eq('temporada', temporada);
-    const { data: grupos, error } = await q;
+    if (somente_sem_coords) q = q.or('lat.is.null,lng.is.null');
+
+    q = q.range(OFFSET, OFFSET + LIMITE - 1);
+    const { data: grupos, count, error } = await q;
     if (error) throw error;
 
     const ok = [];
@@ -1055,8 +1066,13 @@ router.post('/geocode-batch', authorize('admin', 'diretor'), async (req, res) =>
       await sleep(200);
     }
 
+    const processadosAteAgora = OFFSET + (grupos || []).length;
     res.json({
-      total: (grupos || []).length,
+      total_lote: (grupos || []).length,
+      total_geral: count ?? 0,
+      offset: OFFSET,
+      proximo_offset: processadosAteAgora,
+      has_more: processadosAteAgora < (count ?? 0),
       ok_count: ok.length,
       falhas_count: falhas.length,
       skip_count: skip.length,
