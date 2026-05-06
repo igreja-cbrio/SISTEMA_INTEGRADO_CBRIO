@@ -473,6 +473,366 @@ router.get('/saude/agregado', async (req, res) => {
 });
 
 // ══════════════════════════════════════════════
+// BUSCA E PEDIDOS DE INSCRICAO (rotas especificas antes de /:id)
+// ══════════════════════════════════════════════
+
+// Distancia entre dois pontos em km (Haversine)
+function distanciaKm(lat1, lng1, lat2, lng2) {
+  const R = 6371;
+  const dLat = (lat2 - lat1) * Math.PI / 180;
+  const dLng = (lng2 - lng1) * Math.PI / 180;
+  const a = Math.sin(dLat / 2) ** 2 +
+            Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+            Math.sin(dLng / 2) ** 2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+// GET /api/grupos/buscar — busca com filtros para o seletor
+// Query: lider_nome, categoria, bairro, cep, raio_km, temporada, status_temporada
+// Retorna grupos ATIVOS da temporada filtrada com info do lider
+router.get('/buscar', async (req, res) => {
+  try {
+    const { lider_nome, categoria, bairro, cep, raio_km, temporada, status_temporada, q } = req.query;
+
+    let query = supabase.from('mem_grupos').select('*').eq('ativo', true);
+    if (categoria) query = query.eq('categoria', categoria);
+    if (bairro) query = query.eq('bairro', bairro);
+    if (temporada) query = query.eq('temporada', temporada);
+    if (status_temporada) query = query.eq('status_temporada', status_temporada);
+    query = query.order('nome');
+
+    const { data: grupos, error } = await query;
+    if (error) throw error;
+
+    // Enriquecer com lider
+    const liderIds = [...new Set((grupos || []).map(g => g.lider_id).filter(Boolean))];
+    let lideresMap = {};
+    if (liderIds.length > 0) {
+      const { data: lideres } = await supabase.from('mem_membros').select('id, nome, foto_url').in('id', liderIds);
+      (lideres || []).forEach(l => { lideresMap[l.id] = l; });
+    }
+
+    let resultado = (grupos || []).map(g => ({
+      ...g,
+      lider_nome: lideresMap[g.lider_id]?.nome || null,
+      lider_foto: lideresMap[g.lider_id]?.foto_url || null,
+    }));
+
+    // Filtro client-side por nome do lider (texto livre)
+    if (lider_nome) {
+      const term = String(lider_nome).toLowerCase();
+      resultado = resultado.filter(g => g.lider_nome?.toLowerCase().includes(term));
+    }
+
+    // Busca textual livre
+    if (q) {
+      const term = String(q).toLowerCase();
+      resultado = resultado.filter(g =>
+        g.nome?.toLowerCase().includes(term)
+        || g.lider_nome?.toLowerCase().includes(term)
+        || g.bairro?.toLowerCase().includes(term)
+        || g.local?.toLowerCase().includes(term)
+        || g.tema?.toLowerCase().includes(term)
+        || g.codigo?.toLowerCase().includes(term)
+      );
+    }
+
+    // Filtro por raio a partir do CEP
+    if (cep && raio_km) {
+      const cepLimpo = String(cep).replace(/\D/g, '');
+      if (cepLimpo.length === 8) {
+        try {
+          // Geocode do CEP via ViaCEP + Nominatim (mesma logica de membresia)
+          const viaCepRes = await fetch(`https://viacep.com.br/ws/${cepLimpo}/json/`);
+          const viaCep = await viaCepRes.json();
+          if (!viaCep.erro) {
+            const qStr = encodeURIComponent(`${viaCep.logradouro || ''} ${viaCep.localidade} ${viaCep.uf} Brasil`.trim());
+            const nomRes = await fetch(`https://nominatim.openstreetmap.org/search?q=${qStr}&format=json&limit=1`, {
+              headers: { 'User-Agent': 'CBRio-Sistema/1.0 (contato@cbrio.com.br)' },
+            });
+            const nom = await nomRes.json();
+            const cepLat = nom?.[0] ? parseFloat(nom[0].lat) : null;
+            const cepLng = nom?.[0] ? parseFloat(nom[0].lon) : null;
+            const raio = parseFloat(raio_km) || 20;
+            if (cepLat != null && cepLng != null) {
+              resultado = resultado
+                .filter(g => g.lat != null && g.lng != null)
+                .map(g => ({ ...g, dist_km: distanciaKm(cepLat, cepLng, Number(g.lat), Number(g.lng)) }))
+                .filter(g => g.dist_km <= raio)
+                .sort((a, b) => a.dist_km - b.dist_km);
+            }
+          }
+        } catch (geoErr) {
+          console.warn('[Grupos buscar] geocode falhou:', geoErr.message);
+        }
+      }
+    }
+
+    res.json(resultado);
+  } catch (e) { console.error('[Grupos buscar]', e.message); res.status(500).json({ error: 'Erro ao buscar grupos' }); }
+});
+
+// GET /api/grupos/lideres/buscar — autocomplete de lideres com seus grupos
+// Query: q (texto), temporada
+router.get('/lideres/buscar', async (req, res) => {
+  try {
+    const { q, temporada } = req.query;
+    const term = String(q || '').trim().toLowerCase();
+    if (term.length < 2) return res.json([]);
+
+    let query = supabase.from('mem_grupos').select('lider_id').eq('ativo', true).not('lider_id', 'is', null);
+    if (temporada) query = query.eq('temporada', temporada);
+    const { data: grupos } = await query;
+    const liderIds = [...new Set((grupos || []).map(g => g.lider_id))];
+    if (!liderIds.length) return res.json([]);
+
+    const { data: lideres } = await supabase
+      .from('mem_membros')
+      .select('id, nome, foto_url')
+      .in('id', liderIds)
+      .ilike('nome', `%${term}%`)
+      .order('nome')
+      .limit(20);
+
+    res.json(lideres || []);
+  } catch (e) { console.error('[Grupos lideres]', e.message); res.status(500).json({ error: 'Erro ao buscar lideres' }); }
+});
+
+// GET /api/grupos/lideres/:liderId/grupos — grupos liderados por um membro
+router.get('/lideres/:liderId/grupos', async (req, res) => {
+  try {
+    const { temporada } = req.query;
+    let query = supabase.from('mem_grupos').select('*').eq('lider_id', req.params.liderId).eq('ativo', true);
+    if (temporada) query = query.eq('temporada', temporada);
+    query = query.order('nome');
+    const { data, error } = await query;
+    if (error) throw error;
+    res.json(data || []);
+  } catch (e) { console.error('[Grupos lideres/grupos]', e.message); res.status(500).json({ error: 'Erro ao buscar grupos do lider' }); }
+});
+
+// ── PEDIDOS DE INSCRICAO ──
+
+// POST /api/grupos/:id/pedidos — pessoa (logada como staff/totem) cria pedido em nome de um membro
+// Body: { membro_id?, cadastro_pendente_id?, nome, email?, telefone?, origem?, observacao? }
+router.post('/:id/pedidos', async (req, res) => {
+  try {
+    const grupoId = req.params.id;
+    const b = req.body || {};
+    if (!b.membro_id && !b.cadastro_pendente_id) {
+      return res.status(400).json({ error: 'membro_id ou cadastro_pendente_id obrigatorio' });
+    }
+    if (!b.nome) return res.status(400).json({ error: 'nome obrigatorio' });
+
+    // Verifica se ja nao existe pedido pendente
+    if (b.membro_id) {
+      const { data: ja } = await supabase.from('mem_grupo_pedidos')
+        .select('id').eq('grupo_id', grupoId).eq('membro_id', b.membro_id).eq('status', 'pendente').maybeSingle();
+      if (ja) return res.status(409).json({ error: 'Ja existe pedido pendente desse membro pra esse grupo' });
+      // E se ja for membro ativo
+      const { data: jaMembro } = await supabase.from('mem_grupo_membros')
+        .select('id').eq('grupo_id', grupoId).eq('membro_id', b.membro_id).is('saiu_em', null).maybeSingle();
+      if (jaMembro) return res.status(409).json({ error: 'Ja e membro ativo desse grupo' });
+    }
+
+    const { data, error } = await supabase.from('mem_grupo_pedidos').insert({
+      grupo_id: grupoId,
+      membro_id: b.membro_id || null,
+      cadastro_pendente_id: b.cadastro_pendente_id || null,
+      nome: b.nome,
+      email: b.email || null,
+      telefone: b.telefone || null,
+      origem: b.origem || 'cadastro_interno',
+      observacao: b.observacao || null,
+      status: 'pendente',
+    }).select().single();
+    if (error) throw error;
+
+    // Notificar lider (em background)
+    (async () => {
+      try {
+        const { data: grupo } = await supabase.from('mem_grupos').select('nome, lider_id').eq('id', grupoId).single();
+        if (!grupo) return;
+        await notificar({
+          modulo: 'grupos',
+          tipo: 'pedido_grupo',
+          titulo: `Novo pedido para ${grupo.nome}`,
+          mensagem: `${b.nome} pediu para entrar no grupo ${grupo.nome}.`,
+          link: '/grupos/pedidos',
+          severidade: 'aviso',
+          chaveDedup: `pedido_grupo_${data.id}`,
+        });
+      } catch (notifErr) { console.error('[Pedidos notify]', notifErr.message); }
+    })();
+
+    res.json(data);
+  } catch (e) { console.error('[Pedidos create]', e.message); res.status(500).json({ error: 'Erro ao criar pedido' }); }
+});
+
+// GET /api/grupos/pedidos/list — lista pedidos (opcional: status, grupo_id, mine=true)
+router.get('/pedidos/list', async (req, res) => {
+  try {
+    const { status, grupo_id, mine } = req.query;
+    let query = supabase.from('mem_grupo_pedidos')
+      .select('*, mem_grupos(id, nome, codigo, bairro, lider_id, mem_membros!lider_id(id, nome))')
+      .order('created_at', { ascending: false });
+
+    if (status) query = query.eq('status', status);
+    if (grupo_id) query = query.eq('grupo_id', grupo_id);
+
+    // mine=true filtra por grupos onde o user logado e o lider
+    if (mine === 'true') {
+      // Resolve mem_membros.id do user via vol_profiles.membresia_id ou email match
+      const { data: prof } = await supabase
+        .from('vol_profiles')
+        .select('membresia_id')
+        .eq('auth_user_id', req.user.userId)
+        .maybeSingle();
+      const minhaMembresiaId = prof?.membresia_id;
+      if (!minhaMembresiaId) return res.json([]);
+      const { data: meusGrupos } = await supabase.from('mem_grupos').select('id').eq('lider_id', minhaMembresiaId);
+      const ids = (meusGrupos || []).map(g => g.id);
+      if (!ids.length) return res.json([]);
+      query = query.in('grupo_id', ids);
+    }
+
+    const { data, error } = await query;
+    if (error) throw error;
+    res.json(data || []);
+  } catch (e) { console.error('[Pedidos list]', e.message); res.status(500).json({ error: 'Erro ao listar pedidos' }); }
+});
+
+// POST /api/grupos/pedidos/:pedidoId/aprovar
+router.post('/pedidos/:pedidoId/aprovar', async (req, res) => {
+  try {
+    const { data: pedido, error: ePedido } = await supabase.from('mem_grupo_pedidos')
+      .select('*').eq('id', req.params.pedidoId).single();
+    if (ePedido) throw ePedido;
+    if (pedido.status !== 'pendente') {
+      return res.status(409).json({ error: `Pedido ja foi ${pedido.status}` });
+    }
+
+    let membroId = pedido.membro_id;
+
+    // Se o pedido veio do formulario publico (cadastro pendente), promove a membro
+    if (!membroId && pedido.cadastro_pendente_id) {
+      const { data: cad } = await supabase.from('mem_cadastros_pendentes')
+        .select('*').eq('id', pedido.cadastro_pendente_id).single();
+      if (cad) {
+        const { data: novoMembro, error: eMembro } = await supabase.from('mem_membros').insert({
+          nome: cad.nome,
+          email: cad.email,
+          telefone: cad.telefone,
+          data_nascimento: cad.data_nascimento || null,
+          status: 'visitante',
+          active: true,
+        }).select().single();
+        if (eMembro) throw eMembro;
+        membroId = novoMembro.id;
+        // Marca cadastro como aprovado
+        await supabase.from('mem_cadastros_pendentes')
+          .update({ status: 'aprovado' }).eq('id', pedido.cadastro_pendente_id);
+      }
+    }
+
+    if (!membroId) {
+      return res.status(400).json({ error: 'Pedido sem membro nem cadastro pendente valido' });
+    }
+
+    // Fecha participacao anterior do membro
+    await supabase.from('mem_grupo_membros')
+      .update({ saiu_em: new Date().toISOString().slice(0, 10), motivo_saida: 'Trocou de grupo via aprovacao' })
+      .eq('membro_id', membroId).is('saiu_em', null);
+
+    // Cria nova participacao
+    await supabase.from('mem_grupo_membros').insert({
+      grupo_id: pedido.grupo_id, membro_id: membroId,
+      entrou_em: new Date().toISOString().slice(0, 10),
+    });
+
+    // Atualiza pedido
+    await supabase.from('mem_grupo_pedidos').update({
+      status: 'aprovado',
+      decidido_por: req.user.userId,
+      decidido_por_nome: req.user.name,
+      decidido_em: new Date().toISOString(),
+      membro_id: membroId,
+    }).eq('id', pedido.id);
+
+    // Notifica a pessoa (se tiver vol_profile com auth_user_id)
+    (async () => {
+      try {
+        const { data: grupo } = await supabase.from('mem_grupos').select('nome').eq('id', pedido.grupo_id).single();
+        const { data: prof } = await supabase.from('vol_profiles')
+          .select('auth_user_id').eq('membresia_id', membroId).maybeSingle();
+        if (prof?.auth_user_id) {
+          await notificar({
+            modulo: 'grupos',
+            tipo: 'pedido_aprovado',
+            titulo: `Bem-vindo ao grupo ${grupo?.nome || ''}!`,
+            mensagem: `Seu pedido para entrar no grupo foi aprovado.`,
+            link: '/grupos',
+            severidade: 'info',
+            chaveDedup: `pedido_aprovado_${pedido.id}`,
+            targetIds: [prof.auth_user_id],
+          });
+        }
+      } catch (e) { console.error('[Pedido aprovar notify]', e.message); }
+    })();
+
+    res.json({ success: true });
+  } catch (e) { console.error('[Pedido aprovar]', e.message); res.status(500).json({ error: 'Erro ao aprovar pedido' }); }
+});
+
+// POST /api/grupos/pedidos/:pedidoId/rejeitar — body: { motivo? }
+router.post('/pedidos/:pedidoId/rejeitar', async (req, res) => {
+  try {
+    const { motivo } = req.body || {};
+    const { data: pedido } = await supabase.from('mem_grupo_pedidos')
+      .select('id, status, grupo_id, membro_id, nome').eq('id', req.params.pedidoId).single();
+    if (!pedido) return res.status(404).json({ error: 'Pedido nao encontrado' });
+    if (pedido.status !== 'pendente') {
+      return res.status(409).json({ error: `Pedido ja foi ${pedido.status}` });
+    }
+
+    await supabase.from('mem_grupo_pedidos').update({
+      status: 'rejeitado',
+      motivo_rejeicao: motivo || null,
+      decidido_por: req.user.userId,
+      decidido_por_nome: req.user.name,
+      decidido_em: new Date().toISOString(),
+    }).eq('id', pedido.id);
+
+    // Notifica a pessoa
+    (async () => {
+      try {
+        const { data: grupo } = await supabase.from('mem_grupos').select('nome').eq('id', pedido.grupo_id).single();
+        if (pedido.membro_id) {
+          const { data: prof } = await supabase.from('vol_profiles')
+            .select('auth_user_id').eq('membresia_id', pedido.membro_id).maybeSingle();
+          if (prof?.auth_user_id) {
+            await notificar({
+              modulo: 'grupos',
+              tipo: 'pedido_rejeitado',
+              titulo: `Pedido para ${grupo?.nome || 'grupo'} nao foi aceito`,
+              mensagem: motivo
+                ? `Seu pedido foi recusado: ${motivo}. Voce pode tentar outro grupo.`
+                : `Seu pedido foi recusado pelo lider. Voce pode tentar outro grupo.`,
+              link: '/grupos',
+              severidade: 'info',
+              chaveDedup: `pedido_rejeitado_${pedido.id}`,
+              targetIds: [prof.auth_user_id],
+            });
+          }
+        }
+      } catch (e) { console.error('[Pedido rejeitar notify]', e.message); }
+    })();
+
+    res.json({ success: true });
+  } catch (e) { console.error('[Pedido rejeitar]', e.message); res.status(500).json({ error: 'Erro ao rejeitar pedido' }); }
+});
+
+// ══════════════════════════════════════════════
 // CRUD do grupo (rotas com /:id por ultimo)
 // ══════════════════════════════════════════════
 
