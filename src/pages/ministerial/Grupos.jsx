@@ -366,7 +366,7 @@ export default function Grupos() {
             <div style={{ display: 'flex', gap: 16, marginTop: 6, flexWrap: 'wrap' }}>
               {g.lider && <span style={{ fontSize: 13, color: C.t2 }}>Lider: <strong style={{ color: C.text }}>{g.lider.nome}</strong></span>}
               {g.bairro && <span style={{ fontSize: 13, color: C.t2, display: 'flex', alignItems: 'center', gap: 4 }}><MapPin size={12} /> {g.bairro}</span>}
-              {g.local && <span style={{ fontSize: 13, color: C.t3, display: 'flex', alignItems: 'center', gap: 4 }}>{g.local}</span>}
+              {g.local && <span style={{ fontSize: 13, color: C.t3, display: 'flex', alignItems: 'center', gap: 4 }}>{g.local}{g.complemento ? ` — ${g.complemento}` : ''}</span>}
               {g.dia_semana != null && <span style={{ fontSize: 13, color: C.t2, display: 'flex', alignItems: 'center', gap: 4 }}><Clock size={12} /> {DIAS[g.dia_semana]} {g.horario?.slice(0, 5)}</span>}
               {g.status_temporada && STATUS_TEMPORADA[g.status_temporada] ? (
                 <span style={{ fontSize: 12, padding: '2px 8px', borderRadius: 99, background: STATUS_TEMPORADA[g.status_temporada].bg, color: STATUS_TEMPORADA[g.status_temporada].cor, fontWeight: 600 }}>
@@ -1039,7 +1039,7 @@ function GrupoFormModal({ open, onClose, data, onSave, saving, gruposForSelect, 
       loadMembros();
       const temporadaAtiva = (temporadas || []).find(t => t.ativa)?.id || '';
       setForm(data ? { ...data } : {
-        nome: '', categoria: '', lider_id: '', local: '', endereco: '',
+        nome: '', categoria: '', lider_id: '', local: '', endereco: '', complemento: '',
         dia_semana: '', horario: '', recorrencia: 'semanal', tema: '',
         foto_url: '', observacoes: '', grupo_origem_id: '', descricao: '',
         bairro: '', status_temporada: 'novo', temporada: temporadaAtiva,
@@ -1127,6 +1127,11 @@ function GrupoFormModal({ open, onClose, data, onSave, saving, gruposForSelect, 
               <Label>Endereco</Label>
               <Input value={form.endereco || ''} onChange={e => set('endereco', e.target.value)} placeholder="Rua, numero" />
             </div>
+          </div>
+
+          <div>
+            <Label>Complemento</Label>
+            <Input value={form.complemento || ''} onChange={e => set('complemento', e.target.value)} placeholder="Apto, bloco, casa, ponto de referencia..." />
           </div>
 
           <div>

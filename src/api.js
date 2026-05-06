@@ -210,6 +210,7 @@ export const grupos = {
   listarPedidos: (params) => get('/grupos/pedidos/list' + (params ? '?' + new URLSearchParams(params) : '')),
   aprovarPedido: (pedidoId) => post(`/grupos/pedidos/${pedidoId}/aprovar`, {}),
   rejeitarPedido: (pedidoId, motivo) => post(`/grupos/pedidos/${pedidoId}/rejeitar`, { motivo }),
+  geocodeBatch: (data) => post('/grupos/geocode-batch', data || {}),
 };
 
 export const strategic = {
