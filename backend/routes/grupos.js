@@ -899,6 +899,7 @@ router.post('/', authorize('admin', 'diretor'), async (req, res) => {
       foto_url: d.foto_url || null, observacoes: d.observacoes || '',
       grupo_origem_id: d.grupo_origem_id || null,
       lat: d.lat ?? null, lng: d.lng ?? null, cep: d.cep || null,
+      complemento: d.complemento || null,
       bairro: d.bairro || null,
       status_temporada: d.status_temporada || 'novo',
       temporada: d.temporada || null,
@@ -922,6 +923,7 @@ router.put('/:id', authorize('admin', 'diretor'), async (req, res) => {
       foto_url: d.foto_url || null, observacoes: d.observacoes || '',
       grupo_origem_id: d.grupo_origem_id || null,
       lat: d.lat ?? null, lng: d.lng ?? null, cep: d.cep || null,
+      complemento: d.complemento || null,
       bairro: d.bairro || null,
       status_temporada: d.status_temporada || null,
       temporada: d.temporada || null,
@@ -959,6 +961,111 @@ router.get('/bairros/list', async (req, res) => {
       .sort((a, b) => b.total - a.total);
     res.json(list);
   } catch (e) { console.error('[Grupos bairros]', e.message); res.status(500).json({ error: 'Erro ao buscar bairros' }); }
+});
+
+// POST /api/grupos/geocode-batch — geocoda em massa os grupos sem lat/lng.
+// Pula grupos online (bairro=Online) e os que ja tem lat/lng.
+// Para cada grupo: tenta CEP -> ViaCEP+Nominatim. Se falhar, tenta texto livre
+// no Nominatim. Atualiza lat/lng quando sucesso.
+// Rate-limit interno: 1.1s entre chamadas (Nominatim policy).
+//
+// Retorna { ok: [...], falhas: [{id, codigo, nome, motivo, local, bairro}] }
+router.post('/geocode-batch', authorize('admin', 'diretor'), async (req, res) => {
+  try {
+    const { temporada, somente_sem_coords } = req.body || {};
+    let q = supabase.from('mem_grupos').select('id, codigo, nome, local, endereco, complemento, bairro, cep, lat, lng').eq('ativo', true);
+    if (temporada) q = q.eq('temporada', temporada);
+    const { data: grupos, error } = await q;
+    if (error) throw error;
+
+    const ok = [];
+    const falhas = [];
+    const skip = [];
+    const userAgent = 'CBRio-Sistema/1.0 (contato@cbrio.com.br)';
+    const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+
+    // Coordenadas conhecidas: Igreja CBRio (Barra da Tijuca)
+    // Usa ?cbrio_lat e ?cbrio_lng se passados, senao default aproximado
+    const CBRIO_COORDS = { lat: -23.0044, lng: -43.3196 };
+
+    for (const g of grupos || []) {
+      // Pula online
+      if (g.bairro === 'Online' || g.local?.toLowerCase().includes('online')) {
+        skip.push({ id: g.id, codigo: g.codigo, nome: g.nome, motivo: 'online' });
+        continue;
+      }
+      // Pula se ja tem coords e somente_sem_coords=true
+      if (somente_sem_coords && g.lat != null && g.lng != null) {
+        skip.push({ id: g.id, codigo: g.codigo, nome: g.nome, motivo: 'ja_tem_coords' });
+        continue;
+      }
+      // Igreja CBRio: usa coords fixas
+      if (g.local?.toLowerCase().includes('cbrio') || g.local?.toLowerCase().includes('igreja')) {
+        await supabase.from('mem_grupos').update({ lat: CBRIO_COORDS.lat, lng: CBRIO_COORDS.lng }).eq('id', g.id);
+        ok.push({ id: g.id, codigo: g.codigo, nome: g.nome, fonte: 'cbrio_fixo', lat: CBRIO_COORDS.lat, lng: CBRIO_COORDS.lng });
+        continue;
+      }
+
+      let foundLat = null, foundLng = null, fonte = null;
+
+      // Tenta via CEP se tiver
+      const cepLimpo = (g.cep || '').replace(/\D/g, '');
+      if (cepLimpo.length === 8) {
+        try {
+          const vc = await fetch(`https://viacep.com.br/ws/${cepLimpo}/json/`).then(r => r.json());
+          if (!vc.erro) {
+            await sleep(1100);
+            const qStr = encodeURIComponent(`${vc.logradouro || ''} ${vc.bairro || ''} ${vc.localidade} ${vc.uf} Brasil`.trim());
+            const nom = await fetch(`https://nominatim.openstreetmap.org/search?q=${qStr}&format=json&limit=1`, { headers: { 'User-Agent': userAgent } }).then(r => r.json());
+            if (nom?.[0]) {
+              foundLat = parseFloat(nom[0].lat);
+              foundLng = parseFloat(nom[0].lon);
+              fonte = 'cep';
+            }
+          }
+        } catch (e) { /* segue tentando */ }
+      }
+
+      // Fallback: texto livre do "local"
+      if ((foundLat == null || foundLng == null) && g.local) {
+        await sleep(1100);
+        try {
+          const qStr = encodeURIComponent(`${g.local} ${g.bairro || ''} Rio de Janeiro RJ Brasil`.trim());
+          const nom = await fetch(`https://nominatim.openstreetmap.org/search?q=${qStr}&format=json&limit=1`, { headers: { 'User-Agent': userAgent } }).then(r => r.json());
+          if (nom?.[0]) {
+            foundLat = parseFloat(nom[0].lat);
+            foundLng = parseFloat(nom[0].lon);
+            fonte = 'texto_local';
+          }
+        } catch (e) { /* segue */ }
+      }
+
+      if (foundLat != null && foundLng != null) {
+        await supabase.from('mem_grupos').update({ lat: foundLat, lng: foundLng }).eq('id', g.id);
+        ok.push({ id: g.id, codigo: g.codigo, nome: g.nome, fonte, lat: foundLat, lng: foundLng });
+      } else {
+        falhas.push({
+          id: g.id, codigo: g.codigo, nome: g.nome,
+          local: g.local, bairro: g.bairro, cep: g.cep,
+          motivo: cepLimpo.length === 8 ? 'cep_e_texto_falharam' : (g.local ? 'sem_cep_texto_ambiguo' : 'sem_endereco'),
+        });
+      }
+
+      // Pausa final pra respeitar rate limit Nominatim
+      await sleep(200);
+    }
+
+    res.json({
+      total: (grupos || []).length,
+      ok_count: ok.length,
+      falhas_count: falhas.length,
+      skip_count: skip.length,
+      ok, falhas, skip,
+    });
+  } catch (e) {
+    console.error('[Grupos geocode-batch]', e.message);
+    res.status(500).json({ error: 'Erro ao geocodificar em massa' });
+  }
 });
 
 // DELETE /api/grupos/:id — soft delete
