@@ -8,7 +8,10 @@ import { Textarea } from '../../components/ui/textarea';
 import { Select as ShadSelect, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../components/ui/select';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../../components/ui/dialog';
 import { toast } from 'sonner';
-import { Users, MapPin, Clock, Plus, Search, ChevronLeft, UserPlus, X, ArrowRightLeft, FileUp, Trash2, FileText, Image, File as FileIcon, Map as MapIcon, ListChecks, ClipboardCheck, Calendar, Activity, TrendingUp, TrendingDown, Minus, AlertTriangle } from 'lucide-react';
+import { Users, MapPin, Clock, Plus, Search, ChevronLeft, UserPlus, X, ArrowRightLeft, FileUp, Trash2, FileText, Image, File as FileIcon, Map as MapIcon, ListChecks, ClipboardCheck, Calendar, Activity, TrendingUp, TrendingDown, Minus, AlertTriangle, Inbox, QrCode, Compass } from 'lucide-react';
+import PedidosGrupo from './PedidosGrupo';
+import InscricaoGruposQRCode from '../admin/InscricaoGruposQRCode';
+import GruposGeocode from '../admin/GruposGeocode';
 import ProcessosTarefas from '../../components/ProcessosTarefas';
 import { GruposMapView } from '@/components/grupos/GruposMapView';
 
@@ -639,8 +642,11 @@ export default function Grupos() {
         {[
           { key: 'grupos', label: 'Grupos', icon: Users },
           { key: 'mapa', label: 'Mapa', icon: MapIcon },
+          { key: 'pedidos', label: 'Pedidos', icon: Inbox },
           { key: 'materiais', label: 'Materiais', icon: FileText },
           { key: 'tarefas', label: 'Tarefas', icon: ListChecks },
+          { key: 'qrcode', label: 'QR Inscrição', icon: QrCode },
+          { key: 'geocode', label: 'Validar endereços', icon: Compass },
         ].map(tab => (
           <button key={tab.key} onClick={() => setPageTab(tab.key)} style={{
             padding: '10px 24px', background: 'none', border: 'none', cursor: 'pointer',
@@ -809,6 +815,27 @@ export default function Grupos() {
 
       {/* ═══ TAB TAREFAS ═══ */}
       {pageTab === 'tarefas' && <ProcessosTarefas area="Grupos" />}
+
+      {/* ═══ TAB PEDIDOS ═══ */}
+      {pageTab === 'pedidos' && (
+        <div style={{ margin: '0 -32px' }}>
+          <PedidosGrupo />
+        </div>
+      )}
+
+      {/* ═══ TAB QR INSCRIÇÃO ═══ */}
+      {pageTab === 'qrcode' && (
+        <div style={{ margin: '0 -32px' }}>
+          <InscricaoGruposQRCode />
+        </div>
+      )}
+
+      {/* ═══ TAB VALIDAR ENDEREÇOS ═══ */}
+      {pageTab === 'geocode' && (
+        <div style={{ margin: '0 -32px' }}>
+          <GruposGeocode />
+        </div>
+      )}
 
       {/* ═══ TAB GRUPOS ═══ */}
       {pageTab === 'grupos' && <>
