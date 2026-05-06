@@ -200,6 +200,8 @@ export const grupos = {
   removerEncontro: (encontroId) => del(`/grupos/encontros/${encontroId}`),
   metricas: (grupoId) => get(`/grupos/${grupoId}/metricas`),
   saudeAgregada: () => get('/grupos/saude/agregado'),
+  temporadas: () => get('/grupos/temporadas/list'),
+  bairros: (params) => get('/grupos/bairros/list' + (params ? '?' + new URLSearchParams(params) : '')),
 };
 
 export const strategic = {
