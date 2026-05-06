@@ -649,6 +649,34 @@ export const membresia = {
 
 // ── Endpoint público (sem auth) do formulário de cadastro de membresia ──
 // Usa fetch direto porque não requer token e deve funcionar em rotas públicas.
+// API pública de grupos — sem auth, read-only. Usada pelo formulario
+// de cadastro publico (CadastroMembresia.jsx) e pela inscricao com QR.
+export const gruposPublic = {
+  temporadas: async () => {
+    const r = await fetch(`${API}/public/grupos/temporadas`);
+    if (!r.ok) return [];
+    return r.json();
+  },
+  buscar: async (params) => {
+    const qs = params ? '?' + new URLSearchParams(params).toString() : '';
+    const r = await fetch(`${API}/public/grupos/buscar${qs}`);
+    if (!r.ok) return [];
+    return r.json();
+  },
+  buscarLideres: async (params) => {
+    const qs = params ? '?' + new URLSearchParams(params).toString() : '';
+    const r = await fetch(`${API}/public/grupos/lideres/buscar${qs}`);
+    if (!r.ok) return [];
+    return r.json();
+  },
+  gruposDoLider: async (liderId, params) => {
+    const qs = params ? '?' + new URLSearchParams(params).toString() : '';
+    const r = await fetch(`${API}/public/grupos/lideres/${liderId}/grupos${qs}`);
+    if (!r.ok) return [];
+    return r.json();
+  },
+};
+
 export const cadastroPublico = {
   uploadFoto: async (file) => {
     const fd = new FormData();

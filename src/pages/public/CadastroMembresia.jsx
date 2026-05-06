@@ -5,6 +5,7 @@ import { LoginShapesBackground } from '../../components/ui/shape-landing-hero';
 import { MultistepFormShell } from '../../components/ui/multistep-form';
 import MemberWalletPass from '../../components/membresia/MemberWalletPass';
 import MemberWalletDialog from '../../components/membresia/MemberWalletDialog';
+import GrupoSelectorComponent from '../../components/grupos/GrupoSelector';
 import { QRCodeSVG } from 'qrcode.react';
 
 // ── Helpers de máscara ──
@@ -181,6 +182,7 @@ const STEPS = [
   { id: 'pessoal', title: 'Dados Pessoais' },
   { id: 'info', title: 'Informações' },
   { id: 'endereco', title: 'Endereço' },
+  { id: 'grupo', title: 'Grupo de Conexão' },
   { id: 'termos', title: 'Termos' },
 ];
 
@@ -239,6 +241,8 @@ export default function CadastroMembresia() {
   });
   const [aceitaTermos, setAceitaTermos] = useState(false);
   const [aceitaContato, setAceitaContato] = useState(true);
+  const [estaEmGrupo, setEstaEmGrupo] = useState(null); // null | true | false
+  const [grupoEscolhido, setGrupoEscolhido] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [sent, setSent] = useState(false);
@@ -320,6 +324,11 @@ export default function CadastroMembresia() {
       case 2:
         return true; // address is optional
       case 3:
+        // grupo: precisa ter respondido sim/nao. Se sim, precisa escolher grupo.
+        if (estaEmGrupo === null) return false;
+        if (estaEmGrupo === true && !grupoEscolhido) return false;
+        return true;
+      case 4:
         return aceitaTermos;
       default:
         return true;
@@ -389,6 +398,7 @@ export default function CadastroMembresia() {
         consentimento_texto: TEXTO_CONSENTIMENTO,
         familia_sugerida_id: familiaId || null,
         foto_url,
+        grupo_id: grupoEscolhido?.id || null,
       });
       setSent(true);
     } catch (err) {
@@ -693,8 +703,69 @@ export default function CadastroMembresia() {
                 </div>
               )}
 
-              {/* Step 4: Termos */}
+              {/* Step 4: Grupo de Conexão */}
               {currentStep === 3 && (
+                <div>
+                  <SectionTitle>Grupo de conexão</SectionTitle>
+                  <p style={{ fontSize: 13, color: '#a3a3a3', marginBottom: 16 }}>
+                    Você participa de algum grupo de conexão da CBRio? Se sim, podemos te
+                    vincular automaticamente — o líder vai aprovar seu pedido.
+                  </p>
+                  <div style={{ display: 'flex', gap: 10, marginBottom: 16 }}>
+                    <button type="button" onClick={() => { setEstaEmGrupo(true); }}
+                      style={{
+                        flex: 1, padding: '12px 16px', borderRadius: 10,
+                        border: estaEmGrupo === true ? `2px solid #00B39D` : `1px solid var(--cbrio-border)`,
+                        background: estaEmGrupo === true ? 'rgba(0,179,157,0.12)' : 'transparent',
+                        color: estaEmGrupo === true ? '#00B39D' : 'var(--cbrio-text)', fontWeight: 600, cursor: 'pointer',
+                      }}>
+                      Sim, estou em um grupo
+                    </button>
+                    <button type="button" onClick={() => { setEstaEmGrupo(false); setGrupoEscolhido(null); }}
+                      style={{
+                        flex: 1, padding: '12px 16px', borderRadius: 10,
+                        border: estaEmGrupo === false ? `2px solid #00B39D` : `1px solid var(--cbrio-border)`,
+                        background: estaEmGrupo === false ? 'rgba(0,179,157,0.12)' : 'transparent',
+                        color: estaEmGrupo === false ? '#00B39D' : 'var(--cbrio-text)', fontWeight: 600, cursor: 'pointer',
+                      }}>
+                      Não estou em nenhum grupo
+                    </button>
+                  </div>
+
+                  {estaEmGrupo === true && (
+                    <div style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid var(--cbrio-border)', borderRadius: 12, padding: 14 }}>
+                      <p style={{ fontSize: 12, color: '#a3a3a3', margin: 0, marginBottom: 10 }}>
+                        Busque pelo nome do líder do seu grupo e selecione o grupo correto:
+                      </p>
+                      <GrupoSelectorComponent
+                        mode="simple"
+                        usePublicApi
+                        selectedGrupoId={grupoEscolhido?.id}
+                        onSelect={setGrupoEscolhido}
+                      />
+                      {grupoEscolhido && (
+                        <div style={{ marginTop: 10, padding: 10, background: 'rgba(0,179,157,0.10)', border: '1px solid #00B39D', borderRadius: 8, fontSize: 12, color: '#00B39D' }}>
+                          ✓ Grupo selecionado: <strong>{grupoEscolhido.nome}</strong>
+                          {grupoEscolhido.lider_nome && <> (Líder: {grupoEscolhido.lider_nome})</>}
+                          <button type="button" onClick={() => setGrupoEscolhido(null)}
+                            style={{ marginLeft: 8, background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', fontWeight: 600, fontSize: 11 }}>
+                            trocar
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {estaEmGrupo === false && (
+                    <p style={{ fontSize: 12, color: '#a3a3a3', fontStyle: 'italic' }}>
+                      Sem problemas — depois você pode buscar e se inscrever em um grupo direto pelo app.
+                    </p>
+                  )}
+                </div>
+              )}
+
+              {/* Step 5: Termos */}
+              {currentStep === 4 && (
                 <div>
                   <SectionTitle>Termos e consentimento</SectionTitle>
                   <div style={{
