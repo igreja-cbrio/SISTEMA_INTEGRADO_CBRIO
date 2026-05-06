@@ -199,7 +199,7 @@ export const grupos = {
   atualizarEncontro: (encontroId, data) => patch(`/grupos/encontros/${encontroId}`, data),
   removerEncontro: (encontroId) => del(`/grupos/encontros/${encontroId}`),
   metricas: (grupoId) => get(`/grupos/${grupoId}/metricas`),
-  saudeAgregada: () => get('/grupos/saude/agregado'),
+  saudeAgregada: (params) => get('/grupos/saude/agregado' + (params ? '?' + new URLSearchParams(params) : '')),
   temporadas: () => get('/grupos/temporadas/list'),
   bairros: (params) => get('/grupos/bairros/list' + (params ? '?' + new URLSearchParams(params) : '')),
 };
