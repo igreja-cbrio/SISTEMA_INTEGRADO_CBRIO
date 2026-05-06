@@ -13,7 +13,7 @@ router.use(authenticate);
 // GET /api/grupos — lista todos com contagem de membros e lider
 router.get('/', async (req, res) => {
   try {
-    const { ativo, categoria } = req.query;
+    const { ativo, categoria, bairro, temporada, status_temporada } = req.query;
     let q = supabase.from('mem_grupos').select('*');
     // ativo=all retorna tudo (ativos + arquivados); default e so ativos
     if (ativo === 'all') {
@@ -24,6 +24,9 @@ router.get('/', async (req, res) => {
       q = q.eq('ativo', true);
     }
     if (categoria) q = q.eq('categoria', categoria);
+    if (bairro) q = q.eq('bairro', bairro);
+    if (temporada) q = q.eq('temporada', temporada);
+    if (status_temporada) q = q.eq('status_temporada', status_temporada);
     q = q.order('nome');
     const { data: grupos, error } = await q;
     if (error) throw error;
@@ -532,6 +535,9 @@ router.post('/', authorize('admin', 'diretor'), async (req, res) => {
       foto_url: d.foto_url || null, observacoes: d.observacoes || '',
       grupo_origem_id: d.grupo_origem_id || null,
       lat: d.lat ?? null, lng: d.lng ?? null, cep: d.cep || null,
+      bairro: d.bairro || null,
+      status_temporada: d.status_temporada || 'novo',
+      temporada: d.temporada || null,
       descricao: d.descricao || '', ativo: true,
     }).select().single();
     if (error) throw error;
@@ -551,11 +557,43 @@ router.put('/:id', authorize('admin', 'diretor'), async (req, res) => {
       foto_url: d.foto_url || null, observacoes: d.observacoes || '',
       grupo_origem_id: d.grupo_origem_id || null,
       lat: d.lat ?? null, lng: d.lng ?? null, cep: d.cep || null,
+      bairro: d.bairro || null,
+      status_temporada: d.status_temporada || null,
+      temporada: d.temporada || null,
       descricao: d.descricao || '', ativo: d.ativo ?? true,
     }).eq('id', req.params.id).select().single();
     if (error) throw error;
     res.json(data);
   } catch (e) { res.status(500).json({ error: 'Erro ao atualizar grupo' }); }
+});
+
+// GET /api/grupos/temporadas — lista temporadas
+router.get('/temporadas/list', async (req, res) => {
+  try {
+    const { data, error } = await supabase.from('mem_temporadas')
+      .select('*').order('ano', { ascending: false }).order('numero', { ascending: false });
+    if (error) throw error;
+    res.json(data || []);
+  } catch (e) { console.error('[Grupos temporadas]', e.message); res.status(500).json({ error: 'Erro ao buscar temporadas' }); }
+});
+
+// GET /api/grupos/bairros/list — lista bairros distintos com contagem
+router.get('/bairros/list', async (req, res) => {
+  try {
+    const { temporada } = req.query;
+    let q = supabase.from('mem_grupos').select('bairro').not('bairro', 'is', null);
+    if (temporada) q = q.eq('temporada', temporada);
+    const { data, error } = await q;
+    if (error) throw error;
+    const counts = {};
+    (data || []).forEach(r => {
+      if (r.bairro) counts[r.bairro] = (counts[r.bairro] || 0) + 1;
+    });
+    const list = Object.entries(counts)
+      .map(([bairro, total]) => ({ bairro, total }))
+      .sort((a, b) => b.total - a.total);
+    res.json(list);
+  } catch (e) { console.error('[Grupos bairros]', e.message); res.status(500).json({ error: 'Erro ao buscar bairros' }); }
 });
 
 // DELETE /api/grupos/:id — soft delete

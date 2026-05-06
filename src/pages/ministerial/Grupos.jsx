@@ -19,6 +19,14 @@ const C = {
 };
 
 const DIAS = ['Domingo', 'Segunda', 'Terca', 'Quarta', 'Quinta', 'Sexta', 'Sabado'];
+
+const STATUS_TEMPORADA = {
+  ativo: { label: 'Ativo', cor: '#10b981', bg: '#10b98120' },
+  novo: { label: 'Novo', cor: '#3b82f6', bg: '#3b82f620' },
+  aguardando: { label: 'Aguardando', cor: '#f59e0b', bg: '#f59e0b20' },
+  a_confirmar: { label: 'A confirmar', cor: '#a855f7', bg: '#a855f720' },
+  encerrado: { label: 'Encerrado', cor: '#ef4444', bg: '#ef444420' },
+};
 const RECORRENCIAS = [
   { value: 'semanal', label: 'Semanal' },
   { value: 'quinzenal', label: 'Quinzenal' },
@@ -49,6 +57,10 @@ export default function Grupos() {
   const [filterDia, setFilterDia] = useState('all');
   const [filterLocal, setFilterLocal] = useState('all');
   const [filterTema, setFilterTema] = useState('all');
+  const [filterBairro, setFilterBairro] = useState('all');
+  const [filterStatusTemp, setFilterStatusTemp] = useState('all');
+  const [filterTemporada, setFilterTemporada] = useState('');
+  const [temporadas, setTemporadas] = useState([]);
   const [pageTab, setPageTab] = useState('grupos');
   const [materiais, setMateriais] = useState([]);
   const [materiaisFilter, setMateriaisFilter] = useState('all');
@@ -67,12 +79,27 @@ export default function Grupos() {
   const loadList = useCallback(async () => {
     setLoading(true);
     try {
-      const data = await api.list(mostrarArquivados ? { ativo: 'all' } : undefined);
+      const params = {};
+      if (mostrarArquivados) params.ativo = 'all';
+      if (filterTemporada) params.temporada = filterTemporada;
+      const data = await api.list(Object.keys(params).length ? params : undefined);
       setGruposList(data || []);
       setGruposForSelect((data || []).filter(g => g.ativo));
     } catch { toast.error('Erro ao carregar grupos'); }
     finally { setLoading(false); }
-  }, [mostrarArquivados]);
+  }, [mostrarArquivados, filterTemporada]);
+
+  const loadTemporadas = useCallback(async () => {
+    try {
+      const data = await api.temporadas();
+      setTemporadas(data || []);
+      // Setar temporada ativa como default na primeira carga
+      const ativa = (data || []).find(t => t.ativa);
+      if (ativa && !filterTemporada) setFilterTemporada(ativa.id);
+    } catch {}
+  }, [filterTemporada]);
+
+  useEffect(() => { loadTemporadas(); }, []);
 
   const loadDetail = useCallback(async (id) => {
     setDetailLoading(true);
@@ -295,20 +322,23 @@ export default function Grupos() {
   const tiposUnicos = [...new Set(gruposList.map(g => g.categoria).filter(Boolean))].sort();
   const locaisUnicos = [...new Set(gruposList.map(g => g.local).filter(Boolean))].sort();
   const temasUnicos = [...new Set(gruposList.map(g => g.tema).filter(Boolean))].sort();
+  const bairrosUnicos = [...new Set(gruposList.map(g => g.bairro).filter(Boolean))].sort();
 
   const filtered = gruposList.filter(g => {
     if (search) {
       const s = search.toLowerCase();
-      if (!(g.nome?.toLowerCase().includes(s) || g.lider_nome?.toLowerCase().includes(s) || g.local?.toLowerCase().includes(s) || g.tema?.toLowerCase().includes(s))) return false;
+      if (!(g.nome?.toLowerCase().includes(s) || g.lider_nome?.toLowerCase().includes(s) || g.local?.toLowerCase().includes(s) || g.tema?.toLowerCase().includes(s) || g.bairro?.toLowerCase().includes(s))) return false;
     }
     if (filterTipo !== 'all' && g.categoria !== filterTipo) return false;
     if (filterDia !== 'all' && String(g.dia_semana) !== filterDia) return false;
     if (filterLocal !== 'all' && g.local !== filterLocal) return false;
     if (filterTema !== 'all' && g.tema !== filterTema) return false;
+    if (filterBairro !== 'all' && g.bairro !== filterBairro) return false;
+    if (filterStatusTemp !== 'all' && g.status_temporada !== filterStatusTemp) return false;
     return true;
   });
 
-  const hasActiveFilters = filterTipo !== 'all' || filterDia !== 'all' || filterLocal !== 'all' || filterTema !== 'all';
+  const hasActiveFilters = filterTipo !== 'all' || filterDia !== 'all' || filterLocal !== 'all' || filterTema !== 'all' || filterBairro !== 'all' || filterStatusTemp !== 'all';
 
   // ── DETALHE DO GRUPO ──
   if (selectedGrupo && detailData) {
@@ -334,9 +364,17 @@ export default function Grupos() {
             <h1 style={{ fontSize: 22, fontWeight: 700, color: C.text, margin: 0 }}>{g.nome}</h1>
             <div style={{ display: 'flex', gap: 16, marginTop: 6, flexWrap: 'wrap' }}>
               {g.lider && <span style={{ fontSize: 13, color: C.t2 }}>Lider: <strong style={{ color: C.text }}>{g.lider.nome}</strong></span>}
-              {g.local && <span style={{ fontSize: 13, color: C.t2, display: 'flex', alignItems: 'center', gap: 4 }}><MapPin size={12} /> {g.local}</span>}
+              {g.bairro && <span style={{ fontSize: 13, color: C.t2, display: 'flex', alignItems: 'center', gap: 4 }}><MapPin size={12} /> {g.bairro}</span>}
+              {g.local && <span style={{ fontSize: 13, color: C.t3, display: 'flex', alignItems: 'center', gap: 4 }}>{g.local}</span>}
               {g.dia_semana != null && <span style={{ fontSize: 13, color: C.t2, display: 'flex', alignItems: 'center', gap: 4 }}><Clock size={12} /> {DIAS[g.dia_semana]} {g.horario?.slice(0, 5)}</span>}
-              <span style={{ fontSize: 12, padding: '2px 8px', borderRadius: 99, background: g.ativo ? '#10b98120' : '#ef444420', color: g.ativo ? C.green : C.red, fontWeight: 600 }}>{g.ativo ? 'Ativo' : 'Inativo'}</span>
+              {g.status_temporada && STATUS_TEMPORADA[g.status_temporada] ? (
+                <span style={{ fontSize: 12, padding: '2px 8px', borderRadius: 99, background: STATUS_TEMPORADA[g.status_temporada].bg, color: STATUS_TEMPORADA[g.status_temporada].cor, fontWeight: 600 }}>
+                  {STATUS_TEMPORADA[g.status_temporada].label}
+                </span>
+              ) : (
+                <span style={{ fontSize: 12, padding: '2px 8px', borderRadius: 99, background: g.ativo ? '#10b98120' : '#ef444420', color: g.ativo ? C.green : C.red, fontWeight: 600 }}>{g.ativo ? 'Ativo' : 'Inativo'}</span>
+              )}
+              {g.temporada && <span style={{ fontSize: 11, padding: '2px 8px', borderRadius: 99, background: C.primaryBg, color: C.primary, fontWeight: 600 }}>{g.temporada}</span>}
             </div>
             {g.tema && <div style={{ fontSize: 13, color: C.t3, marginTop: 6 }}>Tema: {g.tema}</div>}
             {g.descricao && <div style={{ fontSize: 13, color: C.t3, marginTop: 4 }}>{g.descricao}</div>}
@@ -582,7 +620,7 @@ export default function Grupos() {
         </Dialog>
 
         {/* Modal editar grupo */}
-        <GrupoFormModal open={modalOpen} onClose={() => setModalOpen(false)} data={editData} onSave={handleSave} saving={saving} gruposForSelect={gruposForSelect} allMembros={allMembros} loadMembros={loadMembros} />
+        <GrupoFormModal open={modalOpen} onClose={() => setModalOpen(false)} data={editData} onSave={handleSave} saving={saving} gruposForSelect={gruposForSelect} allMembros={allMembros} loadMembros={loadMembros} temporadas={temporadas} bairrosUnicos={bairrosUnicos} />
       </div>
     );
   }
@@ -844,8 +882,40 @@ export default function Grupos() {
           </SelectContent>
         </ShadSelect>
 
+        <ShadSelect value={filterBairro} onValueChange={setFilterBairro}>
+          <SelectTrigger className="w-[160px] h-8 text-xs"><SelectValue placeholder="Bairro" /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">Todos os bairros</SelectItem>
+            {bairrosUnicos.map(b => <SelectItem key={b} value={b}>{b}</SelectItem>)}
+          </SelectContent>
+        </ShadSelect>
+
+        <ShadSelect value={filterStatusTemp} onValueChange={setFilterStatusTemp}>
+          <SelectTrigger className="w-[150px] h-8 text-xs"><SelectValue placeholder="Status" /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">Todos os status</SelectItem>
+            <SelectItem value="ativo">Ativo</SelectItem>
+            <SelectItem value="novo">Novo</SelectItem>
+            <SelectItem value="aguardando">Aguardando</SelectItem>
+            <SelectItem value="a_confirmar">A confirmar</SelectItem>
+            <SelectItem value="encerrado">Encerrado</SelectItem>
+          </SelectContent>
+        </ShadSelect>
+
+        {temporadas.length > 0 && (
+          <ShadSelect value={filterTemporada || 'all'} onValueChange={v => setFilterTemporada(v === 'all' ? '' : v)}>
+            <SelectTrigger className="w-[180px] h-8 text-xs"><SelectValue placeholder="Temporada" /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">Todas as temporadas</SelectItem>
+              {temporadas.map(t => (
+                <SelectItem key={t.id} value={t.id}>{t.label}{t.ativa ? ' (atual)' : ''}</SelectItem>
+              ))}
+            </SelectContent>
+          </ShadSelect>
+        )}
+
         {hasActiveFilters && (
-          <button onClick={() => { setFilterTipo('all'); setFilterDia('all'); setFilterLocal('all'); setFilterTema('all'); }}
+          <button onClick={() => { setFilterTipo('all'); setFilterDia('all'); setFilterLocal('all'); setFilterTema('all'); setFilterBairro('all'); setFilterStatusTemp('all'); }}
             style={{ fontSize: 11, color: C.red, background: 'none', border: 'none', cursor: 'pointer', fontWeight: 600, display: 'flex', alignItems: 'center', gap: 4 }}>
             <X size={12} /> Limpar filtros
           </button>
@@ -887,9 +957,14 @@ export default function Grupos() {
                   {!g.foto_url && <Users size={22} style={{ color: C.primary }} />}
                 </div>
                 <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4, flexWrap: 'wrap' }}>
                     <div style={{ fontSize: 15, fontWeight: 700, color: C.text }}>{g.nome}</div>
-                    {!g.ativo && <span style={{ fontSize: 9, padding: '1px 6px', borderRadius: 99, background: '#ef444420', color: C.red, fontWeight: 600, textTransform: 'uppercase' }}>Arquivado</span>}
+                    {g.status_temporada && STATUS_TEMPORADA[g.status_temporada] && (
+                      <span style={{ fontSize: 9, padding: '1px 6px', borderRadius: 99, background: STATUS_TEMPORADA[g.status_temporada].bg, color: STATUS_TEMPORADA[g.status_temporada].cor, fontWeight: 600, textTransform: 'uppercase' }}>
+                        {STATUS_TEMPORADA[g.status_temporada].label}
+                      </span>
+                    )}
+                    {!g.ativo && !g.status_temporada && <span style={{ fontSize: 9, padding: '1px 6px', borderRadius: 99, background: '#ef444420', color: C.red, fontWeight: 600, textTransform: 'uppercase' }}>Arquivado</span>}
                   </div>
                   {g.lider_nome && <div style={{ fontSize: 12, color: C.t2, marginBottom: 2 }}>Lider: {g.lider_nome}</div>}
                   <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginTop: 4 }}>
@@ -898,7 +973,12 @@ export default function Grupos() {
                         <Clock size={11} /> {DIAS[g.dia_semana]} {g.horario?.slice(0, 5)}
                       </span>
                     )}
-                    {g.local && (
+                    {g.bairro && (
+                      <span style={{ fontSize: 11, color: C.t3, display: 'flex', alignItems: 'center', gap: 3 }}>
+                        <MapPin size={11} /> {g.bairro}
+                      </span>
+                    )}
+                    {!g.bairro && g.local && (
                       <span style={{ fontSize: 11, color: C.t3, display: 'flex', alignItems: 'center', gap: 3 }}>
                         <MapPin size={11} /> {g.local}
                       </span>
@@ -922,27 +1002,29 @@ export default function Grupos() {
 
       </>}
 
-      <GrupoFormModal open={modalOpen} onClose={() => setModalOpen(false)} data={editData} onSave={handleSave} saving={saving} gruposForSelect={gruposForSelect} allMembros={allMembros} loadMembros={loadMembros} />
+      <GrupoFormModal open={modalOpen} onClose={() => setModalOpen(false)} data={editData} onSave={handleSave} saving={saving} gruposForSelect={gruposForSelect} allMembros={allMembros} loadMembros={loadMembros} temporadas={temporadas} bairrosUnicos={bairrosUnicos} />
     </div>
   );
 }
 
 // ── MODAL DE FORMULARIO ──
-function GrupoFormModal({ open, onClose, data, onSave, saving, gruposForSelect, allMembros, loadMembros }) {
+function GrupoFormModal({ open, onClose, data, onSave, saving, gruposForSelect, allMembros, loadMembros, temporadas, bairrosUnicos }) {
   const [form, setForm] = useState({});
   const [liderSearch, setLiderSearch] = useState('');
 
   useEffect(() => {
     if (open) {
       loadMembros();
+      const temporadaAtiva = (temporadas || []).find(t => t.ativa)?.id || '';
       setForm(data ? { ...data } : {
         nome: '', categoria: '', lider_id: '', local: '', endereco: '',
         dia_semana: '', horario: '', recorrencia: 'semanal', tema: '',
         foto_url: '', observacoes: '', grupo_origem_id: '', descricao: '',
+        bairro: '', status_temporada: 'novo', temporada: temporadaAtiva,
       });
       setLiderSearch(data?.lider?.nome || '');
     }
-  }, [open, data]);
+  }, [open, data, temporadas]);
 
   const liderNome = form.lider?.nome
     || allMembros.find(m => m.id === form.lider_id)?.nome
@@ -1088,6 +1170,46 @@ function GrupoFormModal({ open, onClose, data, onSave, saving, gruposForSelect, 
           <div>
             <Label>Tema atual</Label>
             <Input value={form.tema || ''} onChange={e => set('tema', e.target.value)} placeholder="Ex: Serie Inabalavel" />
+          </div>
+
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+            <div>
+              <Label>Bairro</Label>
+              <Input
+                list="bairros-list"
+                value={form.bairro || ''}
+                onChange={e => set('bairro', e.target.value)}
+                placeholder="Ex: Barra, Online, Recreio..."
+              />
+              <datalist id="bairros-list">
+                {(bairrosUnicos || []).map(b => <option key={b} value={b} />)}
+              </datalist>
+            </div>
+            <div>
+              <Label>Status da temporada</Label>
+              <ShadSelect value={form.status_temporada || 'novo'} onValueChange={v => set('status_temporada', v)}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="ativo">Ativo</SelectItem>
+                  <SelectItem value="novo">Novo</SelectItem>
+                  <SelectItem value="aguardando">Aguardando</SelectItem>
+                  <SelectItem value="a_confirmar">A confirmar</SelectItem>
+                  <SelectItem value="encerrado">Encerrado</SelectItem>
+                </SelectContent>
+              </ShadSelect>
+            </div>
+          </div>
+
+          <div>
+            <Label>Temporada</Label>
+            <ShadSelect value={form.temporada || ''} onValueChange={v => set('temporada', v)}>
+              <SelectTrigger><SelectValue placeholder="Selecione a temporada" /></SelectTrigger>
+              <SelectContent>
+                {(temporadas || []).map(t => (
+                  <SelectItem key={t.id} value={t.id}>{t.label}{t.ativa ? ' (atual)' : ''}</SelectItem>
+                ))}
+              </SelectContent>
+            </ShadSelect>
           </div>
 
           <div>

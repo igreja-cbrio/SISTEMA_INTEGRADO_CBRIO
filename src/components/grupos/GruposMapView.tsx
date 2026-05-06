@@ -151,6 +151,7 @@ export function GruposMapView({
   const [theme, setTheme] = useState<"light" | "dark">(defaultTheme);
   const [search, setSearch] = useState("");
   const [filterCat, setFilterCat] = useState<string>("");
+  const [filterBairro, setFilterBairro] = useState<string>("");
   const [activeId, setActiveId] = useState<string | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const flyTargetRef = useRef<MapGroup | null>(null);
@@ -166,17 +167,23 @@ export function GruposMapView({
     [grupos]
   );
 
+  const bairros = useMemo(
+    () => Array.from(new Set(grupos.map((g: any) => g.bairro).filter(Boolean))).sort() as string[],
+    [grupos]
+  );
+
   const filtered = useMemo(() => {
     const s = search.trim().toLowerCase();
-    return grupos.filter((g) => {
+    return grupos.filter((g: any) => {
       if (filterCat && g.categoria !== filterCat) return false;
+      if (filterBairro && g.bairro !== filterBairro) return false;
       if (s) {
-        const hay = `${g.nome ?? ""} ${g.lider?.nome ?? g.lider_nome ?? ""} ${g.local ?? ""}`.toLowerCase();
+        const hay = `${g.nome ?? ""} ${g.lider?.nome ?? g.lider_nome ?? ""} ${g.local ?? ""} ${g.bairro ?? ""}`.toLowerCase();
         if (!hay.includes(s)) return false;
       }
       return true;
     });
-  }, [grupos, search, filterCat]);
+  }, [grupos, search, filterCat, filterBairro]);
 
   const withCoords = filtered.filter((g) => g.lat != null && g.lng != null);
 
@@ -270,6 +277,41 @@ export function GruposMapView({
                       )}
                     >
                       {cat}
+                    </button>
+                  ))}
+                </div>
+              )}
+
+              {bairros.length > 0 && (
+                <div className="flex flex-wrap gap-1.5">
+                  <span className={cn("px-2 py-1 text-[10px] uppercase tracking-wide self-center", theme === "dark" ? "text-white/40" : "text-gray-400")}>Bairro:</span>
+                  <button
+                    onClick={() => setFilterBairro("")}
+                    className={cn(
+                      "px-2.5 py-1 rounded-full text-xs transition-colors",
+                      !filterBairro
+                        ? "bg-[#00B39D] text-white"
+                        : theme === "dark"
+                        ? "bg-white/10 text-white/60 hover:bg-white/15"
+                        : "bg-gray-100 text-gray-600 hover:bg-gray-200"
+                    )}
+                  >
+                    Todos
+                  </button>
+                  {bairros.map((b) => (
+                    <button
+                      key={b}
+                      onClick={() => setFilterBairro(b === filterBairro ? "" : b)}
+                      className={cn(
+                        "px-2.5 py-1 rounded-full text-xs transition-colors",
+                        filterBairro === b
+                          ? "bg-[#00B39D] text-white"
+                          : theme === "dark"
+                          ? "bg-white/10 text-white/60 hover:bg-white/15"
+                          : "bg-gray-100 text-gray-600 hover:bg-gray-200"
+                      )}
+                    >
+                      {b}
                     </button>
                   ))}
                 </div>
