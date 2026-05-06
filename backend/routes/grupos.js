@@ -13,7 +13,7 @@ router.use(authenticate);
 // GET /api/grupos — lista todos com contagem de membros e lider
 router.get('/', async (req, res) => {
   try {
-    const { ativo, categoria, bairro, temporada, status_temporada } = req.query;
+    const { ativo, categoria, bairro, temporada, status_temporada, codigo } = req.query;
     let q = supabase.from('mem_grupos').select('*');
     // ativo=all retorna tudo (ativos + arquivados); default e so ativos
     if (ativo === 'all') {
@@ -27,6 +27,7 @@ router.get('/', async (req, res) => {
     if (bairro) q = q.eq('bairro', bairro);
     if (temporada) q = q.eq('temporada', temporada);
     if (status_temporada) q = q.eq('status_temporada', status_temporada);
+    if (codigo) q = q.eq('codigo', codigo);
     q = q.order('nome');
     const { data: grupos, error } = await q;
     if (error) throw error;
@@ -396,9 +397,12 @@ router.get('/:id/metricas', async (req, res) => {
 // GET /api/grupos/saude — agregado: total ativos, em risco, ranking
 router.get('/saude/agregado', async (req, res) => {
   try {
-    const { data: grupos } = await supabase.from('mem_grupos')
+    const { temporada } = req.query;
+    let q = supabase.from('mem_grupos')
       .select('id, nome, recorrencia, lider_id')
       .eq('ativo', true);
+    if (temporada) q = q.eq('temporada', temporada);
+    const { data: grupos } = await q;
 
     if (!grupos?.length) return res.json({ total: 0, em_risco: 0, saudaveis: 0, grupos: [] });
 
@@ -538,6 +542,7 @@ router.post('/', authorize('admin', 'diretor'), async (req, res) => {
       bairro: d.bairro || null,
       status_temporada: d.status_temporada || 'novo',
       temporada: d.temporada || null,
+      codigo: d.codigo || null, // se null, trigger auto-gera
       descricao: d.descricao || '', ativo: true,
     }).select().single();
     if (error) throw error;

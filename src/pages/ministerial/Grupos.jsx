@@ -157,10 +157,10 @@ export default function Grupos() {
 
   const loadSaudeAgregada = useCallback(async () => {
     try {
-      const data = await api.saudeAgregada();
+      const data = await api.saudeAgregada(filterTemporada ? { temporada: filterTemporada } : undefined);
       setSaudeAgregada(data);
     } catch { setSaudeAgregada(null); }
-  }, []);
+  }, [filterTemporada]);
 
   const handleRegistrarEncontro = async ({ data, tema, observacoes, membros_presentes }) => {
     try {
@@ -327,7 +327,7 @@ export default function Grupos() {
   const filtered = gruposList.filter(g => {
     if (search) {
       const s = search.toLowerCase();
-      if (!(g.nome?.toLowerCase().includes(s) || g.lider_nome?.toLowerCase().includes(s) || g.local?.toLowerCase().includes(s) || g.tema?.toLowerCase().includes(s) || g.bairro?.toLowerCase().includes(s))) return false;
+      if (!(g.codigo?.toLowerCase().includes(s) || g.nome?.toLowerCase().includes(s) || g.lider_nome?.toLowerCase().includes(s) || g.local?.toLowerCase().includes(s) || g.tema?.toLowerCase().includes(s) || g.bairro?.toLowerCase().includes(s))) return false;
     }
     if (filterTipo !== 'all' && g.categoria !== filterTipo) return false;
     if (filterDia !== 'all' && String(g.dia_semana) !== filterDia) return false;
@@ -361,6 +361,7 @@ export default function Grupos() {
             {!g.foto_url && <Users size={32} style={{ color: C.primary }} />}
           </div>
           <div style={{ flex: 1 }}>
+            {g.codigo && <div style={{ fontSize: 11, color: C.t3, fontWeight: 600, fontFamily: 'monospace', marginBottom: 2 }}>{g.codigo}</div>}
             <h1 style={{ fontSize: 22, fontWeight: 700, color: C.text, margin: 0 }}>{g.nome}</h1>
             <div style={{ display: 'flex', gap: 16, marginTop: 6, flexWrap: 'wrap' }}>
               {g.lider && <span style={{ fontSize: 13, color: C.t2 }}>Lider: <strong style={{ color: C.text }}>{g.lider.nome}</strong></span>}
@@ -844,7 +845,7 @@ export default function Grupos() {
 
       <div style={{ marginBottom: 12, position: 'relative' }}>
         <Search size={16} style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', color: C.t3 }} />
-        <Input placeholder="Buscar grupo, lider, local ou tema..." value={search} onChange={e => setSearch(e.target.value)} style={{ paddingLeft: 36 }} />
+        <Input placeholder="Buscar por código, grupo, líder, local, bairro ou tema..." value={search} onChange={e => setSearch(e.target.value)} style={{ paddingLeft: 36 }} />
       </div>
 
       {/* Filtros */}
@@ -937,8 +938,26 @@ export default function Grupos() {
       {loading ? (
         <div style={{ padding: 40, textAlign: 'center', color: C.t3 }}>Carregando...</div>
       ) : filtered.length === 0 ? (
-        <div style={{ padding: 40, textAlign: 'center', color: C.t3 }}>
-          {search ? 'Nenhum grupo encontrado' : 'Nenhum grupo cadastrado'}
+        <div style={{ padding: 40, textAlign: 'center', color: C.t3, fontSize: 13 }}>
+          {search ? (
+            'Nenhum grupo encontrado para a busca.'
+          ) : hasActiveFilters || filterTemporada ? (
+            <div>
+              <div>Nenhum grupo nos filtros aplicados.</div>
+              <button
+                onClick={() => {
+                  setFilterTipo('all'); setFilterDia('all'); setFilterLocal('all');
+                  setFilterTema('all'); setFilterBairro('all'); setFilterStatusTemp('all');
+                  setFilterTemporada('');
+                }}
+                style={{ marginTop: 8, fontSize: 12, color: C.primary, background: 'none', border: 'none', cursor: 'pointer', fontWeight: 600 }}
+              >
+                Limpar todos os filtros
+              </button>
+            </div>
+          ) : (
+            'Nenhum grupo cadastrado'
+          )}
         </div>
       ) : (
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))', gap: 16 }}>
@@ -957,6 +976,9 @@ export default function Grupos() {
                   {!g.foto_url && <Users size={22} style={{ color: C.primary }} />}
                 </div>
                 <div style={{ flex: 1, minWidth: 0 }}>
+                  {g.codigo && (
+                    <div style={{ fontSize: 10, color: C.t3, fontWeight: 600, fontFamily: 'monospace', marginBottom: 2 }}>{g.codigo}</div>
+                  )}
                   <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4, flexWrap: 'wrap' }}>
                     <div style={{ fontSize: 15, fontWeight: 700, color: C.text }}>{g.nome}</div>
                     {g.status_temporada && STATUS_TEMPORADA[g.status_temporada] && (
