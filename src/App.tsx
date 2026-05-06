@@ -100,6 +100,8 @@ const Processos = lazyWithRetry(() => import('./pages/Processos'));
 const Grupos = lazyWithRetry(() => import('./pages/ministerial/Grupos'));
 const PedidosGrupo = lazyWithRetry(() => import('./pages/ministerial/PedidosGrupo'));
 const CadastroMembresia = lazyWithRetry(() => import('./pages/public/CadastroMembresia'));
+const InscricaoGrupos = lazyWithRetry(() => import('./pages/public/InscricaoGrupos'));
+const InscricaoGruposQRCode = lazyWithRetry(() => import('./pages/admin/InscricaoGruposQRCode'));
 const WalletPage = lazyWithRetry(() => import('./pages/public/WalletPage'));
 const Motion = lazyWithRetry(() => import('./pages/public/Motion'));
 const Voluntariado = lazyWithRetry(() => import('./pages/ministerial/voluntariado'));
@@ -214,6 +216,7 @@ function AppRoutes() {
 
       {/* Rotas publicas */}
       <Route path="/cadastro-membresia" element={<Suspense fallback={<Loading />}><CadastroMembresia /></Suspense>} />
+      <Route path="/inscricao-grupos" element={<Suspense fallback={<Loading />}><InscricaoGrupos /></Suspense>} />
       <Route path="/next" element={<Suspense fallback={<Loading />}><InscricaoNext /></Suspense>} />
       <Route path="/next/inscrever" element={<Suspense fallback={<Loading />}><InscricaoNext /></Suspense>} />
       <Route path="/wallet" element={<Suspense fallback={<Loading />}><WalletPage /></Suspense>} />
@@ -275,6 +278,7 @@ function AppRoutes() {
         <Route path="/painel-kpis" element={<Suspense fallback={<Loading />}><PainelKpis /></Suspense>} />
         <Route path="/admin/notificacao-regras" element={<Suspense fallback={<Loading />}><NotificacaoRegras /></Suspense>} />
         <Route path="/admin/kpi-areas" element={<Suspense fallback={<Loading />}><KpiAreasAdmin /></Suspense>} />
+        <Route path="/admin/grupos/qrcode-inscricao" element={<Suspense fallback={<Loading />}><InscricaoGruposQRCode /></Suspense>} />
         <Route path="/admin/cultura" element={<Suspense fallback={<Loading />}><CulturaMensal /></Suspense>} />
         <Route path="/ministerial/*" element={<PlaceholderPage title="Ministerial" />} />
         <Route path="/criativo/*" element={<PlaceholderPage title="Criativo" />} />

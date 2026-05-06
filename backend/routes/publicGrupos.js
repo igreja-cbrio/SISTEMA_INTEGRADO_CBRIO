@@ -144,4 +144,137 @@ router.get('/lideres/:liderId/grupos', async (req, res) => {
   } catch { res.status(500).json({ error: 'Erro' }); }
 });
 
+// ── Inscricao publica em grupo (POST sem auth) ──
+const { notificar } = require('../services/notificar');
+
+function soDigitos(v) { return (v || '').toString().replace(/\D+/g, ''); }
+function cpfValido(cpfMasked) {
+  const cpf = soDigitos(cpfMasked);
+  if (cpf.length !== 11 || /^(\d)\1{10}$/.test(cpf)) return false;
+  let s = 0;
+  for (let i = 0; i < 9; i++) s += parseInt(cpf[i]) * (10 - i);
+  let r = (s * 10) % 11;
+  if (r === 10) r = 0;
+  if (r !== parseInt(cpf[9])) return false;
+  s = 0;
+  for (let i = 0; i < 10; i++) s += parseInt(cpf[i]) * (11 - i);
+  r = (s * 10) % 11;
+  if (r === 10) r = 0;
+  return r === parseInt(cpf[10]);
+}
+function ehEmailValido(e) { return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e || ''); }
+
+// POST /api/public/grupos/inscrever
+// Formulario publico dedicado (acessado pelo QR code de inscricao).
+// Cria mem_cadastros_pendentes (se a pessoa ainda nao for membro) +
+// mem_grupo_pedidos com origem='formulario_publico'.
+router.post('/inscrever', async (req, res) => {
+  try {
+    const {
+      grupo_id,
+      nome,
+      cpf,
+      email,
+      telefone,
+      data_nascimento,
+      observacao,
+      aceita_termos,
+      consentimento_texto,
+      website, // honeypot
+    } = req.body || {};
+
+    if (website && String(website).trim() !== '') return res.status(201).json({ ok: true });
+
+    if (!grupo_id) return res.status(400).json({ error: 'Grupo obrigatorio.' });
+    if (!nome || nome.trim().length < 3) return res.status(400).json({ error: 'Nome obrigatorio (min 3 caracteres).' });
+    if (!telefone || soDigitos(telefone).length < 10) return res.status(400).json({ error: 'Celular obrigatorio.' });
+    if (!cpf || !cpfValido(cpf)) return res.status(400).json({ error: 'CPF invalido.' });
+    if (email && !ehEmailValido(email)) return res.status(400).json({ error: 'E-mail invalido.' });
+    if (!aceita_termos) return res.status(400).json({ error: 'E necessario aceitar os termos.' });
+
+    const cpfLimpo = soDigitos(cpf);
+    const emailLimpo = email ? email.trim().toLowerCase() : null;
+
+    // Verifica se ja existe membro pelo CPF (evita duplicar cadastros)
+    let membroId = null;
+    if (cpfLimpo) {
+      const { data: m } = await supabase.from('mem_membros')
+        .select('id').eq('cpf', cpfLimpo).eq('active', true).maybeSingle();
+      if (m) membroId = m.id;
+    }
+
+    // Verifica se grupo existe e esta ativo
+    const { data: grupo } = await supabase.from('mem_grupos')
+      .select('id, nome, ativo, status_temporada').eq('id', grupo_id).single();
+    if (!grupo || !grupo.ativo) {
+      return res.status(404).json({ error: 'Grupo nao encontrado ou inativo.' });
+    }
+
+    let cadastroPendenteId = null;
+    if (!membroId) {
+      // Cria cadastro pendente
+      const ip = (req.headers['x-forwarded-for'] || '').toString().split(',')[0].trim() || req.ip || null;
+      const userAgent = (req.headers['user-agent'] || '').toString().slice(0, 500);
+      const { data: cad, error: eCad } = await supabase.from('mem_cadastros_pendentes').insert({
+        nome: nome.trim(),
+        cpf: cpfLimpo,
+        email: emailLimpo,
+        telefone: telefone || null,
+        data_nascimento: data_nascimento || null,
+        origem: 'qr_code',
+        aceita_termos: !!aceita_termos,
+        aceita_contato: true,
+        consentimento_texto: consentimento_texto || null,
+        status: 'pendente',
+        ip_origem: ip,
+        user_agent: userAgent,
+      }).select('id').single();
+      if (eCad) {
+        console.error('[public grupos inscrever] cadastro pendente:', eCad.message);
+        return res.status(500).json({ error: 'Erro ao registrar cadastro.' });
+      }
+      cadastroPendenteId = cad.id;
+    }
+
+    // Cria pedido pendente
+    const pedidoBase = {
+      grupo_id,
+      nome: nome.trim(),
+      email: emailLimpo,
+      telefone: telefone || null,
+      origem: 'formulario_publico',
+      observacao: observacao || null,
+      status: 'pendente',
+    };
+    if (membroId) pedidoBase.membro_id = membroId;
+    else pedidoBase.cadastro_pendente_id = cadastroPendenteId;
+
+    const { data: pedido, error: ePed } = await supabase.from('mem_grupo_pedidos').insert(pedidoBase).select('id').single();
+    if (ePed) {
+      // 23505 = conflito (ja existe pedido pendente)
+      if (ePed.code === '23505') {
+        return res.status(409).json({ error: 'Voce ja tem um pedido pendente para este grupo.' });
+      }
+      console.error('[public grupos inscrever] pedido:', ePed.message);
+      return res.status(500).json({ error: 'Erro ao registrar pedido.' });
+    }
+
+    // Notifica lider
+    notificar({
+      modulo: 'grupos',
+      tipo: 'pedido_grupo',
+      titulo: `Novo pedido para ${grupo.nome}`,
+      mensagem: `${nome.trim()} pediu para entrar no grupo via QR code de inscricao.`,
+      link: '/grupos/pedidos',
+      severidade: 'aviso',
+      chaveDedup: `pedido_grupo_${pedido.id}`,
+    }).catch(err => console.error('[public grupos inscrever notify]', err.message));
+
+    res.status(201).json({ ok: true, pedido_id: pedido.id });
+  } catch (e) {
+    console.error('[public grupos inscrever]', e.message);
+    res.status(500).json({ error: 'Erro ao processar inscricao.' });
+  }
+});
+
 module.exports = router;
