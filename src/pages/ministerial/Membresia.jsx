@@ -702,17 +702,28 @@ export default function Membresia() {
     }
   };
 
-  const openDetail = async (id) => {
+  const openDetail = async (mOrId) => {
+    // Aceita id (string) ou objeto da lista. Quando objeto e passado,
+    // aplica render otimista: modal abre na hora com nome/foto/papeis
+    // que ja temos da lista, e os dados completos carregam em background.
+    const id = typeof mOrId === 'string' ? mOrId : mOrId?.id;
+
+    // Reset de UI sempre (open inicial)
+    setActiveTab('info');
+    setNovoHist('');
+    setShowFamiliaEdit(false);
+    setShowVolForm(false);
+    setShowCheckinForm(false);
+    setShowContribForm(false);
+    setVolStatus(null);
+
+    if (typeof mOrId === 'object' && mOrId) {
+      setSelectedMembro({ ...mOrId, _optimistic: true });
+    }
+
     try {
       const data = await membresia.membros.get(id);
       setSelectedMembro(data);
-      setActiveTab('info');
-      setNovoHist('');
-      setShowFamiliaEdit(false);
-      setShowVolForm(false);
-      setShowCheckinForm(false);
-      setShowContribForm(false);
-      setVolStatus(null);
       loadVolStatus(id);
     } catch (e) {
       setError(e.message);
@@ -1082,7 +1093,7 @@ export default function Membresia() {
             ) : membros.length === 0 ? (
               <tr><td colSpan={7}><div className="flex flex-col items-center py-10 gap-2"><div className="h-10 w-10 rounded-full bg-muted flex items-center justify-center mb-1"><svg className="h-5 w-5 text-muted-foreground" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M20 13V6a2 2 0 00-2-2H6a2 2 0 00-2 2v7m16 0v5a2 2 0 01-2 2H6a2 2 0 01-2-2v-5m16 0h-2.586a1 1 0 00-.707.293l-2.414 2.414a1 1 0 01-.707.293h-3.172a1 1 0 01-.707-.293l-2.414-2.414A1 1 0 006.586 13H4" /></svg></div><span className="text-sm font-medium text-foreground">Nenhum membro encontrado</span></div></td></tr>
             ) : membros.map((m) => (
-              <tr key={m.id} className="cbrio-row" onClick={() => openDetail(m.id)}>
+              <tr key={m.id} className="cbrio-row" onClick={() => openDetail(m)}>
                 <td style={{ padding: '14px 18px', borderBottom: `1px solid ${C.border}` }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
                     <div style={{ width: 36, height: 36, borderRadius: '50%', background: C.primaryBg, display: 'flex', alignItems: 'center', justifyContent: 'center', color: C.primary, fontWeight: 700, fontSize: 13, flexShrink: 0, overflow: 'hidden' }}>

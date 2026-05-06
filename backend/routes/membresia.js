@@ -257,14 +257,47 @@ router.get('/membros', async (req, res) => {
 // GET /api/membresia/membros/:id (detalhe com trilha e histórico)
 router.get('/membros/:id', async (req, res) => {
   try {
-    const { data: membro, error } = await supabase
-      .from('mem_membros')
-      .select('*, familia:mem_familias(id, nome)')
-      .eq('id', req.params.id)
-      .single();
-    if (error) throw error;
+    const id = req.params.id;
+    const anoAtual = new Date().getFullYear();
 
-    // Familiares
+    // Round 1: tudo que so depende do id (em paralelo)
+    const [
+      membroRes,
+      trilhaRes,
+      historicoRes,
+      participacoesRes,
+      contribuicoesRes,
+      contribAnoRes,
+      volProfileRes,
+      inscricoesNextRes,
+    ] = await Promise.all([
+      supabase.from('mem_membros').select('*, familia:mem_familias(id, nome)').eq('id', id).single(),
+      supabase.from('mem_trilha_valores').select('*').eq('membro_id', id).order('created_at'),
+      supabase.from('mem_historico').select('*, registrado:profiles(name)').eq('membro_id', id).order('data', { ascending: false }).limit(20),
+      supabase.from('mem_grupo_membros')
+        .select('*, grupo:mem_grupos(id, nome, categoria, local, dia_semana, horario, lider:mem_membros!lider_id(id, nome))')
+        .eq('membro_id', id).order('entrou_em', { ascending: false }),
+      supabase.from('mem_contribuicoes').select('*').eq('membro_id', id).order('data', { ascending: false }).limit(30),
+      supabase.from('mem_contribuicoes').select('tipo, valor')
+        .eq('membro_id', id).gte('data', `${anoAtual}-01-01`).lte('data', `${anoAtual}-12-31`),
+      supabase.from('vol_profiles')
+        .select('id, full_name, planning_center_id, allocation_status, profile_complete')
+        .eq('membresia_id', id).maybeSingle(),
+      supabase.from('next_inscricoes')
+        .select('id, evento_id, indicou_batismo, indicou_servir, indicou_grupo, indicou_dizimo, check_in_at, created_at, evento:next_eventos(id, data, titulo, status)')
+        .eq('membro_id', id).order('created_at', { ascending: false }).limit(20),
+    ]);
+    if (membroRes.error) throw membroRes.error;
+    const membro = membroRes.data;
+    const trilha = trilhaRes.data || [];
+    const historico = historicoRes.data || [];
+    const participacoes = participacoesRes.data || [];
+    const contribuicoes = contribuicoesRes.data || [];
+    const contribAno = contribAnoRes.data || [];
+    const volProfile = volProfileRes.data || null;
+    const inscricoesNext = inscricoesNextRes.data || [];
+
+    // Round 2: familiares depende de membro.familia_id
     let familiares = [];
     if (membro.familia_id) {
       const { data: fam } = await supabase
@@ -276,64 +309,18 @@ router.get('/membros/:id', async (req, res) => {
       familiares = fam || [];
     }
 
-    // Trilha dos valores
-    const { data: trilha } = await supabase
-      .from('mem_trilha_valores')
-      .select('*')
-      .eq('membro_id', membro.id)
-      .order('created_at');
+    const grupo_atual = participacoes.find(p => !p.saiu_em) || null;
+    const grupo_historico = participacoes.filter(p => p.saiu_em);
 
-    // Histórico
-    const { data: historico } = await supabase
-      .from('mem_historico')
-      .select('*, registrado:profiles(name)')
-      .eq('membro_id', membro.id)
-      .order('data', { ascending: false })
-      .limit(20);
-
-    // Grupo de Conexão — participação atual + histórico
-    const { data: participacoes } = await supabase
-      .from('mem_grupo_membros')
-      .select('*, grupo:mem_grupos(id, nome, categoria, local, dia_semana, horario, lider:mem_membros!lider_id(id, nome))')
-      .eq('membro_id', membro.id)
-      .order('entrou_em', { ascending: false });
-
-    const grupo_atual = (participacoes || []).find(p => !p.saiu_em) || null;
-    const grupo_historico = (participacoes || []).filter(p => p.saiu_em);
-
-    // Contribuições (últimas 30) + nível de generosidade + totais do ano corrente
-    const { data: contribuicoes } = await supabase
-      .from('mem_contribuicoes')
-      .select('*')
-      .eq('membro_id', membro.id)
-      .order('data', { ascending: false })
-      .limit(30);
-
-    const ultimaContribuicao = contribuicoes?.[0]?.data || null;
+    const ultimaContribuicao = contribuicoes[0]?.data || null;
     const nivelGenerosidade = calcularNivelGenerosidade(ultimaContribuicao);
 
-    const anoAtual = new Date().getFullYear();
-    const { data: contribAno } = await supabase
-      .from('mem_contribuicoes')
-      .select('tipo, valor')
-      .eq('membro_id', membro.id)
-      .gte('data', `${anoAtual}-01-01`)
-      .lte('data', `${anoAtual}-12-31`);
-
     const totaisAno = { dizimo: 0, oferta: 0, campanha: 0, total: 0 };
-    (contribAno || []).forEach(c => {
+    contribAno.forEach(c => {
       const v = Number(c.valor) || 0;
       totaisAno[c.tipo] = (totaisAno[c.tipo] || 0) + v;
       totaisAno.total += v;
     });
-
-    // ── Servico (vol_profiles e fonte unica) ───────────────────────────────
-    // Busca vol_profile linkado e enriquece com times, check-ins, escalas
-    const { data: volProfile } = await supabase
-      .from('vol_profiles')
-      .select('id, full_name, planning_center_id, allocation_status, profile_complete')
-      .eq('membresia_id', membro.id)
-      .maybeSingle();
 
     let ministerios_ativos = [];
     let ministerios_historico = [];
@@ -346,20 +333,41 @@ router.get('/membros/:id', async (req, res) => {
     const allocation_status = volProfile?.allocation_status || null;
 
     if (volProfile) {
-      // Times/Ministerios (vol_team_members JOIN vol_teams)
-      const { data: teamData } = await supabase
-        .from('vol_team_members')
-        .select('id, is_active, joined_at, team:vol_teams(id, name, color)')
-        .eq('volunteer_profile_id', volProfile.id);
+      const d90 = new Date(Date.now() - 90 * 86400000).toISOString();
+      // 4 queries de voluntariado em paralelo
+      const [teamRes, ckRes, cnt90Res, schedRes] = await Promise.all([
+        supabase.from('vol_team_members')
+          .select('id, is_active, joined_at, team:vol_teams(id, name, color)')
+          .eq('volunteer_profile_id', volProfile.id),
+        supabase.from('vol_check_ins')
+          .select('id, checked_in_at, method, is_unscheduled, service:vol_services(id, name, scheduled_at)')
+          .eq('volunteer_id', volProfile.id)
+          .order('checked_in_at', { ascending: false })
+          .limit(20),
+        supabase.from('vol_check_ins')
+          .select('id', { count: 'exact', head: true })
+          .eq('volunteer_id', volProfile.id)
+          .gte('checked_in_at', d90),
+        supabase.from('vol_schedules')
+          .select('id, confirmation_status, team_name, position_name, service:vol_services!inner(id, name, scheduled_at)')
+          .eq('volunteer_id', volProfile.id)
+          .gte('service.scheduled_at', new Date().toISOString())
+          .order('service(scheduled_at)', { ascending: true })
+          .limit(10),
+      ]);
+      const teamData = teamRes.data || [];
+      const ckData = ckRes.data || [];
+      const cnt90 = cnt90Res.count || 0;
+      const schedData = schedRes.data || [];
 
-      ministerios_ativos = (teamData || [])
+      ministerios_ativos = teamData
         .filter(t => t.is_active)
         .map(t => ({
           id: t.id, joined_at: t.joined_at,
           ministerio: t.team ? { id: t.team.id, nome: t.team.name, cor: t.team.color, ativo: true } : null,
           desde: t.joined_at,
         }));
-      ministerios_historico = (teamData || [])
+      ministerios_historico = teamData
         .filter(t => !t.is_active)
         .map(t => ({
           id: t.id, joined_at: t.joined_at,
@@ -367,15 +375,7 @@ router.get('/membros/:id', async (req, res) => {
           desde: t.joined_at,
         }));
 
-      // Check-ins recentes (ultimos 20)
-      const { data: ckData } = await supabase
-        .from('vol_check_ins')
-        .select('id, checked_in_at, method, is_unscheduled, service:vol_services(id, name, scheduled_at)')
-        .eq('volunteer_id', volProfile.id)
-        .order('checked_in_at', { ascending: false })
-        .limit(20);
-
-      checkins = (ckData || []).map(c => ({
+      checkins = ckData.map(c => ({
         id: c.id,
         data: c.checked_in_at?.slice(0, 10),
         checked_in_at: c.checked_in_at,
@@ -384,15 +384,7 @@ router.get('/membros/:id', async (req, res) => {
         ministerio: c.service ? { nome: c.service.name } : null,
       }));
       ultimoCheckin = checkins[0]?.checked_in_at || null;
-
-      // Total nos ultimos 90 dias (pra metrica de frequencia)
-      const d90 = new Date(Date.now() - 90 * 86400000).toISOString();
-      const { count: cnt90 } = await supabase
-        .from('vol_check_ins')
-        .select('id', { count: 'exact', head: true })
-        .eq('volunteer_id', volProfile.id)
-        .gte('checked_in_at', d90);
-      totalCheckins90d = cnt90 || 0;
+      totalCheckins90d = cnt90;
 
       // Nivel de servico (Ativo <30d / Ausente 30-90 / Sumido >90)
       if (ultimoCheckin) {
@@ -404,16 +396,7 @@ router.get('/membros/:id', async (req, res) => {
         nivelServico = 'aguardando_alocacao';
       }
 
-      // Escalas futuras (vol_schedules JOIN vol_services)
-      const { data: schedData } = await supabase
-        .from('vol_schedules')
-        .select('id, confirmation_status, team_name, position_name, service:vol_services!inner(id, name, scheduled_at)')
-        .eq('volunteer_id', volProfile.id)
-        .gte('service.scheduled_at', new Date().toISOString())
-        .order('service(scheduled_at)', { ascending: true })
-        .limit(10);
-
-      escalasFuturas = (schedData || []).map(s => ({
+      escalasFuturas = schedData.map(s => ({
         id: s.id,
         data: s.service?.scheduled_at?.slice(0, 10),
         scheduled_at: s.service?.scheduled_at,
@@ -422,14 +405,6 @@ router.get('/membros/:id', async (req, res) => {
         position: s.position_name,
       }));
     }
-
-    // Inscricoes NEXT desta pessoa (next_inscricoes filtrado por membro_id)
-    const { data: inscricoesNext } = await supabase
-      .from('next_inscricoes')
-      .select('id, evento_id, indicou_batismo, indicou_servir, indicou_grupo, indicou_dizimo, check_in_at, created_at, evento:next_eventos(id, data, titulo, status)')
-      .eq('membro_id', membro.id)
-      .order('created_at', { ascending: false })
-      .limit(20);
 
     res.json({
       ...membro,
