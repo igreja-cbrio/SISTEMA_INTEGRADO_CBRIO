@@ -675,6 +675,15 @@ export const gruposPublic = {
     if (!r.ok) return [];
     return r.json();
   },
+  inscrever: async (data) => {
+    const r = await fetch(`${API}/public/grupos/inscrever`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+    return j;
+  },
 };
 
 export const cadastroPublico = {
