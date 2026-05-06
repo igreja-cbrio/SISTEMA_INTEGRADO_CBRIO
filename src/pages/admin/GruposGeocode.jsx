@@ -30,6 +30,7 @@ export default function GruposGeocode() {
   const [loading, setLoading] = useState(false);
   const [resultado, setResultado] = useState(null);
   const [copiado, setCopiado] = useState(false);
+  const [progresso, setProgresso] = useState({ atual: 0, total: 0 });
 
   useEffect(() => {
     api.temporadas().then(ts => {
@@ -40,18 +41,52 @@ export default function GruposGeocode() {
   }, []);
 
   async function rodar() {
-    if (!confirm(`Rodar geocode em massa? Vai levar ~3 minutos para validar todos os grupos da temporada selecionada. Pode acompanhar a evolução depois consultando a página /grupos.`)) return;
+    if (!confirm(`Rodar geocode em massa? O processo roda em chunks de 30 grupos para evitar timeout. Acompanhe a barra de progresso até o fim.`)) return;
     setLoading(true);
     setResultado(null);
+    setProgresso({ atual: 0, total: 0 });
+
+    const acumulado = { ok: [], falhas: [], skip: [] };
+    let offset = 0;
+    let total = 0;
+
     try {
-      const r = await api.geocodeBatch({
-        temporada: temporadaId || undefined,
-        somente_sem_coords: somenteSemCoords,
+      while (true) {
+        const r = await api.geocodeBatch({
+          temporada: temporadaId || undefined,
+          somente_sem_coords: somenteSemCoords,
+          limit: 30,
+          offset,
+        });
+        acumulado.ok.push(...(r.ok || []));
+        acumulado.falhas.push(...(r.falhas || []));
+        acumulado.skip.push(...(r.skip || []));
+        total = r.total_geral || 0;
+        offset = r.proximo_offset || offset;
+        setProgresso({ atual: offset, total });
+        if (!r.has_more) break;
+        // Atualiza resultado parcial pra usuario ver evolucao
+        setResultado({
+          total_geral: total,
+          ok_count: acumulado.ok.length,
+          falhas_count: acumulado.falhas.length,
+          skip_count: acumulado.skip.length,
+          ok: acumulado.ok, falhas: acumulado.falhas, skip: acumulado.skip,
+          parcial: true,
+        });
+      }
+      setResultado({
+        total_geral: total,
+        ok_count: acumulado.ok.length,
+        falhas_count: acumulado.falhas.length,
+        skip_count: acumulado.skip.length,
+        ok: acumulado.ok, falhas: acumulado.falhas, skip: acumulado.skip,
+        parcial: false,
       });
-      setResultado(r);
-      toast.success(`${r.ok_count} validados, ${r.falhas_count} falhas`);
+      toast.success(`Concluido: ${acumulado.ok.length} validados, ${acumulado.falhas.length} falhas`);
     } catch (e) {
       toast.error(e.message || 'Erro ao rodar geocode');
+      console.error('[geocode batch]', e);
     } finally {
       setLoading(false);
     }
@@ -104,16 +139,36 @@ export default function GruposGeocode() {
         </div>
 
         <div style={{ fontSize: 11, color: C.t3, marginTop: 12, padding: 10, background: 'rgba(245,158,11,0.08)', borderRadius: 8, border: `1px solid ${C.amber}40` }}>
-          <strong style={{ color: C.amber }}>Atenção:</strong> a operação respeita o rate limit do Nominatim (OpenStreetMap):
-          1.1s entre chamadas. Para 128 grupos pode levar até 5 minutos. Não feche a página
-          até completar.
+          <strong style={{ color: C.amber }}>Atenção:</strong> processa em chunks de 30 grupos para evitar timeout do servidor.
+          Cada chunk leva ~35s (Nominatim limita 1 chamada/segundo).
+          Para 128 grupos: ~3 minutos. Não feche a página até completar.
         </div>
+
+        {loading && progresso.total > 0 && (
+          <div style={{ marginTop: 12 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, color: C.t2, marginBottom: 6 }}>
+              <span>Processando... {progresso.atual} de {progresso.total}</span>
+              <span>{Math.round((progresso.atual / progresso.total) * 100)}%</span>
+            </div>
+            <div style={{ height: 6, background: C.border, borderRadius: 99, overflow: 'hidden' }}>
+              <div style={{
+                width: `${(progresso.atual / progresso.total) * 100}%`,
+                height: '100%', background: C.primary, transition: 'width 0.3s',
+              }} />
+            </div>
+          </div>
+        )}
       </div>
 
       {resultado && (
         <>
+          {resultado.parcial && (
+            <div style={{ padding: 8, marginBottom: 12, background: 'rgba(0,179,157,0.08)', borderRadius: 8, fontSize: 12, color: C.primary }}>
+              Resultados parciais — ainda processando...
+            </div>
+          )}
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 10, marginBottom: 14 }}>
-            <Stat label="Total" value={resultado.total} cor={C.primary} />
+            <Stat label="Total" value={resultado.total_geral || 0} cor={C.primary} />
             <Stat label="Validados" value={resultado.ok_count} cor={C.green} Icon={CheckCircle2} />
             <Stat label="Falharam" value={resultado.falhas_count} cor={C.red} Icon={AlertTriangle} />
             <Stat label="Pulados" value={resultado.skip_count} cor={C.t3} />
