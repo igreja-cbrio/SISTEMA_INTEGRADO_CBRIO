@@ -134,6 +134,9 @@ router.post('/cadastro', cadastroLimiter, async (req, res) => {
       consentimento_texto,
       familia_sugerida_id,
       foto_url,
+      // grupo de conexao opcional — cria pedido apos cadastro
+      grupo_id,
+      grupo_observacao,
       // honeypot (não deve ser preenchido por humanos)
       website,
     } = req.body || {};
@@ -267,6 +270,44 @@ router.post('/cadastro', cadastroLimiter, async (req, res) => {
       severidade: 'info',
       chaveDedup: `novo_cadastro_${data.id}`,
     }).catch(err => console.error('[PUBLIC CADASTRO] notificação falhou:', err.message));
+
+    // Se a pessoa indicou grupo, cria pedido vinculado (cadastro_pendente_id ou
+    // membro_id se ja existe duplicado).
+    if (grupo_id) {
+      try {
+        const pedidoBase = {
+          grupo_id,
+          nome: nome.trim(),
+          email: emailLimpo,
+          telefone: telefone || null,
+          origem: 'cadastro_interno',
+          observacao: grupo_observacao || null,
+          status: 'pendente',
+        };
+        if (duplicadoDeId) {
+          pedidoBase.membro_id = duplicadoDeId;
+        } else {
+          pedidoBase.cadastro_pendente_id = data.id;
+        }
+        const { data: pedido } = await supabase.from('mem_grupo_pedidos').insert(pedidoBase).select('id').single();
+        if (pedido) {
+          // Notifica o(s) lider(es) do grupo
+          const { data: grupo } = await supabase.from('mem_grupos').select('nome').eq('id', grupo_id).maybeSingle();
+          notificar({
+            modulo: 'grupos',
+            tipo: 'pedido_grupo',
+            titulo: `Novo pedido para ${grupo?.nome || 'grupo'}`,
+            mensagem: `${nome.trim()} pediu para entrar no grupo via cadastro de membresia.`,
+            link: '/grupos/pedidos',
+            severidade: 'aviso',
+            chaveDedup: `pedido_grupo_${pedido.id}`,
+          }).catch(err => console.error('[PUBLIC CADASTRO pedido grupo notify]', err.message));
+        }
+      } catch (pedidoErr) {
+        // Nao bloqueia o cadastro — so loga
+        console.error('[PUBLIC CADASTRO pedido grupo]', pedidoErr.message);
+      }
+    }
 
     // Resposta neutra — não confirma se foi duplicado, preserva privacidade
     res.status(201).json({ ok: true, id: data.id });

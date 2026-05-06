@@ -15,7 +15,7 @@
 // ============================================================================
 
 import { useState, useEffect, useMemo } from 'react';
-import { grupos as api } from '../../api';
+import { grupos as authApi, gruposPublic } from '../../api';
 import { Input } from '../ui/input';
 import { Button } from '../ui/button';
 import { Search, MapPin, Clock, Users, User as UserIcon, Map as MapIcon, Tag, Hash } from 'lucide-react';
@@ -42,7 +42,8 @@ const TABS_SIMPLE = [
   { id: 'lista', label: 'Lista', Icon: Search },
 ];
 
-export default function GrupoSelector({ onSelect, selectedGrupoId, mode = 'full', temporadaId }) {
+export default function GrupoSelector({ onSelect, selectedGrupoId, mode = 'full', temporadaId, usePublicApi = false }) {
+  const api = usePublicApi ? gruposPublic : authApi;
   const tabs = mode === 'simple' ? TABS_SIMPLE : TABS_FULL;
   const [tab, setTab] = useState(tabs[0].id);
   const [temporada, setTemporada] = useState(temporadaId || '');
