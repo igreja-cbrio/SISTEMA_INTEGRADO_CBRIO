@@ -1145,3 +1145,14 @@ export const pessoas = {
   },
   findOrCreate: (body) => post('/pessoas/find-or-create', body),
 };
+
+// ── NSM (North Star Metric) — Painel ──
+export const nsm = {
+  painel: () => get('/nsm/painel'),
+  segmento: (seg) => get(`/nsm/painel/${seg}`),
+  recalcular: () => post('/nsm/recalcular', {}),
+  eventos: (params = {}) => {
+    const qs = new URLSearchParams(params).toString();
+    return get('/nsm/eventos' + (qs ? '?' + qs : ''));
+  },
+};
