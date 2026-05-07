@@ -944,6 +944,20 @@ router.get('/temporadas/list', async (req, res) => {
   } catch (e) { console.error('[Grupos temporadas]', e.message); res.status(500).json({ error: 'Erro ao buscar temporadas' }); }
 });
 
+// PATCH /api/grupos/temporadas/:id — admin/diretor altera inscricoes_abertas (e outros campos)
+router.patch('/temporadas/:id', authorize('admin', 'diretor'), async (req, res) => {
+  try {
+    const allowed = ['inscricoes_abertas', 'ativa', 'data_inicio', 'data_fim', 'label'];
+    const update = {};
+    for (const k of allowed) if (k in req.body) update[k] = req.body[k];
+    if (Object.keys(update).length === 0) return res.status(400).json({ error: 'Nada para atualizar' });
+    const { data, error } = await supabase.from('mem_temporadas')
+      .update(update).eq('id', req.params.id).select().single();
+    if (error) throw error;
+    res.json(data);
+  } catch (e) { console.error('[Grupos temporadas patch]', e.message); res.status(500).json({ error: e.message || 'Erro ao atualizar temporada' }); }
+});
+
 // GET /api/grupos/bairros/list — lista bairros distintos com contagem
 router.get('/bairros/list', async (req, res) => {
   try {

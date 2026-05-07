@@ -201,6 +201,7 @@ export const grupos = {
   metricas: (grupoId) => get(`/grupos/${grupoId}/metricas`),
   saudeAgregada: (params) => get('/grupos/saude/agregado' + (params ? '?' + new URLSearchParams(params) : '')),
   temporadas: () => get('/grupos/temporadas/list'),
+  atualizarTemporada: (id, data) => patch(`/grupos/temporadas/${id}`, data),
   bairros: (params) => get('/grupos/bairros/list' + (params ? '?' + new URLSearchParams(params) : '')),
   // Busca / pedidos de inscricao
   buscar: (params) => get('/grupos/buscar' + (params ? '?' + new URLSearchParams(params) : '')),
@@ -662,6 +663,11 @@ export const gruposPublic = {
     const qs = params ? '?' + new URLSearchParams(params).toString() : '';
     const r = await fetch(`${API}/public/grupos/buscar${qs}`);
     if (!r.ok) return [];
+    return r.json();
+  },
+  getById: async (id) => {
+    const r = await fetch(`${API}/public/grupos/${id}`);
+    if (!r.ok) return null;
     return r.json();
   },
   buscarLideres: async (params) => {

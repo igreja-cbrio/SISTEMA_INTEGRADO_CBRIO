@@ -105,6 +105,7 @@ const CadastroMembresia = lazyWithRetry(() => import('./pages/public/CadastroMem
 const InscricaoGrupos = lazyWithRetry(() => import('./pages/public/InscricaoGrupos'));
 const InscricaoGruposQRCode = lazyWithRetry(() => import('./pages/admin/InscricaoGruposQRCode'));
 const GruposGeocode = lazyWithRetry(() => import('./pages/admin/GruposGeocode'));
+const TemporadasGrupos = lazyWithRetry(() => import('./pages/admin/TemporadasGrupos'));
 const WalletPage = lazyWithRetry(() => import('./pages/public/WalletPage'));
 const Motion = lazyWithRetry(() => import('./pages/public/Motion'));
 const Voluntariado = lazyWithRetry(() => import('./pages/ministerial/voluntariado'));
@@ -287,6 +288,7 @@ function AppRoutes() {
         <Route path="/admin/kpi-areas" element={<Suspense fallback={<Loading />}><KpiAreasAdmin /></Suspense>} />
         <Route path="/admin/grupos/qrcode-inscricao" element={<Suspense fallback={<Loading />}><InscricaoGruposQRCode /></Suspense>} />
         <Route path="/admin/grupos/geocode" element={<Suspense fallback={<Loading />}><GruposGeocode /></Suspense>} />
+        <Route path="/admin/grupos/temporadas" element={<Suspense fallback={<Loading />}><TemporadasGrupos /></Suspense>} />
         <Route path="/ministerial/*" element={<PlaceholderPage title="Ministerial" />} />
         <Route path="/criativo/*" element={<PlaceholderPage title="Criativo" />} />
 

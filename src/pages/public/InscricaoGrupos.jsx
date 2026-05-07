@@ -48,6 +48,11 @@ export default function InscricaoGrupos() {
       return new URLSearchParams(window.location.search).get('temporada') || '';
     } catch { return ''; }
   }, []);
+  const grupoParam = useMemo(() => {
+    try {
+      return new URLSearchParams(window.location.search).get('grupo') || '';
+    } catch { return ''; }
+  }, []);
 
   const [grupoEscolhido, setGrupoEscolhido] = useState(null);
   const [form, setForm] = useState({
@@ -58,6 +63,23 @@ export default function InscricaoGrupos() {
   const [step, setStep] = useState(0); // 0=escolher grupo, 1=dados, 2=success
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+
+  // Quando vem com ?grupo=<id> (ex: clique no mapa), pre-carrega o
+  // grupo e pula direto para o passo 1 (dados).
+  useEffect(() => {
+    if (!grupoParam) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const g = await gruposPublic.getById(grupoParam);
+        if (!cancelled && g && g.id) {
+          setGrupoEscolhido(g);
+          setStep(1);
+        }
+      } catch {}
+    })();
+    return () => { cancelled = true; };
+  }, [grupoParam]);
 
   const set = (k, masked) => (e) => setForm(f => ({ ...f, [k]: masked ? masked(e.target.value) : e.target.value }));
 
