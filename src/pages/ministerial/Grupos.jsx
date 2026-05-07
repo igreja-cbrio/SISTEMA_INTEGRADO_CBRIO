@@ -369,8 +369,26 @@ export default function Grupos() {
             <h1 style={{ fontSize: 22, fontWeight: 700, color: C.text, margin: 0 }}>{g.nome}</h1>
             <div style={{ display: 'flex', gap: 16, marginTop: 6, flexWrap: 'wrap' }}>
               {g.lider && <span style={{ fontSize: 13, color: C.t2 }}>Lider: <strong style={{ color: C.text }}>{g.lider.nome}</strong></span>}
-              {g.bairro && <span style={{ fontSize: 13, color: C.t2, display: 'flex', alignItems: 'center', gap: 4 }}><MapPin size={12} /> {g.bairro}</span>}
-              {g.local && <span style={{ fontSize: 13, color: C.t3, display: 'flex', alignItems: 'center', gap: 4 }}>{g.local}{g.complemento ? ` — ${g.complemento}` : ''}</span>}
+              {(g.bairro || g.local) && (() => {
+                const url = (g.lat != null && g.lng != null)
+                  ? `https://www.google.com/maps/search/?api=1&query=${g.lat},${g.lng}`
+                  : `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent([g.endereco, g.complemento, g.bairro, 'Rio de Janeiro'].filter(Boolean).join(', '))}`;
+                return (
+                  <a href={url} target="_blank" rel="noopener noreferrer" title="Abrir no Google Maps" style={{
+                    fontSize: 13, color: C.primary, display: 'inline-flex', alignItems: 'center', gap: 4,
+                    textDecoration: 'none', cursor: 'pointer',
+                  }}
+                  onMouseEnter={(e) => { e.currentTarget.style.textDecoration = 'underline'; }}
+                  onMouseLeave={(e) => { e.currentTarget.style.textDecoration = 'none'; }}
+                  >
+                    <MapPin size={12} />
+                    {g.bairro || ''}
+                    {g.bairro && g.local ? ' · ' : ''}
+                    {g.local || ''}
+                    {g.complemento ? ` — ${g.complemento}` : ''}
+                  </a>
+                );
+              })()}
               {g.dia_semana != null && <span style={{ fontSize: 13, color: C.t2, display: 'flex', alignItems: 'center', gap: 4 }}><Clock size={12} /> {DIAS[g.dia_semana]} {g.horario?.slice(0, 5)}</span>}
               {g.status_temporada && STATUS_TEMPORADA[g.status_temporada] ? (
                 <span style={{ fontSize: 12, padding: '2px 8px', borderRadius: 99, background: STATUS_TEMPORADA[g.status_temporada].bg, color: STATUS_TEMPORADA[g.status_temporada].cor, fontWeight: 600 }}>
