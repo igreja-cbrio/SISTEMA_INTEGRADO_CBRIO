@@ -1157,6 +1157,13 @@ export const nsm = {
   },
 };
 
+// ── Gestao (PMO administrativo) ──
+export const gestao = {
+  pulso: () => get('/gestao/pulso'),
+  saude: () => get('/gestao/saude'),
+  cobrar: (liderId, body = {}) => post(`/gestao/pulso/cobrar/${liderId}`, body),
+};
+
 // ── Ritual mensal (revisao OKR) ──
 export const ritual = {
   resumo: (periodo) => get('/ritual/resumo' + (periodo ? `?periodo=${periodo}` : '')),
