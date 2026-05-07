@@ -1157,6 +1157,34 @@ export const nsm = {
   },
 };
 
+// ── Estrategia (Direcionadores · Objetivos Gerais · KRs) ──
+export const estrategia = {
+  direcionadores: {
+    list:   () => get('/estrategia/direcionadores'),
+    create: (body) => post('/estrategia/direcionadores', body),
+    update: (id, body) => put(`/estrategia/direcionadores/${id}`, body),
+  },
+  objetivos: {
+    list:   (params = {}) => {
+      const qs = new URLSearchParams(params).toString();
+      return get('/estrategia/objetivos' + (qs ? '?' + qs : ''));
+    },
+    get:    (id) => get(`/estrategia/objetivos/${id}`),
+    create: (body) => post('/estrategia/objetivos', body),
+    update: (id, body) => put(`/estrategia/objetivos/${id}`, body),
+    remove: (id) => del(`/estrategia/objetivos/${id}`),
+  },
+  krs: {
+    list:   (params = {}) => {
+      const qs = new URLSearchParams(params).toString();
+      return get('/estrategia/krs' + (qs ? '?' + qs : ''));
+    },
+    create: (body) => post('/estrategia/krs', body),
+    update: (id, body) => put(`/estrategia/krs/${id}`, body),
+    remove: (id) => del(`/estrategia/krs/${id}`),
+  },
+};
+
 // ── Painel CBRio (mandalas, matriz, alertas, drilldown) ──
 export const painel = {
   mandalas: () => get('/painel/mandalas'),
