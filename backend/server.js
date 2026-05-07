@@ -87,6 +87,7 @@ app.use('/api/jornada', require('./routes/jornada'));
 app.use('/api/devocionais', require('./routes/devocionais'));
 app.use('/api/pessoas', require('./routes/pessoas'));
 app.use('/api/nsm', require('./routes/nsm'));
+app.use('/api/painel', require('./routes/painel'));
 
 // ── Health check ──
 app.get('/api/health', (req, res) => res.json({ status: 'ok', timestamp: new Date().toISOString() }));

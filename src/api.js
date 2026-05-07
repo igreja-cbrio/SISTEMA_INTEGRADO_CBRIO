@@ -1156,3 +1156,8 @@ export const nsm = {
     return get('/nsm/eventos' + (qs ? '?' + qs : ''));
   },
 };
+
+// ── Painel CBRio (mandalas, matriz, alertas) ──
+export const painel = {
+  mandalas: () => get('/painel/mandalas'),
+};
