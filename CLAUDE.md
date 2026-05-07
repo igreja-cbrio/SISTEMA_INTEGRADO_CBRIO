@@ -732,6 +732,61 @@ SELECT * FROM vw_nsm_painel;
 -- status: sem_dado | verde | amarelo | vermelho
 ```
 
+### Fase 2 — Mergeada (PRs #266, #267, #268, #269, #270, fase 2E)
+
+`/painel` central da CBRio com 4 secoes empilhadas + drilldowns:
+
+```
+/painel
+  ├─ Camada 1: visao macro
+  │    ├─ NSM Central card (gradient) + 3 segmentados (cbrio/online/cba)
+  │    │    Click no card → camada 4 (lista de pessoas)
+  │    ├─ Carrossel de 6 mandalas (slide 0 = 5 valores agregados,
+  │    │    slides 1-5 = foco em cada valor com 6 areas)
+  │    ├─ Matriz Valor × Area (6×5 colorida)
+  │    │    Click numa celula → modal com KPIs daquela intersecao
+  │    └─ Top 3 alertas criticos (KPIs criticos > OKR > menor % meta)
+  │
+  ├─ Camada 2: modal de drilldown
+  │    └─ ModalCelula: lista KPIs da intersecao Area × Valor
+  │       Click num KPI → camada 3
+  │
+  ├─ Camada 3: /painel/kpi/:id
+  │    Detalhe 1 KPI: status atual, mini-grafico historico,
+  │    trajetoria (checkpoints), revisoes OKR (regra de ouro)
+  │
+  └─ Camada 4: /painel/nsm/pessoas
+       Lista de convertidos (filtro: engajados true/false, segmento, dias)
+       Marca cada pessoa: dentro de janela 60d / urgente / vencida
+       Vira ferramenta de acao pastoral
+```
+
+### Endpoints backend (`/api/painel/*`)
+
+- `GET /api/nsm/painel`            → vw_nsm_painel (4 segmentos)
+- `GET /api/nsm/eventos`           → eventos NSM (filtros: segmento, valor)
+- `POST /api/nsm/recalcular`       → admin/diretor forca recalculo
+- `GET /api/painel/mandalas`       → 6 mandalas em 1 chamada
+- `GET /api/painel/matriz`         → grid 6×5
+- `GET /api/painel/celula/:a/:v`   → KPIs da intersecao
+- `GET /api/painel/alertas?limit=3`→ top KPIs em alerta
+- `GET /api/painel/kpi/:id`        → detalhe completo (camada 3)
+- `GET /api/painel/nsm/pessoas`    → pessoas convertidas (camada 4)
+
+### Componentes do painel (`src/components/painel/`)
+
+- `MandalaSlide.jsx` — uma mandala SVG (5 ou 6 setores)
+- `CarrosselMandalas.jsx` — carrossel com setas, dots, swipe, teclado
+- `MatrizValorArea.jsx` — tabela colorida com modal
+- `ModalCelula.jsx` — drilldown da celula
+- `AlertasCriticos.jsx` — top 3 KPIs em alerta
+
+### Telas removidas pela Fase 2 (`PR #267`)
+
+`/painel-kpis`, `/admin/cultura`, `/kpis`, `/kpis/guia` foram deletadas
+e tem redirect pra `/painel`. Sidebar Inteligencia tem so 3 itens
+agora: Painel CBRio · Meus KPIs · Assistente IA.
+
 ### Proximas fases
 
 - **Fase 1.5** · Triggers que alimentam nsm_eventos a partir de
@@ -739,9 +794,7 @@ SELECT * FROM vw_nsm_painel;
   grupo (mem_grupo_membros), voluntariado (vol_profiles),
   doacao (mem_contribuicoes). Exige inspecao de cada tabela para nao
   quebrar triggers existentes.
-- **Fase 2** · `/painel` reformulado (NSM topo, carrossel mandalas,
-  matriz colorida, drill-down em 4 camadas)
-- **Fase 3** · `/minha-area` agrupada por valor
+- **Fase 3** · `/minha-area` agrupada por valor (substitui /meus-kpis)
 - **Fase 4** · `/gestao` 3 abas (Pulso · Configurar · Saude)
 - **Fase 5** · `/ritual` + notificacoes in-app
 

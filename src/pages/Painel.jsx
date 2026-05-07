@@ -12,9 +12,10 @@
 // ============================================================================
 
 import { useState, useEffect, useCallback } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { nsm as nsmApi } from '../api';
 import { useAuth } from '../contexts/AuthContext';
-import { Activity, RefreshCw, TrendingUp, TrendingDown, Minus } from 'lucide-react';
+import { Activity, RefreshCw, TrendingUp, TrendingDown, Minus, ChevronRight, Users } from 'lucide-react';
 import { toast } from 'sonner';
 import CarrosselMandalas from '../components/painel/CarrosselMandalas';
 import MatrizValorArea from '../components/painel/MatrizValorArea';
@@ -60,6 +61,7 @@ function timeAgo(iso) {
 }
 
 export default function Painel() {
+  const navigate = useNavigate();
   const { profile } = useAuth();
   const isAdmin = ['admin', 'diretor'].includes(profile?.role);
   const [segmentos, setSegmentos] = useState([]);
@@ -135,7 +137,12 @@ export default function Painel() {
       ) : (
         <>
           {/* NSM CENTRAL — destaque */}
-          {central && <NsmCentralCard data={central} />}
+          {central && (
+            <NsmCentralCard
+              data={central}
+              onAbrirPessoas={() => navigate('/painel/nsm/pessoas?segmento=central&engajados=false')}
+            />
+          )}
 
           {/* NSM SEGMENTADAS */}
           {segmentados.length > 0 && (
@@ -144,7 +151,13 @@ export default function Painel() {
                 Segmentos
               </h3>
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 12 }}>
-                {segmentados.map(s => <NsmSegmentoCard key={s.segmento} data={s} />)}
+                {segmentados.map(s => (
+                  <NsmSegmentoCard
+                    key={s.segmento}
+                    data={s}
+                    onAbrirPessoas={() => navigate(`/painel/nsm/pessoas?segmento=${s.segmento}&engajados=false`)}
+                  />
+                ))}
               </div>
             </div>
           )}
@@ -176,7 +189,7 @@ export default function Painel() {
 // ----------------------------------------------------------------------------
 // NSM Central — card grande no topo
 // ----------------------------------------------------------------------------
-function NsmCentralCard({ data }) {
+function NsmCentralCard({ data, onAbrirPessoas }) {
   const status = STATUS_COLORS[data.status] || STATUS_COLORS.sem_dado;
   const semDado = data.status === 'sem_dado';
   const pct = data.percentual || 0;
@@ -238,13 +251,29 @@ function NsmCentralCard({ data }) {
             </>
           )}
         </div>
-        <div style={{
-          padding: '8px 14px', borderRadius: 99,
-          background: status.bg, color: status.cor,
-          fontSize: 11, fontWeight: 700, whiteSpace: 'nowrap',
-          textTransform: 'uppercase', letterSpacing: 1,
-        }}>
-          {status.label}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8, alignItems: 'flex-end' }}>
+          <div style={{
+            padding: '8px 14px', borderRadius: 99,
+            background: status.bg, color: status.cor,
+            fontSize: 11, fontWeight: 700, whiteSpace: 'nowrap',
+            textTransform: 'uppercase', letterSpacing: 1,
+          }}>
+            {status.label}
+          </div>
+          {onAbrirPessoas && (
+            <button
+              onClick={onAbrirPessoas}
+              style={{
+                padding: '6px 10px', borderRadius: 6, fontSize: 11, fontWeight: 600,
+                background: 'transparent', color: C.primaryDark,
+                border: `1px solid ${C.primary}40`,
+                cursor: 'pointer',
+                display: 'inline-flex', alignItems: 'center', gap: 4,
+              }}
+            >
+              <Users size={12} /> Ver pessoas <ChevronRight size={12} />
+            </button>
+          )}
         </div>
       </div>
     </div>
@@ -254,7 +283,7 @@ function NsmCentralCard({ data }) {
 // ----------------------------------------------------------------------------
 // NSM Segmento — cards menores (CBRio Sede / Online / CBA)
 // ----------------------------------------------------------------------------
-function NsmSegmentoCard({ data }) {
+function NsmSegmentoCard({ data, onAbrirPessoas }) {
   const status = STATUS_COLORS[data.status] || STATUS_COLORS.sem_dado;
   const semDado = data.status === 'sem_dado';
   const delta = fmtDelta(data.delta_vs_mes_anterior);
@@ -262,11 +291,18 @@ function NsmSegmentoCard({ data }) {
                   : data.delta_vs_mes_anterior < 0 ? TrendingDown : Minus;
 
   return (
-    <div style={{
-      background: C.card, borderRadius: 12, padding: 16,
-      border: `1px solid ${C.border}`,
-      borderTop: `3px solid ${status.cor}`,
-    }}>
+    <div
+      onClick={onAbrirPessoas}
+      style={{
+        background: C.card, borderRadius: 12, padding: 16,
+        border: `1px solid ${C.border}`,
+        borderTop: `3px solid ${status.cor}`,
+        cursor: onAbrirPessoas ? 'pointer' : 'default',
+        transition: 'border-color 0.15s',
+      }}
+      onMouseEnter={e => { if (onAbrirPessoas) e.currentTarget.style.borderColor = status.cor; }}
+      onMouseLeave={e => { e.currentTarget.style.borderColor = C.border; e.currentTarget.style.borderTop = `3px solid ${status.cor}`; }}
+    >
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
         <span style={{ fontSize: 12, fontWeight: 700, color: C.text }}>{data.segmento_label}</span>
         <span style={{

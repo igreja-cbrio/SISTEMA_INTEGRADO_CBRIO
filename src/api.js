@@ -1157,7 +1157,7 @@ export const nsm = {
   },
 };
 
-// ── Painel CBRio (mandalas, matriz, alertas) ──
+// ── Painel CBRio (mandalas, matriz, alertas, drilldown) ──
 export const painel = {
   mandalas: () => get('/painel/mandalas'),
   matriz:   () => get('/painel/matriz'),
@@ -1165,5 +1165,10 @@ export const painel = {
   alertas:  (params = {}) => {
     const qs = new URLSearchParams(params).toString();
     return get('/painel/alertas' + (qs ? '?' + qs : ''));
+  },
+  kpi: (id) => get(`/painel/kpi/${encodeURIComponent(id)}`),
+  nsmPessoas: (params = {}) => {
+    const qs = new URLSearchParams(params).toString();
+    return get('/painel/nsm/pessoas' + (qs ? '?' + qs : ''));
   },
 };
