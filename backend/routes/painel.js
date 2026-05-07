@@ -311,7 +311,7 @@ router.get('/kpi/:id', async (req, res) => {
     // Dados do KPI
     const { data: kpi, error: ek } = await supabase
       .from('kpi_indicadores_taticos')
-      .select('id, indicador, descricao, area, categoria, valores, periodicidade, periodo_offset_meses, meta_descricao, unidade, is_okr, lider_funcionario_id, ativo')
+      .select('id, indicador, descricao, area, valores, periodicidade, periodo_offset_meses, meta_descricao, unidade, is_okr, lider_funcionario_id, ativo, memoria_calculo, observacoes, objetivo_geral_id')
       .eq('id', id)
       .maybeSingle();
     if (ek) throw ek;

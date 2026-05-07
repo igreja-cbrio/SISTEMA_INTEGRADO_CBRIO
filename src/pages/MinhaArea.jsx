@@ -8,7 +8,6 @@
 // ============================================================================
 
 import { useState, useEffect, useMemo, useCallback } from 'react';
-import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { kpis as kpisApi } from '../api';
 import { useKpis } from '../hooks/useKpis';
@@ -16,6 +15,7 @@ import { useMyKpiAreas } from '../hooks/useMyKpiAreas';
 import KpiQuickFillModal from '../components/KpiQuickFillModal';
 import KpiEditorModal from '../components/KpiEditorModal';
 import OkrRevisaoModal from '../components/OkrRevisaoModal';
+import KpiDetalheModal from '../components/KpiDetalheModal';
 import { Activity, Pencil, Plus, ChevronDown, ChevronRight, AlertCircle, CheckCircle2, Clock, TrendingDown, MinusCircle, ClipboardCheck } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -61,7 +61,6 @@ function periodKey(periodicidade, date = new Date()) {
 }
 
 export default function MinhaArea() {
-  const navigate = useNavigate();
   const { profile } = useAuth();
   const { kpis, isLoading, refetch } = useKpis();
   const { kpiAreas, isAdmin, canEditAny } = useMyKpiAreas();
@@ -72,6 +71,7 @@ export default function MinhaArea() {
   const [editKpi, setEditKpi] = useState(null);
   const [createOpen, setCreateOpen] = useState(false);
   const [revisarKpi, setRevisarKpi] = useState(null);
+  const [detalheKpiId, setDetalheKpiId] = useState(null);
   const [valorExpandido, setValorExpandido] = useState(null);
 
   // KPIs filtrados pelas minhas areas
@@ -243,7 +243,7 @@ export default function MinhaArea() {
                         onPreencher={() => setFillKpi(kpi)}
                         onEditar={() => setEditKpi(kpi)}
                         onRevisar={() => setRevisarKpi(kpi)}
-                        onDetalhe={() => navigate(`/painel/kpi/${encodeURIComponent(kpi.id)}`)}
+                        onDetalhe={() => setDetalheKpiId(kpi.id)}
                       />
                     ))}
                   </div>
@@ -288,6 +288,13 @@ export default function MinhaArea() {
           onSaved={() => { setRevisarKpi(null); toast.success('Revisao registrada'); }}
         />
       )}
+
+      <KpiDetalheModal
+        open={!!detalheKpiId}
+        kpiId={detalheKpiId}
+        onClose={() => setDetalheKpiId(null)}
+        onUpdated={() => { refetch(); loadDados(); }}
+      />
     </div>
   );
 }

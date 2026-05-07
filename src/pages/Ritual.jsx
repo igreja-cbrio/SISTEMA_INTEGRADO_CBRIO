@@ -10,12 +10,12 @@
 // ============================================================================
 
 import { useState, useEffect, useCallback } from 'react';
-import { useNavigate } from 'react-router-dom';
 import { ritual as ritualApi } from '../api';
 import { useAuth } from '../contexts/AuthContext';
 import { ClipboardCheck, ChevronRight, ChevronLeft, AlertCircle, CheckCircle2, Clock, TrendingDown, Play, X, Activity } from 'lucide-react';
 import { toast } from 'sonner';
 import OkrRevisaoModal from '../components/OkrRevisaoModal';
+import KpiDetalheModal from '../components/KpiDetalheModal';
 
 const C = {
   bg: 'var(--cbrio-bg)', card: 'var(--cbrio-card)', text: 'var(--cbrio-text)',
@@ -40,7 +40,6 @@ function periodoLabel(p) {
 }
 
 export default function Ritual() {
-  const navigate = useNavigate();
   const { profile } = useAuth();
   const periodo = periodoMensalAtual();
 
@@ -52,6 +51,7 @@ export default function Ritual() {
   const [revisarKpi, setRevisarKpi] = useState(null);
   const [modoGuiado, setModoGuiado] = useState(false);
   const [indiceGuiado, setIndiceGuiado] = useState(0);
+  const [detalheKpiId, setDetalheKpiId] = useState(null);
 
   const carregar = useCallback(async () => {
     setLoading(true);
@@ -163,10 +163,17 @@ export default function Ritual() {
       {loading ? (
         <div style={{ padding: 40, textAlign: 'center', color: C.t3, fontSize: 13 }}>Carregando...</div>
       ) : aba === 'pendentes' ? (
-        <ListaPendentes pendentes={pendentes} onRevisar={setRevisarKpi} navigate={navigate} />
+        <ListaPendentes pendentes={pendentes} onRevisar={setRevisarKpi} onDetalhe={setDetalheKpiId} />
       ) : (
-        <ListaRevisados revisados={revisados} navigate={navigate} />
+        <ListaRevisados revisados={revisados} />
       )}
+
+      <KpiDetalheModal
+        open={!!detalheKpiId}
+        kpiId={detalheKpiId}
+        onClose={() => setDetalheKpiId(null)}
+        onUpdated={carregar}
+      />
 
       {/* Modal de revisao + barra do modo guiado */}
       {revisarKpi && (
@@ -217,7 +224,7 @@ export default function Ritual() {
 // Subcomponents
 // ----------------------------------------------------------------------------
 
-function ListaPendentes({ pendentes, onRevisar, navigate }) {
+function ListaPendentes({ pendentes, onRevisar, onDetalhe }) {
   if (pendentes.length === 0) {
     return (
       <div style={{
@@ -237,12 +244,12 @@ function ListaPendentes({ pendentes, onRevisar, navigate }) {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-      {pendentes.map((p, i) => <KpiPendenteCard key={p.id} kpi={p} ordem={i + 1} onRevisar={() => onRevisar(p)} navigate={navigate} />)}
+      {pendentes.map((p, i) => <KpiPendenteCard key={p.id} kpi={p} ordem={i + 1} onRevisar={() => onRevisar(p)} onDetalhe={() => onDetalhe(p.id)} />)}
     </div>
   );
 }
 
-function KpiPendenteCard({ kpi, ordem, onRevisar, navigate }) {
+function KpiPendenteCard({ kpi, ordem, onRevisar, onDetalhe }) {
   const traj = kpi.trajetoria;
   const sv = STATUS_VISUAL[traj?.status_trajetoria] || STATUS_VISUAL.atras;
   const Icon = sv.Icon;
@@ -284,7 +291,7 @@ function KpiPendenteCard({ kpi, ordem, onRevisar, navigate }) {
         </div>
       </div>
       <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
-        <button onClick={() => navigate(`/painel/kpi/${encodeURIComponent(kpi.id)}`)}
+        <button onClick={onDetalhe}
           style={{ background: 'transparent', border: `1px solid ${C.border}`, padding: '6px 12px', borderRadius: 6, fontSize: 11, cursor: 'pointer', color: C.t2, display: 'inline-flex', alignItems: 'center', gap: 4 }}>
           <Activity size={11} /> Ver detalhe
         </button>
@@ -297,7 +304,7 @@ function KpiPendenteCard({ kpi, ordem, onRevisar, navigate }) {
   );
 }
 
-function ListaRevisados({ revisados, navigate }) {
+function ListaRevisados({ revisados }) {
   if (revisados.length === 0) {
     return (
       <div style={{ padding: 40, textAlign: 'center', color: C.t3, fontSize: 13 }}>

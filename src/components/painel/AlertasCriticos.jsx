@@ -8,7 +8,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { painel as painelApi } from '../../api';
 import { AlertCircle, TrendingDown, Clock, ChevronRight } from 'lucide-react';
-import ModalCelula from './ModalCelula';
+import KpiDetalheModal from '../KpiDetalheModal';
 
 const C = {
   card: 'var(--cbrio-card)', text: 'var(--cbrio-text)',
@@ -24,7 +24,7 @@ export default function AlertasCriticos() {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [erro, setErro] = useState(null);
-  const [drilldown, setDrilldown] = useState(null);
+  const [detalheKpiId, setDetalheKpiId] = useState(null);
 
   const carregar = useCallback(async () => {
     setLoading(true);
@@ -109,25 +109,18 @@ export default function AlertasCriticos() {
               key={a.kpi_id}
               alerta={a}
               ordem={i + 1}
-              onClick={() => {
-                // Abre modal da celula correspondente (area x primeiro valor)
-                if (a.valores?.length > 0) {
-                  setDrilldown({ area: String(a.area).toLowerCase(), valor: a.valores[0] });
-                }
-              }}
+              onClick={() => setDetalheKpiId(a.kpi_id)}
             />
           ))}
         </div>
       </section>
 
-      {drilldown && (
-        <ModalCelula
-          area={drilldown.area}
-          valor={drilldown.valor}
-          cell={null}
-          onClose={() => setDrilldown(null)}
-        />
-      )}
+      <KpiDetalheModal
+        open={!!detalheKpiId}
+        kpiId={detalheKpiId}
+        onClose={() => setDetalheKpiId(null)}
+        onUpdated={carregar}
+      />
     </>
   );
 }
