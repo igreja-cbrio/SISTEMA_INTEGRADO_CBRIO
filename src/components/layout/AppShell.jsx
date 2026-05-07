@@ -66,8 +66,9 @@ const NAV_ITEMS = [
           { label: 'Eventos', description: 'Gestão de eventos da igreja', icon: CalendarDays, path: '/eventos', perm: 'canAgenda' },
           { label: 'Projetos', description: 'Acompanhamento de projetos', icon: FolderKanban, path: '/projetos', perm: 'canProjetos' },
           { label: 'Expansão', description: 'Metas de expansão', icon: Map, path: '/expansao', perm: 'canExpansao' },
-          { label: 'Revisão', description: 'Revisão estratégica com líderes', icon: ClipboardCheck, path: '/revisao' },
-          { label: 'Processos', description: 'Processos operacionais e OKRs', icon: ListChecks, path: '/processos', perm: 'canProcessos' },
+          // Removidos do menu (rotas continuam ativas):
+          // - Revisão (/revisao): será substituído pelo /ritual da Fase 5
+          // - Processos (/processos): redundante com /painel + /admin/estrutura-okr
         ],
       },
     ],
