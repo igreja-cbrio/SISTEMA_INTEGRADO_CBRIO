@@ -637,3 +637,129 @@ planejamento estrategico.
 - Soft delete: DELETE arquiva (status='arquivado'), nao remove
 - Areas filtradas por categoria no modal de criacao
 - Sem migration de KPIs — dados vivem em `src/data/indicadores.js`
+
+## Sistema OKR/NSM 2026 (em construcao)
+
+Sistema unificado de OKR/KPI/NSM, alinhado com Marcos+Matheus apos
+estudo metodologico e validacao com lideres em mai/2026.
+
+### Conceito central
+
+- **1 NSM** (estrela-guia): "Novos convertidos engajados em ≥1 valor
+  da CBRio em ate 60d da decisao"
+- **5 valores** como colunas: Seguir, Conectar, Investir, Servir, Generosidade
+- **6 areas** como linhas: Kids, Bridge, AMI, Sede, Online, CBA
+- Matriz Valor × Area → ~150 KPIs distribuidos
+- Cascata automatica: ponta alimenta o agregado
+
+### 3 telas principais (objetivo final)
+
+| Rota | Persona | Resumo |
+|------|---------|--------|
+| `/painel` | Diretoria + todos | NSM topo · carrossel de 6 mandalas · matriz colorida 6×5 · 3 alertas criticos |
+| `/minha-area` | Lideres de area | KPIs da sua area agrupados por valor (nao periodicidade) |
+| `/gestao` | Marcos + Matheus + Eduardo | Pulso · Configurar · Saude do sistema |
+| `/ritual` | Diretoria geral (5 nominais) | Fluxo guiado mensal · regra de ouro causa-decisao-resp-proximo passo |
+
+### Fase 1 — Mergeada em 2026-05-07 (PR #264)
+
+Estruturas criadas:
+
+```
+igrejas (tabela)
+  ├─ CBRio Sede + CBRio Online seedados
+  └─ Igrejas externas CBA criadas via INSERT (tipo='cba_acompanhada')
+
+mem_membros.igreja_id, int_visitantes.igreja_id
+  └─ FK · default = CBRio Sede
+
+profiles.is_diretoria_geral (bool) + funcao_diretoria (text)
+  └─ Subconjunto nominal das 5 pessoas da diretoria geral
+     (DISTINTO de role='diretor' que da acesso a /gestao)
+
+kpi_trajetoria
+  └─ Checkpoints intermediarios da meta por KPI por periodo
+  └─ vw_kpi_trajetoria_atual calcula status (no_alvo/atras/critico)
+
+nsm_eventos (append-only)
+  └─ 1 linha por engajamento de pessoa em valor
+  └─ Coluna calculada dentro_janela_60d (≤60d da decisao)
+
+nsm_estado (1 linha por segmento)
+  └─ Seedados: central, cbrio, online, cba
+  └─ Extensivel: novos segmentos via INSERT (segmento_filtro JSON)
+  └─ Recalculada por funcao recalcular_nsm() em cron horario
+
+areas_kpi (formal)
+  └─ 14 areas: 11 existentes + Bridge + Online + Sede
+  └─ kpi_indicadores_taticos.area continua string referenciando areas_kpi.id
+```
+
+**Renomeacoes importantes:**
+- "Instituicao" (planilha de Marcos+Matheus) → "Sede" (no banco)
+- "OKR (Objetivo Especifico)" da planilha → tratamos como "Meta com
+  trajetoria" no codigo (nao OKR formal, porque nao tem 3-5 KRs)
+
+### Diretoria geral (5 nominais)
+
+Eduardo Gnisci · Lider de Gestao (chefe do Marcos · tambem role=diretor)
+Arthur Serpa · Lider Ministerial
+Pedro Menezes · Lider Criativo
+Pr. Pedrao · Pastor Senior
+Pr. Juninho · Pastor Presidente
+
+`is_diretoria_geral=true` em profiles → recebe alertas criticos no painel
+e participa do `/ritual`. Marcar via UI no `/gestao` (Fase 4) ou direto:
+
+```sql
+UPDATE profiles SET is_diretoria_geral = true,
+                    funcao_diretoria = 'Pastor Senior'
+ WHERE email = 'pedrao@cbrio.com.br';
+```
+
+### Como rodar recalculo da NSM
+
+```sql
+-- Manual:
+SELECT public.recalcular_nsm();
+
+-- Cron (recomendado, horario):
+SELECT cron.schedule('nsm-hourly', '0 * * * *',
+  'SELECT public.recalcular_nsm()');
+
+-- Ler painel:
+SELECT * FROM vw_nsm_painel;
+-- status: sem_dado | verde | amarelo | vermelho
+```
+
+### Proximas fases
+
+- **Fase 1.5** · Triggers que alimentam nsm_eventos a partir de
+  batismo (mem_membros.data_batismo), devocional (mem_devocionais),
+  grupo (mem_grupo_membros), voluntariado (vol_profiles),
+  doacao (mem_contribuicoes). Exige inspecao de cada tabela para nao
+  quebrar triggers existentes.
+- **Fase 2** · `/painel` reformulado (NSM topo, carrossel mandalas,
+  matriz colorida, drill-down em 4 camadas)
+- **Fase 3** · `/minha-area` agrupada por valor
+- **Fase 4** · `/gestao` 3 abas (Pulso · Configurar · Saude)
+- **Fase 5** · `/ritual` + notificacoes in-app
+
+### O que sera removido quando o sistema estiver pronto
+
+- `/painel-kpis` (do Matheus, sera substituido por `/painel`)
+- `/meus-kpis` (do Matheus, vira `/minha-area`)
+- `/admin/cultura` (Mandala vira componente do `/painel`)
+- `/kpis` legado (TabEstrategico/TabPorArea)
+- `/processos` abas OKR/Agenda (limpas)
+
+### Decisoes registradas
+
+- NSM em **2 tabelas** (eventos + estado), nao view materializada — painel
+  abre instantaneo lendo 1 linha
+- Trajetoria em **tabela separada**, nao JSON — permite indexar e versionar
+- Areas em **tabela formal**, mas sem migrar strings de
+  kpi_indicadores_taticos — sem refactor destrutivo
+- `is_diretoria_geral` **complementa** role='diretor', nao substitui
+- Notificacoes **in-app apenas** (sino topbar) — sem email/SMS
+- Ritual **sempre aberto** + modo guiado opcional — nao janela fechada
