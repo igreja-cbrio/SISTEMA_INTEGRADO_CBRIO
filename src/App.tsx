@@ -87,6 +87,7 @@ const PainelNsmPessoas = lazyWithRetry(() => import('./pages/PainelNsmPessoas'))
 const EstruturaOkr = lazyWithRetry(() => import('./pages/admin/EstruturaOkr'));
 const Ritual = lazyWithRetry(() => import('./pages/Ritual'));
 const Gestao = lazyWithRetry(() => import('./pages/Gestao'));
+const MinhaArea = lazyWithRetry(() => import('./pages/MinhaArea'));
 const Membresia = lazyWithRetry(() => import('./pages/ministerial/Membresia'));
 const MemberScan = lazyWithRetry(() => import('./pages/ministerial/membresia/MemberScan'));
 const AssistenteIA = lazyWithRetry(() => import('./pages/admin/AssistenteIA'));
@@ -282,7 +283,7 @@ function AppRoutes() {
         <Route path="/kpis/guia" element={<Navigate to="/painel" replace />} />
         <Route path="/painel-kpis" element={<Navigate to="/painel" replace />} />
         <Route path="/admin/cultura" element={<Navigate to="/painel" replace />} />
-        <Route path="/meus-kpis" element={<Suspense fallback={<Loading />}><MeusKpis /></Suspense>} />
+        <Route path="/meus-kpis" element={<Navigate to="/minha-area" replace />} />
         <Route path="/painel" element={<Suspense fallback={<Loading />}><Painel /></Suspense>} />
         <Route path="/painel/kpi/:id" element={<Suspense fallback={<Loading />}><PainelKpi /></Suspense>} />
         <Route path="/painel/nsm/pessoas" element={<Suspense fallback={<Loading />}><PainelNsmPessoas /></Suspense>} />
@@ -291,6 +292,7 @@ function AppRoutes() {
         <Route path="/admin/estrutura-okr" element={<Suspense fallback={<Loading />}><EstruturaOkr /></Suspense>} />
         <Route path="/ritual" element={<Suspense fallback={<Loading />}><Ritual /></Suspense>} />
         <Route path="/gestao" element={<Suspense fallback={<Loading />}><Gestao /></Suspense>} />
+        <Route path="/minha-area" element={<Suspense fallback={<Loading />}><MinhaArea /></Suspense>} />
         <Route path="/admin/grupos/qrcode-inscricao" element={<Suspense fallback={<Loading />}><InscricaoGruposQRCode /></Suspense>} />
         <Route path="/admin/grupos/geocode" element={<Suspense fallback={<Loading />}><GruposGeocode /></Suspense>} />
         <Route path="/ministerial/*" element={<PlaceholderPage title="Ministerial" />} />

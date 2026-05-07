@@ -49,7 +49,7 @@ const NAV_ITEMS = [
         items: [
           { label: 'Painel CBRio', description: 'NSM · 5 valores · 6 áreas — visão central da igreja', icon: Activity, path: '/painel' },
           { label: 'Ritual Mensal', description: 'Revisão dos OKRs em alerta · regra de ouro', icon: ClipboardCheck, path: '/ritual' },
-          { label: 'Meus KPIs', description: 'Os indicadores da sua área para preencher', icon: BarChart2, path: '/meus-kpis' },
+          { label: 'Minha Área', description: 'KPIs da sua área agrupados por valor da Jornada', icon: BarChart2, path: '/minha-area' },
           { label: 'Gestão (PMO)', description: 'Pulso · Configurar · Saúde do sistema (admin)', icon: Settings, path: '/gestao' },
           { label: 'Assistente IA', description: 'Agentes de auditoria e análise', icon: BrainCircuit, path: '/assistente-ia', perm: 'canIA' },
         ],

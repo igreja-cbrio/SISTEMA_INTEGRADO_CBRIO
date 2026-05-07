@@ -89,7 +89,7 @@ export default function MeusKpisResumo() {
 
   return (
     <div
-      onClick={() => navigate('/meus-kpis')}
+      onClick={() => navigate('/minha-area')}
       style={{
         background: C.card, borderRadius: 12, padding: 16, border: `1px solid ${tudoEmDia ? C.green : (stats.faltam > 0 ? C.amber : C.border)}`,
         cursor: 'pointer', transition: 'transform 0.1s, border-color 0.15s',
