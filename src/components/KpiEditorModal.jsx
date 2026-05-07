@@ -13,10 +13,12 @@
 //   responsavel_area, apuracao, sort_order, ativo, valores[].
 // ============================================================================
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, useCallback } from 'react';
 import { useKpis } from '../hooks/useKpis';
 import { AREAS } from '../data/indicadores';
-import { rh as rhApi } from '../api';
+import { rh as rhApi, estrategia as estrategiaApi } from '../api';
+import { Plus, Pencil, Trash2, X, Save } from 'lucide-react';
+import { toast } from 'sonner';
 
 const C = {
   bg: 'var(--cbrio-bg)', card: 'var(--cbrio-card)', text: 'var(--cbrio-text)',
@@ -86,6 +88,7 @@ const EMPTY = {
   meta_descricao: '', meta_valor: '', unidade: '', pilar: '',
   responsavel_area: '', apuracao: '', sort_order: 0, ativo: true,
   valores: [], is_okr: false, lider_funcionario_id: '',
+  objetivo_geral_id: '', memoria_calculo: '', observacoes: '',
 };
 
 export default function KpiEditorModal({ open, kpi, onClose, onSaved, defaultArea, allowedAreas }) {
@@ -94,15 +97,30 @@ export default function KpiEditorModal({ open, kpi, onClose, onSaved, defaultAre
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState(null);
   const [funcionarios, setFuncionarios] = useState([]);
+  const [objetivos, setObjetivos] = useState([]);
+  const [krs, setKrs] = useState([]);
+  const [editKr, setEditKr] = useState(null);
   const isEdit = !!kpi;
 
-  // Carrega funcionarios ativos pra dropdown de lider
+  // Carrega dropdowns: funcionarios + objetivos
   useEffect(() => {
     if (!open) return;
     rhApi.funcionarios.list({ status: 'ativo' })
       .then(setFuncionarios)
       .catch(() => setFuncionarios([]));
+    estrategiaApi.objetivos.list({ ativos: 'true' })
+      .then(setObjetivos)
+      .catch(() => setObjetivos([]));
   }, [open]);
+
+  // Carrega KRs especificos do KPI (se em edicao)
+  const loadKrs = useCallback(() => {
+    if (!isEdit || !kpi?.id) { setKrs([]); return; }
+    estrategiaApi.krs.list({ kpi_id: kpi.id })
+      .then(setKrs)
+      .catch(() => setKrs([]));
+  }, [isEdit, kpi?.id]);
+  useEffect(() => { if (open) loadKrs(); }, [open, loadKrs]);
 
   useEffect(() => {
     if (!open) return;
@@ -126,11 +144,23 @@ export default function KpiEditorModal({ open, kpi, onClose, onSaved, defaultAre
         valores: kpi.valores || [],
         is_okr: !!kpi.is_okr,
         lider_funcionario_id: kpi.lider_funcionario_id || '',
+        objetivo_geral_id: kpi.objetivo_geral_id || '',
+        memoria_calculo: kpi.memoria_calculo || '',
+        observacoes: kpi.observacoes || '',
       });
     } else {
       setForm({ ...EMPTY, area: defaultArea || '' });
     }
   }, [open, kpi, defaultArea]);
+
+  const removerKr = async (kr) => {
+    if (!window.confirm(`Remover KR "${kr.titulo}"?`)) return;
+    try {
+      await estrategiaApi.krs.remove(kr.id);
+      toast.success('KR removido');
+      loadKrs();
+    } catch (e) { toast.error(e?.message); }
+  };
 
   const offsetOpts = useMemo(() => offsetOptionsFor(form.periodicidade), [form.periodicidade]);
 
@@ -164,6 +194,9 @@ export default function KpiEditorModal({ open, kpi, onClose, onSaved, defaultAre
         meta_valor: form.meta_valor === '' ? null : Number(form.meta_valor),
         periodo_offset_meses: Number(form.periodo_offset_meses) || 0,
         sort_order: Number(form.sort_order) || 0,
+        objetivo_geral_id: form.objetivo_geral_id || null,
+        memoria_calculo: form.memoria_calculo || null,
+        observacoes: form.observacoes || null,
       };
       const saved = isEdit
         ? await update(kpi.id, payload)
@@ -323,7 +356,77 @@ export default function KpiEditorModal({ open, kpi, onClose, onSaved, defaultAre
               </div>
             </Field>
           </div>
+
+          {/* Objetivo Geral + Memoria + Observacoes (Fase 2.5C) */}
+          <div style={{ gridColumn: '1/-1' }}>
+            <Field label="Objetivo Geral (agrupa KPIs do mesmo tema)" hint="Ex: 'Aumentar batismos' agrupa o KPI de cada area. Cascata automatica: ao preencher este KPI, o objetivo geral atualiza % automaticamente.">
+              <select value={form.objetivo_geral_id || ''} onChange={e => set('objetivo_geral_id', e.target.value || null)} style={inp}>
+                <option value="">— Sem objetivo geral —</option>
+                {objetivos.length === 0 && <option disabled>Carregando objetivos...</option>}
+                {objetivos.map(o => (
+                  <option key={o.id} value={o.id}>{o.nome}</option>
+                ))}
+              </select>
+            </Field>
+          </div>
+          <div style={{ gridColumn: '1/-1' }}>
+            <Field label="Memoria de calculo" hint="Como o indicador eh efetivamente calculado. Ex: '% crescimento da frequencia em relacao a semana anterior'.">
+              <textarea value={form.memoria_calculo} onChange={e => set('memoria_calculo', e.target.value)} rows={2} style={{ ...inp, resize: 'vertical' }}
+                placeholder="Ex: '8% da frequencia media dominical'" />
+            </Field>
+          </div>
+          <div style={{ gridColumn: '1/-1' }}>
+            <Field label="Observacoes adicionais">
+              <textarea value={form.observacoes} onChange={e => set('observacoes', e.target.value)} rows={2} style={{ ...inp, resize: 'vertical' }}
+                placeholder="Notas, ressalvas, etc" />
+            </Field>
+          </div>
         </div>
+
+        {/* KRs especificos (so em edit, depois de salvo o KPI) */}
+        {isEdit && (
+          <div style={{ marginTop: 24, paddingTop: 18, borderTop: `1px solid ${C.border}` }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8, flexWrap: 'wrap', gap: 8 }}>
+              <div>
+                <h3 style={{ fontSize: 13, fontWeight: 700, color: C.t2, margin: 0, textTransform: 'uppercase', letterSpacing: 0.5 }}>
+                  Resultados-chave (KRs) deste KPI
+                </h3>
+                <p style={{ fontSize: 11, color: C.t3, marginTop: 4 }}>
+                  Analises que triangulam o KPI principal. Ex: alem de "% crescimento da frequencia",
+                  KRs como "0 cultos com queda &gt; 15%" ou "% retencao semana-a-semana".
+                </p>
+              </div>
+              <button type="button" onClick={() => setEditKr({ kpi_id: form.id })}
+                style={{ padding: '6px 12px', borderRadius: 6, fontSize: 12, fontWeight: 600, background: C.primary, color: '#fff', border: 'none', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                <Plus size={13} /> Novo KR
+              </button>
+            </div>
+            {krs.length === 0 ? (
+              <div style={{ padding: 14, fontSize: 11, color: C.t3, background: C.inputBg, borderRadius: 6, fontStyle: 'italic' }}>
+                Nenhum KR especifico ainda. Sugerido: 2-4 KRs que ajudam a triangular o resultado.
+              </div>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                {krs.map(kr => (
+                  <div key={kr.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px', background: C.card, border: `1px solid ${C.border}`, borderRadius: 6 }}>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: 12, fontWeight: 600, color: C.text }}>{kr.titulo}</div>
+                      {(kr.meta_valor != null || kr.meta_texto) && (
+                        <div style={{ fontSize: 10, color: C.t3 }}>
+                          meta: {kr.meta_valor != null ? `${kr.meta_valor}${kr.unidade ? ' ' + kr.unidade : ''}` : kr.meta_texto}
+                        </div>
+                      )}
+                    </div>
+                    <button type="button" onClick={() => setEditKr(kr)}
+                      style={{ background: 'transparent', border: 'none', padding: 6, color: C.t3, cursor: 'pointer' }}><Pencil size={12} /></button>
+                    <button type="button" onClick={() => removerKr(kr)}
+                      style={{ background: 'transparent', border: 'none', padding: 6, color: '#ef4444', cursor: 'pointer' }}><Trash2 size={12} /></button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
 
         {/* Footer */}
         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 20, paddingTop: 16, borderTop: `1px solid ${C.border}` }}>
@@ -336,6 +439,108 @@ export default function KpiEditorModal({ open, kpi, onClose, onSaved, defaultAre
             {saving ? 'Salvando...' : isEdit ? 'Salvar alterações' : 'Criar KPI'}
           </button>
         </div>
+      </div>
+
+      {/* Sub-modal: editor de KR especifico */}
+      {editKr && (
+        <KrEditorInline
+          kr={editKr}
+          onClose={() => setEditKr(null)}
+          onSaved={() => { setEditKr(null); loadKrs(); }}
+        />
+      )}
+    </div>
+  );
+}
+
+// ============================================================================
+// KrEditorInline — modal-em-modal para editar KR especifico do KPI
+// ============================================================================
+function KrEditorInline({ kr, onClose, onSaved }) {
+  const isNovo = !kr.id;
+  const [form, setForm] = useState({
+    titulo: kr.titulo || '',
+    descricao: kr.descricao || '',
+    formula_calculo: kr.formula_calculo || '',
+    meta_valor: kr.meta_valor ?? '',
+    meta_texto: kr.meta_texto || '',
+    unidade: kr.unidade || '',
+    ordem: kr.ordem || 99,
+  });
+  const [saving, setSaving] = useState(false);
+  const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
+
+  const submit = async () => {
+    if (!form.titulo.trim()) return toast.error('Titulo obrigatorio');
+    setSaving(true);
+    try {
+      const payload = {
+        ...form,
+        meta_valor: form.meta_valor === '' ? null : Number(form.meta_valor),
+      };
+      if (isNovo) {
+        payload.kpi_id = kr.kpi_id;
+        await estrategiaApi.krs.create(payload);
+        toast.success('KR criado');
+      } else {
+        await estrategiaApi.krs.update(kr.id, payload);
+        toast.success('KR atualizado');
+      }
+      onSaved?.();
+    } catch (e) {
+      toast.error(e?.message || 'Erro ao salvar KR');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div onClick={onClose}
+      style={{ position: 'fixed', inset: 0, zIndex: 1100, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
+      <div onClick={e => e.stopPropagation()}
+        style={{ background: 'var(--cbrio-modal-bg)', borderRadius: 12, width: 520, maxHeight: '85vh', overflow: 'auto' }}>
+        <header style={{ padding: 16, borderBottom: '1px solid var(--cbrio-border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <h3 style={{ fontSize: 15, fontWeight: 700, margin: 0 }}>
+            {isNovo ? 'Novo KR especifico' : 'Editar KR'}
+          </h3>
+          <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--cbrio-text3)', padding: 4 }}>
+            <X size={18} />
+          </button>
+        </header>
+        <div style={{ padding: 16 }}>
+          <Field label="Titulo *">
+            <input value={form.titulo} onChange={e => set('titulo', e.target.value)} style={inp}
+              placeholder='Ex: "0 cultos com queda > 15%"' />
+          </Field>
+          <Field label="Descricao">
+            <textarea value={form.descricao} onChange={e => set('descricao', e.target.value)} rows={2} style={{ ...inp, resize: 'vertical' }} />
+          </Field>
+          <Field label="Formula de calculo">
+            <input value={form.formula_calculo} onChange={e => set('formula_calculo', e.target.value)} style={inp}
+              placeholder='Como medir' />
+          </Field>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+            <Field label="Meta (numerica)">
+              <input type="number" value={form.meta_valor} onChange={e => set('meta_valor', e.target.value)} style={inp} />
+            </Field>
+            <Field label="Unidade">
+              <input value={form.unidade} onChange={e => set('unidade', e.target.value)} style={inp} placeholder="%, pessoas, R$..." />
+            </Field>
+          </div>
+          <Field label="Meta (texto, alternativa)">
+            <input value={form.meta_texto} onChange={e => set('meta_texto', e.target.value)} style={inp} />
+          </Field>
+        </div>
+        <footer style={{ padding: 14, borderTop: '1px solid var(--cbrio-border)', display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+          <button onClick={onClose} disabled={saving}
+            style={{ padding: '8px 14px', borderRadius: 6, fontSize: 12, fontWeight: 600, background: 'transparent', color: 'var(--cbrio-text2)', border: '1px solid var(--cbrio-border)', cursor: 'pointer' }}>
+            Cancelar
+          </button>
+          <button onClick={submit} disabled={saving}
+            style={{ padding: '8px 14px', borderRadius: 6, fontSize: 12, fontWeight: 600, background: '#00B39D', color: '#fff', border: 'none', cursor: saving ? 'not-allowed' : 'pointer', opacity: saving ? 0.5 : 1, display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+            <Save size={13} /> {saving ? 'Salvando...' : 'Salvar'}
+          </button>
+        </footer>
       </div>
     </div>
   );

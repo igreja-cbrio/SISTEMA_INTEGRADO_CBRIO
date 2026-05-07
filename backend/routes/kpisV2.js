@@ -255,6 +255,7 @@ router.put('/taticos/:id', authorizeKpiArea(req => fetchIndicadorArea(req.params
     'meta_descricao', 'meta_valor', 'unidade', 'responsavel_area', 'apuracao',
     'sort_order', 'ativo', 'kpi_estrategico_id', 'fonte_auto', 'valores', 'pilar',
     'is_okr', 'lider_funcionario_id',
+    'objetivo_geral_id', 'memoria_calculo', 'observacoes',
   ];
   const update = { updated_at: new Date().toISOString() };
   for (const [k, v] of Object.entries(req.body || {})) {
@@ -334,6 +335,9 @@ router.post('/taticos', authorizeKpiArea(req => req.body?.area), async (req, res
     pilar: b.pilar ?? null,
     is_okr: isOkr,
     lider_funcionario_id: b.lider_funcionario_id ?? null,
+    objetivo_geral_id: b.objetivo_geral_id ?? null,
+    memoria_calculo: b.memoria_calculo ?? null,
+    observacoes: b.observacoes ?? null,
   };
   const { data, error } = await supabase
     .from('kpi_indicadores_taticos')
