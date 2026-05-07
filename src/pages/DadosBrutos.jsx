@@ -7,7 +7,7 @@ import { useState, useEffect, useMemo, useCallback } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { dadosBrutos as dadosApi } from '../api';
 import { useMyKpiAreas } from '../hooks/useMyKpiAreas';
-import { Database, Plus, Pencil, Trash2, X, Save, Calendar, Filter } from 'lucide-react';
+import { Database, Plus, Pencil, Trash2, X, Save, Calendar, Filter, CheckCircle2, ShieldCheck } from 'lucide-react';
 import { toast } from 'sonner';
 
 const C = {
@@ -33,7 +33,7 @@ function hoje() {
 
 export default function DadosBrutos({ embedded = false }) {
   const { profile } = useAuth();
-  const { kpiAreas, isAdmin } = useMyKpiAreas();
+  const { kpiAreas, isAdmin, ministerioId, ministerioPapel, canEditDado, canValidate } = useMyKpiAreas();
   const [tipos, setTipos] = useState([]);
   const [dados, setDados] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -49,13 +49,14 @@ export default function DadosBrutos({ embedded = false }) {
   // Todos veem todas as areas (read). So edita as proprias (validado no submit).
   const areasDisponiveis = AREAS_OFICIAIS;
 
-  // Areas que o usuario pode editar (registrar/editar dados)
+  // Areas que o usuario pode registrar dado AS suas (lider de area)
   const areasEditaveis = useMemo(() => {
     if (isAdmin) return AREAS_OFICIAIS;
     return AREAS_OFICIAIS.filter(a => kpiAreas.includes(a.id));
   }, [isAdmin, kpiAreas]);
 
-  const podeRegistrar = areasEditaveis.length > 0;
+  // Lider/assistente de ministerio pode registrar dados em todas areas
+  const podeRegistrar = isAdmin || areasEditaveis.length > 0 || !!ministerioId;
 
   // Carregar tipos
   useEffect(() => {
@@ -93,6 +94,26 @@ export default function DadosBrutos({ embedded = false }) {
     } catch (e) { toast.error(e?.message); }
   };
 
+  const validar = async (d) => {
+    try {
+      if (d.validado_em) {
+        await dadosApi.desvalidar(d.id);
+        toast.success('Validacao removida');
+      } else {
+        await dadosApi.validar(d.id);
+        toast.success('Validado');
+      }
+      loadDados();
+    } catch (e) { toast.error(e?.message); }
+  };
+
+  // Mapa de tipo_id → ministerio_id (pra checar canEditDado)
+  const ministerioByTipo = useMemo(() => {
+    const m = {};
+    tipos.forEach(t => { m[t.id] = t.ministerio_id; });
+    return m;
+  }, [tipos]);
+
   return (
     <div style={{ padding: embedded ? 0 : '24px 32px', maxWidth: embedded ? '100%' : 1200, margin: embedded ? 0 : '0 auto' }}>
       {!embedded && (
@@ -104,11 +125,14 @@ export default function DadosBrutos({ embedded = false }) {
           </h1>
           <p style={{ fontSize: 12, color: C.t3, marginTop: 6 }}>
             Numeros absolutos da igreja (frequencia, conversoes, batismos, doacoes...).
-            {isAdmin
-              ? ' Voce pode editar dados de qualquer area (admin).'
-              : podeRegistrar
-                ? ` Voce pode registrar/editar dados de: ${areasEditaveis.map(a => a.nome).join(', ')}.`
-                : ' Voce esta em modo leitura — peca um admin pra atribuir sua area.'}
+            {isAdmin && ' Voce edita qualquer dado (admin).'}
+            {!isAdmin && areasEditaveis.length > 0 && (
+              <> Voce e <strong>lider de area</strong> ({areasEditaveis.map(a => a.nome).join(', ')}) — edita/valida dados da sua area.</>
+            )}
+            {!isAdmin && ministerioId && (
+              <> Voce e <strong>{ministerioPapel} de {ministerioId}</strong> — preenche dados do seu ministerio em todas as areas.</>
+            )}
+            {!isAdmin && !areasEditaveis.length && !ministerioId && ' Modo leitura.'}
           </p>
         </div>
         {podeRegistrar && (
@@ -215,7 +239,20 @@ export default function DadosBrutos({ embedded = false }) {
                     </td>
                     <td style={{ ...td, color: C.t3, fontSize: 11 }}>{d.observacao || '—'}</td>
                     <td style={{ ...td, textAlign: 'right', whiteSpace: 'nowrap' }}>
-                      {d.origem !== 'auto' && (isAdmin || areasEditaveis.some(a => a.id === d.area)) && (
+                      {d.validado_em && (
+                        <span title={`Validado em ${new Date(d.validado_em).toLocaleDateString('pt-BR')}`}
+                          style={{ marginRight: 6, color: '#10B981', display: 'inline-flex', verticalAlign: 'middle' }}>
+                          <ShieldCheck size={13} />
+                        </span>
+                      )}
+                      {canValidate(d.area) && d.origem !== 'auto' && (
+                        <button onClick={() => validar(d)}
+                          title={d.validado_em ? 'Desfazer validacao' : 'Validar (OK final do ciclo)'}
+                          style={{ ...btnIcon, color: d.validado_em ? '#10B981' : '#9CA3AF' }}>
+                          <CheckCircle2 size={12} />
+                        </button>
+                      )}
+                      {d.origem !== 'auto' && canEditDado(d.area, ministerioByTipo[d.tipo_id]) && (
                         <>
                           <button onClick={() => setEditando(d)} style={btnIcon}><Pencil size={12} /></button>
                           <button onClick={() => remover(d)} style={{ ...btnIcon, color: '#EF4444' }}><Trash2 size={12} /></button>
@@ -256,16 +293,30 @@ export default function DadosBrutos({ embedded = false }) {
                 {d.observacao && (
                   <div style={{ fontSize: 11, color: C.t3, fontStyle: 'italic', marginBottom: 6 }}>{d.observacao}</div>
                 )}
-                {d.origem !== 'auto' && (isAdmin || areasEditaveis.some(a => a.id === d.area)) && (
-                  <div style={{ display: 'flex', gap: 6, marginTop: 6 }}>
-                    <button onClick={() => setEditando(d)}
-                      style={{ flex: 1, padding: '6px 10px', borderRadius: 6, fontSize: 11, fontWeight: 600, background: 'transparent', color: C.t2, border: `1px solid ${C.border}`, cursor: 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 4 }}>
-                      <Pencil size={12} /> Editar
-                    </button>
-                    <button onClick={() => remover(d)}
-                      style={{ padding: '6px 10px', borderRadius: 6, fontSize: 11, fontWeight: 600, background: 'transparent', color: '#EF4444', border: `1px solid #EF444440`, cursor: 'pointer' }}>
-                      <Trash2 size={12} />
-                    </button>
+                {d.origem !== 'auto' && (
+                  <div style={{ display: 'flex', gap: 6, marginTop: 6, flexWrap: 'wrap' }}>
+                    {canValidate(d.area) && (
+                      <button onClick={() => validar(d)}
+                        style={{ flex: 1, padding: '6px 10px', borderRadius: 6, fontSize: 11, fontWeight: 600,
+                          background: d.validado_em ? '#D1FAE5' : 'transparent',
+                          color: d.validado_em ? '#065F46' : C.t2,
+                          border: `1px solid ${d.validado_em ? '#10B98140' : C.border}`,
+                          cursor: 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 4 }}>
+                        <CheckCircle2 size={12} /> {d.validado_em ? 'Validado' : 'Validar'}
+                      </button>
+                    )}
+                    {canEditDado(d.area, ministerioByTipo[d.tipo_id]) && (
+                      <>
+                        <button onClick={() => setEditando(d)}
+                          style={{ flex: 1, padding: '6px 10px', borderRadius: 6, fontSize: 11, fontWeight: 600, background: 'transparent', color: C.t2, border: `1px solid ${C.border}`, cursor: 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 4 }}>
+                          <Pencil size={12} /> Editar
+                        </button>
+                        <button onClick={() => remover(d)}
+                          style={{ padding: '6px 10px', borderRadius: 6, fontSize: 11, fontWeight: 600, background: 'transparent', color: '#EF4444', border: `1px solid #EF444440`, cursor: 'pointer' }}>
+                          <Trash2 size={12} />
+                        </button>
+                      </>
+                    )}
                   </div>
                 )}
               </div>
@@ -285,12 +336,11 @@ export default function DadosBrutos({ embedded = false }) {
         <ModalRegistrar
           dado={editando}
           tipos={tipos}
-          areasDisponiveis={areasEditaveis}
-          areaDefault={
-            (filtroArea && areasEditaveis.some(a => a.id === filtroArea))
-              ? filtroArea
-              : (areasEditaveis[0]?.id || '')
-          }
+          ministerioId={ministerioId}
+          isAdmin={isAdmin}
+          areasOficiais={AREAS_OFICIAIS}
+          areasEditaveis={areasEditaveis}
+          areaDefault={filtroArea || (areasEditaveis[0]?.id || '') || AREAS_OFICIAIS[0]?.id}
           onClose={() => setEditando(null)}
           onSaved={() => { setEditando(null); loadDados(); }}
         />
@@ -302,7 +352,13 @@ export default function DadosBrutos({ embedded = false }) {
 // ----------------------------------------------------------------------------
 // ModalRegistrar — criar/editar registro
 // ----------------------------------------------------------------------------
-function ModalRegistrar({ dado, tipos, areasDisponiveis, areaDefault, onClose, onSaved }) {
+function ModalRegistrar({ dado, tipos, ministerioId, isAdmin, areasOficiais, areasEditaveis, areaDefault, onClose, onSaved }) {
+  // Lider de ministerio pode preencher em qualquer area; lider de area so na sua
+  const areasDisponiveis = (isAdmin || ministerioId) ? areasOficiais : areasEditaveis;
+  // Tipos disponiveis: se lider de area, todos. Se lider de ministerio (sem ser area), so tipos do ministerio dele
+  const tiposDisponiveis = (isAdmin || areasEditaveis?.length > 0 || !ministerioId)
+    ? tipos
+    : tipos.filter(t => t.ministerio_id === ministerioId);
   const isNovo = !dado.id;
   const [form, setForm] = useState({
     tipo_id: dado.tipo_id || '',
@@ -367,7 +423,7 @@ function ModalRegistrar({ dado, tipos, areasDisponiveis, areaDefault, onClose, o
           <Field label="Tipo de dado *">
             <select value={form.tipo_id} onChange={e => set('tipo_id', e.target.value)} style={inp} disabled={!isNovo}>
               <option value="">— Escolher —</option>
-              {tipos.map(t => (
+              {tiposDisponiveis.map(t => (
                 <option key={t.id} value={t.id}>{t.nome}{t.unidade ? ` (${t.unidade})` : ''}</option>
               ))}
             </select>

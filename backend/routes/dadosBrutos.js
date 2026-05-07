@@ -172,6 +172,70 @@ router.put('/:id', async (req, res) => {
   }
 });
 
+// ----------------------------------------------------------------------------
+// POST /:id/validar — lider de area da OK (validacao final de ciclo)
+// ----------------------------------------------------------------------------
+router.post('/:id/validar', async (req, res) => {
+  try {
+    const { data: cur } = await supabase
+      .from('dados_brutos')
+      .select('area, validado_em')
+      .eq('id', req.params.id)
+      .maybeSingle();
+    if (!cur) return res.status(404).json({ error: 'Registro nao encontrado' });
+
+    // Conferir permissao de validacao (lider de area + admin/diretor)
+    if (!['admin', 'diretor'].includes(req.user?.role)) {
+      const myAreas = (req.user.kpi_areas || []).map(a => a.toLowerCase());
+      if (!myAreas.includes(cur.area.toLowerCase())) {
+        return res.status(403).json({ error: 'Apenas lider de area pode validar dados da sua area' });
+      }
+    }
+
+    const { data, error } = await supabase
+      .from('dados_brutos')
+      .update({
+        validado_por_user_id: req.user?.userId || null,
+        validado_em: new Date().toISOString(),
+      })
+      .eq('id', req.params.id)
+      .select()
+      .single();
+    if (error) throw error;
+    res.json(data);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// DELETE /:id/validar — desfaz validacao
+router.delete('/:id/validar', async (req, res) => {
+  try {
+    const { data: cur } = await supabase
+      .from('dados_brutos')
+      .select('area')
+      .eq('id', req.params.id)
+      .maybeSingle();
+    if (!cur) return res.status(404).json({ error: 'Registro nao encontrado' });
+
+    if (!['admin', 'diretor'].includes(req.user?.role)) {
+      const myAreas = (req.user.kpi_areas || []).map(a => a.toLowerCase());
+      if (!myAreas.includes(cur.area.toLowerCase())) {
+        return res.status(403).json({ error: 'Sem permissao' });
+      }
+    }
+
+    const { error } = await supabase
+      .from('dados_brutos')
+      .update({ validado_por_user_id: null, validado_em: null })
+      .eq('id', req.params.id);
+    if (error) throw error;
+    res.status(204).end();
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 router.delete('/:id', async (req, res) => {
   try {
     const { data: cur } = await supabase
