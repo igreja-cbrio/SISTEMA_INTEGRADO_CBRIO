@@ -74,12 +74,14 @@ export default function MinhaArea() {
   const [detalheKpiId, setDetalheKpiId] = useState(null);
   const [valorExpandido, setValorExpandido] = useState(null);
 
-  // KPIs filtrados pelas minhas areas
-  const meusKpis = useMemo(() => {
-    if (isAdmin) return kpis.filter(k => k.ativo);
-    if (kpiAreas.length === 0) return [];
-    return kpis.filter(k => k.ativo && kpiAreas.includes(String(k.area_db || '').toLowerCase()));
-  }, [kpis, kpiAreas, isAdmin]);
+  // Todos veem todos os KPIs ativos (read). Edicao restrita por kpiAreas no card.
+  const meusKpis = useMemo(() => kpis.filter(k => k.ativo), [kpis]);
+
+  // Areas que o usuario pode editar
+  const podeEditar = useCallback((kpi) => {
+    if (isAdmin) return true;
+    return kpiAreas.includes(String(kpi.area_db || '').toLowerCase());
+  }, [kpiAreas, isAdmin]);
 
   // Carregar registros e trajetorias dos meus KPIs
   const loadDados = useCallback(async () => {
@@ -149,7 +151,10 @@ export default function MinhaArea() {
     return <div style={{ padding: 60, textAlign: 'center', color: C.t3 }}>Carregando...</div>;
   }
 
-  if (!isAdmin && kpiAreas.length === 0) {
+  // Todos veem todos os KPIs — quem nao lidera area ve em modo leitura
+  // (sem botao Preencher/Editar nos cards)
+  const apenasLeitura = !isAdmin && kpiAreas.length === 0;
+  if (false) {
     return (
       <div style={{ padding: '40px 20px', maxWidth: 720, margin: '0 auto', textAlign: 'center' }}>
         <Activity size={32} style={{ color: C.t3, marginBottom: 12 }} />
@@ -171,11 +176,15 @@ export default function MinhaArea() {
           </h1>
           <p style={{ fontSize: 12, color: C.t3, marginTop: 6 }}>
             {isAdmin ? (
-              <>Voce esta vendo <strong>todos os KPIs</strong> (admin/diretor)</>
+              <>Voce ve <strong>todos os KPIs</strong> e edita qualquer um (admin/diretor)</>
+            ) : kpiAreas.length === 0 ? (
+              <>Voce esta em modo leitura — sem area atribuida pra editar</>
             ) : (
-              <>Suas areas: {kpiAreas.map(a => (
-                <span key={a} style={{ marginRight: 6, padding: '2px 10px', borderRadius: 99, background: C.primaryBg, color: C.primaryDark, fontWeight: 600, fontSize: 11, textTransform: 'capitalize' }}>{a}</span>
-              ))}</>
+              <>
+                Voce ve todos os KPIs · edita apenas: {kpiAreas.map(a => (
+                  <span key={a} style={{ marginRight: 6, padding: '2px 10px', borderRadius: 99, background: C.primaryBg, color: C.primaryDark, fontWeight: 600, fontSize: 11, textTransform: 'capitalize' }}>{a}</span>
+                ))}
+              </>
             )}
           </p>
         </div>
@@ -239,7 +248,7 @@ export default function MinhaArea() {
                         kpi={kpi}
                         status={statusKpi(kpi)}
                         ultimo={ultimoRegPorIndicador[kpi.id]}
-                        canEdit={isAdmin || kpiAreas.includes(String(kpi.area_db || '').toLowerCase())}
+                        canEdit={podeEditar(kpi)}
                         onPreencher={() => setFillKpi(kpi)}
                         onEditar={() => setEditKpi(kpi)}
                         onRevisar={() => setRevisarKpi(kpi)}

@@ -46,17 +46,16 @@ export default function DadosBrutos() {
   });
   const [editando, setEditando] = useState(null); // null | {} (novo) | {dado existente}
 
-  const areasDisponiveis = useMemo(() => {
+  // Todos veem todas as areas (read). So edita as proprias (validado no submit).
+  const areasDisponiveis = AREAS_OFICIAIS;
+
+  // Areas que o usuario pode editar (registrar/editar dados)
+  const areasEditaveis = useMemo(() => {
     if (isAdmin) return AREAS_OFICIAIS;
     return AREAS_OFICIAIS.filter(a => kpiAreas.includes(a.id));
   }, [isAdmin, kpiAreas]);
 
-  // Default area = primeira disponivel
-  useEffect(() => {
-    if (!filtroArea && areasDisponiveis.length > 0) {
-      setFiltroArea(areasDisponiveis[0].id);
-    }
-  }, [areasDisponiveis, filtroArea]);
+  const podeRegistrar = areasEditaveis.length > 0;
 
   // Carregar tipos
   useEffect(() => {
@@ -94,18 +93,6 @@ export default function DadosBrutos() {
     } catch (e) { toast.error(e?.message); }
   };
 
-  if (!isAdmin && areasDisponiveis.length === 0) {
-    return (
-      <div style={{ padding: '40px 20px', maxWidth: 720, margin: '0 auto', textAlign: 'center' }}>
-        <Database size={32} style={{ color: C.t3, marginBottom: 12 }} />
-        <h1 style={{ fontSize: 18, fontWeight: 700, color: C.text, marginBottom: 8 }}>Voce ainda nao lidera nenhuma area</h1>
-        <p style={{ fontSize: 13, color: C.t3 }}>
-          Para registrar dados, peca a um administrador para atribuir areas em <strong>/admin/kpi-areas</strong>.
-        </p>
-      </div>
-    );
-  }
-
   return (
     <div style={{ padding: '24px 32px', maxWidth: 1200, margin: '0 auto' }}>
       <header style={{ marginBottom: 18, display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12, flexWrap: 'wrap' }}>
@@ -115,20 +102,26 @@ export default function DadosBrutos() {
             Dados Brutos
           </h1>
           <p style={{ fontSize: 12, color: C.t3, marginTop: 6 }}>
-            Numeros absolutos preenchidos pelo lider (frequencia, conversoes, batismos, doacoes, etc).
-            KPIs com calculo automatico leem destes dados.
+            Numeros absolutos da igreja (frequencia, conversoes, batismos, doacoes...).
+            {isAdmin
+              ? ' Voce pode editar dados de qualquer area (admin).'
+              : podeRegistrar
+                ? ` Voce pode registrar/editar dados de: ${areasEditaveis.map(a => a.nome).join(', ')}.`
+                : ' Voce esta em modo leitura — peca um admin pra atribuir sua area.'}
           </p>
         </div>
-        <button
-          onClick={() => setEditando({})}
-          style={{
-            padding: '8px 14px', borderRadius: 6, fontSize: 12, fontWeight: 600,
-            background: C.primary, color: '#fff', border: 'none', cursor: 'pointer',
-            display: 'inline-flex', alignItems: 'center', gap: 6,
-          }}
-        >
-          <Plus size={14} /> Registrar dado
-        </button>
+        {podeRegistrar && (
+          <button
+            onClick={() => setEditando({})}
+            style={{
+              padding: '8px 14px', borderRadius: 6, fontSize: 12, fontWeight: 600,
+              background: C.primary, color: '#fff', border: 'none', cursor: 'pointer',
+              display: 'inline-flex', alignItems: 'center', gap: 6,
+            }}
+          >
+            <Plus size={14} /> Registrar dado
+          </button>
+        )}
       </header>
 
       {/* Filtros */}
@@ -139,7 +132,7 @@ export default function DadosBrutos() {
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 10 }}>
           <Field label="Area">
             <select value={filtroArea} onChange={e => setFiltroArea(e.target.value)} style={inp}>
-              {isAdmin && <option value="">Todas</option>}
+              <option value="">Todas</option>
               {areasDisponiveis.map(a => <option key={a.id} value={a.id}>{a.nome}</option>)}
             </select>
           </Field>
@@ -167,61 +160,119 @@ export default function DadosBrutos() {
           </p>
         </div>
       ) : (
-        <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 10, overflow: 'hidden' }}>
-          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
-            <thead>
-              <tr style={{ background: C.inputBg }}>
-                <th style={th}>Data</th>
-                <th style={th}>Tipo</th>
-                <th style={th}>Area</th>
-                <th style={{ ...th, textAlign: 'right' }}>Valor</th>
-                <th style={th}>Origem</th>
-                <th style={th}>Observação</th>
-                <th style={{ ...th, textAlign: 'right' }}></th>
-              </tr>
-            </thead>
-            <tbody>
-              {dados.map(d => (
-                <tr key={d.id} style={{ borderTop: `1px solid ${C.border}` }}>
-                  <td style={td}>{d.data}</td>
-                  <td style={td}>
-                    <strong>{d.tipo_nome}</strong>
-                    {d.unidade && <span style={{ color: C.t3, fontSize: 10 }}> · {d.unidade}</span>}
-                  </td>
-                  <td style={{ ...td, textTransform: 'capitalize' }}>{d.area}</td>
-                  <td style={{ ...td, textAlign: 'right', fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>
-                    {Number(d.valor).toLocaleString('pt-BR')}
-                  </td>
-                  <td style={td}>
-                    <span style={{
-                      fontSize: 9, padding: '1px 6px', borderRadius: 99,
-                      background: d.origem === 'auto' ? '#3B82F620' : C.inputBg,
-                      color: d.origem === 'auto' ? '#3B82F6' : C.t3,
-                      fontWeight: 600, textTransform: 'uppercase',
-                    }}>{d.origem}</span>
-                  </td>
-                  <td style={{ ...td, color: C.t3, fontSize: 11 }}>{d.observacao || '—'}</td>
-                  <td style={{ ...td, textAlign: 'right', whiteSpace: 'nowrap' }}>
-                    {d.origem !== 'auto' && (
-                      <>
-                        <button onClick={() => setEditando(d)} style={btnIcon}><Pencil size={12} /></button>
-                        <button onClick={() => remover(d)} style={{ ...btnIcon, color: '#EF4444' }}><Trash2 size={12} /></button>
-                      </>
-                    )}
-                  </td>
+        <>
+          {/* Tabela: desktop (>= 768px) */}
+          <div className="dados-table-desktop" style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 10, overflow: 'hidden' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+              <thead>
+                <tr style={{ background: C.inputBg }}>
+                  <th style={th}>Data</th>
+                  <th style={th}>Tipo</th>
+                  <th style={th}>Area</th>
+                  <th style={{ ...th, textAlign: 'right' }}>Valor</th>
+                  <th style={th}>Origem</th>
+                  <th style={th}>Observação</th>
+                  <th style={{ ...th, textAlign: 'right' }}></th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+              </thead>
+              <tbody>
+                {dados.map(d => (
+                  <tr key={d.id} style={{ borderTop: `1px solid ${C.border}` }}>
+                    <td style={td}>{d.data}</td>
+                    <td style={td}>
+                      <strong>{d.tipo_nome}</strong>
+                      {d.unidade && <span style={{ color: C.t3, fontSize: 10 }}> · {d.unidade}</span>}
+                    </td>
+                    <td style={{ ...td, textTransform: 'capitalize' }}>{d.area}</td>
+                    <td style={{ ...td, textAlign: 'right', fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>
+                      {Number(d.valor).toLocaleString('pt-BR')}
+                    </td>
+                    <td style={td}>
+                      <span style={{
+                        fontSize: 9, padding: '1px 6px', borderRadius: 99,
+                        background: d.origem === 'auto' ? '#3B82F620' : C.inputBg,
+                        color: d.origem === 'auto' ? '#3B82F6' : C.t3,
+                        fontWeight: 600, textTransform: 'uppercase',
+                      }}>{d.origem}</span>
+                    </td>
+                    <td style={{ ...td, color: C.t3, fontSize: 11 }}>{d.observacao || '—'}</td>
+                    <td style={{ ...td, textAlign: 'right', whiteSpace: 'nowrap' }}>
+                      {d.origem !== 'auto' && (isAdmin || areasEditaveis.some(a => a.id === d.area)) && (
+                        <>
+                          <button onClick={() => setEditando(d)} style={btnIcon}><Pencil size={12} /></button>
+                          <button onClick={() => remover(d)} style={{ ...btnIcon, color: '#EF4444' }}><Trash2 size={12} /></button>
+                        </>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          {/* Cards: mobile (< 768px) */}
+          <div className="dados-cards-mobile" style={{ display: 'none', flexDirection: 'column', gap: 8 }}>
+            {dados.map(d => (
+              <div key={d.id} style={{
+                background: C.card, border: `1px solid ${C.border}`,
+                borderRadius: 8, padding: 12,
+              }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8, flexWrap: 'wrap', marginBottom: 6 }}>
+                  <div>
+                    <div style={{ fontSize: 12, fontWeight: 700, color: C.text }}>{d.tipo_nome}</div>
+                    <div style={{ fontSize: 10, color: C.t3, marginTop: 2 }}>
+                      <span style={{ textTransform: 'capitalize' }}>{d.area}</span> · {d.data}
+                      {d.origem === 'auto' && (
+                        <span style={{
+                          marginLeft: 6, fontSize: 8, padding: '1px 5px', borderRadius: 99,
+                          background: '#3B82F620', color: '#3B82F6', fontWeight: 600, textTransform: 'uppercase',
+                        }}>auto</span>
+                      )}
+                    </div>
+                  </div>
+                  <div style={{ fontSize: 18, fontWeight: 800, color: C.text, fontVariantNumeric: 'tabular-nums' }}>
+                    {Number(d.valor).toLocaleString('pt-BR')}
+                    {d.unidade && <span style={{ fontSize: 10, color: C.t3, marginLeft: 4 }}>{d.unidade}</span>}
+                  </div>
+                </div>
+                {d.observacao && (
+                  <div style={{ fontSize: 11, color: C.t3, fontStyle: 'italic', marginBottom: 6 }}>{d.observacao}</div>
+                )}
+                {d.origem !== 'auto' && (isAdmin || areasEditaveis.some(a => a.id === d.area)) && (
+                  <div style={{ display: 'flex', gap: 6, marginTop: 6 }}>
+                    <button onClick={() => setEditando(d)}
+                      style={{ flex: 1, padding: '6px 10px', borderRadius: 6, fontSize: 11, fontWeight: 600, background: 'transparent', color: C.t2, border: `1px solid ${C.border}`, cursor: 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 4 }}>
+                      <Pencil size={12} /> Editar
+                    </button>
+                    <button onClick={() => remover(d)}
+                      style={{ padding: '6px 10px', borderRadius: 6, fontSize: 11, fontWeight: 600, background: 'transparent', color: '#EF4444', border: `1px solid #EF444440`, cursor: 'pointer' }}>
+                      <Trash2 size={12} />
+                    </button>
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+
+          <style>{`
+            @media (max-width: 767px) {
+              .dados-table-desktop { display: none; }
+              .dados-cards-mobile { display: flex !important; }
+            }
+          `}</style>
+        </>
       )}
 
       {editando !== null && (
         <ModalRegistrar
           dado={editando}
           tipos={tipos}
-          areasDisponiveis={areasDisponiveis}
-          areaDefault={filtroArea || areasDisponiveis[0]?.id || ''}
+          areasDisponiveis={areasEditaveis}
+          areaDefault={
+            (filtroArea && areasEditaveis.some(a => a.id === filtroArea))
+              ? filtroArea
+              : (areasEditaveis[0]?.id || '')
+          }
           onClose={() => setEditando(null)}
           onSaved={() => { setEditando(null); loadDados(); }}
         />
