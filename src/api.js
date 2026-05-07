@@ -1157,6 +1157,19 @@ export const nsm = {
   },
 };
 
+// ── Ritual mensal (revisao OKR) ──
+export const ritual = {
+  resumo: (periodo) => get('/ritual/resumo' + (periodo ? `?periodo=${periodo}` : '')),
+  pendentes: (periodo) => get('/ritual/pendentes' + (periodo ? `?periodo=${periodo}` : '')),
+  revisados: (periodo) => get('/ritual/revisados' + (periodo ? `?periodo=${periodo}` : '')),
+  revisar: (kpiId, body) => post(`/ritual/${encodeURIComponent(kpiId)}/revisar`, body),
+  atualizarRevisao: (id, body) => patch(`/ritual/revisao/${id}`, body),
+  historico: (params = {}) => {
+    const qs = new URLSearchParams(params).toString();
+    return get('/ritual/historico' + (qs ? '?' + qs : ''));
+  },
+};
+
 // ── Estrategia (Direcionadores · Objetivos Gerais · KRs) ──
 export const estrategia = {
   direcionadores: {
