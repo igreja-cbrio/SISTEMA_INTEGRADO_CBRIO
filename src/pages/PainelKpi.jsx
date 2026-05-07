@@ -10,10 +10,11 @@
 //   - Botao "Voltar" para o painel
 // ============================================================================
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { painel as painelApi } from '../api';
-import { ArrowLeft, CheckCircle2, Clock, TrendingDown, MinusCircle, Activity, AlertCircle } from 'lucide-react';
+import { ArrowLeft, CheckCircle2, Clock, TrendingDown, MinusCircle, Activity, AlertCircle, ClipboardCheck } from 'lucide-react';
+import OkrRevisaoModal from '../components/OkrRevisaoModal';
 
 const C = {
   bg: 'var(--cbrio-bg)', card: 'var(--cbrio-card)', text: 'var(--cbrio-text)',
@@ -49,8 +50,9 @@ export default function PainelKpi() {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [erro, setErro] = useState(null);
+  const [revisarOpen, setRevisarOpen] = useState(false);
 
-  useEffect(() => {
+  const carregar = useCallback(() => {
     setLoading(true);
     setErro(null);
     painelApi.kpi(id)
@@ -58,6 +60,8 @@ export default function PainelKpi() {
       .catch(e => setErro(e?.message || 'Erro ao carregar KPI'))
       .finally(() => setLoading(false));
   }, [id]);
+
+  useEffect(() => { carregar(); }, [carregar]);
 
   if (loading) {
     return <div style={{ padding: 60, textAlign: 'center', color: C.t3 }}>Carregando...</div>;
@@ -81,6 +85,7 @@ export default function PainelKpi() {
   const sKey = trajetoria_atual?.status_trajetoria || 'sem_dado';
   const sv = STATUS_VISUAL[sKey] || STATUS_VISUAL.sem_dado;
   const StatusIcon = sv.Icon;
+  const podeRevisar = sKey === 'critico' || sKey === 'atras';
 
   return (
     <div style={{ padding: '24px 32px', maxWidth: 1100, margin: '0 auto' }}>
@@ -134,12 +139,26 @@ export default function PainelKpi() {
               </p>
             )}
           </div>
-          <div style={{
-            padding: '8px 14px', borderRadius: 99,
-            background: sv.bg, color: sv.cor, fontWeight: 700,
-            fontSize: 12, display: 'inline-flex', alignItems: 'center', gap: 6,
-          }}>
-            <StatusIcon size={14} /> {sv.label}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8, alignItems: 'flex-end' }}>
+            <div style={{
+              padding: '8px 14px', borderRadius: 99,
+              background: sv.bg, color: sv.cor, fontWeight: 700,
+              fontSize: 12, display: 'inline-flex', alignItems: 'center', gap: 6,
+            }}>
+              <StatusIcon size={14} /> {sv.label}
+            </div>
+            {podeRevisar && (
+              <button
+                onClick={() => setRevisarOpen(true)}
+                style={{
+                  padding: '6px 12px', borderRadius: 6, fontSize: 11, fontWeight: 700,
+                  background: sv.cor, color: '#fff', border: 'none', cursor: 'pointer',
+                  display: 'inline-flex', alignItems: 'center', gap: 4,
+                }}
+              >
+                <ClipboardCheck size={12} /> Registrar revisao
+              </button>
+            )}
           </div>
         </div>
       </div>
@@ -264,6 +283,14 @@ export default function PainelKpi() {
           )}
         </section>
       )}
+
+      {/* Modal Revisao OKR */}
+      <OkrRevisaoModal
+        open={revisarOpen}
+        kpi={kpi ? { ...kpi, trajetoria: trajetoria_atual } : null}
+        onClose={() => setRevisarOpen(false)}
+        onSaved={() => { setRevisarOpen(false); carregar(); }}
+      />
     </div>
   );
 }

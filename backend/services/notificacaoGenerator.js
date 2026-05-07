@@ -17,6 +17,7 @@ async function gerarTodasNotificacoes() {
     total += await gerarNotificacoesKpis();
     total += await gerarNotificacoesCuidados();
     total += await gerarNotificacoesGrupos();
+    total += await gerarNotificacoesRitual();
     console.log(`[Notificações] ${total} notificação(ões) gerada(s).`);
   } catch (e) {
     console.error('[Notificações] Erro:', e.message);
@@ -575,6 +576,130 @@ async function gerarNotificacoesGrupos() {
         severidade: dias >= 180 ? 'aviso' : 'info',
         chaveDedup: `membro_sem_grupo_${m.id}_${janela}`,
       });
+    }
+  }
+
+  return count;
+}
+
+// ═══════════════════════════════════════════════════════════
+// RITUAL MENSAL · OKR
+// ═══════════════════════════════════════════════════════════
+async function gerarNotificacoesRitual() {
+  let count = 0;
+  const hoje = new Date();
+  const dia = hoje.getDate();
+  const ano = hoje.getFullYear();
+  const mes = hoje.getMonth() + 1;
+  const periodo = `${ano}-${String(mes).padStart(2, '0')}`;
+
+  // Pegar diretoria geral pra avisos do ritual
+  const { data: diretoria } = await supabase
+    .from('profiles')
+    .select('id, name')
+    .eq('is_diretoria_geral', true)
+    .eq('active', true);
+  const targetIds = (diretoria || []).map(d => d.id);
+
+  // KPIs em alerta este mes
+  const { data: trajs } = await supabase
+    .from('vw_kpi_trajetoria_atual')
+    .select('kpi_id, status_trajetoria');
+  const emAlerta = (trajs || []).filter(t =>
+    t.status_trajetoria === 'critico' || t.status_trajetoria === 'atras'
+  );
+  const totalAlerta = emAlerta.length;
+
+  if (totalAlerta === 0) return 0;
+
+  // Quantos ja revisados
+  const ids = emAlerta.map(t => t.kpi_id);
+  const { data: revs } = await supabase
+    .from('okr_revisoes')
+    .select('kpi_id')
+    .in('kpi_id', ids)
+    .eq('periodo_referencia', periodo);
+  const revisados = new Set((revs || []).map(r => r.kpi_id));
+  const totalPendentes = totalAlerta - revisados.size;
+
+  // ─── Aviso dia 5: ritual abre ───
+  if (dia === 5 && totalPendentes > 0 && targetIds.length > 0) {
+    count += await notificar({
+      modulo: 'kpis',
+      tipo: 'ritual_aberto',
+      titulo: `Ritual Mensal — ${totalPendentes} OKR(s) aguardando revisao`,
+      mensagem: `${totalAlerta} KPIs em alerta este mes (${revisados.size} ja revisados, ${totalPendentes} pendentes). Acesse o Ritual Mensal para registrar causa, decisao, responsavel e proximo passo.`,
+      link: '/ritual',
+      severidade: 'aviso',
+      chaveDedup: `ritual_aberto_${periodo}`,
+      targetIds,
+    });
+  }
+
+  // ─── Aviso dia 15: meio do mes ───
+  if (dia === 15 && totalPendentes > 0 && targetIds.length > 0) {
+    count += await notificar({
+      modulo: 'kpis',
+      tipo: 'ritual_meio_mes',
+      titulo: `Ritual ainda nao concluido — ${totalPendentes} pendentes`,
+      mensagem: `Metade do mes ja passou. Faltam ${totalPendentes} OKRs em alerta sem revisao registrada.`,
+      link: '/ritual',
+      severidade: 'aviso',
+      chaveDedup: `ritual_meio_${periodo}`,
+      targetIds,
+    });
+  }
+
+  // ─── Aviso dia 25: faltam 5 dias ───
+  if (dia === 25 && totalPendentes > 0 && targetIds.length > 0) {
+    count += await notificar({
+      modulo: 'kpis',
+      tipo: 'ritual_fim_mes',
+      titulo: `Ritual fecha em 5 dias — ${totalPendentes} ainda pendentes`,
+      mensagem: `O mes esta acabando e ainda ha ${totalPendentes} OKRs em alerta sem revisao. Ate o fim do mes.`,
+      link: '/ritual',
+      severidade: 'critico',
+      chaveDedup: `ritual_fim_${periodo}`,
+      targetIds,
+    });
+  }
+
+  // ─── Aviso dia 30+: KPIs nao revisados viram pendencia visivel ───
+  // (gerado depois pelo proprio painel — aqui so notificamos)
+
+  // ─── Lembrete semanal (toda quarta) pra preencher KPIs semanais atrasados ───
+  if (hoje.getDay() === 3) { // quarta-feira
+    const { data: kpisSemanais } = await supabase
+      .from('kpi_indicadores_taticos')
+      .select('id, indicador, area, lider_funcionario_id')
+      .eq('ativo', true)
+      .eq('periodicidade', 'semanal');
+
+    if (kpisSemanais?.length) {
+      // Achar quem tem registro da semana atual
+      const inicioSemana = new Date(hoje);
+      inicioSemana.setDate(hoje.getDate() - hoje.getDay()); // domingo
+      const inicioSemanaStr = inicioSemana.toISOString().slice(0, 10);
+
+      const { data: regs } = await supabase
+        .from('kpi_registros')
+        .select('indicador_id')
+        .gte('data_preenchimento', inicioSemanaStr);
+      const preenchidos = new Set((regs || []).map(r => r.indicador_id));
+
+      const pendentes = kpisSemanais.filter(k => !preenchidos.has(k.id));
+      if (pendentes.length > 0) {
+        const semanaKey = `${ano}-W${Math.ceil((hoje - new Date(ano, 0, 1)) / 86400000 / 7)}`;
+        count += await notificar({
+          modulo: 'kpis',
+          tipo: 'kpis_semanais_pendentes',
+          titulo: `${pendentes.length} KPI(s) semanal(is) pendente(s)`,
+          mensagem: `Voce tem ${pendentes.length} indicadores semanais sem registro nesta semana. Preenche em "Meus KPIs".`,
+          link: '/meus-kpis',
+          severidade: 'info',
+          chaveDedup: `kpis_semanais_${semanaKey}`,
+        });
+      }
     }
   }
 
