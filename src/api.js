@@ -1157,6 +1157,25 @@ export const nsm = {
   },
 };
 
+// ── Dados brutos (numeros absolutos · alimentam KPIs com tipo_calculo automatico) ──
+export const dadosBrutos = {
+  tipos: {
+    list:   (params = {}) => {
+      const qs = new URLSearchParams(params).toString();
+      return get('/dados-brutos/tipos' + (qs ? '?' + qs : ''));
+    },
+    create: (body) => post('/dados-brutos/tipos', body),
+    update: (id, body) => put(`/dados-brutos/tipos/${id}`, body),
+  },
+  list: (params = {}) => {
+    const qs = new URLSearchParams(params).toString();
+    return get('/dados-brutos' + (qs ? '?' + qs : ''));
+  },
+  create: (body) => post('/dados-brutos', body),
+  update: (id, body) => put(`/dados-brutos/${id}`, body),
+  remove: (id) => del(`/dados-brutos/${id}`),
+};
+
 // ── Gestao (PMO administrativo) ──
 export const gestao = {
   pulso: () => get('/gestao/pulso'),
