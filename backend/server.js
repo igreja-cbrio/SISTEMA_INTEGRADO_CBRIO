@@ -91,6 +91,7 @@ app.use('/api/painel', require('./routes/painel'));
 app.use('/api/estrategia', require('./routes/estrategia'));
 app.use('/api/ritual', require('./routes/ritual'));
 app.use('/api/gestao', require('./routes/gestao'));
+app.use('/api/dados-brutos', require('./routes/dadosBrutos'));
 
 // ── Health check ──
 app.get('/api/health', (req, res) => res.json({ status: 'ok', timestamp: new Date().toISOString() }));

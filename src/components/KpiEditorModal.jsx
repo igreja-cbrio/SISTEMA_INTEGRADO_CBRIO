@@ -16,8 +16,8 @@
 import { useEffect, useMemo, useState, useCallback } from 'react';
 import { useKpis } from '../hooks/useKpis';
 import { AREAS } from '../data/indicadores';
-import { rh as rhApi, estrategia as estrategiaApi } from '../api';
-import { Plus, Pencil, Trash2, X, Save } from 'lucide-react';
+import { rh as rhApi, estrategia as estrategiaApi, dadosBrutos as dadosBrutosApi } from '../api';
+import { Plus, Pencil, Trash2, X, Save, Calculator, Info } from 'lucide-react';
 import { toast } from 'sonner';
 
 const C = {
@@ -89,7 +89,63 @@ const EMPTY = {
   responsavel_area: '', apuracao: '', sort_order: 0, ativo: true,
   valores: [], is_okr: false, lider_funcionario_id: '',
   objetivo_geral_id: '', memoria_calculo: '', observacoes: '',
+  tipo_calculo: 'manual', formula_config: null,
 };
+
+const TIPOS_CALCULO = [
+  {
+    key: 'manual',
+    label: 'Manual',
+    desc: 'Lider preenche o valor do indicador diretamente (legado).',
+  },
+  {
+    key: 'delta_pct',
+    label: '% crescimento',
+    desc: '(atual − anterior) / anterior × 100. Ex: "frequencia cresceu 6,2% vs semana anterior".',
+    fields: ['dado_tipo', 'comparacao'],
+  },
+  {
+    key: 'delta_abs',
+    label: 'Delta absoluto',
+    desc: 'atual − anterior. Ex: "+3 batismos vs evento anterior".',
+    fields: ['dado_tipo', 'comparacao'],
+  },
+  {
+    key: 'razao',
+    label: 'Razão / percentual',
+    desc: 'numerador / denominador × 100. Ex: "% de doadores recorrentes sobre o total".',
+    fields: ['numerador', 'denominador'],
+  },
+  {
+    key: 'contagem_janela',
+    label: 'Contagem em janela',
+    desc: 'Conta eventos numa janela. Ex: "convertidos engajados nos ultimos 60 dias".',
+    fields: ['dado_tipo', 'janela_dias'],
+  },
+  {
+    key: 'soma_periodo',
+    label: 'Soma no periodo',
+    desc: 'Soma de valores num periodo. Ex: "valor arrecadado no ano".',
+    fields: ['dado_tipo', 'periodo'],
+  },
+];
+
+const COMPARACOES = [
+  { key: 'semana_anterior', label: 'Semana anterior' },
+  { key: 'mes_anterior', label: 'Mês anterior' },
+  { key: 'trimestre_anterior', label: 'Trimestre anterior' },
+  { key: 'semestre_anterior', label: 'Semestre anterior' },
+  { key: 'ano_anterior', label: 'Ano anterior' },
+  { key: 'evento_anterior', label: 'Evento anterior' },
+  { key: 'ciclo_anterior', label: 'Ciclo anterior' },
+];
+
+const PERIODOS_SOMA = [
+  { key: 'mes', label: 'Mês corrente' },
+  { key: 'trimestre', label: 'Trimestre corrente' },
+  { key: 'semestre', label: 'Semestre corrente' },
+  { key: 'ano', label: 'Ano corrente' },
+];
 
 export default function KpiEditorModal({ open, kpi, onClose, onSaved, defaultArea, allowedAreas }) {
   const { create, update } = useKpis();
@@ -98,11 +154,12 @@ export default function KpiEditorModal({ open, kpi, onClose, onSaved, defaultAre
   const [err, setErr] = useState(null);
   const [funcionarios, setFuncionarios] = useState([]);
   const [objetivos, setObjetivos] = useState([]);
+  const [tiposDado, setTiposDado] = useState([]);
   const [krs, setKrs] = useState([]);
   const [editKr, setEditKr] = useState(null);
   const isEdit = !!kpi;
 
-  // Carrega dropdowns: funcionarios + objetivos
+  // Carrega dropdowns: funcionarios + objetivos + tipos de dado
   useEffect(() => {
     if (!open) return;
     rhApi.funcionarios.list({ status: 'ativo' })
@@ -111,6 +168,9 @@ export default function KpiEditorModal({ open, kpi, onClose, onSaved, defaultAre
     estrategiaApi.objetivos.list({ ativos: 'true' })
       .then(setObjetivos)
       .catch(() => setObjetivos([]));
+    dadosBrutosApi.tipos.list()
+      .then(setTiposDado)
+      .catch(() => setTiposDado([]));
   }, [open]);
 
   // Carrega KRs especificos do KPI (se em edicao)
@@ -147,6 +207,8 @@ export default function KpiEditorModal({ open, kpi, onClose, onSaved, defaultAre
         objetivo_geral_id: kpi.objetivo_geral_id || '',
         memoria_calculo: kpi.memoria_calculo || '',
         observacoes: kpi.observacoes || '',
+        tipo_calculo: kpi.tipo_calculo || 'manual',
+        formula_config: kpi.formula_config || null,
       });
     } else {
       setForm({ ...EMPTY, area: defaultArea || '' });
@@ -383,6 +445,63 @@ export default function KpiEditorModal({ open, kpi, onClose, onSaved, defaultAre
           </div>
         </div>
 
+        {/* Calculo do indicador (Fase 6A) */}
+        <div style={{ marginTop: 24, paddingTop: 18, borderTop: `1px solid ${C.border}` }}>
+          <h3 style={{ fontSize: 13, fontWeight: 700, color: C.t2, margin: 0, marginBottom: 4, textTransform: 'uppercase', letterSpacing: 0.5, display: 'flex', alignItems: 'center', gap: 6 }}>
+            <Calculator size={13} /> Como o indicador eh calculado
+          </h3>
+          <p style={{ fontSize: 11, color: C.t3, marginBottom: 12, display: 'flex', alignItems: 'center', gap: 6 }}>
+            <Info size={11} /> O lider preenche o numero absoluto (ex: frequencia = 850); o KPI calcula automaticamente.
+          </p>
+
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+            {TIPOS_CALCULO.map(t => {
+              const sel = form.tipo_calculo === t.key;
+              return (
+                <label key={t.key}
+                  style={{
+                    display: 'flex', alignItems: 'flex-start', gap: 10,
+                    padding: 10, borderRadius: 6, cursor: 'pointer',
+                    border: sel ? `2px solid ${C.primary}` : `1px solid ${C.border}`,
+                    background: sel ? '#00B39D14' : 'transparent',
+                  }}
+                >
+                  <input
+                    type="radio"
+                    name="tipo_calculo"
+                    checked={sel}
+                    onChange={() => {
+                      set('tipo_calculo', t.key);
+                      set('formula_config', t.key === 'manual' ? null : {});
+                    }}
+                    style={{ marginTop: 3 }}
+                  />
+                  <div style={{ flex: 1 }}>
+                    <div style={{ fontSize: 12, fontWeight: 700, color: C.text }}>{t.label}</div>
+                    <div style={{ fontSize: 10, color: C.t3, marginTop: 2, lineHeight: 1.4 }}>{t.desc}</div>
+                  </div>
+                </label>
+              );
+            })}
+          </div>
+
+          {/* Configuracao da formula (depende do tipo escolhido) */}
+          {form.tipo_calculo !== 'manual' && (
+            <div style={{
+              marginTop: 14, padding: 12,
+              background: 'var(--cbrio-input-bg)', borderRadius: 6,
+              border: `1px solid ${C.border}`,
+            }}>
+              <FormulaConfig
+                tipo={form.tipo_calculo}
+                config={form.formula_config || {}}
+                tiposDado={tiposDado}
+                onChange={(novoConfig) => set('formula_config', novoConfig)}
+              />
+            </div>
+          )}
+        </div>
+
         {/* KRs especificos (so em edit, depois de salvo o KPI) */}
         {isEdit && (
           <div style={{ marginTop: 24, paddingTop: 18, borderTop: `1px solid ${C.border}` }}>
@@ -544,6 +663,90 @@ function KrEditorInline({ kr, onClose, onSaved }) {
       </div>
     </div>
   );
+}
+
+// ============================================================================
+// FormulaConfig — UI da configuracao de formula (depende do tipo_calculo)
+// ============================================================================
+function FormulaConfig({ tipo, config, tiposDado, onChange }) {
+  const set = (k, v) => onChange({ ...config, [k]: v });
+
+  if (tipo === 'delta_pct' || tipo === 'delta_abs') {
+    return (
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+        <Field label="Tipo de dado *">
+          <select value={config.dado_tipo || ''} onChange={e => set('dado_tipo', e.target.value)} style={inp}>
+            <option value="">— Escolher —</option>
+            {tiposDado.map(t => (
+              <option key={t.id} value={t.id}>{t.nome}{t.unidade ? ` (${t.unidade})` : ''}</option>
+            ))}
+          </select>
+        </Field>
+        <Field label="Comparar com *">
+          <select value={config.comparacao || ''} onChange={e => set('comparacao', e.target.value)} style={inp}>
+            <option value="">— Escolher —</option>
+            {COMPARACOES.map(c => <option key={c.key} value={c.key}>{c.label}</option>)}
+          </select>
+        </Field>
+      </div>
+    );
+  }
+
+  if (tipo === 'razao') {
+    return (
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+        <Field label="Numerador *">
+          <select value={config.numerador || ''} onChange={e => set('numerador', e.target.value)} style={inp}>
+            <option value="">— Escolher —</option>
+            {tiposDado.map(t => <option key={t.id} value={t.id}>{t.nome}</option>)}
+          </select>
+        </Field>
+        <Field label="Denominador *">
+          <select value={config.denominador || ''} onChange={e => set('denominador', e.target.value)} style={inp}>
+            <option value="">— Escolher —</option>
+            {tiposDado.map(t => <option key={t.id} value={t.id}>{t.nome}</option>)}
+          </select>
+        </Field>
+      </div>
+    );
+  }
+
+  if (tipo === 'contagem_janela') {
+    return (
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+        <Field label="Tipo de dado (eventos a contar) *">
+          <select value={config.dado_tipo || ''} onChange={e => set('dado_tipo', e.target.value)} style={inp}>
+            <option value="">— Escolher —</option>
+            {tiposDado.map(t => <option key={t.id} value={t.id}>{t.nome}</option>)}
+          </select>
+        </Field>
+        <Field label="Janela (dias) *">
+          <input type="number" value={config.janela_dias || ''} onChange={e => set('janela_dias', Number(e.target.value) || 0)} style={inp} placeholder="60" />
+        </Field>
+      </div>
+    );
+  }
+
+  if (tipo === 'soma_periodo') {
+    return (
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+        <Field label="Tipo de dado *">
+          <select value={config.dado_tipo || ''} onChange={e => set('dado_tipo', e.target.value)} style={inp}>
+            <option value="">— Escolher —</option>
+            {tiposDado.map(t => <option key={t.id} value={t.id}>{t.nome}</option>)}
+          </select>
+        </Field>
+        <Field label="Periodo *">
+          <select value={config.periodo || ''} onChange={e => set('periodo', e.target.value)} style={inp}>
+            <option value="">— Escolher —</option>
+            {PERIODOS_SOMA.map(p => <option key={p.key} value={p.key}>{p.label}</option>)}
+          </select>
+        </Field>
+      </div>
+    );
+  }
+
+  return null;
 }
 
 function Field({ label, hint, children }) {
