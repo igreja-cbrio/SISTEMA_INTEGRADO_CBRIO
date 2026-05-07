@@ -51,6 +51,7 @@ const NAV_ITEMS = [
           { label: 'Ritual Mensal', description: 'Revisão dos OKRs em alerta · regra de ouro', icon: ClipboardCheck, path: '/ritual' },
           { label: 'Dados Brutos', description: 'Registrar números absolutos (frequência, batismos, doações)', icon: BarChart2, path: '/dados-brutos' },
           { label: 'Minha Área', description: 'KPIs da sua área agrupados por valor da Jornada', icon: BarChart2, path: '/minha-area' },
+          { label: 'Estrutura OKR', description: 'Direcionadores · objetivos gerais · KRs (admin)', icon: ClipboardCheck, path: '/admin/estrutura-okr' },
           { label: 'Gestão (PMO)', description: 'Pulso · Configurar · Saúde do sistema (admin)', icon: Settings, path: '/gestao' },
           { label: 'Assistente IA', description: 'Agentes de auditoria e análise', icon: BrainCircuit, path: '/assistente-ia', perm: 'canIA' },
         ],
