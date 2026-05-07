@@ -1160,4 +1160,6 @@ export const nsm = {
 // ── Painel CBRio (mandalas, matriz, alertas) ──
 export const painel = {
   mandalas: () => get('/painel/mandalas'),
+  matriz:   () => get('/painel/matriz'),
+  celula:   (area, valor) => get(`/painel/celula/${area}/${valor}`),
 };

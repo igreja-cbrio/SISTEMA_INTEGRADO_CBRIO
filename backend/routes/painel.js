@@ -60,6 +60,18 @@ function tabularKpis(kpis, statusByKpi) {
 }
 
 // ----------------------------------------------------------------------------
+// Helper: pior status (para celulas da matriz)
+// vermelho > amarelo > sem_dado > verde
+// ----------------------------------------------------------------------------
+function piorStatus(statuses) {
+  if (statuses.includes('vermelho')) return 'vermelho';
+  if (statuses.includes('amarelo'))  return 'amarelo';
+  if (statuses.length === 0)         return 'na';
+  if (statuses.every(s => s === 'sem_dado')) return 'sem_dado';
+  return 'verde';
+}
+
+// ----------------------------------------------------------------------------
 // GET /mandalas - dados das 6 mandalas (1 geral + 5 focadas em cada valor)
 // ----------------------------------------------------------------------------
 router.get('/mandalas', async (req, res) => {
@@ -141,6 +153,149 @@ router.get('/mandalas', async (req, res) => {
   } catch (e) {
     console.error('painel/mandalas:', e.message);
     res.status(500).json({ error: 'Erro ao montar mandalas' });
+  }
+});
+
+// ----------------------------------------------------------------------------
+// GET /matriz - grid 6 areas x 5 valores, com pior status de cada celula
+// ----------------------------------------------------------------------------
+router.get('/matriz', async (req, res) => {
+  try {
+    const { data: kpis, error: ek } = await supabase
+      .from('kpi_indicadores_taticos')
+      .select('id, area, valores')
+      .eq('ativo', true);
+    if (ek) throw ek;
+
+    const { data: trajetorias } = await supabase
+      .from('vw_kpi_trajetoria_atual')
+      .select('kpi_id, status_trajetoria');
+    const statusByKpi = {};
+    (trajetorias || []).forEach(t => { statusByKpi[t.kpi_id] = t.status_trajetoria; });
+
+    const { data: areas } = await supabase
+      .from('areas_kpi')
+      .select('id, nome, cor_hex, ordem, categoria')
+      .eq('ativa', true)
+      .in('id', ['kids', 'bridge', 'ami', 'sede', 'online', 'cba']) // so as 6 areas da matriz
+      .order('ordem');
+
+    // Pra cada celula (area x valor), agregar
+    const cells = {};
+    for (const area of (areas || [])) {
+      for (const v of VALORES) {
+        const kpisCelula = (kpis || []).filter(k =>
+          String(k.area || '').toLowerCase() === area.id &&
+          Array.isArray(k.valores) && k.valores.includes(v)
+        );
+        const tab = tabularKpis(kpisCelula, statusByKpi);
+
+        // Status da celula = pior status entre os KPIs (mas se 0 KPIs = na)
+        let cellStatus;
+        if (tab.total_kpis === 0) {
+          cellStatus = 'na';
+        } else {
+          // Mapeia status_trajetoria de cada KPI para verde/amarelo/vermelho/sem_dado
+          const statuses = kpisCelula.map(k => {
+            const s = statusByKpi[k.id];
+            if (s === 'no_alvo')  return 'verde';
+            if (s === 'atras')    return 'amarelo';
+            if (s === 'critico')  return 'vermelho';
+            return 'sem_dado';
+          });
+          cellStatus = piorStatus(statuses);
+        }
+
+        cells[`${area.id}:${v}`] = {
+          area_id: area.id,
+          area_nome: area.nome,
+          valor_key: v,
+          valor_label: VALOR_LABELS[v],
+          valor_cor: VALOR_CORES[v],
+          status: cellStatus,
+          ...tab,
+        };
+      }
+    }
+
+    res.json({
+      areas: (areas || []).map(a => ({ id: a.id, nome: a.nome, cor_hex: a.cor_hex, categoria: a.categoria })),
+      valores: VALORES.map(v => ({ key: v, label: VALOR_LABELS[v], cor: VALOR_CORES[v] })),
+      cells,
+    });
+  } catch (e) {
+    console.error('painel/matriz:', e.message);
+    res.status(500).json({ error: 'Erro ao montar matriz' });
+  }
+});
+
+// ----------------------------------------------------------------------------
+// GET /celula/:area/:valor - KPIs detalhados daquela intersecao (pra modal)
+// ----------------------------------------------------------------------------
+router.get('/celula/:area/:valor', async (req, res) => {
+  try {
+    const areaId = String(req.params.area).toLowerCase();
+    const valor = String(req.params.valor).toLowerCase();
+
+    if (!VALORES.includes(valor)) {
+      return res.status(400).json({ error: 'Valor invalido' });
+    }
+
+    // KPIs daquela intersecao + dados de trajetoria
+    const { data: kpis, error } = await supabase
+      .from('kpi_indicadores_taticos')
+      .select('id, indicador, descricao, area, valores, periodicidade, meta_descricao, unidade, is_okr, lider_funcionario_id')
+      .eq('ativo', true)
+      .ilike('area', areaId);
+    if (error) throw error;
+
+    const filtrados = (kpis || []).filter(k =>
+      Array.isArray(k.valores) && k.valores.includes(valor)
+    );
+
+    if (filtrados.length === 0) {
+      return res.json({ area: areaId, valor, kpis: [] });
+    }
+
+    const ids = filtrados.map(k => k.id);
+
+    // Trajetoria atual
+    const { data: trajetorias } = await supabase
+      .from('vw_kpi_trajetoria_atual')
+      .select('kpi_id, status_trajetoria, ultimo_periodo, ultimo_valor, checkpoint_meta, percentual_meta')
+      .in('kpi_id', ids);
+    const trajByKpi = {};
+    (trajetorias || []).forEach(t => { trajByKpi[t.kpi_id] = t; });
+
+    // Lider (rh_funcionarios) — buscar nomes em lote
+    const liderIds = filtrados.map(k => k.lider_funcionario_id).filter(Boolean);
+    let lideresMap = {};
+    if (liderIds.length > 0) {
+      const { data: lideres } = await supabase
+        .from('rh_funcionarios')
+        .select('id, nome, cargo')
+        .in('id', liderIds);
+      (lideres || []).forEach(l => { lideresMap[l.id] = l; });
+    }
+
+    const result = filtrados.map(k => ({
+      id: k.id,
+      indicador: k.indicador,
+      descricao: k.descricao,
+      area: k.area,
+      valores: k.valores,
+      periodicidade: k.periodicidade,
+      meta_descricao: k.meta_descricao,
+      unidade: k.unidade,
+      is_okr: k.is_okr,
+      lider: lideresMap[k.lider_funcionario_id] || null,
+      trajetoria: trajByKpi[k.id] || null,
+    }));
+
+    res.json({ area: areaId, valor, kpis: result });
+  } catch (e) {
+    console.error('painel/celula:', e.message);
+    res.status(500).json({ error: 'Erro ao buscar celula' });
   }
 });
 
