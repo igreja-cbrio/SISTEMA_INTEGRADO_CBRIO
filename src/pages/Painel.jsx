@@ -16,6 +16,7 @@ import { nsm as nsmApi } from '../api';
 import { useAuth } from '../contexts/AuthContext';
 import { Activity, RefreshCw, TrendingUp, TrendingDown, Minus } from 'lucide-react';
 import { toast } from 'sonner';
+import CarrosselMandalas from '../components/painel/CarrosselMandalas';
 
 const C = {
   bg: 'var(--cbrio-bg)', card: 'var(--cbrio-card)', text: 'var(--cbrio-text)',
@@ -146,10 +147,15 @@ export default function Painel() {
             </div>
           )}
 
+          {/* Carrossel de Mandalas (Fase 2B) */}
+          <div style={{ marginTop: 24 }}>
+            <CarrosselMandalas />
+          </div>
+
           {/* Placeholder pros proximos sub-PRs */}
-          <div style={{ marginTop: 32, padding: 24, background: C.card, borderRadius: 12, border: `1px dashed ${C.border}`, textAlign: 'center' }}>
-            <p style={{ fontSize: 13, color: C.t3, margin: 0 }}>
-              Carrossel de mandalas, matriz colorida e alertas criticos serao adicionados nos proximos sub-PRs (2B, 2C, 2D).
+          <div style={{ marginTop: 24, padding: 20, background: C.card, borderRadius: 12, border: `1px dashed ${C.border}`, textAlign: 'center' }}>
+            <p style={{ fontSize: 12, color: C.t3, margin: 0 }}>
+              Matriz colorida e alertas criticos serao adicionados nos proximos sub-PRs (2C, 2D).
             </p>
           </div>
         </>
