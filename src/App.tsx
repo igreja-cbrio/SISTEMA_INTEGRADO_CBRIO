@@ -84,6 +84,7 @@ const MeusKpis = lazyWithRetry(() => import('./pages/MeusKpis'));
 const Painel = lazyWithRetry(() => import('./pages/Painel'));
 const PainelKpi = lazyWithRetry(() => import('./pages/PainelKpi'));
 const PainelNsmPessoas = lazyWithRetry(() => import('./pages/PainelNsmPessoas'));
+const EstruturaOkr = lazyWithRetry(() => import('./pages/admin/EstruturaOkr'));
 const Membresia = lazyWithRetry(() => import('./pages/ministerial/Membresia'));
 const MemberScan = lazyWithRetry(() => import('./pages/ministerial/membresia/MemberScan'));
 const AssistenteIA = lazyWithRetry(() => import('./pages/admin/AssistenteIA'));
@@ -285,6 +286,7 @@ function AppRoutes() {
         <Route path="/painel/nsm/pessoas" element={<Suspense fallback={<Loading />}><PainelNsmPessoas /></Suspense>} />
         <Route path="/admin/notificacao-regras" element={<Suspense fallback={<Loading />}><NotificacaoRegras /></Suspense>} />
         <Route path="/admin/kpi-areas" element={<Suspense fallback={<Loading />}><KpiAreasAdmin /></Suspense>} />
+        <Route path="/admin/estrutura-okr" element={<Suspense fallback={<Loading />}><EstruturaOkr /></Suspense>} />
         <Route path="/admin/grupos/qrcode-inscricao" element={<Suspense fallback={<Loading />}><InscricaoGruposQRCode /></Suspense>} />
         <Route path="/admin/grupos/geocode" element={<Suspense fallback={<Loading />}><GruposGeocode /></Suspense>} />
         <Route path="/ministerial/*" element={<PlaceholderPage title="Ministerial" />} />
