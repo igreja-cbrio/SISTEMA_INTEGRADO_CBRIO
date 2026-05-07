@@ -12,6 +12,7 @@ import { Users, MapPin, Clock, Plus, Search, ChevronLeft, UserPlus, X, ArrowRigh
 import PedidosGrupo from './PedidosGrupo';
 import InscricaoGruposQRCode from '../admin/InscricaoGruposQRCode';
 import GruposGeocode from '../admin/GruposGeocode';
+import TemporadasGrupos from '../admin/TemporadasGrupos';
 import ProcessosTarefas from '../../components/ProcessosTarefas';
 import { GruposMapView } from '@/components/grupos/GruposMapView';
 
@@ -647,6 +648,7 @@ export default function Grupos() {
           { key: 'tarefas', label: 'Tarefas', icon: ListChecks },
           { key: 'qrcode', label: 'QR Inscrição', icon: QrCode },
           { key: 'geocode', label: 'Validar endereços', icon: Compass },
+          { key: 'temporadas', label: 'Temporadas', icon: Calendar },
         ].map(tab => (
           <button key={tab.key} onClick={() => setPageTab(tab.key)} style={{
             padding: '10px 24px', background: 'none', border: 'none', cursor: 'pointer',
@@ -670,6 +672,8 @@ export default function Grupos() {
               grupos={gruposList.filter(g => g.ativo)}
               variant="admin"
               defaultTheme="dark"
+              temporadasMap={Object.fromEntries((temporadas || []).map(t => [t.id, { inscricoes_abertas: !!t.inscricoes_abertas, label: t.label }]))}
+              mostrarBotaoInscricao={true}
             />
           )}
         </div>
@@ -834,6 +838,13 @@ export default function Grupos() {
       {pageTab === 'geocode' && (
         <div style={{ margin: '0 -32px' }}>
           <GruposGeocode />
+        </div>
+      )}
+
+      {/* ═══ TAB TEMPORADAS ═══ */}
+      {pageTab === 'temporadas' && (
+        <div style={{ margin: '0 -32px' }}>
+          <TemporadasGrupos />
         </div>
       )}
 

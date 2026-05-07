@@ -129,6 +129,31 @@ router.get('/lideres/buscar', async (req, res) => {
   } catch { res.status(500).json({ error: 'Erro' }); }
 });
 
+// GET /api/public/grupos/:id — usado pelo formulario publico
+// quando o link vem com ?grupo=<id> (ex.: clique no mapa).
+router.get('/:id', async (req, res) => {
+  try {
+    const { data: grupo, error } = await supabase
+      .from('mem_grupos')
+      .select('id, codigo, nome, categoria, dia_semana, horario, recorrencia, local, descricao, bairro, lat, lng, lider_id, status_temporada, temporada, foto_url, complemento, ativo')
+      .eq('id', req.params.id)
+      .maybeSingle();
+    if (error) throw error;
+    if (!grupo || !grupo.ativo) return res.status(404).json({ error: 'Grupo nao encontrado' });
+
+    let lider_nome = null;
+    let lider_foto = null;
+    if (grupo.lider_id) {
+      const { data: lider } = await supabase.from('mem_membros').select('nome, foto_url').eq('id', grupo.lider_id).maybeSingle();
+      if (lider) { lider_nome = lider.nome; lider_foto = lider.foto_url; }
+    }
+    res.json({ ...grupo, lider_nome, lider_foto });
+  } catch (e) {
+    console.error('[public grupos getById]', e.message);
+    res.status(500).json({ error: 'Erro ao buscar grupo' });
+  }
+});
+
 // GET /api/public/grupos/lideres/:liderId/grupos
 router.get('/lideres/:liderId/grupos', async (req, res) => {
   try {
@@ -205,9 +230,21 @@ router.post('/inscrever', async (req, res) => {
 
     // Verifica se grupo existe e esta ativo
     const { data: grupo } = await supabase.from('mem_grupos')
-      .select('id, nome, ativo, status_temporada').eq('id', grupo_id).single();
+      .select('id, nome, ativo, status_temporada, temporada').eq('id', grupo_id).single();
     if (!grupo || !grupo.ativo) {
       return res.status(404).json({ error: 'Grupo nao encontrado ou inativo.' });
+    }
+
+    // Verifica se a temporada do grupo esta com inscricoes abertas
+    if (grupo.temporada) {
+      const { data: temporada } = await supabase.from('mem_temporadas')
+        .select('inscricoes_abertas, label').eq('id', grupo.temporada).maybeSingle();
+      if (!temporada?.inscricoes_abertas) {
+        return res.status(403).json({
+          error: 'As inscrições para esta temporada estão fechadas no momento. Aguarde a próxima abertura.',
+          codigo: 'inscricoes_fechadas',
+        });
+      }
     }
 
     let cadastroPendenteId = null;
