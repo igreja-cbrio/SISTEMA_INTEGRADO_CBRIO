@@ -8,7 +8,8 @@ import { Textarea } from '../../components/ui/textarea';
 import { Select as ShadSelect, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../components/ui/select';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../../components/ui/dialog';
 import { toast } from 'sonner';
-import { Users, MapPin, Clock, Plus, Search, ChevronLeft, UserPlus, X, ArrowRightLeft, FileUp, Trash2, FileText, Image, File as FileIcon, Map as MapIcon, ListChecks, ClipboardCheck, Calendar, Activity, TrendingUp, TrendingDown, Minus, AlertTriangle, Inbox, QrCode, Compass } from 'lucide-react';
+import { Users, MapPin, Clock, Plus, Search, ChevronLeft, UserPlus, X, ArrowRightLeft, FileUp, Trash2, FileText, Image, File as FileIcon, Map as MapIcon, ListChecks, ClipboardCheck, Calendar, Activity, TrendingUp, TrendingDown, Minus, AlertTriangle, Inbox, QrCode, Compass, Copy, Check, Download, ExternalLink, Lock } from 'lucide-react';
+import { QRCodeSVG } from 'qrcode.react';
 import PedidosGrupo from './PedidosGrupo';
 import InscricaoGruposQRCode from '../admin/InscricaoGruposQRCode';
 import GruposGeocode from '../admin/GruposGeocode';
@@ -54,6 +55,8 @@ export default function Grupos() {
   const [editData, setEditData] = useState(null);
   const [saving, setSaving] = useState(false);
   const [addMembroOpen, setAddMembroOpen] = useState(false);
+  const [qrOpen, setQrOpen] = useState(false);
+  const [qrCopied, setQrCopied] = useState(false);
   const [membrosSearch, setMembrosSearch] = useState('');
   const [allMembros, setAllMembros] = useState([]);
   const [gruposForSelect, setGruposForSelect] = useState([]);
@@ -402,7 +405,10 @@ export default function Grupos() {
             {g.tema && <div style={{ fontSize: 13, color: C.t3, marginTop: 6 }}>Tema: {g.tema}</div>}
             {g.descricao && <div style={{ fontSize: 13, color: C.t3, marginTop: 4 }}>{g.descricao}</div>}
           </div>
-          <div style={{ display: 'flex', gap: 8, flexShrink: 0 }}>
+          <div style={{ display: 'flex', gap: 8, flexShrink: 0, flexWrap: 'wrap' }}>
+            <Button size="sm" variant="outline" onClick={() => setQrOpen(true)}>
+              <QrCode size={14} style={{ marginRight: 4 }} /> QR / Link
+            </Button>
             <Button size="sm" variant="outline" onClick={openEdit}>Editar</Button>
             {g.ativo
               ? <Button size="sm" variant="destructive" onClick={handleDelete}>Desativar</Button>
@@ -644,6 +650,16 @@ export default function Grupos() {
 
         {/* Modal editar grupo */}
         <GrupoFormModal open={modalOpen} onClose={() => setModalOpen(false)} data={editData} onSave={handleSave} saving={saving} gruposForSelect={gruposForSelect} allMembros={allMembros} loadMembros={loadMembros} temporadas={temporadas} bairrosUnicos={bairrosUnicos} />
+
+        {/* Modal QR code do grupo */}
+        <GrupoQRModal
+          open={qrOpen}
+          onClose={() => { setQrOpen(false); setQrCopied(false); }}
+          grupo={g}
+          temporada={(temporadas || []).find(t => t.id === g.temporada)}
+          copied={qrCopied}
+          setCopied={setQrCopied}
+        />
       </div>
     );
   }
@@ -1086,6 +1102,103 @@ export default function Grupos() {
 }
 
 // ── MODAL DE FORMULARIO ──
+function GrupoQRModal({ open, onClose, grupo, temporada, copied, setCopied }) {
+  if (!grupo) return null;
+  const baseUrl = typeof window !== 'undefined' ? window.location.origin : '';
+  const url = `${baseUrl}/inscricao-grupos?grupo=${grupo.id}`;
+  const aberta = !!temporada?.inscricoes_abertas;
+
+  const copyUrl = () => {
+    navigator.clipboard.writeText(url);
+    setCopied(true);
+    toast.success('Link copiado');
+    setTimeout(() => setCopied(false), 1500);
+  };
+  const downloadQr = () => {
+    const svg = document.getElementById('qr-grupo-svg');
+    if (!svg) return;
+    const xml = new XMLSerializer().serializeToString(svg);
+    const blob = new Blob([xml], { type: 'image/svg+xml' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    const slug = (grupo.codigo || grupo.id).toString().toLowerCase().replace(/[^a-z0-9-]+/g, '-');
+    a.download = `cbrio-grupo-${slug}.svg`;
+    a.click();
+    URL.revokeObjectURL(a.href);
+    toast.success('QR baixado em SVG');
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={v => { if (!v) onClose(); }}>
+      <DialogContent className="max-w-lg">
+        <DialogHeader>
+          <DialogTitle>QR / Link de inscrição — {grupo.nome}</DialogTitle>
+        </DialogHeader>
+
+        {!aberta && (
+          <div style={{
+            padding: 10, marginBottom: 10, background: 'rgba(245,158,11,0.15)',
+            border: `1px solid #f59e0b`, borderRadius: 8, fontSize: 12, color: '#b45309',
+            display: 'flex', alignItems: 'center', gap: 8,
+          }}>
+            <Lock size={14} />
+            <span>
+              Inscrições da temporada {temporada?.label || ''} estão <strong>fechadas</strong>.
+              O link continua válido, mas as pessoas vão ver "inscrições fechadas" ao tentar enviar.
+            </span>
+          </div>
+        )}
+
+        <div style={{ background: '#fff', borderRadius: 10, padding: 16, textAlign: 'center', marginBottom: 12 }}>
+          <div style={{ fontSize: 13, fontWeight: 700, color: '#000', marginBottom: 8 }}>
+            Quero entrar neste grupo
+          </div>
+          <div style={{ display: 'flex', justifyContent: 'center' }}>
+            <QRCodeSVG id="qr-grupo-svg" value={url} size={220} level="M" includeMargin={false} />
+          </div>
+          <div style={{ fontSize: 11, color: '#666', marginTop: 10 }}>
+            {grupo.codigo ? <div style={{ fontFamily: 'monospace' }}>{grupo.codigo}</div> : null}
+            <div>{grupo.nome}</div>
+          </div>
+        </div>
+
+        <label style={{ fontSize: 12, fontWeight: 600, color: C.t2, marginBottom: 4, display: 'block' }}>
+          Link direto
+        </label>
+        <div style={{ display: 'flex', gap: 6, marginBottom: 10 }}>
+          <input readOnly value={url} style={{
+            flex: 1, padding: '8px 12px', borderRadius: 8,
+            border: `1px solid ${C.border}`, background: 'var(--cbrio-input-bg)',
+            color: C.text, fontSize: 12,
+          }} />
+          <Button size="sm" variant="outline" onClick={copyUrl}>
+            {copied ? <><Check size={14} style={{ marginRight: 4 }} /> Copiado</> : <><Copy size={14} style={{ marginRight: 4 }} /> Copiar</>}
+          </Button>
+        </div>
+
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          <Button size="sm" onClick={() => window.open(url, '_blank')}>
+            <ExternalLink size={14} style={{ marginRight: 4 }} /> Abrir formulário
+          </Button>
+          <Button size="sm" variant="outline" onClick={downloadQr}>
+            <Download size={14} style={{ marginRight: 4 }} /> Baixar SVG
+          </Button>
+        </div>
+
+        <div style={{
+          marginTop: 14, padding: 10, background: 'rgba(0,179,157,0.06)',
+          border: `1px solid ${C.primary}40`, borderRadius: 8, fontSize: 11, color: C.t2,
+          lineHeight: 1.5,
+        }}>
+          A pessoa escaneia o QR ou clica no link → cai no formulário com este grupo
+          já pré-selecionado → preenche dados → o líder recebe o pedido em
+          <strong> /grupos → aba Pedidos</strong>.
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 function GrupoFormModal({ open, onClose, data, onSave, saving, gruposForSelect, allMembros, loadMembros, temporadas, bairrosUnicos }) {
   const [form, setForm] = useState({});
   const [liderSearch, setLiderSearch] = useState('');
