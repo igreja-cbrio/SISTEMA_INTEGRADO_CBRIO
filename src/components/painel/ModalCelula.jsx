@@ -11,8 +11,9 @@
 // ============================================================================
 
 import { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { painel as painelApi } from '../../api';
-import { X, AlertCircle, CheckCircle2, Clock, TrendingDown, MinusCircle } from 'lucide-react';
+import { X, AlertCircle, CheckCircle2, Clock, TrendingDown, MinusCircle, ExternalLink } from 'lucide-react';
 
 const C = {
   card: 'var(--cbrio-card)', text: 'var(--cbrio-text)',
@@ -29,6 +30,7 @@ const STATUS_VISUAL = {
 };
 
 export default function ModalCelula({ area, valor, cell, onClose }) {
+  const navigate = useNavigate();
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [erro, setErro] = useState(null);
@@ -41,6 +43,11 @@ export default function ModalCelula({ area, valor, cell, onClose }) {
       .catch(e => setErro(e?.message || 'Erro ao carregar'))
       .finally(() => setLoading(false));
   }, [area, valor]);
+
+  const irParaKpi = (kpiId) => {
+    onClose?.();
+    navigate(`/painel/kpi/${encodeURIComponent(kpiId)}`);
+  };
 
   // Fechar com ESC
   useEffect(() => {
@@ -132,7 +139,7 @@ export default function ModalCelula({ area, valor, cell, onClose }) {
             </div>
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-              {data.kpis.map(k => <KpiRow key={k.id} kpi={k} />)}
+              {data.kpis.map(k => <KpiRow key={k.id} kpi={k} onAbrir={() => irParaKpi(k.id)} />)}
             </div>
           )}
         </div>
@@ -141,20 +148,27 @@ export default function ModalCelula({ area, valor, cell, onClose }) {
   );
 }
 
-function KpiRow({ kpi }) {
+function KpiRow({ kpi, onAbrir }) {
   const traj = kpi.trajetoria;
   const sKey = traj?.status_trajetoria || 'sem_dado';
   const sv = STATUS_VISUAL[sKey] || STATUS_VISUAL.sem_dado;
   const Icon = sv.Icon;
 
   return (
-    <div style={{
-      background: 'var(--cbrio-card)',
-      border: `1px solid ${C.border}`,
-      borderLeft: `3px solid ${sv.cor}`,
-      borderRadius: 8,
-      padding: 14,
-    }}>
+    <div
+      onClick={onAbrir}
+      style={{
+        background: 'var(--cbrio-card)',
+        border: `1px solid ${C.border}`,
+        borderLeft: `3px solid ${sv.cor}`,
+        borderRadius: 8,
+        padding: 14,
+        cursor: onAbrir ? 'pointer' : 'default',
+        transition: 'border-color 0.15s, transform 0.1s',
+      }}
+      onMouseEnter={e => { if (onAbrir) { e.currentTarget.style.borderColor = sv.cor; } }}
+      onMouseLeave={e => { e.currentTarget.style.borderColor = C.border; e.currentTarget.style.borderLeft = `3px solid ${sv.cor}`; }}
+    >
       <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12 }}>
         <div style={{
           background: sv.bg, color: sv.cor,
@@ -182,6 +196,7 @@ function KpiRow({ kpi }) {
             }}>
               {sv.label}
             </span>
+            <ExternalLink size={12} style={{ color: C.t3 }} />
           </div>
 
           {kpi.descricao && (
