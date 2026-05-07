@@ -1162,4 +1162,8 @@ export const painel = {
   mandalas: () => get('/painel/mandalas'),
   matriz:   () => get('/painel/matriz'),
   celula:   (area, valor) => get(`/painel/celula/${area}/${valor}`),
+  alertas:  (params = {}) => {
+    const qs = new URLSearchParams(params).toString();
+    return get('/painel/alertas' + (qs ? '?' + qs : ''));
+  },
 };

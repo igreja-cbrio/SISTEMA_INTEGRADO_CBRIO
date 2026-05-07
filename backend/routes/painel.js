@@ -299,4 +299,82 @@ router.get('/celula/:area/:valor', async (req, res) => {
   }
 });
 
+// ----------------------------------------------------------------------------
+// GET /alertas - KPIs em alerta (criticos primeiro, depois atrasados)
+// query: ?limit=3 (default 3, max 20)
+//
+// Ordem de prioridade:
+//   1. status='critico'
+//   2. is_okr=true (estrategicos pesam mais)
+//   3. menor percentual_meta (mais distante da meta)
+// ----------------------------------------------------------------------------
+router.get('/alertas', async (req, res) => {
+  try {
+    const limit = Math.min(Number(req.query.limit) || 3, 20);
+
+    const { data: kpis, error } = await supabase
+      .from('kpi_indicadores_taticos')
+      .select('id, indicador, area, valores, is_okr, periodicidade, meta_descricao, unidade')
+      .eq('ativo', true);
+    if (error) throw error;
+
+    const { data: trajetorias } = await supabase
+      .from('vw_kpi_trajetoria_atual')
+      .select('kpi_id, status_trajetoria, ultimo_valor, ultimo_periodo, percentual_meta');
+    const trajByKpi = {};
+    (trajetorias || []).forEach(t => { trajByKpi[t.kpi_id] = t; });
+
+    // Filtrar KPIs em alerta
+    const emAlerta = (kpis || [])
+      .map(k => ({
+        ...k,
+        traj: trajByKpi[k.id] || null,
+      }))
+      .filter(k => k.traj && (k.traj.status_trajetoria === 'critico' || k.traj.status_trajetoria === 'atras'));
+
+    // Ordenar
+    emAlerta.sort((a, b) => {
+      // 1. critico antes de atras
+      const aCrit = a.traj.status_trajetoria === 'critico' ? 0 : 1;
+      const bCrit = b.traj.status_trajetoria === 'critico' ? 0 : 1;
+      if (aCrit !== bCrit) return aCrit - bCrit;
+
+      // 2. OKR antes de nao-OKR
+      const aOkr = a.is_okr ? 0 : 1;
+      const bOkr = b.is_okr ? 0 : 1;
+      if (aOkr !== bOkr) return aOkr - bOkr;
+
+      // 3. menor % da meta primeiro
+      const aPct = a.traj.percentual_meta ?? 100;
+      const bPct = b.traj.percentual_meta ?? 100;
+      return aPct - bPct;
+    });
+
+    const top = emAlerta.slice(0, limit).map(k => ({
+      kpi_id: k.id,
+      indicador: k.indicador,
+      area: k.area,
+      valores: k.valores,
+      is_okr: k.is_okr,
+      periodicidade: k.periodicidade,
+      meta_descricao: k.meta_descricao,
+      unidade: k.unidade,
+      status: k.traj.status_trajetoria,
+      ultimo_valor: k.traj.ultimo_valor,
+      ultimo_periodo: k.traj.ultimo_periodo,
+      percentual_meta: k.traj.percentual_meta,
+    }));
+
+    res.json({
+      total_em_alerta: emAlerta.length,
+      total_criticos:  emAlerta.filter(k => k.traj.status_trajetoria === 'critico').length,
+      total_atrasados: emAlerta.filter(k => k.traj.status_trajetoria === 'atras').length,
+      alertas: top,
+    });
+  } catch (e) {
+    console.error('painel/alertas:', e.message);
+    res.status(500).json({ error: 'Erro ao carregar alertas' });
+  }
+});
+
 module.exports = router;
