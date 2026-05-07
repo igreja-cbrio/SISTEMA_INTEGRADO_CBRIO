@@ -47,6 +47,7 @@ const NAV_ITEMS = [
       {
         title: 'Inteligência',
         items: [
+          { label: 'Painel CBRio', description: 'NSM, valores e áreas — visão central da igreja', icon: Activity, path: '/painel' },
           { label: 'Meus KPIs', description: 'Os indicadores da sua área para preencher', icon: Activity, path: '/meus-kpis' },
           { label: 'Painel de KPIs', description: 'Visão consolidada cross-área, OKRs e Jornada', icon: BarChart2, path: '/painel-kpis' },
           { label: 'KPIs e Indicadores', description: 'Frequência, batismos e métricas 2026', icon: BarChart2, path: '/kpis', perm: 'canKPIs' },

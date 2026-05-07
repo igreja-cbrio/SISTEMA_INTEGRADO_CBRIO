@@ -82,6 +82,7 @@ const NotificacaoRegras = lazyWithRetry(() => import('./pages/admin/NotificacaoR
 const KpiAreasAdmin = lazyWithRetry(() => import('./pages/admin/KpiAreas'));
 const MeusKpis = lazyWithRetry(() => import('./pages/MeusKpis'));
 const PainelKpis = lazyWithRetry(() => import('./pages/PainelKpis'));
+const Painel = lazyWithRetry(() => import('./pages/Painel'));
 const Membresia = lazyWithRetry(() => import('./pages/ministerial/Membresia'));
 const MemberScan = lazyWithRetry(() => import('./pages/ministerial/membresia/MemberScan'));
 const AssistenteIA = lazyWithRetry(() => import('./pages/admin/AssistenteIA'));
@@ -277,6 +278,7 @@ function AppRoutes() {
         <Route path="/kpis/guia" element={<ModuleGuard permKey="canKPIs"><Suspense fallback={<Loading />}><KPIsGuia /></Suspense></ModuleGuard>} />
         <Route path="/meus-kpis" element={<Suspense fallback={<Loading />}><MeusKpis /></Suspense>} />
         <Route path="/painel-kpis" element={<Suspense fallback={<Loading />}><PainelKpis /></Suspense>} />
+        <Route path="/painel" element={<Suspense fallback={<Loading />}><Painel /></Suspense>} />
         <Route path="/admin/notificacao-regras" element={<Suspense fallback={<Loading />}><NotificacaoRegras /></Suspense>} />
         <Route path="/admin/kpi-areas" element={<Suspense fallback={<Loading />}><KpiAreasAdmin /></Suspense>} />
         <Route path="/admin/grupos/qrcode-inscricao" element={<Suspense fallback={<Loading />}><InscricaoGruposQRCode /></Suspense>} />
