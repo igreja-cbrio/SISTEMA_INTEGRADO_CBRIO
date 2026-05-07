@@ -34,7 +34,7 @@ export function AuthProvider({ children }) {
     if (!supabase) return;
     const { data } = await supabase
       .from('profiles')
-      .select('id, name, email, role, area, kpi_areas, avatar_url')
+      .select('id, name, email, role, area, kpi_areas, avatar_url, ministerio_id, ministerio_papel, is_diretoria_geral, funcao_diretoria')
       .eq('id', userId)
       .single();
     setProfile(data ?? null);

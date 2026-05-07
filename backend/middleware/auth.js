@@ -59,7 +59,7 @@ async function authenticate(req, res, next) {
   // Busca perfil do usuário (role, name, area etc.)
   const { data: profile } = await supabase
     .from('profiles')
-    .select('id, name, email, role, area, kpi_areas, active')
+    .select('id, name, email, role, area, kpi_areas, ministerio_id, ministerio_papel, is_diretoria_geral, funcao_diretoria, active')
     .eq('id', user.id)
     .single();
 
@@ -192,6 +192,10 @@ async function authenticate(req, res, next) {
     name: profile.name,
     area: profile.area,
     kpi_areas: profile.kpi_areas || [],
+    ministerio_id: profile.ministerio_id || null,
+    ministerio_papel: profile.ministerio_papel || null,
+    is_diretoria_geral: !!profile.is_diretoria_geral,
+    funcao_diretoria: profile.funcao_diretoria || null,
     granular, // null se usuário não está no sistema granular
   };
 

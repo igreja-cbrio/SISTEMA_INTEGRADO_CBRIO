@@ -2,14 +2,19 @@ import { useMemo } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 
 /**
- * Hook que expoe o conjunto de KPI areas do usuario logado e helpers.
+ * Hook de responsabilidades do usuario logado.
  *
- *   const { kpiAreas, isAdmin, canEditArea, canEditAny } = useMyKpiAreas();
- *
- * - kpiAreas: array em lowercase (ex: ['voluntariado','grupos'])
- * - isAdmin: true para role 'admin' ou 'diretor' (passa por qualquer area)
- * - canEditArea(area): boolean — true se admin OU area no lowercase ∈ kpiAreas
- * - canEditAny: boolean — true se admin OU kpiAreas.length > 0
+ *   const {
+ *     kpiAreas,             // array lowercase (areas que lidera)
+ *     isAdmin,              // admin ou diretor
+ *     ministerioId,         // ministerio que coordena (lidera ou assiste)
+ *     ministerioPapel,      // 'lider' | 'assistente' | null
+ *     isDiretoriaGeral,     // pertence a diretoria geral nominal
+ *     canEditArea(area),    // pode editar KPI da area
+ *     canEditDado(area, dadoTipoMinisterio),  // pode editar dado bruto
+ *     canValidate(area),    // pode validar dado da area
+ *     canEditAny,
+ *   } = useMyKpiAreas();
  */
 export function useMyKpiAreas() {
   const { profile } = useAuth();
@@ -19,6 +24,9 @@ export function useMyKpiAreas() {
   }, [profile]);
 
   const isAdmin = ['admin', 'diretor'].includes(profile?.role);
+  const ministerioId = profile?.ministerio_id || null;
+  const ministerioPapel = profile?.ministerio_papel || null;
+  const isDiretoriaGeral = !!profile?.is_diretoria_geral;
 
   const canEditArea = (area) => {
     if (!area) return false;
@@ -26,7 +34,31 @@ export function useMyKpiAreas() {
     return kpiAreas.includes(String(area).toLowerCase());
   };
 
-  const canEditAny = isAdmin || kpiAreas.length > 0;
+  // Pode editar dado bruto se admin OU lider de area OU lider/assistente do ministerio do tipo
+  const canEditDado = (area, dadoTipoMinisterio) => {
+    if (isAdmin) return true;
+    if (kpiAreas.includes(String(area || '').toLowerCase())) return true;
+    if (ministerioId && ministerioId === dadoTipoMinisterio) return true;
+    return false;
+  };
 
-  return { kpiAreas, isAdmin, canEditArea, canEditAny };
+  // So lider de area (e admin) valida dado
+  const canValidate = (area) => {
+    if (isAdmin) return true;
+    return kpiAreas.includes(String(area || '').toLowerCase());
+  };
+
+  const canEditAny = isAdmin || kpiAreas.length > 0 || !!ministerioId;
+
+  return {
+    kpiAreas,
+    isAdmin,
+    ministerioId,
+    ministerioPapel,
+    isDiretoriaGeral,
+    canEditArea,
+    canEditDado,
+    canValidate,
+    canEditAny,
+  };
 }

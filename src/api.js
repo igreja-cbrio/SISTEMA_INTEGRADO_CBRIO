@@ -1180,6 +1180,8 @@ export const dadosBrutos = {
   create: (body) => post('/dados-brutos', body),
   update: (id, body) => put(`/dados-brutos/${id}`, body),
   remove: (id) => del(`/dados-brutos/${id}`),
+  validar:    (id) => post(`/dados-brutos/${id}/validar`, {}),
+  desvalidar: (id) => del(`/dados-brutos/${id}/validar`),
 };
 
 // ── Gestao (PMO administrativo) ──

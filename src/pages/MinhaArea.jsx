@@ -74,7 +74,7 @@ export default function MinhaArea() {
 
   const { profile } = useAuth();
   const { kpis, isLoading, refetch } = useKpis();
-  const { kpiAreas, isAdmin, canEditAny } = useMyKpiAreas();
+  const { kpiAreas, isAdmin, canEditAny, ministerioId, ministerioPapel } = useMyKpiAreas();
 
   const [registros, setRegistros] = useState([]);
   const [trajetorias, setTrajetorias] = useState([]);
@@ -184,17 +184,25 @@ export default function MinhaArea() {
           <Activity size={22} style={{ color: C.primary }} />
           Minha Area
         </h1>
-        <p style={{ fontSize: 12, color: C.t3, marginTop: 6 }}>
-          {isAdmin ? (
-            <>Voce ve <strong>todos os KPIs e dados</strong> e edita qualquer um (admin/diretor)</>
-          ) : kpiAreas.length === 0 ? (
-            <>Voce esta em modo leitura — sem area atribuida pra editar</>
-          ) : (
-            <>
-              Voce ve todos os KPIs · edita apenas: {kpiAreas.map(a => (
-                <span key={a} style={{ marginRight: 6, padding: '2px 10px', borderRadius: 99, background: C.primaryBg, color: C.primaryDark, fontWeight: 600, fontSize: 11, textTransform: 'capitalize' }}>{a}</span>
+        <p style={{ fontSize: 12, color: C.t3, marginTop: 6, lineHeight: 1.5 }}>
+          {isAdmin && <span>Admin/diretor — voce edita tudo. </span>}
+          {kpiAreas.length > 0 && (
+            <span>
+              Lider de area: {kpiAreas.map(a => (
+                <span key={a} style={{ marginRight: 4, padding: '2px 10px', borderRadius: 99, background: C.primaryBg, color: C.primaryDark, fontWeight: 600, fontSize: 11, textTransform: 'capitalize' }}>{a}</span>
               ))}
-            </>
+              <span style={{ marginRight: 6 }}>· cobrado pelo resultado.</span>
+            </span>
+          )}
+          {ministerioId && (
+            <span>
+              {ministerioPapel === 'lider' ? 'Lider' : 'Assistente'} do ministerio
+              <span style={{ marginLeft: 6, marginRight: 6, padding: '2px 10px', borderRadius: 99, background: '#3B82F620', color: '#3B82F6', fontWeight: 600, fontSize: 11, textTransform: 'capitalize' }}>{ministerioId}</span>
+              · responsavel pela coleta dos dados.
+            </span>
+          )}
+          {!isAdmin && !kpiAreas.length && !ministerioId && (
+            <span>Modo leitura — voce ve todos os KPIs e dados, mas nao edita.</span>
           )}
         </p>
       </header>
