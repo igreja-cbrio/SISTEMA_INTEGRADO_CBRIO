@@ -184,8 +184,8 @@ export default function Processos() {
     return { total, ativos, okrs, byCat, byArea };
   }, [list]);
 
-  // OKR e Agenda saiu para /painel-kpis (aba OKRs e Jornada) e /meus-kpis
-  // (agenda do usuario logado). KPIs foca em referencia processo->indicador.
+  // OKR e Agenda saiu para /painel (Sistema OKR/NSM 2026) e /meus-kpis.
+  // KPIs foca em referencia processo->indicador.
   const tabs = ['Home', 'Lista', 'KPIs'];
 
   return (
@@ -549,7 +549,7 @@ function TabKPIs({ list, kpisByArea = {}, onDetail }) {
   return (
     <div>
       <div style={{ background: C.card, border: `1px dashed ${C.border}`, borderRadius: 10, padding: '10px 14px', marginBottom: 16, fontSize: 12, color: C.t3, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, flexWrap: 'wrap' }}>
-        <span>Esta aba mostra a relação <strong style={{ color: C.text }}>processo → indicador</strong>. Para preencher KPIs vá em <a href="/meus-kpis" style={{ color: C.accent, fontWeight: 600 }}>Meus KPIs</a>; para ver o panorama institucional, <a href="/painel-kpis" style={{ color: C.accent, fontWeight: 600 }}>Painel de KPIs</a>.</span>
+        <span>Esta aba mostra a relação <strong style={{ color: C.text }}>processo → indicador</strong>. Para preencher KPIs vá em <a href="/meus-kpis" style={{ color: C.accent, fontWeight: 600 }}>Meus KPIs</a>; para ver o panorama institucional, <a href="/painel" style={{ color: C.accent, fontWeight: 600 }}>Painel CBRio</a>.</span>
       </div>
       {AREAS.map(area => { const kpis = kpisByArea[area.id] || []; return (
         <div key={area.id} style={{ marginBottom: 24 }}>

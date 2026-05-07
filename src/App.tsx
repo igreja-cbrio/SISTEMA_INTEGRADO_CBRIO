@@ -81,7 +81,6 @@ const Solicitacoes = lazyWithRetry(() => import('./pages/Solicitacoes'));
 const NotificacaoRegras = lazyWithRetry(() => import('./pages/admin/NotificacaoRegras'));
 const KpiAreasAdmin = lazyWithRetry(() => import('./pages/admin/KpiAreas'));
 const MeusKpis = lazyWithRetry(() => import('./pages/MeusKpis'));
-const PainelKpis = lazyWithRetry(() => import('./pages/PainelKpis'));
 const Painel = lazyWithRetry(() => import('./pages/Painel'));
 const Membresia = lazyWithRetry(() => import('./pages/ministerial/Membresia'));
 const MemberScan = lazyWithRetry(() => import('./pages/ministerial/membresia/MemberScan'));
@@ -112,15 +111,14 @@ const TotemMembro = lazyWithRetry(() => import('./pages/TotemMembro'));
 const VolSelfCheckin = lazyWithRetry(() => import('./pages/ministerial/voluntariado/VolSelfCheckin'));
 const PcCallback = lazyWithRetry(() => import('./pages/auth/PcCallback'));
 const SpotifyCallback = lazyWithRetry(() => import('./pages/auth/SpotifyCallback'));
-const KPIs = lazyWithRetry(() => import('./pages/kpis/KPIs'));
-const KPIsGuia = lazyWithRetry(() => import('./pages/kpis/KPIsGuia'));
 const Cuidados = lazyWithRetry(() => import('./pages/ministerial/Cuidados'));
 const Integracao = lazyWithRetry(() => import('./pages/ministerial/Integracao'));
 const Next = lazyWithRetry(() => import('./pages/ministerial/Next'));
 // Jornada virou aba dentro de Membresia (componente MembersJornadaPanel).
 // Mantido aqui apenas pra retrocompat de URL — redirect via Navigate.
 const InscricaoNext = lazyWithRetry(() => import('./pages/public/InscricaoNext'));
-const CulturaMensal = lazyWithRetry(() => import('./pages/admin/CulturaMensal'));
+// /admin/cultura, /kpis, /kpis/guia, /painel-kpis foram substituidos pelo /painel
+// (Fase 2 do sistema OKR/NSM 2026). Redirects abaixo preservam URLs antigas.
 
 // Placeholder pages for modules not yet copied
 const PlaceholderPage = ({ title }) => (
@@ -274,16 +272,17 @@ function AppRoutes() {
         <Route path="/ministerial/next" element={<ModuleGuard permKey="canMembresia"><Suspense fallback={<Loading />}><Next /></Suspense></ModuleGuard>} />
         <Route path="/assistente-ia" element={<ModuleGuard permKey="canIA"><Suspense fallback={<Loading />}><AssistenteIA /></Suspense></ModuleGuard>} />
         <Route path="/solicitacoes" element={<Suspense fallback={<Loading />}><Solicitacoes /></Suspense>} />
-        <Route path="/kpis" element={<ModuleGuard permKey="canKPIs"><Suspense fallback={<Loading />}><KPIs /></Suspense></ModuleGuard>} />
-        <Route path="/kpis/guia" element={<ModuleGuard permKey="canKPIs"><Suspense fallback={<Loading />}><KPIsGuia /></Suspense></ModuleGuard>} />
+        {/* Telas substituidas pelo /painel (Sistema OKR/NSM 2026 — Fase 2) */}
+        <Route path="/kpis" element={<Navigate to="/painel" replace />} />
+        <Route path="/kpis/guia" element={<Navigate to="/painel" replace />} />
+        <Route path="/painel-kpis" element={<Navigate to="/painel" replace />} />
+        <Route path="/admin/cultura" element={<Navigate to="/painel" replace />} />
         <Route path="/meus-kpis" element={<Suspense fallback={<Loading />}><MeusKpis /></Suspense>} />
-        <Route path="/painel-kpis" element={<Suspense fallback={<Loading />}><PainelKpis /></Suspense>} />
         <Route path="/painel" element={<Suspense fallback={<Loading />}><Painel /></Suspense>} />
         <Route path="/admin/notificacao-regras" element={<Suspense fallback={<Loading />}><NotificacaoRegras /></Suspense>} />
         <Route path="/admin/kpi-areas" element={<Suspense fallback={<Loading />}><KpiAreasAdmin /></Suspense>} />
         <Route path="/admin/grupos/qrcode-inscricao" element={<Suspense fallback={<Loading />}><InscricaoGruposQRCode /></Suspense>} />
         <Route path="/admin/grupos/geocode" element={<Suspense fallback={<Loading />}><GruposGeocode /></Suspense>} />
-        <Route path="/admin/cultura" element={<Suspense fallback={<Loading />}><CulturaMensal /></Suspense>} />
         <Route path="/ministerial/*" element={<PlaceholderPage title="Ministerial" />} />
         <Route path="/criativo/*" element={<PlaceholderPage title="Criativo" />} />
 
