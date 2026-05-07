@@ -787,16 +787,86 @@ SELECT * FROM vw_nsm_painel;
 e tem redirect pra `/painel`. Sidebar Inteligencia tem so 3 itens
 agora: Painel CBRio · Meus KPIs · Assistente IA.
 
-### Proximas fases
+### Fase 6 — Dados brutos + calculo automatico (mergeada · 2026-05-07)
 
-- **Fase 1.5** · Triggers que alimentam nsm_eventos a partir de
-  batismo (mem_membros.data_batismo), devocional (mem_devocionais),
-  grupo (mem_grupo_membros), voluntariado (vol_profiles),
-  doacao (mem_contribuicoes). Exige inspecao de cada tabela para nao
-  quebrar triggers existentes.
-- **Fase 3** · `/minha-area` agrupada por valor (substitui /meus-kpis)
-- **Fase 4** · `/gestao` 3 abas (Pulso · Configurar · Saude)
-- **Fase 5** · `/ritual` + notificacoes in-app
+Mudanca conceitual: lider preenche **numero absoluto** (frequencia,
+batismos, doacoes), sistema **calcula** o KPI (% crescimento, razao,
+soma). Resolve confusao "preencher KPI" vs "preencher dado".
+
+Estrutura criada:
+
+```
+tipos_dado_bruto (catalogo · ~35 tipos seedados)
+  ├─ frequencia_culto · frequencia_next · frequencia_grupos
+  ├─ conversoes · batismos · devocionais
+  ├─ voluntarios_ativos · voluntarios_inativos_3m · voluntarios_recuperados
+  ├─ voluntarios_checkin · voluntarios_treinamento
+  ├─ doacoes_valor · doadores_count · doadores_recorrentes · doacoes_qualidade
+  ├─ lideres_grupos · lideres_treinados · lideres_acompanhados · grupos_ativos
+  ├─ solicitacoes_capelania · _aconselhamento · _capelania_recebidas · _aconselhamento_recebidas
+  ├─ solicitacoes_servir_recebidas · solicitacoes_servir_alocadas
+  ├─ inscricoes_jornada180 · novos_convertidos_atend
+  └─ nps_next · nps_lideres · nps_voluntarios · nps_geral
+       ↓
+dados_brutos (registros · UNIQUE(tipo, area, data, contexto))
+       ↓ (trigger automatico)
+recalcular_kpis_por_dado() encontra KPIs ligados pela formula
+       ↓
+calcular_kpi() executa formula:
+  - delta_pct: (atual - anterior) / anterior * 100
+  - delta_abs: atual - anterior
+  - razao: numerador / denominador * 100
+  - contagem_janela: count em janela de N dias
+  - soma_periodo: sum no periodo (mes/trim/sem/ano)
+       ↓
+kpi_valores_calculados (cache · UPSERT por kpi_id+periodo)
+       ↓
+vw_kpi_trajetoria_atual (view consolidada)
+  - se tipo_calculo != 'manual': usa kpi_valores_calculados
+  - senao: kpi_registros (legado · fallback)
+```
+
+`kpi_indicadores_taticos` ganha:
+- `tipo_calculo` (manual | delta_pct | delta_abs | razao | contagem_janela | soma_periodo)
+- `formula_config` (jsonb com parametros)
+
+Dos 153 KPIs ativos, ~150 estao mapeados para calculo automatico.
+~3 ficam manual (casos especiais).
+
+### Tela `/dados-brutos` — onde o lider preenche
+
+- Filtros: area · tipo · desde
+- Tabela cronologica (desktop) / cards (mobile)
+- Modal "Registrar dado": tipo + area + data + valor + observacao
+- UNIQUE constraint: repreenchimento atualiza o valor
+
+### Permissoes (regra geral do sistema OKR)
+
+- Leitura: **todos veem todos os KPIs** (painel, mandalas, matriz, minha-area, dados-brutos)
+- Edicao: **so a propria area** (validado via `kpi_areas` em profiles)
+- Admin/diretor: passa em todos os checks
+
+### Modulos futuros (preparados na Fase 6)
+
+- **NPS**: quando criar, alimenta `nps_*` em dados_brutos.
+  KPIs de satisfacao ja apontam pra esses tipos.
+- **Solicitacoes de membro** (capelania/aconselhamento/servir):
+  quando criar, alimenta `solicitacoes_*_recebidas` e `*_atendidas`.
+  KPIs ja apontam pra esses tipos.
+
+### Voluntario inativo
+
+Definicao operacional: **sem servir ha mais de 90 dias**.
+- voluntarios_ativos: count distinct serviu nos ultimos 90 dias
+- voluntarios_inativos_3m: count distinct sem servico ha 90+ dias
+- voluntarios_recuperados: inativos que voltaram a servir no periodo
+
+### Proximas fases (planejadas)
+
+- **NPS** · modulo de avaliacoes (0-10) por contexto
+- **Solicitacoes** · membro pede capelania/aconselhamento/voluntariado
+- **Mobile responsive** · refinar `/minha-area`, expandir cards mobile
+- **Permissoes finais** · refatorar quando estrutura estiver definida
 
 ### O que sera removido quando o sistema estiver pronto
 
