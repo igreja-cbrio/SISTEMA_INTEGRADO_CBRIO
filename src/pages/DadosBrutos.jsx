@@ -31,7 +31,7 @@ function hoje() {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 
-export default function DadosBrutos() {
+export default function DadosBrutos({ embedded = false }) {
   const { profile } = useAuth();
   const { kpiAreas, isAdmin } = useMyKpiAreas();
   const [tipos, setTipos] = useState([]);
@@ -94,7 +94,8 @@ export default function DadosBrutos() {
   };
 
   return (
-    <div style={{ padding: '24px 32px', maxWidth: 1200, margin: '0 auto' }}>
+    <div style={{ padding: embedded ? 0 : '24px 32px', maxWidth: embedded ? '100%' : 1200, margin: embedded ? 0 : '0 auto' }}>
+      {!embedded && (
       <header style={{ marginBottom: 18, display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12, flexWrap: 'wrap' }}>
         <div>
           <h1 style={{ fontSize: 22, fontWeight: 700, color: C.text, margin: 0, display: 'flex', alignItems: 'center', gap: 10 }}>
@@ -123,6 +124,23 @@ export default function DadosBrutos() {
           </button>
         )}
       </header>
+      )}
+
+      {/* Botão Registrar (modo embedded — header global escondido) */}
+      {embedded && podeRegistrar && (
+        <div style={{ marginBottom: 12, display: 'flex', justifyContent: 'flex-end' }}>
+          <button
+            onClick={() => setEditando({})}
+            style={{
+              padding: '8px 14px', borderRadius: 6, fontSize: 12, fontWeight: 600,
+              background: C.primary, color: '#fff', border: 'none', cursor: 'pointer',
+              display: 'inline-flex', alignItems: 'center', gap: 6,
+            }}
+          >
+            <Plus size={14} /> Registrar dado
+          </button>
+        </div>
+      )}
 
       {/* Filtros */}
       <section style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 10, padding: 12, marginBottom: 16 }}>

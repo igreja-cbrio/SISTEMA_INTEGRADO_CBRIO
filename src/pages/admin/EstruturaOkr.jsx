@@ -32,7 +32,7 @@ const VALOR_CORES = {
   servir: '#10B981', generosidade: '#EC4899',
 };
 
-export default function EstruturaOkr() {
+export default function EstruturaOkr({ embedded = false }) {
   const { profile } = useAuth();
   const isAdmin = ['admin', 'diretor'].includes(profile?.role);
 
@@ -79,7 +79,8 @@ export default function EstruturaOkr() {
   }
 
   return (
-    <div style={{ padding: '24px 32px', maxWidth: 1200, margin: '0 auto' }}>
+    <div style={{ padding: embedded ? 0 : '24px 32px', maxWidth: embedded ? '100%' : 1200, margin: embedded ? 0 : '0 auto' }}>
+      {!embedded && (
       <header style={{ marginBottom: 20, display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 16, flexWrap: 'wrap' }}>
         <div>
           <h1 style={{ fontSize: 22, fontWeight: 700, color: C.text, margin: 0, display: 'flex', alignItems: 'center', gap: 10 }}>
@@ -94,6 +95,19 @@ export default function EstruturaOkr() {
           <Plus size={14} /> Novo objetivo
         </button>
       </header>
+      )}
+
+      {/* Botão Novo objetivo (modo embedded) */}
+      {embedded && (
+        <div style={{ marginBottom: 16, display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+          <p style={{ fontSize: 12, color: C.t3, margin: 0 }}>
+            {objetivos.length} objetivos · {direcionadores.length} direcionadores
+          </p>
+          <button onClick={() => setEditObj({})} style={btnPrimary}>
+            <Plus size={14} /> Novo objetivo
+          </button>
+        </div>
+      )}
 
       {/* Direcionadores (compactos) */}
       <section style={{ ...cardStyle, marginBottom: 16 }}>
