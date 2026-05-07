@@ -291,7 +291,7 @@ function ObjetivoLinha({ objetivo, expanded, onToggle, onEdit, onRemove, onAddKr
                   </div>
                 )}
                 <p style={{ fontSize: 10, color: C.t3, marginTop: 8, fontStyle: 'italic' }}>
-                  Editar KPI individualmente em /meus-kpis (clicando no KPI).
+                  Editar KPI individualmente em /minha-area (clicando no KPI).
                 </p>
               </div>
             </div>
