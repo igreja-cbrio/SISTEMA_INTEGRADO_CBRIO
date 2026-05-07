@@ -978,16 +978,32 @@ router.post('/geocode-batch', authorize('admin', 'diretor'), async (req, res) =>
     const LIMITE = Math.min(Math.max(parseInt(limit, 10) || 30, 1), 50);
     const OFFSET = Math.max(parseInt(offset, 10) || 0, 0);
 
+    // Conta total separadamente (sem range, sem select grande) — facilita
+    // troubleshoot se a query principal falhar.
+    let countQ = supabase.from('mem_grupos').select('id', { count: 'exact', head: true }).eq('ativo', true);
+    if (temporada) countQ = countQ.eq('temporada', temporada);
+    if (somente_sem_coords) countQ = countQ.or('lat.is.null,lng.is.null');
+    const { count: totalGeral, error: errCount } = await countQ;
+    if (errCount) {
+      console.error('[Grupos geocode-batch] count error:', errCount);
+      return res.status(500).json({ error: `Falha contar grupos: ${errCount.message || 'desconhecido'}` });
+    }
+
+    // Query principal — busca o lote
     let q = supabase.from('mem_grupos')
-      .select('id, codigo, nome, local, endereco, complemento, bairro, cep, lat, lng', { count: 'exact' })
+      .select('id, codigo, nome, local, endereco, complemento, bairro, cep, lat, lng')
       .eq('ativo', true)
-      .order('codigo', { ascending: true, nullsFirst: false });
+      .order('codigo', { ascending: true });
     if (temporada) q = q.eq('temporada', temporada);
     if (somente_sem_coords) q = q.or('lat.is.null,lng.is.null');
-
     q = q.range(OFFSET, OFFSET + LIMITE - 1);
-    const { data: grupos, count, error } = await q;
-    if (error) throw error;
+    const { data: grupos, error } = await q;
+    if (error) {
+      console.error('[Grupos geocode-batch] select error:', error);
+      return res.status(500).json({ error: `Falha buscar grupos: ${error.message || 'desconhecido'}`, code: error.code, hint: error.hint });
+    }
+
+    const count = totalGeral ?? 0;
 
     const ok = [];
     const falhas = [];
@@ -1079,8 +1095,8 @@ router.post('/geocode-batch', authorize('admin', 'diretor'), async (req, res) =>
       ok, falhas, skip,
     });
   } catch (e) {
-    console.error('[Grupos geocode-batch]', e.message);
-    res.status(500).json({ error: 'Erro ao geocodificar em massa' });
+    console.error('[Grupos geocode-batch] exception:', e);
+    res.status(500).json({ error: `Erro ao geocodificar: ${e.message || 'desconhecido'}` });
   }
 });
 
