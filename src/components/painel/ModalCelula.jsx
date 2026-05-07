@@ -11,9 +11,9 @@
 // ============================================================================
 
 import { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
 import { painel as painelApi } from '../../api';
 import { X, AlertCircle, CheckCircle2, Clock, TrendingDown, MinusCircle, ExternalLink } from 'lucide-react';
+import KpiDetalheModal from '../KpiDetalheModal';
 
 const C = {
   card: 'var(--cbrio-card)', text: 'var(--cbrio-text)',
@@ -30,10 +30,10 @@ const STATUS_VISUAL = {
 };
 
 export default function ModalCelula({ area, valor, cell, onClose }) {
-  const navigate = useNavigate();
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [erro, setErro] = useState(null);
+  const [detalheKpiId, setDetalheKpiId] = useState(null);
 
   useEffect(() => {
     setLoading(true);
@@ -45,8 +45,7 @@ export default function ModalCelula({ area, valor, cell, onClose }) {
   }, [area, valor]);
 
   const irParaKpi = (kpiId) => {
-    onClose?.();
-    navigate(`/painel/kpi/${encodeURIComponent(kpiId)}`);
+    setDetalheKpiId(kpiId);
   };
 
   // Fechar com ESC
@@ -144,6 +143,13 @@ export default function ModalCelula({ area, valor, cell, onClose }) {
           )}
         </div>
       </div>
+
+      {/* Modal de detalhe do KPI selecionado */}
+      <KpiDetalheModal
+        open={!!detalheKpiId}
+        kpiId={detalheKpiId}
+        onClose={() => setDetalheKpiId(null)}
+      />
     </div>
   );
 }

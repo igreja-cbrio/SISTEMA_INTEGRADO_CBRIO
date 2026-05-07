@@ -82,7 +82,7 @@ const NotificacaoRegras = lazyWithRetry(() => import('./pages/admin/NotificacaoR
 const KpiAreasAdmin = lazyWithRetry(() => import('./pages/admin/KpiAreas'));
 const MeusKpis = lazyWithRetry(() => import('./pages/MeusKpis'));
 const Painel = lazyWithRetry(() => import('./pages/Painel'));
-const PainelKpi = lazyWithRetry(() => import('./pages/PainelKpi'));
+// /painel/kpi/:id removido na Fase 2.5F — agora detalhe abre como modal (KpiDetalheModal)
 const PainelNsmPessoas = lazyWithRetry(() => import('./pages/PainelNsmPessoas'));
 const EstruturaOkr = lazyWithRetry(() => import('./pages/admin/EstruturaOkr'));
 const Ritual = lazyWithRetry(() => import('./pages/Ritual'));
@@ -285,7 +285,7 @@ function AppRoutes() {
         <Route path="/admin/cultura" element={<Navigate to="/painel" replace />} />
         <Route path="/meus-kpis" element={<Navigate to="/minha-area" replace />} />
         <Route path="/painel" element={<Suspense fallback={<Loading />}><Painel /></Suspense>} />
-        <Route path="/painel/kpi/:id" element={<Suspense fallback={<Loading />}><PainelKpi /></Suspense>} />
+        <Route path="/painel/kpi/:id" element={<Navigate to="/painel" replace />} />
         <Route path="/painel/nsm/pessoas" element={<Suspense fallback={<Loading />}><PainelNsmPessoas /></Suspense>} />
         <Route path="/admin/notificacao-regras" element={<Suspense fallback={<Loading />}><NotificacaoRegras /></Suspense>} />
         <Route path="/admin/kpi-areas" element={<Suspense fallback={<Loading />}><KpiAreasAdmin /></Suspense>} />

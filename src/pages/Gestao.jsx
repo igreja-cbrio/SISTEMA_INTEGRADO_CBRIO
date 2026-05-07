@@ -13,6 +13,7 @@ import { gestao as gestaoApi } from '../api';
 import { useAuth } from '../contexts/AuthContext';
 import { Activity, Settings, AlertCircle, TrendingDown, Bell, Users, Target, Shield, ArrowRight, ChevronRight } from 'lucide-react';
 import { toast } from 'sonner';
+import KpiDetalheModal from '../components/KpiDetalheModal';
 
 const C = {
   bg: 'var(--cbrio-bg)', card: 'var(--cbrio-card)', text: 'var(--cbrio-text)',
@@ -86,7 +87,7 @@ export default function Gestao() {
 function AbaPulso() {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
-  const navigate = useNavigate();
+  const [detalheKpiId, setDetalheKpiId] = useState(null);
 
   const carregar = useCallback(() => {
     setLoading(true);
@@ -166,7 +167,7 @@ function AbaPulso() {
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
               {data.cronicamente_vermelhos.slice(0, 10).map(k => (
-                <div key={k.kpi_id} onClick={() => navigate(`/painel/kpi/${encodeURIComponent(k.kpi_id)}`)}
+                <div key={k.kpi_id} onClick={() => setDetalheKpiId(k.kpi_id)}
                   style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 10px', background: 'var(--cbrio-input-bg)', borderRadius: 6, cursor: 'pointer' }}>
                   <TrendingDown size={14} style={{ color: '#EF4444', flexShrink: 0 }} />
                   <div style={{ flex: 1, minWidth: 0 }}>
@@ -205,6 +206,13 @@ function AbaPulso() {
           )}
         </Card>
       </div>
+
+      <KpiDetalheModal
+        open={!!detalheKpiId}
+        kpiId={detalheKpiId}
+        onClose={() => setDetalheKpiId(null)}
+        onUpdated={carregar}
+      />
     </>
   );
 }
@@ -299,6 +307,7 @@ function AbaConfigurar() {
 function AbaSaude() {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [detalheKpiId, setDetalheKpiId] = useState(null);
 
   useEffect(() => {
     setLoading(true);
@@ -323,16 +332,16 @@ function AbaSaude() {
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(380px, 1fr))', gap: 16 }}>
         <ListaSaude titulo="Sem meta definida"
           subtitulo="KPIs que precisam de uma meta antes de poder cobrar"
-          items={data.sem_meta.items} cor="#EF4444" />
+          items={data.sem_meta.items} cor="#EF4444" onAbrirKpi={setDetalheKpiId} />
         <ListaSaude titulo="Sem dono atribuido"
           subtitulo="KPIs sem lider responsavel — ninguem e cobrado"
-          items={data.sem_dono.items} cor="#F59E0B" />
+          items={data.sem_dono.items} cor="#F59E0B" onAbrirKpi={setDetalheKpiId} />
         <ListaSaude titulo="Sem objetivo geral vinculado"
-          subtitulo="Nao alimentam cascata automatica" items={data.sem_objetivo.items} cor="#3B82F6" />
+          subtitulo="Nao alimentam cascata automatica" items={data.sem_objetivo.items} cor="#3B82F6" onAbrirKpi={setDetalheKpiId} />
         <ListaSaude titulo="Sem valores da Jornada"
-          subtitulo="Nao aparecem na matriz nem nas mandalas" items={data.sem_valores.items} cor="#8B5CF6" />
+          subtitulo="Nao aparecem na matriz nem nas mandalas" items={data.sem_valores.items} cor="#8B5CF6" onAbrirKpi={setDetalheKpiId} />
         <ListaSaude titulo="Sem registro nos ultimos 60 dias"
-          subtitulo="KPIs vivos mas que ninguem preenche" items={data.sem_registro_60d.items} cor="#EF4444" />
+          subtitulo="KPIs vivos mas que ninguem preenche" items={data.sem_registro_60d.items} cor="#EF4444" onAbrirKpi={setDetalheKpiId} />
         <Card title="Cobertura da matriz Valor × Area" subtitle="Quais valores cada area ja tem KPI">
           <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
             {data.matriz_cobertura.map(c => (
@@ -359,6 +368,12 @@ function AbaSaude() {
             cols={['nome']} idField="id" />
         )}
       </div>
+
+      <KpiDetalheModal
+        open={!!detalheKpiId}
+        kpiId={detalheKpiId}
+        onClose={() => setDetalheKpiId(null)}
+      />
     </>
   );
 }
@@ -394,8 +409,7 @@ function Stats({ stats }) {
   );
 }
 
-function ListaSaude({ titulo, subtitulo, items, cor, cols = ['indicador', 'area'], idField = 'id' }) {
-  const navigate = useNavigate();
+function ListaSaude({ titulo, subtitulo, items, cor, cols = ['indicador', 'area'], idField = 'id', onAbrirKpi }) {
   return (
     <Card title={titulo} subtitle={subtitulo}>
       {items.length === 0 ? (
@@ -404,7 +418,7 @@ function ListaSaude({ titulo, subtitulo, items, cor, cols = ['indicador', 'area'
         <div style={{ display: 'flex', flexDirection: 'column', gap: 4, maxHeight: 280, overflowY: 'auto' }}>
           {items.map(item => (
             <div key={item[idField]}
-              onClick={() => cols.includes('indicador') && navigate(`/painel/kpi/${encodeURIComponent(item.id)}`)}
+              onClick={() => cols.includes('indicador') && onAbrirKpi?.(item.id)}
               style={{
                 display: 'flex', alignItems: 'center', gap: 8, padding: '6px 10px',
                 background: 'var(--cbrio-input-bg)', borderRadius: 4, fontSize: 11,
