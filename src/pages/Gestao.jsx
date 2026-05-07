@@ -8,12 +8,13 @@
 // ============================================================================
 
 import { useState, useEffect, useCallback } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { gestao as gestaoApi } from '../api';
 import { useAuth } from '../contexts/AuthContext';
 import { Activity, Settings, AlertCircle, TrendingDown, Bell, Users, Target, Shield, ArrowRight, ChevronRight } from 'lucide-react';
 import { toast } from 'sonner';
 import KpiDetalheModal from '../components/KpiDetalheModal';
+import EstruturaOkr from './admin/EstruturaOkr';
 
 const C = {
   bg: 'var(--cbrio-bg)', card: 'var(--cbrio-card)', text: 'var(--cbrio-text)',
@@ -22,15 +23,22 @@ const C = {
 };
 
 const TABS = [
-  { key: 'pulso',     label: 'Pulso',      Icon: Activity },
-  { key: 'configurar', label: 'Configurar', Icon: Settings },
-  { key: 'saude',     label: 'Saude',      Icon: Shield },
+  { key: 'pulso',     label: 'Pulso',         Icon: Activity },
+  { key: 'estrutura', label: 'Estrutura OKR', Icon: Target },
+  { key: 'configurar', label: 'Configurar',   Icon: Settings },
+  { key: 'saude',     label: 'Saude',         Icon: Shield },
 ];
 
 export default function Gestao() {
   const { profile } = useAuth();
   const isAdmin = ['admin', 'diretor'].includes(profile?.role);
-  const [aba, setAba] = useState('pulso');
+  const [searchParams, setSearchParams] = useSearchParams();
+  const aba = searchParams.get('aba') || 'pulso';
+  const setAba = (a) => {
+    const next = new URLSearchParams(searchParams);
+    next.set('aba', a);
+    setSearchParams(next, { replace: true });
+  };
 
   if (!isAdmin) {
     return (
@@ -75,6 +83,7 @@ export default function Gestao() {
       </div>
 
       {aba === 'pulso' && <AbaPulso />}
+      {aba === 'estrutura' && <EstruturaOkr embedded />}
       {aba === 'configurar' && <AbaConfigurar />}
       {aba === 'saude' && <AbaSaude />}
     </div>
@@ -223,13 +232,6 @@ function AbaPulso() {
 function AbaConfigurar() {
   const navigate = useNavigate();
   const items = [
-    {
-      titulo: 'Estrutura OKR',
-      desc: 'Direcionadores, objetivos gerais (25), KRs gerais',
-      Icon: Target,
-      path: '/admin/estrutura-okr',
-      cor: C.primary,
-    },
     {
       titulo: 'Areas de KPI',
       desc: 'Atribuir quais areas cada lider edita',

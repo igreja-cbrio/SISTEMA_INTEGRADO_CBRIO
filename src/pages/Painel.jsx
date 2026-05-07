@@ -15,7 +15,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { nsm as nsmApi } from '../api';
 import { useAuth } from '../contexts/AuthContext';
-import { Activity, RefreshCw, TrendingUp, TrendingDown, Minus, ChevronRight, Users } from 'lucide-react';
+import { Activity, RefreshCw, TrendingUp, TrendingDown, Minus, ChevronRight, Users, ClipboardCheck } from 'lucide-react';
 import { toast } from 'sonner';
 import CarrosselMandalas from '../components/painel/CarrosselMandalas';
 import MatrizValorArea from '../components/painel/MatrizValorArea';
@@ -114,22 +114,37 @@ export default function Painel() {
             )}
           </p>
         </div>
-        {isAdmin && (
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
           <button
-            onClick={handleRecalcular}
-            disabled={recalculando}
+            onClick={() => navigate('/ritual')}
             style={{
-              padding: '8px 14px', borderRadius: 8, fontSize: 12, fontWeight: 600,
-              cursor: recalculando ? 'not-allowed' : 'pointer',
-              background: 'transparent', color: C.t2, border: `1px solid ${C.border}`,
-              display: 'inline-flex', alignItems: 'center', gap: 6, opacity: recalculando ? 0.5 : 1,
+              padding: '8px 14px', borderRadius: 8, fontSize: 12, fontWeight: 700,
+              cursor: 'pointer',
+              background: C.primary, color: '#fff', border: 'none',
+              display: 'inline-flex', alignItems: 'center', gap: 6,
             }}
-            title="Forcar recalculo da NSM"
+            title="Revisar OKRs em alerta este mes"
           >
-            <RefreshCw size={14} style={{ animation: recalculando ? 'spin 1s linear infinite' : 'none' }} />
-            {recalculando ? 'Recalculando...' : 'Recalcular NSM'}
+            <ClipboardCheck size={14} />
+            Ritual Mensal
           </button>
-        )}
+          {isAdmin && (
+            <button
+              onClick={handleRecalcular}
+              disabled={recalculando}
+              style={{
+                padding: '8px 14px', borderRadius: 8, fontSize: 12, fontWeight: 600,
+                cursor: recalculando ? 'not-allowed' : 'pointer',
+                background: 'transparent', color: C.t2, border: `1px solid ${C.border}`,
+                display: 'inline-flex', alignItems: 'center', gap: 6, opacity: recalculando ? 0.5 : 1,
+              }}
+              title="Forcar recalculo da NSM"
+            >
+              <RefreshCw size={14} style={{ animation: recalculando ? 'spin 1s linear infinite' : 'none' }} />
+              {recalculando ? 'Recalculando...' : 'Recalcular NSM'}
+            </button>
+          )}
+        </div>
       </div>
 
       {loading ? (

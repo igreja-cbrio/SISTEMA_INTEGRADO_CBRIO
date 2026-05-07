@@ -1,13 +1,15 @@
 // ============================================================================
-// /minha-area — KPIs do lider, agrupados por VALOR (nao periodicidade)
+// /minha-area — Hub do lider · 2 abas: KPIs (resultado) + Dados (entrada)
 //
-// Substitui /meus-kpis. Mais alinhado com como o lider pensa:
-// "como ta o Servir no meu ministerio?", nao "o que vence semana?".
+// Aba KPIs: cards de KPIs por valor da Jornada (resultado calculado).
+// Aba Dados: registrar numeros absolutos (frequencia, batismos, etc).
 //
-// Mobile-first: cards compactos, modal de preencher otimizado pra dedo.
+// Todos veem todos os KPIs/dados. So edita o que e da propria area
+// (admin/diretor edita tudo).
 // ============================================================================
 
 import { useState, useEffect, useMemo, useCallback } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { kpis as kpisApi } from '../api';
 import { useKpis } from '../hooks/useKpis';
@@ -16,7 +18,8 @@ import KpiQuickFillModal from '../components/KpiQuickFillModal';
 import KpiEditorModal from '../components/KpiEditorModal';
 import OkrRevisaoModal from '../components/OkrRevisaoModal';
 import KpiDetalheModal from '../components/KpiDetalheModal';
-import { Activity, Pencil, Plus, ChevronDown, ChevronRight, AlertCircle, CheckCircle2, Clock, TrendingDown, MinusCircle, ClipboardCheck } from 'lucide-react';
+import DadosBrutos from './DadosBrutos';
+import { Activity, Pencil, Plus, ChevronDown, ChevronRight, AlertCircle, CheckCircle2, Clock, TrendingDown, MinusCircle, ClipboardCheck, Database, BarChart2 } from 'lucide-react';
 import { toast } from 'sonner';
 
 const C = {
@@ -61,6 +64,14 @@ function periodKey(periodicidade, date = new Date()) {
 }
 
 export default function MinhaArea() {
+  const [searchParams, setSearchParams] = useSearchParams();
+  const aba = searchParams.get('aba') || 'kpis'; // 'kpis' | 'dados'
+  const setAba = (a) => {
+    const next = new URLSearchParams(searchParams);
+    next.set('aba', a);
+    setSearchParams(next, { replace: true });
+  };
+
   const { profile } = useAuth();
   const { kpis, isLoading, refetch } = useKpis();
   const { kpiAreas, isAdmin, canEditAny } = useMyKpiAreas();
@@ -168,102 +179,133 @@ export default function MinhaArea() {
 
   return (
     <div style={{ padding: '20px 16px', maxWidth: 1100, margin: '0 auto' }}>
-      <header style={{ marginBottom: 18, display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12, flexWrap: 'wrap' }}>
-        <div>
-          <h1 style={{ fontSize: 22, fontWeight: 700, color: C.text, margin: 0, display: 'flex', alignItems: 'center', gap: 10 }}>
-            <Activity size={22} style={{ color: C.primary }} />
-            Minha Area
-          </h1>
-          <p style={{ fontSize: 12, color: C.t3, marginTop: 6 }}>
-            {isAdmin ? (
-              <>Voce ve <strong>todos os KPIs</strong> e edita qualquer um (admin/diretor)</>
-            ) : kpiAreas.length === 0 ? (
-              <>Voce esta em modo leitura — sem area atribuida pra editar</>
-            ) : (
-              <>
-                Voce ve todos os KPIs · edita apenas: {kpiAreas.map(a => (
-                  <span key={a} style={{ marginRight: 6, padding: '2px 10px', borderRadius: 99, background: C.primaryBg, color: C.primaryDark, fontWeight: 600, fontSize: 11, textTransform: 'capitalize' }}>{a}</span>
-                ))}
-              </>
-            )}
-          </p>
-        </div>
-        {canEditAny && (
-          <button onClick={() => setCreateOpen(true)} style={btnPrimary}>
-            <Plus size={14} /> Novo KPI
-          </button>
-        )}
+      <header style={{ marginBottom: 14 }}>
+        <h1 style={{ fontSize: 22, fontWeight: 700, color: C.text, margin: 0, display: 'flex', alignItems: 'center', gap: 10 }}>
+          <Activity size={22} style={{ color: C.primary }} />
+          Minha Area
+        </h1>
+        <p style={{ fontSize: 12, color: C.t3, marginTop: 6 }}>
+          {isAdmin ? (
+            <>Voce ve <strong>todos os KPIs e dados</strong> e edita qualquer um (admin/diretor)</>
+          ) : kpiAreas.length === 0 ? (
+            <>Voce esta em modo leitura — sem area atribuida pra editar</>
+          ) : (
+            <>
+              Voce ve todos os KPIs · edita apenas: {kpiAreas.map(a => (
+                <span key={a} style={{ marginRight: 6, padding: '2px 10px', borderRadius: 99, background: C.primaryBg, color: C.primaryDark, fontWeight: 600, fontSize: 11, textTransform: 'capitalize' }}>{a}</span>
+              ))}
+            </>
+          )}
+        </p>
       </header>
 
-      {/* Stats topo */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))', gap: 8, marginBottom: 16 }}>
-        <Stat label="Total" value={stats.total} cor={C.text} />
-        <Stat label="Em dia" value={stats.no_alvo} cor="#10B981" />
-        <Stat label="Atras / Critico" value={stats.atras} cor="#EF4444" />
-        <Stat label="Sem dado" value={stats.sem_dado} cor="#9CA3AF" />
+      {/* Tabs */}
+      <div style={{ display: 'flex', gap: 4, borderBottom: `2px solid ${C.border}`, marginBottom: 16 }}>
+        <button
+          onClick={() => setAba('kpis')}
+          style={{
+            padding: '10px 18px', background: 'none', border: 'none', cursor: 'pointer',
+            fontSize: 13, fontWeight: aba === 'kpis' ? 700 : 500,
+            color: aba === 'kpis' ? C.primary : C.t3,
+            borderBottom: aba === 'kpis' ? `2px solid ${C.primary}` : '2px solid transparent',
+            marginBottom: -2, display: 'inline-flex', alignItems: 'center', gap: 6,
+          }}
+        >
+          <BarChart2 size={14} /> KPIs (resultado)
+        </button>
+        <button
+          onClick={() => setAba('dados')}
+          style={{
+            padding: '10px 18px', background: 'none', border: 'none', cursor: 'pointer',
+            fontSize: 13, fontWeight: aba === 'dados' ? 700 : 500,
+            color: aba === 'dados' ? C.primary : C.t3,
+            borderBottom: aba === 'dados' ? `2px solid ${C.primary}` : '2px solid transparent',
+            marginBottom: -2, display: 'inline-flex', alignItems: 'center', gap: 6,
+          }}
+        >
+          <Database size={14} /> Dados (entrada)
+        </button>
       </div>
 
-      {/* Acordeao por valor */}
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-        {VALORES.map(v => {
-          const kpisDoValor = porValor[v.key] || [];
-          if (kpisDoValor.length === 0) return null;
-
-          const pendentes = kpisDoValor.filter(k => statusKpi(k) !== 'no_alvo').length;
-          const expanded = valorExpandido === v.key;
-
-          return (
-            <section key={v.key} style={{
-              background: C.card, border: `1px solid ${C.border}`,
-              borderLeft: `3px solid ${v.cor}`,
-              borderRadius: 8, overflow: 'hidden',
-            }}>
-              <button
-                onClick={() => setValorExpandido(expanded ? null : v.key)}
-                style={{
-                  width: '100%', padding: 14,
-                  display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap',
-                  background: 'none', border: 'none', cursor: 'pointer', textAlign: 'left',
-                }}
-              >
-                {expanded ? <ChevronDown size={16} style={{ color: C.t3 }} /> : <ChevronRight size={16} style={{ color: C.t3 }} />}
-                <div style={{ width: 12, height: 12, borderRadius: '50%', background: v.cor }} />
-                <strong style={{ fontSize: 14, color: C.text }}>{v.label}</strong>
-                <span style={{ fontSize: 10, padding: '2px 8px', borderRadius: 99, background: 'var(--cbrio-input-bg)', color: C.t2, fontWeight: 600, marginLeft: 'auto' }}>
-                  {kpisDoValor.length} KPI{kpisDoValor.length === 1 ? '' : 's'}
-                </span>
-                {pendentes > 0 && (
-                  <span style={{ fontSize: 10, padding: '2px 8px', borderRadius: 99, background: '#FEE2E2', color: '#B91C1C', fontWeight: 700 }}>
-                    {pendentes} pendente{pendentes === 1 ? '' : 's'}
-                  </span>
-                )}
+      {aba === 'dados' ? (
+        <DadosBrutos embedded />
+      ) : (
+        <>
+          {canEditAny && (
+            <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 12 }}>
+              <button onClick={() => setCreateOpen(true)} style={btnPrimary}>
+                <Plus size={14} /> Novo KPI
               </button>
+            </div>
+          )}
 
-              {expanded && (
-                <div style={{ padding: '0 14px 14px', borderTop: `1px solid ${C.border}` }}>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 6, paddingTop: 12 }}>
-                    {kpisDoValor.map(kpi => (
-                      <KpiCard
-                        key={kpi.id}
-                        kpi={kpi}
-                        status={statusKpi(kpi)}
-                        ultimo={ultimoRegPorIndicador[kpi.id]}
-                        canEdit={podeEditar(kpi)}
-                        onPreencher={() => setFillKpi(kpi)}
-                        onEditar={() => setEditKpi(kpi)}
-                        onRevisar={() => setRevisarKpi(kpi)}
-                        onDetalhe={() => setDetalheKpiId(kpi.id)}
-                      />
-                    ))}
-                  </div>
-                </div>
-              )}
-            </section>
-          );
-        })}
-      </div>
+          {/* Stats */}
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))', gap: 8, marginBottom: 16 }}>
+            <Stat label="Total" value={stats.total} cor={C.text} />
+            <Stat label="Em dia" value={stats.no_alvo} cor="#10B981" />
+            <Stat label="Atras / Critico" value={stats.atras} cor="#EF4444" />
+            <Stat label="Sem dado" value={stats.sem_dado} cor="#9CA3AF" />
+          </div>
 
-      {/* Modais */}
+          {/* Acordeao por valor */}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            {VALORES.map(v => {
+              const kpisDoValor = porValor[v.key] || [];
+              if (kpisDoValor.length === 0) return null;
+              const pendentes = kpisDoValor.filter(k => statusKpi(k) !== 'no_alvo').length;
+              const expanded = valorExpandido === v.key;
+              return (
+                <section key={v.key} style={{
+                  background: C.card, border: `1px solid ${C.border}`,
+                  borderLeft: `3px solid ${v.cor}`,
+                  borderRadius: 8, overflow: 'hidden',
+                }}>
+                  <button
+                    onClick={() => setValorExpandido(expanded ? null : v.key)}
+                    style={{
+                      width: '100%', padding: 14,
+                      display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap',
+                      background: 'none', border: 'none', cursor: 'pointer', textAlign: 'left',
+                    }}
+                  >
+                    {expanded ? <ChevronDown size={16} style={{ color: C.t3 }} /> : <ChevronRight size={16} style={{ color: C.t3 }} />}
+                    <div style={{ width: 12, height: 12, borderRadius: '50%', background: v.cor }} />
+                    <strong style={{ fontSize: 14, color: C.text }}>{v.label}</strong>
+                    <span style={{ fontSize: 10, padding: '2px 8px', borderRadius: 99, background: 'var(--cbrio-input-bg)', color: C.t2, fontWeight: 600, marginLeft: 'auto' }}>
+                      {kpisDoValor.length} KPI{kpisDoValor.length === 1 ? '' : 's'}
+                    </span>
+                    {pendentes > 0 && (
+                      <span style={{ fontSize: 10, padding: '2px 8px', borderRadius: 99, background: '#FEE2E2', color: '#B91C1C', fontWeight: 700 }}>
+                        {pendentes} pendente{pendentes === 1 ? '' : 's'}
+                      </span>
+                    )}
+                  </button>
+                  {expanded && (
+                    <div style={{ padding: '0 14px 14px', borderTop: `1px solid ${C.border}` }}>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 6, paddingTop: 12 }}>
+                        {kpisDoValor.map(kpi => (
+                          <KpiCard
+                            key={kpi.id}
+                            kpi={kpi}
+                            status={statusKpi(kpi)}
+                            ultimo={ultimoRegPorIndicador[kpi.id]}
+                            canEdit={podeEditar(kpi)}
+                            onPreencher={() => setFillKpi(kpi)}
+                            onEditar={() => setEditKpi(kpi)}
+                            onRevisar={() => setRevisarKpi(kpi)}
+                            onDetalhe={() => setDetalheKpiId(kpi.id)}
+                          />
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </section>
+              );
+            })}
+          </div>
+        </>
+      )}
+
       <KpiQuickFillModal
         open={!!fillKpi}
         kpi={fillKpi}
@@ -297,7 +339,6 @@ export default function MinhaArea() {
           onSaved={() => { setRevisarKpi(null); toast.success('Revisao registrada'); }}
         />
       )}
-
       <KpiDetalheModal
         open={!!detalheKpiId}
         kpiId={detalheKpiId}
