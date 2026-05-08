@@ -129,7 +129,7 @@ function AbaPulso() {
         { label: 'Lideres com pendencia', value: data.lideres.filter(l => l.criticos > 0 || l.atrasados > 0).length, cor: '#EF4444' },
       ]} />
 
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(420px, 1fr))', gap: 16 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(440px, 1fr))', gap: 16 }}>
         {/* Lideres ranqueados por urgencia */}
         <Card title="Lideres com pendencias" subtitle="Ordenado por gravidade (criticos > atrasados > sem dado)">
           {data.lideres.length === 0 ? (
@@ -138,30 +138,31 @@ function AbaPulso() {
             <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
               {data.lideres.slice(0, 12).map(l => (
                 <div key={l.id} style={{
-                  display: 'flex', alignItems: 'center', gap: 10,
-                  padding: '8px 10px', background: 'var(--cbrio-input-bg)', borderRadius: 6,
+                  display: 'flex', alignItems: 'center', gap: 12,
+                  padding: '10px 12px', background: 'var(--cbrio-input-bg)', borderRadius: 8,
+                  minHeight: 52,
                 }}>
                   <div style={{
-                    width: 30, height: 30, borderRadius: '50%',
+                    width: 34, height: 34, borderRadius: '50%',
                     background: C.primaryBg, color: C.primaryDark,
                     display: 'flex', alignItems: 'center', justifyContent: 'center',
-                    fontSize: 11, fontWeight: 700, flexShrink: 0,
+                    fontSize: 13, fontWeight: 700, flexShrink: 0,
                   }}>
                     {(l.nome || '?').charAt(0).toUpperCase()}
                   </div>
                   <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontSize: 12, fontWeight: 600, color: C.text }}>{l.nome}</div>
-                    <div style={{ fontSize: 9, color: C.t3 }}>
+                    <div style={{ fontSize: 13, fontWeight: 600, color: C.text, lineHeight: 1.3 }}>{l.nome}</div>
+                    <div style={{ fontSize: 10, color: C.t3, marginTop: 2, lineHeight: 1.4 }}>
                       {l.cargo || ''}{l.area ? ` · ${l.area}` : ''} · {l.total_kpis} KPIs · {l.percentual_em_dia}% em dia
                     </div>
                   </div>
-                  <div style={{ display: 'flex', gap: 4 }}>
+                  <div style={{ display: 'flex', gap: 4, flexShrink: 0 }}>
                     {l.criticos > 0 && <Badge cor="#EF4444" label={`${l.criticos}c`} title={`${l.criticos} criticos`} />}
                     {l.atrasados > 0 && <Badge cor="#F59E0B" label={`${l.atrasados}a`} title={`${l.atrasados} atrasados`} />}
                     {l.sem_dado > 0 && <Badge cor="#9CA3AF" label={`${l.sem_dado}?`} title={`${l.sem_dado} sem dado`} />}
                   </div>
                   <button onClick={() => cobrar(l)} style={btnSm} title="Enviar lembrete">
-                    <Bell size={11} />
+                    <Bell size={12} />
                   </button>
                 </div>
               ))}
@@ -172,21 +173,34 @@ function AbaPulso() {
         {/* KPIs cronicamente vermelhos */}
         <Card title="KPIs cronicamente criticos" subtitle="Indicadores em vermelho que precisam de atencao da diretoria">
           {data.cronicamente_vermelhos.length === 0 ? (
-            <Vazio>Nenhum KPI cronicamente vermelho. </Vazio>
+            <Vazio>Nenhum KPI cronicamente vermelho.</Vazio>
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
               {data.cronicamente_vermelhos.slice(0, 10).map(k => (
                 <div key={k.kpi_id} onClick={() => setDetalheKpiId(k.kpi_id)}
-                  style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 10px', background: 'var(--cbrio-input-bg)', borderRadius: 6, cursor: 'pointer' }}>
-                  <TrendingDown size={14} style={{ color: '#EF4444', flexShrink: 0 }} />
+                  style={{
+                    display: 'flex', alignItems: 'center', gap: 12,
+                    padding: '10px 12px', background: 'var(--cbrio-input-bg)', borderRadius: 8,
+                    cursor: 'pointer', minHeight: 52, transition: 'background 0.15s',
+                  }}
+                  onMouseEnter={e => e.currentTarget.style.background = 'var(--cbrio-card)'}
+                  onMouseLeave={e => e.currentTarget.style.background = 'var(--cbrio-input-bg)'}>
+                  <div style={{
+                    width: 34, height: 34, borderRadius: '50%',
+                    background: '#FEE2E2', color: '#EF4444',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    flexShrink: 0,
+                  }}>
+                    <TrendingDown size={16} />
+                  </div>
                   <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontSize: 12, fontWeight: 600, color: C.text }}>{k.indicador}</div>
-                    <div style={{ fontSize: 9, color: C.t3, textTransform: 'capitalize' }}>
+                    <div style={{ fontSize: 13, fontWeight: 600, color: C.text, lineHeight: 1.3, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{k.indicador}</div>
+                    <div style={{ fontSize: 10, color: C.t3, textTransform: 'capitalize', marginTop: 2 }}>
                       {k.area} · {k.percentual_meta != null ? `${k.percentual_meta}% da meta` : 'sem dado'}
                     </div>
                   </div>
                   {k.is_okr && <Badge cor="#B45309" label="OKR" bg="#FEF3C7" />}
-                  <ChevronRight size={14} style={{ color: C.t3 }} />
+                  <ChevronRight size={14} style={{ color: C.t3, flexShrink: 0 }} />
                 </div>
               ))}
             </div>
@@ -196,17 +210,23 @@ function AbaPulso() {
         {/* Areas (saude por area) */}
         <Card title="Saude por area" subtitle="Percentual de KPIs em dia em cada area" full>
           {data.areas.length === 0 ? <Vazio>Nenhuma area cadastrada.</Vazio> : (
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: 8 }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))', gap: 10 }}>
               {data.areas.map(a => {
                 const cor = a.percentual_em_dia >= 70 ? '#10B981' : a.percentual_em_dia >= 40 ? '#F59E0B' : '#EF4444';
                 return (
-                  <div key={a.area} style={{ padding: 10, background: 'var(--cbrio-input-bg)', borderRadius: 6, borderLeft: `3px solid ${cor}` }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 6 }}>
-                      <strong style={{ fontSize: 12, textTransform: 'capitalize' }}>{a.area}</strong>
-                      <span style={{ fontSize: 18, fontWeight: 800, color: cor }}>{a.percentual_em_dia}%</span>
+                  <div key={a.area} style={{
+                    padding: 14, background: 'var(--cbrio-input-bg)', borderRadius: 8,
+                    borderLeft: `3px solid ${cor}`,
+                  }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 8, marginBottom: 8 }}>
+                      <strong style={{ fontSize: 13, textTransform: 'capitalize', color: C.text }}>{a.area}</strong>
+                      <span style={{ fontSize: 22, fontWeight: 800, color: cor, lineHeight: 1 }}>{a.percentual_em_dia}%</span>
                     </div>
-                    <div style={{ fontSize: 10, color: C.t3, marginTop: 4 }}>
-                      <strong style={{ color: '#10B981' }}>{a.em_dia}</strong> dia · <strong style={{ color: '#F59E0B' }}>{a.atrasados}</strong> atras · <strong style={{ color: '#EF4444' }}>{a.criticos}</strong> crit · <strong style={{ color: '#9CA3AF' }}>{a.sem_dado}</strong> ?
+                    <div style={{ fontSize: 10, color: C.t3, display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                      <span><strong style={{ color: '#10B981' }}>{a.em_dia}</strong> dia</span>
+                      <span><strong style={{ color: '#F59E0B' }}>{a.atrasados}</strong> atras</span>
+                      <span><strong style={{ color: '#EF4444' }}>{a.criticos}</strong> crit</span>
+                      <span><strong style={{ color: '#9CA3AF' }}>{a.sem_dado}</strong> ?</span>
                     </div>
                   </div>
                 );
@@ -393,11 +413,15 @@ function Card({ title, subtitle, children, full }) {
 
 function Stats({ stats }) {
   return (
-    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 12, marginBottom: 16 }}>
+    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 14, marginBottom: 18 }}>
       {stats.map((s, i) => (
-        <div key={i} style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 10, padding: '12px 14px' }}>
-          <div style={{ fontSize: 22, fontWeight: 800, color: s.cor, lineHeight: 1 }}>{s.value}</div>
-          <div style={{ fontSize: 9, color: C.t3, marginTop: 4, letterSpacing: 0.3, textTransform: 'uppercase' }}>{s.label}</div>
+        <div key={i} style={{
+          background: C.card, border: `1px solid ${C.border}`, borderRadius: 12,
+          padding: '18px 20px',
+          display: 'flex', flexDirection: 'column', gap: 6,
+        }}>
+          <div style={{ fontSize: 28, fontWeight: 800, color: s.cor, lineHeight: 1, letterSpacing: -0.5 }}>{s.value}</div>
+          <div style={{ fontSize: 10, color: C.t3, letterSpacing: 0.6, textTransform: 'uppercase', fontWeight: 600 }}>{s.label}</div>
         </div>
       ))}
     </div>
