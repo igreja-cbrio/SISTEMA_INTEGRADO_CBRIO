@@ -1,4 +1,5 @@
 const { supabase } = require('../utils/supabase');
+const { enviarPushParaUsers } = require('./webpush');
 
 /**
  * Resolve quais usuários devem receber notificação de um módulo.
@@ -32,6 +33,7 @@ async function notificar({ modulo, tipo, titulo, mensagem, link, severidade = 'i
   if (!destinatarios.length) return 0;
 
   let inserted = 0;
+  const usersInseridos = [];
   for (const userId of destinatarios) {
     // Dedup: não cria se já existe notificação não-lida com mesma chave
     if (chaveDedup) {
@@ -55,8 +57,22 @@ async function notificar({ modulo, tipo, titulo, mensagem, link, severidade = 'i
       chave_dedup: chaveDedup,
       lida: false,
     });
-    if (!error) inserted++;
+    if (!error) {
+      inserted++;
+      usersInseridos.push(userId);
+    }
   }
+
+  // Dispara push em background (no-op se VAPID nao configurado)
+  if (usersInseridos.length) {
+    enviarPushParaUsers(usersInseridos, {
+      title: titulo,
+      body: mensagem,
+      url: link || '/',
+      tag: chaveDedup || `${modulo}-${Date.now()}`,
+    }).catch(e => console.warn('[notificar push]', e.message));
+  }
+
   return inserted;
 }
 

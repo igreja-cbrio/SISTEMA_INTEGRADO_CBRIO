@@ -149,4 +149,53 @@ router.delete('/regras/:id', authorize('admin', 'diretor'), async (req, res) => 
   }
 });
 
+// ── Web Push (PWA) ──────────────────────────────────────────────────
+const webpushService = require('../services/webpush');
+
+// GET /api/notificacoes/push/vapid-key — retorna a chave publica VAPID
+// para o browser usar no PushManager.subscribe(). Retorna 204 se push
+// nao estiver configurado (sem VAPID_PUBLIC_KEY).
+router.get('/push/vapid-key', (req, res) => {
+  const key = webpushService.getVapidPublicKey();
+  if (!key) return res.status(204).end();
+  res.json({ key });
+});
+
+// POST /api/notificacoes/push/subscribe — body: { endpoint, keys: { p256dh, auth } }
+router.post('/push/subscribe', async (req, res) => {
+  try {
+    const { endpoint, keys } = req.body || {};
+    if (!endpoint || !keys?.p256dh || !keys?.auth) {
+      return res.status(400).json({ error: 'subscription invalida' });
+    }
+    const userAgent = (req.headers['user-agent'] || '').slice(0, 500);
+    const { error } = await supabase.from('push_subscriptions').upsert({
+      auth_user_id: req.user.userId,
+      endpoint,
+      p256dh: keys.p256dh,
+      auth: keys.auth,
+      user_agent: userAgent,
+      last_used_at: new Date().toISOString(),
+    }, { onConflict: 'endpoint' });
+    if (error) return res.status(400).json({ error: error.message });
+    res.json({ ok: true });
+  } catch (e) {
+    console.error('[push subscribe]', e.message);
+    res.status(500).json({ error: 'Erro ao registrar subscription' });
+  }
+});
+
+// POST /api/notificacoes/push/unsubscribe — body: { endpoint }
+router.post('/push/unsubscribe', async (req, res) => {
+  try {
+    const { endpoint } = req.body || {};
+    if (!endpoint) return res.status(400).json({ error: 'endpoint obrigatorio' });
+    await supabase.from('push_subscriptions')
+      .delete().eq('endpoint', endpoint).eq('auth_user_id', req.user.userId);
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ error: 'Erro ao remover subscription' });
+  }
+});
+
 module.exports = router;
