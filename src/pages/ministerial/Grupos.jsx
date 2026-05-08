@@ -69,6 +69,8 @@ export default function Grupos() {
   const [filterTemporada, setFilterTemporada] = useState('');
   const [temporadas, setTemporadas] = useState([]);
   const [pageTab, setPageTab] = useState('grupos');
+  const [pedidosCount, setPedidosCount] = useState(0);
+  const [historicoMembros, setHistoricoMembros] = useState([]);
   const [materiais, setMateriais] = useState([]);
   const [materiaisFilter, setMateriaisFilter] = useState('all');
   const [uploading, setUploading] = useState(false);
@@ -108,11 +110,23 @@ export default function Grupos() {
 
   useEffect(() => { loadTemporadas(); }, []);
 
+  const loadPedidosCount = useCallback(async () => {
+    try {
+      const r = await api.contarPedidos();
+      setPedidosCount(r?.pendentes || 0);
+    } catch {}
+  }, []);
+  useEffect(() => { loadPedidosCount(); }, [loadPedidosCount, pageTab]);
+
   const loadDetail = useCallback(async (id) => {
     setDetailLoading(true);
     try {
       const data = await api.get(id);
       setDetailData(data);
+      try {
+        const hist = await api.historicoMembros(id);
+        setHistoricoMembros(hist || []);
+      } catch { setHistoricoMembros([]); }
     } catch { toast.error('Erro ao carregar detalhe'); }
     finally { setDetailLoading(false); }
   }, []);
@@ -576,35 +590,53 @@ export default function Grupos() {
           </div>
         )}
 
-        {/* Historico de saidas */}
-        {!isOptimistic && g.historico?.length > 0 && (
-          <div style={{ background: C.card, borderRadius: 12, border: `1px solid ${C.border}`, overflow: 'hidden', marginTop: 16 }}>
-            <div style={{ padding: '12px 16px', borderBottom: `1px solid ${C.border}`, display: 'flex', alignItems: 'center', gap: 8 }}>
-              <X size={14} style={{ color: C.t3 }} />
-              <span style={{ fontSize: 14, fontWeight: 700, color: C.text }}>Historico de saidas ({g.historico.length})</span>
+        {/* Historico completo de membros (entradas + saidas + transferencias) */}
+        {!isOptimistic && historicoMembros.length > 0 && (() => {
+          const saidas = historicoMembros.filter(h => h.saiu_em);
+          if (saidas.length === 0) return null;
+          return (
+            <div style={{ background: C.card, borderRadius: 12, border: `1px solid ${C.border}`, overflow: 'hidden', marginTop: 16 }}>
+              <div style={{ padding: '12px 16px', borderBottom: `1px solid ${C.border}`, display: 'flex', alignItems: 'center', gap: 8 }}>
+                <ArrowRightLeft size={14} style={{ color: C.t3 }} />
+                <span style={{ fontSize: 14, fontWeight: 700, color: C.text }}>Histórico de saídas e transferências ({saidas.length})</span>
+              </div>
+              <div style={{ overflowX: 'auto' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 600 }}>
+                  <thead>
+                    <tr style={{ background: 'var(--cbrio-table-header)' }}>
+                      <th style={{ padding: '8px 16px', textAlign: 'left', fontSize: 11, fontWeight: 600, color: C.t3, textTransform: 'uppercase' }}>Membro</th>
+                      <th style={{ padding: '8px 16px', textAlign: 'left', fontSize: 11, fontWeight: 600, color: C.t3, textTransform: 'uppercase' }}>Período</th>
+                      <th style={{ padding: '8px 16px', textAlign: 'left', fontSize: 11, fontWeight: 600, color: C.t3, textTransform: 'uppercase' }}>Motivo</th>
+                      <th style={{ padding: '8px 16px', textAlign: 'left', fontSize: 11, fontWeight: 600, color: C.t3, textTransform: 'uppercase' }}>Foi para</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {saidas.map(h => (
+                      <tr key={h.id} style={{ borderBottom: `1px solid ${C.border}` }}>
+                        <td style={{ padding: '10px 16px', fontSize: 13, color: C.text, fontWeight: 600 }}>{h.mem_membros?.nome || '—'}</td>
+                        <td style={{ padding: '10px 16px', fontSize: 12, color: C.t2 }}>{fmtDate(h.entrou_em)} → {fmtDate(h.saiu_em)}</td>
+                        <td style={{ padding: '10px 16px', fontSize: 12, color: C.t3 }}>{h.motivo_saida || '—'}</td>
+                        <td style={{ padding: '10px 16px', fontSize: 12 }}>
+                          {h.destino ? (
+                            <button onClick={() => openGrupo({ id: h.destino.grupo_id })} style={{
+                              background: 'none', border: 'none', color: C.primary, cursor: 'pointer',
+                              padding: 0, fontSize: 12, fontWeight: 600, textAlign: 'left',
+                            }}>
+                              {h.destino.mem_grupos?.nome || h.destino.grupo_id}
+                              {h.destino.mem_grupos?.codigo && (
+                                <code style={{ marginLeft: 6, fontSize: 10, color: C.t3 }}>{h.destino.mem_grupos.codigo}</code>
+                              )}
+                            </button>
+                          ) : <span style={{ color: C.t3 }}>—</span>}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             </div>
-            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-              <thead>
-                <tr style={{ background: 'var(--cbrio-table-header)' }}>
-                  <th style={{ padding: '8px 16px', textAlign: 'left', fontSize: 11, fontWeight: 600, color: C.t3, textTransform: 'uppercase' }}>Membro</th>
-                  <th style={{ padding: '8px 16px', textAlign: 'left', fontSize: 11, fontWeight: 600, color: C.t3, textTransform: 'uppercase' }}>Entrou</th>
-                  <th style={{ padding: '8px 16px', textAlign: 'left', fontSize: 11, fontWeight: 600, color: C.t3, textTransform: 'uppercase' }}>Saiu</th>
-                  <th style={{ padding: '8px 16px', textAlign: 'left', fontSize: 11, fontWeight: 600, color: C.t3, textTransform: 'uppercase' }}>Motivo</th>
-                </tr>
-              </thead>
-              <tbody>
-                {g.historico.map(h => (
-                  <tr key={h.id} style={{ borderBottom: `1px solid ${C.border}` }}>
-                    <td style={{ padding: '10px 16px', fontSize: 13, color: C.text, fontWeight: 600 }}>{h.membro_nome || '—'}</td>
-                    <td style={{ padding: '10px 16px', fontSize: 12, color: C.t2 }}>{fmtDate(h.entrou_em)}</td>
-                    <td style={{ padding: '10px 16px', fontSize: 12, color: C.t2 }}>{fmtDate(h.saiu_em)}</td>
-                    <td style={{ padding: '10px 16px', fontSize: 12, color: C.t3 }}>{h.motivo_saida || '—'}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
+          );
+        })()}
 
         {/* Observacoes */}
         {g.observacoes && (
@@ -677,7 +709,7 @@ export default function Grupos() {
         {[
           { key: 'grupos', label: 'Grupos', icon: Users },
           { key: 'mapa', label: 'Mapa', icon: MapIcon },
-          { key: 'pedidos', label: 'Pedidos', icon: Inbox },
+          { key: 'pedidos', label: 'Pedidos', icon: Inbox, badge: pedidosCount },
           { key: 'materiais', label: 'Materiais', icon: FileText },
           { key: 'tarefas', label: 'Tarefas', icon: ListChecks },
           { key: 'qrcode', label: 'QR Inscrição', icon: QrCode },
@@ -692,6 +724,12 @@ export default function Grupos() {
             display: 'flex', alignItems: 'center', gap: 8, transition: 'all 0.15s',
           }}>
             <tab.icon size={16} /> {tab.label}
+            {tab.badge > 0 && (
+              <span style={{
+                fontSize: 10, fontWeight: 700, padding: '1px 7px', borderRadius: 99,
+                background: '#ef4444', color: '#fff', minWidth: 18, textAlign: 'center',
+              }}>{tab.badge > 99 ? '99+' : tab.badge}</span>
+            )}
           </button>
         ))}
       </div>
