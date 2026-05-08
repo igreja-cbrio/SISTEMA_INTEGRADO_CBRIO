@@ -169,7 +169,7 @@ export default function MeusKpis() {
         <Heart size={32} style={{ color: C.t3, marginBottom: 12 }} />
         <h1 style={{ fontSize: 18, fontWeight: 700, color: C.text, marginBottom: 8 }}>Voce ainda nao lidera nenhuma area</h1>
         <p style={{ fontSize: 13, color: C.t3 }}>
-          Peca para um administrador atribuir suas areas em <strong>/admin/kpi-areas</strong>.
+          Peca para um administrador atribuir suas areas no modulo de Permissoes.
           Depois, voce ve aqui apenas os KPIs que precisa preencher.
         </p>
       </div>

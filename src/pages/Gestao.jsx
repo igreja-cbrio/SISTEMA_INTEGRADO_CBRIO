@@ -11,7 +11,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { gestao as gestaoApi } from '../api';
 import { useAuth } from '../contexts/AuthContext';
-import { Activity, Settings, AlertCircle, TrendingDown, Bell, Users, Target, Shield, ArrowRight, ChevronRight } from 'lucide-react';
+import { Activity, Settings, AlertCircle, TrendingDown, Bell, Target, Shield, ArrowRight, ChevronRight } from 'lucide-react';
 import { toast } from 'sonner';
 import KpiDetalheModal from '../components/KpiDetalheModal';
 import EstruturaOkr from './admin/EstruturaOkr';
@@ -232,13 +232,6 @@ function AbaPulso() {
 function AbaConfigurar() {
   const navigate = useNavigate();
   const items = [
-    {
-      titulo: 'Areas de KPI',
-      desc: 'Atribuir quais areas cada lider edita',
-      Icon: Users,
-      path: '/admin/kpi-areas',
-      cor: '#3B82F6',
-    },
     {
       titulo: 'Regras de Notificacao',
       desc: 'Quem recebe alertas de cada modulo',

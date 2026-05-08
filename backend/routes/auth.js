@@ -37,35 +37,6 @@ router.patch('/profile', authenticate, async (req, res) => {
   }
 });
 
-// PUT /api/auth/profiles/:id/kpi-areas — admin/diretor gerencia areas de KPI do usuario
-router.put('/profiles/:id/kpi-areas', authenticate, async (req, res) => {
-  try {
-    if (!['admin', 'diretor'].includes(req.user.role)) {
-      return res.status(403).json({ error: 'Apenas admin/diretor podem alterar kpi_areas' });
-    }
-    const { kpi_areas } = req.body;
-    if (!Array.isArray(kpi_areas)) {
-      return res.status(400).json({ error: 'kpi_areas deve ser array de strings' });
-    }
-    const normalized = kpi_areas
-      .map(a => String(a || '').trim().toLowerCase())
-      .filter(Boolean);
-
-    const { data, error } = await supabase
-      .from('profiles')
-      .update({ kpi_areas: normalized, updated_at: new Date().toISOString() })
-      .eq('id', req.params.id)
-      .select('id, name, email, role, kpi_areas')
-      .single();
-
-    if (error) return res.status(400).json({ error: error.message });
-    res.json(data);
-  } catch (err) {
-    console.error('[AUTH] Erro em PUT kpi-areas:', err.message);
-    res.status(500).json({ error: 'Erro interno' });
-  }
-});
-
 // GET /api/auth/users — lista todos os usuários ativos (para selects de responsável)
 router.get('/users', authenticate, async (req, res) => {
   try {
