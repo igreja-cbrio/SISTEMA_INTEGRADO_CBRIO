@@ -120,8 +120,18 @@ router.get('/saude', async (req, res) => {
   try {
     const { data: kpis } = await supabase
       .from('kpi_indicadores_taticos')
-      .select('id, indicador, area, valores, meta_descricao, meta_valor, lider_funcionario_id, objetivo_geral_id, is_okr, ativo')
+      .select('id, indicador, descricao, area, valores, meta_descricao, meta_valor, lider_funcionario_id, objetivo_geral_id, is_okr, ativo')
       .eq('ativo', true);
+
+    // Apenas KPIs das 6 areas oficiais (kids/ami/bridge/sede/online/cba) entram
+    // nos checks de "sem objetivo geral" e "sem valor da jornada". KPIs cuja
+    // area e ministerio (integracao/grupos/cuidados/voluntariado/generosidade/next)
+    // sao processos do ministerio · nao precisam estar amarrados num objetivo
+    // geral nem ter valor da jornada (Marcos: "nao e erro ter um processo num
+    // ministerio e nao no outro").
+    const AREAS_OFICIAIS = ['kids', 'ami', 'bridge', 'sede', 'online', 'cba'];
+    const isAreaOficial = (k) => AREAS_OFICIAIS.includes(String(k.area || '').toLowerCase());
+    const kpisAreas = (kpis || []).filter(isAreaOficial);
 
     const sem_meta = (kpis || []).filter(k =>
       (k.meta_valor === null || k.meta_valor === undefined) &&
@@ -129,8 +139,8 @@ router.get('/saude', async (req, res) => {
     );
 
     const sem_dono = (kpis || []).filter(k => !k.lider_funcionario_id);
-    const sem_objetivo = (kpis || []).filter(k => !k.objetivo_geral_id);
-    const sem_valores = (kpis || []).filter(k => !Array.isArray(k.valores) || k.valores.length === 0);
+    const sem_objetivo = kpisAreas.filter(k => !k.objetivo_geral_id);
+    const sem_valores = kpisAreas.filter(k => !Array.isArray(k.valores) || k.valores.length === 0);
 
     // Sem registro nos ultimos 60 dias
     const dataLimite = new Date();
@@ -191,23 +201,23 @@ router.get('/saude', async (req, res) => {
       total_kpis_ativos: kpis?.length || 0,
       sem_meta: {
         total: sem_meta.length,
-        items: summarize(sem_meta, ['id', 'indicador', 'area']),
+        items: summarize(sem_meta, ['id', 'indicador', 'descricao', 'area']),
       },
       sem_dono: {
         total: sem_dono.length,
-        items: summarize(sem_dono, ['id', 'indicador', 'area']),
+        items: summarize(sem_dono, ['id', 'indicador', 'descricao', 'area']),
       },
       sem_objetivo: {
         total: sem_objetivo.length,
-        items: summarize(sem_objetivo, ['id', 'indicador', 'area']),
+        items: summarize(sem_objetivo, ['id', 'indicador', 'descricao', 'area']),
       },
       sem_valores: {
         total: sem_valores.length,
-        items: summarize(sem_valores, ['id', 'indicador', 'area']),
+        items: summarize(sem_valores, ['id', 'indicador', 'descricao', 'area']),
       },
       sem_registro_60d: {
         total: sem_registro_60d.length,
-        items: summarize(sem_registro_60d, ['id', 'indicador', 'area']),
+        items: summarize(sem_registro_60d, ['id', 'indicador', 'descricao', 'area']),
       },
       matriz_cobertura: matrizCobertura,
       objetivos_sem_kpis: {

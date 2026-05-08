@@ -132,11 +132,14 @@ export default function KpiDetalheModal({ open, kpiId, onClose, onUpdated }) {
                       <StatusIcon size={12} /> {sv.label}
                     </span>
                   </div>
+                  {/* Titulo: objetivo especifico (descricao no banco) · fallback pra indicador. */}
                   <h2 style={{ fontSize: 18, fontWeight: 700, color: C.text, margin: 0, lineHeight: 1.3 }}>
-                    {kpi.indicador}
+                    {kpi.descricao || kpi.indicador}
                   </h2>
-                  {kpi.descricao && (
-                    <p style={{ fontSize: 12, color: C.t3, marginTop: 6, lineHeight: 1.4 }}>{kpi.descricao}</p>
+                  {kpi.descricao && kpi.indicador && kpi.descricao !== kpi.indicador && (
+                    <p style={{ fontSize: 12, color: C.t3, marginTop: 6, lineHeight: 1.4 }}>
+                      <strong style={{ color: C.t2 }}>Indicador:</strong> {kpi.indicador}
+                    </p>
                   )}
                 </div>
                 <button onClick={onClose} style={{ background: 'none', border: 'none', color: C.t3, cursor: 'pointer', padding: 4 }}>

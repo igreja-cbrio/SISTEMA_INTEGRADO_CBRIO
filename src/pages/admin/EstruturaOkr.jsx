@@ -297,8 +297,14 @@ function ObjetivoLinha({ objetivo, expanded, onToggle, onEdit, onRemove, onAddKr
                           {k.id}
                         </span>
                         <div style={{ flex: 1, minWidth: 0 }}>
-                          <div style={{ fontSize: 11, color: C.text, lineHeight: 1.3 }}>{k.indicador}</div>
-                          <div style={{ fontSize: 9, color: C.t3, textTransform: 'capitalize' }}>{k.area} · {k.periodicidade}</div>
+                          {/* Titulo do KPI = objetivo especifico (col "Objetivo especifico" da planilha · campo descricao no banco) */}
+                          <div style={{ fontSize: 11, color: C.text, lineHeight: 1.3 }}>{k.descricao || k.indicador}</div>
+                          <div style={{ fontSize: 9, color: C.t3 }}>
+                            <span style={{ textTransform: 'capitalize' }}>{k.area}</span> · {k.periodicidade}
+                            {k.descricao && k.indicador && k.descricao !== k.indicador && (
+                              <> · Fórmula: {k.indicador}</>
+                            )}
+                          </div>
                         </div>
                       </div>
                     ))}
