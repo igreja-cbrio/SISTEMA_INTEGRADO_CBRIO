@@ -24,6 +24,18 @@ const queryClient = new QueryClient({
 //   Webpack     : "Loading chunk X failed" / "ChunkLoadError"
 const CHUNK_ERROR_RE = /Loading chunk|ChunkLoadError|Failed to fetch dynamically imported module|error loading dynamically imported module|Importing a module script failed|valid JavaScript MIME type|Expected a JavaScript(?: \w+)? module script|Unexpected token '?<'?/i;
 
+// Reload com cache-buster · forca o browser a buscar HTML/chunks frescos
+// mesmo se o cache local estiver "preso" ignorando must-revalidate.
+function hardReload() {
+  try {
+    const url = new URL(window.location.href);
+    url.searchParams.set('_cb', String(Date.now()));
+    window.location.replace(url.toString());
+  } catch {
+    window.location.reload();
+  }
+}
+
 function lazyWithRetry<T extends ComponentType<any>>(factory: () => Promise<{ default: T }>) {
   return lazy(async () => {
     const key = 'chunk-retry-' + factory.toString().slice(0, 50);
@@ -34,7 +46,7 @@ function lazyWithRetry<T extends ComponentType<any>>(factory: () => Promise<{ de
       const isChunkError = CHUNK_ERROR_RE.test(err?.message || '');
       if (isChunkError && !alreadyRetried) {
         sessionStorage.setItem(key, '1');
-        window.location.reload();
+        hardReload();
         return new Promise(() => {}); // Nunca resolve — página vai recarregar
       }
       throw err;
@@ -55,7 +67,7 @@ class ErrorBoundary extends Component<{ children: ReactNode }, { hasError: boole
     const isChunkError = CHUNK_ERROR_RE.test(error?.message || '');
     if (isChunkError && !sessionStorage.getItem('boundary-chunk-retry')) {
       sessionStorage.setItem('boundary-chunk-retry', '1');
-      window.location.reload();
+      hardReload();
     }
   }
   render() {
@@ -64,7 +76,7 @@ class ErrorBoundary extends Component<{ children: ReactNode }, { hasError: boole
         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', minHeight: '60vh', gap: 16, padding: 32 }}>
           <h1 style={{ fontSize: 24, fontWeight: 'bold' }}>Algo deu errado</h1>
           <p style={{ color: '#888' }}>{this.state.error?.message || 'Erro inesperado na aplicação.'}</p>
-          <button onClick={() => { sessionStorage.clear(); window.location.reload(); }} style={{ padding: '8px 24px', borderRadius: 8, background: '#00B39D', color: '#fff', border: 'none', cursor: 'pointer' }}>
+          <button onClick={() => { sessionStorage.clear(); hardReload(); }} style={{ padding: '8px 24px', borderRadius: 8, background: '#00B39D', color: '#fff', border: 'none', cursor: 'pointer' }}>
             Recarregar
           </button>
         </div>
