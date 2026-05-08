@@ -7,7 +7,11 @@
 -- Fix: qualificar com nome de tabela em todos os WHERE/SELECT.
 -- ============================================================================
 
-CREATE OR REPLACE FUNCTION public.seedar_krs_especificos(p_kr_geral_id uuid)
+-- DROP necessario porque RETURNS TABLE mudou (area -> area_criada).
+-- Postgres nao deixa mudar row type via CREATE OR REPLACE.
+DROP FUNCTION IF EXISTS public.seedar_krs_especificos(uuid);
+
+CREATE FUNCTION public.seedar_krs_especificos(p_kr_geral_id uuid)
 RETURNS TABLE (kr_especifico_id uuid, area_criada text, criado boolean)
 LANGUAGE plpgsql
 AS $$
