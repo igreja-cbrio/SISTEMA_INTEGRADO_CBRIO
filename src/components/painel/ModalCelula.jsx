@@ -144,11 +144,12 @@ export default function ModalCelula({ area, valor, cell, onClose }) {
         </div>
       </div>
 
-      {/* Modal de detalhe do KPI selecionado */}
+      {/* Click num KPI vai direto pra edicao (sem passar pela tela de detalhe) */}
       <KpiDetalheModal
         open={!!detalheKpiId}
         kpiId={detalheKpiId}
         onClose={() => setDetalheKpiId(null)}
+        openInEdit
       />
     </div>
   );

@@ -244,6 +244,7 @@ function AbaPulso() {
         kpiId={detalheKpiId}
         onClose={() => setDetalheKpiId(null)}
         onUpdated={carregar}
+        openInEdit
       />
     </>
   );
@@ -391,6 +392,7 @@ function AbaSaude() {
         open={!!detalheKpiId}
         kpiId={detalheKpiId}
         onClose={() => setDetalheKpiId(null)}
+        openInEdit
       />
     </>
   );
