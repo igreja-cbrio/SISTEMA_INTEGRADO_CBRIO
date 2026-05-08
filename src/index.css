@@ -276,3 +276,46 @@ table tbody tr:hover {
   .cbrio-card-body { padding: 12px !important; }
   th, td { padding: 8px 10px !important; font-size: 12px !important; }
 }
+
+/* ── /grupos mobile-first ── */
+@media (max-width: 768px) {
+  /* Wrapper externo da pagina (lista + detalhe): tira padding gigante */
+  .cbrio-grupos-page { padding: 14px 12px !important; }
+
+  /* Header da listagem: em mobile vira coluna */
+  .cbrio-grupos-header { flex-direction: column !important; align-items: stretch !important; gap: 10px !important; }
+  .cbrio-grupos-header h1 { font-size: 18px !important; }
+
+  /* Tabs: scroll horizontal em vez de quebrar */
+  .cbrio-grupos-tabs {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: thin;
+    flex-wrap: nowrap !important;
+  }
+  .cbrio-grupos-tabs::-webkit-scrollbar { height: 3px; }
+  .cbrio-grupos-tabs > button {
+    flex: 0 0 auto;
+    padding: 10px 14px !important;
+    font-size: 13px !important;
+    white-space: nowrap;
+  }
+
+  /* Header da tela de detalhe: stack vertical */
+  .cbrio-grupos-detail-header { flex-direction: column !important; gap: 12px !important; }
+  .cbrio-grupos-detail-header h1 { font-size: 18px !important; }
+  .cbrio-grupos-detail-header > div:first-child { width: 64px !important; height: 64px !important; }
+  .cbrio-grupos-detail-actions { width: 100% !important; justify-content: stretch !important; }
+  .cbrio-grupos-detail-actions > button,
+  .cbrio-grupos-detail-actions > a { flex: 1 1 auto !important; }
+
+  /* Filtros: cada controle full-width em mobile */
+  .cbrio-grupos-filters > * { width: 100% !important; min-width: 0 !important; }
+
+  /* Cards de KPI ocupam 2 colunas em vez de 4 */
+  .cbrio-grupos-kpis { grid-template-columns: repeat(2, 1fr) !important; gap: 8px !important; }
+  .cbrio-grupos-kpis > div { padding: 10px !important; }
+
+  /* Tabela de historico permanece com overflow */
+  .cbrio-grupos-page table { font-size: 12px !important; }
+}
