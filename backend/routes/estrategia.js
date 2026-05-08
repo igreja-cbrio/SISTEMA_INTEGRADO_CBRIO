@@ -131,13 +131,14 @@ router.get('/objetivos/:id', async (req, res) => {
       .eq('ativo', true)
       .order('area');
 
-    // KRs gerais
+    // KRs (gerais + especificos por area · ordenado: gerais primeiro, depois por area)
     const { data: krs } = await supabase
       .from('kpi_krs')
       .select('*')
       .eq('objetivo_geral_id', req.params.id)
       .eq('ativo', true)
-      .order('ordem');
+      .order('ordem')
+      .order('area', { nullsFirst: true });
 
     res.json({ ...obj, kpis: kpis || [], krs: krs || [] });
   } catch (e) {

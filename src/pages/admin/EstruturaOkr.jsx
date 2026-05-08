@@ -253,31 +253,39 @@ function ObjetivoLinha({ objetivo, expanded, onToggle, onEdit, onRemove, onAddKr
                   <h4 style={hh4}><ListChecks size={11} /> KRs Gerais ({detalhes.krs.length})</h4>
                   <button onClick={onAddKr} style={btnGhostSm}><Plus size={12} /> Novo</button>
                 </div>
-                {detalhes.krs.length === 0 ? (
-                  <div style={{ fontSize: 11, color: C.t3, padding: 8 }}>
-                    Nenhum KR ainda. Sugestao: 3-5 KRs por objetivo (ex: "% atinge X", "0 cultos com queda > 15%", etc).
-                  </div>
-                ) : (
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                    {detalhes.krs.map(kr => (
-                      <div key={kr.id} style={krStyle}>
-                        <div style={{ flex: 1, minWidth: 0 }}>
-                          <div style={{ fontSize: 11, fontWeight: 600, color: C.text }}>{kr.titulo}</div>
-                          {kr.meta_valor != null && (
-                            <div style={{ fontSize: 10, color: C.t3 }}>
-                              meta: {kr.meta_valor}{kr.unidade ? ' ' + kr.unidade : ''}
-                            </div>
-                          )}
-                          {kr.meta_texto && !kr.meta_valor && (
-                            <div style={{ fontSize: 10, color: C.t3 }}>meta: {kr.meta_texto}</div>
-                          )}
-                        </div>
-                        <button onClick={() => onEditKr(kr)} style={btnIcon}><Pencil size={11} /></button>
-                        <button onClick={() => removerKr(kr)} style={{ ...btnIcon, color: '#ef4444' }}><Trash2 size={11} /></button>
+                {(() => {
+                  // Separa KRs gerais e especificos · agrupa filhos por pai
+                  const krsGerais = (detalhes.krs || []).filter(k => !k.kr_pai_id);
+                  const krsPorPai = {};
+                  (detalhes.krs || []).forEach(k => {
+                    if (k.kr_pai_id) {
+                      if (!krsPorPai[k.kr_pai_id]) krsPorPai[k.kr_pai_id] = [];
+                      krsPorPai[k.kr_pai_id].push(k);
+                    }
+                  });
+
+                  if (krsGerais.length === 0) {
+                    return (
+                      <div style={{ fontSize: 11, color: C.t3, padding: 8 }}>
+                        Nenhum KR ainda. Sugestao: 3-5 KRs por objetivo (ex: "% atinge X", "0 cultos com queda > 15%", etc).
                       </div>
-                    ))}
-                  </div>
-                )}
+                    );
+                  }
+
+                  return (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                      {krsGerais.map(kr => (
+                        <KrComCascata
+                          key={kr.id}
+                          kr={kr}
+                          filhos={(krsPorPai[kr.id] || []).sort((a, b) => (a.area || '').localeCompare(b.area || ''))}
+                          onEditKr={onEditKr}
+                          onRemoverKr={removerKr}
+                        />
+                      ))}
+                    </div>
+                  );
+                })()}
               </div>
 
               {/* KPIs Vinculados */}
@@ -316,6 +324,87 @@ function ObjetivoLinha({ objetivo, expanded, onToggle, onEdit, onRemove, onAddKr
               </div>
             </div>
           )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ============================================================================
+// KrComCascata — KR geral expansivel mostrando os filhos especificos por area
+// ============================================================================
+const AREA_COR = {
+  kids:   '#F59E0B',
+  ami:    '#3B82F6',
+  bridge: '#8B5CF6',
+  sede:   '#10B981',
+  online: '#EC4899',
+  cba:    '#6B7280',
+};
+
+function KrComCascata({ kr, filhos, onEditKr, onRemoverKr }) {
+  const [aberto, setAberto] = useState(false);
+  const temFilhos = filhos.length > 0;
+
+  return (
+    <div style={{ background: 'var(--cbrio-card)', borderRadius: 6, border: `1px solid ${C.border}` }}>
+      {/* Linha do KR geral */}
+      <div style={{ ...krStyle, border: 'none', borderBottom: aberto ? `1px solid ${C.border}` : 'none' }}>
+        {temFilhos && (
+          <button
+            onClick={() => setAberto(a => !a)}
+            style={{ background: 'none', border: 'none', cursor: 'pointer', color: C.t3, padding: 2 }}
+            title={aberto ? 'Recolher' : 'Expandir filhos por area'}
+          >
+            {aberto ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+          </button>
+        )}
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontSize: 11, fontWeight: 600, color: C.text }}>{kr.titulo}</div>
+          {kr.meta_valor != null && (
+            <div style={{ fontSize: 10, color: C.t3 }}>
+              meta: {kr.meta_valor}{kr.unidade ? ' ' + kr.unidade : ''}
+              {temFilhos && ` · ${filhos.length} areas desdobradas`}
+            </div>
+          )}
+          {kr.meta_texto && kr.meta_valor == null && (
+            <div style={{ fontSize: 10, color: C.t3 }}>
+              meta: {kr.meta_texto}
+              {temFilhos && ` · ${filhos.length} areas`}
+            </div>
+          )}
+        </div>
+        <button onClick={() => onEditKr(kr)} style={btnIcon}><Pencil size={11} /></button>
+        <button onClick={() => onRemoverKr(kr)} style={{ ...btnIcon, color: '#ef4444' }}><Trash2 size={11} /></button>
+      </div>
+
+      {/* Filhos especificos por area */}
+      {aberto && temFilhos && (
+        <div style={{ padding: '6px 14px 8px 26px', display: 'flex', flexDirection: 'column', gap: 4, background: 'var(--cbrio-input-bg)' }}>
+          {filhos.map(f => {
+            const cor = AREA_COR[f.area] || C.t3;
+            return (
+              <div key={f.id} style={{
+                display: 'flex', alignItems: 'center', gap: 8,
+                padding: '4px 8px', borderLeft: `2px solid ${cor}`, background: 'var(--cbrio-card)',
+                borderRadius: 4,
+              }}>
+                <span style={{
+                  fontSize: 8, padding: '1px 5px', borderRadius: 99,
+                  background: cor + '20', color: cor, fontWeight: 700, textTransform: 'uppercase',
+                  minWidth: 42, textAlign: 'center',
+                }}>
+                  {f.area}
+                </span>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 10, color: C.t2 }}>
+                    meta: {f.meta_valor != null ? `${f.meta_valor}${f.unidade ? ' ' + f.unidade : ''}` : (f.meta_texto || '—')}
+                  </div>
+                </div>
+                <button onClick={() => onEditKr(f)} style={btnIcon} title="Editar meta desta area"><Pencil size={10} /></button>
+              </div>
+            );
+          })}
         </div>
       )}
     </div>
