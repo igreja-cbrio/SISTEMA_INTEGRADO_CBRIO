@@ -18,7 +18,45 @@ const router = require('express').Router();
 const { authenticate, authorize, authorizeKpiArea } = require('../middleware/auth');
 const { supabase } = require('../utils/supabase');
 
+const CRON_SECRET = process.env.CRON_SECRET;
+
+// Cron: snapshot diario das tabelas-fonte para dados_brutos.
+// Definido ANTES de router.use(authenticate) para Vercel cron + servico chamarem.
+async function autorizaCron(req, res, next) {
+  const auth = req.headers['x-cron-secret'] || req.headers['authorization'];
+  const isVercelCron = req.headers['user-agent']?.includes('vercel-cron');
+  if (!isVercelCron && auth !== CRON_SECRET && auth !== `Bearer ${CRON_SECRET}`) {
+    return res.status(401).json({ error: 'unauthorized' });
+  }
+  next();
+}
+
+async function executarSnapshot(req, res) {
+  try {
+    const { data, error } = await supabase.rpc('sync_dados_brutos_diario');
+    if (error) throw error;
+    res.json({ ok: true, resultado: data });
+  } catch (e) {
+    console.error('[dados-brutos cron]', e.message);
+    res.status(500).json({ error: e.message });
+  }
+}
+
+router.get('/cron/snapshot', autorizaCron, executarSnapshot);
+router.post('/cron/snapshot', autorizaCron, executarSnapshot);
+
 router.use(authenticate);
+
+// Trigger manual do snapshot (admin/diretor)
+router.post('/snapshot', authorize('admin', 'diretor'), async (_req, res) => {
+  try {
+    const { data, error } = await supabase.rpc('sync_dados_brutos_diario');
+    if (error) throw error;
+    res.json({ ok: true, resultado: data });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
 
 // ----------------------------------------------------------------------------
 // TIPOS DE DADO BRUTO (catalogo)

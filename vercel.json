@@ -32,6 +32,10 @@
     {
       "path": "/api/processos/cron/coletar",
       "schedule": "0 4 * * *"
+    },
+    {
+      "path": "/api/dados-brutos/cron/snapshot",
+      "schedule": "30 4 * * *"
     }
   ],
   "rewrites": [
