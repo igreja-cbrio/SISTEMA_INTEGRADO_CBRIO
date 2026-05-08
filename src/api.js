@@ -1229,6 +1229,13 @@ export const estrategia = {
     update: (id, body) => put(`/estrategia/krs/${id}`, body),
     remove: (id) => del(`/estrategia/krs/${id}`),
   },
+  metasInstitucionais: {
+    list:   () => get('/estrategia/metas-institucionais'),
+    upsert: (body) => post('/estrategia/metas-institucionais', body),
+    update: (id, body) => put(`/estrategia/metas-institucionais/${id}`, body),
+  },
+  kpisPorTipo: () => get('/estrategia/kpis-por-tipo'),
+  setKpiTipo:  (id, tipo_kpi) => put(`/estrategia/kpis/${id}/tipo`, { tipo_kpi }),
 };
 
 // ── Painel CBRio (mandalas, matriz, alertas, drilldown) ──

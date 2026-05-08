@@ -11,7 +11,8 @@ import { useState, useEffect, useCallback } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { gestao as gestaoApi } from '../api';
 import { useAuth } from '../contexts/AuthContext';
-import { Activity, Settings, AlertCircle, TrendingDown, Bell, Target, Shield, ArrowRight, ChevronRight } from 'lucide-react';
+import { Activity, Settings, AlertCircle, TrendingDown, Bell, Target, Shield, ArrowRight, ChevronRight, Flag, Edit3, Save as SaveIcon } from 'lucide-react';
+import { estrategia as estrategiaApi } from '../api';
 import { toast } from 'sonner';
 import KpiDetalheModal from '../components/KpiDetalheModal';
 import EstruturaOkr from './admin/EstruturaOkr';
@@ -25,6 +26,7 @@ const C = {
 const TABS = [
   { key: 'pulso',     label: 'Pulso',         Icon: Activity },
   { key: 'estrutura', label: 'Estrutura OKR', Icon: Target },
+  { key: 'metas',     label: 'Metas Institucionais', Icon: Flag },
   { key: 'configurar', label: 'Configurar',   Icon: Settings },
   { key: 'saude',     label: 'Saude',         Icon: Shield },
 ];
@@ -84,6 +86,7 @@ export default function Gestao() {
 
       {aba === 'pulso' && <AbaPulso />}
       {aba === 'estrutura' && <EstruturaOkr embedded />}
+      {aba === 'metas' && <AbaMetasInstitucionais />}
       {aba === 'configurar' && <AbaConfigurar />}
       {aba === 'saude' && <AbaSaude />}
     </div>
@@ -392,6 +395,261 @@ function AbaSaude() {
     </>
   );
 }
+
+// ============================================================================
+// ABA · METAS INSTITUCIONAIS
+// 2 cards (qualitativo + quantitativo) editaveis · cada um lista os KPIs
+// daquele tipo. Marcos usa pra setar a meta global do ano (ex: +30% em todos).
+// ============================================================================
+const TIPO_INFO = {
+  quantitativo: {
+    label: 'Quantitativo',
+    desc: 'KPIs de crescimento (frequência, conversões, batismos, doações...)',
+    cor: '#3B82F6',
+    bg: '#3B82F618',
+  },
+  qualitativo: {
+    label: 'Qualitativo',
+    desc: 'KPIs de processo (NPS, % atendidos, satisfação, qualidade...)',
+    cor: '#8B5CF6',
+    bg: '#8B5CF618',
+  },
+};
+
+function AbaMetasInstitucionais() {
+  const [metas, setMetas] = useState([]);
+  const [kpisPorTipo, setKpisPorTipo] = useState({ qualitativo: [], quantitativo: [], sem_tipo: [] });
+  const [loading, setLoading] = useState(true);
+  const [editingId, setEditingId] = useState(null);
+  const [form, setForm] = useState({});
+  const ano = new Date().getFullYear();
+
+  const carregar = useCallback(async () => {
+    setLoading(true);
+    try {
+      const [m, ks] = await Promise.all([
+        estrategiaApi.metasInstitucionais.list(),
+        estrategiaApi.kpisPorTipo(),
+      ]);
+      setMetas(m || []);
+      setKpisPorTipo(ks || { qualitativo: [], quantitativo: [], sem_tipo: [] });
+    } catch (e) {
+      toast.error(e?.message || 'Erro ao carregar');
+    } finally { setLoading(false); }
+  }, []);
+
+  useEffect(() => { carregar(); }, [carregar]);
+
+  const salvarMeta = async (tipo) => {
+    try {
+      await estrategiaApi.metasInstitucionais.upsert({
+        tipo_kpi: tipo,
+        ano,
+        meta_descricao: form.meta_descricao,
+        meta_valor: form.meta_valor === '' ? null : Number(form.meta_valor),
+        unidade: form.unidade || null,
+        observacoes: form.observacoes || null,
+      });
+      toast.success('Meta atualizada');
+      setEditingId(null);
+      setForm({});
+      carregar();
+    } catch (e) { toast.error(e?.message || 'Erro ao salvar'); }
+  };
+
+  const trocarTipoKpi = async (kpi, novoTipo) => {
+    try {
+      await estrategiaApi.setKpiTipo(kpi.id, novoTipo);
+      toast.success(`${kpi.id} -> ${novoTipo}`);
+      carregar();
+    } catch (e) { toast.error(e?.message); }
+  };
+
+  if (loading) return <Loading />;
+
+  const metaPorTipo = {
+    quantitativo: metas.find(m => m.tipo_kpi === 'quantitativo' && m.ano === ano),
+    qualitativo:  metas.find(m => m.tipo_kpi === 'qualitativo'  && m.ano === ano),
+  };
+
+  return (
+    <>
+      <p style={{ fontSize: 12, color: C.t3, marginBottom: 16, marginTop: 0 }}>
+        Meta global da igreja para {ano} · 1 meta por tipo. Aplica como referencia institucional ·
+        nao substitui as metas individuais dos KPIs (essas voce gerencia em Estrutura OKR).
+      </p>
+
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(420px, 1fr))', gap: 16 }}>
+        {['quantitativo', 'qualitativo'].map(tipo => {
+          const info = TIPO_INFO[tipo];
+          const meta = metaPorTipo[tipo];
+          const kpis = kpisPorTipo[tipo] || [];
+          const editando = editingId === tipo;
+
+          return (
+            <Card
+              key={tipo}
+              title={<span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <span style={{ width: 10, height: 10, borderRadius: '50%', background: info.cor, display: 'inline-block' }} />
+                {info.label}
+                <span style={{ fontSize: 10, padding: '1px 6px', borderRadius: 99, background: info.bg, color: info.cor, fontWeight: 700 }}>
+                  {kpis.length} KPIs
+                </span>
+              </span>}
+              subtitle={info.desc}
+            >
+              {/* Bloco da meta institucional */}
+              <div style={{ background: 'var(--cbrio-input-bg)', padding: 14, borderRadius: 8, marginBottom: 14, borderLeft: `3px solid ${info.cor}` }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+                  <span style={{ fontSize: 10, color: C.t3, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.5 }}>
+                    Meta {ano}
+                  </span>
+                  {!editando && (
+                    <button
+                      onClick={() => {
+                        setEditingId(tipo);
+                        setForm({
+                          meta_descricao: meta?.meta_descricao || '',
+                          meta_valor: meta?.meta_valor ?? '',
+                          unidade: meta?.unidade || '',
+                          observacoes: meta?.observacoes || '',
+                        });
+                      }}
+                      style={btnSm}
+                    >
+                      <Edit3 size={11} /> Editar
+                    </button>
+                  )}
+                </div>
+
+                {editando ? (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                    <input
+                      placeholder="Descrição da meta"
+                      value={form.meta_descricao}
+                      onChange={e => setForm(f => ({ ...f, meta_descricao: e.target.value }))}
+                      style={inpStyle}
+                    />
+                    <div style={{ display: 'flex', gap: 8 }}>
+                      <input
+                        type="number"
+                        placeholder="Valor"
+                        value={form.meta_valor}
+                        onChange={e => setForm(f => ({ ...f, meta_valor: e.target.value }))}
+                        style={{ ...inpStyle, width: 100 }}
+                      />
+                      <input
+                        placeholder="Unidade (%, R$, etc)"
+                        value={form.unidade}
+                        onChange={e => setForm(f => ({ ...f, unidade: e.target.value }))}
+                        style={{ ...inpStyle, width: 140 }}
+                      />
+                    </div>
+                    <input
+                      placeholder="Observações (opcional)"
+                      value={form.observacoes}
+                      onChange={e => setForm(f => ({ ...f, observacoes: e.target.value }))}
+                      style={inpStyle}
+                    />
+                    <div style={{ display: 'flex', gap: 6 }}>
+                      <button onClick={() => salvarMeta(tipo)} style={btnPrimary}>
+                        <SaveIcon size={11} /> Salvar
+                      </button>
+                      <button onClick={() => { setEditingId(null); setForm({}); }} style={btnSm}>
+                        Cancelar
+                      </button>
+                    </div>
+                  </div>
+                ) : meta ? (
+                  <>
+                    <div style={{ fontSize: 18, fontWeight: 700, color: C.text, marginBottom: 4 }}>
+                      {meta.meta_valor != null ? `${meta.meta_valor}${meta.unidade ? ' ' + meta.unidade : ''}` : '—'}
+                    </div>
+                    <div style={{ fontSize: 12, color: C.t2 }}>{meta.meta_descricao}</div>
+                    {meta.observacoes && (
+                      <div style={{ fontSize: 11, color: C.t3, marginTop: 6, fontStyle: 'italic' }}>
+                        {meta.observacoes}
+                      </div>
+                    )}
+                  </>
+                ) : (
+                  <div style={{ fontSize: 11, color: C.t3, fontStyle: 'italic' }}>
+                    Nenhuma meta definida para {ano}. Click em Editar para criar.
+                  </div>
+                )}
+              </div>
+
+              {/* Lista de KPIs do tipo */}
+              <div>
+                <div style={{ fontSize: 10, color: C.t3, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 6 }}>
+                  KPIs deste tipo ({kpis.length})
+                </div>
+                {kpis.length === 0 ? (
+                  <div style={{ fontSize: 11, color: C.t3, padding: 8 }}>Nenhum.</div>
+                ) : (
+                  <div style={{ maxHeight: 300, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 3 }}>
+                    {kpis.map(k => (
+                      <div key={k.id} style={{
+                        display: 'flex', alignItems: 'center', gap: 8,
+                        padding: '5px 8px', background: C.card, borderRadius: 4, fontSize: 11,
+                      }}>
+                        <span style={{
+                          fontSize: 9, padding: '1px 5px', borderRadius: 4,
+                          background: C.primaryBg, color: C.primaryDark, fontWeight: 700,
+                          minWidth: 50, textAlign: 'center',
+                        }}>
+                          {k.id}
+                        </span>
+                        <span style={{ flex: 1, color: C.text, minWidth: 0 }} title={k.indicador}>
+                          {(k.descricao || k.indicador).slice(0, 50)}
+                          {(k.descricao || k.indicador || '').length > 50 ? '…' : ''}
+                        </span>
+                        <button
+                          onClick={() => trocarTipoKpi(k, tipo === 'quantitativo' ? 'qualitativo' : 'quantitativo')}
+                          title={`Mover para ${tipo === 'quantitativo' ? 'qualitativo' : 'quantitativo'}`}
+                          style={btnSm}
+                        >
+                          ⇄
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </Card>
+          );
+        })}
+
+        {kpisPorTipo.sem_tipo?.length > 0 && (
+          <Card title={<>⚠️ KPIs sem tipo classificado ({kpisPorTipo.sem_tipo.length})</>} subtitle="Use os botoes ⇄ acima para classificar" full>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+              {kpisPorTipo.sem_tipo.map(k => (
+                <span key={k.id} style={{
+                  fontSize: 10, padding: '3px 8px', borderRadius: 99,
+                  background: 'var(--cbrio-input-bg)', color: C.t2,
+                }}>
+                  {k.id} · {k.area}
+                </span>
+              ))}
+            </div>
+          </Card>
+        )}
+      </div>
+    </>
+  );
+}
+
+const inpStyle = {
+  padding: '6px 10px', borderRadius: 6, fontSize: 12,
+  border: '1px solid var(--cbrio-border)', background: 'var(--cbrio-input-bg)',
+  color: 'var(--cbrio-text)', fontFamily: 'inherit',
+};
+
+const btnPrimary = {
+  padding: '6px 12px', borderRadius: 6, fontSize: 11, fontWeight: 600,
+  background: '#00B39D', color: '#fff', border: 'none', cursor: 'pointer',
+  display: 'inline-flex', alignItems: 'center', gap: 4,
+};
 
 // ============================================================================
 // Componentes auxiliares

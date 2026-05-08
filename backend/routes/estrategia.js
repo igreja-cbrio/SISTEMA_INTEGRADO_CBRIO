@@ -126,7 +126,7 @@ router.get('/objetivos/:id', async (req, res) => {
     // KPIs vinculados
     const { data: kpis } = await supabase
       .from('kpi_indicadores_taticos')
-      .select('id, indicador, descricao, area, valores, periodicidade, meta_descricao, is_okr, ativo')
+      .select('id, indicador, descricao, area, valores, periodicidade, meta_descricao, tipo_kpi, is_okr, ativo')
       .eq('objetivo_geral_id', req.params.id)
       .eq('ativo', true)
       .order('area');
@@ -263,6 +263,95 @@ router.delete('/krs/:id', authorize('admin', 'diretor'), async (req, res) => {
       .eq('id', req.params.id);
     if (error) throw error;
     res.status(204).end();
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ============================================================================
+// METAS INSTITUCIONAIS · 1 por (tipo_kpi, ano)
+// ============================================================================
+router.get('/metas-institucionais', async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('kpi_metas_institucionais')
+      .select('*')
+      .eq('ativo', true)
+      .order('ano', { ascending: false })
+      .order('tipo_kpi');
+    if (error) throw error;
+    res.json(data || []);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+router.post('/metas-institucionais', authorize('admin', 'diretor'), async (req, res) => {
+  try {
+    const allowed = ['tipo_kpi', 'ano', 'meta_descricao', 'meta_valor', 'unidade', 'observacoes'];
+    const payload = {};
+    for (const [k, v] of Object.entries(req.body || {})) if (allowed.includes(k)) payload[k] = v;
+    if (!payload.tipo_kpi || !payload.ano || !payload.meta_descricao) {
+      return res.status(400).json({ error: 'tipo_kpi, ano e meta_descricao obrigatorios' });
+    }
+    const { data, error } = await supabase
+      .from('kpi_metas_institucionais')
+      .upsert(payload, { onConflict: 'tipo_kpi,ano' })
+      .select()
+      .single();
+    if (error) throw error;
+    res.status(201).json(data);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+router.put('/metas-institucionais/:id', authorize('admin', 'diretor'), async (req, res) => {
+  try {
+    const allowed = ['meta_descricao', 'meta_valor', 'unidade', 'observacoes', 'ativo'];
+    const update = {};
+    for (const [k, v] of Object.entries(req.body || {})) if (allowed.includes(k)) update[k] = v;
+
+    const { data, error } = await supabase
+      .from('kpi_metas_institucionais')
+      .update(update)
+      .eq('id', req.params.id)
+      .select()
+      .single();
+    if (error) throw error;
+    res.json(data);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Lista KPIs agrupados por tipo (qual / quant) · pra UI da aba
+router.get('/kpis-por-tipo', async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('kpi_indicadores_taticos')
+      .select('id, indicador, descricao, area, tipo_kpi, meta_descricao, meta_valor, unidade')
+      .eq('ativo', true)
+      .order('tipo_kpi')
+      .order('area')
+      .order('id');
+    if (error) throw error;
+    const agrupado = { qualitativo: [], quantitativo: [], sem_tipo: [] };
+    (data || []).forEach(k => {
+      const bucket = k.tipo_kpi || 'sem_tipo';
+      agrupado[bucket].push(k);
+    });
+    res.json(agrupado);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Atualizar tipo_kpi de um KPI individual (caso heuristica tenha errado)
+router.put('/kpis/:id/tipo', authorize('admin', 'diretor'), async (req, res) => {
+  try {
+    const { tipo_kpi } = req.body || {};
+    if (!['qualitativo', 'quantitativo', null].includes(tipo_kpi)) {
+      return res.status(400).json({ error: 'tipo_kpi deve ser qualitativo, quantitativo ou null' });
+    }
+    const { data, error } = await supabase
+      .from('kpi_indicadores_taticos')
+      .update({ tipo_kpi, updated_at: new Date().toISOString() })
+      .eq('id', req.params.id)
+      .select()
+      .single();
+    if (error) throw error;
+    res.json(data);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
