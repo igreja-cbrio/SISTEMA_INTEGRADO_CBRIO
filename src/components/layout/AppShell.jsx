@@ -5,6 +5,7 @@ import { useTheme } from '../../contexts/ThemeContext';
 import { notificacoes as notifApi } from '../../api';
 import SpotifyPlayer from './SpotifyPlayer';
 import { playNotificationSound } from '../../lib/sounds';
+import { isPushSupported, getCurrentSubscription, subscribePush, unsubscribePush } from '../../lib/pushNotifications';
 import MegaMenu from '../ui/mega-menu';
 import { CommandSearch } from '../ui/command-search';
 import {
@@ -12,7 +13,7 @@ import {
   CalendarDays, FolderKanban, Map, ListChecks,
   UserCheck, UsersRound, Heart, HandHelping, BookOpen, ArrowRight, TrendingUp,
   Megaphone, BrainCircuit, ShoppingCart,
-  Sun, Moon, Bell, LogOut, Search, CheckCheck, Settings, MonitorSmartphone, BarChart2, ClipboardCheck, Activity,
+  Sun, Moon, Bell, BellRing, BellOff, LogOut, Search, CheckCheck, Settings, MonitorSmartphone, BarChart2, ClipboardCheck, Activity,
 } from 'lucide-react';
 import {
   DropdownMenu, DropdownMenuTrigger, DropdownMenuContent,
@@ -137,6 +138,32 @@ export default function AppShell() {
 
   const [notifCount, setNotifCount] = useState(0);
   const [notifOpen, setNotifOpen] = useState(false);
+  const [pushSubscribed, setPushSubscribed] = useState(false);
+  const [pushBusy, setPushBusy] = useState(false);
+  const pushSupported = typeof window !== 'undefined' && isPushSupported();
+
+  useEffect(() => {
+    if (!pushSupported) return;
+    getCurrentSubscription().then(s => setPushSubscribed(!!s)).catch(() => {});
+  }, [pushSupported]);
+
+  const togglePush = async () => {
+    if (pushBusy) return;
+    setPushBusy(true);
+    try {
+      if (pushSubscribed) {
+        await unsubscribePush();
+        setPushSubscribed(false);
+      } else {
+        const r = await subscribePush();
+        if (r === 'ok') setPushSubscribed(true);
+        else if (r === 'denied') alert('Voce bloqueou notificacoes neste navegador. Habilite nas configuracoes do site.');
+        else if (r === 'no_vapid') alert('Push ainda nao foi configurado pelo administrador.');
+        else if (r === 'unsupported') alert('Este navegador nao suporta notificacoes push.');
+        else alert('Nao foi possivel ativar notificacoes.');
+      }
+    } finally { setPushBusy(false); }
+  };
   const [notifs, setNotifs] = useState([]);
   const [notifsLoading, setNotifsLoading] = useState(false);
   const prevNotifCount = useRef(-1);
@@ -259,6 +286,17 @@ export default function AppShell() {
                     {notifCount > 0 && (
                       <button onClick={handleLerTodas} className="flex items-center gap-1 text-[11px] text-primary hover:underline">
                         <CheckCheck className="h-3 w-3" /> Marcar todas como lidas
+                      </button>
+                    )}
+                    {pushSupported && (
+                      <button
+                        onClick={togglePush}
+                        disabled={pushBusy}
+                        className="p-1 rounded hover:bg-accent transition-colors"
+                        style={{ color: pushSubscribed ? '#00B39D' : 'var(--cbrio-text3)' }}
+                        title={pushSubscribed ? 'Desativar notificacoes no celular/desktop' : 'Ativar notificacoes no celular/desktop'}
+                      >
+                        {pushSubscribed ? <BellRing className="h-3.5 w-3.5" /> : <BellOff className="h-3.5 w-3.5" />}
                       </button>
                     )}
                     <button onClick={() => { setNotifOpen(false); navigate('/admin/notificacao-regras'); }} className="p-1 rounded hover:bg-accent text-muted-foreground" title="Configurar regras">
