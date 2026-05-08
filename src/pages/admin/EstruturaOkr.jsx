@@ -309,15 +309,22 @@ function TabelaCascataOkr({ detalhes, onAddKr, onEditKr, removerKr }) {
           Nenhum KR ainda. Sugestao: 3 KRs por objetivo (volume, comparacao historica, threshold).
         </div>
       ) : (
-        <div style={{ overflowX: 'auto', background: 'var(--cbrio-card)', borderRadius: 6, border: `1px solid ${C.border}` }}>
-          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11, minWidth: 760 }}>
+        <div style={{ overflowX: 'auto', background: 'var(--cbrio-card)', borderRadius: 8, border: `1px solid ${C.border}` }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11, minWidth: 820, tableLayout: 'fixed' }}>
+            <colgroup>
+              <col style={{ width: '24%' }} />
+              <col style={{ width: '22%' }} />
+              <col style={{ width: '24%' }} />
+              <col style={{ width: '24%' }} />
+              <col style={{ width: '6%' }} />
+            </colgroup>
             <thead>
               <tr style={{ background: 'var(--cbrio-input-bg)' }}>
-                <th style={th}>KR Geral</th>
-                <th style={th}>KPI Geral</th>
-                <th style={th}>KR Específico</th>
+                <th style={thGeral}>KR Geral</th>
+                <th style={thGeral}>KPI Geral</th>
+                <th style={th}>KR Específico (por área)</th>
                 <th style={th}>KPI Específico</th>
-                <th style={{ ...th, width: 60 }}></th>
+                <th style={th}></th>
               </tr>
             </thead>
             <tbody>
@@ -335,56 +342,78 @@ function TabelaCascataOkr({ detalhes, onAddKr, onEditKr, removerKr }) {
                   return (
                     <tr key={(filho?.id) || `${kr.id}-empty`}
                         style={{ borderTop: isFirst ? `2px solid ${C.border}` : `1px solid ${C.border}` }}>
-                      {/* KR Geral · rowSpan */}
+                      {/* KR Geral · rowSpan · centralizado horizontal+vertical, com destaque visual */}
                       {isFirst && (
-                        <td rowSpan={linhas.length} style={{ ...td, verticalAlign: 'top', background: 'var(--cbrio-input-bg)' }}>
-                          <div style={{ fontWeight: 600, color: C.text, marginBottom: 2 }}>{kr.titulo}</div>
-                          <div style={{ fontSize: 10, color: C.t3 }}>
+                        <td rowSpan={linhas.length} style={{
+                          padding: '16px 14px',
+                          verticalAlign: 'middle', textAlign: 'center',
+                          background: C.primaryBg,
+                          borderRight: `2px solid ${C.primary}40`,
+                          color: C.text, lineHeight: 1.4,
+                        }}>
+                          <div style={{ fontSize: 13, fontWeight: 700, color: C.text, marginBottom: 6, lineHeight: 1.35 }}>
+                            {kr.titulo}
+                          </div>
+                          <div style={{
+                            fontSize: 11, color: C.primaryDark, fontWeight: 600,
+                            padding: '2px 8px', background: C.card, borderRadius: 99,
+                            display: 'inline-block', border: `1px solid ${C.primary}40`,
+                          }}>
                             meta: {kr.meta_valor != null
                               ? `${kr.meta_valor}${kr.unidade ? ' ' + kr.unidade : ''}`
                               : (kr.meta_texto || '—')}
                           </div>
                           {kr.agregacao_cascata && (
-                            <div style={{ fontSize: 9, color: C.t3, marginTop: 4 }}>
-                              cascata: <strong>{kr.agregacao_cascata}</strong>
+                            <div style={{ fontSize: 9, color: C.t3, marginTop: 6, textTransform: 'uppercase', letterSpacing: 0.5 }}>
+                              cascata · <strong>{kr.agregacao_cascata}</strong>
                             </div>
                           )}
-                          <div style={{ marginTop: 6, display: 'flex', gap: 4 }}>
-                            <button onClick={() => onEditKr(kr)} style={btnIcon}><Pencil size={10} /></button>
-                            <button onClick={() => removerKr(kr)} style={{ ...btnIcon, color: '#ef4444' }}><Trash2 size={10} /></button>
+                          <div style={{ marginTop: 8, display: 'flex', gap: 4, justifyContent: 'center' }}>
+                            <button onClick={() => onEditKr(kr)} style={btnIcon} title="Editar"><Pencil size={11} /></button>
+                            <button onClick={() => removerKr(kr)} style={{ ...btnIcon, color: '#ef4444' }} title="Remover"><Trash2 size={11} /></button>
                           </div>
                         </td>
                       )}
 
-                      {/* KPI Geral · rowSpan · texto do indicador_geral do objetivo */}
+                      {/* KPI Geral · rowSpan · centralizado horizontal+vertical */}
                       {isFirst && (
-                        <td rowSpan={linhas.length} style={{ ...td, verticalAlign: 'top', color: C.t2 }}>
-                          {detalhes.indicador_geral || <span style={{ color: C.t3, fontStyle: 'italic' }}>—</span>}
+                        <td rowSpan={linhas.length} style={{
+                          padding: '16px 14px',
+                          verticalAlign: 'middle', textAlign: 'center',
+                          borderRight: `2px solid ${C.border}`,
+                          lineHeight: 1.5,
+                        }}>
+                          {detalhes.indicador_geral ? (
+                            <div style={{ fontSize: 12, color: C.text, fontWeight: 500, fontStyle: 'italic' }}>
+                              {detalhes.indicador_geral}
+                            </div>
+                          ) : (
+                            <span style={{ color: C.t3, fontStyle: 'italic', fontSize: 11 }}>—</span>
+                          )}
                         </td>
                       )}
 
                       {/* KR Especifico · 1 por linha (por area) */}
                       <td style={{ ...td, borderLeft: `3px solid ${cor}` }}>
                         {filho ? (
-                          <>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 2 }}>
-                              <span style={{
-                                fontSize: 9, padding: '1px 6px', borderRadius: 99,
-                                background: cor + '20', color: cor, fontWeight: 700,
-                                textTransform: 'uppercase', minWidth: 46, textAlign: 'center',
-                              }}>
-                                {filho.area}
-                              </span>
-                              <span style={{ fontSize: 10, color: C.t2 }}>
-                                meta: {filho.meta_valor != null
-                                  ? `${filho.meta_valor}${filho.unidade ? ' ' + filho.unidade : ''}`
-                                  : (filho.meta_texto || '—')}
-                              </span>
-                            </div>
-                          </>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                            <span style={{
+                              fontSize: 9, padding: '2px 8px', borderRadius: 99,
+                              background: cor + '20', color: cor, fontWeight: 700,
+                              textTransform: 'uppercase', minWidth: 50, textAlign: 'center',
+                              letterSpacing: 0.5,
+                            }}>
+                              {filho.area}
+                            </span>
+                            <span style={{ fontSize: 11, color: C.t2 }}>
+                              meta: <strong style={{ color: C.text }}>{filho.meta_valor != null
+                                ? `${filho.meta_valor}${filho.unidade ? ' ' + filho.unidade : ''}`
+                                : (filho.meta_texto || '—')}</strong>
+                            </span>
+                          </div>
                         ) : (
-                          <span style={{ color: C.t3, fontStyle: 'italic', fontSize: 10 }}>
-                            Sem filhos · KR geral nao desdobrado por area
+                          <span style={{ color: C.t3, fontStyle: 'italic', fontSize: 11 }}>
+                            Sem filhos · KR geral não desdobrado por área
                           </span>
                         )}
                       </td>
@@ -392,19 +421,20 @@ function TabelaCascataOkr({ detalhes, onAddKr, onEditKr, removerKr }) {
                       {/* KPI Especifico · ID + descricao do KPI tatico daquela area */}
                       <td style={td}>
                         {kpisDaArea.length === 0 ? (
-                          <span style={{ color: C.t3, fontStyle: 'italic', fontSize: 10 }}>—</span>
+                          <span style={{ color: C.t3, fontStyle: 'italic', fontSize: 11 }}>—</span>
                         ) : (
-                          <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
                             {kpisDaArea.map(k => (
-                              <div key={k.id} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                              <div key={k.id} style={{ display: 'flex', alignItems: 'flex-start', gap: 6 }}>
                                 <span style={{
-                                  fontSize: 9, padding: '1px 5px', borderRadius: 4,
+                                  fontSize: 9, padding: '2px 6px', borderRadius: 4,
                                   background: C.primaryBg, color: C.primaryDark, fontWeight: 700,
-                                  minWidth: 50, textAlign: 'center',
+                                  minWidth: 52, textAlign: 'center', flexShrink: 0,
+                                  fontFamily: 'ui-monospace, SFMono-Regular, monospace',
                                 }}>
                                   {k.id}
                                 </span>
-                                <span style={{ fontSize: 10, color: C.t2, lineHeight: 1.3 }} title={k.indicador}>
+                                <span style={{ fontSize: 11, color: C.t2, lineHeight: 1.4 }} title={k.indicador}>
                                   {(k.descricao || k.indicador).slice(0, 60)}
                                   {(k.descricao || k.indicador || '').length > 60 ? '…' : ''}
                                 </span>
@@ -417,7 +447,7 @@ function TabelaCascataOkr({ detalhes, onAddKr, onEditKr, removerKr }) {
                       {/* Acoes filho */}
                       <td style={{ ...td, textAlign: 'right', whiteSpace: 'nowrap' }}>
                         {filho && (
-                          <button onClick={() => onEditKr(filho)} style={btnIcon} title="Editar meta desta area"><Pencil size={10} /></button>
+                          <button onClick={() => onEditKr(filho)} style={btnIcon} title="Editar meta desta área"><Pencil size={11} /></button>
                         )}
                       </td>
                     </tr>
@@ -691,13 +721,21 @@ const btnIcon = {
 };
 
 const th = {
-  textAlign: 'left', padding: '8px 10px', fontSize: 10,
+  textAlign: 'left', padding: '10px 12px', fontSize: 10,
   color: 'var(--cbrio-text3)', fontWeight: 700,
   textTransform: 'uppercase', letterSpacing: 0.5,
   borderBottom: '2px solid var(--cbrio-border)',
 };
 
+// Cabeçalhos das colunas "Geral" — centralizados com leve destaque visual.
+const thGeral = {
+  ...th,
+  textAlign: 'center',
+  background: 'rgba(0, 179, 157, 0.08)',
+  color: '#00897B',
+};
+
 const td = {
-  padding: '8px 10px', fontSize: 11, color: 'var(--cbrio-text)',
-  verticalAlign: 'top', lineHeight: 1.4,
+  padding: '10px 12px', fontSize: 11, color: 'var(--cbrio-text)',
+  verticalAlign: 'top', lineHeight: 1.45,
 };
