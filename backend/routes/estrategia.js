@@ -126,7 +126,7 @@ router.get('/objetivos/:id', async (req, res) => {
     // KPIs vinculados
     const { data: kpis } = await supabase
       .from('kpi_indicadores_taticos')
-      .select('id, indicador, area, valores, periodicidade, meta_descricao, is_okr, ativo')
+      .select('id, indicador, descricao, area, valores, periodicidade, meta_descricao, is_okr, ativo')
       .eq('objetivo_geral_id', req.params.id)
       .eq('ativo', true)
       .order('area');

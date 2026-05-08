@@ -423,7 +423,10 @@ function ListaSaude({ titulo, subtitulo, items, cor, cols = ['indicador', 'area'
               {item.id && cols.includes('indicador') && (
                 <span style={{ fontSize: 9, padding: '1px 4px', borderRadius: 4, background: C.card, color: C.t3, fontWeight: 600, minWidth: 60, textAlign: 'center' }}>{item.id}</span>
               )}
-              <span style={{ flex: 1, color: C.text }}>{item[cols[0]] || item.nome}</span>
+              <span style={{ flex: 1, color: C.text }}>
+                {/* Pra KPI: prefere a descricao (nome especifico) sobre o indicador (formula generica). */}
+                {cols[0] === 'indicador' ? (item.descricao || item.indicador || item.nome) : (item[cols[0]] || item.nome)}
+              </span>
               {cols.includes('area') && item.area && (
                 <span style={{ fontSize: 9, color: C.t3, textTransform: 'capitalize' }}>{item.area}</span>
               )}
