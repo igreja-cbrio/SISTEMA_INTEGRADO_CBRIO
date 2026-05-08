@@ -123,14 +123,24 @@ router.get('/saude', async (req, res) => {
       .select('id, indicador, area, valores, meta_descricao, meta_valor, lider_funcionario_id, objetivo_geral_id, is_okr, ativo')
       .eq('ativo', true);
 
+    // Apenas KPIs das 6 areas oficiais (kids/ami/bridge/sede/online/cba) entram
+    // nos checks de "sem objetivo geral" e "sem valor da jornada". KPIs cuja
+    // area e ministerio (integracao/grupos/cuidados/voluntariado/generosidade/next)
+    // sao processos do ministerio · nao precisam estar amarrados num objetivo
+    // geral nem ter valor da jornada (Marcos: "nao e erro ter um processo num
+    // ministerio e nao no outro").
+    const AREAS_OFICIAIS = ['kids', 'ami', 'bridge', 'sede', 'online', 'cba'];
+    const isAreaOficial = (k) => AREAS_OFICIAIS.includes(String(k.area || '').toLowerCase());
+    const kpisAreas = (kpis || []).filter(isAreaOficial);
+
     const sem_meta = (kpis || []).filter(k =>
       (k.meta_valor === null || k.meta_valor === undefined) &&
       (!k.meta_descricao || k.meta_descricao.trim() === '')
     );
 
     const sem_dono = (kpis || []).filter(k => !k.lider_funcionario_id);
-    const sem_objetivo = (kpis || []).filter(k => !k.objetivo_geral_id);
-    const sem_valores = (kpis || []).filter(k => !Array.isArray(k.valores) || k.valores.length === 0);
+    const sem_objetivo = kpisAreas.filter(k => !k.objetivo_geral_id);
+    const sem_valores = kpisAreas.filter(k => !Array.isArray(k.valores) || k.valores.length === 0);
 
     // Sem registro nos ultimos 60 dias
     const dataLimite = new Date();
