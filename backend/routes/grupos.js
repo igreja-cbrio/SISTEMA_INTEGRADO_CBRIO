@@ -702,6 +702,81 @@ router.get('/pedidos/list', async (req, res) => {
   } catch (e) { console.error('[Pedidos list]', e.message); res.status(500).json({ error: 'Erro ao listar pedidos' }); }
 });
 
+// GET /api/grupos/pedidos/count — contador de pedidos pendentes do user logado
+// (grupos que ele lidera). Usado por badge na sidebar / aba Pedidos.
+router.get('/pedidos/count', async (req, res) => {
+  try {
+    const { data: prof } = await supabase
+      .from('vol_profiles').select('membresia_id').eq('auth_user_id', req.user.userId).maybeSingle();
+    const minhaMembresiaId = prof?.membresia_id;
+    if (!minhaMembresiaId) return res.json({ pendentes: 0, mine: 0, total: 0 });
+
+    const { data: meusGrupos } = await supabase.from('mem_grupos').select('id').eq('lider_id', minhaMembresiaId);
+    const ids = (meusGrupos || []).map(g => g.id);
+
+    const isAdmin = ['admin', 'diretor'].includes(req.user.role);
+    let mine = 0;
+    if (ids.length) {
+      const { count } = await supabase.from('mem_grupo_pedidos')
+        .select('id', { count: 'exact', head: true }).eq('status', 'pendente').in('grupo_id', ids);
+      mine = count || 0;
+    }
+    let total = mine;
+    if (isAdmin) {
+      const { count } = await supabase.from('mem_grupo_pedidos')
+        .select('id', { count: 'exact', head: true }).eq('status', 'pendente');
+      total = count || 0;
+    }
+    res.json({ pendentes: isAdmin ? total : mine, mine, total });
+  } catch (e) {
+    console.error('[Pedidos count]', e.message);
+    res.status(500).json({ error: 'Erro ao contar pedidos' });
+  }
+});
+
+// GET /api/grupos/:id/historico-membros — lista de entradas/saidas do grupo
+// com origem e destino (para mostrar transferencias).
+router.get('/:id/historico-membros', async (req, res) => {
+  try {
+    const grupoId = req.params.id;
+    // Todas as participacoes do grupo (ativas + encerradas)
+    const { data: participacoes, error } = await supabase
+      .from('mem_grupo_membros')
+      .select('id, membro_id, entrou_em, saiu_em, motivo_saida, mem_membros(id, nome, foto_url)')
+      .eq('grupo_id', grupoId)
+      .order('entrou_em', { ascending: false });
+    if (error) throw error;
+
+    // Para cada saida, tentar identificar o "destino" (proximo grupo do membro)
+    const saidas = (participacoes || []).filter(p => p.saiu_em);
+    const membroIds = [...new Set(saidas.map(p => p.membro_id))];
+    let destinosMap = {};
+    if (membroIds.length) {
+      const { data: outros } = await supabase
+        .from('mem_grupo_membros')
+        .select('membro_id, grupo_id, entrou_em, mem_grupos(id, nome, codigo)')
+        .in('membro_id', membroIds)
+        .neq('grupo_id', grupoId)
+        .order('entrou_em', { ascending: true });
+      // Para cada saida, encontra a primeira entrada subsequente em outro grupo
+      for (const s of saidas) {
+        const candidatos = (outros || []).filter(o =>
+          o.membro_id === s.membro_id && o.entrou_em >= s.saiu_em
+        );
+        if (candidatos.length > 0) destinosMap[s.id] = candidatos[0];
+      }
+    }
+
+    res.json((participacoes || []).map(p => ({
+      ...p,
+      destino: destinosMap[p.id] || null,
+    })));
+  } catch (e) {
+    console.error('[Historico membros]', e.message);
+    res.status(500).json({ error: 'Erro ao buscar historico' });
+  }
+});
+
 // POST /api/grupos/pedidos/:pedidoId/aprovar
 router.post('/pedidos/:pedidoId/aprovar', async (req, res) => {
   try {
