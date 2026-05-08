@@ -1,4 +1,10 @@
 require('dotenv').config();
+
+// Sentry deve inicializar ANTES de qualquer require do app pra capturar
+// erros logo no boot. Se SENTRY_DSN nao estiver setado, vira no-op.
+const { initSentryBackend, sentryRequestHandler, sentryErrorHandler } = require('./utils/sentry');
+initSentryBackend();
+
 const express = require('express');
 const helmet = require('helmet');
 const cors = require('cors');
@@ -10,6 +16,10 @@ const path = require('path');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
+
+// Request handler do Sentry (precisa vir antes de qualquer middleware
+// e antes das rotas para capturar request data nos eventos).
+app.use(sentryRequestHandler());
 
 // ── Security middleware ──
 app.use(helmet({ contentSecurityPolicy: false, crossOriginEmbedderPolicy: false }));
@@ -113,6 +123,9 @@ if (process.env.NODE_ENV === 'production') {
     res.sendFile(path.join(__dirname, 'public', 'index.html'));
   });
 }
+
+// ── Sentry error handler (precisa vir antes do nosso) ──
+app.use(sentryErrorHandler());
 
 // ── Error handler ──
 app.use((err, req, res, next) => {
