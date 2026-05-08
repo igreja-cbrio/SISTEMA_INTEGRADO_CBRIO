@@ -465,6 +465,15 @@ function AbaMetasInstitucionais() {
     } catch (e) { toast.error(e?.message); }
   };
 
+  const recalcularMetas = async () => {
+    if (!window.confirm('Vai sobrescrever a meta de TODOS os KPIs ativos com a meta institucional. Quantitativos vão materializar alvo absoluto a partir do baseline do ano anterior. Continuar?')) return;
+    try {
+      const r = await estrategiaApi.metasInstitucionais.aplicar();
+      toast.success(`Recalculado · ${r.resultado.kpis_atualizados} KPIs (${r.resultado.kpis_com_alvo_materializado} com alvo absoluto)`);
+      carregar();
+    } catch (e) { toast.error(e?.message); }
+  };
+
   if (loading) return <Loading />;
 
   const metaPorTipo = {
@@ -474,10 +483,16 @@ function AbaMetasInstitucionais() {
 
   return (
     <>
-      <p style={{ fontSize: 12, color: C.t3, marginBottom: 16, marginTop: 0 }}>
-        Meta global da igreja para {ano} · 1 meta por tipo. Aplica como referencia institucional ·
-        nao substitui as metas individuais dos KPIs (essas voce gerencia em Estrutura OKR).
-      </p>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12, marginBottom: 16, flexWrap: 'wrap' }}>
+        <p style={{ fontSize: 12, color: C.t3, margin: 0, maxWidth: 700 }}>
+          Meta global da igreja para {ano} · 1 meta por tipo. Ao salvar uma meta, ela é <strong>aplicada
+          automaticamente</strong> em todos os KPIs do tipo (sobrescreve meta individual). Quantitativos
+          materializam alvo absoluto via baseline do ano anterior.
+        </p>
+        <button onClick={recalcularMetas} style={btnPrimary} title="Recalcular alvos absolutos com dados atuais">
+          <Activity size={11} /> Recalcular metas
+        </button>
+      </div>
 
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(420px, 1fr))', gap: 16 }}>
         {['quantitativo', 'qualitativo'].map(tipo => {
@@ -600,10 +615,18 @@ function AbaMetasInstitucionais() {
                         }}>
                           {k.id}
                         </span>
-                        <span style={{ flex: 1, color: C.text, minWidth: 0 }} title={k.indicador}>
-                          {(k.descricao || k.indicador).slice(0, 50)}
-                          {(k.descricao || k.indicador || '').length > 50 ? '…' : ''}
-                        </span>
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ color: C.text }} title={k.indicador}>
+                            {(k.descricao || k.indicador).slice(0, 48)}
+                            {(k.descricao || k.indicador || '').length > 48 ? '…' : ''}
+                          </div>
+                          {k.meta_valor_absoluto != null && (
+                            <div style={{ fontSize: 9, color: info.cor, fontWeight: 600 }}>
+                              alvo: {Number(k.meta_valor_absoluto).toLocaleString('pt-BR')}
+                              {k.unidade ? ' ' + k.unidade : ''}
+                            </div>
+                          )}
+                        </div>
                         <button
                           onClick={() => trocarTipoKpi(k, tipo === 'quantitativo' ? 'qualitativo' : 'quantitativo')}
                           title={`Mover para ${tipo === 'quantitativo' ? 'qualitativo' : 'quantitativo'}`}

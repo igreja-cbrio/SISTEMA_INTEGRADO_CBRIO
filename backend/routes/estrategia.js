@@ -322,7 +322,7 @@ router.get('/kpis-por-tipo', async (req, res) => {
   try {
     const { data, error } = await supabase
       .from('kpi_indicadores_taticos')
-      .select('id, indicador, descricao, area, tipo_kpi, meta_descricao, meta_valor, unidade')
+      .select('id, indicador, descricao, area, tipo_kpi, meta_descricao, meta_valor, meta_valor_absoluto, unidade')
       .eq('ativo', true)
       .order('tipo_kpi')
       .order('area')
@@ -334,6 +334,16 @@ router.get('/kpis-por-tipo', async (req, res) => {
       agrupado[bucket].push(k);
     });
     res.json(agrupado);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Forca recalculo das metas institucionais em todos KPIs (admin/diretor)
+router.post('/metas-institucionais/aplicar', authorize('admin', 'diretor'), async (req, res) => {
+  try {
+    const { tipo } = req.body || {};
+    const { data, error } = await supabase.rpc('aplicar_meta_institucional', { p_tipo: tipo || null });
+    if (error) throw error;
+    res.json({ ok: true, resultado: data });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
