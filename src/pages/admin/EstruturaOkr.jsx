@@ -183,6 +183,7 @@ export default function EstruturaOkr({ embedded = false }) {
 function ObjetivoLinha({ objetivo, expanded, onToggle, onEdit, onRemove, onAddKr, onEditKr, onAfterChange }) {
   const [detalhes, setDetalhes] = useState(null);
   const [loading, setLoading] = useState(false);
+  const [especificosOpen, setEspecificosOpen] = useState(false);
 
   useEffect(() => {
     if (expanded && !detalhes) {
@@ -246,15 +247,146 @@ function ObjetivoLinha({ objetivo, expanded, onToggle, onEdit, onRemove, onAddKr
           {loading ? (
             <div style={{ padding: 16, fontSize: 12, color: C.t3, textAlign: 'center' }}>Carregando...</div>
           ) : !detalhes ? null : (
-            <TabelaCascataOkr
+            <ResumoGerais
               detalhes={detalhes}
               onAddKr={onAddKr}
               onEditKr={onEditKr}
               removerKr={removerKr}
+              onAbrirEspecificos={() => setEspecificosOpen(true)}
             />
           )}
         </div>
       )}
+
+      {especificosOpen && detalhes && (
+        <ModalEspecificos
+          detalhes={detalhes}
+          onClose={() => setEspecificosOpen(false)}
+          onEditKr={onEditKr}
+          removerKr={removerKr}
+        />
+      )}
+    </div>
+  );
+}
+
+// ============================================================================
+// ResumoGerais — vista compacta default (KPI geral + KRs gerais)
+// Mostra apenas o nivel "geral" do objetivo · botao abre modal com cascata.
+// ============================================================================
+function ResumoGerais({ detalhes, onAddKr, onEditKr, removerKr, onAbrirEspecificos }) {
+  const krsGerais = (detalhes.krs || []).filter(k => !k.kr_pai_id);
+  const totalEspecificos = (detalhes.krs || []).filter(k => k.kr_pai_id).length;
+
+  return (
+    <div>
+      {/* KPI Geral · indicador_geral do objetivo */}
+      {detalhes.indicador_geral && (
+        <div style={{ marginBottom: 12, padding: '8px 12px', background: 'var(--cbrio-card)', borderLeft: `3px solid ${C.primary}`, borderRadius: 4 }}>
+          <div style={{ fontSize: 9, color: C.t3, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 2 }}>
+            KPI Geral
+          </div>
+          <div style={{ fontSize: 12, color: C.text, lineHeight: 1.4 }}>{detalhes.indicador_geral}</div>
+        </div>
+      )}
+
+      {/* KRs Gerais */}
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+        <h4 style={hh4}><ListChecks size={11} /> KRs Gerais ({krsGerais.length})</h4>
+        <button onClick={onAddKr} style={btnGhostSm}><Plus size={12} /> Novo KR</button>
+      </div>
+
+      {krsGerais.length === 0 ? (
+        <div style={{ fontSize: 11, color: C.t3, padding: 8 }}>
+          Nenhum KR ainda. Sugestao: 3 KRs por objetivo (volume, comparacao historica, threshold).
+        </div>
+      ) : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+          {krsGerais.map(kr => (
+            <div key={kr.id} style={krStyle}>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 11, fontWeight: 600, color: C.text }}>{kr.titulo}</div>
+                <div style={{ fontSize: 10, color: C.t3 }}>
+                  meta: {kr.meta_valor != null
+                    ? `${kr.meta_valor}${kr.unidade ? ' ' + kr.unidade : ''}`
+                    : (kr.meta_texto || '—')}
+                  {kr.agregacao_cascata && ` · cascata: ${kr.agregacao_cascata}`}
+                </div>
+              </div>
+              <button onClick={() => onEditKr(kr)} style={btnIcon}><Pencil size={11} /></button>
+              <button onClick={() => removerKr(kr)} style={{ ...btnIcon, color: '#ef4444' }}><Trash2 size={11} /></button>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Botao para ver especificos */}
+      {totalEspecificos > 0 && (
+        <div style={{ marginTop: 12, paddingTop: 10, borderTop: `1px solid ${C.border}`, display: 'flex', justifyContent: 'flex-end' }}>
+          <button onClick={onAbrirEspecificos} style={{
+            padding: '6px 14px', borderRadius: 6, fontSize: 11, fontWeight: 600,
+            background: C.primaryBg, color: C.primaryDark, border: `1px solid ${C.primary}`,
+            cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 6,
+          }}>
+            <Activity size={11} /> Ver desdobramento por área ({totalEspecificos} específicos)
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ============================================================================
+// ModalEspecificos — modal com a cascata 4 colunas (uso eventual)
+// ============================================================================
+function ModalEspecificos({ detalhes, onClose, onEditKr, removerKr }) {
+  // Fechar com ESC
+  useEffect(() => {
+    const onKey = (e) => { if (e.key === 'Escape') onClose?.(); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
+
+  return (
+    <div
+      onClick={onClose}
+      style={{
+        position: 'fixed', inset: 0, zIndex: 1000,
+        background: C.overlay,
+        display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16,
+      }}
+    >
+      <div onClick={e => e.stopPropagation()} style={{
+        background: C.modalBg, borderRadius: 12,
+        maxWidth: 1280, width: '100%', maxHeight: '90vh', overflow: 'auto',
+        boxShadow: '0 20px 60px rgba(0,0,0,0.25)',
+      }}>
+        <header style={{
+          padding: '16px 24px', borderBottom: `1px solid ${C.border}`,
+          display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12,
+        }}>
+          <div>
+            <div style={{ fontSize: 10, fontWeight: 700, color: C.t3, textTransform: 'uppercase', letterSpacing: 0.5 }}>
+              Desdobramento por área
+            </div>
+            <h3 style={{ fontSize: 16, fontWeight: 700, color: C.text, margin: '2px 0 0' }}>
+              {detalhes.nome}
+            </h3>
+          </div>
+          <button onClick={onClose} style={{ background: 'none', border: 'none', color: C.t3, cursor: 'pointer', padding: 4 }}>
+            <X size={20} />
+          </button>
+        </header>
+
+        <div style={{ padding: 20 }}>
+          <TabelaCascataOkr
+            detalhes={detalhes}
+            onEditKr={onEditKr}
+            removerKr={removerKr}
+            semHeader
+          />
+        </div>
+      </div>
     </div>
   );
 }
@@ -274,7 +406,7 @@ const AREA_COR = {
 };
 const AREAS_ORDEM = ['kids', 'ami', 'bridge', 'sede', 'online', 'cba'];
 
-function TabelaCascataOkr({ detalhes, onAddKr, onEditKr, removerKr }) {
+function TabelaCascataOkr({ detalhes, onAddKr, onEditKr, removerKr, semHeader = false }) {
   const krsGerais = (detalhes.krs || []).filter(k => !k.kr_pai_id);
   const krsPorPai = {};
   (detalhes.krs || []).forEach(k => {
@@ -292,6 +424,7 @@ function TabelaCascataOkr({ detalhes, onAddKr, onEditKr, removerKr }) {
 
   return (
     <div>
+      {!semHeader && (
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
         <h4 style={hh4}>
           <ListChecks size={11} /> Cascata · {krsGerais.length} KRs gerais &times; 6 areas
@@ -301,8 +434,9 @@ function TabelaCascataOkr({ detalhes, onAddKr, onEditKr, removerKr }) {
             </span>
           )}
         </h4>
-        <button onClick={onAddKr} style={btnGhostSm}><Plus size={12} /> Novo KR</button>
+        {onAddKr && <button onClick={onAddKr} style={btnGhostSm}><Plus size={12} /> Novo KR</button>}
       </div>
+      )}
 
       {krsGerais.length === 0 ? (
         <div style={{ fontSize: 11, color: C.t3, padding: 12, textAlign: 'center', background: 'var(--cbrio-card)', borderRadius: 6 }}>
