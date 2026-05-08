@@ -357,13 +357,13 @@ export default function Grupos() {
     const totalMembros = isOptimistic ? (g.membros_count ?? null) : membrosAtivos.length;
 
     return (
-      <div key={selectedGrupo} style={{ padding: '24px 32px', maxWidth: 1100, margin: '0 auto', animation: 'cbrio-stagger-in 0.18s ease-out' }}>
+      <div key={selectedGrupo} className="cbrio-grupos-page" style={{ padding: '24px 32px', maxWidth: 1100, margin: '0 auto', animation: 'cbrio-stagger-in 0.18s ease-out' }}>
         <button onClick={() => { setSelectedGrupo(null); setDetailData(null); }} style={{ display: 'flex', alignItems: 'center', gap: 6, background: 'none', border: 'none', color: C.primary, cursor: 'pointer', fontSize: 13, fontWeight: 600, marginBottom: 16 }}>
           <ChevronLeft size={16} /> Voltar para grupos
         </button>
 
         {/* Header */}
-        <div style={{ display: 'flex', gap: 20, marginBottom: 24 }}>
+        <div className="cbrio-grupos-detail-header" style={{ display: 'flex', gap: 20, marginBottom: 24 }}>
           <div style={{ width: 80, height: 80, borderRadius: 16, background: g.foto_url ? `url(${g.foto_url}) center/cover` : C.primaryBg, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
             {!g.foto_url && <Users size={32} style={{ color: C.primary }} />}
           </div>
@@ -405,7 +405,7 @@ export default function Grupos() {
             {g.tema && <div style={{ fontSize: 13, color: C.t3, marginTop: 6 }}>Tema: {g.tema}</div>}
             {g.descricao && <div style={{ fontSize: 13, color: C.t3, marginTop: 4 }}>{g.descricao}</div>}
           </div>
-          <div style={{ display: 'flex', gap: 8, flexShrink: 0, flexWrap: 'wrap' }}>
+          <div className="cbrio-grupos-detail-actions" style={{ display: 'flex', gap: 8, flexShrink: 0, flexWrap: 'wrap' }}>
             <Button size="sm" variant="outline" onClick={() => setQrOpen(true)}>
               <QrCode size={14} style={{ marginRight: 4 }} /> QR / Link
             </Button>
@@ -418,7 +418,7 @@ export default function Grupos() {
         </div>
 
         {/* Info cards */}
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12, marginBottom: 16 }}>
+        <div className="cbrio-grupos-kpis" style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12, marginBottom: 16 }}>
           {[
             { label: 'Membros', value: isOptimistic ? null : regulares.length, color: C.primary },
             { label: 'Visitantes', value: isOptimistic ? null : visitantes.length, color: C.amber },
@@ -666,14 +666,14 @@ export default function Grupos() {
 
   // ── LISTA DE GRUPOS ──
   return (
-    <div style={{ padding: '24px 32px', maxWidth: 1100, margin: '0 auto' }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+    <div className="cbrio-grupos-page" style={{ padding: '24px 32px', maxWidth: 1100, margin: '0 auto' }}>
+      <div className="cbrio-grupos-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
         <h1 style={{ fontSize: 22, fontWeight: 700, color: C.text, margin: 0 }}>Grupos</h1>
         {pageTab === 'grupos' && <Button onClick={openCreate}><Plus size={16} style={{ marginRight: 6 }} /> Novo Grupo</Button>}
       </div>
 
       {/* Tabs principais: Grupos | Mapa | Materiais */}
-      <div style={{ display: 'flex', gap: 0, marginBottom: 16, borderBottom: `1px solid ${C.border}` }}>
+      <div className="cbrio-grupos-tabs" style={{ display: 'flex', gap: 0, marginBottom: 16, borderBottom: `1px solid ${C.border}` }}>
         {[
           { key: 'grupos', label: 'Grupos', icon: Users },
           { key: 'mapa', label: 'Mapa', icon: MapIcon },
@@ -921,7 +921,7 @@ export default function Grupos() {
       </div>
 
       {/* Filtros */}
-      <div style={{ display: 'flex', gap: 10, marginBottom: 16, flexWrap: 'wrap', alignItems: 'center' }}>
+      <div className="cbrio-grupos-filters" style={{ display: 'flex', gap: 10, marginBottom: 16, flexWrap: 'wrap', alignItems: 'center' }}>
         <ShadSelect value={filterTipo} onValueChange={setFilterTipo}>
           <SelectTrigger className="w-[150px] h-8 text-xs"><SelectValue placeholder="Tipo" /></SelectTrigger>
           <SelectContent>

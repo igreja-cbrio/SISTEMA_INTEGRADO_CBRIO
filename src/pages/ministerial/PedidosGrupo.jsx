@@ -76,7 +76,7 @@ export default function PedidosGrupo() {
   };
 
   return (
-    <div style={{ padding: '24px 32px', maxWidth: 1100, margin: '0 auto' }}>
+    <div className="cbrio-grupos-page" style={{ padding: '24px 32px', maxWidth: 1100, margin: '0 auto' }}>
       <div style={{ marginBottom: 20 }}>
         <h1 style={{ fontSize: 22, fontWeight: 700, color: C.text, margin: 0 }}>Pedidos de inscrição em grupos</h1>
         <p style={{ fontSize: 13, color: C.t3, marginTop: 6 }}>
