@@ -42,8 +42,9 @@ const VALOR_LABELS = {
  *   kpiId: string | null
  *   onClose: () => void
  *   onUpdated?: () => void  (chamado ao salvar editor ou revisao)
+ *   openInEdit?: boolean    (se true, abre direto no editor pulando a tela de detalhe)
  */
-export default function KpiDetalheModal({ open, kpiId, onClose, onUpdated }) {
+export default function KpiDetalheModal({ open, kpiId, onClose, onUpdated, openInEdit = false }) {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [erro, setErro] = useState(null);
@@ -61,6 +62,14 @@ export default function KpiDetalheModal({ open, kpiId, onClose, onUpdated }) {
   }, [kpiId]);
 
   useEffect(() => { if (open && kpiId) carregar(); }, [open, kpiId, carregar]);
+
+  // Modo "edita direto": ao abrir, ja salta pro editor.
+  // Quando o editor fecha (cancela ou salva), fecha tudo — usuario nao queria ver detalhe.
+  useEffect(() => {
+    if (open && openInEdit && data?.kpi && !editOpen) {
+      setEditOpen(true);
+    }
+  }, [open, openInEdit, data, editOpen]);
 
   // Fechar com ESC
   useEffect(() => {
@@ -281,8 +290,17 @@ export default function KpiDetalheModal({ open, kpiId, onClose, onUpdated }) {
         <KpiEditorModal
           open={editOpen}
           kpi={kpi}
-          onClose={() => setEditOpen(false)}
-          onSaved={() => { setEditOpen(false); carregar(); onUpdated?.(); }}
+          onClose={() => {
+            setEditOpen(false);
+            // Modo edita-direto: fecha tudo ao sair do editor
+            if (openInEdit) onClose?.();
+          }}
+          onSaved={() => {
+            setEditOpen(false);
+            // Modo edita-direto: fecha tudo apos salvar
+            if (openInEdit) { onUpdated?.(); onClose?.(); }
+            else { carregar(); onUpdated?.(); }
+          }}
         />
       )}
 
