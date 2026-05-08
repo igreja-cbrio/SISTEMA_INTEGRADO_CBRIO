@@ -49,7 +49,7 @@ export default function Gestao() {
   }
 
   return (
-    <div style={{ padding: '24px 32px', maxWidth: 1200, margin: '0 auto' }}>
+    <div style={{ padding: '24px 32px', maxWidth: 1440, margin: '0 auto' }}>
       <header style={{ marginBottom: 18 }}>
         <h1 style={{ fontSize: 22, fontWeight: 700, color: C.text, margin: 0, display: 'flex', alignItems: 'center', gap: 10 }}>
           <Settings size={22} style={{ color: C.primary }} />

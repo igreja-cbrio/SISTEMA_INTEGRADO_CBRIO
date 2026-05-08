@@ -246,83 +246,12 @@ function ObjetivoLinha({ objetivo, expanded, onToggle, onEdit, onRemove, onAddKr
           {loading ? (
             <div style={{ padding: 16, fontSize: 12, color: C.t3, textAlign: 'center' }}>Carregando...</div>
           ) : !detalhes ? null : (
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 12 }}>
-              {/* KRs Gerais */}
-              <div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
-                  <h4 style={hh4}><ListChecks size={11} /> KRs Gerais ({detalhes.krs.length})</h4>
-                  <button onClick={onAddKr} style={btnGhostSm}><Plus size={12} /> Novo</button>
-                </div>
-                {(() => {
-                  // Separa KRs gerais e especificos · agrupa filhos por pai
-                  const krsGerais = (detalhes.krs || []).filter(k => !k.kr_pai_id);
-                  const krsPorPai = {};
-                  (detalhes.krs || []).forEach(k => {
-                    if (k.kr_pai_id) {
-                      if (!krsPorPai[k.kr_pai_id]) krsPorPai[k.kr_pai_id] = [];
-                      krsPorPai[k.kr_pai_id].push(k);
-                    }
-                  });
-
-                  if (krsGerais.length === 0) {
-                    return (
-                      <div style={{ fontSize: 11, color: C.t3, padding: 8 }}>
-                        Nenhum KR ainda. Sugestao: 3-5 KRs por objetivo (ex: "% atinge X", "0 cultos com queda > 15%", etc).
-                      </div>
-                    );
-                  }
-
-                  return (
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                      {krsGerais.map(kr => (
-                        <KrComCascata
-                          key={kr.id}
-                          kr={kr}
-                          filhos={(krsPorPai[kr.id] || []).sort((a, b) => (a.area || '').localeCompare(b.area || ''))}
-                          onEditKr={onEditKr}
-                          onRemoverKr={removerKr}
-                        />
-                      ))}
-                    </div>
-                  );
-                })()}
-              </div>
-
-              {/* KPIs Vinculados */}
-              <div>
-                <h4 style={hh4}><Activity size={11} /> KPIs Vinculados ({detalhes.kpis.length})</h4>
-                {detalhes.kpis.length === 0 ? (
-                  <div style={{ fontSize: 11, color: C.t3, padding: 8 }}>Nenhum KPI vinculado.</div>
-                ) : (
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 4, maxHeight: 240, overflowY: 'auto' }}>
-                    {detalhes.kpis.map(k => (
-                      <div key={k.id} style={krStyle}>
-                        <span style={{
-                          fontSize: 9, padding: '1px 6px', borderRadius: 99,
-                          background: C.primaryBg, color: C.primaryDark, fontWeight: 700,
-                          minWidth: 50, textAlign: 'center',
-                        }}>
-                          {k.id}
-                        </span>
-                        <div style={{ flex: 1, minWidth: 0 }}>
-                          {/* Titulo do KPI = objetivo especifico (col "Objetivo especifico" da planilha · campo descricao no banco) */}
-                          <div style={{ fontSize: 11, color: C.text, lineHeight: 1.3 }}>{k.descricao || k.indicador}</div>
-                          <div style={{ fontSize: 9, color: C.t3 }}>
-                            <span style={{ textTransform: 'capitalize' }}>{k.area}</span> · {k.periodicidade}
-                            {k.descricao && k.indicador && k.descricao !== k.indicador && (
-                              <> · Fórmula: {k.indicador}</>
-                            )}
-                          </div>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-                <p style={{ fontSize: 10, color: C.t3, marginTop: 8, fontStyle: 'italic' }}>
-                  Editar KPI individualmente em /minha-area (clicando no KPI).
-                </p>
-              </div>
-            </div>
+            <TabelaCascataOkr
+              detalhes={detalhes}
+              onAddKr={onAddKr}
+              onEditKr={onEditKr}
+              removerKr={removerKr}
+            />
           )}
         </div>
       )}
@@ -331,7 +260,9 @@ function ObjetivoLinha({ objetivo, expanded, onToggle, onEdit, onRemove, onAddKr
 }
 
 // ============================================================================
-// KrComCascata — KR geral expansivel mostrando os filhos especificos por area
+// TabelaCascataOkr — vista de cascata em 4 colunas
+// KR Geral · KPI Geral · KR Especifico (por area) · KPI Especifico
+// KR Geral e KPI Geral usam rowSpan agrupando as 6 areas de cada KR.
 // ============================================================================
 const AREA_COR = {
   kids:   '#F59E0B',
@@ -341,72 +272,166 @@ const AREA_COR = {
   online: '#EC4899',
   cba:    '#6B7280',
 };
+const AREAS_ORDEM = ['kids', 'ami', 'bridge', 'sede', 'online', 'cba'];
 
-function KrComCascata({ kr, filhos, onEditKr, onRemoverKr }) {
-  const [aberto, setAberto] = useState(false);
-  const temFilhos = filhos.length > 0;
+function TabelaCascataOkr({ detalhes, onAddKr, onEditKr, removerKr }) {
+  const krsGerais = (detalhes.krs || []).filter(k => !k.kr_pai_id);
+  const krsPorPai = {};
+  (detalhes.krs || []).forEach(k => {
+    if (k.kr_pai_id) {
+      if (!krsPorPai[k.kr_pai_id]) krsPorPai[k.kr_pai_id] = [];
+      krsPorPai[k.kr_pai_id].push(k);
+    }
+  });
+  const kpiPorArea = {};
+  (detalhes.kpis || []).forEach(k => {
+    const a = String(k.area || '').toLowerCase();
+    if (!kpiPorArea[a]) kpiPorArea[a] = [];
+    kpiPorArea[a].push(k);
+  });
 
   return (
-    <div style={{ background: 'var(--cbrio-card)', borderRadius: 6, border: `1px solid ${C.border}` }}>
-      {/* Linha do KR geral */}
-      <div style={{ ...krStyle, border: 'none', borderBottom: aberto ? `1px solid ${C.border}` : 'none' }}>
-        {temFilhos && (
-          <button
-            onClick={() => setAberto(a => !a)}
-            style={{ background: 'none', border: 'none', cursor: 'pointer', color: C.t3, padding: 2 }}
-            title={aberto ? 'Recolher' : 'Expandir filhos por area'}
-          >
-            {aberto ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
-          </button>
-        )}
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ fontSize: 11, fontWeight: 600, color: C.text }}>{kr.titulo}</div>
-          {kr.meta_valor != null && (
-            <div style={{ fontSize: 10, color: C.t3 }}>
-              meta: {kr.meta_valor}{kr.unidade ? ' ' + kr.unidade : ''}
-              {temFilhos && ` · ${filhos.length} areas desdobradas`}
-            </div>
+    <div>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+        <h4 style={hh4}>
+          <ListChecks size={11} /> Cascata · {krsGerais.length} KRs gerais &times; 6 areas
+          {detalhes.indicador_geral && (
+            <span style={{ marginLeft: 8, fontWeight: 400, color: C.t3 }}>
+              · KPI principal: <em>{detalhes.indicador_geral}</em>
+            </span>
           )}
-          {kr.meta_texto && kr.meta_valor == null && (
-            <div style={{ fontSize: 10, color: C.t3 }}>
-              meta: {kr.meta_texto}
-              {temFilhos && ` · ${filhos.length} areas`}
-            </div>
-          )}
-        </div>
-        <button onClick={() => onEditKr(kr)} style={btnIcon}><Pencil size={11} /></button>
-        <button onClick={() => onRemoverKr(kr)} style={{ ...btnIcon, color: '#ef4444' }}><Trash2 size={11} /></button>
+        </h4>
+        <button onClick={onAddKr} style={btnGhostSm}><Plus size={12} /> Novo KR</button>
       </div>
 
-      {/* Filhos especificos por area */}
-      {aberto && temFilhos && (
-        <div style={{ padding: '6px 14px 8px 26px', display: 'flex', flexDirection: 'column', gap: 4, background: 'var(--cbrio-input-bg)' }}>
-          {filhos.map(f => {
-            const cor = AREA_COR[f.area] || C.t3;
-            return (
-              <div key={f.id} style={{
-                display: 'flex', alignItems: 'center', gap: 8,
-                padding: '4px 8px', borderLeft: `2px solid ${cor}`, background: 'var(--cbrio-card)',
-                borderRadius: 4,
-              }}>
-                <span style={{
-                  fontSize: 8, padding: '1px 5px', borderRadius: 99,
-                  background: cor + '20', color: cor, fontWeight: 700, textTransform: 'uppercase',
-                  minWidth: 42, textAlign: 'center',
-                }}>
-                  {f.area}
-                </span>
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontSize: 10, color: C.t2 }}>
-                    meta: {f.meta_valor != null ? `${f.meta_valor}${f.unidade ? ' ' + f.unidade : ''}` : (f.meta_texto || '—')}
-                  </div>
-                </div>
-                <button onClick={() => onEditKr(f)} style={btnIcon} title="Editar meta desta area"><Pencil size={10} /></button>
-              </div>
-            );
-          })}
+      {krsGerais.length === 0 ? (
+        <div style={{ fontSize: 11, color: C.t3, padding: 12, textAlign: 'center', background: 'var(--cbrio-card)', borderRadius: 6 }}>
+          Nenhum KR ainda. Sugestao: 3 KRs por objetivo (volume, comparacao historica, threshold).
+        </div>
+      ) : (
+        <div style={{ overflowX: 'auto', background: 'var(--cbrio-card)', borderRadius: 6, border: `1px solid ${C.border}` }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11, minWidth: 760 }}>
+            <thead>
+              <tr style={{ background: 'var(--cbrio-input-bg)' }}>
+                <th style={th}>KR Geral</th>
+                <th style={th}>KPI Geral</th>
+                <th style={th}>KR Específico</th>
+                <th style={th}>KPI Específico</th>
+                <th style={{ ...th, width: 60 }}></th>
+              </tr>
+            </thead>
+            <tbody>
+              {krsGerais.map(kr => {
+                const filhos = (krsPorPai[kr.id] || []).slice().sort(
+                  (a, b) => AREAS_ORDEM.indexOf(a.area) - AREAS_ORDEM.indexOf(b.area)
+                );
+                const linhas = filhos.length > 0 ? filhos : [null];
+
+                return linhas.map((filho, idx) => {
+                  const isFirst = idx === 0;
+                  const cor = filho ? (AREA_COR[filho.area] || C.t3) : C.t3;
+                  const kpisDaArea = filho ? (kpiPorArea[filho.area] || []) : [];
+
+                  return (
+                    <tr key={(filho?.id) || `${kr.id}-empty`}
+                        style={{ borderTop: isFirst ? `2px solid ${C.border}` : `1px solid ${C.border}` }}>
+                      {/* KR Geral · rowSpan */}
+                      {isFirst && (
+                        <td rowSpan={linhas.length} style={{ ...td, verticalAlign: 'top', background: 'var(--cbrio-input-bg)' }}>
+                          <div style={{ fontWeight: 600, color: C.text, marginBottom: 2 }}>{kr.titulo}</div>
+                          <div style={{ fontSize: 10, color: C.t3 }}>
+                            meta: {kr.meta_valor != null
+                              ? `${kr.meta_valor}${kr.unidade ? ' ' + kr.unidade : ''}`
+                              : (kr.meta_texto || '—')}
+                          </div>
+                          {kr.agregacao_cascata && (
+                            <div style={{ fontSize: 9, color: C.t3, marginTop: 4 }}>
+                              cascata: <strong>{kr.agregacao_cascata}</strong>
+                            </div>
+                          )}
+                          <div style={{ marginTop: 6, display: 'flex', gap: 4 }}>
+                            <button onClick={() => onEditKr(kr)} style={btnIcon}><Pencil size={10} /></button>
+                            <button onClick={() => removerKr(kr)} style={{ ...btnIcon, color: '#ef4444' }}><Trash2 size={10} /></button>
+                          </div>
+                        </td>
+                      )}
+
+                      {/* KPI Geral · rowSpan · texto do indicador_geral do objetivo */}
+                      {isFirst && (
+                        <td rowSpan={linhas.length} style={{ ...td, verticalAlign: 'top', color: C.t2 }}>
+                          {detalhes.indicador_geral || <span style={{ color: C.t3, fontStyle: 'italic' }}>—</span>}
+                        </td>
+                      )}
+
+                      {/* KR Especifico · 1 por linha (por area) */}
+                      <td style={{ ...td, borderLeft: `3px solid ${cor}` }}>
+                        {filho ? (
+                          <>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 2 }}>
+                              <span style={{
+                                fontSize: 9, padding: '1px 6px', borderRadius: 99,
+                                background: cor + '20', color: cor, fontWeight: 700,
+                                textTransform: 'uppercase', minWidth: 46, textAlign: 'center',
+                              }}>
+                                {filho.area}
+                              </span>
+                              <span style={{ fontSize: 10, color: C.t2 }}>
+                                meta: {filho.meta_valor != null
+                                  ? `${filho.meta_valor}${filho.unidade ? ' ' + filho.unidade : ''}`
+                                  : (filho.meta_texto || '—')}
+                              </span>
+                            </div>
+                          </>
+                        ) : (
+                          <span style={{ color: C.t3, fontStyle: 'italic', fontSize: 10 }}>
+                            Sem filhos · KR geral nao desdobrado por area
+                          </span>
+                        )}
+                      </td>
+
+                      {/* KPI Especifico · ID + descricao do KPI tatico daquela area */}
+                      <td style={td}>
+                        {kpisDaArea.length === 0 ? (
+                          <span style={{ color: C.t3, fontStyle: 'italic', fontSize: 10 }}>—</span>
+                        ) : (
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+                            {kpisDaArea.map(k => (
+                              <div key={k.id} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                                <span style={{
+                                  fontSize: 9, padding: '1px 5px', borderRadius: 4,
+                                  background: C.primaryBg, color: C.primaryDark, fontWeight: 700,
+                                  minWidth: 50, textAlign: 'center',
+                                }}>
+                                  {k.id}
+                                </span>
+                                <span style={{ fontSize: 10, color: C.t2, lineHeight: 1.3 }} title={k.indicador}>
+                                  {(k.descricao || k.indicador).slice(0, 60)}
+                                  {(k.descricao || k.indicador || '').length > 60 ? '…' : ''}
+                                </span>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </td>
+
+                      {/* Acoes filho */}
+                      <td style={{ ...td, textAlign: 'right', whiteSpace: 'nowrap' }}>
+                        {filho && (
+                          <button onClick={() => onEditKr(filho)} style={btnIcon} title="Editar meta desta area"><Pencil size={10} /></button>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                });
+              })}
+            </tbody>
+          </table>
         </div>
       )}
+
+      <p style={{ fontSize: 10, color: C.t3, marginTop: 8, fontStyle: 'italic' }}>
+        KR geral consolida via cascata (sum/avg/etc) os filhos por area · meta de cada area editavel individualmente.
+      </p>
     </div>
   );
 }
@@ -663,4 +688,16 @@ const btnGhostSm = {
 const btnIcon = {
   background: 'transparent', border: 'none', padding: 6, borderRadius: 4,
   cursor: 'pointer', color: 'var(--cbrio-text3)',
+};
+
+const th = {
+  textAlign: 'left', padding: '8px 10px', fontSize: 10,
+  color: 'var(--cbrio-text3)', fontWeight: 700,
+  textTransform: 'uppercase', letterSpacing: 0.5,
+  borderBottom: '2px solid var(--cbrio-border)',
+};
+
+const td = {
+  padding: '8px 10px', fontSize: 11, color: 'var(--cbrio-text)',
+  verticalAlign: 'top', lineHeight: 1.4,
 };
