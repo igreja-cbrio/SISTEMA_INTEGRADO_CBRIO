@@ -46,25 +46,21 @@ GRANT EXECUTE ON FUNCTION public.listar_matches_seed(text) TO authenticated, ser
 -- 2. LIMPAR kpi_areas POLUIDOS · so deixa as 6 areas oficiais
 --    Areas validas: kids, ami, bridge, sede, online, cba
 --    Tudo o que nao for isso (ministerial, criativo, gestão, etc) sai.
+--
+--    NOTA: kpi_areas e NOT NULL na tabela · array vazio '{}' em vez de NULL.
 -- ----------------------------------------------------------------------------
 UPDATE public.profiles
-   SET kpi_areas = (
-     SELECT array_agg(area)
-       FROM unnest(kpi_areas) AS area
-      WHERE area IN ('kids', 'ami', 'bridge', 'sede', 'online', 'cba')
+   SET kpi_areas = COALESCE(
+     (SELECT array_agg(area)
+        FROM unnest(kpi_areas) AS area
+       WHERE area IN ('kids', 'ami', 'bridge', 'sede', 'online', 'cba')),
+     '{}'::text[]
    )
- WHERE kpi_areas IS NOT NULL
-   AND array_length(kpi_areas, 1) > 0
+ WHERE array_length(kpi_areas, 1) > 0
    AND EXISTS (
      SELECT 1 FROM unnest(kpi_areas) AS area
       WHERE area NOT IN ('kids', 'ami', 'bridge', 'sede', 'online', 'cba')
    );
-
--- Quando o array fica vazio depois do filtro, vira NULL (mais limpo)
-UPDATE public.profiles
-   SET kpi_areas = NULL
- WHERE kpi_areas IS NOT NULL
-   AND array_length(kpi_areas, 1) IS NULL;
 
 -- ----------------------------------------------------------------------------
 -- 3. FORCAR Eduardo Gnisci sair do ministerio adm_financeiro
@@ -133,7 +129,7 @@ END $$;
 
 -- C) Validar que kpi_areas so tem valores oficiais
 -- SELECT name, kpi_areas FROM profiles
---  WHERE kpi_areas IS NOT NULL
+--  WHERE array_length(kpi_areas, 1) > 0
 --    AND EXISTS (
 --      SELECT 1 FROM unnest(kpi_areas) AS a
 --       WHERE a NOT IN ('kids', 'ami', 'bridge', 'sede', 'online', 'cba')
