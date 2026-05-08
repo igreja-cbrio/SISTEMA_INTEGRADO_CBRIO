@@ -309,15 +309,15 @@ export default function KpiEditorModal({ open, kpi, onClose, onSaved, defaultAre
 
           {/* Nome (span full) */}
           <div style={{ gridColumn: '1/-1' }}>
-            <Field label="Nome do indicador *">
-              <input value={form.indicador} onChange={e => set('indicador', e.target.value)} style={inp} />
+            <Field label="Indicador (fórmula) *">
+              <input value={form.indicador} onChange={e => set('indicador', e.target.value)} placeholder="ex: % de crescimento" style={inp} />
             </Field>
           </div>
 
-          {/* Descricao */}
+          {/* Objetivo especifico (chamado descricao no banco · nome da planilha "consolidado oficial") */}
           <div style={{ gridColumn: '1/-1' }}>
-            <Field label="Descrição (contexto, o porque)">
-              <textarea value={form.descricao} onChange={e => set('descricao', e.target.value)} rows={2} style={{ ...inp, resize: 'vertical' }} />
+            <Field label="Objetivo específico">
+              <textarea value={form.descricao} onChange={e => set('descricao', e.target.value)} rows={2} placeholder="ex: Aumentar numero de jovens fazendo Devocionais no AMI" style={{ ...inp, resize: 'vertical' }} />
             </Field>
           </div>
 
