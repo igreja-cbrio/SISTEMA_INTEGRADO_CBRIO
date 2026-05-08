@@ -3,7 +3,7 @@
 //
 // 3 abas:
 //   - Pulso        → quem esta atrasado, KPIs cronicamente vermelhos, calendario
-//   - Configurar   → reusa /api/estrategia/* e /api/auth/profiles/:id/kpi-areas
+//   - Configurar   → reusa /api/estrategia/* e /api/notificacao-regras/*
 //   - Saude        → health check do sistema (KPIs sem meta, sem dono, etc)
 // ============================================================================
 
