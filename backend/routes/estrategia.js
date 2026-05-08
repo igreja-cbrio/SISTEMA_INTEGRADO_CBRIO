@@ -317,21 +317,20 @@ router.put('/metas-institucionais/:id', authorize('admin', 'diretor'), async (re
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-// Lista KPIs agrupados por tipo (qual / quant) · pra UI da aba
-router.get('/kpis-por-tipo', async (req, res) => {
+// Lista OKRs agrupados por tipo (qual / quant) · pra UI da aba Metas Institucionais
+router.get('/okrs-por-tipo', async (req, res) => {
   try {
     const { data, error } = await supabase
-      .from('kpi_indicadores_taticos')
-      .select('id, indicador, descricao, area, tipo_kpi, meta_descricao, meta_valor, meta_valor_absoluto, unidade')
+      .from('kpi_objetivos_gerais')
+      .select('id, nome, indicador_geral, tipo_okr, dado_tipo_principal, meta_descricao, meta_valor, meta_valor_absoluto, ordem')
       .eq('ativo', true)
-      .order('tipo_kpi')
-      .order('area')
-      .order('id');
+      .order('tipo_okr')
+      .order('ordem');
     if (error) throw error;
     const agrupado = { qualitativo: [], quantitativo: [], sem_tipo: [] };
-    (data || []).forEach(k => {
-      const bucket = k.tipo_kpi || 'sem_tipo';
-      agrupado[bucket].push(k);
+    (data || []).forEach(o => {
+      const bucket = o.tipo_okr || 'sem_tipo';
+      agrupado[bucket].push(o);
     });
     res.json(agrupado);
   } catch (e) { res.status(500).json({ error: e.message }); }
@@ -347,16 +346,31 @@ router.post('/metas-institucionais/aplicar', authorize('admin', 'diretor'), asyn
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-// Atualizar tipo_kpi de um KPI individual (caso heuristica tenha errado)
-router.put('/kpis/:id/tipo', authorize('admin', 'diretor'), async (req, res) => {
+// Atualizar tipo_okr de um OKR individual (caso heuristica tenha errado)
+router.put('/objetivos/:id/tipo', authorize('admin', 'diretor'), async (req, res) => {
   try {
-    const { tipo_kpi } = req.body || {};
-    if (!['qualitativo', 'quantitativo', null].includes(tipo_kpi)) {
-      return res.status(400).json({ error: 'tipo_kpi deve ser qualitativo, quantitativo ou null' });
+    const { tipo_okr } = req.body || {};
+    if (!['qualitativo', 'quantitativo', null].includes(tipo_okr)) {
+      return res.status(400).json({ error: 'tipo_okr deve ser qualitativo, quantitativo ou null' });
     }
     const { data, error } = await supabase
-      .from('kpi_indicadores_taticos')
-      .update({ tipo_kpi, updated_at: new Date().toISOString() })
+      .from('kpi_objetivos_gerais')
+      .update({ tipo_okr })
+      .eq('id', req.params.id)
+      .select()
+      .single();
+    if (error) throw error;
+    res.json(data);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Atualizar dado_tipo_principal de um OKR
+router.put('/objetivos/:id/dado-tipo-principal', authorize('admin', 'diretor'), async (req, res) => {
+  try {
+    const { dado_tipo_principal } = req.body || {};
+    const { data, error } = await supabase
+      .from('kpi_objetivos_gerais')
+      .update({ dado_tipo_principal })
       .eq('id', req.params.id)
       .select()
       .single();
