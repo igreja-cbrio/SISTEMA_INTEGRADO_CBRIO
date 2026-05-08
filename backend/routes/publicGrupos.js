@@ -230,7 +230,7 @@ router.post('/inscrever', async (req, res) => {
 
     // Verifica se grupo existe e esta ativo
     const { data: grupo } = await supabase.from('mem_grupos')
-      .select('id, nome, ativo, status_temporada, temporada').eq('id', grupo_id).single();
+      .select('id, nome, ativo, status_temporada, temporada, lider_id').eq('id', grupo_id).single();
     if (!grupo || !grupo.ativo) {
       return res.status(404).json({ error: 'Grupo nao encontrado ou inativo.' });
     }
@@ -296,16 +296,27 @@ router.post('/inscrever', async (req, res) => {
       return res.status(500).json({ error: 'Erro ao registrar pedido.' });
     }
 
-    // Notifica lider
-    notificar({
-      modulo: 'grupos',
-      tipo: 'pedido_grupo',
-      titulo: `Novo pedido para ${grupo.nome}`,
-      mensagem: `${nome.trim()} pediu para entrar no grupo via QR code de inscricao.`,
-      link: '/grupos/pedidos',
-      severidade: 'aviso',
-      chaveDedup: `pedido_grupo_${pedido.id}`,
-    }).catch(err => console.error('[public grupos inscrever notify]', err.message));
+    // Notifica lider do grupo (se tiver login) + admins via fallback
+    (async () => {
+      try {
+        let liderAuthUserId = null;
+        if (grupo.lider_id) {
+          const { data: liderProf } = await supabase.from('vol_profiles')
+            .select('auth_user_id').eq('membresia_id', grupo.lider_id).maybeSingle();
+          liderAuthUserId = liderProf?.auth_user_id || null;
+        }
+        await notificar({
+          modulo: 'grupos',
+          tipo: 'pedido_grupo',
+          titulo: `Novo pedido para ${grupo.nome}`,
+          mensagem: `${nome.trim()} pediu para entrar no grupo via QR code.`,
+          link: '/grupos',
+          severidade: 'aviso',
+          chaveDedup: `pedido_grupo_${pedido.id}`,
+          extraTargetIds: liderAuthUserId ? [liderAuthUserId] : [],
+        });
+      } catch (err) { console.error('[public grupos inscrever notify]', err.message); }
+    })();
 
     res.status(201).json({ ok: true, pedido_id: pedido.id });
   } catch (e) {

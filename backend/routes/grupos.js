@@ -648,19 +648,26 @@ router.post('/:id/pedidos', async (req, res) => {
     }).select().single();
     if (error) throw error;
 
-    // Notificar lider (em background)
+    // Notificar lider (em background) + admins via fallback
     (async () => {
       try {
         const { data: grupo } = await supabase.from('mem_grupos').select('nome, lider_id').eq('id', grupoId).single();
         if (!grupo) return;
+        let liderAuthUserId = null;
+        if (grupo.lider_id) {
+          const { data: liderProf } = await supabase.from('vol_profiles')
+            .select('auth_user_id').eq('membresia_id', grupo.lider_id).maybeSingle();
+          liderAuthUserId = liderProf?.auth_user_id || null;
+        }
         await notificar({
           modulo: 'grupos',
           tipo: 'pedido_grupo',
           titulo: `Novo pedido para ${grupo.nome}`,
           mensagem: `${b.nome} pediu para entrar no grupo ${grupo.nome}.`,
-          link: '/grupos/pedidos',
+          link: '/grupos',
           severidade: 'aviso',
           chaveDedup: `pedido_grupo_${data.id}`,
+          extraTargetIds: liderAuthUserId ? [liderAuthUserId] : [],
         });
       } catch (notifErr) { console.error('[Pedidos notify]', notifErr.message); }
     })();
@@ -759,22 +766,70 @@ router.post('/pedidos/:pedidoId/aprovar', async (req, res) => {
       membro_id: membroId,
     }).eq('id', pedido.id);
 
-    // Notifica a pessoa (se tiver vol_profile com auth_user_id)
+    // Fluxo de boas-vindas: notifica a pessoa (rica) e o lider (novo membro)
     (async () => {
       try {
-        const { data: grupo } = await supabase.from('mem_grupos').select('nome').eq('id', pedido.grupo_id).single();
+        const { data: grupo } = await supabase.from('mem_grupos')
+          .select('id, nome, codigo, dia_semana, horario, local, complemento, bairro, lider_id')
+          .eq('id', pedido.grupo_id).single();
+        if (!grupo) return;
+        let liderNome = null;
+        let liderTelefone = null;
+        let liderAuthUserId = null;
+        if (grupo.lider_id) {
+          const { data: lider } = await supabase.from('mem_membros')
+            .select('nome, telefone').eq('id', grupo.lider_id).maybeSingle();
+          liderNome = lider?.nome || null;
+          liderTelefone = lider?.telefone || null;
+          const { data: liderProf } = await supabase.from('vol_profiles')
+            .select('auth_user_id').eq('membresia_id', grupo.lider_id).maybeSingle();
+          liderAuthUserId = liderProf?.auth_user_id || null;
+        }
+
+        const DIAS = ['Domingo','Segunda','Terca','Quarta','Quinta','Sexta','Sabado'];
+        const quando = grupo.dia_semana != null
+          ? `${DIAS[grupo.dia_semana]}${grupo.horario ? ` as ${String(grupo.horario).slice(0,5)}` : ''}`
+          : null;
+        const ondePartes = [grupo.local, grupo.complemento, grupo.bairro].filter(Boolean);
+        const onde = ondePartes.length ? ondePartes.join(' — ') : null;
+
+        const partesPessoa = [];
+        partesPessoa.push(`Voce foi aprovado(a) no grupo ${grupo.nome}.`);
+        if (quando) partesPessoa.push(`Encontros ${quando}.`);
+        if (onde) partesPessoa.push(`Local: ${onde}.`);
+        if (liderNome) {
+          partesPessoa.push(`Lider: ${liderNome}${liderTelefone ? ` (${liderTelefone})` : ''}.`);
+        }
+        partesPessoa.push('O lider entrara em contato em breve.');
+        const mensagemPessoa = partesPessoa.join(' ');
+
+        // Notifica a pessoa (so se tiver login)
         const { data: prof } = await supabase.from('vol_profiles')
           .select('auth_user_id').eq('membresia_id', membroId).maybeSingle();
         if (prof?.auth_user_id) {
           await notificar({
             modulo: 'grupos',
             tipo: 'pedido_aprovado',
-            titulo: `Bem-vindo ao grupo ${grupo?.nome || ''}!`,
-            mensagem: `Seu pedido para entrar no grupo foi aprovado.`,
+            titulo: `Bem-vindo ao grupo ${grupo.nome}!`,
+            mensagem: mensagemPessoa,
             link: '/grupos',
             severidade: 'info',
             chaveDedup: `pedido_aprovado_${pedido.id}`,
             targetIds: [prof.auth_user_id],
+          });
+        }
+
+        // Notifica o lider — novo membro chegando
+        if (liderAuthUserId) {
+          await notificar({
+            modulo: 'grupos',
+            tipo: 'novo_membro_grupo',
+            titulo: `Novo membro em ${grupo.nome}`,
+            mensagem: `${pedido.nome} entrou no grupo. Faça contato para dar as boas-vindas.`,
+            link: `/grupos`,
+            severidade: 'info',
+            chaveDedup: `novo_membro_${pedido.id}`,
+            targetIds: [liderAuthUserId],
           });
         }
       } catch (e) { console.error('[Pedido aprovar notify]', e.message); }

@@ -28,8 +28,11 @@ async function resolverDestinatarios(modulo) {
  * Cria notificação para múltiplos usuários, com deduplicação.
  * chaveDedup: string única que identifica o evento (ex: "ferias_vencendo_uuid123")
  */
-async function notificar({ modulo, tipo, titulo, mensagem, link, severidade = 'info', chaveDedup, targetIds }) {
-  const destinatarios = targetIds || await resolverDestinatarios(modulo);
+async function notificar({ modulo, tipo, titulo, mensagem, link, severidade = 'info', chaveDedup, targetIds, extraTargetIds }) {
+  let destinatarios = targetIds || await resolverDestinatarios(modulo);
+  if (extraTargetIds?.length) {
+    destinatarios = [...new Set([...(destinatarios || []), ...extraTargetIds.filter(Boolean)])];
+  }
   if (!destinatarios.length) return 0;
 
   let inserted = 0;
