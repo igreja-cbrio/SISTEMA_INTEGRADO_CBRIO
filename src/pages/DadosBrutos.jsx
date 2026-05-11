@@ -9,6 +9,8 @@ import { dadosBrutos as dadosApi } from '../api';
 import { useMyKpiAreas } from '../hooks/useMyKpiAreas';
 import { Database, Plus, Pencil, Trash2, X, Save, Calendar, Filter, CheckCircle2, ShieldCheck } from 'lucide-react';
 import { toast } from 'sonner';
+import EmptyState from '../components/EmptyState';
+import { formatErro } from '../lib/formatErro';
 
 const C = {
   bg: 'var(--cbrio-bg)', card: 'var(--cbrio-card)', text: 'var(--cbrio-text)',
@@ -75,7 +77,7 @@ export default function DadosBrutos({ embedded = false }) {
       const data = await dadosApi.list(params);
       setDados(data);
     } catch (e) {
-      toast.error(e?.message || 'Erro ao carregar');
+      toast.error(formatErro(e, 'dados brutos'));
     } finally {
       setLoading(false);
     }
@@ -203,13 +205,17 @@ export default function DadosBrutos({ embedded = false }) {
       {loading ? (
         <div style={{ padding: 40, textAlign: 'center', color: C.t3 }}>Carregando...</div>
       ) : dados.length === 0 ? (
-        <div style={{ padding: 40, textAlign: 'center', color: C.t3, background: C.card, borderRadius: 10, border: `1px dashed ${C.border}` }}>
-          <Database size={28} style={{ marginBottom: 12, color: C.t3 }} />
-          <p style={{ fontSize: 13, margin: 0 }}>Nenhum dado registrado neste filtro.</p>
-          <p style={{ fontSize: 11, marginTop: 6, color: C.t3 }}>
-            Click em <strong>Registrar dado</strong> pra começar.
-          </p>
-        </div>
+        <EmptyState
+          tom="neutro"
+          icone={Database}
+          titulo="Nenhum dado registrado neste filtro"
+          mensagem={
+            filtroArea || filtroTipo
+              ? 'Tente ajustar os filtros acima ou expandir o periodo.'
+              : 'Comece registrando o primeiro dado bruto · frequencia de culto, conversoes, doacoes etc.'
+          }
+          cta={podeRegistrar ? { label: '+ Registrar dado', onClick: () => setEditando({}) } : null}
+        />
       ) : (
         <>
           {/* Tabela: desktop (>= 768px) */}

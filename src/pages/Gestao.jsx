@@ -16,6 +16,9 @@ import { estrategia as estrategiaApi } from '../api';
 import { toast } from 'sonner';
 import KpiDetalheModal from '../components/KpiDetalheModal';
 import EstruturaOkr from './admin/EstruturaOkr';
+import EmptyState from '../components/EmptyState';
+import { CheckCircle2 } from 'lucide-react';
+import { formatErro } from '../lib/formatErro';
 
 const C = {
   bg: 'var(--cbrio-bg)', card: 'var(--cbrio-card)', text: 'var(--cbrio-text)',
@@ -105,7 +108,7 @@ function AbaPulso() {
     setLoading(true);
     gestaoApi.pulso()
       .then(setData)
-      .catch(e => toast.error(e?.message || 'Erro'))
+      .catch(e => toast.error(formatErro(e, 'pulso')))
       .finally(() => setLoading(false));
   }, []);
   useEffect(() => { carregar(); }, [carregar]);
@@ -116,7 +119,7 @@ function AbaPulso() {
       await gestaoApi.cobrar(lider.id);
       toast.success(`Lembrete enviado para ${lider.nome}`);
     } catch (e) {
-      toast.error(e?.message || 'Erro ao notificar (lider sem profile vinculado?)');
+      toast.error(formatErro(e) + ' (lider tem profile vinculado?)');
     }
   };
 
@@ -332,7 +335,7 @@ function AbaSaude() {
     setLoading(true);
     gestaoApi.saude()
       .then(setData)
-      .catch(e => toast.error(e?.message || 'Erro'))
+      .catch(e => toast.error(formatErro(e, 'saude do sistema')))
       .finally(() => setLoading(false));
   }, []);
 
@@ -436,7 +439,7 @@ function AbaMetasInstitucionais() {
       setMetas(m || []);
       setOkrsPorTipo(os || { qualitativo: [], quantitativo: [], sem_tipo: [] });
     } catch (e) {
-      toast.error(e?.message || 'Erro ao carregar');
+      toast.error(formatErro(e, 'metas institucionais'));
     } finally { setLoading(false); }
   }, []);
 
@@ -456,7 +459,7 @@ function AbaMetasInstitucionais() {
       setEditingId(null);
       setForm({});
       carregar();
-    } catch (e) { toast.error(e?.message || 'Erro ao salvar'); }
+    } catch (e) { toast.error(formatErro(e)); }
   };
 
   const trocarTipoOkr = async (okr, novoTipo) => {
@@ -464,7 +467,7 @@ function AbaMetasInstitucionais() {
       await estrategiaApi.setOkrTipo(okr.id, novoTipo);
       toast.success(`${okr.nome.slice(0, 30)} → ${novoTipo}`);
       carregar();
-    } catch (e) { toast.error(e?.message); }
+    } catch (e) { toast.error(formatErro(e)); }
   };
 
   const recalcularMetas = async () => {
@@ -473,7 +476,7 @@ function AbaMetasInstitucionais() {
       const r = await estrategiaApi.metasInstitucionais.aplicar();
       toast.success(`Recalculado · ${r.resultado.okrs_atualizados} OKRs (${r.resultado.okrs_com_alvo_materializado} com alvo absoluto)`);
       carregar();
-    } catch (e) { toast.error(e?.message); }
+    } catch (e) { toast.error(formatErro(e)); }
   };
 
   if (loading) return <Loading />;
@@ -757,8 +760,17 @@ function Badge({ cor, label, title, bg }) {
   );
 }
 
-function Vazio({ children }) {
-  return <div style={{ padding: 12, textAlign: 'center', color: C.t3, fontSize: 11, fontStyle: 'italic' }}>{children}</div>;
+// "Vazio" no /gestao quase sempre e noticia boa (sem pendencia, sem critico,
+// tudo certo). Usa EmptyState compacto com tom positivo + icone de check.
+function Vazio({ children, tom = 'positivo' }) {
+  return (
+    <EmptyState
+      tom={tom}
+      icone={CheckCircle2}
+      titulo={typeof children === 'string' ? children : null}
+      compacto
+    />
+  );
 }
 
 function Loading() {
