@@ -1,0 +1,477 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Matriz CBRio · Conceito</title>
+  <link rel="icon" type="image/png" href="/logo-cbrio-icon.png" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --primary: #00B39D;
+      --primary-bg: #00B39D18;
+      --primary-dark: #00897B;
+      --text: #1A2233;
+      --text-2: #4A5568;
+      --text-3: #94A3B8;
+      --border: #E2E8F0;
+      --bg: #F8FAFC;
+      --card: #FFFFFF;
+      --input-bg: #F1F5F9;
+      --green: #10B981; --green-bg: #10B98118;
+      --amber: #F59E0B; --amber-bg: #F59E0B18;
+      --red: #EF4444;   --red-bg:   #EF444418;
+      --blue: #3B82F6;  --blue-bg:  #3B82F618;
+      --purple: #8B5CF6; --purple-bg: #8B5CF618;
+      --pink: #EC4899;  --pink-bg:  #EC489918;
+      --gray: #6B7280;  --gray-bg:  #6B728018;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.5;
+      -webkit-font-smoothing: antialiased;
+    }
+    .container { max-width: 1200px; margin: 0 auto; padding: 0 24px; }
+
+    /* HEADER */
+    header.topo {
+      background: var(--card);
+      border-bottom: 1px solid var(--border);
+      padding: 16px 0;
+      position: sticky; top: 0; z-index: 10;
+    }
+    header.topo .container {
+      display: flex; align-items: center; justify-content: space-between;
+    }
+    header.topo .marca {
+      display: flex; align-items: center; gap: 10px;
+      font-weight: 700; font-size: 16px; color: var(--text);
+    }
+    header.topo .marca .logo {
+      width: 36px; height: 36px; border-radius: 8px;
+      background: var(--primary-bg);
+      display: flex; align-items: center; justify-content: center;
+      color: var(--primary); font-weight: 800;
+    }
+    header.topo .selo {
+      font-size: 11px; padding: 4px 10px; border-radius: 99px;
+      background: var(--primary-bg); color: var(--primary-dark);
+      font-weight: 600; letter-spacing: 0.3px;
+    }
+
+    /* HERO */
+    .hero {
+      padding: 56px 0 32px;
+      text-align: center;
+    }
+    .hero h1 {
+      font-size: 36px; font-weight: 800;
+      letter-spacing: -0.5px; margin-bottom: 12px;
+    }
+    .hero p {
+      font-size: 17px; color: var(--text-2);
+      max-width: 680px; margin: 0 auto;
+    }
+
+    /* SECTION */
+    section.bloco {
+      padding: 32px 0;
+    }
+    .bloco h2 {
+      font-size: 22px; font-weight: 700; margin-bottom: 6px;
+      display: flex; align-items: center; gap: 10px;
+    }
+    .bloco h2 .num {
+      display: inline-flex; align-items: center; justify-content: center;
+      width: 28px; height: 28px; border-radius: 8px;
+      background: var(--primary); color: #fff;
+      font-size: 14px; font-weight: 700;
+    }
+    .bloco .sub {
+      font-size: 14px; color: var(--text-3); margin-bottom: 22px;
+    }
+
+    /* CARD GENERICO */
+    .card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 22px;
+      box-shadow: 0 1px 2px rgba(0,0,0,0.03);
+    }
+
+    /* MATRIZ */
+    .matriz-wrap {
+      overflow-x: auto;
+    }
+    .matriz {
+      width: 100%; min-width: 720px;
+      border-collapse: separate; border-spacing: 6px;
+    }
+    .matriz th, .matriz td {
+      padding: 0; text-align: center;
+    }
+    .matriz th.col {
+      font-size: 10px; font-weight: 700;
+      color: var(--text-3); text-transform: uppercase;
+      letter-spacing: 0.8px; padding: 0 4px 8px;
+      vertical-align: bottom;
+    }
+    .matriz th.col .label {
+      display: block; font-size: 11px;
+    }
+    .matriz th.col .pct {
+      display: block; font-size: 13px; color: var(--text);
+      font-weight: 700; margin-top: 2px;
+    }
+    .matriz th.row {
+      text-align: left; font-size: 12px; font-weight: 600;
+      color: var(--text); padding: 0 12px 0 4px;
+      white-space: nowrap;
+    }
+    .matriz th.row .nome {
+      display: flex; align-items: center; gap: 8px;
+    }
+    .matriz th.row .dot {
+      width: 10px; height: 10px; border-radius: 50%;
+    }
+    .matriz td.celula {
+      border-radius: 8px;
+      padding: 14px 10px;
+      min-height: 64px;
+      cursor: default;
+      transition: transform 0.15s;
+      position: relative;
+    }
+    .matriz td.celula:hover { transform: scale(1.03); }
+    .matriz td.celula .pct {
+      font-size: 16px; font-weight: 700; color: #fff;
+    }
+    .matriz td.celula .kpis {
+      font-size: 9px; color: rgba(255,255,255,0.85);
+      margin-top: 2px;
+      text-transform: uppercase; letter-spacing: 0.5px;
+    }
+    .cel-verde    { background: var(--green); }
+    .cel-amarelo  { background: var(--amber); }
+    .cel-vermelho { background: var(--red); }
+    .cel-sem-dado { background: var(--gray); }
+    .cel-na       { background: var(--input-bg); }
+    .cel-na .pct  { color: var(--text-3); font-size: 14px; }
+
+    /* LEGENDA */
+    .legenda {
+      display: flex; flex-wrap: wrap; gap: 16px;
+      margin-top: 18px; padding-top: 16px;
+      border-top: 1px solid var(--border);
+      font-size: 12px; color: var(--text-2);
+    }
+    .legenda .item {
+      display: inline-flex; align-items: center; gap: 6px;
+    }
+    .legenda .sw {
+      width: 14px; height: 14px; border-radius: 4px;
+    }
+
+    /* CRUZAMENTOS */
+    .cruzamentos {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+      gap: 18px;
+    }
+    .cruzamento {
+      padding: 22px;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      display: flex; flex-direction: column;
+      box-shadow: 0 1px 2px rgba(0,0,0,0.03);
+    }
+    .cruzamento .titulo {
+      font-size: 15px; font-weight: 700; color: var(--text);
+      margin-bottom: 6px;
+    }
+    .cruzamento .pergunta {
+      font-size: 12px; color: var(--text-3);
+      margin-bottom: 18px;
+    }
+    .chips {
+      display: flex; flex-wrap: wrap; gap: 6px;
+      margin-bottom: 18px;
+    }
+    .chip {
+      font-size: 11px; font-weight: 600;
+      padding: 4px 10px; border-radius: 99px;
+      display: inline-flex; align-items: center; gap: 4px;
+      border: 1px solid;
+    }
+    .chip.tem        { color: var(--green); border-color: var(--green); background: var(--green-bg); }
+    .chip.tem::before { content: '✓ '; }
+    .chip.naotem     { color: var(--red); border-color: var(--red); background: var(--red-bg); }
+    .chip.naotem::before { content: '✕ '; }
+    .resultado {
+      flex: 1; display: flex; align-items: flex-end; gap: 14px;
+    }
+    .resultado .num {
+      font-size: 38px; font-weight: 800; color: var(--text);
+      line-height: 1;
+    }
+    .resultado .meta {
+      flex: 1; font-size: 12px; color: var(--text-3);
+    }
+    .resultado .meta .of {
+      font-size: 11px; color: var(--text-3); display: block;
+    }
+    .resultado .meta .pct {
+      font-size: 14px; font-weight: 700; color: var(--primary-dark);
+      margin-top: 2px;
+    }
+    .barra {
+      margin-top: 12px;
+      height: 6px; background: var(--input-bg);
+      border-radius: 99px; overflow: hidden;
+    }
+    .barra .fill {
+      height: 100%; border-radius: 99px;
+      transition: width 0.6s;
+    }
+    .insight {
+      margin-top: 14px; padding: 10px 12px;
+      background: var(--input-bg); border-radius: 8px;
+      font-size: 11px; color: var(--text-2); line-height: 1.5;
+      border-left: 3px solid var(--primary);
+    }
+    .insight strong { color: var(--text); }
+
+    /* FOOTER */
+    footer.rodape {
+      text-align: center;
+      padding: 40px 0;
+      color: var(--text-3);
+      font-size: 12px;
+      border-top: 1px solid var(--border);
+      margin-top: 32px;
+    }
+
+    /* RESPONSIVO */
+    @media (max-width: 720px) {
+      .hero h1 { font-size: 26px; }
+      .hero p { font-size: 15px; }
+      .bloco h2 { font-size: 18px; }
+    }
+  </style>
+</head>
+<body>
+  <header class="topo">
+    <div class="container">
+      <div class="marca">
+        <div class="logo">C</div>
+        <span>Sistema Integrado CBRio</span>
+      </div>
+      <span class="selo">Conceito · maio/2026</span>
+    </div>
+  </header>
+
+  <div class="container">
+    <section class="hero">
+      <h1>Como medimos a Igreja</h1>
+      <p>
+        Cada pessoa caminha pelos <strong>5 valores da CBRio</strong> dentro
+        de uma das <strong>6 áreas</strong>. A matriz mostra onde estamos em
+        cada interseção · e o cruzamento de dados responde perguntas
+        estratégicas em segundos.
+      </p>
+    </section>
+
+    <section class="bloco">
+      <h2><span class="num">1</span> Matriz Valor × Área</h2>
+      <p class="sub">
+        Cada célula representa a saúde dos KPIs daquela interseção (verde no
+        alvo, amarelo atrás, vermelho crítico, cinza sem dado, em branco
+        quando não se aplica).
+      </p>
+
+      <div class="card">
+        <div class="matriz-wrap">
+          <table class="matriz">
+            <thead>
+              <tr>
+                <th></th>
+                <th class="col">
+                  <span class="label" style="color: var(--purple)">Seguir Jesus</span>
+                  <span class="pct">62%</span>
+                </th>
+                <th class="col">
+                  <span class="label" style="color: var(--blue)">Conectar</span>
+                  <span class="pct">48%</span>
+                </th>
+                <th class="col">
+                  <span class="label" style="color: var(--amber)">Investir Tempo</span>
+                  <span class="pct">31%</span>
+                </th>
+                <th class="col">
+                  <span class="label" style="color: var(--green)">Servir</span>
+                  <span class="pct">21%</span>
+                </th>
+                <th class="col">
+                  <span class="label" style="color: var(--pink)">Generosidade</span>
+                  <span class="pct">28%</span>
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <th class="row"><span class="nome"><span class="dot" style="background: var(--amber)"></span> Kids</span></th>
+                <td class="celula cel-verde"><div class="pct">82%</div><div class="kpis">3 kpis</div></td>
+                <td class="celula cel-amarelo"><div class="pct">54%</div><div class="kpis">2 kpis</div></td>
+                <td class="celula cel-amarelo"><div class="pct">42%</div><div class="kpis">2 kpis</div></td>
+                <td class="celula cel-na"><div class="pct">—</div></td>
+                <td class="celula cel-sem-dado"><div class="pct">—</div><div class="kpis">1 sem dado</div></td>
+              </tr>
+              <tr>
+                <th class="row"><span class="nome"><span class="dot" style="background: var(--purple)"></span> Bridge</span></th>
+                <td class="celula cel-verde"><div class="pct">76%</div><div class="kpis">3 kpis</div></td>
+                <td class="celula cel-verde"><div class="pct">71%</div><div class="kpis">2 kpis</div></td>
+                <td class="celula cel-amarelo"><div class="pct">48%</div><div class="kpis">2 kpis</div></td>
+                <td class="celula cel-vermelho"><div class="pct">22%</div><div class="kpis">3 kpis</div></td>
+                <td class="celula cel-amarelo"><div class="pct">45%</div><div class="kpis">2 kpis</div></td>
+              </tr>
+              <tr>
+                <th class="row"><span class="nome"><span class="dot" style="background: var(--blue)"></span> AMI</span></th>
+                <td class="celula cel-verde"><div class="pct">88%</div><div class="kpis">4 kpis</div></td>
+                <td class="celula cel-verde"><div class="pct">73%</div><div class="kpis">2 kpis</div></td>
+                <td class="celula cel-amarelo"><div class="pct">55%</div><div class="kpis">3 kpis</div></td>
+                <td class="celula cel-amarelo"><div class="pct">42%</div><div class="kpis">3 kpis</div></td>
+                <td class="celula cel-verde"><div class="pct">68%</div><div class="kpis">2 kpis</div></td>
+              </tr>
+              <tr>
+                <th class="row"><span class="nome"><span class="dot" style="background: var(--green)"></span> Sede</span></th>
+                <td class="celula cel-amarelo"><div class="pct">59%</div><div class="kpis">5 kpis</div></td>
+                <td class="celula cel-amarelo"><div class="pct">52%</div><div class="kpis">4 kpis</div></td>
+                <td class="celula cel-vermelho"><div class="pct">28%</div><div class="kpis">2 kpis</div></td>
+                <td class="celula cel-amarelo"><div class="pct">48%</div><div class="kpis">3 kpis</div></td>
+                <td class="celula cel-verde"><div class="pct">72%</div><div class="kpis">3 kpis</div></td>
+              </tr>
+              <tr>
+                <th class="row"><span class="nome"><span class="dot" style="background: var(--pink)"></span> Online</span></th>
+                <td class="celula cel-verde"><div class="pct">81%</div><div class="kpis">2 kpis</div></td>
+                <td class="celula cel-vermelho"><div class="pct">18%</div><div class="kpis">1 kpi</div></td>
+                <td class="celula cel-sem-dado"><div class="pct">—</div><div class="kpis">1 sem dado</div></td>
+                <td class="celula cel-na"><div class="pct">—</div></td>
+                <td class="celula cel-amarelo"><div class="pct">44%</div><div class="kpis">2 kpis</div></td>
+              </tr>
+              <tr>
+                <th class="row"><span class="nome"><span class="dot" style="background: var(--gray)"></span> CBA</span></th>
+                <td class="celula cel-amarelo"><div class="pct">52%</div><div class="kpis">3 kpis</div></td>
+                <td class="celula cel-amarelo"><div class="pct">46%</div><div class="kpis">2 kpis</div></td>
+                <td class="celula cel-sem-dado"><div class="pct">—</div><div class="kpis">2 sem dado</div></td>
+                <td class="celula cel-amarelo"><div class="pct">38%</div><div class="kpis">2 kpis</div></td>
+                <td class="celula cel-verde"><div class="pct">75%</div><div class="kpis">2 kpis</div></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="legenda">
+          <span class="item"><span class="sw" style="background: var(--green)"></span> No alvo (≥70%)</span>
+          <span class="item"><span class="sw" style="background: var(--amber)"></span> Atrás (40-69%)</span>
+          <span class="item"><span class="sw" style="background: var(--red)"></span> Crítico (&lt;40%)</span>
+          <span class="item"><span class="sw" style="background: var(--gray)"></span> Sem dado</span>
+          <span class="item"><span class="sw" style="background: var(--input-bg); border: 1px solid var(--border)"></span> N/A</span>
+        </div>
+      </div>
+    </section>
+
+    <section class="bloco">
+      <h2><span class="num">2</span> Cruzamento de dados</h2>
+      <p class="sub">
+        A matriz mostra <em>onde olhar</em>. O cruzamento responde
+        <em>qual o próximo passo</em>. Exemplos reais de perguntas que o
+        sistema responde em segundos:
+      </p>
+
+      <div class="cruzamentos">
+        <div class="cruzamento">
+          <div class="titulo">Voluntários que dizimam</div>
+          <div class="pergunta">Quantos dos nossos voluntários também estão sendo generosos?</div>
+          <div class="chips">
+            <span class="chip tem">Servir</span>
+            <span class="chip tem">Generosidade</span>
+          </div>
+          <div class="resultado">
+            <div class="num">387</div>
+            <div class="meta">
+              <span class="of">de 754 voluntários ativos</span>
+              <span class="pct">51% deles</span>
+            </div>
+          </div>
+          <div class="barra"><div class="fill" style="width: 51%; background: var(--green)"></div></div>
+          <div class="insight">
+            <strong>Insight:</strong> mais da metade dos voluntários doa
+            recorrente. A campanha de fim de ano pode focar nos 367 que
+            servem mas ainda não dizimam.
+          </div>
+        </div>
+
+        <div class="cruzamento">
+          <div class="titulo">Convertidos sem grupo</div>
+          <div class="pergunta">Quem tomou decisão por Cristo mas ainda não foi integrado a um grupo?</div>
+          <div class="chips">
+            <span class="chip tem">Seguir Jesus</span>
+            <span class="chip naotem">Conectar</span>
+          </div>
+          <div class="resultado">
+            <div class="num">234</div>
+            <div class="meta">
+              <span class="of">de 1.247 convertidos no ano</span>
+              <span class="pct">19% sem acompanhamento</span>
+            </div>
+          </div>
+          <div class="barra"><div class="fill" style="width: 19%; background: var(--red)"></div></div>
+          <div class="insight">
+            <strong>Insight:</strong> 234 pessoas tomaram decisão mas estão
+            soltas. Lista exportável pra capelania ligar e convidar pra um
+            grupo de conexão.
+          </div>
+        </div>
+
+        <div class="cruzamento">
+          <div class="titulo">NEXT que ainda não servem</div>
+          <div class="pergunta">Quem passou pelo NEXT mas ainda não entrou no voluntariado?</div>
+          <div class="chips">
+            <span class="chip tem">Inscrito no NEXT</span>
+            <span class="chip naotem">Servir</span>
+          </div>
+          <div class="resultado">
+            <div class="num">152</div>
+            <div class="meta">
+              <span class="of">de 489 inscritos no NEXT</span>
+              <span class="pct">31% potencial</span>
+            </div>
+          </div>
+          <div class="barra"><div class="fill" style="width: 31%; background: var(--amber)"></div></div>
+          <div class="insight">
+            <strong>Insight:</strong> NEXT é a porta principal pro
+            voluntariado. 152 pessoas estão prontas e a equipe de
+            voluntariado pode abordar individualmente.
+          </div>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <footer class="rodape">
+    <div class="container">
+      <p>
+        Sistema Integrado CBRio · matriz e cruzamento sobre 3.847 pessoas
+        ativas em maio/2026 · números ilustrativos
+      </p>
+    </div>
+  </footer>
+</body>
+</html>
