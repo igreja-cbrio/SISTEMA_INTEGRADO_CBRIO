@@ -3,7 +3,7 @@
 //
 // 3 abas:
 //   - Pulso        → quem esta atrasado, KPIs cronicamente vermelhos
-//   - Configurar   → atalhos para Estrutura OKR, Areas KPI, Diretoria Geral
+//   - Configurar   → atalhos para Cruzamentos, Regras de Notificacao
 //   - Saude        → meta-monitoramento (KPIs sem meta/dono/registro)
 // ============================================================================
 
@@ -311,23 +311,6 @@ function AbaConfigurar() {
           </button>
         );
       })}
-
-      <div style={{
-        background: 'var(--cbrio-input-bg)', border: `1px dashed ${C.border}`,
-        borderRadius: 12, padding: 18, gridColumn: '1/-1',
-      }}>
-        <h3 style={{ fontSize: 13, fontWeight: 700, color: C.t2, margin: 0 }}>Diretoria geral (5 nominais)</h3>
-        <p style={{ fontSize: 11, color: C.t3, marginTop: 6, lineHeight: 1.5 }}>
-          Para marcar pessoas como diretoria geral (recebem alertas criticos + participam do ritual mensal),
-          rode no Supabase Studio:
-        </p>
-        <pre style={{ marginTop: 10, padding: 12, background: C.card, borderRadius: 6, fontSize: 11, color: C.t2, overflowX: 'auto', border: `1px solid ${C.border}` }}>
-{`UPDATE profiles
-   SET is_diretoria_geral = true,
-       funcao_diretoria = 'Pastor Senior'
- WHERE email = 'pedrao@cbrio.com.br';`}
-        </pre>
-      </div>
     </div>
   );
 }
