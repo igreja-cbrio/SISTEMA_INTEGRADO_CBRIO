@@ -420,7 +420,7 @@ const TIPO_INFO = {
 
 function AbaMetasInstitucionais() {
   const [metas, setMetas] = useState([]);
-  const [kpisPorTipo, setKpisPorTipo] = useState({ qualitativo: [], quantitativo: [], sem_tipo: [] });
+  const [okrsPorTipo, setOkrsPorTipo] = useState({ qualitativo: [], quantitativo: [], sem_tipo: [] });
   const [loading, setLoading] = useState(true);
   const [editingId, setEditingId] = useState(null);
   const [form, setForm] = useState({});
@@ -429,12 +429,12 @@ function AbaMetasInstitucionais() {
   const carregar = useCallback(async () => {
     setLoading(true);
     try {
-      const [m, ks] = await Promise.all([
+      const [m, os] = await Promise.all([
         estrategiaApi.metasInstitucionais.list(),
-        estrategiaApi.kpisPorTipo(),
+        estrategiaApi.okrsPorTipo(),
       ]);
       setMetas(m || []);
-      setKpisPorTipo(ks || { qualitativo: [], quantitativo: [], sem_tipo: [] });
+      setOkrsPorTipo(os || { qualitativo: [], quantitativo: [], sem_tipo: [] });
     } catch (e) {
       toast.error(e?.message || 'Erro ao carregar');
     } finally { setLoading(false); }
@@ -459,19 +459,19 @@ function AbaMetasInstitucionais() {
     } catch (e) { toast.error(e?.message || 'Erro ao salvar'); }
   };
 
-  const trocarTipoKpi = async (kpi, novoTipo) => {
+  const trocarTipoOkr = async (okr, novoTipo) => {
     try {
-      await estrategiaApi.setKpiTipo(kpi.id, novoTipo);
-      toast.success(`${kpi.id} -> ${novoTipo}`);
+      await estrategiaApi.setOkrTipo(okr.id, novoTipo);
+      toast.success(`${okr.nome.slice(0, 30)} → ${novoTipo}`);
       carregar();
     } catch (e) { toast.error(e?.message); }
   };
 
   const recalcularMetas = async () => {
-    if (!window.confirm('Vai sobrescrever a meta de TODOS os KPIs ativos com a meta institucional. Quantitativos vão materializar alvo absoluto a partir do baseline do ano anterior. Continuar?')) return;
+    if (!window.confirm('Vai sobrescrever a meta de TODOS os OKRs ativos com a meta institucional. Quantitativos vão materializar alvo absoluto a partir do baseline do ano anterior. Continuar?')) return;
     try {
       const r = await estrategiaApi.metasInstitucionais.aplicar();
-      toast.success(`Recalculado · ${r.resultado.kpis_atualizados} KPIs (${r.resultado.kpis_com_alvo_materializado} com alvo absoluto)`);
+      toast.success(`Recalculado · ${r.resultado.okrs_atualizados} OKRs (${r.resultado.okrs_com_alvo_materializado} com alvo absoluto)`);
       carregar();
     } catch (e) { toast.error(e?.message); }
   };
@@ -500,7 +500,7 @@ function AbaMetasInstitucionais() {
         {['quantitativo', 'qualitativo'].map(tipo => {
           const info = TIPO_INFO[tipo];
           const meta = metaPorTipo[tipo];
-          const kpis = kpisPorTipo[tipo] || [];
+          const okrs = okrsPorTipo[tipo] || [];
           const editando = editingId === tipo;
 
           return (
@@ -510,7 +510,7 @@ function AbaMetasInstitucionais() {
                 <span style={{ width: 10, height: 10, borderRadius: '50%', background: info.cor, display: 'inline-block' }} />
                 {info.label}
                 <span style={{ fontSize: 10, padding: '1px 6px', borderRadius: 99, background: info.bg, color: info.cor, fontWeight: 700 }}>
-                  {kpis.length} KPIs
+                  {okrs.length} OKRs
                 </span>
               </span>}
               subtitle={info.desc}
@@ -599,38 +599,39 @@ function AbaMetasInstitucionais() {
               {/* Lista de KPIs do tipo */}
               <div>
                 <div style={{ fontSize: 10, color: C.t3, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 6 }}>
-                  KPIs deste tipo ({kpis.length})
+                  OKRs deste tipo ({okrs.length})
                 </div>
-                {kpis.length === 0 ? (
+                {okrs.length === 0 ? (
                   <div style={{ fontSize: 11, color: C.t3, padding: 8 }}>Nenhum.</div>
                 ) : (
-                  <div style={{ maxHeight: 300, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 3 }}>
-                    {kpis.map(k => (
-                      <div key={k.id} style={{
+                  <div style={{ maxHeight: 360, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 4 }}>
+                    {okrs.map(o => (
+                      <div key={o.id} style={{
                         display: 'flex', alignItems: 'center', gap: 8,
-                        padding: '5px 8px', background: C.card, borderRadius: 4, fontSize: 11,
+                        padding: '7px 10px', background: C.card, borderRadius: 6, fontSize: 11,
+                        borderLeft: `2px solid ${info.cor}`,
                       }}>
-                        <span style={{
-                          fontSize: 9, padding: '1px 5px', borderRadius: 4,
-                          background: C.primaryBg, color: C.primaryDark, fontWeight: 700,
-                          minWidth: 50, textAlign: 'center',
-                        }}>
-                          {k.id}
-                        </span>
                         <div style={{ flex: 1, minWidth: 0 }}>
-                          <div style={{ color: C.text }} title={k.indicador}>
-                            {(k.descricao || k.indicador).slice(0, 48)}
-                            {(k.descricao || k.indicador || '').length > 48 ? '…' : ''}
+                          <div style={{ color: C.text, fontWeight: 600, lineHeight: 1.3 }} title={o.nome}>
+                            {o.nome}
                           </div>
-                          {k.meta_valor_absoluto != null && (
-                            <div style={{ fontSize: 9, color: info.cor, fontWeight: 600 }}>
-                              alvo: {Number(k.meta_valor_absoluto).toLocaleString('pt-BR')}
-                              {k.unidade ? ' ' + k.unidade : ''}
+                          {o.meta_valor_absoluto != null ? (
+                            <div style={{ fontSize: 10, color: info.cor, fontWeight: 700, marginTop: 2 }}>
+                              alvo {ano}: {Number(o.meta_valor_absoluto).toLocaleString('pt-BR')}
+                              {tipo === 'qualitativo' ? '%' : ''}
+                            </div>
+                          ) : o.dado_tipo_principal ? (
+                            <div style={{ fontSize: 9, color: C.t3, marginTop: 2, fontStyle: 'italic' }}>
+                              sem baseline · adicione dados de {ano - 1} pra materializar
+                            </div>
+                          ) : (
+                            <div style={{ fontSize: 9, color: '#F59E0B', marginTop: 2 }}>
+                              sem fonte natural · meta = {meta?.meta_valor}{meta?.unidade}
                             </div>
                           )}
                         </div>
                         <button
-                          onClick={() => trocarTipoKpi(k, tipo === 'quantitativo' ? 'qualitativo' : 'quantitativo')}
+                          onClick={() => trocarTipoOkr(o, tipo === 'quantitativo' ? 'qualitativo' : 'quantitativo')}
                           title={`Mover para ${tipo === 'quantitativo' ? 'qualitativo' : 'quantitativo'}`}
                           style={btnSm}
                         >
@@ -645,15 +646,15 @@ function AbaMetasInstitucionais() {
           );
         })}
 
-        {kpisPorTipo.sem_tipo?.length > 0 && (
-          <Card title={<>⚠️ KPIs sem tipo classificado ({kpisPorTipo.sem_tipo.length})</>} subtitle="Use os botoes ⇄ acima para classificar" full>
+        {okrsPorTipo.sem_tipo?.length > 0 && (
+          <Card title={<>⚠️ OKRs sem tipo classificado ({okrsPorTipo.sem_tipo.length})</>} subtitle="Use os botoes ⇄ acima para classificar" full>
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-              {kpisPorTipo.sem_tipo.map(k => (
-                <span key={k.id} style={{
+              {okrsPorTipo.sem_tipo.map(o => (
+                <span key={o.id} style={{
                   fontSize: 10, padding: '3px 8px', borderRadius: 99,
                   background: 'var(--cbrio-input-bg)', color: C.t2,
                 }}>
-                  {k.id} · {k.area}
+                  {o.nome}
                 </span>
               ))}
             </div>
