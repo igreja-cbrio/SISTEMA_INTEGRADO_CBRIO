@@ -12,6 +12,7 @@ import { painel as painelApi } from '../api';
 import { X, CheckCircle2, Clock, TrendingDown, MinusCircle, AlertCircle, Pencil, ClipboardCheck } from 'lucide-react';
 import KpiEditorModal from './KpiEditorModal';
 import OkrRevisaoModal from './OkrRevisaoModal';
+import { SkeletonKpiDetalhe } from './Skeleton';
 
 const C = {
   card: 'var(--cbrio-card)', text: 'var(--cbrio-text)',
@@ -105,7 +106,7 @@ export default function KpiDetalheModal({ open, kpiId, onClose, onUpdated, openI
           }}
         >
           {loading ? (
-            <div style={{ padding: 60, textAlign: 'center', color: C.t3 }}>Carregando...</div>
+            <SkeletonKpiDetalhe />
           ) : erro || !data ? (
             <div style={{ padding: 40, textAlign: 'center', color: '#ef4444' }}>
               <AlertCircle size={24} style={{ marginBottom: 8 }} />

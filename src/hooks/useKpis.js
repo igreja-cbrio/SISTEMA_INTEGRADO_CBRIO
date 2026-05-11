@@ -73,9 +73,13 @@ async function fetchAll(force = false) {
   if (_cachePromise && !force) return _cachePromise;
   _cachePromise = (async () => {
     const rows = await kpisApi.v2.taticos();
-    _cache = (rows || []).map(fromDb).sort((a, b) =>
-      a.area.localeCompare(b.area) || (a.sort_order - b.sort_order)
-    );
+    // Filtra inativos por padrao · cache so contem KPIs ativos. KPIs com
+    // ativo=false (legacy KID-01..05, etc) ficam de fora pra nao poluir
+    // /minha-area, /meus-kpis, painel etc.
+    _cache = (rows || [])
+      .filter(r => r.ativo !== false)
+      .map(fromDb)
+      .sort((a, b) => a.area.localeCompare(b.area) || (a.sort_order - b.sort_order));
     _cachePromise = null;
     notifySubscribers();
     return _cache;
