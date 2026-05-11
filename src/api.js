@@ -1259,3 +1259,38 @@ export const painel = {
     return get('/painel/nsm/pessoas' + (qs ? '?' + qs : ''));
   },
 };
+
+export const nps = {
+  list: (params = {}) => {
+    const qs = new URLSearchParams(params).toString();
+    return get('/nps' + (qs ? '?' + qs : ''));
+  },
+  get: (id) => get(`/nps/${id}`),
+  create: (data) => post('/nps', data),
+  update: (id, data) => put(`/nps/${id}`, data),
+  remove: (id) => del(`/nps/${id}`),
+  gerarPerguntas: (data) => post('/nps/gerar-perguntas', data),
+  respostas: (id) => get(`/nps/${id}/respostas`),
+  responder: (id, data) => post(`/nps/${id}/responder`, data),
+  analisar: (id) => post(`/nps/${id}/analisar`, {}),
+  notificar: (id) => post(`/nps/${id}/notificar`, {}),
+  // Públicas (sem auth)
+  publicGet: (token) =>
+    fetch(`${API}/public/nps/${encodeURIComponent(token)}`, {
+      headers: { 'Content-Type': 'application/json' },
+    }).then(async (r) => {
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(data.error || 'Erro ao carregar pesquisa');
+      return data;
+    }),
+  publicResponder: (token, payload) =>
+    fetch(`${API}/public/nps/${encodeURIComponent(token)}/responder`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    }).then(async (r) => {
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(data.error || 'Erro ao enviar resposta');
+      return data;
+    }),
+};
