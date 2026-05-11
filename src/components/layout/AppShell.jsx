@@ -13,7 +13,7 @@ import {
   CalendarDays, FolderKanban, Map, ListChecks,
   UserCheck, UsersRound, Heart, HandHelping, BookOpen, ArrowRight, TrendingUp,
   Megaphone, BrainCircuit, ShoppingCart,
-  Sun, Moon, Bell, BellRing, BellOff, LogOut, Search, CheckCheck, Settings, MonitorSmartphone, BarChart2, ClipboardCheck, Activity,
+  Sun, Moon, Bell, BellRing, BellOff, LogOut, Search, CheckCheck, Settings, MonitorSmartphone, BarChart2, ClipboardCheck, Activity, MessageSquare,
 } from 'lucide-react';
 import {
   DropdownMenu, DropdownMenuTrigger, DropdownMenuContent,
@@ -22,8 +22,8 @@ import { ScrollArea } from '../ui/scroll-area';
 import { Avatar, AvatarFallback } from '../ui/avatar';
 
 const SEV_COLORS = { urgente: '#ef4444', aviso: '#f59e0b', info: '#00B39D' };
-const MOD_COLORS = { rh: '#8b5cf6', financeiro: '#10b981', logistica: '#ef4444', patrimonio: '#6366f1', membresia: '#00B39D', eventos: '#3b82f6', projetos: '#ec4899', kpis: '#f97316', cuidados: '#ef476f', processos: '#00B39D', sistema: '#6b7280' };
-const MOD_LABELS = { rh: 'RH', financeiro: 'Financeiro', logistica: 'Logística', patrimonio: 'Patrimônio', membresia: 'Membresia', eventos: 'Eventos', projetos: 'Projetos', kpis: 'KPIs', cuidados: 'Cuidados', processos: 'Processos', sistema: 'Sistema' };
+const MOD_COLORS = { rh: '#8b5cf6', financeiro: '#10b981', logistica: '#ef4444', patrimonio: '#6366f1', membresia: '#00B39D', eventos: '#3b82f6', projetos: '#ec4899', kpis: '#f97316', cuidados: '#ef476f', processos: '#00B39D', nps: '#06b6d4', sistema: '#6b7280' };
+const MOD_LABELS = { rh: 'RH', financeiro: 'Financeiro', logistica: 'Logística', patrimonio: 'Patrimônio', membresia: 'Membresia', eventos: 'Eventos', projetos: 'Projetos', kpis: 'KPIs', cuidados: 'Cuidados', processos: 'Processos', nps: 'NPS', sistema: 'Sistema' };
 
 const NAV_ITEMS = [
   {
@@ -49,6 +49,7 @@ const NAV_ITEMS = [
         title: 'Inteligência',
         items: [
           { label: 'Painel CBRio', description: 'NSM · 5 valores · 6 áreas — visão macro · ritual mensal', icon: Activity, path: '/painel' },
+          { label: 'NPS', description: 'Pesquisas de satisfação geradas por IA · análise automática', icon: MessageSquare, path: '/nps' },
           { label: 'Minha Área', description: 'KPIs (resultado) e Dados (entrada) da sua área', icon: BarChart2, path: '/minha-area' },
           { label: 'Gestão (PMO)', description: 'Pulso · Estrutura OKR · Saúde · Configurar (admin)', icon: Settings, path: '/gestao' },
           { label: 'Assistente IA', description: 'Agentes de auditoria e análise', icon: BrainCircuit, path: '/assistente-ia', perm: 'canIA' },
