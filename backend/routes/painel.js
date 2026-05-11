@@ -13,6 +13,44 @@ const { supabase } = require('../utils/supabase');
 
 router.use(authenticate);
 
+// ============================================================================
+// CACHE em memoria (5 min TTL)
+//
+// Painel e a pagina mais visitada · cada usuario refresca = recalcula matriz
+// (multiplas queries agregadas). Cache compartilhado entre todos os usuarios
+// reduz carga em ~95% (10 usuarios simultaneos = 1 calculo).
+//
+// TTL curto (5 min) garante dados frescos. Em deploy serverless, cada
+// instancia tem seu cache (sem coordenacao · ok pra read-only).
+// ============================================================================
+const CACHE_TTL_MS = 5 * 60 * 1000;
+const _cache = new Map();
+
+function cacheGet(key) {
+  const e = _cache.get(key);
+  if (!e) return null;
+  if (Date.now() - e.t > CACHE_TTL_MS) { _cache.delete(key); return null; }
+  return e.v;
+}
+function cacheSet(key, v) {
+  _cache.set(key, { v, t: Date.now() });
+}
+function cacheBust(prefix) {
+  for (const k of _cache.keys()) {
+    if (k.startsWith(prefix)) _cache.delete(k);
+  }
+}
+
+// Endpoint manual pra invalidar cache (admin/diretor) · util apos ajuste de meta
+router.post('/cache/bust', (req, res) => {
+  if (!['admin', 'diretor'].includes(req.user?.role)) {
+    return res.status(403).json({ error: 'Apenas admin/diretor' });
+  }
+  const prefix = req.body?.prefix || '';
+  cacheBust(prefix);
+  res.json({ ok: true });
+});
+
 const VALORES = ['seguir', 'conectar', 'investir', 'servir', 'generosidade'];
 
 const VALOR_LABELS = {
@@ -76,6 +114,9 @@ function piorStatus(statuses) {
 // ----------------------------------------------------------------------------
 router.get('/mandalas', async (req, res) => {
   try {
+    const cached = cacheGet('mandalas');
+    if (cached) return res.json(cached);
+
     // 1. KPIs ativos com valores preenchidos
     const { data: kpis, error: ek } = await supabase
       .from('kpi_indicadores_taticos')
@@ -146,10 +187,12 @@ router.get('/mandalas', async (req, res) => {
       };
     }
 
-    res.json({
+    const _resp = {
       geral: { valores: geral_valores },
       por_valor,
-    });
+    };
+    cacheSet('mandalas', _resp);
+    res.json(_resp);
   } catch (e) {
     console.error('painel/mandalas:', e.message);
     res.status(500).json({ error: 'Erro ao montar mandalas' });
@@ -161,6 +204,9 @@ router.get('/mandalas', async (req, res) => {
 // ----------------------------------------------------------------------------
 router.get('/matriz', async (req, res) => {
   try {
+    const cached = cacheGet('matriz');
+    if (cached) return res.json(cached);
+
     const { data: kpis, error: ek } = await supabase
       .from('kpi_indicadores_taticos')
       .select('id, area, valores')
@@ -218,11 +264,13 @@ router.get('/matriz', async (req, res) => {
       }
     }
 
-    res.json({
+    const _resp = {
       areas: (areas || []).map(a => ({ id: a.id, nome: a.nome, cor_hex: a.cor_hex, categoria: a.categoria })),
       valores: VALORES.map(v => ({ key: v, label: VALOR_LABELS[v], cor: VALOR_CORES[v] })),
       cells,
-    });
+    };
+    cacheSet('matriz', _resp);
+    res.json(_resp);
   } catch (e) {
     console.error('painel/matriz:', e.message);
     res.status(500).json({ error: 'Erro ao montar matriz' });
@@ -536,6 +584,9 @@ router.get('/nsm/pessoas', async (req, res) => {
 router.get('/alertas', async (req, res) => {
   try {
     const limit = Math.min(Number(req.query.limit) || 3, 20);
+    const cacheKey = `alertas:${limit}`;
+    const cached = cacheGet(cacheKey);
+    if (cached) return res.json(cached);
 
     const { data: kpis, error } = await supabase
       .from('kpi_indicadores_taticos')
@@ -590,12 +641,14 @@ router.get('/alertas', async (req, res) => {
       percentual_meta: k.traj.percentual_meta,
     }));
 
-    res.json({
+    const _resp = {
       total_em_alerta: emAlerta.length,
       total_criticos:  emAlerta.filter(k => k.traj.status_trajetoria === 'critico').length,
       total_atrasados: emAlerta.filter(k => k.traj.status_trajetoria === 'atras').length,
       alertas: top,
-    });
+    };
+    cacheSet(cacheKey, _resp);
+    res.json(_resp);
   } catch (e) {
     console.error('painel/alertas:', e.message);
     res.status(500).json({ error: 'Erro ao carregar alertas' });

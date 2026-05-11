@@ -32,6 +32,10 @@
     {
       "path": "/api/processos/cron/coletar",
       "schedule": "0 4 * * *"
+    },
+    {
+      "path": "/api/jornada/cron/refresh-papeis",
+      "schedule": "0 5 * * *"
     }
   ],
   "rewrites": [

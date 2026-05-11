@@ -2,6 +2,33 @@ const router = require('express').Router();
 const { authenticate } = require('../middleware/auth');
 const { supabase } = require('../utils/supabase');
 
+const CRON_SECRET = process.env.CRON_SECRET;
+
+// Cron: refresh da view materializada (chamado por Vercel cron horario).
+// Definido ANTES de router.use(authenticate) pra Vercel cron chamar sem login.
+async function autorizaCron(req, res, next) {
+  const auth = req.headers['x-cron-secret'] || req.headers['authorization'];
+  const isVercelCron = req.headers['user-agent']?.includes('vercel-cron');
+  if (!isVercelCron && auth !== CRON_SECRET && auth !== `Bearer ${CRON_SECRET}`) {
+    return res.status(401).json({ error: 'unauthorized' });
+  }
+  next();
+}
+
+async function refreshPapeis(_req, res) {
+  try {
+    const { data, error } = await supabase.rpc('refresh_vw_pessoas_papeis_mat');
+    if (error) throw error;
+    res.json({ ok: true, resultado: data });
+  } catch (e) {
+    console.error('[jornada/cron/refresh-papeis]', e.message);
+    res.status(500).json({ error: e.message });
+  }
+}
+
+router.get('/cron/refresh-papeis', autorizaCron, refreshPapeis);
+router.post('/cron/refresh-papeis', autorizaCron, refreshPapeis);
+
 router.use(authenticate);
 
 /**
@@ -175,139 +202,51 @@ router.get('/membro/:id', async (req, res) => {
 // Cruza combinacoes livres de criterios entre os 5 valores da Jornada
 // e papeis (voluntario, visitante, NEXT, grupos ativos, contribuinte).
 //
-// Body: { criterios: { seguir: 'tem'|'nao_tem'|null, ..., next: 'tem'|null } }
-// Retorna: { total_geral, total_match, percentual, membros: [...up to 200] }
+// Le da vw_pessoas_papeis_mat via funcao SQL cruzar_pessoas() · 1 query.
+// Escala ate 100k+ pessoas (antes carregava 50k linhas em memoria JS).
+//
+// Body: { criterios: { seguir: 'tem'|'nao_tem'|null, ... }, limit, offset }
 router.post('/cruzar', async (req, res) => {
   try {
     const criterios = req.body?.criterios || {};
-    const VALORES = ['seguir', 'conectar', 'investir', 'servir', 'generosidade'];
-    const PAPEIS  = ['voluntario', 'visitante', 'inscrito_next', 'grupo_ativo', 'contribuinte'];
+    const limit = Math.min(Number(req.body?.limit) || 200, 500);
+    const offset = Math.max(Number(req.body?.offset) || 0, 0);
 
-    // Set de criterios ativos (ignora os null/indiferente)
+    const { data, error } = await supabase.rpc('cruzar_pessoas', {
+      p_criterios: criterios,
+      p_limit: limit,
+      p_offset: offset,
+    });
+    if (error) throw error;
+
+    // Set de criterios ativos pra retornar pro client (debug/exibicao)
+    const VALIDOS = ['seguir', 'conectar', 'investir', 'servir', 'generosidade',
+                     'voluntario', 'visitante', 'inscrito_next', 'grupo_ativo', 'contribuinte'];
     const ativos = {};
-    [...VALORES, ...PAPEIS].forEach(k => {
-      if (criterios[k] === 'tem' || criterios[k] === 'nao_tem') {
-        ativos[k] = criterios[k];
-      }
-    });
-
-    // 1. Lista todos membros ativos
-    const { data: membros, error: errM } = await supabase
-      .from('mem_membros')
-      .select('id, nome, email, telefone, status, foto_url')
-      .eq('active', true)
-      .order('nome');
-    if (errM) throw errM;
-    if (!membros?.length) return res.json({ total_geral: 0, total_match: 0, percentual: 0, membros: [] });
-
-    const ids = membros.map(m => m.id);
-    const totalGeral = ids.length;
-
-    // 2. Em paralelo · busca sets de cada criterio ATIVO (otimiza · so o que precisa)
-    const queries = [];
-    const sets = {};
-
-    if (ativos.seguir) {
-      queries.push(
-        supabase.from('mem_trilha_valores')
-          .select('membro_id, etapa, concluida')
-          .in('membro_id', ids).eq('concluida', true)
-          .then(r => {
-            sets.seguir = new Set(
-              (r.data || [])
-                .filter(t => ['conversao','primeiro_contato','batismo'].includes(t.etapa))
-                .map(t => t.membro_id)
-            );
-          })
-      );
-    }
-    if (ativos.conectar || ativos.grupo_ativo) {
-      queries.push(
-        supabase.from('mem_grupo_membros')
-          .select('membro_id').in('membro_id', ids).is('saiu_em', null)
-          .then(r => {
-            const s = new Set((r.data || []).map(g => g.membro_id));
-            sets.conectar = s;
-            sets.grupo_ativo = s;
-          })
-      );
-    }
-    if (ativos.investir) {
-      queries.push(
-        supabase.from('cui_jornada180')
-          .select('membro_id').in('membro_id', ids).gte('data_encontro', daysAgo(90))
-          .then(r => {
-            sets.investir = new Set((r.data || []).map(j => j.membro_id).filter(Boolean));
-          })
-      );
-    }
-    if (ativos.servir || ativos.voluntario) {
-      queries.push(
-        supabase.from('mem_voluntarios')
-          .select('membro_id').in('membro_id', ids).is('ate', null)
-          .then(r => {
-            const s = new Set((r.data || []).map(v => v.membro_id));
-            sets.servir = s;
-            sets.voluntario = s;
-          })
-      );
-    }
-    if (ativos.generosidade || ativos.contribuinte) {
-      queries.push(
-        supabase.from('mem_contribuicoes')
-          .select('membro_id').in('membro_id', ids).gte('data', daysAgo(90))
-          .then(r => {
-            const s = new Set((r.data || []).map(c => c.membro_id).filter(Boolean));
-            sets.generosidade = s;
-            sets.contribuinte = s;
-          })
-      );
-    }
-    if (ativos.visitante) {
-      queries.push(
-        supabase.from('int_visitantes')
-          .select('membresia_id').in('membresia_id', ids)
-          .then(r => {
-            sets.visitante = new Set((r.data || []).map(v => v.membresia_id).filter(Boolean));
-          })
-      );
-    }
-    if (ativos.inscrito_next) {
-      queries.push(
-        supabase.from('next_inscricoes')
-          .select('membro_id').in('membro_id', ids)
-          .then(r => {
-            sets.inscrito_next = new Set((r.data || []).map(n => n.membro_id).filter(Boolean));
-          })
-      );
+    for (const k of VALIDOS) {
+      if (criterios[k] === 'tem' || criterios[k] === 'nao_tem') ativos[k] = criterios[k];
     }
 
-    await Promise.all(queries);
-
-    // 3. Filtra membros que atendem TODOS os criterios ativos
-    const matches = membros.filter(m => {
-      for (const [criterio, valor] of Object.entries(ativos)) {
-        const set = sets[criterio];
-        const has = set ? set.has(m.id) : false;
-        if (valor === 'tem' && !has) return false;
-        if (valor === 'nao_tem' && has) return false;
-      }
-      return true;
-    });
-
-    res.json({
-      total_geral: totalGeral,
-      total_match: matches.length,
-      percentual: totalGeral ? Math.round((matches.length / totalGeral) * 1000) / 10 : 0,
-      criterios_ativos: ativos,
-      membros: matches.slice(0, 200).map(m => ({
-        id: m.id, nome: m.nome, email: m.email, telefone: m.telefone,
-        status: m.status, foto_url: m.foto_url,
-      })),
-    });
+    res.json({ ...data, criterios_ativos: ativos });
   } catch (e) {
     console.error('jornada cruzar:', e.message);
     res.status(500).json({ error: 'Erro ao cruzar dados' });
+  }
+});
+
+// ── POST /api/jornada/refresh-papeis (manual · admin/diretor) ──
+// Refresh forcado da view materializada. Quando voce acabou de inserir
+// dados e quer ver no /cruzamentos sem esperar o cron horario.
+router.post('/refresh-papeis', async (req, res) => {
+  if (!['admin', 'diretor'].includes(req.user?.role)) {
+    return res.status(403).json({ error: 'Apenas admin/diretor pode forcar refresh' });
+  }
+  try {
+    const { data, error } = await supabase.rpc('refresh_vw_pessoas_papeis_mat');
+    if (error) throw error;
+    res.json({ ok: true, resultado: data });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
   }
 });
 

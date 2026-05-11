@@ -61,6 +61,8 @@ function nextEstado(estado) {
   return null;
 }
 
+const PAGE_SIZE = 100;
+
 export default function CruzamentosPessoas() {
   const { profile } = useAuth();
   const isAdmin = ['admin', 'diretor'].includes(profile?.role);
@@ -68,6 +70,8 @@ export default function CruzamentosPessoas() {
   const [resultado, setResultado] = useState(null);
   const [loading, setLoading] = useState(false);
   const [showLista, setShowLista] = useState(true);
+  const [page, setPage] = useState(0);
+  const [refreshing, setRefreshing] = useState(false);
 
   const toggleCriterio = (key) => {
     setCriterios(c => {
@@ -77,9 +81,10 @@ export default function CruzamentosPessoas() {
       else novo[key] = next;
       return novo;
     });
+    setPage(0);
   };
 
-  const limparTudo = () => setCriterios({});
+  const limparTudo = () => { setCriterios({}); setPage(0); };
 
   const ativos = useMemo(() =>
     Object.entries(criterios).filter(([, v]) => v === 'tem' || v === 'nao_tem'),
@@ -89,12 +94,23 @@ export default function CruzamentosPessoas() {
   const carregar = useCallback(async () => {
     setLoading(true);
     try {
-      const r = await jornadaApi.cruzar(criterios);
+      const r = await jornadaApi.cruzar(criterios, { limit: PAGE_SIZE, offset: page * PAGE_SIZE });
       setResultado(r);
     } catch (e) {
       toast.error(formatErro(e, 'cruzamento'));
     } finally { setLoading(false); }
-  }, [criterios]);
+  }, [criterios, page]);
+
+  const forcarRefresh = async () => {
+    setRefreshing(true);
+    try {
+      await jornadaApi.refreshPapeis();
+      toast.success('Dados atualizados · view refresh OK');
+      carregar();
+    } catch (e) {
+      toast.error(formatErro(e));
+    } finally { setRefreshing(false); }
+  };
 
   useEffect(() => { carregar(); }, [carregar]);
 
@@ -115,15 +131,25 @@ export default function CruzamentosPessoas() {
 
   return (
     <div style={{ padding: '24px 32px', maxWidth: 1300, margin: '0 auto' }}>
-      <header style={{ marginBottom: 20 }}>
-        <h1 style={{ fontSize: 22, fontWeight: 700, color: C.text, margin: 0, display: 'flex', alignItems: 'center', gap: 10 }}>
-          <Filter size={22} style={{ color: COLORS.primary }} />
-          Cruzamentos de pessoas
-        </h1>
-        <p style={{ fontSize: 13, color: C.t3, marginTop: 6 }}>
-          Combine criterios pra responder perguntas como "quantos voluntarios dizimam?",
-          "convertidos que ainda nao estao em grupos", "NEXT + contribuintes recorrentes". Cada chip alterna entre <strong>indiferente</strong> ⟶ <strong style={{ color: COLORS.green }}>tem ✓</strong> ⟶ <strong style={{ color: COLORS.red }}>nao tem ✕</strong>.
-        </p>
+      <header style={{ marginBottom: 20, display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12, flexWrap: 'wrap' }}>
+        <div style={{ flex: 1, minWidth: 280 }}>
+          <h1 style={{ fontSize: 22, fontWeight: 700, color: C.text, margin: 0, display: 'flex', alignItems: 'center', gap: 10 }}>
+            <Filter size={22} style={{ color: COLORS.primary }} />
+            Cruzamentos de pessoas
+          </h1>
+          <p style={{ fontSize: 13, color: C.t3, marginTop: 6 }}>
+            Combine criterios pra responder perguntas como "quantos voluntarios dizimam?",
+            "convertidos que ainda nao estao em grupos", "NEXT + contribuintes recorrentes". Cada chip alterna entre <strong>indiferente</strong> ⟶ <strong style={{ color: COLORS.green }}>tem ✓</strong> ⟶ <strong style={{ color: COLORS.red }}>nao tem ✕</strong>.
+          </p>
+        </div>
+        <button
+          onClick={forcarRefresh}
+          disabled={refreshing}
+          style={{ ...btnGhostSm, opacity: refreshing ? 0.5 : 1 }}
+          title="Force refresh da view materializada · use apos inserir dados em massa"
+        >
+          {refreshing ? 'Atualizando...' : '↻ Atualizar dados'}
+        </button>
       </header>
 
       {/* Painel de criterios · 2 grupos */}
@@ -262,8 +288,28 @@ export default function CruzamentosPessoas() {
               <div style={{
                 padding: '10px 16px', background: 'var(--cbrio-table-header)',
                 fontSize: 10, fontWeight: 700, color: C.t3, textTransform: 'uppercase', letterSpacing: 0.5,
+                display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, flexWrap: 'wrap',
               }}>
-                {resultado.total_match > 200 ? `Primeiras 200 pessoas (de ${resultado.total_match.toLocaleString('pt-BR')})` : `${resultado.membros.length} pessoa${resultado.membros.length > 1 ? 's' : ''}`}
+                <span>
+                  Pagina {page + 1} de {Math.max(1, Math.ceil(resultado.total_match / PAGE_SIZE))}
+                  {' · '}{(page * PAGE_SIZE) + 1}-{Math.min((page + 1) * PAGE_SIZE, resultado.total_match)} de {resultado.total_match.toLocaleString('pt-BR')}
+                </span>
+                <div style={{ display: 'flex', gap: 4 }}>
+                  <button
+                    onClick={() => setPage(p => Math.max(0, p - 1))}
+                    disabled={page === 0 || loading}
+                    style={{ ...btnGhostSm, opacity: page === 0 ? 0.4 : 1 }}
+                  >
+                    ← Anterior
+                  </button>
+                  <button
+                    onClick={() => setPage(p => p + 1)}
+                    disabled={(page + 1) * PAGE_SIZE >= resultado.total_match || loading}
+                    style={{ ...btnGhostSm, opacity: (page + 1) * PAGE_SIZE >= resultado.total_match ? 0.4 : 1 }}
+                  >
+                    Próxima →
+                  </button>
+                </div>
               </div>
               <div style={{ maxHeight: 540, overflowY: 'auto' }}>
                 {resultado.membros.map(m => (

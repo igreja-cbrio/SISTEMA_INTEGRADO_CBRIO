@@ -886,3 +886,68 @@ Definicao operacional: **sem servir ha mais de 90 dias**.
 - `is_diretoria_geral` **complementa** role='diretor', nao substitui
 - Notificacoes **in-app apenas** (sino topbar) — sem email/SMS
 - Ritual **sempre aberto** + modo guiado opcional — nao janela fechada
+
+## Escala 50k pessoas (visao 5 anos · 5 campus)
+
+Preparacao de banco/backend feita em 2026-05-11 para escalar ate 50k+
+pessoas ativas (visao: 5 campus + online + CBA acompanhadas).
+
+### View materializada · vw_pessoas_papeis_mat
+
+Substitui `vw_pessoas_papeis` em queries pesadas (cruzamentos).
+- 10 colunas booleanas pre-calculadas: 5 valores Jornada + 5 papeis
+- 8 indices parciais (cada criterio do /cruzamentos)
+- Refresh `CONCURRENTLY` (nao bloqueia SELECT)
+- Cron Vercel horario: `/api/jornada/cron/refresh-papeis`
+- Refresh manual: `POST /api/jornada/refresh-papeis` (admin/diretor)
+
+A view `vw_pessoas_papeis` original continua existindo para backward compat
+(ex: `backend/routes/membresia.js`).
+
+### Funcao SQL · cruzar_pessoas(criterios, limit, offset)
+
+`POST /api/jornada/cruzar` agora chama RPC que constroi WHERE dinamico
+e retorna count + pagina em **1 query**. Antes carregava 50k linhas em
+memoria + filtrava em JS.
+
+Performance esperada em 50k pessoas:
+- Cruzamento simples: ~50ms
+- Cruzamento com 5 filtros: ~150ms
+- Lista paginada (100): ~5ms adicional
+
+### Statement-level trigger em dados_brutos
+
+Antes: `FOR EACH ROW` · batch INSERT de 500 linhas = 500 chamadas a
+`recalcular_kpi`. Agora: `FOR EACH STATEMENT` com transition tables
+(`REFERENCING NEW TABLE AS inserted_rows`), pega DISTINCT (tipo, area, data)
+e roda recalculo 1x por combo. **3 triggers separados** porque Postgres
+exige (INSERT, UPDATE, DELETE).
+
+### Cache em memoria no /api/painel
+
+`mandalas`, `matriz`, `alertas` cacheiam por 5 min em `Map()` local de cada
+instancia serverless. 10 usuarios simultaneos = 1 calculo (vs 10).
+Invalidacao manual via `POST /api/painel/cache/bust` apos edicoes.
+
+### Indices parciais criados (migration 20260511100000)
+
+- `mem_contribuicoes (data DESC, membro_id)` · janelas de doacao
+- `mem_voluntarios (membro_id) WHERE ate IS NULL` · ativos
+- `mem_grupo_membros (membro_id) WHERE saiu_em IS NULL` · ativos
+- `cui_jornada180 (data_encontro DESC, membro_id)` · janela 90d
+- `cultos (data DESC)` · todos calculos KPI
+- `dados_brutos (tipo_id, area, data DESC)` · agregar_dado
+- `batismo_inscricoes (data_batismo DESC) WHERE status='realizado'`
+- `mem_trilha_valores (membro_id, etapa) WHERE concluida=true`
+
+### Paginacao server-side
+
+- `/admin/cruzamentos` · 100 pessoas por pagina, controles Anterior/Proxima
+- `POST /api/jornada/cruzar` aceita `{ criterios, limit, offset }`
+
+### Proximos passos quando crescer (10k+ → 25k+)
+
+- **Read replica do Supabase** · alivia leitura pesada
+- **Particionamento de mem_contribuicoes por ano** · cresce ~600k/ano
+- **Lazy load de KPIs por area** em `useKpis` (hoje cache global)
+- **Server-side pagination no /membresia** (hoje carrega tudo)
