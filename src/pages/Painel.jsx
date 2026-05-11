@@ -20,6 +20,7 @@ import { toast } from 'sonner';
 import CarrosselMandalas from '../components/painel/CarrosselMandalas';
 import MatrizValorArea from '../components/painel/MatrizValorArea';
 import AlertasCriticos from '../components/painel/AlertasCriticos';
+import { SkeletonLine, SkeletonBlock } from '../components/Skeleton';
 
 const C = {
   bg: 'var(--cbrio-bg)', card: 'var(--cbrio-card)', text: 'var(--cbrio-text)',
@@ -147,52 +148,50 @@ export default function Painel() {
         </div>
       </div>
 
+      {/* NSM CENTRAL · mostra skeleton enquanto carrega · sub-componentes carregam em paralelo */}
       {loading ? (
-        <div style={{ padding: 60, textAlign: 'center', color: C.t3 }}>Carregando painel...</div>
-      ) : (
-        <>
-          {/* NSM CENTRAL — destaque */}
-          {central && (
-            <NsmCentralCard
-              data={central}
-              onAbrirPessoas={() => navigate('/painel/nsm/pessoas?segmento=central&engajados=false')}
-            />
-          )}
+        <SkeletonBlock height={180} style={{ marginBottom: 16 }} />
+      ) : central ? (
+        <NsmCentralCard
+          data={central}
+          onAbrirPessoas={() => navigate('/painel/nsm/pessoas?segmento=central&engajados=false')}
+        />
+      ) : null}
 
-          {/* NSM SEGMENTADAS */}
-          {segmentados.length > 0 && (
-            <div style={{ marginTop: 20 }}>
-              <h3 style={{ fontSize: 11, fontWeight: 700, color: C.t3, textTransform: 'uppercase', letterSpacing: 1, marginBottom: 12 }}>
-                Segmentos
-              </h3>
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 12 }}>
-                {segmentados.map(s => (
-                  <NsmSegmentoCard
-                    key={s.segmento}
-                    data={s}
-                    onAbrirPessoas={() => navigate(`/painel/nsm/pessoas?segmento=${s.segmento}&engajados=false`)}
-                  />
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* Carrossel de Mandalas (Fase 2B) */}
-          <div style={{ marginTop: 24 }}>
-            <CarrosselMandalas />
+      {/* NSM SEGMENTADAS */}
+      {loading ? (
+        <div style={{ marginTop: 20, display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 12 }}>
+          <SkeletonBlock height={120} /><SkeletonBlock height={120} /><SkeletonBlock height={120} />
+        </div>
+      ) : segmentados.length > 0 ? (
+        <div style={{ marginTop: 20 }}>
+          <h3 style={{ fontSize: 11, fontWeight: 700, color: C.t3, textTransform: 'uppercase', letterSpacing: 1, marginBottom: 12 }}>
+            Segmentos
+          </h3>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 12 }}>
+            {segmentados.map(s => (
+              <NsmSegmentoCard
+                key={s.segmento}
+                data={s}
+                onAbrirPessoas={() => navigate(`/painel/nsm/pessoas?segmento=${s.segmento}&engajados=false`)}
+              />
+            ))}
           </div>
+        </div>
+      ) : null}
 
-          {/* Matriz Valor x Area (Fase 2C) */}
-          <div style={{ marginTop: 24 }}>
-            <MatrizValorArea />
-          </div>
+      {/* Sub-componentes carregam em paralelo ao NSM · cada um tem proprio loading */}
+      <div style={{ marginTop: 24 }}>
+        <CarrosselMandalas />
+      </div>
 
-          {/* Alertas Criticos (Fase 2D) */}
-          <div style={{ marginTop: 24 }}>
-            <AlertasCriticos />
-          </div>
-        </>
-      )}
+      <div style={{ marginTop: 24 }}>
+        <MatrizValorArea />
+      </div>
+
+      <div style={{ marginTop: 24 }}>
+        <AlertasCriticos />
+      </div>
 
       <style>{`
         @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }

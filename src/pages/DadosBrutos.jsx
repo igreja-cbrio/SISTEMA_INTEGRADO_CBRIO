@@ -81,9 +81,18 @@ export default function DadosBrutos({ embedded = false }) {
     }
   }, [filtroArea, filtroTipo, filtroDesde]);
 
+  // Default · ao montar, se lider tem 1+ areas pre-seleciona a primeira (evita
+  // tela vazia para nao-admin). Admin/ministerial veem tudo.
   useEffect(() => {
-    if (filtroArea || isAdmin) loadDados();
-  }, [loadDados, filtroArea, isAdmin]);
+    if (!filtroArea && !isAdmin && !ministerioId && kpiAreas.length > 0) {
+      setFiltroArea(kpiAreas[0]);
+    }
+  }, [filtroArea, isAdmin, ministerioId, kpiAreas]);
+
+  // Carrega sempre · admin/ministerial sem filtro = todas; lider so a sua area
+  useEffect(() => {
+    loadDados();
+  }, [loadDados]);
 
   const remover = async (d) => {
     if (!window.confirm(`Remover registro de ${d.tipo_nome} (${d.area} · ${d.data})?`)) return;
