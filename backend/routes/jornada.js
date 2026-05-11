@@ -171,4 +171,144 @@ router.get('/membro/:id', async (req, res) => {
   }
 });
 
+// ── POST /api/jornada/cruzar ──
+// Cruza combinacoes livres de criterios entre os 5 valores da Jornada
+// e papeis (voluntario, visitante, NEXT, grupos ativos, contribuinte).
+//
+// Body: { criterios: { seguir: 'tem'|'nao_tem'|null, ..., next: 'tem'|null } }
+// Retorna: { total_geral, total_match, percentual, membros: [...up to 200] }
+router.post('/cruzar', async (req, res) => {
+  try {
+    const criterios = req.body?.criterios || {};
+    const VALORES = ['seguir', 'conectar', 'investir', 'servir', 'generosidade'];
+    const PAPEIS  = ['voluntario', 'visitante', 'inscrito_next', 'grupo_ativo', 'contribuinte'];
+
+    // Set de criterios ativos (ignora os null/indiferente)
+    const ativos = {};
+    [...VALORES, ...PAPEIS].forEach(k => {
+      if (criterios[k] === 'tem' || criterios[k] === 'nao_tem') {
+        ativos[k] = criterios[k];
+      }
+    });
+
+    // 1. Lista todos membros ativos
+    const { data: membros, error: errM } = await supabase
+      .from('mem_membros')
+      .select('id, nome, email, telefone, status, foto_url')
+      .eq('active', true)
+      .order('nome');
+    if (errM) throw errM;
+    if (!membros?.length) return res.json({ total_geral: 0, total_match: 0, percentual: 0, membros: [] });
+
+    const ids = membros.map(m => m.id);
+    const totalGeral = ids.length;
+
+    // 2. Em paralelo · busca sets de cada criterio ATIVO (otimiza · so o que precisa)
+    const queries = [];
+    const sets = {};
+
+    if (ativos.seguir) {
+      queries.push(
+        supabase.from('mem_trilha_valores')
+          .select('membro_id, etapa, concluida')
+          .in('membro_id', ids).eq('concluida', true)
+          .then(r => {
+            sets.seguir = new Set(
+              (r.data || [])
+                .filter(t => ['conversao','primeiro_contato','batismo'].includes(t.etapa))
+                .map(t => t.membro_id)
+            );
+          })
+      );
+    }
+    if (ativos.conectar || ativos.grupo_ativo) {
+      queries.push(
+        supabase.from('mem_grupo_membros')
+          .select('membro_id').in('membro_id', ids).is('saiu_em', null)
+          .then(r => {
+            const s = new Set((r.data || []).map(g => g.membro_id));
+            sets.conectar = s;
+            sets.grupo_ativo = s;
+          })
+      );
+    }
+    if (ativos.investir) {
+      queries.push(
+        supabase.from('cui_jornada180')
+          .select('membro_id').in('membro_id', ids).gte('data_encontro', daysAgo(90))
+          .then(r => {
+            sets.investir = new Set((r.data || []).map(j => j.membro_id).filter(Boolean));
+          })
+      );
+    }
+    if (ativos.servir || ativos.voluntario) {
+      queries.push(
+        supabase.from('mem_voluntarios')
+          .select('membro_id').in('membro_id', ids).is('ate', null)
+          .then(r => {
+            const s = new Set((r.data || []).map(v => v.membro_id));
+            sets.servir = s;
+            sets.voluntario = s;
+          })
+      );
+    }
+    if (ativos.generosidade || ativos.contribuinte) {
+      queries.push(
+        supabase.from('mem_contribuicoes')
+          .select('membro_id').in('membro_id', ids).gte('data', daysAgo(90))
+          .then(r => {
+            const s = new Set((r.data || []).map(c => c.membro_id).filter(Boolean));
+            sets.generosidade = s;
+            sets.contribuinte = s;
+          })
+      );
+    }
+    if (ativos.visitante) {
+      queries.push(
+        supabase.from('int_visitantes')
+          .select('membresia_id').in('membresia_id', ids)
+          .then(r => {
+            sets.visitante = new Set((r.data || []).map(v => v.membresia_id).filter(Boolean));
+          })
+      );
+    }
+    if (ativos.inscrito_next) {
+      queries.push(
+        supabase.from('next_inscricoes')
+          .select('membro_id').in('membro_id', ids)
+          .then(r => {
+            sets.inscrito_next = new Set((r.data || []).map(n => n.membro_id).filter(Boolean));
+          })
+      );
+    }
+
+    await Promise.all(queries);
+
+    // 3. Filtra membros que atendem TODOS os criterios ativos
+    const matches = membros.filter(m => {
+      for (const [criterio, valor] of Object.entries(ativos)) {
+        const set = sets[criterio];
+        const has = set ? set.has(m.id) : false;
+        if (valor === 'tem' && !has) return false;
+        if (valor === 'nao_tem' && has) return false;
+      }
+      return true;
+    });
+
+    res.json({
+      total_geral: totalGeral,
+      total_match: matches.length,
+      percentual: totalGeral ? Math.round((matches.length / totalGeral) * 1000) / 10 : 0,
+      criterios_ativos: ativos,
+      membros: matches.slice(0, 200).map(m => ({
+        id: m.id, nome: m.nome, email: m.email, telefone: m.telefone,
+        status: m.status, foto_url: m.foto_url,
+      })),
+    });
+  } catch (e) {
+    console.error('jornada cruzar:', e.message);
+    res.status(500).json({ error: 'Erro ao cruzar dados' });
+  }
+});
+
 module.exports = router;

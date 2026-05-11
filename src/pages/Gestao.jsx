@@ -11,7 +11,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { gestao as gestaoApi } from '../api';
 import { useAuth } from '../contexts/AuthContext';
-import { Activity, Settings, AlertCircle, TrendingDown, Bell, Target, Shield, ArrowRight, ChevronRight, Flag, Edit3, Save as SaveIcon } from 'lucide-react';
+import { Activity, Settings, AlertCircle, TrendingDown, Bell, Target, Shield, ArrowRight, ChevronRight, Flag, Edit3, Save as SaveIcon, Filter } from 'lucide-react';
 import { estrategia as estrategiaApi } from '../api';
 import { toast } from 'sonner';
 import KpiDetalheModal from '../components/KpiDetalheModal';
@@ -261,6 +261,13 @@ function AbaPulso() {
 function AbaConfigurar() {
   const navigate = useNavigate();
   const items = [
+    {
+      titulo: 'Cruzamentos de pessoas',
+      desc: 'Quem cruza papeis e valores · "voluntarios que dizimam", "NEXT + grupos", etc',
+      Icon: Filter,
+      path: '/admin/cruzamentos',
+      cor: '#00B39D',
+    },
     {
       titulo: 'Regras de Notificacao',
       desc: 'Quem recebe alertas de cada modulo',

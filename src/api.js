@@ -1130,6 +1130,7 @@ export const jornada = {
   dashboard: () => get('/jornada/dashboard'),
   membros: (p) => get('/jornada/membros' + (p ? '?' + new URLSearchParams(p) : '')),
   membro: (id) => get(`/jornada/membro/${id}`),
+  cruzar: (criterios) => post('/jornada/cruzar', { criterios }),
 };
 
 export const devocionais = {
