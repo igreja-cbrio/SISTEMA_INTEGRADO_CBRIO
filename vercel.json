@@ -35,7 +35,7 @@
     },
     {
       "path": "/api/jornada/cron/refresh-papeis",
-      "schedule": "0 * * * *"
+      "schedule": "0 5 * * *"
     }
   ],
   "rewrites": [
