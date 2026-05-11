@@ -21,6 +21,8 @@ import KpiDetalheModal from '../components/KpiDetalheModal';
 import DadosBrutos from './DadosBrutos';
 import { Activity, Pencil, Plus, ChevronDown, ChevronRight, AlertCircle, CheckCircle2, Clock, TrendingDown, MinusCircle, ClipboardCheck, Database, BarChart2 } from 'lucide-react';
 import { toast } from 'sonner';
+import { SkeletonBlock } from '../components/Skeleton';
+import { formatErro } from '../lib/formatErro';
 
 const C = {
   bg: 'var(--cbrio-bg)', card: 'var(--cbrio-card)', text: 'var(--cbrio-text)',
@@ -159,7 +161,16 @@ export default function MinhaArea() {
   };
 
   if (isLoading) {
-    return <div style={{ padding: 60, textAlign: 'center', color: C.t3 }}>Carregando...</div>;
+    return (
+      <div style={{ padding: '24px 20px', maxWidth: 960, margin: '0 auto' }}>
+        <SkeletonBlock height={56} style={{ marginBottom: 16 }} />
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 8, marginBottom: 18 }}>
+          <SkeletonBlock height={64} /><SkeletonBlock height={64} /><SkeletonBlock height={64} /><SkeletonBlock height={64} /><SkeletonBlock height={64} />
+        </div>
+        <SkeletonBlock height={140} style={{ marginBottom: 10 }} />
+        <SkeletonBlock height={140} />
+      </div>
+    );
   }
 
   // Todos veem todos os KPIs — quem nao lidera area ve em modo leitura

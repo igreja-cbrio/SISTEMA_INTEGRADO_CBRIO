@@ -12,6 +12,7 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { estrategia as estrategiaApi } from '../../api';
+import { SkeletonBlock } from '../../components/Skeleton';
 import { useAuth } from '../../contexts/AuthContext';
 import { Plus, Pencil, Trash2, ChevronDown, ChevronRight, Target, ListChecks, Activity, X, Save } from 'lucide-react';
 import { toast } from 'sonner';
@@ -133,7 +134,13 @@ export default function EstruturaOkr({ embedded = false }) {
         </p>
 
         {loading ? (
-          <div style={{ padding: 30, textAlign: 'center', color: C.t3, fontSize: 13 }}>Carregando...</div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+            <SkeletonBlock height={48} />
+            <SkeletonBlock height={48} />
+            <SkeletonBlock height={48} />
+            <SkeletonBlock height={48} />
+            <SkeletonBlock height={48} />
+          </div>
         ) : objetivos.length === 0 ? (
           <div style={{ padding: 30, textAlign: 'center', color: C.t3, fontSize: 13 }}>
             Nenhum objetivo cadastrado.

@@ -19,6 +19,8 @@ import EstruturaOkr from './admin/EstruturaOkr';
 import EmptyState from '../components/EmptyState';
 import { CheckCircle2 } from 'lucide-react';
 import { formatErro } from '../lib/formatErro';
+import { btnPrimary, btnSm } from '../lib/uiTokens';
+import { SkeletonBlock } from '../components/Skeleton';
 
 const C = {
   bg: 'var(--cbrio-bg)', card: 'var(--cbrio-card)', text: 'var(--cbrio-text)',
@@ -674,12 +676,6 @@ const inpStyle = {
   color: 'var(--cbrio-text)', fontFamily: 'inherit',
 };
 
-const btnPrimary = {
-  padding: '6px 12px', borderRadius: 6, fontSize: 11, fontWeight: 600,
-  background: '#00B39D', color: '#fff', border: 'none', cursor: 'pointer',
-  display: 'inline-flex', alignItems: 'center', gap: 4,
-};
-
 // ============================================================================
 // Componentes auxiliares
 // ============================================================================
@@ -774,11 +770,16 @@ function Vazio({ children, tom = 'positivo' }) {
 }
 
 function Loading() {
-  return <div style={{ padding: 40, textAlign: 'center', color: C.t3 }}>Carregando...</div>;
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 10 }}>
+        <SkeletonBlock height={64} /><SkeletonBlock height={64} /><SkeletonBlock height={64} /><SkeletonBlock height={64} />
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(440px, 1fr))', gap: 14, marginTop: 4 }}>
+        <SkeletonBlock height={280} />
+        <SkeletonBlock height={280} />
+      </div>
+    </div>
+  );
 }
 
-const btnSm = {
-  background: 'transparent', border: `1px solid ${C.border}`,
-  padding: 6, borderRadius: 4, cursor: 'pointer', color: C.t3,
-  display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-};
