@@ -13,6 +13,7 @@ import { X, CheckCircle2, Clock, TrendingDown, MinusCircle, AlertCircle, Pencil,
 import KpiEditorModal from './KpiEditorModal';
 import OkrRevisaoModal from './OkrRevisaoModal';
 import { SkeletonKpiDetalhe } from './Skeleton';
+import { formatErro } from '../lib/formatErro';
 
 const C = {
   card: 'var(--cbrio-card)', text: 'var(--cbrio-text)',
@@ -58,7 +59,7 @@ export default function KpiDetalheModal({ open, kpiId, onClose, onUpdated, openI
     setErro(null);
     painelApi.kpi(kpiId)
       .then(setData)
-      .catch(e => setErro(e?.message || 'Erro ao carregar KPI'))
+      .catch(e => setErro(formatErro(e, 'KPI')))
       .finally(() => setLoading(false));
   }, [kpiId]);
 

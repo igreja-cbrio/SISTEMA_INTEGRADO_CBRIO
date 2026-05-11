@@ -13,13 +13,17 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { kpis as kpisApi } from '../api';
 
-// DB usa areas em lowercase ('ami','cba','kids',...) mas o frontend e o
-// AREAS const usam mixed case ('AMI','CBA','CBKids',...). Mapeia.
+// DB usa areas em lowercase. Frontend usa label amigavel.
+// 6 areas oficiais (cleanup pos-OKR 2026 · ver migration 20260507400000).
+// Cuidados/Grupos/Integracao/Voluntariado/NEXT/Generosidade sao MINISTERIOS,
+// nao areas KPI · nao aparecem aqui.
 const AREA_DB_TO_FRONTEND = {
-  ami: 'AMI', cba: 'CBA', kids: 'CBKids', cuidados: 'Cuidados',
-  grupos: 'Grupos', integracao: 'Integracao', voluntariado: 'Voluntariado',
-  next: 'NEXT', generosidade: 'Generosidade',
-  jornada: 'Jornada', igreja: 'Igreja',
+  kids:   'CBKids',
+  ami:    'AMI',
+  bridge: 'Bridge',
+  sede:   'Sede',
+  online: 'Online',
+  cba:    'CBA',
 };
 
 function normalizeArea(area) {
