@@ -493,16 +493,17 @@ function ResumoGerais({ detalhes, onAddKr, onEditKr, removerKr, onAbrirEspecific
       )}
 
       {/* Botao para ver especificos · ministerial (KRs filhos) ou operacional (KPIs por area adm) */}
-      {(totalEspecificos > 0 || (isOperacional && kpis.length > 0)) && (
+      {(totalEspecificos > 0 || isOperacional) && (
         <div style={{ marginTop: 12, paddingTop: 10, borderTop: `1px solid ${C.border}`, display: 'flex', justifyContent: 'flex-end' }}>
           <button onClick={onAbrirEspecificos} style={{
-            padding: '6px 14px', borderRadius: 6, fontSize: 11, fontWeight: 600,
-            background: C.primaryBg, color: C.primaryDark, border: `1px solid ${C.primary}`,
+            padding: '8px 16px', borderRadius: 6, fontSize: 12, fontWeight: 700,
+            background: C.primary, color: '#fff', border: `1px solid ${C.primary}`,
             cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 6,
+            boxShadow: '0 1px 2px rgba(0,0,0,0.08)',
           }}>
-            <Activity size={11} />
+            <Activity size={12} />
             {isOperacional
-              ? `Ver desdobramento por área administrativa (${kpis.length} KPIs)`
+              ? `Ver desdobramento por área administrativa${kpis.length > 0 ? ` (${kpis.length} KPIs)` : ''}`
               : `Ver desdobramento por área (${totalEspecificos} específicos)`}
           </button>
         </div>
@@ -622,6 +623,12 @@ function TabelaDesdobramentoAdm({ detalhes }) {
         Cada area da gestão tem seu KPI específico medindo o quanto serve bem os ministérios.
         Hospitalidade agrega Reserva + Cozinha + Manutenção · Logística agrega Estoque + Compras.
       </p>
+
+      {kpis.length === 0 && (
+        <div style={{ padding: 24, textAlign: 'center', color: C.t3, fontSize: 12, border: `1px dashed ${C.border}`, borderRadius: 6 }}>
+          Nenhum KPI específico vinculado a este OKR ainda.
+        </div>
+      )}
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
         {GRUPO_ORDEM.filter(g => porGrupo[g]?.length > 0).map(g => (
