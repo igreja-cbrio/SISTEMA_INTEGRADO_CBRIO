@@ -99,7 +99,8 @@ export default function Painel() {
   };
 
   const central = segmentos.find(s => s.segmento === 'central');
-  const segmentados = segmentos.filter(s => s.segmento !== 'central');
+  // CBA removido dos cards · so coleta batismos/aceitacoes via dados_brutos
+  const segmentados = segmentos.filter(s => s.segmento !== 'central' && s.segmento !== 'cba');
   const ultimaAtualizacao = segmentos[0]?.atualizado_em;
 
   return (

@@ -317,7 +317,7 @@ const AREAS_CLIENTE = [
   { id: 'bridge', nome: 'Bridge' },
   { id: 'sede',   nome: 'Sede' },
   { id: 'online', nome: 'Online' },
-  { id: 'cba',    nome: 'CBA' },
+  // CBA removido · so coleta dados batismos/aceitacoes via dados_brutos
 ];
 
 router.get('/matriz-adm', async (req, res) => {
