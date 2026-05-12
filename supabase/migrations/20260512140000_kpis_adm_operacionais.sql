@@ -356,11 +356,11 @@ BEGIN
   v_valor := public.agg_solicitacoes_kpi(v_area, v_sub, v_metrica, v_inicio, v_fim);
 
   -- UPSERT no cache kpi_valores_calculados (mesmo padrao do recalcular_kpi)
-  INSERT INTO public.kpi_valores_calculados (kpi_id, periodo_referencia, valor, calculado_em, detalhes)
+  INSERT INTO public.kpi_valores_calculados (kpi_id, periodo_referencia, valor_calculado, calculado_em, detalhes)
   VALUES (p_kpi_id, v_periodo, v_valor, now(),
           jsonb_build_object('area_responsavel', v_area, 'subcategoria', v_sub, 'metrica', v_metrica, 'fonte', 'solicitacoes'))
   ON CONFLICT (kpi_id, periodo_referencia) DO UPDATE
-    SET valor = EXCLUDED.valor,
+    SET valor_calculado = EXCLUDED.valor_calculado,
         calculado_em = now(),
         detalhes = EXCLUDED.detalhes;
 

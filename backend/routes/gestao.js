@@ -310,7 +310,7 @@ router.get('/painel-adm', async (req, res) => {
     const kpiIds = (kpis || []).map(k => k.id);
     const { data: valores } = kpiIds.length ? await supabase
       .from('kpi_valores_calculados')
-      .select('kpi_id, valor, periodo_referencia, calculado_em')
+      .select('kpi_id, valor_calculado, periodo_referencia, calculado_em')
       .in('kpi_id', kpiIds)
       .order('calculado_em', { ascending: false }) : { data: [] };
 
@@ -350,7 +350,7 @@ router.get('/painel-adm', async (req, res) => {
           id: k.id,
           indicador: k.indicador,
           metrica: k.formula_config?.metrica,
-          valor: vc?.valor ?? null,
+          valor: vc?.valor_calculado ?? null,
           meta: k.meta_valor,
           unidade: k.unidade,
           periodo: vc?.periodo_referencia,
