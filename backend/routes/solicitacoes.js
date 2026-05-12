@@ -5,17 +5,30 @@ const { notificar, resolverDestinatarios } = require('../services/notificar');
 
 router.use(authenticate);
 
-const ALLOWED_CATEGORIES = ['ti', 'compras', 'reembolso', 'espaco', 'infraestrutura', 'ferias', 'outro'];
+const ALLOWED_CATEGORIES = ['ti', 'compras', 'reembolso', 'reserva_espaco', 'espaco', 'infraestrutura', 'ferias', 'outro'];
 
 // Map categoria → notification module
 const CATEGORIA_MODULO = {
   ti: 'ti',
   compras: 'logistica',
   reembolso: 'financeiro',
-  espaco: 'administrativo',
+  reserva_espaco: 'administrativo',
+  espaco: 'administrativo', // legado
   infraestrutura: 'administrativo',
   ferias: 'rh',
   outro: 'administrativo',
+};
+
+// Map categoria → area_responsavel + subcategoria (Fase A backbone)
+const CATEGORIA_TO_AREA_RESP = {
+  ti:              { area: 'ti',                subcategoria: 'default' },
+  compras:         { area: 'logistica_compras', subcategoria: 'default' },
+  reembolso:       { area: 'financeiro',        subcategoria: 'reembolso' },
+  reserva_espaco:  { area: 'reserva_espaco',    subcategoria: 'default' },
+  espaco:          { area: 'reserva_espaco',    subcategoria: 'default' },
+  infraestrutura:  { area: 'manutencao',        subcategoria: 'default' },
+  ferias:          { area: 'rh',                subcategoria: 'ferias' },
+  outro:           { area: null,                subcategoria: 'default' },
 };
 
 // Map módulo → categorias (for granular permission filtering)
@@ -106,11 +119,20 @@ router.post('/', async (req, res) => {
     const userName = req.user.name;
 
     const { titulo, descricao, justificativa, categoria, urgencia, valor_estimado, area_solicitante,
+            // Fase A backbone
+            area_cliente, area_responsavel, subcategoria, eh_urgente, justificativa_urgencia,
+            data_necessaria, espaco_solicitado, data_uso, horario_inicio, horario_fim, qtde_pessoas,
+            // Reembolso (legado)
             forma_pagamento, chave_pix, banco, agencia, conta, documento_url } = req.body;
     if (!titulo || !categoria) return res.status(400).json({ error: 'Título e categoria são obrigatórios' });
     if (!ALLOWED_CATEGORIES.includes(categoria)) {
       return res.status(400).json({ error: `Categoria inválida: "${categoria}". Permitidas: ${ALLOWED_CATEGORIES.join(', ')}` });
     }
+
+    // Auto-mapeia area_responsavel + subcategoria
+    const mapa = CATEGORIA_TO_AREA_RESP[categoria] || { area: null, subcategoria: 'default' };
+    const finalAreaResp = area_responsavel || mapa.area;
+    const finalSub = subcategoria || mapa.subcategoria;
 
     const { data, error } = await supabase
       .from('solicitacoes')
@@ -123,6 +145,22 @@ router.post('/', async (req, res) => {
         valor_estimado,
         solicitante_id: userId,
         area_solicitante,
+        // Campos novos · trigger calcula SLA e precisa_aprovacao_financeira
+        area_cliente: area_cliente || null,
+        area_responsavel: finalAreaResp,
+        subcategoria: finalSub,
+        eh_urgente: !!eh_urgente,
+        justificativa_urgencia: justificativa_urgencia || null,
+        data_necessaria: data_necessaria || null,
+        // Reserva de espaco
+        ...(finalAreaResp === 'reserva_espaco' && {
+          espaco_solicitado: espaco_solicitado || null,
+          data_uso: data_uso || null,
+          horario_inicio: horario_inicio || null,
+          horario_fim: horario_fim || null,
+          qtde_pessoas: qtde_pessoas || null,
+        }),
+        // Reembolso
         ...(categoria === 'reembolso' && {
           forma_pagamento: forma_pagamento || null,
           chave_pix: chave_pix || null,
@@ -160,11 +198,23 @@ router.patch('/:id', async (req, res) => {
   try {
     const userName = req.user.name;
 
-    const { status, responsavel_id, observacoes } = req.body;
+    const { status, responsavel_id, observacoes,
+            // Fase A · novos campos editaveis
+            proposta_orcamento, proposta_cronograma,
+            nps_nota, nps_comentario,
+            aprovado_financeiro_em } = req.body;
     const update = {};
     if (status) update.status = status;
     if (responsavel_id !== undefined) update.responsavel_id = responsavel_id;
     if (observacoes !== undefined) update.observacoes = observacoes;
+    if (proposta_orcamento !== undefined) update.proposta_orcamento = proposta_orcamento;
+    if (proposta_cronograma !== undefined) update.proposta_cronograma = proposta_cronograma;
+    if (nps_nota !== undefined) update.nps_nota = nps_nota;
+    if (nps_comentario !== undefined) update.nps_comentario = nps_comentario;
+    if (aprovado_financeiro_em !== undefined) {
+      update.aprovado_financeiro_em = aprovado_financeiro_em;
+      update.aprovado_financeiro_por = req.user.userId;
+    }
 
     if (!Object.keys(update).length) return res.status(400).json({ error: 'Nada para atualizar' });
 
@@ -217,6 +267,46 @@ router.patch('/:id', async (req, res) => {
     console.error('[SOLICITACOES] update error:', e.message);
     res.status(500).json({ error: 'Erro ao atualizar solicitação' });
   }
+});
+
+// ── SLA definitions (catalogo de prazos) ───────────────────────
+router.get('/sla-defs', async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('sla_definicoes')
+      .select('*')
+      .eq('ativo', true)
+      .order('area_responsavel')
+      .order('subcategoria')
+      .order('eh_urgente');
+    if (error) throw error;
+    res.json(data || []);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── Reserva de espacos · calendario ────────────────────────────
+router.get('/reservas-espaco', async (req, res) => {
+  try {
+    const { desde, ate } = req.query;
+    let q = supabase.from('vw_reserva_espacos').select('*');
+    if (desde) q = q.gte('data_uso', desde);
+    if (ate) q = q.lte('data_uso', ate);
+    const { data, error } = await q;
+    if (error) throw error;
+    res.json(data || []);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── Area alcadas (limites de aprovacao financeira) ─────────────
+router.get('/alcadas', async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('area_alcadas')
+      .select('*')
+      .order('area_cliente');
+    if (error) throw error;
+    res.json(data || []);
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 module.exports = router;
