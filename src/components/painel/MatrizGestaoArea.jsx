@@ -133,21 +133,21 @@ export default function MatrizGestaoArea() {
                   </td>
                   {areas_cliente.map(cli => {
                     const cell = cells[`${grupo.key}:${cli.id}`];
-                    const cor = STATUS_COR[cell?.status] || STATUS_COR.na;
-                    const isNA = cell?.status === 'sem_dado';
-                    const isClickable = !isNA;
+                    const cor = STATUS_COR[cell?.status] || STATUS_COR.sem_dado;
+                    const semDado = cell?.status === 'sem_dado';
+                    // Todas as celulas sao clicaveis · sempre mostra os KPIs do grupo
+                    // mesmo quando nao tem solicitacao no periodo
                     return (
                       <td
                         key={cli.id}
-                        onClick={isClickable ? () => setCelulaAberta(cell) : undefined}
+                        onClick={() => setCelulaAberta(cell)}
                         style={{
                           background: cor,
                           color: '#fff',
                           textAlign: 'center',
                           padding: 10,
                           borderRadius: 8,
-                          cursor: isClickable ? 'pointer' : 'default',
-                          opacity: isNA ? 0.4 : 1,
+                          cursor: 'pointer',
                           minHeight: 56,
                           height: 56,
                           fontSize: 11,
@@ -157,19 +157,26 @@ export default function MatrizGestaoArea() {
                           userSelect: 'none',
                         }}
                         onMouseEnter={e => {
-                          if (isClickable) {
-                            e.currentTarget.style.transform = 'scale(1.04)';
-                            e.currentTarget.style.boxShadow = '0 4px 12px rgba(0,0,0,0.15)';
-                          }
+                          e.currentTarget.style.transform = 'scale(1.04)';
+                          e.currentTarget.style.boxShadow = '0 4px 12px rgba(0,0,0,0.15)';
                         }}
                         onMouseLeave={e => {
                           e.currentTarget.style.transform = 'scale(1)';
                           e.currentTarget.style.boxShadow = 'none';
                         }}
-                        title={isNA ? 'Sem solicitacao no periodo' : `${cell.no_prazo}/${cell.concluidos} no SLA · ${cell.atrasados} atrasados · ${cell.em_andamento} em andamento`}
+                        title={semDado
+                          ? 'Sem solicitacao no periodo · clique pra ver os KPIs desta area'
+                          : `${cell.no_prazo}/${cell.concluidos} no SLA · ${cell.atrasados} atrasados · ${cell.em_andamento} em andamento`}
                       >
-                        {isNA ? (
-                          <span style={{ color: '#9CA3AF', fontWeight: 500, fontSize: 10 }}>—</span>
+                        {semDado ? (
+                          <>
+                            <div style={{ fontSize: 14, lineHeight: 1, marginBottom: 2, fontWeight: 500 }}>
+                              —
+                            </div>
+                            <div style={{ fontSize: 9, fontWeight: 500, opacity: 0.92, lineHeight: 1.1 }}>
+                              0 sol.
+                            </div>
+                          </>
                         ) : (
                           <>
                             <div style={{ fontSize: 14, lineHeight: 1, marginBottom: 2 }}>
