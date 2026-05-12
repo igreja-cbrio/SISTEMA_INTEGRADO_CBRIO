@@ -27,15 +27,34 @@ const SEV_MAP = {
 };
 
 const AGENT_TYPES = [
-  { value: 'system_auditor', label: '🔍 Auditor Geral', desc: 'Analisa dados reais de todos os módulos e identifica problemas, inconsistências e oportunidades de melhoria.', icon: '🔍' },
-  { value: 'module_rh', label: '👥 Agente RH', desc: 'Audita colaboradores, admissões, férias, treinamentos. Verifica campos faltantes e inconsistências.', icon: '👥' },
-  { value: 'module_financeiro', label: '💰 Agente Financeiro', desc: 'Audita contas, transações, contas a pagar e reembolsos. Detecta vencimentos e anomalias.', icon: '💰' },
-  { value: 'module_eventos', label: '📅 Agente Eventos', desc: 'Audita eventos, tarefas, orçamentos e reuniões. Identifica atrasos e eventos sem responsável.', icon: '📅' },
-  { value: 'module_projetos', label: '📊 Agente Projetos', desc: 'Audita projetos, fases, tarefas e riscos. Detecta progresso estagnado e marcos vencidos.', icon: '📊' },
-  { value: 'module_logistica', label: '🚚 Agente Logística', desc: 'Audita fornecedores, pedidos, solicitações e notas fiscais. Verifica atrasos e pendências.', icon: '🚚' },
-  { value: 'module_patrimonio', label: '🏢 Agente Patrimônio', desc: 'Audita bens, inventários e movimentações. Detecta bens extraviados e sem catalogação.', icon: '🏢' },
-  { value: 'module_membresia', label: '⛪ Agente Membresia', desc: 'Audita membros, integração e engajamento. Identifica dados incompletos e inativos.', icon: '⛪' },
-  { value: 'design_auditor', label: '🎨 Agente Design', desc: 'Analisa layout e UI do sistema, traz referências modernas (Linear, Vercel, Notion) e sugere melhorias concretas com Tailwind.', icon: '🎨' },
+  // Auditoria cross-módulos
+  { value: 'system_auditor',     label: '🔍 Auditor Geral',       desc: 'Analisa dados reais de todos os módulos e identifica problemas, inconsistências e oportunidades.', icon: '🔍', group: 'cross' },
+  { value: 'design_auditor',     label: '🎨 Agente Design',       desc: 'Analisa layout e UI, traz referências modernas (Linear, Vercel, Notion) e sugere melhorias.', icon: '🎨', group: 'cross' },
+
+  // Administrativo
+  { value: 'module_rh',          label: '👥 Agente RH',           desc: 'Audita colaboradores, admissões, férias, treinamentos. Verifica campos faltantes.', icon: '👥', group: 'admin' },
+  { value: 'module_financeiro',  label: '💰 Agente Financeiro',   desc: 'Audita contas, transações, contas a pagar e reembolsos.', icon: '💰', group: 'admin' },
+  { value: 'module_logistica',   label: '🚚 Agente Logística',    desc: 'Audita fornecedores, pedidos, solicitações e notas fiscais.', icon: '🚚', group: 'admin' },
+  { value: 'module_patrimonio',  label: '🏢 Agente Patrimônio',   desc: 'Audita bens, inventários e movimentações.', icon: '🏢', group: 'admin' },
+
+  // Acompanhamento
+  { value: 'module_eventos',     label: '📅 Agente Eventos',      desc: 'Audita eventos, tarefas, orçamentos e reuniões.', icon: '📅', group: 'acomp' },
+  { value: 'module_projetos',    label: '📊 Agente Projetos',     desc: 'Audita projetos, fases, tarefas e riscos.', icon: '📊', group: 'acomp' },
+
+  // Ministerial
+  { value: 'module_membresia',   label: '⛪ Agente Membresia',     desc: 'Audita membros, integração e engajamento.', icon: '⛪', group: 'min' },
+  { value: 'module_integracao',  label: '🤲 Agente Integração',   desc: 'Audita visitantes, decisões e funil de acompanhamento.', icon: '🤲', group: 'min' },
+  { value: 'module_next',        label: '➡️ Agente NEXT',         desc: 'Audita inscrições do NEXT, check-ins e indicações pendentes.', icon: '➡️', group: 'min' },
+  { value: 'module_grupos',      label: '👥 Agente Grupos',       desc: 'Audita grupos de conexão, líderes e cobertura por bairro.', icon: '👥', group: 'min' },
+  { value: 'module_cuidados',    label: '💜 Agente Cuidados',     desc: 'Audita capelania, aconselhamento e Jornada 180.', icon: '💜', group: 'min' },
+  { value: 'module_voluntariado',label: '🤝 Agente Voluntariado', desc: 'Audita voluntários ativos, escalas e sincronização Planning Center.', icon: '🤝', group: 'min' },
+
+  // Inteligência / Governança
+  { value: 'module_nps',         label: '📢 Agente NPS',          desc: 'Audita pesquisas de satisfação, taxa de resposta e tendências de NPS.', icon: '📢', group: 'intel' },
+  { value: 'module_cerebro',     label: '🧠 Agente Cérebro',      desc: 'Audita fila do Cérebro CBRio, erros de processamento e custo de tokens.', icon: '🧠', group: 'intel' },
+  { value: 'module_kpis',        label: '📈 Agente KPIs/OKR',     desc: 'Audita indicadores táticos, trajetória das metas e cobertura por área.', icon: '📈', group: 'intel' },
+  { value: 'module_processos',   label: '⚙️ Agente Processos',    desc: 'Audita processos operacionais, OKRs e responsáveis.', icon: '⚙️', group: 'intel' },
+  { value: 'module_governanca',  label: '🏛️ Agente Governança',   desc: 'Audita ciclo mensal (OKR/DRE/KPI/Conselho), pautas e deliberações.', icon: '🏛️', group: 'intel' },
 ];
 
 const MODULE_OPTIONS = [

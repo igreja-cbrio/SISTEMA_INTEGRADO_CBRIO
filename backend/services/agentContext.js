@@ -21,13 +21,21 @@ const MODULE_ROUTE_KEY = {
   cuidados: 'cuidados',
   grupos: 'membresia',
   integracao: 'membresia',
-  marketing: null, // sem módulo granular — só admin/diretor
+  next: 'membresia',
+  marketing: null,         // sem módulo granular — só admin/diretor
+  // Módulos cross-cutting / institucionais (sem routeKey específica)
+  nps: null,
+  cerebro: null,
+  kpis: null,
+  processos: null,
+  governanca: null,
 };
 
 const ALL_MODULES = [
   'rh', 'financeiro', 'logistica', 'solicitarCompra', 'patrimonio',
   'eventos', 'projetos', 'expansao', 'membresia', 'voluntariado',
-  'cuidados', 'grupos', 'marketing',
+  'cuidados', 'grupos', 'integracao', 'next', 'marketing',
+  'nps', 'cerebro', 'kpis', 'processos', 'governanca',
 ];
 
 /**
@@ -128,7 +136,14 @@ Módulos:
 - Voluntariado: voluntários, escalas, check-ins, serviços (Planning Center)
 - Cuidados: aconselhamento, capelania, acompanhamentos, jornada 180, convertidos
 - Grupos: grupos de vida, membros dos grupos, documentos
+- Integração: visitantes, decisões, follow-up de novos
+- NEXT: inscrições no NEXT (porta de entrada), check-ins, indicações
 - Marketing: campanhas e comunicação
+- NPS: pesquisas de satisfação geradas por IA, respostas e análise
+- Cérebro CBRio: base de conhecimento Obsidian (SharePoint), fila de processamento de arquivos via IA
+- KPIs/OKR: indicadores táticos, dados brutos, trajetória (no_alvo / atras / critico)
+- Processos: gestão operacional, OKRs do mês, registros de indicadores
+- Governança: ciclos mensais (OKR, DRE, KPI, Conselho), reuniões e tarefas
 
 Regras importantes:
 - Transferências entre contas devem ser filtradas nas análises financeiras
@@ -153,7 +168,14 @@ async function fetchModuleContext(mod) {
     case 'voluntariado': return fetchVoluntariadoContext();
     case 'cuidados': return fetchCuidadosContext();
     case 'grupos': return fetchGruposContext();
+    case 'integracao': return fetchIntegracaoContext();
+    case 'next': return fetchNextContext();
     case 'marketing': return fetchMarketingContext();
+    case 'nps': return fetchNpsContext();
+    case 'cerebro': return fetchCerebroContext();
+    case 'kpis': return fetchKpisContext();
+    case 'processos': return fetchProcessosContext();
+    case 'governanca': return fetchGovernancaContext();
     default: return { info: 'Módulo não reconhecido' };
   }
 }
@@ -525,6 +547,307 @@ async function fetchMarketingContext() {
   return {
     resumo: { info: 'Módulo de marketing sem tabelas dedicadas ainda.' },
     observacao: 'Peças de comunicação vivem em eventos/projetos; campanhas não têm schema próprio.',
+  };
+}
+
+// ─── Integração ────────────────────────────────────────────────────────
+
+async function fetchIntegracaoContext() {
+  const d30 = new Date(Date.now() - 30 * 86400000).toISOString().slice(0, 10);
+  const d90 = new Date(Date.now() - 90 * 86400000).toISOString().slice(0, 10);
+
+  const { count: totalVisitantes } = await supabase.from('int_visitantes').select('id', { count: 'exact', head: true });
+  const { count: visitantes30d }   = await supabase.from('int_visitantes').select('id', { count: 'exact', head: true }).gte('data_visita', d30);
+  const { count: novos }           = await supabase.from('int_visitantes').select('id', { count: 'exact', head: true }).eq('status', 'novo');
+  const { count: decisoes30d }     = await supabase.from('int_visitantes').select('id', { count: 'exact', head: true }).eq('fez_decisao', true).gte('data_visita', d30);
+  const { count: semFollowup }     = await supabase.from('int_visitantes').select('id', { count: 'exact', head: true }).eq('status', 'novo').lt('data_visita', d30);
+  const { count: virouMembro }     = await supabase.from('int_visitantes').select('id', { count: 'exact', head: true }).eq('status', 'membro_ativo').gte('data_visita', d90);
+
+  const { data: novosSemResp } = await supabase
+    .from('int_visitantes')
+    .select('id, nome, data_visita, status, responsavel_id')
+    .eq('status', 'novo')
+    .is('responsavel_id', null)
+    .order('data_visita', { ascending: false })
+    .limit(30);
+
+  return {
+    resumo: {
+      total_visitantes: totalVisitantes,
+      visitantes_ultimos_30d: visitantes30d,
+      em_status_novo: novos,
+      decisoes_ultimos_30d: decisoes30d,
+      sem_followup_apos_30d: semFollowup,
+      virou_membro_ultimos_90d: virouMembro,
+    },
+    visitantes_novos_sem_responsavel: novosSemResp || [],
+  };
+}
+
+// ─── NEXT ──────────────────────────────────────────────────────────────
+
+async function fetchNextContext() {
+  const d30 = new Date(Date.now() - 30 * 86400000).toISOString();
+
+  const { count: totalInscritos }    = await supabase.from('next_inscricoes').select('id', { count: 'exact', head: true });
+  const { count: inscritos30d }      = await supabase.from('next_inscricoes').select('id', { count: 'exact', head: true }).gte('created_at', d30);
+  const { count: comCheckin }        = await supabase.from('next_inscricoes').select('id', { count: 'exact', head: true }).not('check_in_at', 'is', null);
+  const { count: semCheckin30d }     = await supabase.from('next_inscricoes').select('id', { count: 'exact', head: true }).is('check_in_at', null).gte('created_at', d30);
+
+  // Indicações abertas: registradas mas sem acionamento (caso a tabela exista)
+  let indicacoesPendentes = null;
+  try {
+    const { count } = await supabase
+      .from('next_indicacoes')
+      .select('id', { count: 'exact', head: true })
+      .eq('status', 'pendente');
+    indicacoesPendentes = count;
+  } catch { /* tabela pode não existir */ }
+
+  const { data: ultimasInscricoes } = await supabase
+    .from('next_inscricoes')
+    .select('id, nome, telefone, email, check_in_at, created_at')
+    .order('created_at', { ascending: false })
+    .limit(30);
+
+  return {
+    resumo: {
+      total_inscritos: totalInscritos,
+      inscritos_ultimos_30d: inscritos30d,
+      inscritos_com_checkin: comCheckin,
+      sem_checkin_no_periodo: semCheckin30d,
+      indicacoes_pendentes: indicacoesPendentes,
+    },
+    ultimas_inscricoes: ultimasInscricoes || [],
+  };
+}
+
+// ─── NPS ───────────────────────────────────────────────────────────────
+
+async function fetchNpsContext() {
+  const d30 = new Date(Date.now() - 30 * 86400000).toISOString();
+  const d7  = new Date(Date.now() - 7  * 86400000).toISOString();
+
+  const { count: total }      = await supabase.from('nps_pesquisas').select('id', { count: 'exact', head: true });
+  const { count: ativas }     = await supabase.from('nps_pesquisas').select('id', { count: 'exact', head: true }).eq('status', 'ativa');
+  const { count: encerradas } = await supabase.from('nps_pesquisas').select('id', { count: 'exact', head: true }).eq('status', 'encerrada');
+
+  const { data: pesquisasAtivas } = await supabase
+    .from('vw_nps_pesquisa_stats')
+    .select('*')
+    .eq('status', 'ativa')
+    .order('data_inicio', { ascending: false })
+    .limit(30);
+
+  // Pesquisas ativas sem resposta há > 7d
+  const { data: ativasSemRespRecente } = await supabase
+    .from('nps_pesquisas')
+    .select('id, titulo, data_inicio')
+    .eq('status', 'ativa')
+    .lt('created_at', d7);
+
+  // Pesquisas com análise IA pendente
+  const { data: semAnalise } = await supabase
+    .from('nps_pesquisas')
+    .select('id, titulo, status, created_at')
+    .is('analise_ia', null)
+    .eq('status', 'encerrada')
+    .limit(30);
+
+  // Respostas recentes (sentimento)
+  const { data: respostasRecentes } = await supabase
+    .from('nps_respostas')
+    .select('pesquisa_id, score, comentario, created_at')
+    .gte('created_at', d30)
+    .order('created_at', { ascending: false })
+    .limit(100);
+
+  return {
+    resumo: { total_pesquisas: total, ativas, encerradas },
+    pesquisas_ativas_stats: pesquisasAtivas || [],
+    pesquisas_encerradas_sem_analise_ia: semAnalise || [],
+    pesquisas_ativas_sem_resposta_recente: ativasSemRespRecente || [],
+    respostas_ultimos_30d: respostasRecentes || [],
+  };
+}
+
+// ─── Cérebro CBRio ─────────────────────────────────────────────────────
+
+async function fetchCerebroContext() {
+  const d24 = new Date(Date.now() - 24 * 3600 * 1000).toISOString();
+  const d7  = new Date(Date.now() - 7  * 86400000).toISOString();
+
+  const { count: total }        = await supabase.from('cerebro_fila').select('id', { count: 'exact', head: true });
+  const { count: pendentes }    = await supabase.from('cerebro_fila').select('id', { count: 'exact', head: true }).eq('status', 'pendente');
+  const { count: processando }  = await supabase.from('cerebro_fila').select('id', { count: 'exact', head: true }).eq('status', 'processando');
+  const { count: concluidos }   = await supabase.from('cerebro_fila').select('id', { count: 'exact', head: true }).eq('status', 'concluido');
+  const { count: comErro }      = await supabase.from('cerebro_fila').select('id', { count: 'exact', head: true }).eq('status', 'erro');
+  const { count: ignorados }    = await supabase.from('cerebro_fila').select('id', { count: 'exact', head: true }).eq('status', 'ignorado');
+
+  // Pendentes há > 24h (atraso)
+  const { data: pendentesAtrasados } = await supabase
+    .from('cerebro_fila')
+    .select('id, nome_arquivo, biblioteca, pasta_origem, detectado_em')
+    .eq('status', 'pendente')
+    .lt('detectado_em', d24)
+    .limit(20);
+
+  // Últimos erros
+  const { data: errosRecentes } = await supabase
+    .from('cerebro_fila')
+    .select('id, nome_arquivo, biblioteca, erro_mensagem, processado_em')
+    .eq('status', 'erro')
+    .gte('processado_em', d7)
+    .order('processado_em', { ascending: false })
+    .limit(20);
+
+  // Tokens consumidos (últimos 7d)
+  const { data: ultimosOk } = await supabase
+    .from('cerebro_fila')
+    .select('tokens_usados, processado_em')
+    .eq('status', 'concluido')
+    .gte('processado_em', d7);
+  const tokens7d = (ultimosOk || []).reduce((s, r) => s + (r.tokens_usados || 0), 0);
+
+  return {
+    resumo: {
+      fila_total: total,
+      pendentes,
+      processando,
+      concluidos,
+      com_erro: comErro,
+      ignorados,
+      tokens_ultimos_7d: tokens7d,
+    },
+    pendentes_ha_mais_de_24h: pendentesAtrasados || [],
+    erros_ultimos_7d: errosRecentes || [],
+  };
+}
+
+// ─── KPIs / OKR ────────────────────────────────────────────────────────
+
+async function fetchKpisContext() {
+  const { count: totalKpis }  = await supabase.from('kpi_indicadores_taticos').select('id', { count: 'exact', head: true }).eq('ativo', true);
+  const { count: kpisOkr }    = await supabase.from('kpi_indicadores_taticos').select('id', { count: 'exact', head: true }).eq('ativo', true).eq('is_okr', true);
+
+  // Trajetória atual (status: no_alvo / atras / critico / sem_dado)
+  let trajetoria = [];
+  try {
+    const { data } = await supabase
+      .from('vw_kpi_trajetoria_atual')
+      .select('kpi_id, area, indicador, periodo, valor_atual, meta_valor, status, percentual')
+      .limit(200);
+    trajetoria = data || [];
+  } catch { /* view pode não existir */ }
+
+  const porStatus = { no_alvo: 0, atras: 0, critico: 0, sem_dado: 0 };
+  trajetoria.forEach(t => {
+    if (porStatus[t.status] != null) porStatus[t.status]++;
+  });
+
+  const criticos = trajetoria.filter(t => t.status === 'critico').slice(0, 20);
+  const atrasados = trajetoria.filter(t => t.status === 'atras').slice(0, 20);
+
+  // Áreas sem dado recente (últimos 14d)
+  const d14 = new Date(Date.now() - 14 * 86400000).toISOString().slice(0, 10);
+  const { data: dadosRecentes } = await supabase
+    .from('dados_brutos')
+    .select('area, tipo_id, data')
+    .gte('data', d14)
+    .limit(500);
+  const areasComDados = new Set((dadosRecentes || []).map(d => d.area).filter(Boolean));
+
+  return {
+    resumo: {
+      total_kpis_ativos: totalKpis,
+      kpis_okr: kpisOkr,
+      trajetoria_no_alvo: porStatus.no_alvo,
+      trajetoria_atras: porStatus.atras,
+      trajetoria_critico: porStatus.critico,
+      trajetoria_sem_dado: porStatus.sem_dado,
+      areas_com_dado_ultimos_14d: areasComDados.size,
+    },
+    kpis_criticos: criticos,
+    kpis_atrasados: atrasados,
+  };
+}
+
+// ─── Processos ─────────────────────────────────────────────────────────
+
+async function fetchProcessosContext() {
+  const { count: total }     = await supabase.from('processos').select('id', { count: 'exact', head: true }).neq('status', 'arquivado');
+  const { count: okrs }      = await supabase.from('processos').select('id', { count: 'exact', head: true }).eq('is_okr', true).neq('status', 'arquivado');
+  const { count: pausados }  = await supabase.from('processos').select('id', { count: 'exact', head: true }).eq('status', 'pausado');
+
+  const { data: semResponsavel } = await supabase
+    .from('processos')
+    .select('id, nome, area, categoria, is_okr, status')
+    .is('responsavel_id', null)
+    .neq('status', 'arquivado')
+    .limit(30);
+
+  const { data: okrsSemKpi } = await supabase
+    .from('processos')
+    .select('id, nome, area, indicador_ids')
+    .eq('is_okr', true)
+    .neq('status', 'arquivado')
+    .limit(50);
+
+  return {
+    resumo: {
+      total_processos_ativos: total,
+      okrs_definidos: okrs,
+      processos_pausados: pausados,
+    },
+    processos_sem_responsavel: semResponsavel || [],
+    okrs_sem_kpis_vinculados: (okrsSemKpi || []).filter(p => !p.indicador_ids?.length),
+  };
+}
+
+// ─── Governança ────────────────────────────────────────────────────────
+
+async function fetchGovernancaContext() {
+  const hoje = new Date();
+  const ano = hoje.getFullYear();
+  const mes = hoje.getMonth() + 1;
+
+  const { data: cicloAtual } = await supabase
+    .from('governance_cycles')
+    .select('id, year, month, status')
+    .eq('year', ano)
+    .eq('month', mes)
+    .maybeSingle();
+
+  const { count: cicloAno } = await supabase
+    .from('governance_cycles')
+    .select('id', { count: 'exact', head: true })
+    .eq('year', ano);
+
+  // Reuniões do ciclo atual
+  let reunioesCiclo = [];
+  if (cicloAtual?.id) {
+    const { data } = await supabase
+      .from('governance_meetings')
+      .select('id, tipo, data, status, pauta, ata, deliberacoes')
+      .eq('cycle_id', cicloAtual.id);
+    reunioesCiclo = data || [];
+  }
+
+  // Tarefas abertas
+  const { count: tarefasAbertas } = await supabase
+    .from('governance_tasks')
+    .select('id', { count: 'exact', head: true })
+    .neq('status', 'concluida');
+
+  return {
+    resumo: {
+      ciclo_atual: cicloAtual || null,
+      ciclos_no_ano: cicloAno,
+      reunioes_ciclo_atual: reunioesCiclo.length,
+      reunioes_com_ata: reunioesCiclo.filter(r => r.ata && r.ata.length).length,
+      tarefas_abertas: tarefasAbertas,
+    },
+    reunioes_ciclo_atual: reunioesCiclo,
   };
 }
 
