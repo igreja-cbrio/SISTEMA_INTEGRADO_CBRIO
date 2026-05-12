@@ -33,6 +33,35 @@ const VALOR_CORES = {
   servir: '#10B981', generosidade: '#EC4899',
 };
 
+const VALORES_JORNADA = [
+  { key: 'seguir',       label: 'Seguir Jesus',  cor: '#8B5CF6' },
+  { key: 'conectar',     label: 'Conectar',       cor: '#3B82F6' },
+  { key: 'investir',     label: 'Investir Tempo', cor: '#F59E0B' },
+  { key: 'servir',       label: 'Servir',         cor: '#10B981' },
+  { key: 'generosidade', label: 'Generosidade',   cor: '#EC4899' },
+];
+
+const AREAS_CULTO = [
+  { key: 'kids',   label: 'CBKids' },
+  { key: 'ami',    label: 'AMI' },
+  { key: 'bridge', label: 'Bridge' },
+  { key: 'sede',   label: 'Sede' },
+  { key: 'online', label: 'Online' },
+  { key: 'cba',    label: 'CBA' },
+];
+
+const AREAS_ADM = [
+  { key: 'reserva_espaco',     label: 'Reserva de Espaço' },
+  { key: 'cozinha',            label: 'Cozinha' },
+  { key: 'manutencao',         label: 'Manutenção' },
+  { key: 'logistica_estoque',  label: 'Log. Estoque' },
+  { key: 'logistica_compras',  label: 'Log. Compras' },
+  { key: 'ti',                 label: 'TI' },
+  { key: 'rh',                 label: 'RH' },
+  { key: 'financeiro',         label: 'Financeiro' },
+  { key: 'criativo',           label: 'Criativo' },
+];
+
 export default function EstruturaOkr({ embedded = false }) {
   const { profile } = useAuth();
   const isAdmin = ['admin', 'diretor'].includes(profile?.role);
@@ -43,6 +72,24 @@ export default function EstruturaOkr({ embedded = false }) {
   const [expandedObj, setExpandedObj] = useState(null);
   const [editObj, setEditObj] = useState(null);
   const [editKr, setEditKr] = useState(null);
+
+  // Filtros · sets vazios = "todos"
+  const [filtroValores, setFiltroValores] = useState(new Set());
+  const [filtroAreasCulto, setFiltroAreasCulto] = useState(new Set());
+  const [filtroAreasAdm, setFiltroAreasAdm] = useState(new Set());
+
+  const toggleFiltro = (setter, key) => setter(prev => {
+    const novo = new Set(prev);
+    if (novo.has(key)) novo.delete(key);
+    else novo.add(key);
+    return novo;
+  });
+
+  const limparFiltros = () => {
+    setFiltroValores(new Set());
+    setFiltroAreasCulto(new Set());
+    setFiltroAreasAdm(new Set());
+  };
 
   const carregar = useCallback(async () => {
     setLoading(true);
@@ -61,6 +108,73 @@ export default function EstruturaOkr({ embedded = false }) {
   }, []);
 
   useEffect(() => { carregar(); }, [carregar]);
+
+  // Infere area adm a partir do nome do OKR operacional
+  // (ex: "Reserva de Espaço · servir bem...") · usado pelo filtro adm
+  const inferAreaAdmDoNome = (nome) => {
+    if (!nome) return null;
+    const n = nome.toLowerCase();
+    if (n.startsWith('reserva de espa'))         return 'reserva_espaco';
+    if (n.startsWith('cozinha'))                  return 'cozinha';
+    if (n.startsWith('manuten'))                  return 'manutencao';
+    if (n.startsWith('logistica estoque'))        return 'logistica_estoque';
+    if (n.startsWith('logistica compras'))        return 'logistica_compras';
+    if (n.startsWith('ti '))                      return 'ti';
+    if (n.startsWith('rh '))                      return 'rh';
+    if (n.startsWith('financeiro operacional'))   return 'financeiro';
+    if (n.startsWith('criativo'))                 return 'criativo';
+    return null;
+  };
+
+  // Agrupamento: ministeriais por valor da jornada, operacionais separados
+  const grupos = useMemo(() => {
+    const operacionais = [];
+    const porValor = { seguir: [], conectar: [], investir: [], servir: [], generosidade: [], sem_valor: [] };
+
+    objetivos.forEach(o => {
+      // Aplica filtros
+      const isOp = o.tipo_okr === 'operacional';
+      const areaAdm = isOp ? inferAreaAdmDoNome(o.nome) : null;
+
+      // Filtro por área adm (só aplica em operacionais)
+      if (filtroAreasAdm.size > 0) {
+        if (!isOp) return;
+        if (!areaAdm || !filtroAreasAdm.has(areaAdm)) return;
+      }
+      // Filtro por valor (só aplica em ministeriais)
+      if (filtroValores.size > 0) {
+        if (isOp) return; // operacionais nao tem valor da jornada
+        const valoresObj = o.valores || [];
+        if (!valoresObj.some(v => filtroValores.has(v))) return;
+      }
+      // Filtro por área culto (vamos aplicar olhando os KPIs vinculados via .kpis_areas se vier · simplificacao: filtra pelo nome se conter)
+      // Como nao temos area no objetivo, esse filtro fica no nivel do KPI (UI futura)
+      // Por ora apenas avisa: filtro de area culto aplicado mas nao temos enriched data
+
+      if (isOp) {
+        operacionais.push(o);
+      } else {
+        const v = (o.valores || [])[0] || 'sem_valor';
+        if (porValor[v]) porValor[v].push(o);
+        else porValor.sem_valor.push(o);
+      }
+    });
+
+    // Ordena cada grupo de valor por ordem
+    Object.keys(porValor).forEach(k => {
+      porValor[k].sort((a, b) => (a.ordem || 99) - (b.ordem || 99));
+    });
+    operacionais.sort((a, b) => (a.ordem || 99) - (b.ordem || 99));
+
+    return { porValor, operacionais };
+  }, [objetivos, filtroValores, filtroAreasAdm, filtroAreasCulto]);
+
+  const totalFiltrado = useMemo(() => {
+    return grupos.operacionais.length +
+      Object.values(grupos.porValor).reduce((s, arr) => s + arr.length, 0);
+  }, [grupos]);
+
+  const algumFiltro = filtroValores.size + filtroAreasCulto.size + filtroAreasAdm.size > 0;
 
   const removerObjetivo = async (obj) => {
     if (!window.confirm(`Inativar objetivo "${obj.nome}"? KPIs vinculados ficam orfaos.`)) return;
@@ -128,10 +242,91 @@ export default function EstruturaOkr({ embedded = false }) {
 
       {/* Objetivos Gerais */}
       <section style={cardStyle}>
-        <h3 style={hh3}>Objetivos Gerais ({objetivos.length})</h3>
-        <p style={{ fontSize: 11, color: C.t3, marginTop: -4, marginBottom: 12 }}>
-          Click pra expandir e gerenciar KRs gerais e ver KPIs vinculados.
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', flexWrap: 'wrap', gap: 8, marginBottom: 8 }}>
+          <h3 style={hh3}>Objetivos Gerais ({totalFiltrado}{algumFiltro ? ` de ${objetivos.length}` : ''})</h3>
+          {algumFiltro && (
+            <button onClick={limparFiltros} style={{
+              padding: '4px 10px', fontSize: 10, fontWeight: 600,
+              background: 'transparent', color: C.t2, border: `1px solid ${C.border}`,
+              borderRadius: 4, cursor: 'pointer',
+            }}>Limpar filtros</button>
+          )}
+        </div>
+        <p style={{ fontSize: 11, color: C.t3, marginBottom: 12 }}>
+          Ministeriais agrupados por valor da Jornada · Operacionais agrupados separadamente. Click pra expandir.
         </p>
+
+        {/* FILTROS */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginBottom: 16, padding: 12, background: C.inputBg, borderRadius: 8, border: `1px solid ${C.border}` }}>
+          {/* Filtro Valor */}
+          <div>
+            <div style={{ fontSize: 10, color: C.t3, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 6 }}>
+              Valor da Jornada
+            </div>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+              {VALORES_JORNADA.map(v => {
+                const sel = filtroValores.has(v.key);
+                return (
+                  <button key={v.key} onClick={() => toggleFiltro(setFiltroValores, v.key)} style={{
+                    padding: '4px 10px', fontSize: 11, fontWeight: 600,
+                    borderRadius: 99, cursor: 'pointer',
+                    border: `1px solid ${sel ? v.cor : C.border}`,
+                    background: sel ? v.cor + '20' : 'transparent',
+                    color: sel ? v.cor : C.t2,
+                  }}>
+                    {v.label}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Filtro Area Culto · NOTA: filtro aplica nos KPIs vinculados, nao no objetivo. UI aqui pra futuro · drilldown filtra */}
+          <div>
+            <div style={{ fontSize: 10, color: C.t3, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 6 }}>
+              Área de Culto <span style={{ color: C.t3, fontWeight: 400, textTransform: 'none', letterSpacing: 0 }}>· filtra no drilldown</span>
+            </div>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+              {AREAS_CULTO.map(a => {
+                const sel = filtroAreasCulto.has(a.key);
+                return (
+                  <button key={a.key} onClick={() => toggleFiltro(setFiltroAreasCulto, a.key)} style={{
+                    padding: '4px 10px', fontSize: 11, fontWeight: 600,
+                    borderRadius: 99, cursor: 'pointer',
+                    border: `1px solid ${sel ? C.primary : C.border}`,
+                    background: sel ? C.primaryBg : 'transparent',
+                    color: sel ? C.primaryDark : C.t2,
+                  }}>
+                    {a.label}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Filtro Area Adm */}
+          <div>
+            <div style={{ fontSize: 10, color: C.t3, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 6 }}>
+              Área Administrativa
+            </div>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+              {AREAS_ADM.map(a => {
+                const sel = filtroAreasAdm.has(a.key);
+                return (
+                  <button key={a.key} onClick={() => toggleFiltro(setFiltroAreasAdm, a.key)} style={{
+                    padding: '4px 10px', fontSize: 11, fontWeight: 600,
+                    borderRadius: 99, cursor: 'pointer',
+                    border: `1px solid ${sel ? '#06B6D4' : C.border}`,
+                    background: sel ? '#06B6D420' : 'transparent',
+                    color: sel ? '#0891B2' : C.t2,
+                  }}>
+                    {a.label}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        </div>
 
         {loading ? (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
@@ -145,21 +340,73 @@ export default function EstruturaOkr({ embedded = false }) {
           <div style={{ padding: 30, textAlign: 'center', color: C.t3, fontSize: 13 }}>
             Nenhum objetivo cadastrado.
           </div>
+        ) : totalFiltrado === 0 ? (
+          <div style={{ padding: 30, textAlign: 'center', color: C.t3, fontSize: 13 }}>
+            Nenhum objetivo bate com os filtros selecionados.
+          </div>
         ) : (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-            {objetivos.map(o => (
-              <ObjetivoLinha
-                key={o.id}
-                objetivo={o}
-                expanded={expandedObj === o.id}
-                onToggle={() => setExpandedObj(expandedObj === o.id ? null : o.id)}
-                onEdit={() => setEditObj(o)}
-                onRemove={() => removerObjetivo(o)}
-                onAddKr={() => setEditKr({ objetivo_geral_id: o.id, _objetivoLabel: o.nome })}
-                onEditKr={(kr) => setEditKr(kr)}
-                onAfterChange={carregar}
-              />
-            ))}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
+            {/* MINISTERIAIS agrupados por valor */}
+            {VALORES_JORNADA.map(v => {
+              const lista = grupos.porValor[v.key] || [];
+              if (lista.length === 0) return null;
+              return (
+                <div key={v.key}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8, paddingBottom: 6, borderBottom: `2px solid ${v.cor}` }}>
+                    <span style={{ width: 12, height: 12, borderRadius: '50%', background: v.cor }} />
+                    <span style={{ fontSize: 11, fontWeight: 800, color: v.cor, textTransform: 'uppercase', letterSpacing: 0.5 }}>
+                      {v.label}
+                    </span>
+                    <span style={{ fontSize: 10, color: C.t3 }}>· {lista.length} {lista.length === 1 ? 'objetivo' : 'objetivos'}</span>
+                  </div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                    {lista.map(o => (
+                      <ObjetivoLinha
+                        key={o.id}
+                        objetivo={o}
+                        expanded={expandedObj === o.id}
+                        onToggle={() => setExpandedObj(expandedObj === o.id ? null : o.id)}
+                        onEdit={() => setEditObj(o)}
+                        onRemove={() => removerObjetivo(o)}
+                        onAddKr={() => setEditKr({ objetivo_geral_id: o.id, _objetivoLabel: o.nome })}
+                        onEditKr={(kr) => setEditKr(kr)}
+                        onAfterChange={carregar}
+                        filtroAreaCulto={filtroAreasCulto}
+                      />
+                    ))}
+                  </div>
+                </div>
+              );
+            })}
+
+            {/* OPERACIONAIS · separados */}
+            {grupos.operacionais.length > 0 && (
+              <div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8, paddingBottom: 6, borderBottom: `2px solid #06B6D4` }}>
+                  <span style={{ width: 12, height: 12, borderRadius: '50%', background: '#06B6D4' }} />
+                  <span style={{ fontSize: 11, fontWeight: 800, color: '#0891B2', textTransform: 'uppercase', letterSpacing: 0.5 }}>
+                    Operacionais · Administração
+                  </span>
+                  <span style={{ fontSize: 10, color: C.t3 }}>· {grupos.operacionais.length} {grupos.operacionais.length === 1 ? 'área' : 'áreas'}</span>
+                </div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                  {grupos.operacionais.map(o => (
+                    <ObjetivoLinha
+                      key={o.id}
+                      objetivo={o}
+                      expanded={expandedObj === o.id}
+                      onToggle={() => setExpandedObj(expandedObj === o.id ? null : o.id)}
+                      onEdit={() => setEditObj(o)}
+                      onRemove={() => removerObjetivo(o)}
+                      onAddKr={() => setEditKr({ objetivo_geral_id: o.id, _objetivoLabel: o.nome })}
+                      onEditKr={(kr) => setEditKr(kr)}
+                      onAfterChange={carregar}
+                      filtroAreaCulto={filtroAreasCulto}
+                    />
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
         )}
       </section>
