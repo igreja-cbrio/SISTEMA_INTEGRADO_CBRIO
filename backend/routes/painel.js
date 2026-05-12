@@ -223,7 +223,7 @@ router.get('/matriz', async (req, res) => {
       .from('areas_kpi')
       .select('id, nome, cor_hex, ordem, categoria')
       .eq('ativa', true)
-      .in('id', ['kids', 'bridge', 'ami', 'sede', 'online', 'cba']) // so as 6 areas da matriz
+      .in('id', ['kids', 'bridge', 'ami', 'sede', 'online']) // 5 areas · CBA removido (so coleta batismos/aceitacoes via dados_brutos)
       .order('ordem');
 
     // Pra cada celula (area x valor), agregar
