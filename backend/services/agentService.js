@@ -172,6 +172,50 @@ class AgentService {
       cost_usd: this.totalCost,
       completed_at: new Date().toISOString(),
     }).eq('id', this.runId);
+
+    // Dispara notificações in-app se houver findings críticos. Não bloqueia.
+    this._notificarSeNecessario(findings, summary).catch(e =>
+      console.warn('[AgentService] notificacao falhou:', e.message)
+    );
+  }
+
+  /** Cria notificação in-app para findings críticos. Silencioso em erro. */
+  async _notificarSeNecessario(findings, summary) {
+    if (process.env.AI_DISABLE_NOTIFICATIONS === '1') return;
+    if (!Array.isArray(findings) || !findings.length) return;
+
+    const criticos = findings.filter(f => f.severity === 'critico');
+    const avisos = findings.filter(f => f.severity === 'aviso');
+    if (!criticos.length && avisos.length < 3) return;
+
+    let notificar;
+    try { notificar = require('./notificar').notificar; }
+    catch { return; }
+
+    const score = this.config?.score;
+    const nomeAgente = this.agentType
+      .replace('module_', '')
+      .replace('_', ' ')
+      .replace(/\b\w/g, c => c.toUpperCase());
+
+    const severidade = criticos.length ? 'critico' : 'aviso';
+    const titulo = criticos.length
+      ? `${nomeAgente}: ${criticos.length} problema(s) crítico(s)`
+      : `${nomeAgente}: ${avisos.length} avisos detectados`;
+    const primeiraEvidencia = (criticos[0] || avisos[0])?.title || 'Veja o detalhe da auditoria.';
+    const mensagem = score != null
+      ? `Score ${score}/10 — ${primeiraEvidencia}`
+      : primeiraEvidencia;
+
+    await notificar({
+      modulo: 'assistenteIA',
+      tipo: 'auditoria_critica',
+      titulo,
+      mensagem,
+      link: `/assistente-ia?run=${this.runId}`,
+      severidade,
+      chaveDedup: `auditoria_${this.agentType}_${new Date().toISOString().slice(0, 10)}`,
+    });
   }
 
   /** Finaliza run com erro */
