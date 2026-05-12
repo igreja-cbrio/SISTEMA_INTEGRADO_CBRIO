@@ -104,36 +104,35 @@ export default function MatrizValorArea() {
             <thead>
               <tr>
                 <th style={thArea}></th>
-                {valores.map(v => (
-                  <th key={v.key} style={{
+                {areas.map(area => (
+                  <th key={area.id} style={{
                     ...thCol,
-                    borderTop: `3px solid ${v.cor}`,
                     color: C.text,
                   }}>
-                    <span style={{ display: 'inline-block', width: 6, height: 6, borderRadius: '50%', background: v.cor, marginRight: 6 }} />
-                    {v.label}
+                    {area.nome}
                   </th>
                 ))}
               </tr>
             </thead>
             <tbody>
-              {areas.map(area => (
-                <tr key={area.id}>
+              {valores.map(v => (
+                <tr key={v.key}>
                   <td style={{
                     ...thRow,
                     background: 'var(--cbrio-input-bg)',
                     color: C.text,
+                    borderLeft: `3px solid ${v.cor}`,
                   }}>
-                    <strong style={{ fontSize: 12 }}>{area.nome}</strong>
+                    <strong style={{ fontSize: 12 }}>{v.label}</strong>
                   </td>
-                  {valores.map(v => {
+                  {areas.map(area => {
                     const cell = cells[`${area.id}:${v.key}`];
                     const cor = STATUS_COR[cell?.status] || STATUS_COR.na;
                     const isNA = cell?.status === 'na' || cell?.total_kpis === 0;
                     const isClickable = !isNA;
                     return (
                       <td
-                        key={v.key}
+                        key={area.id}
                         onClick={isClickable ? () => setCelulaAberta({ area: area.id, valor: v.key, cell }) : undefined}
                         style={{
                           background: cor,
