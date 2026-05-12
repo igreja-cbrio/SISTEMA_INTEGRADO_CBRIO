@@ -33,6 +33,47 @@ const CONTEXTOS_KPI = [
   { id: 'nps_voluntarios', label: 'NPS Voluntários' },
 ];
 
+// Áreas disponíveis para a pesquisa (alinhadas com dados_brutos.area).
+// IDs em lowercase sem acento — labels legíveis. "geral" é o cross-area.
+const AREAS_NPS = [
+  { grupo: 'Geral',         opcoes: [{ id: 'geral', label: 'Geral / Cross-área' }] },
+  { grupo: 'Ministerial',   opcoes: [
+    { id: 'ami',          label: 'AMI' },
+    { id: 'cba',          label: 'CBA' },
+    { id: 'cbkids',       label: 'CBKids' },
+    { id: 'cuidados',     label: 'Cuidados' },
+    { id: 'grupos',       label: 'Grupos' },
+    { id: 'integracao',   label: 'Integração' },
+    { id: 'next',         label: 'NEXT' },
+    { id: 'voluntariado', label: 'Voluntariado' },
+    { id: 'generosidade', label: 'Generosidade' },
+  ]},
+  { grupo: 'Operacional',   opcoes: [
+    { id: 'producao',     label: 'Produção' },
+    { id: 'marketing',    label: 'Marketing' },
+    { id: 'logistica',    label: 'Logística' },
+    { id: 'financeiro',   label: 'Financeiro' },
+    { id: 'compras',      label: 'Compras' },
+    { id: 'cozinha',      label: 'Cozinha' },
+    { id: 'limpeza',      label: 'Limpeza' },
+    { id: 'manutencao',   label: 'Manutenção' },
+    { id: 'patrimonio',   label: 'Patrimônio' },
+    { id: 'rh',           label: 'Recursos Humanos' },
+    { id: 'ti',           label: 'TI' },
+    { id: 'adm',          label: 'Administrativo' },
+  ]},
+  { grupo: 'Institucional', opcoes: [
+    { id: 'jornada',      label: 'Jornada (cross-cutting)' },
+    { id: 'igreja',       label: 'Igreja (institucional)' },
+  ]},
+];
+
+const AREA_LABEL = (() => {
+  const map = {};
+  AREAS_NPS.forEach(g => g.opcoes.forEach(o => { map[o.id] = o.label; }));
+  return map;
+})();
+
 const STATUS_MAP = {
   rascunho:  { label: 'Rascunho',  color: '#6b7280', bg: '#6b728020' },
   ativa:     { label: 'Ativa',     color: C.green,   bg: '#10b98120' },
@@ -111,6 +152,7 @@ export default function Nps() {
   const [loading, setLoading] = useState(true);
   const [tab, setTab] = useState('ativas');
   const [search, setSearch] = useState('');
+  const [filtroArea, setFiltroArea] = useState('todas');
   const [showCreate, setShowCreate] = useState(false);
   const [detalheId, setDetalheId] = useState(null);
 
@@ -132,10 +174,11 @@ export default function Nps() {
     return (lista || []).filter(p => {
       if (tab === 'ativas' && p.status !== 'ativa') return false;
       if (tab === 'encerradas' && !['encerrada', 'arquivada'].includes(p.status)) return false;
+      if (filtroArea !== 'todas' && p.area !== filtroArea) return false;
       if (term && !`${p.titulo} ${p.objetivo}`.toLowerCase().includes(term)) return false;
       return true;
     });
-  }, [lista, tab, search]);
+  }, [lista, tab, search, filtroArea]);
 
   return (
     <div style={{ maxWidth: 1400, margin: '0 auto', padding: '24px' }}>
@@ -164,6 +207,15 @@ export default function Nps() {
             </button>
           ))}
         </div>
+        <select value={filtroArea} onChange={e => setFiltroArea(e.target.value)}
+          style={{ ...inp, width: 'auto', minWidth: 180 }}>
+          <option value="todas">Todas as áreas</option>
+          {AREAS_NPS.map(grp => (
+            <optgroup key={grp.grupo} label={grp.grupo}>
+              {grp.opcoes.map(o => <option key={o.id} value={o.id}>{o.label}</option>)}
+            </optgroup>
+          ))}
+        </select>
         <div style={{ flex: 1, minWidth: 240, position: 'relative' }}>
           <Search size={14} style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', color: C.t3 }} />
           <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Buscar pesquisa..."
@@ -194,7 +246,12 @@ export default function Nps() {
                 onMouseEnter={e => e.currentTarget.style.transform = 'translateY(-2px)'}
                 onMouseLeave={e => e.currentTarget.style.transform = 'translateY(0)'}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8, marginBottom: 10 }}>
-                  <span style={{ fontSize: 11, fontWeight: 700, color: v.color, padding: '2px 8px', borderRadius: 10, background: `${v.color}15` }}>{v.label}</span>
+                  <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                    <span style={{ fontSize: 11, fontWeight: 700, color: v.color, padding: '2px 8px', borderRadius: 10, background: `${v.color}15` }}>{v.label}</span>
+                    {p.area && p.area !== 'geral' && (
+                      <span style={{ fontSize: 11, fontWeight: 600, color: C.t2, padding: '2px 8px', borderRadius: 10, background: C.border }}>{AREA_LABEL[p.area] || p.area}</span>
+                    )}
+                  </div>
                   <NpsBadge status={p.status} />
                 </div>
                 <h3 style={{ margin: '0 0 6px', fontSize: 15, fontWeight: 700, color: C.text, lineHeight: 1.3 }}>{p.titulo}</h3>
@@ -250,7 +307,7 @@ function CreateModal({ onClose, onCreated }) {
     }
     setGerando(true);
     try {
-      const result = await api.gerarPerguntas({ valor, objetivo, contexto_kpi: contextoKpi });
+      const result = await api.gerarPerguntas({ valor, objetivo, contexto_kpi: contextoKpi, area });
       setPerguntas(result);
       setTitulo(result.titulo_sugerido || `NPS — ${valor}`);
       setStep(2);
@@ -335,8 +392,14 @@ function CreateModal({ onClose, onCreated }) {
               </select>
             </div>
             <div>
-              <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: C.t2, marginBottom: 6 }}>Área (KPI)</label>
-              <input value={area} onChange={e => setArea(e.target.value)} placeholder="geral, voluntariado, integracao..." style={inp} />
+              <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: C.t2, marginBottom: 6 }}>Área</label>
+              <select value={area} onChange={e => setArea(e.target.value)} style={inp}>
+                {AREAS_NPS.map(grp => (
+                  <optgroup key={grp.grupo} label={grp.grupo}>
+                    {grp.opcoes.map(o => <option key={o.id} value={o.id}>{o.label}</option>)}
+                  </optgroup>
+                ))}
+              </select>
             </div>
           </div>
 
@@ -492,6 +555,9 @@ function DetalheModal({ id, onClose, onChanged, canWrite, onResponder }) {
     <Modal open onClose={onClose} title={pesquisa.titulo} width={820}>
       <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 16, flexWrap: 'wrap' }}>
         <span style={{ fontSize: 11, fontWeight: 700, color: v.color, padding: '2px 10px', borderRadius: 10, background: `${v.color}15` }}>{v.label}</span>
+        {pesquisa.area && pesquisa.area !== 'geral' && (
+          <span style={{ fontSize: 11, fontWeight: 600, color: C.t2, padding: '2px 10px', borderRadius: 10, background: C.border }}>{AREA_LABEL[pesquisa.area] || pesquisa.area}</span>
+        )}
         <NpsBadge status={pesquisa.status} />
         <span style={{ fontSize: 11, color: C.t3 }}>Início: {new Date(pesquisa.data_inicio).toLocaleDateString('pt-BR')}</span>
         {pesquisa.data_fim && <span style={{ fontSize: 11, color: C.t3 }}>Fim: {new Date(pesquisa.data_fim).toLocaleDateString('pt-BR')}</span>}
