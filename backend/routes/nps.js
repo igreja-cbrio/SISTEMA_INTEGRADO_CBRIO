@@ -26,12 +26,12 @@ router.use(authenticate);
 // ────────────────────────────────────────────────────────────────────
 router.post('/gerar-perguntas', authorize('admin', 'diretor'), iaLimiter, async (req, res) => {
   try {
-    const { valor, objetivo, contexto_kpi } = req.body || {};
+    const { valor, objetivo, contexto_kpi, area } = req.body || {};
     if (!valor || !objetivo) {
       return res.status(400).json({ error: 'valor e objetivo são obrigatórios' });
     }
     const contextoKpi = TIPOS_KPI_VALIDOS.includes(contexto_kpi) ? contexto_kpi : 'nps_geral';
-    const result = await npsService.gerarPerguntas({ valor, objetivo, contextoKpi });
+    const result = await npsService.gerarPerguntas({ valor, objetivo, contextoKpi, area });
     res.json(result);
   } catch (e) {
     console.error('[nps] gerar-perguntas:', e.message);

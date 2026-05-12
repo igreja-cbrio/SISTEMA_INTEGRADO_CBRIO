@@ -29,7 +29,7 @@ function parseJson(text, fallback) {
 // ── Geração de perguntas ────────────────────────────────────────────
 // Recebe {valor, objetivo, contextoKpi} e devolve a estrutura de perguntas
 // que será persistida na pesquisa.
-async function gerarPerguntas({ valor, objetivo, contextoKpi }) {
+async function gerarPerguntas({ valor, objetivo, contextoKpi, area }) {
   const info = VALORES_INFO[valor];
   if (!info) throw new Error(`Valor inválido: ${valor}`);
   if (!objetivo || objetivo.trim().length < 5) {
@@ -64,10 +64,11 @@ Responda APENAS com JSON válido, sem markdown:
   const userMsg = `Valor da CBRio: ${info.nome}
 Foco do valor: ${info.foco}
 Contexto da NPS (tipo dado_bruto): ${contextoKpi}
+${area ? `Área da igreja: ${area}` : ''}
 
 O que queremos medir: ${objetivo.trim()}
 
-Gere a pergunta NPS principal + 2 a 3 perguntas qualitativas.`;
+Gere a pergunta NPS principal + 2 a 3 perguntas qualitativas, ajustando o tom e exemplos${area ? ` ao contexto da área "${area}"` : ''}.`;
 
   const client = clienteAnthropic();
   const response = await client.messages.create({
