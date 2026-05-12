@@ -24,6 +24,10 @@ export const AREAS = [
   { id: 'Generosidade', nome: 'Generosidade', categoria: 'Ministerial' },
   { id: 'Jornada', nome: 'Jornada (cross-cutting)', categoria: 'Institucional' },
   { id: 'Igreja', nome: 'Igreja (institucional)', categoria: 'Institucional' },
+  // Operações — sustentam a NSM, não movem (PDF Planejamento Estratégico 2026)
+  { id: 'Financeiro',     nome: 'Financeiro',     categoria: 'Operacoes' },
+  { id: 'RH',             nome: 'RH',             categoria: 'Operacoes' },
+  { id: 'Infraestrutura', nome: 'Infraestrutura', categoria: 'Operacoes' },
 ];
 
 export const CATEGORIA_AREAS = {
@@ -31,7 +35,7 @@ export const CATEGORIA_AREAS = {
   Geracional: ['AMI', 'CBKids'],
   Institucional: ['Jornada', 'Igreja'],
   Criativo: [],
-  Operacoes: [],
+  Operacoes: ['Financeiro', 'RH', 'Infraestrutura'],
 };
 
 export const getAreasForCategoria = (cat) => CATEGORIA_AREAS[cat] || [];
