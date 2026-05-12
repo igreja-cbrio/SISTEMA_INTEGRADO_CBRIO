@@ -71,7 +71,7 @@ export default function MatrizGestaoArea() {
   }
   if (!data) return null;
 
-  const { areas_adm, areas_cliente, cells, desde } = data;
+  const { grupos_adm, areas_cliente, cells, desde } = data;
 
   return (
     <>
@@ -81,8 +81,9 @@ export default function MatrizGestaoArea() {
             Matriz Gestão × Área
           </h3>
           <p style={{ fontSize: 11, color: C.t3, marginTop: 4 }}>
-            Como cada area da administracao serve cada area de culto. % de solicitacoes
-            concluidas no SLA nos ultimos 30 dias.
+            Como cada area da gestao serve cada area de culto. % de solicitacoes
+            concluidas no SLA nos ultimos 30 dias. Hospitalidade agrega Reserva + Cozinha +
+            Manutencao · Logistica agrega Estoque + Compras.
           </p>
         </header>
 
@@ -91,7 +92,7 @@ export default function MatrizGestaoArea() {
             <thead>
               <tr>
                 <th style={{ textAlign: 'left', padding: '4px 8px', fontSize: 10, color: C.t3, fontWeight: 700, textTransform: 'uppercase' }}>
-                  Adm \ Cliente
+                  Gestão \ Cliente
                 </th>
                 {areas_cliente.map(c => (
                   <th key={c.id} style={{
@@ -104,17 +105,22 @@ export default function MatrizGestaoArea() {
               </tr>
             </thead>
             <tbody>
-              {areas_adm.map(adm => (
-                <tr key={adm.key}>
+              {grupos_adm.map(grupo => (
+                <tr key={grupo.key}>
                   <td style={{
                     padding: '6px 8px', fontSize: 11, fontWeight: 700, color: C.text,
-                    background: C.inputBg, borderRadius: 6, borderLeft: `3px solid ${adm.cor}`,
+                    background: C.inputBg, borderRadius: 6, borderLeft: `3px solid ${grupo.cor}`,
                     whiteSpace: 'nowrap',
                   }}>
-                    {adm.label}
+                    {grupo.label}
+                    {grupo.subareas && grupo.subareas.length > 1 && (
+                      <div style={{ fontSize: 9, color: C.t3, fontWeight: 500, marginTop: 2 }}>
+                        {grupo.sub_labels.join(' · ')}
+                      </div>
+                    )}
                   </td>
                   {areas_cliente.map(cli => {
-                    const cell = cells[`${adm.key}:${cli.id}`];
+                    const cell = cells[`${grupo.key}:${cli.id}`];
                     return (
                       <td key={cli.id} style={{ padding: 0 }}>
                         <CelulaBox cell={cell} onClick={() => cell.total > 0 && setCelulaAberta(cell)} />
@@ -197,11 +203,11 @@ function ModalCelulaAdm({ cell, onClose }) {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    painelApi.celulaAdm(cell.area_adm, cell.area_cliente)
+    painelApi.celulaAdm(cell.grupo_adm, cell.area_cliente)
       .then(r => setSolicitacoes(r.solicitacoes || []))
       .catch(() => setSolicitacoes([]))
       .finally(() => setLoading(false));
-  }, [cell.area_adm, cell.area_cliente]);
+  }, [cell.grupo_adm, cell.area_cliente]);
 
   useEffect(() => {
     const onKey = (e) => { if (e.key === 'Escape') onClose?.(); };
@@ -222,7 +228,7 @@ function ModalCelulaAdm({ cell, onClose }) {
         <header style={{ padding: '16px 20px', borderBottom: `1px solid ${C.border}`, display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12 }}>
           <div>
             <div style={{ fontSize: 10, color: C.t3, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.5 }}>
-              {cell.area_adm_label} × {cell.area_cliente_nome}
+              {cell.grupo_label} × {cell.area_cliente_nome}
             </div>
             <h3 style={{ fontSize: 16, fontWeight: 700, color: C.text, margin: '2px 0 0' }}>
               {cell.percentual != null ? `${cell.percentual}% no SLA` : 'Sem dados'}
@@ -270,6 +276,8 @@ function LinhaSolicitacao({ sol }) {
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ color: C.text, fontWeight: 500 }}>{sol.titulo}</div>
         <div style={{ fontSize: 10, color: C.t3 }}>
+          {sol.area_responsavel && <strong style={{ textTransform: 'capitalize' }}>{sol.area_responsavel.replace('_', ' ')}</strong>}
+          {sol.area_responsavel && ' · '}
           {new Date(sol.created_at).toLocaleDateString('pt-BR')}
           {sol.concluido_em && ` · concluído em ${new Date(sol.concluido_em).toLocaleDateString('pt-BR')}`}
           {sol.horas_total != null && ` · ${Math.round(sol.horas_total)}h`}
