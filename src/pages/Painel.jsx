@@ -19,6 +19,7 @@ import { Activity, RefreshCw, TrendingUp, TrendingDown, Minus, ChevronRight, Use
 import { toast } from 'sonner';
 import CarrosselMandalas from '../components/painel/CarrosselMandalas';
 import MatrizValorArea from '../components/painel/MatrizValorArea';
+import MatrizGestaoArea from '../components/painel/MatrizGestaoArea';
 import AlertasCriticos from '../components/painel/AlertasCriticos';
 import { SkeletonLine, SkeletonBlock } from '../components/Skeleton';
 
@@ -187,6 +188,10 @@ export default function Painel() {
 
       <div style={{ marginTop: 24 }}>
         <MatrizValorArea />
+      </div>
+
+      <div style={{ marginTop: 24 }}>
+        <MatrizGestaoArea />
       </div>
 
       <div style={{ marginTop: 24 }}>

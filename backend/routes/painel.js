@@ -278,6 +278,143 @@ router.get('/matriz', async (req, res) => {
 });
 
 // ----------------------------------------------------------------------------
+// GET /matriz-adm - grid 8 areas adm × 6 areas-cliente
+//   Cada celula: % solicitacoes concluidas no SLA daquela area adm para
+//   aquela area-cliente no mes corrente.
+// ----------------------------------------------------------------------------
+const AREAS_ADM = [
+  { key: 'reserva_espaco',     label: 'Reserva de Espaço', cor: '#8B5CF6' },
+  { key: 'cozinha',            label: 'Cozinha',            cor: '#EC4899' },
+  { key: 'manutencao',         label: 'Manutenção',         cor: '#F59E0B' },
+  { key: 'logistica_estoque',  label: 'Log. Estoque',       cor: '#3B82F6' },
+  { key: 'logistica_compras',  label: 'Log. Compras',       cor: '#06B6D4' },
+  { key: 'ti',                 label: 'TI',                 cor: '#10B981' },
+  { key: 'rh',                 label: 'RH',                 cor: '#EF4444' },
+  { key: 'financeiro',         label: 'Financeiro',         cor: '#84CC16' },
+];
+const AREAS_CLIENTE = [
+  { id: 'kids',   nome: 'CBKids' },
+  { id: 'ami',    nome: 'AMI' },
+  { id: 'bridge', nome: 'Bridge' },
+  { id: 'sede',   nome: 'Sede' },
+  { id: 'online', nome: 'Online' },
+  { id: 'cba',    nome: 'CBA' },
+];
+
+router.get('/matriz-adm', async (req, res) => {
+  try {
+    const cached = cacheGet('matriz-adm');
+    if (cached) return res.json(cached);
+
+    // Periodo: 30 ultimos dias (cobrem o mes corrente)
+    const desde = new Date();
+    desde.setDate(desde.getDate() - 30);
+    const desdeStr = desde.toISOString().slice(0, 10);
+
+    // Le solicitacoes do periodo via view (ja tem sla_resolucao_status)
+    const { data: solicitacoes, error } = await supabase
+      .from('vw_solicitacoes_sla')
+      .select('area_responsavel, area_cliente, status, sla_resolucao_status, concluido_em, created_at')
+      .gte('created_at', desdeStr);
+    if (error) throw error;
+
+    // Agrega por (area_responsavel × area_cliente)
+    const cells = {};
+    AREAS_ADM.forEach(adm => {
+      AREAS_CLIENTE.forEach(cli => {
+        cells[`${adm.key}:${cli.id}`] = {
+          area_adm: adm.key,
+          area_adm_label: adm.label,
+          area_adm_cor: adm.cor,
+          area_cliente: cli.id,
+          area_cliente_nome: cli.nome,
+          total: 0,
+          concluidos: 0,
+          no_prazo: 0,
+          atrasados: 0,
+          em_andamento: 0,
+        };
+      });
+    });
+
+    (solicitacoes || []).forEach(s => {
+      if (!s.area_responsavel || !s.area_cliente) return;
+      const key = `${s.area_responsavel}:${s.area_cliente}`;
+      const c = cells[key];
+      if (!c) return;
+      c.total++;
+      if (s.concluido_em) {
+        c.concluidos++;
+        if (s.sla_resolucao_status === 'concluiu_no_prazo') c.no_prazo++;
+      } else if (s.sla_resolucao_status === 'atrasado') {
+        c.atrasados++;
+      } else {
+        c.em_andamento++;
+      }
+    });
+
+    // Status da celula:
+    //   sem_dado -> 0 total
+    //   verde -> >=90% concluidos no prazo
+    //   amarelo -> 70-89%
+    //   vermelho -> <70% OU tem atrasado nao concluido
+    Object.values(cells).forEach(c => {
+      if (c.total === 0) {
+        c.status = 'sem_dado';
+        c.percentual = null;
+      } else if (c.concluidos === 0) {
+        c.status = c.atrasados > 0 ? 'vermelho' : 'sem_dado';
+        c.percentual = c.atrasados > 0 ? 0 : null;
+      } else {
+        const pct = Math.round((c.no_prazo / c.concluidos) * 100);
+        c.percentual = pct;
+        if (c.atrasados > 0 || pct < 70) c.status = 'vermelho';
+        else if (pct < 90) c.status = 'amarelo';
+        else c.status = 'verde';
+      }
+    });
+
+    const resp = {
+      desde: desdeStr,
+      areas_adm: AREAS_ADM,
+      areas_cliente: AREAS_CLIENTE,
+      cells,
+    };
+    cacheSet('matriz-adm', resp);
+    res.json(resp);
+  } catch (e) {
+    console.error('painel/matriz-adm:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ----------------------------------------------------------------------------
+// GET /celula-adm/:area_adm/:area_cliente - solicitacoes daquela intersecao
+// ----------------------------------------------------------------------------
+router.get('/celula-adm/:area_adm/:area_cliente', async (req, res) => {
+  try {
+    const { area_adm, area_cliente } = req.params;
+    const desde = new Date();
+    desde.setDate(desde.getDate() - 30);
+    const desdeStr = desde.toISOString().slice(0, 10);
+
+    const { data, error } = await supabase
+      .from('vw_solicitacoes_sla')
+      .select('id, titulo, status, eh_urgente, sla_resolucao_status, horas_total, created_at, concluido_em, valor_estimado')
+      .eq('area_responsavel', area_adm)
+      .eq('area_cliente', area_cliente)
+      .gte('created_at', desdeStr)
+      .order('created_at', { ascending: false })
+      .limit(50);
+    if (error) throw error;
+    res.json({ area_adm, area_cliente, solicitacoes: data || [] });
+  } catch (e) {
+    console.error('painel/celula-adm:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ----------------------------------------------------------------------------
 // GET /celula/:area/:valor - KPIs detalhados daquela intersecao (pra modal)
 // ----------------------------------------------------------------------------
 router.get('/celula/:area/:valor', async (req, res) => {
