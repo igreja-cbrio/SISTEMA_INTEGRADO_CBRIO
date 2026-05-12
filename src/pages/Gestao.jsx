@@ -11,7 +11,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { gestao as gestaoApi } from '../api';
 import { useAuth } from '../contexts/AuthContext';
-import { Activity, Settings, AlertCircle, TrendingDown, Bell, Target, Shield, ArrowRight, ChevronRight, Flag, Edit3, Save as SaveIcon, Filter } from 'lucide-react';
+import { Activity, Settings, AlertCircle, TrendingDown, Bell, Target, Shield, ArrowRight, ChevronRight, Flag, Edit3, Save as SaveIcon, Filter, Building2, Zap } from 'lucide-react';
 import { estrategia as estrategiaApi } from '../api';
 import { toast } from 'sonner';
 import KpiDetalheModal from '../components/KpiDetalheModal';
@@ -32,6 +32,7 @@ const TABS = [
   { key: 'pulso',     label: 'Pulso',         Icon: Activity },
   { key: 'estrutura', label: 'Estrutura OKR', Icon: Target },
   { key: 'metas',     label: 'Metas Institucionais', Icon: Flag },
+  { key: 'painel_adm', label: 'Painel Adm',   Icon: Building2 },
   { key: 'configurar', label: 'Configurar',   Icon: Settings },
   { key: 'saude',     label: 'Saude',         Icon: Shield },
 ];
@@ -92,6 +93,7 @@ export default function Gestao() {
       {aba === 'pulso' && <AbaPulso />}
       {aba === 'estrutura' && <EstruturaOkr embedded />}
       {aba === 'metas' && <AbaMetasInstitucionais />}
+      {aba === 'painel_adm' && <AbaPainelAdm />}
       {aba === 'configurar' && <AbaConfigurar />}
       {aba === 'saude' && <AbaSaude />}
     </div>
@@ -252,6 +254,120 @@ function AbaPulso() {
         openInEdit
       />
     </>
+  );
+}
+
+// ============================================================================
+// ABA · PAINEL ADM
+// 8 areas adm (reserva_espaco, cozinha, manutencao, log_estoque, log_compras,
+// ti, rh, financeiro) · indicadores operacionais puxados de vw_solicitacoes_sla
+// ============================================================================
+function AbaPainelAdm() {
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [recalculando, setRecalculando] = useState(false);
+
+  const carregar = useCallback(async () => {
+    setLoading(true);
+    try {
+      const r = await gestaoApi.painelAdm();
+      setData(r);
+    } catch (e) {
+      toast.error(formatErro(e, 'painel adm'));
+    } finally { setLoading(false); }
+  }, []);
+
+  useEffect(() => { carregar(); }, [carregar]);
+
+  const recalcular = async () => {
+    setRecalculando(true);
+    try {
+      const r = await gestaoApi.recalcularAdm();
+      toast.success(`${r.resultado?.kpis_recalculados || 0} KPIs recalculados`);
+      await carregar();
+    } catch (e) {
+      toast.error(formatErro(e));
+    } finally { setRecalculando(false); }
+  };
+
+  if (loading) return <Loading />;
+  if (!data) return null;
+
+  return (
+    <>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12, marginBottom: 16, flexWrap: 'wrap' }}>
+        <p style={{ fontSize: 12, color: C.t3, margin: 0, maxWidth: 700 }}>
+          Cada area da administracao mede SLA e NPS interno das solicitacoes vindas das
+          areas de culto (kids/ami/bridge/sede/online/cba). Click numa area pra ver
+          detalhes. Periodo: <strong>{data.periodo_mes.inicio} a {data.periodo_mes.fim}</strong>
+        </p>
+        <button onClick={recalcular} disabled={recalculando} style={{ ...btnPrimary, opacity: recalculando ? 0.5 : 1 }}>
+          <Zap size={11} /> {recalculando ? 'Recalculando...' : 'Recalcular KPIs'}
+        </button>
+      </div>
+
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: 14 }}>
+        {data.areas.map(area => <AreaAdmCard key={area.key} area={area} />)}
+      </div>
+    </>
+  );
+}
+
+function AreaAdmCard({ area }) {
+  const respostaSla = area.indicadores.find(i => i.metrica === 'resposta_no_sla');
+  const resolucaoSla = area.indicadores.find(i => i.metrica === 'resolucao_no_sla');
+  const nps = area.indicadores.find(i => i.metrica === 'nps_medio');
+
+  const corSemForte = '#9CA3AF';
+  const corPctOk = v => v == null ? corSemForte : v >= 90 ? '#10B981' : v >= 70 ? '#F59E0B' : '#EF4444';
+  const corNps = v => v == null ? corSemForte : v >= 9 ? '#10B981' : v >= 7 ? '#F59E0B' : '#EF4444';
+  const corUrgente = pct => pct >= 30 ? '#EF4444' : pct >= 15 ? '#F59E0B' : '#10B981';
+
+  return (
+    <section style={{
+      background: C.card, borderRadius: 12, border: `1px solid ${C.border}`,
+      borderTop: `4px solid ${area.cor}`,
+      padding: 16,
+    }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 12 }}>
+        <h3 style={{ fontSize: 14, fontWeight: 700, color: C.text, margin: 0 }}>{area.label}</h3>
+        <span style={{ fontSize: 11, color: C.t3 }}>{area.total_mes} solicitações no mês</span>
+      </div>
+
+      {/* 3 indicadores principais · % resposta SLA, % resolucao SLA, NPS */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8, marginBottom: 12 }}>
+        <Indicador label="Resposta no SLA" valor={respostaSla?.valor} unidade="%" cor={corPctOk(respostaSla?.valor)} meta={respostaSla?.meta} />
+        <Indicador label="Conclusão no SLA" valor={resolucaoSla?.valor} unidade="%" cor={corPctOk(resolucaoSla?.valor)} meta={resolucaoSla?.meta} />
+        <Indicador label="NPS interno" valor={nps?.valor} unidade="" cor={corNps(nps?.valor)} meta={nps?.meta} />
+      </div>
+
+      {/* Linha de status operacional */}
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 11, color: C.t2,
+                    paddingTop: 10, borderTop: `1px solid ${C.border}` }}>
+        <span>
+          <strong style={{ color: corUrgente(area.pct_urgentes) }}>{area.pct_urgentes}%</strong> urgentes
+          <span style={{ color: C.t3 }}> ({area.urgentes_mes} de {area.total_mes})</span>
+        </span>
+        <span>
+          <strong>{area.pendentes_agora}</strong> pendentes agora
+        </span>
+      </div>
+    </section>
+  );
+}
+
+function Indicador({ label, valor, unidade, cor, meta }) {
+  const sd = valor == null;
+  return (
+    <div style={{ background: 'var(--cbrio-input-bg)', padding: 10, borderRadius: 8, textAlign: 'center' }}>
+      <div style={{ fontSize: 9, color: C.t3, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.4, marginBottom: 4 }}>{label}</div>
+      <div style={{ fontSize: 22, fontWeight: 800, color: sd ? C.t3 : cor, lineHeight: 1 }}>
+        {sd ? '—' : (valor != null ? `${Number(valor).toFixed(unidade === '%' ? 0 : 1)}${unidade}` : '—')}
+      </div>
+      {meta != null && (
+        <div style={{ fontSize: 9, color: C.t3, marginTop: 4 }}>meta: ≥{meta}{unidade}</div>
+      )}
+    </div>
   );
 }
 
