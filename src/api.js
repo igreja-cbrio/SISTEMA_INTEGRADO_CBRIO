@@ -1195,6 +1195,8 @@ export const gestao = {
   pulso: () => get('/gestao/pulso'),
   saude: () => get('/gestao/saude'),
   cobrar: (liderId, body = {}) => post(`/gestao/pulso/cobrar/${liderId}`, body),
+  painelAdm: () => get('/gestao/painel-adm'),
+  recalcularAdm: () => post('/gestao/painel-adm/recalcular', {}),
 };
 
 // ── Ritual mensal (revisao OKR) ──

@@ -278,4 +278,111 @@ router.post('/pulso/cobrar/:lider_id', async (req, res) => {
   }
 });
 
+// ----------------------------------------------------------------------------
+// GET /painel-adm · agrega 8 areas adm com indicadores operacionais
+// Le KPIs operacionais ja calculados + agrega solicitacoes do mes corrente
+// ----------------------------------------------------------------------------
+router.get('/painel-adm', async (req, res) => {
+  try {
+    const AREAS_ADM = [
+      { key: 'reserva_espaco',     label: 'Reserva de Espaço', cor: '#8B5CF6' },
+      { key: 'cozinha',            label: 'Cozinha',            cor: '#EC4899' },
+      { key: 'manutencao',         label: 'Manutenção',         cor: '#F59E0B' },
+      { key: 'logistica_estoque',  label: 'Logística Estoque',  cor: '#3B82F6' },
+      { key: 'logistica_compras',  label: 'Logística Compras',  cor: '#06B6D4' },
+      { key: 'ti',                 label: 'TI',                 cor: '#10B981' },
+      { key: 'rh',                 label: 'RH',                 cor: '#EF4444' },
+      { key: 'financeiro',         label: 'Financeiro',         cor: '#84CC16' },
+    ];
+
+    // Periodo: mes corrente
+    const hoje = new Date();
+    const inicio = `${hoje.getFullYear()}-${String(hoje.getMonth() + 1).padStart(2, '0')}-01`;
+    const fim = `${hoje.getFullYear()}-${String(hoje.getMonth() + 1).padStart(2, '0')}-${String(new Date(hoje.getFullYear(), hoje.getMonth() + 1, 0).getDate()).padStart(2, '0')}`;
+
+    // Le KPIs operacionais ativos + ultimo valor calculado
+    const { data: kpis } = await supabase
+      .from('kpi_indicadores_taticos')
+      .select('id, indicador, formula_config, meta_valor, unidade, objetivo_geral_id')
+      .eq('ativo', true)
+      .eq('tipo_kpi', 'operacional');
+
+    const kpiIds = (kpis || []).map(k => k.id);
+    const { data: valores } = kpiIds.length ? await supabase
+      .from('kpi_valores_calculados')
+      .select('kpi_id, valor_calculado, periodo_referencia, calculado_em')
+      .in('kpi_id', kpiIds)
+      .order('calculado_em', { ascending: false }) : { data: [] };
+
+    const valorByKpi = {};
+    (valores || []).forEach(v => {
+      if (!valorByKpi[v.kpi_id]) valorByKpi[v.kpi_id] = v;
+    });
+
+    // Pra cada area, agrega contagem de solicitacoes do mes
+    const areas = await Promise.all(AREAS_ADM.map(async (area) => {
+      const { count: total } = await supabase
+        .from('solicitacoes')
+        .select('id', { count: 'exact', head: true })
+        .eq('area_responsavel', area.key)
+        .gte('created_at', inicio)
+        .lte('created_at', fim + 'T23:59:59');
+
+      const { count: urgentes } = await supabase
+        .from('solicitacoes')
+        .select('id', { count: 'exact', head: true })
+        .eq('area_responsavel', area.key)
+        .eq('eh_urgente', true)
+        .gte('created_at', inicio)
+        .lte('created_at', fim + 'T23:59:59');
+
+      const { count: pendentes } = await supabase
+        .from('solicitacoes')
+        .select('id', { count: 'exact', head: true })
+        .eq('area_responsavel', area.key)
+        .in('status', ['pendente', 'em_analise', 'aguardando_aprovacao_financeira', 'em_atendimento', 'aguardando_entrega']);
+
+      // KPIs dessa area (matching pelo formula_config.area_responsavel)
+      const kpisArea = (kpis || []).filter(k => k.formula_config?.area_responsavel === area.key);
+      const indicadores = kpisArea.map(k => {
+        const vc = valorByKpi[k.id];
+        return {
+          id: k.id,
+          indicador: k.indicador,
+          metrica: k.formula_config?.metrica,
+          valor: vc?.valor_calculado ?? null,
+          meta: k.meta_valor,
+          unidade: k.unidade,
+          periodo: vc?.periodo_referencia,
+        };
+      });
+
+      return {
+        ...area,
+        total_mes: total || 0,
+        urgentes_mes: urgentes || 0,
+        pct_urgentes: total ? Math.round((urgentes / total) * 100) : 0,
+        pendentes_agora: pendentes || 0,
+        indicadores,
+      };
+    }));
+
+    res.json({ periodo_mes: { inicio, fim }, areas });
+  } catch (e) {
+    console.error('gestao/painel-adm:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Forca recalculo de todos KPIs adm (admin/diretor)
+router.post('/painel-adm/recalcular', async (req, res) => {
+  try {
+    const { data, error } = await supabase.rpc('recalcular_todos_kpis_adm');
+    if (error) throw error;
+    res.json({ ok: true, resultado: data });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 module.exports = router;

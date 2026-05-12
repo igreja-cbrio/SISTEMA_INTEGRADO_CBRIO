@@ -951,3 +951,83 @@ Invalidacao manual via `POST /api/painel/cache/bust` apos edicoes.
 - **Particionamento de mem_contribuicoes por ano** · cresce ~600k/ano
 - **Lazy load de KPIs por area** em `useKpis` (hoje cache global)
 - **Server-side pagination no /membresia** (hoje carrega tudo)
+
+## Solicitacoes · backbone administrativo (CONTEXTO PARA MATHEUS)
+
+Em 2026-05-12 Marcos definiu que Solicitacoes vira a **fonte unica de
+dados** dos KPIs administrativos. Toda interacao adm <-> ministerio passa
+por la (sem WhatsApp, sem planilha). Isso viabiliza KPIs 100% automaticos
+de SLA, NPS, throughput e urgencia frequente.
+
+### O que ja foi feito
+
+**Schema** (migration `20260512130000_solicitacoes_backbone_reset.sql`):
+- Enum `area_adm_resp` · 8 areas (reserva_espaco, cozinha, manutencao,
+  logistica_estoque, logistica_compras, ti, rh, financeiro)
+- Enum `area_kpi` · 6 areas de culto (kids/ami/bridge/sede/online/cba)
+- Tabela `sla_definicoes` · 24 prazos seedados (validados com Marcos)
+- Tabela `area_alcadas` · limite R$1000 default por area
+- Tabela `solicitacoes_eventos` · audit log completo
+- Triggers automaticos: calcula SLA, decide aprovacao financeira por
+  alcada, loga transicoes, auto-preenche respondido_em/concluido_em
+- Views `vw_solicitacoes_sla` e `vw_reserva_espacos`
+
+**UI parcial** (PR #333):
+- Form com area_cliente, eh_urgente + justificativa, bloco reserva_espaco
+  (espaco/data/horario/qtde), data_necessaria, badge SLA em tempo real
+- Backend POST/PATCH aceita os campos novos
+- Rotas `/sla-defs`, `/reservas-espaco`, `/alcadas`
+
+### O que falta · pendente para Matheus avaliar/testar e refinar
+
+Marcos pediu pra nao se aprofundar mais agora · Matheus testa depois e
+decide o que melhorar. Lista priorizada:
+
+1. **NPS pos-conclusao** (alta prioridade)
+   - Campos `nps_nota` + `nps_comentario` ja existem
+   - Falta UI: quando solicitante ve solicitacao 'concluida', modal
+     pergunta "Como avalia? (0-10)" + comentario opcional
+   - Sem isso, KPI cultural de NPS interno fica zerado
+
+2. **Visualizacao de SLA nos cards do kanban**
+   - View `vw_solicitacoes_sla` retorna `sla_resposta_status`,
+     `sla_resolucao_status`, `horas_para_resposta`, `horas_total`
+   - So precisa renderizar badge "atrasado Xh" / "no prazo" nos cards
+
+3. **Kanban com novos status**
+   - Schema adicionou: aguardando_aprovacao_financeira, em_atendimento,
+     aguardando_entrega, avaliado
+   - Avaliar: agrupar visualmente ou adicionar colunas extras
+
+4. **Aprovacao financeira no fluxo**
+   - Quando `precisa_aprovacao_financeira=true`, solicitacao deveria ir
+     pra status `aguardando_aprovacao_financeira` antes do responsavel
+     da area pegar. Hoje vai direto pra 'pendente'
+
+5. **Painel solicitante separado do responsavel**
+   - Hoje mesma pagina (filtrado backend). Solicitante quer "minhas
+     pendencias com SLA". Responsavel quer "fila por urgencia + SLA
+     estourando primeiro"
+
+6. **Calendario visual de reservas de espaco**
+   - Endpoint `/reservas-espaco` ja retorna
+   - Falta UI calendario mensal com conflitos destacados
+
+7. **Dashboard de urgencia frequente**
+   - Marcos: "o sistema mapeia quem solicita urgencia frequente"
+   - Top 10 solicitantes urgentes do trimestre · acao pastoral
+     (geralmente sintoma de planejamento ruim, nao crise real)
+
+8. **Notificacoes especificas**
+   - Status muda de pendente -> em_atendimento: avisa solicitante
+   - SLA pra estourar (24h antes): avisa responsavel
+
+### Pontos de atencao tecnica
+
+- `vw_solicitacoes_sla` e view regular, NAO materializada. Se volume
+  crescer (>10k solicitacoes/ano), considerar materializar
+- Trigger `tg_solicitacoes_calcula_sla` so calcula SLA quando
+  `area_responsavel` esta preenchida. Backend ja auto-mapeia via
+  `CATEGORIA_TO_AREA_RESP` mas SQL puro pode escapar
+- `area_alcadas` esta em R$1000 default · Marcos pode ajustar por area
+  depois (CBA grande gasta mais que Online pequeno)
