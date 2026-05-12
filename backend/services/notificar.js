@@ -33,10 +33,16 @@ async function notificar({ modulo, tipo, titulo, mensagem, link, severidade = 'i
   if (extraTargetIds?.length) {
     destinatarios = [...new Set([...(destinatarios || []), ...extraTargetIds.filter(Boolean)])];
   }
-  if (!destinatarios.length) return 0;
+  if (!destinatarios.length) {
+    console.warn(`[notificar] sem destinatarios · modulo=${modulo} · titulo="${titulo}"`);
+    return 0;
+  }
 
   let inserted = 0;
+  let skipped = 0;
+  let failed = 0;
   const usersInseridos = [];
+  const erros = [];
   for (const userId of destinatarios) {
     // Dedup: não cria se já existe notificação não-lida com mesma chave
     if (chaveDedup) {
@@ -46,7 +52,7 @@ async function notificar({ modulo, tipo, titulo, mensagem, link, severidade = 'i
         .eq('usuario_id', userId)
         .eq('chave_dedup', chaveDedup)
         .eq('lida', false);
-      if (count > 0) continue;
+      if (count > 0) { skipped++; continue; }
     }
 
     const { error } = await supabase.from('notificacoes').insert({
@@ -63,8 +69,13 @@ async function notificar({ modulo, tipo, titulo, mensagem, link, severidade = 'i
     if (!error) {
       inserted++;
       usersInseridos.push(userId);
+    } else {
+      failed++;
+      erros.push(`${userId.slice(0, 8)}: ${error.message}`);
     }
   }
+
+  console.log(`[notificar] modulo=${modulo} alvos=${destinatarios.length} inseridos=${inserted} pulados=${skipped} falhas=${failed}${failed ? ' erros=' + erros.slice(0, 3).join('; ') : ''}`);
 
   // Dispara push em background (no-op se VAPID nao configurado)
   if (usersInseridos.length) {
