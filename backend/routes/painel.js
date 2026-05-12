@@ -282,7 +282,8 @@ router.get('/matriz', async (req, res) => {
 //   Cada celula: % solicitacoes concluidas no SLA daquela area adm para
 //   aquela area-cliente no mes corrente.
 // ----------------------------------------------------------------------------
-// 6 grupos visuais · cada um agrega 1 ou mais sub-areas adm
+// 5 grupos visuais · cada um agrega 1 ou mais sub-areas adm
+// (Criativo removido · vai ter matriz/OKR propria por ter natureza diferente)
 const AREAS_ADM_GRUPOS = [
   { key: 'hospitalidade', label: 'Hospitalidade', cor: '#8B5CF6',
     subareas: ['reserva_espaco', 'cozinha', 'manutencao'],
@@ -296,11 +297,10 @@ const AREAS_ADM_GRUPOS = [
     subareas: ['rh'], sub_labels: ['RH'] },
   { key: 'financeiro',    label: 'Financeiro',    cor: '#84CC16',
     subareas: ['financeiro'], sub_labels: ['Financeiro'] },
-  { key: 'criativo',      label: 'Criativo',      cor: '#EC4899',
-    subareas: ['criativo'], sub_labels: ['Criativo'] },
 ];
 
 // Legado mantido para outros endpoints que ainda referenciam areas individuais
+// (Criativo nao listado · matriz separada futura)
 const AREAS_ADM = [
   { key: 'reserva_espaco',     label: 'Reserva de Espaço', cor: '#8B5CF6' },
   { key: 'cozinha',            label: 'Cozinha',            cor: '#EC4899' },
@@ -422,7 +422,8 @@ router.get('/celula-adm/:area_adm/:area_cliente', async (req, res) => {
     const grupo = AREAS_ADM_GRUPOS.find(g => g.key === area_adm);
     const subareas = grupo ? grupo.subareas : [area_adm];
 
-    const { data, error } = await supabase
+    // Solicitacoes da intersecao (ultimos 30 dias)
+    const { data: solicitacoes, error } = await supabase
       .from('vw_solicitacoes_sla')
       .select('id, titulo, status, eh_urgente, sla_resolucao_status, horas_total, created_at, concluido_em, valor_estimado, area_responsavel')
       .in('area_responsavel', subareas)
@@ -431,7 +432,46 @@ router.get('/celula-adm/:area_adm/:area_cliente', async (req, res) => {
       .order('created_at', { ascending: false })
       .limit(50);
     if (error) throw error;
-    res.json({ area_adm, area_cliente, subareas, solicitacoes: data || [] });
+
+    // KPIs especificos vinculados as subareas desse grupo
+    // (formula_config.area_responsavel match com subareas)
+    const { data: kpisAll } = await supabase
+      .from('kpi_indicadores_taticos')
+      .select('id, indicador, descricao, meta_descricao, meta_valor, unidade, tipo_kpi, is_okr, formula_config, ativo')
+      .eq('ativo', true)
+      .eq('tipo_kpi', 'operacional');
+
+    const kpisDoGrupo = (kpisAll || []).filter(k => {
+      const areaResp = k.formula_config?.area_responsavel;
+      return areaResp && subareas.includes(areaResp);
+    });
+
+    // Ultimo valor de cada KPI
+    let ultimoPorKpi = {};
+    if (kpisDoGrupo.length > 0) {
+      const ids = kpisDoGrupo.map(k => k.id);
+      const { data: valores } = await supabase
+        .from('kpi_valores_calculados')
+        .select('kpi_id, valor_calculado, periodo_referencia, calculado_em')
+        .in('kpi_id', ids)
+        .order('calculado_em', { ascending: false });
+      (valores || []).forEach(v => {
+        if (!ultimoPorKpi[v.kpi_id]) ultimoPorKpi[v.kpi_id] = v;
+      });
+    }
+
+    const kpis = kpisDoGrupo.map(k => ({
+      ...k,
+      area_responsavel: k.formula_config?.area_responsavel || null,
+      ultimo_valor: ultimoPorKpi[k.id]?.valor_calculado ?? null,
+      ultimo_periodo: ultimoPorKpi[k.id]?.periodo_referencia ?? null,
+    }));
+
+    res.json({
+      area_adm, area_cliente, subareas,
+      solicitacoes: solicitacoes || [],
+      kpis,
+    });
   } catch (e) {
     console.error('painel/celula-adm:', e.message);
     res.status(500).json({ error: e.message });

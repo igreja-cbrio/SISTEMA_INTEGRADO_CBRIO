@@ -585,10 +585,11 @@ const CFG_CULTURA = {
 };
 
 const CFG_ADM = {
+  // 8 areas adm · Criativo removido (matriz/OKR proprio futuro)
   AREAS: [
     'reserva_espaco', 'cozinha', 'manutencao',
     'logistica_estoque', 'logistica_compras',
-    'ti', 'rh', 'financeiro', 'criativo',
+    'ti', 'rh', 'financeiro',
   ],
   COR: {
     reserva_espaco:    '#8B5CF6', // hospitalidade
@@ -599,7 +600,6 @@ const CFG_ADM = {
     ti:                '#10B981',
     rh:                '#EF4444',
     financeiro:        '#84CC16',
-    criativo:          '#EC4899',
   },
   LABEL: {
     reserva_espaco:    'Reserva',
@@ -610,7 +610,6 @@ const CFG_ADM = {
     ti:                'TI',
     rh:                'RH',
     financeiro:        'Financeiro',
-    criativo:          'Criativo',
   },
   // Adm: KPI.area='sede' mas formula_config.area_responsavel='reserva_espaco' etc
   getKpiArea: (k) => String(k.formula_config?.area_responsavel || '').toLowerCase(),
