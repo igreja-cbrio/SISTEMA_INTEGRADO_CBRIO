@@ -1254,8 +1254,10 @@ export const painel = {
   mandalas:   () => get('/painel/mandalas'),
   matriz:     () => get('/painel/matriz'),
   matrizAdm:  () => get('/painel/matriz-adm'),
+  matrizCriativo: () => get('/painel/matriz-criativo'),
   celula:     (area, valor) => get(`/painel/celula/${area}/${valor}`),
   celulaAdm:  (areaAdm, areaCliente) => get(`/painel/celula-adm/${areaAdm}/${areaCliente}`),
+  celulaCriativo: (areaCriativa, areaCliente) => get(`/painel/celula-criativo/${areaCriativa}/${areaCliente}`),
   alertas:  (params = {}) => {
     const qs = new URLSearchParams(params).toString();
     return get('/painel/alertas' + (qs ? '?' + qs : ''));

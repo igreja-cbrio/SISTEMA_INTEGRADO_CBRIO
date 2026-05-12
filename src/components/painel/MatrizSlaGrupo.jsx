@@ -1,17 +1,23 @@
 // ============================================================================
-// MatrizGestaoArea · grid 5 grupos adm × 6 areas-cliente no /painel
+// MatrizSlaGrupo · componente generico de matriz SLA (grupos × areas-cliente)
 //
-// Cada celula = saude do servico daquela area adm para aquela area-cliente
-// nos ultimos 30 dias (% concluidas no SLA + alerta de atrasados).
+// Usado por:
+// - MatrizGestaoArea (5 grupos adm: hospitalidade, logistica, ti, rh, financeiro)
+// - MatrizCriativoArea (3 grupos: producao, adoracao, marketing)
 //
+// Cada celula = saude do servico daquele grupo para aquela area-cliente nos
+// ultimos 30 dias (% no SLA + alerta) + count de KPIs vinculados ao grupo.
 // Click numa celula abre modal com solicitacoes + KPIs especificos da area.
-// Visual identico ao MatrizValorArea (mesmo card, mesmo cell style, legenda
-// igual).
-// Criativo removido daqui · matriz propria futura.
+// Visual identico ao MatrizValorArea (mesmo card, mesmo cell style, legenda).
+//
+// Props:
+//   titulo · "Matriz Gestão × Área" ou "Matriz Criativo × Área"
+//   subtitulo · descricao curta abaixo do titulo
+//   loadMatriz · funcao () => Promise<{ grupos_adm, areas_cliente, cells, desde }>
+//   loadCelula · funcao (grupoKey, clienteKey) => Promise<{ solicitacoes, kpis }>
 // ============================================================================
 
 import { useState, useEffect, useCallback } from 'react';
-import { painel as painelApi } from '../../api';
 import { X, Clock, CheckCircle2, AlertCircle, Zap, ExternalLink, Activity } from 'lucide-react';
 import { formatErro } from '../../lib/formatErro';
 import KpiDetalheModal from '../KpiDetalheModal';
@@ -40,7 +46,7 @@ const STATUS_LABEL_CURTO = {
   na:       'N/A',
 };
 
-export default function MatrizGestaoArea() {
+export default function MatrizSlaGrupo({ titulo, subtitulo, loadMatriz, loadCelula }) {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [erro, setErro] = useState(null);
@@ -50,12 +56,12 @@ export default function MatrizGestaoArea() {
     setLoading(true);
     setErro(null);
     try {
-      const r = await painelApi.matrizAdm();
+      const r = await loadMatriz();
       setData(r);
     } catch (e) {
-      setErro(formatErro(e, 'matriz administrativa'));
+      setErro(formatErro(e, titulo));
     } finally { setLoading(false); }
-  }, []);
+  }, [loadMatriz, titulo]);
 
   useEffect(() => { carregar(); }, [carregar]);
 
@@ -63,7 +69,7 @@ export default function MatrizGestaoArea() {
     return (
       <section style={cardStyle}>
         <div style={{ padding: 30, textAlign: 'center', color: C.t3, fontSize: 13 }}>
-          Carregando matriz administrativa...
+          Carregando matriz...
         </div>
       </section>
     );
@@ -89,11 +95,10 @@ export default function MatrizGestaoArea() {
       <section style={cardStyle}>
         <header style={{ marginBottom: 14 }}>
           <h2 style={{ fontSize: 16, fontWeight: 700, color: C.text, margin: 0 }}>
-            Matriz Gestão × Área
+            {titulo}
           </h2>
           <p style={{ fontSize: 11, color: C.t3, marginTop: 4, margin: 0 }}>
-            Clique numa celula para ver solicitacoes e KPIs daquela area da gestao.
-            Hospitalidade = Reserva + Cozinha + Manutencao · Logistica = Estoque + Compras.
+            {subtitulo}
           </p>
         </header>
 
@@ -215,6 +220,7 @@ export default function MatrizGestaoArea() {
       {celulaAberta && (
         <ModalCelulaAdm
           cell={celulaAberta}
+          loadCelula={loadCelula}
           onClose={() => setCelulaAberta(null)}
         />
       )}
@@ -231,18 +237,18 @@ function Legenda({ cor, label }) {
   );
 }
 
-function ModalCelulaAdm({ cell, onClose }) {
+function ModalCelulaAdm({ cell, loadCelula, onClose }) {
   const [payload, setPayload] = useState(null);
   const [loading, setLoading] = useState(true);
   const [detalheKpiId, setDetalheKpiId] = useState(null);
 
   useEffect(() => {
     setLoading(true);
-    painelApi.celulaAdm(cell.grupo_adm, cell.area_cliente)
+    loadCelula(cell.grupo_adm, cell.area_cliente)
       .then(setPayload)
       .catch(() => setPayload({ solicitacoes: [], kpis: [] }))
       .finally(() => setLoading(false));
-  }, [cell.grupo_adm, cell.area_cliente]);
+  }, [cell.grupo_adm, cell.area_cliente, loadCelula]);
 
   useEffect(() => {
     const onKey = (e) => { if (e.key === 'Escape') onClose?.(); };

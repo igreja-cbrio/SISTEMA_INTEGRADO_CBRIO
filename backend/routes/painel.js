@@ -429,6 +429,171 @@ router.get('/matriz-adm', async (req, res) => {
 // ----------------------------------------------------------------------------
 // param area_adm pode ser grupo (hospitalidade) ou subarea (cozinha)
 // Se for grupo, expande pras subareas
+// ----------------------------------------------------------------------------
+// Matriz Criativo · 3 grupos criativos × 6 areas-cliente
+// (Mesma logica da Gestao mas grupos diferentes)
+// ----------------------------------------------------------------------------
+const AREAS_CRIATIVO_GRUPOS = [
+  { key: 'producao',  label: 'Produção',  cor: '#F97316',
+    subareas: ['producao'], sub_labels: ['Produção'] },
+  { key: 'adoracao',  label: 'Adoração',  cor: '#A855F7',
+    subareas: ['adoracao'], sub_labels: ['Adoração'] },
+  { key: 'marketing', label: 'Marketing', cor: '#EC4899',
+    subareas: ['marketing'], sub_labels: ['Marketing'] },
+];
+
+router.get('/matriz-criativo', async (req, res) => {
+  try {
+    const cached = cacheGet('matriz-criativo');
+    if (cached) return res.json(cached);
+
+    const desde = new Date();
+    desde.setDate(desde.getDate() - 30);
+    const desdeStr = desde.toISOString().slice(0, 10);
+
+    const subareasCriativas = AREAS_CRIATIVO_GRUPOS.flatMap(g => g.subareas);
+    const { data: solicitacoes, error } = await supabase
+      .from('vw_solicitacoes_sla')
+      .select('area_responsavel, area_cliente, status, sla_resolucao_status, concluido_em, created_at')
+      .in('area_responsavel', subareasCriativas)
+      .gte('created_at', desdeStr);
+    if (error) throw error;
+
+    // KPIs criativos ativos por grupo
+    const { data: kpis } = await supabase
+      .from('kpi_indicadores_taticos')
+      .select('id, formula_config, ativo, tipo_kpi')
+      .eq('ativo', true)
+      .eq('tipo_kpi', 'operacional')
+      .like('id', 'ADM-C-%');
+
+    const kpisPorGrupo = {};
+    (kpis || []).forEach(k => {
+      const sub = k.formula_config?.area_responsavel;
+      if (!sub) return;
+      const grupo = AREAS_CRIATIVO_GRUPOS.find(g => g.subareas.includes(sub));
+      if (!grupo) return;
+      kpisPorGrupo[grupo.key] = (kpisPorGrupo[grupo.key] || 0) + 1;
+    });
+
+    const SUB_TO_GRUPO = {};
+    AREAS_CRIATIVO_GRUPOS.forEach(g => g.subareas.forEach(sub => { SUB_TO_GRUPO[sub] = g.key; }));
+
+    const cells = {};
+    AREAS_CRIATIVO_GRUPOS.forEach(g => {
+      AREAS_CLIENTE.forEach(cli => {
+        cells[`${g.key}:${cli.id}`] = {
+          grupo_adm: g.key,
+          grupo_label: g.label,
+          grupo_cor: g.cor,
+          subareas: g.subareas,
+          area_cliente: cli.id,
+          area_cliente_nome: cli.nome,
+          total_kpis: kpisPorGrupo[g.key] || 0,
+          total: 0, concluidos: 0, no_prazo: 0, atrasados: 0, em_andamento: 0,
+        };
+      });
+    });
+
+    (solicitacoes || []).forEach(s => {
+      if (!s.area_responsavel || !s.area_cliente) return;
+      const grupo = SUB_TO_GRUPO[s.area_responsavel];
+      if (!grupo) return;
+      const c = cells[`${grupo}:${s.area_cliente}`];
+      if (!c) return;
+      c.total++;
+      if (s.concluido_em) {
+        c.concluidos++;
+        if (s.sla_resolucao_status === 'concluiu_no_prazo') c.no_prazo++;
+      } else if (s.sla_resolucao_status === 'atrasado') c.atrasados++;
+      else c.em_andamento++;
+    });
+
+    Object.values(cells).forEach(c => {
+      if (c.total === 0) { c.status = 'sem_dado'; c.percentual = null; }
+      else if (c.concluidos === 0) {
+        c.status = c.atrasados > 0 ? 'vermelho' : 'sem_dado';
+        c.percentual = c.atrasados > 0 ? 0 : null;
+      } else {
+        const pct = Math.round((c.no_prazo / c.concluidos) * 100);
+        c.percentual = pct;
+        if (c.atrasados > 0 || pct < 70) c.status = 'vermelho';
+        else if (pct < 90) c.status = 'amarelo';
+        else c.status = 'verde';
+      }
+    });
+
+    const resp = {
+      desde: desdeStr,
+      grupos_adm: AREAS_CRIATIVO_GRUPOS,
+      areas_cliente: AREAS_CLIENTE,
+      cells,
+    };
+    cacheSet('matriz-criativo', resp);
+    res.json(resp);
+  } catch (e) {
+    console.error('painel/matriz-criativo:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+router.get('/celula-criativo/:area_adm/:area_cliente', async (req, res) => {
+  try {
+    const { area_adm, area_cliente } = req.params;
+    const desde = new Date();
+    desde.setDate(desde.getDate() - 30);
+    const desdeStr = desde.toISOString().slice(0, 10);
+
+    const grupo = AREAS_CRIATIVO_GRUPOS.find(g => g.key === area_adm);
+    const subareas = grupo ? grupo.subareas : [area_adm];
+
+    const { data: solicitacoes, error } = await supabase
+      .from('vw_solicitacoes_sla')
+      .select('id, titulo, status, eh_urgente, sla_resolucao_status, horas_total, created_at, concluido_em, valor_estimado, area_responsavel')
+      .in('area_responsavel', subareas)
+      .eq('area_cliente', area_cliente)
+      .gte('created_at', desdeStr)
+      .order('created_at', { ascending: false })
+      .limit(50);
+    if (error) throw error;
+
+    const { data: kpisAll } = await supabase
+      .from('kpi_indicadores_taticos')
+      .select('id, indicador, descricao, meta_descricao, meta_valor, unidade, tipo_kpi, is_okr, formula_config, ativo')
+      .eq('ativo', true)
+      .eq('tipo_kpi', 'operacional')
+      .like('id', 'ADM-C-%');
+
+    const kpisDoGrupo = (kpisAll || []).filter(k => {
+      const areaResp = k.formula_config?.area_responsavel;
+      return areaResp && subareas.includes(areaResp);
+    });
+
+    let ultimoPorKpi = {};
+    if (kpisDoGrupo.length > 0) {
+      const ids = kpisDoGrupo.map(k => k.id);
+      const { data: valores } = await supabase
+        .from('kpi_valores_calculados')
+        .select('kpi_id, valor_calculado, periodo_referencia, calculado_em')
+        .in('kpi_id', ids)
+        .order('calculado_em', { ascending: false });
+      (valores || []).forEach(v => { if (!ultimoPorKpi[v.kpi_id]) ultimoPorKpi[v.kpi_id] = v; });
+    }
+
+    const kpis = kpisDoGrupo.map(k => ({
+      ...k,
+      area_responsavel: k.formula_config?.area_responsavel || null,
+      ultimo_valor: ultimoPorKpi[k.id]?.valor_calculado ?? null,
+      ultimo_periodo: ultimoPorKpi[k.id]?.periodo_referencia ?? null,
+    }));
+
+    res.json({ area_adm, area_cliente, subareas, solicitacoes: solicitacoes || [], kpis });
+  } catch (e) {
+    console.error('painel/celula-criativo:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 router.get('/celula-adm/:area_adm/:area_cliente', async (req, res) => {
   try {
     const { area_adm, area_cliente } = req.params;
