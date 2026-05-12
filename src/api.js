@@ -1251,9 +1251,11 @@ export const estrategia = {
 
 // ── Painel CBRio (mandalas, matriz, alertas, drilldown) ──
 export const painel = {
-  mandalas: () => get('/painel/mandalas'),
-  matriz:   () => get('/painel/matriz'),
-  celula:   (area, valor) => get(`/painel/celula/${area}/${valor}`),
+  mandalas:   () => get('/painel/mandalas'),
+  matriz:     () => get('/painel/matriz'),
+  matrizAdm:  () => get('/painel/matriz-adm'),
+  celula:     (area, valor) => get(`/painel/celula/${area}/${valor}`),
+  celulaAdm:  (areaAdm, areaCliente) => get(`/painel/celula-adm/${areaAdm}/${areaCliente}`),
   alertas:  (params = {}) => {
     const qs = new URLSearchParams(params).toString();
     return get('/painel/alertas' + (qs ? '?' + qs : ''));
