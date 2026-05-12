@@ -38,6 +38,15 @@ const VALORES = [
   { key: 'generosidade', label: 'Viver Generosamente',  cor: '#EC4899' },
 ];
 
+// Áreas operacionais — sustentam a NSM, não movem (PDF Planejamento 2026).
+// KPIs com valores=[] caem aqui em vez de na seção dos 5 valores.
+const AREAS_OPERACIONAIS = [
+  { key: 'financeiro',     label: 'Financeiro',     cor: '#10B981' },
+  { key: 'rh',             label: 'RH',             cor: '#F59E0B' },
+  { key: 'infraestrutura', label: 'Infraestrutura', cor: '#6B7280' },
+];
+const AREAS_OPER_KEYS = AREAS_OPERACIONAIS.map(a => a.key);
+
 const STATUS_VISUAL = {
   no_alvo:  { Icon: CheckCircle2, cor: '#10B981', bg: '#10B98118', label: 'No alvo' },
   atras:    { Icon: Clock,        cor: '#F59E0B', bg: '#F59E0B18', label: 'Atras' },
@@ -137,6 +146,18 @@ export default function MinhaArea() {
       (k.valores || []).forEach(v => {
         if (m[v]) m[v].push(k);
       });
+    });
+    return m;
+  }, [meusKpis]);
+
+  // Agrupar KPIs operacionais (admin) por área — não amarrados a nenhum valor.
+  // Sustentam a NSM, não movem (Financeiro, RH, Infraestrutura).
+  const porAreaOper = useMemo(() => {
+    const m = {};
+    AREAS_OPERACIONAIS.forEach(a => { m[a.key] = []; });
+    meusKpis.forEach(k => {
+      const a = String(k.area_db || '').toLowerCase();
+      if (m[a]) m[a].push(k);
     });
     return m;
   }, [meusKpis]);
@@ -322,6 +343,77 @@ export default function MinhaArea() {
               );
             })}
           </div>
+
+          {/* Acordeao por área operacional (Financeiro, RH, Infraestrutura)
+              — sustenta a NSM, não move. KPIs sem amarração com os 5 valores. */}
+          {(() => {
+            const totalOper = AREAS_OPERACIONAIS.reduce((s, a) => s + (porAreaOper[a.key]?.length || 0), 0);
+            if (totalOper === 0) return null;
+            return (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 16 }}>
+                <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, padding: '0 4px', marginBottom: 2 }}>
+                  <span style={{ fontSize: 11, fontWeight: 700, color: C.t3, textTransform: 'uppercase', letterSpacing: 0.8 }}>
+                    Operações
+                  </span>
+                  <span style={{ fontSize: 11, color: C.t3 }}>· sustenta a NSM (não move)</span>
+                </div>
+                {AREAS_OPERACIONAIS.map(a => {
+                  const kpisDaArea = porAreaOper[a.key] || [];
+                  if (kpisDaArea.length === 0) return null;
+                  const pendentes = kpisDaArea.filter(k => statusKpi(k) !== 'no_alvo').length;
+                  const expandKey = `oper:${a.key}`;
+                  const expanded = valorExpandido === expandKey;
+                  return (
+                    <section key={a.key} style={{
+                      background: C.card, border: `1px solid ${C.border}`,
+                      borderLeft: `3px solid ${a.cor}`,
+                      borderRadius: 8, overflow: 'hidden',
+                    }}>
+                      <button
+                        onClick={() => setValorExpandido(expanded ? null : expandKey)}
+                        style={{
+                          width: '100%', padding: 14,
+                          display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap',
+                          background: 'none', border: 'none', cursor: 'pointer', textAlign: 'left',
+                        }}
+                      >
+                        {expanded ? <ChevronDown size={16} style={{ color: C.t3 }} /> : <ChevronRight size={16} style={{ color: C.t3 }} />}
+                        <div style={{ width: 12, height: 12, borderRadius: 3, background: a.cor }} />
+                        <strong style={{ fontSize: 14, color: C.text }}>{a.label}</strong>
+                        <span style={{ fontSize: 10, padding: '2px 8px', borderRadius: 99, background: 'var(--cbrio-input-bg)', color: C.t2, fontWeight: 600, marginLeft: 'auto' }}>
+                          {kpisDaArea.length} KPI{kpisDaArea.length === 1 ? '' : 's'}
+                        </span>
+                        {pendentes > 0 && (
+                          <span style={{ fontSize: 10, padding: '2px 8px', borderRadius: 99, background: '#FEE2E2', color: '#B91C1C', fontWeight: 700 }}>
+                            {pendentes} pendente{pendentes === 1 ? '' : 's'}
+                          </span>
+                        )}
+                      </button>
+                      {expanded && (
+                        <div style={{ padding: '0 14px 14px', borderTop: `1px solid ${C.border}` }}>
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: 6, paddingTop: 12 }}>
+                            {kpisDaArea.map(kpi => (
+                              <KpiCard
+                                key={kpi.id}
+                                kpi={kpi}
+                                status={statusKpi(kpi)}
+                                ultimo={ultimoRegPorIndicador[kpi.id]}
+                                canEdit={podeEditar(kpi)}
+                                onPreencher={() => setFillKpi(kpi)}
+                                onEditar={() => setEditKpi(kpi)}
+                                onRevisar={() => setRevisarKpi(kpi)}
+                                onDetalhe={() => setDetalheKpiId(kpi.id)}
+                              />
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </section>
+                  );
+                })}
+              </div>
+            );
+          })()}
         </>
       )}
 
