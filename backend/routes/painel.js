@@ -282,6 +282,25 @@ router.get('/matriz', async (req, res) => {
 //   Cada celula: % solicitacoes concluidas no SLA daquela area adm para
 //   aquela area-cliente no mes corrente.
 // ----------------------------------------------------------------------------
+// 6 grupos visuais · cada um agrega 1 ou mais sub-areas adm
+const AREAS_ADM_GRUPOS = [
+  { key: 'hospitalidade', label: 'Hospitalidade', cor: '#8B5CF6',
+    subareas: ['reserva_espaco', 'cozinha', 'manutencao'],
+    sub_labels: ['Reserva', 'Cozinha', 'Manutenção'] },
+  { key: 'logistica',     label: 'Logística',     cor: '#3B82F6',
+    subareas: ['logistica_estoque', 'logistica_compras'],
+    sub_labels: ['Estoque', 'Compras'] },
+  { key: 'ti',            label: 'TI',            cor: '#10B981',
+    subareas: ['ti'], sub_labels: ['TI'] },
+  { key: 'rh',            label: 'RH',            cor: '#EF4444',
+    subareas: ['rh'], sub_labels: ['RH'] },
+  { key: 'financeiro',    label: 'Financeiro',    cor: '#84CC16',
+    subareas: ['financeiro'], sub_labels: ['Financeiro'] },
+  { key: 'criativo',      label: 'Criativo',      cor: '#EC4899',
+    subareas: ['criativo'], sub_labels: ['Criativo'] },
+];
+
+// Legado mantido para outros endpoints que ainda referenciam areas individuais
 const AREAS_ADM = [
   { key: 'reserva_espaco',     label: 'Reserva de Espaço', cor: '#8B5CF6' },
   { key: 'cozinha',            label: 'Cozinha',            cor: '#EC4899' },
@@ -306,26 +325,29 @@ router.get('/matriz-adm', async (req, res) => {
     const cached = cacheGet('matriz-adm');
     if (cached) return res.json(cached);
 
-    // Periodo: 30 ultimos dias (cobrem o mes corrente)
     const desde = new Date();
     desde.setDate(desde.getDate() - 30);
     const desdeStr = desde.toISOString().slice(0, 10);
 
-    // Le solicitacoes do periodo via view (ja tem sla_resolucao_status)
     const { data: solicitacoes, error } = await supabase
       .from('vw_solicitacoes_sla')
       .select('area_responsavel, area_cliente, status, sla_resolucao_status, concluido_em, created_at')
       .gte('created_at', desdeStr);
     if (error) throw error;
 
-    // Agrega por (area_responsavel × area_cliente)
+    // Mapa de subarea_adm -> grupo (pra agregar)
+    const SUB_TO_GRUPO = {};
+    AREAS_ADM_GRUPOS.forEach(g => g.subareas.forEach(sub => { SUB_TO_GRUPO[sub] = g.key; }));
+
+    // Agrega por (grupo_adm × area_cliente)
     const cells = {};
-    AREAS_ADM.forEach(adm => {
+    AREAS_ADM_GRUPOS.forEach(g => {
       AREAS_CLIENTE.forEach(cli => {
-        cells[`${adm.key}:${cli.id}`] = {
-          area_adm: adm.key,
-          area_adm_label: adm.label,
-          area_adm_cor: adm.cor,
+        cells[`${g.key}:${cli.id}`] = {
+          grupo_adm: g.key,
+          grupo_label: g.label,
+          grupo_cor: g.cor,
+          subareas: g.subareas,
           area_cliente: cli.id,
           area_cliente_nome: cli.nome,
           total: 0,
@@ -339,7 +361,9 @@ router.get('/matriz-adm', async (req, res) => {
 
     (solicitacoes || []).forEach(s => {
       if (!s.area_responsavel || !s.area_cliente) return;
-      const key = `${s.area_responsavel}:${s.area_cliente}`;
+      const grupo = SUB_TO_GRUPO[s.area_responsavel];
+      if (!grupo) return;
+      const key = `${grupo}:${s.area_cliente}`;
       const c = cells[key];
       if (!c) return;
       c.total++;
@@ -353,11 +377,6 @@ router.get('/matriz-adm', async (req, res) => {
       }
     });
 
-    // Status da celula:
-    //   sem_dado -> 0 total
-    //   verde -> >=90% concluidos no prazo
-    //   amarelo -> 70-89%
-    //   vermelho -> <70% OU tem atrasado nao concluido
     Object.values(cells).forEach(c => {
       if (c.total === 0) {
         c.status = 'sem_dado';
@@ -376,7 +395,7 @@ router.get('/matriz-adm', async (req, res) => {
 
     const resp = {
       desde: desdeStr,
-      areas_adm: AREAS_ADM,
+      grupos_adm: AREAS_ADM_GRUPOS,
       areas_cliente: AREAS_CLIENTE,
       cells,
     };
@@ -391,6 +410,8 @@ router.get('/matriz-adm', async (req, res) => {
 // ----------------------------------------------------------------------------
 // GET /celula-adm/:area_adm/:area_cliente - solicitacoes daquela intersecao
 // ----------------------------------------------------------------------------
+// param area_adm pode ser grupo (hospitalidade) ou subarea (cozinha)
+// Se for grupo, expande pras subareas
 router.get('/celula-adm/:area_adm/:area_cliente', async (req, res) => {
   try {
     const { area_adm, area_cliente } = req.params;
@@ -398,16 +419,19 @@ router.get('/celula-adm/:area_adm/:area_cliente', async (req, res) => {
     desde.setDate(desde.getDate() - 30);
     const desdeStr = desde.toISOString().slice(0, 10);
 
+    const grupo = AREAS_ADM_GRUPOS.find(g => g.key === area_adm);
+    const subareas = grupo ? grupo.subareas : [area_adm];
+
     const { data, error } = await supabase
       .from('vw_solicitacoes_sla')
-      .select('id, titulo, status, eh_urgente, sla_resolucao_status, horas_total, created_at, concluido_em, valor_estimado')
-      .eq('area_responsavel', area_adm)
+      .select('id, titulo, status, eh_urgente, sla_resolucao_status, horas_total, created_at, concluido_em, valor_estimado, area_responsavel')
+      .in('area_responsavel', subareas)
       .eq('area_cliente', area_cliente)
       .gte('created_at', desdeStr)
       .order('created_at', { ascending: false })
       .limit(50);
     if (error) throw error;
-    res.json({ area_adm, area_cliente, solicitacoes: data || [] });
+    res.json({ area_adm, area_cliente, subareas, solicitacoes: data || [] });
   } catch (e) {
     console.error('painel/celula-adm:', e.message);
     res.status(500).json({ error: e.message });
