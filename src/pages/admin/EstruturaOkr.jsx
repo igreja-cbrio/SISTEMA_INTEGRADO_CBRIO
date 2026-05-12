@@ -492,7 +492,7 @@ function ResumoGerais({ detalhes, onAddKr, onEditKr, removerKr, onAbrirEspecific
         </div>
       )}
 
-      {/* Botao para ver especificos · ministerial (KRs filhos) ou operacional (KPIs por area adm) */}
+      {/* Botao para abrir cascata 4 colunas (KR Geral · KPI Geral · KR Esp · KPI Esp) */}
       {(totalEspecificos > 0 || isOperacional) && (
         <div style={{ marginTop: 12, paddingTop: 10, borderTop: `1px solid ${C.border}`, display: 'flex', justifyContent: 'flex-end' }}>
           <button onClick={onAbrirEspecificos} style={{
@@ -503,7 +503,7 @@ function ResumoGerais({ detalhes, onAddKr, onEditKr, removerKr, onAbrirEspecific
           }}>
             <Activity size={12} />
             {isOperacional
-              ? `Ver desdobramento por área administrativa${kpis.length > 0 ? ` (${kpis.length} KPIs)` : ''}`
+              ? `Ver desdobramento por área administrativa${totalEspecificos > 0 ? ` (${totalEspecificos} específicos)` : kpis.length > 0 ? ` (${kpis.length} KPIs)` : ''}`
               : `Ver desdobramento por área (${totalEspecificos} específicos)`}
           </button>
         </div>
@@ -555,120 +555,13 @@ function ModalEspecificos({ detalhes, onClose, onEditKr, removerKr }) {
         </header>
 
         <div style={{ padding: 20 }}>
-          {detalhes.tipo_okr === 'operacional' ? (
-            <TabelaDesdobramentoAdm detalhes={detalhes} />
-          ) : (
-            <TabelaCascataOkr
-              detalhes={detalhes}
-              onEditKr={onEditKr}
-              removerKr={removerKr}
-              semHeader
-            />
-          )}
+          <TabelaCascataOkr
+            detalhes={detalhes}
+            onEditKr={onEditKr}
+            removerKr={removerKr}
+            semHeader
+          />
         </div>
-      </div>
-    </div>
-  );
-}
-
-// ============================================================================
-// TabelaDesdobramentoAdm · drilldown de OKR operacional
-// Mostra os 9 KPIs especificos agrupados por grupo adm (Hospitalidade, etc).
-// Cada linha: KPI · Meta · Ultimo valor · Status semaforico
-// ============================================================================
-const GRUPO_LABEL = {
-  hospitalidade: 'Hospitalidade',
-  logistica:     'Logística',
-  ti:            'TI',
-  rh:            'RH',
-  financeiro:    'Financeiro',
-  criativo:      'Criativo',
-};
-const GRUPO_COR = {
-  hospitalidade: '#8B5CF6',
-  logistica:     '#3B82F6',
-  ti:            '#10B981',
-  rh:            '#EF4444',
-  financeiro:    '#84CC16',
-  criativo:      '#EC4899',
-};
-const GRUPO_ORDEM = ['hospitalidade', 'logistica', 'ti', 'rh', 'financeiro', 'criativo'];
-
-function TabelaDesdobramentoAdm({ detalhes }) {
-  const kpis = detalhes.kpis || [];
-  const porGrupo = {};
-  kpis.forEach(k => {
-    const g = k.formula_config?.grupo || 'outros';
-    if (!porGrupo[g]) porGrupo[g] = [];
-    porGrupo[g].push(k);
-  });
-
-  const corPorValor = (valor, meta, unidade) => {
-    if (valor == null) return '#9CA3AF';
-    if (unidade === 'nota') {
-      if (valor >= 9) return '#10B981';
-      if (valor >= 7) return '#F59E0B';
-      return '#EF4444';
-    }
-    // % padrao
-    const pct = valor;
-    if (pct >= 90) return '#10B981';
-    if (pct >= 70) return '#F59E0B';
-    return '#EF4444';
-  };
-
-  return (
-    <div>
-      <p style={{ fontSize: 11, color: C.t3, marginBottom: 12 }}>
-        Cada area da gestão tem seu KPI específico medindo o quanto serve bem os ministérios.
-        Hospitalidade agrega Reserva + Cozinha + Manutenção · Logística agrega Estoque + Compras.
-      </p>
-
-      {kpis.length === 0 && (
-        <div style={{ padding: 24, textAlign: 'center', color: C.t3, fontSize: 12, border: `1px dashed ${C.border}`, borderRadius: 6 }}>
-          Nenhum KPI específico vinculado a este OKR ainda.
-        </div>
-      )}
-
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-        {GRUPO_ORDEM.filter(g => porGrupo[g]?.length > 0).map(g => (
-          <div key={g}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6, paddingBottom: 4, borderBottom: `2px solid ${GRUPO_COR[g]}` }}>
-              <span style={{ width: 10, height: 10, borderRadius: '50%', background: GRUPO_COR[g] }} />
-              <span style={{ fontSize: 11, fontWeight: 700, color: GRUPO_COR[g], textTransform: 'uppercase', letterSpacing: 0.5 }}>
-                {GRUPO_LABEL[g] || g}
-              </span>
-              <span style={{ fontSize: 10, color: C.t3 }}>· {porGrupo[g].length} KPI{porGrupo[g].length > 1 ? 's' : ''}</span>
-            </div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-              {porGrupo[g].map(k => {
-                const cor = corPorValor(k.ultimo_valor, k.meta_valor, k.unidade);
-                return (
-                  <div key={k.id} style={{
-                    display: 'flex', alignItems: 'center', gap: 10,
-                    padding: '8px 12px', background: 'var(--cbrio-input-bg)',
-                    borderRadius: 6, borderLeft: `3px solid ${cor}`,
-                  }}>
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ fontSize: 12, fontWeight: 600, color: C.text }}>{k.indicador}</div>
-                      <div style={{ fontSize: 10, color: C.t3, marginTop: 2 }}>
-                        {k.id} · meta {k.meta_descricao || (k.meta_valor != null ? `${k.meta_valor}${k.unidade ? ' ' + k.unidade : ''}` : '—')}
-                      </div>
-                    </div>
-                    <div style={{ textAlign: 'right' }}>
-                      <div style={{ fontSize: 18, fontWeight: 800, color: cor, lineHeight: 1 }}>
-                        {k.ultimo_valor != null ? `${Number(k.ultimo_valor).toFixed(k.unidade === '%' ? 0 : 1)}${k.unidade ? (k.unidade === 'nota' ? '' : k.unidade) : ''}` : '—'}
-                      </div>
-                      <div style={{ fontSize: 9, color: C.t3, marginTop: 2 }}>
-                        {k.ultimo_periodo || 'sem dados'}
-                      </div>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        ))}
       </div>
     </div>
   );
@@ -677,19 +570,55 @@ function TabelaDesdobramentoAdm({ detalhes }) {
 // ============================================================================
 // TabelaCascataOkr — vista de cascata em 4 colunas
 // KR Geral · KPI Geral · KR Especifico (por area) · KPI Especifico
-// KR Geral e KPI Geral usam rowSpan agrupando as 6 areas de cada KR.
+// KR Geral e KPI Geral usam rowSpan agrupando as N areas de cada KR.
+// Suporta ministerial (6 areas culto) e operacional adm (9 areas adm).
 // ============================================================================
-const AREA_COR = {
-  kids:   '#F59E0B',
-  ami:    '#3B82F6',
-  bridge: '#8B5CF6',
-  sede:   '#10B981',
-  online: '#EC4899',
-  cba:    '#6B7280',
+const CFG_CULTURA = {
+  AREAS: ['kids', 'ami', 'bridge', 'sede', 'online', 'cba'],
+  COR: {
+    kids:   '#F59E0B', ami: '#3B82F6', bridge: '#8B5CF6',
+    sede:   '#10B981', online: '#EC4899', cba: '#6B7280',
+  },
+  LABEL: null, // usa a area string maiuscula
+  // Ministerial: KPI.area = KR.area (mesmo string)
+  getKpiArea: (k) => String(k.area || '').toLowerCase(),
 };
-const AREAS_ORDEM = ['kids', 'ami', 'bridge', 'sede', 'online', 'cba'];
+
+const CFG_ADM = {
+  AREAS: [
+    'reserva_espaco', 'cozinha', 'manutencao',
+    'logistica_estoque', 'logistica_compras',
+    'ti', 'rh', 'financeiro', 'criativo',
+  ],
+  COR: {
+    reserva_espaco:    '#8B5CF6', // hospitalidade
+    cozinha:           '#A78BFA',
+    manutencao:        '#7C3AED',
+    logistica_estoque: '#3B82F6', // logistica
+    logistica_compras: '#60A5FA',
+    ti:                '#10B981',
+    rh:                '#EF4444',
+    financeiro:        '#84CC16',
+    criativo:          '#EC4899',
+  },
+  LABEL: {
+    reserva_espaco:    'Reserva',
+    cozinha:           'Cozinha',
+    manutencao:        'Manutenção',
+    logistica_estoque: 'Log. Estoque',
+    logistica_compras: 'Log. Compras',
+    ti:                'TI',
+    rh:                'RH',
+    financeiro:        'Financeiro',
+    criativo:          'Criativo',
+  },
+  // Adm: KPI.area='sede' mas formula_config.area_responsavel='reserva_espaco' etc
+  getKpiArea: (k) => String(k.formula_config?.area_responsavel || '').toLowerCase(),
+};
 
 function TabelaCascataOkr({ detalhes, onAddKr, onEditKr, removerKr, semHeader = false }) {
+  const cfg = detalhes.tipo_okr === 'operacional' ? CFG_ADM : CFG_CULTURA;
+
   const krsGerais = (detalhes.krs || []).filter(k => !k.kr_pai_id);
   const krsPorPai = {};
   (detalhes.krs || []).forEach(k => {
@@ -700,17 +629,18 @@ function TabelaCascataOkr({ detalhes, onAddKr, onEditKr, removerKr, semHeader = 
   });
   const kpiPorArea = {};
   (detalhes.kpis || []).forEach(k => {
-    const a = String(k.area || '').toLowerCase();
+    const a = cfg.getKpiArea(k);
     if (!kpiPorArea[a]) kpiPorArea[a] = [];
     kpiPorArea[a].push(k);
   });
+  const areaLabel = (a) => cfg.LABEL?.[a] || String(a || '').toUpperCase();
 
   return (
     <div>
       {!semHeader && (
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
         <h4 style={hh4}>
-          <ListChecks size={11} /> Cascata · {krsGerais.length} KRs gerais &times; 6 areas
+          <ListChecks size={11} /> Cascata · {krsGerais.length} KRs gerais &times; {cfg.AREAS.length} {detalhes.tipo_okr === 'operacional' ? 'areas adm' : 'areas'}
           {detalhes.indicador_geral && (
             <span style={{ marginLeft: 8, fontWeight: 400, color: C.t3 }}>
               · KPI principal: <em>{detalhes.indicador_geral}</em>
@@ -747,13 +677,13 @@ function TabelaCascataOkr({ detalhes, onAddKr, onEditKr, removerKr, semHeader = 
             <tbody>
               {krsGerais.map(kr => {
                 const filhos = (krsPorPai[kr.id] || []).slice().sort(
-                  (a, b) => AREAS_ORDEM.indexOf(a.area) - AREAS_ORDEM.indexOf(b.area)
+                  (a, b) => cfg.AREAS.indexOf(a.area) - cfg.AREAS.indexOf(b.area)
                 );
                 const linhas = filhos.length > 0 ? filhos : [null];
 
                 return linhas.map((filho, idx) => {
                   const isFirst = idx === 0;
-                  const cor = filho ? (AREA_COR[filho.area] || C.t3) : C.t3;
+                  const cor = filho ? (cfg.COR[filho.area] || C.t3) : C.t3;
                   const kpisDaArea = filho ? (kpiPorArea[filho.area] || []) : [];
 
                   return (
@@ -820,7 +750,7 @@ function TabelaCascataOkr({ detalhes, onAddKr, onEditKr, removerKr, semHeader = 
                               textTransform: 'uppercase', minWidth: 50, textAlign: 'center',
                               letterSpacing: 0.5,
                             }}>
-                              {filho.area}
+                              {areaLabel(filho.area)}
                             </span>
                             <span style={{ fontSize: 11, color: C.t2 }}>
                               meta: <strong style={{ color: C.text }}>{filho.meta_valor != null
