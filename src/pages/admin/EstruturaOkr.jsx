@@ -49,11 +49,11 @@ const CATEGORIAS = [
 ];
 
 // Helpers · distingue OKR operacional adm vs criativo pelo nome
-// Criativo: contem "criativo" OU "producao"/"adoracao"/"marketing" OU "culto"
+// Criativo: contem "criativo" OU subareas "producao"/"adoracao"/"marketing"
 const isOkrCriativo = (o) => {
   if (o.tipo_okr !== 'operacional') return false;
   const n = (o.nome || '').toLowerCase();
-  return /criativo|produ[cç][aã]o|adora[cç][aã]o|marketing|culto/.test(n);
+  return /criativo|produ[cç][aã]o|adora[cç][aã]o|marketing/.test(n);
 };
 const isOkrAdm = (o) => o.tipo_okr === 'operacional' && !isOkrCriativo(o);
 
