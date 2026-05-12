@@ -174,7 +174,7 @@ export default function MatrizGestaoArea() {
                               —
                             </div>
                             <div style={{ fontSize: 9, fontWeight: 500, opacity: 0.92, lineHeight: 1.1 }}>
-                              0 sol.
+                              Sem dado
                             </div>
                           </>
                         ) : (
