@@ -170,8 +170,8 @@ export default function MatrizGestaoArea() {
                       >
                         {semDado ? (
                           <>
-                            <div style={{ fontSize: 14, lineHeight: 1, marginBottom: 2, fontWeight: 500 }}>
-                              —
+                            <div style={{ fontSize: 14, lineHeight: 1, marginBottom: 2 }}>
+                              {cell.total_kpis || 0}
                             </div>
                             <div style={{ fontSize: 9, fontWeight: 500, opacity: 0.92, lineHeight: 1.1 }}>
                               Sem dado

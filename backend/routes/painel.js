@@ -335,6 +335,22 @@ router.get('/matriz-adm', async (req, res) => {
       .gte('created_at', desdeStr);
     if (error) throw error;
 
+    // KPIs operacionais ativos · agrupa por grupo (via subareas)
+    const { data: kpis } = await supabase
+      .from('kpi_indicadores_taticos')
+      .select('id, formula_config, ativo, tipo_kpi')
+      .eq('ativo', true)
+      .eq('tipo_kpi', 'operacional');
+
+    const kpisPorGrupo = {}; // grupo.key -> count
+    (kpis || []).forEach(k => {
+      const sub = k.formula_config?.area_responsavel;
+      if (!sub) return;
+      const grupo = AREAS_ADM_GRUPOS.find(g => g.subareas.includes(sub));
+      if (!grupo) return;
+      kpisPorGrupo[grupo.key] = (kpisPorGrupo[grupo.key] || 0) + 1;
+    });
+
     // Mapa de subarea_adm -> grupo (pra agregar)
     const SUB_TO_GRUPO = {};
     AREAS_ADM_GRUPOS.forEach(g => g.subareas.forEach(sub => { SUB_TO_GRUPO[sub] = g.key; }));
@@ -350,6 +366,7 @@ router.get('/matriz-adm', async (req, res) => {
           subareas: g.subareas,
           area_cliente: cli.id,
           area_cliente_nome: cli.nome,
+          total_kpis: kpisPorGrupo[g.key] || 0,
           total: 0,
           concluidos: 0,
           no_prazo: 0,
