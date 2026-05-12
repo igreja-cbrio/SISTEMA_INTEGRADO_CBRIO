@@ -458,7 +458,19 @@ function parseMes(input) {
   const inicio = new Date(Date.UTC(y, m - 1, 1));
   const fimExclusivo = new Date(Date.UTC(y, m, 1));
   const diasNoMes = new Date(Date.UTC(y, m, 0)).getUTCDate();
-  const semanasNoMes = Math.max(1, Math.ceil(diasNoMes / 7));
+  // Semanas "completas" · domingo (D) E quarta (D+3) ambos dentro do mes.
+  // Regra do negocio: so contam semanas com ambos os dias de culto (dom+qua).
+  // Ex.: abr/26 → 4 semanas (dom 5/12/19/26 + qua 8/15/22/29 todos em abril)
+  //      jun/26 → 3 semanas (dom 28/jun + qua 1/jul cai fora)
+  let semanasNoMes = 0;
+  for (let d = 1; d <= diasNoMes; d++) {
+    const date = new Date(Date.UTC(y, m - 1, d));
+    if (date.getUTCDay() === 0) {
+      const qua = new Date(date.getTime() + 3 * 86400000);
+      if (qua.getUTCMonth() === m - 1) semanasNoMes++;
+    }
+  }
+  semanasNoMes = Math.max(1, semanasNoMes);
   const mesISO = `${y}-${String(m).padStart(2, '0')}`;
   const inicioStr = inicio.toISOString().split('T')[0];
   const fimExclusivoStr = fimExclusivo.toISOString().split('T')[0];
@@ -518,22 +530,34 @@ router.get('/cultura', async (req, res) => {
       ofertantes: cm?.qtd_ofertantes ?? null,
     };
 
+    // Valores manuais de cultura_mensal tem prioridade sobre o agregado de
+    // cultos · permite lancar mes consolidado sem cultos individuais.
+    const presencialSemanal = cm?.freq_presencial_semanal != null
+      ? cm.freq_presencial_semanal
+      : Math.round(presencialTotal / semanasNoMes);
+    const onlineSemanal = cm?.freq_online_semanal != null
+      ? cm.freq_online_semanal
+      : Math.round(onlineDsTotal / semanasNoMes);
+    const decisoesMes = cm?.decisoes_total != null ? cm.decisoes_total : decisoesTotal;
+    const conectarMes = cm?.freq_grupos_total != null ? cm.freq_grupos_total : conectarPessoas;
+
     res.json({
       mes: mesISO,
       semanas_no_mes: semanasNoMes,
       dias_no_mes: diasNoMes,
       seguir_jesus: {
-        presencial: Math.round(presencialTotal / semanasNoMes),
-        online: Math.round(onlineDsTotal / semanasNoMes),
+        presencial: presencialSemanal,
+        online: onlineSemanal,
         presencial_total: presencialTotal,
         online_total: onlineDsTotal,
+        fonte: cm?.freq_presencial_semanal != null ? 'manual' : 'auto',
       },
-      conectar_pessoas: conectarPessoas,
+      conectar_pessoas: conectarMes,
       investir_deus: investirDeus,
       investir_deus_total: penseTotalViews,
       servir_comunidade: servirComunidade,
       generosidade,
-      decisoes: decisoesTotal,
+      decisoes: decisoesMes,
     });
   } catch (e) {
     console.error('[kpis/cultura] erro:', e);
@@ -546,16 +570,24 @@ router.get('/cultura', async (req, res) => {
 
 // POST /kpis/cultura/mensal — upsert (mes, qtd_dizimistas, qtd_ofertantes, observacoes)
 router.post('/cultura/mensal', authorize('admin', 'diretor'), async (req, res) => {
-  const { mes, qtd_dizimistas, qtd_ofertantes, observacoes } = req.body || {};
+  const {
+    mes, qtd_dizimistas, qtd_ofertantes, observacoes,
+    freq_presencial_semanal, freq_online_semanal, decisoes_total, freq_grupos_total,
+  } = req.body || {};
   if (!mes || !/^\d{4}-\d{2}/.test(mes)) {
     return res.status(400).json({ error: 'Campo "mes" obrigatório no formato YYYY-MM' });
   }
   // Sempre dia 01
   const mesDate = `${mes.slice(0, 7)}-01`;
+  const intOrNull = (v) => v == null || v === '' ? null : Number(v);
   const payload = {
     mes: mesDate,
     qtd_dizimistas: Number(qtd_dizimistas) || 0,
     qtd_ofertantes: Number(qtd_ofertantes) || 0,
+    freq_presencial_semanal: intOrNull(freq_presencial_semanal),
+    freq_online_semanal:     intOrNull(freq_online_semanal),
+    decisoes_total:          intOrNull(decisoes_total),
+    freq_grupos_total:       intOrNull(freq_grupos_total),
     observacoes: observacoes || null,
     updated_at: new Date().toISOString(),
     updated_by: req.user?.id || null,
