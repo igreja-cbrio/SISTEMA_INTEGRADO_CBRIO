@@ -62,6 +62,29 @@ router.get('/count', async (req, res) => {
   }
 });
 
+// POST /api/notificacoes/_test — cria 1 notificação de teste para o usuário logado
+// (admin/diretor apenas — usado para debugar entrega)
+router.post('/_test', authorize('admin', 'diretor'), async (req, res) => {
+  try {
+    const { error, data } = await supabase.from('notificacoes').insert({
+      usuario_id: req.user.userId,
+      titulo: 'Teste de notificação',
+      mensagem: `Disparado em ${new Date().toLocaleString('pt-BR')} por ${req.user.email}. Se você está vendo isso, o sino funciona.`,
+      tipo: 'teste',
+      modulo: 'sistema',
+      severidade: 'info',
+      lida: false,
+    }).select().single();
+    if (error) {
+      console.error('[notif _test] erro insert:', error.message);
+      return res.status(500).json({ error: error.message });
+    }
+    res.json({ success: true, notificacaoId: data.id, usuarioId: req.user.userId });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // POST /api/notificacoes/gerar — gerar notificações automáticas (admin/diretor)
 router.post('/gerar', authorize('admin', 'diretor'), async (req, res) => {
   try {
