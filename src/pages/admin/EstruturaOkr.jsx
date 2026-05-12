@@ -49,8 +49,13 @@ const CATEGORIAS = [
 ];
 
 // Helpers · distingue OKR operacional adm vs criativo pelo nome
-const isOkrCriativo = (o) => o.tipo_okr === 'operacional' && (o.nome || '').toLowerCase().includes('criativo');
-const isOkrAdm      = (o) => o.tipo_okr === 'operacional' && !isOkrCriativo(o);
+// Criativo: contem "criativo" OU "producao"/"adoracao"/"marketing" OU "culto"
+const isOkrCriativo = (o) => {
+  if (o.tipo_okr !== 'operacional') return false;
+  const n = (o.nome || '').toLowerCase();
+  return /criativo|produ[cç][aã]o|adora[cç][aã]o|marketing|culto/.test(n);
+};
+const isOkrAdm = (o) => o.tipo_okr === 'operacional' && !isOkrCriativo(o);
 
 export default function EstruturaOkr({ embedded = false }) {
   const { profile } = useAuth();
@@ -593,14 +598,32 @@ function ModalEspecificos({ detalhes, onClose, onEditKr, removerKr }) {
 // Suporta ministerial (6 areas culto) e operacional adm (9 areas adm).
 // ============================================================================
 const CFG_CULTURA = {
-  AREAS: ['kids', 'ami', 'bridge', 'sede', 'online', 'cba'],
+  // 5 areas · CBA removido (so coleta batismos/aceitacoes via dados_brutos)
+  AREAS: ['kids', 'ami', 'bridge', 'sede', 'online'],
   COR: {
     kids:   '#F59E0B', ami: '#3B82F6', bridge: '#8B5CF6',
-    sede:   '#10B981', online: '#EC4899', cba: '#6B7280',
+    sede:   '#10B981', online: '#EC4899',
   },
   LABEL: null, // usa a area string maiuscula
-  // Ministerial: KPI.area = KR.area (mesmo string)
+  // KPI.area = KR.area (mesmo string)
   getKpiArea: (k) => String(k.area || '').toLowerCase(),
+};
+
+const CFG_CRIATIVO = {
+  // 3 grupos criativos · KR especifico tem area='producao'/'adoracao'/'marketing'
+  AREAS: ['producao', 'adoracao', 'marketing'],
+  COR: {
+    producao:  '#F97316',
+    adoracao:  '#A855F7',
+    marketing: '#EC4899',
+  },
+  LABEL: {
+    producao:  'Produção',
+    adoracao:  'Adoração',
+    marketing: 'Marketing',
+  },
+  // KPI.area='sede' mas formula_config.area_responsavel='producao' etc
+  getKpiArea: (k) => String(k.formula_config?.area_responsavel || '').toLowerCase(),
 };
 
 const CFG_ADM = {
@@ -635,7 +658,20 @@ const CFG_ADM = {
 };
 
 function TabelaCascataOkr({ detalhes, onAddKr, onEditKr, removerKr, semHeader = false }) {
-  const cfg = detalhes.tipo_okr === 'operacional' ? CFG_ADM : CFG_CULTURA;
+  // Pick config baseado nas areas reais dos KR especificos
+  const krFilhos = (detalhes.krs || []).filter(k => k.kr_pai_id);
+  const cfg = (() => {
+    if (krFilhos.length === 0) {
+      return detalhes.tipo_okr === 'operacional' ? CFG_ADM : CFG_CULTURA;
+    }
+    const areas = krFilhos.map(k => String(k.area || '').toLowerCase());
+    const cultoCount = areas.filter(a => CFG_CULTURA.AREAS.includes(a)).length;
+    const criativoCount = areas.filter(a => CFG_CRIATIVO.AREAS.includes(a)).length;
+    const admCount = areas.filter(a => CFG_ADM.AREAS.includes(a)).length;
+    if (cultoCount >= criativoCount && cultoCount >= admCount) return CFG_CULTURA;
+    if (criativoCount >= admCount) return CFG_CRIATIVO;
+    return CFG_ADM;
+  })();
 
   const krsGerais = (detalhes.krs || []).filter(k => !k.kr_pai_id);
   const krsPorPai = {};
