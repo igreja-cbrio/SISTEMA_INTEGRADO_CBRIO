@@ -31,8 +31,14 @@ class AgentService {
     this.stepCount = 0;
   }
 
-  /** Cria um run no banco e retorna a instância */
+  /** Cria um run no banco e retorna a instância (ou reusa se config._existingRunId) */
   static async createRun(agentType, triggeredBy, config = {}) {
+    // Permite reusar uma run já criada pelo endpoint /run (evita duplicação).
+    if (config._existingRunId) {
+      const cleanConfig = { ...config };
+      delete cleanConfig._existingRunId;
+      return new AgentService(config._existingRunId, agentType, cleanConfig);
+    }
     const { data, error } = await supabase.from('agent_runs').insert({
       agent_type: agentType,
       status: 'running',
