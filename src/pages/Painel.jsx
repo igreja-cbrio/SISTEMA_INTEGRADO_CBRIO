@@ -13,13 +13,13 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { nsm as nsmApi } from '../api';
+import { nsm as nsmApi, painel as painelApi } from '../api';
 import { useAuth } from '../contexts/AuthContext';
 import { Activity, RefreshCw, TrendingUp, TrendingDown, Minus, ChevronRight, Users, ClipboardCheck } from 'lucide-react';
 import { toast } from 'sonner';
 import CarrosselMandalas from '../components/painel/CarrosselMandalas';
 import MatrizValorArea from '../components/painel/MatrizValorArea';
-import MatrizGestaoArea from '../components/painel/MatrizGestaoArea';
+import MatrizSlaGrupo from '../components/painel/MatrizSlaGrupo';
 import AlertasCriticos from '../components/painel/AlertasCriticos';
 import { SkeletonLine, SkeletonBlock } from '../components/Skeleton';
 
@@ -191,7 +191,21 @@ export default function Painel() {
       </div>
 
       <div style={{ marginTop: 24 }}>
-        <MatrizGestaoArea />
+        <MatrizSlaGrupo
+          titulo="Matriz Gestão × Área"
+          subtitulo="Clique numa celula para ver solicitacoes e KPIs daquela area da gestao. Hospitalidade = Reserva + Cozinha + Manutencao · Logistica = Estoque + Compras."
+          loadMatriz={() => painelApi.matrizAdm()}
+          loadCelula={(g, c) => painelApi.celulaAdm(g, c)}
+        />
+      </div>
+
+      <div style={{ marginTop: 24 }}>
+        <MatrizSlaGrupo
+          titulo="Matriz Criativo × Área"
+          subtitulo="Clique numa celula para ver solicitacoes e KPIs do criativo · 3 areas: Produção, Adoração, Marketing."
+          loadMatriz={() => painelApi.matrizCriativo()}
+          loadCelula={(g, c) => painelApi.celulaCriativo(g, c)}
+        />
       </div>
 
       <div style={{ marginTop: 24 }}>
