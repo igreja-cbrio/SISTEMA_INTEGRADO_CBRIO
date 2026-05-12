@@ -41,24 +41,16 @@ const VALORES_JORNADA = [
   { key: 'generosidade', label: 'Generosidade',   cor: '#EC4899' },
 ];
 
-const AREAS_CULTO = [
-  { key: 'kids',   label: 'CBKids' },
-  { key: 'ami',    label: 'AMI' },
-  { key: 'bridge', label: 'Bridge' },
-  { key: 'sede',   label: 'Sede' },
-  { key: 'online', label: 'Online' },
-  { key: 'cba',    label: 'CBA' },
+// Categoria · ministerial (todos os valores) / adm / criativo
+const CATEGORIAS = [
+  { key: 'ministerial', label: 'Ministerial' },
+  { key: 'adm',         label: 'Administração' },
+  { key: 'criativo',    label: 'Criativo' },
 ];
 
-// Grupos adm · mesma estrutura da matriz (Hospitalidade agrega 3, Logistica agrega 2)
-const AREAS_ADM_GRUPOS = [
-  { key: 'hospitalidade', label: 'Hospitalidade', subareas: ['reserva_espaco', 'cozinha', 'manutencao'] },
-  { key: 'logistica',     label: 'Logística',     subareas: ['logistica_estoque', 'logistica_compras'] },
-  { key: 'ti',            label: 'TI',            subareas: ['ti'] },
-  { key: 'rh',            label: 'RH',            subareas: ['rh'] },
-  { key: 'financeiro',    label: 'Financeiro',    subareas: ['financeiro'] },
-  { key: 'criativo',      label: 'Criativo',      subareas: ['criativo'] },
-];
+// Helpers · distingue OKR operacional adm vs criativo pelo nome
+const isOkrCriativo = (o) => o.tipo_okr === 'operacional' && (o.nome || '').toLowerCase().includes('criativo');
+const isOkrAdm      = (o) => o.tipo_okr === 'operacional' && !isOkrCriativo(o);
 
 export default function EstruturaOkr({ embedded = false }) {
   const { profile } = useAuth();
@@ -73,8 +65,7 @@ export default function EstruturaOkr({ embedded = false }) {
 
   // Filtros · sets vazios = todos
   const [filtroValores, setFiltroValores] = useState(new Set());
-  const [filtroAreasCulto, setFiltroAreasCulto] = useState(new Set());
-  const [filtroAreasAdm, setFiltroAreasAdm] = useState(new Set());
+  const [filtroCategoria, setFiltroCategoria] = useState(new Set());
 
   const toggleFiltro = (setter, key) => setter(prev => {
     const novo = new Set(prev);
@@ -84,11 +75,10 @@ export default function EstruturaOkr({ embedded = false }) {
 
   const limparFiltros = () => {
     setFiltroValores(new Set());
-    setFiltroAreasCulto(new Set());
-    setFiltroAreasAdm(new Set());
+    setFiltroCategoria(new Set());
   };
 
-  const algumFiltro = filtroValores.size + filtroAreasCulto.size + filtroAreasAdm.size > 0;
+  const algumFiltro = filtroValores.size + filtroCategoria.size > 0;
 
   const carregar = useCallback(async () => {
     setLoading(true);
@@ -108,30 +98,35 @@ export default function EstruturaOkr({ embedded = false }) {
 
   useEffect(() => { carregar(); }, [carregar]);
 
-  // Agrupa OKRs · ministeriais por valor da Jornada, operacionais separados
+  // Agrupa OKRs · ministeriais por valor · operacionais separados por categoria (adm/criativo)
   const grupos = useMemo(() => {
-    const operacionais = [];
+    const adm = [];
+    const criativo = [];
     const porValor = { seguir: [], conectar: [], investir: [], servir: [], generosidade: [], sem_valor: [] };
 
     objetivos.forEach(o => {
       const isOp = o.tipo_okr === 'operacional';
+      const isCriat = isOkrCriativo(o);
+      const isAdm   = isOkrAdm(o);
 
-      // Filtro por valor (so aplica em ministeriais)
+      // Filtro por categoria · ministerial / adm / criativo
+      if (filtroCategoria.size > 0) {
+        let match = false;
+        if (filtroCategoria.has('ministerial') && !isOp) match = true;
+        if (filtroCategoria.has('adm')         && isAdm) match = true;
+        if (filtroCategoria.has('criativo')    && isCriat) match = true;
+        if (!match) return;
+      }
+
+      // Filtro por valor da Jornada · so aplica em ministeriais
       if (filtroValores.size > 0) {
         if (isOp) return;
         const valoresObj = o.valores || [];
         if (!valoresObj.some(v => filtroValores.has(v))) return;
       }
 
-      // Filtro por area adm (so aplica em operacionais · o OKR adm agora e 1 so com 9 KPIs)
-      // Filtro nao oculta o OKR · sera usado no drilldown pra filtrar KPIs especificos
-      // (Implementacao simples: quando algum filtro adm ativo e o OKR e operacional, mostra)
-      if (filtroAreasAdm.size > 0 && !isOp) {
-        // Filtro de adm aplicado · ministeriais nao bate
-        return;
-      }
-
-      if (isOp) operacionais.push(o);
+      if (isCriat) criativo.push(o);
+      else if (isAdm) adm.push(o);
       else {
         const v = (o.valores || [])[0] || 'sem_valor';
         if (porValor[v]) porValor[v].push(o);
@@ -140,11 +135,12 @@ export default function EstruturaOkr({ embedded = false }) {
     });
 
     Object.keys(porValor).forEach(k => porValor[k].sort((a, b) => (a.ordem || 99) - (b.ordem || 99)));
-    operacionais.sort((a, b) => (a.ordem || 99) - (b.ordem || 99));
-    return { porValor, operacionais };
-  }, [objetivos, filtroValores, filtroAreasAdm]);
+    adm.sort((a, b) => (a.ordem || 99) - (b.ordem || 99));
+    criativo.sort((a, b) => (a.ordem || 99) - (b.ordem || 99));
+    return { porValor, adm, criativo };
+  }, [objetivos, filtroValores, filtroCategoria]);
 
-  const totalFiltrado = useMemo(() => grupos.operacionais.length +
+  const totalFiltrado = useMemo(() => grupos.adm.length + grupos.criativo.length +
     Object.values(grupos.porValor).reduce((s, arr) => s + arr.length, 0), [grupos]);
 
   const removerObjetivo = async (obj) => {
@@ -234,10 +230,9 @@ export default function EstruturaOkr({ embedded = false }) {
           </div>
           <FiltroChips label="Valor da Jornada" items={VALORES_JORNADA} selecionados={filtroValores}
                        onToggle={(k) => toggleFiltro(setFiltroValores, k)} />
-          <FiltroChips label="Área de Culto (filtra drilldown)" items={AREAS_CULTO} selecionados={filtroAreasCulto}
-                       onToggle={(k) => toggleFiltro(setFiltroAreasCulto, k)} corPrimaria={C.primary} corBg={C.primaryBg} />
-          <FiltroChips label="Área Administrativa" items={AREAS_ADM_GRUPOS} selecionados={filtroAreasAdm}
-                       onToggle={(k) => toggleFiltro(setFiltroAreasAdm, k)} corPrimaria="#06B6D4" corBg="#06B6D420" />
+          <FiltroChips label="Categoria" items={CATEGORIAS} selecionados={filtroCategoria}
+                       onToggle={(k) => toggleFiltro(setFiltroCategoria, k)}
+                       corPrimaria="#06B6D4" corBg="#06B6D420" />
         </div>
 
         {loading ? (
@@ -276,18 +271,42 @@ export default function EstruturaOkr({ embedded = false }) {
               );
             })}
 
-            {/* OPERACIONAIS */}
-            {grupos.operacionais.length > 0 && (
+            {/* OPERACIONAIS · Administração */}
+            {grupos.adm.length > 0 && (
               <div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8, paddingBottom: 6, borderBottom: '2px solid #06B6D4' }}>
                   <span style={{ width: 12, height: 12, borderRadius: '50%', background: '#06B6D4' }} />
                   <span style={{ fontSize: 11, fontWeight: 800, color: '#0891B2', textTransform: 'uppercase', letterSpacing: 0.5 }}>
                     Operacionais · Administração
                   </span>
-                  <span style={{ fontSize: 10, color: C.t3 }}>· {grupos.operacionais.length}</span>
+                  <span style={{ fontSize: 10, color: C.t3 }}>· {grupos.adm.length}</span>
                 </div>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                  {grupos.operacionais.map(o => (
+                  {grupos.adm.map(o => (
+                    <ObjetivoLinha key={o.id} objetivo={o}
+                      expanded={expandedObj === o.id}
+                      onToggle={() => setExpandedObj(expandedObj === o.id ? null : o.id)}
+                      onEdit={() => setEditObj(o)} onRemove={() => removerObjetivo(o)}
+                      onAddKr={() => setEditKr({ objetivo_geral_id: o.id, _objetivoLabel: o.nome })}
+                      onEditKr={(kr) => setEditKr(kr)} onAfterChange={carregar}
+                    />
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* OPERACIONAIS · Criativo */}
+            {grupos.criativo.length > 0 && (
+              <div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8, paddingBottom: 6, borderBottom: '2px solid #EC4899' }}>
+                  <span style={{ width: 12, height: 12, borderRadius: '50%', background: '#EC4899' }} />
+                  <span style={{ fontSize: 11, fontWeight: 800, color: '#BE185D', textTransform: 'uppercase', letterSpacing: 0.5 }}>
+                    Operacionais · Criativo
+                  </span>
+                  <span style={{ fontSize: 10, color: C.t3 }}>· {grupos.criativo.length}</span>
+                </div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                  {grupos.criativo.map(o => (
                     <ObjetivoLinha key={o.id} objetivo={o}
                       expanded={expandedObj === o.id}
                       onToggle={() => setExpandedObj(expandedObj === o.id ? null : o.id)}
