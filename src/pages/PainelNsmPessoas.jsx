@@ -28,7 +28,7 @@ const SEGMENTO_LABEL = {
   central: 'CBRio Total',
   cbrio:   'CBRio Sede',
   online:  'CBRio Online',
-  cba:     'CBA (Rede)',
+  // CBA removido · so coleta batismos/aceitacoes via dados_brutos
 };
 
 export default function PainelNsmPessoas() {
@@ -78,7 +78,7 @@ export default function PainelNsmPessoas() {
         display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: 16,
         background: C.card, border: `1px solid ${C.border}`, borderRadius: 10, padding: 12,
       }}>
-        <Filtro label="Segmento" valor={segmento} options={['central', 'cbrio', 'online', 'cba']}
+        <Filtro label="Segmento" valor={segmento} options={['central', 'cbrio', 'online']}
           onChange={v => setFilter('segmento', v)}
           formato={(v) => SEGMENTO_LABEL[v] || v}
         />

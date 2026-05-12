@@ -25,7 +25,7 @@ const AREAS_OFICIAIS = [
   { id: 'ami',    nome: 'AMI' },
   { id: 'sede',   nome: 'Sede' },
   { id: 'online', nome: 'Online' },
-  { id: 'cba',    nome: 'CBA' },
+  // CBA removido · so coleta batismos/aceitacoes (dados_brutos com area=igreja)
 ];
 
 function hoje() {
