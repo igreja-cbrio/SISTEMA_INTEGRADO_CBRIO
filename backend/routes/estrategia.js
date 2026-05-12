@@ -126,10 +126,29 @@ router.get('/objetivos/:id', async (req, res) => {
     // KPIs vinculados
     const { data: kpis } = await supabase
       .from('kpi_indicadores_taticos')
-      .select('id, indicador, descricao, area, valores, periodicidade, meta_descricao, tipo_kpi, is_okr, ativo')
+      .select('id, indicador, descricao, area, valores, periodicidade, meta_descricao, meta_valor, unidade, tipo_kpi, tipo_calculo, formula_config, is_okr, ativo')
       .eq('objetivo_geral_id', req.params.id)
       .eq('ativo', true)
       .order('area');
+
+    // Ultimo valor calculado de cada KPI (pra mostrar no desdobramento operacional)
+    let valoresPorKpi = {};
+    if ((kpis || []).length > 0) {
+      const ids = kpis.map(k => k.id);
+      const { data: valores } = await supabase
+        .from('kpi_valores_calculados')
+        .select('kpi_id, valor_calculado, periodo_referencia, calculado_em')
+        .in('kpi_id', ids)
+        .order('calculado_em', { ascending: false });
+      (valores || []).forEach(v => {
+        if (!valoresPorKpi[v.kpi_id]) valoresPorKpi[v.kpi_id] = v;
+      });
+    }
+    const kpisComValor = (kpis || []).map(k => ({
+      ...k,
+      ultimo_valor: valoresPorKpi[k.id]?.valor_calculado ?? null,
+      ultimo_periodo: valoresPorKpi[k.id]?.periodo_referencia ?? null,
+    }));
 
     // KRs (gerais + especificos por area · ordenado: gerais primeiro, depois por area)
     const { data: krs } = await supabase
@@ -140,7 +159,7 @@ router.get('/objetivos/:id', async (req, res) => {
       .order('ordem')
       .order('area', { nullsFirst: true });
 
-    res.json({ ...obj, kpis: kpis || [], krs: krs || [] });
+    res.json({ ...obj, kpis: kpisComValor, krs: krs || [] });
   } catch (e) {
     console.error('estrategia/objetivos/:id', e.message);
     res.status(500).json({ error: e.message });

@@ -447,6 +447,8 @@ function ObjetivoLinha({ objetivo, expanded, onToggle, onEdit, onRemove, onAddKr
 function ResumoGerais({ detalhes, onAddKr, onEditKr, removerKr, onAbrirEspecificos }) {
   const krsGerais = (detalhes.krs || []).filter(k => !k.kr_pai_id);
   const totalEspecificos = (detalhes.krs || []).filter(k => k.kr_pai_id).length;
+  const isOperacional = detalhes.tipo_okr === 'operacional';
+  const kpis = detalhes.kpis || [];
 
   return (
     <div>
@@ -490,15 +492,18 @@ function ResumoGerais({ detalhes, onAddKr, onEditKr, removerKr, onAbrirEspecific
         </div>
       )}
 
-      {/* Botao para ver especificos */}
-      {totalEspecificos > 0 && (
+      {/* Botao para ver especificos · ministerial (KRs filhos) ou operacional (KPIs por area adm) */}
+      {(totalEspecificos > 0 || (isOperacional && kpis.length > 0)) && (
         <div style={{ marginTop: 12, paddingTop: 10, borderTop: `1px solid ${C.border}`, display: 'flex', justifyContent: 'flex-end' }}>
           <button onClick={onAbrirEspecificos} style={{
             padding: '6px 14px', borderRadius: 6, fontSize: 11, fontWeight: 600,
             background: C.primaryBg, color: C.primaryDark, border: `1px solid ${C.primary}`,
             cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 6,
           }}>
-            <Activity size={11} /> Ver desdobramento por área ({totalEspecificos} específicos)
+            <Activity size={11} />
+            {isOperacional
+              ? `Ver desdobramento por área administrativa (${kpis.length} KPIs)`
+              : `Ver desdobramento por área (${totalEspecificos} específicos)`}
           </button>
         </div>
       )}
@@ -549,13 +554,114 @@ function ModalEspecificos({ detalhes, onClose, onEditKr, removerKr }) {
         </header>
 
         <div style={{ padding: 20 }}>
-          <TabelaCascataOkr
-            detalhes={detalhes}
-            onEditKr={onEditKr}
-            removerKr={removerKr}
-            semHeader
-          />
+          {detalhes.tipo_okr === 'operacional' ? (
+            <TabelaDesdobramentoAdm detalhes={detalhes} />
+          ) : (
+            <TabelaCascataOkr
+              detalhes={detalhes}
+              onEditKr={onEditKr}
+              removerKr={removerKr}
+              semHeader
+            />
+          )}
         </div>
+      </div>
+    </div>
+  );
+}
+
+// ============================================================================
+// TabelaDesdobramentoAdm · drilldown de OKR operacional
+// Mostra os 9 KPIs especificos agrupados por grupo adm (Hospitalidade, etc).
+// Cada linha: KPI · Meta · Ultimo valor · Status semaforico
+// ============================================================================
+const GRUPO_LABEL = {
+  hospitalidade: 'Hospitalidade',
+  logistica:     'Logística',
+  ti:            'TI',
+  rh:            'RH',
+  financeiro:    'Financeiro',
+  criativo:      'Criativo',
+};
+const GRUPO_COR = {
+  hospitalidade: '#8B5CF6',
+  logistica:     '#3B82F6',
+  ti:            '#10B981',
+  rh:            '#EF4444',
+  financeiro:    '#84CC16',
+  criativo:      '#EC4899',
+};
+const GRUPO_ORDEM = ['hospitalidade', 'logistica', 'ti', 'rh', 'financeiro', 'criativo'];
+
+function TabelaDesdobramentoAdm({ detalhes }) {
+  const kpis = detalhes.kpis || [];
+  const porGrupo = {};
+  kpis.forEach(k => {
+    const g = k.formula_config?.grupo || 'outros';
+    if (!porGrupo[g]) porGrupo[g] = [];
+    porGrupo[g].push(k);
+  });
+
+  const corPorValor = (valor, meta, unidade) => {
+    if (valor == null) return '#9CA3AF';
+    if (unidade === 'nota') {
+      if (valor >= 9) return '#10B981';
+      if (valor >= 7) return '#F59E0B';
+      return '#EF4444';
+    }
+    // % padrao
+    const pct = valor;
+    if (pct >= 90) return '#10B981';
+    if (pct >= 70) return '#F59E0B';
+    return '#EF4444';
+  };
+
+  return (
+    <div>
+      <p style={{ fontSize: 11, color: C.t3, marginBottom: 12 }}>
+        Cada area da gestão tem seu KPI específico medindo o quanto serve bem os ministérios.
+        Hospitalidade agrega Reserva + Cozinha + Manutenção · Logística agrega Estoque + Compras.
+      </p>
+
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+        {GRUPO_ORDEM.filter(g => porGrupo[g]?.length > 0).map(g => (
+          <div key={g}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6, paddingBottom: 4, borderBottom: `2px solid ${GRUPO_COR[g]}` }}>
+              <span style={{ width: 10, height: 10, borderRadius: '50%', background: GRUPO_COR[g] }} />
+              <span style={{ fontSize: 11, fontWeight: 700, color: GRUPO_COR[g], textTransform: 'uppercase', letterSpacing: 0.5 }}>
+                {GRUPO_LABEL[g] || g}
+              </span>
+              <span style={{ fontSize: 10, color: C.t3 }}>· {porGrupo[g].length} KPI{porGrupo[g].length > 1 ? 's' : ''}</span>
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+              {porGrupo[g].map(k => {
+                const cor = corPorValor(k.ultimo_valor, k.meta_valor, k.unidade);
+                return (
+                  <div key={k.id} style={{
+                    display: 'flex', alignItems: 'center', gap: 10,
+                    padding: '8px 12px', background: 'var(--cbrio-input-bg)',
+                    borderRadius: 6, borderLeft: `3px solid ${cor}`,
+                  }}>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: 12, fontWeight: 600, color: C.text }}>{k.indicador}</div>
+                      <div style={{ fontSize: 10, color: C.t3, marginTop: 2 }}>
+                        {k.id} · meta {k.meta_descricao || (k.meta_valor != null ? `${k.meta_valor}${k.unidade ? ' ' + k.unidade : ''}` : '—')}
+                      </div>
+                    </div>
+                    <div style={{ textAlign: 'right' }}>
+                      <div style={{ fontSize: 18, fontWeight: 800, color: cor, lineHeight: 1 }}>
+                        {k.ultimo_valor != null ? `${Number(k.ultimo_valor).toFixed(k.unidade === '%' ? 0 : 1)}${k.unidade ? (k.unidade === 'nota' ? '' : k.unidade) : ''}` : '—'}
+                      </div>
+                      <div style={{ fontSize: 9, color: C.t3, marginTop: 2 }}>
+                        {k.ultimo_periodo || 'sem dados'}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        ))}
       </div>
     </div>
   );
