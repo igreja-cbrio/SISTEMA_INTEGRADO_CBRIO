@@ -116,7 +116,10 @@ function Modal({ open, onClose, title, children, footer, width = 640 }) {
   );
 }
 
-function valorMeta(id) { return VALORES.find(v => v.id === id) || { label: id, color: '#6b7280' }; }
+function valorMeta(id) {
+  if (!id) return null;
+  return VALORES.find(v => v.id === id) || { label: id, color: '#6b7280' };
+}
 
 function NpsBadge({ status }) {
   const s = STATUS_MAP[status] || STATUS_MAP.ativa;
@@ -240,14 +243,17 @@ export default function Nps() {
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(340px, 1fr))', gap: 16 }}>
           {filtradas.map(p => {
             const v = valorMeta(p.valor);
+            const accentColor = v?.color || C.primary;
             return (
               <div key={p.id} onClick={() => setDetalheId(p.id)}
-                style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 12, padding: 18, cursor: 'pointer', transition: 'transform .12s', borderLeft: `4px solid ${v.color}` }}
+                style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 12, padding: 18, cursor: 'pointer', transition: 'transform .12s', borderLeft: `4px solid ${accentColor}` }}
                 onMouseEnter={e => e.currentTarget.style.transform = 'translateY(-2px)'}
                 onMouseLeave={e => e.currentTarget.style.transform = 'translateY(0)'}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8, marginBottom: 10 }}>
                   <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-                    <span style={{ fontSize: 11, fontWeight: 700, color: v.color, padding: '2px 8px', borderRadius: 10, background: `${v.color}15` }}>{v.label}</span>
+                    {v && (
+                      <span style={{ fontSize: 11, fontWeight: 700, color: v.color, padding: '2px 8px', borderRadius: 10, background: `${v.color}15` }}>{v.label}</span>
+                    )}
                     {p.area && p.area !== 'geral' && (
                       <span style={{ fontSize: 11, fontWeight: 600, color: C.t2, padding: '2px 8px', borderRadius: 10, background: C.border }}>{AREA_LABEL[p.area] || p.area}</span>
                     )}
@@ -288,7 +294,7 @@ export default function Nps() {
 // ════════════════════════════════════════════════════════════════════
 function CreateModal({ onClose, onCreated }) {
   const [step, setStep] = useState(1); // 1: definir · 2: revisar perguntas
-  const [valor, setValor] = useState('servir');
+  const [valor, setValor] = useState(null);
   const [objetivo, setObjetivo] = useState('');
   const [contextoKpi, setContextoKpi] = useState('nps_geral');
   const [area, setArea] = useState('geral');
@@ -300,7 +306,14 @@ function CreateModal({ onClose, onCreated }) {
   const [titulo, setTitulo] = useState('');
   const [salvando, setSalvando] = useState(false);
 
+  const areaEspecifica = area && area.toLowerCase() !== 'geral';
+  const escopoOk = !!valor || areaEspecifica;
+
   async function gerar() {
+    if (!escopoOk) {
+      toast.error('Escolha um valor da CBRio ou uma área específica (não "Geral").');
+      return;
+    }
     if (objetivo.trim().length < 5) {
       toast.error('Descreva melhor o que quer medir (mínimo 5 caracteres).');
       return;
@@ -309,7 +322,8 @@ function CreateModal({ onClose, onCreated }) {
     try {
       const result = await api.gerarPerguntas({ valor, objetivo, contexto_kpi: contextoKpi, area });
       setPerguntas(result);
-      setTitulo(result.titulo_sugerido || `NPS — ${valor}`);
+      const fallback = valor ? `NPS — ${valor}` : `NPS — ${area}`;
+      setTitulo(result.titulo_sugerido || fallback);
       setStep(2);
     } catch (e) {
       toast.error(e.message || 'Erro ao gerar perguntas');
@@ -365,8 +379,14 @@ function CreateModal({ onClose, onCreated }) {
       {step === 1 && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
           <div>
-            <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: C.t2, marginBottom: 6 }}>Valor da CBRio</label>
+            <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: C.t2, marginBottom: 6 }}>
+              Valor da CBRio <span style={{ fontWeight: 400, color: C.t3 }}>(opcional se escolher uma área específica)</span>
+            </label>
             <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+              <button type="button" onClick={() => setValor(null)}
+                style={{ padding: '8px 14px', borderRadius: 8, fontSize: 13, fontWeight: 600, cursor: 'pointer', border: `1.5px solid ${valor === null ? C.primary : C.border}`, background: valor === null ? C.primaryBg : 'transparent', color: valor === null ? C.primary : C.t3 }}>
+                Sem valor específico
+              </button>
               {VALORES.map(v => (
                 <button key={v.id} type="button" onClick={() => setValor(v.id)}
                   style={{ padding: '8px 14px', borderRadius: 8, fontSize: 13, fontWeight: 600, cursor: 'pointer', border: `1.5px solid ${valor === v.id ? v.color : C.border}`, background: valor === v.id ? `${v.color}15` : 'transparent', color: valor === v.id ? v.color : C.t2 }}>
@@ -374,6 +394,11 @@ function CreateModal({ onClose, onCreated }) {
                 </button>
               ))}
             </div>
+            {!escopoOk && (
+              <p style={{ fontSize: 11, color: C.amber, margin: '6px 0 0' }}>
+                Escolha um valor OU uma área específica (diferente de "Geral / Cross-área") abaixo.
+              </p>
+            )}
           </div>
 
           <div>
@@ -554,7 +579,9 @@ function DetalheModal({ id, onClose, onChanged, canWrite, onResponder }) {
   return (
     <Modal open onClose={onClose} title={pesquisa.titulo} width={820}>
       <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 16, flexWrap: 'wrap' }}>
-        <span style={{ fontSize: 11, fontWeight: 700, color: v.color, padding: '2px 10px', borderRadius: 10, background: `${v.color}15` }}>{v.label}</span>
+        {v && (
+          <span style={{ fontSize: 11, fontWeight: 700, color: v.color, padding: '2px 10px', borderRadius: 10, background: `${v.color}15` }}>{v.label}</span>
+        )}
         {pesquisa.area && pesquisa.area !== 'geral' && (
           <span style={{ fontSize: 11, fontWeight: 600, color: C.t2, padding: '2px 10px', borderRadius: 10, background: C.border }}>{AREA_LABEL[pesquisa.area] || pesquisa.area}</span>
         )}

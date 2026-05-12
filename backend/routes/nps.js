@@ -27,11 +27,15 @@ router.use(authenticate);
 router.post('/gerar-perguntas', authorize('admin', 'diretor'), iaLimiter, async (req, res) => {
   try {
     const { valor, objetivo, contexto_kpi, area } = req.body || {};
-    if (!valor || !objetivo) {
-      return res.status(400).json({ error: 'valor e objetivo são obrigatórios' });
+    if (!objetivo) {
+      return res.status(400).json({ error: 'objetivo é obrigatório' });
+    }
+    const areaInformada = area && String(area).toLowerCase() !== 'geral' ? area : null;
+    if (!valor && !areaInformada) {
+      return res.status(400).json({ error: 'Defina um escopo: um valor da CBRio ou uma área específica.' });
     }
     const contextoKpi = TIPOS_KPI_VALIDOS.includes(contexto_kpi) ? contexto_kpi : 'nps_geral';
-    const result = await npsService.gerarPerguntas({ valor, objetivo, contextoKpi, area });
+    const result = await npsService.gerarPerguntas({ valor: valor || null, objetivo, contextoKpi, area });
     res.json(result);
   } catch (e) {
     console.error('[nps] gerar-perguntas:', e.message);
@@ -101,19 +105,25 @@ router.get('/:id', async (req, res) => {
 router.post('/', authorize('admin', 'diretor'), async (req, res) => {
   try {
     const d = req.body || {};
-    if (!d.titulo || !d.valor || !d.objetivo || !d.perguntas) {
-      return res.status(400).json({ error: 'titulo, valor, objetivo e perguntas são obrigatórios' });
+    if (!d.titulo || !d.objetivo || !d.perguntas) {
+      return res.status(400).json({ error: 'titulo, objetivo e perguntas são obrigatórios' });
     }
+    const areaNormalizada = (d.area || 'geral').toLowerCase().slice(0, 60);
+    const valorNormalizado = d.valor || null;
+    if (!valorNormalizado && areaNormalizada === 'geral') {
+      return res.status(400).json({ error: 'Defina um escopo: um valor da CBRio ou uma área específica.' });
+    }
+
     const contextoKpi = TIPOS_KPI_VALIDOS.includes(d.contexto_kpi) ? d.contexto_kpi : 'nps_geral';
 
     const token = d.permite_publico === false ? null : crypto.randomBytes(18).toString('base64url');
 
     const insert = {
       titulo: d.titulo.slice(0, 200),
-      valor: d.valor,
+      valor: valorNormalizado,
       objetivo: d.objetivo,
       contexto_kpi: contextoKpi,
-      area: (d.area || 'geral').toLowerCase().slice(0, 60),
+      area: areaNormalizada,
       perguntas: d.perguntas,
       ia_modelo: d.ia_modelo || npsService.MODELO_PADRAO,
       ia_prompt: d.ia_prompt || null,
@@ -140,11 +150,16 @@ router.post('/', authorize('admin', 'diretor'), async (req, res) => {
         .eq('active', true);
       const targetIds = (profiles || []).map(p => p.id);
 
+      const valorNome = pesquisa.valor ? npsService.VALORES_INFO[pesquisa.valor]?.nome : null;
+      const foco = valorNome
+        ? `Sua opinião ajuda a melhorar o valor "${valorNome}".`
+        : `Sua opinião ajuda a melhorar a área "${pesquisa.area}".`;
+
       await notificar({
         modulo: 'nps',
         tipo: 'pesquisa_aberta',
         titulo: `Nova pesquisa: ${pesquisa.titulo}`,
-        mensagem: `Sua opinião ajuda a melhorar o valor "${npsService.VALORES_INFO[pesquisa.valor]?.nome || pesquisa.valor}". Leva menos de 2 minutos.`,
+        mensagem: `${foco} Leva menos de 2 minutos.`,
         link: `/nps/${pesquisa.id}/responder`,
         severidade: 'info',
         chaveDedup: `nps_${pesquisa.id}`,
