@@ -7,7 +7,7 @@ import { useState, useEffect, useMemo, useCallback } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { dadosBrutos as dadosApi } from '../api';
 import { useMyKpiAreas } from '../hooks/useMyKpiAreas';
-import { Database, Plus, Pencil, Trash2, X, Save, Calendar, Filter, CheckCircle2, ShieldCheck } from 'lucide-react';
+import { Database, Plus, Pencil, Trash2, X, Save, Calendar, Filter, CheckCircle2, ShieldCheck, Users, HandCoins, Sparkles, HeartHandshake, ClipboardList, Smile, Zap } from 'lucide-react';
 import { toast } from 'sonner';
 import EmptyState from '../components/EmptyState';
 import { formatErro } from '../lib/formatErro';
@@ -27,6 +27,52 @@ const AREAS_OFICIAIS = [
   { id: 'online', nome: 'Online' },
   // CBA removido · so coleta batismos/aceitacoes (dados_brutos com area=igreja)
 ];
+
+// Quick log · 4-6 tipos mais comuns por area. Click pre-preenche tipo+area.
+// Quem nao se encaixa cai no "Outros tipos" (modal completo).
+const QUICK_LOG_POR_AREA = {
+  kids:   ['frequencia_culto', 'conversoes', 'batismos', 'voluntarios_checkin'],
+  bridge: ['frequencia_culto', 'conversoes', 'batismos', 'voluntarios_checkin'],
+  ami:    ['frequencia_culto', 'conversoes', 'batismos', 'voluntarios_checkin', 'nps_next'],
+  sede:   ['frequencia_culto', 'conversoes', 'batismos', 'doacoes_valor', 'doadores_count', 'voluntarios_ativos'],
+  online: ['frequencia_culto', 'conversoes', 'batismos'],
+  cba:    ['frequencia_culto', 'conversoes', 'batismos', 'lideres_treinados', 'lideres_acompanhados'],
+};
+
+// Default para admin/diretor sem area especifica
+const QUICK_LOG_DEFAULT = ['frequencia_culto', 'conversoes', 'batismos', 'doacoes_valor', 'voluntarios_ativos', 'nps_geral'];
+
+// Icone + cor por familia de tipo · usado nos cards do quick log
+const TIPO_VISUAL = {
+  frequencia_culto:        { Icon: Users,         cor: '#3B82F6', label: 'Frequência do culto' },
+  frequencia_next:         { Icon: Users,         cor: '#3B82F6', label: 'Frequência Next' },
+  frequencia_grupos:       { Icon: Users,         cor: '#3B82F6', label: 'Frequência grupos' },
+  conversoes:              { Icon: Sparkles,      cor: '#8B5CF6', label: 'Decisões / Conversões' },
+  batismos:                { Icon: Sparkles,      cor: '#8B5CF6', label: 'Batismos' },
+  voluntarios_ativos:      { Icon: HeartHandshake,cor: '#10B981', label: 'Voluntários ativos' },
+  voluntarios_inativos_3m: { Icon: HeartHandshake,cor: '#10B981', label: 'Voluntários inativos' },
+  voluntarios_recuperados: { Icon: HeartHandshake,cor: '#10B981', label: 'Voluntários recuperados' },
+  voluntarios_checkin:     { Icon: HeartHandshake,cor: '#10B981', label: 'Check-in voluntários' },
+  voluntarios_treinamento: { Icon: HeartHandshake,cor: '#10B981', label: 'Voluntários em treinamento' },
+  doacoes_valor:           { Icon: HandCoins,     cor: '#F59E0B', label: 'Doações (R$)' },
+  doadores_count:          { Icon: HandCoins,     cor: '#F59E0B', label: 'Doadores' },
+  doadores_recorrentes:    { Icon: HandCoins,     cor: '#F59E0B', label: 'Doadores recorrentes' },
+  lideres_grupos:          { Icon: Users,         cor: '#EC4899', label: 'Líderes de grupo' },
+  lideres_treinados:       { Icon: Users,         cor: '#EC4899', label: 'Líderes treinados' },
+  lideres_acompanhados:    { Icon: Users,         cor: '#EC4899', label: 'Líderes acompanhados' },
+  grupos_ativos:           { Icon: Users,         cor: '#EC4899', label: 'Grupos ativos' },
+  devocionais:             { Icon: Sparkles,      cor: '#8B5CF6', label: 'Devocionais' },
+  nps_geral:               { Icon: Smile,         cor: '#06B6D4', label: 'NPS geral' },
+  nps_next:                { Icon: Smile,         cor: '#06B6D4', label: 'NPS Next' },
+  nps_lideres:             { Icon: Smile,         cor: '#06B6D4', label: 'NPS líderes' },
+  nps_voluntarios:         { Icon: Smile,         cor: '#06B6D4', label: 'NPS voluntários' },
+};
+
+function visualParaTipo(tipo) {
+  const v = TIPO_VISUAL[tipo.id];
+  if (v) return v;
+  return { Icon: ClipboardList, cor: '#6B7280', label: tipo.nome };
+}
 
 function hoje() {
   const d = new Date();
@@ -125,6 +171,35 @@ export default function DadosBrutos({ embedded = false }) {
     return m;
   }, [tipos]);
 
+  // Quick log · tipos sugeridos baseado em quem voce e
+  // - Lider de area(s): uniao dos quick log das suas areas (max 6)
+  // - Lider de ministerio: tipos do ministerio dele (max 6)
+  // - Admin/diretor sem area: lista default
+  const quickLog = useMemo(() => {
+    if (!tipos.length) return [];
+    const tipoById = Object.fromEntries(tipos.map(t => [t.id, t]));
+    let ids = [];
+    if (!isAdmin && ministerioId && !areasEditaveis.length) {
+      ids = tipos.filter(t => t.ministerio_id === ministerioId).slice(0, 6).map(t => t.id);
+    } else if (kpiAreas.length > 0) {
+      const set = new Set();
+      kpiAreas.forEach(a => { (QUICK_LOG_POR_AREA[a] || []).forEach(id => set.add(id)); });
+      ids = Array.from(set).slice(0, 6);
+    } else {
+      ids = QUICK_LOG_DEFAULT;
+    }
+    return ids.map(id => tipoById[id]).filter(Boolean);
+  }, [tipos, isAdmin, ministerioId, kpiAreas, areasEditaveis]);
+
+  // Abre modal com tipo (e area se unica) pre-preenchidos
+  const quickLogClick = (tipoId) => {
+    const tipo = tipos.find(t => t.id === tipoId);
+    if (!tipo) return;
+    const areaPre = areasEditaveis.length === 1 ? areasEditaveis[0].id
+                   : (filtroArea || '');
+    setEditando({ tipo_id: tipoId, area: areaPre });
+  };
+
   return (
     <div style={{ padding: embedded ? 0 : '24px 32px', maxWidth: embedded ? '100%' : 1200, margin: embedded ? 0 : '0 auto' }}>
       {!embedded && (
@@ -146,23 +221,68 @@ export default function DadosBrutos({ embedded = false }) {
             {!isAdmin && !areasEditaveis.length && !ministerioId && ' Modo leitura.'}
           </p>
         </div>
-        {podeRegistrar && (
-          <button
-            onClick={() => setEditando({})}
-            style={{
-              padding: '8px 14px', borderRadius: 6, fontSize: 12, fontWeight: 600,
-              background: C.primary, color: '#fff', border: 'none', cursor: 'pointer',
-              display: 'inline-flex', alignItems: 'center', gap: 6,
-            }}
-          >
-            <Plus size={14} /> Registrar dado
-          </button>
-        )}
       </header>
       )}
 
-      {/* Botão Registrar (modo embedded — header global escondido) */}
-      {embedded && podeRegistrar && (
+      {/* Quick log · cards grandes com os tipos mais comuns da sua area.
+          Click pre-preenche tipo (e area se voce so lidera uma). */}
+      {podeRegistrar && quickLog.length > 0 && (
+        <section style={{ marginBottom: 16 }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginBottom: 8 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, fontWeight: 700, color: C.t3, textTransform: 'uppercase', letterSpacing: 0.6 }}>
+              <Zap size={11} style={{ color: C.primary }} /> Lançamento rápido
+            </div>
+            <button
+              onClick={() => setEditando({})}
+              style={{
+                padding: '6px 10px', borderRadius: 6, fontSize: 11, fontWeight: 600,
+                background: 'transparent', color: C.t2, border: `1px solid ${C.border}`, cursor: 'pointer',
+                display: 'inline-flex', alignItems: 'center', gap: 4,
+              }}
+            >
+              <Plus size={12} /> Outros tipos
+            </button>
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: 10 }}>
+            {quickLog.map(tipo => {
+              const v = visualParaTipo(tipo);
+              return (
+                <button
+                  key={tipo.id}
+                  onClick={() => quickLogClick(tipo.id)}
+                  title={tipo.descricao || tipo.nome}
+                  style={{
+                    textAlign: 'left', padding: 14, borderRadius: 10, cursor: 'pointer',
+                    background: C.card, border: `1px solid ${C.border}`, borderLeft: `3px solid ${v.cor}`,
+                    display: 'flex', flexDirection: 'column', gap: 8, minHeight: 92,
+                    transition: 'transform 0.05s, border-color 0.1s',
+                  }}
+                  onMouseEnter={e => { e.currentTarget.style.borderColor = v.cor; }}
+                  onMouseLeave={e => { e.currentTarget.style.borderColor = C.border; e.currentTarget.style.borderLeftColor = v.cor; }}
+                >
+                  <div style={{
+                    width: 32, height: 32, borderRadius: 8, background: `${v.cor}18`,
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  }}>
+                    <v.Icon size={16} style={{ color: v.cor }} />
+                  </div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                    <strong style={{ fontSize: 13, color: C.text, lineHeight: 1.2 }}>
+                      Lançar {v.label.toLowerCase()}
+                    </strong>
+                    {tipo.unidade && (
+                      <span style={{ fontSize: 10, color: C.t3 }}>{tipo.unidade}</span>
+                    )}
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+        </section>
+      )}
+
+      {/* Fallback geral quando nao tem area mapeada para quick log */}
+      {podeRegistrar && quickLog.length === 0 && (
         <div style={{ marginBottom: 12, display: 'flex', justifyContent: 'flex-end' }}>
           <button
             onClick={() => setEditando({})}
