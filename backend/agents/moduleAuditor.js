@@ -198,11 +198,11 @@ O score vai de 1 (péssimo) a 10 (perfeito).`,
     // Finalizar
     await agent.complete(summaryResult.text, findings, []);
 
-    // Salvar score no run config
+    // Salvar score no run config (usa agent.config que já está limpo de flags internas)
     if (score !== null) {
       const { supabase } = require('../utils/supabase');
       await supabase.from('agent_runs').update({
-        config: { ...config, score, module: moduleKey }
+        config: { ...agent.config, score, module: moduleKey }
       }).eq('id', agent.runId);
     }
 

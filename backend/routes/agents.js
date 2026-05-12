@@ -509,4 +509,192 @@ router.get('/log', authorize('admin', 'diretor'), async (req, res) => {
   } catch (e) { res.status(500).json({ error: 'Erro' }); }
 });
 
+// ─── AUDITORES (system, module_*, design) ───────────────────────────────
+// Os agentes rodam em background ("fire and forget"). O frontend faz polling
+// em /runs/:id para acompanhar progresso e ler os findings quando completar.
+
+const { runSystemAudit } = require('../agents/systemAuditor');
+const { runModuleAudit } = require('../agents/moduleAuditor');
+const { runDesignAudit } = require('../agents/designAuditor');
+const { AgentService } = require('../services/agentService');
+
+function executarAgente(agentType, triggeredBy, config) {
+  if (agentType === 'system_auditor') return runSystemAudit(triggeredBy, config);
+  if (agentType === 'design_auditor') return runDesignAudit(triggeredBy, config);
+  if (agentType.startsWith('module_')) return runModuleAudit(agentType, triggeredBy, config);
+  throw new Error(`Tipo de agente desconhecido: ${agentType}`);
+}
+
+// POST /api/agents/run — dispara auditoria em background, retorna runId
+router.post('/run', authorize('admin', 'diretor'), aiLimiter, async (req, res) => {
+  try {
+    const { agentType, config } = sanitizeObj(req.body || {});
+    if (!agentType) return res.status(400).json({ error: 'agentType obrigatório' });
+
+    const userConfig = config || {};
+
+    // Cria o run imediatamente para o frontend já ter um ID para polling.
+    // O config gravado no banco é só o que veio do usuário (sem flags internas).
+    const agent = await AgentService.createRun(agentType, req.user.userId, userConfig);
+
+    // Dispara a auditoria em background. Erros são capturados pelo próprio
+    // auditor (chamam agent.fail) — qualquer escape vira agent_runs.status='failed'.
+    const runtimeConfig = { ...userConfig, _existingRunId: agent.runId };
+    setImmediate(async () => {
+      try {
+        await executarAgente(agentType, req.user.userId, runtimeConfig);
+      } catch (err) {
+        console.error(`[AGENTS] run ${agent.runId} crashed:`, err.message);
+        try {
+          await supabase.from('agent_runs').update({
+            status: 'failed',
+            error: err.message,
+            completed_at: new Date().toISOString(),
+          }).eq('id', agent.runId);
+        } catch { /* ignore */ }
+      }
+    });
+
+    res.status(202).json({ runId: agent.runId, status: 'running' });
+  } catch (e) {
+    console.error('[AGENTS] /run error:', e.message);
+    res.status(500).json({ error: e.message || 'Erro ao iniciar agente' });
+  }
+});
+
+// GET /api/agents/runs — lista runs (filtros: agentType, status, limit)
+router.get('/runs', async (req, res) => {
+  try {
+    const { agentType, status, limit } = req.query;
+    let q = supabase
+      .from('agent_runs')
+      .select('id, agent_type, status, summary, findings, config, tokens_input, tokens_output, cost_usd, created_at, completed_at, error')
+      .order('created_at', { ascending: false })
+      .limit(Math.min(parseInt(limit) || 30, 100));
+    if (agentType) q = q.eq('agent_type', agentType);
+    if (status) q = q.eq('status', status);
+    const { data, error } = await q;
+    if (error) throw error;
+    res.json(data);
+  } catch (e) {
+    console.error('[AGENTS] /runs error:', e.message);
+    res.status(500).json({ error: 'Erro ao listar runs' });
+  }
+});
+
+// GET /api/agents/runs/:id — detalhe de uma run
+router.get('/runs/:id', async (req, res) => {
+  try {
+    if (!isValidUUID(req.params.id)) return res.status(400).json({ error: 'ID inválido' });
+    const { data, error } = await supabase
+      .from('agent_runs').select('*').eq('id', req.params.id).single();
+    if (error || !data) return res.status(404).json({ error: 'Run não encontrada' });
+    res.json(data);
+  } catch (e) {
+    res.status(500).json({ error: 'Erro ao buscar run' });
+  }
+});
+
+// GET /api/agents/runs/:id/steps — passos de uma run
+router.get('/runs/:id/steps', async (req, res) => {
+  try {
+    if (!isValidUUID(req.params.id)) return res.status(400).json({ error: 'ID inválido' });
+    const { data, error } = await supabase
+      .from('agent_steps')
+      .select('id, step_number, model, role, tokens_input, tokens_output, cost_usd, response_text, duration_ms, created_at')
+      .eq('run_id', req.params.id)
+      .order('step_number', { ascending: true });
+    if (error) throw error;
+    res.json(data || []);
+  } catch (e) {
+    res.status(500).json({ error: 'Erro ao listar steps' });
+  }
+});
+
+// POST /api/agents/runs/:id/cancel — marca como cancelada
+router.post('/runs/:id/cancel', authorize('admin', 'diretor'), async (req, res) => {
+  try {
+    if (!isValidUUID(req.params.id)) return res.status(400).json({ error: 'ID inválido' });
+    const { error } = await supabase
+      .from('agent_runs')
+      .update({ status: 'cancelled', completed_at: new Date().toISOString() })
+      .eq('id', req.params.id)
+      .eq('status', 'running');
+    if (error) throw error;
+    res.json({ success: true });
+  } catch (e) {
+    res.status(500).json({ error: 'Erro ao cancelar' });
+  }
+});
+
+// GET /api/agents/stats — totais agregados (execuções, tokens, custo)
+router.get('/stats', async (req, res) => {
+  try {
+    const sinceDays = parseInt(req.query.days) || 30;
+    const since = new Date(Date.now() - sinceDays * 86400000).toISOString();
+    const { data, error } = await supabase
+      .from('agent_runs')
+      .select('tokens_input, tokens_output, cost_usd, status')
+      .gte('created_at', since);
+    if (error) throw error;
+    const rows = data || [];
+    const totalRuns = rows.length;
+    const completed = rows.filter(r => r.status === 'completed').length;
+    const failed = rows.filter(r => r.status === 'failed').length;
+    const totalTokens = rows.reduce((s, r) => s + (r.tokens_input || 0) + (r.tokens_output || 0), 0);
+    const totalCost = rows.reduce((s, r) => s + Number(r.cost_usd || 0), 0);
+    res.json({ totalRuns, completed, failed, totalTokens, totalCost, sinceDays });
+  } catch (e) {
+    console.error('[AGENTS] /stats error:', e.message);
+    res.status(500).json({ error: 'Erro ao calcular estatísticas' });
+  }
+});
+
+// GET /api/agents/scores — histórico de score por agent_type
+router.get('/scores', async (req, res) => {
+  try {
+    const sinceDays = parseInt(req.query.days) || 90;
+    const since = new Date(Date.now() - sinceDays * 86400000).toISOString();
+    const { data, error } = await supabase
+      .from('agent_runs')
+      .select('agent_type, config, findings, created_at')
+      .eq('status', 'completed')
+      .gte('created_at', since)
+      .order('created_at', { ascending: true });
+    if (error) throw error;
+
+    const byType = {};
+    for (const r of data || []) {
+      const score = r.config?.score;
+      if (score == null) continue;
+      if (!byType[r.agent_type]) byType[r.agent_type] = [];
+      byType[r.agent_type].push({
+        date: r.created_at,
+        score: Number(score),
+        findingsCount: Array.isArray(r.findings) ? r.findings.length : 0,
+      });
+    }
+    res.json(byType);
+  } catch (e) {
+    console.error('[AGENTS] /scores error:', e.message);
+    res.status(500).json({ error: 'Erro ao buscar scores' });
+  }
+});
+
+// GET /api/agents/memory/:module — memórias persistidas de um módulo
+router.get('/memory/:module', authorize('admin', 'diretor'), async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('agent_memory')
+      .select('agent_type, module, key, value, updated_at')
+      .eq('module', req.params.module)
+      .order('updated_at', { ascending: false })
+      .limit(100);
+    if (error) throw error;
+    res.json(data || []);
+  } catch (e) {
+    res.status(500).json({ error: 'Erro ao buscar memória' });
+  }
+});
+
 module.exports = router;
