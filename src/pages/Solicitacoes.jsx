@@ -16,13 +16,22 @@ import { supabase } from '../supabaseClient';
 import { toast } from 'sonner';
 
 const CATEGORIAS = [
-  { value: 'ti', label: 'TI', color: 'bg-blue-500/15 text-blue-700 dark:text-blue-400' },
-  { value: 'compras', label: 'Compras', color: 'bg-orange-500/15 text-orange-700 dark:text-orange-400' },
-  { value: 'reembolso', label: 'Reembolso', color: 'bg-green-500/15 text-green-700 dark:text-green-400' },
-  { value: 'espaco', label: 'Reserva de Espaço', color: 'bg-purple-500/15 text-purple-700 dark:text-purple-400' },
-  { value: 'infraestrutura', label: 'Infraestrutura', color: 'bg-yellow-500/15 text-yellow-700 dark:text-yellow-400' },
-  { value: 'ferias', label: 'Férias', color: 'bg-cyan-500/15 text-cyan-700 dark:text-cyan-400' },
-  { value: 'outro', label: 'Outro', color: 'bg-muted text-muted-foreground' },
+  { value: 'ti',             label: 'TI',                  color: 'bg-blue-500/15 text-blue-700 dark:text-blue-400',     areaResp: 'ti' },
+  { value: 'compras',        label: 'Compras',             color: 'bg-orange-500/15 text-orange-700 dark:text-orange-400', areaResp: 'logistica_compras' },
+  { value: 'reembolso',      label: 'Reembolso',           color: 'bg-green-500/15 text-green-700 dark:text-green-400',  areaResp: 'financeiro' },
+  { value: 'reserva_espaco', label: 'Reserva de Espaço',   color: 'bg-purple-500/15 text-purple-700 dark:text-purple-400', areaResp: 'reserva_espaco' },
+  { value: 'infraestrutura', label: 'Infraestrutura',      color: 'bg-yellow-500/15 text-yellow-700 dark:text-yellow-400', areaResp: 'manutencao' },
+  { value: 'ferias',         label: 'Férias',              color: 'bg-cyan-500/15 text-cyan-700 dark:text-cyan-400',     areaResp: 'rh' },
+  { value: 'outro',          label: 'Outro',               color: 'bg-muted text-muted-foreground',                       areaResp: null },
+];
+
+const AREAS_CLIENTE = [
+  { value: 'kids',   label: 'CBKids' },
+  { value: 'ami',    label: 'AMI' },
+  { value: 'bridge', label: 'Bridge' },
+  { value: 'sede',   label: 'Sede' },
+  { value: 'online', label: 'Online' },
+  { value: 'cba',    label: 'CBA' },
 ];
 
 const URGENCIAS = [
@@ -74,8 +83,34 @@ export default function Solicitacoes() {
   const isResponsavel = isAdmin || canAccessModule(['DP', 'Pessoas', 'Financeiro', 'Logística', 'Patrimônio', 'Membresia', 'TI']);
 
   // Form state
-  const FORM_INITIAL = { titulo: '', descricao: '', justificativa: '', categoria: '', urgencia: 'normal', valor_estimado: '', forma_pagamento: '', chave_pix: '', banco: '', agencia: '', conta: '', documento_file: null };
+  const FORM_INITIAL = {
+    titulo: '', descricao: '', justificativa: '',
+    categoria: '', urgencia: 'normal', valor_estimado: '',
+    // Novos campos Fase A (backbone)
+    area_cliente: '',
+    eh_urgente: false, justificativa_urgencia: '',
+    data_necessaria: '',
+    // Reserva de espaco
+    espaco_solicitado: '', data_uso: '', horario_inicio: '', horario_fim: '', qtde_pessoas: '',
+    // Reembolso
+    forma_pagamento: '', chave_pix: '', banco: '', agencia: '', conta: '', documento_file: null,
+  };
   const [form, setForm] = useState(FORM_INITIAL);
+  const [slaDefs, setSlaDefs] = useState([]);
+
+  // Carrega SLAs definidos pra mostrar prazo expected no form
+  useEffect(() => {
+    api.slaDefs?.().then(setSlaDefs).catch(() => setSlaDefs([]));
+  }, []);
+
+  // Pre-preenche area_cliente baseado no profile · primeira area_kpi do usuario
+  useEffect(() => {
+    const minhasAreas = profile?.kpi_areas || [];
+    const primeiraAreaKpi = AREAS_CLIENTE.find(a => minhasAreas.includes(a.value));
+    if (primeiraAreaKpi && !form.area_cliente) {
+      setForm(f => ({ ...f, area_cliente: primeiraAreaKpi.value }));
+    }
+  }, [profile?.kpi_areas]);
 
   async function load() {
     try {
@@ -111,6 +146,16 @@ export default function Solicitacoes() {
 
       if (payload.valor_estimado) payload.valor_estimado = parseFloat(payload.valor_estimado);
       else delete payload.valor_estimado;
+
+      // Limpa campos vazios opcionais pra nao mandar string vazia ao backend
+      if (!payload.data_necessaria) delete payload.data_necessaria;
+      if (!payload.data_uso) delete payload.data_uso;
+      if (!payload.horario_inicio) delete payload.horario_inicio;
+      if (!payload.horario_fim) delete payload.horario_fim;
+      if (!payload.qtde_pessoas) delete payload.qtde_pessoas;
+      else payload.qtde_pessoas = parseInt(payload.qtde_pessoas, 10);
+      if (!payload.justificativa_urgencia) delete payload.justificativa_urgencia;
+      if (!payload.espaco_solicitado) delete payload.espaco_solicitado;
 
       // Upload do comprovante para Supabase Storage (bucket: solicitacoes)
       if (form.documento_file && supabase) {
@@ -157,11 +202,15 @@ export default function Solicitacoes() {
 
   const showValueField = ['compras', 'reembolso'].includes(form.categoria);
   const isReembolso = form.categoria === 'reembolso';
+  const isReservaEspaco = form.categoria === 'reserva_espaco';
   const reembolsoValid = !isReembolso || (
     form.forma_pagamento &&
     (form.forma_pagamento !== 'pix' || form.chave_pix.trim()) &&
     (form.forma_pagamento !== 'transferencia_bancaria' || (form.banco.trim() && form.agencia.trim() && form.conta.trim()))
   );
+  const reservaEspacoValid = !isReservaEspaco || (form.espaco_solicitado.trim() && form.data_uso);
+  const urgenciaValid = !form.eh_urgente || form.justificativa_urgencia.trim().length >= 5;
+  const areaClienteValid = !!form.area_cliente;
 
   return (
     <div className="p-6 space-y-6">
@@ -172,7 +221,7 @@ export default function Solicitacoes() {
             <ClipboardList className="h-6 w-6 text-primary" />
             Solicitações
           </h1>
-          <p className="text-sm text-muted-foreground mt-1">TI, compras, reembolso, infraestrutura, espaços e férias</p>
+          <p className="text-sm text-muted-foreground mt-1">TI, compras, reembolso, infraestrutura, reserva de espaços e férias</p>
         </div>
         <div className="flex items-center gap-3">
           {/* Category filter — only for responsáveis */}
@@ -203,14 +252,25 @@ export default function Solicitacoes() {
                 <DialogTitle>Nova Solicitação</DialogTitle>
               </DialogHeader>
               <div className="space-y-4 mt-2">
-                <div className="space-y-2">
-                  <Label>Categoria *</Label>
-                  <Select value={form.categoria} onValueChange={v => setForm(f => ({ ...f, categoria: v }))}>
-                    <SelectTrigger><SelectValue placeholder="Selecione..." /></SelectTrigger>
-                    <SelectContent>
-                      {CATEGORIAS.map(c => <SelectItem key={c.value} value={c.value}>{c.label}</SelectItem>)}
-                    </SelectContent>
-                  </Select>
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-2">
+                    <Label>Categoria *</Label>
+                    <Select value={form.categoria} onValueChange={v => setForm(f => ({ ...f, categoria: v }))}>
+                      <SelectTrigger><SelectValue placeholder="Selecione..." /></SelectTrigger>
+                      <SelectContent>
+                        {CATEGORIAS.map(c => <SelectItem key={c.value} value={c.value}>{c.label}</SelectItem>)}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Área (cliente) *</Label>
+                    <Select value={form.area_cliente} onValueChange={v => setForm(f => ({ ...f, area_cliente: v }))}>
+                      <SelectTrigger><SelectValue placeholder="Quem pede" /></SelectTrigger>
+                      <SelectContent>
+                        {AREAS_CLIENTE.map(a => <SelectItem key={a.value} value={a.value}>{a.label}</SelectItem>)}
+                      </SelectContent>
+                    </Select>
+                  </div>
                 </div>
                 <div className="space-y-2">
                   <Label>Título *</Label>
@@ -224,9 +284,97 @@ export default function Solicitacoes() {
                   <Label>Justificativa</Label>
                   <Textarea value={form.justificativa} onChange={e => setForm(f => ({ ...f, justificativa: e.target.value }))} rows={2} />
                 </div>
+
+                {/* Checkbox urgente · reduz SLA · pra compras significa "sai pra rua mesmo dia" */}
+                <div className="space-y-2 rounded-lg border border-border p-3 bg-muted/30">
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={form.eh_urgente}
+                      onChange={e => setForm(f => ({ ...f, eh_urgente: e.target.checked }))}
+                      className="h-4 w-4 cursor-pointer"
+                    />
+                    <span className="text-sm font-medium">Esta solicitação é urgente</span>
+                  </label>
+                  <p className="text-xs text-muted-foreground ml-6">
+                    Reduz o prazo. Para compras urgentes, não há cotação · alguém sai pra comprar no mesmo dia.
+                    Use só quando realmente necessário (o sistema mapeia quem solicita urgência frequente).
+                  </p>
+                  {form.eh_urgente && (
+                    <div className="ml-6 mt-2">
+                      <Label className="text-xs">Justificativa da urgência *</Label>
+                      <Textarea
+                        value={form.justificativa_urgencia}
+                        onChange={e => setForm(f => ({ ...f, justificativa_urgencia: e.target.value }))}
+                        rows={2}
+                        placeholder="Por que precisa ser urgente?"
+                        className="mt-1"
+                      />
+                    </div>
+                  )}
+                </div>
+
+                {/* Reserva de Espaco · campos especificos */}
+                {form.categoria === 'reserva_espaco' && (
+                  <div className="space-y-3 rounded-lg border border-purple-500/30 bg-purple-500/5 p-3">
+                    <p className="text-sm font-semibold text-purple-700 dark:text-purple-400">Detalhes da reserva</p>
+                    <div className="space-y-2">
+                      <Label className="text-xs">Espaço solicitado *</Label>
+                      <Input
+                        value={form.espaco_solicitado}
+                        onChange={e => setForm(f => ({ ...f, espaco_solicitado: e.target.value }))}
+                        placeholder="ex: Auditório principal, Sala Kids, Cozinha"
+                      />
+                    </div>
+                    <div className="grid grid-cols-3 gap-2">
+                      <div className="space-y-2">
+                        <Label className="text-xs">Data *</Label>
+                        <Input type="date" value={form.data_uso} onChange={e => setForm(f => ({ ...f, data_uso: e.target.value }))} />
+                      </div>
+                      <div className="space-y-2">
+                        <Label className="text-xs">Início</Label>
+                        <Input type="time" value={form.horario_inicio} onChange={e => setForm(f => ({ ...f, horario_inicio: e.target.value }))} />
+                      </div>
+                      <div className="space-y-2">
+                        <Label className="text-xs">Fim</Label>
+                        <Input type="time" value={form.horario_fim} onChange={e => setForm(f => ({ ...f, horario_fim: e.target.value }))} />
+                      </div>
+                    </div>
+                    <div className="space-y-2">
+                      <Label className="text-xs">Qtde de pessoas (estimada)</Label>
+                      <Input type="number" value={form.qtde_pessoas} onChange={e => setForm(f => ({ ...f, qtde_pessoas: e.target.value }))} placeholder="0" />
+                    </div>
+                  </div>
+                )}
+
+                {/* Data necessária (pra outras categorias · alerta se SLA estoura) */}
+                {form.categoria && form.categoria !== 'reserva_espaco' && (
+                  <div className="space-y-2">
+                    <Label>Data necessária (opcional)</Label>
+                    <Input type="date" value={form.data_necessaria} onChange={e => setForm(f => ({ ...f, data_necessaria: e.target.value }))} />
+                    <p className="text-xs text-muted-foreground">
+                      Se preencher, alertaremos caso o SLA padrão não bata.
+                    </p>
+                  </div>
+                )}
+
+                {/* SLA esperado · mostra ao usuario o que ele pode esperar */}
+                {(() => {
+                  const cat = CATEGORIAS.find(c => c.value === form.categoria);
+                  if (!cat?.areaResp) return null;
+                  const sla = slaDefs.find(s => s.area_responsavel === cat.areaResp && s.eh_urgente === !!form.eh_urgente);
+                  if (!sla) return null;
+                  return (
+                    <div className="rounded-md bg-blue-500/5 border border-blue-500/30 px-3 py-2 text-xs text-blue-700 dark:text-blue-300">
+                      <strong>Prazo esperado:</strong> resposta em ~{Math.round(sla.sla_resposta_horas/24*10)/10} dias · conclusão em ~{Math.round(sla.sla_resolucao_horas/24*10)/10} dias
+                      {form.eh_urgente && ' · modo urgente'}
+                    </div>
+                  );
+                })()}
+
                 <div className="grid grid-cols-2 gap-4">
                   <div className="space-y-2">
-                    <Label>Urgência</Label>
+                    <Label>Urgência (sentimento)</Label>
                     <Select value={form.urgencia} onValueChange={v => setForm(f => ({ ...f, urgencia: v }))}>
                       <SelectTrigger><SelectValue /></SelectTrigger>
                       <SelectContent>
@@ -322,7 +470,7 @@ export default function Solicitacoes() {
 
                 <div className="flex justify-end gap-2 pt-2">
                   <Button type="button" variant="outline" onClick={() => setDialogOpen(false)}>Cancelar</Button>
-                  <Button onClick={handleCreate} disabled={!form.titulo || !form.categoria || !reembolsoValid || submitting}>
+                  <Button onClick={handleCreate} disabled={!form.titulo || !form.categoria || !areaClienteValid || !reembolsoValid || !reservaEspacoValid || !urgenciaValid || submitting}>
                     {submitting ? 'Criando...' : 'Criar Solicitação'}
                   </Button>
                 </div>

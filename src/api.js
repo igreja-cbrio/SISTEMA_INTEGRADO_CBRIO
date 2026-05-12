@@ -565,9 +565,12 @@ export const permissoes = {
 };
 
 export const solicitacoes = {
-  list: (params) => get('/solicitacoes' + (params ? '?' + new URLSearchParams(params) : '')),
-  create: (data) => post('/solicitacoes', data),
-  update: (id, data) => patch(`/solicitacoes/${id}`, data),
+  list:           (params) => get('/solicitacoes' + (params ? '?' + new URLSearchParams(params) : '')),
+  create:         (data) => post('/solicitacoes', data),
+  update:         (id, data) => patch(`/solicitacoes/${id}`, data),
+  slaDefs:        () => get('/solicitacoes/sla-defs'),
+  reservasEspaco: (params) => get('/solicitacoes/reservas-espaco' + (params ? '?' + new URLSearchParams(params) : '')),
+  alcadas:        () => get('/solicitacoes/alcadas'),
 };
 
 export const membresia = {
