@@ -27,11 +27,18 @@ function parseJson(text, fallback) {
 }
 
 // ── Geração de perguntas ────────────────────────────────────────────
-// Recebe {valor, objetivo, contextoKpi} e devolve a estrutura de perguntas
-// que será persistida na pesquisa.
+// Recebe {valor?, objetivo, contextoKpi, area?} e devolve a estrutura de perguntas
+// que será persistida na pesquisa. Pelo menos um de (valor, area específica) é
+// obrigatório — define o foco da pesquisa.
 async function gerarPerguntas({ valor, objetivo, contextoKpi, area }) {
-  const info = VALORES_INFO[valor];
-  if (!info) throw new Error(`Valor inválido: ${valor}`);
+  const info = valor ? VALORES_INFO[valor] : null;
+  if (valor && !info) throw new Error(`Valor inválido: ${valor}`);
+
+  const areaEspecifica = area && area.toLowerCase() !== 'geral' ? area : null;
+  if (!info && !areaEspecifica) {
+    throw new Error('Defina pelo menos um escopo: um valor da CBRio ou uma área específica.');
+  }
+
   if (!objetivo || objetivo.trim().length < 5) {
     throw new Error('Objetivo precisa descrever o que se quer medir');
   }
@@ -40,7 +47,7 @@ async function gerarPerguntas({ valor, objetivo, contextoKpi, area }) {
 Sua tarefa é gerar UMA pergunta NPS principal (escala 0-10) + 2 a 3 perguntas qualitativas adicionais.
 
 REGRAS:
-- A pergunta NPS principal SEMPRE pergunta "De 0 a 10, ..." — adapte ao contexto do valor.
+- A pergunta NPS principal SEMPRE pergunta "De 0 a 10, ..." — adapte ao contexto.
 - As perguntas qualitativas devem aprofundar o que se quer medir, sem repetir a NPS.
 - Use linguagem direta, calorosa, em português brasileiro.
 - Cada pergunta qualitativa tem um "tipo": "texto_longo" (resposta aberta), "texto_curto" (uma frase) ou "escala_5" (1 a 5).
@@ -61,14 +68,27 @@ Responda APENAS com JSON válido, sem markdown:
   ]
 }`;
 
-  const userMsg = `Valor da CBRio: ${info.nome}
-Foco do valor: ${info.foco}
-Contexto da NPS (tipo dado_bruto): ${contextoKpi}
-${area ? `Área da igreja: ${area}` : ''}
+  const partesFoco = [];
+  if (info) {
+    partesFoco.push(`Valor da CBRio: ${info.nome}`);
+    partesFoco.push(`Foco do valor: ${info.foco}`);
+  }
+  if (areaEspecifica) {
+    partesFoco.push(`Área da igreja: ${areaEspecifica}`);
+  }
+  partesFoco.push(`Contexto da NPS (tipo dado_bruto): ${contextoKpi}`);
+
+  const focoFraseAjuste = info && areaEspecifica
+    ? `ajustando o tom e exemplos ao contexto da área "${areaEspecifica}" dentro do valor "${info.nome}"`
+    : info
+      ? `ajustando o tom e exemplos ao foco do valor "${info.nome}"`
+      : `ajustando o tom e exemplos ao contexto operacional da área "${areaEspecifica}" (medir qualidade, agilidade, experiência percebida)`;
+
+  const userMsg = `${partesFoco.join('\n')}
 
 O que queremos medir: ${objetivo.trim()}
 
-Gere a pergunta NPS principal + 2 a 3 perguntas qualitativas, ajustando o tom e exemplos${area ? ` ao contexto da área "${area}"` : ''}.`;
+Gere a pergunta NPS principal + 2 a 3 perguntas qualitativas, ${focoFraseAjuste}.`;
 
   const client = clienteAnthropic();
   const response = await client.messages.create({
@@ -84,13 +104,14 @@ Gere a pergunta NPS principal + 2 a 3 perguntas qualitativas, ajustando o tom e 
     throw new Error('IA não retornou perguntas em formato válido');
   }
 
-  // Garante IDs únicos
   data.perguntas_extras.forEach((p, i) => {
     if (!p.id) p.id = `q${i + 1}`;
   });
 
+  const tituloFallback = info ? `NPS — ${info.nome}` : `NPS — ${areaEspecifica}`;
+
   return {
-    titulo_sugerido: data.titulo_sugerido || `NPS — ${info.nome}`,
+    titulo_sugerido: data.titulo_sugerido || tituloFallback,
     descricao_curta: data.descricao_curta || '',
     pergunta_nps: data.pergunta_nps,
     perguntas_extras: data.perguntas_extras.slice(0, 3),
