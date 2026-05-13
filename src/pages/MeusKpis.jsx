@@ -426,10 +426,13 @@ function SecaoPeriodicidade({ periodicidade, kpis, statusKpi, ultimoRegPorIndica
               {(() => {
                 const dadoTipo = kpi.formula_config?.dado_tipo;
                 const fonteAuto = kpi.fonte_auto;
-                const isManualDado = !!dadoTipo;
-                const isFonteAuto = !!fonteAuto && !dadoTipo;
-                // KPIs com fonte_auto (cultos.*, voluntariado.*, etc) sobem automatico
-                if (isFonteAuto) {
+                const dadoTipoManual = !!kpi.dado_tipo_manual; // tipo permite lancamento manual?
+                // Automatico em 2 cenarios:
+                //   1. fonte_auto definido (collector pega sozinho)
+                //   2. dado_tipo existe mas tipo e marcado entrada_manual=false (NPS/Voluntariado/Financeiro/etc)
+                const isAutomatico = (!!fonteAuto && !dadoTipo) || (!!dadoTipo && !dadoTipoManual);
+                const isManualDado = !!dadoTipo && dadoTipoManual;
+                if (isAutomatico) {
                   return (
                     <div style={{ marginTop: 'auto', padding: '8px 10px', background: C.primaryBg, borderRadius: 6, textAlign: 'center' }}>
                       <div style={{ fontSize: 10, fontWeight: 700, color: C.primary, textTransform: 'uppercase', letterSpacing: 0.5 }}>
@@ -441,7 +444,7 @@ function SecaoPeriodicidade({ periodicidade, kpis, statusKpi, ultimoRegPorIndica
                     </div>
                   );
                 }
-                // KPIs com dado_tipo: usuario lanca dado bruto -> KPI calcula
+                // KPIs com dado_tipo manual: usuario lanca dado bruto -> KPI calcula
                 if (isManualDado) {
                   return (
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 4, marginTop: 'auto', paddingTop: 4 }}>

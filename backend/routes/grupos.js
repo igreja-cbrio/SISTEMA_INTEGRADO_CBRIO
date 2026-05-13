@@ -1293,4 +1293,293 @@ router.post('/:id/membros', authorize('admin', 'diretor'), async (req, res) => {
   } catch (e) { console.error('[Grupos add member]', e.message); res.status(500).json({ error: 'Erro ao adicionar membro' }); }
 });
 
+// ============================================================================
+// SUPERVISAO · funcoes hierarquicas + visitas + observacoes mensais
+//
+// Modelo de papeis (na pratica · descobrimos pelo membro_id do user):
+//   - admin/diretor (role) → ve TUDO
+//   - coordenador (existe row em mem_grupo_membros com funcao='coordenador') → ve TODOS os supervisores e grupos
+//   - supervisor (mem_grupos.supervisor_id = my_membro_id) → ve apenas os grupos que supervisiona
+//   - outros → 403
+// ============================================================================
+
+// Helper · resolve membro_id e papel mais alto do user logado
+async function getMeuPerfilGrupo(userId, role) {
+  // Pega membro vinculado ao user
+  const { data: profile } = await supabase
+    .from('profiles')
+    .select('email, name')
+    .eq('id', userId)
+    .maybeSingle();
+  if (!profile?.email) return { papel: null, membro_id: null };
+
+  const { data: membro } = await supabase
+    .from('mem_membros')
+    .select('id')
+    .eq('email', profile.email)
+    .maybeSingle();
+  const meuMembroId = membro?.id || null;
+
+  if (['admin', 'diretor'].includes(role)) return { papel: 'admin', membro_id: meuMembroId };
+
+  if (!meuMembroId) return { papel: null, membro_id: null };
+
+  // Coordenador? Tem alguma participacao ativa com funcao=coordenador
+  const { data: coordRow } = await supabase
+    .from('mem_grupo_membros')
+    .select('id')
+    .eq('membro_id', meuMembroId)
+    .eq('funcao', 'coordenador')
+    .is('saiu_em', null)
+    .limit(1)
+    .maybeSingle();
+  if (coordRow) return { papel: 'coordenador', membro_id: meuMembroId };
+
+  // Supervisor? Aparece como supervisor_id em algum grupo ativo
+  const { data: supervisorRow } = await supabase
+    .from('mem_grupos')
+    .select('id')
+    .eq('supervisor_id', meuMembroId)
+    .eq('ativo', true)
+    .limit(1)
+    .maybeSingle();
+  if (supervisorRow) return { papel: 'supervisor', membro_id: meuMembroId };
+
+  return { papel: null, membro_id: meuMembroId };
+}
+
+// GET /api/grupos/supervisao/me · papel + grupos visiveis na hierarquia
+router.get('/supervisao/me', async (req, res) => {
+  try {
+    const { papel, membro_id } = await getMeuPerfilGrupo(req.user.userId, req.user.role);
+    if (!papel) return res.status(403).json({ error: 'Voce nao tem papel ativo nos grupos (supervisor/coordenador/admin)' });
+
+    let grupos = [];
+    if (papel === 'admin' || papel === 'coordenador') {
+      const { data } = await supabase
+        .from('vw_grupos_supervisao')
+        .select('*')
+        .order('supervisor_nome', { ascending: true })
+        .order('nome', { ascending: true });
+      grupos = data || [];
+    } else if (papel === 'supervisor') {
+      const { data } = await supabase
+        .from('vw_grupos_supervisao')
+        .select('*')
+        .eq('supervisor_id', membro_id)
+        .order('nome', { ascending: true });
+      grupos = data || [];
+    }
+
+    // Agrupa por supervisor (pra UI expansível)
+    const porSupervisor = {};
+    grupos.forEach(g => {
+      const key = g.supervisor_id || 'sem_supervisor';
+      if (!porSupervisor[key]) {
+        porSupervisor[key] = {
+          supervisor_id: g.supervisor_id,
+          supervisor_nome: g.supervisor_nome || 'Sem supervisor',
+          grupos: [],
+          total_grupos: 0,
+          total_visitas_mes: 0,
+        };
+      }
+      porSupervisor[key].grupos.push(g);
+      porSupervisor[key].total_grupos++;
+      porSupervisor[key].total_visitas_mes += Number(g.visitas_mes_atual || 0);
+    });
+
+    res.json({
+      papel,
+      membro_id,
+      total_grupos: grupos.length,
+      supervisores: Object.values(porSupervisor),
+      grupos, // tambem lista flat
+    });
+  } catch (e) {
+    console.error('[grupos] supervisao/me:', e.message);
+    res.status(500).json({ error: 'Erro ao carregar supervisao' });
+  }
+});
+
+// GET /api/grupos/:id/visitas
+router.get('/:id/visitas', async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('grupo_supervisao_visitas')
+      .select('id, data_visita, observacao, supervisor_id, created_at')
+      .eq('grupo_id', req.params.id)
+      .order('data_visita', { ascending: false });
+    if (error) throw error;
+    res.json(data || []);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// POST /api/grupos/:id/visitas
+router.post('/:id/visitas', async (req, res) => {
+  try {
+    const { data_visita, observacao } = req.body || {};
+    const { papel, membro_id } = await getMeuPerfilGrupo(req.user.userId, req.user.role);
+    if (!papel) return res.status(403).json({ error: 'Sem permissao' });
+
+    // Supervisor só registra nos seus grupos
+    if (papel === 'supervisor') {
+      const { data: g } = await supabase
+        .from('mem_grupos')
+        .select('supervisor_id')
+        .eq('id', req.params.id)
+        .maybeSingle();
+      if (!g || g.supervisor_id !== membro_id) {
+        return res.status(403).json({ error: 'Voce so registra visitas nos grupos que supervisiona' });
+      }
+    }
+
+    // Descobre supervisor_id efetivo (admin pode passar; senao usa o do grupo)
+    let supervisorIdRow = req.body?.supervisor_id || membro_id;
+    if (!supervisorIdRow) {
+      const { data: g } = await supabase
+        .from('mem_grupos')
+        .select('supervisor_id')
+        .eq('id', req.params.id)
+        .maybeSingle();
+      supervisorIdRow = g?.supervisor_id;
+    }
+    if (!supervisorIdRow) return res.status(400).json({ error: 'Grupo sem supervisor definido' });
+
+    const { data, error } = await supabase
+      .from('grupo_supervisao_visitas')
+      .insert({
+        grupo_id: req.params.id,
+        supervisor_id: supervisorIdRow,
+        data_visita: data_visita || new Date().toISOString().slice(0, 10),
+        observacao: observacao || null,
+        registrado_por: req.user.userId,
+      })
+      .select()
+      .single();
+    if (error) throw error;
+    res.status(201).json(data);
+  } catch (e) {
+    console.error('[grupos] post visita:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// DELETE /api/grupos/visitas/:visitaId
+router.delete('/visitas/:visitaId', async (req, res) => {
+  try {
+    const { papel } = await getMeuPerfilGrupo(req.user.userId, req.user.role);
+    if (!['admin', 'coordenador', 'supervisor'].includes(papel)) {
+      return res.status(403).json({ error: 'Sem permissao' });
+    }
+    const { error } = await supabase.from('grupo_supervisao_visitas').delete().eq('id', req.params.visitaId);
+    if (error) throw error;
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// GET /api/grupos/:id/observacoes
+router.get('/:id/observacoes', async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('grupo_supervisao_observacoes')
+      .select('id, periodo, observacao, supervisor_id, created_at, updated_at')
+      .eq('grupo_id', req.params.id)
+      .order('periodo', { ascending: false });
+    if (error) throw error;
+    res.json(data || []);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// PUT /api/grupos/:id/observacoes/:periodo · upsert por mes
+router.put('/:id/observacoes/:periodo', async (req, res) => {
+  try {
+    const { observacao } = req.body || {};
+    if (!observacao) return res.status(400).json({ error: 'observacao obrigatoria' });
+    if (!/^\d{4}-\d{2}$/.test(req.params.periodo)) {
+      return res.status(400).json({ error: 'periodo deve ser YYYY-MM' });
+    }
+
+    const { papel, membro_id } = await getMeuPerfilGrupo(req.user.userId, req.user.role);
+    if (!papel) return res.status(403).json({ error: 'Sem permissao' });
+
+    if (papel === 'supervisor') {
+      const { data: g } = await supabase
+        .from('mem_grupos')
+        .select('supervisor_id')
+        .eq('id', req.params.id)
+        .maybeSingle();
+      if (!g || g.supervisor_id !== membro_id) {
+        return res.status(403).json({ error: 'Voce so escreve observacao nos grupos que supervisiona' });
+      }
+    }
+
+    let supervisorIdRow = membro_id;
+    if (!supervisorIdRow) {
+      const { data: g } = await supabase
+        .from('mem_grupos')
+        .select('supervisor_id')
+        .eq('id', req.params.id)
+        .maybeSingle();
+      supervisorIdRow = g?.supervisor_id;
+    }
+
+    const { data, error } = await supabase
+      .from('grupo_supervisao_observacoes')
+      .upsert({
+        grupo_id: req.params.id,
+        supervisor_id: supervisorIdRow,
+        periodo: req.params.periodo,
+        observacao,
+        registrado_por: req.user.userId,
+        updated_at: new Date().toISOString(),
+      }, { onConflict: 'grupo_id,periodo' })
+      .select()
+      .single();
+    if (error) throw error;
+    res.json(data);
+  } catch (e) {
+    console.error('[grupos] put observacao:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// PUT /api/grupos/:id/supervisor · admin define supervisor do grupo
+router.put('/:id/supervisor', authorize('admin', 'diretor'), async (req, res) => {
+  try {
+    const { supervisor_id } = req.body || {};
+    const { data, error } = await supabase
+      .from('mem_grupos')
+      .update({ supervisor_id: supervisor_id || null, updated_at: new Date().toISOString() })
+      .eq('id', req.params.id)
+      .select()
+      .single();
+    if (error) throw error;
+    res.json(data);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// PUT /api/grupos/membros/:membroRowId/funcao · trocar funcao de um membro
+router.put('/membros/:membroRowId/funcao', async (req, res) => {
+  try {
+    const { funcao } = req.body || {};
+    const VALIDAS = ['visitante', 'frequentador', 'lider_treinamento', 'lider', 'co_lider', 'supervisor', 'coordenador'];
+    if (!VALIDAS.includes(funcao)) {
+      return res.status(400).json({ error: `funcao deve ser uma de: ${VALIDAS.join(', ')}` });
+    }
+    const { papel } = await getMeuPerfilGrupo(req.user.userId, req.user.role);
+    if (!['admin', 'coordenador', 'supervisor'].includes(papel)) {
+      return res.status(403).json({ error: 'Sem permissao' });
+    }
+    const { data, error } = await supabase
+      .from('mem_grupo_membros')
+      .update({ funcao })
+      .eq('id', req.params.membroRowId)
+      .select()
+      .single();
+    if (error) throw error;
+    res.json(data);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 module.exports = router;

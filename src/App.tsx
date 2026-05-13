@@ -120,6 +120,7 @@ const Nps = lazyWithRetry(() => import('./pages/Nps'));
 const NpsResponder = lazyWithRetry(() => import('./pages/nps/NpsResponder'));
 const NpsPublica = lazyWithRetry(() => import('./pages/public/NpsPublica'));
 const Grupos = lazyWithRetry(() => import('./pages/ministerial/Grupos'));
+const GruposSupervisao = lazyWithRetry(() => import('./pages/ministerial/GruposSupervisao'));
 const PedidosGrupo = lazyWithRetry(() => import('./pages/ministerial/PedidosGrupo'));
 const CadastroMembresia = lazyWithRetry(() => import('./pages/public/CadastroMembresia'));
 const InscricaoGrupos = lazyWithRetry(() => import('./pages/public/InscricaoGrupos'));
@@ -291,6 +292,7 @@ function AppRoutes() {
         <Route path="/ministerial/membresia/scan" element={<ModuleGuard permKey="canMembresia"><Suspense fallback={<Loading />}><MemberScan /></Suspense></ModuleGuard>} />
         <Route path="/ministerial/voluntariado/*" element={<VoluntariadoGuard><Suspense fallback={<Loading />}><Voluntariado /></Suspense></VoluntariadoGuard>} />
         <Route path="/grupos" element={<ModuleGuard permKey="canMembresia"><Suspense fallback={<Loading />}><Grupos /></Suspense></ModuleGuard>} />
+        <Route path="/grupos/supervisao" element={<Suspense fallback={<Loading />}><GruposSupervisao /></Suspense>} />
         <Route path="/grupos/pedidos" element={<Suspense fallback={<Loading />}><PedidosGrupo /></Suspense>} />
         <Route path="/ministerial/cuidados" element={<ModuleGuard permKey="canCuidados"><Suspense fallback={<Loading />}><Cuidados /></Suspense></ModuleGuard>} />
         <Route path="/ministerial/jornada" element={<Navigate to="/ministerial/membresia" replace />} />
