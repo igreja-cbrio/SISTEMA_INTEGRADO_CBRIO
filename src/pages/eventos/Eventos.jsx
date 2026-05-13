@@ -499,11 +499,32 @@ export default function Eventos() {
     const newStatus = currentStatus === 'concluido' ? 'reabrir' : 'concluido';
     const label = newStatus === 'concluido' ? 'finalizar' : 'reabrir';
     if (!window.confirm(`Deseja ${label} este evento?`)) return;
+
+    // Captura erro mas não desiste — refetch checa se o banco realmente
+    // mudou. Erro lateral (audit_log, trigger derivado) é suprimido se
+    // o status alvo bate com o que o usuário pediu. Bug real continua
+    // aparecendo porque o refetch detecta status inalterado.
+    let apiError = null;
     try {
       await events.updateStatus(id, newStatus);
-      loadEvents();
-      if (selectedEvent?.id === id) refreshDetail();
-    } catch (e) { setError(e.message); }
+    } catch (e) {
+      apiError = e;
+    }
+
+    loadEvents();
+    if (selectedEvent?.id === id) refreshDetail();
+
+    if (apiError) {
+      try {
+        const fresh = await events.get(id);
+        const finalizou = fresh?.status === 'concluido';
+        const reabriu = fresh?.status !== 'concluido';
+        const sucessoReal = newStatus === 'reabrir' ? reabriu : finalizou;
+        if (!sucessoReal) setError(apiError.message);
+      } catch {
+        setError(apiError.message);
+      }
+    }
   }
 
   async function deleteEvent(id) {
@@ -2944,8 +2965,16 @@ export default function Eventos() {
             <Button variant={expandedOcc.status === 'concluido' ? 'outline' : 'default'} size="sm"
               onClick={async () => {
                 const ns = expandedOcc.status === 'concluido' ? 'pendente' : 'concluido';
-                try { await events.updateOccurrence(ev.id, expandedOcc.id, { status: ns }); refreshDetail(); loadOccurrence(expandedOcc.id); dashApi.pmo().then(setPmoKpis).catch(() => {}); }
-                catch (err) { setError(err.message); }
+                try {
+                  await events.updateOccurrence(ev.id, expandedOcc.id, { status: ns });
+                  // Refresh detalhe, ocorrência atual E a lista (próxima
+                  // data do evento na grid). Sem loadEvents() a data antiga
+                  // ficava em vermelho até F5.
+                  refreshDetail();
+                  loadOccurrence(expandedOcc.id);
+                  loadEvents();
+                  dashApi.pmo().then(setPmoKpis).catch(() => {});
+                } catch (err) { setError(err.message); }
               }}>
               {expandedOcc.status === 'concluido' ? 'Reabrir' : 'Finalizar'}
             </Button>
