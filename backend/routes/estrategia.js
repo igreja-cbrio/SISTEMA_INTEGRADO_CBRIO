@@ -10,8 +10,21 @@
 const router = require('express').Router();
 const { authenticate, authorize } = require('../middleware/auth');
 const { supabase } = require('../utils/supabase');
+const painelCache = require('../services/painelCache');
 
 router.use(authenticate);
+
+// Toda mutacao de OKR/KR/KPI invalida o cache do painel · usuario ve mudanca
+// no proximo refresh sem esperar TTL. Aplicado a TODAS as rotas POST/PUT/PATCH/DELETE
+// deste router automaticamente.
+router.use((req, res, next) => {
+  if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method)) {
+    res.on('finish', () => {
+      if (res.statusCode >= 200 && res.statusCode < 300) painelCache.bust('');
+    });
+  }
+  next();
+});
 
 // ============================================================================
 // DIRECIONADORES (read-only para todos · admin pode CRUD)

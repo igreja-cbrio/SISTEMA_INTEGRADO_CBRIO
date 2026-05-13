@@ -17,6 +17,7 @@
 const router = require('express').Router();
 const { authenticate, authorize, authorizeKpiArea } = require('../middleware/auth');
 const { supabase } = require('../utils/supabase');
+const painelCache = require('../services/painelCache');
 
 // Helper · usuario tem permissao por valor se algum KPI que consome esse tipo_id+area
 // tem valor que bate com profile.kpi_valores
@@ -34,6 +35,16 @@ async function temPermissaoPorValor(req, registro) {
 }
 
 router.use(authenticate);
+
+// Bust automatico do painel · qualquer mutacao em dado bruto recalcula KPI
+router.use((req, res, next) => {
+  if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method)) {
+    res.on('finish', () => {
+      if (res.statusCode >= 200 && res.statusCode < 300) painelCache.bust('');
+    });
+  }
+  next();
+});
 
 // ----------------------------------------------------------------------------
 // TIPOS DE DADO BRUTO (catalogo)
