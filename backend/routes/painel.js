@@ -459,21 +459,32 @@ router.get('/matriz-criativo', async (req, res) => {
       .gte('created_at', desdeStr);
     if (error) throw error;
 
-    // KPIs criativos ativos por grupo
-    const { data: kpis } = await supabase
+    // KPIs criativos ativos por grupo · filtra por formula_config.area_responsavel
+    // (Pega tanto ADM-C-* quanto qualquer outro KPI que aponte pra producao/adoracao/marketing,
+    // ex.: MKT-ONL-* do OKR Engajamento Online)
+    const { data: kpisAll } = await supabase
       .from('kpi_indicadores_taticos')
       .select('id, formula_config, ativo, tipo_kpi')
       .eq('ativo', true)
-      .eq('tipo_kpi', 'operacional')
-      .like('id', 'ADM-C-%');
+      .eq('tipo_kpi', 'operacional');
 
-    const kpisPorGrupo = {};
-    (kpis || []).forEach(k => {
+    // Conta KPIs por celula (grupo x area_cliente) · KPI com area='sede' (cross)
+    // entra em todas as colunas, KPI com area especifica so na propria
+    const kpisPorCelula = {};
+    AREAS_CRIATIVO_GRUPOS.forEach(g => {
+      AREAS_CLIENTE.forEach(cli => { kpisPorCelula[`${g.key}:${cli.id}`] = 0; });
+    });
+    (kpisAll || []).forEach(k => {
       const sub = k.formula_config?.area_responsavel;
       if (!sub) return;
       const grupo = AREAS_CRIATIVO_GRUPOS.find(g => g.subareas.includes(sub));
       if (!grupo) return;
-      kpisPorGrupo[grupo.key] = (kpisPorGrupo[grupo.key] || 0) + 1;
+      const isCross = !k.area || k.area === 'sede';
+      AREAS_CLIENTE.forEach(cli => {
+        if (isCross || k.area === cli.id) {
+          kpisPorCelula[`${grupo.key}:${cli.id}`]++;
+        }
+      });
     });
 
     const SUB_TO_GRUPO = {};
@@ -489,7 +500,7 @@ router.get('/matriz-criativo', async (req, res) => {
           subareas: g.subareas,
           area_cliente: cli.id,
           area_cliente_nome: cli.nome,
-          total_kpis: kpisPorGrupo[g.key] || 0,
+          total_kpis: kpisPorCelula[`${g.key}:${cli.id}`] || 0,
           total: 0, concluidos: 0, no_prazo: 0, atrasados: 0, em_andamento: 0,
         };
       });
@@ -557,16 +568,22 @@ router.get('/celula-criativo/:area_adm/:area_cliente', async (req, res) => {
       .limit(50);
     if (error) throw error;
 
+    // KPIs do grupo criativo · filtra por formula_config.area_responsavel
+    // (Inclui ADM-C-* + MKT-ONL-* + qualquer outro KPI operacional vinculado)
     const { data: kpisAll } = await supabase
       .from('kpi_indicadores_taticos')
-      .select('id, indicador, descricao, meta_descricao, meta_valor, unidade, tipo_kpi, is_okr, formula_config, ativo')
+      .select('id, indicador, descricao, meta_descricao, meta_valor, unidade, tipo_kpi, is_okr, formula_config, ativo, area')
       .eq('ativo', true)
-      .eq('tipo_kpi', 'operacional')
-      .like('id', 'ADM-C-%');
+      .eq('tipo_kpi', 'operacional');
 
     const kpisDoGrupo = (kpisAll || []).filter(k => {
       const areaResp = k.formula_config?.area_responsavel;
-      return areaResp && subareas.includes(areaResp);
+      if (!areaResp || !subareas.includes(areaResp)) return false;
+      // Se o KPI tem area especifica (ex: MKT-ONL-* tem area='online'), filtra
+      // tambem pela area_cliente do clique. Se area do KPI e 'sede' (cross),
+      // mostra em qualquer celula.
+      if (k.area && k.area !== 'sede' && k.area !== area_cliente) return false;
+      return true;
     });
 
     let ultimoPorKpi = {};
