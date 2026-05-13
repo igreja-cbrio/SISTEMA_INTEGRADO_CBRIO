@@ -6,7 +6,7 @@ const { supabase } = require('../utils/supabase');
 const { notificar } = require('../services/notificar');
 const npsService = require('../services/npsService');
 
-const TIPOS_KPI_VALIDOS = ['nps_geral', 'nps_next', 'nps_lideres', 'nps_voluntarios'];
+const TIPOS_KPI_VALIDOS = ['nps_geral', 'nps_next', 'nps_lideres', 'nps_voluntarios', 'nps_culto'];
 
 // Rate limit para chamadas de IA (geração/análise) — caro em tokens.
 const iaLimiter = rateLimit({

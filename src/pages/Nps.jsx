@@ -31,16 +31,22 @@ const CONTEXTOS_KPI = [
   { id: 'nps_next',        label: 'NPS NEXT' },
   { id: 'nps_lideres',     label: 'NPS Líderes' },
   { id: 'nps_voluntarios', label: 'NPS Voluntários' },
+  { id: 'nps_culto',       label: 'NPS de Culto' },
 ];
 
 // Áreas disponíveis para a pesquisa (alinhadas com dados_brutos.area).
 // IDs em lowercase sem acento — labels legíveis. "geral" é o cross-area.
+// CBA removido · so coletamos batismos/aceitacoes daquelas igrejas.
 const AREAS_NPS = [
   { grupo: 'Geral',         opcoes: [{ id: 'geral', label: 'Geral / Cross-área' }] },
-  { grupo: 'Ministerial',   opcoes: [
+  { grupo: 'Áreas de Culto', opcoes: [
+    { id: 'kids',         label: 'CBKids' },
     { id: 'ami',          label: 'AMI' },
-    { id: 'cba',          label: 'CBA' },
-    { id: 'cbkids',       label: 'CBKids' },
+    { id: 'bridge',       label: 'Bridge' },
+    { id: 'sede',         label: 'Sede' },
+    { id: 'online',       label: 'Online' },
+  ]},
+  { grupo: 'Ministerial',   opcoes: [
     { id: 'cuidados',     label: 'Cuidados' },
     { id: 'grupos',       label: 'Grupos' },
     { id: 'integracao',   label: 'Integração' },
@@ -50,17 +56,16 @@ const AREAS_NPS = [
   ]},
   { grupo: 'Operacional',   opcoes: [
     { id: 'producao',     label: 'Produção' },
+    { id: 'adoracao',     label: 'Adoração' },
     { id: 'marketing',    label: 'Marketing' },
-    { id: 'logistica',    label: 'Logística' },
-    { id: 'financeiro',   label: 'Financeiro' },
-    { id: 'compras',      label: 'Compras' },
+    { id: 'reserva_espaco', label: 'Reserva de Espaço' },
     { id: 'cozinha',      label: 'Cozinha' },
-    { id: 'limpeza',      label: 'Limpeza' },
     { id: 'manutencao',   label: 'Manutenção' },
-    { id: 'patrimonio',   label: 'Patrimônio' },
+    { id: 'logistica_estoque', label: 'Logística · Estoque' },
+    { id: 'logistica_compras', label: 'Logística · Compras' },
     { id: 'rh',           label: 'Recursos Humanos' },
     { id: 'ti',           label: 'TI' },
-    { id: 'adm',          label: 'Administrativo' },
+    { id: 'financeiro',   label: 'Financeiro' },
   ]},
   { grupo: 'Institucional', opcoes: [
     { id: 'jornada',      label: 'Jornada (cross-cutting)' },
@@ -418,7 +423,14 @@ function CreateModal({ onClose, onCreated }) {
             </div>
             <div>
               <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: C.t2, marginBottom: 6 }}>Área</label>
-              <select value={area} onChange={e => setArea(e.target.value)} style={inp}>
+              <select value={area} onChange={e => {
+                const novaArea = e.target.value;
+                setArea(novaArea);
+                // Sugere contexto_kpi automaticamente · area de culto -> nps_culto
+                if (['kids', 'ami', 'bridge', 'sede', 'online'].includes(novaArea) && contextoKpi === 'nps_geral') {
+                  setContextoKpi('nps_culto');
+                }
+              }} style={inp}>
                 {AREAS_NPS.map(grp => (
                   <optgroup key={grp.grupo} label={grp.grupo}>
                     {grp.opcoes.map(o => <option key={o.id} value={o.id}>{o.label}</option>)}
