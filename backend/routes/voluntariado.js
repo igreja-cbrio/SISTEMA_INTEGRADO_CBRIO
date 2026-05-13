@@ -1984,7 +1984,7 @@ router.post('/teams-manage/sync-members-from-schedules', async (req, res) => {
 
 // ════════════════════════════════════════════════════════════════════════════
 // Inscricoes (form Google) · funil recebidas vs alocadas
-// Le direto de dados_brutos (independe de meta cadastrada em kpi_trajetoria)
+// Le da tabela vol_inscricoes (linha por pessoa) para suportar cruzamentos.
 // ════════════════════════════════════════════════════════════════════════════
 router.get('/inscricoes-summary', async (req, res) => {
   try {
@@ -1992,16 +1992,20 @@ router.get('/inscricoes-summary', async (req, res) => {
     const area = req.query.area ? String(req.query.area).toLowerCase() : null;
 
     let query = supabase
-      .from('dados_brutos')
-      .select('tipo_id, area, data, valor')
-      .in('tipo_id', ['solicitacoes_servir_recebidas', 'solicitacoes_servir_alocadas'])
-      .in('area', ['kids', 'sede']);
-    if (ano) query = query.gte('data', `${ano}-01-01`).lte('data', `${ano}-12-31`);
+      .from('vol_inscricoes')
+      .select('data_inscricao, status, area');
+    if (ano) {
+      query = query
+        .gte('data_inscricao', `${ano}-01-01`)
+        .lt('data_inscricao', `${Number(ano) + 1}-01-01`);
+    }
     if (area) query = query.eq('area', area);
     const { data, error } = await query;
     if (error) throw error;
 
-    // Agrega por mes (YYYY-MM) e por area
+    // Considera "alocada" status integrado ou enviado_ministerio (em processo final)
+    const isAlocada = (s) => s === 'integrado';
+
     const porMes = {};
     let totalRecebidas = 0;
     let totalAlocadas = 0;
@@ -2011,31 +2015,30 @@ router.get('/inscricoes-summary', async (req, res) => {
     };
 
     for (const row of data || []) {
-      const ym = String(row.data).slice(0, 7);
-      if (!porMes[ym]) porMes[ym] = { recebidas: 0, alocadas: 0, kids_rec: 0, kids_aloc: 0, sede_rec: 0, sede_aloc: 0 };
-      const v = Number(row.valor || 0);
-      if (row.tipo_id === 'solicitacoes_servir_recebidas') {
-        porMes[ym].recebidas += v;
-        totalRecebidas += v;
-        if (porArea[row.area]) porArea[row.area].recebidas += v;
-        if (row.area === 'kids') porMes[ym].kids_rec += v;
-        if (row.area === 'sede') porMes[ym].sede_rec += v;
-      } else {
-        porMes[ym].alocadas += v;
-        totalAlocadas += v;
-        if (porArea[row.area]) porArea[row.area].alocadas += v;
-        if (row.area === 'kids') porMes[ym].kids_aloc += v;
-        if (row.area === 'sede') porMes[ym].sede_aloc += v;
+      const ym = String(row.data_inscricao).slice(0, 7);
+      if (!porMes[ym]) {
+        porMes[ym] = { recebidas: 0, alocadas: 0, kids_rec: 0, kids_aloc: 0, sede_rec: 0, sede_aloc: 0 };
+      }
+      const aloc = isAlocada(row.status);
+      porMes[ym].recebidas += 1;
+      totalRecebidas += 1;
+      if (porArea[row.area]) porArea[row.area].recebidas += 1;
+      if (row.area === 'kids') porMes[ym].kids_rec += 1;
+      if (row.area === 'sede') porMes[ym].sede_rec += 1;
+      if (aloc) {
+        porMes[ym].alocadas += 1;
+        totalAlocadas += 1;
+        if (porArea[row.area]) porArea[row.area].alocadas += 1;
+        if (row.area === 'kids') porMes[ym].kids_aloc += 1;
+        if (row.area === 'sede') porMes[ym].sede_aloc += 1;
       }
     }
 
-    const meses = Object.keys(porMes)
-      .sort()
-      .map(ym => {
-        const m = porMes[ym];
-        const taxa = m.recebidas > 0 ? Math.round((m.alocadas / m.recebidas) * 100) : null;
-        return { mes: ym, ...m, taxa };
-      });
+    const meses = Object.keys(porMes).sort().map(ym => {
+      const m = porMes[ym];
+      const taxa = m.recebidas > 0 ? Math.round((m.alocadas / m.recebidas) * 100) : null;
+      return { mes: ym, ...m, taxa };
+    });
 
     const taxa = totalRecebidas > 0 ? Math.round((totalAlocadas / totalRecebidas) * 100) : null;
 
@@ -2048,6 +2051,50 @@ router.get('/inscricoes-summary', async (req, res) => {
   } catch (e) {
     console.error('[inscricoes-summary]', e.message);
     res.status(500).json({ error: 'Erro ao agregar inscricoes' });
+  }
+});
+
+// Lista detalhada de inscricoes (drill-down com nomes individuais)
+router.get('/inscricoes', async (req, res) => {
+  try {
+    const ano = req.query.ano ? String(req.query.ano) : null;
+    const area = req.query.area ? String(req.query.area).toLowerCase() : null;
+    const status = req.query.status ? String(req.query.status) : null;
+    const mes = req.query.mes ? String(req.query.mes) : null; // YYYY-MM
+    const search = req.query.search ? String(req.query.search).trim() : null;
+    const limit = Math.min(Number(req.query.limit) || 100, 500);
+    const offset = Number(req.query.offset) || 0;
+
+    let q = supabase
+      .from('vol_inscricoes')
+      .select(`
+        id, nome, sobrenome, nome_completo, cpf, email, telefone,
+        data_nascimento, data_inscricao, area, status,
+        dom_predominante, ministerios_interesse, participou_next,
+        feedback, integrado_em, membro_id
+      `, { count: 'exact' })
+      .order('data_inscricao', { ascending: false })
+      .range(offset, offset + limit - 1);
+
+    if (ano) {
+      q = q.gte('data_inscricao', `${ano}-01-01`).lt('data_inscricao', `${Number(ano) + 1}-01-01`);
+    }
+    if (mes) {
+      const [y, m] = mes.split('-');
+      const nextMonth = new Date(Number(y), Number(m), 1);
+      q = q.gte('data_inscricao', `${mes}-01`).lt('data_inscricao', nextMonth.toISOString().slice(0, 10));
+    }
+    if (area) q = q.eq('area', area);
+    if (status) q = q.eq('status', status);
+    if (search) q = q.ilike('nome_completo', `%${search}%`);
+
+    const { data, error, count } = await q;
+    if (error) throw error;
+
+    res.json({ total: count || 0, limit, offset, rows: data || [] });
+  } catch (e) {
+    console.error('[inscricoes-list]', e.message);
+    res.status(500).json({ error: 'Erro ao listar inscricoes' });
   }
 });
 

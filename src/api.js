@@ -877,6 +877,18 @@ export const voluntariado = {
     const s = qs.toString();
     return get(`/voluntariado/inscricoes-summary${s ? `?${s}` : ''}`);
   },
+  inscricoesList: (params = {}) => {
+    const qs = new URLSearchParams();
+    if (params.ano) qs.set('ano', params.ano);
+    if (params.area) qs.set('area', params.area);
+    if (params.status) qs.set('status', params.status);
+    if (params.mes) qs.set('mes', params.mes);
+    if (params.search) qs.set('search', params.search);
+    if (params.limit != null) qs.set('limit', params.limit);
+    if (params.offset != null) qs.set('offset', params.offset);
+    const s = qs.toString();
+    return get(`/voluntariado/inscricoes${s ? `?${s}` : ''}`);
+  },
   // Encontros 1x1 mensais (lider <-> voluntario)
   teamMembers: (teamId, yearMonth) =>
     get(`/voluntariado/team/${teamId}/members${yearMonth ? `?year_month=${yearMonth}` : ''}`),
