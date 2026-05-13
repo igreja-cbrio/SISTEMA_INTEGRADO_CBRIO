@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { kpis as kpisApi } from '../../api';
 import { Button } from '../../components/ui/button';
 import { Input } from '../../components/ui/input';
@@ -8,11 +8,16 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../../components/ui/table';
 import { Badge } from '../../components/ui/badge';
 import { StatisticsCard } from '../../components/ui/statistics-card';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../components/ui/select';
+import { Card, CardContent, CardHeader, CardTitle } from '../../components/ui/card';
 import {
   Droplets, Loader2, Search, Plus, Calendar, Phone, Mail, AlertCircle,
-  CheckCircle2, Clock, XCircle, ChevronRight, User, IdCard, FileText,
+  CheckCircle2, Clock, XCircle, ChevronRight, User, IdCard, FileText, BarChart3,
 } from 'lucide-react';
 import { toast } from 'sonner';
+import {
+  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
+} from 'recharts';
 
 const C = { primary: '#00B39D', info: '#3b82f6', warn: '#f59e0b', purple: '#8b5cf6', danger: '#ef4444' };
 
@@ -66,10 +71,39 @@ function ymdHoje(): string {
   return new Date().toISOString().slice(0, 10);
 }
 
+// Calcula o 4o domingo de um mes (year + 0-indexed month)
+function quartoDomingo(year: number, month: number): Date {
+  const primeiro = new Date(year, month, 1);
+  const offset = (7 - primeiro.getDay()) % 7;
+  return new Date(year, month, 1 + offset + 21);
+}
+
+// Proximo batismo: 4o domingo deste mes (se ainda nao passou) ou do proximo
+function proximoQuartoDomingo(): string {
+  const hoje = new Date();
+  hoje.setHours(0, 0, 0, 0);
+  let year = hoje.getFullYear();
+  let month = hoje.getMonth();
+  let q = quartoDomingo(year, month);
+  if (q < hoje) {
+    month += 1;
+    if (month > 11) { year += 1; month = 0; }
+    q = quartoDomingo(year, month);
+  }
+  return q.toISOString().slice(0, 10);
+}
+
+const MESES_PT = ['jan', 'fev', 'mar', 'abr', 'mai', 'jun', 'jul', 'ago', 'set', 'out', 'nov', 'dez'];
+const labelMes = (ym: string) => {
+  const [y, m] = ym.split('-');
+  return `${MESES_PT[parseInt(m, 10) - 1]}/${y.slice(2)}`;
+};
+
 export default function Batismos() {
   const [list, setList] = useState<BatismoInscricao[]>([]);
   const [loading, setLoading] = useState(true);
   const [statusFilter, setStatusFilter] = useState<Status | 'todos'>('todos');
+  const [mesFiltro, setMesFiltro] = useState<string>('todos');
   const [busca, setBusca] = useState('');
   const [selected, setSelected] = useState<BatismoInscricao | null>(null);
   const [novaOpen, setNovaOpen] = useState(false);
@@ -87,8 +121,20 @@ export default function Batismos() {
 
   useEffect(() => { load(); }, [load]);
 
+  // Meses disponiveis para o filtro · ordenados desc (mais recente primeiro)
+  const mesesDisponiveis = useMemo(() => {
+    const set = new Set<string>();
+    list.forEach(b => {
+      if (b.data_batismo) set.add(b.data_batismo.slice(0, 7));
+    });
+    return Array.from(set).sort().reverse();
+  }, [list]);
+
   const filtrada = list.filter(b => {
     if (statusFilter !== 'todos' && b.status !== statusFilter) return false;
+    if (mesFiltro !== 'todos') {
+      if (!b.data_batismo || b.data_batismo.slice(0, 7) !== mesFiltro) return false;
+    }
     if (busca) {
       const q = busca.toLowerCase();
       const hay = `${b.nome} ${b.sobrenome} ${b.cpf || ''} ${b.telefone || ''} ${b.email || ''}`.toLowerCase();
@@ -103,10 +149,37 @@ export default function Batismos() {
   const realizadosMes = list.filter(b => b.status === 'realizado' && (b.data_batismo || '') >= ymdInicioMes).length;
   const pendentes = list.filter(b => b.status === 'pendente').length;
   const confirmados = list.filter(b => b.status === 'confirmado').length;
-  const proximaDataBatismo = list
-    .filter(b => (b.status === 'pendente' || b.status === 'confirmado') && b.data_batismo && b.data_batismo >= ymdHoje())
-    .map(b => b.data_batismo as string)
-    .sort()[0];
+
+  // Proximo batismo: pega data agendada futura mais proxima, ou cai pro 4o
+  // domingo automatico se nao houver agendamento futuro registrado.
+  const proximaDataBatismo = useMemo(() => {
+    const agendadas = list
+      .filter(b => (b.status === 'pendente' || b.status === 'confirmado') && b.data_batismo && b.data_batismo >= ymdHoje())
+      .map(b => b.data_batismo as string)
+      .sort();
+    return agendadas[0] || proximoQuartoDomingo();
+  }, [list]);
+
+  // Realizados por mes nos ultimos 12 meses (para o grafico)
+  const realizadosPorMes = useMemo(() => {
+    const buckets: Record<string, number> = {};
+    const hoje = new Date();
+    for (let i = 11; i >= 0; i -= 1) {
+      const d = new Date(hoje.getFullYear(), hoje.getMonth() - i, 1);
+      const ym = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+      buckets[ym] = 0;
+    }
+    list.forEach(b => {
+      if (b.status !== 'realizado' || !b.data_batismo) return;
+      const ym = b.data_batismo.slice(0, 7);
+      if (buckets[ym] !== undefined) buckets[ym] += 1;
+    });
+    return Object.entries(buckets).map(([ym, count]) => ({
+      mes: labelMes(ym),
+      ym,
+      batizados: count,
+    }));
+  }, [list]);
 
   return (
     <div className="space-y-4">
@@ -143,6 +216,37 @@ export default function Batismos() {
         />
       </div>
 
+      {/* Grafico de barras · batismos realizados por mes (ultimos 12 meses) */}
+      <Card>
+        <CardHeader className="pb-2 flex flex-row items-center justify-between space-y-0">
+          <CardTitle className="text-sm font-medium flex items-center gap-2">
+            <BarChart3 className="h-4 w-4 text-muted-foreground" />
+            Batismos realizados por mes
+            <span className="text-xs text-muted-foreground font-normal">(ultimos 12 meses)</span>
+          </CardTitle>
+          <span className="text-xs text-muted-foreground">
+            Total: {realizadosPorMes.reduce((s, m) => s + m.batizados, 0)}
+          </span>
+        </CardHeader>
+        <CardContent>
+          <div className="h-[220px]">
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={realizadosPorMes} margin={{ top: 6, right: 8, left: -16, bottom: 0 }}>
+                <CartesianGrid strokeDasharray="3 3" opacity={0.25} />
+                <XAxis dataKey="mes" tick={{ fontSize: 11 }} />
+                <YAxis tick={{ fontSize: 11 }} allowDecimals={false} />
+                <Tooltip
+                  cursor={{ fill: 'rgba(0,179,157,0.08)' }}
+                  contentStyle={{ borderRadius: 8, fontSize: 12 }}
+                  formatter={(v: any) => [`${v} batizado(s)`, '']}
+                />
+                <Bar dataKey="batizados" fill={C.primary} radius={[4, 4, 0, 0]} />
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+        </CardContent>
+      </Card>
+
       <div className="flex flex-wrap items-center gap-3">
         <div className="inline-flex rounded-xl border border-border p-0.5 bg-muted/30 overflow-x-auto">
           {(['todos', 'pendente', 'confirmado', 'realizado', 'cancelado'] as const).map(f => {
@@ -158,6 +262,17 @@ export default function Batismos() {
             );
           })}
         </div>
+        <Select value={mesFiltro} onValueChange={setMesFiltro}>
+          <SelectTrigger className="w-[160px] h-9">
+            <SelectValue placeholder="Filtrar mes" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="todos">Todos os meses</SelectItem>
+            {mesesDisponiveis.map(ym => (
+              <SelectItem key={ym} value={ym}>{labelMes(ym)}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
         <div className="relative flex-1 min-w-[200px] max-w-md">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
           <Input value={busca} onChange={e => setBusca(e.target.value)} placeholder="Buscar nome, CPF, telefone ou email" className="pl-9" />
