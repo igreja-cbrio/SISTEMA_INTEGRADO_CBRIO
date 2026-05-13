@@ -259,6 +259,34 @@ const COLLECTORS = {
     };
   },
 
+  // ── Grupos · Supervisao (lideres treinados + acompanhados) ──
+  'grupos.lideres_treinados': async () => {
+    // Count membros com funcao='lider_treinamento' ativos (saiu_em IS NULL)
+    const { count } = await supabase
+      .from('mem_grupo_membros')
+      .select('id', { count: 'exact', head: true })
+      .eq('funcao', 'lider_treinamento')
+      .is('saiu_em', null);
+    return {
+      valor: count || 0,
+      observacao: `${count || 0} membros marcados como lider em treinamento (Grupos)`,
+    };
+  },
+
+  'grupos.lideres_acompanhados': async ({ inicio, fim }) => {
+    // Count distinct grupo_id visitado no periodo (cada supervisor visitou X grupos distintos)
+    const { data } = await supabase
+      .from('grupo_supervisao_visitas')
+      .select('grupo_id')
+      .gte('data_visita', inicio)
+      .lt('data_visita', fim);
+    const distinct = new Set((data || []).map(v => v.grupo_id));
+    return {
+      valor: distinct.size,
+      observacao: `${distinct.size} grupos visitados no periodo`,
+    };
+  },
+
   // ── Grupos ──
   'grupos.total_grupos': async () => {
     const { count } = await supabase.from('mem_grupos').select('id', { count: 'exact', head: true }).eq('ativo', true);

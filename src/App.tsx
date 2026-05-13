@@ -381,8 +381,8 @@ function AppRoutes() {
         <Route path="/ritual" element={<Suspense fallback={<Loading />}><Ritual /></Suspense>} />
         <Route path="/gestao" element={<Suspense fallback={<Loading />}><Gestao /></Suspense>} />
         <Route path="/minha-area" element={<Suspense fallback={<Loading />}><MinhaArea /></Suspense>} />
-        {/* Redirects (telas que viraram aba — consolidacao 3 telas) */}
-        <Route path="/dados-brutos" element={<Navigate to="/minha-area?aba=dados" replace />} />
+        {/* Redirects · /minha-area virou so visualizador · /dados-brutos so admin */}
+        <Route path="/dados-brutos" element={<Suspense fallback={<Loading />}><DadosBrutos /></Suspense>} />
         <Route path="/admin/estrutura-okr" element={<Navigate to="/gestao?aba=estrutura" replace />} />
         <Route path="/admin/grupos/qrcode-inscricao" element={<Suspense fallback={<Loading />}><InscricaoGruposQRCode /></Suspense>} />
         <Route path="/admin/grupos/geocode" element={<Suspense fallback={<Loading />}><GruposGeocode /></Suspense>} />
