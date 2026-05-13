@@ -76,8 +76,17 @@ function tabularKpis(kpis, statusByKpi) {
   const sem_dado = total - em_dia - atras - critico;
   const totalAvaliados = em_dia + atras + critico;
   const percentual = total > 0 ? Math.round((em_dia / total) * 100) : 0;
+  // Conta OKRs distintos · KPIs do mesmo OKR (em cascata) contam como 1
+  const okrIds = new Set();
+  let kpisSemOkr = 0;
+  for (const k of kpis) {
+    if (k.objetivo_geral_id) okrIds.add(k.objetivo_geral_id);
+    else kpisSemOkr++;
+  }
+  const totalOkrs = okrIds.size + kpisSemOkr; // KPI orfao conta sozinho
   return {
     total_kpis: total,
+    total_okrs: totalOkrs,
     em_dia, atras, critico, sem_dado,
     percentual,
     status: calcStatus(percentual, totalAvaliados),
@@ -108,7 +117,7 @@ router.get('/mandalas', async (req, res) => {
     // 1. KPIs ativos com valores preenchidos
     const { data: kpis, error: ek } = await supabase
       .from('kpi_indicadores_taticos')
-      .select('id, area, valores, is_okr')
+      .select('id, area, valores, is_okr, objetivo_geral_id')
       .eq('ativo', true);
     if (ek) throw ek;
 
@@ -197,7 +206,7 @@ router.get('/matriz', async (req, res) => {
 
     const { data: kpis, error: ek } = await supabase
       .from('kpi_indicadores_taticos')
-      .select('id, area, valores')
+      .select('id, area, valores, objetivo_geral_id')
       .eq('ativo', true);
     if (ek) throw ek;
 
@@ -326,17 +335,19 @@ router.get('/matriz-adm', async (req, res) => {
     // KPIs operacionais ativos · agrupa por grupo (via subareas)
     const { data: kpis } = await supabase
       .from('kpi_indicadores_taticos')
-      .select('id, formula_config, ativo, tipo_kpi')
+      .select('id, formula_config, ativo, tipo_kpi, objetivo_geral_id')
       .eq('ativo', true)
       .eq('tipo_kpi', 'operacional');
 
-    const kpisPorGrupo = {}; // grupo.key -> count
+    // Conta OKRs distintos por grupo (KPIs do mesmo OKR contam como 1)
+    const okrsPorGrupo = {};
     (kpis || []).forEach(k => {
       const sub = k.formula_config?.area_responsavel;
-      if (!sub) return;
+      if (!sub || !k.objetivo_geral_id) return;
       const grupo = AREAS_ADM_GRUPOS.find(g => g.subareas.includes(sub));
       if (!grupo) return;
-      kpisPorGrupo[grupo.key] = (kpisPorGrupo[grupo.key] || 0) + 1;
+      if (!okrsPorGrupo[grupo.key]) okrsPorGrupo[grupo.key] = new Set();
+      okrsPorGrupo[grupo.key].add(k.objetivo_geral_id);
     });
 
     // Mapa de subarea_adm -> grupo (pra agregar)
@@ -354,7 +365,7 @@ router.get('/matriz-adm', async (req, res) => {
           subareas: g.subareas,
           area_cliente: cli.id,
           area_cliente_nome: cli.nome,
-          total_kpis: kpisPorGrupo[g.key] || 0,
+          total_kpis: (okrsPorGrupo[g.key]?.size) || 0,
           total: 0,
           concluidos: 0,
           no_prazo: 0,
@@ -452,25 +463,26 @@ router.get('/matriz-criativo', async (req, res) => {
     // ex.: MKT-ONL-* do OKR Engajamento Online)
     const { data: kpisAll } = await supabase
       .from('kpi_indicadores_taticos')
-      .select('id, formula_config, ativo, tipo_kpi')
+      .select('id, formula_config, ativo, tipo_kpi, area, objetivo_geral_id')
       .eq('ativo', true)
       .eq('tipo_kpi', 'operacional');
 
-    // Conta KPIs por celula (grupo x area_cliente) · KPI com area='sede' (cross)
-    // entra em todas as colunas, KPI com area especifica so na propria
-    const kpisPorCelula = {};
+    // Conta OKRs distintos por celula (grupo x area_cliente)
+    // KPIs do mesmo OKR (em cascata) contam como 1 OKR na celula
+    // KPI com area='sede' (cross) entra em todas as colunas; com area especifica so na propria
+    const okrsPorCelula = {};
     AREAS_CRIATIVO_GRUPOS.forEach(g => {
-      AREAS_CLIENTE.forEach(cli => { kpisPorCelula[`${g.key}:${cli.id}`] = 0; });
+      AREAS_CLIENTE.forEach(cli => { okrsPorCelula[`${g.key}:${cli.id}`] = new Set(); });
     });
     (kpisAll || []).forEach(k => {
       const sub = k.formula_config?.area_responsavel;
-      if (!sub) return;
+      if (!sub || !k.objetivo_geral_id) return;
       const grupo = AREAS_CRIATIVO_GRUPOS.find(g => g.subareas.includes(sub));
       if (!grupo) return;
       const isCross = !k.area || k.area === 'sede';
       AREAS_CLIENTE.forEach(cli => {
         if (isCross || k.area === cli.id) {
-          kpisPorCelula[`${grupo.key}:${cli.id}`]++;
+          okrsPorCelula[`${grupo.key}:${cli.id}`].add(k.objetivo_geral_id);
         }
       });
     });
@@ -488,7 +500,7 @@ router.get('/matriz-criativo', async (req, res) => {
           subareas: g.subareas,
           area_cliente: cli.id,
           area_cliente_nome: cli.nome,
-          total_kpis: kpisPorCelula[`${g.key}:${cli.id}`] || 0,
+          total_kpis: okrsPorCelula[`${g.key}:${cli.id}`].size || 0,
           total: 0, concluidos: 0, no_prazo: 0, atrasados: 0, em_andamento: 0,
         };
       });
