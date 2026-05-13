@@ -490,10 +490,12 @@ export default function DadosBrutos({ embedded = false }) {
 function ModalRegistrar({ dado, tipos, ministerioId, isAdmin, areasOficiais, areasEditaveis, areaDefault, onClose, onSaved }) {
   // Lider de ministerio pode preencher em qualquer area; lider de area so na sua
   const areasDisponiveis = (isAdmin || ministerioId) ? areasOficiais : areasEditaveis;
-  // Tipos disponiveis: se lider de area, todos. Se lider de ministerio (sem ser area), so tipos do ministerio dele
+  // 1. Filtra tipos automaticos (entrada_manual=false vem de modulos externos)
+  const tiposManuais = tipos.filter(t => t.entrada_manual !== false);
+  // 2. Tipos disponiveis conforme permissao
   const tiposDisponiveis = (isAdmin || areasEditaveis?.length > 0 || !ministerioId)
-    ? tipos
-    : tipos.filter(t => t.ministerio_id === ministerioId);
+    ? tiposManuais
+    : tiposManuais.filter(t => t.ministerio_id === ministerioId);
   const isNovo = !dado.id;
   const [form, setForm] = useState({
     tipo_id: dado.tipo_id || '',

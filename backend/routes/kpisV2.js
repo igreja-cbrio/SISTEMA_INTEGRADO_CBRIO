@@ -197,7 +197,47 @@ router.get('/taticos', async (req, res) => {
   if (periodicidade) query = query.eq('periodicidade', periodicidade);
   const { data, error } = await query;
   if (error) return res.status(500).json({ error: error.message });
-  res.json(data);
+
+  // Enriquece com formula_config + entrada_manual do tipo dado_tipo
+  // (a view nao tem essas colunas · precisamos pra UI saber quem e auto/manual)
+  const ids = (data || []).map(d => d.id);
+  let fcByKpi = {};
+  if (ids.length) {
+    const { data: configs } = await supabase
+      .from('kpi_indicadores_taticos')
+      .select('id, formula_config, tipo_calculo')
+      .in('id', ids);
+    fcByKpi = Object.fromEntries((configs || []).map(c => [c.id, c]));
+  }
+
+  const tipoIds = [...new Set(
+    Object.values(fcByKpi)
+      .map(c => c?.formula_config?.dado_tipo)
+      .filter(Boolean)
+  )];
+  let tiposManuais = {};
+  if (tipoIds.length) {
+    const { data: tipos } = await supabase
+      .from('tipos_dado_bruto')
+      .select('id, entrada_manual')
+      .in('id', tipoIds);
+    tiposManuais = Object.fromEntries((tipos || []).map(t => [t.id, t.entrada_manual]));
+  }
+
+  const enriched = (data || []).map(d => {
+    const cfg = fcByKpi[d.id] || {};
+    const dadoTipo = cfg.formula_config?.dado_tipo || null;
+    // dado_tipo_manual = true se o KPI tem dado_tipo E o tipo permite entrada manual
+    const dadoTipoManual = !!dadoTipo && tiposManuais[dadoTipo] === true;
+    return {
+      ...d,
+      formula_config: cfg.formula_config || null,
+      tipo_calculo: cfg.tipo_calculo || null,
+      dado_tipo_manual: dadoTipoManual,
+    };
+  });
+
+  res.json(enriched);
 });
 
 // ----------------------------------------------------------------------------
