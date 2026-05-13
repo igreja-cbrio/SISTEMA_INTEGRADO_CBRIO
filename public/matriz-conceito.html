@@ -26,6 +26,7 @@
       --blue: #3B82F6;  --blue-bg:  #3B82F618;
       --purple: #8B5CF6; --purple-bg: #8B5CF618;
       --pink: #EC4899;  --pink-bg:  #EC489918;
+      --orange: #F97316; --orange-bg: #F9731618;
       --gray: #6B7280;  --gray-bg:  #6B728018;
     }
     * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -75,7 +76,7 @@
     }
     .hero p {
       font-size: 17px; color: var(--text-2);
-      max-width: 680px; margin: 0 auto;
+      max-width: 720px; margin: 0 auto;
     }
 
     /* SECTION */
@@ -92,6 +93,13 @@
       background: var(--primary); color: #fff;
       font-size: 14px; font-weight: 700;
     }
+    .bloco h2 .num.problema {
+      background: var(--red);
+    }
+    .bloco h3 {
+      font-size: 16px; font-weight: 700;
+      margin: 0 0 4px;
+    }
     .bloco .sub {
       font-size: 14px; color: var(--text-3); margin-bottom: 22px;
     }
@@ -104,6 +112,13 @@
       padding: 22px;
       box-shadow: 0 1px 2px rgba(0,0,0,0.03);
     }
+    .card.problema {
+      border-color: var(--red-bg);
+      box-shadow: 0 0 0 2px var(--red-bg);
+    }
+    .card.solucao {
+      border-color: var(--primary-bg);
+    }
 
     /* MATRIZ */
     .matriz-wrap {
@@ -113,6 +128,7 @@
       width: 100%; min-width: 720px;
       border-collapse: separate; border-spacing: 6px;
     }
+    .matriz.compacta { min-width: 560px; }
     .matriz th, .matriz td {
       padding: 0; text-align: center;
     }
@@ -140,6 +156,11 @@
     .matriz th.row .dot {
       width: 10px; height: 10px; border-radius: 50%;
     }
+    .matriz th.row .sub {
+      display: block; font-size: 9px; color: var(--text-3);
+      margin-left: 18px; font-weight: 500;
+      text-transform: none; margin-top: 1px; margin-bottom: 0;
+    }
     .matriz td.celula {
       border-radius: 8px;
       padding: 14px 10px;
@@ -164,6 +185,59 @@
     .cel-na       { background: var(--input-bg); }
     .cel-na .pct  { color: var(--text-3); font-size: 14px; }
 
+    /* MATRIZ PROBLEMA · estilo de confusao */
+    .cel-confuso {
+      background: #FFF4E5;
+      border: 2px dashed #F59E0B;
+      padding: 8px 6px;
+    }
+    .cel-confuso .donos {
+      display: flex; flex-wrap: wrap; gap: 3px;
+      justify-content: center; align-items: center;
+    }
+    .cel-confuso .dono {
+      font-size: 9px; font-weight: 700;
+      padding: 2px 6px; border-radius: 99px;
+      background: var(--card); color: var(--text-2);
+      border: 1px solid var(--border);
+      white-space: nowrap;
+    }
+    .cel-confuso .dono.q { color: var(--red); border-color: var(--red); }
+    .cel-confuso .interr {
+      font-size: 16px; font-weight: 800; color: var(--amber);
+      line-height: 1; margin-top: 4px;
+    }
+    .cel-conflito {
+      background: #FEE2E2;
+      border: 2px solid var(--red);
+    }
+    .cel-conflito .donos .dono {
+      background: var(--red); color: #fff;
+      border-color: var(--red);
+    }
+
+    /* ALERTA */
+    .alerta {
+      background: var(--red-bg);
+      border-left: 4px solid var(--red);
+      padding: 14px 16px;
+      border-radius: 8px;
+      margin-top: 16px;
+      font-size: 13px;
+      color: var(--text-2);
+    }
+    .alerta strong { color: var(--red); display: block; margin-bottom: 4px; font-size: 12px; text-transform: uppercase; letter-spacing: 0.5px; }
+    .info {
+      background: var(--primary-bg);
+      border-left: 4px solid var(--primary);
+      padding: 14px 16px;
+      border-radius: 8px;
+      margin-top: 16px;
+      font-size: 13px;
+      color: var(--text-2);
+    }
+    .info strong { color: var(--primary-dark); display: block; margin-bottom: 4px; font-size: 12px; text-transform: uppercase; letter-spacing: 0.5px; }
+
     /* LEGENDA */
     .legenda {
       display: flex; flex-wrap: wrap; gap: 16px;
@@ -176,6 +250,24 @@
     }
     .legenda .sw {
       width: 14px; height: 14px; border-radius: 4px;
+    }
+
+    /* SETA ANTES → DEPOIS */
+    .transicao {
+      text-align: center;
+      padding: 32px 0 0;
+      color: var(--text-3);
+    }
+    .transicao .seta {
+      display: inline-flex; align-items: center; gap: 12px;
+      padding: 14px 24px;
+      background: var(--card); border: 1px solid var(--border);
+      border-radius: 99px;
+      font-size: 13px; font-weight: 600; color: var(--text-2);
+    }
+    .transicao .seta::before {
+      content: '↓';
+      font-size: 18px; color: var(--primary);
     }
 
     /* CRUZAMENTOS */
@@ -248,6 +340,21 @@
     }
     .insight strong { color: var(--text); }
 
+    /* RODAPE DE MATRIZ */
+    .matriz-rodape {
+      margin-top: 14px;
+      font-size: 11px; color: var(--text-3);
+      display: flex; flex-wrap: wrap; gap: 14px;
+      align-items: center;
+    }
+    .matriz-rodape .dono-tag {
+      display: inline-flex; align-items: center; gap: 4px;
+      font-weight: 600; color: var(--text-2);
+    }
+    .matriz-rodape .dono-tag .icon {
+      font-size: 13px;
+    }
+
     /* FOOTER */
     footer.rodape {
       text-align: center;
@@ -281,97 +388,319 @@
     <section class="hero">
       <h1>Como medimos a Igreja</h1>
       <p>
-        Cada pessoa caminha pelos <strong>5 valores da CBRio</strong> dentro
-        de uma das <strong>6 áreas</strong>. A matriz mostra onde estamos em
-        cada interseção · e o cruzamento de dados responde perguntas
-        estratégicas em segundos.
+        Antes, vários líderes preenchiam os mesmos indicadores · ninguém sabia
+        de quem era a responsabilidade. Agora, <strong>3 matrizes complementares</strong>
+        com donos claros: ministerial, gestão e criativo.
       </p>
     </section>
 
+    <!-- ======================= PROBLEMA ======================= -->
     <section class="bloco">
-      <h2><span class="num">1</span> Matriz Valor × Área</h2>
+      <h2><span class="num problema">!</span> O problema · 1 matriz pra todos</h2>
       <p class="sub">
-        Cada célula representa a saúde dos KPIs daquela interseção (verde no
-        alvo, amarelo atrás, vermelho crítico, cinza sem dado, em branco
-        quando não se aplica).
+        Quando tudo cabia em uma única matriz Valor × Área, áreas
+        diferentes acabavam reportando os mesmos indicadores. Resultado:
+        dado duplicado, dado divergente, ninguém certo de quem é o dono.
       </p>
 
-      <div class="card">
+      <div class="card problema">
         <div class="matriz-wrap">
           <table class="matriz">
             <thead>
               <tr>
                 <th></th>
-                <th class="col">
-                  <span class="label" style="color: var(--purple)">Seguir Jesus</span>
-                  <span class="pct">62%</span>
-                </th>
-                <th class="col">
-                  <span class="label" style="color: var(--blue)">Conectar</span>
-                  <span class="pct">48%</span>
-                </th>
-                <th class="col">
-                  <span class="label" style="color: var(--amber)">Investir Tempo</span>
-                  <span class="pct">31%</span>
-                </th>
-                <th class="col">
-                  <span class="label" style="color: var(--green)">Servir</span>
-                  <span class="pct">21%</span>
-                </th>
-                <th class="col">
-                  <span class="label" style="color: var(--pink)">Generosidade</span>
-                  <span class="pct">28%</span>
-                </th>
+                <th class="col"><span class="label" style="color: var(--purple)">Seguir</span></th>
+                <th class="col"><span class="label" style="color: var(--blue)">Conectar</span></th>
+                <th class="col"><span class="label" style="color: var(--amber)">Investir</span></th>
+                <th class="col"><span class="label" style="color: var(--green)">Servir</span></th>
+                <th class="col"><span class="label" style="color: var(--pink)">Generosidade</span></th>
               </tr>
             </thead>
             <tbody>
               <tr>
                 <th class="row"><span class="nome"><span class="dot" style="background: var(--amber)"></span> Kids</span></th>
-                <td class="celula cel-verde"><div class="pct">82%</div><div class="kpis">3 kpis</div></td>
-                <td class="celula cel-amarelo"><div class="pct">54%</div><div class="kpis">2 kpis</div></td>
-                <td class="celula cel-amarelo"><div class="pct">42%</div><div class="kpis">2 kpis</div></td>
-                <td class="celula cel-na"><div class="pct">—</div></td>
-                <td class="celula cel-sem-dado"><div class="pct">—</div><div class="kpis">1 sem dado</div></td>
-              </tr>
-              <tr>
-                <th class="row"><span class="nome"><span class="dot" style="background: var(--purple)"></span> Bridge</span></th>
-                <td class="celula cel-verde"><div class="pct">76%</div><div class="kpis">3 kpis</div></td>
-                <td class="celula cel-verde"><div class="pct">71%</div><div class="kpis">2 kpis</div></td>
-                <td class="celula cel-amarelo"><div class="pct">48%</div><div class="kpis">2 kpis</div></td>
-                <td class="celula cel-vermelho"><div class="pct">22%</div><div class="kpis">3 kpis</div></td>
-                <td class="celula cel-amarelo"><div class="pct">45%</div><div class="kpis">2 kpis</div></td>
+                <td class="celula cel-confuso">
+                  <div class="donos">
+                    <span class="dono">Kids</span>
+                    <span class="dono q">Integração?</span>
+                  </div>
+                  <div class="interr">?</div>
+                </td>
+                <td class="celula cel-conflito">
+                  <div class="donos">
+                    <span class="dono">Kids</span>
+                    <span class="dono">Grupos</span>
+                    <span class="dono">Cuidados</span>
+                  </div>
+                  <div class="interr" style="color: #fff">⚠</div>
+                </td>
+                <td class="celula cel-confuso">
+                  <div class="donos">
+                    <span class="dono">Kids</span>
+                    <span class="dono q">Devoção?</span>
+                  </div>
+                  <div class="interr">?</div>
+                </td>
+                <td class="celula cel-conflito">
+                  <div class="donos">
+                    <span class="dono">Kids</span>
+                    <span class="dono">Voluntariado</span>
+                  </div>
+                  <div class="interr" style="color: #fff">⚠</div>
+                </td>
+                <td class="celula cel-confuso">
+                  <div class="donos">
+                    <span class="dono q">Generosidade?</span>
+                  </div>
+                  <div class="interr">?</div>
+                </td>
               </tr>
               <tr>
                 <th class="row"><span class="nome"><span class="dot" style="background: var(--blue)"></span> AMI</span></th>
-                <td class="celula cel-verde"><div class="pct">88%</div><div class="kpis">4 kpis</div></td>
-                <td class="celula cel-verde"><div class="pct">73%</div><div class="kpis">2 kpis</div></td>
-                <td class="celula cel-amarelo"><div class="pct">55%</div><div class="kpis">3 kpis</div></td>
-                <td class="celula cel-amarelo"><div class="pct">42%</div><div class="kpis">3 kpis</div></td>
-                <td class="celula cel-verde"><div class="pct">68%</div><div class="kpis">2 kpis</div></td>
+                <td class="celula cel-conflito">
+                  <div class="donos">
+                    <span class="dono">AMI</span>
+                    <span class="dono">Integração</span>
+                  </div>
+                  <div class="interr" style="color: #fff">⚠</div>
+                </td>
+                <td class="celula cel-conflito">
+                  <div class="donos">
+                    <span class="dono">AMI</span>
+                    <span class="dono">Grupos</span>
+                  </div>
+                  <div class="interr" style="color: #fff">⚠</div>
+                </td>
+                <td class="celula cel-confuso">
+                  <div class="donos">
+                    <span class="dono">AMI</span>
+                    <span class="dono q">Cuidados?</span>
+                  </div>
+                  <div class="interr">?</div>
+                </td>
+                <td class="celula cel-conflito">
+                  <div class="donos">
+                    <span class="dono">AMI</span>
+                    <span class="dono">Voluntariado</span>
+                  </div>
+                  <div class="interr" style="color: #fff">⚠</div>
+                </td>
+                <td class="celula cel-confuso">
+                  <div class="donos">
+                    <span class="dono q">Generosidade?</span>
+                  </div>
+                  <div class="interr">?</div>
+                </td>
+              </tr>
+              <tr>
+                <th class="row"><span class="nome"><span class="dot" style="background: var(--purple)"></span> Bridge</span></th>
+                <td class="celula cel-conflito">
+                  <div class="donos">
+                    <span class="dono">Bridge</span>
+                    <span class="dono">Integração</span>
+                  </div>
+                  <div class="interr" style="color: #fff">⚠</div>
+                </td>
+                <td class="celula cel-conflito">
+                  <div class="donos">
+                    <span class="dono">Bridge</span>
+                    <span class="dono">Grupos</span>
+                  </div>
+                  <div class="interr" style="color: #fff">⚠</div>
+                </td>
+                <td class="celula cel-confuso">
+                  <div class="donos">
+                    <span class="dono">Bridge</span>
+                    <span class="dono q">Cuidados?</span>
+                  </div>
+                  <div class="interr">?</div>
+                </td>
+                <td class="celula cel-conflito">
+                  <div class="donos">
+                    <span class="dono">Bridge</span>
+                    <span class="dono">Voluntariado</span>
+                  </div>
+                  <div class="interr" style="color: #fff">⚠</div>
+                </td>
+                <td class="celula cel-confuso">
+                  <div class="donos">
+                    <span class="dono q">Generosidade?</span>
+                  </div>
+                  <div class="interr">?</div>
+                </td>
               </tr>
               <tr>
                 <th class="row"><span class="nome"><span class="dot" style="background: var(--green)"></span> Sede</span></th>
-                <td class="celula cel-amarelo"><div class="pct">59%</div><div class="kpis">5 kpis</div></td>
-                <td class="celula cel-amarelo"><div class="pct">52%</div><div class="kpis">4 kpis</div></td>
-                <td class="celula cel-vermelho"><div class="pct">28%</div><div class="kpis">2 kpis</div></td>
-                <td class="celula cel-amarelo"><div class="pct">48%</div><div class="kpis">3 kpis</div></td>
-                <td class="celula cel-verde"><div class="pct">72%</div><div class="kpis">3 kpis</div></td>
+                <td class="celula cel-conflito">
+                  <div class="donos">
+                    <span class="dono">Sede</span>
+                    <span class="dono">Pastores</span>
+                    <span class="dono">Integração</span>
+                  </div>
+                  <div class="interr" style="color: #fff">⚠</div>
+                </td>
+                <td class="celula cel-conflito">
+                  <div class="donos">
+                    <span class="dono">Sede</span>
+                    <span class="dono">Grupos</span>
+                  </div>
+                  <div class="interr" style="color: #fff">⚠</div>
+                </td>
+                <td class="celula cel-conflito">
+                  <div class="donos">
+                    <span class="dono">Sede</span>
+                    <span class="dono">Cuidados</span>
+                  </div>
+                  <div class="interr" style="color: #fff">⚠</div>
+                </td>
+                <td class="celula cel-conflito">
+                  <div class="donos">
+                    <span class="dono">Sede</span>
+                    <span class="dono">Voluntariado</span>
+                  </div>
+                  <div class="interr" style="color: #fff">⚠</div>
+                </td>
+                <td class="celula cel-confuso">
+                  <div class="donos">
+                    <span class="dono">Sede</span>
+                    <span class="dono q">Generosidade?</span>
+                  </div>
+                  <div class="interr">?</div>
+                </td>
               </tr>
               <tr>
                 <th class="row"><span class="nome"><span class="dot" style="background: var(--pink)"></span> Online</span></th>
-                <td class="celula cel-verde"><div class="pct">81%</div><div class="kpis">2 kpis</div></td>
-                <td class="celula cel-vermelho"><div class="pct">18%</div><div class="kpis">1 kpi</div></td>
-                <td class="celula cel-sem-dado"><div class="pct">—</div><div class="kpis">1 sem dado</div></td>
+                <td class="celula cel-conflito">
+                  <div class="donos">
+                    <span class="dono">Online</span>
+                    <span class="dono">Marketing</span>
+                  </div>
+                  <div class="interr" style="color: #fff">⚠</div>
+                </td>
+                <td class="celula cel-confuso">
+                  <div class="donos">
+                    <span class="dono q">Online?</span>
+                    <span class="dono q">Grupos?</span>
+                  </div>
+                  <div class="interr">?</div>
+                </td>
+                <td class="celula cel-confuso">
+                  <div class="donos">
+                    <span class="dono q">Online?</span>
+                  </div>
+                  <div class="interr">?</div>
+                </td>
+                <td class="celula cel-confuso">
+                  <div class="donos">
+                    <span class="dono q">Online?</span>
+                    <span class="dono q">Voluntariado?</span>
+                  </div>
+                  <div class="interr">?</div>
+                </td>
+                <td class="celula cel-confuso">
+                  <div class="donos">
+                    <span class="dono q">Generosidade?</span>
+                  </div>
+                  <div class="interr">?</div>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="alerta">
+          <strong>Exemplos reais do problema</strong>
+          <p>
+            <strong style="color: var(--text)">Líder de AMI</strong> cuidava
+            dos grupos do AMI. Mas a área <strong style="color: var(--text)">Grupos</strong>
+            também coordenava grupos. <strong style="color: var(--text)">Quem
+            preenchia o número de grupos do AMI?</strong> Ambos? Nenhum?<br /><br />
+            <strong style="color: var(--text)">Voluntariado</strong> mexia em
+            voluntários de Kids/AMI/Bridge/Sede/Online. Mas cada área
+            também tinha seu líder de voluntariado. <strong style="color: var(--text)">Quem
+            era responsável pelo NPS dos voluntários do Kids?</strong>
+          </p>
+        </div>
+      </div>
+    </section>
+
+    <div class="transicao">
+      <span class="seta">Solução · separar por responsável e contexto</span>
+    </div>
+
+    <!-- ======================= SOLUÇÃO ======================= -->
+    <section class="bloco">
+      <h2><span class="num">✓</span> A solução · 3 matrizes complementares</h2>
+      <p class="sub">
+        Cada matriz tem um propósito e um dono claro. Líder ministerial
+        olha a primeira. Líderes de gestão a segunda. Time criativo a
+        terceira. Toda célula sabe quem preenche e quem é responsável pela
+        meta.
+      </p>
+    </section>
+
+    <!-- Matriz 1 · Valor × Área ministerial -->
+    <section class="bloco" style="padding-top: 0;">
+      <h3>1 · Matriz Valor × Área <span style="color: var(--text-3); font-weight: 500; font-size: 13px;">· ministerial</span></h3>
+      <p class="sub">
+        Saúde dos 5 valores em cada área de culto. Dono do dado: o
+        ministério responsável pelo valor (ex: Integração preenche Seguir,
+        Voluntariado preenche Servir). Dono da meta: o líder da área de culto.
+      </p>
+
+      <div class="card solucao">
+        <div class="matriz-wrap">
+          <table class="matriz">
+            <thead>
+              <tr>
+                <th></th>
+                <th class="col"><span class="label" style="color: var(--purple)">Seguir</span><span class="pct">62%</span></th>
+                <th class="col"><span class="label" style="color: var(--blue)">Conectar</span><span class="pct">54%</span></th>
+                <th class="col"><span class="label" style="color: var(--amber)">Investir</span><span class="pct">31%</span></th>
+                <th class="col"><span class="label" style="color: var(--green)">Servir</span><span class="pct">48%</span></th>
+                <th class="col"><span class="label" style="color: var(--pink)">Generosidade</span><span class="pct">52%</span></th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <th class="row"><span class="nome"><span class="dot" style="background: var(--amber)"></span> Kids</span></th>
+                <td class="celula cel-verde"><div class="pct">82%</div><div class="kpis">1 OKR</div></td>
                 <td class="celula cel-na"><div class="pct">—</div></td>
-                <td class="celula cel-amarelo"><div class="pct">44%</div><div class="kpis">2 kpis</div></td>
+                <td class="celula cel-amarelo"><div class="pct">42%</div><div class="kpis">1 OKR</div></td>
+                <td class="celula cel-amarelo"><div class="pct">54%</div><div class="kpis">2 OKRs</div></td>
+                <td class="celula cel-sem-dado"><div class="pct">—</div><div class="kpis">1 sem dado</div></td>
               </tr>
               <tr>
-                <th class="row"><span class="nome"><span class="dot" style="background: var(--gray)"></span> CBA</span></th>
-                <td class="celula cel-amarelo"><div class="pct">52%</div><div class="kpis">3 kpis</div></td>
-                <td class="celula cel-amarelo"><div class="pct">46%</div><div class="kpis">2 kpis</div></td>
-                <td class="celula cel-sem-dado"><div class="pct">—</div><div class="kpis">2 sem dado</div></td>
-                <td class="celula cel-amarelo"><div class="pct">38%</div><div class="kpis">2 kpis</div></td>
-                <td class="celula cel-verde"><div class="pct">75%</div><div class="kpis">2 kpis</div></td>
+                <th class="row"><span class="nome"><span class="dot" style="background: var(--blue)"></span> AMI</span></th>
+                <td class="celula cel-verde"><div class="pct">88%</div><div class="kpis">3 OKRs</div></td>
+                <td class="celula cel-verde"><div class="pct">73%</div><div class="kpis">2 OKRs</div></td>
+                <td class="celula cel-amarelo"><div class="pct">55%</div><div class="kpis">3 OKRs</div></td>
+                <td class="celula cel-amarelo"><div class="pct">42%</div><div class="kpis">3 OKRs</div></td>
+                <td class="celula cel-verde"><div class="pct">68%</div><div class="kpis">2 OKRs</div></td>
+              </tr>
+              <tr>
+                <th class="row"><span class="nome"><span class="dot" style="background: var(--purple)"></span> Bridge</span></th>
+                <td class="celula cel-verde"><div class="pct">76%</div><div class="kpis">3 OKRs</div></td>
+                <td class="celula cel-verde"><div class="pct">71%</div><div class="kpis">2 OKRs</div></td>
+                <td class="celula cel-amarelo"><div class="pct">48%</div><div class="kpis">2 OKRs</div></td>
+                <td class="celula cel-vermelho"><div class="pct">22%</div><div class="kpis">3 OKRs</div></td>
+                <td class="celula cel-amarelo"><div class="pct">45%</div><div class="kpis">2 OKRs</div></td>
+              </tr>
+              <tr>
+                <th class="row"><span class="nome"><span class="dot" style="background: var(--green)"></span> Sede</span></th>
+                <td class="celula cel-amarelo"><div class="pct">59%</div><div class="kpis">3 OKRs</div></td>
+                <td class="celula cel-amarelo"><div class="pct">52%</div><div class="kpis">2 OKRs</div></td>
+                <td class="celula cel-vermelho"><div class="pct">28%</div><div class="kpis">2 OKRs</div></td>
+                <td class="celula cel-amarelo"><div class="pct">48%</div><div class="kpis">3 OKRs</div></td>
+                <td class="celula cel-verde"><div class="pct">72%</div><div class="kpis">3 OKRs</div></td>
+              </tr>
+              <tr>
+                <th class="row"><span class="nome"><span class="dot" style="background: var(--pink)"></span> Online</span></th>
+                <td class="celula cel-verde"><div class="pct">81%</div><div class="kpis">3 OKRs</div></td>
+                <td class="celula cel-vermelho"><div class="pct">18%</div><div class="kpis">1 OKR</div></td>
+                <td class="celula cel-sem-dado"><div class="pct">—</div><div class="kpis">1 sem dado</div></td>
+                <td class="celula cel-amarelo"><div class="pct">44%</div><div class="kpis">2 OKRs</div></td>
+                <td class="celula cel-amarelo"><div class="pct">44%</div><div class="kpis">2 OKRs</div></td>
               </tr>
             </tbody>
           </table>
@@ -387,12 +716,175 @@
       </div>
     </section>
 
-    <section class="bloco">
-      <h2><span class="num">2</span> Cruzamento de dados</h2>
+    <!-- Matriz 2 · Gestão × Área -->
+    <section class="bloco" style="padding-top: 16px;">
+      <h3>2 · Matriz Gestão × Área <span style="color: var(--text-3); font-weight: 500; font-size: 13px;">· serviço administrativo</span></h3>
       <p class="sub">
-        A matriz mostra <em>onde olhar</em>. O cruzamento responde
-        <em>qual o próximo passo</em>. Exemplos reais de perguntas que o
-        sistema responde em segundos:
+        Como cada área da gestão (Hospitalidade, Logística, TI, RH, Financeiro)
+        serve cada área de culto. Mede o quanto o backstage está atendendo o
+        ministério. Dado vem 100% do módulo de Solicitações.
+      </p>
+
+      <div class="card solucao">
+        <div class="matriz-wrap">
+          <table class="matriz compacta">
+            <thead>
+              <tr>
+                <th></th>
+                <th class="col"><span class="label">Kids</span></th>
+                <th class="col"><span class="label">AMI</span></th>
+                <th class="col"><span class="label">Bridge</span></th>
+                <th class="col"><span class="label">Sede</span></th>
+                <th class="col"><span class="label">Online</span></th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <th class="row">
+                  <span class="nome"><span class="dot" style="background: var(--purple)"></span> Hospitalidade</span>
+                  <span class="sub">Reserva · Cozinha · Manutenção</span>
+                </th>
+                <td class="celula cel-verde"><div class="pct">93%</div><div class="kpis">12 sol.</div></td>
+                <td class="celula cel-verde"><div class="pct">87%</div><div class="kpis">18 sol.</div></td>
+                <td class="celula cel-amarelo"><div class="pct">76%</div><div class="kpis">9 sol.</div></td>
+                <td class="celula cel-verde"><div class="pct">91%</div><div class="kpis">34 sol.</div></td>
+                <td class="celula cel-amarelo"><div class="pct">71%</div><div class="kpis">7 sol.</div></td>
+              </tr>
+              <tr>
+                <th class="row">
+                  <span class="nome"><span class="dot" style="background: var(--blue)"></span> Logística</span>
+                  <span class="sub">Estoque · Compras</span>
+                </th>
+                <td class="celula cel-verde"><div class="pct">95%</div><div class="kpis">8 sol.</div></td>
+                <td class="celula cel-amarelo"><div class="pct">82%</div><div class="kpis">14 sol.</div></td>
+                <td class="celula cel-verde"><div class="pct">90%</div><div class="kpis">11 sol.</div></td>
+                <td class="celula cel-verde"><div class="pct">88%</div><div class="kpis">29 sol.</div></td>
+                <td class="celula cel-sem-dado"><div class="pct">2</div><div class="kpis">Sem dado</div></td>
+              </tr>
+              <tr>
+                <th class="row">
+                  <span class="nome"><span class="dot" style="background: var(--green)"></span> TI</span>
+                </th>
+                <td class="celula cel-amarelo"><div class="pct">78%</div><div class="kpis">5 sol.</div></td>
+                <td class="celula cel-verde"><div class="pct">92%</div><div class="kpis">13 sol.</div></td>
+                <td class="celula cel-amarelo"><div class="pct">85%</div><div class="kpis">7 sol.</div></td>
+                <td class="celula cel-verde"><div class="pct">94%</div><div class="kpis">22 sol.</div></td>
+                <td class="celula cel-verde"><div class="pct">96%</div><div class="kpis">19 sol.</div></td>
+              </tr>
+              <tr>
+                <th class="row">
+                  <span class="nome"><span class="dot" style="background: var(--red)"></span> RH</span>
+                </th>
+                <td class="celula cel-sem-dado"><div class="pct">2</div><div class="kpis">Sem dado</div></td>
+                <td class="celula cel-sem-dado"><div class="pct">2</div><div class="kpis">Sem dado</div></td>
+                <td class="celula cel-sem-dado"><div class="pct">2</div><div class="kpis">Sem dado</div></td>
+                <td class="celula cel-amarelo"><div class="pct">73%</div><div class="kpis">11 sol.</div></td>
+                <td class="celula cel-sem-dado"><div class="pct">2</div><div class="kpis">Sem dado</div></td>
+              </tr>
+              <tr>
+                <th class="row">
+                  <span class="nome"><span class="dot" style="background: #84CC16"></span> Financeiro</span>
+                </th>
+                <td class="celula cel-amarelo"><div class="pct">85%</div><div class="kpis">4 sol.</div></td>
+                <td class="celula cel-verde"><div class="pct">92%</div><div class="kpis">9 sol.</div></td>
+                <td class="celula cel-amarelo"><div class="pct">88%</div><div class="kpis">6 sol.</div></td>
+                <td class="celula cel-verde"><div class="pct">94%</div><div class="kpis">28 sol.</div></td>
+                <td class="celula cel-amarelo"><div class="pct">81%</div><div class="kpis">5 sol.</div></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="matriz-rodape">
+          <span class="dono-tag"><span class="icon">📥</span> Preenche: módulo de Solicitações (automático)</span>
+          <span class="dono-tag"><span class="icon">🎯</span> Meta: líder da área de gestão</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- Matriz 3 · Criativo × Área -->
+    <section class="bloco" style="padding-top: 16px;">
+      <h3>3 · Matriz Criativo × Área <span style="color: var(--text-3); font-weight: 500; font-size: 13px;">· conteúdo e experiência</span></h3>
+      <p class="sub">
+        Como Produção, Adoração e Marketing servem cada área de culto. A
+        célula Marketing × Online tem o OKR Engajamento Online (5 KPIs em
+        cascata · contado como 1).
+      </p>
+
+      <div class="card solucao">
+        <div class="matriz-wrap">
+          <table class="matriz compacta">
+            <thead>
+              <tr>
+                <th></th>
+                <th class="col"><span class="label">Kids</span></th>
+                <th class="col"><span class="label">AMI</span></th>
+                <th class="col"><span class="label">Bridge</span></th>
+                <th class="col"><span class="label">Sede</span></th>
+                <th class="col"><span class="label">Online</span></th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <th class="row">
+                  <span class="nome"><span class="dot" style="background: var(--orange)"></span> Produção</span>
+                </th>
+                <td class="celula cel-verde"><div class="pct">86%</div><div class="kpis">2 OKRs</div></td>
+                <td class="celula cel-verde"><div class="pct">92%</div><div class="kpis">2 OKRs</div></td>
+                <td class="celula cel-amarelo"><div class="pct">78%</div><div class="kpis">2 OKRs</div></td>
+                <td class="celula cel-verde"><div class="pct">90%</div><div class="kpis">2 OKRs</div></td>
+                <td class="celula cel-verde"><div class="pct">88%</div><div class="kpis">2 OKRs</div></td>
+              </tr>
+              <tr>
+                <th class="row">
+                  <span class="nome"><span class="dot" style="background: var(--purple)"></span> Adoração</span>
+                </th>
+                <td class="celula cel-amarelo"><div class="pct">68%</div><div class="kpis">2 OKRs</div></td>
+                <td class="celula cel-verde"><div class="pct">89%</div><div class="kpis">2 OKRs</div></td>
+                <td class="celula cel-verde"><div class="pct">85%</div><div class="kpis">2 OKRs</div></td>
+                <td class="celula cel-verde"><div class="pct">93%</div><div class="kpis">2 OKRs</div></td>
+                <td class="celula cel-amarelo"><div class="pct">72%</div><div class="kpis">2 OKRs</div></td>
+              </tr>
+              <tr>
+                <th class="row">
+                  <span class="nome"><span class="dot" style="background: var(--pink)"></span> Marketing</span>
+                </th>
+                <td class="celula cel-amarelo"><div class="pct">79%</div><div class="kpis">2 OKRs</div></td>
+                <td class="celula cel-verde"><div class="pct">84%</div><div class="kpis">2 OKRs</div></td>
+                <td class="celula cel-verde"><div class="pct">87%</div><div class="kpis">2 OKRs</div></td>
+                <td class="celula cel-amarelo"><div class="pct">76%</div><div class="kpis">2 OKRs</div></td>
+                <td class="celula cel-amarelo"><div class="pct">62%</div><div class="kpis">3 OKRs</div></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="info">
+          <strong>Destaque · Marketing × Online</strong>
+          <p>
+            3 OKRs nessa célula: <strong style="color: var(--text)">Atender SLA</strong>,
+            <strong style="color: var(--text)">Qualidade NPS</strong> e o novo
+            <strong style="color: var(--text)">Engajamento Online</strong> · score
+            composto de 5 KPIs YouTube (retenção, compartilhamento, CTR,
+            comentários, comentários relevantes). Marketing preenche os dados,
+            Online é dono da meta.
+          </p>
+        </div>
+
+        <div class="matriz-rodape">
+          <span class="dono-tag"><span class="icon">📥</span> Preenche: módulo Solicitações + YouTube API</span>
+          <span class="dono-tag"><span class="icon">🎯</span> Meta: líder da área de culto correspondente</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- ======================= CRUZAMENTO ======================= -->
+    <section class="bloco">
+      <h2><span class="num">3</span> Cruzamento de dados</h2>
+      <p class="sub">
+        Matrizes mostram <em>onde olhar</em>. O cruzamento responde
+        <em>qual o próximo passo</em>. Sem ambiguidade de dono · cada lista
+        tem um responsável claro pra agir.
       </p>
 
       <div class="cruzamentos">
