@@ -18,6 +18,7 @@ const express = require('express');
 const router = express.Router();
 const { authenticate, authorize, authorizeKpiArea } = require('../middleware/auth');
 const { supabase } = require('../utils/supabase');
+const painelCache = require('../services/painelCache');
 const { coletarTodos } = require('../services/kpiAutoCollector');
 
 const CRON_SECRET = process.env.CRON_SECRET;
@@ -56,6 +57,16 @@ router.post('/cron/coletar', autorizaCron, async (_req, res) => {
 });
 
 router.use(authenticate);
+
+// Bust automatico do painel apos mutacoes (edicao de KPI, lancamento de registro)
+router.use((req, res, next) => {
+  if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method)) {
+    res.on('finish', () => {
+      if (res.statusCode >= 200 && res.statusCode < 300) painelCache.bust('');
+    });
+  }
+  next();
+});
 
 // ----------------------------------------------------------------------------
 // Trigger manual (admin) - dry-run ou execucao

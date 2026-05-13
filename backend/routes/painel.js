@@ -23,23 +23,11 @@ router.use(authenticate);
 // TTL curto (5 min) garante dados frescos. Em deploy serverless, cada
 // instancia tem seu cache (sem coordenacao · ok pra read-only).
 // ============================================================================
-const CACHE_TTL_MS = 5 * 60 * 1000;
-const _cache = new Map();
-
-function cacheGet(key) {
-  const e = _cache.get(key);
-  if (!e) return null;
-  if (Date.now() - e.t > CACHE_TTL_MS) { _cache.delete(key); return null; }
-  return e.v;
-}
-function cacheSet(key, v) {
-  _cache.set(key, { v, t: Date.now() });
-}
-function cacheBust(prefix) {
-  for (const k of _cache.keys()) {
-    if (k.startsWith(prefix)) _cache.delete(k);
-  }
-}
+// Cache compartilhado via service · permite outros routes invalidarem
+const painelCache = require('../services/painelCache');
+const cacheGet = painelCache.get;
+const cacheSet = painelCache.set;
+const cacheBust = painelCache.bust;
 
 // Endpoint manual pra invalidar cache (admin/diretor) · util apos ajuste de meta
 router.post('/cache/bust', (req, res) => {
@@ -47,8 +35,8 @@ router.post('/cache/bust', (req, res) => {
     return res.status(403).json({ error: 'Apenas admin/diretor' });
   }
   const prefix = req.body?.prefix || '';
-  cacheBust(prefix);
-  res.json({ ok: true });
+  const removed = cacheBust(prefix);
+  res.json({ ok: true, removed });
 });
 
 const VALORES = ['seguir', 'conectar', 'investir', 'servir', 'generosidade'];

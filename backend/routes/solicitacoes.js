@@ -2,8 +2,19 @@ const router = require('express').Router();
 const { authenticate } = require('../middleware/auth');
 const { supabase } = require('../utils/supabase');
 const { notificar, resolverDestinatarios } = require('../services/notificar');
+const painelCache = require('../services/painelCache');
 
 router.use(authenticate);
+
+// Bust do cache do painel apos mutacao (afeta matriz adm/criativo)
+router.use((req, res, next) => {
+  if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method)) {
+    res.on('finish', () => {
+      if (res.statusCode >= 200 && res.statusCode < 300) painelCache.bust('');
+    });
+  }
+  next();
+});
 
 const ALLOWED_CATEGORIES = ['ti', 'compras', 'reembolso', 'reserva_espaco', 'espaco', 'infraestrutura', 'ferias', 'outro'];
 
