@@ -59,7 +59,7 @@ async function authenticate(req, res, next) {
   // Busca perfil do usuário (role, name, area etc.)
   const { data: profile } = await supabase
     .from('profiles')
-    .select('id, name, email, role, area, kpi_areas, ministerio_id, ministerio_papel, is_diretoria_geral, funcao_diretoria, active')
+    .select('id, name, email, role, area, kpi_areas, kpi_valores, ministerio_id, ministerio_papel, is_diretoria_geral, funcao_diretoria, active')
     .eq('id', user.id)
     .single();
 
@@ -192,6 +192,7 @@ async function authenticate(req, res, next) {
     name: profile.name,
     area: profile.area,
     kpi_areas: profile.kpi_areas || [],
+    kpi_valores: profile.kpi_valores || [],
     ministerio_id: profile.ministerio_id || null,
     ministerio_papel: profile.ministerio_papel || null,
     is_diretoria_geral: !!profile.is_diretoria_geral,
@@ -226,28 +227,32 @@ function authorize(...roles) {
 }
 
 // Autoriza edicao/preenchimento de KPI por area:
-// - admin/diretor sempre podem (qualquer area)
-// - lideres da area (kpi_areas inclui a area do KPI) podem
+// - admin/diretor sempre podem (qualquer area/valor)
+// - lider de area (kpi_areas inclui a area do KPI) pode
+// - lider de valor (kpi_valores tem intersecao com valores do KPI) pode
 // - resto e bloqueado
 //
 // Modo de uso:
 //   authorizeKpiArea(req => req.body.area)
+//   authorizeKpiArea(req => req.body.area, req => req.body.valores)
 //   authorizeKpiArea(req => fetchAreaFromIndicadorId(req.params.id))
-//
-// O extractor recebe o req e retorna a string da area (lowercase).
-// Se retornar Promise, aguardamos.
-function authorizeKpiArea(areaExtractor) {
+function authorizeKpiArea(areaExtractor, valoresExtractor = null) {
   return async (req, res, next) => {
     if (!req.user) return res.status(401).json({ error: 'Não autenticado' });
     if (['admin', 'diretor'].includes(req.user.role)) return next();
     try {
       const area = await areaExtractor(req);
-      if (!area) return res.status(400).json({ error: 'Area do KPI nao identificada' });
       const myAreas = (req.user.kpi_areas || []).map(a => String(a).toLowerCase());
-      if (!myAreas.includes(String(area).toLowerCase())) {
-        return res.status(403).json({ error: `Sem permissao para editar KPIs da area "${area}"` });
+      if (area && myAreas.includes(String(area).toLowerCase())) return next();
+
+      // Fallback · permissao por valor (se informado)
+      if (valoresExtractor) {
+        const valores = (await valoresExtractor(req)) || [];
+        const myValores = (req.user.kpi_valores || []).map(v => String(v).toLowerCase());
+        if (valores.some(v => myValores.includes(String(v).toLowerCase()))) return next();
       }
-      next();
+
+      return res.status(403).json({ error: `Sem permissao para editar KPIs da area "${area || '?'}"` });
     } catch (e) {
       console.error('[authorizeKpiArea]', e.message);
       res.status(500).json({ error: 'Erro ao verificar permissao' });

@@ -18,7 +18,45 @@
 // ============================================================================
 
 import { useEffect, useMemo, useState } from 'react';
-import { kpis as kpisApi } from '../api';
+import { kpis as kpisApi, dadosBrutos as dadosBrutosApi } from '../api';
+
+// Converte periodKey ('2026-05', '2026-W19', '2026-Q2'…) em data ISO 'YYYY-MM-DD'
+// Pra escrever em dados_brutos · usamos o 1o dia do periodo
+function periodKeyParaData(periodKey, periodicidade) {
+  if (!periodKey) return new Date().toISOString().slice(0, 10);
+  // semanal: 2026-W19
+  if (periodicidade === 'semanal' && periodKey.includes('-W')) {
+    const [yStr, wStr] = periodKey.split('-W');
+    const y = Number(yStr);
+    const w = Number(wStr);
+    const jan4 = new Date(Date.UTC(y, 0, 4));
+    const jan4Day = jan4.getUTCDay() || 7;
+    const monday = new Date(jan4);
+    monday.setUTCDate(jan4.getUTCDate() - jan4Day + 1 + (w - 1) * 7);
+    return monday.toISOString().slice(0, 10);
+  }
+  // mensal: 2026-05
+  if (periodicidade === 'mensal' && /^\d{4}-\d{2}$/.test(periodKey)) {
+    return `${periodKey}-01`;
+  }
+  // trimestral: 2026-Q2
+  if (periodicidade === 'trimestral' && periodKey.includes('-Q')) {
+    const [yStr, qStr] = periodKey.split('-Q');
+    const mes = (Number(qStr) - 1) * 3 + 1;
+    return `${yStr}-${String(mes).padStart(2, '0')}-01`;
+  }
+  // semestral: 2026-S1
+  if (periodicidade === 'semestral' && periodKey.includes('-S')) {
+    const [yStr, sStr] = periodKey.split('-S');
+    const mes = sStr === '1' ? 1 : 7;
+    return `${yStr}-${String(mes).padStart(2, '0')}-01`;
+  }
+  // anual: 2026
+  if (periodicidade === 'anual' && /^\d{4}$/.test(periodKey)) {
+    return `${periodKey}-01-01`;
+  }
+  return new Date().toISOString().slice(0, 10);
+}
 
 const C = {
   bg: 'var(--cbrio-bg)', card: 'var(--cbrio-card)', text: 'var(--cbrio-text)',
@@ -113,6 +151,9 @@ export default function KpiQuickFillModal({ open, kpi, periodKey, onClose, onSav
 
   const isPeriodPassado = selectedPeriod !== periodKey;
 
+  const dadoTipo = kpi?.formula_config?.dado_tipo || null;
+  const isAutomatico = !!kpi?.fonte_auto && !dadoTipo;
+
   const submit = async () => {
     if (valor === '' || valor == null) {
       setErr('Informe o valor');
@@ -121,15 +162,27 @@ export default function KpiQuickFillModal({ open, kpi, periodKey, onClose, onSav
     setSaving(true);
     setErr(null);
     try {
-      await kpisApi.v2.registros.create({
-        indicador_id: kpi.id,
-        periodo_referencia: selectedPeriod,
-        valor_realizado: Number(valor),
-        observacoes: obs || null,
-      });
+      if (dadoTipo) {
+        // Fluxo unificado · escreve em dados_brutos
+        await dadosBrutosApi.create({
+          tipo_id: dadoTipo,
+          area: String(kpi.area_db || kpi.area || '').toLowerCase(),
+          data: periodKeyParaData(selectedPeriod, kpi.periodicidade || 'mensal'),
+          valor: Number(valor),
+          observacao: obs || null,
+          origem: 'manual',
+        });
+      } else {
+        // Legado · KPIs sem dado_tipo (raros · tipo_calculo='manual' antigos)
+        await kpisApi.v2.registros.create({
+          indicador_id: kpi.id,
+          periodo_referencia: selectedPeriod,
+          valor_realizado: Number(valor),
+          observacoes: obs || null,
+        });
+      }
       setDone(true);
       onSaved?.({ kpi, periodKey: selectedPeriod, valor: Number(valor) });
-      // Auto-fecha apos 800ms pra dar feedback visual
       setTimeout(() => { onClose?.(); }, 800);
     } catch (e) {
       setErr(e?.message || 'Erro ao salvar');

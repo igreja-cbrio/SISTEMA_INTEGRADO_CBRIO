@@ -12,7 +12,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import { useKpis } from '../hooks/useKpis';
 import { useMyKpiAreas } from '../hooks/useMyKpiAreas';
-import { kpis as kpisApi } from '../api';
+import { kpis as kpisApi, dadosBrutos as dadosBrutosApi } from '../api';
 import KpiQuickFillModal from '../components/KpiQuickFillModal';
 import KpiEditorModal from '../components/KpiEditorModal';
 import { Button } from '../components/ui/button';
@@ -67,26 +67,42 @@ function periodKey(periodicidade, date = new Date()) {
   }
 }
 
-// Mapa lower-area -> areas ativas do user
-function isMyArea(kpi, kpiAreas, isAdmin) {
+// Decide se o KPI esta sob responsabilidade do usuario
+// admin → ve tudo
+// senao → ve se kpi.area in kpiAreas OR kpi.valores ∩ kpiValores
+function isMyKpi(kpi, kpiAreas, kpiValores, isAdmin) {
   if (isAdmin) return true;
-  const a = String(kpi.area_db || kpi.area || '').toLowerCase();
-  return kpiAreas.includes(a);
+  const area = String(kpi.area_db || kpi.area || '').toLowerCase();
+  if (kpiAreas.includes(area)) return true;
+  const valores = (kpi.valores || []).map(v => String(v).toLowerCase());
+  return valores.some(v => kpiValores.includes(v));
 }
 
 export default function MeusKpis() {
   const { kpis, isLoading, refetch } = useKpis();
-  const { kpiAreas, isAdmin, canEditAny } = useMyKpiAreas();
-  const [registros, setRegistros] = useState([]); // todos os registros recentes do user
+  const { kpiAreas, kpiValores, isAdmin, canEditAny } = useMyKpiAreas();
+  const [registros, setRegistros] = useState([]);
   const [loadingRegs, setLoadingRegs] = useState(false);
   const [fillKpi, setFillKpi] = useState(null);
   const [editKpi, setEditKpi] = useState(null);
   const [createOpen, setCreateOpen] = useState(false);
+  // Filtro UI · valores selecionados (set vazio = todos)
+  const [filtroValores, setFiltroValores] = useState(new Set());
 
-  // KPIs filtrados pelas minhas areas
+  // KPIs filtrados pela minha responsabilidade (area OU valor)
   const meusKpis = useMemo(() => {
-    return kpis.filter(k => k.ativo && isMyArea(k, kpiAreas, isAdmin));
-  }, [kpis, kpiAreas, isAdmin]);
+    let arr = kpis.filter(k => k.ativo && isMyKpi(k, kpiAreas, kpiValores, isAdmin));
+    if (filtroValores.size > 0) {
+      arr = arr.filter(k => (k.valores || []).some(v => filtroValores.has(String(v).toLowerCase())));
+    }
+    return arr;
+  }, [kpis, kpiAreas, kpiValores, isAdmin, filtroValores]);
+
+  const toggleValor = (v) => setFiltroValores(prev => {
+    const novo = new Set(prev);
+    if (novo.has(v)) novo.delete(v); else novo.add(v);
+    return novo;
+  });
 
   // Agrupa por periodicidade
   const porPeriodicidade = useMemo(() => {
@@ -99,22 +115,35 @@ export default function MeusKpis() {
     return m;
   }, [meusKpis]);
 
-  // Carrega registros do periodo atual de cada KPI pra mostrar status
-  // "ja preenchido"
+  // Estado adicional · ultimos dados_brutos por (tipo_id, area)
+  const [dadosBrutos, setDadosBrutos] = useState([]);
+
+  // Carrega registros + dados_brutos pra mostrar status "preenchido nesse periodo"
   useEffect(() => {
-    if (!meusKpis.length) { setRegistros([]); return; }
+    if (!meusKpis.length) { setRegistros([]); setDadosBrutos([]); return; }
     setLoadingRegs(true);
     (async () => {
       try {
-        // Busca todos os registros (limit 200) recentes por area dos KPIs
-        // que vou exibir. Backend filtra por area se passado.
         const areasUnicas = Array.from(new Set(meusKpis.map(k => k.area_db).filter(Boolean)));
-        const all = [];
-        for (const area of areasUnicas) {
-          const rs = await kpisApi.v2.registros.list({ area });
-          all.push(...(rs || []));
-        }
-        setRegistros(all);
+        const tiposUnicos = Array.from(new Set(
+          meusKpis.map(k => k.formula_config?.dado_tipo).filter(Boolean)
+        ));
+
+        // Registros legados (KPIs sem dado_tipo)
+        const regsPromises = areasUnicas.map(area =>
+          kpisApi.v2.registros.list({ area }).catch(() => [])
+        );
+        // Dados brutos por tipo (KPIs com dado_tipo)
+        const brutosPromises = tiposUnicos.map(tipo_id =>
+          dadosBrutosApi.list({ tipo_id, limit: 100 }).catch(() => [])
+        );
+
+        const [regsArrs, brutosArrs] = await Promise.all([
+          Promise.all(regsPromises),
+          Promise.all(brutosPromises),
+        ]);
+        setRegistros(regsArrs.flat());
+        setDadosBrutos(brutosArrs.flat());
       } catch (e) {
         console.error('[meus-kpis] registros', e);
       } finally {
@@ -123,7 +152,7 @@ export default function MeusKpis() {
     })();
   }, [meusKpis]);
 
-  // index registros por (indicador_id, periodo)
+  // Index ultimo registro legado por indicador_id
   const ultimoRegPorIndicador = useMemo(() => {
     const m = {};
     registros.forEach(r => {
@@ -135,9 +164,44 @@ export default function MeusKpis() {
     return m;
   }, [registros]);
 
+  // Index ultimo dado bruto por (tipo_id::area)
+  const ultimoDadoBrutoPorTipoArea = useMemo(() => {
+    const m = {};
+    dadosBrutos.forEach(d => {
+      const key = `${d.tipo_id}::${(d.area || '').toLowerCase()}`;
+      const cur = m[key];
+      if (!cur || (d.data || '') > (cur.data || '')) {
+        m[key] = d;
+      }
+    });
+    return m;
+  }, [dadosBrutos]);
+
+  // periodKey de uma data 'YYYY-MM-DD' segundo a periodicidade
+  function periodoDeData(periodicidade, dataStr) {
+    if (!dataStr) return null;
+    const d = new Date(dataStr + 'T12:00:00Z');
+    return periodKey(periodicidade, d);
+  }
+
   function statusKpi(kpi) {
-    const reg = ultimoRegPorIndicador[kpi.id];
     const periodoEsperado = periodKey(kpi.periodicidade);
+    const dadoTipo = kpi.formula_config?.dado_tipo;
+
+    // 1. KPI alimentado por dados_brutos
+    if (dadoTipo) {
+      const area = String(kpi.area_db || kpi.area || '').toLowerCase();
+      const d = ultimoDadoBrutoPorTipoArea[`${dadoTipo}::${area}`];
+      if (!d) return { tipo: 'pendente', label: 'Pendente', cor: C.red, corBg: C.redBg, Icon: AlertCircle };
+      const pAtual = periodoDeData(kpi.periodicidade, d.data);
+      if (pAtual === periodoEsperado) {
+        return { tipo: 'ok', label: 'Em dia', cor: C.green, corBg: C.greenBg, Icon: CheckCircle2 };
+      }
+      return { tipo: 'atrasado', label: 'Atrasado', cor: C.amber, corBg: C.amberBg, Icon: Clock };
+    }
+
+    // 2. KPI legado (kpi_registros)
+    const reg = ultimoRegPorIndicador[kpi.id];
     if (!reg) return { tipo: 'pendente', label: 'Pendente', cor: C.red, corBg: C.redBg, Icon: AlertCircle };
     if (reg.periodo_referencia === periodoEsperado) {
       return { tipo: 'ok', label: 'Em dia', cor: C.green, corBg: C.greenBg, Icon: CheckCircle2 };
@@ -163,13 +227,13 @@ export default function MeusKpis() {
     return <div style={{ padding: 60, textAlign: 'center', color: C.t3 }}>Carregando KPIs...</div>;
   }
 
-  if (!isAdmin && kpiAreas.length === 0) {
+  if (!isAdmin && kpiAreas.length === 0 && kpiValores.length === 0) {
     return (
       <div style={{ padding: '40px 32px', maxWidth: 720, margin: '0 auto', textAlign: 'center' }}>
         <Heart size={32} style={{ color: C.t3, marginBottom: 12 }} />
-        <h1 style={{ fontSize: 18, fontWeight: 700, color: C.text, marginBottom: 8 }}>Voce ainda nao lidera nenhuma area</h1>
+        <h1 style={{ fontSize: 18, fontWeight: 700, color: C.text, marginBottom: 8 }}>Voce ainda nao lidera nenhuma area ou valor</h1>
         <p style={{ fontSize: 13, color: C.t3 }}>
-          Peca para um administrador atribuir suas areas no modulo de Permissoes.
+          Peca para um administrador atribuir suas areas e/ou valores da Jornada no modulo de Permissoes.
           Depois, voce ve aqui apenas os KPIs que precisa preencher.
         </p>
       </div>
@@ -178,18 +242,42 @@ export default function MeusKpis() {
 
   return (
     <div style={{ padding: '24px 32px', maxWidth: 1100, margin: '0 auto' }}>
-      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 16, marginBottom: 20, flexWrap: 'wrap' }}>
+      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 16, marginBottom: 4, flexWrap: 'wrap' }}>
         <div>
           <h1 style={{ fontSize: 22, fontWeight: 700, color: C.text, margin: 0, display: 'flex', alignItems: 'center', gap: 10 }}>
             <Activity size={22} style={{ color: C.primary }} /> Meus KPIs
           </h1>
-          <p style={{ fontSize: 13, color: C.t3, marginTop: 6 }}>
+          <p style={{ fontSize: 12, color: C.t3, marginTop: 4, marginBottom: 8 }}>
+            Você lança <strong>dados</strong> (frequência, batismos, NPS, etc) e os KPIs calculam sozinhos.
+            KPIs marcados "Automático" sobem via módulo (cultos, contribuições, etc) — sem preenchimento manual.
+          </p>
+          <p style={{ fontSize: 13, color: C.t3, marginTop: 0, display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 6 }}>
             {isAdmin ? (
-              <>Voce esta vendo <strong>todos os KPIs</strong> (admin/diretor).</>
+              <span>Voce esta vendo <strong>todos os KPIs</strong> (admin/diretor).</span>
             ) : (
-              <>Suas areas: {kpiAreas.map(a => (
-                <span key={a} style={{ marginRight: 6, padding: '2px 10px', borderRadius: 99, background: C.primaryBg, color: C.primary, fontWeight: 600, fontSize: 11 }}>{a}</span>
-              ))}</>
+              <>
+                {kpiAreas.length > 0 && (
+                  <>
+                    <span>Areas:</span>
+                    {kpiAreas.map(a => (
+                      <span key={a} style={{ padding: '2px 10px', borderRadius: 99, background: C.primaryBg, color: C.primary, fontWeight: 600, fontSize: 11 }}>{a}</span>
+                    ))}
+                  </>
+                )}
+                {kpiValores.length > 0 && (
+                  <>
+                    <span style={{ marginLeft: kpiAreas.length > 0 ? 8 : 0 }}>Valores:</span>
+                    {kpiValores.map(v => (
+                      <span key={v} style={{
+                        padding: '2px 10px', borderRadius: 99,
+                        background: (VALORES_LABEL[v]?.cor || C.primary) + '20',
+                        color: VALORES_LABEL[v]?.cor || C.primary,
+                        fontWeight: 600, fontSize: 11,
+                      }}>{VALORES_LABEL[v]?.label || v}</span>
+                    ))}
+                  </>
+                )}
+              </>
             )}
           </p>
         </div>
@@ -197,6 +285,29 @@ export default function MeusKpis() {
           <Button onClick={() => setCreateOpen(true)} variant="outline">
             <Plus size={14} style={{ marginRight: 4 }} /> Novo KPI da minha area
           </Button>
+        )}
+      </div>
+
+      {/* Filtro por valor (chips) */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 16, flexWrap: 'wrap' }}>
+        <span style={{ fontSize: 11, color: C.t3, fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.5 }}>Filtrar por valor:</span>
+        {Object.entries(VALORES_LABEL).map(([key, info]) => {
+          const sel = filtroValores.has(key);
+          return (
+            <button key={key} onClick={() => toggleValor(key)} style={{
+              padding: '4px 12px', fontSize: 11, fontWeight: 600, borderRadius: 99, cursor: 'pointer',
+              border: `1px solid ${sel ? info.cor : C.border}`,
+              background: sel ? info.cor + '20' : 'transparent',
+              color: sel ? info.cor : C.t2,
+            }}>{info.label}</button>
+          );
+        })}
+        {filtroValores.size > 0 && (
+          <button onClick={() => setFiltroValores(new Set())} style={{
+            padding: '4px 10px', fontSize: 10, fontWeight: 600,
+            background: 'transparent', color: C.t3, border: `1px solid ${C.border}`,
+            borderRadius: 4, cursor: 'pointer',
+          }}>Limpar</button>
         )}
       </div>
 
@@ -312,21 +423,58 @@ function SecaoPeriodicidade({ periodicidade, kpis, statusKpi, ultimoRegPorIndica
                 </div>
               )}
 
-              <div style={{ display: 'flex', gap: 8, marginTop: 'auto', paddingTop: 4 }}>
-                <Button size="sm" onClick={() => onPreencher(kpi)} disabled={!podeEditar} style={{ flex: 1 }}>
-                  Preencher
-                </Button>
-                {podeEditar && (
-                  <Button size="sm" variant="outline" onClick={() => onEditar(kpi)} title="Editar definição/meta">
-                    <Pencil size={13} />
-                  </Button>
-                )}
-              </div>
-              {kpi.is_auto && (
-                <div style={{ fontSize: 10, color: C.t3, marginTop: 6, textAlign: 'center', fontStyle: 'italic' }}>
-                  Coletado automaticamente · você pode complementar manualmente
-                </div>
-              )}
+              {(() => {
+                const dadoTipo = kpi.formula_config?.dado_tipo;
+                const fonteAuto = kpi.fonte_auto;
+                const isManualDado = !!dadoTipo;
+                const isFonteAuto = !!fonteAuto && !dadoTipo;
+                // KPIs com fonte_auto (cultos.*, voluntariado.*, etc) sobem automatico
+                if (isFonteAuto) {
+                  return (
+                    <div style={{ marginTop: 'auto', padding: '8px 10px', background: C.primaryBg, borderRadius: 6, textAlign: 'center' }}>
+                      <div style={{ fontSize: 10, fontWeight: 700, color: C.primary, textTransform: 'uppercase', letterSpacing: 0.5 }}>
+                        Automatico
+                      </div>
+                      <div style={{ fontSize: 10, color: C.t3, marginTop: 2 }}>
+                        Sobe via modulo · sem preenchimento manual
+                      </div>
+                    </div>
+                  );
+                }
+                // KPIs com dado_tipo: usuario lanca dado bruto -> KPI calcula
+                if (isManualDado) {
+                  return (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 4, marginTop: 'auto', paddingTop: 4 }}>
+                      <div style={{ display: 'flex', gap: 8 }}>
+                        <Button size="sm" onClick={() => onPreencher(kpi)} disabled={!podeEditar} style={{ flex: 1 }}>
+                          Lançar dado
+                        </Button>
+                        {podeEditar && (
+                          <Button size="sm" variant="outline" onClick={() => onEditar(kpi)} title="Editar definição/meta">
+                            <Pencil size={13} />
+                          </Button>
+                        )}
+                      </div>
+                      <div style={{ fontSize: 9, color: C.t3, textAlign: 'center' }}>
+                        Lance o dado bruto · KPI calcula sozinho
+                      </div>
+                    </div>
+                  );
+                }
+                // Fallback (raro · KPI sem fonte definida)
+                return (
+                  <div style={{ display: 'flex', gap: 8, marginTop: 'auto', paddingTop: 4 }}>
+                    <Button size="sm" onClick={() => onPreencher(kpi)} disabled={!podeEditar} style={{ flex: 1 }}>
+                      Preencher
+                    </Button>
+                    {podeEditar && (
+                      <Button size="sm" variant="outline" onClick={() => onEditar(kpi)} title="Editar definição/meta">
+                        <Pencil size={13} />
+                      </Button>
+                    )}
+                  </div>
+                );
+              })()}
             </div>
           );
         })}
