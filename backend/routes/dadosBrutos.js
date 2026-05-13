@@ -18,6 +18,21 @@ const router = require('express').Router();
 const { authenticate, authorize, authorizeKpiArea } = require('../middleware/auth');
 const { supabase } = require('../utils/supabase');
 
+// Helper · usuario tem permissao por valor se algum KPI que consome esse tipo_id+area
+// tem valor que bate com profile.kpi_valores
+async function temPermissaoPorValor(req, registro) {
+  const myValores = (req.user?.kpi_valores || []).map(v => String(v).toLowerCase());
+  if (myValores.length === 0) return false;
+  const { data } = await supabase
+    .from('kpi_indicadores_taticos')
+    .select('valores')
+    .eq('area', String(registro.area).toLowerCase())
+    .contains('formula_config', { dado_tipo: registro.tipo_id });
+  const valoresDoTipo = new Set();
+  (data || []).forEach(k => (k.valores || []).forEach(v => valoresDoTipo.add(String(v).toLowerCase())));
+  return [...valoresDoTipo].some(v => myValores.includes(v));
+}
+
 router.use(authenticate);
 
 // ----------------------------------------------------------------------------
@@ -103,7 +118,21 @@ router.get('/', async (req, res) => {
 });
 
 router.post('/',
-  authorizeKpiArea(req => (req.body?.area || '').toLowerCase()),
+  authorizeKpiArea(
+    req => (req.body?.area || '').toLowerCase(),
+    // Fallback · descobre os valores dos KPIs que consomem esse tipo_id+area
+    async (req) => {
+      if (!req.body?.tipo_id || !req.body?.area) return [];
+      const { data } = await supabase
+        .from('kpi_indicadores_taticos')
+        .select('valores')
+        .eq('area', String(req.body.area).toLowerCase())
+        .contains('formula_config', { dado_tipo: req.body.tipo_id });
+      const vs = new Set();
+      (data || []).forEach(k => (k.valores || []).forEach(v => vs.add(String(v).toLowerCase())));
+      return [...vs];
+    }
+  ),
   async (req, res) => {
     try {
       const b = req.body || {};
@@ -138,18 +167,17 @@ router.put('/:id', async (req, res) => {
     // Para edicao: validar permissao via area do registro existente
     const { data: cur, error: errCur } = await supabase
       .from('dados_brutos')
-      .select('area')
+      .select('area, tipo_id')
       .eq('id', req.params.id)
       .maybeSingle();
     if (errCur) throw errCur;
     if (!cur) return res.status(404).json({ error: 'Registro nao encontrado' });
 
-    // Se nao admin/diretor, conferir kpi_areas
+    // Se nao admin/diretor, conferir kpi_areas OU kpi_valores
     if (!['admin', 'diretor'].includes(req.user?.role)) {
       const myAreas = (req.user.kpi_areas || []).map(a => a.toLowerCase());
-      if (!myAreas.includes(cur.area.toLowerCase())) {
-        return res.status(403).json({ error: 'Sem permissao para esta area' });
-      }
+      const ok = myAreas.includes(cur.area.toLowerCase()) || await temPermissaoPorValor(req, cur);
+      if (!ok) return res.status(403).json({ error: 'Sem permissao para esta area/valor' });
     }
 
     const allowed = ['valor', 'contexto', 'observacao'];

@@ -67,26 +67,42 @@ function periodKey(periodicidade, date = new Date()) {
   }
 }
 
-// Mapa lower-area -> areas ativas do user
-function isMyArea(kpi, kpiAreas, isAdmin) {
+// Decide se o KPI esta sob responsabilidade do usuario
+// admin → ve tudo
+// senao → ve se kpi.area in kpiAreas OR kpi.valores ∩ kpiValores
+function isMyKpi(kpi, kpiAreas, kpiValores, isAdmin) {
   if (isAdmin) return true;
-  const a = String(kpi.area_db || kpi.area || '').toLowerCase();
-  return kpiAreas.includes(a);
+  const area = String(kpi.area_db || kpi.area || '').toLowerCase();
+  if (kpiAreas.includes(area)) return true;
+  const valores = (kpi.valores || []).map(v => String(v).toLowerCase());
+  return valores.some(v => kpiValores.includes(v));
 }
 
 export default function MeusKpis() {
   const { kpis, isLoading, refetch } = useKpis();
-  const { kpiAreas, isAdmin, canEditAny } = useMyKpiAreas();
-  const [registros, setRegistros] = useState([]); // todos os registros recentes do user
+  const { kpiAreas, kpiValores, isAdmin, canEditAny } = useMyKpiAreas();
+  const [registros, setRegistros] = useState([]);
   const [loadingRegs, setLoadingRegs] = useState(false);
   const [fillKpi, setFillKpi] = useState(null);
   const [editKpi, setEditKpi] = useState(null);
   const [createOpen, setCreateOpen] = useState(false);
+  // Filtro UI · valores selecionados (set vazio = todos)
+  const [filtroValores, setFiltroValores] = useState(new Set());
 
-  // KPIs filtrados pelas minhas areas
+  // KPIs filtrados pela minha responsabilidade (area OU valor)
   const meusKpis = useMemo(() => {
-    return kpis.filter(k => k.ativo && isMyArea(k, kpiAreas, isAdmin));
-  }, [kpis, kpiAreas, isAdmin]);
+    let arr = kpis.filter(k => k.ativo && isMyKpi(k, kpiAreas, kpiValores, isAdmin));
+    if (filtroValores.size > 0) {
+      arr = arr.filter(k => (k.valores || []).some(v => filtroValores.has(String(v).toLowerCase())));
+    }
+    return arr;
+  }, [kpis, kpiAreas, kpiValores, isAdmin, filtroValores]);
+
+  const toggleValor = (v) => setFiltroValores(prev => {
+    const novo = new Set(prev);
+    if (novo.has(v)) novo.delete(v); else novo.add(v);
+    return novo;
+  });
 
   // Agrupa por periodicidade
   const porPeriodicidade = useMemo(() => {
@@ -163,13 +179,13 @@ export default function MeusKpis() {
     return <div style={{ padding: 60, textAlign: 'center', color: C.t3 }}>Carregando KPIs...</div>;
   }
 
-  if (!isAdmin && kpiAreas.length === 0) {
+  if (!isAdmin && kpiAreas.length === 0 && kpiValores.length === 0) {
     return (
       <div style={{ padding: '40px 32px', maxWidth: 720, margin: '0 auto', textAlign: 'center' }}>
         <Heart size={32} style={{ color: C.t3, marginBottom: 12 }} />
-        <h1 style={{ fontSize: 18, fontWeight: 700, color: C.text, marginBottom: 8 }}>Voce ainda nao lidera nenhuma area</h1>
+        <h1 style={{ fontSize: 18, fontWeight: 700, color: C.text, marginBottom: 8 }}>Voce ainda nao lidera nenhuma area ou valor</h1>
         <p style={{ fontSize: 13, color: C.t3 }}>
-          Peca para um administrador atribuir suas areas no modulo de Permissoes.
+          Peca para um administrador atribuir suas areas e/ou valores da Jornada no modulo de Permissoes.
           Depois, voce ve aqui apenas os KPIs que precisa preencher.
         </p>
       </div>
@@ -178,18 +194,38 @@ export default function MeusKpis() {
 
   return (
     <div style={{ padding: '24px 32px', maxWidth: 1100, margin: '0 auto' }}>
-      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 16, marginBottom: 20, flexWrap: 'wrap' }}>
+      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 16, marginBottom: 12, flexWrap: 'wrap' }}>
         <div>
           <h1 style={{ fontSize: 22, fontWeight: 700, color: C.text, margin: 0, display: 'flex', alignItems: 'center', gap: 10 }}>
             <Activity size={22} style={{ color: C.primary }} /> Meus KPIs
           </h1>
-          <p style={{ fontSize: 13, color: C.t3, marginTop: 6 }}>
+          <p style={{ fontSize: 13, color: C.t3, marginTop: 6, display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 6 }}>
             {isAdmin ? (
-              <>Voce esta vendo <strong>todos os KPIs</strong> (admin/diretor).</>
+              <span>Voce esta vendo <strong>todos os KPIs</strong> (admin/diretor).</span>
             ) : (
-              <>Suas areas: {kpiAreas.map(a => (
-                <span key={a} style={{ marginRight: 6, padding: '2px 10px', borderRadius: 99, background: C.primaryBg, color: C.primary, fontWeight: 600, fontSize: 11 }}>{a}</span>
-              ))}</>
+              <>
+                {kpiAreas.length > 0 && (
+                  <>
+                    <span>Areas:</span>
+                    {kpiAreas.map(a => (
+                      <span key={a} style={{ padding: '2px 10px', borderRadius: 99, background: C.primaryBg, color: C.primary, fontWeight: 600, fontSize: 11 }}>{a}</span>
+                    ))}
+                  </>
+                )}
+                {kpiValores.length > 0 && (
+                  <>
+                    <span style={{ marginLeft: kpiAreas.length > 0 ? 8 : 0 }}>Valores:</span>
+                    {kpiValores.map(v => (
+                      <span key={v} style={{
+                        padding: '2px 10px', borderRadius: 99,
+                        background: (VALORES_LABEL[v]?.cor || C.primary) + '20',
+                        color: VALORES_LABEL[v]?.cor || C.primary,
+                        fontWeight: 600, fontSize: 11,
+                      }}>{VALORES_LABEL[v]?.label || v}</span>
+                    ))}
+                  </>
+                )}
+              </>
             )}
           </p>
         </div>
@@ -197,6 +233,29 @@ export default function MeusKpis() {
           <Button onClick={() => setCreateOpen(true)} variant="outline">
             <Plus size={14} style={{ marginRight: 4 }} /> Novo KPI da minha area
           </Button>
+        )}
+      </div>
+
+      {/* Filtro por valor (chips) */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 16, flexWrap: 'wrap' }}>
+        <span style={{ fontSize: 11, color: C.t3, fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.5 }}>Filtrar por valor:</span>
+        {Object.entries(VALORES_LABEL).map(([key, info]) => {
+          const sel = filtroValores.has(key);
+          return (
+            <button key={key} onClick={() => toggleValor(key)} style={{
+              padding: '4px 12px', fontSize: 11, fontWeight: 600, borderRadius: 99, cursor: 'pointer',
+              border: `1px solid ${sel ? info.cor : C.border}`,
+              background: sel ? info.cor + '20' : 'transparent',
+              color: sel ? info.cor : C.t2,
+            }}>{info.label}</button>
+          );
+        })}
+        {filtroValores.size > 0 && (
+          <button onClick={() => setFiltroValores(new Set())} style={{
+            padding: '4px 10px', fontSize: 10, fontWeight: 600,
+            background: 'transparent', color: C.t3, border: `1px solid ${C.border}`,
+            borderRadius: 4, cursor: 'pointer',
+          }}>Limpar</button>
         )}
       </div>
 

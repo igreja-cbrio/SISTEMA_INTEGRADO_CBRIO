@@ -5,14 +5,14 @@ import { useAuth } from '../contexts/AuthContext';
  * Hook de responsabilidades do usuario logado.
  *
  *   const {
- *     kpiAreas,             // array lowercase (areas que lidera)
- *     isAdmin,              // admin ou diretor
- *     ministerioId,         // ministerio que coordena (lidera ou assiste)
- *     ministerioPapel,      // 'lider' | 'assistente' | null
- *     isDiretoriaGeral,     // pertence a diretoria geral nominal
- *     canEditArea(area),    // pode editar KPI da area
- *     canEditDado(area, dadoTipoMinisterio),  // pode editar dado bruto
- *     canValidate(area),    // pode validar dado da area
+ *     kpiAreas,             // areas que lidera (kids, ami etc)
+ *     kpiValores,           // valores que lidera (seguir, conectar etc)
+ *     isAdmin,
+ *     ministerioId, ministerioPapel,
+ *     isDiretoriaGeral,
+ *     canEditArea(area), canEditValor(valor), canSeeKpi(kpi),
+ *     canEditDado(area, dadoTipoMinisterio),
+ *     canValidate(area),
  *     canEditAny,
  *   } = useMyKpiAreas();
  */
@@ -21,6 +21,10 @@ export function useMyKpiAreas() {
 
   const kpiAreas = useMemo(() => {
     return (profile?.kpi_areas || []).map(a => String(a).toLowerCase());
+  }, [profile]);
+
+  const kpiValores = useMemo(() => {
+    return (profile?.kpi_valores || []).map(v => String(v).toLowerCase());
   }, [profile]);
 
   const isAdmin = ['admin', 'diretor'].includes(profile?.role);
@@ -34,10 +38,26 @@ export function useMyKpiAreas() {
     return kpiAreas.includes(String(area).toLowerCase());
   };
 
-  // Pode editar dado bruto se admin OU lider de area OU lider/assistente do ministerio do tipo
-  const canEditDado = (area, dadoTipoMinisterio) => {
+  const canEditValor = (valor) => {
+    if (!valor) return false;
+    if (isAdmin) return true;
+    return kpiValores.includes(String(valor).toLowerCase());
+  };
+
+  // Visibilidade de um KPI: admin ve tudo, demais veem se area E/OU valor batem
+  const canSeeKpi = (kpi) => {
+    if (isAdmin) return true;
+    const area = String(kpi?.area_db || kpi?.area || '').toLowerCase();
+    if (kpiAreas.includes(area)) return true;
+    const valores = (kpi?.valores || []).map(v => String(v).toLowerCase());
+    return valores.some(v => kpiValores.includes(v));
+  };
+
+  // Pode editar dado bruto se admin OU lider de area OU dono do valor OU lider/assistente do ministerio do tipo
+  const canEditDado = (area, dadoTipoMinisterio, valores = []) => {
     if (isAdmin) return true;
     if (kpiAreas.includes(String(area || '').toLowerCase())) return true;
+    if (valores.some(v => kpiValores.includes(String(v).toLowerCase()))) return true;
     if (ministerioId && ministerioId === dadoTipoMinisterio) return true;
     return false;
   };
@@ -48,15 +68,18 @@ export function useMyKpiAreas() {
     return kpiAreas.includes(String(area || '').toLowerCase());
   };
 
-  const canEditAny = isAdmin || kpiAreas.length > 0 || !!ministerioId;
+  const canEditAny = isAdmin || kpiAreas.length > 0 || kpiValores.length > 0 || !!ministerioId;
 
   return {
     kpiAreas,
+    kpiValores,
     isAdmin,
     ministerioId,
     ministerioPapel,
     isDiretoriaGeral,
     canEditArea,
+    canEditValor,
+    canSeeKpi,
     canEditDado,
     canValidate,
     canEditAny,
