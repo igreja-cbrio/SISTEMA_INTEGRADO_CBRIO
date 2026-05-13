@@ -120,25 +120,25 @@ export default function Batismos() {
         <StatisticsCard
           title="Pendentes"
           value={String(pendentes)}
-          icon={<Clock className="h-5 w-5" />}
+          icon={Clock}
           iconColor={C.warn}
         />
         <StatisticsCard
           title="Confirmados"
           value={String(confirmados)}
-          icon={<CheckCircle2 className="h-5 w-5" />}
+          icon={CheckCircle2}
           iconColor={C.info}
         />
         <StatisticsCard
           title="Realizados (mes)"
           value={String(realizadosMes)}
-          icon={<Droplets className="h-5 w-5" />}
+          icon={Droplets}
           iconColor={C.primary}
         />
         <StatisticsCard
           title="Proximo batismo"
           value={proximaDataBatismo ? ymdLocal(proximaDataBatismo) : '—'}
-          icon={<Calendar className="h-5 w-5" />}
+          icon={Calendar}
           iconColor={C.purple}
         />
       </div>
