@@ -1982,4 +1982,73 @@ router.post('/teams-manage/sync-members-from-schedules', async (req, res) => {
   }
 });
 
+// ════════════════════════════════════════════════════════════════════════════
+// Inscricoes (form Google) · funil recebidas vs alocadas
+// Le direto de dados_brutos (independe de meta cadastrada em kpi_trajetoria)
+// ════════════════════════════════════════════════════════════════════════════
+router.get('/inscricoes-summary', async (req, res) => {
+  try {
+    const ano = req.query.ano ? String(req.query.ano) : null;
+    const area = req.query.area ? String(req.query.area).toLowerCase() : null;
+
+    let query = supabase
+      .from('dados_brutos')
+      .select('tipo_id, area, data, valor')
+      .in('tipo_id', ['solicitacoes_servir_recebidas', 'solicitacoes_servir_alocadas'])
+      .in('area', ['kids', 'sede']);
+    if (ano) query = query.gte('data', `${ano}-01-01`).lte('data', `${ano}-12-31`);
+    if (area) query = query.eq('area', area);
+    const { data, error } = await query;
+    if (error) throw error;
+
+    // Agrega por mes (YYYY-MM) e por area
+    const porMes = {};
+    let totalRecebidas = 0;
+    let totalAlocadas = 0;
+    const porArea = {
+      kids: { recebidas: 0, alocadas: 0 },
+      sede: { recebidas: 0, alocadas: 0 },
+    };
+
+    for (const row of data || []) {
+      const ym = String(row.data).slice(0, 7);
+      if (!porMes[ym]) porMes[ym] = { recebidas: 0, alocadas: 0, kids_rec: 0, kids_aloc: 0, sede_rec: 0, sede_aloc: 0 };
+      const v = Number(row.valor || 0);
+      if (row.tipo_id === 'solicitacoes_servir_recebidas') {
+        porMes[ym].recebidas += v;
+        totalRecebidas += v;
+        if (porArea[row.area]) porArea[row.area].recebidas += v;
+        if (row.area === 'kids') porMes[ym].kids_rec += v;
+        if (row.area === 'sede') porMes[ym].sede_rec += v;
+      } else {
+        porMes[ym].alocadas += v;
+        totalAlocadas += v;
+        if (porArea[row.area]) porArea[row.area].alocadas += v;
+        if (row.area === 'kids') porMes[ym].kids_aloc += v;
+        if (row.area === 'sede') porMes[ym].sede_aloc += v;
+      }
+    }
+
+    const meses = Object.keys(porMes)
+      .sort()
+      .map(ym => {
+        const m = porMes[ym];
+        const taxa = m.recebidas > 0 ? Math.round((m.alocadas / m.recebidas) * 100) : null;
+        return { mes: ym, ...m, taxa };
+      });
+
+    const taxa = totalRecebidas > 0 ? Math.round((totalAlocadas / totalRecebidas) * 100) : null;
+
+    res.json({
+      filtros: { ano, area },
+      total: { recebidas: totalRecebidas, alocadas: totalAlocadas, taxa },
+      por_area: porArea,
+      meses,
+    });
+  } catch (e) {
+    console.error('[inscricoes-summary]', e.message);
+    res.status(500).json({ error: 'Erro ao agregar inscricoes' });
+  }
+});
+
 module.exports = router;

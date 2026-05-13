@@ -1,5 +1,5 @@
 import { useNavigate, useLocation } from 'react-router-dom';
-import { Home, QrCode, ClipboardCheck, Calendar, BarChart3, Settings, Monitor, Users, CalendarPlus, Church, CalendarOff, LayoutDashboard, List, ScanLine, User, History, CalendarCheck } from 'lucide-react';
+import { Home, QrCode, ClipboardCheck, Calendar, BarChart3, Settings, Monitor, Users, CalendarPlus, Church, CalendarOff, LayoutDashboard, List, ScanLine, User, History, CalendarCheck, Inbox } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 
 // Staff navigation — all management tabs
@@ -13,6 +13,7 @@ const STAFF_NAV_ITEMS = [
   { label: 'Tipos de Culto', icon: Church, path: '/ministerial/voluntariado/tipos-culto' },
   { label: 'Disponibilidade', icon: CalendarOff, path: '/ministerial/voluntariado/disponibilidade' },
   { label: 'QR Codes', icon: QrCode, path: '/ministerial/voluntariado/qrcodes' },
+  { label: 'Inscricoes', icon: Inbox, path: '/ministerial/voluntariado/inscricoes' },
   { label: 'Relatorios', icon: BarChart3, path: '/ministerial/voluntariado/relatorios' },
   { label: 'Admin', icon: Settings, path: '/ministerial/voluntariado/admin' },
 ];
