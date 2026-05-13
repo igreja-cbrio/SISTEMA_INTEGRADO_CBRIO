@@ -213,6 +213,15 @@ export const grupos = {
   aprovarPedido: (pedidoId) => post(`/grupos/pedidos/${pedidoId}/aprovar`, {}),
   rejeitarPedido: (pedidoId, motivo) => post(`/grupos/pedidos/${pedidoId}/rejeitar`, { motivo }),
   geocodeBatch: (data) => post('/grupos/geocode-batch', data || {}),
+  // Supervisao
+  supervisaoMe: () => get('/grupos/supervisao/me'),
+  setSupervisor: (grupoId, supervisor_id) => put(`/grupos/${grupoId}/supervisor`, { supervisor_id }),
+  setFuncaoMembro: (membroRowId, funcao) => put(`/grupos/membros/${membroRowId}/funcao`, { funcao }),
+  listVisitas: (grupoId) => get(`/grupos/${grupoId}/visitas`),
+  addVisita: (grupoId, body) => post(`/grupos/${grupoId}/visitas`, body),
+  removeVisita: (visitaId) => del(`/grupos/visitas/${visitaId}`),
+  listObservacoes: (grupoId) => get(`/grupos/${grupoId}/observacoes`),
+  setObservacao: (grupoId, periodo, observacao) => put(`/grupos/${grupoId}/observacoes/${periodo}`, { observacao }),
 };
 
 export const strategic = {
