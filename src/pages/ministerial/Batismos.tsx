@@ -109,23 +109,14 @@ export default function Batismos() {
     .sort()[0];
 
   return (
-    <div className="space-y-6 p-6 max-w-[1400px] mx-auto">
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-        <div>
-          <h1 className="text-2xl font-bold text-foreground flex items-center gap-2">
-            <Droplets className="h-6 w-6" style={{ color: C.primary }} />
-            Batismos
-          </h1>
-          <p className="text-sm text-muted-foreground mt-0.5">
-            Inscricoes, confirmacao e realizacao de batismos
-          </p>
-        </div>
+    <div className="space-y-4">
+      <div className="flex items-center justify-end">
         <Button onClick={() => setNovaOpen(true)} className="gap-2 bg-[#00B39D] hover:bg-[#00B39D]/90 text-white">
           <Plus className="h-4 w-4" /> Cadastrar inscricao
         </Button>
       </div>
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
         <StatisticsCard
           title="Pendentes"
           value={String(pendentes)}

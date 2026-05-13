@@ -1,7 +1,9 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, lazy, Suspense } from 'react';
 import { integracao as intApi, voluntariado as volApi } from '../../api';
 import ProcessosTarefas from '../../components/ProcessosTarefas';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '../../components/ui/tabs';
+
+const Batismos = lazy(() => import('./Batismos'));
 import { Button } from '../../components/ui/button';
 import { Input } from '../../components/ui/input';
 import { Label } from '../../components/ui/label';
@@ -94,6 +96,13 @@ export default function Integracao() {
 
   useEffect(() => { reloadDashboard(); }, [reloadDashboard]);
 
+  // Permitir abrir aba via querystring (?tab=batismos)
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const t = params.get('tab');
+    if (t && ['visitantes', 'pendentes', '1x1', 'batismos', 'tarefas'].includes(t)) setTab(t);
+  }, []);
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
@@ -135,6 +144,7 @@ export default function Integracao() {
           <TabsTrigger value="visitantes">Visitantes</TabsTrigger>
           <TabsTrigger value="pendentes">Pendentes</TabsTrigger>
           <TabsTrigger value="1x1">Encontros 1x1</TabsTrigger>
+          <TabsTrigger value="batismos">Batismos</TabsTrigger>
           <TabsTrigger value="tarefas">Tarefas</TabsTrigger>
         </TabsList>
 
@@ -148,6 +158,11 @@ export default function Integracao() {
 
         <TabsContent value="1x1" className="mt-4">
           <TabEncontros1x1 />
+        </TabsContent>
+        <TabsContent value="batismos" className="mt-4">
+          <Suspense fallback={<div className="flex items-center justify-center py-12 text-sm text-muted-foreground">Carregando…</div>}>
+            <Batismos />
+          </Suspense>
         </TabsContent>
         <TabsContent value="tarefas" className="mt-4">
           <ProcessosTarefas area="Integracao" />
