@@ -1,11 +1,14 @@
 // ============================================================================
-// /minha-area — Hub do lider · 2 abas: KPIs (resultado) + Dados (entrada)
+// /minha-area — Hub do lider · VISUALIZADOR de KPIs da area do user
 //
-// Aba KPIs: cards de KPIs por valor da Jornada (resultado calculado).
-// Aba Dados: registrar numeros absolutos (frequencia, batismos, etc).
+// Refator 2026-05-13 (Marcos): "/meus-kpis deveria ser apenas visualizador de
+// relatorios da sua propria area · cada modulo tem sua aba de preenchimento".
 //
-// Todos veem todos os KPIs/dados. So edita o que e da propria area
-// (admin/diretor edita tudo).
+// Antes: 2 abas (KPIs · Dados de entrada via DadosBrutos)
+// Agora: 1 aba so · KPIs por valor com card 'OrigemDado' linkando pro modulo
+//        correto onde se preenche o dado · zero entrada de dado nesta tela.
+//
+// Acesso a /dados-brutos so via admin agora (ver MODULO_POR_DADO_TIPO).
 // ============================================================================
 
 import { useState, useEffect, useMemo, useCallback } from 'react';
@@ -14,12 +17,12 @@ import { useAuth } from '../contexts/AuthContext';
 import { kpis as kpisApi } from '../api';
 import { useKpis } from '../hooks/useKpis';
 import { useMyKpiAreas } from '../hooks/useMyKpiAreas';
-import KpiQuickFillModal from '../components/KpiQuickFillModal';
+// KpiQuickFillModal removido · /minha-area e so visualizador
 import KpiEditorModal from '../components/KpiEditorModal';
 import OkrRevisaoModal from '../components/OkrRevisaoModal';
 import KpiDetalheModal from '../components/KpiDetalheModal';
-import DadosBrutos from './DadosBrutos';
-import { Activity, Pencil, Plus, ChevronDown, ChevronRight, AlertCircle, CheckCircle2, Clock, TrendingDown, MinusCircle, ClipboardCheck, Database, BarChart2 } from 'lucide-react';
+// DadosBrutos removido daqui · cada modulo tem sua propria entrada
+import { Activity, Pencil, Plus, ChevronDown, ChevronRight, AlertCircle, CheckCircle2, Clock, TrendingDown, MinusCircle, ClipboardCheck, ExternalLink } from 'lucide-react';
 import { toast } from 'sonner';
 import { SkeletonBlock } from '../components/Skeleton';
 import { formatErro } from '../lib/formatErro';
@@ -74,14 +77,60 @@ function periodKey(periodicidade, date = new Date()) {
   }
 }
 
+// ============================================================================
+// Mapeamento dado_tipo → modulo onde preencher
+// (mesmo de MeusKpis · centralizado aqui pois /meus-kpis redireciona pra ca)
+// ============================================================================
+const MODULO_POR_DADO_TIPO = {
+  // Auto-coletados (so visualiza)
+  frequencia_culto: { titulo: 'Cultos',          path: '/cultos' },
+  conversoes:       { titulo: 'Visitantes',      path: '/visitantes' },
+  batismos:         { titulo: 'Batismo',         path: '/batismo' },
+  // Voluntariado
+  voluntarios_ativos:      { titulo: 'Voluntariado', path: '/voluntariado' },
+  voluntarios_inativos_3m: { titulo: 'Voluntariado', path: '/voluntariado' },
+  voluntarios_recuperados: { titulo: 'Voluntariado', path: '/voluntariado' },
+  voluntarios_checkin:     { titulo: 'Voluntariado', path: '/voluntariado' },
+  voluntarios_treinamento: { titulo: 'Voluntariado', path: '/voluntariado' },
+  voluntarios_alocados:    { titulo: 'Voluntariado', path: '/voluntariado' },
+  voluntarios_inativos:    { titulo: 'Voluntariado', path: '/voluntariado' },
+  // Generosidade
+  doacoes_valor:        { titulo: 'Generosidade', path: '/generosidade' },
+  doadores_count:       { titulo: 'Generosidade', path: '/generosidade' },
+  doadores_recorrentes: { titulo: 'Generosidade', path: '/generosidade' },
+  doacoes_qualidade:    { titulo: 'Generosidade', path: '/generosidade' },
+  // NEXT
+  frequencia_next: { titulo: 'NEXT', path: '/next' },
+  // Cuidados (Devocional, Jornada180, Capelania, Aconselhamento, Convertidos)
+  inscricoes_jornada180:   { titulo: 'Cuidados', path: '/cuidados?tab=agregado' },
+  devocionais:             { titulo: 'Cuidados', path: '/cuidados?tab=agregado' },
+  solicitacoes_capelania:  { titulo: 'Cuidados', path: '/cuidados?tab=agregado' },
+  solicitacoes_aconselh:   { titulo: 'Cuidados', path: '/cuidados?tab=agregado' },
+  novos_convertidos_atend: { titulo: 'Cuidados', path: '/cuidados?tab=agregado' },
+  // Grupos
+  frequencia_grupos: { titulo: 'Grupos',     path: '/grupos' },
+  grupos_ativos:     { titulo: 'Grupos',     path: '/grupos' },
+  lideres_grupos:    { titulo: 'Grupos · Supervisao', path: '/grupos/supervisao' },
+  lideres_treinados: { titulo: 'Grupos · Supervisao', path: '/grupos/supervisao' },
+  lideres_acompanhados: { titulo: 'Grupos · Supervisao', path: '/grupos/supervisao' },
+  // NPS
+  nps_geral:       { titulo: 'NPS', path: '/nps' },
+  nps_next:        { titulo: 'NPS', path: '/nps' },
+  nps_lideres:     { titulo: 'NPS', path: '/nps' },
+  nps_voluntarios: { titulo: 'NPS', path: '/nps' },
+  nps_culto:       { titulo: 'NPS', path: '/nps' },
+  satisfacao_lideres:     { titulo: 'NPS', path: '/nps' },
+  satisfacao_voluntarios: { titulo: 'NPS', path: '/nps' },
+  // Solicitacoes (membros pedem capelania/aconselh/servir)
+  solicitacoes_capelania_recebidas:      { titulo: 'Cuidados', path: '/cuidados?tab=agregado' },
+  solicitacoes_aconselhamento_recebidas: { titulo: 'Cuidados', path: '/cuidados?tab=agregado' },
+  solicitacoes_servir_recebidas: { titulo: 'Voluntariado', path: '/voluntariado' },
+  solicitacoes_servir_alocadas:  { titulo: 'Voluntariado', path: '/voluntariado' },
+};
+
 export default function MinhaArea() {
   const [searchParams, setSearchParams] = useSearchParams();
-  const aba = searchParams.get('aba') || 'kpis'; // 'kpis' | 'dados'
-  const setAba = (a) => {
-    const next = new URLSearchParams(searchParams);
-    next.set('aba', a);
-    setSearchParams(next, { replace: true });
-  };
+  // Aba dados removida · /minha-area e so visualizador agora
 
   const { profile } = useAuth();
   const { kpis, isLoading, refetch } = useKpis();
@@ -89,7 +138,7 @@ export default function MinhaArea() {
 
   const [registros, setRegistros] = useState([]);
   const [trajetorias, setTrajetorias] = useState([]);
-  const [fillKpi, setFillKpi] = useState(null);
+  // fillKpi removido · cada modulo tem entrada propria
   const [editKpi, setEditKpi] = useState(null);
   const [createOpen, setCreateOpen] = useState(false);
   const [revisarKpi, setRevisarKpi] = useState(null);
@@ -174,12 +223,7 @@ export default function MinhaArea() {
     return { total: meusKpis.length, no_alvo, atras, sem_dado };
   }, [meusKpis, ultimoRegPorIndicador]);
 
-  const handleSaved = () => {
-    setFillKpi(null);
-    refetch();
-    setTimeout(loadDados, 200);
-    toast.success('Valor registrado');
-  };
+  // handleSaved removido · entrada agora e nos modulos
 
   if (isLoading) {
     return (
@@ -239,38 +283,17 @@ export default function MinhaArea() {
         </p>
       </header>
 
-      {/* Tabs */}
-      <div style={{ display: 'flex', gap: 4, borderBottom: `2px solid ${C.border}`, marginBottom: 16 }}>
-        <button
-          onClick={() => setAba('kpis')}
-          style={{
-            padding: '10px 18px', background: 'none', border: 'none', cursor: 'pointer',
-            fontSize: 13, fontWeight: aba === 'kpis' ? 700 : 500,
-            color: aba === 'kpis' ? C.primary : C.t3,
-            borderBottom: aba === 'kpis' ? `2px solid ${C.primary}` : '2px solid transparent',
-            marginBottom: -2, display: 'inline-flex', alignItems: 'center', gap: 6,
-          }}
-        >
-          <BarChart2 size={14} /> KPIs (resultado)
-        </button>
-        <button
-          onClick={() => setAba('dados')}
-          style={{
-            padding: '10px 18px', background: 'none', border: 'none', cursor: 'pointer',
-            fontSize: 13, fontWeight: aba === 'dados' ? 700 : 500,
-            color: aba === 'dados' ? C.primary : C.t3,
-            borderBottom: aba === 'dados' ? `2px solid ${C.primary}` : '2px solid transparent',
-            marginBottom: -2, display: 'inline-flex', alignItems: 'center', gap: 6,
-          }}
-        >
-          <Database size={14} /> Dados (entrada)
-        </button>
+      {/* Aviso curto · o que e essa pagina */}
+      <div style={{
+        background: 'var(--cbrio-input-bg)', borderLeft: '3px solid var(--cbrio-text3)',
+        padding: '10px 14px', borderRadius: 6, marginBottom: 16, fontSize: 12, color: 'var(--cbrio-text2)',
+      }}>
+        Aqui voce <strong>visualiza</strong> o resultado dos KPIs da sua area.
+        Para preencher dados, va no <strong>modulo correspondente</strong>
+        (indicado em cada card abaixo).
       </div>
 
-      {aba === 'dados' ? (
-        <DadosBrutos embedded />
-      ) : (
-        <>
+      <>
           {canEditAny && (
             <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 12 }}>
               <button onClick={() => setCreateOpen(true)} style={btnPrimary}>
@@ -330,7 +353,6 @@ export default function MinhaArea() {
                             status={statusKpi(kpi)}
                             ultimo={ultimoRegPorIndicador[kpi.id]}
                             canEdit={podeEditar(kpi)}
-                            onPreencher={() => setFillKpi(kpi)}
                             onEditar={() => setEditKpi(kpi)}
                             onRevisar={() => setRevisarKpi(kpi)}
                             onDetalhe={() => setDetalheKpiId(kpi.id)}
@@ -415,15 +437,7 @@ export default function MinhaArea() {
             );
           })()}
         </>
-      )}
 
-      <KpiQuickFillModal
-        open={!!fillKpi}
-        kpi={fillKpi}
-        periodKey={fillKpi ? periodKey(fillKpi.periodicidade) : ''}
-        onClose={() => setFillKpi(null)}
-        onSaved={handleSaved}
-      />
       {editKpi && (
         <KpiEditorModal
           open={!!editKpi}
@@ -460,7 +474,7 @@ export default function MinhaArea() {
   );
 }
 
-function KpiCard({ kpi, status, ultimo, canEdit, onPreencher, onEditar, onRevisar, onDetalhe }) {
+function KpiCard({ kpi, status, ultimo, canEdit, onEditar, onRevisar, onDetalhe }) {
   const sv = STATUS_VISUAL[status] || STATUS_VISUAL.sem_dado;
   const Icon = sv.Icon;
   const podeRevisar = status === 'critico' || status === 'atras';
@@ -485,24 +499,79 @@ function KpiCard({ kpi, status, ultimo, canEdit, onPreencher, onEditar, onRevisa
         <span style={{ textTransform: 'capitalize' }}>{kpi.periodicidade}</span>
       </div>
 
-      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-        <button onClick={onPreencher} disabled={!canEdit} style={{ ...btnPrimarySm, opacity: canEdit ? 1 : 0.5, cursor: canEdit ? 'pointer' : 'not-allowed' }}>
-          Preencher
-        </button>
-        {canEdit && (
-          <button onClick={onEditar} style={btnGhostSm}>
-            <Pencil size={11} /> Editar
-          </button>
-        )}
+      {/* Origem do dado · indica onde preencher (modulo) */}
+      <OrigemDado kpi={kpi} />
+
+      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 8 }}>
         <button onClick={onDetalhe} style={btnGhostSm}>
           <Activity size={11} /> Detalhe
         </button>
+        {canEdit && (
+          <button onClick={onEditar} style={btnGhostSm}>
+            <Pencil size={11} /> Editar meta
+          </button>
+        )}
         {podeRevisar && (
           <button onClick={onRevisar} style={{ ...btnGhostSm, color: sv.cor, borderColor: sv.cor + '60' }}>
             <ClipboardCheck size={11} /> Revisar
           </button>
         )}
       </div>
+    </div>
+  );
+}
+
+// ============================================================================
+// OrigemDado · chip linkando pro modulo onde se preenche
+// ============================================================================
+function OrigemDado({ kpi }) {
+  const dadoTipo = kpi.formula_config?.dado_tipo;
+  const fonteAuto = kpi.fonte_auto;
+  const dadoTipoManual = !!kpi.dado_tipo_manual;
+  const moduloInfo = dadoTipo && MODULO_POR_DADO_TIPO[dadoTipo];
+
+  // Automatico: fonte_auto definida OU dado_tipo nao-manual (modulo cuida)
+  const isAutomatico = (!!fonteAuto && !dadoTipo) || (!!dadoTipo && !dadoTipoManual);
+
+  if (isAutomatico) {
+    return (
+      <div style={{
+        background: '#10B98118', borderLeft: '3px solid #10B981',
+        padding: '6px 10px', borderRadius: 4, marginTop: 8,
+        display: 'flex', alignItems: 'center', gap: 8, fontSize: 11,
+      }}>
+        <span style={{ fontSize: 9, fontWeight: 700, color: '#047857', textTransform: 'uppercase', letterSpacing: 0.5 }}>
+          Automático
+        </span>
+        <span style={{ color: 'var(--cbrio-text3)', flex: 1 }}>
+          {moduloInfo ? `Sobe via ${moduloInfo.titulo}` : 'Coletado automaticamente'}
+        </span>
+        {moduloInfo && (
+          <a href={moduloInfo.path} style={{ color: '#047857', fontWeight: 600, textDecoration: 'none', display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+            Ver módulo <ExternalLink size={10} />
+          </a>
+        )}
+      </div>
+    );
+  }
+
+  // Manual: aponta pro modulo correto (ou /dados-brutos como fallback)
+  const destino = moduloInfo || { titulo: 'Dados Brutos (admin)', path: '/dados-brutos' };
+  return (
+    <div style={{
+      background: '#F59E0B18', borderLeft: '3px solid #F59E0B',
+      padding: '6px 10px', borderRadius: 4, marginTop: 8,
+      display: 'flex', alignItems: 'center', gap: 8, fontSize: 11,
+    }}>
+      <span style={{ fontSize: 9, fontWeight: 700, color: '#B45309', textTransform: 'uppercase', letterSpacing: 0.5 }}>
+        Manual
+      </span>
+      <span style={{ color: 'var(--cbrio-text3)', flex: 1 }}>
+        Preencha em {destino.titulo}
+      </span>
+      <a href={destino.path} style={{ color: '#B45309', fontWeight: 700, textDecoration: 'none', display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+        Abrir <ExternalLink size={10} />
+      </a>
     </div>
   );
 }
