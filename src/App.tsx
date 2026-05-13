@@ -203,6 +203,7 @@ const SpotifyCallback = lazyWithRetry(() => import('./pages/auth/SpotifyCallback
 const Cuidados = lazyWithRetry(() => import('./pages/ministerial/Cuidados'));
 const Integracao = lazyWithRetry(() => import('./pages/ministerial/Integracao'));
 const Next = lazyWithRetry(() => import('./pages/ministerial/Next'));
+const Batismos = lazyWithRetry(() => import('./pages/ministerial/Batismos'));
 // Jornada virou aba dentro de Membresia (componente MembersJornadaPanel).
 // Mantido aqui apenas pra retrocompat de URL — redirect via Navigate.
 const InscricaoNext = lazyWithRetry(() => import('./pages/public/InscricaoNext'));
@@ -363,6 +364,7 @@ function AppRoutes() {
         <Route path="/ministerial/jornada" element={<Navigate to="/ministerial/membresia" replace />} />
         <Route path="/ministerial/integracao" element={<ModuleGuard permKey="canMembresia"><Suspense fallback={<Loading />}><Integracao /></Suspense></ModuleGuard>} />
         <Route path="/ministerial/next" element={<ModuleGuard permKey="canMembresia"><Suspense fallback={<Loading />}><Next /></Suspense></ModuleGuard>} />
+        <Route path="/ministerial/batismos" element={<ModuleGuard permKey="canMembresia"><Suspense fallback={<Loading />}><Batismos /></Suspense></ModuleGuard>} />
         <Route path="/assistente-ia" element={<ModuleGuard permKey="canIA"><Suspense fallback={<Loading />}><AssistenteIA /></Suspense></ModuleGuard>} />
         <Route path="/solicitacoes" element={<Suspense fallback={<Loading />}><Solicitacoes /></Suspense>} />
         {/* Telas substituidas pelo /painel (Sistema OKR/NSM 2026 — Fase 2) */}
