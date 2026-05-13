@@ -4,6 +4,7 @@ import ProcessosTarefas from '../../components/ProcessosTarefas';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '../../components/ui/tabs';
 
 const Batismos = lazy(() => import('./Batismos'));
+import CalendarioCultos from '../../components/CalendarioCultos';
 import { Button } from '../../components/ui/button';
 import { Input } from '../../components/ui/input';
 import { Label } from '../../components/ui/label';
@@ -96,11 +97,16 @@ export default function Integracao() {
 
   useEffect(() => { reloadDashboard(); }, [reloadDashboard]);
 
-  // Permitir abrir aba via querystring (?tab=batismos)
+  // Permitir abrir aba via querystring (?tab=batismos) · tambem aceita action=nova_decisao
+  const [forceNewVisitor, setForceNewVisitor] = useState(false);
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const t = params.get('tab');
-    if (t && ['visitantes', 'pendentes', '1x1', 'batismos', 'tarefas'].includes(t)) setTab(t);
+    if (t && ['visitantes', 'pendentes', '1x1', 'batismos', 'frequencia', 'tarefas'].includes(t)) setTab(t);
+    if (params.get('action') === 'nova_decisao') {
+      setTab('visitantes');
+      setForceNewVisitor(true);
+    }
   }, []);
 
   return (
@@ -112,31 +118,47 @@ export default function Integracao() {
         </div>
       </div>
 
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-        <StatisticsCard
-          title="Visitantes (30d)"
-          value={loadingDash ? '…' : String(dashboard?.visitantes_ultimos_30 ?? 0)}
-          icon={Users}
-          iconColor={C.info}
-        />
-        <StatisticsCard
-          title="Decisões"
-          value={loadingDash ? '…' : String(dashboard?.total_decisoes ?? 0)}
-          icon={Heart}
-          iconColor={C.pink}
-        />
-        <StatisticsCard
-          title="Em acompanhamento"
-          value={loadingDash ? '…' : String(dashboard?.por_status?.acompanhamento ?? 0)}
-          icon={TrendingUp}
-          iconColor={C.purple}
-        />
-        <StatisticsCard
-          title="Contatos hoje"
-          value={loadingDash ? '…' : String(dashboard?.acompanhamentos_hoje ?? 0)}
-          icon={Clock}
-          iconColor={C.warn}
-        />
+      <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
+        <button onClick={() => setTab('visitantes')} className="text-left hover:scale-[1.02] transition-transform">
+          <StatisticsCard
+            title="Visitantes (30d)"
+            value={loadingDash ? '…' : String(dashboard?.visitantes_ultimos_30 ?? 0)}
+            icon={Users}
+            iconColor={C.info}
+          />
+        </button>
+        <button onClick={() => { setTab('visitantes'); setForceNewVisitor(true); }} className="text-left hover:scale-[1.02] transition-transform">
+          <StatisticsCard
+            title="Decisões · registrar"
+            value={loadingDash ? '…' : String(dashboard?.total_decisoes ?? 0)}
+            icon={Heart}
+            iconColor={C.pink}
+          />
+        </button>
+        <button onClick={() => setTab('batismos')} className="text-left hover:scale-[1.02] transition-transform">
+          <StatisticsCard
+            title="Batismos · registrar"
+            value={loadingDash ? '…' : String(dashboard?.total_batismos ?? '—')}
+            icon={CheckCircle2}
+            iconColor={C.primary}
+          />
+        </button>
+        <button onClick={() => setTab('frequencia')} className="text-left hover:scale-[1.02] transition-transform">
+          <StatisticsCard
+            title="Frequência · registrar"
+            value="Cultos"
+            icon={Calendar}
+            iconColor={C.purple}
+          />
+        </button>
+        <button onClick={() => setTab('1x1')} className="text-left hover:scale-[1.02] transition-transform">
+          <StatisticsCard
+            title="Contatos hoje"
+            value={loadingDash ? '…' : String(dashboard?.acompanhamentos_hoje ?? 0)}
+            icon={Clock}
+            iconColor={C.warn}
+          />
+        </button>
       </div>
 
       <Tabs value={tab} onValueChange={setTab}>
@@ -145,11 +167,12 @@ export default function Integracao() {
           <TabsTrigger value="pendentes">Pendentes</TabsTrigger>
           <TabsTrigger value="1x1">Encontros 1x1</TabsTrigger>
           <TabsTrigger value="batismos">Batismos</TabsTrigger>
+          <TabsTrigger value="frequencia">Frequência</TabsTrigger>
           <TabsTrigger value="tarefas">Tarefas</TabsTrigger>
         </TabsList>
 
         <TabsContent value="visitantes" className="mt-4">
-          <TabVisitantes onChanged={reloadDashboard} />
+          <TabVisitantes onChanged={reloadDashboard} forceNewVisitor={forceNewVisitor} onClosedNewVisitor={() => setForceNewVisitor(false)} />
         </TabsContent>
 
         <TabsContent value="pendentes" className="mt-4">
@@ -164,6 +187,14 @@ export default function Integracao() {
             <Batismos />
           </Suspense>
         </TabsContent>
+        <TabsContent value="frequencia" className="mt-4">
+          <div className="space-y-2">
+            <p className="text-sm text-muted-foreground">
+              Registre presenca dos cultos · alimenta os KPIs de frequencia, conversoes e batismos automaticamente.
+            </p>
+            <CalendarioCultos />
+          </div>
+        </TabsContent>
         <TabsContent value="tarefas" className="mt-4">
           <ProcessosTarefas area="Integracao" />
         </TabsContent>
@@ -172,13 +203,21 @@ export default function Integracao() {
   );
 }
 
-function TabVisitantes({ onChanged }: { onChanged: () => void }) {
+function TabVisitantes({ onChanged, forceNewVisitor, onClosedNewVisitor }: { onChanged: () => void; forceNewVisitor?: boolean; onClosedNewVisitor?: () => void }) {
   const [list, setList] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [statusFilter, setStatusFilter] = useState<string>('todos');
   const [search, setSearch] = useState('');
   const [showForm, setShowForm] = useState(false);
   const [selected, setSelected] = useState<any | null>(null);
+
+  // Abre form automaticamente quando vem do card 'Decisoes' do header
+  useEffect(() => {
+    if (forceNewVisitor) {
+      setShowForm(true);
+      onClosedNewVisitor?.();
+    }
+  }, [forceNewVisitor, onClosedNewVisitor]);
 
   const reload = useCallback(async () => {
     setLoading(true);
