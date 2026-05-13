@@ -2,13 +2,33 @@ import { useState, useMemo } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Badge } from '@/components/ui/badge';
+import { Input } from '@/components/ui/input';
+import { Button } from '@/components/ui/button';
 import { useQuery } from '@tanstack/react-query';
 import { voluntariado } from '@/api';
-import { Inbox, CheckCircle2, Percent } from 'lucide-react';
+import { Inbox, CheckCircle2, Percent, Search, Link2 } from 'lucide-react';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend,
   LineChart, Line,
 } from 'recharts';
+
+const STATUS_LABELS: Record<string, string> = {
+  integrado: 'Integrado',
+  enviado_ministerio: 'Enviado ao ministerio',
+  inscrito: 'Inscrito (triagem)',
+  kids: 'Kids',
+  nao_responde: 'Nao responde',
+  nao_pode_ou_duplicata: 'Nao pode / duplicata',
+};
+
+const STATUS_COLORS: Record<string, string> = {
+  integrado: 'bg-green-500/10 text-green-700 border-green-500/20',
+  enviado_ministerio: 'bg-blue-500/10 text-blue-700 border-blue-500/20',
+  inscrito: 'bg-gray-500/10 text-gray-700 border-gray-500/20',
+  kids: 'bg-pink-500/10 text-pink-700 border-pink-500/20',
+  nao_responde: 'bg-orange-500/10 text-orange-700 border-orange-500/20',
+  nao_pode_ou_duplicata: 'bg-red-500/10 text-red-700 border-red-500/20',
+};
 
 const ANO_ATUAL = new Date().getFullYear();
 const ANOS = [ANO_ATUAL, ANO_ATUAL - 1, ANO_ATUAL - 2];
@@ -37,15 +57,59 @@ interface InscricoesSummary {
   }>;
 }
 
+interface InscricaoRow {
+  id: string;
+  nome: string;
+  sobrenome: string;
+  nome_completo: string;
+  cpf: string | null;
+  email: string | null;
+  telefone: string | null;
+  data_nascimento: string | null;
+  data_inscricao: string;
+  area: string;
+  status: string;
+  dom_predominante: string | null;
+  ministerios_interesse: string | null;
+  participou_next: string | null;
+  feedback: string | null;
+  integrado_em: string | null;
+  membro_id: string | null;
+}
+
+interface InscricoesListResponse {
+  total: number;
+  limit: number;
+  offset: number;
+  rows: InscricaoRow[];
+}
+
 export default function VolInscricoes() {
   const [ano, setAno] = useState<string>(String(ANO_ATUAL));
   const [area, setArea] = useState<string>('todas');
+  const [statusFilter, setStatusFilter] = useState<string>('todos');
+  const [search, setSearch] = useState<string>('');
+  const [searchInput, setSearchInput] = useState<string>('');
+  const [page, setPage] = useState(0);
+  const pageSize = 50;
 
   const { data, isLoading } = useQuery<InscricoesSummary>({
     queryKey: ['vol', 'inscricoes-summary', ano, area],
     queryFn: () => voluntariado.inscricoesSummary({
       ano,
       area: area === 'todas' ? undefined : area,
+    }),
+  });
+
+  const { data: lista, isLoading: loadingList } = useQuery<InscricoesListResponse>({
+    queryKey: ['vol', 'inscricoes-list', ano, area, statusFilter, search, page],
+    queryFn: () => voluntariado.inscricoesList({
+      ano,
+      area: area === 'todas' ? undefined : area,
+      status: statusFilter === 'todos' ? undefined : statusFilter,
+      search: search || undefined,
+      limit: pageSize,
+      offset: page * pageSize,
     }),
   });
 
@@ -229,10 +293,10 @@ export default function VolInscricoes() {
         </Card>
       )}
 
-      {/* Tabela */}
+      {/* Resumo mensal */}
       <Card>
         <CardHeader className="pb-3">
-          <CardTitle className="text-base">Detalhe mensal</CardTitle>
+          <CardTitle className="text-base">Resumo mensal</CardTitle>
         </CardHeader>
         <CardContent className="px-0">
           <div className="overflow-x-auto">
@@ -262,6 +326,120 @@ export default function VolInscricoes() {
               </tbody>
             </table>
           </div>
+        </CardContent>
+      </Card>
+
+      {/* Lista de pessoas (drill-down) */}
+      <Card>
+        <CardHeader className="pb-3">
+          <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+            <CardTitle className="text-base">
+              Pessoas inscritas {lista?.total != null && (
+                <span className="text-muted-foreground text-sm font-normal">({lista.total})</span>
+              )}
+            </CardTitle>
+            <div className="flex gap-2 flex-wrap">
+              <Select value={statusFilter} onValueChange={(v) => { setStatusFilter(v); setPage(0); }}>
+                <SelectTrigger className="w-[170px]"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="todos">Todos status</SelectItem>
+                  {Object.entries(STATUS_LABELS).map(([k, l]) => (
+                    <SelectItem key={k} value={k}>{l}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <form onSubmit={(e) => { e.preventDefault(); setSearch(searchInput); setPage(0); }} className="flex gap-1">
+                <div className="relative">
+                  <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
+                  <Input
+                    value={searchInput}
+                    onChange={(e) => setSearchInput(e.target.value)}
+                    placeholder="Buscar nome..."
+                    className="pl-7 h-9 w-[160px]"
+                  />
+                </div>
+                <Button type="submit" size="sm" variant="outline">Buscar</Button>
+              </form>
+            </div>
+          </div>
+        </CardHeader>
+        <CardContent className="px-0">
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead className="text-xs text-muted-foreground border-b">
+                <tr>
+                  <th className="text-left px-4 py-2 font-medium">Nome</th>
+                  <th className="text-left px-4 py-2 font-medium">Inscricao</th>
+                  <th className="text-left px-4 py-2 font-medium">Area</th>
+                  <th className="text-left px-4 py-2 font-medium">Status</th>
+                  <th className="text-left px-4 py-2 font-medium">Ministerio</th>
+                  <th className="text-left px-4 py-2 font-medium">Contato</th>
+                  <th className="text-center px-4 py-2 font-medium">Membro</th>
+                </tr>
+              </thead>
+              <tbody>
+                {loadingList && (
+                  <tr><td colSpan={7} className="text-center text-muted-foreground py-6">Carregando...</td></tr>
+                )}
+                {!loadingList && lista?.rows?.length === 0 && (
+                  <tr><td colSpan={7} className="text-center text-muted-foreground py-6">Nenhuma inscricao com esses filtros</td></tr>
+                )}
+                {lista?.rows?.map(p => (
+                  <tr key={p.id} className="border-b last:border-b-0 hover:bg-accent/30">
+                    <td className="px-4 py-2 font-medium">
+                      {p.nome_completo}
+                      {p.email && <div className="text-xs text-muted-foreground">{p.email}</div>}
+                    </td>
+                    <td className="px-4 py-2 text-muted-foreground whitespace-nowrap">
+                      {new Date(p.data_inscricao).toLocaleDateString('pt-BR')}
+                    </td>
+                    <td className="px-4 py-2 capitalize">{p.area}</td>
+                    <td className="px-4 py-2">
+                      <Badge variant="outline" className={STATUS_COLORS[p.status] || ''}>
+                        {STATUS_LABELS[p.status] || p.status}
+                      </Badge>
+                    </td>
+                    <td className="px-4 py-2 text-xs max-w-[200px] truncate" title={p.ministerios_interesse || ''}>
+                      {p.ministerios_interesse || p.integrado_em || '-'}
+                    </td>
+                    <td className="px-4 py-2 text-xs whitespace-nowrap">
+                      {p.telefone || '-'}
+                    </td>
+                    <td className="px-4 py-2 text-center">
+                      {p.membro_id ? (
+                        <Link2 className="h-4 w-4 text-green-600 mx-auto" />
+                      ) : (
+                        <span className="text-muted-foreground text-xs">-</span>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          {lista && lista.total > pageSize && (
+            <div className="flex items-center justify-between px-4 py-3 border-t text-sm">
+              <span className="text-muted-foreground">
+                Pagina {page + 1} de {Math.ceil(lista.total / pageSize)}
+              </span>
+              <div className="flex gap-2">
+                <Button
+                  size="sm" variant="outline"
+                  disabled={page === 0}
+                  onClick={() => setPage(p => Math.max(0, p - 1))}
+                >
+                  Anterior
+                </Button>
+                <Button
+                  size="sm" variant="outline"
+                  disabled={(page + 1) * pageSize >= lista.total}
+                  onClick={() => setPage(p => p + 1)}
+                >
+                  Proxima
+                </Button>
+              </div>
+            </div>
+          )}
         </CardContent>
       </Card>
     </div>
