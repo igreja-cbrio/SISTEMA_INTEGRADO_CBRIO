@@ -13,7 +13,7 @@ import { useState, useEffect, useMemo } from 'react';
 import { useKpis } from '../hooks/useKpis';
 import { useMyKpiAreas } from '../hooks/useMyKpiAreas';
 import { kpis as kpisApi, dadosBrutos as dadosBrutosApi } from '../api';
-import KpiQuickFillModal from '../components/KpiQuickFillModal';
+// KpiQuickFillModal removido · /meus-kpis agora e visualizador (Fase B 2026-05-13)
 import KpiEditorModal from '../components/KpiEditorModal';
 import { Button } from '../components/ui/button';
 import { toast } from 'sonner';
@@ -83,7 +83,7 @@ export default function MeusKpis() {
   const { kpiAreas, kpiValores, isAdmin, canEditAny } = useMyKpiAreas();
   const [registros, setRegistros] = useState([]);
   const [loadingRegs, setLoadingRegs] = useState(false);
-  const [fillKpi, setFillKpi] = useState(null);
+  // fillKpi removido · cards agora linkam pro modulo (Fase B)
   const [editKpi, setEditKpi] = useState(null);
   const [createOpen, setCreateOpen] = useState(false);
   // Filtro UI · valores selecionados (set vazio = todos)
@@ -209,19 +209,7 @@ export default function MeusKpis() {
     return { tipo: 'atrasado', label: 'Atrasado', cor: C.amber, corBg: C.amberBg, Icon: Clock };
   }
 
-  const handleSaved = () => {
-    setFillKpi(null);
-    refetch();
-    // Refaz fetch dos registros
-    setRegistros([]);
-    setTimeout(() => {
-      const areasUnicas = Array.from(new Set(meusKpis.map(k => k.area_db).filter(Boolean)));
-      Promise.all(areasUnicas.map(area => kpisApi.v2.registros.list({ area })))
-        .then(arrs => setRegistros(arrs.flat()))
-        .catch(() => {});
-    }, 200);
-    toast.success('Valor registrado');
-  };
+  // handleSaved removido · /meus-kpis nao salva mais dados (Fase B 2026-05-13)
 
   if (isLoading) {
     return <div style={{ padding: 60, textAlign: 'center', color: C.t3 }}>Carregando KPIs...</div>;
@@ -323,20 +311,11 @@ export default function MeusKpis() {
             kpis={porPeriodicidade[p]}
             statusKpi={statusKpi}
             ultimoRegPorIndicador={ultimoRegPorIndicador}
-            onPreencher={setFillKpi}
             onEditar={setEditKpi}
             canEditArea={(kpi) => isAdmin || kpiAreas.includes(String(kpi.area_db || '').toLowerCase())}
           />
         ))
       )}
-
-      <KpiQuickFillModal
-        open={!!fillKpi}
-        kpi={fillKpi}
-        periodKey={fillKpi ? periodKey(fillKpi.periodicidade) : ''}
-        onClose={() => setFillKpi(null)}
-        onSaved={handleSaved}
-      />
 
       {editKpi && (
         <KpiEditorModal
@@ -361,7 +340,7 @@ export default function MeusKpis() {
   );
 }
 
-function SecaoPeriodicidade({ periodicidade, kpis, statusKpi, ultimoRegPorIndicador, onPreencher, onEditar, canEditArea }) {
+function SecaoPeriodicidade({ periodicidade, kpis, statusKpi, ultimoRegPorIndicador, onEditar, canEditArea }) {
   return (
     <section style={{ marginBottom: 28 }}>
       <h2 style={{ fontSize: 14, fontWeight: 700, color: C.t2, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 12 }}>
@@ -423,61 +402,8 @@ function SecaoPeriodicidade({ periodicidade, kpis, statusKpi, ultimoRegPorIndica
                 </div>
               )}
 
-              {(() => {
-                const dadoTipo = kpi.formula_config?.dado_tipo;
-                const fonteAuto = kpi.fonte_auto;
-                const dadoTipoManual = !!kpi.dado_tipo_manual; // tipo permite lancamento manual?
-                // Automatico em 2 cenarios:
-                //   1. fonte_auto definido (collector pega sozinho)
-                //   2. dado_tipo existe mas tipo e marcado entrada_manual=false (NPS/Voluntariado/Financeiro/etc)
-                const isAutomatico = (!!fonteAuto && !dadoTipo) || (!!dadoTipo && !dadoTipoManual);
-                const isManualDado = !!dadoTipo && dadoTipoManual;
-                if (isAutomatico) {
-                  return (
-                    <div style={{ marginTop: 'auto', padding: '8px 10px', background: C.primaryBg, borderRadius: 6, textAlign: 'center' }}>
-                      <div style={{ fontSize: 10, fontWeight: 700, color: C.primary, textTransform: 'uppercase', letterSpacing: 0.5 }}>
-                        Automatico
-                      </div>
-                      <div style={{ fontSize: 10, color: C.t3, marginTop: 2 }}>
-                        Sobe via modulo · sem preenchimento manual
-                      </div>
-                    </div>
-                  );
-                }
-                // KPIs com dado_tipo manual: usuario lanca dado bruto -> KPI calcula
-                if (isManualDado) {
-                  return (
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 4, marginTop: 'auto', paddingTop: 4 }}>
-                      <div style={{ display: 'flex', gap: 8 }}>
-                        <Button size="sm" onClick={() => onPreencher(kpi)} disabled={!podeEditar} style={{ flex: 1 }}>
-                          Lançar dado
-                        </Button>
-                        {podeEditar && (
-                          <Button size="sm" variant="outline" onClick={() => onEditar(kpi)} title="Editar definição/meta">
-                            <Pencil size={13} />
-                          </Button>
-                        )}
-                      </div>
-                      <div style={{ fontSize: 9, color: C.t3, textAlign: 'center' }}>
-                        Lance o dado bruto · KPI calcula sozinho
-                      </div>
-                    </div>
-                  );
-                }
-                // Fallback (raro · KPI sem fonte definida)
-                return (
-                  <div style={{ display: 'flex', gap: 8, marginTop: 'auto', paddingTop: 4 }}>
-                    <Button size="sm" onClick={() => onPreencher(kpi)} disabled={!podeEditar} style={{ flex: 1 }}>
-                      Preencher
-                    </Button>
-                    {podeEditar && (
-                      <Button size="sm" variant="outline" onClick={() => onEditar(kpi)} title="Editar definição/meta">
-                        <Pencil size={13} />
-                      </Button>
-                    )}
-                  </div>
-                );
-              })()}
+              {/* Origem do dado · indica onde preencher (modulo) ou se e automatico */}
+              <OrigemDado kpi={kpi} podeEditar={podeEditar} onEditar={onEditar} />
             </div>
           );
         })}
@@ -485,3 +411,104 @@ function SecaoPeriodicidade({ periodicidade, kpis, statusKpi, ultimoRegPorIndica
     </section>
   );
 }
+
+// ============================================================================
+// OrigemDado · indica em 1 card onde o dado e preenchido
+//   - fonte_auto coletor: AUTOMATICO (verde claro)
+//   - dado_tipo nao-manual: AUTO via modulo (link)
+//   - dado_tipo manual: vai pra /dados-brutos (link) OU pra modulo X (link)
+// ============================================================================
+const MODULO_POR_DADO_TIPO = {
+  // Cultos
+  frequencia_culto: { titulo: 'Cultos',          path: '/cultos' },
+  conversoes:       { titulo: 'Visitantes',      path: '/visitantes' },
+  batismos:         { titulo: 'Batismo',         path: '/batismo' },
+  // Voluntariado
+  voluntarios_ativos:      { titulo: 'Voluntariado', path: '/voluntariado' },
+  voluntarios_inativos_3m: { titulo: 'Voluntariado', path: '/voluntariado' },
+  voluntarios_recuperados: { titulo: 'Voluntariado', path: '/voluntariado' },
+  voluntarios_checkin:     { titulo: 'Voluntariado', path: '/voluntariado' },
+  voluntarios_treinamento: { titulo: 'Voluntariado', path: '/voluntariado' },
+  voluntarios_alocados:    { titulo: 'Voluntariado', path: '/voluntariado' },
+  // Generosidade
+  doacoes_valor:        { titulo: 'Generosidade', path: '/generosidade' },
+  doadores_count:       { titulo: 'Generosidade', path: '/generosidade' },
+  doadores_recorrentes: { titulo: 'Generosidade', path: '/generosidade' },
+  doacoes_qualidade:    { titulo: 'Generosidade', path: '/generosidade' },
+  // NEXT
+  frequencia_next:        { titulo: 'NEXT',     path: '/next' },
+  inscricoes_jornada180:  { titulo: 'Jornada 180', path: '/jornada180' },
+  // Grupos
+  frequencia_grupos: { titulo: 'Grupos',     path: '/grupos' },
+  grupos_ativos:     { titulo: 'Grupos',     path: '/grupos' },
+  lideres_grupos:    { titulo: 'Supervisao Grupos', path: '/grupos/supervisao' },
+  // Devocional
+  devocionais: { titulo: 'Devocional', path: '/devocional' },
+  // NPS · sempre via modulo NPS
+  nps_geral:       { titulo: 'NPS', path: '/nps' },
+  nps_next:        { titulo: 'NPS', path: '/nps' },
+  nps_lideres:     { titulo: 'NPS', path: '/nps' },
+  nps_voluntarios: { titulo: 'NPS', path: '/nps' },
+  nps_culto:       { titulo: 'NPS', path: '/nps' },
+};
+
+function OrigemDado({ kpi, podeEditar, onEditar }) {
+  const dadoTipo = kpi.formula_config?.dado_tipo;
+  const fonteAuto = kpi.fonte_auto;
+  const dadoTipoManual = !!kpi.dado_tipo_manual;
+  const moduloInfo = dadoTipo && MODULO_POR_DADO_TIPO[dadoTipo];
+
+  // CASO 1 · KPI com auto-collector (cultos.*, voluntariado.*, etc) ou
+  //          dado_tipo nao-manual (vem direto do modulo via /api)
+  const isAutomatico = (!!fonteAuto && !dadoTipo) || (!!dadoTipo && !dadoTipoManual);
+  if (isAutomatico) {
+    return (
+      <div style={{ marginTop: 'auto', padding: '8px 10px', background: C.primaryBg, borderRadius: 6 }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 6 }}>
+          <div style={{ fontSize: 10, fontWeight: 700, color: C.primary, textTransform: 'uppercase', letterSpacing: 0.5 }}>
+            Automatico
+          </div>
+          {moduloInfo && (
+            <a href={moduloInfo.path} style={{ fontSize: 10, color: C.primary, fontWeight: 600, textDecoration: 'none' }}>
+              Ver {moduloInfo.titulo} →
+            </a>
+          )}
+        </div>
+        <div style={{ fontSize: 10, color: C.t3, marginTop: 2 }}>
+          {moduloInfo ? `Sobe via modulo ${moduloInfo.titulo}` : 'Sobe via outro modulo'}
+        </div>
+        {podeEditar && (
+          <button onClick={() => onEditar(kpi)}
+            style={{ marginTop: 6, fontSize: 10, background: 'none', border: 'none', color: C.t3, cursor: 'pointer', padding: 0, textDecoration: 'underline' }}>
+            Editar meta
+          </button>
+        )}
+      </div>
+    );
+  }
+
+  // CASO 2 · KPI manual · indica modulo OU /dados-brutos
+  const destino = moduloInfo || { titulo: 'Dados Brutos', path: '/dados-brutos' };
+  return (
+    <div style={{ marginTop: 'auto', padding: '8px 10px', background: 'var(--cbrio-input-bg)', borderRadius: 6 }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 6 }}>
+        <div style={{ fontSize: 10, fontWeight: 700, color: '#F59E0B', textTransform: 'uppercase', letterSpacing: 0.5 }}>
+          Manual
+        </div>
+        <a href={destino.path} style={{ fontSize: 10, color: C.primary, fontWeight: 700, textDecoration: 'none' }}>
+          Lançar em {destino.titulo} →
+        </a>
+      </div>
+      <div style={{ fontSize: 10, color: C.t3, marginTop: 2 }}>
+        Preencha o dado no modulo · KPI calcula sozinho
+      </div>
+      {podeEditar && (
+        <button onClick={() => onEditar(kpi)}
+          style={{ marginTop: 6, fontSize: 10, background: 'none', border: 'none', color: C.t3, cursor: 'pointer', padding: 0, textDecoration: 'underline' }}>
+          Editar meta
+        </button>
+      )}
+    </div>
+  );
+}
+
