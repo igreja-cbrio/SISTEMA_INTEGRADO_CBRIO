@@ -1,10 +1,18 @@
 // ============================================================================
 // /gestao — Painel administrativo do PMO (Marcos + Matheus + Eduardo)
 //
-// 3 abas:
-//   - Pulso        → quem esta atrasado, KPIs cronicamente vermelhos
-//   - Configurar   → atalhos para Cruzamentos, Regras de Notificacao
-//   - Saude        → meta-monitoramento (KPIs sem meta/dono/registro)
+// 4 abas (consolidacao Maio/2026):
+//   - Diagnostico  → fusao Pulso + Saude (lideres pendentes + KPIs criticos +
+//                    saude por area + KPIs sem meta/dono/registro)
+//   - Estrutura OKR → hierarquia Direcionador → Objetivo → KR → KPI
+//   - Operacional   → SLA / NPS / urgencia das solicitacoes
+//   - Configurar    → Cruzamentos, Regras de Notificacao, Metas Institucionais
+//
+// Redirecionamentos das abas antigas:
+//   ?aba=pulso    → diagnostico
+//   ?aba=saude    → diagnostico
+//   ?aba=metas    → configurar
+//   ?aba=painel_adm → operacional
 // ============================================================================
 
 import { useState, useEffect, useCallback } from 'react';
@@ -29,19 +37,36 @@ const C = {
 };
 
 const TABS = [
-  { key: 'pulso',     label: 'Pulso',         Icon: Activity },
-  { key: 'estrutura', label: 'Estrutura OKR', Icon: Target },
-  { key: 'metas',     label: 'Metas Institucionais', Icon: Flag },
-  { key: 'painel_adm', label: 'Painel Adm',   Icon: Building2 },
-  { key: 'configurar', label: 'Configurar',   Icon: Settings },
-  { key: 'saude',     label: 'Saude',         Icon: Shield },
+  { key: 'diagnostico', label: 'Diagnóstico', Icon: Activity },
+  { key: 'estrutura',   label: 'Estrutura OKR', Icon: Target },
+  { key: 'operacional', label: 'Operacional',  Icon: Building2 },
+  { key: 'configurar',  label: 'Configurar',    Icon: Settings },
 ];
+
+// Redirecionamentos das abas antigas
+const TABS_ANTIGAS = {
+  pulso: 'diagnostico',
+  saude: 'diagnostico',
+  metas: 'configurar',
+  painel_adm: 'operacional',
+};
 
 export default function Gestao() {
   const { profile } = useAuth();
   const isAdmin = ['admin', 'diretor'].includes(profile?.role);
   const [searchParams, setSearchParams] = useSearchParams();
-  const aba = searchParams.get('aba') || 'pulso';
+  // Normaliza aba antiga pra nova
+  const abaRaw = searchParams.get('aba') || 'diagnostico';
+  const aba = TABS_ANTIGAS[abaRaw] || abaRaw;
+  // Se URL tinha aba antiga, atualiza pra nova (transparente)
+  useEffect(() => {
+    if (TABS_ANTIGAS[abaRaw]) {
+      const next = new URLSearchParams(searchParams);
+      next.set('aba', TABS_ANTIGAS[abaRaw]);
+      setSearchParams(next, { replace: true });
+    }
+  }, [abaRaw, searchParams, setSearchParams]);
+
   const setAba = (a) => {
     const next = new URLSearchParams(searchParams);
     next.set('aba', a);
@@ -90,15 +115,225 @@ export default function Gestao() {
         })}
       </div>
 
-      {aba === 'pulso' && <AbaPulso />}
+      {aba === 'diagnostico' && <AbaDiagnostico />}
       {aba === 'estrutura' && <EstruturaOkr embedded />}
-      {aba === 'metas' && <AbaMetasInstitucionais />}
-      {aba === 'painel_adm' && <AbaPainelAdm />}
+      {aba === 'operacional' && <AbaPainelAdm />}
       {aba === 'configurar' && <AbaConfigurar />}
-      {aba === 'saude' && <AbaSaude />}
     </div>
   );
 }
+
+// ============================================================================
+// ABA · DIAGNOSTICO (fusao Pulso + Saude)
+// Carrega ambos endpoints em paralelo e renderiza em secoes.
+// ============================================================================
+function AbaDiagnostico() {
+  const [pulso, setPulso] = useState(null);
+  const [saude, setSaude] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [detalheKpiId, setDetalheKpiId] = useState(null);
+
+  const carregar = useCallback(async () => {
+    setLoading(true);
+    try {
+      const [p, s] = await Promise.all([
+        gestaoApi.pulso().catch(() => null),
+        gestaoApi.saude().catch(() => null),
+      ]);
+      setPulso(p);
+      setSaude(s);
+    } catch (e) {
+      toast.error(formatErro(e, 'diagnostico'));
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+  useEffect(() => { carregar(); }, [carregar]);
+
+  const cobrar = async (lider) => {
+    if (!window.confirm(`Enviar lembrete pra ${lider.nome}?`)) return;
+    try {
+      await gestaoApi.cobrar(lider.id);
+      toast.success(`Lembrete enviado para ${lider.nome}`);
+    } catch (e) {
+      toast.error(formatErro(e) + ' (lider tem profile vinculado?)');
+    }
+  };
+
+  if (loading) return <Loading />;
+  if (!pulso && !saude) return null;
+
+  return (
+    <>
+      {/* Stats globais · fusao Pulso + Saude */}
+      <Stats stats={[
+        { label: 'KPIs ativos', value: pulso?.total_kpis_ativos ?? saude?.total_kpis_ativos ?? 0, cor: C.text },
+        { label: 'KPIs criticos', value: pulso?.cronicamente_vermelhos?.length || 0, cor: '#EF4444' },
+        { label: 'Lideres com pendencia', value: (pulso?.lideres || []).filter(l => l.criticos > 0 || l.atrasados > 0).length, cor: '#EF4444' },
+        { label: 'Sem registro 60d', value: saude?.sem_registro_60d?.total || 0, cor: '#F59E0B' },
+        { label: 'Sem meta', value: saude?.sem_meta?.total || 0, cor: '#9CA3AF' },
+        { label: 'Sem dono', value: saude?.sem_dono?.total || 0, cor: '#9CA3AF' },
+      ]} />
+
+      {/* SECAO 1 · STATUS OPERACIONAL (do Pulso) */}
+      <h3 style={hSec}>Status operacional</h3>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(440px, 1fr))', gap: 16, marginBottom: 24 }}>
+        <Card title="Lideres com pendencias" subtitle="Ordenado por gravidade (criticos > atrasados > sem dado)">
+          {!pulso?.lideres?.length ? (
+            <Vazio>Nenhum lider com pendencia.</Vazio>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+              {pulso.lideres.slice(0, 12).map(l => (
+                <div key={l.id} style={{
+                  display: 'flex', alignItems: 'center', gap: 12,
+                  padding: '10px 12px', background: 'var(--cbrio-input-bg)', borderRadius: 8, minHeight: 52,
+                }}>
+                  <div style={{
+                    width: 34, height: 34, borderRadius: '50%',
+                    background: C.primaryBg, color: C.primaryDark,
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    fontSize: 13, fontWeight: 700, flexShrink: 0,
+                  }}>{(l.nome || '?').charAt(0).toUpperCase()}</div>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: 13, fontWeight: 600, color: C.text, lineHeight: 1.3 }}>{l.nome}</div>
+                    <div style={{ fontSize: 10, color: C.t3, marginTop: 2, lineHeight: 1.4 }}>
+                      {l.cargo || ''}{l.area ? ` · ${l.area}` : ''} · {l.total_kpis} KPIs · {l.percentual_em_dia}% em dia
+                    </div>
+                  </div>
+                  <div style={{ display: 'flex', gap: 4, flexShrink: 0 }}>
+                    {l.criticos > 0 && <Badge cor="#EF4444" label={`${l.criticos}c`} title={`${l.criticos} criticos`} />}
+                    {l.atrasados > 0 && <Badge cor="#F59E0B" label={`${l.atrasados}a`} title={`${l.atrasados} atrasados`} />}
+                    {l.sem_dado > 0 && <Badge cor="#9CA3AF" label={`${l.sem_dado}?`} title={`${l.sem_dado} sem dado`} />}
+                  </div>
+                  <button onClick={() => cobrar(l)} style={btnSm} title="Enviar lembrete">
+                    <Bell size={12} />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </Card>
+
+        <Card title="KPIs cronicamente criticos" subtitle="Indicadores em vermelho que precisam de atencao da diretoria">
+          {!pulso?.cronicamente_vermelhos?.length ? (
+            <Vazio>Nenhum KPI cronicamente vermelho.</Vazio>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+              {pulso.cronicamente_vermelhos.slice(0, 10).map(k => (
+                <div key={k.kpi_id} onClick={() => setDetalheKpiId(k.kpi_id)}
+                  style={{
+                    display: 'flex', alignItems: 'center', gap: 12,
+                    padding: '10px 12px', background: 'var(--cbrio-input-bg)', borderRadius: 8,
+                    cursor: 'pointer', minHeight: 52, transition: 'background 0.15s',
+                  }}
+                  onMouseEnter={e => e.currentTarget.style.background = 'var(--cbrio-card)'}
+                  onMouseLeave={e => e.currentTarget.style.background = 'var(--cbrio-input-bg)'}>
+                  <div style={{
+                    width: 34, height: 34, borderRadius: '50%',
+                    background: '#FEE2E2', color: '#EF4444',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
+                  }}><TrendingDown size={16} /></div>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: 13, fontWeight: 600, color: C.text, lineHeight: 1.3, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{k.indicador}</div>
+                    <div style={{ fontSize: 10, color: C.t3, textTransform: 'capitalize', marginTop: 2 }}>
+                      {k.area} · {k.percentual_meta != null ? `${k.percentual_meta}% da meta` : 'sem dado'}
+                    </div>
+                  </div>
+                  {k.is_okr && <Badge cor="#B45309" label="OKR" bg="#FEF3C7" />}
+                  <ChevronRight size={14} style={{ color: C.t3, flexShrink: 0 }} />
+                </div>
+              ))}
+            </div>
+          )}
+        </Card>
+
+        <Card title="Saude por area" subtitle="Percentual de KPIs em dia em cada area" full>
+          {!pulso?.areas?.length ? <Vazio>Nenhuma area cadastrada.</Vazio> : (
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))', gap: 10 }}>
+              {pulso.areas.map(a => {
+                const cor = a.percentual_em_dia >= 70 ? '#10B981' : a.percentual_em_dia >= 40 ? '#F59E0B' : '#EF4444';
+                return (
+                  <div key={a.area} style={{
+                    padding: 14, background: 'var(--cbrio-input-bg)', borderRadius: 8,
+                    borderLeft: `3px solid ${cor}`,
+                  }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 8, marginBottom: 8 }}>
+                      <strong style={{ fontSize: 13, textTransform: 'capitalize', color: C.text }}>{a.area}</strong>
+                      <span style={{ fontSize: 22, fontWeight: 800, color: cor, lineHeight: 1 }}>{a.percentual_em_dia}%</span>
+                    </div>
+                    <div style={{ fontSize: 10, color: C.t3, display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                      <span><strong style={{ color: '#10B981' }}>{a.em_dia}</strong> dia</span>
+                      <span><strong style={{ color: '#F59E0B' }}>{a.atrasados}</strong> atras</span>
+                      <span><strong style={{ color: '#EF4444' }}>{a.criticos}</strong> crit</span>
+                      <span><strong style={{ color: '#9CA3AF' }}>{a.sem_dado}</strong> ?</span>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </Card>
+      </div>
+
+      {/* SECAO 2 · QUALIDADE DE CADASTRO (do Saude) */}
+      <h3 style={hSec}>Qualidade do cadastro</h3>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(380px, 1fr))', gap: 16 }}>
+        {saude && (<>
+          <ListaSaude titulo="Sem meta definida"
+            subtitulo="KPIs que precisam de uma meta antes de poder cobrar"
+            items={saude.sem_meta.items} cor="#EF4444" onAbrirKpi={setDetalheKpiId} />
+          <ListaSaude titulo="Sem dono atribuido"
+            subtitulo="KPIs sem lider responsavel — ninguem e cobrado"
+            items={saude.sem_dono.items} cor="#F59E0B" onAbrirKpi={setDetalheKpiId} />
+          <ListaSaude titulo="Sem objetivo geral vinculado"
+            subtitulo="Nao alimentam cascata automatica" items={saude.sem_objetivo.items} cor="#3B82F6" onAbrirKpi={setDetalheKpiId} />
+          <ListaSaude titulo="Sem valores da Jornada"
+            subtitulo="Nao aparecem na matriz nem nas mandalas" items={saude.sem_valores.items} cor="#8B5CF6" onAbrirKpi={setDetalheKpiId} />
+          <ListaSaude titulo="Sem registro nos ultimos 60 dias"
+            subtitulo="KPIs vivos mas que ninguem preenche" items={saude.sem_registro_60d.items} cor="#EF4444" onAbrirKpi={setDetalheKpiId} />
+          <Card title="Cobertura da matriz Valor × Area" subtitle="Quais valores cada area ja tem KPI">
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+              {saude.matriz_cobertura.map(c => (
+                <div key={c.area} style={{ padding: 10, background: 'var(--cbrio-input-bg)', borderRadius: 6 }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 6 }}>
+                    <strong style={{ fontSize: 12, textTransform: 'capitalize' }}>{c.nome}</strong>
+                    <span style={{ fontSize: 10, color: c.completo ? '#10B981' : '#F59E0B', fontWeight: 700 }}>
+                      {c.valores_cobertos.length}/5 valores
+                    </span>
+                  </div>
+                  {c.valores_faltantes.length > 0 && (
+                    <div style={{ fontSize: 10, color: C.t3, marginTop: 4 }}>
+                      Faltam: <strong>{c.valores_faltantes.join(', ')}</strong>
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          </Card>
+          {saude.objetivos_sem_kpis.total > 0 && (
+            <ListaSaude titulo="Objetivos sem KPIs"
+              subtitulo="Objetivos cadastrados que ninguem mede"
+              items={saude.objetivos_sem_kpis.items} cor="#9CA3AF"
+              cols={['nome']} idField="id" />
+          )}
+        </>)}
+      </div>
+
+      <KpiDetalheModal
+        open={!!detalheKpiId}
+        kpiId={detalheKpiId}
+        onClose={() => setDetalheKpiId(null)}
+        onUpdated={carregar}
+        openInEdit
+      />
+    </>
+  );
+}
+
+const hSec = {
+  fontSize: 14, fontWeight: 700, color: 'var(--cbrio-text)',
+  margin: '8px 0 12px', textTransform: 'uppercase', letterSpacing: 0.5,
+};
 
 // ============================================================================
 // ABA 1 · PULSO
@@ -394,40 +629,48 @@ function AbaConfigurar() {
   ];
 
   return (
-    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 14 }}>
-      {items.map(item => {
-        const Icon = item.Icon;
-        return (
-          <button
-            key={item.titulo}
-            onClick={() => navigate(item.path)}
-            style={{
-              background: C.card, border: `1px solid ${C.border}`,
-              borderRadius: 12, padding: 18, cursor: 'pointer',
-              textAlign: 'left',
-              display: 'flex', alignItems: 'flex-start', gap: 14,
-              transition: 'border-color 0.15s',
-            }}
-            onMouseEnter={e => e.currentTarget.style.borderColor = item.cor}
-            onMouseLeave={e => e.currentTarget.style.borderColor = C.border}
-          >
-            <div style={{
-              width: 40, height: 40, borderRadius: 10,
-              background: item.cor + '20', color: item.cor,
-              display: 'flex', alignItems: 'center', justifyContent: 'center',
-              flexShrink: 0,
-            }}>
-              <Icon size={18} />
-            </div>
-            <div style={{ flex: 1 }}>
-              <h3 style={{ fontSize: 14, fontWeight: 700, color: C.text, margin: 0 }}>{item.titulo}</h3>
-              <p style={{ fontSize: 11, color: C.t3, marginTop: 4, lineHeight: 1.4 }}>{item.desc}</p>
-            </div>
-            <ArrowRight size={16} style={{ color: C.t3, flexShrink: 0, alignSelf: 'center' }} />
-          </button>
-        );
-      })}
-    </div>
+    <>
+      {/* Atalhos */}
+      <h3 style={hSec}>Ferramentas</h3>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 14, marginBottom: 24 }}>
+        {items.map(item => {
+          const Icon = item.Icon;
+          return (
+            <button
+              key={item.titulo}
+              onClick={() => navigate(item.path)}
+              style={{
+                background: C.card, border: `1px solid ${C.border}`,
+                borderRadius: 12, padding: 18, cursor: 'pointer',
+                textAlign: 'left',
+                display: 'flex', alignItems: 'flex-start', gap: 14,
+                transition: 'border-color 0.15s',
+              }}
+              onMouseEnter={e => e.currentTarget.style.borderColor = item.cor}
+              onMouseLeave={e => e.currentTarget.style.borderColor = C.border}
+            >
+              <div style={{
+                width: 40, height: 40, borderRadius: 10,
+                background: item.cor + '20', color: item.cor,
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                flexShrink: 0,
+              }}>
+                <Icon size={18} />
+              </div>
+              <div style={{ flex: 1 }}>
+                <h3 style={{ fontSize: 14, fontWeight: 700, color: C.text, margin: 0 }}>{item.titulo}</h3>
+                <p style={{ fontSize: 11, color: C.t3, marginTop: 4, lineHeight: 1.4 }}>{item.desc}</p>
+              </div>
+              <ArrowRight size={16} style={{ color: C.t3, flexShrink: 0, alignSelf: 'center' }} />
+            </button>
+          );
+        })}
+      </div>
+
+      {/* Metas Institucionais embutidas */}
+      <h3 style={hSec}>Metas Institucionais</h3>
+      <AbaMetasInstitucionais />
+    </>
   );
 }
 
