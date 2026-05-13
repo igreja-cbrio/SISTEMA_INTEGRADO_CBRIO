@@ -479,6 +479,18 @@ Para alterar: `PUT /api/cycles/area-responsaveis/:area` com
 o novo responsável; tarefas já criadas não são afetadas
 retroativamente.
 
+## Grupos · hierarquia e supervisao
+
+Modulo Grupos tem hierarquia formal de papeis (visitante → frequentador
+→ lider_treinamento → lider → co_lider → supervisor → coordenador) e
+fluxo de supervisao (visitas + observacoes mensais por grupo).
+
+Tela: `/grupos/supervisao` (em `src/pages/ministerial/GruposSupervisao.jsx`).
+
+**Documentação completa** com checklist de ativação + queries de
+atribuição: `docs/modulo-grupos-supervisao.md`. Consultar antes de
+popular dados reais de função/supervisor pra verificar permissões.
+
 ## Revisao Estrategica — edicao direta com impacto
 
 Modulo para revisar projetos e marcos de expansao com visualizacao de
