@@ -225,6 +225,40 @@ const COLLECTORS = {
     return { valor: pct, observacao: `${com2mais} de ${ids.length} membros com 2+ valores` };
   },
 
+  // ── Cuidados · Devocional + Jornada 180 inscricoes ──
+  // Devocional: count distinct membros que registraram pelo menos 1 devocional
+  // no periodo (do modulo de Cuidados → aba Devocional, tabela mem_devocionais)
+  'cuidados.devocional_membros': async ({ inicio, fim }) => {
+    const { data } = await supabase
+      .from('mem_devocionais')
+      .select('membro_id, concluida')
+      .eq('concluida', true)
+      .gte('data_devocional', inicio)
+      .lt('data_devocional', fim);
+    const distinct = new Set((data || []).map(d => d.membro_id));
+    return {
+      valor: distinct.size,
+      observacao: `${distinct.size} membros fizeram pelo menos 1 devocional no periodo`,
+    };
+  },
+
+  // Jornada 180 inscricoes: count distinct membros na etapa 1 do periodo
+  // (primeiro encontro = "inscricao" funcional)
+  'cuidados.jornada180_inscricoes': async ({ inicio, fim }) => {
+    const { data } = await supabase
+      .from('cui_jornada180')
+      .select('membro_id, nome')
+      .eq('etapa', 1)
+      .gte('data_encontro', inicio)
+      .lt('data_encontro', fim);
+    // Conta por membro_id quando existe, senao por nome (visitantes)
+    const distinct = new Set((data || []).map(d => d.membro_id || `nome:${d.nome}`));
+    return {
+      valor: distinct.size,
+      observacao: `${distinct.size} pessoas iniciaram a Jornada 180 (etapa 1)`,
+    };
+  },
+
   // ── Grupos ──
   'grupos.total_grupos': async () => {
     const { count } = await supabase.from('mem_grupos').select('id', { count: 'exact', head: true }).eq('ativo', true);
