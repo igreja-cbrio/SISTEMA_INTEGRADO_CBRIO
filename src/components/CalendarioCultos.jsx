@@ -5,7 +5,9 @@
 // ============================================================================
 
 import { useState, useEffect, useMemo, useCallback } from 'react';
-import { cultos as cultosApi } from '../api';
+import { kpis as kpisApi } from '../api';
+
+const cultosApi = kpisApi.cultos;
 import { Calendar, ChevronLeft, ChevronRight, CheckCircle2, AlertCircle, X, Save, Tv, Users, Sparkles } from 'lucide-react';
 import { toast } from 'sonner';
 import { formatErro } from '../lib/formatErro';
