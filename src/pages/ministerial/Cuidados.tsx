@@ -221,8 +221,12 @@ export default function Cuidados() {
   const [convertidos, setConvertidos] = useState<any[]>([]);
   const [agregado, setAgregado] = useState<any[]>([]);
   const [agMes, setAgMes] = useState(new Date().toISOString().slice(0, 7));
+  const [agArea, setAgArea] = useState('igreja');
   const [agAcons, setAgAcons] = useState('');
   const [agCapel, setAgCapel] = useState('');
+  const [agDevoc, setAgDevoc] = useState('');
+  const [agJorn, setAgJorn] = useState('');
+  const [agConvAtend, setAgConvAtend] = useState('');
 
   const [modalAcomp, setModalAcomp] = useState(false);
   const [modalJornada, setModalJornada] = useState(false);
@@ -240,10 +244,12 @@ export default function Cuidados() {
         cuidadosApi.agregado.list(agMes).catch(() => []),
       ]);
       setDash(d); setAcomp(a); setJornada(j); setConvertidos(c); setAgregado(ag);
-      const ac = (ag || []).find((r: any) => r.tipo === 'aconselhamento');
-      const cp = (ag || []).find((r: any) => r.tipo === 'capelania');
-      setAgAcons(ac ? String(ac.quantidade) : '');
-      setAgCapel(cp ? String(cp.quantidade) : '');
+      const findT = (t: string) => (ag || []).find((r: any) => r.tipo === t);
+      setAgAcons(findT('aconselhamento') ? String(findT('aconselhamento').quantidade) : '');
+      setAgCapel(findT('capelania') ? String(findT('capelania').quantidade) : '');
+      setAgDevoc(findT('devocional') ? String(findT('devocional').quantidade) : '');
+      setAgJorn(findT('jornada180_inscricoes') ? String(findT('jornada180_inscricoes').quantidade) : '');
+      setAgConvAtend(findT('novos_convertidos_atend') ? String(findT('novos_convertidos_atend').quantidade) : '');
     } finally { setLoading(false); }
   }
 
@@ -253,16 +259,18 @@ export default function Cuidados() {
   useEffect(() => {
     cuidadosApi.agregado.list(agMes).then((ag: any) => {
       setAgregado(ag);
-      const ac = (ag || []).find((r: any) => r.tipo === 'aconselhamento');
-      const cp = (ag || []).find((r: any) => r.tipo === 'capelania');
-      setAgAcons(ac ? String(ac.quantidade) : '');
-      setAgCapel(cp ? String(cp.quantidade) : '');
+      const findT = (t: string) => (ag || []).find((r: any) => r.tipo === t);
+      setAgAcons(findT('aconselhamento') ? String(findT('aconselhamento').quantidade) : '');
+      setAgCapel(findT('capelania') ? String(findT('capelania').quantidade) : '');
+      setAgDevoc(findT('devocional') ? String(findT('devocional').quantidade) : '');
+      setAgJorn(findT('jornada180_inscricoes') ? String(findT('jornada180_inscricoes').quantidade) : '');
+      setAgConvAtend(findT('novos_convertidos_atend') ? String(findT('novos_convertidos_atend').quantidade) : '');
     }).catch(() => {});
   }, [agMes]);
 
-  async function salvarAgregado(tipo: 'aconselhamento' | 'capelania', q: string) {
+  async function salvarAgregado(tipo: string, q: string) {
     try {
-      await cuidadosApi.agregado.upsert({ mes: agMes, tipo, quantidade: Number(q) || 0 });
+      await cuidadosApi.agregado.upsert({ mes: agMes, tipo, quantidade: Number(q) || 0, area: agArea });
       toast.success('Salvo');
       loadAll();
     } catch (e: any) { toast.error(e.message); }
@@ -290,7 +298,7 @@ export default function Cuidados() {
           <TabsTrigger value="acomp">Acompanhamentos</TabsTrigger>
           <TabsTrigger value="jornada">Jornada 180</TabsTrigger>
           <TabsTrigger value="convertidos">Convertidos</TabsTrigger>
-          <TabsTrigger value="agregado">Aconselhamento / Capelania</TabsTrigger>
+          <TabsTrigger value="agregado">Mensal / Agregado</TabsTrigger>
           <TabsTrigger value="tarefas">Tarefas</TabsTrigger>
         </TabsList>
 
@@ -419,14 +427,26 @@ export default function Cuidados() {
           </div>
         </TabsContent>
 
-        {/* Agregado */}
+        {/* Agregado · totais mensais por tipo */}
         <TabsContent value="agregado" className="space-y-4">
-          <p className="text-sm text-muted-foreground">Registre o total mensal de atendimentos sem identificar pessoas. Estes dados alimentam diretamente o KPI mensal.</p>
-          <div className="flex items-center gap-3">
+          <p className="text-sm text-muted-foreground">Registre os totais mensais por tipo. Alimentam direto os KPIs (Aconselhamento, Capelania, Devocional, Jornada 180 e Convertidos atendidos).</p>
+          <div className="flex items-center gap-3 flex-wrap">
             <Label>Mês:</Label>
             <Input type="month" value={agMes} onChange={e => setAgMes(e.target.value)} className="w-44" />
+            <Label>Área:</Label>
+            <Select value={agArea} onValueChange={setAgArea}>
+              <SelectTrigger className="w-44"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="igreja">Igreja (geral)</SelectItem>
+                <SelectItem value="kids">Kids</SelectItem>
+                <SelectItem value="ami">AMI</SelectItem>
+                <SelectItem value="bridge">Bridge</SelectItem>
+                <SelectItem value="sede">Sede</SelectItem>
+                <SelectItem value="online">Online</SelectItem>
+              </SelectContent>
+            </Select>
           </div>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
             <div className="rounded-lg border border-border bg-card p-4 space-y-3">
               <div className="flex items-center gap-2"><BookOpen className="h-4 w-4 text-info" /><h3 className="font-semibold">Aconselhamentos</h3></div>
               <Input type="number" min={0} value={agAcons} onChange={e => setAgAcons(e.target.value)} placeholder="Quantidade" />
@@ -436,6 +456,21 @@ export default function Cuidados() {
               <div className="flex items-center gap-2"><HandHelping className="h-4 w-4 text-warning" /><h3 className="font-semibold">Capelania</h3></div>
               <Input type="number" min={0} value={agCapel} onChange={e => setAgCapel(e.target.value)} placeholder="Quantidade" />
               <Button size="sm" onClick={() => salvarAgregado('capelania', agCapel)}>Salvar</Button>
+            </div>
+            <div className="rounded-lg border border-border bg-card p-4 space-y-3">
+              <div className="flex items-center gap-2"><BookOpen className="h-4 w-4" style={{ color: '#8b5cf6' }} /><h3 className="font-semibold">Devocional</h3></div>
+              <Input type="number" min={0} value={agDevoc} onChange={e => setAgDevoc(e.target.value)} placeholder="Pessoas fazendo devocional" />
+              <Button size="sm" onClick={() => salvarAgregado('devocional', agDevoc)}>Salvar</Button>
+            </div>
+            <div className="rounded-lg border border-border bg-card p-4 space-y-3">
+              <div className="flex items-center gap-2"><Users className="h-4 w-4" style={{ color: '#ef476f' }} /><h3 className="font-semibold">Jornada 180 · Inscrições</h3></div>
+              <Input type="number" min={0} value={agJorn} onChange={e => setAgJorn(e.target.value)} placeholder="Inscritos no semestre" />
+              <Button size="sm" onClick={() => salvarAgregado('jornada180_inscricoes', agJorn)}>Salvar</Button>
+            </div>
+            <div className="rounded-lg border border-border bg-card p-4 space-y-3">
+              <div className="flex items-center gap-2"><UserCheck className="h-4 w-4 text-primary" /><h3 className="font-semibold">Convertidos atendidos</h3></div>
+              <Input type="number" min={0} value={agConvAtend} onChange={e => setAgConvAtend(e.target.value)} placeholder="Atendidos na semana da conversão" />
+              <Button size="sm" onClick={() => salvarAgregado('novos_convertidos_atend', agConvAtend)}>Salvar</Button>
             </div>
           </div>
           {agregado.length > 0 && (

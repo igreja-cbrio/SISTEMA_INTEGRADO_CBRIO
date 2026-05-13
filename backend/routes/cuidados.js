@@ -287,13 +287,26 @@ router.get('/agregado', async (req, res) => {
   }
 });
 
+// Mapeia tipo do agregado pro tipo correspondente em dados_brutos (pra KPI)
+const TIPO_AGREGADO_DADO_BRUTO = {
+  aconselhamento:         'solicitacoes_aconselh',
+  capelania:              'solicitacoes_capelania',
+  devocional:             'devocionais',
+  jornada180_inscricoes:  'inscricoes_jornada180',
+  novos_convertidos_atend:'novos_convertidos_atend',
+};
+const TIPOS_AGREGADO_VALIDOS = Object.keys(TIPO_AGREGADO_DADO_BRUTO);
+
 router.post('/agregado', async (req, res) => {
   try {
-    const { mes, tipo, quantidade, observacoes } = req.body;
+    const { mes, tipo, quantidade, observacoes, area } = req.body;
     const mesIso = mes ? `${mes}-01` : new Date().toISOString().slice(0, 7) + '-01';
-    if (!['aconselhamento', 'capelania'].includes(tipo)) {
-      return res.status(400).json({ error: "tipo deve ser 'aconselhamento' ou 'capelania'" });
+    if (!TIPOS_AGREGADO_VALIDOS.includes(tipo)) {
+      return res.status(400).json({
+        error: `tipo deve ser um de: ${TIPOS_AGREGADO_VALIDOS.join(', ')}`,
+      });
     }
+    const areaNormalizada = (area || 'igreja').toLowerCase();
 
     // Upsert manual: deletar existente do mesmo (mes,tipo,responsavel) e inserir
     await supabase
@@ -316,6 +329,27 @@ router.post('/agregado', async (req, res) => {
       .select()
       .single();
     if (error) throw error;
+
+    // Espelha em dados_brutos pro KPI calcular sozinho (sem necessidade de UI separada)
+    const tipoDadoBruto = TIPO_AGREGADO_DADO_BRUTO[tipo];
+    if (tipoDadoBruto) {
+      try {
+        await supabase
+          .from('dados_brutos')
+          .upsert({
+            tipo_id: tipoDadoBruto,
+            area: areaNormalizada,
+            data: mesIso,
+            valor: Number(quantidade) || 0,
+            contexto: { origem: 'cuidados.agregado', responsavel_id: req.user.userId },
+            observacao: observacoes || null,
+            origem: 'auto',
+          }, { onConflict: 'tipo_id,area,data,contexto' });
+      } catch (eMir) {
+        console.warn('[cuidados/agregado] mirror dados_brutos falhou:', eMir.message);
+      }
+    }
+
     res.status(201).json(data);
   } catch (e) {
     res.status(500).json({ error: e.message });

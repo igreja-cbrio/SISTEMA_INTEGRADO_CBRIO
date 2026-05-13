@@ -437,13 +437,16 @@ const MODULO_POR_DADO_TIPO = {
   doacoes_qualidade:    { titulo: 'Generosidade', path: '/generosidade' },
   // NEXT
   frequencia_next:        { titulo: 'NEXT',     path: '/next' },
-  inscricoes_jornada180:  { titulo: 'Jornada 180', path: '/jornada180' },
+  // Cuidados (Jornada 180 inscricoes + Devocional + Capelania + Aconselhamento + Convertidos atendidos)
+  inscricoes_jornada180:  { titulo: 'Cuidados · Jornada 180', path: '/cuidados?tab=agregado' },
+  devocionais:            { titulo: 'Cuidados · Devocional',  path: '/cuidados?tab=agregado' },
+  solicitacoes_capelania: { titulo: 'Cuidados',  path: '/cuidados?tab=agregado' },
+  solicitacoes_aconselh:  { titulo: 'Cuidados',  path: '/cuidados?tab=agregado' },
+  novos_convertidos_atend:{ titulo: 'Cuidados',  path: '/cuidados?tab=agregado' },
   // Grupos
   frequencia_grupos: { titulo: 'Grupos',     path: '/grupos' },
   grupos_ativos:     { titulo: 'Grupos',     path: '/grupos' },
   lideres_grupos:    { titulo: 'Supervisao Grupos', path: '/grupos/supervisao' },
-  // Devocional
-  devocionais: { titulo: 'Devocional', path: '/devocional' },
   // NPS · sempre via modulo NPS
   nps_geral:       { titulo: 'NPS', path: '/nps' },
   nps_next:        { titulo: 'NPS', path: '/nps' },
