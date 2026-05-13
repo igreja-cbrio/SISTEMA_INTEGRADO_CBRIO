@@ -7,13 +7,16 @@ import { Input } from '../../components/ui/input';
 import { Label } from '../../components/ui/label';
 import { Textarea } from '../../components/ui/textarea';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '../../components/ui/dialog';
+import { Popover, PopoverContent, PopoverTrigger } from '../../components/ui/popover';
+import { Calendar as CalendarPicker } from '../../components/ui/calendar';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../../components/ui/table';
 import { Badge } from '../../components/ui/badge';
 import { StatisticsCard } from '../../components/ui/statistics-card';
+import { ptBR } from 'date-fns/locale';
 import {
   Calendar, Users, CheckCircle2, Clock, Plus, Loader2, Search, ChevronRight,
   Droplets, HandHeart, UsersRound, Wallet, X, AlertCircle, Phone, Mail, Copy,
-  Share2, MessageCircle, RefreshCw,
+  Share2, MessageCircle, RefreshCw, FileText, CalendarDays,
 } from 'lucide-react';
 import QRCode from 'qrcode';
 import { kpis as kpisApi } from '../../api';
@@ -21,7 +24,14 @@ import { toast } from 'sonner';
 
 const C = { primary: '#00B39D', info: '#3b82f6', warn: '#f59e0b', purple: '#8b5cf6', danger: '#ef4444' };
 
-type Evento = { id: string; data: string; titulo?: string; status: string; observacoes?: string; inscritos: number; checkins: number };
+type Evento = {
+  id: string; data: string; titulo?: string; status: string; observacoes?: string;
+  inscritos: number; checkins: number;
+  total_lista?: number | null;
+  presentes_impressa?: number | null;
+  presentes_manuscritos?: number | null;
+  arquivo_origem?: string | null;
+};
 type Inscricao = {
   id: string;
   evento_id?: string;
@@ -29,6 +39,7 @@ type Inscricao = {
   nome: string; sobrenome?: string;
   cpf?: string; telefone?: string; email?: string; data_nascimento?: string;
   observacoes?: string;
+  origem_lista?: 'impressa' | 'manuscrito' | null;
   ja_batizado?: boolean; ja_voluntario?: boolean; ja_doador?: boolean;
   check_in_at?: string | null;
   indicou_batismo?: boolean; indicou_servir?: boolean; indicou_grupo?: boolean; indicou_dizimo?: boolean;
@@ -154,6 +165,7 @@ function TabEventos({ onChanged }: { onChanged: () => void }) {
   const [eventos, setEventos] = useState<Evento[]>([]);
   const [loading, setLoading] = useState(true);
   const [autoCreating, setAutoCreating] = useState(false);
+  const [eventoSelecionado, setEventoSelecionado] = useState<Evento | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -213,15 +225,20 @@ function TabEventos({ onChanged }: { onChanged: () => void }) {
                 <TableHead className="text-center">Inscritos</TableHead>
                 <TableHead className="text-center">Check-ins</TableHead>
                 <TableHead className="text-center">% Comparecimento</TableHead>
+                <TableHead className="w-10"></TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {eventos.map(ev => {
                 const pct = ev.inscritos > 0 ? Math.round((ev.checkins / ev.inscritos) * 100) : 0;
                 return (
-                  <TableRow key={ev.id}>
+                  <TableRow
+                    key={ev.id}
+                    className="cursor-pointer hover:bg-muted/40 transition-colors"
+                    onClick={() => setEventoSelecionado(ev)}
+                  >
                     <TableCell>
-                      <p className="font-medium">{new Date(ev.data + 'T12:00:00').toLocaleDateString('pt-BR', { weekday: 'short', day: '2-digit', month: 'short' })}</p>
+                      <p className="font-medium">{new Date(ev.data + 'T12:00:00').toLocaleDateString('pt-BR', { weekday: 'short', day: '2-digit', month: 'short', year: 'numeric' })}</p>
                       {ev.titulo && <p className="text-xs text-muted-foreground">{ev.titulo}</p>}
                     </TableCell>
                     <TableCell>
@@ -232,6 +249,9 @@ function TabEventos({ onChanged }: { onChanged: () => void }) {
                     <TableCell className="text-center text-sm">
                       <span style={{ color: pct >= 70 ? C.primary : pct >= 50 ? C.warn : C.danger }}>{pct}%</span>
                     </TableCell>
+                    <TableCell className="text-right text-muted-foreground">
+                      <ChevronRight className="h-4 w-4 inline-block" />
+                    </TableCell>
                   </TableRow>
                 );
               })}
@@ -239,7 +259,184 @@ function TabEventos({ onChanged }: { onChanged: () => void }) {
           </Table>
         </div>
       )}
+
+      {eventoSelecionado && (
+        <ModalEventoDetalhe
+          evento={eventoSelecionado}
+          onClose={() => setEventoSelecionado(null)}
+          onChanged={() => { load(); onChanged(); }}
+        />
+      )}
     </div>
+  );
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// MODAL DE DETALHE DO EVENTO
+// ──────────────────────────────────────────────────────────────────────────
+function ModalEventoDetalhe({ evento, onClose, onChanged }: { evento: Evento; onClose: () => void; onChanged: () => void }) {
+  const [inscricoes, setInscricoes] = useState<Inscricao[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [filtro, setFiltro] = useState<'todos' | 'presentes' | 'ausentes'>('todos');
+  const [origem, setOrigem] = useState<'todas' | 'impressa' | 'manuscrito'>('todas');
+  const [busca, setBusca] = useState('');
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      setInscricoes(await nextApi.inscricoes.list({ evento_id: evento.id, limit: 500 }));
+    } catch {}
+    setLoading(false);
+  }, [evento.id]);
+  useEffect(() => { load(); }, [load]);
+
+  const handleCheckinToggle = async (insc: Inscricao) => {
+    try {
+      if (insc.check_in_at) {
+        await nextApi.inscricoes.descheckin(insc.id);
+        toast.success('Check-in desfeito');
+      } else {
+        await nextApi.inscricoes.checkin(insc.id);
+        toast.success('Check-in marcado');
+      }
+      await load();
+      onChanged();
+    } catch (e: any) {
+      toast.error(e?.message || 'Erro');
+    }
+  };
+
+  const filtradas = inscricoes.filter(i => {
+    if (filtro === 'presentes' && !i.check_in_at) return false;
+    if (filtro === 'ausentes' && i.check_in_at) return false;
+    if (origem !== 'todas' && i.origem_lista !== origem) return false;
+    if (busca) {
+      const q = busca.toLowerCase();
+      const hay = `${i.nome} ${i.sobrenome || ''} ${i.telefone || ''} ${i.email || ''}`.toLowerCase();
+      if (!hay.includes(q)) return false;
+    }
+    return true;
+  });
+
+  const presentesCount = inscricoes.filter(i => i.check_in_at).length;
+  const ausentesCount = inscricoes.length - presentesCount;
+  const pct = inscricoes.length > 0 ? Math.round((presentesCount / inscricoes.length) * 100) : 0;
+  const impressaCount = inscricoes.filter(i => i.origem_lista === 'impressa').length;
+  const manuscritoCount = inscricoes.filter(i => i.origem_lista === 'manuscrito').length;
+
+  return (
+    <Dialog open onOpenChange={onClose}>
+      <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <CalendarDays className="h-5 w-5" style={{ color: C.primary }} />
+            NEXT — {new Date(evento.data + 'T12:00:00').toLocaleDateString('pt-BR', { weekday: 'long', day: '2-digit', month: 'long', year: 'numeric' })}
+          </DialogTitle>
+        </DialogHeader>
+
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 my-3">
+          <div className="rounded-xl border border-border p-3">
+            <p className="text-[10px] uppercase tracking-wider text-muted-foreground">Inscritos</p>
+            <p className="text-2xl font-bold">{inscricoes.length}</p>
+            {evento.total_lista != null && evento.total_lista !== inscricoes.length && (
+              <p className="text-[10px] text-muted-foreground">planilha: {evento.total_lista}</p>
+            )}
+          </div>
+          <div className="rounded-xl border border-border p-3">
+            <p className="text-[10px] uppercase tracking-wider text-muted-foreground">Presentes</p>
+            <p className="text-2xl font-bold" style={{ color: C.primary }}>{presentesCount}</p>
+            <p className="text-[10px] text-muted-foreground">{ausentesCount} ausentes</p>
+          </div>
+          <div className="rounded-xl border border-border p-3">
+            <p className="text-[10px] uppercase tracking-wider text-muted-foreground">% Comparecimento</p>
+            <p className="text-2xl font-bold" style={{ color: pct >= 70 ? C.primary : pct >= 50 ? C.warn : C.danger }}>{pct}%</p>
+          </div>
+          <div className="rounded-xl border border-border p-3">
+            <p className="text-[10px] uppercase tracking-wider text-muted-foreground">Origem</p>
+            <div className="text-xs space-y-0.5 mt-1">
+              <div className="flex justify-between"><span className="text-muted-foreground">Impressa</span><span className="font-semibold">{impressaCount}</span></div>
+              <div className="flex justify-between"><span className="text-muted-foreground">Manuscrito</span><span className="font-semibold">{manuscritoCount}</span></div>
+            </div>
+          </div>
+        </div>
+
+        {evento.observacoes && (
+          <div className="rounded-xl border border-amber-200 bg-amber-50/40 dark:bg-amber-950/20 dark:border-amber-900/40 p-3 flex gap-2 text-xs">
+            <FileText className="h-4 w-4 shrink-0 text-amber-600 dark:text-amber-400 mt-0.5" />
+            <div>
+              <p className="font-medium text-amber-900 dark:text-amber-200 mb-0.5">Observacao do dia</p>
+              <p className="text-amber-800 dark:text-amber-300/80">{evento.observacoes}</p>
+              {evento.arquivo_origem && <p className="text-[10px] text-amber-700/70 dark:text-amber-400/60 mt-1">Origem: {evento.arquivo_origem}</p>}
+            </div>
+          </div>
+        )}
+
+        <div className="flex flex-wrap gap-2 items-center pt-2 pb-3 border-b border-border">
+          <div className="inline-flex rounded-xl border border-border p-0.5 bg-muted/30">
+            {(['todos', 'presentes', 'ausentes'] as const).map(f => (
+              <button
+                key={f}
+                onClick={() => setFiltro(f)}
+                className={`px-3 py-1 text-xs rounded-lg transition-colors ${filtro === f ? 'bg-background shadow-sm font-medium' : 'text-muted-foreground hover:text-foreground'}`}
+              >
+                {f === 'todos' ? `Todos (${inscricoes.length})` : f === 'presentes' ? `Presentes (${presentesCount})` : `Ausentes (${ausentesCount})`}
+              </button>
+            ))}
+          </div>
+          <div className="inline-flex rounded-xl border border-border p-0.5 bg-muted/30">
+            {(['todas', 'impressa', 'manuscrito'] as const).map(o => (
+              <button
+                key={o}
+                onClick={() => setOrigem(o)}
+                className={`px-3 py-1 text-xs rounded-lg transition-colors ${origem === o ? 'bg-background shadow-sm font-medium' : 'text-muted-foreground hover:text-foreground'}`}
+              >
+                {o === 'todas' ? 'Todas origens' : o}
+              </button>
+            ))}
+          </div>
+          <div className="relative flex-1 min-w-[180px] max-w-xs">
+            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
+            <Input value={busca} onChange={e => setBusca(e.target.value)} placeholder="Buscar nome ou telefone" className="pl-8 h-8 text-xs" />
+          </div>
+        </div>
+
+        {loading ? (
+          <Loader2 className="h-6 w-6 animate-spin text-muted-foreground mx-auto my-12" />
+        ) : filtradas.length === 0 ? (
+          <p className="text-center text-sm text-muted-foreground py-8">Nenhum registro corresponde aos filtros.</p>
+        ) : (
+          <div className="space-y-1 max-h-[50vh] overflow-y-auto pr-1">
+            {filtradas.map(i => (
+              <div key={i.id} className="flex items-center gap-3 p-2 rounded-lg hover:bg-muted/40 transition-colors">
+                <button
+                  onClick={() => handleCheckinToggle(i)}
+                  className={`shrink-0 h-8 w-8 rounded-full border-2 flex items-center justify-center transition-all ${i.check_in_at ? 'border-emerald-500 bg-emerald-500 text-white' : 'border-border hover:border-emerald-500 hover:bg-emerald-50 dark:hover:bg-emerald-950/30'}`}
+                  title={i.check_in_at ? 'Desfazer check-in' : 'Marcar check-in'}
+                >
+                  {i.check_in_at ? <CheckCircle2 className="h-4 w-4" /> : null}
+                </button>
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-medium truncate">{i.nome} {i.sobrenome || ''}</p>
+                  <div className="flex flex-wrap gap-2 text-[11px] text-muted-foreground">
+                    {i.telefone && <span className="flex items-center gap-0.5"><Phone className="h-3 w-3" />{i.telefone}</span>}
+                    {i.email && <span className="flex items-center gap-0.5"><Mail className="h-3 w-3" />{i.email}</span>}
+                  </div>
+                </div>
+                {i.origem_lista && (
+                  <Badge variant="outline" className="text-[9px] uppercase">
+                    {i.origem_lista}
+                  </Badge>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+
+        <DialogFooter className="pt-3">
+          <Button variant="outline" onClick={onClose}>Fechar</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -287,19 +484,76 @@ function TabInscritos({ onChanged }: { onChanged: () => void }) {
     }
   };
 
+  // Mapa data (yyyy-mm-dd) -> evento, e datas disponíveis como Date objetos
+  const eventoPorData = new Map(eventos.map(ev => [ev.data, ev]));
+  const eventDates = eventos.map(ev => new Date(ev.data + 'T12:00:00'));
+  const eventoAtual = eventoFilter ? eventos.find(e => e.id === eventoFilter) : null;
+  const [calOpen, setCalOpen] = useState(false);
+  // Mes inicial: ultimo evento (mais recente) ou hoje
+  const initialMonth = eventos[0] ? new Date(eventos[0].data + 'T12:00:00') : new Date();
+  const [calMonth, setCalMonth] = useState<Date>(initialMonth);
+
+  const handlePickDate = (date: Date | undefined) => {
+    if (!date) { setEventoFilter(''); setCalOpen(false); return; }
+    const ymd = date.toISOString().slice(0, 10);
+    const ev = eventoPorData.get(ymd);
+    if (ev) {
+      setEventoFilter(ev.id);
+      setCalOpen(false);
+    }
+  };
+
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center gap-3">
-        <select
-          value={eventoFilter}
-          onChange={e => setEventoFilter(e.target.value)}
-          className="px-3 py-2 rounded-xl border border-border bg-background text-sm"
-        >
-          <option value="">Todos os eventos</option>
-          {eventos.map(ev => (
-            <option key={ev.id} value={ev.id}>{new Date(ev.data + 'T12:00:00').toLocaleDateString('pt-BR')} {ev.titulo || ''}</option>
-          ))}
-        </select>
+        <Popover open={calOpen} onOpenChange={setCalOpen}>
+          <PopoverTrigger asChild>
+            <Button variant="outline" className="gap-2 min-w-[220px] justify-start font-normal">
+              <CalendarDays className="h-4 w-4" style={{ color: C.primary }} />
+              {eventoAtual ? (
+                <span>
+                  {new Date(eventoAtual.data + 'T12:00:00').toLocaleDateString('pt-BR', { weekday: 'short', day: '2-digit', month: 'short', year: 'numeric' })}
+                </span>
+              ) : (
+                <span className="text-muted-foreground">Todos os eventos</span>
+              )}
+            </Button>
+          </PopoverTrigger>
+          <PopoverContent className="w-auto p-0" align="start">
+            <CalendarPicker
+              mode="single"
+              locale={ptBR}
+              month={calMonth}
+              onMonthChange={setCalMonth}
+              selected={eventoAtual ? new Date(eventoAtual.data + 'T12:00:00') : undefined}
+              onSelect={handlePickDate}
+              modifiers={{ hasEvent: eventDates }}
+              modifiersStyles={{
+                hasEvent: {
+                  fontWeight: 700,
+                  color: C.primary,
+                  textDecoration: 'underline',
+                  textUnderlineOffset: 4,
+                },
+              }}
+              disabled={(date) => {
+                const ymd = date.toISOString().slice(0, 10);
+                return !eventoPorData.has(ymd);
+              }}
+            />
+            <div className="border-t border-border p-2 flex items-center justify-between text-xs">
+              <span className="text-muted-foreground px-2">{eventos.length} encontro(s)</span>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => { setEventoFilter(''); setCalOpen(false); }}
+                className="text-xs h-7"
+              >
+                Limpar filtro
+              </Button>
+            </div>
+          </PopoverContent>
+        </Popover>
         <div className="relative max-w-sm flex-1">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
           <Input value={search} onChange={e => setSearch(e.target.value)} placeholder="Buscar nome, email ou CPF" className="pl-9" />

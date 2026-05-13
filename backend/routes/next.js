@@ -61,22 +61,20 @@ router.get('/eventos', async (req, res) => {
     const next = new Date(Date.UTC(Number(ano), Number(mes), 1)).toISOString().slice(0, 10);
     q = q.gte('data', start).lt('data', next);
   }
-  const { data, error } = await q;
+  const { data, error } = await q.limit(500);
   if (error) return res.status(500).json({ error: error.message });
 
-  // Contagem de inscritos / check-ins por evento
+  // Contagem agregada via view (1 row por evento) — evita o limite default
+  // de 1000 rows do supabase ao agregar em memoria com 2.4k+ inscricoes.
   const ids = (data || []).map(e => e.id);
   let counts = {};
   if (ids.length) {
     const { data: rows } = await supabase
-      .from('next_inscricoes')
-      .select('evento_id, check_in_at')
+      .from('vw_next_eventos_counts')
+      .select('evento_id, inscritos, checkins')
       .in('evento_id', ids);
     for (const row of (rows || [])) {
-      const k = row.evento_id;
-      counts[k] = counts[k] || { inscritos: 0, checkins: 0 };
-      counts[k].inscritos += 1;
-      if (row.check_in_at) counts[k].checkins += 1;
+      counts[row.evento_id] = { inscritos: Number(row.inscritos) || 0, checkins: Number(row.checkins) || 0 };
     }
   }
   res.json((data || []).map(e => ({
