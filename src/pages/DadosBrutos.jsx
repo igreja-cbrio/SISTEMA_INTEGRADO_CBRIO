@@ -10,6 +10,7 @@ import { useMyKpiAreas } from '../hooks/useMyKpiAreas';
 import { Database, Plus, Pencil, Trash2, X, Save, Calendar, Filter, CheckCircle2, ShieldCheck, Users, HandCoins, Sparkles, HeartHandshake, ClipboardList, Smile, Zap } from 'lucide-react';
 import { toast } from 'sonner';
 import EmptyState from '../components/EmptyState';
+import CalendarioCultos from '../components/CalendarioCultos';
 import { formatErro } from '../lib/formatErro';
 
 const C = {
@@ -29,18 +30,19 @@ const AREAS_OFICIAIS = [
 ];
 
 // Quick log · 4-6 tipos mais comuns por area. Click pre-preenche tipo+area.
-// Quem nao se encaixa cai no "Outros tipos" (modal completo).
+// Frequencia/decisoes de culto sao preenchidas pelo calendario acima · aqui
+// ficam so os tipos avulsos (fora de culto regular).
 const QUICK_LOG_POR_AREA = {
-  kids:   ['frequencia_culto', 'conversoes', 'batismos', 'voluntarios_checkin'],
-  bridge: ['frequencia_culto', 'conversoes', 'batismos', 'voluntarios_checkin'],
-  ami:    ['frequencia_culto', 'conversoes', 'batismos', 'voluntarios_checkin', 'nps_next'],
-  sede:   ['frequencia_culto', 'conversoes', 'batismos', 'doacoes_valor', 'doadores_count', 'voluntarios_ativos'],
-  online: ['frequencia_culto', 'conversoes', 'batismos'],
-  cba:    ['frequencia_culto', 'conversoes', 'batismos', 'lideres_treinados', 'lideres_acompanhados'],
+  kids:   ['conversoes', 'batismos', 'voluntarios_checkin'],
+  bridge: ['conversoes', 'batismos', 'voluntarios_checkin'],
+  ami:    ['conversoes', 'batismos', 'voluntarios_checkin', 'nps_next'],
+  sede:   ['conversoes', 'batismos', 'doacoes_valor', 'doadores_count', 'voluntarios_ativos'],
+  online: ['conversoes', 'batismos'],
+  cba:    ['conversoes', 'batismos', 'lideres_treinados', 'lideres_acompanhados'],
 };
 
 // Default para admin/diretor sem area especifica
-const QUICK_LOG_DEFAULT = ['frequencia_culto', 'conversoes', 'batismos', 'doacoes_valor', 'voluntarios_ativos', 'nps_geral'];
+const QUICK_LOG_DEFAULT = ['conversoes', 'batismos', 'doacoes_valor', 'voluntarios_ativos', 'nps_geral'];
 
 // Icone + cor por familia de tipo · usado nos cards do quick log
 const TIPO_VISUAL = {
@@ -223,6 +225,10 @@ export default function DadosBrutos({ embedded = false }) {
         </div>
       </header>
       )}
+
+      {/* Cultos do mes · forma principal de preencher frequencia/decisoes/online.
+          Click no culto abre modal com campos nativos da tabela `cultos`. */}
+      {podeRegistrar && <CalendarioCultos />}
 
       {/* Quick log · cards grandes com os tipos mais comuns da sua area.
           Click pre-preenche tipo (e area se voce so lidera uma). */}
