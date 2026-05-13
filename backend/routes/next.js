@@ -87,11 +87,17 @@ router.get('/eventos', async (req, res) => {
 });
 
 router.post('/eventos', async (req, res) => {
-  const { data, titulo, observacoes } = req.body || {};
+  const { data, titulo, observacoes, total_lista, presentes_impressa, presentes_manuscritos, arquivo_origem } = req.body || {};
   if (!data) return res.status(400).json({ error: 'data obrigatoria' });
   const { data: row, error } = await supabase
     .from('next_eventos')
-    .insert({ data, titulo: titulo || null, observacoes: observacoes || null })
+    .insert({
+      data, titulo: titulo || null, observacoes: observacoes || null,
+      total_lista: total_lista ?? null,
+      presentes_impressa: presentes_impressa ?? null,
+      presentes_manuscritos: presentes_manuscritos ?? null,
+      arquivo_origem: arquivo_origem || null,
+    })
     .select()
     .single();
   if (error) return res.status(500).json({ error: error.message });
@@ -99,7 +105,10 @@ router.post('/eventos', async (req, res) => {
 });
 
 router.put('/eventos/:id', async (req, res) => {
-  const allowed = ['data', 'titulo', 'observacoes', 'status'];
+  const allowed = [
+    'data', 'titulo', 'observacoes', 'status',
+    'total_lista', 'presentes_impressa', 'presentes_manuscritos', 'arquivo_origem',
+  ];
   const update = { updated_at: new Date().toISOString() };
   for (const [k, v] of Object.entries(req.body || {})) {
     if (allowed.includes(k)) update[k] = v;
@@ -139,12 +148,14 @@ router.post('/eventos/auto-create-mes', async (req, res) => {
 // Inscricoes
 // ----------------------------------------------------------------------------
 router.get('/inscricoes', async (req, res) => {
-  const { evento_id, search, com_checkin, com_indicacao } = req.query;
+  const { evento_id, search, com_checkin, com_indicacao, origem_lista, limit } = req.query;
+  const maxLimit = Math.min(Number(limit) || 500, 5000);
   let q = supabase.from('next_inscricoes').select('*, evento:next_eventos(id, data, titulo)')
-    .order('created_at', { ascending: false }).limit(500);
+    .order('created_at', { ascending: false }).limit(maxLimit);
   if (evento_id) q = q.eq('evento_id', evento_id);
   if (com_checkin === 'true') q = q.not('check_in_at', 'is', null);
   if (com_checkin === 'false') q = q.is('check_in_at', null);
+  if (origem_lista && ['impressa', 'manuscrito'].includes(origem_lista)) q = q.eq('origem_lista', origem_lista);
   if (com_indicacao === 'true') {
     q = q.or('indicou_batismo.eq.true,indicou_servir.eq.true,indicou_grupo.eq.true,indicou_dizimo.eq.true');
   }
@@ -171,9 +182,10 @@ router.get('/inscricoes/:id', async (req, res) => {
 const { findOrCreateMembro } = require('./pessoas');
 
 router.post('/inscricoes', async (req, res) => {
-  const { evento_id, nome, sobrenome, cpf, telefone, email, data_nascimento, observacoes } = req.body || {};
+  const { evento_id, nome, sobrenome, cpf, telefone, email, data_nascimento, observacoes, origem_lista } = req.body || {};
   if (!nome || !evento_id) return res.status(400).json({ error: 'nome e evento_id obrigatorios' });
   const cleanCpf = cpf ? String(cpf).replace(/\D/g, '') : null;
+  const validOrigemLista = ['impressa', 'manuscrito'].includes(origem_lista) ? origem_lista : null;
 
   // ANTES de criar a inscricao: garantir que existe mem_membros (cria se necessario).
   // Membresia e fonte unica — toda pessoa que se inscreve no NEXT vira membro
@@ -197,7 +209,8 @@ router.post('/inscricoes', async (req, res) => {
       evento_id, nome, sobrenome: sobrenome || null, cpf: cleanCpf,
       telefone: telefone || null, email: email ? String(email).toLowerCase() : null,
       data_nascimento: data_nascimento || null, observacoes: observacoes || null,
-      origem: 'manual', registered_by: req.user?.id || null,
+      origem: 'manual', origem_lista: validOrigemLista,
+      registered_by: req.user?.id || null,
       membro_id,
     })
     .select().single();
@@ -209,6 +222,7 @@ router.put('/inscricoes/:id', async (req, res) => {
   const allowed = [
     'nome', 'sobrenome', 'cpf', 'telefone', 'email', 'data_nascimento',
     'observacoes', 'evento_id', 'ja_batizado', 'ja_voluntario', 'ja_doador',
+    'origem_lista',
   ];
   const update = { updated_at: new Date().toISOString() };
   for (const [k, v] of Object.entries(req.body || {})) {
