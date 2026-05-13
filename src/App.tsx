@@ -24,11 +24,45 @@ const queryClient = new QueryClient({
 //   Webpack     : "Loading chunk X failed" / "ChunkLoadError"
 const CHUNK_ERROR_RE = /Loading chunk|ChunkLoadError|Failed to fetch dynamically imported module|error loading dynamically imported module|Importing a module script failed|valid JavaScript MIME type|Expected a JavaScript(?: \w+)? module script|Unexpected token '?<'?/i;
 
-// Reload com cache-buster · forca o browser a buscar HTML/chunks frescos
-// mesmo se o cache local estiver "preso" ignorando must-revalidate.
-function hardReload() {
+// Conta tentativas via querystring (sobrevive ao reload, diferente de
+// sessionStorage que ficava preso entre deploys consecutivos e impedia
+// re-tentativas legítimas).
+const RETRY_PARAM = '_chunk_retry';
+const MAX_RETRIES = 3;
+
+function getRetryCount(): number {
+  try {
+    const v = new URL(window.location.href).searchParams.get(RETRY_PARAM);
+    return v ? parseInt(v, 10) || 0 : 0;
+  } catch { return 0; }
+}
+
+// Reload com cache-buster + limpeza de caches do browser/SW · usado quando
+// um chunk lazy quebra (deploy novo invalidou o hash que o HTML em cache
+// referencia). Limpa tudo que pode estar segurando o HTML antigo.
+async function hardReload() {
+  try {
+    // Limpa Cache Storage (PWA / fetch cache)
+    if ('caches' in window) {
+      const keys = await caches.keys();
+      await Promise.all(keys.map(k => caches.delete(k)));
+    }
+    // Desregistra Service Workers (vai re-registrar no proximo load se necessario)
+    if ('serviceWorker' in navigator) {
+      const regs = await navigator.serviceWorker.getRegistrations();
+      await Promise.all(regs.map(r => r.unregister()));
+    }
+    // Limpa flags antigos do retry baseado em sessionStorage (legado)
+    Object.keys(sessionStorage)
+      .filter(k => k.startsWith('chunk-retry-') || k === 'boundary-chunk-retry')
+      .forEach(k => sessionStorage.removeItem(k));
+  } catch {
+    // ignora — vamos recarregar de qualquer jeito
+  }
   try {
     const url = new URL(window.location.href);
+    const next = getRetryCount() + 1;
+    url.searchParams.set(RETRY_PARAM, String(next));
     url.searchParams.set('_cb', String(Date.now()));
     window.location.replace(url.toString());
   } catch {
@@ -38,16 +72,13 @@ function hardReload() {
 
 function lazyWithRetry<T extends ComponentType<any>>(factory: () => Promise<{ default: T }>) {
   return lazy(async () => {
-    const key = 'chunk-retry-' + factory.toString().slice(0, 50);
     try {
       return await factory();
     } catch (err: any) {
-      const alreadyRetried = sessionStorage.getItem(key);
       const isChunkError = CHUNK_ERROR_RE.test(err?.message || '');
-      if (isChunkError && !alreadyRetried) {
-        sessionStorage.setItem(key, '1');
+      if (isChunkError && getRetryCount() < MAX_RETRIES) {
         hardReload();
-        return new Promise(() => {}); // Nunca resolve — página vai recarregar
+        return new Promise<{ default: T }>(() => {}); // Nunca resolve — pagina vai recarregar
       }
       throw err;
     }
@@ -63,22 +94,56 @@ class ErrorBoundary extends Component<{ children: ReactNode }, { hasError: boole
     return { hasError: true, error };
   }
   componentDidCatch(error: Error) {
-    // Se for chunk load error, tenta recarregar automaticamente
+    // Se for chunk load error, tenta recarregar automaticamente (ate MAX_RETRIES)
     const isChunkError = CHUNK_ERROR_RE.test(error?.message || '');
-    if (isChunkError && !sessionStorage.getItem('boundary-chunk-retry')) {
-      sessionStorage.setItem('boundary-chunk-retry', '1');
+    if (isChunkError && getRetryCount() < MAX_RETRIES) {
       hardReload();
     }
   }
   render() {
     if (this.state.hasError) {
+      const isChunkError = CHUNK_ERROR_RE.test(this.state.error?.message || '');
       return (
-        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', minHeight: '60vh', gap: 16, padding: 32 }}>
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', minHeight: '60vh', gap: 16, padding: 32, textAlign: 'center' }}>
           <h1 style={{ fontSize: 24, fontWeight: 'bold' }}>Algo deu errado</h1>
-          <p style={{ color: '#888' }}>{this.state.error?.message || 'Erro inesperado na aplicação.'}</p>
-          <button onClick={() => { sessionStorage.clear(); hardReload(); }} style={{ padding: '8px 24px', borderRadius: 8, background: '#00B39D', color: '#fff', border: 'none', cursor: 'pointer' }}>
-            Recarregar
-          </button>
+          {isChunkError ? (
+            <>
+              <p style={{ color: '#888', maxWidth: 480 }}>
+                Houve uma atualizacao do sistema. Vamos limpar o cache e recarregar.
+              </p>
+              <button
+                onClick={async () => {
+                  // Forca limpeza total + remove o param de retry pra zerar o contador
+                  try {
+                    if ('caches' in window) {
+                      const keys = await caches.keys();
+                      await Promise.all(keys.map(k => caches.delete(k)));
+                    }
+                    if ('serviceWorker' in navigator) {
+                      const regs = await navigator.serviceWorker.getRegistrations();
+                      await Promise.all(regs.map(r => r.unregister()));
+                    }
+                  } catch {}
+                  sessionStorage.clear();
+                  // Limpa querystring (zera contador) e vai pra raiz
+                  window.location.replace('/?_cb=' + Date.now());
+                }}
+                style={{ padding: '10px 28px', borderRadius: 8, background: '#00B39D', color: '#fff', border: 'none', cursor: 'pointer', fontSize: 14, fontWeight: 600 }}
+              >
+                Limpar cache e recarregar
+              </button>
+              <p style={{ color: '#aaa', fontSize: 12, marginTop: 8 }}>
+                Se o problema persistir: feche o navegador e abra de novo, ou use uma aba anonima.
+              </p>
+            </>
+          ) : (
+            <>
+              <p style={{ color: '#888' }}>{this.state.error?.message || 'Erro inesperado na aplicacao.'}</p>
+              <button onClick={() => { sessionStorage.clear(); hardReload(); }} style={{ padding: '8px 24px', borderRadius: 8, background: '#00B39D', color: '#fff', border: 'none', cursor: 'pointer' }}>
+                Recarregar
+              </button>
+            </>
+          )}
         </div>
       );
     }
