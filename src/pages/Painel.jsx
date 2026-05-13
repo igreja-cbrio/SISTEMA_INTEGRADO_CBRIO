@@ -85,6 +85,13 @@ export default function Painel() {
 
   useEffect(() => { carregar(); }, [carregar]);
 
+  // Estabiliza as funcoes passadas pras matrizes filhas · evita re-renders
+  // do MatrizSlaGrupo (que dispararia loading na volta de alt-tab)
+  const loadMatrizAdm = useCallback(() => painelApi.matrizAdm(), []);
+  const loadCelulaAdm = useCallback((g, c) => painelApi.celulaAdm(g, c), []);
+  const loadMatrizCriativo = useCallback(() => painelApi.matrizCriativo(), []);
+  const loadCelulaCriativo = useCallback((g, c) => painelApi.celulaCriativo(g, c), []);
+
   const handleRecalcular = async () => {
     setRecalculando(true);
     try {
@@ -195,8 +202,8 @@ export default function Painel() {
         <MatrizSlaGrupo
           titulo="Matriz Gestão × Área"
           subtitulo="Clique numa celula para ver solicitacoes e KPIs daquela area da gestao. Hospitalidade = Reserva + Cozinha + Manutencao · Logistica = Estoque + Compras."
-          loadMatriz={() => painelApi.matrizAdm()}
-          loadCelula={(g, c) => painelApi.celulaAdm(g, c)}
+          loadMatriz={loadMatrizAdm}
+          loadCelula={loadCelulaAdm}
         />
       </div>
 
@@ -204,8 +211,8 @@ export default function Painel() {
         <MatrizSlaGrupo
           titulo="Matriz Criativo × Área"
           subtitulo="Clique numa celula para ver solicitacoes e KPIs do criativo · 3 areas: Produção, Adoração, Marketing."
-          loadMatriz={() => painelApi.matrizCriativo()}
-          loadCelula={(g, c) => painelApi.celulaCriativo(g, c)}
+          loadMatriz={loadMatrizCriativo}
+          loadCelula={loadCelulaCriativo}
         />
       </div>
 
