@@ -450,6 +450,7 @@ function TabInscritos({ onChanged }: { onChanged: () => void }) {
   const [list, setList] = useState<Inscricao[]>([]);
   const [loading, setLoading] = useState(true);
   const [selected, setSelected] = useState<Inscricao | null>(null);
+  const [novaOpen, setNovaOpen] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -558,6 +559,12 @@ function TabInscritos({ onChanged }: { onChanged: () => void }) {
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
           <Input value={search} onChange={e => setSearch(e.target.value)} placeholder="Buscar nome, email ou CPF" className="pl-9" />
         </div>
+        <Button
+          onClick={() => setNovaOpen(true)}
+          className="gap-2 bg-[#00B39D] hover:bg-[#00B39D]/90 text-white ml-auto"
+        >
+          <Plus className="h-4 w-4" /> Cadastrar inscricao
+        </Button>
       </div>
 
       {loading ? (
@@ -635,7 +642,213 @@ function TabInscritos({ onChanged }: { onChanged: () => void }) {
       )}
 
       {selected && <CardInscrito inscricao={selected} onClose={() => setSelected(null)} onSaved={() => { load(); onChanged(); }} />}
+
+      {novaOpen && (
+        <ModalNovaInscricao
+          eventos={eventos}
+          eventoIdInicial={eventoFilter || undefined}
+          onClose={() => setNovaOpen(false)}
+          onCreated={() => { load(); onChanged(); }}
+        />
+      )}
     </div>
+  );
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Modal de cadastro manual de inscricao (espelha campos do form publico)
+// ──────────────────────────────────────────────────────────────────────────
+function ModalNovaInscricao({
+  eventos, eventoIdInicial, onClose, onCreated,
+}: {
+  eventos: Evento[];
+  eventoIdInicial?: string;
+  onClose: () => void;
+  onCreated: () => void;
+}) {
+  const soDigitos = (v: string) => (v || '').replace(/\D+/g, '');
+  const mascaraCpf = (v: string) => {
+    const d = soDigitos(v).slice(0, 11);
+    if (d.length <= 3) return d;
+    if (d.length <= 6) return `${d.slice(0, 3)}.${d.slice(3)}`;
+    if (d.length <= 9) return `${d.slice(0, 3)}.${d.slice(3, 6)}.${d.slice(6)}`;
+    return `${d.slice(0, 3)}.${d.slice(3, 6)}.${d.slice(6, 9)}-${d.slice(9)}`;
+  };
+  const mascaraTel = (v: string) => {
+    const d = soDigitos(v).slice(0, 11);
+    if (d.length <= 2) return d.length ? `(${d}` : '';
+    if (d.length <= 6) return `(${d.slice(0, 2)}) ${d.slice(2)}`;
+    if (d.length <= 10) return `(${d.slice(0, 2)}) ${d.slice(2, 6)}-${d.slice(6)}`;
+    return `(${d.slice(0, 2)}) ${d.slice(2, 7)}-${d.slice(7)}`;
+  };
+  const cpfValido = (v: string) => {
+    const d = soDigitos(v);
+    if (d.length !== 11) return false;
+    if (/^(\d)\1{10}$/.test(d)) return false;
+    const calc = (base: string, fator: number) => {
+      let s = 0;
+      for (let i = 0; i < base.length; i += 1) s += parseInt(base[i], 10) * (fator - i);
+      const r = (s * 10) % 11;
+      return r === 10 ? 0 : r;
+    };
+    return calc(d.slice(0, 9), 10) === parseInt(d[9], 10)
+      && calc(d.slice(0, 10), 11) === parseInt(d[10], 10);
+  };
+
+  // Evento default: o filtrado, senao o proximo "agendado", senao o primeiro
+  const defaultEventoId = eventoIdInicial
+    || eventos.find(e => e.status === 'agendado')?.id
+    || eventos[0]?.id
+    || '';
+
+  const [form, setForm] = useState({
+    evento_id: defaultEventoId,
+    nome: '', sobrenome: '',
+    email: '', telefone: '', cpf: '',
+    data_nascimento: '',
+    origem_lista: 'impressa' as 'impressa' | 'manuscrito',
+    observacoes: '',
+  });
+  const [saving, setSaving] = useState(false);
+  const [erro, setErro] = useState<string | null>(null);
+
+  const set = (k: keyof typeof form) => (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) => {
+    let v = e.target.value;
+    if (k === 'cpf') v = mascaraCpf(v);
+    if (k === 'telefone') v = mascaraTel(v);
+    setForm(f => ({ ...f, [k]: v }));
+    setErro(null);
+  };
+
+  const handleSubmit = async () => {
+    if (!form.evento_id) return setErro('Selecione um evento');
+    if (!form.nome.trim() || form.nome.trim().length < 2) return setErro('Informe o nome');
+    if (!form.email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email)) return setErro('Email invalido');
+    if (!form.telefone || soDigitos(form.telefone).length < 10) return setErro('Telefone invalido');
+    if (form.cpf && !cpfValido(form.cpf)) return setErro('CPF invalido');
+
+    setSaving(true);
+    try {
+      await nextApi.inscricoes.create({
+        evento_id: form.evento_id,
+        nome: form.nome.trim(),
+        sobrenome: form.sobrenome.trim() || null,
+        cpf: form.cpf || null,
+        telefone: form.telefone,
+        email: form.email.toLowerCase().trim(),
+        data_nascimento: form.data_nascimento || null,
+        observacoes: form.observacoes.trim() || null,
+        origem_lista: form.origem_lista,
+      });
+      toast.success('Inscricao cadastrada!');
+      onCreated();
+      onClose();
+    } catch (e: any) {
+      setErro(e?.message || 'Erro ao cadastrar');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Dialog open onOpenChange={onClose}>
+      <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <Plus className="h-5 w-5" style={{ color: C.primary }} />
+            Cadastrar inscricao no NEXT
+          </DialogTitle>
+        </DialogHeader>
+
+        <div className="space-y-4 pt-2">
+          <div>
+            <Label className="text-xs">Evento *</Label>
+            <select
+              value={form.evento_id}
+              onChange={set('evento_id')}
+              className="w-full mt-1 px-3 py-2 rounded-xl border border-border bg-background text-sm"
+            >
+              <option value="">— escolha —</option>
+              {eventos.map(ev => (
+                <option key={ev.id} value={ev.id}>
+                  {new Date(ev.data + 'T12:00:00').toLocaleDateString('pt-BR', { weekday: 'short', day: '2-digit', month: 'short', year: 'numeric' })}
+                  {ev.status === 'agendado' ? ' (agendado)' : ''}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <div>
+              <Label htmlFor="ni-nome" className="text-xs">Nome *</Label>
+              <Input id="ni-nome" value={form.nome} onChange={set('nome')} autoComplete="given-name" />
+            </div>
+            <div>
+              <Label htmlFor="ni-sobrenome" className="text-xs">Sobrenome</Label>
+              <Input id="ni-sobrenome" value={form.sobrenome} onChange={set('sobrenome')} autoComplete="family-name" />
+            </div>
+          </div>
+
+          <div>
+            <Label htmlFor="ni-email" className="text-xs">Email *</Label>
+            <Input id="ni-email" type="email" value={form.email} onChange={set('email')} autoComplete="email" inputMode="email" />
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <div>
+              <Label htmlFor="ni-telefone" className="text-xs">Telefone *</Label>
+              <Input id="ni-telefone" value={form.telefone} onChange={set('telefone')} placeholder="(00) 00000-0000" inputMode="tel" autoComplete="tel" />
+            </div>
+            <div>
+              <Label htmlFor="ni-cpf" className="text-xs">CPF (opcional)</Label>
+              <Input id="ni-cpf" value={form.cpf} onChange={set('cpf')} placeholder="000.000.000-00" inputMode="numeric" />
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <div>
+              <Label htmlFor="ni-nasc" className="text-xs">Data de nascimento (opcional)</Label>
+              <Input id="ni-nasc" type="date" value={form.data_nascimento} onChange={set('data_nascimento')} autoComplete="bday" />
+            </div>
+            <div>
+              <Label className="text-xs">Origem da inscricao</Label>
+              <div className="inline-flex rounded-xl border border-border p-0.5 bg-muted/30 mt-1 w-full">
+                {(['impressa', 'manuscrito'] as const).map(o => (
+                  <button
+                    key={o}
+                    type="button"
+                    onClick={() => setForm(f => ({ ...f, origem_lista: o }))}
+                    className={`flex-1 px-3 py-1.5 text-xs rounded-lg transition-colors capitalize ${form.origem_lista === o ? 'bg-background shadow-sm font-medium' : 'text-muted-foreground hover:text-foreground'}`}
+                  >
+                    {o}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          <div>
+            <Label htmlFor="ni-obs" className="text-xs">Observacoes (opcional)</Label>
+            <Textarea id="ni-obs" value={form.observacoes} onChange={set('observacoes')} rows={2} />
+          </div>
+
+          {erro && (
+            <div className="rounded-xl border border-red-200 bg-red-50/40 dark:bg-red-950/20 dark:border-red-900/40 p-3 flex gap-2 text-xs text-red-700 dark:text-red-300">
+              <AlertCircle className="h-4 w-4 shrink-0 mt-0.5" />
+              <span>{erro}</span>
+            </div>
+          )}
+        </div>
+
+        <DialogFooter className="pt-3">
+          <Button variant="outline" onClick={onClose} disabled={saving}>Cancelar</Button>
+          <Button onClick={handleSubmit} disabled={saving} className="gap-2 bg-[#00B39D] hover:bg-[#00B39D]/90 text-white">
+            {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
+            Cadastrar
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 
