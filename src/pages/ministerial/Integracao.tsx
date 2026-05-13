@@ -145,8 +145,8 @@ export default function Integracao() {
         </button>
         <button onClick={() => setTab('frequencia')} className="text-left hover:scale-[1.02] transition-transform">
           <StatisticsCard
-            title="Frequência · registrar"
-            value="Cultos"
+            title="Cultos · registrar"
+            value="Abrir"
             icon={Calendar}
             iconColor={C.purple}
           />
@@ -163,11 +163,11 @@ export default function Integracao() {
 
       <Tabs value={tab} onValueChange={setTab}>
         <TabsList>
+          <TabsTrigger value="frequencia">Cultos</TabsTrigger>
           <TabsTrigger value="visitantes">Visitantes</TabsTrigger>
           <TabsTrigger value="pendentes">Pendentes</TabsTrigger>
           <TabsTrigger value="1x1">Encontros 1x1</TabsTrigger>
           <TabsTrigger value="batismos">Batismos</TabsTrigger>
-          <TabsTrigger value="frequencia">Frequência</TabsTrigger>
           <TabsTrigger value="tarefas">Tarefas</TabsTrigger>
         </TabsList>
 
@@ -190,7 +190,9 @@ export default function Integracao() {
         <TabsContent value="frequencia" className="mt-4">
           <div className="space-y-2">
             <p className="text-sm text-muted-foreground">
-              Registre presenca dos cultos · alimenta os KPIs de frequencia, conversoes e batismos automaticamente.
+              Clique num culto pra preencher tudo daquele culto: presencial, online, visitantes, decisões.
+              Cada culto é vinculado ao seu tipo (Domingo 08:30 / 10:00 / 11:30 / 19:00 · AMI · Bridge ·
+              Quarta com Deus) · relatórios saem por culto automaticamente.
             </p>
             <CalendarioCultos />
           </div>

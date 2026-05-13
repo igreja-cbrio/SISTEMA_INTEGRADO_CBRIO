@@ -37,7 +37,9 @@ function preenchido(c) {
     (c.presencial_kids || 0) > 0 ||
     (c.decisoes_presenciais || 0) > 0 ||
     (c.decisoes_online || 0) > 0 ||
-    (c.online_pico || 0) > 0
+    (c.online_pico || 0) > 0 ||
+    (c.visitantes || 0) > 0 ||
+    (c.visitantes_online || 0) > 0
   );
 }
 
@@ -54,6 +56,7 @@ export default function CalendarioCultos() {
   const [cultos, setCultos] = useState([]);
   const [loading, setLoading] = useState(true);
   const [editando, setEditando] = useState(null);
+  const [filtroTipo, setFiltroTipo] = useState('todos'); // 'todos' | nome do service_type
 
   const ehMesAtual = ano === hoje.getFullYear() && mes === hoje.getMonth();
 
@@ -84,11 +87,27 @@ export default function CalendarioCultos() {
     setAno(a);
   };
 
+  // Tipos unicos pro filtro (a partir dos cultos do mes)
+  const tiposDisponiveis = useMemo(() => {
+    const map = new Map();
+    cultos.forEach(c => {
+      if (c.service_type_name) {
+        map.set(c.service_type_name, c.service_type_color || C.primary);
+      }
+    });
+    return Array.from(map.entries()).map(([nome, cor]) => ({ nome, cor }));
+  }, [cultos]);
+
+  const cultosFiltrados = useMemo(() => {
+    if (filtroTipo === 'todos') return cultos;
+    return cultos.filter(c => c.service_type_name === filtroTipo);
+  }, [cultos, filtroTipo]);
+
   const { totalPreenchidos, totalPendentes } = useMemo(() => {
     let p = 0, n = 0;
-    cultos.forEach(c => { preenchido(c) ? p++ : n++; });
+    cultosFiltrados.forEach(c => { preenchido(c) ? p++ : n++; });
     return { totalPreenchidos: p, totalPendentes: n };
-  }, [cultos]);
+  }, [cultosFiltrados]);
 
   return (
     <section style={{ marginBottom: 20 }}>
@@ -115,10 +134,40 @@ export default function CalendarioCultos() {
       </header>
 
       {!loading && cultos.length > 0 && (
-        <div style={{ display: 'flex', gap: 12, marginBottom: 10, fontSize: 11, color: C.t3 }}>
-          <span><strong style={{ color: '#10B981' }}>{totalPreenchidos}</strong> preenchidos</span>
-          <span><strong style={{ color: '#F59E0B' }}>{totalPendentes}</strong> pendentes</span>
-        </div>
+        <>
+          {/* Filtro por tipo de culto · chips clicaveis */}
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 10 }}>
+            <button
+              onClick={() => setFiltroTipo('todos')}
+              style={{
+                padding: '4px 10px', fontSize: 11, fontWeight: 600, borderRadius: 99, cursor: 'pointer',
+                border: `1px solid ${filtroTipo === 'todos' ? C.primary : C.border}`,
+                background: filtroTipo === 'todos' ? C.primaryBg : 'transparent',
+                color: filtroTipo === 'todos' ? C.primary : C.t2,
+              }}
+            >Todos ({cultos.length})</button>
+            {tiposDisponiveis.map(t => {
+              const sel = filtroTipo === t.nome;
+              const count = cultos.filter(c => c.service_type_name === t.nome).length;
+              return (
+                <button key={t.nome} onClick={() => setFiltroTipo(t.nome)} style={{
+                  padding: '4px 10px', fontSize: 11, fontWeight: 600, borderRadius: 99, cursor: 'pointer',
+                  border: `1px solid ${sel ? t.cor : C.border}`,
+                  background: sel ? `${t.cor}18` : 'transparent',
+                  color: sel ? t.cor : C.t2,
+                  display: 'inline-flex', alignItems: 'center', gap: 4,
+                }}>
+                  <span style={{ width: 8, height: 8, borderRadius: '50%', background: t.cor }} />
+                  {t.nome} ({count})
+                </button>
+              );
+            })}
+          </div>
+          <div style={{ display: 'flex', gap: 12, marginBottom: 10, fontSize: 11, color: C.t3 }}>
+            <span><strong style={{ color: '#10B981' }}>{totalPreenchidos}</strong> preenchidos</span>
+            <span><strong style={{ color: '#F59E0B' }}>{totalPendentes}</strong> pendentes</span>
+          </div>
+        </>
       )}
 
       {loading ? (
@@ -129,9 +178,13 @@ export default function CalendarioCultos() {
         <div style={{ padding: 24, textAlign: 'center', color: C.t3, background: C.card, borderRadius: 10, border: `1px solid ${C.border}`, fontSize: 12 }}>
           Nenhum culto cadastrado em {MESES[mes]} {ano}.
         </div>
+      ) : cultosFiltrados.length === 0 ? (
+        <div style={{ padding: 24, textAlign: 'center', color: C.t3, background: C.card, borderRadius: 10, border: `1px solid ${C.border}`, fontSize: 12 }}>
+          Nenhum culto desse tipo em {MESES[mes]} {ano}.
+        </div>
       ) : (
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: 10 }}>
-          {cultos.map(c => <CardCulto key={c.id} culto={c} onClick={() => setEditando(c)} />)}
+          {cultosFiltrados.map(c => <CardCulto key={c.id} culto={c} onClick={() => setEditando(c)} />)}
         </div>
       )}
 
@@ -200,6 +253,14 @@ function CardCulto({ culto, onClick }) {
           {(culto.presencial_kids || 0) > 0 && (
             <Chip cor="#EC4899" icone={Users} valor={culto.presencial_kids} label="kids" />
           )}
+          {((culto.visitantes || 0) + (culto.visitantes_online || 0)) > 0 && (
+            <Chip
+              cor="#10B981"
+              icone={Users}
+              valor={(culto.visitantes || 0) + (culto.visitantes_online || 0)}
+              label="visitantes"
+            />
+          )}
           {((culto.decisoes_presenciais || 0) + (culto.decisoes_online || 0)) > 0 && (
             <Chip
               cor="#8B5CF6"
@@ -238,6 +299,8 @@ function ModalCulto({ culto, onClose, onSaved }) {
   const [form, setForm] = useState({
     presencial_adulto:    culto.presencial_adulto ?? 0,
     presencial_kids:      culto.presencial_kids ?? 0,
+    visitantes:           culto.visitantes ?? 0,
+    visitantes_online:    culto.visitantes_online ?? 0,
     decisoes_presenciais: culto.decisoes_presenciais ?? 0,
     decisoes_online:      culto.decisoes_online ?? 0,
     online_pico:          culto.online_pico ?? '',
@@ -253,6 +316,8 @@ function ModalCulto({ culto, onClose, onSaved }) {
       const payload = {
         presencial_adulto:    Number(form.presencial_adulto) || 0,
         presencial_kids:      Number(form.presencial_kids) || 0,
+        visitantes:           Number(form.visitantes) || 0,
+        visitantes_online:    Number(form.visitantes_online) || 0,
         decisoes_presenciais: Number(form.decisoes_presenciais) || 0,
         decisoes_online:      Number(form.decisoes_online) || 0,
         online_pico:          form.online_pico === '' ? null : Number(form.online_pico),
@@ -304,6 +369,16 @@ function ModalCulto({ culto, onClose, onSaved }) {
             </Field>
             <Field label="Kids">
               <input type="number" min="0" value={form.presencial_kids} onChange={e => set('presencial_kids', e.target.value)} style={inp} />
+            </Field>
+          </div>
+
+          <SecaoTitulo icone={Users} cor="#10B981" titulo="Visitantes (1ª vez)" />
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 16 }}>
+            <Field label="Presenciais">
+              <input type="number" min="0" value={form.visitantes} onChange={e => set('visitantes', e.target.value)} style={inp} />
+            </Field>
+            <Field label="Online">
+              <input type="number" min="0" value={form.visitantes_online} onChange={e => set('visitantes_online', e.target.value)} style={inp} />
             </Field>
           </div>
 

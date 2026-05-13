@@ -228,19 +228,30 @@ router.put('/:id', authorize('diretor', 'admin'), async (req, res) => {
 });
 
 // PATCH /api/events/:id/status
+// Política: o UPDATE primário em events.status é o que importa. Tudo que
+// vier antes (toggle de event_cycles) ou depois (audit_log, select pós-
+// update) vira best-effort — falha apenas LOGA, não derruba a resposta.
+// Antes, qualquer erro lateral (ex: trigger Supabase no audit_log, RLS,
+// ciclo inexistente) caía no catch genérico → 500 mas o status já tinha
+// mudado. UX confusa: usuário via "Erro 500" depois de finalizar com
+// sucesso.
 router.patch('/:id/status', async (req, res) => {
+  const eventId = req.params.id;
   try {
-    if (!isUUID(req.params.id)) return res.status(400).json({ error: 'ID inválido' });
+    if (!isUUID(eventId)) return res.status(400).json({ error: 'ID inválido' });
     let { status } = req.body;
     if (!status) return res.status(400).json({ error: 'Status obrigatório' });
 
-    // Reabrir: reativar ciclo criativo e recalcular status
+    // ── 1) Resolver status final se for "reabrir" (cálculo, não escrita) ──
     if (status === 'reabrir') {
-      await supabase.from('event_cycles').update({ status: 'ativo' }).eq('event_id', req.params.id).eq('status', 'encerrado');
-      const { data: ev } = await supabase.from('events').select('date, recurrence').eq('id', req.params.id).single();
+      const { data: ev, error: evErr } = await supabase.from('events').select('date, recurrence').eq('id', eventId).single();
+      if (evErr) {
+        console.error('[Events PATCH status] read event:', { eventId, message: evErr.message, code: evErr.code });
+        return res.status(500).json({ error: `Erro ao ler evento: ${evErr.message}` });
+      }
       if (!ev) return res.status(404).json({ error: 'Evento não encontrado' });
       if (ev.recurrence !== 'unico') {
-        const { data: nextOcc } = await supabase.from('event_occurrences').select('date').eq('event_id', req.params.id).eq('status', 'pendente').order('date').limit(1);
+        const { data: nextOcc } = await supabase.from('event_occurrences').select('date').eq('event_id', eventId).eq('status', 'pendente').order('date').limit(1);
         const refDate = nextOcc?.length > 0 ? new Date(nextOcc[0].date) : new Date(ev.date);
         const diffDays = Math.ceil((refDate - new Date()) / 86400000);
         status = diffDays < 0 ? 'atrasado' : diffDays <= 7 ? 'em-risco' : 'no-prazo';
@@ -250,17 +261,66 @@ router.patch('/:id/status', async (req, res) => {
       }
     }
 
-    // Finalizar: desativar ciclo criativo (se existir)
-    if (status === 'concluido') {
-      await supabase.from('event_cycles').update({ status: 'encerrado' }).eq('event_id', req.params.id).eq('status', 'ativo');
+    // ── 2) Best-effort: toggle event_cycles (não-bloqueante) ──
+    // Se o ciclo nem existe, retorna sem erro. Se RLS bloqueia, loga e segue.
+    try {
+      if (status === 'concluido') {
+        const r = await supabase.from('event_cycles').update({ status: 'encerrado' }).eq('event_id', eventId).eq('status', 'ativo');
+        if (r.error) console.error('[Events PATCH status] toggle cycle encerrar (não-bloqueante):', r.error.message);
+      } else {
+        const r = await supabase.from('event_cycles').update({ status: 'ativo' }).eq('event_id', eventId).eq('status', 'encerrado');
+        if (r.error) console.error('[Events PATCH status] toggle cycle ativar (não-bloqueante):', r.error.message);
+      }
+    } catch (cycErr) {
+      console.error('[Events PATCH status] toggle cycle exceção (não-bloqueante):', cycErr?.message);
     }
 
-    const { data: oldEv } = await supabase.from('events').select('status, name').eq('id', req.params.id).single();
-    const { data, error } = await supabase.from('events').update({ status }).eq('id', req.params.id).select().single();
-    if (error) throw error;
-    if (oldEv) await supabase.from('audit_log').insert({ table_name: 'events', record_id: req.params.id, event_id: req.params.id, action: 'status_change', field_name: 'status', old_value: oldEv.status, new_value: status, description: `Evento "${oldEv.name}" ${oldEv.status} → ${status}`, changed_by: req.user.userId, changed_by_name: req.user.name }).catch(() => {});
-    res.json(data);
-  } catch (e) { console.error('[Events PATCH status]', e.message); res.status(500).json({ error: 'Erro ao atualizar status' }); }
+    // ── 3) Ler estado anterior pra audit (best-effort) ──
+    let oldEv = null;
+    try {
+      const r = await supabase.from('events').select('status, name').eq('id', eventId).single();
+      oldEv = r.data;
+    } catch (oldErr) {
+      console.error('[Events PATCH status] read oldEv (não-bloqueante):', oldErr?.message);
+    }
+
+    // ── 4) UPDATE PRIMÁRIO ── este é o único que pode retornar 500 ──
+    const { error: updErr } = await supabase.from('events').update({ status }).eq('id', eventId);
+    if (updErr) {
+      console.error('[Events PATCH status] update primário:', { eventId, message: updErr.message, code: updErr.code, details: updErr.details, hint: updErr.hint });
+      return res.status(500).json({ error: `Update falhou: ${updErr.message}`, code: updErr.code, details: updErr.details, hint: updErr.hint });
+    }
+
+    // ── 5) Daqui pra frente: tudo é best-effort ──
+    let data = null;
+    try {
+      const sel = await supabase.from('events').select().eq('id', eventId).single();
+      data = sel.data;
+    } catch (selErr) {
+      console.error('[Events PATCH status] select pós-update (não-bloqueante):', selErr?.message);
+    }
+
+    if (oldEv) {
+      try {
+        await supabase.from('audit_log').insert({
+          table_name: 'events', record_id: eventId, event_id: eventId,
+          action: 'status_change', field_name: 'status',
+          old_value: oldEv.status, new_value: status,
+          description: `Evento "${oldEv.name}" ${oldEv.status} → ${status}`,
+          changed_by: req.user.userId, changed_by_name: req.user.name,
+        });
+      } catch (auditErr) {
+        console.error('[Events PATCH status] audit_log (não-bloqueante):', auditErr?.message);
+      }
+    }
+
+    // 200 mesmo se data === null — UPDATE passou, cliente pode recarregar
+    res.json(data || { id: eventId, status });
+  } catch (e) {
+    const detail = [e?.message, e?.code && `code=${e.code}`, e?.details && `details=${e.details}`, e?.hint && `hint=${e.hint}`].filter(Boolean).join(' | ');
+    console.error('[Events PATCH status] exceção:', { eventId, message: e?.message, code: e?.code, details: e?.details, hint: e?.hint, stack: e?.stack });
+    res.status(500).json({ error: detail || 'Erro ao atualizar status', _v: 'patch-status-resilient-v1' });
+  }
 });
 
 // DELETE /api/events/:id — excluir evento (diretor+) com cascade
@@ -325,20 +385,47 @@ async function recalcEventStatus(eventId) {
 }
 
 // ── OCCURRENCES ──
+// Política: UPDATE primário sem .select() encadeado (trigger lateral no DB
+// pode falhar no SELECT mas o UPDATE já passou). recalcEventStatus + SELECT
+// pós-update viram best-effort — só logam. Log inclui code/details/hint pra
+// próximo erro ser óbvio em vez de "Erro ao atualizar ocorrência" genérico.
 router.patch('/:id/occurrences/:occId', async (req, res) => {
+  const { id: eventId, occId } = req.params;
   try {
-    if (!isUUID(req.params.occId)) return res.status(400).json({ error: 'ID inválido' });
+    if (!isUUID(occId)) return res.status(400).json({ error: 'ID inválido' });
     const d = req.body;
     const update = {};
     if (d.status !== undefined) update.status = d.status;
     if (d.notes !== undefined) update.notes = d.notes;
     if (d.lessons_learned !== undefined) update.lessons_learned = d.lessons_learned;
     if (d.attendance !== undefined) update.attendance = Math.max(0, parseInt(d.attendance) || 0);
-    const { data, error } = await supabase.from('event_occurrences').update(update).eq('id', req.params.occId).eq('event_id', req.params.id).select().single();
-    if (error) throw error;
-    await recalcEventStatus(req.params.id);
-    res.json(data);
-  } catch (e) { res.status(500).json({ error: 'Erro ao atualizar ocorrência' }); }
+
+    // UPDATE PRIMÁRIO (sem .select() encadeado)
+    const { error: updErr } = await supabase.from('event_occurrences').update(update).eq('id', occId).eq('event_id', eventId);
+    if (updErr) {
+      console.error('[Events PATCH occurrence] update:', { eventId, occId, message: updErr.message, code: updErr.code, details: updErr.details, hint: updErr.hint });
+      return res.status(500).json({ error: `Update falhou: ${updErr.message}`, code: updErr.code, details: updErr.details, hint: updErr.hint });
+    }
+
+    // recalcEventStatus best-effort (já trata erros internamente mas blindamos mesmo assim)
+    try { await recalcEventStatus(eventId); }
+    catch (recErr) { console.error('[Events PATCH occurrence] recalcEventStatus (não-bloqueante):', recErr?.message); }
+
+    // SELECT pós-update best-effort
+    let data = null;
+    try {
+      const sel = await supabase.from('event_occurrences').select().eq('id', occId).single();
+      data = sel.data;
+    } catch (selErr) {
+      console.error('[Events PATCH occurrence] select pós-update (não-bloqueante):', selErr?.message);
+    }
+
+    res.json(data || { id: occId, event_id: eventId, ...update });
+  } catch (e) {
+    const detail = [e?.message, e?.code && `code=${e.code}`, e?.details && `details=${e.details}`, e?.hint && `hint=${e.hint}`].filter(Boolean).join(' | ');
+    console.error('[Events PATCH occurrence] exceção:', { eventId, occId, message: e?.message, code: e?.code, details: e?.details, hint: e?.hint, stack: e?.stack });
+    res.status(500).json({ error: detail || 'Erro ao atualizar ocorrência', _v: 'patch-occ-resilient-v1' });
+  }
 });
 
 // ── TASKS ──
