@@ -869,6 +869,14 @@ export const publicVoluntariado = {
 
 // ── Voluntariado ──
 export const voluntariado = {
+  // Inscricoes (funil recebidas vs alocadas, do formulario Google)
+  inscricoesSummary: (params = {}) => {
+    const qs = new URLSearchParams();
+    if (params.ano) qs.set('ano', params.ano);
+    if (params.area) qs.set('area', params.area);
+    const s = qs.toString();
+    return get(`/voluntariado/inscricoes-summary${s ? `?${s}` : ''}`);
+  },
   // Encontros 1x1 mensais (lider <-> voluntario)
   teamMembers: (teamId, yearMonth) =>
     get(`/voluntariado/team/${teamId}/members${yearMonth ? `?year_month=${yearMonth}` : ''}`),
