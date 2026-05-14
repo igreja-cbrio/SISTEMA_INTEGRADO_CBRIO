@@ -645,7 +645,7 @@ que já existem.
 | Domingo 10:00 | Dom (0) | 10:00 | **Sede** | ✓ | ✓ |
 | Domingo 11:30 | Dom (0) | 11:30 | **Sede** | ✓ | ✓ |
 | Domingo 19:00 | Dom (0) | 19:00 | **Sede** | ✓ | ✓ |
-| Quarta com Deus | Qua (3) | 20:00 | Presencial | — | ✓ |
+| Quarta com Deus | Qua (3) | 20:00 | Presencial | ✓ | ✓ |
 | Bridge | Sáb (6) | 17:00 | Presencial | — | — |
 | AMI | Sáb (6) | 20:00 | Presencial | — | ✓ |
 
