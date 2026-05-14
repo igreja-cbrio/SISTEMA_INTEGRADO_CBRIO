@@ -147,6 +147,46 @@ const COLLECTORS = {
     return { valor: conv, observacao: `${conv} conversoes` };
   },
 
+  // ── Online · KPIs especificos do canal (so /minha-area, NAO entram em painel NSM) ──
+  // Marcos: "enquadre isso como dados apenas e crie kpis específicos do online
+  //          que só são do online (entao eles nao entram no painel nsm pois nao
+  //          tem cross, so entram na minha area)"
+  // Os 3 KPIs ON-AUD-01 / ON-DS-01 / ON-DDUS-01 tem valores=NULL · /painel filtra
+  // por valores.includes(v), entao nao aparecem em mandala/matriz. /minha-area
+  // mostra todos os ativos da area.
+
+  'cultos.online_pico_avg': async ({ inicio, fim }) => {
+    const { data } = await supabase
+      .from('cultos')
+      .select('online_pico')
+      .gte('data', inicio).lt('data', fim)
+      .not('online_pico', 'is', null);
+    const vals = (data || []).map(c => c.online_pico).filter(v => v > 0);
+    if (vals.length === 0) return { valor: 0, observacao: 'Nenhum culto com pico online no periodo' };
+    const media = Math.round(vals.reduce((s, v) => s + v, 0) / vals.length);
+    return { valor: media, observacao: `Media de ${vals.length} culto(s)` };
+  },
+
+  'cultos.online_ds_total': async ({ inicio, fim }) => {
+    const { data } = await supabase
+      .from('cultos')
+      .select('online_ds')
+      .gte('data', inicio).lt('data', fim)
+      .not('online_ds', 'is', null);
+    const total = (data || []).reduce((s, c) => s + (c.online_ds || 0), 0);
+    return { valor: total, observacao: `${(data || []).length} culto(s) com video` };
+  },
+
+  'cultos.online_ddus_total': async ({ inicio, fim }) => {
+    const { data } = await supabase
+      .from('cultos')
+      .select('online_ddus')
+      .gte('data', inicio).lt('data', fim)
+      .not('online_ddus', 'is', null);
+    const total = (data || []).reduce((s, c) => s + (c.online_ddus || 0), 0);
+    return { valor: total, observacao: `${(data || []).length} culto(s) com video` };
+  },
+
   // ── Cuidados ──
   'cuidados.convertidos_pos_culto': async ({ inicio, fim }) => {
     const { count: total } = await supabase.from('cui_convertidos').select('id', { count: 'exact', head: true }).gte('data_culto', inicio).lt('data_culto', fim);
