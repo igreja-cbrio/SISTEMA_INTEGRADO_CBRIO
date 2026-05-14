@@ -712,15 +712,30 @@ de visitantes por culto**. Removido da UI:
 - Aba "Visitantes" da página `/integracao` (e os componentes
   `TabVisitantes`, `VisitanteFormDialog`, `VisitanteDetailDialog`,
   `AcompanhamentoFormDialog`)
-- Card "Visitantes (30d)" do header
+- Aba "Pendentes" (era acompanhamentos de visitantes — sem fonte de
+  dados depois da remoção da aba Visitantes, ficaria sempre vazia)
+- Card "Visitantes (30d)" e "Contatos hoje" do header
 - Seção "Visitantes (1ª vez)" do modal de culto em `CalendarioCultos`
   (campos `visitantes` / `visitantes_online` não são mais preenchidos)
 - Linha "X visit" dos cards do calendário semanal
 
-Schema preservado: `cultos.visitantes`, `cultos.visitantes_online` e
-`int_visitantes` continuam existindo no banco · só não há entrada pela
-UI. Para retomar a contagem, basta reintroduzir os campos no
-`ModalCulto` e renderizar uma aba/lista nova.
+Schema preservado: `cultos.visitantes`, `cultos.visitantes_online`,
+`int_visitantes` e `int_acompanhamentos` continuam existindo no banco ·
+só não há entrada pela UI.
+
+**Coletor `cultos.conv_visit` ajustado**: antes somava
+`decisões + visitantes`. Agora soma só decisões — `cultos.visitantes`
+seria sempre zero e degradaria o KPI silenciosamente.
+
+### Recálculo automático ao editar culto
+
+`PUT /api/kpis/cultos/:id` (backend/routes/kpis.js) dispara em
+background `coletarTodos({ fontes: ['cultos.', 'batismos.'] })` +
+`painelCache.bust('')` depois de salvar. KPIs do painel refletem a
+edição em segundos em vez de esperar o cron diário
+(`/api/kpis/v2/cron/coletar`).
+
+Tabs vigentes de `/integracao`: **Cultos · Frequência · Decisões · Batismos**.
 
 ### Calendário semanal
 

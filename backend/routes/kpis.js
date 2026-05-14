@@ -3,6 +3,8 @@ const router = express.Router();
 const { authenticate, authorize } = require('../middleware/auth');
 const { supabase } = require('../utils/supabase');
 const { notificar } = require('../services/notificar');
+const { coletarTodos } = require('../services/kpiAutoCollector');
+const painelCache = require('../services/painelCache');
 
 router.use(authenticate);
 
@@ -76,6 +78,19 @@ router.put('/cultos/:id', async (req, res) => {
   const { data, error } = await supabase
     .from('cultos').update(update).eq('id', req.params.id).select().single();
   if (error) return res.status(500).json({ error: error.message });
+
+  // Recalcula KPIs que dependem de cultos em background · KPIs do painel
+  // refletem mudança em segundos em vez de esperar cron diário. fire-and-forget
+  // pra nao bloquear resposta. Cache do /painel limpado pra forcar releitura.
+  setImmediate(async () => {
+    try {
+      await coletarTodos({ fontes: ['cultos.', 'batismos.'] });
+      painelCache.bust('');
+    } catch (e) {
+      console.error('[kpis] recalculo pos-update culto falhou:', e.message);
+    }
+  });
+
   res.json(data);
 });
 
