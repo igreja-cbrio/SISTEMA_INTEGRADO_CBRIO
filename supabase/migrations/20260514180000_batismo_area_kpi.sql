@@ -38,8 +38,15 @@ COMMENT ON COLUMN public.batismo_inscricoes.area_kpi IS
 
 -- ----------------------------------------------------------------------------
 -- 2. Atualiza vw_batismo_historico_anual · expoe area_kpi pra historico filtrado
+--
+-- DROP + CREATE em vez de CREATE OR REPLACE porque adicionar coluna no meio
+-- (entre ano e total_batismos) muda a posicao das colunas existentes e o
+-- Postgres recusa com "cannot change name of view column".
+-- Sem CASCADE porque a view e consumida so via SELECT (endpoint historico).
 -- ----------------------------------------------------------------------------
-CREATE OR REPLACE VIEW public.vw_batismo_historico_anual AS
+DROP VIEW IF EXISTS public.vw_batismo_historico_anual;
+
+CREATE VIEW public.vw_batismo_historico_anual AS
 SELECT
   EXTRACT(YEAR FROM COALESCE(data_batismo, created_at::date))::int AS ano,
   area_kpi,
