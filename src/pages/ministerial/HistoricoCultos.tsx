@@ -30,9 +30,10 @@ type HistoricoRow = {
 
 type BatismoAnoRow = { ano: number; total_batismos: number };
 
-type Metrica = 'frequencia' | 'aceitacoes' | 'batismos';
+type Metrica = 'todos' | 'frequencia' | 'aceitacoes' | 'batismos';
 
 const METRICAS: { value: Metrica; label: string; cor: string }[] = [
+  { value: 'todos',      label: 'Todos',      cor: C.primary },
   { value: 'frequencia', label: 'Frequência', cor: C.info },
   { value: 'aceitacoes', label: 'Aceitações', cor: C.purple },
   { value: 'batismos',   label: 'Batismos',   cor: C.primary },
@@ -52,7 +53,7 @@ export default function HistoricoCultos() {
   });
 
   const [tipoFiltro, setTipoFiltro] = useState<string>('todos');
-  const [metrica, setMetrica] = useState<Metrica>('frequencia');
+  const [metrica, setMetrica] = useState<Metrica>('todos');
 
   const rows = data || [];
 
@@ -213,6 +214,15 @@ export default function HistoricoCultos() {
                   formatter={(v: any, name: any) => [`${Number(v).toLocaleString('pt-BR')}`, name]}
                 />
                 <Legend wrapperStyle={{ fontSize: 11, paddingTop: 4 }} />
+                {metrica === 'todos' && (
+                  <>
+                    <Bar dataKey="presencial" name="Presencial" stackId="freq" fill={C.info} />
+                    <Bar dataKey="kids"       name="Kids"       stackId="freq" fill={C.pink} radius={[4, 4, 0, 0]} />
+                    <Bar dataKey="decisoes"   name="Aceitações" fill={C.purple} radius={[4, 4, 0, 0]} />
+                    <Bar dataKey="batismos"   name="Batismos"   fill={C.primary} radius={[4, 4, 0, 0]} />
+                    <Bar dataKey="online"     name="Pico online" fill={C.warn} radius={[4, 4, 0, 0]} />
+                  </>
+                )}
                 {metrica === 'frequencia' && (
                   <>
                     <Bar dataKey="presencial" name="Presencial" stackId="freq" fill={C.info} />
