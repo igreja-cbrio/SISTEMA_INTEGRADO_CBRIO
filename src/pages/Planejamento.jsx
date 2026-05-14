@@ -104,6 +104,11 @@ export default function Planejamento() {
 
   // Gantt data
   const [ganttTasks, setGanttTasks] = useState([]);
+  // Filtro de finalizadas-com-evento: 'hide' (default) | 'show' | 'only'
+  // hide = lista limpa, sem tarefas de eventos que já acabaram
+  // show = todas, com badge nas marcadas
+  // only = só as fechadas com evento (bucket de visibilidade pra cobrar quem ficou pra trás)
+  const [finalizedFilter, setFinalizedFilter] = useState('hide');
 
   const [apiError, setApiError] = useState('');
 
@@ -118,12 +123,17 @@ export default function Planejamento() {
           setKanbanPhase(first.numero_fase);
         }
       }).catch(e => console.error('Kanban:', e)),
-      tasksApi.all({}).then(setGanttTasks).catch(e => console.error('Gantt:', e)),
+      tasksApi.all({ finalized: finalizedFilter }).then(setGanttTasks).catch(e => console.error('Gantt:', e)),
       dashApi.projectsKanban().then(setProjectsData).catch(e => console.error('Projetos:', e)),
       dashApi.strategicKanban().then(setStrategicData).catch(e => console.error('Estratégico:', e)),
       tasksApi.all({ source: 'projeto' }).then(d => setProjTasks(Array.isArray(d) ? d : [])).catch(e => console.error('ProjTasks:', e)),
     ]).finally(() => setLoading(false));
   }, []);
+
+  // Re-fetch quando o filtro de finalizadas muda
+  useEffect(() => {
+    tasksApi.all({ finalized: finalizedFilter }).then(setGanttTasks).catch(e => console.error('Gantt:', e));
+  }, [finalizedFilter]);
 
   const handleProjTaskStatus = async (taskId, status) => {
     await tasksApi.updateStatus('projeto', taskId, status);
@@ -519,6 +529,19 @@ export default function Planejamento() {
                 <SelectItem value="15">Próx. 15 dias</SelectItem>
                 <SelectItem value="30">Próx. 30 dias</SelectItem>
                 <SelectItem value="0">Sem filtro</SelectItem>
+              </SelectContent>
+            </ShadSelect>
+
+            <span style={{ width: 1, height: 20, background: C.border }} />
+
+            {/* Filtro de finalizadas com evento — bucket de visibilidade preservada */}
+            <span style={{ fontSize: 11, color: C.t2, fontWeight: 600 }}>Finalizadas c/ evento:</span>
+            <ShadSelect value={finalizedFilter} onValueChange={setFinalizedFilter}>
+              <SelectTrigger className="h-7 w-auto min-w-[140px] text-xs"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="hide">Esconder (default)</SelectItem>
+                <SelectItem value="show">Mostrar misturadas</SelectItem>
+                <SelectItem value="only">Só essas (cobrar)</SelectItem>
               </SelectContent>
             </ShadSelect>
           </div>

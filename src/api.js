@@ -279,10 +279,12 @@ export const history = {
 };
 
 export const tasks = {
+  // finalized: 'hide' (default, esconde fechadas-com-evento) | 'show' (todas, marcadas) | 'only' (só fechadas-com-evento)
   all: (params) => {
     const q = new URLSearchParams();
     if (params?.source) q.set('source', params.source);
     if (params?.area) q.set('area', params.area);
+    if (params?.finalized) q.set('finalized', params.finalized);
     const qs = q.toString();
     return get('/tasks/all' + (qs ? '?' + qs : ''));
   },

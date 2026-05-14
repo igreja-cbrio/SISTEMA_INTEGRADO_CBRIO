@@ -138,8 +138,9 @@ async function loadInputSnapshot(eventId, type, phase_name, since_days) {
   const hasDateFilter = Number.isFinite(sinceN) && sinceN > 0;
   const sinceIso = hasDateFilter ? new Date(Date.now() - sinceN * 86400000).toISOString() : null;
 
-  const { data: event } = await supabase.from('events').select('name, date, status, description').eq('id', eventId).single();
+  const { data: event } = await supabase.from('events').select('name, date, status, description, updated_at').eq('id', eventId).single();
   if (!event) return { error: 'Evento não encontrado' };
+  const isFinalizedEvent = event.status === 'concluido';
 
   let q = supabase.from('event_task_attachments').select('*').eq('event_id', eventId);
   if (type === 'phase' && phase_name) q = q.eq('phase_name', phase_name);
@@ -160,7 +161,7 @@ async function loadInputSnapshot(eventId, type, phase_name, since_days) {
   const { data: progress } = await progressQ.order('phase_number');
 
   let pendingQ = supabase.from('cycle_phase_tasks')
-    .select('titulo, area, status, responsavel_nome, event_phase_id')
+    .select('titulo, area, status, responsavel_nome, event_phase_id, closed_with_event_at, prazo')
     .eq('event_id', eventId)
     .neq('status', 'concluida');
   if (type === 'phase' && phase_name) {
@@ -170,7 +171,29 @@ async function loadInputSnapshot(eventId, type, phase_name, since_days) {
   }
   const { data: pendingTasks } = await pendingQ;
 
-  if ((!attachs || attachs.length === 0) && (!completions || completions.length === 0) && (!pendingTasks || pendingTasks.length === 0)) {
+  // Tarefas event_tasks (do "kanban simples") em aberto, também listadas
+  // pra termos visão completa do que ficou pra trás.
+  let pendingEvQ = supabase.from('event_tasks')
+    .select('name, area, status, responsible, closed_with_event_at, deadline')
+    .eq('event_id', eventId)
+    .neq('status', 'concluida');
+  const { data: pendingEventTasks } = await pendingEvQ;
+
+  // Pra evento finalizado: separa as tarefas marcadas como "fechadas com
+  // evento". Essas são as que vão alimentar o Haiku pra destacar "o evento
+  // foi finalizado sem a conclusão de X, Y, Z" como o Marcos pediu.
+  const closedWithEvent = isFinalizedEvent ? [
+    ...(pendingTasks || []).filter(t => t.closed_with_event_at).map(t => ({
+      titulo: t.titulo, area: t.area, status_real: t.status, prazo: t.prazo,
+      responsavel: t.responsavel_nome, origem: 'ciclo',
+    })),
+    ...(pendingEventTasks || []).filter(t => t.closed_with_event_at).map(t => ({
+      titulo: t.name, area: t.area, status_real: t.status, prazo: t.deadline,
+      responsavel: t.responsible, origem: 'evento',
+    })),
+  ] : [];
+
+  if ((!attachs || attachs.length === 0) && (!completions || completions.length === 0) && (!pendingTasks || pendingTasks.length === 0) && closedWithEvent.length === 0) {
     return { error: 'Nenhum dado encontrado para gerar relatório.' };
   }
 
@@ -209,12 +232,31 @@ async function loadInputSnapshot(eventId, type, phase_name, since_days) {
     type,
     phase_name: phase_name || null,
     since_days: sinceN || null,
-    totals: { cards: totalCards, concluidos: totalConcluidos, pendentes: totalPendentes, pct: pctGeral, anexos: attachs?.length || 0 },
+    isFinalizedEvent,
+    eventFinalizedAt: isFinalizedEvent ? event.updated_at : null,
+    totals: {
+      cards: totalCards,
+      concluidos: totalConcluidos,
+      pendentes: totalPendentes,
+      pct: pctGeral,
+      anexos: attachs?.length || 0,
+      closed_with_event: closedWithEvent.length,
+    },
     progress: progress || [],
     pendingTasks: pendingTasks || [],
+    closedWithEvent,
     fileContents,
     completions: completions || [],
   };
+}
+
+// Lista de tarefas que ficaram em aberto quando o evento foi finalizado.
+// Usado pelo Haiku pra destacar "evento foi finalizado sem conclusão de X, Y, Z".
+function formatClosedWithEvent(items) {
+  if (!items?.length) return '(nenhuma)';
+  return items.map(t =>
+    `- "${t.titulo}" | Área: ${t.area || 'não definida'} | Status real: ${t.status_real || 'não definido'} | Responsável: ${t.responsavel || 'não atribuído'}${t.prazo ? ` | Prazo era: ${t.prazo}` : ''} (origem: ${t.origem})`
+  ).join('\n');
 }
 
 // Formata um pedaço do snapshot pra texto que vai dentro do prompt da seção.
@@ -246,10 +288,15 @@ function formatFiles(files) {
 // Constrói o prompt focado de UMA seção. Recebe input_data (snapshot) +
 // sectionName + opcionalmente outras seções já geradas (pra synthesis).
 function buildSectionPrompt(sectionName, input, otherSections = {}) {
+  const finalizedLine = input.isFinalizedEvent
+    ? `Status do evento: FINALIZADO em ${input.eventFinalizedAt ? new Date(input.eventFinalizedAt).toLocaleDateString('pt-BR') : 'data desconhecida'}.${input.totals.closed_with_event > 0 ? ` ${input.totals.closed_with_event} tarefa(s) ficaram em aberto no momento do finalize.` : ''}`
+    : `Status do evento: em andamento.`;
+
   const ctx = `### CONTEXTO DO EVENTO
 Evento: ${input.eventName}
 Data: ${input.eventDate || 'não definida'}
 Escopo: ${input.scope}${input.since_days ? ` · últimos ${input.since_days} dias` : ''}
+${finalizedLine}
 Cards: ${input.totals.cards} total / ${input.totals.concluidos} concluídos (${input.totals.pct}%) / ${input.totals.pendentes} pendentes
 Anexos: ${input.totals.anexos}`;
 
@@ -261,15 +308,24 @@ REGRAS DURAS:
 - Baseie-se SOMENTE nos dados fornecidos. NUNCA invente nomes, datas, observações.
 - Se a seção não tem dados pra preencher de forma útil, retorne uma única linha tipo "_Sem dados disponíveis para esta seção._"
 - Use markdown limpo: ## subtítulos, - bullets, **negrito** apenas pra realce real.
-- Tom profissional, conciso, acionável. NÃO repita o título da seção dentro do conteúdo.`;
+- Tom profissional, conciso, acionável. NÃO repita o título da seção dentro do conteúdo.
+${input.isFinalizedEvent ? `- EVENTO ESTÁ FINALIZADO. Use tempo PASSADO ("foi entregue", "ficou pendente"). NÃO sugira ações pra "destravar antes do evento" — o evento já acabou. Recomendações devem ser pro PRÓXIMO ciclo similar (aprendizado).` : ''}`;
 
   let task = '';
   let data = '';
 
+  // Pra evento finalizado, todas as seções recebem a lista de tarefas que
+  // ficaram em aberto no finalize. Cada seção decide se usa ou não.
+  const closedBlock = input.isFinalizedEvent && input.closedWithEvent?.length
+    ? `\n\nTAREFAS QUE FICARAM EM ABERTO QUANDO O EVENTO FOI FINALIZADO (status real não foi concluida):\n${formatClosedWithEvent(input.closedWithEvent)}`
+    : '';
+
   switch (sectionName) {
     case 'resumo_executivo':
-      task = `Gere o RESUMO EXECUTIVO em 2-4 parágrafos: o estado geral do evento — o que foi entregue, o que ainda falta, status global, qual o sentimento geral. Sem listas, prosa corrida.`;
-      data = `PROGRESSO POR FASE:\n${formatProgress(input.progress)}\n\nPENDÊNCIAS:\n${formatPending(input.pendingTasks)}`;
+      task = input.isFinalizedEvent
+        ? `Gere o RESUMO EXECUTIVO de um evento que JÁ ACONTECEU. 2-4 parágrafos contando: o que foi entregue, o que ficou em aberto, qual a leitura geral. Mencione explicitamente se houve tarefas que ficaram pendentes no fechamento. Use tempo passado.`
+        : `Gere o RESUMO EXECUTIVO em 2-4 parágrafos: o estado geral do evento — o que foi entregue, o que ainda falta, status global, qual o sentimento geral. Sem listas, prosa corrida.`;
+      data = `PROGRESSO POR FASE:\n${formatProgress(input.progress)}\n\nPENDÊNCIAS:\n${formatPending(input.pendingTasks)}${closedBlock}`;
       break;
     case 'progresso_por_fase':
       task = `Gere a seção PROGRESSO POR FASE: lista por fase com total/concluídos/pendentes/%. Use bullets ou tabela markdown.`;
@@ -280,20 +336,28 @@ REGRAS DURAS:
       data = `CONCLUSÕES:\n${formatCompletions(input.completions)}\n\nARQUIVOS ANEXADOS:\n${formatFiles(input.fileContents)}`;
       break;
     case 'cards_pendentes':
-      task = `Gere a seção CARDS PENDENTES: lista os cards não concluídos agrupados por fase/área. Pra cada um, avalie em 1 frase o impacto da pendência no evento.`;
-      data = `PENDÊNCIAS:\n${formatPending(input.pendingTasks)}\n\nPROGRESSO POR FASE (contexto):\n${formatProgress(input.progress)}`;
+      task = input.isFinalizedEvent
+        ? `Gere a seção "FICOU EM ABERTO": lista as tarefas que não foram concluídas e o evento foi finalizado mesmo assim. Agrupe por área. Pra cada uma, mencione o responsável e prazo. Esta lista é prestação de contas — não esquecer dos responsáveis que ficaram com tarefas inacabadas.`
+        : `Gere a seção CARDS PENDENTES: lista os cards não concluídos agrupados por fase/área. Pra cada um, avalie em 1 frase o impacto da pendência no evento.`;
+      data = input.isFinalizedEvent
+        ? `TAREFAS FECHADAS COM EVENTO (não concluídas pelo responsável):\n${formatClosedWithEvent(input.closedWithEvent)}\n\nPENDÊNCIAS RESTANTES NO CICLO:\n${formatPending(input.pendingTasks)}`
+        : `PENDÊNCIAS:\n${formatPending(input.pendingTasks)}\n\nPROGRESSO POR FASE (contexto):\n${formatProgress(input.progress)}`;
       break;
     case 'observacoes_responsaveis':
       task = `Gere a seção OBSERVAÇÕES DOS RESPONSÁVEIS: extraia das conclusões SÓ as que têm observação preenchida. Destaque insights, alertas e contexto que os responsáveis deixaram. Se não houver observações, escreva apenas uma linha indicando.`;
       data = `CONCLUSÕES COM OBSERVAÇÃO:\n${formatCompletions((input.completions || []).filter(c => c.observacao))}`;
       break;
     case 'pontos_atencao':
-      task = `Gere a seção PONTOS DE ATENÇÃO: gaps, atrasos, áreas que não entregaram, riscos identificados a partir das pendências e do histórico. Seja específico e acionável. Não duplique a lista de cards_pendentes (essa seção já existe) — aqui é análise, não listagem.`;
-      data = `PENDÊNCIAS:\n${formatPending(input.pendingTasks)}\n\nPROGRESSO:\n${formatProgress(input.progress)}\n\nSEÇÕES JÁ GERADAS (use como contexto, NÃO repita):\n${otherSections.cards_pendentes ? `--- cards_pendentes ---\n${otherSections.cards_pendentes}\n` : ''}${otherSections.entregas_por_area ? `--- entregas_por_area ---\n${otherSections.entregas_por_area}\n` : ''}`;
+      task = input.isFinalizedEvent
+        ? `Gere a seção PONTOS DE ATENÇÃO de evento FINALIZADO. Destaque EXPLICITAMENTE: "O evento foi finalizado sem a conclusão das tarefas: [liste por nome]". Aponte também áreas que ficaram para trás, responsáveis com tarefas em aberto, padrões problemáticos. Esta seção é o registro pro time não esquecer o que ficou pra trás.`
+        : `Gere a seção PONTOS DE ATENÇÃO: gaps, atrasos, áreas que não entregaram, riscos identificados a partir das pendências e do histórico. Seja específico e acionável. Não duplique a lista de cards_pendentes (essa seção já existe) — aqui é análise, não listagem.`;
+      data = `PENDÊNCIAS:\n${formatPending(input.pendingTasks)}\n\nPROGRESSO:\n${formatProgress(input.progress)}${closedBlock}\n\nSEÇÕES JÁ GERADAS (use como contexto, NÃO repita):\n${otherSections.cards_pendentes ? `--- cards_pendentes ---\n${otherSections.cards_pendentes}\n` : ''}${otherSections.entregas_por_area ? `--- entregas_por_area ---\n${otherSections.entregas_por_area}\n` : ''}`;
       break;
     case 'recomendacoes':
-      task = `Gere a seção RECOMENDAÇÕES: próximos passos concretos pra destravar pendências antes do evento. Priorize por impacto. Bullets com ação + responsável sugerido + prazo recomendado quando fizer sentido.`;
-      data = `PENDÊNCIAS:\n${formatPending(input.pendingTasks)}\n\nPONTOS DE ATENÇÃO JÁ IDENTIFICADOS (use como contexto):\n${otherSections.pontos_atencao || '(ainda não gerado)'}`;
+      task = input.isFinalizedEvent
+        ? `Gere RECOMENDAÇÕES como aprendizado pra próximas edições deste evento (já que ele finalizou). Foque em padrões: áreas que precisam de mais antecedência, processos que falharam, melhorias pro próximo ciclo. NÃO sugira "destravar pendências antes do evento" — já acabou.`
+        : `Gere a seção RECOMENDAÇÕES: próximos passos concretos pra destravar pendências antes do evento. Priorize por impacto. Bullets com ação + responsável sugerido + prazo recomendado quando fizer sentido.`;
+      data = `PENDÊNCIAS:\n${formatPending(input.pendingTasks)}\n\nPONTOS DE ATENÇÃO JÁ IDENTIFICADOS (use como contexto):\n${otherSections.pontos_atencao || '(ainda não gerado)'}${closedBlock}`;
       break;
     default:
       throw new Error(`Seção desconhecida: ${sectionName}`);
@@ -320,20 +384,32 @@ router.post('/:eventId/report', async (req, res) => {
 Sua tarefa é gerar um relatório operacional estruturado em seções fixas. Use submit_report com markdown em cada campo.
 
 REGRAS: Baseie-se APENAS nos dados fornecidos. NUNCA invente. Seções sem dados ficam string vazia.
-Markdown limpo, ## subtítulos, - bullets, **negrito** apenas pra realce real.`;
+Markdown limpo, ## subtítulos, - bullets, **negrito** apenas pra realce real.
+
+${input.isFinalizedEvent ? `EVENTO ESTÁ FINALIZADO. Use tempo passado. Em pontos_atencao destaque EXPLICITAMENTE "O evento foi finalizado sem a conclusão das tarefas: [liste]". Recomendações são pro PRÓXIMO ciclo similar — não pra destravar antes do evento (já acabou).` : ''}`;
+
+    const finalizedLine = input.isFinalizedEvent
+      ? `Status: FINALIZADO em ${input.eventFinalizedAt ? new Date(input.eventFinalizedAt).toLocaleDateString('pt-BR') : 'data desconhecida'}.${input.totals.closed_with_event > 0 ? ` ${input.totals.closed_with_event} tarefa(s) ficaram em aberto no fechamento.` : ''}`
+      : `Status: em andamento.`;
 
     const dynamicHeader = `### CONTEXTO
 Evento: ${input.eventName}
 Data: ${input.eventDate || 'não definida'}
 Escopo: ${input.scope}${input.since_days ? ` · últimos ${input.since_days} dias` : ''}
+${finalizedLine}
 Cards: ${input.totals.cards} total / ${input.totals.concluidos} concluídos (${input.totals.pct}%) / ${input.totals.pendentes} pendentes
 Anexos: ${input.totals.anexos}`;
+
+    const closedBlock = input.isFinalizedEvent && input.closedWithEvent?.length
+      ? `\n\n=== TAREFAS QUE FICARAM EM ABERTO NO FECHAMENTO DO EVENTO ===\n${formatClosedWithEvent(input.closedWithEvent)}`
+      : '';
 
     const userMessage =
       `=== PROGRESSO POR FASE/ÁREA ===\n${formatProgress(input.progress)}\n\n` +
       `=== CARDS PENDENTES ===\n${formatPending(input.pendingTasks)}\n\n` +
       `=== CONCLUSÕES DE CARDS ===\n${formatCompletions(input.completions)}\n\n` +
-      `=== ARQUIVOS ANEXADOS ===\n${formatFiles(input.fileContents)}`;
+      `=== ARQUIVOS ANEXADOS ===\n${formatFiles(input.fileContents)}` +
+      closedBlock;
 
     const useHaiku = type === 'phase' && userMessage.length < 80000;
     const model = useHaiku ? 'claude-haiku-4-5-20251001' : 'claude-sonnet-4-20250514';

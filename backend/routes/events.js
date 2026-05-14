@@ -261,18 +261,53 @@ router.patch('/:id/status', async (req, res) => {
       }
     }
 
-    // ── 2) Best-effort: toggle event_cycles (não-bloqueante) ──
+    // ── 2) Best-effort: toggle event_cycles + marcar tarefas em aberto ──
+    // (não-bloqueante)
     // Se o ciclo nem existe, retorna sem erro. Se RLS bloqueia, loga e segue.
     try {
       if (status === 'concluido') {
         const r = await supabase.from('event_cycles').update({ status: 'encerrado' }).eq('event_id', eventId).eq('status', 'ativo');
         if (r.error) console.error('[Events PATCH status] toggle cycle encerrar (não-bloqueante):', r.error.message);
+
+        // Marca tarefas NÃO concluídas como "fechadas com evento". Status real
+        // delas preserva (continua pendente/em-andamento) — só o timestamp
+        // sinaliza pros filtros/relatórios que o responsável NÃO terminou.
+        // Se a tarefa já tinha closed_with_event_at de finalize anterior, NÃO
+        // sobrescreve (mantém a primeira marcação como verdade histórica).
+        const finalizeAt = new Date().toISOString();
+        const [etRes, cptRes] = await Promise.all([
+          supabase.from('event_tasks').update({ closed_with_event_at: finalizeAt })
+            .eq('event_id', eventId)
+            .not('status', 'in', '("concluida","concluido")')
+            .is('closed_with_event_at', null),
+          supabase.from('cycle_phase_tasks').update({ closed_with_event_at: finalizeAt })
+            .eq('event_id', eventId)
+            .not('status', 'in', '("concluida","concluido")')
+            .is('closed_with_event_at', null),
+        ]);
+        if (etRes.error) console.error('[Events PATCH status] marcar event_tasks (não-bloqueante):', etRes.error.message);
+        if (cptRes.error) console.error('[Events PATCH status] marcar cycle_phase_tasks (não-bloqueante):', cptRes.error.message);
       } else {
         const r = await supabase.from('event_cycles').update({ status: 'ativo' }).eq('event_id', eventId).eq('status', 'encerrado');
         if (r.error) console.error('[Events PATCH status] toggle cycle ativar (não-bloqueante):', r.error.message);
+
+        // Reabrir evento: desmarca closed_with_event_at das tarefas (volta pro
+        // bucket de pendentes/atrasadas). Política: limpa TODAS as marcações
+        // do evento, mesmo se houve múltiplos finalizes — usuário reabriu,
+        // quer ver de novo as tarefas em aberto.
+        const [etRes, cptRes] = await Promise.all([
+          supabase.from('event_tasks').update({ closed_with_event_at: null })
+            .eq('event_id', eventId)
+            .not('closed_with_event_at', 'is', null),
+          supabase.from('cycle_phase_tasks').update({ closed_with_event_at: null })
+            .eq('event_id', eventId)
+            .not('closed_with_event_at', 'is', null),
+        ]);
+        if (etRes.error) console.error('[Events PATCH status] desmarcar event_tasks (não-bloqueante):', etRes.error.message);
+        if (cptRes.error) console.error('[Events PATCH status] desmarcar cycle_phase_tasks (não-bloqueante):', cptRes.error.message);
       }
     } catch (cycErr) {
-      console.error('[Events PATCH status] toggle cycle exceção (não-bloqueante):', cycErr?.message);
+      console.error('[Events PATCH status] cascade tarefas exceção (não-bloqueante):', cycErr?.message);
     }
 
     // ── 3) Ler estado anterior pra audit (best-effort) ──
