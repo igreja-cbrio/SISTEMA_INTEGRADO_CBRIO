@@ -546,19 +546,24 @@ const COLLECTORS = {
     };
   },
 
-  // ── Batismos ──
-  'batismos.kids': async ({ inicio, fim }) => {
-    // Aceitacoes + batismos de criancas no periodo
-    // Usa batismos com idade <= 12 (Kids); ajustar conforme schema real
-    try {
-      const { count } = await supabase.from('batismos')
-        .select('id', { count: 'exact', head: true })
-        .gte('created_at', inicio).lt('created_at', fim);
-      return { valor: count || 0, observacao: 'Total batismos no periodo (filtro Kids pendente)' };
-    } catch (e) {
-      return null;
-    }
-  },
+  // ── Batismos por area (alimentados pela coluna area_kpi adicionada em
+  //    20260514180000_batismo_area_kpi.sql). Filtra status='realizado' e
+  //    usa COALESCE(data_batismo, created_at) pra contar a data real.
+  ...['kids', 'sede', 'bridge', 'ami', 'online'].reduce((acc, area) => {
+    acc[`batismos.${area}`] = async ({ inicio, fim }) => {
+      const { data } = await supabase
+        .from('batismo_inscricoes')
+        .select('id, data_batismo, created_at')
+        .eq('status', 'realizado')
+        .eq('area_kpi', area);
+      const total = (data || []).filter(b => {
+        const dt = b.data_batismo || (b.created_at || '').slice(0, 10);
+        return dt >= inicio && dt < fim;
+      }).length;
+      return { valor: total, observacao: `${total} batismo(s) ${area} no periodo` };
+    };
+    return acc;
+  }, {}),
 
   // ── Voluntariado extras (Onda 3) ──
 

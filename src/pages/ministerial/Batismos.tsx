@@ -575,6 +575,7 @@ function ModalNovaInscricao({ onClose, onCreated }: { onClose: () => void; onCre
     cpf: '', telefone: '', email: '',
     data_nascimento: '',
     observacoes: '',
+    area_kpi: 'sede',
   });
   const [saving, setSaving] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
@@ -605,6 +606,7 @@ function ModalNovaInscricao({ onClose, onCreated }: { onClose: () => void; onCre
         data_nascimento: form.data_nascimento || null,
         observacoes: form.observacoes.trim() || null,
         origem: 'manual',
+        area_kpi: form.area_kpi || 'sede',
       });
       toast.success('Inscricao cadastrada!');
       onCreated();
@@ -657,6 +659,21 @@ function ModalNovaInscricao({ onClose, onCreated }: { onClose: () => void; onCre
               <Label htmlFor="bn-email" className="text-xs">Email</Label>
               <Input id="bn-email" type="email" value={form.email} onChange={set('email')} autoComplete="email" inputMode="email" />
             </div>
+          </div>
+
+          <div>
+            <Label htmlFor="bn-campus" className="text-xs">Campus (alimenta KPI por area)</Label>
+            <select
+              id="bn-campus"
+              value={form.area_kpi}
+              onChange={e => setForm(f => ({ ...f, area_kpi: e.target.value }))}
+              className="w-full h-9 px-3 rounded-md border border-input bg-background text-sm"
+            >
+              <option value="sede">CBRio Domingo (Sede)</option>
+              <option value="ami">AMI</option>
+              <option value="bridge">Bridge</option>
+              <option value="online">Online</option>
+            </select>
           </div>
 
           <div>

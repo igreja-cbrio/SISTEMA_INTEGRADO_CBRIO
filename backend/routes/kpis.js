@@ -202,8 +202,10 @@ router.get('/batismos', async (req, res) => {
 });
 
 router.post('/batismos', async (req, res) => {
-  const { cpf, nome, sobrenome, data_nascimento, telefone, email, origem = 'manual', observacoes } = req.body;
+  const { cpf, nome, sobrenome, data_nascimento, telefone, email, origem = 'manual', observacoes, area_kpi } = req.body;
   if (!nome || !sobrenome) return res.status(400).json({ error: 'nome e sobrenome são obrigatórios' });
+  const AREAS_OK = ['kids', 'sede', 'bridge', 'ami', 'online'];
+  const areaKpiValida = AREAS_OK.includes(area_kpi) ? area_kpi : 'sede';
 
   let membro_id = null;
   const cpfClean = cpf ? cpf.replace(/\D/g, '') : null;
@@ -245,6 +247,7 @@ router.post('/batismos', async (req, res) => {
       telefone: telefone || null,
       email: email || null,
       origem,
+      area_kpi: areaKpiValida,
       observacoes: observacoes || null,
       inscrito_por: req.user?.id || null,
     })
@@ -266,11 +269,14 @@ router.post('/batismos', async (req, res) => {
 });
 
 router.put('/batismos/:id', async (req, res) => {
-  const { status, data_batismo, observacoes } = req.body;
+  const { status, data_batismo, observacoes, area_kpi } = req.body;
   const update = { updated_at: new Date().toISOString() };
   if (status)       update.status = status;
   if (data_batismo) update.data_batismo = data_batismo;
   if (observacoes !== undefined) update.observacoes = observacoes;
+  if (area_kpi && ['kids', 'sede', 'bridge', 'ami', 'online'].includes(area_kpi)) {
+    update.area_kpi = area_kpi;
+  }
 
   const { data, error } = await supabase
     .from('batismo_inscricoes')
