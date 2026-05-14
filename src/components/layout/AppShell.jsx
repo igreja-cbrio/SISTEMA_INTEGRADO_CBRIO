@@ -11,7 +11,7 @@ import { CommandSearch } from '../ui/command-search';
 import {
   Users, DollarSign, Truck, Tag,
   CalendarDays, FolderKanban, Map, ListChecks,
-  UserCheck, UsersRound, Heart, HandHelping, BookOpen, ArrowRight, TrendingUp,
+  UserCheck, UsersRound, Heart, HandHelping, BookOpen, ArrowRight, TrendingUp, Youtube,
   Megaphone, BrainCircuit, ShoppingCart,
   Sun, Moon, Bell, BellRing, BellOff, LogOut, Search, CheckCheck, Settings, MonitorSmartphone, BarChart2, ClipboardCheck, Activity, MessageSquare,
 } from 'lucide-react';
@@ -83,6 +83,7 @@ const NAV_ITEMS = [
         title: 'Áreas',
         items: [
           { label: 'Integração', description: 'Batismo, apresentação e cultos', icon: UserCheck, path: '/ministerial/integracao' },
+          { label: 'Online', description: 'Visão do canal YouTube e séries de pregação', icon: Youtube, path: '/ministerial/online', perm: 'canMembresia' },
           { label: 'NEXT', description: 'Porta de entrada — inscrições, check-in e indicações', icon: ArrowRight, path: '/ministerial/next', perm: 'canMembresia' },
           { label: 'Grupos', description: 'Grupos de conexao, pedidos, QR e mapa', icon: UsersRound, path: '/grupos' },
           { label: 'Cuidados', description: 'Capelania e aconselhamento', icon: Heart, path: '/ministerial/cuidados', perm: 'canCuidados' },
