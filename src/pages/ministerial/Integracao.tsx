@@ -1,9 +1,10 @@
 import { useState, useEffect, useCallback, lazy, Suspense } from 'react';
 import { integracao as intApi, voluntariado as volApi } from '../../api';
-import ProcessosTarefas from '../../components/ProcessosTarefas';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '../../components/ui/tabs';
 
 const Batismos = lazy(() => import('./Batismos'));
+const VisualizacaoFrequencia = lazy(() => import('./VisualizacaoFrequencia'));
+const VisualizacaoDecisoes   = lazy(() => import('./VisualizacaoDecisoes'));
 import CalendarioCultos from '../../components/CalendarioCultos';
 import { Button } from '../../components/ui/button';
 import { Input } from '../../components/ui/input';
@@ -36,7 +37,7 @@ export default function Integracao() {
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const t = params.get('tab');
-    if (t && ['pendentes', '1x1', 'batismos', 'frequencia', 'tarefas'].includes(t)) setTab(t);
+    if (t && ['pendentes', '1x1', 'batismos', 'frequencia', 'vis_frequencia', 'vis_decisoes'].includes(t)) setTab(t);
   }, []);
 
   return (
@@ -86,24 +87,13 @@ export default function Integracao() {
       <Tabs value={tab} onValueChange={setTab}>
         <TabsList>
           <TabsTrigger value="frequencia">Cultos</TabsTrigger>
+          <TabsTrigger value="vis_frequencia">Frequência</TabsTrigger>
+          <TabsTrigger value="vis_decisoes">Decisões</TabsTrigger>
           <TabsTrigger value="pendentes">Pendentes</TabsTrigger>
           <TabsTrigger value="1x1">Encontros 1x1</TabsTrigger>
           <TabsTrigger value="batismos">Batismos</TabsTrigger>
-          <TabsTrigger value="tarefas">Tarefas</TabsTrigger>
         </TabsList>
 
-        <TabsContent value="pendentes" className="mt-4">
-          <TabPendentes />
-        </TabsContent>
-
-        <TabsContent value="1x1" className="mt-4">
-          <TabEncontros1x1 />
-        </TabsContent>
-        <TabsContent value="batismos" className="mt-4">
-          <Suspense fallback={<div className="flex items-center justify-center py-12 text-sm text-muted-foreground">Carregando…</div>}>
-            <Batismos />
-          </Suspense>
-        </TabsContent>
         <TabsContent value="frequencia" className="mt-4">
           <div className="space-y-2">
             <p className="text-sm text-muted-foreground">
@@ -115,8 +105,26 @@ export default function Integracao() {
             <CalendarioCultos />
           </div>
         </TabsContent>
-        <TabsContent value="tarefas" className="mt-4">
-          <ProcessosTarefas area="Integracao" />
+        <TabsContent value="vis_frequencia" className="mt-4">
+          <Suspense fallback={<div className="flex items-center justify-center py-12 text-sm text-muted-foreground">Carregando…</div>}>
+            <VisualizacaoFrequencia />
+          </Suspense>
+        </TabsContent>
+        <TabsContent value="vis_decisoes" className="mt-4">
+          <Suspense fallback={<div className="flex items-center justify-center py-12 text-sm text-muted-foreground">Carregando…</div>}>
+            <VisualizacaoDecisoes />
+          </Suspense>
+        </TabsContent>
+        <TabsContent value="pendentes" className="mt-4">
+          <TabPendentes />
+        </TabsContent>
+        <TabsContent value="1x1" className="mt-4">
+          <TabEncontros1x1 />
+        </TabsContent>
+        <TabsContent value="batismos" className="mt-4">
+          <Suspense fallback={<div className="flex items-center justify-center py-12 text-sm text-muted-foreground">Carregando…</div>}>
+            <Batismos />
+          </Suspense>
         </TabsContent>
       </Tabs>
     </div>
