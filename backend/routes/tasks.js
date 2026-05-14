@@ -6,30 +6,43 @@ const { notificar } = require('../services/notificar');
 router.use(authenticate);
 
 // GET /api/tasks/all — todas as tarefas de todos os módulos
+// Query params:
+//   source: filtra por tipo (evento | ciclo | projeto | planejamento)
+//   area:   filtra por área
+//   finalized: hide (default) | show | only
+//     - hide: ignora tarefas com closed_with_event_at preenchido (lista limpa)
+//     - show: traz todas, marca is_finalized_with_event nas que estão fechadas
+//     - only: traz APENAS as fechadas com evento (bucket de visibilidade)
 router.get('/all', async (req, res) => {
   try {
     const { source, area } = req.query;
+    const finalized = req.query.finalized || 'hide'; // hide | show | only
 
     const results = [];
 
     // Tarefas de eventos
     if (!source || source === 'evento') {
       let q = supabase.from('event_tasks')
-        .select('id, name, responsible, area, deadline, status, priority, is_milestone, event_id, created_at, events(name)')
+        .select('id, name, responsible, area, deadline, status, priority, is_milestone, event_id, created_at, closed_with_event_at, events(name)')
         .order('deadline', { nullsFirst: false });
       if (area) q = q.eq('area', area);
+      if (finalized === 'hide') q = q.is('closed_with_event_at', null);
+      if (finalized === 'only') q = q.not('closed_with_event_at', 'is', null);
       const { data } = await q;
       (data || []).forEach(t => results.push({
         ...t, source: 'evento', parent_name: t.events?.name || '—', parent_id: t.event_id,
+        is_finalized_with_event: !!t.closed_with_event_at,
       }));
     }
 
     // Tarefas do ciclo criativo (com subtarefas)
     if (!source || source === 'ciclo') {
       let q = supabase.from('cycle_phase_tasks')
-        .select('id, titulo, responsavel_nome, area, prazo, status, prioridade, event_id, observacoes, created_at, events(name), event_cycle_phases(nome_fase)')
+        .select('id, titulo, responsavel_nome, area, prazo, status, prioridade, event_id, observacoes, created_at, closed_with_event_at, events(name), event_cycle_phases(nome_fase)')
         .order('prazo', { nullsFirst: false });
       if (area) q = q.eq('area', area);
+      if (finalized === 'hide') q = q.is('closed_with_event_at', null);
+      if (finalized === 'only') q = q.not('closed_with_event_at', 'is', null);
       const { data } = await q;
 
       // Buscar subtarefas de todas as tarefas do ciclo
@@ -45,6 +58,8 @@ router.get('/all', async (req, res) => {
         deadline: t.prazo, status: t.status === 'a_fazer' ? 'pendente' : t.status === 'em_andamento' ? 'em-andamento' : t.status,
         priority: t.prioridade, parent_name: (t.events?.name || '—') + ' → ' + (t.event_cycle_phases?.nome_fase || ''),
         parent_id: t.event_id, source: 'ciclo', created_at: t.created_at,
+        closed_with_event_at: t.closed_with_event_at,
+        is_finalized_with_event: !!t.closed_with_event_at,
         observacoes: t.observacoes,
         subtasks: subsMap[t.id] || [],
       }));
