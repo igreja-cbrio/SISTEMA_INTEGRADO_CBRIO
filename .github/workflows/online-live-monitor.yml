@@ -1,0 +1,35 @@
+name: Online · Live Monitor (5min)
+
+# Vercel Hobby nao permite cron sub-diario. Live monitor roda aqui no GitHub
+# Actions a cada 5 minutos · so age (server-side) se ha culto na janela.
+#
+# Custo estimado: ~10s por run × 288 runs/dia × 30 dias = ~1440min/mes.
+# Cabe no free tier de 2000min/mes pra private repos.
+#
+# Secrets necessarios no repo (Settings > Secrets > Actions):
+#   CRON_SECRET    · mesmo valor da env CRON_SECRET no Vercel
+#   APP_BASE_URL   · ex.: https://crmcbrio.vercel.app
+
+on:
+  schedule:
+    # */5 * * * * = a cada 5 minutos
+    - cron: '*/5 * * * *'
+  workflow_dispatch: # permite run manual via UI
+
+concurrency:
+  group: online-live-monitor
+  cancel-in-progress: false
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Call live-monitor endpoint
+        run: |
+          set -euo pipefail
+          curl --fail-with-body --max-time 60 -sS \
+            -H "x-cron-secret: ${{ secrets.CRON_SECRET }}" \
+            -H "user-agent: github-actions-cron" \
+            "${{ secrets.APP_BASE_URL }}/api/online/cron/live-monitor" \
+            || echo "Live monitor falhou (possivelmente fora de janela ou token revogado)"

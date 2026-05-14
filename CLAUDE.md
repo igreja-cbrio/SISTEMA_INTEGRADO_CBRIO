@@ -515,7 +515,10 @@ preenchidas pela **Alda Lorena** (responsavel da Integracao) em
 
 3 jobs autonomos · tokens persistidos em `online_oauth_tokens`:
 
-- **live-monitor** · cron `*/5 * * * *` · so age se ha culto na janela
+- **live-monitor** · cron `*/5 * * * *` via **GitHub Actions**
+  (.github/workflows/online-live-monitor.yml) porque Vercel Hobby nao
+  permite cron sub-diario. Secrets necessarios no repo:
+  `CRON_SECRET` e `APP_BASE_URL`. So age se ha culto na janela
   (30min antes ate 4h depois do horario marcado). Detecta live ativa via
   `liveBroadcasts.list?broadcastStatus=active`, linka `youtube_video_id`
   no culto e atualiza `online_pico` quando `concurrentViewers > atual`.
