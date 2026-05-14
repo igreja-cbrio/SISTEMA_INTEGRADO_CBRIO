@@ -45,6 +45,63 @@ const SECTION_TOOL = {
   },
 };
 
+// Tool dedicada pro corpo de e-mail curto. Texto plano, sem markdown.
+const EMAIL_BODY_TOOL = {
+  name: 'submit_email_body',
+  description: 'Envia o corpo curto (3-5 linhas) que o usuário vai copiar e colar no e-mail ao enviar o relatório.',
+  input_schema: {
+    type: 'object',
+    required: ['body'],
+    properties: {
+      body: {
+        type: 'string',
+        description: 'Corpo do e-mail em TEXTO PLANO (sem markdown, sem ##, sem **). 3-5 linhas curtas. SEM saudação inicial ("Olá", "Prezados"). SEM assinatura. SEM "Segue em anexo" (já é óbvio). Foque no que importa: o que o relatório aborda, 1-2 destaques operacionais, 1 ponto crítico se houver, próximo passo se óbvio. Voz humana, acionável.',
+      },
+    },
+  },
+};
+
+// Gera corpo de e-mail a partir do markdown completo do relatório.
+// Usado pelo /finalize, pelo /report sync e pelo endpoint /email-summary.
+// É best-effort: se falhar, retorna null e quem chamou decide se loga ou
+// continua. Não derruba o fluxo principal.
+async function generateEmailSummary({ userId, eventName, scope, content }) {
+  if (!content || !content.trim()) return null;
+  try {
+    const agent = await AgentService.createRun('event_report_email', userId, { mode: 'email-summary' });
+    const result = await agent.call({
+      model: 'claude-haiku-4-5-20251001',
+      system: `Você é assistente operacional da Igreja Comunidade Batista do Rio de Janeiro (CBRio).
+Sua tarefa: gerar o CORPO de um e-mail curto que o destinatário vai usar pra enviar este relatório anexo.
+
+REGRAS:
+- 3 a 5 linhas em texto plano (sem markdown).
+- SEM saudação inicial ("Olá [nome]", "Prezados") — o usuário customiza.
+- SEM assinatura ou "Atenciosamente" — idem.
+- SEM "segue em anexo" ou "abaixo" — é redundante.
+- Foque em: o que o relatório aborda + 1-2 destaques + ponto de atenção crítico + próximo passo (se óbvio).
+- Voz humana e direta. Evite jargão.
+- Baseie-se SÓ no relatório fornecido. NUNCA invente dados.
+
+Use a ferramenta submit_email_body.`,
+      messages: [{
+        role: 'user',
+        content: `Evento: ${eventName}\nEscopo: ${scope}\n\n--- RELATÓRIO COMPLETO ---\n${content}`,
+      }],
+      tools: [EMAIL_BODY_TOOL],
+      toolChoice: { type: 'tool', name: 'submit_email_body' },
+      maxTokens: 512,
+      role: 'email-summary',
+    });
+    await agent.complete('Corpo de e-mail gerado');
+    const tc = (result.toolCalls || []).find(c => c.name === 'submit_email_body');
+    return tc?.input?.body || null;
+  } catch (e) {
+    console.error('[Reports] generateEmailSummary:', e.message);
+    return null;
+  }
+}
+
 // Plano fixo das 7 seções. Cada uma usa Haiku (rápido + barato) com prompt
 // focado e SÓ a fatia relevante do snapshot (menor contexto = mais rápido).
 // "synthesis: true" indica que a seção sintetiza outras (gerada por último).
@@ -302,11 +359,20 @@ Anexos: ${input.totals.anexos}`;
     if (toolCall?.input) reportContent = structuredToMarkdown(toolCall.input);
     else reportContent = result.text || 'Não foi possível gerar o relatório.';
 
+    // Gera corpo de e-mail (best-effort, sem derrubar o relatório se falhar)
+    const emailSummary = await generateEmailSummary({
+      userId: req.user.userId,
+      eventName: input.eventName,
+      scope: input.scope,
+      content: reportContent,
+    });
+
     const { data: report, error } = await supabase.from('event_reports').insert({
       event_id: eventId,
       phase_name: type === 'phase' ? phase_name : null,
       report_type: type,
       content: reportContent,
+      email_summary: emailSummary,
       generated_by: req.user.userId,
       attachments_count: input.totals.anexos,
       token_cost: agent.totalCost,
@@ -474,6 +540,7 @@ router.post('/:eventId/report/:reportId/section', async (req, res) => {
 
 // POST /:eventId/report/:reportId/finalize
 // Monta o markdown final de sections, salva em content, status=ready.
+// Gera email_summary best-effort (não bloqueia o finalize se falhar).
 router.post('/:eventId/report/:reportId/finalize', async (req, res) => {
   try {
     const { eventId, reportId } = req.params;
@@ -493,8 +560,17 @@ router.post('/:eventId/report/:reportId/finalize', async (req, res) => {
 
     const finalStatus = missing.length === 0 ? 'ready' : 'error';
 
+    // Gera corpo de e-mail (best-effort). Só dispara se temos conteúdo útil.
+    // Falha aqui NÃO derruba o finalize — usuário pode regenerar manualmente.
+    const eventNameForEmail = row.input_data?.eventName || 'Evento';
+    const scopeForEmail = row.input_data?.scope || (row.report_type === 'phase' ? `Fase: ${row.phase_name}` : 'Evento Completo');
+    const emailSummary = content.trim()
+      ? await generateEmailSummary({ userId: req.user.userId, eventName: eventNameForEmail, scope: scopeForEmail, content })
+      : null;
+
     const { data: updated, error: updErr } = await supabase.from('event_reports').update({
       content,
+      email_summary: emailSummary,
       status: finalStatus,
       finished_at: new Date().toISOString(),
     }).eq('id', reportId).select().single();
@@ -504,6 +580,47 @@ router.post('/:eventId/report/:reportId/finalize', async (req, res) => {
   } catch (e) {
     console.error('[Reports] Finalize:', e.message);
     res.status(500).json({ error: e.message || 'Erro ao finalizar relatório' });
+  }
+});
+
+// POST /:eventId/report/:reportId/email-summary
+// Gera ou regenera o corpo de e-mail pra um relatório existente.
+// - Útil pra relatórios antigos (pré-feature) que não têm email_summary
+// - Permite ao usuário pedir uma nova versão se a primeira não agradou
+// Body opcional: { force: true } pra regenerar mesmo se já existe.
+router.post('/:eventId/report/:reportId/email-summary', async (req, res) => {
+  try {
+    const { eventId, reportId } = req.params;
+    const force = req.body?.force === true || req.query.force === '1';
+
+    const { data: row, error: readErr } = await supabase.from('event_reports')
+      .select('*').eq('id', reportId).eq('event_id', eventId).single();
+    if (readErr || !row) return res.status(404).json({ error: 'Relatório não encontrado' });
+
+    if (row.email_summary && !force) {
+      return res.json({ email_summary: row.email_summary, cached: true });
+    }
+    if (!row.content || !row.content.trim()) {
+      return res.status(400).json({ error: 'Relatório sem conteúdo. Gere o relatório antes.' });
+    }
+
+    const { data: ev } = await supabase.from('events').select('name').eq('id', eventId).single();
+    const eventName = row.input_data?.eventName || ev?.name || 'Evento';
+    const scope = row.input_data?.scope || (row.report_type === 'phase' ? `Fase: ${row.phase_name}` : 'Evento Completo');
+
+    const email = await generateEmailSummary({
+      userId: req.user.userId, eventName, scope, content: row.content,
+    });
+    if (!email) return res.status(500).json({ error: 'Não foi possível gerar o resumo de e-mail.' });
+
+    const { error: updErr } = await supabase.from('event_reports')
+      .update({ email_summary: email }).eq('id', reportId);
+    if (updErr) throw updErr;
+
+    res.json({ email_summary: email, cached: false });
+  } catch (e) {
+    console.error('[Reports] Email summary:', e.message);
+    res.status(500).json({ error: e.message || 'Erro ao gerar resumo de e-mail' });
   }
 });
 

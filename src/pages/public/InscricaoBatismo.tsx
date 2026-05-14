@@ -173,6 +173,7 @@ export default function InscricaoBatismo() {
     motivo: '',
     observacoes: '',
     horario_culto: '',
+    area_kpi: '', // opcional · 'sede' (default) | 'ami' | 'bridge' | 'online'
     website: '', // honeypot
   });
   const [loading, setLoading] = useState(false);
@@ -219,6 +220,7 @@ export default function InscricaoBatismo() {
         motivo: form.motivo || null,
         observacoes: form.observacoes || null,
         horario_culto: form.horario_culto || null,
+        area_kpi: form.area_kpi || null,
       });
       setSent(true);
     } catch (err: any) {
@@ -346,6 +348,17 @@ export default function InscricaoBatismo() {
                   ]}
                 />
               </Row>
+              <SelectField
+                id="area_kpi" label="Voce frequenta qual campus? (opcional)"
+                value={form.area_kpi}
+                onChange={set('area_kpi') as any}
+                options={[
+                  { value: '', label: 'CBRio Domingo' },
+                  { value: 'ami', label: 'AMI' },
+                  { value: 'bridge', label: 'Bridge' },
+                  { value: 'online', label: 'Online' },
+                ]}
+              />
               <Field
                 id="limitacao_mobilidade"
                 label="Possui alguma limitacao de mobilidade?"

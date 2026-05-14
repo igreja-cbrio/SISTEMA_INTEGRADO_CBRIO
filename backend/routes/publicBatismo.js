@@ -65,7 +65,7 @@ router.post('/', limiter, async (req, res) => {
     const {
       nome, sobrenome, email, telefone, cpf, data_nascimento,
       endereco, cep, tamanho_camisa, limitacao_mobilidade, motivo,
-      observacoes, horario_culto,
+      observacoes, horario_culto, area_kpi,
     } = req.body || {};
 
     // Validacoes basicas
@@ -133,6 +133,9 @@ router.post('/', limiter, async (req, res) => {
     if (motivo) obsParts.push(`Motivo: ${String(motivo).trim()}`);
     if (observacoes) obsParts.push(`Comentario: ${String(observacoes).trim()}`);
 
+    const AREAS_OK = ['kids', 'sede', 'bridge', 'ami', 'online'];
+    const areaKpiValida = AREAS_OK.includes(area_kpi) ? area_kpi : 'sede';
+
     const payload = {
       nome: nomeT,
       sobrenome: sobrenomeT,
@@ -143,6 +146,7 @@ router.post('/', limiter, async (req, res) => {
       status: 'pendente',
       data_batismo: dataBatismo,
       origem: 'publico',
+      area_kpi: areaKpiValida,
       observacoes: obsParts.length ? obsParts.join('. ') : null,
       membro_id: membroId,
     };

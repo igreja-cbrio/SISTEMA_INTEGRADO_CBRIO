@@ -28,7 +28,7 @@ type HistoricoRow = {
   online_ddus_total: number;
 };
 
-type BatismoAnoRow = { ano: number; total_batismos: number };
+type BatismoAnoRow = { ano: number; area_kpi?: string; total_batismos: number };
 
 type Metrica = 'todos' | 'frequencia' | 'aceitacoes' | 'batismos';
 
@@ -70,10 +70,13 @@ export default function HistoricoCultos() {
     return rows.filter(r => r.service_type_name === tipoFiltro);
   }, [rows, tipoFiltro]);
 
-  // Agrega por ano · adiciona batismos do ano via lookup separado
+  // Agrega por ano · adiciona batismos do ano via lookup separado.
+  // View agora retorna 1 linha por (ano, area_kpi) · soma todas as areas por ano.
   const porAno = useMemo(() => {
     const batismosMap = new Map<number, number>();
-    batismosAno.forEach(b => batismosMap.set(b.ano, b.total_batismos));
+    batismosAno.forEach(b => {
+      batismosMap.set(b.ano, (batismosMap.get(b.ano) || 0) + b.total_batismos);
+    });
 
     const map = new Map<number, {
       ano: number;

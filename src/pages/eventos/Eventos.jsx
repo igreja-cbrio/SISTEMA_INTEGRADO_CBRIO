@@ -2153,6 +2153,41 @@ export default function Eventos() {
                             </div>
                           )}
 
+                          {/* Corpo de e-mail pra copiar */}
+                          {rm.result?.email_summary ? (
+                            <div style={{ marginBottom: 16, padding: 14, borderRadius: 10, border: '1px solid var(--cbrio-border)', background: 'var(--cbrio-card)' }}>
+                              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+                                <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--cbrio-text)' }}>Corpo do e-mail (cole pra enviar)</div>
+                                <div style={{ display: 'flex', gap: 6 }}>
+                                  <button onClick={async () => {
+                                    try { await navigator.clipboard.writeText(rm.result.email_summary); }
+                                    catch { /* navegador sem permissão de clipboard */ }
+                                  }} style={{ padding: '4px 10px', borderRadius: 6, border: '1px solid var(--cbrio-border)', background: 'var(--cbrio-primary, #00B39D)', color: '#fff', fontSize: 11, fontWeight: 600, cursor: 'pointer' }}>
+                                    Copiar
+                                  </button>
+                                  <button onClick={async () => {
+                                    try {
+                                      const fresh = await reportsApi.emailSummary(rm.eventId, rm.result.id, true);
+                                      setReportModal(prev => prev ? { ...prev, result: { ...prev.result, email_summary: fresh.email_summary } } : prev);
+                                    } catch { /* silencia, usuário pode tentar de novo */ }
+                                  }} style={{ padding: '4px 10px', borderRadius: 6, border: '1px solid var(--cbrio-border)', background: 'transparent', color: 'var(--cbrio-text3)', fontSize: 11, cursor: 'pointer' }} title="Gerar outra versão">
+                                    ↻
+                                  </button>
+                                </div>
+                              </div>
+                              <pre style={{ margin: 0, padding: '10px 12px', borderRadius: 8, background: 'var(--cbrio-bg)', fontSize: 12, lineHeight: 1.5, color: 'var(--cbrio-text)', whiteSpace: 'pre-wrap', fontFamily: 'inherit' }}>{rm.result.email_summary}</pre>
+                            </div>
+                          ) : rm.result?.content ? (
+                            <button onClick={async () => {
+                              try {
+                                const fresh = await reportsApi.emailSummary(rm.eventId, rm.result.id, false);
+                                setReportModal(prev => prev ? { ...prev, result: { ...prev.result, email_summary: fresh.email_summary } } : prev);
+                              } catch { /* silencia */ }
+                            }} style={{ marginBottom: 14, padding: '8px 14px', borderRadius: 8, border: '1px dashed var(--cbrio-border)', background: 'transparent', color: 'var(--cbrio-text2)', fontSize: 12, cursor: 'pointer', width: '100%' }}>
+                              Gerar resumo de e-mail pra copiar
+                            </button>
+                          ) : null}
+
                           <div style={{ fontSize: 10, color: 'var(--cbrio-text3)', marginBottom: 10, textAlign: 'center' }}>
                             Os downloads são HTML formatado. Abra no navegador, depois "Imprimir → Salvar como PDF" pra compartilhar.
                           </div>
@@ -3744,6 +3779,45 @@ function ReportTab({ eventId, isPMO }) {
               <ReactMarkdown>{viewReport.content}</ReactMarkdown>
             </div>
           )}
+
+          {/* Corpo de e-mail pra copiar */}
+          {viewReport.email_summary ? (
+            <div style={{ marginBottom: 16, padding: 14, borderRadius: 10, border: '1px solid var(--cbrio-border)', background: 'var(--cbrio-card)' }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+                <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--cbrio-text)' }}>Corpo do e-mail (cole pra enviar)</div>
+                <div style={{ display: 'flex', gap: 6 }}>
+                  <button onClick={async () => {
+                    try { await navigator.clipboard.writeText(viewReport.email_summary); }
+                    catch { /* navegador sem permissão de clipboard */ }
+                  }} style={{ padding: '4px 10px', borderRadius: 6, border: '1px solid var(--cbrio-border)', background: 'var(--cbrio-primary, #00B39D)', color: '#fff', fontSize: 11, fontWeight: 600, cursor: 'pointer' }}>
+                    Copiar
+                  </button>
+                  <button onClick={async () => {
+                    try {
+                      const fresh = await reportsApi.emailSummary(eventId, viewReport.id, true);
+                      const updated = { ...viewReport, email_summary: fresh.email_summary };
+                      setViewReport(updated);
+                      setReportsList(prev => prev.map(r => r.id === updated.id ? updated : r));
+                    } catch { /* silencia */ }
+                  }} style={{ padding: '4px 10px', borderRadius: 6, border: '1px solid var(--cbrio-border)', background: 'transparent', color: 'var(--cbrio-text3)', fontSize: 11, cursor: 'pointer' }} title="Gerar outra versão">
+                    ↻
+                  </button>
+                </div>
+              </div>
+              <pre style={{ margin: 0, padding: '10px 12px', borderRadius: 8, background: 'var(--cbrio-bg)', fontSize: 12, lineHeight: 1.5, color: 'var(--cbrio-text)', whiteSpace: 'pre-wrap', fontFamily: 'inherit' }}>{viewReport.email_summary}</pre>
+            </div>
+          ) : viewReport.content ? (
+            <button onClick={async () => {
+              try {
+                const fresh = await reportsApi.emailSummary(eventId, viewReport.id, false);
+                const updated = { ...viewReport, email_summary: fresh.email_summary };
+                setViewReport(updated);
+                setReportsList(prev => prev.map(r => r.id === updated.id ? updated : r));
+              } catch { /* silencia */ }
+            }} style={{ marginBottom: 14, padding: '8px 14px', borderRadius: 8, border: '1px dashed var(--cbrio-border)', background: 'transparent', color: 'var(--cbrio-text2)', fontSize: 12, cursor: 'pointer', width: '100%' }}>
+              Gerar resumo de e-mail pra copiar
+            </button>
+          ) : null}
 
           <div style={{ fontSize: 10, color: 'var(--cbrio-text3)', marginBottom: 10 }}>
             Os downloads são HTML formatado. Abra no navegador, depois "Imprimir → Salvar como PDF" pra compartilhar.
