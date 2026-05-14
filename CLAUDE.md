@@ -751,16 +751,27 @@ Jornada → KPI não entra em nenhuma célula.
 Para futuros KPIs "só de visualização" (sem cross-impacto na
 Jornada), basta deixar `valores = '{}'::text[]`.
 
-### Recálculo automático ao editar culto
+### Recálculo automático · trigger SQL em tempo real
 
-`PUT /api/kpis/cultos/:id` (backend/routes/kpis.js) dispara em
-background `coletarTodos({ fontes: ['cultos.', 'batismos.'],
-referenceDate: <data do culto> })` + `painelCache.bust('')` depois de
-salvar. KPIs do painel refletem a edição em segundos em vez de esperar
-o cron diário (`/api/kpis/v2/cron/coletar`).
+KPIs auto-cultos/batismos são recalculados via **trigger SQL** no
+banco. Migration `20260514210000_kpis_trigger_realtime.sql` cria:
 
-`coletarTodos` aceita `referenceDate` opcional · garante que editar
-culto antigo recalcula o **período do culto**, não o mês corrente.
+- `kpi_calcular_valor_auto(fonte, inicio, fim)` · CASE com a lógica de
+  cada `fonte_auto` que começa com `cultos.` ou `batismos.`
+- `kpi_recalcular_para_data(data)` · UPSERT em `kpi_registros` pra todos
+  os KPIs ativos que cobrem a data, em todas as periodicidades aplicáveis
+- Trigger `cultos_recalc_kpis AFTER INSERT/UPDATE/DELETE ON cultos`
+- Trigger `batismos_recalc_kpis AFTER INSERT/UPDATE/DELETE ON batismo_inscricoes`
+
+Latência: **zero** · KPIs sempre refletem o último dado salvo. Sem cron,
+sem `setImmediate`. O backend só limpa o cache do `/painel` no PUT.
+
+Editar culto antigo recalcula o período daquele culto (não o mês
+corrente) automaticamente porque a função usa a `data` do row mudado.
+
+Backfill na própria migration popula `kpi_registros` de todas as datas
+existentes em `cultos` + `batismo_inscricoes` (`status='realizado'`) ·
+não precisa esperar cron diário nem editar manualmente.
 
 Tabs vigentes de `/integracao`: **Cultos · Frequência · Decisões · Batismos · Histórico**.
 
