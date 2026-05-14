@@ -22,6 +22,7 @@ const MODULOS = [
   { id: 'grupos', label: 'Grupos', desc: 'Novos membros, grupos sem encontro recente, membros sem grupo, indicações via NEXT', color: '#a855f7' },
   { id: 'generosidade', label: 'Generosidade', desc: 'Indicações de dízimo/oferta via NEXT', color: '#eab308' },
   { id: 'integracao', label: 'Integração', desc: 'Visitantes novos, indicações de batismo via NEXT', color: '#0ea5e9' },
+  { id: 'batismos', label: 'Batismos', desc: 'Novas inscrições para batismo via formulário público', color: '#06b6d4' },
   { id: 'processos', label: 'Processos', desc: 'Novos processos, OKRs e acompanhamento de indicadores', color: '#00B39D' },
   { id: 'nps', label: 'NPS', desc: 'Novas pesquisas de satisfação, lembretes e análises', color: '#06b6d4' },
 ];

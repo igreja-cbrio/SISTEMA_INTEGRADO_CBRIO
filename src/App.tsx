@@ -188,6 +188,7 @@ const Grupos = lazyWithRetry(() => import('./pages/ministerial/Grupos'));
 const GruposSupervisao = lazyWithRetry(() => import('./pages/ministerial/GruposSupervisao'));
 const PedidosGrupo = lazyWithRetry(() => import('./pages/ministerial/PedidosGrupo'));
 const CadastroMembresia = lazyWithRetry(() => import('./pages/public/CadastroMembresia'));
+const InscricaoBatismo = lazyWithRetry(() => import('./pages/public/InscricaoBatismo'));
 const InscricaoGrupos = lazyWithRetry(() => import('./pages/public/InscricaoGrupos'));
 const InscricaoGruposQRCode = lazyWithRetry(() => import('./pages/admin/InscricaoGruposQRCode'));
 const GruposGeocode = lazyWithRetry(() => import('./pages/admin/GruposGeocode'));
@@ -305,6 +306,7 @@ function AppRoutes() {
 
       {/* Rotas publicas */}
       <Route path="/cadastro-membresia" element={<Suspense fallback={<Loading />}><CadastroMembresia /></Suspense>} />
+      <Route path="/inscricao-batismo" element={<Suspense fallback={<Loading />}><InscricaoBatismo /></Suspense>} />
       <Route path="/inscricao-grupos" element={<Suspense fallback={<Loading />}><InscricaoGrupos /></Suspense>} />
       <Route path="/next" element={<Suspense fallback={<Loading />}><InscricaoNext /></Suspense>} />
       <Route path="/next/inscrever" element={<Suspense fallback={<Loading />}><InscricaoNext /></Suspense>} />

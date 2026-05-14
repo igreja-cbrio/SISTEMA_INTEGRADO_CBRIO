@@ -706,6 +706,26 @@ export const gruposPublic = {
   },
 };
 
+export const batismoPublico = {
+  proximaData: async () => {
+    const res = await fetch(`${API}/public/batismo/proxima-data`);
+    if (!res.ok) throw new Error('Erro ao buscar proxima data');
+    return res.json();
+  },
+  inscrever: async (data) => {
+    const res = await fetch(`${API}/public/batismo`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || `HTTP ${res.status}`);
+    }
+    return res.json();
+  },
+};
+
 export const cadastroPublico = {
   uploadFoto: async (file) => {
     const fd = new FormData();

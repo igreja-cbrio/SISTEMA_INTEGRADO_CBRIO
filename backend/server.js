@@ -81,6 +81,7 @@ app.use('/api/public/membresia', require('./routes/publicMembresia'));
 app.use('/api/public/voluntariado', require('./routes/publicVoluntariado'));
 app.use('/api/public/next', require('./routes/publicNext'));
 app.use('/api/public/grupos', require('./routes/publicGrupos'));
+app.use('/api/public/batismo', require('./routes/publicBatismo'));
 app.use('/api/solicitacoes', require('./routes/solicitacoes'));
 app.use('/api/cerebro', require('./routes/cerebro'));
 app.use('/api/voluntariado', require('./routes/voluntariado'));
