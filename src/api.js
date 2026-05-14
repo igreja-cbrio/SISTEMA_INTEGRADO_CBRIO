@@ -859,6 +859,9 @@ export const reports = {
   generateSection: (eventId, reportId, section, force = false) =>
     post(`/events/${eventId}/report/${reportId}/section${force ? '?force=1' : ''}`, { section }),
   finalize: (eventId, reportId) => post(`/events/${eventId}/report/${reportId}/finalize`, {}),
+  // Gera/regenera o corpo de e-mail pro relatório. Sem force=true devolve cache se já existe.
+  emailSummary: (eventId, reportId, force = false) =>
+    post(`/events/${eventId}/report/${reportId}/email-summary`, force ? { force: true } : {}),
 };
 
 export const completions = {
