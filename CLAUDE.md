@@ -623,6 +623,62 @@ stats). Cliente: `devocionais` em `src/api.js`.
 Filtros em `isAmiCulto` (AMI ou sábado, exclui Bridge) e `isBridgeCulto`
 (qualquer culto com 'bridge' no nome). Ajustar se nomenclatura de
 cultos mudar.
+
+## Cultos recorrentes — slots fixos e identidade única
+
+Os horários de culto vivem em `vol_service_types` com `recurrence_day`
+(0=Dom … 6=Sáb) + `recurrence_time`. A função
+`gerar_cultos_recorrentes(data_inicio, data_fim)` materializa rows em
+`public.cultos` para cada ocorrência no range — idempotente, pula slots
+que já existem.
+
+### Slots vigentes
+
+| Service Type | Dia | Hora |
+|--------------|-----|------|
+| Domingo 08:30 (Sede) | Dom (0) | 08:30 |
+| Domingo 10:00 (Sede) | Dom (0) | 10:00 |
+| Domingo 11:30 (Sede) | Dom (0) | 11:30 |
+| Domingo 19:00 (Sede) | Dom (0) | 19:00 |
+| AMI | **Sáb (6)** | **20:00** |
+| Quarta com Deus | Qua (3) | 20:00 |
+| Bridge | Sáb (6) | 17:00 |
+
+### Identidade única do culto
+
+- `cultos.id` é `uuid PRIMARY KEY DEFAULT gen_random_uuid()` — cada row
+  tem ID único naturalmente.
+- **UNIQUE (service_type_id, data)** em `cultos` garante que não exista
+  2 rows pro mesmo slot lógico. Migração:
+  `20260514110000_ami_sabado_20h_unique_culto.sql`.
+- Série histórica de indicadores por culto cruza `cultos.service_type_id`
+  com `cultos.data` sem ambiguidade — `(service_type_id, data)` é
+  chave estável.
+
+### Contagem de visitantes — descontinuada
+
+A partir de 2026-05-14 (decisão do Marcos), **não contamos mais o número
+de visitantes por culto**. Removido da UI:
+
+- Aba "Visitantes" da página `/integracao` (e os componentes
+  `TabVisitantes`, `VisitanteFormDialog`, `VisitanteDetailDialog`,
+  `AcompanhamentoFormDialog`)
+- Card "Visitantes (30d)" do header
+- Seção "Visitantes (1ª vez)" do modal de culto em `CalendarioCultos`
+  (campos `visitantes` / `visitantes_online` não são mais preenchidos)
+- Linha "X visit" dos cards do calendário semanal
+
+Schema preservado: `cultos.visitantes`, `cultos.visitantes_online` e
+`int_visitantes` continuam existindo no banco · só não há entrada pela
+UI. Para retomar a contagem, basta reintroduzir os campos no
+`ModalCulto` e renderizar uma aba/lista nova.
+
+### Calendário semanal
+
+`/integracao` aba "Cultos" mostra grade Dom-Sáb (7 colunas) da semana
+atual. Setas navegam ±1 semana; botão "Hoje" volta. Cada card mostra
+horário + tipo de culto + status (preenchido/pendente). Click abre
+modal de edição de dados de integração.
 - **Permissão**: `canProcessos` via modulo "Processos" em
   `permissoes_modulo`
 

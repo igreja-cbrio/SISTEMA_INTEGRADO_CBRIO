@@ -58,9 +58,7 @@ function preenchido(c) {
     (c.presencial_kids || 0) > 0 ||
     (c.decisoes_presenciais || 0) > 0 ||
     (c.decisoes_online || 0) > 0 ||
-    (c.online_pico || 0) > 0 ||
-    (c.visitantes || 0) > 0 ||
-    (c.visitantes_online || 0) > 0
+    (c.online_pico || 0) > 0
   );
 }
 
@@ -307,11 +305,6 @@ function MiniCardCulto({ culto, onClick }) {
               {(culto.presencial_adulto || 0) + (culto.presencial_kids || 0)} pres
             </span>
           )}
-          {((culto.visitantes || 0) + (culto.visitantes_online || 0)) > 0 && (
-            <span style={{ fontSize: 9, color: '#10B981' }}>
-              · {(culto.visitantes || 0) + (culto.visitantes_online || 0)} visit
-            </span>
-          )}
           {((culto.decisoes_presenciais || 0) + (culto.decisoes_online || 0)) > 0 && (
             <span style={{ fontSize: 9, color: '#8B5CF6' }}>
               · {(culto.decisoes_presenciais || 0) + (culto.decisoes_online || 0)} dec
@@ -377,14 +370,6 @@ function CardCulto({ culto, onClick }) {
           {(culto.presencial_kids || 0) > 0 && (
             <Chip cor="#EC4899" icone={Users} valor={culto.presencial_kids} label="kids" />
           )}
-          {((culto.visitantes || 0) + (culto.visitantes_online || 0)) > 0 && (
-            <Chip
-              cor="#10B981"
-              icone={Users}
-              valor={(culto.visitantes || 0) + (culto.visitantes_online || 0)}
-              label="visitantes"
-            />
-          )}
           {((culto.decisoes_presenciais || 0) + (culto.decisoes_online || 0)) > 0 && (
             <Chip
               cor="#8B5CF6"
@@ -423,8 +408,6 @@ function ModalCulto({ culto, onClose, onSaved }) {
   const [form, setForm] = useState({
     presencial_adulto:    culto.presencial_adulto ?? 0,
     presencial_kids:      culto.presencial_kids ?? 0,
-    visitantes:           culto.visitantes ?? 0,
-    visitantes_online:    culto.visitantes_online ?? 0,
     decisoes_presenciais: culto.decisoes_presenciais ?? 0,
     decisoes_online:      culto.decisoes_online ?? 0,
     online_pico:          culto.online_pico ?? '',
@@ -440,8 +423,6 @@ function ModalCulto({ culto, onClose, onSaved }) {
       const payload = {
         presencial_adulto:    Number(form.presencial_adulto) || 0,
         presencial_kids:      Number(form.presencial_kids) || 0,
-        visitantes:           Number(form.visitantes) || 0,
-        visitantes_online:    Number(form.visitantes_online) || 0,
         decisoes_presenciais: Number(form.decisoes_presenciais) || 0,
         decisoes_online:      Number(form.decisoes_online) || 0,
         online_pico:          form.online_pico === '' ? null : Number(form.online_pico),
@@ -493,16 +474,6 @@ function ModalCulto({ culto, onClose, onSaved }) {
             </Field>
             <Field label="Kids">
               <input type="number" min="0" value={form.presencial_kids} onChange={e => set('presencial_kids', e.target.value)} style={inp} />
-            </Field>
-          </div>
-
-          <SecaoTitulo icone={Users} cor="#10B981" titulo="Visitantes (1ª vez)" />
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 16 }}>
-            <Field label="Presenciais">
-              <input type="number" min="0" value={form.visitantes} onChange={e => set('visitantes', e.target.value)} style={inp} />
-            </Field>
-            <Field label="Online">
-              <input type="number" min="0" value={form.visitantes_online} onChange={e => set('visitantes_online', e.target.value)} style={inp} />
             </Field>
           </div>
 
