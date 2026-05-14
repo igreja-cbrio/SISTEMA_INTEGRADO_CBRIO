@@ -69,16 +69,27 @@ function periodoRange(periodo, periodicidade) {
   return { inicio: `${y}-01-01`, fim: `${y + 1}-01-01` };
 }
 
+// Filtros por service_type_name (vw_culto_stats expoe esse campo via JOIN).
+// Robusto contra variacoes no nome do culto (ex: "AMI — 17/05/2026").
+// Fallback para nome.includes() pra cultos avulsos sem service_type_id.
 function isAmiCulto(c) {
+  const t = (c.service_type_name || '').toLowerCase();
+  if (t) return t === 'ami';
   const n = (c.nome || '').toLowerCase();
-  // AMI sozinho ou com sabado (publico AMI no culto de sabado).
-  // Bridge fica EXCLUIDO.
   return (n.includes('ami') || n.includes('sabado') || n.includes('sábado')) && !n.includes('bridge');
 }
 
 function isBridgeCulto(c) {
+  const t = (c.service_type_name || '').toLowerCase();
+  if (t) return t === 'bridge';
   const n = (c.nome || '').toLowerCase();
   return n.includes('bridge');
+}
+
+// Sede · 4 horarios de domingo + Quarta com Deus
+function isSedeCulto(c) {
+  const t = (c.service_type_name || '').toLowerCase();
+  return t.startsWith('domingo') || t === 'quarta com deus';
 }
 
 // Mantido por compat retroativa: cultos AMI ou Bridge (consolidacao antiga).
@@ -135,6 +146,35 @@ const COLLECTORS = {
   'cultos.kids_freq': async ({ inicio, fim }) => {
     const { data } = await supabase.from('vw_culto_stats').select('presencial_kids').gte('data', inicio).lt('data', fim);
     const total = (data || []).reduce((s, c) => s + (c.presencial_kids || 0), 0);
+    return { valor: total };
+  },
+
+  // ── Cultos: Sede (Domingos + Quarta com Deus) ──
+  'cultos.sede_freq': async ({ inicio, fim }) => {
+    const { data } = await supabase.from('vw_culto_stats').select('nome, service_type_name, presencial_adulto').gte('data', inicio).lt('data', fim);
+    const sede = (data || []).filter(isSedeCulto);
+    const total = sede.reduce((s, c) => s + (c.presencial_adulto || 0), 0);
+    return { valor: total, observacao: `${sede.length} culto(s) Sede` };
+  },
+
+  'cultos.sede_conv': async ({ inicio, fim }) => {
+    const { data } = await supabase.from('vw_culto_stats').select('nome, service_type_name, decisoes_presenciais, decisoes_online').gte('data', inicio).lt('data', fim);
+    const sede = (data || []).filter(isSedeCulto);
+    const total = sede.reduce((s, c) => s + (c.decisoes_presenciais || 0) + (c.decisoes_online || 0), 0);
+    return { valor: total, observacao: `${sede.length} culto(s) Sede` };
+  },
+
+  // ── Cultos: Online (audiencia via stream · soma de pico online no periodo) ──
+  'cultos.online_freq': async ({ inicio, fim }) => {
+    const { data } = await supabase.from('cultos').select('online_pico').gte('data', inicio).lt('data', fim).not('online_pico', 'is', null);
+    const cultos = (data || []).filter(c => (c.online_pico || 0) > 0);
+    const total = cultos.reduce((s, c) => s + (c.online_pico || 0), 0);
+    return { valor: total, observacao: `${cultos.length} culto(s) com transmissao` };
+  },
+
+  'cultos.online_conv': async ({ inicio, fim }) => {
+    const { data } = await supabase.from('cultos').select('decisoes_online').gte('data', inicio).lt('data', fim).not('decisoes_online', 'is', null);
+    const total = (data || []).reduce((s, c) => s + (c.decisoes_online || 0), 0);
     return { valor: total };
   },
 

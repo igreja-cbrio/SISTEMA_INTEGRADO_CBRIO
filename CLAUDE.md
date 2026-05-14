@@ -764,6 +764,28 @@ culto antigo recalcula o **período do culto**, não o mês corrente.
 
 Tabs vigentes de `/integracao`: **Cultos · Frequência · Decisões · Batismos · Histórico**.
 
+### Cascata Seguir a Jesus → KPIs por área
+
+Os dados preenchidos no modal de culto agora alimentam **7 KPIs** do
+valor "seguir" automaticamente (antes só AMI tinha cobertura):
+
+| KPI | Área | Coletor |
+|---|---|---|
+| `BRG-01` | Bridge | `cultos.bridge_freq` |
+| `BRG-02` | Bridge | `cultos.bridge_conv` |
+| `SED-21` | Sede | `cultos.sede_freq` |
+| `SED-18` | Sede | `cultos.sede_conv` |
+| `ONL-11` | Online | `cultos.online_freq` (pico online) |
+| `ONL-13` | Online | `cultos.online_conv` (decisões online) |
+| `KIDS-01` | Kids | `cultos.kids_freq` |
+
+Migration: `20260514170000_kpis_seguir_fonte_auto.sql`.
+
+Coletores filtram cultos por `service_type_name` (mais robusto que
+nome livre): `isAmiCulto` checa `'ami'`, `isBridgeCulto` checa
+`'bridge'`, `isSedeCulto` checa `domingo*` ou `'quarta com deus'`.
+Online usa soma de `online_pico` direto, sem filtro de tipo.
+
 ### Histórico de longo prazo · vw_culto_historico_anual
 
 Visualizações Frequência/Decisões cobrem ranges 3m / 6m / 12m / 2a / 5a
