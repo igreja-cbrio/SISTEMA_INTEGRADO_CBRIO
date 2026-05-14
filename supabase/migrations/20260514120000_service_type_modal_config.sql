@@ -65,8 +65,17 @@ UPDATE public.vol_service_types
 -- ----------------------------------------------------------------------------
 -- 3. Recria vw_culto_stats expondo os 3 campos novos pro frontend
 --    (Frontend nao consulta vol_service_types direto pelo culto · usa view.)
+--
+-- DROP + CREATE em vez de CREATE OR REPLACE: o REPLACE so permite ADICIONAR
+-- colunas no final · como cultos ganhou colunas novas ao longo do tempo
+-- (visitantes, visitantes_online, voluntarios, culto_id em int_visitantes),
+-- o `c.*` agora expande pra mais colunas e desloca service_type_name, o
+-- que o REPLACE recusa com "cannot change name of view column".
+-- Backend usa a view via SELECT simples · nada depende dela (sem CASCADE).
 -- ----------------------------------------------------------------------------
-CREATE OR REPLACE VIEW public.vw_culto_stats AS
+DROP VIEW IF EXISTS public.vw_culto_stats;
+
+CREATE VIEW public.vw_culto_stats AS
 SELECT
   c.*,
   vst.name              AS service_type_name,
