@@ -739,6 +739,11 @@ export const cadastroPublico = {
     if (!res.ok) return { familias: [] };
     return res.json();
   },
+  lookupCpf: async (cpf) => {
+    const res = await fetch(`${API}/public/membresia/lookup-cpf?cpf=${encodeURIComponent(cpf)}`);
+    if (!res.ok) return { found: false };
+    return res.json();
+  },
   enviar: async (data) => {
     const res = await fetch(`${API}/public/membresia/cadastro`, {
       method: 'POST',
