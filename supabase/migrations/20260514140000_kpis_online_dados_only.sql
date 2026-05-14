@@ -7,13 +7,14 @@
 --
 -- Dados ja salvos em cultos.online_pico, cultos.online_ds, cultos.online_ddus
 -- (modal de culto · CalendarioCultos.jsx · so quando service_type.has_online).
--- Agora viram 3 KPIs com area='online', valores=NULL.
+-- Agora viram 3 KPIs com area='online', valores='{}' (array vazio).
 --
 -- Por que NAO entram no painel/mandala:
 -- - backend/routes/painel.js mandalas/matriz filtra por
 --   `Array.isArray(k.valores) && k.valores.includes(v)`
--- - valores=NULL → filtro retorna false pra todos os 5 valores da Jornada
+-- - valores='{}' (array vazio) → Array.isArray=true mas includes(v)=false
 -- - Logo nao aparece em mandalas, nem na matriz Valor × Area
+-- - (coluna valores e NOT NULL no schema · array vazio cumpre o mesmo papel)
 --
 -- Por que aparecem em /minha-area:
 -- - src/pages/MinhaArea.jsx line 149 · meusKpis = kpis.filter(k => k.ativo)
@@ -42,7 +43,7 @@ INSERT INTO public.kpi_indicadores_taticos (
     'Definir com Marcos', NULL, 'pessoas',
     'Media de cultos.online_pico nos cultos do mes que tiveram transmissao',
     'Online', true, 90, 2026,
-    NULL, 'Comunicacao Online',
+    '{}'::text[], 'Comunicacao Online',
     'cultos.online_pico_avg', 'manual',
     'Tamanho medio da audiencia simultanea no pico das transmissoes do mes'
   ),
@@ -52,7 +53,7 @@ INSERT INTO public.kpi_indicadores_taticos (
     'Definir com Marcos', NULL, 'views',
     'Soma de cultos.online_ds nos cultos do mes (Daily Stream · D+1)',
     'Online', true, 91, 2026,
-    NULL, 'Comunicacao Online',
+    '{}'::text[], 'Comunicacao Online',
     'cultos.online_ds_total', 'manual',
     'Total de views ate 24h apos a transmissao · coletado via cron YouTube ou manual'
   ),
@@ -62,7 +63,7 @@ INSERT INTO public.kpi_indicadores_taticos (
     'Definir com Marcos', NULL, 'views',
     'Soma de cultos.online_ddus nos cultos do mes (Daily Demand Users · D+7)',
     'Online', true, 92, 2026,
-    NULL, 'Comunicacao Online',
+    '{}'::text[], 'Comunicacao Online',
     'cultos.online_ddus_total', 'manual',
     'Total de views on-demand ate 7 dias apos a transmissao · coletado via cron YouTube ou manual'
   )
@@ -87,7 +88,7 @@ ON CONFLICT (id) DO UPDATE SET
 --   SELECT id, area, indicador, valores, fonte_auto, ativo
 --     FROM kpi_indicadores_taticos
 --    WHERE id IN ('ON-AUD-01', 'ON-DS-01', 'ON-DDUS-01');
---   Espera: valores=NULL, fonte_auto definido, ativo=true
+--   Espera: valores={}, fonte_auto definido, ativo=true
 --
 -- Recalculo manual (depois da migration · gera os 3 registros do periodo atual):
 --   POST /api/kpis/v2/coletar  body: { fontes: ['cultos.online_'] }
