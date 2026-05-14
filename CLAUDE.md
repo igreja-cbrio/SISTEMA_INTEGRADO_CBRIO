@@ -623,6 +623,50 @@ stats). Cliente: `devocionais` em `src/api.js`.
 Filtros em `isAmiCulto` (AMI ou sábado, exclui Bridge) e `isBridgeCulto`
 (qualquer culto com 'bridge' no nome). Ajustar se nomenclatura de
 cultos mudar.
+
+## Cultos recorrentes — slots fixos e identidade única
+
+Os horários de culto vivem em `vol_service_types` com `recurrence_day`
+(0=Dom … 6=Sáb) + `recurrence_time`. A função
+`gerar_cultos_recorrentes(data_inicio, data_fim)` materializa rows em
+`public.cultos` para cada ocorrência no range — idempotente, pula slots
+que já existem.
+
+### Slots vigentes
+
+| Service Type | Dia | Hora |
+|--------------|-----|------|
+| Domingo 08:30 (Sede) | Dom (0) | 08:30 |
+| Domingo 10:00 (Sede) | Dom (0) | 10:00 |
+| Domingo 11:30 (Sede) | Dom (0) | 11:30 |
+| Domingo 19:00 (Sede) | Dom (0) | 19:00 |
+| AMI | **Sáb (6)** | **20:00** |
+| Quarta com Deus | Qua (3) | 20:00 |
+| Bridge | Sáb (6) | 17:00 |
+
+### Identidade única do culto
+
+- `cultos.id` é `uuid PRIMARY KEY DEFAULT gen_random_uuid()` — cada row
+  tem ID único naturalmente.
+- **UNIQUE (service_type_id, data)** em `cultos` garante que não exista
+  2 rows pro mesmo slot lógico. Migração:
+  `20260514110000_ami_sabado_20h_unique_culto.sql`.
+- Série histórica de indicadores por culto cruza `cultos.service_type_id`
+  com `cultos.data` sem ambiguidade — `(service_type_id, data)` é
+  chave estável.
+
+### Visitantes vinculados a culto
+
+`int_visitantes.culto_id uuid REFERENCES cultos(id) ON DELETE SET NULL`
+— FK opcional (cadastro avulso continua possível). Form de visitante
+auto-sugere o culto pela data informada.
+
+### Calendário semanal
+
+`/integracao` aba "Cultos" mostra grade Dom-Sáb (7 colunas) da semana
+atual. Setas navegam ±1 semana; botão "Hoje" volta. Cada card mostra
+horário + tipo de culto + status (preenchido/pendente). Click abre
+modal de edição de dados de integração.
 - **Permissão**: `canProcessos` via modulo "Processos" em
   `permissoes_modulo`
 
