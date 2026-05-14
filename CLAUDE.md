@@ -473,11 +473,50 @@ preenche `responsavel_nome` automaticamente com o valor dessa tabela.
 | marketing | Pedro Paiva |
 | financeiro | Yago Torres |
 | adm | Marcos Paulo |
+| integracao | Alda Lorena |
 
 Para alterar: `PUT /api/cycles/area-responsaveis/:area` com
 `{ "responsavel_nome": "Novo Nome" }`. Os eventos futuros usarão
 o novo responsável; tarefas já criadas não são afetadas
 retroativamente.
+
+## Online · visao do canal YouTube (somente leitura)
+
+Modulo `/ministerial/online` mostra desempenho do canal YouTube CBRio com
+inscritos, views, melhores videos do mes (por views e por engajamento) e
+analise por serie de pregacao.
+
+**Regra de negocio importante**: este modulo eh **somente leitura**. A
+frequencia online dos cultos e as aceitacoes/conversoes online sao
+preenchidas pela **Alda Lorena** (responsavel da Integracao) em
+`/ministerial/integracao` (aba Cultos).
+
+### Arquitetura
+
+- Series de pregacao = playlists do YouTube. Para criar/editar serie,
+  basta criar/editar playlist no YT Studio. Cron sincroniza.
+- Tabelas:
+  - `online_canal_snapshot` (1 linha por dia · inscritos, views totais)
+  - `online_series` (espelha playlists)
+  - `online_videos` (videos com statistics + serie_id + culto_id)
+- View `vw_online_series_kpi` agrega totais por serie
+- Cron diario 6h (`/api/online/cron/sync`) chama YouTube API e popula
+  as tabelas. Custo ~40 unidades de quota/dia.
+- Endpoint `POST /api/online/sync` permite refresh manual (admin/diretor)
+
+### Variaveis de ambiente
+
+- `YOUTUBE_API_KEY` (ja existe, usada pelo coletor de DS/DDUS)
+- `YOUTUBE_CHANNEL_ID` (novo) — formato `UCxxxxxxxxxx` do canal CBRio
+
+### O que **NAO fazer**
+
+- Nunca permitir input de frequencia/aceitacoes neste modulo. Eh
+  competencia da Integracao.
+- Nunca consumir a API do YouTube live na resposta de `/dashboard`. Sempre
+  ler do snapshot. Pra atualizar, usar cron ou botao "Sincronizar agora".
+- Series sao playlists. Nao criar uma camada de "serie manual no banco" —
+  fonte de verdade eh o YouTube.
 
 ## Grupos · hierarquia e supervisao
 

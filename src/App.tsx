@@ -168,6 +168,7 @@ const MinhaArea = lazyWithRetry(() => import('./pages/MinhaArea'));
 const DadosBrutos = lazyWithRetry(() => import('./pages/DadosBrutos'));
 const Membresia = lazyWithRetry(() => import('./pages/ministerial/Membresia'));
 const MemberScan = lazyWithRetry(() => import('./pages/ministerial/membresia/MemberScan'));
+const Online = lazyWithRetry(() => import('./pages/ministerial/Online'));
 const AssistenteIA = lazyWithRetry(() => import('./pages/admin/AssistenteIA'));
 const EventDetail = lazyWithRetry(() => import('./pages/eventos/EventDetail'));
 const Financeiro = lazyWithRetry(() => import('./pages/admin/financeiro/Financeiro'));
@@ -364,6 +365,7 @@ function AppRoutes() {
         <Route path="/ministerial/cuidados" element={<ModuleGuard permKey="canCuidados"><Suspense fallback={<Loading />}><Cuidados /></Suspense></ModuleGuard>} />
         <Route path="/ministerial/jornada" element={<Navigate to="/ministerial/membresia" replace />} />
         <Route path="/ministerial/integracao" element={<ModuleGuard permKey="canMembresia"><Suspense fallback={<Loading />}><Integracao /></Suspense></ModuleGuard>} />
+        <Route path="/ministerial/online" element={<ModuleGuard permKey="canMembresia"><Suspense fallback={<Loading />}><Online /></Suspense></ModuleGuard>} />
         <Route path="/ministerial/next" element={<ModuleGuard permKey="canMembresia"><Suspense fallback={<Loading />}><Next /></Suspense></ModuleGuard>} />
         <Route path="/ministerial/batismos" element={<Navigate to="/ministerial/integracao?tab=batismos" replace />} />
         <Route path="/assistente-ia" element={<ModuleGuard permKey="canIA"><Suspense fallback={<Loading />}><AssistenteIA /></Suspense></ModuleGuard>} />

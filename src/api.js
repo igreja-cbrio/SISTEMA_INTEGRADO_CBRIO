@@ -1352,3 +1352,10 @@ export const nps = {
       return data;
     }),
 };
+
+export const online = {
+  dashboard: () => get('/online/dashboard'),
+  series: (order) => get('/online/series' + (order ? '?order=' + order : '')),
+  serie: (id) => get('/online/series/' + id),
+  sync: () => post('/online/sync', {}),
+};
