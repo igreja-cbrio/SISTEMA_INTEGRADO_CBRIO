@@ -296,4 +296,19 @@ router.get('/historico-anual', async (req, res) => {
   }
 });
 
+// ── GET /historico-batismos — total de batismos realizados por ano ──────────
+router.get('/historico-batismos', async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('vw_batismo_historico_anual')
+      .select('*')
+      .order('ano', { ascending: false });
+    if (error) return res.status(400).json({ error: error.message });
+    res.json(data || []);
+  } catch (e) {
+    console.error('[INTEGRACAO] historico-batismos', e.message);
+    res.status(500).json({ error: 'Erro ao carregar historico de batismos' });
+  }
+});
+
 module.exports = router;
