@@ -780,11 +780,14 @@ router.get('/kpi/:id', async (req, res) => {
       .order('periodo_referencia', { ascending: true });
 
     // Historico de registros (ultimos 12)
+    // Colunas reais: observacoes (plural) e user_id · antes estavam erradas
+    // (`observacao` e `preenchido_por_user_id`) e o SELECT silenciava com
+    // registros=null · histórico aparecia vazio no /painel/kpi/:id.
     const { data: registros } = await supabase
       .from('kpi_registros')
-      .select('id, periodo_referencia, valor_realizado, valor_texto, observacao, data_preenchimento, preenchido_por_user_id')
+      .select('id, periodo_referencia, valor_realizado, valor_texto, observacoes, origem, data_preenchimento, user_id')
       .eq('indicador_id', id)
-      .order('data_preenchimento', { ascending: false })
+      .order('periodo_referencia', { ascending: false })
       .limit(12);
 
     // Lider (rh_funcionarios)
