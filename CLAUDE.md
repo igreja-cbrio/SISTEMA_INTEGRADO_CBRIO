@@ -671,17 +671,27 @@ Os horários de culto vivem em `vol_service_types` com `recurrence_day`
 `public.cultos` para cada ocorrência no range — idempotente, pula slots
 que já existem.
 
-### Slots vigentes
+### Slots vigentes e config do modal
 
-| Service Type | Dia | Hora |
-|--------------|-----|------|
-| Domingo 08:30 (Sede) | Dom (0) | 08:30 |
-| Domingo 10:00 (Sede) | Dom (0) | 10:00 |
-| Domingo 11:30 (Sede) | Dom (0) | 11:30 |
-| Domingo 19:00 (Sede) | Dom (0) | 19:00 |
-| AMI | **Sáb (6)** | **20:00** |
-| Quarta com Deus | Qua (3) | 20:00 |
-| Bridge | Sáb (6) | 17:00 |
+`vol_service_types` tem 3 colunas que configuram o `ModalCulto`:
+- `presencial_label` (texto) · label do input de presencial
+- `has_kids` (bool) · mostra campo Kids
+- `has_online` (bool) · mostra decisoes_online + bloco Transmissão online
+
+| Service Type | Dia | Hora | Presencial label | Kids | Online |
+|--------------|-----|------|------------------|------|--------|
+| Domingo 08:30 | Dom (0) | 08:30 | **Sede** | ✓ | ✓ |
+| Domingo 10:00 | Dom (0) | 10:00 | **Sede** | ✓ | ✓ |
+| Domingo 11:30 | Dom (0) | 11:30 | **Sede** | ✓ | ✓ |
+| Domingo 19:00 | Dom (0) | 19:00 | **Sede** | ✓ | ✓ |
+| Quarta com Deus | Qua (3) | 20:00 | Presencial | ✓ | ✓ |
+| Bridge | Sáb (6) | 17:00 | Presencial | — | — |
+| AMI | Sáb (6) | 20:00 | Presencial | — | ✓ |
+
+Para adicionar um novo tipo de culto: `INSERT INTO vol_service_types
+(name, recurrence_day, recurrence_time, presencial_label, has_kids,
+has_online, color)`. Modal adapta automaticamente · não precisa
+mexer no React.
 
 ### Identidade única do culto
 
