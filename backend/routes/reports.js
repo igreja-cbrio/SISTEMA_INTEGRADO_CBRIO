@@ -54,15 +54,13 @@ router.post('/:eventId/report', async (req, res) => {
       return res.status(400).json({ error: 'Nenhum dado encontrado para gerar relatório.' });
     }
 
-    // Montar conteúdo dos arquivos (usar digest se disponível, fallback para download)
-    const fileContents = [];
-    for (const a of attachs) {
+    // Montar conteúdo dos arquivos (usar digest se disponível, fallback para download).
+    // Paraleliza fallbacks pra não fazer N downloads serial em eventos antigos sem digest.
+    const fileContents = await Promise.all((attachs || []).map(async (a) => {
       let text = '';
       if (a.file_digest) {
-        // Digest já gerado na hora do upload — usar direto
         text = a.file_digest;
       } else if (a.supabase_path || a.sharepoint_item_id) {
-        // Fallback: arquivo antigo sem digest — baixar e extrair
         try {
           const buffer = await storage.downloadFile(a.supabase_path, a.sharepoint_item_id);
           text = await extractText(buffer, a.file_type, a.file_name);
@@ -70,15 +68,15 @@ router.post('/:eventId/report', async (req, res) => {
           text = `[Erro ao ler ${a.file_name}: ${e.message}]`;
         }
       }
-      fileContents.push({
+      return {
         file_name: a.file_name,
         area: a.area || 'não especificada',
         phase: a.phase_name || 'geral',
         description: a.description || '',
         uploaded_by: a.uploaded_by_name || 'desconhecido',
         content: text,
-      });
-    }
+      };
+    }));
 
     // Montar dados de conclusões para o prompt
     const completionsSummary = (completions || []).map(c =>
@@ -142,13 +140,18 @@ Baseie-se APENAS nos dados fornecidos. Não invente informações.`;
       userMessage += '\n=== CONCLUSÕES DE CARDS ===\n' + completionsSummary;
     }
 
-    // Criar run do agente
-    const agent = await AgentService.createRun('event_report', req.user.userId, { eventId, type, phase_name });
+    // Model routing: Haiku pra fase única (escopo menor, ~1/10 do custo), Sonnet pra evento completo.
+    // Threshold de fallback: se userMessage > 80k chars (~20k tokens), força Sonnet mesmo em fase.
+    const useHaiku = type === 'phase' && userMessage.length < 80000;
+    const model = useHaiku ? 'claude-haiku-4-5-20251001' : 'claude-sonnet-4-20250514';
+    const maxTokens = useHaiku ? 2048 : 4096;
+
+    const agent = await AgentService.createRun('event_report', req.user.userId, { eventId, type, phase_name, model });
     const result = await agent.call({
-      model: 'claude-sonnet-4-20250514',
+      model,
       system,
       messages: [{ role: 'user', content: userMessage }],
-      maxTokens: 4096,
+      maxTokens,
       role: 'report',
     });
     await agent.complete('Relatório gerado');
@@ -210,10 +213,16 @@ router.post('/:eventId/report/export', async (req, res) => {
     };
 
     const html = format === 'slide' ? generateSlideHTML(params) : generateDocumentHTML(params);
-    const ext = format === 'slide' ? 'Apresentacao' : 'Documento';
-    const filename = `${ext}_${event?.name || 'evento'}.html`;
+    const prefix = format === 'slide' ? 'Apresentacao' : 'Documento';
+    // Sanitiza nome do evento pra filename: remove acento + caractere especial.
+    const safeName = (event?.name || 'evento')
+      .normalize('NFD').replace(/[̀-ͯ]/g, '')
+      .replace(/[^a-zA-Z0-9_-]+/g, '_').slice(0, 60);
+    const filename = `${prefix}_${safeName}.html`;
 
     res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    // Garante extensão correta no download mesmo se o frontend errar
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
     res.send(html);
   } catch (e) {
     console.error('[Reports] Export:', e.message);

@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
+import ReactMarkdown from 'react-markdown';
 import { events, meetings, cycles as cyclesApi, occurrences as occApi, dashboard as dashApi, risks as risksApi, retrospective as retroApi, history as historyApi, users as usersApi, reports as reportsApi } from '../../api';
 import { supabase } from '../../supabaseClient';
 import { resolveApiBaseUrl } from '../../lib/api-base';
@@ -1920,18 +1921,38 @@ export default function Eventos() {
                     </div>
                   )}
 
-                  {/* Step 5: Resultado — botões de download */}
+                  {/* Step 5: Resultado — preview + downloads ou erro com retry */}
                   {rm.step === 'done' && (
                     <div>
                       {rm.error ? (
-                        <div style={{ padding: '12px 16px', background: '#fee2e2', color: '#ef4444', borderRadius: 8, fontSize: 13 }}>{rm.error}</div>
+                        <div>
+                          <div style={{ padding: '12px 16px', background: '#fee2e2', color: '#ef4444', borderRadius: 8, fontSize: 13, marginBottom: 12 }}>{rm.error}</div>
+                          <button onClick={() => {
+                            // Retry: re-dispara baseado no estado atual (full ou phase)
+                            if (rm.type === 'phase') selectPhase(rm.phaseName);
+                            else selectScope('full');
+                          }} style={{ padding: '10px 20px', borderRadius: 8, border: 'none', background: 'var(--cbrio-primary, #00B39D)', color: '#fff', fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>
+                            Tentar novamente
+                          </button>
+                        </div>
                       ) : (
-                        <div style={{ textAlign: 'center', padding: '10px 0' }}>
+                        <div>
                           <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--cbrio-text)', marginBottom: 4 }}>
                             {rm.type === 'full' ? 'Relatório Completo' : `Fase: ${rm.phaseName}`}
                           </div>
-                          <div style={{ fontSize: 11, color: 'var(--cbrio-text3)', marginBottom: 20 }}>
+                          <div style={{ fontSize: 11, color: 'var(--cbrio-text3)', marginBottom: 14 }}>
                             {rm.eventName} · {rm.result?.attachments_count || 0} arquivo(s) analisado(s)
+                          </div>
+
+                          {/* Preview do markdown gerado */}
+                          {rm.result?.content && (
+                            <div style={{ maxHeight: 360, overflowY: 'auto', padding: '12px 16px', border: '1px solid var(--cbrio-border)', borderRadius: 10, background: 'var(--cbrio-bg)', marginBottom: 16, fontSize: 13, lineHeight: 1.55, color: 'var(--cbrio-text)' }}>
+                              <ReactMarkdown>{rm.result.content}</ReactMarkdown>
+                            </div>
+                          )}
+
+                          <div style={{ fontSize: 10, color: 'var(--cbrio-text3)', marginBottom: 10, textAlign: 'center' }}>
+                            Os downloads são HTML formatado. Abra no navegador, depois "Imprimir → Salvar como PDF" pra compartilhar.
                           </div>
                           <div style={{ display: 'flex', gap: 12, justifyContent: 'center', flexWrap: 'wrap' }}>
                             <button onClick={async () => {
@@ -1942,7 +1963,8 @@ export default function Eventos() {
                                 });
                                 const blob = await res.blob();
                                 const url = URL.createObjectURL(blob);
-                                const a = document.createElement('a'); a.href = url; a.download = `Apresentacao_${rm.eventName}.pptx`; a.click();
+                                const a = document.createElement('a'); a.href = url; a.download = `Apresentacao_${rm.eventName}.html`; a.click();
+                                setTimeout(() => URL.revokeObjectURL(url), 1000);
                               } catch (e) { console.error(e); }
                             }} style={{ padding: '14px 28px', borderRadius: 10, border: 'none', background: '#00839D', color: '#fff', fontSize: 14, fontWeight: 700, cursor: 'pointer' }}>
                               Baixar Apresentação
@@ -1955,7 +1977,8 @@ export default function Eventos() {
                                 });
                                 const blob = await res.blob();
                                 const url = URL.createObjectURL(blob);
-                                const a = document.createElement('a'); a.href = url; a.download = `Documento_${rm.eventName}.docx`; a.click();
+                                const a = document.createElement('a'); a.href = url; a.download = `Documento_${rm.eventName}.html`; a.click();
+                                setTimeout(() => URL.revokeObjectURL(url), 1000);
                               } catch (e) { console.error(e); }
                             }} style={{ padding: '14px 28px', borderRadius: 10, border: 'none', background: '#242223', color: '#fff', fontSize: 14, fontWeight: 700, cursor: 'pointer' }}>
                               Baixar Documento
@@ -3316,20 +3339,24 @@ function ReportTab({ eventId, isPMO }) {
     }
   };
 
-  const downloadExport = async (reportId, format) => {
-    setExporting(format);
+  // kind: 'slide' | 'document' (alinhado com o backend; antes mandava 'pptx'/'docx',
+  // que o backend não reconhecia e gerava sempre documento pros dois botões).
+  const downloadExport = async (reportId, kind) => {
+    setExporting(kind);
     try {
       const res = await fetch(`${API}/events/${eventId}/report/export`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${(await supabase.auth.getSession()).data.session?.access_token}` },
-        body: JSON.stringify({ reportId, format }),
+        body: JSON.stringify({ reportId, format: kind }),
       });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const blob = await res.blob();
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = format === 'pptx' ? `Apresentacao_CBRio.pptx` : `Documento_CBRio.docx`;
+      a.download = kind === 'slide' ? `Apresentacao_CBRio.html` : `Documento_CBRio.html`;
       a.click();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
     } catch (e) { setError('Erro ao exportar: ' + e.message); }
     finally { setExporting(''); }
   };
@@ -3362,28 +3389,46 @@ function ReportTab({ eventId, isPMO }) {
       </div>
 
       {error && (
-        <div style={{ padding: '10px 16px', borderRadius: 8, background: '#fee2e2', color: '#ef4444', fontSize: 13, marginBottom: 16 }}>
-          {error}
+        <div style={{ marginBottom: 16 }}>
+          <div style={{ padding: '10px 16px', borderRadius: 8, background: '#fee2e2', color: '#ef4444', fontSize: 13, marginBottom: 8 }}>
+            {error}
+          </div>
+          <button onClick={() => { setError(''); generate(); }}
+            style={{ padding: '8px 18px', borderRadius: 8, border: 'none', background: 'var(--cbrio-primary, #00B39D)', color: '#fff', fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>
+            Tentar novamente
+          </button>
         </div>
       )}
 
-      {/* Relatório gerado — botões de download */}
+      {/* Relatório gerado — preview + downloads */}
       {viewReport && (
         <div style={{ background: 'var(--cbrio-card)', borderRadius: 12, border: '1px solid var(--cbrio-border)', marginBottom: 16, padding: '24px 20px' }}>
           <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--cbrio-text)', marginBottom: 4 }}>
             {viewReport.report_type === 'full' ? 'Relatório Completo' : `Relatório: ${viewReport.phase_name}`}
           </div>
-          <div style={{ fontSize: 11, color: 'var(--cbrio-text3)', marginBottom: 20 }}>
+          <div style={{ fontSize: 11, color: 'var(--cbrio-text3)', marginBottom: 16 }}>
             {viewReport.attachments_count} arquivo(s) analisado(s) · Gerado em {new Date(viewReport.created_at).toLocaleString('pt-BR')}
           </div>
+
+          {/* Preview do conteúdo gerado */}
+          {viewReport.content && (
+            <div style={{ maxHeight: 420, overflowY: 'auto', padding: '14px 18px', border: '1px solid var(--cbrio-border)', borderRadius: 10, background: 'var(--cbrio-bg)', marginBottom: 16, fontSize: 13, lineHeight: 1.55, color: 'var(--cbrio-text)' }}>
+              <ReactMarkdown>{viewReport.content}</ReactMarkdown>
+            </div>
+          )}
+
+          <div style={{ fontSize: 10, color: 'var(--cbrio-text3)', marginBottom: 10 }}>
+            Os downloads são HTML formatado. Abra no navegador, depois "Imprimir → Salvar como PDF" pra compartilhar.
+          </div>
+
           <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
-            <button onClick={() => downloadExport(viewReport.id, 'pptx')} disabled={!!exporting}
-              style={{ padding: '14px 28px', borderRadius: 10, border: 'none', background: '#00839D', color: '#fff', fontSize: 14, fontWeight: 700, cursor: exporting ? 'wait' : 'pointer', display: 'flex', alignItems: 'center', gap: 8, opacity: exporting === 'docx' ? 0.5 : 1 }}>
-              {exporting === 'pptx' ? 'Gerando...' : 'Baixar Apresentação'}
+            <button onClick={() => downloadExport(viewReport.id, 'slide')} disabled={!!exporting}
+              style={{ padding: '14px 28px', borderRadius: 10, border: 'none', background: '#00839D', color: '#fff', fontSize: 14, fontWeight: 700, cursor: exporting ? 'wait' : 'pointer', display: 'flex', alignItems: 'center', gap: 8, opacity: exporting === 'document' ? 0.5 : 1 }}>
+              {exporting === 'slide' ? 'Gerando...' : 'Baixar Apresentação'}
             </button>
-            <button onClick={() => downloadExport(viewReport.id, 'docx')} disabled={!!exporting}
-              style={{ padding: '14px 28px', borderRadius: 10, border: 'none', background: '#242223', color: '#fff', fontSize: 14, fontWeight: 700, cursor: exporting ? 'wait' : 'pointer', display: 'flex', alignItems: 'center', gap: 8, opacity: exporting === 'pptx' ? 0.5 : 1 }}>
-              {exporting === 'docx' ? 'Gerando...' : 'Baixar Documento'}
+            <button onClick={() => downloadExport(viewReport.id, 'document')} disabled={!!exporting}
+              style={{ padding: '14px 28px', borderRadius: 10, border: 'none', background: '#242223', color: '#fff', fontSize: 14, fontWeight: 700, cursor: exporting ? 'wait' : 'pointer', display: 'flex', alignItems: 'center', gap: 8, opacity: exporting === 'slide' ? 0.5 : 1 }}>
+              {exporting === 'document' ? 'Gerando...' : 'Baixar Documento'}
             </button>
             <button onClick={() => setViewReport(null)}
               style={{ padding: '14px 20px', borderRadius: 10, border: '1px solid var(--cbrio-border)', background: 'transparent', fontSize: 13, cursor: 'pointer', color: 'var(--cbrio-text3)' }}>

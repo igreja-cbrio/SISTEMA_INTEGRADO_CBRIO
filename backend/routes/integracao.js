@@ -221,42 +221,57 @@ router.delete('/acompanhamentos/:id', async (req, res) => {
   }
 });
 
-// ── GET /dashboard — contadores do funil ────────────────────────────────────
+// ── GET /dashboard — cards do header de /integracao ─────────────────────────
+// Reformulado em 2026-05-14 · visitantes/acompanhamentos descontinuados (PR
+// #399). Agora retorna dados acionaveis: cultos pendentes de preenchimento,
+// frequencia + decisoes do mes corrente, batismos aguardando.
 router.get('/dashboard', async (req, res) => {
   try {
-    const { data: visitantes, error } = await supabase
-      .from('int_visitantes')
-      .select('status, fez_decisao, data_visita');
-    if (error) return res.status(400).json({ error: error.message });
-
-    const porStatus = {};
-    for (const s of STATUS_VALIDOS) porStatus[s] = 0;
-    let decisoes = 0;
-    let visitantesUltimos30 = 0;
     const hoje = new Date();
-    const trintaDias = new Date(hoje.getTime() - 30 * 24 * 60 * 60 * 1000);
+    const hojeStr = hoje.toISOString().slice(0, 10);
+    const inicioMes = new Date(hoje.getFullYear(), hoje.getMonth(), 1).toISOString().slice(0, 10);
+    const sessentaDiasAtrasStr = new Date(hoje.getTime() - 60 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
 
-    for (const v of visitantes || []) {
-      if (v.status) porStatus[v.status] = (porStatus[v.status] || 0) + 1;
-      if (v.fez_decisao) decisoes += 1;
-      if (v.data_visita && new Date(v.data_visita) >= trintaDias) visitantesUltimos30 += 1;
+    // 1. Cultos pendentes · passados nos ultimos 60 dias sem preenchimento
+    const { data: cultosRecentes } = await supabase
+      .from('cultos')
+      .select('id, data, presencial_adulto, presencial_kids')
+      .gte('data', sessentaDiasAtrasStr)
+      .lte('data', hojeStr);
+    const cultosPendentes = (cultosRecentes || []).filter(
+      c => (c.presencial_adulto || 0) === 0 && (c.presencial_kids || 0) === 0
+    ).length;
+
+    // 2. Frequencia + decisoes do mes corrente
+    const { data: cultosMes } = await supabase
+      .from('cultos')
+      .select('presencial_adulto, presencial_kids, decisoes_presenciais, decisoes_online')
+      .gte('data', inicioMes)
+      .lte('data', hojeStr);
+    let frequenciaMes = 0;
+    let decisoesMes = 0;
+    for (const c of cultosMes || []) {
+      frequenciaMes += (c.presencial_adulto || 0) + (c.presencial_kids || 0);
+      decisoesMes   += (c.decisoes_presenciais || 0) + (c.decisoes_online || 0);
     }
 
-    const hojeStr = hoje.toISOString().slice(0, 10);
-    const { data: pendentes } = await supabase
-      .from('int_acompanhamentos')
-      .select('id, data_proximo_contato')
-      .gte('data_proximo_contato', hojeStr);
-
-    const pendentesHoje = (pendentes || []).filter(p => p.data_proximo_contato === hojeStr).length;
+    // 3. Batismos aguardando + proxima data
+    const { data: batismosAg } = await supabase
+      .from('batismo_inscricoes')
+      .select('id, data_batismo, status')
+      .in('status', ['pendente', 'confirmado']);
+    const batismosAguardando = (batismosAg || []).length;
+    const proximoBatismo = (batismosAg || [])
+      .map(b => b.data_batismo)
+      .filter(d => d && d >= hojeStr)
+      .sort()[0] || null;
 
     res.json({
-      total: (visitantes || []).length,
-      por_status: porStatus,
-      total_decisoes: decisoes,
-      visitantes_ultimos_30: visitantesUltimos30,
-      acompanhamentos_pendentes: (pendentes || []).length,
-      acompanhamentos_hoje: pendentesHoje,
+      cultos_pendentes: cultosPendentes,
+      frequencia_mes: frequenciaMes,
+      decisoes_mes: decisoesMes,
+      batismos_aguardando: batismosAguardando,
+      proximo_batismo: proximoBatismo,
     });
   } catch (e) {
     console.error('[INTEGRACAO] dashboard', e.message);
