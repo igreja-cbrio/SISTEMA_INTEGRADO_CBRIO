@@ -40,14 +40,18 @@ COMMENT ON COLUMN public.int_visitantes.culto_id IS
 --    do dia da semana no range), pulando os que ja existem.
 --    Idempotente · pode rodar varias vezes sem duplicar.
 -- ----------------------------------------------------------------------------
-CREATE OR REPLACE FUNCTION public.gerar_cultos_recorrentes(
+-- Drop necessario pra mudar nomes das colunas RETURNS TABLE (alterar retorno
+-- de uma funcao requer DROP IF EXISTS · CREATE OR REPLACE nao basta)
+DROP FUNCTION IF EXISTS public.gerar_cultos_recorrentes(date, date);
+
+CREATE FUNCTION public.gerar_cultos_recorrentes(
   p_data_inicio date,
   p_data_fim    date
 )
 RETURNS TABLE(
-  service_type text,
-  data         date,
-  status       text  -- 'criado' | 'ja_existia'
+  out_service_type text,
+  out_data         date,
+  out_status       text  -- 'criado' | 'ja_existia'
 )
 LANGUAGE plpgsql AS $$
 DECLARE
@@ -67,15 +71,14 @@ BEGIN
        AND recurrence_day IS NOT NULL
        AND recurrence_time IS NOT NULL
   LOOP
-    -- Itera dia a dia, mas o filtro de dia da semana faz pular rapido
     v_data := p_data_inicio;
     WHILE v_data <= p_data_fim LOOP
       IF extract(dow FROM v_data)::int = v_st.recurrence_day THEN
-        -- Confere se ja existe esse (service_type_id, data)
+        -- Qualifica 'cultos.data' pra nao conflitar com OUT out_data
         SELECT EXISTS (
-          SELECT 1 FROM public.cultos
-           WHERE service_type_id = v_st.id
-             AND data = v_data
+          SELECT 1 FROM public.cultos c
+           WHERE c.service_type_id = v_st.id
+             AND c.data = v_data
         ) INTO v_existe;
 
         IF NOT v_existe THEN
@@ -89,14 +92,14 @@ BEGIN
             v_st.id, v_nome, v_data, v_st.recurrence_time,
             0, 0, 0, 0, 0, 0, 0
           );
-          service_type := v_st.name;
-          data         := v_data;
-          status       := 'criado';
+          out_service_type := v_st.name;
+          out_data         := v_data;
+          out_status       := 'criado';
           RETURN NEXT;
         ELSE
-          service_type := v_st.name;
-          data         := v_data;
-          status       := 'ja_existia';
+          out_service_type := v_st.name;
+          out_data         := v_data;
+          out_status       := 'ja_existia';
           RETURN NEXT;
         END IF;
       END IF;
@@ -118,8 +121,8 @@ DECLARE
   v_criados int;
 BEGIN
   SELECT count(*) INTO v_criados
-    FROM public.gerar_cultos_recorrentes(v_inicio, v_fim)
-   WHERE status = 'criado';
+    FROM public.gerar_cultos_recorrentes(v_inicio, v_fim) g
+   WHERE g.out_status = 'criado';
   RAISE NOTICE 'Cultos recorrentes gerados de % a %: %', v_inicio, v_fim, v_criados;
 END $$;
 
