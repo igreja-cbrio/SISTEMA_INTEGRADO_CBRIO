@@ -5,11 +5,19 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from '../../components/ui/ta
 const Batismos = lazy(() => import('./Batismos'));
 const VisualizacaoFrequencia = lazy(() => import('./VisualizacaoFrequencia'));
 const VisualizacaoDecisoes   = lazy(() => import('./VisualizacaoDecisoes'));
+const HistoricoCultos        = lazy(() => import('./HistoricoCultos'));
 import CalendarioCultos from '../../components/CalendarioCultos';
 import { StatisticsCard } from '../../components/ui/statistics-card';
 import { Calendar, CheckCircle2, Heart } from 'lucide-react';
 
 const C = { primary: '#00B39D', info: '#3b82f6', warn: '#f59e0b', purple: '#8b5cf6', pink: '#ef476f', gray: '#737373' };
+
+// "2026-05-25" → "25/mai"
+function formatDataCurta(iso: string): string {
+  const [y, m, d] = iso.split('-').map(Number);
+  const meses = ['jan','fev','mar','abr','mai','jun','jul','ago','set','out','nov','dez'];
+  return `${String(d).padStart(2, '0')}/${meses[m - 1]}`;
+}
 
 export default function Integracao() {
   const [tab, setTab] = useState('frequencia');
@@ -27,7 +35,7 @@ export default function Integracao() {
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const t = params.get('tab');
-    if (t && ['batismos', 'frequencia', 'vis_frequencia', 'vis_decisoes'].includes(t)) setTab(t);
+    if (t && ['batismos', 'frequencia', 'vis_frequencia', 'vis_decisoes', 'historico'].includes(t)) setTab(t);
   }, []);
 
   return (
@@ -42,24 +50,24 @@ export default function Integracao() {
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
         <button onClick={() => setTab('frequencia')} className="text-left hover:scale-[1.02] transition-transform">
           <StatisticsCard
-            title="Cultos · registrar"
-            value="Abrir"
+            title={dashboard?.cultos_pendentes > 0 ? 'Cultos pendentes' : 'Cultos · em dia'}
+            value={loadingDash ? '…' : String(dashboard?.cultos_pendentes ?? 0)}
             icon={Calendar}
-            iconColor={C.purple}
+            iconColor={dashboard?.cultos_pendentes > 0 ? C.warn : C.primary}
           />
         </button>
-        <button onClick={() => setTab('frequencia')} className="text-left hover:scale-[1.02] transition-transform">
+        <button onClick={() => setTab('vis_decisoes')} className="text-left hover:scale-[1.02] transition-transform">
           <StatisticsCard
-            title="Decisões · registrar"
-            value={loadingDash ? '…' : String(dashboard?.total_decisoes ?? 0)}
+            title="Decisões neste mês"
+            value={loadingDash ? '…' : String(dashboard?.decisoes_mes ?? 0)}
             icon={Heart}
             iconColor={C.pink}
           />
         </button>
         <button onClick={() => setTab('batismos')} className="text-left hover:scale-[1.02] transition-transform">
           <StatisticsCard
-            title="Batismos · registrar"
-            value={loadingDash ? '…' : String(dashboard?.total_batismos ?? '—')}
+            title={dashboard?.proximo_batismo ? `Próximo batismo · ${formatDataCurta(dashboard.proximo_batismo)}` : 'Batismos aguardando'}
+            value={loadingDash ? '…' : String(dashboard?.batismos_aguardando ?? 0)}
             icon={CheckCircle2}
             iconColor={C.primary}
           />
@@ -72,6 +80,7 @@ export default function Integracao() {
           <TabsTrigger value="vis_frequencia">Frequência</TabsTrigger>
           <TabsTrigger value="vis_decisoes">Decisões</TabsTrigger>
           <TabsTrigger value="batismos">Batismos</TabsTrigger>
+          <TabsTrigger value="historico">Histórico</TabsTrigger>
         </TabsList>
 
         <TabsContent value="frequencia" className="mt-4">
@@ -98,6 +107,11 @@ export default function Integracao() {
         <TabsContent value="batismos" className="mt-4">
           <Suspense fallback={<div className="flex items-center justify-center py-12 text-sm text-muted-foreground">Carregando…</div>}>
             <Batismos />
+          </Suspense>
+        </TabsContent>
+        <TabsContent value="historico" className="mt-4">
+          <Suspense fallback={<div className="flex items-center justify-center py-12 text-sm text-muted-foreground">Carregando…</div>}>
+            <HistoricoCultos />
           </Suspense>
         </TabsContent>
       </Tabs>

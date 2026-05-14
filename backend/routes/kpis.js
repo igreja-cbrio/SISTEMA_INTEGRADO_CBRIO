@@ -82,9 +82,13 @@ router.put('/cultos/:id', async (req, res) => {
   // Recalcula KPIs que dependem de cultos em background · KPIs do painel
   // refletem mudança em segundos em vez de esperar cron diário. fire-and-forget
   // pra nao bloquear resposta. Cache do /painel limpado pra forcar releitura.
+  //
+  // referenceDate = data do culto editado · garante que editar culto antigo
+  // recalcula o periodo do culto, nao o mes corrente (bug que existia antes).
+  const refDate = data?.data ? new Date(data.data + 'T12:00:00') : null;
   setImmediate(async () => {
     try {
-      await coletarTodos({ fontes: ['cultos.', 'batismos.'] });
+      await coletarTodos({ fontes: ['cultos.', 'batismos.'], referenceDate: refDate });
       painelCache.bust('');
     } catch (e) {
       console.error('[kpis] recalculo pos-update culto falhou:', e.message);

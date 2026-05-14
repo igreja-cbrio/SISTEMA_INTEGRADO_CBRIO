@@ -178,6 +178,8 @@ export const integracao = {
     remove: (id) => del(`/integracao/acompanhamentos/${id}`),
   },
   dashboard: () => get('/integracao/dashboard'),
+  historicoAnual: () => get('/integracao/historico-anual'),
+  historicoBatismos: () => get('/integracao/historico-batismos'),
 };
 
 export const grupos = {
@@ -847,7 +849,7 @@ export const attachments = {
 };
 
 export const reports = {
-  // Geração síncrona (legacy/fallback). Frontend novo usa start+section+finalize.
+  // Geração síncrona (legacy/fallback). Novo frontend usa start+section+finalize.
   generate: (eventId, data) => post(`/events/${eventId}/report`, data),
   list: (eventId) => get(`/events/${eventId}/reports`),
   get: (eventId, id) => get(`/events/${eventId}/reports/${id}`),

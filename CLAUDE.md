@@ -754,12 +754,28 @@ Jornada), basta deixar `valores = '{}'::text[]`.
 ### Recálculo automático ao editar culto
 
 `PUT /api/kpis/cultos/:id` (backend/routes/kpis.js) dispara em
-background `coletarTodos({ fontes: ['cultos.', 'batismos.'] })` +
-`painelCache.bust('')` depois de salvar. KPIs do painel refletem a
-edição em segundos em vez de esperar o cron diário
-(`/api/kpis/v2/cron/coletar`).
+background `coletarTodos({ fontes: ['cultos.', 'batismos.'],
+referenceDate: <data do culto> })` + `painelCache.bust('')` depois de
+salvar. KPIs do painel refletem a edição em segundos em vez de esperar
+o cron diário (`/api/kpis/v2/cron/coletar`).
 
-Tabs vigentes de `/integracao`: **Cultos · Frequência · Decisões · Batismos**.
+`coletarTodos` aceita `referenceDate` opcional · garante que editar
+culto antigo recalcula o **período do culto**, não o mês corrente.
+
+Tabs vigentes de `/integracao`: **Cultos · Frequência · Decisões · Batismos · Histórico**.
+
+### Histórico de longo prazo · vw_culto_historico_anual
+
+Visualizações Frequência/Decisões cobrem ranges 3m / 6m / 12m / 2a / 5a
+(limit 5.000 cultos · folga ampla pra 5 anos × 7 slots × 52 sem = 1.820).
+
+A aba **Histórico** (`HistoricoCultos.tsx`) usa a view
+`vw_culto_historico_anual` (agregação SQL por ano + tipo de culto).
+Como retorna 1 linha por `(ano, service_type)`, escala pra qualquer
+volume de cultos sem limit no front · 50 anos × 7 tipos = 350 rows.
+
+Visualizações usam **react-query** (`staleTime: 5min`) · trocar de
+range não refaz fetch enquanto cache estiver quente.
 
 ### Calendário semanal
 
