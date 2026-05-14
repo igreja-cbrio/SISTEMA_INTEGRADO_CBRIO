@@ -138,11 +138,13 @@ const COLLECTORS = {
     return { valor: total };
   },
 
+  // Antes somava conversoes + visitantes · Marcos descontinuou contagem de
+  // visitantes em 2026-05-14 (PR #399), entao agora soma so as conversoes.
+  // KPI deixa de misturar entidades · numero do indicador fica interpretavel.
   'cultos.conv_visit': async ({ inicio, fim }) => {
-    const { data } = await supabase.from('vw_culto_stats').select('decisoes_presenciais, decisoes_online, visitantes, visitantes_online').gte('data', inicio).lt('data', fim);
+    const { data } = await supabase.from('vw_culto_stats').select('decisoes_presenciais, decisoes_online').gte('data', inicio).lt('data', fim);
     const conv = (data || []).reduce((s, c) => s + (c.decisoes_presenciais || 0) + (c.decisoes_online || 0), 0);
-    const visit = (data || []).reduce((s, c) => s + (c.visitantes || 0) + (c.visitantes_online || 0), 0);
-    return { valor: conv + visit, observacao: `${conv} conversoes + ${visit} visitantes` };
+    return { valor: conv, observacao: `${conv} conversoes` };
   },
 
   // ── Cuidados ──
