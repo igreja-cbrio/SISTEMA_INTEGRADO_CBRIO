@@ -58,23 +58,44 @@ class AgentService {
     return this.tokenBudget - total;
   }
 
-  /** Chamada principal ao Claude API */
-  async call({ model = 'claude-haiku-4-5-20251001', system, messages, tools, role = 'step', maxTokens = 2048 }) {
+  /** Chamada principal ao Claude API
+   *
+   * `system` aceita 3 formas:
+   *  - string: append no GUARDRAILS, vira system simples
+   *  - array de TextBlocks Anthropic ({type:'text', text, cache_control?}): usado tal qual,
+   *    com GUARDRAILS injetado no primeiro bloco (preservando o cache_control que estiver lá)
+   *  - undefined: só os GUARDRAILS
+   *
+   * `tools` + `toolChoice` ativam structured output. O resultado vai em toolCalls[0].input.
+   */
+  async call({ model = 'claude-haiku-4-5-20251001', system, messages, tools, toolChoice, role = 'step', maxTokens = 2048 }) {
     this.checkBudget();
     this.stepCount++;
 
     const apiKey = process.env.ANTHROPIC_API_KEY;
     if (!apiKey) throw new Error('ANTHROPIC_API_KEY não configurada');
 
-    const systemWithGuardrails = `${GUARDRAILS}\n\n${system || ''}`;
+    // Build system field: aceita string ou array de blocks
+    let systemField;
+    if (Array.isArray(system)) {
+      // Injeta GUARDRAILS no primeiro bloco preservando seu cache_control
+      const first = system[0] || { type: 'text', text: '' };
+      systemField = [
+        { ...first, text: `${GUARDRAILS}\n\n${first.text || ''}` },
+        ...system.slice(1),
+      ];
+    } else {
+      systemField = `${GUARDRAILS}\n\n${system || ''}`;
+    }
 
     const body = {
       model,
       max_tokens: maxTokens,
-      system: systemWithGuardrails,
+      system: systemField,
       messages,
     };
     if (tools?.length) body.tools = tools;
+    if (toolChoice) body.tool_choice = toolChoice;
 
     const start = Date.now();
     const res = await fetch('https://api.anthropic.com/v1/messages', {

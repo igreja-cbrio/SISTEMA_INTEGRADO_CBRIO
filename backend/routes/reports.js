@@ -8,29 +8,72 @@ const { extractText } = require('../services/textExtractor');
 
 router.use(authenticate);
 
+// Tool schema usado pra structured output. Forçar o modelo a preencher esse
+// schema elimina o parsing fragil por regex no reportGenerator.js — todos os
+// campos vêm tipados e nomeados, mesmo se o modelo mudar o estilo do markdown.
+const REPORT_TOOL = {
+  name: 'submit_report',
+  description: 'Envia o relatório estruturado do evento em seções fixas. Todos os campos são markdown.',
+  input_schema: {
+    type: 'object',
+    required: ['resumo_executivo', 'pontos_atencao', 'recomendacoes'],
+    properties: {
+      resumo_executivo: { type: 'string', description: 'Visão geral do evento: o que foi entregue e o que falta. 2-4 parágrafos.' },
+      progresso_por_fase: { type: 'string', description: 'Markdown listando cada fase com total/concluído/pendente/%. Vazio se não houver dados.' },
+      entregas_por_area: { type: 'string', description: 'O que cada área entregou, quem concluiu e quando. Markdown com bullets/seções por área.' },
+      cards_pendentes: { type: 'string', description: 'Lista de cards não concluídos agrupados por fase/área, com impacto no evento.' },
+      observacoes_responsaveis: { type: 'string', description: 'Observações relevantes dos responsáveis nas conclusões.' },
+      pontos_atencao: { type: 'string', description: 'Gaps, atrasos, faltantes ou problemas identificados.' },
+      recomendacoes: { type: 'string', description: 'Próximos passos sugeridos pra resolver as pendências a tempo.' },
+    },
+  },
+};
+
+// Renderiza o JSON estruturado pra markdown (compatível com o storage atual
+// em event_reports.content e com o reportGenerator que extrai por regex).
+function structuredToMarkdown(j) {
+  const sec = (title, body) => body && body.trim() ? `## ${title}\n\n${body.trim()}\n\n` : '';
+  return (
+    sec('Resumo Executivo', j.resumo_executivo) +
+    sec('Progresso por Fase', j.progresso_por_fase) +
+    sec('Entregas por Área', j.entregas_por_area) +
+    sec('Cards Pendentes', j.cards_pendentes) +
+    sec('Observações dos Responsáveis', j.observacoes_responsaveis) +
+    sec('Pontos de Atenção', j.pontos_atencao) +
+    sec('Recomendações', j.recomendacoes)
+  ).trim();
+}
+
 // POST /api/events/:eventId/report — gerar relatório por IA
 router.post('/:eventId/report', async (req, res) => {
   try {
     const { eventId } = req.params;
-    const { type = 'full', phase_name } = req.body;
+    const { type = 'full', phase_name, since_days } = req.body;
+
+    // Filtro de data: pra séries longas, limita ao período recente.
+    // since_days: 30/60/90/180. null/undefined = sem filtro (todos).
+    const sinceN = parseInt(since_days, 10);
+    const hasDateFilter = Number.isFinite(sinceN) && sinceN > 0;
+    const sinceIso = hasDateFilter ? new Date(Date.now() - sinceN * 86400000).toISOString() : null;
 
     // Buscar evento
     const { data: event } = await supabase.from('events').select('name, date, status, description').eq('id', eventId).single();
     if (!event) return res.status(404).json({ error: 'Evento não encontrado' });
 
-    // Buscar anexos
+    // Buscar anexos (com filtro opcional de data)
     let q = supabase.from('event_task_attachments').select('*').eq('event_id', eventId);
     if (type === 'phase' && phase_name) q = q.eq('phase_name', phase_name);
+    if (hasDateFilter) q = q.gte('created_at', sinceIso);
     const { data: attachs } = await q.order('created_at');
 
     // Buscar conclusões de cards (card_completions)
     let compQ = supabase.from('card_completions').select('*').eq('event_id', eventId).is('reopened_at', null);
     if (type === 'phase' && phase_name) {
-      // Buscar phase_number da fase pelo nome
       const { data: phaseRow } = await supabase.from('event_cycle_phases')
         .select('numero_fase').eq('event_id', eventId).eq('nome_fase', phase_name).limit(1).maybeSingle();
       if (phaseRow) compQ = compQ.eq('phase_number', phaseRow.numero_fase);
     }
+    if (hasDateFilter) compQ = compQ.gte('completed_at', sinceIso);
     const { data: completions } = await compQ.order('completed_at');
 
     // Buscar progresso por fase/área (totais, concluídos, pendentes)
@@ -38,7 +81,7 @@ router.post('/:eventId/report', async (req, res) => {
     if (type === 'phase' && phase_name) progressQ = progressQ.eq('nome_fase', phase_name);
     const { data: progress } = await progressQ.order('phase_number');
 
-    // Buscar cards pendentes (não concluídos)
+    // Buscar cards pendentes (não concluídos) — sem filtro de data, pendência atual é sempre relevante
     let pendingQ = supabase.from('cycle_phase_tasks')
       .select('titulo, area, status, responsavel_nome, event_phase_id')
       .eq('event_id', eventId)
@@ -89,29 +132,39 @@ router.post('/:eventId/report', async (req, res) => {
     const totalPendentes = totalCards - totalConcluidos;
     const pctGeral = totalCards > 0 ? Math.round(totalConcluidos / totalCards * 100) : 0;
 
-    // Montar prompt
+    // Prompt em 2 blocos: o STATIC tem instruções e regras (cacheável — repete
+    // entre requisições). O DYNAMIC tem nome/data/totais do evento (varia).
+    // Anthropic só ativa cache se o bloco passar do mínimo (~1024 tokens p/ Sonnet).
+    // Em escopo pequeno o cache_control é no-op silencioso, sem prejuízo.
     const scope = type === 'phase' ? `Fase: ${phase_name}` : 'Evento Completo';
-    const system = `Você é um analista de eventos da Igreja Comunidade Batista do Rio de Janeiro (CBRio).
-Gere um relatório estruturado em markdown com base nos entregáveis, conclusões e status dos cards.
 
-Evento: ${event.name}
-Data: ${event.date || 'não definida'}
-Escopo: ${scope}
-Total de cards: ${totalCards}
-Cards concluídos: ${totalConcluidos} (${pctGeral}%)
-Cards pendentes: ${totalPendentes}
-Total de anexos: ${attachs?.length || 0}
+    const SYSTEM_STATIC = `Você é um analista de eventos da Igreja Comunidade Batista do Rio de Janeiro (CBRio).
+Sua tarefa é gerar um relatório operacional estruturado em seções fixas a partir de dados reais de cards, entregas, anexos e pendências de um ciclo criativo.
 
-O relatório deve conter:
-1. **Resumo Executivo** — visão geral do evento: o que foi entregue e o que ainda falta
-2. **Progresso por Fase** — para cada fase, mostrar total de cards, concluídos, pendentes e % de conclusão
-3. **Entregas por Área** — o que cada área (marketing, produção, adm, etc.) entregou, quem concluiu e quando
-4. **Cards Pendentes** — listar os cards que ainda não foram concluídos, agrupados por fase/área, e avaliar o impacto de cada pendência no evento
-5. **Observações dos Responsáveis** — destaque as observações relevantes registradas nas conclusões
-6. **Pontos de Atenção** — gaps, atrasos, entregas faltantes ou problemas identificados com base nas pendências
-7. **Recomendações** — próximos passos sugeridos para resolver as pendências a tempo
+Use a ferramenta submit_report para entregar o relatório. Cada campo da ferramenta deve ser markdown corpado:
+- resumo_executivo: 2-4 parágrafos com visão geral do evento (o que foi entregue, o que ainda falta, status global).
+- progresso_por_fase: lista por fase, mostrando total, concluídos, pendentes e % de conclusão.
+- entregas_por_area: por área (marketing, produção, adm, etc.), o que foi entregue, por quem, quando.
+- cards_pendentes: lista de pendências agrupada por fase/área, avaliando impacto de cada uma no evento.
+- observacoes_responsaveis: destaque as observações relevantes registradas nas conclusões.
+- pontos_atencao: gaps, atrasos, entregas faltantes, riscos identificados nas pendências.
+- recomendacoes: próximos passos pra destravar pendências antes do evento.
 
-Baseie-se APENAS nos dados fornecidos. Não invente informações.`;
+REGRAS DURAS:
+- Baseie-se APENAS nos dados fornecidos. NUNCA invente nomes, datas, observações.
+- Se uma seção não tem dados, retorne string vazia ("") naquele campo. Não preencha com placeholders genéricos.
+- Use markdown limpo: títulos com ##, bullets com -, negrito apenas pra realce real.
+- Tom profissional, conciso, acionável.`;
+
+    const dynamicHeader = `### CONTEXTO DESTE EVENTO
+
+- Evento: ${event.name}
+- Data: ${event.date || 'não definida'}
+- Escopo: ${scope}${hasDateFilter ? ` · últimos ${sinceN} dias` : ''}
+- Total de cards: ${totalCards}
+- Cards concluídos: ${totalConcluidos} (${pctGeral}%)
+- Cards pendentes: ${totalPendentes}
+- Total de anexos: ${attachs?.length || 0}`;
 
     let userMessage = '';
 
@@ -146,17 +199,32 @@ Baseie-se APENAS nos dados fornecidos. Não invente informações.`;
     const model = useHaiku ? 'claude-haiku-4-5-20251001' : 'claude-sonnet-4-20250514';
     const maxTokens = useHaiku ? 2048 : 4096;
 
-    const agent = await AgentService.createRun('event_report', req.user.userId, { eventId, type, phase_name, model });
+    const agent = await AgentService.createRun('event_report', req.user.userId, { eventId, type, phase_name, model, since_days: sinceN || null });
+
+    // System em 2 blocos pra prompt caching: estável + dinâmico.
+    // Tools + tool_choice forçam structured output via submit_report.
     const result = await agent.call({
       model,
-      system,
+      system: [
+        { type: 'text', text: SYSTEM_STATIC, cache_control: { type: 'ephemeral' } },
+        { type: 'text', text: dynamicHeader },
+      ],
       messages: [{ role: 'user', content: userMessage }],
+      tools: [REPORT_TOOL],
+      toolChoice: { type: 'tool', name: 'submit_report' },
       maxTokens,
       role: 'report',
     });
     await agent.complete('Relatório gerado');
 
-    const reportContent = result.text || 'Não foi possível gerar o relatório.';
+    // Extrai resultado da tool_use; se o modelo escapar e responder texto livre, usa o texto.
+    let reportContent = '';
+    const toolCall = (result.toolCalls || []).find(c => c.name === 'submit_report');
+    if (toolCall?.input) {
+      reportContent = structuredToMarkdown(toolCall.input);
+    } else {
+      reportContent = result.text || 'Não foi possível gerar o relatório.';
+    }
 
     // Salvar no banco
     const { data: report, error } = await supabase.from('event_reports').insert({

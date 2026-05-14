@@ -178,6 +178,7 @@ export const integracao = {
     remove: (id) => del(`/integracao/acompanhamentos/${id}`),
   },
   dashboard: () => get('/integracao/dashboard'),
+  historicoAnual: () => get('/integracao/historico-anual'),
 };
 
 export const grupos = {

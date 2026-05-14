@@ -659,7 +659,12 @@ const COLLECTORS = {
 
 // ── Coletor master ──────────────────────────────────────────────────────────
 
-async function coletarTodos({ dryRun = false, fontes = null, areas = null } = {}) {
+// referenceDate: opcional · usado quando o gatilho do recalculo conhece a
+// data exata do dado que mudou (ex: PUT /cultos/:id passa a data do culto).
+// Isso garante que editar um culto do mes passado recalcula o registro do
+// mes passado, nao o periodo atual. Sem o param, comporta como cron diario
+// (recalcula sempre o periodo corrente).
+async function coletarTodos({ dryRun = false, fontes = null, areas = null, referenceDate = null } = {}) {
   let query = supabase
     .from('kpi_indicadores_taticos')
     .select('id, periodicidade, fonte_auto, indicador, area')
@@ -680,6 +685,8 @@ async function coletarTodos({ dryRun = false, fontes = null, areas = null } = {}
 
   if (error) throw error;
 
+  const dataRef = referenceDate ? new Date(referenceDate) : new Date();
+
   const resultados = [];
   for (const ind of (indicadores || [])) {
     const collector = COLLECTORS[ind.fonte_auto];
@@ -688,7 +695,7 @@ async function coletarTodos({ dryRun = false, fontes = null, areas = null } = {}
       continue;
     }
 
-    const periodo = periodoAtual(ind.periodicidade);
+    const periodo = periodoAtual(ind.periodicidade, dataRef);
     const range = periodoRange(periodo, ind.periodicidade);
 
     try {
