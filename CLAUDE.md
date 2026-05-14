@@ -655,11 +655,23 @@ que já existem.
   com `cultos.data` sem ambiguidade — `(service_type_id, data)` é
   chave estável.
 
-### Visitantes vinculados a culto
+### Contagem de visitantes — descontinuada
 
-`int_visitantes.culto_id uuid REFERENCES cultos(id) ON DELETE SET NULL`
-— FK opcional (cadastro avulso continua possível). Form de visitante
-auto-sugere o culto pela data informada.
+A partir de 2026-05-14 (decisão do Marcos), **não contamos mais o número
+de visitantes por culto**. Removido da UI:
+
+- Aba "Visitantes" da página `/integracao` (e os componentes
+  `TabVisitantes`, `VisitanteFormDialog`, `VisitanteDetailDialog`,
+  `AcompanhamentoFormDialog`)
+- Card "Visitantes (30d)" do header
+- Seção "Visitantes (1ª vez)" do modal de culto em `CalendarioCultos`
+  (campos `visitantes` / `visitantes_online` não são mais preenchidos)
+- Linha "X visit" dos cards do calendário semanal
+
+Schema preservado: `cultos.visitantes`, `cultos.visitantes_online` e
+`int_visitantes` continuam existindo no banco · só não há entrada pela
+UI. Para retomar a contagem, basta reintroduzir os campos no
+`ModalCulto` e renderizar uma aba/lista nova.
 
 ### Calendário semanal
 
