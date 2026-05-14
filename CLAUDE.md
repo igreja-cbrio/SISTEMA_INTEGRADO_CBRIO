@@ -727,6 +727,29 @@ só não há entrada pela UI.
 `decisões + visitantes`. Agora soma só decisões — `cultos.visitantes`
 seria sempre zero e degradaria o KPI silenciosamente.
 
+### KPIs do Online — só /minha-area (não entram no painel NSM)
+
+`cultos.online_pico`, `cultos.online_ds`, `cultos.online_ddus` são
+preenchidos no modal de culto (quando `service_type.has_online`).
+Não têm cross-relação com outras áreas, então **não entram no painel
+NSM** (mandalas, matriz Valor × Área). Aparecem apenas em
+`/minha-area` para quem tem `kpi_areas = ['online']`.
+
+| ID | Indicador | Coletor (mensal) |
+|---|---|---|
+| `ON-AUD-01` | Audiência online de pico (média) | `cultos.online_pico_avg` |
+| `ON-DS-01` | Views D+1 (total) | `cultos.online_ds_total` |
+| `ON-DDUS-01` | Views D+7 on-demand (total) | `cultos.online_ddus_total` |
+
+**Como filtrar do painel**: os 3 têm `valores = NULL` em
+`kpi_indicadores_taticos`. O endpoint `/painel/mandalas` e
+`/painel/matriz` filtram com
+`Array.isArray(k.valores) && k.valores.includes(v)`, então KPIs com
+`valores=NULL` são naturalmente excluídos sem precisar de flag nova.
+
+Para futuros KPIs "só de visualização" (sem cross-impacto na
+Jornada), basta deixar `valores = NULL`.
+
 ### Recálculo automático ao editar culto
 
 `PUT /api/kpis/cultos/:id` (backend/routes/kpis.js) dispara em
