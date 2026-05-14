@@ -1802,13 +1802,35 @@ export default function Eventos() {
 
           const closeModal = () => setReportModal(null);
 
-          const selectEvent = (ev) => setReportModal({ ...rm, step: 'scope', eventId: ev.id, eventName: ev.name });
+          // Ao escolher o evento, já busca relatórios existentes em paralelo
+          // pra mostrar opção de reaproveitar e evitar custo de regenerar.
+          const selectEvent = async (ev) => {
+            const base = { ...rm, step: 'scope', eventId: ev.id, eventName: ev.name, sinceDays: null, existingReports: [] };
+            setReportModal(base);
+            try {
+              const list = await reportsApi.list(ev.id);
+              setReportModal(prev => prev && prev.eventId === ev.id ? { ...prev, existingReports: Array.isArray(list) ? list : [] } : prev);
+            } catch { /* silencia: histórico é apenas conveniência */ }
+          };
+
+          // Reusa um relatório já gerado em vez de pagar Sonnet de novo
+          const reuseReport = (report) => {
+            setReportModal({
+              ...rm,
+              step: 'done',
+              type: report.report_type,
+              phaseName: report.phase_name || undefined,
+              result: report,
+            });
+          };
 
           const selectScope = async (type) => {
+            const body = { type };
+            if (rm.sinceDays) body.since_days = rm.sinceDays;
             if (type === 'full') {
               setReportModal({ ...rm, step: 'generating', type: 'full' });
               try {
-                const result = await reportsApi.generate(rm.eventId, { type: 'full' });
+                const result = await reportsApi.generate(rm.eventId, body);
                 setReportModal({ ...rm, step: 'done', type: 'full', result });
               } catch (e) { setReportModal({ ...rm, step: 'done', type: 'full', error: e.message }); }
             } else {
@@ -1818,8 +1840,10 @@ export default function Eventos() {
 
           const selectPhase = async (phaseName) => {
             setReportModal({ ...rm, step: 'generating', type: 'phase', phaseName });
+            const body = { type: 'phase', phase_name: phaseName };
+            if (rm.sinceDays) body.since_days = rm.sinceDays;
             try {
-              const result = await reportsApi.generate(rm.eventId, { type: 'phase', phase_name: phaseName });
+              const result = await reportsApi.generate(rm.eventId, body);
               setReportModal({ ...rm, step: 'done', type: 'phase', phaseName, result });
             } catch (e) { setReportModal({ ...rm, step: 'done', type: 'phase', phaseName, error: e.message }); }
           };
@@ -1862,11 +1886,56 @@ export default function Eventos() {
                     </div>
                   )}
 
-                  {/* Step 2: Escopo */}
+                  {/* Step 2: Escopo + histórico + filtro de data */}
                   {rm.step === 'scope' && (
                     <div>
                       <div style={{ fontSize: 11, color: 'var(--cbrio-text3)', marginBottom: 4 }}>{rm.eventName}</div>
-                      <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--cbrio-text)', marginBottom: 12 }}>Qual tipo de relatório?</div>
+
+                      {/* Histórico (offer-existing) — só aparece se já houver relatórios */}
+                      {Array.isArray(rm.existingReports) && rm.existingReports.length > 0 && (
+                        <div style={{ marginBottom: 14, padding: 10, borderRadius: 8, background: 'var(--cbrio-bg)', border: '1px dashed var(--cbrio-border)' }}>
+                          <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--cbrio-text2)', marginBottom: 6 }}>Relatórios anteriores · clique pra abrir sem gastar IA</div>
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                            {rm.existingReports.slice(0, 3).map(r => (
+                              <button key={r.id} onClick={() => reuseReport(r)} style={{
+                                padding: '6px 10px', borderRadius: 6, border: '1px solid var(--cbrio-border)',
+                                background: 'transparent', cursor: 'pointer', textAlign: 'left',
+                                fontSize: 12, color: 'var(--cbrio-text)',
+                              }}
+                                onMouseEnter={e => e.currentTarget.style.background = 'var(--cbrio-card)'}
+                                onMouseLeave={e => e.currentTarget.style.background = 'transparent'}>
+                                <span style={{ fontWeight: 600 }}>
+                                  {r.report_type === 'full' ? 'Evento Completo' : `Fase: ${r.phase_name}`}
+                                </span>
+                                <span style={{ color: 'var(--cbrio-text3)', marginLeft: 6, fontSize: 10 }}>
+                                  · {new Date(r.created_at).toLocaleDateString('pt-BR')} · {r.attachments_count || 0} anexo(s)
+                                </span>
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Filtro de data — útil pra séries longas */}
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 14 }}>
+                        <span style={{ fontSize: 11, color: 'var(--cbrio-text3)' }}>Período:</span>
+                        {[
+                          { v: null, l: 'Tudo' },
+                          { v: 30, l: '30d' },
+                          { v: 60, l: '60d' },
+                          { v: 90, l: '90d' },
+                        ].map(opt => (
+                          <button key={String(opt.v)} onClick={() => setReportModal({ ...rm, sinceDays: opt.v })} style={{
+                            padding: '4px 10px', borderRadius: 99, fontSize: 11, fontWeight: 600,
+                            cursor: 'pointer',
+                            border: rm.sinceDays === opt.v ? '1px solid var(--cbrio-primary, #00B39D)' : '1px solid var(--cbrio-border)',
+                            background: rm.sinceDays === opt.v ? 'var(--cbrio-primary, #00B39D)' : 'transparent',
+                            color: rm.sinceDays === opt.v ? '#fff' : 'var(--cbrio-text2)',
+                          }}>{opt.l}</button>
+                        ))}
+                      </div>
+
+                      <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--cbrio-text)', marginBottom: 12 }}>Gerar novo relatório:</div>
                       <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
                         <button onClick={() => selectScope('full')} style={{
                           padding: '14px 16px', borderRadius: 10, border: '1px solid var(--cbrio-border)',
@@ -1875,7 +1944,7 @@ export default function Eventos() {
                           onMouseEnter={e => e.currentTarget.style.background = 'var(--cbrio-bg)'}
                           onMouseLeave={e => e.currentTarget.style.background = 'transparent'}>
                           <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--cbrio-text)' }}>Acumulado completo</div>
-                          <div style={{ fontSize: 11, color: 'var(--cbrio-text3)', marginTop: 2 }}>Tudo que foi entregue no evento/série até hoje</div>
+                          <div style={{ fontSize: 11, color: 'var(--cbrio-text3)', marginTop: 2 }}>Tudo que foi entregue no evento/série{rm.sinceDays ? ` nos últimos ${rm.sinceDays} dias` : ' até hoje'}</div>
                         </button>
                         <button onClick={() => selectScope('phase')} style={{
                           padding: '14px 16px', borderRadius: 10, border: '1px solid var(--cbrio-border)',
@@ -1884,7 +1953,7 @@ export default function Eventos() {
                           onMouseEnter={e => e.currentTarget.style.background = 'var(--cbrio-bg)'}
                           onMouseLeave={e => e.currentTarget.style.background = 'transparent'}>
                           <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--cbrio-text)' }}>Fase específica</div>
-                          <div style={{ fontSize: 11, color: 'var(--cbrio-text3)', marginTop: 2 }}>Relatório de uma fase do ciclo criativo</div>
+                          <div style={{ fontSize: 11, color: 'var(--cbrio-text3)', marginTop: 2 }}>Relatório de uma fase do ciclo criativo{rm.sinceDays ? ` · últimos ${rm.sinceDays} dias` : ''}</div>
                         </button>
                       </div>
                     </div>
@@ -3318,6 +3387,9 @@ function ReportTab({ eventId, isPMO }) {
   const [error, setError] = useState('');
   const [viewReport, setViewReport] = useState(null);
   const [reportType, setReportType] = useState('full');
+  // null = sem filtro de data (todo o histórico). 30/60/90 limita o escopo
+  // do que o IA processa — útil pra séries longas, reduz custo e foca em ação.
+  const [sinceDays, setSinceDays] = useState(null);
 
   useEffect(() => {
     reportsApi.list(eventId).then(setReportsList).catch(() => {});
@@ -3329,7 +3401,9 @@ function ReportTab({ eventId, isPMO }) {
     setGenerating(true);
     setError('');
     try {
-      const report = await reportsApi.generate(eventId, { type: reportType });
+      const body = { type: reportType };
+      if (sinceDays) body.since_days = sinceDays;
+      const report = await reportsApi.generate(eventId, body);
       setReportsList(prev => [report, ...prev]);
       setViewReport(report);
     } catch (err) {
@@ -3366,7 +3440,7 @@ function ReportTab({ eventId, isPMO }) {
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
         <div style={{ fontSize: 18, fontWeight: 700, color: 'var(--cbrio-text)' }}>Relatórios do Evento</div>
         {isPMO && (
-          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
             <ShadSelect value={reportType} onValueChange={v => setReportType(v)}>
               <SelectTrigger className="w-[180px] h-8 text-xs">
                 <SelectValue />
@@ -3374,6 +3448,17 @@ function ReportTab({ eventId, isPMO }) {
               <SelectContent>
                 <SelectItem value="full">Evento Completo</SelectItem>
                 <SelectItem value="phase">Por Fase</SelectItem>
+              </SelectContent>
+            </ShadSelect>
+            <ShadSelect value={String(sinceDays || 'all')} onValueChange={v => setSinceDays(v === 'all' ? null : parseInt(v, 10))}>
+              <SelectTrigger className="w-[120px] h-8 text-xs">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">Tudo</SelectItem>
+                <SelectItem value="30">Últimos 30d</SelectItem>
+                <SelectItem value="60">Últimos 60d</SelectItem>
+                <SelectItem value="90">Últimos 90d</SelectItem>
               </SelectContent>
             </ShadSelect>
             <button onClick={generate} disabled={generating}
