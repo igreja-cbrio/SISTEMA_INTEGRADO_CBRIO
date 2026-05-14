@@ -345,12 +345,32 @@ function VisitanteFormDialog({ onClose, onSaved }: { onClose: () => void; onSave
   const [form, setForm] = useState<any>({
     nome: '', telefone: '', email: '', idade: '',
     data_visita: new Date().toISOString().slice(0, 10),
-    origem: '', veio_acompanhado: false, fez_decisao: false, tipo_decisao: '',
+    culto_id: '', origem: '', veio_acompanhado: false, fez_decisao: false, tipo_decisao: '',
     observacoes: '',
   });
   const [saving, setSaving] = useState(false);
+  const [cultos, setCultos] = useState<any[]>([]);
 
   const set = (k: string, v: any) => setForm((f: any) => ({ ...f, [k]: v }));
+
+  // Carrega cultos do mes corrente + anterior + proximo (janela de 90 dias)
+  useEffect(() => {
+    const hoje = new Date();
+    const ini = new Date(hoje.getFullYear(), hoje.getMonth() - 1, 1).toISOString().slice(0, 10);
+    const fim = new Date(hoje.getFullYear(), hoje.getMonth() + 2, 0).toISOString().slice(0, 10);
+    import('../../api').then(({ kpis }) =>
+      kpis.cultos.list({ data_inicio: ini, data_fim: fim, limit: 100 })
+        .then((d: any) => setCultos(Array.isArray(d) ? d : []))
+        .catch(() => setCultos([]))
+    );
+  }, []);
+
+  // Quando o usuario muda a data_visita, sugere o culto daquela data (se houver)
+  useEffect(() => {
+    if (form.culto_id || !form.data_visita || cultos.length === 0) return;
+    const candidato = cultos.find((c: any) => c.data === form.data_visita);
+    if (candidato) set('culto_id', candidato.id);
+  }, [form.data_visita, cultos]);
 
   const save = async () => {
     if (!form.nome.trim()) return toast.error('Nome obrigatório');
@@ -361,6 +381,7 @@ function VisitanteFormDialog({ onClose, onSaved }: { onClose: () => void; onSave
       else payload.idade = Number(payload.idade);
       if (!payload.origem) delete payload.origem;
       if (!payload.tipo_decisao || !payload.fez_decisao) delete payload.tipo_decisao;
+      if (!payload.culto_id) delete payload.culto_id;
       await intApi.visitantes.create(payload);
       toast.success('Visitante cadastrado');
       onSaved();
@@ -408,6 +429,28 @@ function VisitanteFormDialog({ onClose, onSaved }: { onClose: () => void; onSave
                 </SelectContent>
               </Select>
             </div>
+          </div>
+          <div>
+            <Label>Culto · vinculo opcional</Label>
+            <Select value={form.culto_id || '__none__'} onValueChange={v => set('culto_id', v === '__none__' ? '' : v)}>
+              <SelectTrigger>
+                <SelectValue placeholder="Em qual culto a pessoa visitou?" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="__none__">Sem vinculo (cadastro avulso)</SelectItem>
+                {cultos
+                  .slice()
+                  .sort((a: any, b: any) => (b.data + b.hora).localeCompare(a.data + a.hora))
+                  .map((c: any) => (
+                    <SelectItem key={c.id} value={c.id}>
+                      {c.service_type_name || c.nome} · {new Date(c.data + 'T12:00:00').toLocaleDateString('pt-BR')} {c.hora?.slice(0, 5)}
+                    </SelectItem>
+                  ))}
+              </SelectContent>
+            </Select>
+            <p className="text-[10px] text-muted-foreground mt-1">
+              Vincula a pessoa ao culto. Sai em relatorios por culto e ajuda no acompanhamento.
+            </p>
           </div>
           <div className="flex items-center gap-6 text-sm">
             <label className="flex items-center gap-1.5 cursor-pointer">
