@@ -1824,29 +1824,108 @@ export default function Eventos() {
             });
           };
 
-          const selectScope = async (type) => {
+          // Geração progressiva: start → loop section → finalize. Cada chamada
+          // < 60s (contorna Vercel Hobby). Frontend orquestra, mostra progresso
+          // por seção, permite retry granular.
+          const runProgressive = async (type, phaseName) => {
             const body = { type };
+            if (phaseName) body.phase_name = phaseName;
             if (rm.sinceDays) body.since_days = rm.sinceDays;
-            if (type === 'full') {
-              setReportModal({ ...rm, step: 'generating', type: 'full' });
+
+            // Etapa 1: start (cria registro + snapshot)
+            let started;
+            try {
+              started = await reportsApi.start(rm.eventId, body);
+            } catch (e) {
+              setReportModal(prev => prev ? { ...prev, step: 'done', type, phaseName, error: e.message } : prev);
+              return;
+            }
+
+            const initialSections = started.sections_plan.map(p => ({
+              name: p.name, title: p.title, status: 'pending', content: '', error: null,
+            }));
+
+            setReportModal(prev => prev ? {
+              ...prev, step: 'progressive', type, phaseName,
+              reportId: started.id, sectionsState: initialSections,
+              progressError: null,
+            } : prev);
+
+            // Etapa 2: gera cada seção em série. Continua mesmo se uma falhar
+            // (acumula erros, permite finalize parcial).
+            const sectionsState = [...initialSections];
+            for (let i = 0; i < sectionsState.length; i++) {
+              sectionsState[i] = { ...sectionsState[i], status: 'generating' };
+              const snap = [...sectionsState];
+              setReportModal(prev => prev?.reportId === started.id ? { ...prev, sectionsState: snap } : prev);
+
               try {
-                const result = await reportsApi.generate(rm.eventId, body);
-                setReportModal({ ...rm, step: 'done', type: 'full', result });
-              } catch (e) { setReportModal({ ...rm, step: 'done', type: 'full', error: e.message }); }
-            } else {
-              setReportModal({ ...rm, step: 'phase', type: 'phase' });
+                const result = await reportsApi.generateSection(rm.eventId, started.id, sectionsState[i].name);
+                sectionsState[i] = { ...sectionsState[i], status: 'done', content: result.content, error: null };
+              } catch (e) {
+                sectionsState[i] = { ...sectionsState[i], status: 'error', error: e.message };
+              }
+              const after = [...sectionsState];
+              setReportModal(prev => prev?.reportId === started.id ? { ...prev, sectionsState: after } : prev);
+            }
+
+            // Etapa 3: finalize (assembla markdown e marca status). Se faltou
+            // seção, backend retorna missing_sections — mostra na UI.
+            try {
+              const final = await reportsApi.finalize(rm.eventId, started.id);
+              const hasMissing = (final.missing_sections || []).length > 0;
+              setReportModal(prev => prev?.reportId === started.id ? {
+                ...prev,
+                step: hasMissing ? 'progressive' : 'done',
+                result: final,
+                progressError: hasMissing ? `Finalizado com ${final.missing_sections.length} seção(ões) faltando.` : null,
+              } : prev);
+            } catch (e) {
+              setReportModal(prev => prev?.reportId === started.id ? { ...prev, progressError: 'Erro ao finalizar: ' + e.message } : prev);
             }
           };
 
-          const selectPhase = async (phaseName) => {
-            setReportModal({ ...rm, step: 'generating', type: 'phase', phaseName });
-            const body = { type: 'phase', phase_name: phaseName };
-            if (rm.sinceDays) body.since_days = rm.sinceDays;
+          // Retry de uma seção que falhou (força regen mesmo se já existe)
+          const retrySection = async (idx) => {
+            const current = reportModal;
+            if (!current?.reportId) return;
+            const sectionName = current.sectionsState[idx].name;
+            const sectionsState = [...current.sectionsState];
+            sectionsState[idx] = { ...sectionsState[idx], status: 'generating', error: null };
+            setReportModal(prev => prev?.reportId === current.reportId ? { ...prev, sectionsState } : prev);
+
             try {
-              const result = await reportsApi.generate(rm.eventId, body);
-              setReportModal({ ...rm, step: 'done', type: 'phase', phaseName, result });
-            } catch (e) { setReportModal({ ...rm, step: 'done', type: 'phase', phaseName, error: e.message }); }
+              const result = await reportsApi.generateSection(current.eventId, current.reportId, sectionName, true);
+              sectionsState[idx] = { ...sectionsState[idx], status: 'done', content: result.content, error: null };
+            } catch (e) {
+              sectionsState[idx] = { ...sectionsState[idx], status: 'error', error: e.message };
+            }
+            const after = [...sectionsState];
+            setReportModal(prev => prev?.reportId === current.reportId ? { ...prev, sectionsState: after } : prev);
           };
+
+          // Tenta finalizar (útil se o usuário aceitar relatório com lacunas)
+          const finalizeNow = async () => {
+            const current = reportModal;
+            if (!current?.reportId) return;
+            try {
+              const final = await reportsApi.finalize(current.eventId, current.reportId);
+              const hasMissing = (final.missing_sections || []).length > 0;
+              setReportModal(prev => prev?.reportId === current.reportId ? {
+                ...prev, step: hasMissing ? 'progressive' : 'done', result: final,
+                progressError: hasMissing ? `Finalizado com ${final.missing_sections.length} seção(ões) faltando.` : null,
+              } : prev);
+            } catch (e) {
+              setReportModal(prev => prev?.reportId === current.reportId ? { ...prev, progressError: 'Erro ao finalizar: ' + e.message } : prev);
+            }
+          };
+
+          const selectScope = (type) => {
+            if (type === 'full') runProgressive('full', null);
+            else setReportModal({ ...rm, step: 'phase', type: 'phase' });
+          };
+
+          const selectPhase = (phaseName) => runProgressive('phase', phaseName);
 
           const eventPhases = allPh.filter(p => p.event_id === rm.eventId);
 
@@ -1981,12 +2060,66 @@ export default function Eventos() {
                   )}
 
                   {/* Step 4: Gerando */}
-                  {rm.step === 'generating' && (
-                    <div style={{ textAlign: 'center', padding: 30 }}>
-                      <div style={{ width: 28, height: 28, border: '3px solid var(--cbrio-border)', borderTopColor: '#7c3aed', borderRadius: '50%', animation: 'spin 0.8s linear infinite', margin: '0 auto 12px' }} />
+                  {/* Step 4: Geração progressiva — lista de seções com status individual */}
+                  {rm.step === 'progressive' && (
+                    <div>
                       <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
-                      <div style={{ fontSize: 13, color: 'var(--cbrio-text2)' }}>Gerando relatório de {rm.eventName}...</div>
-                      <div style={{ fontSize: 11, color: 'var(--cbrio-text3)', marginTop: 4 }}>Analisando entregáveis e conclusões</div>
+                      <div style={{ fontSize: 11, color: 'var(--cbrio-text3)', marginBottom: 4 }}>{rm.eventName}</div>
+                      <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--cbrio-text)', marginBottom: 4 }}>
+                        Gerando relatório por seção
+                      </div>
+                      <div style={{ fontSize: 10, color: 'var(--cbrio-text3)', marginBottom: 14 }}>
+                        Cada seção é uma chamada curta · você pode fechar e voltar depois
+                      </div>
+
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                        {(rm.sectionsState || []).map((s, i) => {
+                          const isDone = s.status === 'done';
+                          const isGen = s.status === 'generating';
+                          const isErr = s.status === 'error';
+                          const icon = isDone ? '✓' : isErr ? '!' : isGen ? '' : '○';
+                          const iconColor = isDone ? 'var(--cbrio-green, #10b981)' : isErr ? '#ef4444' : isGen ? '#7c3aed' : 'var(--cbrio-text3)';
+                          return (
+                            <div key={s.name} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px', borderRadius: 8, background: isErr ? '#fee2e2' : 'var(--cbrio-bg)', border: '1px solid var(--cbrio-border)' }}>
+                              <div style={{ width: 18, height: 18, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                                {isGen ? (
+                                  <div style={{ width: 14, height: 14, border: '2px solid var(--cbrio-border)', borderTopColor: '#7c3aed', borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
+                                ) : (
+                                  <span style={{ color: iconColor, fontWeight: 700, fontSize: 13 }}>{icon}</span>
+                                )}
+                              </div>
+                              <div style={{ flex: 1 }}>
+                                <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--cbrio-text)' }}>{s.title}</div>
+                                {isErr && (
+                                  <div style={{ fontSize: 10, color: '#ef4444', marginTop: 2 }}>{s.error}</div>
+                                )}
+                              </div>
+                              {isErr && (
+                                <button onClick={() => retrySection(i)} style={{
+                                  padding: '4px 10px', borderRadius: 6, border: '1px solid #ef4444',
+                                  background: 'transparent', color: '#ef4444', fontSize: 10, fontWeight: 600, cursor: 'pointer',
+                                }}>Tentar de novo</button>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+
+                      {rm.progressError && (
+                        <div style={{ marginTop: 14, padding: '10px 14px', background: '#fef3c7', color: '#92400e', borderRadius: 8, fontSize: 12 }}>
+                          {rm.progressError}
+                        </div>
+                      )}
+
+                      {/* Botão de finalize manual se há seções pendentes/erro mas o usuário quer prosseguir */}
+                      {(rm.sectionsState || []).some(s => s.status === 'error' || s.status === 'pending') && (
+                        <div style={{ marginTop: 14, display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+                          <button onClick={finalizeNow} style={{
+                            padding: '8px 18px', borderRadius: 8, border: '1px solid var(--cbrio-border)',
+                            background: 'transparent', color: 'var(--cbrio-text2)', fontSize: 12, fontWeight: 600, cursor: 'pointer',
+                          }}>Finalizar com o que tem</button>
+                        </div>
+                      )}
                     </div>
                   )}
 
@@ -3390,6 +3523,9 @@ function ReportTab({ eventId, isPMO }) {
   // null = sem filtro de data (todo o histórico). 30/60/90 limita o escopo
   // do que o IA processa — útil pra séries longas, reduz custo e foca em ação.
   const [sinceDays, setSinceDays] = useState(null);
+  // Estado da geração progressiva (null quando ocioso).
+  // { reportId, sectionsState: [{ name, title, status, content, error }] }
+  const [progState, setProgState] = useState(null);
 
   useEffect(() => {
     reportsApi.list(eventId).then(setReportsList).catch(() => {});
@@ -3397,20 +3533,82 @@ function ReportTab({ eventId, isPMO }) {
 
   const [exporting, setExporting] = useState('');
 
+  // Geração progressiva: start → loop section → finalize. Cada chamada < 60s.
   const generate = async () => {
     setGenerating(true);
     setError('');
+
+    const body = { type: reportType };
+    if (sinceDays) body.since_days = sinceDays;
+
+    let started;
     try {
-      const body = { type: reportType };
-      if (sinceDays) body.since_days = sinceDays;
-      const report = await reportsApi.generate(eventId, body);
-      setReportsList(prev => [report, ...prev]);
-      setViewReport(report);
+      started = await reportsApi.start(eventId, body);
     } catch (err) {
       setError(err.message);
-    } finally {
       setGenerating(false);
+      return;
     }
+
+    const initial = started.sections_plan.map(p => ({
+      name: p.name, title: p.title, status: 'pending', content: '', error: null,
+    }));
+    setProgState({ reportId: started.id, sectionsState: initial });
+
+    const ss = [...initial];
+    for (let i = 0; i < ss.length; i++) {
+      ss[i] = { ...ss[i], status: 'generating' };
+      const snap = [...ss];
+      setProgState(prev => prev?.reportId === started.id ? { ...prev, sectionsState: snap } : prev);
+      try {
+        const result = await reportsApi.generateSection(eventId, started.id, ss[i].name);
+        ss[i] = { ...ss[i], status: 'done', content: result.content, error: null };
+      } catch (err) {
+        ss[i] = { ...ss[i], status: 'error', error: err.message };
+      }
+      const after = [...ss];
+      setProgState(prev => prev?.reportId === started.id ? { ...prev, sectionsState: after } : prev);
+    }
+
+    try {
+      const final = await reportsApi.finalize(eventId, started.id);
+      setReportsList(prev => [final, ...prev.filter(r => r.id !== final.id)]);
+      setViewReport(final);
+      if (final.missing_sections && final.missing_sections.length > 0) {
+        setError(`Relatório finalizado com ${final.missing_sections.length} seção(ões) faltando. Clique em uma seção em vermelho pra retentar.`);
+      }
+    } catch (err) {
+      setError('Falha ao finalizar: ' + err.message);
+    }
+
+    setGenerating(false);
+    // Mantém progState visível pra usuário ver o resultado das seções.
+    // Será limpo no próximo generate ou ao trocar de evento.
+  };
+
+  // Retry de uma seção específica que falhou
+  const retrySection = async (idx) => {
+    if (!progState) return;
+    const reportId = progState.reportId;
+    const ss = [...progState.sectionsState];
+    const sectionName = ss[idx].name;
+    ss[idx] = { ...ss[idx], status: 'generating', error: null };
+    setProgState(prev => prev?.reportId === reportId ? { ...prev, sectionsState: [...ss] } : prev);
+    try {
+      const result = await reportsApi.generateSection(eventId, reportId, sectionName, true);
+      ss[idx] = { ...ss[idx], status: 'done', content: result.content, error: null };
+    } catch (err) {
+      ss[idx] = { ...ss[idx], status: 'error', error: err.message };
+    }
+    const after = [...ss];
+    setProgState(prev => prev?.reportId === reportId ? { ...prev, sectionsState: after } : prev);
+    // Re-finalize pra atualizar content
+    try {
+      const final = await reportsApi.finalize(eventId, reportId);
+      setReportsList(prev => [final, ...prev.filter(r => r.id !== final.id)]);
+      if (viewReport?.id === reportId) setViewReport(final);
+      if (!final.missing_sections || final.missing_sections.length === 0) setError('');
+    } catch { /* silencia: finalize parcial é OK */ }
   };
 
   // kind: 'slide' | 'document' (alinhado com o backend; antes mandava 'pptx'/'docx',
@@ -3482,6 +3680,51 @@ function ReportTab({ eventId, isPMO }) {
             style={{ padding: '8px 18px', borderRadius: 8, border: 'none', background: 'var(--cbrio-primary, #00B39D)', color: '#fff', fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>
             Tentar novamente
           </button>
+        </div>
+      )}
+
+      {/* Progresso da geração progressiva — uma seção por linha */}
+      {progState && progState.sectionsState && progState.sectionsState.length > 0 && (
+        <div style={{ background: 'var(--cbrio-card)', borderRadius: 12, border: '1px solid var(--cbrio-border)', marginBottom: 16, padding: '18px 20px' }}>
+          <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
+          <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--cbrio-text)', marginBottom: 4 }}>
+            {generating ? 'Gerando relatório por seção...' : 'Resultado das seções'}
+          </div>
+          <div style={{ fontSize: 10, color: 'var(--cbrio-text3)', marginBottom: 12 }}>
+            Cada seção é uma chamada curta · você pode fechar e voltar depois sem perder progresso
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+            {progState.sectionsState.map((s, i) => {
+              const isDone = s.status === 'done';
+              const isGen = s.status === 'generating';
+              const isErr = s.status === 'error';
+              const icon = isDone ? '✓' : isErr ? '!' : '○';
+              const iconColor = isDone ? '#10b981' : isErr ? '#ef4444' : 'var(--cbrio-text3)';
+              return (
+                <div key={s.name} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px', borderRadius: 8, background: isErr ? '#fee2e2' : 'var(--cbrio-bg)', border: '1px solid var(--cbrio-border)' }}>
+                  <div style={{ width: 18, height: 18, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                    {isGen ? (
+                      <div style={{ width: 14, height: 14, border: '2px solid var(--cbrio-border)', borderTopColor: '#7c3aed', borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
+                    ) : (
+                      <span style={{ color: iconColor, fontWeight: 700, fontSize: 13 }}>{icon}</span>
+                    )}
+                  </div>
+                  <div style={{ flex: 1 }}>
+                    <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--cbrio-text)' }}>{s.title}</div>
+                    {isErr && (
+                      <div style={{ fontSize: 10, color: '#ef4444', marginTop: 2 }}>{s.error}</div>
+                    )}
+                  </div>
+                  {isErr && !generating && (
+                    <button onClick={() => retrySection(i)} style={{
+                      padding: '4px 10px', borderRadius: 6, border: '1px solid #ef4444',
+                      background: 'transparent', color: '#ef4444', fontSize: 10, fontWeight: 600, cursor: 'pointer',
+                    }}>Tentar de novo</button>
+                  )}
+                </div>
+              );
+            })}
+          </div>
         </div>
       )}
 
