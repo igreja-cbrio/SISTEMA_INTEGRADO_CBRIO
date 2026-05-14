@@ -1,7 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
-import { events, meetings, cycles as cyclesApi, occurrences as occApi, dashboard as dashApi, risks as risksApi, retrospective as retroApi, history as historyApi, users as usersApi, reports as reportsApi, governanca as govApi } from '../../api';
-// govApi usado apenas para aba Governança (relatórios)
+import { events, meetings, cycles as cyclesApi, occurrences as occApi, dashboard as dashApi, risks as risksApi, retrospective as retroApi, history as historyApi, users as usersApi, reports as reportsApi } from '../../api';
 import { supabase } from '../../supabaseClient';
 import { resolveApiBaseUrl } from '../../lib/api-base';
 import CycleView from './components/CycleView';
@@ -333,9 +332,6 @@ export default function Eventos() {
   const [newSubName, setNewSubName] = useState('');
   const [expandedTpl, setExpandedTpl] = useState(null);
   const [templateSubTab, setTemplateSubTab] = useState('ciclo');
-  const [simpleKanban, setSimpleKanban] = useState({ events: [], tasks: [] });
-  const [simpleKanbanEvent, setSimpleKanbanEvent] = useState('all');
-  const [simpleNewTask, setSimpleNewTask] = useState('');
   const [kpiWeights, setKpiWeights] = useState([]);
   const [eventList, setEventList] = useState([]);
   const [categories, setCategories] = useState([]);
