@@ -29,6 +29,35 @@ const REPORT_TOOL = {
   },
 };
 
+// Tool reusado por cada chamada de seção (geração progressiva).
+const SECTION_TOOL = {
+  name: 'submit_section',
+  description: 'Envia o conteúdo markdown da seção solicitada do relatório.',
+  input_schema: {
+    type: 'object',
+    required: ['content'],
+    properties: {
+      content: {
+        type: 'string',
+        description: 'Markdown da seção. Use bullets, headings (##), negrito (**) apenas pra realce real. Tom profissional, conciso, acionável. NUNCA invente dados ausentes.',
+      },
+    },
+  },
+};
+
+// Plano fixo das 7 seções. Cada uma usa Haiku (rápido + barato) com prompt
+// focado e SÓ a fatia relevante do snapshot (menor contexto = mais rápido).
+// "synthesis: true" indica que a seção sintetiza outras (gerada por último).
+const SECTION_PLAN = [
+  { name: 'resumo_executivo',         title: 'Resumo Executivo' },
+  { name: 'progresso_por_fase',       title: 'Progresso por Fase' },
+  { name: 'entregas_por_area',        title: 'Entregas por Área' },
+  { name: 'cards_pendentes',          title: 'Cards Pendentes' },
+  { name: 'observacoes_responsaveis', title: 'Observações dos Responsáveis' },
+  { name: 'pontos_atencao',           title: 'Pontos de Atenção', synthesis: true },
+  { name: 'recomendacoes',            title: 'Recomendações',     synthesis: true },
+];
+
 // Renderiza o JSON estruturado pra markdown (compatível com o storage atual
 // em event_reports.content e com o reportGenerator que extrai por regex).
 function structuredToMarkdown(j) {
@@ -44,165 +73,216 @@ function structuredToMarkdown(j) {
   ).trim();
 }
 
-// POST /api/events/:eventId/report — gerar relatório por IA
+// Carrega o snapshot completo dos dados do evento. Usado tanto pela rota
+// síncrona quanto pelo /report/start. Retornar tudo aqui garante que TODAS
+// as 7 seções (geradas em momentos diferentes) usem exatamente o mesmo input.
+async function loadInputSnapshot(eventId, type, phase_name, since_days) {
+  const sinceN = parseInt(since_days, 10);
+  const hasDateFilter = Number.isFinite(sinceN) && sinceN > 0;
+  const sinceIso = hasDateFilter ? new Date(Date.now() - sinceN * 86400000).toISOString() : null;
+
+  const { data: event } = await supabase.from('events').select('name, date, status, description').eq('id', eventId).single();
+  if (!event) return { error: 'Evento não encontrado' };
+
+  let q = supabase.from('event_task_attachments').select('*').eq('event_id', eventId);
+  if (type === 'phase' && phase_name) q = q.eq('phase_name', phase_name);
+  if (hasDateFilter) q = q.gte('created_at', sinceIso);
+  const { data: attachs } = await q.order('created_at');
+
+  let compQ = supabase.from('card_completions').select('*').eq('event_id', eventId).is('reopened_at', null);
+  if (type === 'phase' && phase_name) {
+    const { data: phaseRow } = await supabase.from('event_cycle_phases')
+      .select('numero_fase').eq('event_id', eventId).eq('nome_fase', phase_name).limit(1).maybeSingle();
+    if (phaseRow) compQ = compQ.eq('phase_number', phaseRow.numero_fase);
+  }
+  if (hasDateFilter) compQ = compQ.gte('completed_at', sinceIso);
+  const { data: completions } = await compQ.order('completed_at');
+
+  let progressQ = supabase.from('vw_phase_progress').select('*').eq('event_id', eventId);
+  if (type === 'phase' && phase_name) progressQ = progressQ.eq('nome_fase', phase_name);
+  const { data: progress } = await progressQ.order('phase_number');
+
+  let pendingQ = supabase.from('cycle_phase_tasks')
+    .select('titulo, area, status, responsavel_nome, event_phase_id')
+    .eq('event_id', eventId)
+    .neq('status', 'concluida');
+  if (type === 'phase' && phase_name) {
+    const { data: phaseRow } = await supabase.from('event_cycle_phases')
+      .select('id').eq('event_id', eventId).eq('nome_fase', phase_name).limit(1).maybeSingle();
+    if (phaseRow) pendingQ = pendingQ.eq('event_phase_id', phaseRow.id);
+  }
+  const { data: pendingTasks } = await pendingQ;
+
+  if ((!attachs || attachs.length === 0) && (!completions || completions.length === 0) && (!pendingTasks || pendingTasks.length === 0)) {
+    return { error: 'Nenhum dado encontrado para gerar relatório.' };
+  }
+
+  // Extrai conteúdo dos arquivos (paraleliza fallbacks pra arquivos sem digest)
+  const fileContents = await Promise.all((attachs || []).map(async (a) => {
+    let text = '';
+    if (a.file_digest) {
+      text = a.file_digest;
+    } else if (a.supabase_path || a.sharepoint_item_id) {
+      try {
+        const buffer = await storage.downloadFile(a.supabase_path, a.sharepoint_item_id);
+        text = await extractText(buffer, a.file_type, a.file_name);
+      } catch (e) {
+        text = `[Erro ao ler ${a.file_name}: ${e.message}]`;
+      }
+    }
+    return {
+      file_name: a.file_name,
+      area: a.area || 'não especificada',
+      phase: a.phase_name || 'geral',
+      description: a.description || '',
+      uploaded_by: a.uploaded_by_name || 'desconhecido',
+      content: text,
+    };
+  }));
+
+  const totalCards = (progress || []).reduce((s, p) => s + (p.total_cards || 0), 0);
+  const totalConcluidos = (progress || []).reduce((s, p) => s + (p.cards_concluidos || 0), 0);
+  const totalPendentes = totalCards - totalConcluidos;
+  const pctGeral = totalCards > 0 ? Math.round(totalConcluidos / totalCards * 100) : 0;
+
+  return {
+    eventName: event.name,
+    eventDate: event.date || null,
+    scope: type === 'phase' ? `Fase: ${phase_name}` : 'Evento Completo',
+    type,
+    phase_name: phase_name || null,
+    since_days: sinceN || null,
+    totals: { cards: totalCards, concluidos: totalConcluidos, pendentes: totalPendentes, pct: pctGeral, anexos: attachs?.length || 0 },
+    progress: progress || [],
+    pendingTasks: pendingTasks || [],
+    fileContents,
+    completions: completions || [],
+  };
+}
+
+// Formata um pedaço do snapshot pra texto que vai dentro do prompt da seção.
+function formatProgress(progress) {
+  if (!progress?.length) return '(sem dados de progresso)';
+  return progress.map(p =>
+    `- Fase ${p.phase_number} "${p.nome_fase}" | Área: ${p.area} | ${p.cards_concluidos}/${p.total_cards} concluídos (${p.pct_concluido}%)${p.cards_bloqueados > 0 ? ` | ${p.cards_bloqueados} bloqueado(s)` : ''}`
+  ).join('\n');
+}
+function formatPending(pending) {
+  if (!pending?.length) return '(sem pendências)';
+  return pending.map(t =>
+    `- "${t.titulo}" | Área: ${t.area || 'não definida'} | Status: ${t.status} | Responsável: ${t.responsavel_nome || 'não atribuído'}`
+  ).join('\n');
+}
+function formatCompletions(completions) {
+  if (!completions?.length) return '(sem conclusões registradas)';
+  return completions.map(c =>
+    `- "${c.card_titulo}" | Área: ${c.area} | Fase: ${c.phase_number} | Por: ${c.completed_by_name || 'desconhecido'} em ${new Date(c.completed_at).toLocaleDateString('pt-BR')}${c.observacao ? ` | Obs: "${c.observacao}"` : ''}${c.file_name ? ` | Arquivo: ${c.file_name}` : ''}`
+  ).join('\n');
+}
+function formatFiles(files) {
+  if (!files?.length) return '(sem arquivos anexados)';
+  return files.map((f, i) =>
+    `--- Arquivo ${i + 1}: ${f.file_name} ---\nÁrea: ${f.area}\nFase: ${f.phase}\nDescrição: ${f.description}\nEnviado por: ${f.uploaded_by}\n\nConteúdo:\n${f.content}\n`
+  ).join('\n');
+}
+
+// Constrói o prompt focado de UMA seção. Recebe input_data (snapshot) +
+// sectionName + opcionalmente outras seções já geradas (pra synthesis).
+function buildSectionPrompt(sectionName, input, otherSections = {}) {
+  const ctx = `### CONTEXTO DO EVENTO
+Evento: ${input.eventName}
+Data: ${input.eventDate || 'não definida'}
+Escopo: ${input.scope}${input.since_days ? ` · últimos ${input.since_days} dias` : ''}
+Cards: ${input.totals.cards} total / ${input.totals.concluidos} concluídos (${input.totals.pct}%) / ${input.totals.pendentes} pendentes
+Anexos: ${input.totals.anexos}`;
+
+  const system = `Você é um analista de eventos da Igreja Comunidade Batista do Rio de Janeiro (CBRio).
+Sua tarefa AGORA é gerar APENAS a seção solicitada do relatório operacional, em markdown.
+Use a ferramenta submit_section pra entregar.
+
+REGRAS DURAS:
+- Baseie-se SOMENTE nos dados fornecidos. NUNCA invente nomes, datas, observações.
+- Se a seção não tem dados pra preencher de forma útil, retorne uma única linha tipo "_Sem dados disponíveis para esta seção._"
+- Use markdown limpo: ## subtítulos, - bullets, **negrito** apenas pra realce real.
+- Tom profissional, conciso, acionável. NÃO repita o título da seção dentro do conteúdo.`;
+
+  let task = '';
+  let data = '';
+
+  switch (sectionName) {
+    case 'resumo_executivo':
+      task = `Gere o RESUMO EXECUTIVO em 2-4 parágrafos: o estado geral do evento — o que foi entregue, o que ainda falta, status global, qual o sentimento geral. Sem listas, prosa corrida.`;
+      data = `PROGRESSO POR FASE:\n${formatProgress(input.progress)}\n\nPENDÊNCIAS:\n${formatPending(input.pendingTasks)}`;
+      break;
+    case 'progresso_por_fase':
+      task = `Gere a seção PROGRESSO POR FASE: lista por fase com total/concluídos/pendentes/%. Use bullets ou tabela markdown.`;
+      data = `PROGRESSO POR FASE:\n${formatProgress(input.progress)}`;
+      break;
+    case 'entregas_por_area':
+      task = `Gere a seção ENTREGAS POR ÁREA: agrupe por área (marketing, produção, adm, etc.) o que cada uma entregou, quem concluiu, quando. Inclua os arquivos anexados relevantes.`;
+      data = `CONCLUSÕES:\n${formatCompletions(input.completions)}\n\nARQUIVOS ANEXADOS:\n${formatFiles(input.fileContents)}`;
+      break;
+    case 'cards_pendentes':
+      task = `Gere a seção CARDS PENDENTES: lista os cards não concluídos agrupados por fase/área. Pra cada um, avalie em 1 frase o impacto da pendência no evento.`;
+      data = `PENDÊNCIAS:\n${formatPending(input.pendingTasks)}\n\nPROGRESSO POR FASE (contexto):\n${formatProgress(input.progress)}`;
+      break;
+    case 'observacoes_responsaveis':
+      task = `Gere a seção OBSERVAÇÕES DOS RESPONSÁVEIS: extraia das conclusões SÓ as que têm observação preenchida. Destaque insights, alertas e contexto que os responsáveis deixaram. Se não houver observações, escreva apenas uma linha indicando.`;
+      data = `CONCLUSÕES COM OBSERVAÇÃO:\n${formatCompletions((input.completions || []).filter(c => c.observacao))}`;
+      break;
+    case 'pontos_atencao':
+      task = `Gere a seção PONTOS DE ATENÇÃO: gaps, atrasos, áreas que não entregaram, riscos identificados a partir das pendências e do histórico. Seja específico e acionável. Não duplique a lista de cards_pendentes (essa seção já existe) — aqui é análise, não listagem.`;
+      data = `PENDÊNCIAS:\n${formatPending(input.pendingTasks)}\n\nPROGRESSO:\n${formatProgress(input.progress)}\n\nSEÇÕES JÁ GERADAS (use como contexto, NÃO repita):\n${otherSections.cards_pendentes ? `--- cards_pendentes ---\n${otherSections.cards_pendentes}\n` : ''}${otherSections.entregas_por_area ? `--- entregas_por_area ---\n${otherSections.entregas_por_area}\n` : ''}`;
+      break;
+    case 'recomendacoes':
+      task = `Gere a seção RECOMENDAÇÕES: próximos passos concretos pra destravar pendências antes do evento. Priorize por impacto. Bullets com ação + responsável sugerido + prazo recomendado quando fizer sentido.`;
+      data = `PENDÊNCIAS:\n${formatPending(input.pendingTasks)}\n\nPONTOS DE ATENÇÃO JÁ IDENTIFICADOS (use como contexto):\n${otherSections.pontos_atencao || '(ainda não gerado)'}`;
+      break;
+    default:
+      throw new Error(`Seção desconhecida: ${sectionName}`);
+  }
+
+  return {
+    system,
+    userMessage: `${ctx}\n\n### TAREFA\n${task}\n\n### DADOS\n${data}`,
+  };
+}
+
+// POST /api/events/:eventId/report — geração SÍNCRONA (legacy/fallback).
+// Mantida pra integrações externas. Frontend novo usa /start + /section +
+// /finalize (geração progressiva, contorna timeout de 60s do Vercel).
 router.post('/:eventId/report', async (req, res) => {
   try {
     const { eventId } = req.params;
     const { type = 'full', phase_name, since_days } = req.body;
 
-    // Filtro de data: pra séries longas, limita ao período recente.
-    // since_days: 30/60/90/180. null/undefined = sem filtro (todos).
-    const sinceN = parseInt(since_days, 10);
-    const hasDateFilter = Number.isFinite(sinceN) && sinceN > 0;
-    const sinceIso = hasDateFilter ? new Date(Date.now() - sinceN * 86400000).toISOString() : null;
-
-    // Buscar evento
-    const { data: event } = await supabase.from('events').select('name, date, status, description').eq('id', eventId).single();
-    if (!event) return res.status(404).json({ error: 'Evento não encontrado' });
-
-    // Buscar anexos (com filtro opcional de data)
-    let q = supabase.from('event_task_attachments').select('*').eq('event_id', eventId);
-    if (type === 'phase' && phase_name) q = q.eq('phase_name', phase_name);
-    if (hasDateFilter) q = q.gte('created_at', sinceIso);
-    const { data: attachs } = await q.order('created_at');
-
-    // Buscar conclusões de cards (card_completions)
-    let compQ = supabase.from('card_completions').select('*').eq('event_id', eventId).is('reopened_at', null);
-    if (type === 'phase' && phase_name) {
-      const { data: phaseRow } = await supabase.from('event_cycle_phases')
-        .select('numero_fase').eq('event_id', eventId).eq('nome_fase', phase_name).limit(1).maybeSingle();
-      if (phaseRow) compQ = compQ.eq('phase_number', phaseRow.numero_fase);
-    }
-    if (hasDateFilter) compQ = compQ.gte('completed_at', sinceIso);
-    const { data: completions } = await compQ.order('completed_at');
-
-    // Buscar progresso por fase/área (totais, concluídos, pendentes)
-    let progressQ = supabase.from('vw_phase_progress').select('*').eq('event_id', eventId);
-    if (type === 'phase' && phase_name) progressQ = progressQ.eq('nome_fase', phase_name);
-    const { data: progress } = await progressQ.order('phase_number');
-
-    // Buscar cards pendentes (não concluídos) — sem filtro de data, pendência atual é sempre relevante
-    let pendingQ = supabase.from('cycle_phase_tasks')
-      .select('titulo, area, status, responsavel_nome, event_phase_id')
-      .eq('event_id', eventId)
-      .neq('status', 'concluida');
-    if (type === 'phase' && phase_name) {
-      const { data: phaseRow } = await supabase.from('event_cycle_phases')
-        .select('id').eq('event_id', eventId).eq('nome_fase', phase_name).limit(1).maybeSingle();
-      if (phaseRow) pendingQ = pendingQ.eq('event_phase_id', phaseRow.id);
-    }
-    const { data: pendingTasks } = await pendingQ;
-
-    if ((!attachs || attachs.length === 0) && (!completions || completions.length === 0) && (!pendingTasks || pendingTasks.length === 0)) {
-      return res.status(400).json({ error: 'Nenhum dado encontrado para gerar relatório.' });
-    }
-
-    // Montar conteúdo dos arquivos (usar digest se disponível, fallback para download).
-    // Paraleliza fallbacks pra não fazer N downloads serial em eventos antigos sem digest.
-    const fileContents = await Promise.all((attachs || []).map(async (a) => {
-      let text = '';
-      if (a.file_digest) {
-        text = a.file_digest;
-      } else if (a.supabase_path || a.sharepoint_item_id) {
-        try {
-          const buffer = await storage.downloadFile(a.supabase_path, a.sharepoint_item_id);
-          text = await extractText(buffer, a.file_type, a.file_name);
-        } catch (e) {
-          text = `[Erro ao ler ${a.file_name}: ${e.message}]`;
-        }
-      }
-      return {
-        file_name: a.file_name,
-        area: a.area || 'não especificada',
-        phase: a.phase_name || 'geral',
-        description: a.description || '',
-        uploaded_by: a.uploaded_by_name || 'desconhecido',
-        content: text,
-      };
-    }));
-
-    // Montar dados de conclusões para o prompt
-    const completionsSummary = (completions || []).map(c =>
-      `- Card: "${c.card_titulo}" | Área: ${c.area} | Fase: ${c.phase_number} | Concluído por: ${c.completed_by_name || 'desconhecido'} em ${new Date(c.completed_at).toLocaleDateString('pt-BR')}${c.observacao ? ` | Observação: "${c.observacao}"` : ''}${c.file_name ? ` | Arquivo: ${c.file_name}` : ''}`
-    ).join('\n');
-
-    // Calcular totais a partir do progresso
-    const totalCards = (progress || []).reduce((s, p) => s + (p.total_cards || 0), 0);
-    const totalConcluidos = (progress || []).reduce((s, p) => s + (p.cards_concluidos || 0), 0);
-    const totalPendentes = totalCards - totalConcluidos;
-    const pctGeral = totalCards > 0 ? Math.round(totalConcluidos / totalCards * 100) : 0;
-
-    // Prompt em 2 blocos: o STATIC tem instruções e regras (cacheável — repete
-    // entre requisições). O DYNAMIC tem nome/data/totais do evento (varia).
-    // Anthropic só ativa cache se o bloco passar do mínimo (~1024 tokens p/ Sonnet).
-    // Em escopo pequeno o cache_control é no-op silencioso, sem prejuízo.
-    const scope = type === 'phase' ? `Fase: ${phase_name}` : 'Evento Completo';
+    const input = await loadInputSnapshot(eventId, type, phase_name, since_days);
+    if (input.error) return res.status(input.error === 'Evento não encontrado' ? 404 : 400).json({ error: input.error });
 
     const SYSTEM_STATIC = `Você é um analista de eventos da Igreja Comunidade Batista do Rio de Janeiro (CBRio).
-Sua tarefa é gerar um relatório operacional estruturado em seções fixas a partir de dados reais de cards, entregas, anexos e pendências de um ciclo criativo.
+Sua tarefa é gerar um relatório operacional estruturado em seções fixas. Use submit_report com markdown em cada campo.
 
-Use a ferramenta submit_report para entregar o relatório. Cada campo da ferramenta deve ser markdown corpado:
-- resumo_executivo: 2-4 parágrafos com visão geral do evento (o que foi entregue, o que ainda falta, status global).
-- progresso_por_fase: lista por fase, mostrando total, concluídos, pendentes e % de conclusão.
-- entregas_por_area: por área (marketing, produção, adm, etc.), o que foi entregue, por quem, quando.
-- cards_pendentes: lista de pendências agrupada por fase/área, avaliando impacto de cada uma no evento.
-- observacoes_responsaveis: destaque as observações relevantes registradas nas conclusões.
-- pontos_atencao: gaps, atrasos, entregas faltantes, riscos identificados nas pendências.
-- recomendacoes: próximos passos pra destravar pendências antes do evento.
+REGRAS: Baseie-se APENAS nos dados fornecidos. NUNCA invente. Seções sem dados ficam string vazia.
+Markdown limpo, ## subtítulos, - bullets, **negrito** apenas pra realce real.`;
 
-REGRAS DURAS:
-- Baseie-se APENAS nos dados fornecidos. NUNCA invente nomes, datas, observações.
-- Se uma seção não tem dados, retorne string vazia ("") naquele campo. Não preencha com placeholders genéricos.
-- Use markdown limpo: títulos com ##, bullets com -, negrito apenas pra realce real.
-- Tom profissional, conciso, acionável.`;
+    const dynamicHeader = `### CONTEXTO
+Evento: ${input.eventName}
+Data: ${input.eventDate || 'não definida'}
+Escopo: ${input.scope}${input.since_days ? ` · últimos ${input.since_days} dias` : ''}
+Cards: ${input.totals.cards} total / ${input.totals.concluidos} concluídos (${input.totals.pct}%) / ${input.totals.pendentes} pendentes
+Anexos: ${input.totals.anexos}`;
 
-    const dynamicHeader = `### CONTEXTO DESTE EVENTO
+    const userMessage =
+      `=== PROGRESSO POR FASE/ÁREA ===\n${formatProgress(input.progress)}\n\n` +
+      `=== CARDS PENDENTES ===\n${formatPending(input.pendingTasks)}\n\n` +
+      `=== CONCLUSÕES DE CARDS ===\n${formatCompletions(input.completions)}\n\n` +
+      `=== ARQUIVOS ANEXADOS ===\n${formatFiles(input.fileContents)}`;
 
-- Evento: ${event.name}
-- Data: ${event.date || 'não definida'}
-- Escopo: ${scope}${hasDateFilter ? ` · últimos ${sinceN} dias` : ''}
-- Total de cards: ${totalCards}
-- Cards concluídos: ${totalConcluidos} (${pctGeral}%)
-- Cards pendentes: ${totalPendentes}
-- Total de anexos: ${attachs?.length || 0}`;
-
-    let userMessage = '';
-
-    // Progresso por fase
-    if (progress && progress.length > 0) {
-      userMessage += '=== PROGRESSO POR FASE/ÁREA ===\n';
-      userMessage += progress.map(p =>
-        `- Fase ${p.phase_number} "${p.nome_fase}" | Área: ${p.area} | ${p.cards_concluidos}/${p.total_cards} concluídos (${p.pct_concluido}%)${p.cards_bloqueados > 0 ? ` | ${p.cards_bloqueados} bloqueado(s)` : ''}`
-      ).join('\n') + '\n\n';
-    }
-
-    // Cards pendentes
-    if (pendingTasks && pendingTasks.length > 0) {
-      userMessage += '=== CARDS PENDENTES (NÃO CONCLUÍDOS) ===\n';
-      userMessage += pendingTasks.map(t =>
-        `- "${t.titulo}" | Área: ${t.area || 'não definida'} | Status: ${t.status} | Responsável: ${t.responsavel_nome || 'não atribuído'}`
-      ).join('\n') + '\n\n';
-    }
-
-    if (fileContents.length > 0) {
-      userMessage += '=== ARQUIVOS ANEXADOS ===\n' + fileContents.map((f, i) =>
-        `--- Arquivo ${i + 1}: ${f.file_name} ---\nÁrea: ${f.area}\nFase: ${f.phase}\nDescrição: ${f.description}\nEnviado por: ${f.uploaded_by}\n\nConteúdo:\n${f.content}\n`
-      ).join('\n');
-    }
-    if (completionsSummary) {
-      userMessage += '\n=== CONCLUSÕES DE CARDS ===\n' + completionsSummary;
-    }
-
-    // Model routing: Haiku pra fase única (escopo menor, ~1/10 do custo), Sonnet pra evento completo.
-    // Threshold de fallback: se userMessage > 80k chars (~20k tokens), força Sonnet mesmo em fase.
     const useHaiku = type === 'phase' && userMessage.length < 80000;
     const model = useHaiku ? 'claude-haiku-4-5-20251001' : 'claude-sonnet-4-20250514';
     const maxTokens = useHaiku ? 2048 : 4096;
 
-    const agent = await AgentService.createRun('event_report', req.user.userId, { eventId, type, phase_name, model, since_days: sinceN || null });
-
-    // System em 2 blocos pra prompt caching: estável + dinâmico.
-    // Tools + tool_choice forçam structured output via submit_report.
+    const agent = await AgentService.createRun('event_report', req.user.userId, { eventId, type, phase_name, model, since_days: input.since_days, mode: 'sync' });
     const result = await agent.call({
       model,
       system: [
@@ -217,31 +297,213 @@ REGRAS DURAS:
     });
     await agent.complete('Relatório gerado');
 
-    // Extrai resultado da tool_use; se o modelo escapar e responder texto livre, usa o texto.
     let reportContent = '';
     const toolCall = (result.toolCalls || []).find(c => c.name === 'submit_report');
-    if (toolCall?.input) {
-      reportContent = structuredToMarkdown(toolCall.input);
-    } else {
-      reportContent = result.text || 'Não foi possível gerar o relatório.';
-    }
+    if (toolCall?.input) reportContent = structuredToMarkdown(toolCall.input);
+    else reportContent = result.text || 'Não foi possível gerar o relatório.';
 
-    // Salvar no banco
     const { data: report, error } = await supabase.from('event_reports').insert({
       event_id: eventId,
       phase_name: type === 'phase' ? phase_name : null,
       report_type: type,
       content: reportContent,
       generated_by: req.user.userId,
-      attachments_count: attachs.length,
+      attachments_count: input.totals.anexos,
       token_cost: agent.totalCost,
+      status: 'ready',
+      finished_at: new Date().toISOString(),
     }).select().single();
     if (error) throw error;
 
     res.json(report);
   } catch (e) {
-    console.error('[Reports] Generate:', e.message);
+    console.error('[Reports] Generate (sync):', e.message);
     res.status(500).json({ error: e.message || 'Erro ao gerar relatório' });
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// GERAÇÃO PROGRESSIVA — 3 endpoints (start, section, finalize)
+// ─────────────────────────────────────────────────────────────────────────
+//
+// Por que: Vercel Hobby = 60s de timeout. Sonnet com 4096 tokens output em
+// evento grande às vezes passa disso. Solução: quebrar em 7 chamadas Haiku
+// (~5-15s cada) em vez de 1 Sonnet de ~60-80s. Frontend orquestra. Bônus:
+// custo cai, UX vê progresso por seção, retry é granular.
+//
+// Garantias de confiança:
+// 1. Snapshot de input congelado no /start → todas as 7 chamadas usam os
+//    MESMOS dados, mesmo se entregas forem adicionadas durante a geração.
+// 2. Idempotência por seção: /section sem ?force=1 retorna cache se já gerada.
+// 3. Resume: cliente que reabriu o modal vê pelas chaves de event_reports.sections
+//    o que já existe e continua de onde parou.
+// 4. Retry granular: 1 seção falha → cliente refaz só ela com ?force=1.
+// 5. Atomicidade: cada seção é UPDATE jsonb_set atomico, sem race de overwrite.
+
+// POST /:eventId/report/start — cria o registro com status='pending' e o
+// snapshot dos dados. Retorna { id, sections: [...nomes...] }.
+router.post('/:eventId/report/start', async (req, res) => {
+  try {
+    const { eventId } = req.params;
+    const { type = 'full', phase_name, since_days } = req.body;
+
+    const input = await loadInputSnapshot(eventId, type, phase_name, since_days);
+    if (input.error) return res.status(input.error === 'Evento não encontrado' ? 404 : 400).json({ error: input.error });
+
+    const { data: row, error } = await supabase.from('event_reports').insert({
+      event_id: eventId,
+      phase_name: type === 'phase' ? phase_name : null,
+      report_type: type,
+      content: '',
+      generated_by: req.user.userId,
+      attachments_count: input.totals.anexos,
+      token_cost: 0,
+      status: 'pending',
+      input_data: input,
+      sections: {},
+      section_errors: {},
+      started_at: new Date().toISOString(),
+    }).select().single();
+    if (error) throw error;
+
+    res.json({
+      id: row.id,
+      event_id: eventId,
+      status: row.status,
+      sections_plan: SECTION_PLAN,
+      input_summary: {
+        event: input.eventName,
+        scope: input.scope,
+        since_days: input.since_days,
+        totals: input.totals,
+      },
+    });
+  } catch (e) {
+    console.error('[Reports] Start:', e.message);
+    res.status(500).json({ error: e.message || 'Erro ao iniciar relatório' });
+  }
+});
+
+// POST /:eventId/report/:reportId/section
+// body: { section: 'resumo_executivo' }, query: ?force=1 pra forçar regen
+// Gera UMA seção com Haiku usando o snapshot salvo no /start.
+router.post('/:eventId/report/:reportId/section', async (req, res) => {
+  try {
+    const { eventId, reportId } = req.params;
+    const { section } = req.body;
+    const force = req.query.force === '1' || req.query.force === 'true';
+
+    if (!SECTION_PLAN.find(p => p.name === section)) {
+      return res.status(400).json({ error: `Seção inválida: ${section}` });
+    }
+
+    const { data: row, error: readErr } = await supabase.from('event_reports')
+      .select('*').eq('id', reportId).eq('event_id', eventId).single();
+    if (readErr || !row) return res.status(404).json({ error: 'Relatório não encontrado' });
+    if (row.status === 'ready' && !force) {
+      return res.status(409).json({ error: 'Relatório já finalizado. Use ?force=1 pra regenerar a seção.' });
+    }
+
+    // Idempotência: se a seção já está preenchida e não é force, devolve cache.
+    if (row.sections?.[section] && !force) {
+      return res.json({ section, content: row.sections[section], cached: true });
+    }
+
+    const input = row.input_data;
+    if (!input) return res.status(400).json({ error: 'Snapshot do relatório indisponível. Recrie pelo /start.' });
+
+    // Para seções synthesis, passa as outras já geradas como contexto extra.
+    const otherSections = row.sections || {};
+
+    const { system, userMessage } = buildSectionPrompt(section, input, otherSections);
+
+    const agent = await AgentService.createRun('event_report_section', req.user.userId, {
+      eventId, reportId, section, mode: 'progressive',
+    });
+
+    const result = await agent.call({
+      model: 'claude-haiku-4-5-20251001',
+      system,
+      messages: [{ role: 'user', content: userMessage }],
+      tools: [SECTION_TOOL],
+      toolChoice: { type: 'tool', name: 'submit_section' },
+      maxTokens: 2048,
+      role: 'report-section',
+    });
+    await agent.complete(`Seção ${section} gerada`);
+
+    let content = '';
+    const tc = (result.toolCalls || []).find(c => c.name === 'submit_section');
+    if (tc?.input?.content) content = tc.input.content;
+    else content = result.text || '_Sem dados disponíveis para esta seção._';
+
+    // UPDATE atômico via jsonb_set: lê a row atual, atualiza só essa chave,
+    // grava o objeto novo. Custo extra de transferência mas evita corrupção
+    // se duas seções fossem salvas simultaneamente.
+    const updatedSections = { ...(row.sections || {}), [section]: content };
+    const updatedErrors = { ...(row.section_errors || {}) };
+    delete updatedErrors[section]; // limpa erro anterior se sucesso
+
+    const newCost = parseFloat(row.token_cost || 0) + agent.totalCost;
+    const newStatus = row.status === 'pending' ? 'streaming' : row.status;
+
+    const { error: updErr } = await supabase.from('event_reports').update({
+      sections: updatedSections,
+      section_errors: updatedErrors,
+      token_cost: newCost,
+      status: newStatus,
+    }).eq('id', reportId);
+    if (updErr) throw updErr;
+
+    res.json({ section, content, cached: false, status: newStatus });
+  } catch (e) {
+    console.error('[Reports] Section:', e.message);
+    // Persiste erro pra cliente saber o que falhou e poder retentar
+    const { reportId } = req.params;
+    const { section } = req.body || {};
+    if (reportId && section) {
+      try {
+        const { data: row } = await supabase.from('event_reports').select('section_errors').eq('id', reportId).single();
+        const errors = { ...(row?.section_errors || {}), [section]: e.message || 'Erro desconhecido' };
+        await supabase.from('event_reports').update({ section_errors: errors }).eq('id', reportId);
+      } catch { /* swallow */ }
+    }
+    res.status(500).json({ error: e.message || 'Erro ao gerar seção' });
+  }
+});
+
+// POST /:eventId/report/:reportId/finalize
+// Monta o markdown final de sections, salva em content, status=ready.
+router.post('/:eventId/report/:reportId/finalize', async (req, res) => {
+  try {
+    const { eventId, reportId } = req.params;
+
+    const { data: row, error: readErr } = await supabase.from('event_reports')
+      .select('*').eq('id', reportId).eq('event_id', eventId).single();
+    if (readErr || !row) return res.status(404).json({ error: 'Relatório não encontrado' });
+
+    const missing = SECTION_PLAN
+      .filter(p => !(row.sections && row.sections[p.name]))
+      .map(p => p.name);
+
+    // Política: aceita finalize com seções faltando (retorna 200) MAS marca
+    // status='error' se faltar alguma. Frontend pode oferecer "finalizar mesmo
+    // assim" ou "retentar faltantes". Não quero perder o trabalho já feito.
+    const content = structuredToMarkdown(row.sections || {});
+
+    const finalStatus = missing.length === 0 ? 'ready' : 'error';
+
+    const { data: updated, error: updErr } = await supabase.from('event_reports').update({
+      content,
+      status: finalStatus,
+      finished_at: new Date().toISOString(),
+    }).eq('id', reportId).select().single();
+    if (updErr) throw updErr;
+
+    res.json({ ...updated, missing_sections: missing });
+  } catch (e) {
+    console.error('[Reports] Finalize:', e.message);
+    res.status(500).json({ error: e.message || 'Erro ao finalizar relatório' });
   }
 });
 
