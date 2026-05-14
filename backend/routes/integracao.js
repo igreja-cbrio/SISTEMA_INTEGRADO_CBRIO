@@ -264,4 +264,21 @@ router.get('/dashboard', async (req, res) => {
   }
 });
 
+// ── GET /historico-anual — agregacao por ano + tipo de culto ────────────────
+// Le vw_culto_historico_anual · agregacao no SQL escala pra qualquer volume.
+// Frontend desenha tabela/grafico anual sem limit no client.
+router.get('/historico-anual', async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('vw_culto_historico_anual')
+      .select('*')
+      .order('ano', { ascending: false });
+    if (error) return res.status(400).json({ error: error.message });
+    res.json(data || []);
+  } catch (e) {
+    console.error('[INTEGRACAO] historico-anual', e.message);
+    res.status(500).json({ error: 'Erro ao carregar historico' });
+  }
+});
+
 module.exports = router;

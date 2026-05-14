@@ -1,10 +1,10 @@
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useMemo } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { kpis as kpisApi } from '../../api';
 import { Card, CardContent, CardHeader, CardTitle } from '../../components/ui/card';
 import { StatisticsCard } from '../../components/ui/statistics-card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../../components/ui/table';
 import { Heart, Sparkles, Loader2, BarChart3, Calendar } from 'lucide-react';
-import { toast } from 'sonner';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend,
 } from 'recharts';
@@ -26,10 +26,14 @@ const labelMes = (ym: string) => {
   return `${MESES_PT[parseInt(m, 10) - 1]}/${y.slice(2)}`;
 };
 
-const RANGE_OPCOES: { value: '3m' | '6m' | '12m'; label: string; meses: number }[] = [
+type RangeValue = '3m' | '6m' | '12m' | '24m' | '60m';
+
+const RANGE_OPCOES: { value: RangeValue; label: string; meses: number }[] = [
   { value: '3m',  label: 'Últimos 3 meses',  meses: 3 },
   { value: '6m',  label: 'Últimos 6 meses',  meses: 6 },
   { value: '12m', label: 'Últimos 12 meses', meses: 12 },
+  { value: '24m', label: 'Últimos 2 anos',   meses: 24 },
+  { value: '60m', label: 'Últimos 5 anos',   meses: 60 },
 ];
 
 function dataInicio(mesesAtras: number): string {
@@ -40,26 +44,19 @@ function dataInicio(mesesAtras: number): string {
 }
 
 export default function VisualizacaoDecisoes() {
-  const [range, setRange] = useState<'3m' | '6m' | '12m'>('6m');
-  const [cultos, setCultos] = useState<Culto[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [range, setRange] = useState<RangeValue>('12m');
 
-  const load = useCallback(async () => {
-    setLoading(true);
-    try {
-      const meses = RANGE_OPCOES.find(r => r.value === range)?.meses ?? 6;
+  const { data: cultos = [], isLoading: loading } = useQuery<Culto[]>({
+    queryKey: ['integracao', 'cultos-dec', range],
+    queryFn: async () => {
+      const meses = RANGE_OPCOES.find(r => r.value === range)?.meses ?? 12;
       const inicio = dataInicio(meses);
       const fim = new Date().toISOString().slice(0, 10);
-      const data = await kpisApi.cultos.list({ data_inicio: inicio, data_fim: fim, limit: 1000 });
-      setCultos(Array.isArray(data) ? data : []);
-    } catch (e: any) {
-      toast.error(e?.message || 'Erro ao carregar cultos');
-    } finally {
-      setLoading(false);
-    }
-  }, [range]);
-
-  useEffect(() => { load(); }, [load]);
+      const d = await kpisApi.cultos.list({ data_inicio: inicio, data_fim: fim, limit: 5000 });
+      return Array.isArray(d) ? d : [];
+    },
+    staleTime: 5 * 60_000,
+  });
 
   const totais = useMemo(() => {
     let presenciais = 0, online = 0;

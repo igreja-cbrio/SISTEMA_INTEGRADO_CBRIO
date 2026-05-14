@@ -5,6 +5,7 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from '../../components/ui/ta
 const Batismos = lazy(() => import('./Batismos'));
 const VisualizacaoFrequencia = lazy(() => import('./VisualizacaoFrequencia'));
 const VisualizacaoDecisoes   = lazy(() => import('./VisualizacaoDecisoes'));
+const HistoricoCultos        = lazy(() => import('./HistoricoCultos'));
 import CalendarioCultos from '../../components/CalendarioCultos';
 import { StatisticsCard } from '../../components/ui/statistics-card';
 import { Calendar, CheckCircle2, Heart } from 'lucide-react';
@@ -27,7 +28,7 @@ export default function Integracao() {
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const t = params.get('tab');
-    if (t && ['batismos', 'frequencia', 'vis_frequencia', 'vis_decisoes'].includes(t)) setTab(t);
+    if (t && ['batismos', 'frequencia', 'vis_frequencia', 'vis_decisoes', 'historico'].includes(t)) setTab(t);
   }, []);
 
   return (
@@ -72,6 +73,7 @@ export default function Integracao() {
           <TabsTrigger value="vis_frequencia">Frequência</TabsTrigger>
           <TabsTrigger value="vis_decisoes">Decisões</TabsTrigger>
           <TabsTrigger value="batismos">Batismos</TabsTrigger>
+          <TabsTrigger value="historico">Histórico</TabsTrigger>
         </TabsList>
 
         <TabsContent value="frequencia" className="mt-4">
@@ -98,6 +100,11 @@ export default function Integracao() {
         <TabsContent value="batismos" className="mt-4">
           <Suspense fallback={<div className="flex items-center justify-center py-12 text-sm text-muted-foreground">Carregando…</div>}>
             <Batismos />
+          </Suspense>
+        </TabsContent>
+        <TabsContent value="historico" className="mt-4">
+          <Suspense fallback={<div className="flex items-center justify-center py-12 text-sm text-muted-foreground">Carregando…</div>}>
+            <HistoricoCultos />
           </Suspense>
         </TabsContent>
       </Tabs>
