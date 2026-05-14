@@ -20,15 +20,36 @@ const C = {
 };
 
 const MESES = ['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'];
+const MESES_CURTO = ['Jan','Fev','Mar','Abr','Mai','Jun','Jul','Ago','Set','Out','Nov','Dez'];
 const DIAS = ['Dom','Seg','Ter','Qua','Qui','Sex','Sáb'];
 
 function pad(n) { return String(n).padStart(2, '0'); }
+function toISO(d) { return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`; }
 
-function rangeMes(ano, mes) {
-  const inicio = `${ano}-${pad(mes + 1)}-01`;
-  const ultimo = new Date(ano, mes + 1, 0).getDate();
-  const fim = `${ano}-${pad(mes + 1)}-${pad(ultimo)}`;
-  return { inicio, fim };
+// Retorna o domingo da semana de uma data (semana comeca no domingo)
+function inicioSemana(d) {
+  const c = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+  c.setDate(c.getDate() - c.getDay()); // c.getDay()=0 (dom) → fica
+  return c;
+}
+
+function rangeSemana(domingo) {
+  const fim = new Date(domingo);
+  fim.setDate(fim.getDate() + 6);
+  return { inicio: toISO(domingo), fim: toISO(fim) };
+}
+
+// Gera array de 7 datas (Dom→Sáb) da semana
+function diasDaSemana(domingo) {
+  return Array.from({ length: 7 }, (_, i) => {
+    const d = new Date(domingo);
+    d.setDate(d.getDate() + i);
+    return d;
+  });
+}
+
+function mesmoDia(a, b) {
+  return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
 }
 
 function preenchido(c) {
@@ -51,20 +72,20 @@ function formataDataCurta(dataStr) {
 
 export default function CalendarioCultos() {
   const hoje = new Date();
-  const [ano, setAno] = useState(hoje.getFullYear());
-  const [mes, setMes] = useState(hoje.getMonth());
+  const [semanaInicio, setSemanaInicio] = useState(() => inicioSemana(hoje));
   const [cultos, setCultos] = useState([]);
   const [loading, setLoading] = useState(true);
   const [editando, setEditando] = useState(null);
-  const [filtroTipo, setFiltroTipo] = useState('todos'); // 'todos' | nome do service_type
+  const [filtroTipo, setFiltroTipo] = useState('todos');
 
-  const ehMesAtual = ano === hoje.getFullYear() && mes === hoje.getMonth();
+  const dias = useMemo(() => diasDaSemana(semanaInicio), [semanaInicio]);
+  const ehSemanaAtual = mesmoDia(semanaInicio, inicioSemana(hoje));
 
   const carregar = useCallback(async () => {
     setLoading(true);
     try {
-      const { inicio, fim } = rangeMes(ano, mes);
-      const data = await cultosApi.list({ data_inicio: inicio, data_fim: fim, limit: 200 });
+      const { inicio, fim } = rangeSemana(semanaInicio);
+      const data = await cultosApi.list({ data_inicio: inicio, data_fim: fim, limit: 50 });
       setCultos(Array.isArray(data) ? data : []);
     } catch (e) {
       toast.error(formatErro(e, 'cultos'));
@@ -72,20 +93,16 @@ export default function CalendarioCultos() {
     } finally {
       setLoading(false);
     }
-  }, [ano, mes]);
+  }, [semanaInicio]);
 
   useEffect(() => { carregar(); }, [carregar]);
 
-  const irMes = (delta) => {
-    let m = mes + delta;
-    let a = ano;
-    if (m < 0) { m = 11; a -= 1; }
-    if (m > 11) { m = 0; a += 1; }
-    // Trava no mes atual · so navega pra tras
-    if (a > hoje.getFullYear() || (a === hoje.getFullYear() && m > hoje.getMonth())) return;
-    setMes(m);
-    setAno(a);
+  const irSemana = (delta) => {
+    const novo = new Date(semanaInicio);
+    novo.setDate(novo.getDate() + delta * 7);
+    setSemanaInicio(novo);
   };
+  const voltarHoje = () => setSemanaInicio(inicioSemana(new Date()));
 
   // Tipos unicos pro filtro (a partir dos cultos do mes)
   const tiposDisponiveis = useMemo(() => {
@@ -109,27 +126,33 @@ export default function CalendarioCultos() {
     return { totalPreenchidos: p, totalPendentes: n };
   }, [cultosFiltrados]);
 
+  const ultimoDiaSemana = dias[6];
+  const labelSemana =
+    semanaInicio.getMonth() === ultimoDiaSemana.getMonth()
+      ? `${semanaInicio.getDate()} – ${ultimoDiaSemana.getDate()} ${MESES[semanaInicio.getMonth()]} ${semanaInicio.getFullYear()}`
+      : `${semanaInicio.getDate()} ${MESES_CURTO[semanaInicio.getMonth()]} – ${ultimoDiaSemana.getDate()} ${MESES_CURTO[ultimoDiaSemana.getMonth()]} ${ultimoDiaSemana.getFullYear()}`;
+
   return (
     <section style={{ marginBottom: 20 }}>
       <header style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginBottom: 10, flexWrap: 'wrap' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, fontWeight: 700, color: C.t3, textTransform: 'uppercase', letterSpacing: 0.6 }}>
-          <Calendar size={11} style={{ color: C.primary }} /> Cultos do mês
+          <Calendar size={11} style={{ color: C.primary }} /> Cultos da semana
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <button onClick={() => irMes(-1)} title="Mês anterior" style={btnNav}>
+          <button onClick={() => irSemana(-1)} title="Semana anterior" style={btnNav}>
             <ChevronLeft size={14} />
           </button>
-          <div style={{ fontSize: 13, fontWeight: 700, color: C.text, minWidth: 130, textAlign: 'center' }}>
-            {MESES[mes]} {ano}
+          <div style={{ fontSize: 13, fontWeight: 700, color: C.text, minWidth: 180, textAlign: 'center' }}>
+            {labelSemana}
           </div>
-          <button
-            onClick={() => irMes(1)}
-            disabled={ehMesAtual}
-            title={ehMesAtual ? 'Não navega para o futuro' : 'Próximo mês'}
-            style={{ ...btnNav, opacity: ehMesAtual ? 0.3 : 1, cursor: ehMesAtual ? 'not-allowed' : 'pointer' }}
-          >
+          <button onClick={() => irSemana(1)} title="Próxima semana" style={btnNav}>
             <ChevronRight size={14} />
           </button>
+          {!ehSemanaAtual && (
+            <button onClick={voltarHoje} style={{ ...btnNav, padding: '6px 12px', fontSize: 11, fontWeight: 600, color: C.primary, borderColor: C.primary }}>
+              Hoje
+            </button>
+          )}
         </div>
       </header>
 
@@ -172,20 +195,15 @@ export default function CalendarioCultos() {
 
       {loading ? (
         <div style={{ padding: 24, textAlign: 'center', color: C.t3, background: C.card, borderRadius: 10, border: `1px solid ${C.border}` }}>
-          Carregando cultos...
-        </div>
-      ) : cultos.length === 0 ? (
-        <div style={{ padding: 24, textAlign: 'center', color: C.t3, background: C.card, borderRadius: 10, border: `1px solid ${C.border}`, fontSize: 12 }}>
-          Nenhum culto cadastrado em {MESES[mes]} {ano}.
-        </div>
-      ) : cultosFiltrados.length === 0 ? (
-        <div style={{ padding: 24, textAlign: 'center', color: C.t3, background: C.card, borderRadius: 10, border: `1px solid ${C.border}`, fontSize: 12 }}>
-          Nenhum culto desse tipo em {MESES[mes]} {ano}.
+          Carregando cultos da semana...
         </div>
       ) : (
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: 10 }}>
-          {cultosFiltrados.map(c => <CardCulto key={c.id} culto={c} onClick={() => setEditando(c)} />)}
-        </div>
+        <GradeSemanal
+          dias={dias}
+          cultos={cultosFiltrados}
+          hoje={hoje}
+          onClickCulto={setEditando}
+        />
       )}
 
       {editando && (
@@ -200,7 +218,113 @@ export default function CalendarioCultos() {
 }
 
 // ----------------------------------------------------------------------------
-// CardCulto — visual de cada culto na grade
+// GradeSemanal — 7 colunas (Dom-Sab) com cultos empilhados por dia
+// ----------------------------------------------------------------------------
+function GradeSemanal({ dias, cultos, hoje, onClickCulto }) {
+  const porDia = useMemo(() => {
+    const map = new Map();
+    dias.forEach(d => map.set(toISO(d), []));
+    cultos.forEach(c => {
+      if (map.has(c.data)) map.get(c.data).push(c);
+    });
+    // Ordena cultos do mesmo dia por hora
+    for (const arr of map.values()) {
+      arr.sort((a, b) => (a.hora || '').localeCompare(b.hora || ''));
+    }
+    return map;
+  }, [dias, cultos]);
+
+  return (
+    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: 6 }}>
+      {dias.map((d, idx) => {
+        const isoData = toISO(d);
+        const cultosDoDia = porDia.get(isoData) || [];
+        const ehHoje = mesmoDia(d, hoje);
+        const ehFimSemana = d.getDay() === 0 || d.getDay() === 6;
+        return (
+          <div key={isoData} style={{
+            background: ehHoje ? C.primaryBg : C.card,
+            border: `1px solid ${ehHoje ? C.primary : C.border}`,
+            borderRadius: 8, padding: 8, minHeight: 140,
+            display: 'flex', flexDirection: 'column', gap: 6,
+          }}>
+            <div style={{ textAlign: 'center', borderBottom: `1px dashed ${C.border}`, paddingBottom: 6 }}>
+              <div style={{ fontSize: 9, fontWeight: 700, color: ehHoje ? C.primary : C.t3, textTransform: 'uppercase', letterSpacing: 0.5 }}>
+                {DIAS[idx]}
+              </div>
+              <div style={{ fontSize: 18, fontWeight: 800, color: ehHoje ? C.primary : C.text, lineHeight: 1 }}>
+                {d.getDate()}
+              </div>
+            </div>
+            {cultosDoDia.length === 0 ? (
+              <div style={{ fontSize: 10, color: C.t3, textAlign: 'center', padding: 14, fontStyle: 'italic' }}>
+                {ehFimSemana || d.getDay() === 3 ? '—' : 'sem culto'}
+              </div>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                {cultosDoDia.map(c => <MiniCardCulto key={c.id} culto={c} onClick={() => onClickCulto(c)} />)}
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+// MiniCardCulto · compacto pra caber na coluna da semana
+function MiniCardCulto({ culto, onClick }) {
+  const ok = preenchido(culto);
+  const cor = culto.service_type_color || C.primary;
+  const tipo = culto.service_type_name || culto.nome;
+
+  return (
+    <button onClick={onClick} style={{
+      textAlign: 'left', padding: '6px 8px', borderRadius: 6, cursor: 'pointer',
+      background: ok ? `${cor}10` : C.inputBg,
+      border: `1px solid ${ok ? cor : C.border}`,
+      borderLeft: `3px solid ${cor}`,
+      display: 'flex', flexDirection: 'column', gap: 2,
+      transition: 'transform 0.1s, box-shadow 0.1s',
+    }}
+    onMouseEnter={e => { e.currentTarget.style.transform = 'translateY(-1px)'; e.currentTarget.style.boxShadow = '0 2px 6px rgba(0,0,0,0.08)'; }}
+    onMouseLeave={e => { e.currentTarget.style.transform = 'none'; e.currentTarget.style.boxShadow = 'none'; }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 4 }}>
+        <span style={{ fontSize: 10, fontWeight: 700, color: cor }}>{culto.hora?.slice(0, 5) || '--:--'}</span>
+        {ok ? (
+          <CheckCircle2 size={11} style={{ color: '#10B981' }} />
+        ) : (
+          <AlertCircle size={11} style={{ color: '#F59E0B' }} />
+        )}
+      </div>
+      <span style={{ fontSize: 10, color: C.text, fontWeight: 600, lineHeight: 1.2 }}>
+        {tipo}
+      </span>
+      {ok && (
+        <div style={{ display: 'flex', gap: 3, flexWrap: 'wrap', marginTop: 1 }}>
+          {((culto.presencial_adulto || 0) + (culto.presencial_kids || 0)) > 0 && (
+            <span style={{ fontSize: 9, color: C.t3 }}>
+              {(culto.presencial_adulto || 0) + (culto.presencial_kids || 0)} pres
+            </span>
+          )}
+          {((culto.visitantes || 0) + (culto.visitantes_online || 0)) > 0 && (
+            <span style={{ fontSize: 9, color: '#10B981' }}>
+              · {(culto.visitantes || 0) + (culto.visitantes_online || 0)} visit
+            </span>
+          )}
+          {((culto.decisoes_presenciais || 0) + (culto.decisoes_online || 0)) > 0 && (
+            <span style={{ fontSize: 9, color: '#8B5CF6' }}>
+              · {(culto.decisoes_presenciais || 0) + (culto.decisoes_online || 0)} dec
+            </span>
+          )}
+        </div>
+      )}
+    </button>
+  );
+}
+
+// ----------------------------------------------------------------------------
+// CardCulto — visual antigo (mantido pra fallback, nao usado na visao semanal)
 // ----------------------------------------------------------------------------
 function CardCulto({ culto, onClick }) {
   const { dia, diaSemana } = formataDataCurta(culto.data);
