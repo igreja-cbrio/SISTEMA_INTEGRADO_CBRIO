@@ -13,6 +13,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '../../components/ui/ca
 import {
   Droplets, Loader2, Search, Plus, Calendar, Phone, Mail, AlertCircle,
   CheckCircle2, Clock, XCircle, ChevronRight, User, IdCard, FileText, BarChart3,
+  Share2, Copy, Check,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import {
@@ -181,9 +182,44 @@ export default function Batismos() {
     }));
   }, [list]);
 
+  const linkPublico = typeof window !== 'undefined'
+    ? `${window.location.origin}/inscricao-batismo`
+    : '/inscricao-batismo';
+  const [linkCopiado, setLinkCopiado] = useState(false);
+  const copiarLink = () => {
+    navigator.clipboard.writeText(linkPublico).then(() => {
+      setLinkCopiado(true);
+      toast.success('Link copiado!');
+      setTimeout(() => setLinkCopiado(false), 2500);
+    }).catch(() => toast.error('Nao foi possivel copiar'));
+  };
+  const compartilharWhatsApp = () => {
+    const msg = encodeURIComponent(`Inscreva-se para o batismo na CBRio: ${linkPublico}`);
+    window.open(`https://wa.me/?text=${msg}`, '_blank');
+  };
+
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-end">
+      <div className="flex flex-wrap items-center justify-end gap-2">
+        <div className="flex items-center gap-2 px-3 py-2 rounded-lg border border-border bg-muted/30 text-xs max-w-[420px]">
+          <Share2 className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+          <code className="truncate text-muted-foreground">{linkPublico}</code>
+          <button
+            onClick={copiarLink}
+            className="inline-flex items-center gap-1 px-2 py-1 rounded text-xs hover:bg-background border border-transparent hover:border-border shrink-0"
+            title="Copiar link"
+          >
+            {linkCopiado ? <Check className="h-3 w-3 text-emerald-600" /> : <Copy className="h-3 w-3" />}
+            {linkCopiado ? 'Copiado' : 'Copiar'}
+          </button>
+          <button
+            onClick={compartilharWhatsApp}
+            className="inline-flex items-center gap-1 px-2 py-1 rounded text-xs bg-emerald-600/10 text-emerald-700 hover:bg-emerald-600/20 shrink-0"
+            title="Compartilhar no WhatsApp"
+          >
+            WhatsApp
+          </button>
+        </div>
         <Button onClick={() => setNovaOpen(true)} className="gap-2 bg-[#00B39D] hover:bg-[#00B39D]/90 text-white">
           <Plus className="h-4 w-4" /> Cadastrar inscricao
         </Button>
