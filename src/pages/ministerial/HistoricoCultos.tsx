@@ -4,7 +4,7 @@ import { integracao as intApi } from '../../api';
 import { Card, CardContent, CardHeader, CardTitle } from '../../components/ui/card';
 import { StatisticsCard } from '../../components/ui/statistics-card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../../components/ui/table';
-import { Calendar, Users, Heart, Tv, Loader2, BarChart3, Archive } from 'lucide-react';
+import { Calendar, Users, Heart, Tv, Loader2, BarChart3, Archive, Droplets } from 'lucide-react';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend,
 } from 'recharts';
@@ -28,6 +28,16 @@ type HistoricoRow = {
   online_ddus_total: number;
 };
 
+type BatismoAnoRow = { ano: number; total_batismos: number };
+
+type Metrica = 'frequencia' | 'aceitacoes' | 'batismos';
+
+const METRICAS: { value: Metrica; label: string; cor: string }[] = [
+  { value: 'frequencia', label: 'Frequência', cor: C.info },
+  { value: 'aceitacoes', label: 'Aceitações', cor: C.purple },
+  { value: 'batismos',   label: 'Batismos',   cor: C.primary },
+];
+
 export default function HistoricoCultos() {
   const { data, isLoading } = useQuery<HistoricoRow[]>({
     queryKey: ['integracao', 'historico-anual'],
@@ -35,7 +45,14 @@ export default function HistoricoCultos() {
     staleTime: 5 * 60_000,
   });
 
+  const { data: batismosAno = [] } = useQuery<BatismoAnoRow[]>({
+    queryKey: ['integracao', 'historico-batismos'],
+    queryFn: () => intApi.historicoBatismos(),
+    staleTime: 5 * 60_000,
+  });
+
   const [tipoFiltro, setTipoFiltro] = useState<string>('todos');
+  const [metrica, setMetrica] = useState<Metrica>('frequencia');
 
   const rows = data || [];
 
@@ -52,19 +69,23 @@ export default function HistoricoCultos() {
     return rows.filter(r => r.service_type_name === tipoFiltro);
   }, [rows, tipoFiltro]);
 
-  // Agrega por ano (soma de todos os tipos visíveis)
+  // Agrega por ano · adiciona batismos do ano via lookup separado
   const porAno = useMemo(() => {
+    const batismosMap = new Map<number, number>();
+    batismosAno.forEach(b => batismosMap.set(b.ano, b.total_batismos));
+
     const map = new Map<number, {
       ano: number;
       presencial: number;
       kids: number;
       decisoes: number;
+      batismos: number;
       online: number;
       cultos: number;
     }>();
     rowsFiltrados.forEach(r => {
       const row = map.get(r.ano) || {
-        ano: r.ano, presencial: 0, kids: 0, decisoes: 0, online: 0, cultos: 0,
+        ano: r.ano, presencial: 0, kids: 0, decisoes: 0, batismos: 0, online: 0, cultos: 0,
       };
       row.presencial += r.presencial_total;
       row.kids       += r.kids_total;
@@ -73,8 +94,20 @@ export default function HistoricoCultos() {
       row.cultos     += r.total_cultos;
       map.set(r.ano, row);
     });
+    // Quando filtro é "todos", batismos do ano são fixos (não dependem de tipo
+    // de culto). Quando filtro é por tipo, batismos seguem visíveis mesmo
+    // assim · escolha de design: batismos é série independente.
+    for (const row of map.values()) {
+      row.batismos = batismosMap.get(row.ano) || 0;
+    }
+    // Garante anos que só têm batismos (sem cultos) também aparecem
+    for (const [ano, total] of batismosMap.entries()) {
+      if (!map.has(ano)) {
+        map.set(ano, { ano, presencial: 0, kids: 0, decisoes: 0, batismos: total, online: 0, cultos: 0 });
+      }
+    }
     return Array.from(map.values()).sort((a, b) => a.ano - b.ano);
-  }, [rowsFiltrados]);
+  }, [rowsFiltrados, batismosAno]);
 
   const totais = useMemo(() => {
     let p = 0, k = 0, d = 0, c = 0;
@@ -84,8 +117,9 @@ export default function HistoricoCultos() {
       d += r.decisoes_presenciais_total + r.decisoes_online_total;
       c += r.total_cultos;
     });
-    return { presencial: p, kids: k, decisoes: d, cultos: c };
-  }, [rowsFiltrados]);
+    const batismosTotal = batismosAno.reduce((s, b) => s + b.total_batismos, 0);
+    return { presencial: p, kids: k, decisoes: d, cultos: c, batismos: batismosTotal };
+  }, [rowsFiltrados, batismosAno]);
 
   const anos = useMemo(() => {
     const s = new Set(rows.map(r => r.ano));
@@ -112,8 +146,8 @@ export default function HistoricoCultos() {
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
         <StatisticsCard title="Cultos no histórico" value={totais.cultos.toLocaleString('pt-BR')} icon={Calendar} iconColor={C.purple} />
         <StatisticsCard title="Frequência total"    value={(totais.presencial + totais.kids).toLocaleString('pt-BR')} icon={Users} iconColor={C.info} />
-        <StatisticsCard title="Decisões totais"     value={totais.decisoes.toLocaleString('pt-BR')} icon={Heart} iconColor={C.pink} />
-        <StatisticsCard title="Kids (acumulado)"    value={totais.kids.toLocaleString('pt-BR')} icon={Users} iconColor={C.pink} />
+        <StatisticsCard title="Aceitações totais"   value={totais.decisoes.toLocaleString('pt-BR')} icon={Heart} iconColor={C.pink} />
+        <StatisticsCard title="Batismos realizados" value={totais.batismos.toLocaleString('pt-BR')} icon={Droplets} iconColor={C.primary} />
       </div>
 
       {tiposDisponiveis.length > 0 && (
@@ -145,11 +179,26 @@ export default function HistoricoCultos() {
       )}
 
       <Card>
-        <CardHeader className="pb-2">
+        <CardHeader className="pb-2 flex flex-row items-center justify-between gap-2 space-y-0">
           <CardTitle className="text-sm font-medium flex items-center gap-2">
             <BarChart3 className="h-4 w-4 text-muted-foreground" />
-            Frequência e decisões por ano
+            {METRICAS.find(m => m.value === metrica)?.label} por ano
           </CardTitle>
+          <div className="inline-flex rounded-xl border border-border p-0.5 bg-muted/30">
+            {METRICAS.map(m => (
+              <button
+                key={m.value}
+                onClick={() => setMetrica(m.value)}
+                className={`px-3 py-1 text-xs font-medium rounded-lg transition-colors ${
+                  metrica === m.value
+                    ? 'bg-[#00B39D] text-white'
+                    : 'text-muted-foreground hover:text-foreground'
+                }`}
+              >
+                {m.label}
+              </button>
+            ))}
+          </div>
         </CardHeader>
         <CardContent>
           <div className="h-[300px]">
@@ -164,10 +213,18 @@ export default function HistoricoCultos() {
                   formatter={(v: any, name: any) => [`${Number(v).toLocaleString('pt-BR')}`, name]}
                 />
                 <Legend wrapperStyle={{ fontSize: 11, paddingTop: 4 }} />
-                <Bar dataKey="presencial" name="Presencial" stackId="freq" fill={C.info} />
-                <Bar dataKey="kids"       name="Kids"       stackId="freq" fill={C.pink} radius={[4, 4, 0, 0]} />
-                <Bar dataKey="decisoes"   name="Decisões"   fill={C.purple} radius={[4, 4, 0, 0]} />
-                <Bar dataKey="online"     name="Pico online" fill={C.warn} radius={[4, 4, 0, 0]} />
+                {metrica === 'frequencia' && (
+                  <>
+                    <Bar dataKey="presencial" name="Presencial" stackId="freq" fill={C.info} />
+                    <Bar dataKey="kids"       name="Kids"       stackId="freq" fill={C.pink} radius={[4, 4, 0, 0]} />
+                  </>
+                )}
+                {metrica === 'aceitacoes' && (
+                  <Bar dataKey="decisoes" name="Aceitações" fill={C.purple} radius={[4, 4, 0, 0]} />
+                )}
+                {metrica === 'batismos' && (
+                  <Bar dataKey="batismos" name="Batismos" fill={C.primary} radius={[4, 4, 0, 0]} />
+                )}
               </BarChart>
             </ResponsiveContainer>
           </div>

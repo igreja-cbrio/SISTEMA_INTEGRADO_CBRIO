@@ -179,6 +179,7 @@ export const integracao = {
   },
   dashboard: () => get('/integracao/dashboard'),
   historicoAnual: () => get('/integracao/historico-anual'),
+  historicoBatismos: () => get('/integracao/historico-batismos'),
 };
 
 export const grupos = {
@@ -848,9 +849,16 @@ export const attachments = {
 };
 
 export const reports = {
+  // Geração síncrona (legacy/fallback). Novo frontend usa start+section+finalize.
   generate: (eventId, data) => post(`/events/${eventId}/report`, data),
   list: (eventId) => get(`/events/${eventId}/reports`),
   get: (eventId, id) => get(`/events/${eventId}/reports/${id}`),
+  // Geração progressiva — chunked como upload de SharePoint, mas pra IA.
+  // Cliente orquestra: start → loop generateSection → finalize. Cada call < 60s.
+  start: (eventId, data) => post(`/events/${eventId}/report/start`, data),
+  generateSection: (eventId, reportId, section, force = false) =>
+    post(`/events/${eventId}/report/${reportId}/section${force ? '?force=1' : ''}`, { section }),
+  finalize: (eventId, reportId) => post(`/events/${eventId}/report/${reportId}/finalize`, {}),
 };
 
 export const completions = {
