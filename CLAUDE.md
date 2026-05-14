@@ -741,14 +741,15 @@ NSM** (mandalas, matriz Valor × Área). Aparecem apenas em
 | `ON-DS-01` | Views D+1 (total) | `cultos.online_ds_total` |
 | `ON-DDUS-01` | Views D+7 on-demand (total) | `cultos.online_ddus_total` |
 
-**Como filtrar do painel**: os 3 têm `valores = NULL` em
-`kpi_indicadores_taticos`. O endpoint `/painel/mandalas` e
-`/painel/matriz` filtram com
-`Array.isArray(k.valores) && k.valores.includes(v)`, então KPIs com
-`valores=NULL` são naturalmente excluídos sem precisar de flag nova.
+**Como filtrar do painel**: os 3 têm `valores = '{}'` (array vazio) em
+`kpi_indicadores_taticos` (coluna é NOT NULL). O endpoint
+`/painel/mandalas` e `/painel/matriz` filtram com
+`Array.isArray(k.valores) && k.valores.includes(v)`. Array vazio passa
+no `isArray` mas `includes(v)` é false para todos os valores da
+Jornada → KPI não entra em nenhuma célula.
 
 Para futuros KPIs "só de visualização" (sem cross-impacto na
-Jornada), basta deixar `valores = NULL`.
+Jornada), basta deixar `valores = '{}'::text[]`.
 
 ### Recálculo automático ao editar culto
 
