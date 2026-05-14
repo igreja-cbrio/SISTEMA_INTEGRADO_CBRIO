@@ -58,11 +58,10 @@ UPDATE cycle_phase_tasks cpt
    AND cpt.closed_with_event_at IS NULL
    AND cpt.status NOT IN ('concluida', 'concluido');
 
--- ── Update vw_pmo_kpis pra reconhecer também essa coluna ──
--- A view antiga já excluía via "e.status <> 'concluido'" (filtro pelo evento).
--- Agora adiciona belt-and-suspenders: também ignora se closed_with_event_at
--- estiver setado. Isso cobre o caso de tarefas criadas em eventos finalizados
--- que por algum motivo não foram marcadas (improvável mas defensivo).
+-- ── Update vw_pmo_kpis: adiciona filtro closed_with_event_at + nova coluna ──
+-- PostgreSQL não deixa mudar ordem de colunas em CREATE OR REPLACE VIEW
+-- (ERROR 42P16). Coluna nova precisa ficar NO FINAL pra não conflitar com
+-- a posição das colunas existentes (risks_open / events_no_owner / budgets).
 
 CREATE OR REPLACE VIEW vw_pmo_kpis AS
 SELECT
@@ -104,14 +103,14 @@ SELECT
        AND cpt.closed_with_event_at IS NULL)
   ) AS tasks_overdue,
 
-  -- NOVO: tasks_closed_with_event — contagem pro bucket "finalizadas com evento"
+  (SELECT count(*) FROM event_risks WHERE status NOT IN ('mitigado','fechado')) AS risks_open,
+  (SELECT count(*) FROM events WHERE responsible IS NULL OR responsible = '') AS events_no_owner,
+  (SELECT COALESCE(sum(budget_planned),0) FROM events) AS budget_total,
+  (SELECT COALESCE(sum(budget_spent),0) FROM events) AS budget_spent,
+
+  -- NOVA coluna no FINAL: contagem pro bucket "finalizadas com evento"
   (
     (SELECT count(*) FROM event_tasks WHERE closed_with_event_at IS NOT NULL AND status NOT IN ('concluida','concluido'))
     +
     (SELECT count(*) FROM cycle_phase_tasks WHERE closed_with_event_at IS NOT NULL AND status NOT IN ('concluida','concluido'))
-  ) AS tasks_closed_with_event,
-
-  (SELECT count(*) FROM event_risks WHERE status NOT IN ('mitigado','fechado')) AS risks_open,
-  (SELECT count(*) FROM events WHERE responsible IS NULL OR responsible = '') AS events_no_owner,
-  (SELECT COALESCE(sum(budget_planned),0) FROM events) AS budget_total,
-  (SELECT COALESCE(sum(budget_spent),0) FROM events) AS budget_spent;
+  ) AS tasks_closed_with_event;
