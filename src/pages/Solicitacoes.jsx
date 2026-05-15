@@ -11,7 +11,7 @@ import { Label } from '../components/ui/label';
 import { Textarea } from '../components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select';
 import { ScrollArea } from '../components/ui/scroll-area';
-import { Plus, Filter, ClipboardList, Clock, CheckCircle2, XCircle, Search as SearchIcon, ArrowRight, List, Upload, FileText, X } from 'lucide-react';
+import { Plus, Filter, ClipboardList, Clock, CheckCircle2, XCircle, Search as SearchIcon, ArrowRight, List, Upload, FileText, X, Users } from 'lucide-react';
 import { supabase } from '../supabaseClient';
 import { toast } from 'sonner';
 
@@ -21,7 +21,9 @@ const CATEGORIAS = [
   { value: 'reembolso',      label: 'Reembolso',           color: 'bg-green-500/15 text-green-700 dark:text-green-400',    areaResp: 'financeiro' },
   { value: 'reserva_espaco', label: 'Reserva de Espaço',   color: 'bg-purple-500/15 text-purple-700 dark:text-purple-400', areaResp: 'reserva_espaco' },
   { value: 'infraestrutura', label: 'Infraestrutura',      color: 'bg-yellow-500/15 text-yellow-700 dark:text-yellow-400', areaResp: 'manutencao' },
+  { value: 'marketing',      label: 'Marketing',           color: 'bg-pink-500/15 text-pink-700 dark:text-pink-400',       areaResp: 'marketing' },
   { value: 'ferias',         label: 'Férias',              color: 'bg-cyan-500/15 text-cyan-700 dark:text-cyan-400',       areaResp: 'rh' },
+  { value: 'licenca',        label: 'Licença',             color: 'bg-teal-500/15 text-teal-700 dark:text-teal-400',       areaResp: 'rh' },
   { value: 'outro',          label: 'Outro',               color: 'bg-muted text-muted-foreground',                         areaResp: null },
 ];
 
@@ -218,9 +220,21 @@ export default function Solicitacoes() {
             <ClipboardList className="h-6 w-6 text-primary" />
             Solicitações
           </h1>
-          <p className="text-sm text-muted-foreground mt-1">TI, compras, reembolso, infraestrutura, reserva de espaços e férias</p>
+          <p className="text-sm text-muted-foreground mt-1">TI, marketing, compras, reembolso, infraestrutura, reservas, férias e licenças</p>
         </div>
         <div className="flex items-center gap-3">
+          {/* Config de responsaveis · so admin/diretor */}
+          {isAdmin && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => window.location.href = '/admin/solicitacoes-responsaveis'}
+              className="gap-1.5"
+              title="Configurar responsáveis por área"
+            >
+              <Users className="h-4 w-4" /> Responsáveis
+            </Button>
+          )}
           {/* Category filter — only for responsáveis */}
           {isResponsavel && (
             <div className="flex items-center gap-2">

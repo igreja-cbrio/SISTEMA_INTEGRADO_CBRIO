@@ -16,7 +16,7 @@ router.use((req, res, next) => {
   next();
 });
 
-const ALLOWED_CATEGORIES = ['ti', 'compras', 'reembolso', 'reserva_espaco', 'espaco', 'infraestrutura', 'ferias', 'outro'];
+const ALLOWED_CATEGORIES = ['ti', 'compras', 'reembolso', 'reserva_espaco', 'espaco', 'infraestrutura', 'ferias', 'licenca', 'marketing', 'outro'];
 
 // Map categoria → notification module
 const CATEGORIA_MODULO = {
@@ -27,6 +27,8 @@ const CATEGORIA_MODULO = {
   espaco: 'administrativo', // legado
   infraestrutura: 'administrativo',
   ferias: 'rh',
+  licenca: 'rh',
+  marketing: 'marketing',
   outro: 'administrativo',
 };
 
@@ -39,6 +41,8 @@ const CATEGORIA_TO_AREA_RESP = {
   espaco:          { area: 'reserva_espaco',    subcategoria: 'default' },
   infraestrutura:  { area: 'manutencao',        subcategoria: 'default' },
   ferias:          { area: 'rh',                subcategoria: 'ferias' },
+  licenca:         { area: 'rh',                subcategoria: 'licenca' },
+  marketing:       { area: 'marketing',         subcategoria: 'default' },
   outro:           { area: null,                subcategoria: 'default' },
 };
 
@@ -47,8 +51,9 @@ const MODULO_CATEGORIAS = {
   ti: ['ti'],
   logistica: ['compras'],
   financeiro: ['reembolso'],
-  administrativo: ['espaco', 'infraestrutura', 'outro'],
-  rh: ['ferias'],
+  administrativo: ['espaco', 'reserva_espaco', 'infraestrutura', 'outro'],
+  rh: ['ferias', 'licenca'],
+  marketing: ['marketing'],
 };
 
 // Map modulePerms key → backend modulo
@@ -60,6 +65,7 @@ const PERM_TO_MODULO = {
   'Patrimônio': 'administrativo',
   'Membresia': 'administrativo',
   'TI': 'ti',
+  'Marketing': 'marketing',
 };
 
 // ── LIST (filtered by role) ─────────────────────────────────
@@ -83,6 +89,13 @@ router.get('/', async (req, res) => {
     } else if (['admin', 'diretor'].includes(role)) {
       // Admin/diretor sees all — no filter
     } else {
+      // Areas onde o user eh responsavel cadastrado em area_solicitacoes_responsaveis
+      const { data: respRows } = await supabase
+        .from('area_solicitacoes_responsaveis')
+        .select('area')
+        .eq('profile_id', userId);
+      const responsavelAreas = new Set((respRows || []).map(r => r.area));
+
       const modulePerms = granular?.modulePerms || {};
       const allowedCategories = new Set();
 
@@ -93,11 +106,16 @@ router.get('/', async (req, res) => {
         }
       }
 
+      // Monta filtro OR · sempre ve as proprias + categorias permitidas via
+      // permissoes + areas onde eh responsavel cadastrado
+      const orParts = [`solicitante_id.eq.${encodeURIComponent(userId)}`];
       if (allowedCategories.size > 0) {
-        q = q.or(`solicitante_id.eq.${encodeURIComponent(userId)},categoria.in.(${[...allowedCategories].join(',')})`);
-      } else {
-        q = q.eq('solicitante_id', userId);
+        orParts.push(`categoria.in.(${[...allowedCategories].join(',')})`);
       }
+      if (responsavelAreas.size > 0) {
+        orParts.push(`area_responsavel.in.(${[...responsavelAreas].join(',')})`);
+      }
+      q = q.or(orParts.join(','));
     }
 
     const { data, error } = await q;
@@ -185,7 +203,27 @@ router.post('/', async (req, res) => {
       .single();
     if (error) throw error;
 
-    // Notify responsible people
+    // Auto-vincula responsavel_id se houver uma unica pessoa cadastrada para
+    // a area · se houver mais, deixa nulo (qualquer um da fila pode pegar)
+    let responsaveisDaArea = [];
+    if (finalAreaResp) {
+      const { data: resps } = await supabase
+        .from('area_solicitacoes_responsaveis')
+        .select('profile_id')
+        .eq('area', finalAreaResp);
+      responsaveisDaArea = (resps || []).map(r => r.profile_id);
+
+      if (responsaveisDaArea.length === 1) {
+        await supabase
+          .from('solicitacoes')
+          .update({ responsavel_id: responsaveisDaArea[0] })
+          .eq('id', data.id);
+        data.responsavel_id = responsaveisDaArea[0];
+      }
+    }
+
+    // Notify responsible people · alem das regras do modulo, sempre notifica
+    // os responsaveis cadastrados pra area (Pedro Paiva pra marketing, etc)
     const modulo = CATEGORIA_MODULO[categoria] || 'administrativo';
     notificar({
       modulo,
@@ -195,6 +233,7 @@ router.post('/', async (req, res) => {
       link: '/solicitacoes',
       severidade: urgencia === 'critica' ? 'alta' : 'info',
       chaveDedup: `solicitacao_nova_${data.id}`,
+      extraTargetIds: responsaveisDaArea,
     }).catch(err => console.error('[SOLICITACOES] notify error:', err.message));
 
     res.status(201).json(data);
@@ -318,6 +357,72 @@ router.get('/alcadas', async (req, res) => {
     if (error) throw error;
     res.json(data || []);
   } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── Responsaveis por area de solicitacao (admin/diretor) ────────────────────
+// GET lista todos · agrupa por area com nomes dos responsaveis
+router.get('/area-responsaveis', async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('area_solicitacoes_responsaveis')
+      .select('id, area, profile_id, criado_em')
+      .order('area');
+    if (error) throw error;
+
+    const profileIds = [...new Set((data || []).map(r => r.profile_id))];
+    let profileMap = {};
+    if (profileIds.length) {
+      const { data: profs } = await supabase
+        .from('profiles')
+        .select('id, nome_completo, email')
+        .in('id', profileIds);
+      profileMap = Object.fromEntries((profs || []).map(p => [p.id, p]));
+    }
+
+    const enriched = (data || []).map(r => ({
+      ...r,
+      profile: profileMap[r.profile_id] || null,
+    }));
+    res.json(enriched);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// PUT substitui responsaveis de uma area · body: { area, profile_ids: [] }
+// Apaga vinculos atuais da area e insere os novos
+router.put('/area-responsaveis', async (req, res) => {
+  if (!['admin', 'diretor'].includes(req.user.role)) {
+    return res.status(403).json({ error: 'Apenas admin/diretor podem configurar responsaveis' });
+  }
+  try {
+    const { area, profile_ids } = req.body || {};
+    if (!area) return res.status(400).json({ error: 'area obrigatoria' });
+    if (!Array.isArray(profile_ids)) return res.status(400).json({ error: 'profile_ids deve ser array' });
+
+    // Apaga vinculos existentes da area
+    const { error: delError } = await supabase
+      .from('area_solicitacoes_responsaveis')
+      .delete()
+      .eq('area', area);
+    if (delError) throw delError;
+
+    // Insere novos
+    if (profile_ids.length > 0) {
+      const rows = profile_ids.map(pid => ({
+        area,
+        profile_id: pid,
+        criado_por: req.user.userId,
+      }));
+      const { error: insError } = await supabase
+        .from('area_solicitacoes_responsaveis')
+        .insert(rows);
+      if (insError) throw insError;
+    }
+
+    res.json({ ok: true, area, count: profile_ids.length });
+  } catch (e) {
+    console.error('[SOLICITACOES] area-responsaveis PUT:', e.message);
+    res.status(500).json({ error: e.message });
+  }
 });
 
 module.exports = router;
