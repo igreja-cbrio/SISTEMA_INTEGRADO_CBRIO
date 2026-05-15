@@ -15,9 +15,9 @@
 //   ?aba=painel_adm → operacional
 // ============================================================================
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { gestao as gestaoApi } from '../api';
+import { gestao as gestaoApi, kpis as kpisApi } from '../api';
 import { useAuth } from '../contexts/AuthContext';
 import { Activity, Settings, AlertCircle, TrendingDown, Bell, Target, Shield, ArrowRight, ChevronRight, Flag, Edit3, Save as SaveIcon, Filter, Building2, Zap } from 'lucide-react';
 import { estrategia as estrategiaApi } from '../api';
@@ -1015,7 +1015,216 @@ function AbaMetasInstitucionais() {
           </Card>
         )}
       </div>
+
+      {/* ────────────────────────────────────────────────────────────────── */}
+      {/* Seção · Metas específicas (override da institucional)             */}
+      {/* OKRs Gerais (kpi_objetivos_gerais) e KPIs Táticos                  */}
+      {/* ────────────────────────────────────────────────────────────────── */}
+      <MetasEspecificas okrsPorTipo={okrsPorTipo} onSaved={carregar} />
     </>
+  );
+}
+
+// ============================================================================
+// Subcomponente · MetasEspecificas (override individual)
+// ============================================================================
+function MetasEspecificas({ okrsPorTipo, onSaved }) {
+  const [tab, setTab] = useState('okrs'); // 'okrs' | 'kpis'
+  const [busca, setBusca] = useState('');
+  const [kpis, setKpis] = useState([]);
+  const [editandoId, setEditandoId] = useState(null);
+  const [edicao, setEdicao] = useState({});
+  const [loading, setLoading] = useState(false);
+
+  const carregarKpis = useCallback(async () => {
+    setLoading(true);
+    try {
+      const data = await kpisApi.v2.taticos();
+      setKpis(Array.isArray(data) ? data.filter(k => k.ativo) : []);
+    } catch (e) { toast.error(formatErro(e)); }
+    finally { setLoading(false); }
+  }, []);
+
+  useEffect(() => { if (tab === 'kpis') carregarKpis(); }, [tab, carregarKpis]);
+
+  const todosOkrs = useMemo(() => {
+    return [
+      ...(okrsPorTipo.quantitativo || []).map(o => ({ ...o, tipo: 'quantitativo' })),
+      ...(okrsPorTipo.qualitativo  || []).map(o => ({ ...o, tipo: 'qualitativo' })),
+      ...(okrsPorTipo.operacional  || []).map(o => ({ ...o, tipo: 'operacional' })),
+      ...(okrsPorTipo.sem_tipo     || []).map(o => ({ ...o, tipo: 'sem_tipo' })),
+    ];
+  }, [okrsPorTipo]);
+
+  const okrsFiltrados = useMemo(() => {
+    if (!busca) return todosOkrs;
+    const q = busca.toLowerCase();
+    return todosOkrs.filter(o => (o.nome || '').toLowerCase().includes(q) || (o.indicador_geral || '').toLowerCase().includes(q));
+  }, [todosOkrs, busca]);
+
+  const kpisFiltrados = useMemo(() => {
+    if (!busca) return kpis;
+    const q = busca.toLowerCase();
+    return kpis.filter(k => (k.indicador || '').toLowerCase().includes(q) || (k.id || '').toLowerCase().includes(q) || (k.area || '').toLowerCase().includes(q));
+  }, [kpis, busca]);
+
+  const iniciarEdicao = (item) => {
+    setEditandoId(item.id);
+    setEdicao({
+      meta_valor: item.meta_valor ?? '',
+      meta_descricao: item.meta_descricao || '',
+    });
+  };
+
+  const salvar = async (item, tipoItem) => {
+    try {
+      const payload = {
+        meta_valor: edicao.meta_valor === '' ? null : Number(edicao.meta_valor),
+        meta_descricao: edicao.meta_descricao || null,
+      };
+      if (tipoItem === 'okr') {
+        await estrategiaApi.objetivos.update(item.id, payload);
+      } else {
+        await kpisApi.v2.taticoUpdate(item.id, payload);
+      }
+      toast.success('Meta atualizada');
+      setEditandoId(null);
+      setEdicao({});
+      if (tipoItem === 'okr') onSaved(); else carregarKpis();
+    } catch (e) { toast.error(formatErro(e)); }
+  };
+
+  const limparOverride = async (item, tipoItem) => {
+    if (!window.confirm('Limpar meta específica? O item passa a herdar a meta institucional do tipo.')) return;
+    try {
+      const payload = { meta_valor: null, meta_descricao: null };
+      if (tipoItem === 'okr') {
+        await estrategiaApi.objetivos.update(item.id, payload);
+      } else {
+        await kpisApi.v2.taticoUpdate(item.id, payload);
+      }
+      toast.success('Meta específica removida · herda institucional');
+      if (tipoItem === 'okr') onSaved(); else carregarKpis();
+    } catch (e) { toast.error(formatErro(e)); }
+  };
+
+  const lista = tab === 'okrs' ? okrsFiltrados : kpisFiltrados;
+  const tipoItem = tab === 'okrs' ? 'okr' : 'kpi';
+
+  return (
+    <Card
+      title={<>🎯 Metas específicas <span style={{ fontSize: 10, fontWeight: 400, color: C.t3 }}>· override da meta institucional</span></>}
+      subtitle="Defina meta individual quando um OKR ou KPI precisa de meta diferente da institucional"
+      full
+    >
+      {/* Toggle tipo + busca */}
+      <div style={{ display: 'flex', gap: 12, alignItems: 'center', marginBottom: 12, flexWrap: 'wrap' }}>
+        <div style={{ display: 'inline-flex', border: `1px solid ${C.border}`, borderRadius: 6, padding: 2, background: 'var(--cbrio-input-bg)' }}>
+          {[
+            { v: 'okrs', l: `OKRs Gerais (${todosOkrs.length})` },
+            { v: 'kpis', l: `KPIs Táticos (${kpis.length || '...'})` },
+          ].map(opt => (
+            <button
+              key={opt.v}
+              onClick={() => { setTab(opt.v); setEditandoId(null); }}
+              style={{
+                padding: '5px 12px', borderRadius: 4, fontSize: 11, fontWeight: 600,
+                background: tab === opt.v ? '#00B39D' : 'transparent',
+                color: tab === opt.v ? '#fff' : C.t2,
+                border: 'none', cursor: 'pointer',
+              }}
+            >{opt.l}</button>
+          ))}
+        </div>
+        <input
+          type="text" placeholder="Buscar por nome, ID, área..."
+          value={busca} onChange={e => setBusca(e.target.value)}
+          style={{ ...inpStyle, flex: 1, minWidth: 200, maxWidth: 400 }}
+        />
+        <span style={{ fontSize: 10, color: C.t3 }}>{lista.length} resultado{lista.length === 1 ? '' : 's'}</span>
+      </div>
+
+      {/* Lista */}
+      {loading ? (
+        <p style={{ fontSize: 12, color: C.t3, padding: 20, textAlign: 'center' }}>Carregando…</p>
+      ) : lista.length === 0 ? (
+        <p style={{ fontSize: 12, color: C.t3, padding: 20, textAlign: 'center' }}>
+          {busca ? 'Nenhum item bate com a busca.' : 'Sem itens.'}
+        </p>
+      ) : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 4, maxHeight: 600, overflowY: 'auto' }}>
+          {lista.map(item => {
+            const editando = editandoId === item.id;
+            const temOverride = item.meta_valor != null;
+            const nome = tab === 'okrs' ? item.nome : item.indicador;
+            const subInfo = tab === 'okrs'
+              ? (item.indicador_geral || item.tipo)
+              : `${item.id} · ${item.area} · ${item.periodicidade}`;
+
+            return (
+              <div key={item.id} style={{
+                padding: 10, borderRadius: 6, border: `1px solid ${C.border}`,
+                borderLeft: temOverride ? '3px solid #00B39D' : `3px solid ${C.border}`,
+                background: editando ? 'var(--cbrio-input-bg)' : C.card,
+              }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+                  <div style={{ flex: 1, minWidth: 250 }}>
+                    <div style={{ fontSize: 12, fontWeight: 600, color: C.text }}>{nome}</div>
+                    <div style={{ fontSize: 10, color: C.t3, marginTop: 2 }}>{subInfo}</div>
+                  </div>
+
+                  {!editando && (
+                    <>
+                      <div style={{ textAlign: 'right', minWidth: 130 }}>
+                        {temOverride ? (
+                          <>
+                            <div style={{ fontSize: 14, fontWeight: 700, color: '#00B39D', lineHeight: 1.1 }}>
+                              {item.meta_valor}{item.unidade ? ` ${item.unidade}` : ''}
+                            </div>
+                            <div style={{ fontSize: 9, color: '#00B39D', fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.5 }}>específica</div>
+                          </>
+                        ) : (
+                          <>
+                            <div style={{ fontSize: 14, fontWeight: 700, color: C.t3, lineHeight: 1.1 }}>—</div>
+                            <div style={{ fontSize: 9, color: C.t3, textTransform: 'uppercase', letterSpacing: 0.5 }}>herda institucional</div>
+                          </>
+                        )}
+                      </div>
+                      <button onClick={() => iniciarEdicao(item)} style={btnSm}>Editar</button>
+                      {temOverride && (
+                        <button onClick={() => limparOverride(item, tipoItem)} style={{ ...btnSm, color: '#EF4444', borderColor: '#EF444460' }}>
+                          Limpar
+                        </button>
+                      )}
+                    </>
+                  )}
+
+                  {editando && (
+                    <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap', flex: 1, minWidth: 280 }}>
+                      <input
+                        type="number" step="0.01" placeholder="Meta valor"
+                        value={edicao.meta_valor}
+                        onChange={e => setEdicao(f => ({ ...f, meta_valor: e.target.value }))}
+                        style={{ ...inpStyle, width: 100 }}
+                        autoFocus
+                      />
+                      <input
+                        type="text" placeholder="Descrição (ex: +30% vs 2025)"
+                        value={edicao.meta_descricao}
+                        onChange={e => setEdicao(f => ({ ...f, meta_descricao: e.target.value }))}
+                        style={{ ...inpStyle, flex: 1, minWidth: 160 }}
+                      />
+                      <button onClick={() => salvar(item, tipoItem)} style={btnPrimary}>Salvar</button>
+                      <button onClick={() => { setEditandoId(null); setEdicao({}); }} style={btnSm}>Cancelar</button>
+                    </div>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </Card>
   );
 }
 
