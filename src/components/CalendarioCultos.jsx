@@ -8,7 +8,7 @@ import { useState, useEffect, useMemo, useCallback } from 'react';
 import { kpis as kpisApi } from '../api';
 
 const cultosApi = kpisApi.cultos;
-import { Calendar, ChevronLeft, ChevronRight, CheckCircle2, AlertCircle, X, Save, Tv, Users, Sparkles } from 'lucide-react';
+import { Calendar, ChevronLeft, ChevronRight, CheckCircle2, AlertCircle, X, Save, Tv, Users, Sparkles, UserPlus, Trash2, Pencil } from 'lucide-react';
 import { toast } from 'sonner';
 import { formatErro } from '../lib/formatErro';
 
@@ -492,7 +492,7 @@ function ModalCulto({ culto, onClose, onSaved }) {
           </div>
 
           <SecaoTitulo icone={Sparkles} cor="#8B5CF6" titulo="Decisões / conversões" />
-          <div style={{ display: 'grid', gridTemplateColumns: hasOnline ? '1fr 1fr' : '1fr', gap: 10, marginBottom: 16 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: hasOnline ? '1fr 1fr' : '1fr', gap: 10, marginBottom: 12 }}>
             <Field label={hasOnline ? 'Presenciais' : 'Decisões'}>
               <input type="number" min="0" value={form.decisoes_presenciais} onChange={e => set('decisoes_presenciais', e.target.value)} style={inp} />
             </Field>
@@ -502,6 +502,13 @@ function ModalCulto({ culto, onClose, onSaved }) {
               </Field>
             )}
           </div>
+
+          {/* Dados individuais das pessoas que decidiram */}
+          <DecisoesPessoasSection
+            cultoId={culto.id}
+            totalEsperado={(Number(form.decisoes_presenciais) || 0) + (hasOnline ? (Number(form.decisoes_online) || 0) : 0)}
+            hasOnline={hasOnline}
+          />
 
           {hasOnline && (
             <>
@@ -592,3 +599,261 @@ const btnGhost = {
   padding: '8px 14px', borderRadius: 6, fontSize: 12, fontWeight: 600,
   background: 'transparent', color: C.t2, border: `1px solid ${C.border}`, cursor: 'pointer',
 };
+
+// ============================================================================
+// DecisoesPessoasSection · captura nome/contato de cada pessoa que decidiu
+//
+// Marcos: "sempre que for preenchido as decisoes de pessoas, tenha um campo
+//          para ser inserido os dados de cada um que toma essa decisao em
+//          todos os cultos".
+//
+// UX:
+// - Mostra contador "X de Y registradas" baseado no valor de decisoes_presenciais
+//   + decisoes_online (totalEsperado) e quantas pessoas ja foram registradas
+// - Botao "+ Adicionar pessoa" abre form inline (nome obrigatorio, resto
+//   opcional · CPF tenta vincular a mem_membros existente no backend)
+// - Lista as pessoas ja registradas · click pra editar/remover
+// ============================================================================
+function DecisoesPessoasSection({ cultoId, totalEsperado, hasOnline }) {
+  const [pessoas, setPessoas] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [showForm, setShowForm] = useState(false);
+  const [editando, setEditando] = useState(null); // id da pessoa em edicao
+
+  const carregar = useCallback(async () => {
+    if (!cultoId) return;
+    setLoading(true);
+    try {
+      const data = await cultosApi.decisoesPessoas.list(cultoId);
+      setPessoas(Array.isArray(data) ? data : []);
+    } catch (e) {
+      console.error('[decisoes-pessoas]', e);
+    } finally {
+      setLoading(false);
+    }
+  }, [cultoId]);
+
+  useEffect(() => { carregar(); }, [carregar]);
+
+  const handleSaved = () => {
+    setShowForm(false);
+    setEditando(null);
+    carregar();
+  };
+
+  const handleDelete = async (id) => {
+    if (!window.confirm('Remover registro desta pessoa?')) return;
+    try {
+      await cultosApi.decisoesPessoas.remove(id);
+      toast.success('Removido');
+      carregar();
+    } catch (e) { toast.error(formatErro(e)); }
+  };
+
+  const registradas = pessoas.length;
+  const faltando = Math.max(0, totalEsperado - registradas);
+  const completo = totalEsperado > 0 && registradas >= totalEsperado;
+
+  if (totalEsperado === 0 && registradas === 0) {
+    // Sem decisoes preenchidas e sem registros · nao mostra a secao
+    return null;
+  }
+
+  return (
+    <div style={{ marginBottom: 16, padding: 12, borderRadius: 8, background: 'var(--cbrio-input-bg)', border: `1px solid ${C.border}` }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginBottom: 10, flexWrap: 'wrap' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, fontWeight: 700, color: '#8B5CF6', textTransform: 'uppercase', letterSpacing: 0.5 }}>
+          <UserPlus size={11} /> Dados das pessoas que decidiram
+        </div>
+        <div style={{ fontSize: 11, fontWeight: 600, color: completo ? '#10B981' : faltando > 0 ? '#F59E0B' : C.t3 }}>
+          {registradas} de {totalEsperado || registradas} registrada{registradas === 1 ? '' : 's'}
+          {faltando > 0 && ` · faltam ${faltando}`}
+        </div>
+      </div>
+
+      {/* Lista de pessoas ja registradas */}
+      {pessoas.length > 0 && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 4, marginBottom: 8 }}>
+          {pessoas.map(p => editando === p.id ? (
+            <DecisaoPessoaForm
+              key={p.id}
+              cultoId={cultoId}
+              pessoa={p}
+              hasOnline={hasOnline}
+              onSaved={handleSaved}
+              onCancel={() => setEditando(null)}
+            />
+          ) : (
+            <div key={p.id} style={{
+              display: 'flex', alignItems: 'center', gap: 8, padding: '6px 10px',
+              background: C.card, border: `1px solid ${C.border}`, borderLeft: '3px solid #8B5CF6', borderRadius: 4, fontSize: 11,
+            }}>
+              <span style={{ fontWeight: 600, color: C.text, flex: 1, minWidth: 120 }}>{p.nome}</span>
+              {p.telefone && <span style={{ color: C.t3 }}>{p.telefone}</span>}
+              {p.email && <span style={{ color: C.t3, fontSize: 10 }}>{p.email}</span>}
+              <span style={{ fontSize: 9, padding: '1px 6px', borderRadius: 99, background: 'var(--cbrio-input-bg)', color: C.t2, fontWeight: 600 }}>
+                {p.tipo_decisao}
+              </span>
+              {p.membro_id && (
+                <span style={{ fontSize: 9, padding: '1px 6px', borderRadius: 99, background: '#10B98118', color: '#047857', fontWeight: 700 }}>vinculada a membro</span>
+              )}
+              <button onClick={() => setEditando(p.id)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: C.t2, padding: 4 }} title="Editar">
+                <Pencil size={11} />
+              </button>
+              <button onClick={() => handleDelete(p.id)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#EF4444', padding: 4 }} title="Remover">
+                <Trash2 size={11} />
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Form de adicionar */}
+      {showForm && (
+        <DecisaoPessoaForm
+          cultoId={cultoId}
+          pessoa={null}
+          hasOnline={hasOnline}
+          onSaved={handleSaved}
+          onCancel={() => setShowForm(false)}
+        />
+      )}
+
+      {/* Botao adicionar */}
+      {!showForm && (
+        <button
+          onClick={() => setShowForm(true)}
+          disabled={loading}
+          style={{
+            ...btnGhost, width: '100%', justifyContent: 'center',
+            color: faltando > 0 ? '#8B5CF6' : C.t2,
+            borderColor: faltando > 0 ? '#8B5CF6' : C.border,
+          }}
+        >
+          <UserPlus size={12} /> Adicionar pessoa{faltando > 0 ? ` (faltam ${faltando})` : ''}
+        </button>
+      )}
+    </div>
+  );
+}
+
+function DecisaoPessoaForm({ cultoId, pessoa, hasOnline, onSaved, onCancel }) {
+  const ehEdicao = !!pessoa;
+  const [form, setForm] = useState({
+    nome: pessoa?.nome || '',
+    telefone: pessoa?.telefone || '',
+    email: pessoa?.email || '',
+    idade: pessoa?.idade ?? '',
+    cpf: pessoa?.cpf || '',
+    tipo_decisao: pessoa?.tipo_decisao || 'presencial',
+    observacoes: pessoa?.observacoes || '',
+  });
+  const [saving, setSaving] = useState(false);
+
+  const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
+
+  const submit = async () => {
+    if (!form.nome.trim() || form.nome.trim().length < 2) {
+      toast.error('Nome obrigatório (mínimo 2 caracteres)');
+      return;
+    }
+    setSaving(true);
+    try {
+      const payload = {
+        nome: form.nome.trim(),
+        telefone: form.telefone || null,
+        email: form.email || null,
+        idade: form.idade === '' ? null : Number(form.idade),
+        cpf: form.cpf || null,
+        tipo_decisao: form.tipo_decisao,
+        observacoes: form.observacoes || null,
+      };
+      if (ehEdicao) {
+        await cultosApi.decisoesPessoas.update(pessoa.id, payload);
+      } else {
+        await cultosApi.decisoesPessoas.create(cultoId, payload);
+      }
+      toast.success(ehEdicao ? 'Pessoa atualizada' : 'Pessoa registrada');
+      onSaved();
+    } catch (e) {
+      toast.error(formatErro(e));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div style={{
+      background: C.card, border: `2px solid #8B5CF6`, borderRadius: 6,
+      padding: 10, display: 'flex', flexDirection: 'column', gap: 8,
+    }}>
+      <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 8 }}>
+        <div>
+          <label style={{ fontSize: 10, fontWeight: 600, color: C.t3, display: 'block', marginBottom: 2 }}>Nome *</label>
+          <input
+            type="text" value={form.nome} autoFocus
+            onChange={e => set('nome', e.target.value)}
+            style={{ ...inp, padding: '6px 10px', fontSize: 11 }}
+            placeholder="Nome completo"
+          />
+        </div>
+        <div>
+          <label style={{ fontSize: 10, fontWeight: 600, color: C.t3, display: 'block', marginBottom: 2 }}>Tipo</label>
+          <select
+            value={form.tipo_decisao}
+            onChange={e => set('tipo_decisao', e.target.value)}
+            style={{ ...inp, padding: '6px 10px', fontSize: 11 }}
+          >
+            <option value="presencial">Presencial</option>
+            {hasOnline && <option value="online">Online</option>}
+          </select>
+        </div>
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 80px', gap: 8 }}>
+        <div>
+          <label style={{ fontSize: 10, fontWeight: 600, color: C.t3, display: 'block', marginBottom: 2 }}>Telefone</label>
+          <input
+            type="tel" value={form.telefone}
+            onChange={e => set('telefone', e.target.value)}
+            style={{ ...inp, padding: '6px 10px', fontSize: 11 }}
+            placeholder="(21) 99999-0000"
+          />
+        </div>
+        <div>
+          <label style={{ fontSize: 10, fontWeight: 600, color: C.t3, display: 'block', marginBottom: 2 }}>E-mail</label>
+          <input
+            type="email" value={form.email}
+            onChange={e => set('email', e.target.value)}
+            style={{ ...inp, padding: '6px 10px', fontSize: 11 }}
+            placeholder="opcional"
+          />
+        </div>
+        <div>
+          <label style={{ fontSize: 10, fontWeight: 600, color: C.t3, display: 'block', marginBottom: 2 }}>Idade</label>
+          <input
+            type="number" min="0" max="120" value={form.idade}
+            onChange={e => set('idade', e.target.value)}
+            style={{ ...inp, padding: '6px 10px', fontSize: 11 }}
+          />
+        </div>
+      </div>
+      <div>
+        <label style={{ fontSize: 10, fontWeight: 600, color: C.t3, display: 'block', marginBottom: 2 }}>
+          CPF <span style={{ fontWeight: 400 }}>(opcional · se preenchido, vincula a cadastro existente)</span>
+        </label>
+        <input
+          type="text" value={form.cpf} maxLength={14}
+          onChange={e => set('cpf', e.target.value)}
+          style={{ ...inp, padding: '6px 10px', fontSize: 11 }}
+          placeholder="000.000.000-00"
+        />
+      </div>
+      <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end' }}>
+        <button onClick={onCancel} disabled={saving} style={btnGhost}>Cancelar</button>
+        <button onClick={submit} disabled={saving} style={{ ...btnPrimary, background: '#8B5CF6' }}>
+          {saving ? 'Salvando...' : (ehEdicao ? 'Atualizar' : 'Registrar')}
+        </button>
+      </div>
+    </div>
+  );
+}
