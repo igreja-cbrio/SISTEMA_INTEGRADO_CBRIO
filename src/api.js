@@ -584,6 +584,10 @@ export const solicitacoes = {
   slaDefs:        () => get('/solicitacoes/sla-defs'),
   reservasEspaco: (params) => get('/solicitacoes/reservas-espaco' + (params ? '?' + new URLSearchParams(params) : '')),
   alcadas:        () => get('/solicitacoes/alcadas'),
+  areaResponsaveis: {
+    list:    () => get('/solicitacoes/area-responsaveis'),
+    save:    (area, profile_ids) => put('/solicitacoes/area-responsaveis', { area, profile_ids }),
+  },
 };
 
 export const membresia = {
