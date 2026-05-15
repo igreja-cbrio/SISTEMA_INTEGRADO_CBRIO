@@ -1122,11 +1122,12 @@ router.get('/nsm/sem-dados', async (req, res) => {
 
 const SERIE_DADOS = {
   seguir: [
-    { id: 'conversoes', label: 'Conversões',     filtra_culto: true,  tabela: 'cultos' },
+    { id: 'conversoes', label: 'Decisões',       filtra_culto: true,  tabela: 'cultos' },
     { id: 'frequencia', label: 'Frequência',     filtra_culto: true,  tabela: 'cultos' },
     { id: 'batismos',   label: 'Batismos',       filtra_culto: false, tabela: 'batismo_inscricoes' },
   ],
   conectar: [
+    { id: 'grupos_ativos',     label: 'Grupos ativos',           filtra_culto: false, tabela: 'mem_grupo_membros' },
     { id: 'membros_em_grupos', label: 'Membros em grupos ativos', filtra_culto: false, tabela: 'mem_grupo_membros' },
     { id: 'entradas_grupos',   label: 'Novas entradas em grupos', filtra_culto: false, tabela: 'mem_grupo_membros' },
   ],
@@ -1139,6 +1140,8 @@ const SERIE_DADOS = {
     { id: 'novos_voluntarios',  label: 'Novos voluntários',         filtra_culto: false, tabela: 'mem_voluntarios' },
   ],
   generosidade: [
+    { id: 'dizimistas',      label: 'Dizimistas únicos',       filtra_culto: false, tabela: 'mem_contribuicoes' },
+    { id: 'ofertantes',      label: 'Ofertantes únicos',       filtra_culto: false, tabela: 'mem_contribuicoes' },
     { id: 'doacoes_valor',   label: 'Valor doado (R$)',        filtra_culto: false, tabela: 'mem_contribuicoes' },
     { id: 'doadores_unicos', label: 'Doadores únicos no mês',  filtra_culto: false, tabela: 'mem_contribuicoes' },
   ],
@@ -1226,7 +1229,25 @@ async function calcularSerie(valor, dado, { inicio, fim, culto, granularidade })
     (data || []).forEach(r => add(r.data_batismo, 1));
   }
   // ----- CONECTAR -----
-  else if (valor === 'conectar' && dado === 'membros_em_grupos') {
+  else if (valor === 'conectar' && dado === 'grupos_ativos') {
+    // Snapshot · grupos com pelo menos 1 membro ativo no fim de cada periodo
+    const { data, error } = await supabase.from('mem_grupo_membros')
+      .select('grupo_id, entrou_em, saiu_em');
+    if (error) throw error;
+    const periodos = preencherLacunas([], inicio, fim, granularidade).map(p => p.periodo);
+    for (const p of periodos) {
+      const fimP = granularidade === 'semana'
+        ? new Date(new Date(p + 'T12:00:00').setDate(new Date(p + 'T12:00:00').getDate() + 6)).toISOString().slice(0, 10)
+        : new Date(Number(p.slice(0, 4)), Number(p.slice(5, 7)), 0).toISOString().slice(0, 10);
+      const gruposAtivos = new Set();
+      (data || []).forEach(r => {
+        if (r.entrou_em && r.entrou_em <= fimP && (!r.saiu_em || r.saiu_em > fimP)) {
+          gruposAtivos.add(r.grupo_id);
+        }
+      });
+      agg.set(p, gruposAtivos.size);
+    }
+  } else if (valor === 'conectar' && dado === 'membros_em_grupos') {
     // Snapshot por mes: quantos membros estavam ativos em grupos no fim do mes
     // (entrou_em <= fim_do_mes AND (saiu_em IS NULL OR saiu_em > fim_do_mes))
     const { data, error } = await supabase.from('mem_grupo_membros')
@@ -1290,7 +1311,22 @@ async function calcularSerie(valor, dado, { inicio, fim, culto, granularidade })
     (data || []).forEach(r => add(r.desde, 1));
   }
   // ----- GENEROSIDADE -----
-  else if (valor === 'generosidade' && dado === 'doacoes_valor') {
+  else if (valor === 'generosidade' && (dado === 'dizimistas' || dado === 'ofertantes')) {
+    const tipo = dado === 'dizimistas' ? 'dizimo' : 'oferta';
+    const { data, error } = await supabase.from('mem_contribuicoes')
+      .select('data, membro_id, tipo')
+      .eq('tipo', tipo)
+      .gte('data', inicio).lte('data', fim);
+    if (error) throw error;
+    const setsPorPeriodo = new Map();
+    (data || []).forEach(r => {
+      const k = chavePeriodo(r.data, granularidade);
+      if (!k || !r.membro_id) return;
+      if (!setsPorPeriodo.has(k)) setsPorPeriodo.set(k, new Set());
+      setsPorPeriodo.get(k).add(r.membro_id);
+    });
+    setsPorPeriodo.forEach((set, k) => agg.set(k, set.size));
+  } else if (valor === 'generosidade' && dado === 'doacoes_valor') {
     const { data, error } = await supabase.from('mem_contribuicoes')
       .select('data, valor')
       .gte('data', inicio).lte('data', fim);
@@ -1374,207 +1410,108 @@ router.get('/serie-temporal', async (req, res) => {
 });
 
 // ============================================================================
-// GET /okrs-cascata · OKRs > KRs > KPIs com status agregado
+// GET /indicadores-principais · resumo visual dos indicadores que movem
+// cada valor (1-3 por valor)
 //
-// Marcos: "uma seção de KPIs por KR · cada KR expande pros KPIs táticos que
-//          o alimentam · resolve 'o KR ta 65% porque KPI X ta 80% e Y ta 50%'"
+// Marcos: "use o que move cada area e faca uma tela mais visual"
+//   - Seguir:        Frequencia, Batismo, Decisao
+//   - Conectar:      Grupos ativos
+//   - Investir:      Devocionais concluidos
+//   - Servir:        Voluntarios ativos
+//   - Generosidade:  Dizimistas, Ofertantes
 //
-// Estrutura aninhada:
-//   OKR Geral
-//     └─ KR Geral (kpi_krs com area IS NULL)
-//          └─ KR Especifico por area (kr_pai_id = KR Geral)
-//                └─ KPI Tatico (kpi_krs.kpi_id -> kpi_indicadores_taticos)
-//
-// Status agrega bottom-up: KPI -> KR -> OKR (pior status entre filhos).
+// Retorna por valor: indicadores com valor_atual (ultimo mes),
+// delta_pct vs mes anterior, sparkline dos ultimos 6 meses.
 // ============================================================================
-router.get('/okrs-cascata', async (req, res) => {
+
+const INDICADORES_PRINCIPAIS = {
+  seguir: [
+    { id: 'frequencia', label: 'Frequência',   icon: 'users',    formato: 'inteiro' },
+    { id: 'conversoes', label: 'Decisões',     icon: 'heart',    formato: 'inteiro' },
+    { id: 'batismos',   label: 'Batismos',     icon: 'droplet',  formato: 'inteiro' },
+  ],
+  conectar: [
+    { id: 'grupos_ativos', label: 'Grupos ativos na temporada', icon: 'users',  formato: 'inteiro' },
+  ],
+  investir: [
+    { id: 'devocionais', label: 'Devocionais concluídos', icon: 'book', formato: 'inteiro' },
+  ],
+  servir: [
+    { id: 'voluntarios_ativos', label: 'Voluntários ativos', icon: 'hand', formato: 'inteiro' },
+  ],
+  generosidade: [
+    { id: 'dizimistas', label: 'Dizimistas',  icon: 'gift', formato: 'inteiro' },
+    { id: 'ofertantes', label: 'Ofertantes',  icon: 'gift', formato: 'inteiro' },
+  ],
+};
+
+router.get('/indicadores-principais', async (req, res) => {
   try {
-    const cached = cacheGet('okrs-cascata');
+    const cached = cacheGet('indicadores-principais');
     if (cached) return res.json(cached);
 
-    // 1. OKRs ativos
-    const { data: okrs, error: eo } = await supabase
-      .from('kpi_objetivos_gerais')
-      .select('id, nome, descricao, valores, tipo_okr, meta_valor, ordem')
-      .eq('ativo', true)
-      .order('ordem', { nullsFirst: false });
-    if (eo) throw eo;
+    // Range: ultimos 6 meses pra sparkline + comparar ultimo com penultimo
+    const fim = new Date();
+    const inicio = new Date();
+    inicio.setMonth(inicio.getMonth() - 5);
+    inicio.setDate(1);
+    const inicioStr = inicio.toISOString().slice(0, 10);
+    const fimStr    = fim.toISOString().slice(0, 10);
+    const opts = { inicio: inicioStr, fim: fimStr, culto: null, granularidade: 'mes' };
 
-    // 2. KRs (gerais + especificos)
-    const { data: krs, error: ek } = await supabase
-      .from('kpi_krs')
-      .select('id, objetivo_geral_id, titulo, meta_valor, meta_texto, unidade, area, kr_pai_id, kpi_id, agregacao_cascata')
-      .eq('ativo', true);
-    if (ek) throw ek;
-
-    // 3. KPIs taticos
-    const { data: kpis, error: ekp } = await supabase
-      .from('kpi_indicadores_taticos')
-      .select('id, indicador, area, valores, objetivo_geral_id, meta_valor, periodicidade')
-      .eq('ativo', true);
-    if (ekp) throw ekp;
-    const kpiById = {};
-    (kpis || []).forEach(k => { kpiById[k.id] = k; });
-
-    // 4. Status de cada KPI
-    const { data: trajs } = await supabase
-      .from('vw_kpi_trajetoria_atual')
-      .select('kpi_id, status_trajetoria, valor_realizado, periodo_referencia, meta_valor');
-    const trajByKpi = {};
-    (trajs || []).forEach(t => { trajByKpi[t.kpi_id] = t; });
-
-    // Normalizador de status (lega ou novo)
-    const norm = (s) => {
-      if (s === 'verde'    || s === 'no_alvo') return 'verde';
-      if (s === 'amarelo'  || s === 'atras')   return 'amarelo';
-      if (s === 'vermelho' || s === 'critico') return 'vermelho';
-      return 'sem_dado';
-    };
-
-    // Pior status entre uma lista
-    const piorStatus = (lista) => {
-      const arr = lista.map(norm);
-      if (arr.includes('vermelho')) return 'vermelho';
-      if (arr.includes('amarelo'))  return 'amarelo';
-      if (arr.every(s => s === 'sem_dado')) return 'sem_dado';
-      return 'verde';
-    };
-
-    // Agrupa KRs por objetivo_geral_id (KRs gerais · area NULL)
-    const krGeraisPorOkr = {};
-    const krEspecificosPorPai = {};
-    (krs || []).forEach(kr => {
-      if (!kr.area && !kr.kr_pai_id && kr.objetivo_geral_id) {
-        if (!krGeraisPorOkr[kr.objetivo_geral_id]) krGeraisPorOkr[kr.objetivo_geral_id] = [];
-        krGeraisPorOkr[kr.objetivo_geral_id].push(kr);
-      } else if (kr.area && kr.kr_pai_id) {
-        if (!krEspecificosPorPai[kr.kr_pai_id]) krEspecificosPorPai[kr.kr_pai_id] = [];
-        krEspecificosPorPai[kr.kr_pai_id].push(kr);
-      }
-    });
-
-    // KPIs ligados diretamente ao OKR (sem passar por KR · objetivo_geral_id no KPI)
-    const kpisDiretosPorOkr = {};
-    (kpis || []).forEach(k => {
-      if (k.objetivo_geral_id) {
-        if (!kpisDiretosPorOkr[k.objetivo_geral_id]) kpisDiretosPorOkr[k.objetivo_geral_id] = [];
-        kpisDiretosPorOkr[k.objetivo_geral_id].push(k);
-      }
-    });
-
-    // Monta payload
-    const okrsOut = (okrs || []).map(okr => {
-      const krGerais = krGeraisPorOkr[okr.id] || [];
-      const krsComKpis = krGerais.map(krG => {
-        const especificos = krEspecificosPorPai[krG.id] || [];
-        const kpisDoKr = especificos
-          .map(esp => {
-            const kpi = kpiById[esp.kpi_id];
-            if (!kpi) return null;
-            const t = trajByKpi[kpi.id];
-            return {
-              id: kpi.id,
-              indicador: kpi.indicador,
-              area: kpi.area,
-              area_kr: esp.area, // area do KR especifico
-              meta_valor: t?.meta_valor || kpi.meta_valor,
-              valor_atual: t?.valor_realizado ?? null,
-              periodo: t?.periodo_referencia || null,
-              status: norm(t?.status_trajetoria),
-              periodicidade: kpi.periodicidade,
-            };
-          })
-          .filter(Boolean);
-
-        const statusKr = kpisDoKr.length > 0
-          ? piorStatus(kpisDoKr.map(k => k.status))
-          : 'sem_dado';
-
-        return {
-          id: krG.id,
-          titulo: krG.titulo,
-          meta_valor: krG.meta_valor,
-          meta_texto: krG.meta_texto,
-          unidade: krG.unidade,
-          agregacao: krG.agregacao_cascata,
-          total_kpis: kpisDoKr.length,
-          em_dia: kpisDoKr.filter(k => k.status === 'verde').length,
-          atras: kpisDoKr.filter(k => k.status === 'amarelo').length,
-          critico: kpisDoKr.filter(k => k.status === 'vermelho').length,
-          sem_dado: kpisDoKr.filter(k => k.status === 'sem_dado').length,
-          status: statusKr,
-          kpis: kpisDoKr,
-        };
-      });
-
-      // KPIs orfaos · ligados ao OKR sem passar por KR (raros)
-      const kpisOrfaos = (kpisDiretosPorOkr[okr.id] || [])
-        // remove os ja cobertos por algum KR
-        .filter(k => !krsComKpis.some(kr => kr.kpis.some(kp => kp.id === k.id)))
-        .map(kpi => {
-          const t = trajByKpi[kpi.id];
+    // Pra cada valor, calcula serie de cada indicador em paralelo
+    const valoresOut = await Promise.all(VALORES.map(async (valorKey) => {
+      const cfgs = INDICADORES_PRINCIPAIS[valorKey] || [];
+      const indicadores = await Promise.all(cfgs.map(async (cfg) => {
+        try {
+          const serie = await calcularSerie(valorKey, cfg.id, opts);
+          const valores = serie.map(p => Number(p.valor) || 0);
+          const valor_atual = valores[valores.length - 1] || 0;
+          const valor_anterior = valores[valores.length - 2] || 0;
+          const delta_pct = valor_anterior > 0
+            ? Math.round(((valor_atual - valor_anterior) / valor_anterior) * 1000) / 10
+            : null;
+          const total_6m = valores.reduce((s, v) => s + v, 0);
           return {
-            id: kpi.id,
-            indicador: kpi.indicador,
-            area: kpi.area,
-            area_kr: null,
-            meta_valor: t?.meta_valor || kpi.meta_valor,
-            valor_atual: t?.valor_realizado ?? null,
-            periodo: t?.periodo_referencia || null,
-            status: norm(t?.status_trajetoria),
-            periodicidade: kpi.periodicidade,
+            id: cfg.id,
+            label: cfg.label,
+            icon: cfg.icon,
+            formato: cfg.formato,
+            valor_atual,
+            valor_anterior,
+            delta_pct,
+            total_6m,
+            sparkline: serie.map(p => ({ periodo: p.periodo, valor: Number(p.valor) || 0 })),
+            periodo_atual: serie[serie.length - 1]?.periodo || null,
           };
-        });
-
-      // Stats agregados do OKR
-      const todosKpis = [
-        ...krsComKpis.flatMap(kr => kr.kpis),
-        ...kpisOrfaos,
-      ];
-      const statusOkr = todosKpis.length > 0
-        ? piorStatus(todosKpis.map(k => k.status))
-        : 'sem_dado';
+        } catch (e) {
+          console.error(`indicadores-principais:${valorKey}:${cfg.id}:`, e.message);
+          return {
+            id: cfg.id, label: cfg.label, icon: cfg.icon, formato: cfg.formato,
+            valor_atual: 0, valor_anterior: 0, delta_pct: null, total_6m: 0,
+            sparkline: [], erro: e.message,
+          };
+        }
+      }));
 
       return {
-        id: okr.id,
-        nome: okr.nome,
-        descricao: okr.descricao,
-        valores: Array.isArray(okr.valores) ? okr.valores : [],
-        tipo_okr: okr.tipo_okr,
-        meta_valor: okr.meta_valor,
-        total_krs: krsComKpis.length,
-        total_kpis: todosKpis.length,
-        em_dia: todosKpis.filter(k => k.status === 'verde').length,
-        atras: todosKpis.filter(k => k.status === 'amarelo').length,
-        critico: todosKpis.filter(k => k.status === 'vermelho').length,
-        sem_dado: todosKpis.filter(k => k.status === 'sem_dado').length,
-        status: statusOkr,
-        krs: krsComKpis,
-        kpis_orfaos: kpisOrfaos,
+        key: valorKey,
+        label: VALOR_LABELS[valorKey],
+        cor: VALOR_CORES[valorKey],
+        indicadores,
       };
-    });
+    }));
 
-    // Stats globais
-    const todosKpisFlat = okrsOut.flatMap(o => [
-      ...o.krs.flatMap(kr => kr.kpis),
-      ...o.kpis_orfaos,
-    ]);
-    const resumo = {
-      total_okrs: okrsOut.length,
-      total_krs:  okrsOut.reduce((s, o) => s + o.total_krs, 0),
-      total_kpis: todosKpisFlat.length,
-      em_dia:  todosKpisFlat.filter(k => k.status === 'verde').length,
-      atras:   todosKpisFlat.filter(k => k.status === 'amarelo').length,
-      critico: todosKpisFlat.filter(k => k.status === 'vermelho').length,
-      sem_dado:todosKpisFlat.filter(k => k.status === 'sem_dado').length,
+    const _resp = {
+      periodo_inicio: inicioStr,
+      periodo_fim:    fimStr,
+      valores: valoresOut,
     };
-
-    const _resp = { resumo, okrs: okrsOut };
-    cacheSet('okrs-cascata', _resp);
+    cacheSet('indicadores-principais', _resp);
     res.json(_resp);
   } catch (e) {
-    console.error('painel/okrs-cascata:', e.message);
-    res.status(500).json({ error: 'Erro ao carregar cascata de OKRs' });
+    console.error('painel/indicadores-principais:', e.message);
+    res.status(500).json({ error: 'Erro ao carregar indicadores principais' });
   }
 });
 

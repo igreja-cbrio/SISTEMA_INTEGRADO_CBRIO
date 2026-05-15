@@ -998,8 +998,8 @@ SELECT * FROM vw_nsm_painel;
 - `GET /api/painel/serie-temporal/dados` → catalogo valor×dado + lista de cultos
 - `GET /api/painel/serie-temporal?valor=&dado=&culto=&inicio=&fim=&granularidade=`
    → serie agregada `[{periodo, valor}]` pra carrossel de tendencias
-- `GET /api/painel/okrs-cascata` → estrutura aninhada OKR > KR > KPIs com
-   status agregado (verde/amarelo/vermelho/sem_dado bottom-up)
+- `GET /api/painel/indicadores-principais` → resumo dos indicadores que movem
+   cada valor (1-3 por valor) com `valor_atual`, `delta_pct` e `sparkline` 6m
 
 ### Carrossel de valores (tendencias temporais · `/painel`)
 
@@ -1026,40 +1026,40 @@ Pra adicionar novo dado: incluir entrada em `SERIE_DADOS[valor]` em
 `backend/routes/painel.js` + adicionar o branch correspondente em
 `calcularSerie()`. Frontend pega automaticamente via `/serie-temporal/dados`.
 
-### KPIs por KR (cascata OKR > KR > KPI · `/painel`)
+### Indicadores principais (`/painel`)
 
-Abaixo do carrossel de tendências, `<KpisPorKR>` lê `/api/painel/okrs-cascata`
-e renderiza **cards expansíveis** dos OKRs Gerais. Cada card mostra:
+Abaixo do carrossel de tendências, `<IndicadoresPrincipais>` mostra um grid
+de **5 cards visuais** · um por valor · com os indicadores que **movem
+cada área**, escolhidos pelo Marcos:
 
-- Nome do OKR · tipo (estratégico/operacional) · badges dos valores
-- Resumo: total de KRs · total de KPIs · contagem por status
-- Click expande pros **KRs gerais** (lista) · cada KR mostra meta + razão
-  KPIs no alvo / total + status pintado
-- Click no KR expande pros **KPIs filhos** com indicador, área, valor
-  atual / meta · click no KPI navega pra `/painel/kpi/:id`
+| Valor | Indicadores principais |
+|-------|------------------------|
+| Seguir a Jesus | Frequência · Decisões · Batismos |
+| Conectar | Grupos ativos na temporada |
+| Investir Tempo com Deus | Devocionais concluídos |
+| Servir em Comunidade | Voluntários ativos |
+| Generosidade | Dizimistas · Ofertantes |
 
-Estrutura de dados:
-```
-kpi_objetivos_gerais (OKR)
-  └─ kpi_krs (kr_geral · area IS NULL, kr_pai_id IS NULL)
-       └─ kpi_krs (kr_especifico · area NOT NULL, kr_pai_id = kr_geral.id)
-            └─ kpi_indicadores_taticos (via kpi_id no kr_especifico)
-```
+Cada indicador tem: número grande do **mês atual**, delta % vs mês anterior
+(verde/vermelho) e **sparkline AreaChart dos últimos 6 meses**. Backend
+delega o cálculo pra `calcularSerie()` (mesma função do carrossel de
+tendências), então adicionar novo indicador é mapear em
+`INDICADORES_PRINCIPAIS` (backend/routes/painel.js).
 
-KPIs sem KR (ligados direto ao OKR via `kpi_indicadores_taticos.objetivo_geral_id`)
-aparecem numa pseudo-linha "KPIs ligados direto ao OKR (sem KR)".
-
-Status bottom-up: KPI (via `vw_kpi_trajetoria_atual`) → KR (pior status entre
-KPIs) → OKR (pior status entre KRs). Filtros disponíveis na UI: por valor
-(Seguir/Conectar/Investir/Servir/Generosidade), por status (todos/em
-alerta/no alvo) e por tipo (estratégico/operacional).
+Pra cobrir os indicadores, o `SERIE_DADOS` ganhou:
+- `conectar.grupos_ativos` · count de grupos com pelo menos 1 membro ativo
+  no fim de cada período (snapshot via `mem_grupo_membros`)
+- `generosidade.dizimistas` e `generosidade.ofertantes` · distinct membros
+  filtrando por `mem_contribuicoes.tipo = 'dizimo' | 'oferta'`
 
 ### Componentes do painel (`src/components/painel/`)
 
 - `MandalaSlide.jsx` — uma mandala SVG (5 ou 6 setores)
 - `CarrosselMandalas.jsx` — carrossel com setas, dots, swipe, teclado
 - `CarrosselValores.jsx` — 5 slides com filtros + gráfico de linha (tendências)
-- `KpisPorKR.jsx` — cascata OKR > KR > KPIs com cards expansíveis (3 filtros)
+- `IndicadoresPrincipais.jsx` — grid 5 cards · indicadores que movem cada valor
+  (frequência/decisões/batismos · grupos ativos · devocionais · voluntários ·
+   dizimistas/ofertantes) com número grande + delta % + sparkline 6m
 - `MatrizValorArea.jsx` — tabela colorida com modal
 - `ModalCelula.jsx` — drilldown da celula
 - `AlertasCriticos.jsx` — top 3 KPIs em alerta
