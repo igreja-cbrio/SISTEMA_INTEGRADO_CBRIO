@@ -23,6 +23,10 @@ app.use(sentryRequestHandler());
 
 // ── Security middleware ──
 app.use(helmet({ contentSecurityPolicy: false, crossOriginEmbedderPolicy: false }));
+// Dominios extras configuraveis via env (CSV) · ex: EXTRA_ALLOWED_ORIGINS="https://x.com,https://y.com"
+const extraOrigins = (process.env.EXTRA_ALLOWED_ORIGINS || '')
+  .split(',').map(s => s.trim()).filter(Boolean);
+
 app.use(cors({
   origin: function (origin, callback) {
     // Allow same-origin (no origin header) and known domains
@@ -30,10 +34,20 @@ app.use(cors({
       'http://localhost:5173',
       'http://localhost:8080',
       process.env.FRONTEND_URL,
+      ...extraOrigins,
     ].filter(Boolean);
-    if (!origin || allowed.includes(origin) || /\.vercel\.app$/.test(origin) || /\.lovable\.app$/.test(origin) || /\.lovableproject\.com$/.test(origin)) {
+    if (
+      !origin ||
+      allowed.includes(origin) ||
+      /\.vercel\.app$/.test(origin) ||
+      /\.lovable\.app$/.test(origin) ||
+      /\.lovableproject\.com$/.test(origin) ||
+      // Dominio proprio CBRio · cbrio.org + qualquer subdominio
+      /^https:\/\/(.+\.)?cbrio\.org$/.test(origin)
+    ) {
       callback(null, true);
     } else {
+      console.warn('[CORS] Origem bloqueada:', origin);
       callback(new Error('Origem não permitida pelo CORS'));
     }
   },
