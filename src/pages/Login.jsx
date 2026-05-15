@@ -118,7 +118,6 @@ export default function Login() {
         pc_no_email: 'Nenhum e-mail encontrado na sua conta do Planning Center.',
         pc_oauth_failed: 'Erro ao autenticar com Planning Center. Tente novamente.',
         verify_failed: 'Erro ao verificar sessao. Tente novamente.',
-        use_email_login: 'Voce ja possui uma conta criada com este e-mail. Entre com seu e-mail e senha.',
       };
       setError(msgs[oauthError] || 'Erro na autenticacao.');
       window.history.replaceState({}, '', '/login');
