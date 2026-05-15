@@ -105,7 +105,9 @@ export function AuthProvider({ children }) {
     if (!supabase) return { error: { message: 'Supabase não configurado' } };
     return supabase.auth.signInWithOAuth({
       provider: 'azure',
-      options: { redirectTo: window.location.origin },
+      // Supabase sempre inclui openid; estes escopos garantem que o Azure
+      // devolva dados suficientes para criar/associar o usuario por e-mail.
+      options: { redirectTo: window.location.origin, scopes: 'email profile' },
     });
   }
 

@@ -111,15 +111,23 @@ export default function Login() {
   // Show OAuth error messages from redirects
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
+    const hashParams = new URLSearchParams(window.location.hash.replace(/^#/, ''));
     const oauthError = params.get('error');
-    if (oauthError) {
+    const hashError = hashParams.get('error');
+    const errorCode = params.get('error_code') || hashParams.get('error_code');
+    const errorDescription = params.get('error_description') || hashParams.get('error_description');
+    const authError = oauthError || hashError;
+    if (authError) {
       const msgs = {
         pc_oauth_denied: 'Login com Planning Center foi cancelado.',
         pc_no_email: 'Nenhum e-mail encontrado na sua conta do Planning Center.',
         pc_oauth_failed: 'Erro ao autenticar com Planning Center. Tente novamente.',
         verify_failed: 'Erro ao verificar sessao. Tente novamente.',
+        server_error: 'Erro no provedor de login. Tente novamente.',
       };
-      setError(msgs[oauthError] || 'Erro na autenticacao.');
+      const baseMessage = msgs[authError] || 'Erro na autenticacao.';
+      const detail = errorDescription || errorCode;
+      setError(detail ? `${baseMessage} Detalhe: ${detail}` : baseMessage);
       window.history.replaceState({}, '', '/login');
     }
   }, []);

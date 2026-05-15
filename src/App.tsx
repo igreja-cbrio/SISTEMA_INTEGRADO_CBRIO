@@ -70,12 +70,13 @@ async function hardReload() {
   }
 }
 
-function lazyWithRetry<T extends ComponentType<any>>(factory: () => Promise<{ default: T }>) {
+function lazyWithRetry<T extends ComponentType<Record<string, never>>>(factory: () => Promise<{ default: T }>) {
   return lazy(async () => {
     try {
       return await factory();
-    } catch (err: any) {
-      const isChunkError = CHUNK_ERROR_RE.test(err?.message || '');
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err || '');
+      const isChunkError = CHUNK_ERROR_RE.test(message);
       if (isChunkError && getRetryCount() < MAX_RETRIES) {
         hardReload();
         return new Promise<{ default: T }>(() => {}); // Nunca resolve — pagina vai recarregar
@@ -123,7 +124,9 @@ class ErrorBoundary extends Component<{ children: ReactNode }, { hasError: boole
                       const regs = await navigator.serviceWorker.getRegistrations();
                       await Promise.all(regs.map(r => r.unregister()));
                     }
-                  } catch {}
+                  } catch {
+                    // Ignora falhas de limpeza; o reload abaixo ainda recupera o app.
+                  }
                   sessionStorage.clear();
                   // Limpa querystring (zera contador) e vai pra raiz
                   window.location.replace('/?_cb=' + Date.now());
@@ -229,10 +232,18 @@ const Loading = () => (
   </div>
 );
 
+function loginRedirectTarget() {
+  if (typeof window === 'undefined') return '/login';
+  const searchParams = new URLSearchParams(window.location.search);
+  const hashParams = new URLSearchParams(window.location.hash.replace(/^#/, ''));
+  const hasAuthError = searchParams.has('error') || hashParams.has('error');
+  return hasAuthError ? `/login${window.location.search}${window.location.hash}` : '/login';
+}
+
 function ProtectedRoute({ children }) {
   const { user, loading } = useAuth();
   if (loading) return <Loading />;
-  if (!user) return <Navigate to="/login" replace />;
+  if (!user) return <Navigate to={loginRedirectTarget()} replace />;
   return children;
 }
 
@@ -293,7 +304,7 @@ function VolunteerShell() {
 function DefaultRedirect() {
   const { user, loading, isVoluntario } = useAuth();
   if (loading) return <Loading />;
-  if (!user) return <Navigate to="/login" replace />;
+  if (!user) return <Navigate to={loginRedirectTarget()} replace />;
   if (isVoluntario) return <Navigate to="/voluntariado/checkin" replace />;
   return <Navigate to="/dashboard" replace />;
 }
