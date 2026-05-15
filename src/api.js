@@ -28,8 +28,14 @@ async function request(path, opts = {}) {
   }
 
   if (res.status === 401) {
-    console.warn('[API] 401 – token inválido ou backend sem SUPABASE_SERVICE_ROLE_KEY');
-    throw new Error('Não autorizado. Verifique se o backend está configurado corretamente.');
+    const body = await res.json().catch(() => ({}));
+    console.warn('[API] 401', { path, reason: body.reason, detail: body.detail });
+    // Mensagens especificas pro usuario por causa raiz
+    const reasonMsg = {
+      no_token:       'Sessão expirada. Faça login novamente.',
+      invalid_token:  'Sua sessão expirou ou é de outro ambiente. Saia e entre novamente.',
+    };
+    throw new Error(reasonMsg[body.reason] || body.error || 'Não autorizado. Verifique se o backend está configurado corretamente.');
   }
   if (!res.ok) {
     const err = await res.json().catch(() => ({ error: 'Erro desconhecido' }));

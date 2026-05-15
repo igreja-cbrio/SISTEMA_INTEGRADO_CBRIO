@@ -78,7 +78,7 @@ export function AuthProvider({ children }) {
       if (_event === 'SIGNED_IN' && session?.user) {
         const u = session.user;
         const provider = u.app_metadata?.provider;
-        if (provider === 'azure') {
+        if (provider === 'azure' || provider === 'google') {
           const identities = u.identities || [];
           const hasEmailIdentity = identities.some(i => i.provider === 'email');
           if (hasEmailIdentity) {
@@ -191,6 +191,7 @@ export function AuthProvider({ children }) {
     userAreas,
     userSetores,
     signInWithMicrosoft,
+    signInWithGoogle,
     signInWithEmail,
     signOut,
   };
@@ -211,6 +212,7 @@ export function useAuth() {
       canExpansao: false, canAgenda: false, canIA: false, canCuidados: false,
       userAreas: [], userSetores: [],
       signInWithMicrosoft: async () => ({}),
+      signInWithGoogle: async () => ({}),
       signInWithEmail: async () => ({}), signOut: async () => {},
     };
   }
