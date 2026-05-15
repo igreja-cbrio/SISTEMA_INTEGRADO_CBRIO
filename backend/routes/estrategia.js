@@ -359,13 +359,20 @@ router.get('/okrs-por-tipo', async (req, res) => {
       .order('tipo_okr')
       .order('ordem');
     if (error) throw error;
+    // tipo_okr aceita varios buckets · agrupar dinamicamente em vez de
+    // assumir apenas qualitativo/quantitativo/sem_tipo (tinha 'operacional'
+    // gerando erro 'cannot read properties of undefined' antes).
     const agrupado = { qualitativo: [], quantitativo: [], sem_tipo: [] };
     (data || []).forEach(o => {
       const bucket = o.tipo_okr || 'sem_tipo';
+      if (!agrupado[bucket]) agrupado[bucket] = [];
       agrupado[bucket].push(o);
     });
     res.json(agrupado);
-  } catch (e) { res.status(500).json({ error: e.message }); }
+  } catch (e) {
+    console.error('[estrategia/okrs-por-tipo]', e?.message, e?.stack);
+    res.status(500).json({ error: e?.message || 'Erro ao carregar OKRs por tipo' });
+  }
 });
 
 // Forca recalculo das metas institucionais em todos KPIs (admin/diretor)
