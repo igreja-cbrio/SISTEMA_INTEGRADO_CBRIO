@@ -815,6 +815,42 @@ nome livre): `isAmiCulto` checa `'ami'`, `isBridgeCulto` checa
 `'bridge'`, `isSedeCulto` checa `domingo*` ou `'quarta com deus'`.
 Online usa soma de `online_pico` direto, sem filtro de tipo.
 
+### ⚠️ Meta absoluta × periodicidade do KPI · regra importante
+
+**Sempre** que adicionar novo KPI tático com `tipo_calculo != 'manual'` E meta
+cascateada via `aplicar_meta_institucional()`, lembrar:
+
+- `aplicar_meta_institucional()` materializa `meta_valor_absoluto` SEMPRE em
+  **escala anual** (baseline = ano anterior jan-dez × 1.30 / fator institucional).
+- O **coletor automático** gera registros na **periodicidade do KPI**
+  (semanal: soma da semana · mensal: soma do mês · etc).
+- Comparar valor de UMA semana contra meta ANUAL gera percentual baixo falso
+  (ex: 2.500 / 23.400 = 10.6% · vermelho falso positivo).
+
+**Onde a normalização acontece**: `vw_kpi_trajetoria_atual` e
+`vw_kpi_taticos_status` dividem `meta_valor_absoluto` pelo fator da
+periodicidade do KPI:
+
+| Periodicidade | Divisor |
+|---------------|---------|
+| `semanal`     | 52      |
+| `mensal`      | 12      |
+| `trimestral`  | 4       |
+| `semestral`   | 2       |
+| `anual`       | 1       |
+
+Migration de referência: `20260515520000_normalizar_meta_periodicidade.sql`.
+
+**Cuidados ao adicionar KPI novo:**
+1. Decidir a **periodicidade** correta no `kpi_indicadores_taticos.periodicidade`
+2. Garantir que o **coletor** (`fonte_auto` em `kpiAutoCollector.js`) retorna
+   o valor agregado naquela periodicidade (semanal = 1 semana, não acumulado)
+3. Se quiser meta **manual em escala não-anual** (ex: meta semanal direto),
+   preencher `kpi_indicadores_taticos.meta_valor` SEM passar pela cascata
+   (a view só normaliza quando `meta_valor_absoluto IS NOT NULL`)
+4. KPIs com checkpoints granulares em `kpi_trajetoria` continuam com a meta
+   do checkpoint (não passam pela normalização) · checkpoint já é por período
+
 ### Histórico de longo prazo · vw_culto_historico_anual
 
 Visualizações Frequência/Decisões cobrem ranges 3m / 6m / 12m / 2a / 5a
