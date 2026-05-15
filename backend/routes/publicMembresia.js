@@ -107,6 +107,72 @@ router.get('/verificar-familia', cadastroLimiter, async (req, res) => {
   }
 });
 
+// ─────────────────────────────────────────────────────────────────────────
+// GET /api/public/membresia/lookup-cpf?cpf=...
+//
+// Lookup proativo enquanto o usuario digita CPF no formulario publico.
+// Por privacidade NAO retorna dados sensiveis (telefone/email/endereco):
+// retorna apenas { found, primeiroNome, iniciaisSobrenome, fonte } pra
+// confirmacao visual. Se confirmar, o backend ja faz o de-dup correto
+// na submissao via duplicado_de_id.
+// ─────────────────────────────────────────────────────────────────────────
+router.get('/lookup-cpf', cadastroLimiter, async (req, res) => {
+  try {
+    const cpf = req.query.cpf;
+    if (!cpf || !cpfValido(cpf)) {
+      return res.json({ found: false, reason: 'invalid' });
+    }
+    const d = soDigitos(cpf);
+
+    // 1. mem_membros ativos
+    const { data: m } = await supabase
+      .from('mem_membros')
+      .select('id, nome, data_nascimento, status')
+      .eq('cpf', d)
+      .eq('active', true)
+      .maybeSingle();
+
+    if (m) {
+      const partes = (m.nome || '').trim().split(/\s+/);
+      const primeiroNome = partes[0] || '';
+      const iniciaisSobrenome = partes.slice(1).map(p => p[0]?.toUpperCase() || '').join('. ').trim();
+      return res.json({
+        found: true,
+        fonte: 'membro',
+        primeiroNome,
+        iniciaisSobrenome: iniciaisSobrenome ? iniciaisSobrenome + '.' : '',
+        status: m.status,
+      });
+    }
+
+    // 2. Cadastro pendente
+    const { data: p } = await supabase
+      .from('mem_cadastros_pendentes')
+      .select('id, nome, status')
+      .eq('cpf', d)
+      .in('status', ['pendente', 'duplicado'])
+      .maybeSingle();
+
+    if (p) {
+      const partes = (p.nome || '').trim().split(/\s+/);
+      const primeiroNome = partes[0] || '';
+      const iniciaisSobrenome = partes.slice(1).map(x => x[0]?.toUpperCase() || '').join('. ').trim();
+      return res.json({
+        found: true,
+        fonte: 'pendente',
+        primeiroNome,
+        iniciaisSobrenome: iniciaisSobrenome ? iniciaisSobrenome + '.' : '',
+        status: p.status,
+      });
+    }
+
+    return res.json({ found: false });
+  } catch (e) {
+    console.error('[PUBLIC] lookup-cpf error:', e.message);
+    res.json({ found: false, reason: 'error' });
+  }
+});
+
 // POST /api/public/membresia/cadastro
 // Submissão pública do formulário de cadastro de membresia.
 // - Não exige autenticação (RLS permite INSERT para role anon)

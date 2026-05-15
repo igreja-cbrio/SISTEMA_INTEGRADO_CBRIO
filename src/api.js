@@ -584,6 +584,10 @@ export const solicitacoes = {
   slaDefs:        () => get('/solicitacoes/sla-defs'),
   reservasEspaco: (params) => get('/solicitacoes/reservas-espaco' + (params ? '?' + new URLSearchParams(params) : '')),
   alcadas:        () => get('/solicitacoes/alcadas'),
+  areaResponsaveis: {
+    list:    () => get('/solicitacoes/area-responsaveis'),
+    save:    (area, profile_ids) => put('/solicitacoes/area-responsaveis', { area, profile_ids }),
+  },
 };
 
 export const membresia = {
@@ -741,6 +745,11 @@ export const cadastroPublico = {
   verificarFamilia: async (sobrenome) => {
     const res = await fetch(`${API}/public/membresia/verificar-familia?sobrenome=${encodeURIComponent(sobrenome)}`);
     if (!res.ok) return { familias: [] };
+    return res.json();
+  },
+  lookupCpf: async (cpf) => {
+    const res = await fetch(`${API}/public/membresia/lookup-cpf?cpf=${encodeURIComponent(cpf)}`);
+    if (!res.ok) return { found: false };
     return res.json();
   },
   enviar: async (data) => {
@@ -1091,6 +1100,7 @@ export const kpis = {
       create: (cultoId, data) => post(`/kpis/cultos/${cultoId}/decisoes-pessoas`, data),
       update: (id, data) => put(`/kpis/decisoes-pessoas/${id}`, data),
       remove: (id) => del(`/kpis/decisoes-pessoas/${id}`),
+      buscarMembro: (q) => get(`/kpis/decisoes-pessoas/buscar-membro?q=${encodeURIComponent(q)}`),
     },
   },
   // Batismos
@@ -1336,6 +1346,12 @@ export const painel = {
   nsmPessoas: (params = {}) => {
     const qs = new URLSearchParams(params).toString();
     return get('/painel/nsm/pessoas' + (qs ? '?' + qs : ''));
+  },
+  // Cultos com decisoes sem pessoas registradas · alimenta filtro "sem dados"
+  // no drilldown NSM. Mostra accountability da captura individual.
+  nsmSemDados: (params = {}) => {
+    const qs = new URLSearchParams(params).toString();
+    return get('/painel/nsm/sem-dados' + (qs ? '?' + qs : ''));
   },
 };
 

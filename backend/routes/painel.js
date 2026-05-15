@@ -1061,4 +1061,45 @@ router.get('/alertas', async (req, res) => {
   }
 });
 
+// ============================================================================
+// GET /nsm/sem-dados · cultos com gap entre decisoes e pessoas registradas
+//
+// Marcos: "ao clicar para ver deve ter um filtro 'pessoas sem dados'"
+//
+// Usado no drilldown /painel/nsm/pessoas pra mostrar QUANTAS decisoes nao
+// tem nome/contato cadastrado em cultos_decisoes_pessoas · accountability
+// pela ausencia de dados.
+// ============================================================================
+router.get('/nsm/sem-dados', async (req, res) => {
+  try {
+    const dias = Math.min(Number(req.query.dias) || 90, 365);
+    const dataLimite = new Date();
+    dataLimite.setDate(dataLimite.getDate() - dias);
+    const dataLimiteStr = dataLimite.toISOString().slice(0, 10);
+
+    const { data, error } = await supabase
+      .from('vw_nsm_sem_dados')
+      .select('*')
+      .gte('data_culto', dataLimiteStr)
+      .order('data_culto', { ascending: false });
+    if (error) throw error;
+
+    const items = data || [];
+    const resumo = {
+      total_cultos:         items.length,
+      total_decisoes:       items.reduce((s, c) => s + (c.total_decisoes || 0), 0),
+      total_registradas:    items.reduce((s, c) => s + (c.total_registradas || 0), 0),
+      total_sem_dados:      items.reduce((s, c) => s + (c.sem_dados || 0), 0),
+      cultos_nenhuma_registrada: items.filter(c => c.gap_status === 'nenhuma_registrada').length,
+      cultos_parcial:            items.filter(c => c.gap_status === 'parcial').length,
+      cultos_completo:           items.filter(c => c.gap_status === 'completo').length,
+    };
+
+    res.json({ resumo, items });
+  } catch (e) {
+    console.error('painel/nsm/sem-dados:', e.message);
+    res.status(500).json({ error: 'Erro ao carregar dados sem registro' });
+  }
+});
+
 module.exports = router;

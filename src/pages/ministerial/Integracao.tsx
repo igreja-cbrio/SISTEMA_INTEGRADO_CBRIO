@@ -6,6 +6,7 @@ const Batismos = lazy(() => import('./Batismos'));
 const VisualizacaoFrequencia = lazy(() => import('./VisualizacaoFrequencia'));
 const VisualizacaoDecisoes   = lazy(() => import('./VisualizacaoDecisoes'));
 const HistoricoCultos        = lazy(() => import('./HistoricoCultos'));
+const DecisoesPessoas        = lazy(() => import('./DecisoesPessoas'));
 import CalendarioCultos from '../../components/CalendarioCultos';
 import { StatisticsCard } from '../../components/ui/statistics-card';
 import { Calendar, CheckCircle2, Heart } from 'lucide-react';
@@ -35,7 +36,7 @@ export default function Integracao() {
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const t = params.get('tab');
-    if (t && ['batismos', 'frequencia', 'vis_frequencia', 'vis_decisoes', 'historico'].includes(t)) setTab(t);
+    if (t && ['batismos', 'frequencia', 'pessoas', 'vis_frequencia', 'vis_decisoes', 'historico'].includes(t)) setTab(t);
   }, []);
 
   return (
@@ -77,6 +78,7 @@ export default function Integracao() {
       <Tabs value={tab} onValueChange={setTab}>
         <TabsList>
           <TabsTrigger value="frequencia">Cultos</TabsTrigger>
+          <TabsTrigger value="pessoas">Pessoas decididas</TabsTrigger>
           <TabsTrigger value="vis_frequencia">Frequência</TabsTrigger>
           <TabsTrigger value="vis_decisoes">Decisões</TabsTrigger>
           <TabsTrigger value="batismos">Batismos</TabsTrigger>
@@ -93,6 +95,11 @@ export default function Integracao() {
             </p>
             <CalendarioCultos />
           </div>
+        </TabsContent>
+        <TabsContent value="pessoas" className="mt-4">
+          <Suspense fallback={<div className="flex items-center justify-center py-12 text-sm text-muted-foreground">Carregando…</div>}>
+            <DecisoesPessoas />
+          </Suspense>
         </TabsContent>
         <TabsContent value="vis_frequencia" className="mt-4">
           <Suspense fallback={<div className="flex items-center justify-center py-12 text-sm text-muted-foreground">Carregando…</div>}>

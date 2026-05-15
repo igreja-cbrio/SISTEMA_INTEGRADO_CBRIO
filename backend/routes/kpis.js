@@ -135,40 +135,69 @@ router.delete('/cultos/:id', authorize('admin', 'diretor'), async (req, res) => 
 router.get('/cultos/:id/decisoes-pessoas', async (req, res) => {
   const { data, error } = await supabase
     .from('cultos_decisoes_pessoas')
-    .select('id, culto_id, membro_id, nome, telefone, email, idade, cpf, tipo_decisao, observacoes, status_followup, registrado_em, registrado_por')
+    .select('id, culto_id, membro_id, nome, telefone, email, idade, data_nascimento, cpf, tipo_decisao, observacoes, status_followup, registrado_em, registrado_por')
     .eq('culto_id', req.params.id)
     .order('registrado_em', { ascending: false });
   if (error) return res.status(500).json({ error: error.message });
   res.json(data || []);
 });
 
+// Busca de membro/visitante por nome, CPF, email, telefone
+// Usada pelo autocomplete no modal antes de cadastrar manual
+router.get('/decisoes-pessoas/buscar-membro', async (req, res) => {
+  const q = String(req.query.q || '').trim();
+  if (q.length < 2) return res.json([]);
+
+  const cpfLimpo = q.replace(/\D/g, '');
+  const isCpf = cpfLimpo.length >= 5 && /^\d+$/.test(cpfLimpo);
+
+  let query = supabase
+    .from('mem_membros')
+    .select('id, nome, email, telefone, cpf, data_nascimento, status')
+    .limit(10);
+
+  if (isCpf) {
+    query = query.ilike('cpf', `${cpfLimpo}%`);
+  } else {
+    const escaped = q.replace(/[%_,()]/g, '\\$&');
+    query = query.or(`nome.ilike.%${escaped}%,email.ilike.%${escaped}%,telefone.ilike.%${escaped}%`);
+  }
+
+  const { data, error } = await query;
+  if (error) {
+    console.error('[kpis/decisoes-pessoas buscar-membro]', error.message);
+    return res.status(500).json({ error: error.message });
+  }
+  res.json(data || []);
+});
+
 router.post('/cultos/:id/decisoes-pessoas', authorizeIntegracao, async (req, res) => {
-  const { nome, telefone, email, idade, cpf, tipo_decisao, observacoes } = req.body || {};
+  const { nome, telefone, email, idade, data_nascimento, cpf, tipo_decisao, observacoes, membro_id } = req.body || {};
   if (!nome || String(nome).trim().length < 2) {
     return res.status(400).json({ error: 'Nome obrigatorio (min 2 chars)' });
   }
   const cpfLimpo = cpf ? String(cpf).replace(/\D/g, '') : null;
-
-  // Tenta vincular a membro existente por CPF (match exato)
-  let membro_id = null;
-  if (cpfLimpo && cpfLimpo.length === 11) {
-    const { data: m } = await supabase
-      .from('mem_membros')
-      .select('id')
-      .eq('cpf', cpfLimpo)
-      .maybeSingle();
-    if (m) membro_id = m.id;
+  if (cpfLimpo && cpfLimpo.length !== 11) {
+    return res.status(400).json({ error: 'CPF deve ter 11 digitos' });
+  }
+  if (!cpfLimpo) {
+    return res.status(400).json({ error: 'CPF obrigatorio para cruzamento com a jornada' });
+  }
+  if (!data_nascimento) {
+    return res.status(400).json({ error: 'Data de nascimento obrigatoria para cruzamento estavel' });
   }
 
+  // Se nao veio membro_id explicito, trigger BEFORE INSERT resolve/cria
   const { data, error } = await supabase
     .from('cultos_decisoes_pessoas')
     .insert({
       culto_id: req.params.id,
-      membro_id,
+      membro_id: membro_id || null,
       nome: String(nome).trim(),
       telefone: telefone || null,
       email: email ? String(email).trim().toLowerCase() : null,
       idade: idade ? Number(idade) : null,
+      data_nascimento,
       cpf: cpfLimpo,
       tipo_decisao: ['presencial', 'online'].includes(tipo_decisao) ? tipo_decisao : 'presencial',
       observacoes: observacoes || null,
@@ -184,13 +213,14 @@ router.post('/cultos/:id/decisoes-pessoas', authorizeIntegracao, async (req, res
 });
 
 router.put('/decisoes-pessoas/:id', authorizeIntegracao, async (req, res) => {
-  const allowed = ['nome', 'telefone', 'email', 'idade', 'cpf', 'tipo_decisao', 'observacoes', 'status_followup', 'observacoes_followup'];
+  const allowed = ['nome', 'telefone', 'email', 'idade', 'data_nascimento', 'cpf', 'tipo_decisao', 'observacoes', 'status_followup', 'observacoes_followup'];
   const update = {};
   for (const [k, v] of Object.entries(req.body || {})) {
     if (!allowed.includes(k)) continue;
     if (k === 'cpf' && v) update[k] = String(v).replace(/\D/g, '');
     else if (k === 'email' && v) update[k] = String(v).trim().toLowerCase();
     else if (k === 'idade') update[k] = v ? Number(v) : null;
+    else if (k === 'data_nascimento') update[k] = v || null;
     else update[k] = v === '' ? null : v;
   }
   const { data, error } = await supabase

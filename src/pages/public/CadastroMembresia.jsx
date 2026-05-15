@@ -260,6 +260,11 @@ export default function CadastroMembresia() {
   const [showFamiliaStep, setShowFamiliaStep] = useState(false);
   const [buscouFamilia, setBuscouFamilia] = useState(false);
 
+  // Lookup proativo por CPF (debounced)
+  // null = nao buscou | { found: false } | { found: true, primeiroNome, ... }
+  const [cpfLookup, setCpfLookup] = useState(null);
+  const [cpfChecando, setCpfChecando] = useState(false);
+
   const origem = useMemo(() => {
     try {
       const params = new URLSearchParams(window.location.search);
@@ -289,6 +294,28 @@ export default function CadastroMembresia() {
       }
     }
   };
+
+  // Debounce: 600ms apos parar de digitar CPF, se CPF for valido, faz lookup
+  useEffect(() => {
+    const cpf = form.cpf;
+    if (!cpfValido(cpf)) {
+      setCpfLookup(null);
+      setCpfChecando(false);
+      return undefined;
+    }
+    setCpfChecando(true);
+    const t = setTimeout(async () => {
+      try {
+        const r = await cadastroPublico.lookupCpf(soDigitos(cpf));
+        setCpfLookup(r);
+      } catch {
+        setCpfLookup(null);
+      } finally {
+        setCpfChecando(false);
+      }
+    }, 600);
+    return () => clearTimeout(t);
+  }, [form.cpf]);
 
   const [fotoDragOver, setFotoDragOver] = useState(false);
 
@@ -663,6 +690,41 @@ export default function CadastroMembresia() {
                     <Field id="cpf" label="CPF" value={form.cpf} onChange={setMasked('cpf', mascaraCpf)} required inputMode="numeric" maxLength={14} />
                     <Field id="telefone" label="Celular / WhatsApp" value={form.telefone} onChange={setMasked('telefone', mascaraTelefone)} required autoComplete="tel" inputMode="tel" maxLength={16} />
                   </Row>
+                  {cpfChecando && (
+                    <div style={{ marginTop: -10, marginBottom: 14, fontSize: 12, color: 'var(--cbrio-text3)' }}>
+                      Verificando se voce ja esta cadastrado...
+                    </div>
+                  )}
+                  {!cpfChecando && cpfLookup?.found && (
+                    <div style={{
+                      marginTop: -10, marginBottom: 14,
+                      padding: '10px 12px',
+                      borderRadius: 10,
+                      background: 'rgba(0, 179, 157, 0.08)',
+                      border: '1px solid rgba(0, 179, 157, 0.3)',
+                      display: 'flex', alignItems: 'flex-start', gap: 10,
+                    }}>
+                      <span style={{ fontSize: 18, lineHeight: 1 }}>{cpfLookup.fonte === 'membro' ? '✓' : '!'}</span>
+                      <div style={{ fontSize: 13, lineHeight: 1.4 }}>
+                        {cpfLookup.fonte === 'membro' ? (
+                          <>
+                            <strong>Bem-vindo(a) de volta, {cpfLookup.primeiroNome} {cpfLookup.iniciaisSobrenome}</strong>
+                            <div style={{ color: 'var(--cbrio-text3)', marginTop: 2 }}>
+                              Encontramos seu cadastro. Continue preenchendo abaixo · seus dados serao atualizados ao enviar.
+                            </div>
+                          </>
+                        ) : (
+                          <>
+                            <strong>Ja existe um cadastro com este CPF</strong>
+                            <div style={{ color: 'var(--cbrio-text3)', marginTop: 2 }}>
+                              Em nome de {cpfLookup.primeiroNome} {cpfLookup.iniciaisSobrenome} (em analise).
+                              Se for voce, pode continuar — vamos atualizar.
+                            </div>
+                          </>
+                        )}
+                      </div>
+                    </div>
+                  )}
                 </div>
               )}
 
