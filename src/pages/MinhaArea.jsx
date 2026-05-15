@@ -464,8 +464,11 @@ function KpiLinha({ kpi, historico, expanded, onToggleExpand, onRevisar }) {
   const ultimoValor = kpi.ultimo_valor;
   const anteriorReg = sparkData.length >= 2 ? sparkData[sparkData.length - 2].y : null;
   const delta = ultimoValor != null && anteriorReg != null ? formatDelta(ultimoValor, anteriorReg) : null;
-  const pctMeta = kpi.meta_valor && ultimoValor != null && kpi.meta_valor !== 0
-    ? Math.round((ultimoValor / kpi.meta_valor) * 100)
+  // Meta efetiva: prioriza absoluto (alvo materializado por area), fallback pro %
+  const metaEfetiva = kpi.meta_valor_absoluto ?? kpi.meta_valor;
+  const usaAbsoluto = kpi.meta_valor_absoluto != null;
+  const pctMeta = metaEfetiva && ultimoValor != null && metaEfetiva !== 0
+    ? Math.round((ultimoValor / metaEfetiva) * 100)
     : null;
   const modulo = moduloDoKpi(kpi);
   const podeRevisar = kpi.is_okr && (status === 'vermelho' || status === 'amarelo');
@@ -478,8 +481,10 @@ function KpiLinha({ kpi, historico, expanded, onToggleExpand, onRevisar }) {
           <div className="text-xl font-bold tabular-nums leading-tight" style={{ color: cor }}>
             {ultimoValor != null ? ultimoValor.toLocaleString('pt-BR') : '—'}
           </div>
-          {kpi.meta_valor != null && (
-            <div className="text-[9px] text-muted-foreground">meta {kpi.meta_valor}{kpi.unidade ? ` ${kpi.unidade}` : ''}</div>
+          {metaEfetiva != null && (
+            <div className="text-[9px] text-muted-foreground">
+              meta {usaAbsoluto ? Math.round(metaEfetiva).toLocaleString('pt-BR') : metaEfetiva}{kpi.unidade ? ` ${kpi.unidade}` : ''}
+            </div>
           )}
         </div>
 
