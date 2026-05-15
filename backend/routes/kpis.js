@@ -8,6 +8,27 @@ const painelCache = require('../services/painelCache');
 
 router.use(authenticate);
 
+// Helper: permite escrita em cultos/decisoes/batismos pra admin/diretor OU
+// quem tem 'integracao' em kpi_areas (Alda Lorena, lider de Integracao).
+// Auditoria de pre-liberacao identificou que essas rotas estavam so com
+// authenticate · qualquer usuario logado escrevia. Agora restringido.
+function authorizeIntegracao(req, res, next) {
+  const u = req.user || {};
+  if (['admin', 'diretor'].includes(u.role)) return next();
+  const areas = (u.kpi_areas || []).map(a => String(a).toLowerCase());
+  if (areas.includes('integracao')) return next();
+  return res.status(403).json({
+    error: 'Sem permissao · necessario ser admin, diretor ou lider de Integracao',
+  });
+}
+
+// Helper: valida numero >= 0 (rejeita negativos antes do INSERT/UPDATE)
+function nonNeg(v, fallback = 0) {
+  const n = Number(v);
+  if (Number.isNaN(n) || n < 0) return fallback;
+  return n;
+}
+
 // ── Service Types (culto types) ───────────────────────────────────────────────
 router.get('/service-types', async (req, res) => {
   const { data, error } = await supabase
@@ -37,7 +58,7 @@ router.get('/cultos', async (req, res) => {
   res.json(data);
 });
 
-router.post('/cultos', async (req, res) => {
+router.post('/cultos', authorizeIntegracao, async (req, res) => {
   const {
     service_type_id, nome, data, hora,
     presencial_adulto, presencial_kids,
@@ -50,12 +71,12 @@ router.post('/cultos', async (req, res) => {
     .from('cultos')
     .insert({
       service_type_id, nome, data, hora,
-      presencial_adulto: Number(presencial_adulto) || 0,
-      presencial_kids:   Number(presencial_kids)   || 0,
-      decisoes_presenciais: Number(decisoes_presenciais) || 0,
-      decisoes_online:      Number(decisoes_online)      || 0,
+      presencial_adulto:    nonNeg(presencial_adulto),
+      presencial_kids:      nonNeg(presencial_kids),
+      decisoes_presenciais: nonNeg(decisoes_presenciais),
+      decisoes_online:      nonNeg(decisoes_online),
       youtube_video_id: youtube_video_id || null,
-      online_pico: online_pico ? Number(online_pico) : null,
+      online_pico: online_pico ? nonNeg(online_pico, null) : null,
       inserido_por: req.user.id,
     })
     .select()
@@ -64,16 +85,31 @@ router.post('/cultos', async (req, res) => {
   res.json(culto);
 });
 
-router.put('/cultos/:id', async (req, res) => {
+router.put('/cultos/:id', authorizeIntegracao, async (req, res) => {
   const allowed = [
     'presencial_adulto', 'presencial_kids',
     'decisoes_presenciais', 'decisoes_online',
     'youtube_video_id', 'online_pico', 'nome',
     'online_ds', 'online_ddus',
   ];
+  const camposNumericos = [
+    'presencial_adulto', 'presencial_kids',
+    'decisoes_presenciais', 'decisoes_online',
+    'online_pico', 'online_ds', 'online_ddus',
+  ];
   const update = { updated_at: new Date().toISOString() };
   for (const [k, v] of Object.entries(req.body)) {
-    if (allowed.includes(k)) update[k] = v === '' ? null : v;
+    if (!allowed.includes(k)) continue;
+    if (v === '' || v === null || v === undefined) { update[k] = null; continue; }
+    if (camposNumericos.includes(k)) {
+      const n = Number(v);
+      if (Number.isNaN(n) || n < 0) {
+        return res.status(400).json({ error: `Campo ${k} deve ser número >= 0 (recebido: ${v})` });
+      }
+      update[k] = n;
+    } else {
+      update[k] = v;
+    }
   }
   const { data, error } = await supabase
     .from('cultos').update(update).eq('id', req.params.id).select().single();
@@ -135,7 +171,7 @@ router.get('/decisoes-pessoas/buscar-membro', async (req, res) => {
   res.json(data || []);
 });
 
-router.post('/cultos/:id/decisoes-pessoas', async (req, res) => {
+router.post('/cultos/:id/decisoes-pessoas', authorizeIntegracao, async (req, res) => {
   const { nome, telefone, email, idade, data_nascimento, cpf, tipo_decisao, observacoes, membro_id } = req.body || {};
   if (!nome || String(nome).trim().length < 2) {
     return res.status(400).json({ error: 'Nome obrigatorio (min 2 chars)' });
@@ -176,7 +212,7 @@ router.post('/cultos/:id/decisoes-pessoas', async (req, res) => {
   res.status(201).json(data);
 });
 
-router.put('/decisoes-pessoas/:id', async (req, res) => {
+router.put('/decisoes-pessoas/:id', authorizeIntegracao, async (req, res) => {
   const allowed = ['nome', 'telefone', 'email', 'idade', 'data_nascimento', 'cpf', 'tipo_decisao', 'observacoes', 'status_followup', 'observacoes_followup'];
   const update = {};
   for (const [k, v] of Object.entries(req.body || {})) {
@@ -194,7 +230,7 @@ router.put('/decisoes-pessoas/:id', async (req, res) => {
   res.json(data);
 });
 
-router.delete('/decisoes-pessoas/:id', async (req, res) => {
+router.delete('/decisoes-pessoas/:id', authorizeIntegracao, async (req, res) => {
   const { error } = await supabase.from('cultos_decisoes_pessoas').delete().eq('id', req.params.id);
   if (error) return res.status(500).json({ error: error.message });
   res.json({ ok: true });
@@ -297,7 +333,7 @@ router.get('/batismos', async (req, res) => {
   res.json(data);
 });
 
-router.post('/batismos', async (req, res) => {
+router.post('/batismos', authorizeIntegracao, async (req, res) => {
   const { cpf, nome, sobrenome, data_nascimento, telefone, email, origem = 'manual', observacoes, area_kpi } = req.body;
   if (!nome || !sobrenome) return res.status(400).json({ error: 'nome e sobrenome são obrigatórios' });
   const AREAS_OK = ['kids', 'sede', 'bridge', 'ami', 'online'];
@@ -364,7 +400,7 @@ router.post('/batismos', async (req, res) => {
   res.json(inscricao);
 });
 
-router.put('/batismos/:id', async (req, res) => {
+router.put('/batismos/:id', authorizeIntegracao, async (req, res) => {
   const { status, data_batismo, observacoes, area_kpi } = req.body;
   const update = { updated_at: new Date().toISOString() };
   if (status)       update.status = status;

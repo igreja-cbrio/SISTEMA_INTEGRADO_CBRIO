@@ -683,6 +683,23 @@ function DecisoesPessoasSection({ cultoId, totalEsperado, hasOnline }) {
         </div>
       )}
 
+      {/* Banner de aviso quando há gap · accountability NSM */}
+      {faltando > 0 && (
+        <div style={{
+          background: '#F59E0B18', borderLeft: '3px solid #F59E0B',
+          padding: '8px 12px', borderRadius: 4, marginBottom: 10,
+          fontSize: 11, color: 'var(--cbrio-text)', display: 'flex', alignItems: 'flex-start', gap: 8,
+        }}>
+          <AlertCircle size={14} style={{ color: '#F59E0B', flexShrink: 0, marginTop: 1 }} />
+          <div>
+            <strong>{faltando} decisão{faltando === 1 ? '' : 'ões'} sem nome registrado.</strong>{' '}
+            Essas pessoas entram no <strong>denominador da NSM</strong> mas não conseguem ser
+            acompanhadas (sem identidade · sem trilha de valor). Registre os dados pra que
+            apareçam no painel de cuidados pastorais.
+          </div>
+        </div>
+      )}
+
       {/* Lista de pessoas ja registradas */}
       {pessoas.length > 0 && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 4, marginBottom: 8 }}>
