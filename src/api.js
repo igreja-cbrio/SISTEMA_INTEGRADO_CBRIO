@@ -1095,6 +1095,7 @@ export const kpis = {
       create: (cultoId, data) => post(`/kpis/cultos/${cultoId}/decisoes-pessoas`, data),
       update: (id, data) => put(`/kpis/decisoes-pessoas/${id}`, data),
       remove: (id) => del(`/kpis/decisoes-pessoas/${id}`),
+      buscarMembro: (q) => get(`/kpis/decisoes-pessoas/buscar-membro?q=${encodeURIComponent(q)}`),
     },
   },
   // Batismos
