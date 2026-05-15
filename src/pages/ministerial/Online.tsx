@@ -8,8 +8,9 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import {
   Users, Eye, ThumbsUp, MessageSquare, TrendingUp, TrendingDown, ExternalLink,
   Youtube, Loader2, RefreshCw, PlayCircle, Info, Cross, HeartHandshake,
-  Clock, HandHelping, Sparkles, AlertCircle, Target,
+  Clock, HandHelping, Sparkles, AlertCircle, Target, ChevronDown,
 } from 'lucide-react';
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { toast } from 'sonner';
 
 const VALOR_META: Record<string, { label: string; cor: string; corClara: string; icon: any }> = {
@@ -259,7 +260,12 @@ function KpiCard({ kpi }: { kpi: MatrizCell }) {
   );
 }
 
-function ValorGroupCard({ valor, kpis }: { valor: string; kpis: MatrizCell[] }) {
+function ValorGroupCard({ valor, kpis, open, onOpenChange }: {
+  valor: string;
+  kpis: MatrizCell[];
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+}) {
   const meta = VALOR_META[valor];
   if (!meta) return null;
   const Icon = meta.icon;
@@ -275,40 +281,54 @@ function ValorGroupCard({ valor, kpis }: { valor: string; kpis: MatrizCell[] }) 
   });
 
   return (
-    <div className={`rounded-2xl border border-border overflow-hidden bg-gradient-to-br ${meta.corClara}`}>
-      <div className="p-4 flex items-center gap-3 border-b border-border/40">
-        <div
-          className="rounded-xl p-2.5 shadow-sm"
-          style={{ background: meta.cor + '20', color: meta.cor }}
+    <Collapsible
+      open={open}
+      onOpenChange={onOpenChange}
+      className={`rounded-2xl border border-border overflow-hidden bg-gradient-to-br ${meta.corClara} h-fit`}
+    >
+      <CollapsibleTrigger asChild>
+        <button
+          type="button"
+          className={`w-full p-4 flex items-center gap-3 text-left hover:bg-black/5 dark:hover:bg-white/5 transition-colors ${open ? 'border-b border-border/40' : ''}`}
         >
-          <Icon className="h-6 w-6" />
-        </div>
-        <div className="flex-1 min-w-0">
-          <h3 className="text-sm font-bold leading-tight">{meta.label}</h3>
-          <div className="flex flex-wrap gap-1.5 mt-1.5 text-[10px]">
-            <span className="text-muted-foreground">{kpis.length} indicador{kpis.length > 1 ? 'es' : ''}</span>
-            {counts.no_alvo > 0 && (
-              <Badge variant="outline" className="text-[10px] py-0 h-4 bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border-emerald-500/30">
-                {counts.no_alvo} ok
-              </Badge>
-            )}
-            {counts.atras > 0 && (
-              <Badge variant="outline" className="text-[10px] py-0 h-4 bg-amber-500/10 text-amber-700 dark:text-amber-400 border-amber-500/30">
-                {counts.atras} atras
-              </Badge>
-            )}
-            {counts.critico > 0 && (
-              <Badge variant="outline" className="text-[10px] py-0 h-4 bg-red-500/10 text-red-700 dark:text-red-400 border-red-500/30">
-                {counts.critico} critico
-              </Badge>
-            )}
+          <div
+            className="rounded-xl p-2.5 shadow-sm shrink-0"
+            style={{ background: meta.cor + '20', color: meta.cor }}
+          >
+            <Icon className="h-6 w-6" />
           </div>
+          <div className="flex-1 min-w-0">
+            <h3 className="text-sm font-bold leading-tight">{meta.label}</h3>
+            <div className="flex flex-wrap gap-1.5 mt-1.5 text-[10px]">
+              <span className="text-muted-foreground">{kpis.length} indicador{kpis.length > 1 ? 'es' : ''}</span>
+              {counts.no_alvo > 0 && (
+                <Badge variant="outline" className="text-[10px] py-0 h-4 bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border-emerald-500/30">
+                  {counts.no_alvo} ok
+                </Badge>
+              )}
+              {counts.atras > 0 && (
+                <Badge variant="outline" className="text-[10px] py-0 h-4 bg-amber-500/10 text-amber-700 dark:text-amber-400 border-amber-500/30">
+                  {counts.atras} atras
+                </Badge>
+              )}
+              {counts.critico > 0 && (
+                <Badge variant="outline" className="text-[10px] py-0 h-4 bg-red-500/10 text-red-700 dark:text-red-400 border-red-500/30">
+                  {counts.critico} critico
+                </Badge>
+              )}
+            </div>
+          </div>
+          <ChevronDown
+            className={`h-5 w-5 text-muted-foreground shrink-0 transition-transform duration-200 ${open ? 'rotate-180' : ''}`}
+          />
+        </button>
+      </CollapsibleTrigger>
+      <CollapsibleContent className="data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0">
+        <div className="p-3 space-y-2">
+          {kpis.map((k) => <KpiCard key={k.kpi_id} kpi={k} />)}
         </div>
-      </div>
-      <div className="p-3 space-y-2">
-        {kpis.map((k) => <KpiCard key={k.kpi_id} kpi={k} />)}
-      </div>
-    </div>
+      </CollapsibleContent>
+    </Collapsible>
   );
 }
 
@@ -332,6 +352,7 @@ export default function Online() {
   });
 
   const [topTab, setTopTab] = useState<'views' | 'engajamento'>('views');
+  const [matrizOpenMap, setMatrizOpenMap] = useState<Record<string, boolean>>({});
 
   if (isLoading) {
     return (
@@ -344,6 +365,11 @@ export default function Online() {
   const canal = data?.canal;
   const semDados = !canal;
   const matrizKeys = data?.matriz_online ? Object.keys(data.matriz_online) : [];
+  const matrizAllOpen = matrizKeys.length > 0 && matrizKeys.every(k => matrizOpenMap[k]);
+  const toggleAllMatriz = () => {
+    const next = !matrizAllOpen;
+    setMatrizOpenMap(Object.fromEntries(matrizKeys.map(k => [k, next])));
+  };
 
   return (
     <div className="p-4 md:p-6 space-y-6 max-w-[1400px] mx-auto">
@@ -534,14 +560,25 @@ export default function Online() {
                 KPIs da matriz Valor × Area = Online (do <code className="px-1 py-0.5 rounded bg-muted text-[10px]">/painel</code>)
               </p>
             </div>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={toggleAllMatriz}
+              className="gap-1.5"
+            >
+              <ChevronDown className={`h-3.5 w-3.5 transition-transform ${matrizAllOpen ? 'rotate-180' : ''}`} />
+              {matrizAllOpen ? 'Recolher todos' : 'Expandir todos'}
+            </Button>
           </div>
           <CardContent className="p-4 md:p-5">
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 items-start">
               {matrizKeys.map(valor => (
                 <ValorGroupCard
                   key={valor}
                   valor={valor}
                   kpis={(data?.matriz_online?.[valor] || []) as MatrizCell[]}
+                  open={!!matrizOpenMap[valor]}
+                  onOpenChange={(v) => setMatrizOpenMap(m => ({ ...m, [valor]: v }))}
                 />
               ))}
             </div>
