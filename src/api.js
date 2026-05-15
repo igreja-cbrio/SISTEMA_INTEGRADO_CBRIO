@@ -1362,6 +1362,15 @@ export const painel = {
     const qs = new URLSearchParams(params).toString();
     return get('/painel/nsm/sem-dados' + (qs ? '?' + qs : ''));
   },
+  // Catalogo de combinacoes valor x dado disponiveis pro carrossel + cultos
+  serieTemporalDados: () => get('/painel/serie-temporal/dados'),
+  // Serie temporal pra grafico de linha do carrossel de valores
+  // params: { valor, dado, culto?, inicio?, fim?, granularidade? }
+  serieTemporal: (params = {}) => {
+    const clean = Object.fromEntries(Object.entries(params).filter(([, v]) => v !== null && v !== undefined && v !== ''));
+    const qs = new URLSearchParams(clean).toString();
+    return get('/painel/serie-temporal' + (qs ? '?' + qs : ''));
+  },
 };
 
 export const nps = {

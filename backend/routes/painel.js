@@ -1102,4 +1102,275 @@ router.get('/nsm/sem-dados', async (req, res) => {
   }
 });
 
+// ============================================================================
+// GET /serie-temporal · carrossel de valores no painel
+//
+// Marcos: "um carrossel de dados com filtro por valor. Um grafico de linhas
+//          por exemplo de Seguir a Jesus com filtro de conversoes, batismo
+//          e frequencia por todos os cultos · seleciona dado, culto, periodo"
+//
+// Query params:
+//   valor          · seguir | conectar | investir | servir | generosidade
+//   dado           · id do dado (varia por valor · ver /serie-temporal/dados)
+//   culto          · uuid de vol_service_types (opcional · so faz sentido p/ seguir)
+//   inicio         · ISO date (default = hoje - 12 meses)
+//   fim            · ISO date (default = hoje)
+//   granularidade  · mes (default) | semana
+//
+// Retorna: { label, dado, valor, granularidade, serie: [{ periodo, valor }] }
+// ============================================================================
+
+const SERIE_DADOS = {
+  seguir: [
+    { id: 'conversoes', label: 'Conversões',     filtra_culto: true,  tabela: 'cultos' },
+    { id: 'frequencia', label: 'Frequência',     filtra_culto: true,  tabela: 'cultos' },
+    { id: 'batismos',   label: 'Batismos',       filtra_culto: false, tabela: 'batismo_inscricoes' },
+  ],
+  conectar: [
+    { id: 'membros_em_grupos', label: 'Membros em grupos ativos', filtra_culto: false, tabela: 'mem_grupo_membros' },
+    { id: 'entradas_grupos',   label: 'Novas entradas em grupos', filtra_culto: false, tabela: 'mem_grupo_membros' },
+  ],
+  investir: [
+    { id: 'devocionais', label: 'Devocionais concluídos', filtra_culto: false, tabela: 'mem_devocionais' },
+    { id: 'jornada180',  label: 'Encontros Jornada 180',  filtra_culto: false, tabela: 'cui_jornada180' },
+  ],
+  servir: [
+    { id: 'voluntarios_ativos', label: 'Voluntários ativos no mês', filtra_culto: false, tabela: 'mem_voluntarios' },
+    { id: 'novos_voluntarios',  label: 'Novos voluntários',         filtra_culto: false, tabela: 'mem_voluntarios' },
+  ],
+  generosidade: [
+    { id: 'doacoes_valor',   label: 'Valor doado (R$)',        filtra_culto: false, tabela: 'mem_contribuicoes' },
+    { id: 'doadores_unicos', label: 'Doadores únicos no mês',  filtra_culto: false, tabela: 'mem_contribuicoes' },
+  ],
+};
+
+function defaultRange() {
+  const fim = new Date();
+  const inicio = new Date();
+  inicio.setMonth(inicio.getMonth() - 11);
+  inicio.setDate(1);
+  return { inicio: inicio.toISOString().slice(0, 10), fim: fim.toISOString().slice(0, 10) };
+}
+
+function chavePeriodo(dataIso, granularidade) {
+  if (!dataIso) return null;
+  if (granularidade === 'semana') {
+    const d = new Date(dataIso + 'T12:00:00');
+    const dow = (d.getDay() + 6) % 7; // segunda = 0
+    d.setDate(d.getDate() - dow);
+    return d.toISOString().slice(0, 10);
+  }
+  // mes (default)
+  return dataIso.slice(0, 7);
+}
+
+function preencherLacunas(serie, inicio, fim, granularidade) {
+  // Garante pontos pra todos os periodos do range (mesmo zerados)
+  const mapa = new Map(serie.map(p => [p.periodo, p.valor]));
+  const out = [];
+  if (granularidade === 'semana') {
+    const start = new Date(inicio + 'T12:00:00');
+    const dow = (start.getDay() + 6) % 7;
+    start.setDate(start.getDate() - dow);
+    const end = new Date(fim + 'T12:00:00');
+    for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 7)) {
+      const k = d.toISOString().slice(0, 10);
+      out.push({ periodo: k, valor: mapa.get(k) || 0 });
+    }
+  } else {
+    const [yi, mi] = inicio.slice(0, 7).split('-').map(Number);
+    const [yf, mf] = fim.slice(0, 7).split('-').map(Number);
+    let y = yi, m = mi;
+    while (y < yf || (y === yf && m <= mf)) {
+      const k = `${y}-${String(m).padStart(2, '0')}`;
+      out.push({ periodo: k, valor: mapa.get(k) || 0 });
+      m++; if (m > 12) { m = 1; y++; }
+    }
+  }
+  return out;
+}
+
+async function calcularSerie(valor, dado, { inicio, fim, culto, granularidade }) {
+  const agg = new Map();
+  const add = (dataIso, v) => {
+    const k = chavePeriodo(dataIso, granularidade);
+    if (!k) return;
+    agg.set(k, (agg.get(k) || 0) + (Number(v) || 0));
+  };
+
+  // ----- SEGUIR -----
+  if (valor === 'seguir' && dado === 'conversoes') {
+    let q = supabase.from('cultos')
+      .select('data, decisoes_presenciais, decisoes_online, service_type_id')
+      .gte('data', inicio).lte('data', fim);
+    if (culto) q = q.eq('service_type_id', culto);
+    const { data, error } = await q;
+    if (error) throw error;
+    (data || []).forEach(r => add(r.data, (r.decisoes_presenciais || 0) + (r.decisoes_online || 0)));
+  } else if (valor === 'seguir' && dado === 'frequencia') {
+    let q = supabase.from('cultos')
+      .select('data, presencial_adulto, presencial_kids, online_pico, service_type_id')
+      .gte('data', inicio).lte('data', fim);
+    if (culto) q = q.eq('service_type_id', culto);
+    const { data, error } = await q;
+    if (error) throw error;
+    (data || []).forEach(r => add(r.data,
+      (r.presencial_adulto || 0) + (r.presencial_kids || 0) + (r.online_pico || 0)
+    ));
+  } else if (valor === 'seguir' && dado === 'batismos') {
+    const { data, error } = await supabase.from('batismo_inscricoes')
+      .select('data_batismo')
+      .eq('status', 'realizado')
+      .gte('data_batismo', inicio).lte('data_batismo', fim);
+    if (error) throw error;
+    (data || []).forEach(r => add(r.data_batismo, 1));
+  }
+  // ----- CONECTAR -----
+  else if (valor === 'conectar' && dado === 'membros_em_grupos') {
+    // Snapshot por mes: quantos membros estavam ativos em grupos no fim do mes
+    // (entrou_em <= fim_do_mes AND (saiu_em IS NULL OR saiu_em > fim_do_mes))
+    const { data, error } = await supabase.from('mem_grupo_membros')
+      .select('entrou_em, saiu_em');
+    if (error) throw error;
+    const periodos = preencherLacunas([], inicio, fim, granularidade).map(p => p.periodo);
+    for (const p of periodos) {
+      const fimP = granularidade === 'semana'
+        ? new Date(new Date(p + 'T12:00:00').setDate(new Date(p + 'T12:00:00').getDate() + 6)).toISOString().slice(0, 10)
+        : new Date(Number(p.slice(0, 4)), Number(p.slice(5, 7)), 0).toISOString().slice(0, 10);
+      const ativos = (data || []).filter(r =>
+        r.entrou_em && r.entrou_em <= fimP &&
+        (!r.saiu_em || r.saiu_em > fimP)
+      ).length;
+      agg.set(p, ativos);
+    }
+  } else if (valor === 'conectar' && dado === 'entradas_grupos') {
+    const { data, error } = await supabase.from('mem_grupo_membros')
+      .select('entrou_em')
+      .gte('entrou_em', inicio).lte('entrou_em', fim);
+    if (error) throw error;
+    (data || []).forEach(r => add(r.entrou_em, 1));
+  }
+  // ----- INVESTIR -----
+  else if (valor === 'investir' && dado === 'devocionais') {
+    const { data, error } = await supabase.from('mem_devocionais')
+      .select('data_devocional')
+      .eq('concluida', true)
+      .gte('data_devocional', inicio).lte('data_devocional', fim);
+    if (error) throw error;
+    (data || []).forEach(r => add(r.data_devocional, 1));
+  } else if (valor === 'investir' && dado === 'jornada180') {
+    const { data, error } = await supabase.from('cui_jornada180')
+      .select('data_encontro, presente')
+      .gte('data_encontro', inicio).lte('data_encontro', fim);
+    if (error) throw error;
+    (data || []).forEach(r => { if (r.presente !== false) add(r.data_encontro, 1); });
+  }
+  // ----- SERVIR -----
+  else if (valor === 'servir' && dado === 'voluntarios_ativos') {
+    // Snapshot por periodo: voluntarios com (desde <= fim_periodo AND (ate IS NULL OR ate > fim_periodo))
+    const { data, error } = await supabase.from('mem_voluntarios')
+      .select('desde, ate');
+    if (error) throw error;
+    const periodos = preencherLacunas([], inicio, fim, granularidade).map(p => p.periodo);
+    for (const p of periodos) {
+      const fimP = granularidade === 'semana'
+        ? new Date(new Date(p + 'T12:00:00').setDate(new Date(p + 'T12:00:00').getDate() + 6)).toISOString().slice(0, 10)
+        : new Date(Number(p.slice(0, 4)), Number(p.slice(5, 7)), 0).toISOString().slice(0, 10);
+      const ativos = (data || []).filter(r =>
+        r.desde && r.desde <= fimP &&
+        (!r.ate || r.ate > fimP)
+      ).length;
+      agg.set(p, ativos);
+    }
+  } else if (valor === 'servir' && dado === 'novos_voluntarios') {
+    const { data, error } = await supabase.from('mem_voluntarios')
+      .select('desde')
+      .gte('desde', inicio).lte('desde', fim);
+    if (error) throw error;
+    (data || []).forEach(r => add(r.desde, 1));
+  }
+  // ----- GENEROSIDADE -----
+  else if (valor === 'generosidade' && dado === 'doacoes_valor') {
+    const { data, error } = await supabase.from('mem_contribuicoes')
+      .select('data, valor')
+      .gte('data', inicio).lte('data', fim);
+    if (error) throw error;
+    (data || []).forEach(r => add(r.data, Number(r.valor) || 0));
+  } else if (valor === 'generosidade' && dado === 'doadores_unicos') {
+    const { data, error } = await supabase.from('mem_contribuicoes')
+      .select('data, membro_id')
+      .gte('data', inicio).lte('data', fim);
+    if (error) throw error;
+    const setsPorPeriodo = new Map();
+    (data || []).forEach(r => {
+      const k = chavePeriodo(r.data, granularidade);
+      if (!k || !r.membro_id) return;
+      if (!setsPorPeriodo.has(k)) setsPorPeriodo.set(k, new Set());
+      setsPorPeriodo.get(k).add(r.membro_id);
+    });
+    setsPorPeriodo.forEach((set, k) => agg.set(k, set.size));
+  } else {
+    const err = new Error(`Combinação valor=${valor} dado=${dado} não suportada`);
+    err.status = 400;
+    throw err;
+  }
+
+  const serie = Array.from(agg.entries()).map(([periodo, valor]) => ({ periodo, valor }));
+  return preencherLacunas(serie, inicio, fim, granularidade);
+}
+
+router.get('/serie-temporal/dados', async (req, res) => {
+  try {
+    const { data: tipos } = await supabase.from('vol_service_types')
+      .select('id, name, color')
+      .order('recurrence_day').order('recurrence_time');
+    res.json({
+      valores: VALORES.map(v => ({
+        key: v,
+        label: VALOR_LABELS[v],
+        cor: VALOR_CORES[v],
+        dados: SERIE_DADOS[v] || [],
+      })),
+      cultos: tipos || [],
+    });
+  } catch (e) {
+    console.error('painel/serie-temporal/dados:', e.message);
+    res.status(500).json({ error: 'Erro ao listar dados disponíveis' });
+  }
+});
+
+router.get('/serie-temporal', async (req, res) => {
+  try {
+    const valor = String(req.query.valor || '').toLowerCase();
+    const dado  = String(req.query.dado || '').toLowerCase();
+    if (!SERIE_DADOS[valor]) return res.status(400).json({ error: 'valor inválido' });
+    const def = SERIE_DADOS[valor].find(d => d.id === dado);
+    if (!def) return res.status(400).json({ error: 'dado inválido para esse valor' });
+
+    const { inicio: defIni, fim: defFim } = defaultRange();
+    const inicio = String(req.query.inicio || defIni).slice(0, 10);
+    const fim    = String(req.query.fim || defFim).slice(0, 10);
+    const granularidade = req.query.granularidade === 'semana' ? 'semana' : 'mes';
+    const culto = def.filtra_culto ? (req.query.culto || null) : null;
+
+    const cacheKey = `serie:${valor}:${dado}:${culto || 'all'}:${inicio}:${fim}:${granularidade}`;
+    const cached = cacheGet(cacheKey);
+    if (cached) return res.json(cached);
+
+    const serie = await calcularSerie(valor, dado, { inicio, fim, culto, granularidade });
+    const total = serie.reduce((s, p) => s + (Number(p.valor) || 0), 0);
+    const _resp = {
+      valor, dado, label: def.label, granularidade,
+      inicio, fim, culto,
+      total,
+      serie,
+    };
+    cacheSet(cacheKey, _resp);
+    res.json(_resp);
+  } catch (e) {
+    console.error('painel/serie-temporal:', e.message);
+    res.status(e.status || 500).json({ error: e.message || 'Erro ao montar série temporal' });
+  }
+});
+
 module.exports = router;

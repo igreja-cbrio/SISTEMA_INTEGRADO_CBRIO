@@ -995,11 +995,40 @@ SELECT * FROM vw_nsm_painel;
 - `GET /api/painel/alertas?limit=3`→ top KPIs em alerta
 - `GET /api/painel/kpi/:id`        → detalhe completo (camada 3)
 - `GET /api/painel/nsm/pessoas`    → pessoas convertidas (camada 4)
+- `GET /api/painel/serie-temporal/dados` → catalogo valor×dado + lista de cultos
+- `GET /api/painel/serie-temporal?valor=&dado=&culto=&inicio=&fim=&granularidade=`
+   → serie agregada `[{periodo, valor}]` pra carrossel de tendencias
+
+### Carrossel de valores (tendencias temporais · `/painel`)
+
+Abaixo do carrossel de mandalas tem o `<CarrosselValores>` · um slide
+por valor (Seguir/Conectar/Investir/Servir/Generosidade) com **3 filtros**:
+
+- **Dado** · varia por valor. Catalogo em `SERIE_DADOS` (backend/routes/painel.js):
+  - Seguir: Conversões · Frequência · Batismos
+  - Conectar: Membros em grupos ativos · Novas entradas em grupos
+  - Investir: Devocionais · Encontros Jornada 180
+  - Servir: Voluntários ativos no mês · Novos voluntários
+  - Generosidade: Valor doado (R$) · Doadores únicos no mês
+- **Culto** (só Seguir · `dadoDef.filtra_culto = true`) · dropdown com
+  os 7 service_types · default "Todos os cultos"
+- **Período** · 3m / 6m / 12m (default) / 2a / 5a
+
+Dados de snapshot (membros em grupos, voluntários ativos) calculam
+"quantos estavam ativos no fim de cada período" via overlap
+`desde <= fim AND (ate IS NULL OR ate > fim)`. Outros dados são
+soma simples por período. Cache 5min por combo
+`valor:dado:culto:inicio:fim:granularidade`.
+
+Pra adicionar novo dado: incluir entrada em `SERIE_DADOS[valor]` em
+`backend/routes/painel.js` + adicionar o branch correspondente em
+`calcularSerie()`. Frontend pega automaticamente via `/serie-temporal/dados`.
 
 ### Componentes do painel (`src/components/painel/`)
 
 - `MandalaSlide.jsx` — uma mandala SVG (5 ou 6 setores)
 - `CarrosselMandalas.jsx` — carrossel com setas, dots, swipe, teclado
+- `CarrosselValores.jsx` — 5 slides com filtros + gráfico de linha (tendências)
 - `MatrizValorArea.jsx` — tabela colorida com modal
 - `ModalCelula.jsx` — drilldown da celula
 - `AlertasCriticos.jsx` — top 3 KPIs em alerta
