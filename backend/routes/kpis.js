@@ -93,6 +93,83 @@ router.delete('/cultos/:id', authorize('admin', 'diretor'), async (req, res) => 
   res.json({ ok: true });
 });
 
+// ── Decisões com dados das pessoas (cultos_decisoes_pessoas) ──────────────────
+// 1 row por pessoa que decidiu no culto · vincula opcionalmente a mem_membros.
+
+router.get('/cultos/:id/decisoes-pessoas', async (req, res) => {
+  const { data, error } = await supabase
+    .from('cultos_decisoes_pessoas')
+    .select('id, culto_id, membro_id, nome, telefone, email, idade, cpf, tipo_decisao, observacoes, status_followup, registrado_em, registrado_por')
+    .eq('culto_id', req.params.id)
+    .order('registrado_em', { ascending: false });
+  if (error) return res.status(500).json({ error: error.message });
+  res.json(data || []);
+});
+
+router.post('/cultos/:id/decisoes-pessoas', async (req, res) => {
+  const { nome, telefone, email, idade, cpf, tipo_decisao, observacoes } = req.body || {};
+  if (!nome || String(nome).trim().length < 2) {
+    return res.status(400).json({ error: 'Nome obrigatorio (min 2 chars)' });
+  }
+  const cpfLimpo = cpf ? String(cpf).replace(/\D/g, '') : null;
+
+  // Tenta vincular a membro existente por CPF (match exato)
+  let membro_id = null;
+  if (cpfLimpo && cpfLimpo.length === 11) {
+    const { data: m } = await supabase
+      .from('mem_membros')
+      .select('id')
+      .eq('cpf', cpfLimpo)
+      .maybeSingle();
+    if (m) membro_id = m.id;
+  }
+
+  const { data, error } = await supabase
+    .from('cultos_decisoes_pessoas')
+    .insert({
+      culto_id: req.params.id,
+      membro_id,
+      nome: String(nome).trim(),
+      telefone: telefone || null,
+      email: email ? String(email).trim().toLowerCase() : null,
+      idade: idade ? Number(idade) : null,
+      cpf: cpfLimpo,
+      tipo_decisao: ['presencial', 'online'].includes(tipo_decisao) ? tipo_decisao : 'presencial',
+      observacoes: observacoes || null,
+      registrado_por: req.user?.id || null,
+    })
+    .select()
+    .single();
+  if (error) {
+    console.error('[kpis/decisoes-pessoas POST]', error.message);
+    return res.status(500).json({ error: error.message });
+  }
+  res.status(201).json(data);
+});
+
+router.put('/decisoes-pessoas/:id', async (req, res) => {
+  const allowed = ['nome', 'telefone', 'email', 'idade', 'cpf', 'tipo_decisao', 'observacoes', 'status_followup', 'observacoes_followup'];
+  const update = {};
+  for (const [k, v] of Object.entries(req.body || {})) {
+    if (!allowed.includes(k)) continue;
+    if (k === 'cpf' && v) update[k] = String(v).replace(/\D/g, '');
+    else if (k === 'email' && v) update[k] = String(v).trim().toLowerCase();
+    else if (k === 'idade') update[k] = v ? Number(v) : null;
+    else update[k] = v === '' ? null : v;
+  }
+  const { data, error } = await supabase
+    .from('cultos_decisoes_pessoas').update(update)
+    .eq('id', req.params.id).select().single();
+  if (error) return res.status(500).json({ error: error.message });
+  res.json(data);
+});
+
+router.delete('/decisoes-pessoas/:id', async (req, res) => {
+  const { error } = await supabase.from('cultos_decisoes_pessoas').delete().eq('id', req.params.id);
+  if (error) return res.status(500).json({ error: error.message });
+  res.json({ ok: true });
+});
+
 // ── Auto-criação semanal de cultos ────────────────────────────────────────────
 // POST /kpis/cultos/auto-create[?weeks=N]
 // Cria cultos da semana corrente a partir de vol_service_types (recurrence_day, recurrence_time).
