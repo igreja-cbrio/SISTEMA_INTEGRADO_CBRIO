@@ -18,7 +18,6 @@ import { useQuery } from '@tanstack/react-query';
 import { useAuth } from '../contexts/AuthContext';
 import { kpis as kpisApi } from '../api';
 import { useMyKpiAreas } from '../hooks/useMyKpiAreas';
-import KpiEditorModal from '../components/KpiEditorModal';
 import OkrRevisaoModal from '../components/OkrRevisaoModal';
 import { Badge } from '../components/ui/badge';
 import { Button } from '../components/ui/button';
@@ -26,7 +25,7 @@ import { Input } from '../components/ui/input';
 import { Card, CardContent } from '../components/ui/card';
 import {
   Search, ChevronDown, ChevronRight, Activity, TrendingUp, TrendingDown,
-  Minus, ExternalLink, Pencil, ClipboardCheck, Plus, X, Layers,
+  Minus, ExternalLink, ClipboardCheck, X, Layers,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts';
@@ -114,7 +113,7 @@ function moduloDoKpi(kpi) {
 // ============================================================================
 export default function MinhaArea() {
   const { profile } = useAuth();
-  const { kpiAreas, isAdmin, canEditAny, ministerioId, ministerioPapel } = useMyKpiAreas();
+  const { kpiAreas, isAdmin, ministerioId, ministerioPapel } = useMyKpiAreas();
 
   // Filtros
   const [busca, setBusca] = useState('');
@@ -126,9 +125,8 @@ export default function MinhaArea() {
   const [agrupamento, setAgrupamento] = useState('pilar');
   const [expandedId, setExpandedId] = useState(null);
 
-  // Modais
-  const [editKpi, setEditKpi] = useState(null);
-  const [createOpen, setCreateOpen] = useState(false);
+  // Modal de revisao OKR (uso do lider · operacional, nao e configuracao).
+  // Edicao/criacao de KPI/meta foi pra /gestao · /minha-area e so visualizacao.
   const [revisarKpi, setRevisarKpi] = useState(null);
 
   // Carga · 2 queries paralelas
@@ -241,11 +239,6 @@ export default function MinhaArea() {
     return Array.from(map.values()).filter(g => g.kpis.length > 0);
   }, [kpisFiltrados, agrupamento]);
 
-  function podeEditar(kpi) {
-    if (isAdmin) return true;
-    return kpiAreas.includes(String(kpi.area_db || kpi.area || '').toLowerCase());
-  }
-
   if (isLoading) {
     return (
       <div className="p-4 md:p-6 max-w-[1400px] mx-auto">
@@ -270,17 +263,11 @@ export default function MinhaArea() {
             <Activity className="h-5 w-5 text-[#00B39D]" /> Minha Área
           </h1>
           <p className="text-xs text-muted-foreground mt-1">
-            {isAdmin && 'Admin/diretor · edita tudo. '}
-            {kpiAreas.length > 0 && <>Líder de <strong className="capitalize">{kpiAreas.join(', ')}</strong>. </>}
-            {ministerioId && <>{ministerioPapel === 'lider' ? 'Líder' : 'Assistente'} de <strong>{ministerioId}</strong>. </>}
-            {!isAdmin && !kpiAreas.length && !ministerioId && 'Modo leitura · vê todos, não edita.'}
+            Visualização dos KPIs · metas e estrutura editáveis em <a href="/gestao?aba=configurar" className="text-[#00B39D] hover:underline">/gestao</a>.
+            {kpiAreas.length > 0 && <> Líder de <strong className="capitalize">{kpiAreas.join(', ')}</strong>.</>}
+            {ministerioId && <> {ministerioPapel === 'lider' ? 'Líder' : 'Assistente'} de <strong>{ministerioId}</strong>.</>}
           </p>
         </div>
-        {canEditAny && (
-          <Button onClick={() => setCreateOpen(true)} size="sm" className="gap-2 bg-[#00B39D] hover:bg-[#00B39D]/90">
-            <Plus className="h-4 w-4" /> Novo KPI
-          </Button>
-        )}
       </header>
 
       {/* Stats */}
@@ -369,30 +356,12 @@ export default function MinhaArea() {
               historicoPorKpi={historicoPorKpi}
               expandedId={expandedId}
               setExpandedId={setExpandedId}
-              podeEditar={podeEditar}
-              onEditar={setEditKpi}
               onRevisar={setRevisarKpi}
             />
           ))}
         </div>
       )}
 
-      {editKpi && (
-        <KpiEditorModal
-          open={!!editKpi} kpi={editKpi}
-          onClose={() => setEditKpi(null)}
-          onSaved={() => { setEditKpi(null); refetch(); toast.success('KPI atualizado'); }}
-        />
-      )}
-      {createOpen && (
-        <KpiEditorModal
-          open={createOpen} kpi={null}
-          defaultArea={kpiAreas[0] || ''}
-          allowedAreas={isAdmin ? null : kpiAreas}
-          onClose={() => setCreateOpen(false)}
-          onSaved={() => { setCreateOpen(false); refetch(); toast.success('KPI criado'); }}
-        />
-      )}
       {revisarKpi && (
         <OkrRevisaoModal
           open={!!revisarKpi} kpi={revisarKpi}
@@ -442,7 +411,7 @@ function ChipsRow({ label, opts, valor, setValor }) {
   );
 }
 
-function GrupoSecao({ grupo, historicoPorKpi, expandedId, setExpandedId, podeEditar, onEditar, onRevisar }) {
+function GrupoSecao({ grupo, historicoPorKpi, expandedId, setExpandedId, onRevisar }) {
   const [collapsed, setCollapsed] = useState(false);
 
   const stats = useMemo(() => {
@@ -479,8 +448,6 @@ function GrupoSecao({ grupo, historicoPorKpi, expandedId, setExpandedId, podeEdi
               historico={historicoPorKpi.get(kpi.id) || []}
               expanded={expandedId === kpi.id}
               onToggleExpand={() => setExpandedId(expandedId === kpi.id ? null : kpi.id)}
-              canEdit={podeEditar(kpi)}
-              onEditar={() => onEditar(kpi)}
               onRevisar={() => onRevisar(kpi)}
             />
           ))}
@@ -490,7 +457,7 @@ function GrupoSecao({ grupo, historicoPorKpi, expandedId, setExpandedId, podeEdi
   );
 }
 
-function KpiLinha({ kpi, historico, expanded, onToggleExpand, canEdit, onEditar, onRevisar }) {
+function KpiLinha({ kpi, historico, expanded, onToggleExpand, onRevisar }) {
   const status = kpi.status || 'sem_dado';
   const cor = STATUS_COR[status];
   const sparkData = historico.map(h => ({ x: h.periodo_referencia, y: h.valor_realizado ?? 0 }));
@@ -637,13 +604,8 @@ function KpiLinha({ kpi, historico, expanded, onToggleExpand, canEdit, onEditar,
             </div>
           )}
 
-          {/* Acoes */}
+          {/* Acoes · /minha-area e so visualizacao · meta editavel em /gestao */}
           <div className="flex items-center gap-2 flex-wrap">
-            {canEdit && (
-              <Button size="sm" variant="outline" onClick={onEditar} className="h-7 text-xs gap-1.5">
-                <Pencil className="h-3 w-3" /> Editar meta
-              </Button>
-            )}
             {podeRevisar && (
               <Button size="sm" variant="outline" onClick={onRevisar} className="h-7 text-xs gap-1.5" style={{ borderColor: cor, color: cor }}>
                 <ClipboardCheck className="h-3 w-3" /> Registrar revisão OKR
@@ -652,6 +614,9 @@ function KpiLinha({ kpi, historico, expanded, onToggleExpand, canEdit, onEditar,
             {kpi.is_okr && !podeRevisar && (
               <span className="text-[10px] text-muted-foreground">Revisão OKR disponível quando status fica amarelo/vermelho.</span>
             )}
+            <span className="text-[10px] text-muted-foreground ml-auto">
+              Meta editável em <a href="/gestao?aba=configurar" className="text-[#00B39D] hover:underline">/gestao · Configurar</a>
+            </span>
           </div>
         </div>
       )}

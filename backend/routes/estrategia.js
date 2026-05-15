@@ -202,9 +202,21 @@ router.post('/objetivos', authorize('admin', 'diretor'), async (req, res) => {
 
 router.put('/objetivos/:id', authorize('admin', 'diretor'), async (req, res) => {
   try {
-    const allowed = ['nome', 'descricao', 'indicador_geral', 'valores', 'ordem', 'direcionador_id', 'ativo'];
+    const allowed = [
+      'nome', 'descricao', 'indicador_geral', 'valores', 'ordem',
+      'direcionador_id', 'ativo',
+      // Metas (gerenciaveis em /gestao aba Metas)
+      'meta_descricao', 'meta_valor', 'meta_valor_absoluto',
+    ];
     const update = {};
-    for (const [k, v] of Object.entries(req.body || {})) if (allowed.includes(k)) update[k] = v;
+    for (const [k, v] of Object.entries(req.body || {})) {
+      if (!allowed.includes(k)) continue;
+      if (k === 'meta_valor' || k === 'meta_valor_absoluto') {
+        update[k] = (v === '' || v == null) ? null : Number(v);
+      } else {
+        update[k] = v;
+      }
+    }
 
     const { data, error } = await supabase
       .from('kpi_objetivos_gerais')
@@ -214,7 +226,10 @@ router.put('/objetivos/:id', authorize('admin', 'diretor'), async (req, res) => 
       .single();
     if (error) throw error;
     res.json(data);
-  } catch (e) { res.status(500).json({ error: e.message }); }
+  } catch (e) {
+    console.error('[estrategia/objetivos PUT]', e?.message);
+    res.status(500).json({ error: e?.message });
+  }
 });
 
 router.delete('/objetivos/:id', authorize('admin', 'diretor'), async (req, res) => {
