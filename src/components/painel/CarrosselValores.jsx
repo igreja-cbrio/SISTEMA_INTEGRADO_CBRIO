@@ -64,6 +64,12 @@ function fmtValor(v, dado) {
   return Number(v).toLocaleString('pt-BR');
 }
 
+// Cache local centralizado no componente pai · evita refetch ao trocar de slide
+// e permite prefetch ao montar pra que troca seja instantanea
+function chaveSerie(valor, dado, culto, periodo) {
+  return `${valor}:${dado}:${culto || ''}:${periodo}`;
+}
+
 export default function CarrosselValores() {
   const [catalogo, setCatalogo] = useState(null);
   const [carregandoCat, setCarregandoCat] = useState(true);
@@ -71,8 +77,39 @@ export default function CarrosselValores() {
   const [indice, setIndice] = useState(0);
   // Filtros separados por valor (mantem ao voltar pro slide)
   const [filtros, setFiltros] = useState({});
+  // Cache de series por chave (valor:dado:culto:periodo) -> { data?, loading?, erro? }
+  // Atualizacao via ref + bump pra evitar stale closure nos prefetches concorrentes
+  const cacheRef = useRef({});
+  const [, bumpCache] = useState(0);
   const containerRef = useRef(null);
   const touchStartRef = useRef(null);
+
+  const setCacheEntry = useCallback((chave, patch) => {
+    cacheRef.current = {
+      ...cacheRef.current,
+      [chave]: { ...(cacheRef.current[chave] || {}), ...patch },
+    };
+    bumpCache(n => n + 1);
+  }, []);
+
+  // Carrega 1 serie e popula o cache. Idempotente · se ja tem dado fresco, no-op.
+  const carregarSerie = useCallback(async (valor, dado, culto, periodo, { force = false } = {}) => {
+    const chave = chaveSerie(valor, dado, culto, periodo);
+    const atual = cacheRef.current[chave];
+    if (!force && atual && (atual.data || atual.loading)) return;
+    setCacheEntry(chave, { loading: true, erro: null });
+    try {
+      const { inicio, fim } = calcularRange(periodo);
+      const r = await painelApi.serieTemporal({
+        valor, dado,
+        culto: culto || null,
+        inicio, fim,
+      });
+      setCacheEntry(chave, { data: r, loading: false, erro: null });
+    } catch (e) {
+      setCacheEntry(chave, { loading: false, erro: e?.message || 'Erro ao carregar série' });
+    }
+  }, [setCacheEntry]);
 
   const carregarCat = useCallback(async () => {
     setCarregandoCat(true);
@@ -90,12 +127,22 @@ export default function CarrosselValores() {
         };
       });
       setFiltros(ini);
+
+      // PREFETCH · dispara todas as combinacoes (valor × dado) com culto=null
+      // periodo=12m em paralelo. ~11 chamadas. Cache backend (5min) garante que
+      // recargas seguintes sejam quase instantaneas. Quem ja ta no cache local
+      // e ignorado · noop.
+      (r.valores || []).forEach(v => {
+        (v.dados || []).forEach(d => {
+          carregarSerie(v.key, d.id, null, '12m');
+        });
+      });
     } catch (e) {
       setErroCat(e?.message || 'Erro ao carregar catálogo');
     } finally {
       setCarregandoCat(false);
     }
-  }, []);
+  }, [carregarSerie]);
 
   useEffect(() => { carregarCat(); }, [carregarCat]);
 
@@ -208,6 +255,8 @@ export default function CarrosselValores() {
               cultos={catalogo.cultos || []}
               filtro={filtro}
               onChange={setFiltroAtual}
+              cache={cacheRef.current}
+              onRequire={carregarSerie}
             />
           </div>
 
@@ -260,38 +309,29 @@ export default function CarrosselValores() {
 
 // ----------------------------------------------------------------------------
 // SlideValor · um slide com filtros + grafico de linha
+//
+// Le do `cache` (controlado pelo pai). Se a chave atual nao esta carregada,
+// pede ao pai via `onRequire`. Stale-while-revalidate · se ja tem dado
+// anterior, mostra ele e atualiza em background quando o novo chega.
 // ----------------------------------------------------------------------------
-function SlideValor({ meta, cultos, filtro, onChange }) {
-  const [serie, setSerie] = useState(null);
-  const [loading, setLoading] = useState(false);
-  const [erro, setErro] = useState(null);
-
+function SlideValor({ meta, cultos, filtro, onChange, cache, onRequire }) {
   const dadoDef = useMemo(
     () => (meta?.dados || []).find(d => d.id === filtro.dado),
     [meta, filtro.dado]
   );
 
-  const carregar = useCallback(async () => {
-    if (!meta || !filtro.dado) return;
-    setLoading(true);
-    setErro(null);
-    try {
-      const { inicio, fim } = calcularRange(filtro.periodo);
-      const r = await painelApi.serieTemporal({
-        valor: meta.key,
-        dado: filtro.dado,
-        culto: dadoDef?.filtra_culto ? (filtro.culto || null) : null,
-        inicio, fim,
-      });
-      setSerie(r);
-    } catch (e) {
-      setErro(e?.message || 'Erro ao carregar série');
-    } finally {
-      setLoading(false);
-    }
-  }, [meta, filtro.dado, filtro.culto, filtro.periodo, dadoDef]);
+  const cultoEfetivo = dadoDef?.filtra_culto ? (filtro.culto || null) : null;
+  const chave = meta && filtro.dado ? chaveSerie(meta.key, filtro.dado, cultoEfetivo, filtro.periodo) : null;
+  const entry = chave ? cache[chave] : null;
+  const serie = entry?.data || null;
+  const loading = !!entry?.loading && !serie; // so mostra "carregando" se nao tem nada cacheado
+  const erro = entry?.erro && !serie ? entry.erro : null;
 
-  useEffect(() => { carregar(); }, [carregar]);
+  // Garante que o cache vai ser populado pra essa chave (idempotente).
+  useEffect(() => {
+    if (!meta || !filtro.dado) return;
+    onRequire(meta.key, filtro.dado, cultoEfetivo, filtro.periodo);
+  }, [meta, filtro.dado, cultoEfetivo, filtro.periodo, onRequire]);
 
   const dados = (serie?.serie || []).map(p => ({
     ...p,
