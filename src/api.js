@@ -1371,6 +1371,8 @@ export const painel = {
     const qs = new URLSearchParams(clean).toString();
     return get('/painel/serie-temporal' + (qs ? '?' + qs : ''));
   },
+  // Cascata OKRs > KRs > KPIs com status agregado · seção "KPIs por KR" do painel
+  okrsCascata: () => get('/painel/okrs-cascata'),
 };
 
 export const nps = {
