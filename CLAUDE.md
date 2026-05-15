@@ -998,6 +998,8 @@ SELECT * FROM vw_nsm_painel;
 - `GET /api/painel/serie-temporal/dados` → catalogo valor×dado + lista de cultos
 - `GET /api/painel/serie-temporal?valor=&dado=&culto=&inicio=&fim=&granularidade=`
    → serie agregada `[{periodo, valor}]` pra carrossel de tendencias
+- `GET /api/painel/okrs-cascata` → estrutura aninhada OKR > KR > KPIs com
+   status agregado (verde/amarelo/vermelho/sem_dado bottom-up)
 
 ### Carrossel de valores (tendencias temporais · `/painel`)
 
@@ -1024,11 +1026,40 @@ Pra adicionar novo dado: incluir entrada em `SERIE_DADOS[valor]` em
 `backend/routes/painel.js` + adicionar o branch correspondente em
 `calcularSerie()`. Frontend pega automaticamente via `/serie-temporal/dados`.
 
+### KPIs por KR (cascata OKR > KR > KPI · `/painel`)
+
+Abaixo do carrossel de tendências, `<KpisPorKR>` lê `/api/painel/okrs-cascata`
+e renderiza **cards expansíveis** dos OKRs Gerais. Cada card mostra:
+
+- Nome do OKR · tipo (estratégico/operacional) · badges dos valores
+- Resumo: total de KRs · total de KPIs · contagem por status
+- Click expande pros **KRs gerais** (lista) · cada KR mostra meta + razão
+  KPIs no alvo / total + status pintado
+- Click no KR expande pros **KPIs filhos** com indicador, área, valor
+  atual / meta · click no KPI navega pra `/painel/kpi/:id`
+
+Estrutura de dados:
+```
+kpi_objetivos_gerais (OKR)
+  └─ kpi_krs (kr_geral · area IS NULL, kr_pai_id IS NULL)
+       └─ kpi_krs (kr_especifico · area NOT NULL, kr_pai_id = kr_geral.id)
+            └─ kpi_indicadores_taticos (via kpi_id no kr_especifico)
+```
+
+KPIs sem KR (ligados direto ao OKR via `kpi_indicadores_taticos.objetivo_geral_id`)
+aparecem numa pseudo-linha "KPIs ligados direto ao OKR (sem KR)".
+
+Status bottom-up: KPI (via `vw_kpi_trajetoria_atual`) → KR (pior status entre
+KPIs) → OKR (pior status entre KRs). Filtros disponíveis na UI: por valor
+(Seguir/Conectar/Investir/Servir/Generosidade), por status (todos/em
+alerta/no alvo) e por tipo (estratégico/operacional).
+
 ### Componentes do painel (`src/components/painel/`)
 
 - `MandalaSlide.jsx` — uma mandala SVG (5 ou 6 setores)
 - `CarrosselMandalas.jsx` — carrossel com setas, dots, swipe, teclado
 - `CarrosselValores.jsx` — 5 slides com filtros + gráfico de linha (tendências)
+- `KpisPorKR.jsx` — cascata OKR > KR > KPIs com cards expansíveis (3 filtros)
 - `MatrizValorArea.jsx` — tabela colorida com modal
 - `ModalCelula.jsx` — drilldown da celula
 - `AlertasCriticos.jsx` — top 3 KPIs em alerta

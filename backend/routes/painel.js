@@ -1373,4 +1373,209 @@ router.get('/serie-temporal', async (req, res) => {
   }
 });
 
+// ============================================================================
+// GET /okrs-cascata · OKRs > KRs > KPIs com status agregado
+//
+// Marcos: "uma seção de KPIs por KR · cada KR expande pros KPIs táticos que
+//          o alimentam · resolve 'o KR ta 65% porque KPI X ta 80% e Y ta 50%'"
+//
+// Estrutura aninhada:
+//   OKR Geral
+//     └─ KR Geral (kpi_krs com area IS NULL)
+//          └─ KR Especifico por area (kr_pai_id = KR Geral)
+//                └─ KPI Tatico (kpi_krs.kpi_id -> kpi_indicadores_taticos)
+//
+// Status agrega bottom-up: KPI -> KR -> OKR (pior status entre filhos).
+// ============================================================================
+router.get('/okrs-cascata', async (req, res) => {
+  try {
+    const cached = cacheGet('okrs-cascata');
+    if (cached) return res.json(cached);
+
+    // 1. OKRs ativos
+    const { data: okrs, error: eo } = await supabase
+      .from('kpi_objetivos_gerais')
+      .select('id, nome, descricao, valores, tipo_okr, meta_valor, ordem')
+      .eq('ativo', true)
+      .order('ordem', { nullsFirst: false });
+    if (eo) throw eo;
+
+    // 2. KRs (gerais + especificos)
+    const { data: krs, error: ek } = await supabase
+      .from('kpi_krs')
+      .select('id, objetivo_geral_id, titulo, meta_valor, meta_texto, unidade, area, kr_pai_id, kpi_id, agregacao_cascata')
+      .eq('ativo', true);
+    if (ek) throw ek;
+
+    // 3. KPIs taticos
+    const { data: kpis, error: ekp } = await supabase
+      .from('kpi_indicadores_taticos')
+      .select('id, indicador, area, valores, objetivo_geral_id, meta_valor, periodicidade')
+      .eq('ativo', true);
+    if (ekp) throw ekp;
+    const kpiById = {};
+    (kpis || []).forEach(k => { kpiById[k.id] = k; });
+
+    // 4. Status de cada KPI
+    const { data: trajs } = await supabase
+      .from('vw_kpi_trajetoria_atual')
+      .select('kpi_id, status_trajetoria, valor_realizado, periodo_referencia, meta_valor');
+    const trajByKpi = {};
+    (trajs || []).forEach(t => { trajByKpi[t.kpi_id] = t; });
+
+    // Normalizador de status (lega ou novo)
+    const norm = (s) => {
+      if (s === 'verde'    || s === 'no_alvo') return 'verde';
+      if (s === 'amarelo'  || s === 'atras')   return 'amarelo';
+      if (s === 'vermelho' || s === 'critico') return 'vermelho';
+      return 'sem_dado';
+    };
+
+    // Pior status entre uma lista
+    const piorStatus = (lista) => {
+      const arr = lista.map(norm);
+      if (arr.includes('vermelho')) return 'vermelho';
+      if (arr.includes('amarelo'))  return 'amarelo';
+      if (arr.every(s => s === 'sem_dado')) return 'sem_dado';
+      return 'verde';
+    };
+
+    // Agrupa KRs por objetivo_geral_id (KRs gerais · area NULL)
+    const krGeraisPorOkr = {};
+    const krEspecificosPorPai = {};
+    (krs || []).forEach(kr => {
+      if (!kr.area && !kr.kr_pai_id && kr.objetivo_geral_id) {
+        if (!krGeraisPorOkr[kr.objetivo_geral_id]) krGeraisPorOkr[kr.objetivo_geral_id] = [];
+        krGeraisPorOkr[kr.objetivo_geral_id].push(kr);
+      } else if (kr.area && kr.kr_pai_id) {
+        if (!krEspecificosPorPai[kr.kr_pai_id]) krEspecificosPorPai[kr.kr_pai_id] = [];
+        krEspecificosPorPai[kr.kr_pai_id].push(kr);
+      }
+    });
+
+    // KPIs ligados diretamente ao OKR (sem passar por KR · objetivo_geral_id no KPI)
+    const kpisDiretosPorOkr = {};
+    (kpis || []).forEach(k => {
+      if (k.objetivo_geral_id) {
+        if (!kpisDiretosPorOkr[k.objetivo_geral_id]) kpisDiretosPorOkr[k.objetivo_geral_id] = [];
+        kpisDiretosPorOkr[k.objetivo_geral_id].push(k);
+      }
+    });
+
+    // Monta payload
+    const okrsOut = (okrs || []).map(okr => {
+      const krGerais = krGeraisPorOkr[okr.id] || [];
+      const krsComKpis = krGerais.map(krG => {
+        const especificos = krEspecificosPorPai[krG.id] || [];
+        const kpisDoKr = especificos
+          .map(esp => {
+            const kpi = kpiById[esp.kpi_id];
+            if (!kpi) return null;
+            const t = trajByKpi[kpi.id];
+            return {
+              id: kpi.id,
+              indicador: kpi.indicador,
+              area: kpi.area,
+              area_kr: esp.area, // area do KR especifico
+              meta_valor: t?.meta_valor || kpi.meta_valor,
+              valor_atual: t?.valor_realizado ?? null,
+              periodo: t?.periodo_referencia || null,
+              status: norm(t?.status_trajetoria),
+              periodicidade: kpi.periodicidade,
+            };
+          })
+          .filter(Boolean);
+
+        const statusKr = kpisDoKr.length > 0
+          ? piorStatus(kpisDoKr.map(k => k.status))
+          : 'sem_dado';
+
+        return {
+          id: krG.id,
+          titulo: krG.titulo,
+          meta_valor: krG.meta_valor,
+          meta_texto: krG.meta_texto,
+          unidade: krG.unidade,
+          agregacao: krG.agregacao_cascata,
+          total_kpis: kpisDoKr.length,
+          em_dia: kpisDoKr.filter(k => k.status === 'verde').length,
+          atras: kpisDoKr.filter(k => k.status === 'amarelo').length,
+          critico: kpisDoKr.filter(k => k.status === 'vermelho').length,
+          sem_dado: kpisDoKr.filter(k => k.status === 'sem_dado').length,
+          status: statusKr,
+          kpis: kpisDoKr,
+        };
+      });
+
+      // KPIs orfaos · ligados ao OKR sem passar por KR (raros)
+      const kpisOrfaos = (kpisDiretosPorOkr[okr.id] || [])
+        // remove os ja cobertos por algum KR
+        .filter(k => !krsComKpis.some(kr => kr.kpis.some(kp => kp.id === k.id)))
+        .map(kpi => {
+          const t = trajByKpi[kpi.id];
+          return {
+            id: kpi.id,
+            indicador: kpi.indicador,
+            area: kpi.area,
+            area_kr: null,
+            meta_valor: t?.meta_valor || kpi.meta_valor,
+            valor_atual: t?.valor_realizado ?? null,
+            periodo: t?.periodo_referencia || null,
+            status: norm(t?.status_trajetoria),
+            periodicidade: kpi.periodicidade,
+          };
+        });
+
+      // Stats agregados do OKR
+      const todosKpis = [
+        ...krsComKpis.flatMap(kr => kr.kpis),
+        ...kpisOrfaos,
+      ];
+      const statusOkr = todosKpis.length > 0
+        ? piorStatus(todosKpis.map(k => k.status))
+        : 'sem_dado';
+
+      return {
+        id: okr.id,
+        nome: okr.nome,
+        descricao: okr.descricao,
+        valores: Array.isArray(okr.valores) ? okr.valores : [],
+        tipo_okr: okr.tipo_okr,
+        meta_valor: okr.meta_valor,
+        total_krs: krsComKpis.length,
+        total_kpis: todosKpis.length,
+        em_dia: todosKpis.filter(k => k.status === 'verde').length,
+        atras: todosKpis.filter(k => k.status === 'amarelo').length,
+        critico: todosKpis.filter(k => k.status === 'vermelho').length,
+        sem_dado: todosKpis.filter(k => k.status === 'sem_dado').length,
+        status: statusOkr,
+        krs: krsComKpis,
+        kpis_orfaos: kpisOrfaos,
+      };
+    });
+
+    // Stats globais
+    const todosKpisFlat = okrsOut.flatMap(o => [
+      ...o.krs.flatMap(kr => kr.kpis),
+      ...o.kpis_orfaos,
+    ]);
+    const resumo = {
+      total_okrs: okrsOut.length,
+      total_krs:  okrsOut.reduce((s, o) => s + o.total_krs, 0),
+      total_kpis: todosKpisFlat.length,
+      em_dia:  todosKpisFlat.filter(k => k.status === 'verde').length,
+      atras:   todosKpisFlat.filter(k => k.status === 'amarelo').length,
+      critico: todosKpisFlat.filter(k => k.status === 'vermelho').length,
+      sem_dado:todosKpisFlat.filter(k => k.status === 'sem_dado').length,
+    };
+
+    const _resp = { resumo, okrs: okrsOut };
+    cacheSet('okrs-cascata', _resp);
+    res.json(_resp);
+  } catch (e) {
+    console.error('painel/okrs-cascata:', e.message);
+    res.status(500).json({ error: 'Erro ao carregar cascata de OKRs' });
+  }
+});
+
 module.exports = router;

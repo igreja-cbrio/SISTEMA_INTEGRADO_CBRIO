@@ -19,6 +19,7 @@ import { Activity, RefreshCw, TrendingUp, TrendingDown, Minus, ChevronRight, Use
 import { toast } from 'sonner';
 import CarrosselMandalas from '../components/painel/CarrosselMandalas';
 import CarrosselValores from '../components/painel/CarrosselValores';
+import KpisPorKR from '../components/painel/KpisPorKR';
 import MatrizValorArea from '../components/painel/MatrizValorArea';
 import MatrizSlaGrupo from '../components/painel/MatrizSlaGrupo';
 import AlertasCriticos from '../components/painel/AlertasCriticos';
@@ -197,6 +198,10 @@ export default function Painel() {
 
       <div style={{ marginTop: 24 }}>
         <CarrosselValores />
+      </div>
+
+      <div style={{ marginTop: 24 }}>
+        <KpisPorKR />
       </div>
 
       <div style={{ marginTop: 24 }}>
