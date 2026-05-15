@@ -575,6 +575,7 @@ export const notificacoes = {
 
 export const permissoes = {
   estrutura: () => get('/permissoes/estrutura'),
+  colaboradores: () => get('/permissoes/colaboradores'),
   usuario: (id) => get(`/permissoes/usuario/${id}`),
   usuarioPorEmail: (email) => get(`/permissoes/usuario-por-email/${encodeURIComponent(email)}`),
   criarUsuario: (data) => post('/permissoes/usuario', data),

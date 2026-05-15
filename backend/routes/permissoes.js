@@ -4,6 +4,54 @@ const { supabase } = require('../utils/supabase');
 
 router.use(authenticate, authorize('admin', 'diretor'));
 
+// ────────────────────────────────────────────────────────────────────────
+// GET /api/permissoes/colaboradores
+// Retorna profiles que sao colaboradores reais do sistema (nao membros).
+// Exclui quem:
+//   - existe em vol_profiles.auth_user_id (signup via voluntariado)
+//   - tem email em mem_cadastros_pendentes (signup via formulario membresia)
+// Usado pela tela de "Responsaveis por Solicitacao" no dropdown.
+// ────────────────────────────────────────────────────────────────────────
+router.get('/colaboradores', async (_req, res) => {
+  try {
+    // 1. Pega todos profiles ativos
+    const { data: profiles, error } = await supabase
+      .from('profiles')
+      .select('id, name, email, role, avatar_url')
+      .eq('active', true)
+      .order('name');
+    if (error) throw error;
+
+    // 2. IDs que vieram do voluntariado
+    const { data: volIds } = await supabase
+      .from('vol_profiles')
+      .select('auth_user_id')
+      .not('auth_user_id', 'is', null);
+    const volSet = new Set((volIds || []).map(v => v.auth_user_id));
+
+    // 3. Emails que vieram do formulario publico de membresia
+    const { data: cadEmails } = await supabase
+      .from('mem_cadastros_pendentes')
+      .select('email')
+      .not('email', 'is', null);
+    const cadSet = new Set((cadEmails || [])
+      .map(c => (c.email || '').toLowerCase().trim())
+      .filter(Boolean));
+
+    // 4. Filtra
+    const colaboradores = (profiles || []).filter(p => {
+      if (volSet.has(p.id)) return false;
+      if (p.email && cadSet.has(p.email.toLowerCase().trim())) return false;
+      return true;
+    });
+
+    res.json(colaboradores);
+  } catch (e) {
+    console.error('[permissoes/colaboradores]', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // GET /api/permissoes/estrutura — setores, áreas, módulos, cargos
 router.get('/estrutura', async (req, res) => {
   try {

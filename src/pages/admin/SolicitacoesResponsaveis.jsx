@@ -1,7 +1,7 @@
-import { useState, useEffect } from 'react';
-import { solicitacoes } from '../../api';
+import { useState, useEffect, useRef } from 'react';
+import { solicitacoes, permissoes } from '../../api';
 import { Button } from '../../components/ui/button';
-import { Plus, X, Save, Loader2, Users } from 'lucide-react';
+import { Plus, X, Save, Loader2, Users, Search, ChevronDown } from 'lucide-react';
 import { toast } from 'sonner';
 
 const C = {
@@ -9,6 +9,152 @@ const C = {
   border: 'var(--cbrio-border)', card: 'var(--cbrio-card)', primary: '#00B39D',
   inputBg: 'var(--cbrio-input-bg)',
 };
+
+// Picker com busca · substitui <select>
+function PessoaPicker({ disponiveis, onPick }) {
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState('');
+  const wrapRef = useRef(null);
+  const inputRef = useRef(null);
+
+  useEffect(() => {
+    if (!open) return undefined;
+    function onClickOutside(e) {
+      if (wrapRef.current && !wrapRef.current.contains(e.target)) {
+        setOpen(false);
+        setQuery('');
+      }
+    }
+    document.addEventListener('mousedown', onClickOutside);
+    return () => document.removeEventListener('mousedown', onClickOutside);
+  }, [open]);
+
+  useEffect(() => {
+    if (open && inputRef.current) inputRef.current.focus();
+  }, [open]);
+
+  const q = query.trim().toLowerCase();
+  const filtrados = q
+    ? disponiveis.filter(p =>
+        (p.name || '').toLowerCase().includes(q) ||
+        (p.email || '').toLowerCase().includes(q))
+    : disponiveis;
+
+  return (
+    <div ref={wrapRef} style={{ position: 'relative', flex: 1 }}>
+      <button
+        type="button"
+        onClick={() => setOpen(o => !o)}
+        style={{
+          width: '100%',
+          padding: '8px 10px',
+          background: 'var(--cbrio-input-bg)',
+          border: '1px solid var(--cbrio-border)',
+          borderRadius: 6,
+          color: 'var(--cbrio-text3)',
+          fontSize: 12,
+          cursor: 'pointer',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          gap: 8,
+          textAlign: 'left',
+        }}
+      >
+        <span>+ Adicionar pessoa…</span>
+        <ChevronDown size={14} />
+      </button>
+
+      {open && (
+        <div style={{
+          position: 'absolute',
+          top: 'calc(100% + 4px)',
+          left: 0,
+          right: 0,
+          zIndex: 50,
+          background: 'var(--cbrio-card)',
+          border: '1px solid var(--cbrio-border)',
+          borderRadius: 8,
+          boxShadow: '0 8px 24px rgba(0,0,0,0.18)',
+          maxHeight: 320,
+          display: 'flex',
+          flexDirection: 'column',
+          overflow: 'hidden',
+        }}>
+          <div style={{
+            padding: '8px 10px',
+            borderBottom: '1px solid var(--cbrio-border)',
+            display: 'flex',
+            alignItems: 'center',
+            gap: 8,
+          }}>
+            <Search size={14} style={{ color: 'var(--cbrio-text3)' }} />
+            <input
+              ref={inputRef}
+              type="text"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Buscar por nome ou email…"
+              style={{
+                flex: 1,
+                background: 'transparent',
+                border: 'none',
+                outline: 'none',
+                color: 'var(--cbrio-text)',
+                fontSize: 13,
+              }}
+            />
+            {query && (
+              <button
+                type="button"
+                onClick={() => setQuery('')}
+                style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--cbrio-text3)', padding: 0 }}
+              >
+                <X size={14} />
+              </button>
+            )}
+          </div>
+          <div style={{ overflowY: 'auto', maxHeight: 260 }}>
+            {filtrados.length === 0 ? (
+              <div style={{ padding: 16, fontSize: 12, color: 'var(--cbrio-text3)', textAlign: 'center' }}>
+                {q ? 'Nenhum resultado para "' + query + '"' : 'Sem pessoas disponíveis'}
+              </div>
+            ) : filtrados.map(p => (
+              <button
+                key={p.id}
+                type="button"
+                onClick={() => {
+                  onPick(p.id);
+                  setOpen(false);
+                  setQuery('');
+                }}
+                style={{
+                  width: '100%',
+                  padding: '8px 12px',
+                  textAlign: 'left',
+                  background: 'transparent',
+                  border: 'none',
+                  cursor: 'pointer',
+                  fontSize: 12,
+                  color: 'var(--cbrio-text)',
+                  borderBottom: '1px solid var(--cbrio-border)',
+                  transition: 'background 0.1s',
+                }}
+                onMouseEnter={(e) => e.currentTarget.style.background = 'var(--cbrio-input-bg)'}
+                onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
+              >
+                <div style={{ fontWeight: 600 }}>{p.name || '(sem nome)'}</div>
+                {p.email && (
+                  <div style={{ color: 'var(--cbrio-text3)', fontSize: 11, marginTop: 2 }}>{p.email}</div>
+                )}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
 
 // Areas com cor + label amigavel
 const AREAS = [
@@ -51,11 +197,9 @@ export default function SolicitacoesResponsaveis() {
 
   async function loadProfiles() {
     try {
-      const { supabase } = await import('../../supabaseClient');
-      const { data } = await supabase
-        .from('profiles')
-        .select('id, name, email, role')
-        .order('name');
+      // Endpoint dedicado: exclui quem veio do formulario de membresia ou voluntariado.
+      // So mostra colaboradores reais do sistema.
+      const data = await permissoes.colaboradores();
       setProfiles(data || []);
     } catch (e) { console.error(e); }
   }
@@ -193,27 +337,12 @@ export default function SolicitacoesResponsaveis() {
                 })}
               </div>
 
-              {/* Dropdown pra adicionar */}
+              {/* Picker com busca · so colaboradores (exclui membros/voluntarios) */}
               <div style={{ display: 'flex', gap: 6 }}>
-                <select
-                  value=""
-                  onChange={e => addResponsavel(area.id, e.target.value)}
-                  style={{
-                    flex: 1,
-                    padding: '8px 10px',
-                    background: C.inputBg,
-                    border: `1px solid ${C.border}`,
-                    borderRadius: 6,
-                    color: C.text,
-                    fontSize: 12,
-                    cursor: 'pointer',
-                  }}
-                >
-                  <option value="">+ Adicionar pessoa…</option>
-                  {disponiveis.map(p => (
-                    <option key={p.id} value={p.id}>{p.name || p.email}</option>
-                  ))}
-                </select>
+                <PessoaPicker
+                  disponiveis={disponiveis}
+                  onPick={(id) => addResponsavel(area.id, id)}
+                />
               </div>
 
               {/* Botao salvar (so quando ha mudanca) */}
