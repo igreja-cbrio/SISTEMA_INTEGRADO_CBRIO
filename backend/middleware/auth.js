@@ -48,23 +48,42 @@ async function getModulos() {
 // Verifica token Supabase JWT e injeta req.user (inclui permissões granulares)
 async function authenticate(req, res, next) {
   const token = req.headers.authorization?.replace('Bearer ', '');
-  if (!token) return res.status(401).json({ error: 'Token não fornecido' });
+  if (!token) return res.status(401).json({ error: 'Token não fornecido', reason: 'no_token' });
+
+  if (!supabase) {
+    console.error('[AUTH] Supabase client nao inicializado · verifique SUPABASE_URL e SUPABASE_SERVICE_ROLE_KEY no Vercel');
+    return res.status(500).json({ error: 'Backend nao configurado (Supabase env vars ausentes)', reason: 'no_supabase_client' });
+  }
 
   const { data: { user }, error } = await supabase.auth.getUser(token);
 
   if (error || !user) {
-    return res.status(401).json({ error: 'Token inválido ou expirado' });
+    console.warn('[AUTH] Token rejeitado pelo Supabase:', error?.message || 'usuario null');
+    return res.status(401).json({
+      error: 'Token inválido ou expirado',
+      reason: 'invalid_token',
+      detail: error?.message || 'getUser retornou null · token pode ser de outro projeto Supabase',
+    });
   }
 
   // Busca perfil do usuário (role, name, area etc.)
-  const { data: profile } = await supabase
+  const { data: profile, error: profileError } = await supabase
     .from('profiles')
     .select('id, name, email, role, area, kpi_areas, kpi_valores, ministerio_id, ministerio_papel, is_diretoria_geral, funcao_diretoria, active')
     .eq('id', user.id)
     .single();
 
-  if (!profile || !profile.active) {
-    return res.status(403).json({ error: 'Usuário inativo ou sem perfil' });
+  if (profileError) {
+    console.error('[AUTH] Erro ao buscar profile:', profileError.message);
+    return res.status(500).json({ error: 'Erro ao carregar perfil', reason: 'profile_query_error', detail: profileError.message });
+  }
+
+  if (!profile) {
+    return res.status(403).json({ error: 'Perfil nao encontrado pra este usuario', reason: 'no_profile', detail: `auth.uid=${user.id} email=${user.email}` });
+  }
+
+  if (!profile.active) {
+    return res.status(403).json({ error: 'Usuario inativo', reason: 'inactive_profile' });
   }
 
   // Auto-sync: se profile não tem area, buscar no RH pelo email

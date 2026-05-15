@@ -108,7 +108,19 @@ app.use('/api/nps', require('./routes/nps'));
 app.use('/api/public/nps', require('./routes/publicNps'));
 
 // ── Health check ──
-app.get('/api/health', (req, res) => res.json({ status: 'ok', timestamp: new Date().toISOString() }));
+// Inclui status do Supabase client pra diagnostico de "Nao autorizado" em prod
+app.get('/api/health', (req, res) => {
+  const { supabase } = require('./utils/supabase');
+  res.json({
+    status: 'ok',
+    timestamp: new Date().toISOString(),
+    supabase_client: !!supabase,
+    supabase_url_set: !!process.env.SUPABASE_URL,
+    supabase_service_role_set: !!process.env.SUPABASE_SERVICE_ROLE_KEY,
+    database_url_set: !!process.env.DATABASE_URL,
+    node_env: process.env.NODE_ENV || 'unknown',
+  });
+});
 
 // ── API 404 (evita fallback HTML para rotas inexistentes) ──
 app.use('/api', (req, res) => {
