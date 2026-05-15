@@ -1347,6 +1347,12 @@ export const painel = {
     const qs = new URLSearchParams(params).toString();
     return get('/painel/nsm/pessoas' + (qs ? '?' + qs : ''));
   },
+  // Cultos com decisoes sem pessoas registradas · alimenta filtro "sem dados"
+  // no drilldown NSM. Mostra accountability da captura individual.
+  nsmSemDados: (params = {}) => {
+    const qs = new URLSearchParams(params).toString();
+    return get('/painel/nsm/sem-dados' + (qs ? '?' + qs : ''));
+  },
 };
 
 export const nps = {
