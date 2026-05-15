@@ -69,9 +69,11 @@ function tabularKpis(kpis, statusByKpi) {
   let em_dia = 0, atras = 0, critico = 0;
   for (const k of kpis) {
     const s = statusByKpi[k.id];
-    if (s === 'no_alvo') em_dia++;
-    else if (s === 'atras') atras++;
-    else if (s === 'critico') critico++;
+    // Aceita ambos formatos · nomes unificados em 20260515200000:
+    // verde/amarelo/vermelho/pendente OU legado no_alvo/atras/critico/sem_meta
+    if (s === 'verde' || s === 'no_alvo') em_dia++;
+    else if (s === 'amarelo' || s === 'atras') atras++;
+    else if (s === 'vermelho' || s === 'critico') critico++;
   }
   const sem_dado = total - em_dia - atras - critico;
   const totalAvaliados = em_dia + atras + critico;
@@ -238,12 +240,13 @@ router.get('/matriz', async (req, res) => {
         if (tab.total_kpis === 0) {
           cellStatus = 'na';
         } else {
-          // Mapeia status_trajetoria de cada KPI para verde/amarelo/vermelho/sem_dado
+          // Mapeia status do KPI (verde/amarelo/vermelho/pendente) ou legado
+          // (no_alvo/atras/critico/sem_meta) pra cor da celula
           const statuses = kpisCelula.map(k => {
             const s = statusByKpi[k.id];
-            if (s === 'no_alvo')  return 'verde';
-            if (s === 'atras')    return 'amarelo';
-            if (s === 'critico')  return 'vermelho';
+            if (s === 'verde'    || s === 'no_alvo')  return 'verde';
+            if (s === 'amarelo'  || s === 'atras')    return 'amarelo';
+            if (s === 'vermelho' || s === 'critico')  return 'vermelho';
             return 'sem_dado';
           });
           cellStatus = piorStatus(statuses);
