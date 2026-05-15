@@ -775,6 +775,24 @@ não precisa esperar cron diário nem editar manualmente.
 
 Tabs vigentes de `/integracao`: **Cultos · Frequência · Decisões · Batismos · Histórico**.
 
+### Decisões · toggle Por culto | Pessoas (CPFs)
+
+Aba "Decisões" tem o gráfico mensal no topo (Recharts) e, embaixo, um
+`<DetalhamentoDecisoes>` com toggle entre 2 modos · estilo Batismos:
+
+- **Por culto** (default) · tabela agregada por tipo de culto
+  (Domingo/AMI/Bridge/Quarta) · cultos · presenciais · online · total
+  · média.
+- **Pessoas** · lê `vw_nsm_sem_dados` + carrega `cultos_decisoes_pessoas`
+  de cada culto. Renderiza:
+  - **Sem busca**: lista de cultos com expand (filtro Todos/Pendentes/Sem
+    dados/Completos · botão "Adicionar pessoa (faltam N)" inline)
+  - **Com busca**: tabela flat estilo `/integracao` aba Batismos (Nome ·
+    CPF · Contato · Culto · Tipo · Vínculo membro)
+
+A aba "Pessoas decididas" separada foi removida em 2026-05-14 · todo
+o fluxo passa pela aba Decisões. Arquivo `DecisoesPessoas.tsx` deletado.
+
 ### Cascata Seguir a Jesus → KPIs por área
 
 Os dados preenchidos no modal de culto agora alimentam **7 KPIs** do
