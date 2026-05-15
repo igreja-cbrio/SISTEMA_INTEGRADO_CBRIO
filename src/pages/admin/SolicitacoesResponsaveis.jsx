@@ -174,7 +174,7 @@ export default function SolicitacoesResponsaveis() {
   const [rows, setRows] = useState([]);
   const [profiles, setProfiles] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [savingArea, setSavingArea] = useState(null);
+  const [savingAll, setSavingAll] = useState(false);
   // Mapa area -> array de profile_ids selecionados (estado local antes de salvar)
   const [editMap, setEditMap] = useState({});
 
@@ -222,16 +222,6 @@ export default function SolicitacoesResponsaveis() {
     }));
   }
 
-  async function salvar(area) {
-    setSavingArea(area);
-    try {
-      await solicitacoes.areaResponsaveis.save(area, editMap[area] || []);
-      toast.success('Responsáveis atualizados');
-      await load();
-    } catch (e) { toast.error(e.message); }
-    setSavingArea(null);
-  }
-
   // Mapa para lookup rapido
   const profileById = Object.fromEntries(profiles.map(p => [p.id, p]));
 
@@ -248,6 +238,37 @@ export default function SolicitacoesResponsaveis() {
     const b = (originalByArea[area] || []).slice().sort().join(',');
     return a !== b;
   };
+
+  const dirtyAreas = AREAS.filter(a => isDirty(a.id));
+
+  async function salvarTudo() {
+    if (dirtyAreas.length === 0) return;
+    setSavingAll(true);
+    let saved = 0;
+    let failed = 0;
+    for (const a of dirtyAreas) {
+      try {
+        await solicitacoes.areaResponsaveis.save(a.id, editMap[a.id] || []);
+        saved++;
+      } catch (e) {
+        failed++;
+        toast.error(`${a.label}: ${e.message}`);
+      }
+    }
+    if (failed === 0) {
+      toast.success(`${saved} ${saved === 1 ? 'área atualizada' : 'áreas atualizadas'}`);
+    } else if (saved > 0) {
+      toast.warning(`${saved} salva(s), ${failed} com erro`);
+    }
+    await load();
+    setSavingAll(false);
+  }
+
+  function descartar() {
+    const map = {};
+    AREAS.forEach(a => { map[a.id] = (originalByArea[a.id] || []).slice(); });
+    setEditMap(map);
+  }
 
   if (loading) {
     return (
@@ -272,6 +293,54 @@ export default function SolicitacoesResponsaveis() {
         </div>
       </div>
 
+      {dirtyAreas.length > 0 && (
+        <div style={{
+          position: 'sticky',
+          top: 12,
+          zIndex: 30,
+          marginBottom: 16,
+          padding: '10px 14px',
+          background: C.card,
+          border: `1px solid ${C.primary}`,
+          borderRadius: 10,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          gap: 12,
+          boxShadow: '0 6px 18px rgba(0,0,0,0.18)',
+        }}>
+          <div style={{ fontSize: 13, color: C.text }}>
+            <span style={{ fontWeight: 700, color: C.primary }}>{dirtyAreas.length}</span>
+            {' '}{dirtyAreas.length === 1 ? 'área modificada' : 'áreas modificadas'}
+            <span style={{ color: C.text3 }}>
+              {' · '}{dirtyAreas.map(a => a.label).join(', ')}
+            </span>
+          </div>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={descartar}
+              disabled={savingAll}
+            >
+              Descartar
+            </Button>
+            <Button
+              size="sm"
+              onClick={salvarTudo}
+              disabled={savingAll}
+              style={{ background: C.primary, color: 'white', borderColor: C.primary }}
+            >
+              {savingAll ? (
+                <><Loader2 className="animate-spin" size={14} style={{ marginRight: 6 }} /> Salvando…</>
+              ) : (
+                <><Save size={14} style={{ marginRight: 6 }} /> Salvar todas</>
+              )}
+            </Button>
+          </div>
+        </div>
+      )}
+
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(360px, 1fr))', gap: 16 }}>
         {AREAS.map(area => {
           const selecionados = editMap[area.id] || [];
@@ -294,7 +363,18 @@ export default function SolicitacoesResponsaveis() {
               }}
             >
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
-                <div style={{ fontWeight: 700, fontSize: 15, color: C.text }}>{area.label}</div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <div style={{ fontWeight: 700, fontSize: 15, color: C.text }}>{area.label}</div>
+                  {dirty && (
+                    <span
+                      title="Mudança não salva"
+                      style={{
+                        width: 8, height: 8, borderRadius: '50%',
+                        background: C.primary, flexShrink: 0,
+                      }}
+                    />
+                  )}
+                </div>
                 <div style={{ fontSize: 11, color: C.text3 }}>
                   {selecionados.length} responsáve{selecionados.length === 1 ? 'l' : 'is'}
                 </div>
@@ -344,22 +424,6 @@ export default function SolicitacoesResponsaveis() {
                   onPick={(id) => addResponsavel(area.id, id)}
                 />
               </div>
-
-              {/* Botao salvar (so quando ha mudanca) */}
-              {dirty && (
-                <Button
-                  size="sm"
-                  onClick={() => salvar(area.id)}
-                  disabled={savingArea === area.id}
-                  style={{ background: area.color, color: 'white', borderColor: area.color }}
-                >
-                  {savingArea === area.id ? (
-                    <><Loader2 className="animate-spin" size={14} style={{ marginRight: 6 }} /> Salvando…</>
-                  ) : (
-                    <><Save size={14} style={{ marginRight: 6 }} /> Salvar mudanças</>
-                  )}
-                </Button>
-              )}
             </div>
           );
         })}
