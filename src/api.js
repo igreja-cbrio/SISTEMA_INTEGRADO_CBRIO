@@ -599,6 +599,8 @@ export const solicitacoes = {
 export const membresia = {
   kpis: () => get('/membresia/kpis'),
   qrLookup: (token) => get(`/membresia/qr-lookup/${encodeURIComponent(token)}`),
+  orfaosStats: () => get('/membresia/orfaos-stats'),
+  promoverOrfaos: () => post('/membresia/promover-orfaos', {}),
   membros: {
     list: (params) => get('/membresia/membros' + (params ? '?' + new URLSearchParams(params) : '')),
     get: (id) => get(`/membresia/membros/${id}`),
