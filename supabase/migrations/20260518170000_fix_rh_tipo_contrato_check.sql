@@ -22,14 +22,19 @@
 
 BEGIN;
 
+-- 1. Dropa o constraint antigo ANTES de qualquer UPDATE.
+--    Se o UPDATE rodar antes, ele bate no constraint legado (lowercase-only)
+--    e falha porque upper(pj) = 'PJ' não está no IN list antigo.
+ALTER TABLE public.rh_funcionarios
+  DROP CONSTRAINT IF EXISTS rh_funcionarios_tipo_contrato_check;
+
+-- 2. Normaliza valores existentes (pj → PJ, clt → CLT, etc).
 UPDATE public.rh_funcionarios
 SET tipo_contrato = upper(tipo_contrato)
 WHERE tipo_contrato IS NOT NULL
   AND tipo_contrato <> upper(tipo_contrato);
 
-ALTER TABLE public.rh_funcionarios
-  DROP CONSTRAINT IF EXISTS rh_funcionarios_tipo_contrato_check;
-
+-- 3. Recria constraint aceitando os 4 tipos do PCS em uppercase.
 ALTER TABLE public.rh_funcionarios
   ADD CONSTRAINT rh_funcionarios_tipo_contrato_check
   CHECK (tipo_contrato IS NULL OR tipo_contrato IN ('CLT', 'PJ', 'PJ+', 'PREBENDA'));
