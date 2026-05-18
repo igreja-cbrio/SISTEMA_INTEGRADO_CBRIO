@@ -4,7 +4,7 @@
 // Usado em /minha-area (aba Dados) como forma principal de entrada de dados de culto.
 // ============================================================================
 
-import { useState, useEffect, useMemo, useCallback } from 'react';
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { kpis as kpisApi } from '../api';
 
 const cultosApi = kpisApi.cultos;
@@ -411,7 +411,8 @@ function ModalCulto({ culto, onClose, onSaved }) {
   const hasKids   = culto.service_type_has_kids   ?? false;
   const hasOnline = culto.service_type_has_online ?? false;
 
-  const [form, setForm] = useState({
+  // Valores iniciais (preservados pra detectar dirty)
+  const valoresIniciaisRef = useRef({
     presencial_adulto:    culto.presencial_adulto ?? 0,
     presencial_kids:      culto.presencial_kids ?? 0,
     decisoes_presenciais: culto.decisoes_presenciais ?? 0,
@@ -421,9 +422,37 @@ function ModalCulto({ culto, onClose, onSaved }) {
     online_ddus:          culto.online_ddus ?? '',
     youtube_video_id:     culto.youtube_video_id ?? '',
   });
+
+  const [form, setForm] = useState({ ...valoresIniciaisRef.current });
   const [saving, setSaving] = useState(false);
 
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
+
+  // Detecta alteracoes nao salvas pra avisar antes de fechar
+  // Marcos: "voce clica fora e zera tudo no meio da operacao"
+  const isDirty = useMemo(() => {
+    const orig = valoresIniciaisRef.current;
+    return Object.keys(orig).some(k => String(orig[k] ?? '') !== String(form[k] ?? ''));
+  }, [form]);
+
+  const tentarFechar = useCallback(() => {
+    if (saving) return; // nao fecha durante salvamento
+    if (isDirty) {
+      const ok = window.confirm(
+        'Tem dados preenchidos que ainda não foram salvos.\n\n'
+        + 'Tem certeza que quer fechar e perder essas alterações?'
+      );
+      if (!ok) return;
+    }
+    onClose?.();
+  }, [isDirty, onClose, saving]);
+
+  // ESC tambem usa tentarFechar
+  useEffect(() => {
+    const onKey = (e) => { if (e.key === 'Escape') tentarFechar(); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [tentarFechar]);
 
   const submit = async () => {
     setSaving(true);
@@ -453,7 +482,7 @@ function ModalCulto({ culto, onClose, onSaved }) {
   const { dia, diaSemana } = formataDataCurta(culto.data);
 
   return (
-    <div onClick={onClose}
+    <div onClick={tentarFechar}
       style={{
         position: 'fixed', inset: 0, zIndex: 1000, background: C.overlay,
         display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16,
@@ -466,6 +495,7 @@ function ModalCulto({ culto, onClose, onSaved }) {
           <div>
             <h2 style={{ fontSize: 15, fontWeight: 700, margin: 0, color: C.text }}>
               {culto.nome}
+              {isDirty && <span style={{ marginLeft: 8, fontSize: 9, fontWeight: 700, padding: '2px 6px', borderRadius: 99, background: '#F59E0B22', color: '#B45309', letterSpacing: 0.3 }}>NÃO SALVO</span>}
             </h2>
             <p style={{ fontSize: 11, color: C.t3, margin: '4px 0 0', textTransform: 'capitalize' }}>
               {diaSemana} · {dia} {MESES[Number(culto.data.split('-')[1]) - 1]} {culto.data.split('-')[0]}
@@ -473,7 +503,7 @@ function ModalCulto({ culto, onClose, onSaved }) {
               {culto.service_type_name && <> · {culto.service_type_name}</>}
             </p>
           </div>
-          <button onClick={onClose} disabled={saving} style={{ background: 'none', border: 'none', cursor: 'pointer', color: C.t3, padding: 4 }}>
+          <button onClick={tentarFechar} disabled={saving} style={{ background: 'none', border: 'none', cursor: 'pointer', color: C.t3, padding: 4 }}>
             <X size={18} />
           </button>
         </header>
@@ -553,7 +583,7 @@ function ModalCulto({ culto, onClose, onSaved }) {
         </div>
 
         <footer style={{ padding: 14, borderTop: `1px solid ${C.border}`, display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
-          <button onClick={onClose} disabled={saving} style={btnGhost}>Cancelar</button>
+          <button onClick={tentarFechar} disabled={saving} style={btnGhost}>Cancelar</button>
           <button onClick={submit} disabled={saving} style={{ ...btnPrimary, opacity: saving ? 0.5 : 1 }}>
             <Save size={13} /> {saving ? 'Salvando...' : 'Salvar'}
           </button>
