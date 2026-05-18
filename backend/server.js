@@ -121,6 +121,7 @@ app.use('/api/gestao', require('./routes/gestao'));
 app.use('/api/dados-brutos', require('./routes/dadosBrutos'));
 app.use('/api/nps', require('./routes/nps'));
 app.use('/api/public/nps', require('./routes/publicNps'));
+app.use('/api/planejamento', require('./routes/planejamento'));
 
 // ── Health check ──
 // Inclui status do Supabase client pra diagnostico de "Nao autorizado" em prod
