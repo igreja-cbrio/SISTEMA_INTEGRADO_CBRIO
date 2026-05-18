@@ -1167,9 +1167,21 @@ Dos 153 KPIs ativos, ~150 estao mapeados para calculo automatico.
 
 ### Permissoes (regra geral do sistema OKR)
 
-- Leitura: **todos veem todos os KPIs** (painel, mandalas, matriz, minha-area, dados-brutos)
-- Edicao: **so a propria area** (validado via `kpi_areas` em profiles)
+- **Leitura geral** (`/painel`, mandalas, matriz, alertas): qualquer autenticado
+- **`/minha-area`**: filtro client-side por `profile.kpi_areas` OU `profile.kpi_valores`:
+  - admin/diretor: vê tudo
+  - sem `kpi_areas` e sem `kpi_valores` configurados: vê tudo (fallback MVP · vai apertar depois)
+  - com permissões: KPI passa se `kpi.area` bate `kpi_areas` OU algum `kpi.valores[]` bate `kpi_valores`
+- **`/integracao` escrita** (cultos, decisões, batismos): `authorizeIntegracao` em
+  `backend/routes/kpis.js` exige `role IN ('admin','diretor')` OR `kpi_areas` contém `'integracao'`
+- **`/dados-brutos`**: `useMyKpiAreas.canEditDado()` segue mesma lógica (area + valor + ministério)
 - Admin/diretor: passa em todos os checks
+
+**Caso de uso · líder de Integração (ex: Alda Lorena):**
+- `kpi_areas = ['integracao']` → desbloqueia escrita em `/integracao`
+- `kpi_valores = ['seguir']` → `/minha-area` mostra só KPIs Seguir (que estão nas 6 áreas
+  sede/ami/bridge/online/kids/cba). Filtro client-side faz match por valor.
+- Detalhes operacionais (query de diagnóstico + UPDATE): `docs/permissoes-alda.md`
 
 ### Modulos futuros (preparados na Fase 6)
 

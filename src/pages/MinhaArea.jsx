@@ -113,7 +113,7 @@ function moduloDoKpi(kpi) {
 // ============================================================================
 export default function MinhaArea() {
   const { profile } = useAuth();
-  const { kpiAreas, isAdmin, ministerioId, ministerioPapel } = useMyKpiAreas();
+  const { kpiAreas, kpiValores, isAdmin, ministerioId, ministerioPapel } = useMyKpiAreas();
 
   // Filtros
   const [busca, setBusca] = useState('');
@@ -157,7 +157,25 @@ export default function MinhaArea() {
     return m;
   }, [registros]);
 
-  const kpisAtivos = useMemo(() => taticos.filter(k => k.ativo !== false), [taticos]);
+  // Filtro de permissao · /minha-area mostra KPIs que o usuario "responde por":
+  //   · admin/diretor: tudo
+  //   · perfil sem kpi_areas/kpi_valores: tudo (legado · MVP)
+  //   · perfil com kpi_areas ou kpi_valores: so KPIs cuja area OU valor batem
+  //
+  // Marcos: "Alda quer ver minha area de kpi so com seguir a Jesus".
+  // Setando profile.kpi_valores = ['seguir'] no banco, ela ve so esses.
+  const kpisAtivos = useMemo(() => {
+    return taticos.filter(k => {
+      if (k.ativo === false) return false;
+      if (isAdmin) return true;
+      // Sem permissoes configuradas · MVP mostra tudo (comportamento legado)
+      if (kpiAreas.length === 0 && kpiValores.length === 0) return true;
+      const area = String(k.area || '').toLowerCase();
+      if (kpiAreas.includes(area)) return true;
+      const valores = (k.valores || []).map(v => String(v).toLowerCase());
+      return valores.some(v => kpiValores.includes(v));
+    });
+  }, [taticos, isAdmin, kpiAreas, kpiValores]);
 
   // Opcoes derivadas
   const pilaresDisponiveis = useMemo(() => {
