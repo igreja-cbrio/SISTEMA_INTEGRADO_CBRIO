@@ -365,7 +365,9 @@ function AppRoutes() {
         <Route path="/expansao" element={<ModuleGuard permKey="canExpansao"><Suspense fallback={<Loading />}><Expansao /></Suspense></ModuleGuard>} />
         <Route path="/revisao" element={<Suspense fallback={<Loading />}><RevisaoEstrategica /></Suspense>} />
         <Route path="/revisao/:tipo/:id" element={<Suspense fallback={<Loading />}><RevisaoDetalhe /></Suspense>} />
-        <Route path="/processos" element={<ModuleGuard permKey="canProcessos"><Suspense fallback={<Loading />}><Processos /></Suspense></ModuleGuard>} />
+        {/* /processos descontinuado em 2026-05-18 (reuniao de permissoes) — redireciona pra /eventos */}
+        <Route path="/processos" element={<Navigate to="/eventos" replace />} />
+        <Route path="/processos/*" element={<Navigate to="/eventos" replace />} />
         <Route path="/nps" element={<Suspense fallback={<Loading />}><Nps /></Suspense>} />
         <Route path="/nps/:id/responder" element={<Suspense fallback={<Loading />}><NpsResponder /></Suspense>} />
         <Route path="/admin/rh" element={<ModuleGuard permKey="canRH"><Suspense fallback={<Loading />}><RH /></Suspense></ModuleGuard>} />
