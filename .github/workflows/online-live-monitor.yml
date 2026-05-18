@@ -8,7 +8,7 @@ name: Online · Live Monitor (5min)
 #
 # Secrets necessarios no repo (Settings > Secrets > Actions):
 #   CRON_SECRET    · mesmo valor da env CRON_SECRET no Vercel
-#   APP_BASE_URL   · ex.: https://crmcbrio.vercel.app
+#   APP_BASE_URL   · ex.: https://cbrio.org
 
 on:
   schedule:
