@@ -8,6 +8,7 @@ import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
 import { planejamento as planApi } from '../../api';
+import RevisaoModal from './RevisaoModal';
 
 const C = {
   bg: 'var(--cbrio-bg)', card: 'var(--cbrio-card)', primary: '#00B39D',
@@ -30,12 +31,21 @@ export default function AnualCiclos() {
   const [newYear, setNewYear] = useState(new Date().getFullYear() + 1);
   const [newDesc, setNewDesc] = useState('');
 
+  // Filas de aprovação (vazias se usuário não tem essa role)
+  const [filaDir, setFilaDir] = useState([]);
+  const [filaDirGeral, setFilaDirGeral] = useState([]);
+  const [revisando, setRevisando] = useState(null); // { proposta, etapa }
+
   const load = () => {
     setLoading(true);
-    planApi.listCiclos()
-      .then(d => setCiclos(Array.isArray(d) ? d : []))
-      .catch(e => setError(e.message))
-      .finally(() => setLoading(false));
+    Promise.all([
+      planApi.listCiclos().then(d => Array.isArray(d) ? d : []),
+      planApi.filaDiretor().then(d => Array.isArray(d) ? d : []).catch(() => []),
+      planApi.filaDiretoria().then(d => Array.isArray(d) ? d : []).catch(() => []),
+    ]).then(([cs, fd, fdg]) => {
+      setCiclos(cs); setFilaDir(fd); setFilaDirGeral(fdg);
+    }).catch(e => setError(e.message))
+    .finally(() => setLoading(false));
   };
 
   useEffect(() => { load(); }, []);
@@ -77,6 +87,20 @@ export default function AnualCiclos() {
       {error && (
         <div style={{ padding: '10px 14px', background: '#fee2e2', color: C.red, borderRadius: 8, fontSize: 13, marginBottom: 16 }}>
           {error}
+        </div>
+      )}
+
+      {/* Filas de aprovação (só aparecem se há itens pro usuário) */}
+      {(filaDir.length > 0 || filaDirGeral.length > 0) && (
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(360px, 1fr))', gap: 12, marginBottom: 24 }}>
+          {filaDir.length > 0 && (
+            <FilaCard titulo="Aguardando sua aprovação (diretor do setor)" itens={filaDir} cor={C.amber}
+              onRevisar={(p) => setRevisando({ proposta: p, etapa: 'diretor' })} />
+          )}
+          {filaDirGeral.length > 0 && (
+            <FilaCard titulo="Aguardando aprovação final da diretoria" itens={filaDirGeral} cor={C.blue}
+              onRevisar={(p) => setRevisando({ proposta: p, etapa: 'diretoria' })} />
+          )}
         </div>
       )}
 
@@ -143,6 +167,43 @@ export default function AnualCiclos() {
           })}
         </div>
       )}
+
+      {revisando && (
+        <RevisaoModal
+          proposta={revisando.proposta}
+          etapa={revisando.etapa}
+          onClose={() => setRevisando(null)}
+          onDecided={() => { setRevisando(null); load(); }}
+        />
+      )}
+    </div>
+  );
+}
+
+function FilaCard({ titulo, itens, cor, onRevisar }) {
+  return (
+    <div style={{ background: C.card, border: `1px solid ${cor}`, borderRadius: 12, padding: 16 }}>
+      <div style={{ fontSize: 12, fontWeight: 700, color: cor, marginBottom: 10 }}>{titulo} · {itens.length}</div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+        {itens.slice(0, 10).map(p => {
+          const titulo = p.payload_atual?.nome || '(sem nome)';
+          return (
+            <button key={p.id} onClick={() => onRevisar(p)} style={{
+              padding: '10px 12px', textAlign: 'left', background: 'var(--cbrio-bg)', border: `1px solid ${C.border}`, borderRadius: 6, cursor: 'pointer',
+            }}>
+              <div style={{ fontSize: 12, fontWeight: 600, color: C.text }}>{titulo}</div>
+              <div style={{ fontSize: 10, color: C.t3, marginTop: 2 }}>
+                {p.tipo} · {p.area} · {p.setor?.nome} · ciclo {p.ciclo?.year} · por {p.proposto?.name || '—'}
+              </div>
+            </button>
+          );
+        })}
+        {itens.length > 10 && (
+          <div style={{ fontSize: 10, color: C.t3, textAlign: 'center', marginTop: 4 }}>
+            +{itens.length - 10} item(ns) — abra cada um pra revisar
+          </div>
+        )}
+      </div>
     </div>
   );
 }
