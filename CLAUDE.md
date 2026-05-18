@@ -595,30 +595,128 @@ serverless functions via `api/index.js`).
 
 Módulos principais: Dashboard, Eventos, Projetos, Planejamento,
 Expansão, RH, Financeiro, Logística, Patrimônio, **Membresia**,
-Solicitações, Assistente IA, Permissões, **Cérebro CBRio**,
-**Processos**.
+Solicitações, Assistente IA, Permissões, **Cérebro CBRio**.
 
-## Processos — Modulo de gestao operacional
+> **Processos**: removido na reuniao de permissoes (2026-05-18).
+> A rota `/processos` foi descontinuada e redireciona pra `/eventos`. Schema
+> da tabela `processos` permanece no banco mas o modulo nao aparece mais no
+> menu nem no sistema de permissoes (linha marcada como obsoleta na matriz).
 
-Modulo para gestao de processos operacionais que alimentam KPIs.
-Seção do menu renomeada de "Projetos e Eventos" para "Acompanhamento".
+## Permissoes · matriz cargo x modulo (reuniao Marcos Paulo · 2026-05-18)
 
-### Arquitetura
+A matriz aprovada vive em duas tabelas (Supabase):
 
-- **Tabela**: `processos` (Supabase) com campos nome, descricao,
-  area, categoria, responsavel_id/nome, indicador_ids (TEXT[]),
-  is_okr, status
-- **Backend**: `backend/routes/processos.js` — CRUD padrao com
-  authenticate + authorize('admin','diretor')
-- **Frontend**: `src/pages/Processos.jsx` — 4 tabs (Home, Lista,
-  OKR, KPIs)
-- **KPIs**: 60 indicadores vigentes em `src/data/indicadores.js`,
-  espelhando a planilha "Metas e Indicadores 2026" (OneDrive). O banco
-  (`kpi_indicadores_taticos`) foi alinhado com a planilha em
-  `20260430090000_kpis_align_planilha.sql` — mesmos IDs, mesmas metas.
-  **Planilha = fonte de verdade**: ao adicionar/remover/renomear KPI,
-  atualizar a planilha primeiro, depois `indicadores.js`, depois banco
-  via migration. Nunca divergir entre os 3.
+- `cargo_modulo_permissao` · **default por cargo** (matriz que veio da
+  planilha · source of truth). Linha por (cargo, modulo) com nivel 0-5
+  + modificadores (`pode_exportar`, `pode_aprovar`, `escopo_proprio`).
+- `permissoes_modulo` · **override por usuario** (excecao individual).
+  Tem os mesmos campos + `motivo` e `expira_em` (override temporario).
+
+A view `vw_permissao_efetiva` ja faz o fallback `override -> default
+do cargo -> 0`. Quando precisar consultar permissao efetiva, usa essa view
+ao inves de juntar manualmente.
+
+### Niveis 0-5
+
+- `0` Sem acesso · modulo nao aparece no menu nem responde a URL
+- `1` Ver (so leitura)
+- `2` Ver + preencher dado bruto (lancar numeros)
+- `3` Ver + editar (CRUD)
+- `4` Ver + editar + deletar
+- `5` Admin do modulo (configura regras, metas, seeds, deleta tudo)
+
+### Modificadores
+
+- `pode_exportar` (`+E`) · exportar dados (CPF, telefone, financeiro · LGPD)
+- `pode_aprovar`  (`+A`) · aprovar workflows daquele modulo (ex: despesa)
+- `escopo_proprio` (`*`) · acesso so da propria area / valor / setor
+
+### 25 cargos (slugs)
+
+`pastor-senior`, `pastor-presidente`, `diretor-administrativo`,
+`coordenador-estrategia`, `diretor-ministerial`, `diretor-criativo`,
+`lider-ministerial`, `assistente-area`, `assistente-ministerial`,
+`coordenador-financeiro`, `assistente-financeiro`,
+`coordenador-marketing`, `assistente-marketing`,
+`lider-producao`, `assistente-producao`,
+`lider-operacoes`, `lider-logistica`, `assistente-logistica`,
+`assistente-operacoes`,
+`diretor-rh`, `coordenador-voluntarios`, `voluntario`, `membro`,
+`conselho`, `dev`.
+
+### 30 modulos (slugs)
+
+- **Estrategica**: `dashboard`, `painel-cbrio`, `minha-area`, `gestao`,
+  `planejamento`, `ritual`, `governanca`, `revisao-estrategica`
+- **Ministerial**: `integracao`, `cuidados`, `online`, `next`,
+  `voluntariado`, `membresia`, `grupos`
+- **Operacional**: `eventos`, `projetos`, `expansao`, `rh`, `financeiro`,
+  `logistica`, `patrimonio`, `solicitacoes`
+- **Dados / IA / Admin**: `dados-brutos`, `nps`, `notificacoes-config`,
+  `assistente-ia`, `cerebro`, `perfil`, `permissoes-admin`, `usuarios-admin`
+
+### Backend · como usar
+
+```js
+const { authorizeModule } = require('../middleware/auth');
+// Bloqueia acesso ao endpoint se o usuario nao tiver nivel >= 2 em /financeiro
+router.use(authenticate, authorizeModule('financeiro', 2));
+```
+
+`ROUTE_MODULE_MAP` em `backend/middleware/auth.js` mapeia routeKey -> slugs
+de modulo. Quando criar rota nova, adicionar entrada la.
+
+`req.user.granular.modulePerms[slug]` retorna
+`{ leitura, escrita, pode_exportar, pode_aprovar, escopo_proprio }`.
+
+### Frontend · como usar
+
+```jsx
+const { canFinanceiro, canMembresia, getAccessLevel } = useAuth();
+if (!canFinanceiro) return <Navigate to="/dashboard" />;
+const nivel = getAccessLevel(['financeiro']);
+```
+
+Hooks ja definidos em `src/contexts/AuthContext.jsx`: `canRH`, `canFinanceiro`,
+`canLogistica`, `canPatrimonio`, `canMembresia`, `canProjetos`, `canExpansao`,
+`canAgenda`, `canIA`, `canKPIs`, `canCuidados`, `canSolicitacoes`, `canNPS`,
+`canDadosBrutos`, `canPainel`.
+
+### Overrides com expiracao
+
+`permissoes_modulo.expira_em` permite override temporario (cobrir licenca,
+projeto pontual). Quando expira, o usuario volta automaticamente para o
+default do cargo. O middleware filtra overrides expirados antes de compor
+a permissao efetiva.
+
+### Endpoints admin (`/api/permissoes/*`)
+
+- `GET /matriz` · matriz completa (cargos, modulos, celulas)
+- `PUT /matriz/celula` · editar uma celula da matriz (default por cargo)
+- `GET /cargo/:id` · detalhe + celulas de um cargo
+- `GET /usuario/:id` · permissoes efetivas + overrides + areas
+- `PUT /usuario/:id/cargo` · trocar cargo do usuario
+- `PUT /usuario/:id/modulo` · criar/atualizar override por modulo
+- `DELETE /usuario/:id/modulo/:moduloId` · remover override
+
+Todos exigem `authorize('admin','diretor')`. Ao editar matriz ou override,
+o cache do middleware e' invalidado automaticamente.
+
+### Itens pendentes da reuniao
+
+Estes itens **nao** foram preenchidos na planilha e precisam de decisao:
+
+1. **Assistente do Online** · ninguem definido como assistente da area
+2. **Estrutura do Marketing** · todos como assistentes ou ter lideres de
+   subarea (conteudo, design, redes sociais)?
+3. **Cargo do Francisco (Chico)** · provisoriamente `assistente-financeiro`,
+   confirmar com a Ju do RH
+4. **Permissoes do Lider de Producao** · reuniao foi interrompida nessa
+   parte · matriz atual usa um perfil generico (espelha outros lideres
+   de area). Conferir com Bracinho/Marcos
+5. **Override flow** · planilha decidiu nao pre-configurar overrides.
+   Formalizar processo de pedido + aprovacao quando alguem precisar de
+   acesso fora do cargo
 
 ## Membro Modelo — Fluxo da jornada nos 5 valores
 

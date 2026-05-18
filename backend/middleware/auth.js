@@ -15,21 +15,42 @@ const PERMISSIONS = {
   membro_marketing: { canViewMarketing: true, canMarkChecklist: true, label: 'Membro de Marketing' },
 };
 
-// ── Mapeamento de rotas API → nome do módulo na tabela modulos ──
+// ── Mapeamento de rotas API → slugs dos modulos (matriz reuniao 2026-05-18) ──
+// Source of truth: cargo_modulo_permissao (matriz padrao) + permissoes_modulo
+// (overrides). Slugs definidos em supabase/migrations/20260518200000_*.sql
 const ROUTE_MODULE_MAP = {
-  'rh':          ['DP', 'Pessoas'],
-  'financeiro':  ['Financeiro'],
-  'logistica':   ['Logística'],
-  'patrimonio':  ['Patrimônio'],
-  'membresia':   ['Membresia'],
-  'events':      ['Agenda'],
-  'projects':    ['Projetos'],
-  'agents':      ['IA / Agentes'],
-  'tasks':       ['Tarefas'],
-  'notificacoes':['Comunicação'],
-  'expansion':   ['Projetos'],
-  'voluntariado':['Membresia'],
-  'cuidados':    ['Cuidados'],
+  // operacionais
+  'rh':           ['rh'],
+  'financeiro':   ['financeiro'],
+  'logistica':    ['logistica'],
+  'patrimonio':   ['patrimonio'],
+  'eventos':      ['eventos'],
+  'events':       ['eventos'],
+  'projects':     ['projetos'],
+  'expansion':    ['expansao'],
+  'solicitacoes': ['solicitacoes'],
+  // ministeriais
+  'integracao':   ['integracao'],
+  'cuidados':     ['cuidados'],
+  'online':       ['online'],
+  'next':         ['next'],
+  'voluntariado': ['voluntariado'],
+  'membresia':    ['membresia'],
+  'grupos':       ['grupos'],
+  // estrategicos
+  'gestao':       ['gestao'],
+  'planejamento': ['planejamento'],
+  'governanca':   ['governanca'],
+  'painel':       ['painel-cbrio'],
+  'revisoes':    ['revisao-estrategica'],
+  // dados/IA/admin
+  'dados-brutos': ['dados-brutos'],
+  'dadosBrutos':  ['dados-brutos'],
+  'nps':          ['nps'],
+  'agents':       ['assistente-ia'],
+  'notificacoes': ['notificacoes-config'],
+  'permissoes':   ['permissoes-admin'],
+  'cerebro':      ['cerebro'],
 };
 
 // Cache de módulos (carrega uma vez e reutiliza)
@@ -39,10 +60,59 @@ const CACHE_TTL = 5 * 60 * 1000; // 5 minutos
 
 async function getModulos() {
   if (modulosCache && Date.now() - modulosCacheTime < CACHE_TTL) return modulosCache;
-  const { data } = await supabase.from('modulos').select('id, nome').eq('ativo', true);
+  const { data } = await supabase
+    .from('modulos')
+    .select('id, nome, slug, categoria, rota, ordem')
+    .eq('ativo', true);
   modulosCache = data || [];
   modulosCacheTime = Date.now();
   return modulosCache;
+}
+
+// Cache da matriz cargo×modulo (defaults por cargo)
+let cargoMatrixCache = null;
+let cargoMatrixCacheTime = 0;
+
+async function getCargoMatrix() {
+  if (cargoMatrixCache && Date.now() - cargoMatrixCacheTime < CACHE_TTL) return cargoMatrixCache;
+  const { data } = await supabase
+    .from('cargo_modulo_permissao')
+    .select('cargo_id, modulo_id, nivel, pode_exportar, pode_aprovar, escopo_proprio');
+  cargoMatrixCache = data || [];
+  cargoMatrixCacheTime = Date.now();
+  return cargoMatrixCache;
+}
+
+// Resolve a permissao efetiva de um usuario por modulo:
+//   override (permissoes_modulo) ?? default cargo (cargo_modulo_permissao) ?? zero
+function resolveEffectivePerms({ overrides, cargoMatrix, cargoId, modulos }) {
+  const result = {};
+  const overridesByMod = new Map();
+  for (const o of overrides || []) overridesByMod.set(o.modulo_id, o);
+  const defaultsByMod = new Map();
+  for (const r of cargoMatrix || []) {
+    if (r.cargo_id === cargoId) defaultsByMod.set(r.modulo_id, r);
+  }
+  for (const m of modulos) {
+    const o = overridesByMod.get(m.id);
+    const d = defaultsByMod.get(m.id);
+    const nivelL = o?.nivel_leitura ?? d?.nivel ?? 0;
+    const nivelE = o?.nivel_escrita ?? d?.nivel ?? 0;
+    const exp    = o?.pode_exportar ?? d?.pode_exportar ?? false;
+    const apr    = o?.pode_aprovar  ?? d?.pode_aprovar  ?? false;
+    const esc    = o?.escopo_proprio ?? d?.escopo_proprio ?? false;
+    // Indexa por nome E por slug (legado: alguns lookups usam 'Financeiro', etc)
+    const entry = {
+      leitura: nivelL,
+      escrita: nivelE,
+      pode_exportar: exp,
+      pode_aprovar: apr,
+      escopo_proprio: esc,
+    };
+    if (m.nome) result[m.nome] = entry;
+    if (m.slug) result[m.slug] = entry;
+  }
+  return result;
 }
 
 // Verifica token Supabase JWT e injeta req.user (inclui permissões granulares)
@@ -116,14 +186,22 @@ async function authenticate(req, res, next) {
     permUser = existing;
 
     // Auto-provisionar: se o usuário não existe em usuarios, criar automaticamente
+    // Default = cargo 'membro' (mais restritivo). Admin/diretor (legado) viram
+    // 'diretor-administrativo' pra manter retrocompat sem expor dados sensiveis
+    // por engano. O ajuste fino de cargo deve ser feito no /admin/permissoes.
     if (!permUser) {
       try {
-        // Buscar cargo compatível pelo nome do role
-        const roleCargoMap = { admin: 'Admin', diretor: 'Líder', assistente: 'Assistente' };
-        const cargoNome = roleCargoMap[profile.role] || 'Assistente';
+        const roleSlugMap = {
+          admin: 'diretor-administrativo',
+          diretor: 'diretor-administrativo',
+          assistente: 'membro',
+          voluntario: 'voluntario',
+          membro: 'membro',
+        };
+        const cargoSlug = roleSlugMap[profile.role] || 'membro';
         const { data: cargo } = await supabase.from('cargos')
           .select('id, nivel_padrao_leitura, nivel_padrao_escrita')
-          .ilike('nome', `%${cargoNome}%`)
+          .eq('slug', cargoSlug)
           .limit(1)
           .maybeSingle();
 
@@ -140,22 +218,7 @@ async function authenticate(req, res, next) {
 
         if (created) {
           permUser = created;
-          console.log(`[AUTH] Auto-provisionado usuario granular: ${profile.email} (cargo: ${cargoNome})`);
-
-          // Para admin/diretor: criar overrides com nível alto em todos os módulos
-          if (['admin', 'diretor'].includes(profile.role)) {
-            const nivel = profile.role === 'admin' ? 5 : 4;
-            const modulos = await getModulos();
-            const overrides = modulos.map(m => ({
-              usuario_id: created.id,
-              modulo_id: m.id,
-              nivel_leitura: nivel,
-              nivel_escrita: nivel,
-            }));
-            if (overrides.length > 0) {
-              await supabase.from('permissoes_modulo').insert(overrides);
-            }
-          }
+          console.log(`[AUTH] Auto-provisionado usuario granular: ${profile.email} (cargo: ${cargoSlug})`);
         }
       } catch (autoErr) {
         console.error('[AUTH] Auto-provisionar usuario falhou:', autoErr.message);
@@ -163,26 +226,26 @@ async function authenticate(req, res, next) {
     }
 
     if (permUser) {
-      // Buscar overrides por módulo
+      // Buscar overrides por modulo (incluindo modificadores)
       const { data: overrides } = await supabase.from('permissoes_modulo')
-        .select('modulo_id, nivel_leitura, nivel_escrita')
+        .select('modulo_id, nivel_leitura, nivel_escrita, pode_exportar, pode_aprovar, escopo_proprio, expira_em')
         .eq('usuario_id', permUser.id);
 
+      // Filtra overrides expirados
+      const now = Date.now();
+      const validOverrides = (overrides || []).filter(o => !o.expira_em || new Date(o.expira_em).getTime() > now);
+
       const modulos = await getModulos();
-      const modulePerms = {};
+      const cargoMatrix = await getCargoMatrix();
 
-      for (const mod of modulos) {
-        const override = (overrides || []).find(o => o.modulo_id === mod.id);
-        // Sem override explícito → nível 1 (acesso apenas aos próprios dados).
-        // O nível padrão do cargo NÃO é propagado para todos os módulos, evitando
-        // que colaboradores vejam módulos de áreas que não são as suas.
-        modulePerms[mod.nome] = {
-          leitura: override ? override.nivel_leitura : 1,
-          escrita: override ? override.nivel_escrita : 1,
-        };
-      }
+      const modulePerms = resolveEffectivePerms({
+        overrides: validOverrides,
+        cargoMatrix,
+        cargoId: permUser.cargo_id,
+        modulos,
+      });
 
-      // Carregar áreas do usuário (para filtragem por setor/área)
+      // Carregar areas do usuario (para filtragem por setor/area)
       const { data: userAreas } = await supabase.from('usuario_areas')
         .select('area_id, is_principal, areas(nome, setor_id, setores(nome))')
         .eq('usuario_id', permUser.id);
@@ -339,11 +402,13 @@ function authorizeModule(routeKey, nivelMinimo = 2) {
   return (req, res, next) => {
     if (!req.user) return res.status(401).json({ error: 'Não autenticado' });
 
-    // Admin/Diretor sempre passam (backward compatibility)
+    // Admin/Diretor sempre passam (backward compatibility com profiles.role)
     if (['admin', 'diretor'].includes(req.user.role)) return next();
 
-    // Voluntarios podem acessar rotas de voluntariado (membresia nivel 1)
-    if (req.user.role === 'voluntario' && moduleNames.some(m => m === 'Membresia') && nivelMinimo <= 1) {
+    // Voluntarios podem acessar rotas de voluntariado / membresia em leitura
+    if (req.user.role === 'voluntario'
+        && moduleNames.some(m => m === 'voluntariado' || m === 'membresia' || m === 'Membresia')
+        && nivelMinimo <= 1) {
       return next();
     }
 
@@ -353,16 +418,16 @@ function authorizeModule(routeKey, nivelMinimo = 2) {
       return next();
     }
 
-    // Se não tem granular, bloquear (assistente sem granular = sem acesso)
+    // Se nao tem granular, bloquear
     if (!req.user.granular) {
       return res.status(403).json({ error: 'Acesso negado — permissões não configuradas' });
     }
 
-    // Determinar tipo com base no método HTTP
+    // Determinar tipo com base no metodo HTTP
     const isWrite = ['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method);
     const tipo = isWrite ? 'escrita' : 'leitura';
 
-    // Verificar se tem nível suficiente em QUALQUER um dos módulos mapeados
+    // Verificar se tem nivel suficiente em QUALQUER um dos modulos mapeados
     let hasAccess = false;
     for (const modName of moduleNames) {
       const perm = req.user.granular.modulePerms[modName];
@@ -372,7 +437,7 @@ function authorizeModule(routeKey, nivelMinimo = 2) {
       }
     }
 
-    // Se não tem módulos mapeados, usar o nível padrão do cargo
+    // Se nao tem modulos mapeados, usar o nivel padrao do cargo
     if (moduleNames.length === 0) {
       const nivel = isWrite ? req.user.granular.cargoNivelEscrita : req.user.granular.cargoNivelLeitura;
       hasAccess = nivel >= nivelMinimo;
@@ -394,10 +459,23 @@ function authorizeModule(routeKey, nivelMinimo = 2) {
 async function getMyPermissions(req, res) {
   if (!req.user) return res.status(401).json({ error: 'Não autenticado' });
 
+  // Inclui metadata dos modulos (slug, rota, categoria) para o frontend
+  // saber montar o menu dinamicamente sem precisar de catalogo hardcoded.
+  let modulosMeta = [];
+  try {
+    const modulos = await getModulos();
+    modulosMeta = modulos.map(m => ({
+      slug: m.slug, nome: m.nome, rota: m.rota, categoria: m.categoria, ordem: m.ordem,
+    })).sort((a, b) => (a.ordem || 0) - (b.ordem || 0));
+  } catch (e) {
+    console.warn('[AUTH] falha ao carregar metadata de modulos:', e.message);
+  }
+
   res.json({
     role: req.user.role,
     area: req.user.area,
     name: req.user.name,
+    modulos: modulosMeta,
     granular: req.user.granular ? {
       cargoId: req.user.granular.cargoId,
       cargoNivelLeitura: req.user.granular.cargoNivelLeitura,
@@ -407,6 +485,14 @@ async function getMyPermissions(req, res) {
       setores: req.user.granular.setores || [],
     } : null,
   });
+}
+
+// Invalida caches de modulos e matriz (chamado pela UI de admin apos editar)
+function bustPermissionCaches() {
+  modulosCache = null;
+  modulosCacheTime = 0;
+  cargoMatrixCache = null;
+  cargoMatrixCacheTime = 0;
 }
 
 /**
@@ -481,4 +567,4 @@ function applyAccessFilter(query, req, routeKey, opts = {}) {
   return query;
 }
 
-module.exports = { authenticate, authorize, authorizeCycle, authorizeModule, authorizeKpiArea, getMyPermissions, getEffectiveLevel, getUserAreas, applyAccessFilter, ROLE_MAP, PERMISSIONS, ROUTE_MODULE_MAP };
+module.exports = { authenticate, authorize, authorizeCycle, authorizeModule, authorizeKpiArea, getMyPermissions, getEffectiveLevel, getUserAreas, applyAccessFilter, bustPermissionCaches, ROLE_MAP, PERMISSIONS, ROUTE_MODULE_MAP };

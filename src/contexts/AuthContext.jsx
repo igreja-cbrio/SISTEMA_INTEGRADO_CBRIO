@@ -149,21 +149,28 @@ export function AuthProvider({ children }) {
   const isVoluntario = profile?.role === 'voluntario';
   const isAdmin = ['admin', 'diretor'].includes(profile?.role);
 
-  const canRH = canAccessModule(['DP', 'Pessoas']);
-  const canFinanceiro = canAccessModule(['Financeiro']);
-  const canLogistica = canAccessModule(['Logística']);
-  const canPatrimonio = canAccessModule(['Patrimônio']);
-  const canMembresia = canAccessModule(['Membresia']);
-  const canProjetos = canAccessModule(['Projetos', 'Tarefas']);
-  const canExpansao = canAccessModule(['Projetos']);
-  const canAgenda = canAccessModule(['Agenda']);
-  const canIAModulo = canAccessModule(['IA / Agentes']);
-  const canKPIs = isAdmin || canAccessModule(['KPIs', 'Indicadores']);
-  const canCuidados = isAdmin || canAccessModule(['Cuidados']);
-  const canProcessos = isAdmin || canAccessModule(['Processos']);
+  // Helpers de gating por modulo · usa slug novo (matriz reuniao 2026-05-18)
+  // com fallback para nome antigo pra compatibilidade durante a transicao.
+  const canRH = canAccessModule(['rh', 'RH', 'DP', 'Pessoas']);
+  const canFinanceiro = canAccessModule(['financeiro', 'Financeiro']);
+  const canLogistica = canAccessModule(['logistica', 'Logística']);
+  const canPatrimonio = canAccessModule(['patrimonio', 'Patrimônio']);
+  const canMembresia = canAccessModule(['membresia', 'Membresia']);
+  const canProjetos = canAccessModule(['projetos', 'Projetos', 'Tarefas']);
+  const canExpansao = canAccessModule(['expansao', 'Expansão', 'Projetos']);
+  const canAgenda = canAccessModule(['eventos', 'Eventos', 'Agenda']);
+  const canIAModulo = canAccessModule(['assistente-ia', 'Assistente IA', 'IA / Agentes']);
+  const canKPIs = isAdmin || canAccessModule(['minha-area', 'Minha Área', 'KPIs', 'Indicadores']);
+  const canCuidados = isAdmin || canAccessModule(['cuidados', 'Cuidados']);
+  // Modulo Processos removido na reuniao 2026-05-18 — rota redireciona pra /eventos
+  const canProcessos = false;
+  const canSolicitacoes = isAdmin || canAccessModule(['solicitacoes', 'Solicitações'], 'leitura', 1);
+  const canNPS = isAdmin || canAccessModule(['nps', 'NPS']);
+  const canDadosBrutos = isAdmin || canAccessModule(['dados-brutos', 'Dados Brutos']);
+  const canPainel = isAdmin || canAccessModule(['painel-cbrio', 'Painel CBRio'], 'leitura', 1);
   // Colaborador = admin/diretor ou usuario com qualquer permissao de modulo
   // (voluntarios e membros sem permissao nao sao colaboradores)
-  const isColaborador = isAdmin || canRH || canFinanceiro || canLogistica || canPatrimonio || canMembresia || canProjetos || canExpansao || canAgenda || canIAModulo || canCuidados || canProcessos;
+  const isColaborador = isAdmin || canRH || canFinanceiro || canLogistica || canPatrimonio || canMembresia || canProjetos || canExpansao || canAgenda || canIAModulo || canCuidados || canSolicitacoes || canDadosBrutos || canNPS;
   // Assistente IA é liberado para qualquer colaborador; o backend filtra os
   // agentes e os dados conforme as permissões de cada usuário.
   const canIA = isColaborador;
@@ -179,7 +186,7 @@ export function AuthProvider({ children }) {
     isColaborador,
     modulePerms,
     canAccessModule,
-    canRH, canFinanceiro, canLogistica, canPatrimonio, canMembresia, canProjetos, canExpansao, canAgenda, canIA, canKPIs, canCuidados, canProcessos,
+    canRH, canFinanceiro, canLogistica, canPatrimonio, canMembresia, canProjetos, canExpansao, canAgenda, canIA, canKPIs, canCuidados, canProcessos, canSolicitacoes, canNPS, canDadosBrutos, canPainel,
     getAccessLevel,
     userAreas,
     userSetores,
@@ -203,6 +210,8 @@ export function useAuth() {
       canRH: false, canFinanceiro: false, canLogistica: false,
       canPatrimonio: false, canMembresia: false, canProjetos: false,
       canExpansao: false, canAgenda: false, canIA: false, canCuidados: false,
+      canProcessos: false, canSolicitacoes: false, canNPS: false,
+      canDadosBrutos: false, canPainel: false, canKPIs: false,
       userAreas: [], userSetores: [],
       signInWithMicrosoft: async () => ({}),
       signInWithGoogle: async () => ({}),

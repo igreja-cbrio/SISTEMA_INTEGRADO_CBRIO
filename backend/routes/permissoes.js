@@ -1,5 +1,5 @@
 const router = require('express').Router();
-const { authenticate, authorize } = require('../middleware/auth');
+const { authenticate, authorize, bustPermissionCaches } = require('../middleware/auth');
 const { supabase } = require('../utils/supabase');
 
 router.use(authenticate, authorize('admin', 'diretor'));
@@ -58,8 +58,8 @@ router.get('/estrutura', async (req, res) => {
     const [setores, areas, modulos, cargos] = await Promise.all([
       supabase.from('setores').select('*').eq('ativo', true).order('id'),
       supabase.from('areas').select('*, setores(nome)').eq('ativo', true).order('nome'),
-      supabase.from('modulos').select('*').eq('ativo', true).order('nome'),
-      supabase.from('cargos').select('*').order('id'),
+      supabase.from('modulos').select('*').eq('ativo', true).order('ordem'),
+      supabase.from('cargos').select('*').eq('ativo', true).order('ordem'),
     ]);
     res.json({
       setores: setores.data || [],
@@ -67,6 +67,63 @@ router.get('/estrutura', async (req, res) => {
       modulos: modulos.data || [],
       cargos: cargos.data || [],
     });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ────────────────────────────────────────────────────────────────────────
+// GET /api/permissoes/matriz
+// Retorna a matriz cargo x modulo (defaults por cargo).
+// Resposta: { cargos: [...], modulos: [...], celulas: [{cargo_id, modulo_id, nivel, ...}] }
+// ────────────────────────────────────────────────────────────────────────
+router.get('/matriz', async (_req, res) => {
+  try {
+    const [cargos, modulos, celulas] = await Promise.all([
+      supabase.from('cargos').select('*').eq('ativo', true).order('ordem'),
+      supabase.from('modulos').select('*').eq('ativo', true).order('ordem'),
+      supabase.from('cargo_modulo_permissao').select('*'),
+    ]);
+    res.json({
+      cargos: cargos.data || [],
+      modulos: modulos.data || [],
+      celulas: celulas.data || [],
+    });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ────────────────────────────────────────────────────────────────────────
+// PUT /api/permissoes/matriz/celula
+// Atualiza uma celula da matriz cargo x modulo (default por cargo).
+// Body: { cargo_id, modulo_id, nivel, pode_exportar, pode_aprovar, escopo_proprio }
+// ────────────────────────────────────────────────────────────────────────
+router.put('/matriz/celula', async (req, res) => {
+  try {
+    const { cargo_id, modulo_id, nivel, pode_exportar, pode_aprovar, escopo_proprio } = req.body;
+    if (!cargo_id || !modulo_id) return res.status(400).json({ error: 'cargo_id e modulo_id sao obrigatorios' });
+    if (typeof nivel !== 'number' || nivel < 0 || nivel > 5) return res.status(400).json({ error: 'nivel deve estar entre 0 e 5' });
+
+    const { error } = await supabase.from('cargo_modulo_permissao').upsert({
+      cargo_id, modulo_id, nivel,
+      pode_exportar: !!pode_exportar,
+      pode_aprovar: !!pode_aprovar,
+      escopo_proprio: !!escopo_proprio,
+      updated_at: new Date().toISOString(),
+    }, { onConflict: 'cargo_id,modulo_id' });
+    if (error) return res.status(400).json({ error: error.message });
+
+    bustPermissionCaches();
+    res.json({ success: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// GET /api/permissoes/cargo/:id — detalhes de um cargo + matriz por modulo
+router.get('/cargo/:id', async (req, res) => {
+  try {
+    const [cargo, celulas] = await Promise.all([
+      supabase.from('cargos').select('*').eq('id', req.params.id).single(),
+      supabase.from('cargo_modulo_permissao').select('*, modulos(slug, nome, categoria, ordem)').eq('cargo_id', req.params.id),
+    ]);
+    if (cargo.error) return res.status(404).json({ error: 'Cargo nao encontrado' });
+    res.json({ cargo: cargo.data, celulas: celulas.data || [] });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -166,33 +223,75 @@ router.put('/usuario/:id/areas', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-// PUT /api/permissoes/usuario/:id/modulo — set module override
+// PUT /api/permissoes/usuario/:id/modulo — set/clear override por modulo
+// Body: { modulo_id, nivel_leitura, nivel_escrita, pode_exportar?, pode_aprovar?,
+//         escopo_proprio?, motivo?, expira_em? }
+// Se os valores coincidirem com a matriz default do cargo, o override e' removido.
 router.put('/usuario/:id/modulo', async (req, res) => {
   try {
-    const { modulo_id, nivel_leitura, nivel_escrita, motivo } = req.body;
-    const userId = parseInt(req.params.id);
-    if (isNaN(userId)) return res.status(400).json({ error: 'ID inválido' });
+    const {
+      modulo_id, nivel_leitura, nivel_escrita,
+      pode_exportar = false, pode_aprovar = false, escopo_proprio = false,
+      motivo = null, expira_em = null,
+    } = req.body;
+    const userId = req.params.id;
+    if (!userId || !modulo_id) return res.status(400).json({ error: 'usuario e modulo sao obrigatorios' });
 
-    // If levels match cargo default, remove override
+    // Busca a celula default do cargo do usuario para o modulo
     const { data: user } = await supabase.from('usuarios')
-      .select('cargo_id, cargos(nivel_padrao_leitura, nivel_padrao_escrita)').eq('id', userId).single();
+      .select('cargo_id').eq('id', userId).single();
 
-    if (user?.cargos &&
-        nivel_leitura === user.cargos.nivel_padrao_leitura &&
-        nivel_escrita === user.cargos.nivel_padrao_escrita) {
-      // Remove override (back to default)
+    let cellDefault = null;
+    if (user?.cargo_id) {
+      const { data } = await supabase.from('cargo_modulo_permissao')
+        .select('nivel, pode_exportar, pode_aprovar, escopo_proprio')
+        .eq('cargo_id', user.cargo_id).eq('modulo_id', modulo_id).maybeSingle();
+      cellDefault = data;
+    }
+
+    // Se override == default, remove (volta pro default)
+    const equalsDefault = cellDefault
+      && nivel_leitura === cellDefault.nivel
+      && nivel_escrita === cellDefault.nivel
+      && !!pode_exportar === !!cellDefault.pode_exportar
+      && !!pode_aprovar === !!cellDefault.pode_aprovar
+      && !!escopo_proprio === !!cellDefault.escopo_proprio
+      && !expira_em;
+
+    if (equalsDefault) {
       await supabase.from('permissoes_modulo')
         .delete().eq('usuario_id', userId).eq('modulo_id', modulo_id);
     } else {
-      // Upsert override
-      const { error } = await supabase.from('permissoes_modulo')
-        .upsert({
-          usuario_id: userId, modulo_id, nivel_leitura, nivel_escrita,
-          motivo: motivo || null, updated_at: new Date().toISOString(),
-        }, { onConflict: 'usuario_id,modulo_id' });
+      const { error } = await supabase.from('permissoes_modulo').upsert({
+        usuario_id: userId,
+        modulo_id,
+        nivel_leitura,
+        nivel_escrita,
+        pode_exportar: !!pode_exportar,
+        pode_aprovar: !!pode_aprovar,
+        escopo_proprio: !!escopo_proprio,
+        motivo,
+        expira_em,
+        criado_por: req.user?.userId || null,
+        updated_at: new Date().toISOString(),
+      }, { onConflict: 'usuario_id,modulo_id' });
       if (error) return res.status(400).json({ error: error.message });
     }
 
+    bustPermissionCaches();
+    res.json({ success: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// DELETE /api/permissoes/usuario/:id/modulo/:moduloId — remove um override
+router.delete('/usuario/:id/modulo/:moduloId', async (req, res) => {
+  try {
+    const { error } = await supabase.from('permissoes_modulo')
+      .delete()
+      .eq('usuario_id', req.params.id)
+      .eq('modulo_id', req.params.moduloId);
+    if (error) return res.status(400).json({ error: error.message });
+    bustPermissionCaches();
     res.json({ success: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
