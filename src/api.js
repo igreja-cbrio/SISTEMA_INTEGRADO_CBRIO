@@ -1490,4 +1490,12 @@ export const planejamento = {
   },
   getProposta: (id) => get(`/planejamento/propostas/${id}`),
   createProposta: (data) => post('/planejamento/propostas', data),
+
+  // Filas de aprovação (PR-B)
+  filaDiretor: () => get('/planejamento/filas/diretor'),
+  filaDiretoria: () => get('/planejamento/filas/diretoria'),
+
+  // Decisões
+  decidirDiretor: (id, data) => patch(`/planejamento/propostas/${id}/decidir-diretor`, data),
+  decidirDiretoria: (id, data) => patch(`/planejamento/propostas/${id}/decidir-diretoria`, data),
 };

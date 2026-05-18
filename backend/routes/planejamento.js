@@ -316,4 +316,306 @@ router.post('/propostas', async (req, res) => {
   }
 });
 
+// ═════════════════════════════════════════════════════════════════════
+// FILAS (PR-B)
+// ═════════════════════════════════════════════════════════════════════
+
+// GET /api/planejamento/filas/diretor — propostas aguardando minha decisão de setor
+router.get('/filas/diretor', async (req, res) => {
+  try {
+    const setores = await getSetoresDoDirector(req.user.userId);
+    if (setores.length === 0) return res.json([]);
+    const setorIds = setores.map(s => s.id);
+
+    const { data, error } = await supabase
+      .from('planejamento_propostas')
+      .select(`
+        id, ciclo_id, tipo, area, setor_id, proposto_por, proposto_em,
+        payload_original, payload_atual, status,
+        proposto:proposto_por(name, email),
+        setor:setor_id(nome),
+        ciclo:ciclo_id(year, status)
+      `)
+      .eq('status', 'pendente_diretor')
+      .in('setor_id', setorIds)
+      .order('proposto_em');
+    if (error) throw error;
+    res.json(data || []);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// GET /api/planejamento/filas/diretoria — propostas aguardando aprovação final
+router.get('/filas/diretoria', async (req, res) => {
+  try {
+    if (!(await isDiretoriaGeral(req.user.userId))) return res.json([]);
+
+    const { data, error } = await supabase
+      .from('planejamento_propostas')
+      .select(`
+        id, ciclo_id, tipo, area, setor_id, proposto_por, proposto_em,
+        payload_original, payload_atual, status,
+        diretor_decisao_por, diretor_decisao_em, diretor_decisao, diretor_comentario,
+        proposto:proposto_por(name, email),
+        diretor_decisor:diretor_decisao_por(name),
+        setor:setor_id(nome),
+        ciclo:ciclo_id(year, status)
+      `)
+      .eq('status', 'pendente_diretoria')
+      .order('diretor_decisao_em');
+    if (error) throw error;
+    res.json(data || []);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ═════════════════════════════════════════════════════════════════════
+// DECISÕES (workflow de aprovação)
+// ═════════════════════════════════════════════════════════════════════
+
+// Calcula diff entre dois payloads. Retorna array de { campo, antes, depois }.
+// Usado pro audit log e pra devolutiva.
+function diffPayload(a, b) {
+  const keys = new Set([...Object.keys(a || {}), ...Object.keys(b || {})]);
+  const out = [];
+  for (const k of keys) {
+    const va = a?.[k];
+    const vb = b?.[k];
+    if (JSON.stringify(va) !== JSON.stringify(vb)) {
+      out.push({ campo: k, antes: va ?? null, depois: vb ?? null });
+    }
+  }
+  return out;
+}
+
+// Registra entradas de audit pra cada campo alterado
+async function logAuditChanges(propostaId, etapa, userId, diffs, comentario) {
+  if (!diffs.length) return;
+  const rows = diffs.map(d => ({
+    proposta_id: propostaId,
+    quem: userId,
+    etapa,
+    campo: d.campo,
+    valor_antes: d.antes,
+    valor_depois: d.depois,
+    comentario: comentario || null,
+  }));
+  await supabase.from('planejamento_audit').insert(rows);
+}
+
+// Dispara notificação inline pro proponente quando o payload foi alterado
+async function notifyProponente(proposta, etapa, alteracoes) {
+  if (!alteracoes.length) return;
+  try {
+    const { notificar } = require('../services/notificar');
+    const tituloEtapa = etapa === 'diretor' ? 'Diretor do setor' : 'Diretoria geral';
+    await notificar({
+      modulo: 'planejamento',
+      tipo: 'proposta_alterada',
+      titulo: `${tituloEtapa} alterou sua proposta`,
+      mensagem: `${alteracoes.length} campo(s) foram modificados antes da aprovação. Veja a devolutiva no detalhe da proposta.`,
+      link: `/planejamento/anual/${proposta.ciclo_id}`,
+      destinatarios: [proposta.proposto_por],
+      severidade: 'info',
+      chaveDedup: `proposta_${proposta.id}_alterada_${etapa}`,
+    });
+  } catch { /* notificar é best-effort */ }
+}
+
+// Materializa a proposta aprovada em event/project oficial
+async function materializarProposta(proposta) {
+  const p = proposta.payload_atual || {};
+  if (proposta.tipo === 'projeto') {
+    const { data, error } = await supabase.from('projects').insert({
+      name: p.nome,
+      description: p.descricao || '',
+      year: proposta.year_from_ciclo,
+      area: proposta.area,
+      responsible: p.responsavel || '',
+      date_end: p.data || null,
+      budget_planned: p.budget_planned || 0,
+      status: 'no-prazo',
+      proposta_id: proposta.id,
+      criacao_origem: 'ciclo_planejamento',
+      created_by: proposta.proposto_por,
+    }).select().single();
+    if (error) throw error;
+    return { kind: 'project', id: data.id };
+  } else {
+    // evento e série caem em events
+    const { data, error } = await supabase.from('events').insert({
+      name: p.nome,
+      description: p.descricao || '',
+      date: p.data,
+      location: p.local || '',
+      responsible: p.responsavel || '',
+      budget_planned: p.budget_planned || 0,
+      expected_attendance: p.expected_attendance || null,
+      recurrence: p.recorrencia || 'unico',
+      proposta_id: proposta.id,
+      criacao_origem: 'ciclo_planejamento',
+      created_by: proposta.proposto_por,
+    }).select().single();
+    if (error) throw error;
+    return { kind: 'event', id: data.id };
+  }
+}
+
+// PATCH /api/planejamento/propostas/:id/decidir-diretor
+// Body: { decisao: 'aprovado'|'aprovado_com_ressalvas'|'rejeitado', comentario, payload_alterado? }
+// Guard: proposto_por != req.user.userId E usuário é diretor do setor da proposta.
+router.patch('/propostas/:id/decidir-diretor', async (req, res) => {
+  try {
+    if (!isUUID(req.params.id)) return res.status(400).json({ error: 'ID inválido' });
+    const { decisao, comentario, payload_alterado } = req.body;
+    if (!['aprovado', 'aprovado_com_ressalvas', 'rejeitado'].includes(decisao)) {
+      return res.status(400).json({ error: 'Decisão inválida' });
+    }
+    if (decisao === 'rejeitado' && (!comentario || !comentario.trim())) {
+      return res.status(400).json({ error: 'Comentário obrigatório ao rejeitar' });
+    }
+
+    const { data: prop, error: readErr } = await supabase.from('planejamento_propostas')
+      .select('*, ciclo:ciclo_id(year)').eq('id', req.params.id).single();
+    if (readErr || !prop) return res.status(404).json({ error: 'Proposta não encontrada' });
+    if (prop.status !== 'pendente_diretor') return res.status(409).json({ error: `Proposta não está aguardando decisão do diretor (status atual: ${prop.status})` });
+
+    // Guard anti auto-aprovação
+    if (prop.proposto_por === req.user.userId) {
+      return res.status(403).json({ error: 'Você não pode decidir a própria proposta.' });
+    }
+
+    // Guard: usuário precisa ser diretor do setor
+    const setores = await getSetoresDoDirector(req.user.userId);
+    if (!setores.some(s => s.id === prop.setor_id)) {
+      return res.status(403).json({ error: 'Você não é diretor deste setor.' });
+    }
+
+    // Aplica edições no payload_atual se houver
+    let newPayloadAtual = prop.payload_atual;
+    let diffs = [];
+    if (payload_alterado && typeof payload_alterado === 'object') {
+      newPayloadAtual = { ...prop.payload_atual, ...payload_alterado };
+      diffs = diffPayload(prop.payload_atual, newPayloadAtual);
+    }
+
+    // Define status final pós-decisão
+    let newStatus;
+    let finalDecisao = decisao;
+    if (decisao === 'rejeitado') newStatus = 'rejeitado';
+    else {
+      newStatus = 'pendente_diretoria';
+      // Se houve alteração de campos, vira "com ressalvas" automaticamente
+      if (diffs.length > 0 && decisao === 'aprovado') finalDecisao = 'aprovado_com_ressalvas';
+    }
+
+    const { error: updErr } = await supabase.from('planejamento_propostas').update({
+      status: newStatus,
+      payload_atual: newPayloadAtual,
+      diretor_decisao: finalDecisao,
+      diretor_decisao_por: req.user.userId,
+      diretor_decisao_em: new Date().toISOString(),
+      diretor_comentario: comentario || null,
+    }).eq('id', req.params.id);
+    if (updErr) throw updErr;
+
+    // Audit log das mudanças de campo
+    await logAuditChanges(req.params.id, 'diretor', req.user.userId, diffs, comentario);
+    // Notifica proponente se houve alterações
+    if (diffs.length > 0) await notifyProponente(prop, 'diretor', diffs);
+
+    res.json({ success: true, status: newStatus, diretor_decisao: finalDecisao, diff_count: diffs.length });
+  } catch (e) {
+    console.error('[Planejamento] decidir-diretor:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// PATCH /api/planejamento/propostas/:id/decidir-diretoria
+// Body: { decisao, comentario, payload_alterado? }
+// Guard: proposto_por != req.user.userId E usuário tem is_diretoria_geral=true.
+// Quando aprovado final, MATERIALIZA event/project oficial.
+router.patch('/propostas/:id/decidir-diretoria', async (req, res) => {
+  try {
+    if (!isUUID(req.params.id)) return res.status(400).json({ error: 'ID inválido' });
+    const { decisao, comentario, payload_alterado } = req.body;
+    if (!['aprovado', 'aprovado_com_ressalvas', 'rejeitado'].includes(decisao)) {
+      return res.status(400).json({ error: 'Decisão inválida' });
+    }
+    if (decisao === 'rejeitado' && (!comentario || !comentario.trim())) {
+      return res.status(400).json({ error: 'Comentário obrigatório ao rejeitar' });
+    }
+
+    const { data: prop, error: readErr } = await supabase.from('planejamento_propostas')
+      .select('*, ciclo:ciclo_id(year)').eq('id', req.params.id).single();
+    if (readErr || !prop) return res.status(404).json({ error: 'Proposta não encontrada' });
+    if (prop.status !== 'pendente_diretoria') return res.status(409).json({ error: `Proposta não está aguardando diretoria (status atual: ${prop.status})` });
+
+    if (prop.proposto_por === req.user.userId) {
+      return res.status(403).json({ error: 'Você não pode decidir a própria proposta. Outro membro da diretoria precisa decidir.' });
+    }
+
+    if (!(await isDiretoriaGeral(req.user.userId))) {
+      return res.status(403).json({ error: 'Apenas membros da diretoria geral podem decidir.' });
+    }
+
+    let newPayloadAtual = prop.payload_atual;
+    let diffs = [];
+    if (payload_alterado && typeof payload_alterado === 'object') {
+      newPayloadAtual = { ...prop.payload_atual, ...payload_alterado };
+      diffs = diffPayload(prop.payload_atual, newPayloadAtual);
+    }
+
+    // Status final
+    let newStatus;
+    let finalDecisao = decisao;
+    if (decisao === 'rejeitado') newStatus = 'rejeitado';
+    else {
+      // Se diretor já tinha aprovado com ressalvas OU se houve nova alteração da diretoria → com ressalvas
+      const previousAlterations = prop.diretor_decisao === 'aprovado_com_ressalvas';
+      const newAlterations = diffs.length > 0;
+      finalDecisao = (previousAlterations || newAlterations || decisao === 'aprovado_com_ressalvas')
+        ? 'aprovado_com_ressalvas' : 'aprovado';
+      newStatus = finalDecisao;
+    }
+
+    // Atualiza a proposta
+    const updFields = {
+      status: newStatus,
+      payload_atual: newPayloadAtual,
+      diretoria_decisao: finalDecisao,
+      diretoria_decisao_por: req.user.userId,
+      diretoria_decisao_em: new Date().toISOString(),
+      diretoria_comentario: comentario || null,
+    };
+
+    // Materializa se aprovado
+    if (newStatus === 'aprovado' || newStatus === 'aprovado_com_ressalvas') {
+      try {
+        const propWithYear = { ...prop, payload_atual: newPayloadAtual, year_from_ciclo: prop.ciclo?.year };
+        const materialized = await materializarProposta(propWithYear);
+        if (materialized.kind === 'event') updFields.created_event_id = materialized.id;
+        else if (materialized.kind === 'project') updFields.created_project_id = materialized.id;
+      } catch (matErr) {
+        console.error('[Planejamento] materializacao falhou:', matErr.message);
+        return res.status(500).json({ error: `Erro ao criar item oficial: ${matErr.message}` });
+      }
+    }
+
+    const { error: updErr } = await supabase.from('planejamento_propostas').update(updFields).eq('id', req.params.id);
+    if (updErr) throw updErr;
+
+    await logAuditChanges(req.params.id, 'diretoria', req.user.userId, diffs, comentario);
+    if (diffs.length > 0) await notifyProponente(prop, 'diretoria', diffs);
+
+    res.json({ success: true, status: newStatus, diretoria_decisao: finalDecisao, diff_count: diffs.length,
+      created_event_id: updFields.created_event_id, created_project_id: updFields.created_project_id });
+  } catch (e) {
+    console.error('[Planejamento] decidir-diretoria:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 module.exports = router;
