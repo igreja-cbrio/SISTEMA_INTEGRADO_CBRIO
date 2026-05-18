@@ -109,6 +109,52 @@ router.patch('/:source/:taskId/status', async (req, res) => {
     const { data, error } = await supabase.from(table).update({ status: newStatus }).eq('id', taskId).select().single();
     if (error) throw error;
 
+    // ── Sincroniza card_completions quando dropdown muda status de tarefa de ciclo ──
+    // Antes: dropdown só mexia em cycle_phase_tasks.status, mas a view
+    // vw_phase_progress (usada pelo relatório IA via Haiku) conta
+    // card_completions. Resultado: kanban verde mas relatório mostrava 0/N.
+    // Best-effort: erro aqui não derruba o status update principal.
+    if (source === 'ciclo') {
+      try {
+        if (newStatus === 'concluida') {
+          // Idempotente: existe completion ativa?
+          const { data: existing } = await supabase.from('card_completions')
+            .select('id').eq('task_id', taskId).is('reopened_at', null).maybeSingle();
+          if (!existing) {
+            const { data: task } = await supabase.from('cycle_phase_tasks')
+              .select('event_id, event_phase_id, titulo, area, subtasks:cycle_task_subtasks(name, done)')
+              .eq('id', taskId).single();
+            const { data: phase } = task?.event_phase_id
+              ? await supabase.from('event_cycle_phases').select('numero_fase').eq('id', task.event_phase_id).maybeSingle()
+              : { data: null };
+            if (task) {
+              await supabase.from('card_completions').insert({
+                task_id: taskId,
+                event_id: task.event_id,
+                event_phase_id: task.event_phase_id || null,
+                phase_number: phase?.numero_fase || 0,
+                area: task.area || '',
+                card_titulo: task.titulo || '',
+                card_subtarefas: task.subtasks ? { items: task.subtasks } : null,
+                observacao: null,
+                completed_by: req.user.userId,
+                completed_by_name: req.user.name,
+              });
+            }
+          }
+        } else {
+          // Saiu de concluida → marca reopened nas completions ativas
+          await supabase.from('card_completions').update({
+            reopened_at: new Date().toISOString(),
+            reopened_by: req.user.userId,
+            reopen_reason: `Status alterado para ${newStatus}`,
+          }).eq('task_id', taskId).is('reopened_at', null);
+        }
+      } catch (syncErr) {
+        console.error('[Tasks] sync completion (não-bloqueante):', syncErr.message);
+      }
+    }
+
     // Auto-conclusão de fase para projetos
     if (source === 'projeto' && newStatus === 'concluida' && data) {
       try {

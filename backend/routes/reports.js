@@ -328,7 +328,11 @@ ${input.isFinalizedEvent ? `- EVENTO ESTÁ FINALIZADO. Use tempo PASSADO ("foi e
       data = `PROGRESSO POR FASE:\n${formatProgress(input.progress)}\n\nPENDÊNCIAS:\n${formatPending(input.pendingTasks)}${closedBlock}`;
       break;
     case 'progresso_por_fase':
-      task = `Gere a seção PROGRESSO POR FASE: lista por fase com total/concluídos/pendentes/%. Use bullets ou tabela markdown.`;
+      // A tabela formal vem do template HTML (determinística, vw_phase_progress).
+      // Aqui o Haiku só gera NARRATIVA CURTA (2-4 frases) sobre o ritmo geral.
+      // Antes ele inventava números na tabela markdown — agora não tem mais
+      // como inventar porque não pedimos pra ele tabular.
+      task = `Gere uma NARRATIVA CURTA (2-4 frases) sobre o ritmo geral de execução do ciclo: quais fases estão andando, quais travaram, ritmo aceitável ou preocupante. NÃO faça tabela, NÃO repita números (a tabela é mostrada no template separadamente). Foco em análise qualitativa.`;
       data = `PROGRESSO POR FASE:\n${formatProgress(input.progress)}`;
       break;
     case 'entregas_por_area':
@@ -732,6 +736,10 @@ router.post('/:eventId/report/export', async (req, res) => {
       pendingTasks: totalTasks - completedTasks,
       totalTasks,
       pctDone: totalTasks > 0 ? Math.round(completedTasks / totalTasks * 100) : 0,
+      // sections (JSON estruturado) tem prioridade — elimina parser regex e
+      // títulos duplicados. content em markdown vira fallback pra relatórios
+      // gerados antes do progressive flow (#4).
+      sections: (report.sections && Object.keys(report.sections).length > 0) ? report.sections : null,
       reportContent: report.content || '',
     };
 
