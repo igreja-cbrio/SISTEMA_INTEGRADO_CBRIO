@@ -202,9 +202,21 @@ router.post('/objetivos', authorize('admin', 'diretor'), async (req, res) => {
 
 router.put('/objetivos/:id', authorize('admin', 'diretor'), async (req, res) => {
   try {
-    const allowed = ['nome', 'descricao', 'indicador_geral', 'valores', 'ordem', 'direcionador_id', 'ativo'];
+    const allowed = [
+      'nome', 'descricao', 'indicador_geral', 'valores', 'ordem',
+      'direcionador_id', 'ativo',
+      // Metas (gerenciaveis em /gestao aba Metas)
+      'meta_descricao', 'meta_valor', 'meta_valor_absoluto',
+    ];
     const update = {};
-    for (const [k, v] of Object.entries(req.body || {})) if (allowed.includes(k)) update[k] = v;
+    for (const [k, v] of Object.entries(req.body || {})) {
+      if (!allowed.includes(k)) continue;
+      if (k === 'meta_valor' || k === 'meta_valor_absoluto') {
+        update[k] = (v === '' || v == null) ? null : Number(v);
+      } else {
+        update[k] = v;
+      }
+    }
 
     const { data, error } = await supabase
       .from('kpi_objetivos_gerais')
@@ -214,7 +226,10 @@ router.put('/objetivos/:id', authorize('admin', 'diretor'), async (req, res) => 
       .single();
     if (error) throw error;
     res.json(data);
-  } catch (e) { res.status(500).json({ error: e.message }); }
+  } catch (e) {
+    console.error('[estrategia/objetivos PUT]', e?.message);
+    res.status(500).json({ error: e?.message });
+  }
 });
 
 router.delete('/objetivos/:id', authorize('admin', 'diretor'), async (req, res) => {
@@ -359,13 +374,20 @@ router.get('/okrs-por-tipo', async (req, res) => {
       .order('tipo_okr')
       .order('ordem');
     if (error) throw error;
+    // tipo_okr aceita varios buckets · agrupar dinamicamente em vez de
+    // assumir apenas qualitativo/quantitativo/sem_tipo (tinha 'operacional'
+    // gerando erro 'cannot read properties of undefined' antes).
     const agrupado = { qualitativo: [], quantitativo: [], sem_tipo: [] };
     (data || []).forEach(o => {
       const bucket = o.tipo_okr || 'sem_tipo';
+      if (!agrupado[bucket]) agrupado[bucket] = [];
       agrupado[bucket].push(o);
     });
     res.json(agrupado);
-  } catch (e) { res.status(500).json({ error: e.message }); }
+  } catch (e) {
+    console.error('[estrategia/okrs-por-tipo]', e?.message, e?.stack);
+    res.status(500).json({ error: e?.message || 'Erro ao carregar OKRs por tipo' });
+  }
 });
 
 // Forca recalculo das metas institucionais em todos KPIs (admin/diretor)

@@ -6,30 +6,43 @@ const { notificar } = require('../services/notificar');
 router.use(authenticate);
 
 // GET /api/tasks/all — todas as tarefas de todos os módulos
+// Query params:
+//   source: filtra por tipo (evento | ciclo | projeto | planejamento)
+//   area:   filtra por área
+//   finalized: hide (default) | show | only
+//     - hide: ignora tarefas com closed_with_event_at preenchido (lista limpa)
+//     - show: traz todas, marca is_finalized_with_event nas que estão fechadas
+//     - only: traz APENAS as fechadas com evento (bucket de visibilidade)
 router.get('/all', async (req, res) => {
   try {
     const { source, area } = req.query;
+    const finalized = req.query.finalized || 'hide'; // hide | show | only
 
     const results = [];
 
     // Tarefas de eventos
     if (!source || source === 'evento') {
       let q = supabase.from('event_tasks')
-        .select('id, name, responsible, area, deadline, status, priority, is_milestone, event_id, created_at, events(name)')
+        .select('id, name, responsible, area, deadline, status, priority, is_milestone, event_id, created_at, closed_with_event_at, events(name)')
         .order('deadline', { nullsFirst: false });
       if (area) q = q.eq('area', area);
+      if (finalized === 'hide') q = q.is('closed_with_event_at', null);
+      if (finalized === 'only') q = q.not('closed_with_event_at', 'is', null);
       const { data } = await q;
       (data || []).forEach(t => results.push({
         ...t, source: 'evento', parent_name: t.events?.name || '—', parent_id: t.event_id,
+        is_finalized_with_event: !!t.closed_with_event_at,
       }));
     }
 
     // Tarefas do ciclo criativo (com subtarefas)
     if (!source || source === 'ciclo') {
       let q = supabase.from('cycle_phase_tasks')
-        .select('id, titulo, responsavel_nome, area, prazo, status, prioridade, event_id, observacoes, created_at, events(name), event_cycle_phases(nome_fase)')
+        .select('id, titulo, responsavel_nome, area, prazo, status, prioridade, event_id, observacoes, created_at, closed_with_event_at, events(name), event_cycle_phases(nome_fase)')
         .order('prazo', { nullsFirst: false });
       if (area) q = q.eq('area', area);
+      if (finalized === 'hide') q = q.is('closed_with_event_at', null);
+      if (finalized === 'only') q = q.not('closed_with_event_at', 'is', null);
       const { data } = await q;
 
       // Buscar subtarefas de todas as tarefas do ciclo
@@ -45,6 +58,8 @@ router.get('/all', async (req, res) => {
         deadline: t.prazo, status: t.status === 'a_fazer' ? 'pendente' : t.status === 'em_andamento' ? 'em-andamento' : t.status,
         priority: t.prioridade, parent_name: (t.events?.name || '—') + ' → ' + (t.event_cycle_phases?.nome_fase || ''),
         parent_id: t.event_id, source: 'ciclo', created_at: t.created_at,
+        closed_with_event_at: t.closed_with_event_at,
+        is_finalized_with_event: !!t.closed_with_event_at,
         observacoes: t.observacoes,
         subtasks: subsMap[t.id] || [],
       }));
@@ -93,6 +108,52 @@ router.patch('/:source/:taskId/status', async (req, res) => {
     }
     const { data, error } = await supabase.from(table).update({ status: newStatus }).eq('id', taskId).select().single();
     if (error) throw error;
+
+    // ── Sincroniza card_completions quando dropdown muda status de tarefa de ciclo ──
+    // Antes: dropdown só mexia em cycle_phase_tasks.status, mas a view
+    // vw_phase_progress (usada pelo relatório IA via Haiku) conta
+    // card_completions. Resultado: kanban verde mas relatório mostrava 0/N.
+    // Best-effort: erro aqui não derruba o status update principal.
+    if (source === 'ciclo') {
+      try {
+        if (newStatus === 'concluida') {
+          // Idempotente: existe completion ativa?
+          const { data: existing } = await supabase.from('card_completions')
+            .select('id').eq('task_id', taskId).is('reopened_at', null).maybeSingle();
+          if (!existing) {
+            const { data: task } = await supabase.from('cycle_phase_tasks')
+              .select('event_id, event_phase_id, titulo, area, subtasks:cycle_task_subtasks(name, done)')
+              .eq('id', taskId).single();
+            const { data: phase } = task?.event_phase_id
+              ? await supabase.from('event_cycle_phases').select('numero_fase').eq('id', task.event_phase_id).maybeSingle()
+              : { data: null };
+            if (task) {
+              await supabase.from('card_completions').insert({
+                task_id: taskId,
+                event_id: task.event_id,
+                event_phase_id: task.event_phase_id || null,
+                phase_number: phase?.numero_fase || 0,
+                area: task.area || '',
+                card_titulo: task.titulo || '',
+                card_subtarefas: task.subtasks ? { items: task.subtasks } : null,
+                observacao: null,
+                completed_by: req.user.userId,
+                completed_by_name: req.user.name,
+              });
+            }
+          }
+        } else {
+          // Saiu de concluida → marca reopened nas completions ativas
+          await supabase.from('card_completions').update({
+            reopened_at: new Date().toISOString(),
+            reopened_by: req.user.userId,
+            reopen_reason: `Status alterado para ${newStatus}`,
+          }).eq('task_id', taskId).is('reopened_at', null);
+        }
+      } catch (syncErr) {
+        console.error('[Tasks] sync completion (não-bloqueante):', syncErr.message);
+      }
+    }
 
     // Auto-conclusão de fase para projetos
     if (source === 'projeto' && newStatus === 'concluida' && data) {

@@ -11,7 +11,7 @@ import { Label } from '../components/ui/label';
 import { Textarea } from '../components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select';
 import { ScrollArea } from '../components/ui/scroll-area';
-import { Plus, Filter, ClipboardList, Clock, CheckCircle2, XCircle, Search as SearchIcon, ArrowRight, List, Upload, FileText, X } from 'lucide-react';
+import { Plus, Filter, ClipboardList, Clock, CheckCircle2, XCircle, Search as SearchIcon, ArrowRight, List, Upload, FileText, X, Users, Star } from 'lucide-react';
 import { supabase } from '../supabaseClient';
 import { toast } from 'sonner';
 
@@ -21,7 +21,9 @@ const CATEGORIAS = [
   { value: 'reembolso',      label: 'Reembolso',           color: 'bg-green-500/15 text-green-700 dark:text-green-400',    areaResp: 'financeiro' },
   { value: 'reserva_espaco', label: 'Reserva de Espaço',   color: 'bg-purple-500/15 text-purple-700 dark:text-purple-400', areaResp: 'reserva_espaco' },
   { value: 'infraestrutura', label: 'Infraestrutura',      color: 'bg-yellow-500/15 text-yellow-700 dark:text-yellow-400', areaResp: 'manutencao' },
+  { value: 'marketing',      label: 'Marketing',           color: 'bg-pink-500/15 text-pink-700 dark:text-pink-400',       areaResp: 'marketing' },
   { value: 'ferias',         label: 'Férias',              color: 'bg-cyan-500/15 text-cyan-700 dark:text-cyan-400',       areaResp: 'rh' },
+  { value: 'licenca',        label: 'Licença',             color: 'bg-teal-500/15 text-teal-700 dark:text-teal-400',       areaResp: 'rh' },
   { value: 'outro',          label: 'Outro',               color: 'bg-muted text-muted-foreground',                         areaResp: null },
 ];
 
@@ -197,6 +199,19 @@ export default function Solicitacoes() {
     }
   }
 
+  async function handleNpsSubmit(id, nota, comentario) {
+    try {
+      const updated = await api.update(id, { nps_nota: nota, nps_comentario: comentario });
+      toast.success('Obrigado pela avaliação!');
+      // Mescla com o item atual pra preservar campos enriquecidos (solicitante/responsavel)
+      setDetailItem(curr => (curr ? { ...curr, ...updated } : updated));
+      load();
+    } catch (e) {
+      toast.error(e.message || 'Erro ao enviar avaliação');
+      throw e;
+    }
+  }
+
   const showValueField = ['compras', 'reembolso'].includes(form.categoria);
   const isReembolso = form.categoria === 'reembolso';
   const isReservaEspaco = form.categoria === 'reserva_espaco';
@@ -218,9 +233,21 @@ export default function Solicitacoes() {
             <ClipboardList className="h-6 w-6 text-primary" />
             Solicitações
           </h1>
-          <p className="text-sm text-muted-foreground mt-1">TI, compras, reembolso, infraestrutura, reserva de espaços e férias</p>
+          <p className="text-sm text-muted-foreground mt-1">TI, marketing, compras, reembolso, infraestrutura, reservas, férias e licenças</p>
         </div>
         <div className="flex items-center gap-3">
+          {/* Config de responsaveis · so admin/diretor */}
+          {isAdmin && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => window.location.href = '/admin/solicitacoes-responsaveis'}
+              className="gap-1.5"
+              title="Configurar responsáveis por área"
+            >
+              <Users className="h-4 w-4" /> Responsáveis
+            </Button>
+          )}
           {/* Category filter — only for responsáveis */}
           {isResponsavel && (
             <div className="flex items-center gap-2">
@@ -567,7 +594,14 @@ export default function Solicitacoes() {
       )}
 
       {/* Detail dialog */}
-      <DetailDialog item={detailItem} onClose={() => setDetailItem(null)} isAdmin={isResponsavel} onStatusChange={handleStatusChange} />
+      <DetailDialog
+        item={detailItem}
+        onClose={() => setDetailItem(null)}
+        isAdmin={isResponsavel}
+        currentUserId={profile?.id}
+        onStatusChange={handleStatusChange}
+        onNpsSubmit={handleNpsSubmit}
+      />
     </div>
   );
 }
@@ -619,7 +653,7 @@ function SolicitacaoCard({ item, isAdmin, onStatusChange, onClick, draggable }) 
   );
 }
 
-function DetailDialog({ item, onClose, isAdmin, onStatusChange }) {
+function DetailDialog({ item, onClose, isAdmin, currentUserId, onStatusChange, onNpsSubmit }) {
   const [actionPending, setActionPending] = useState(null); // e.g. 'aprovado', 'rejeitado', 'concluido', 'em_analise'
   const [obsText, setObsText] = useState('');
 
@@ -753,6 +787,14 @@ function DetailDialog({ item, onClose, isAdmin, onStatusChange }) {
             </div>
           )}
 
+          {/* NPS pos-conclusao · so pro solicitante apos status concluido */}
+          {item.status === 'concluido'
+            && currentUserId
+            && item.solicitante_id === currentUserId
+            && onNpsSubmit && (
+              <NpsBlock item={item} onSubmit={onNpsSubmit} />
+          )}
+
           {actionPending && (
             <div className="space-y-3 pt-2 border-t border-border">
               <p className="text-sm font-medium text-foreground">
@@ -776,5 +818,81 @@ function DetailDialog({ item, onClose, isAdmin, onStatusChange }) {
         </div>
       </DialogContent>
     </Dialog>
+  );
+}
+
+function NpsBlock({ item, onSubmit }) {
+  const [nota, setNota] = useState(item.nps_nota ?? null);
+  const [comentario, setComentario] = useState(item.nps_comentario || '');
+  const [submitting, setSubmitting] = useState(false);
+  const jaAvaliou = item.nps_nota != null;
+
+  if (jaAvaliou) {
+    return (
+      <div className="space-y-2 pt-3 border-t border-border">
+        <p className="text-sm font-semibold flex items-center gap-2 text-foreground">
+          <Star className="h-4 w-4 text-primary fill-primary" />
+          Sua avaliação
+        </p>
+        <p className="text-2xl font-bold text-primary">{item.nps_nota}/10</p>
+        {item.nps_comentario && (
+          <p className="text-sm text-muted-foreground italic">"{item.nps_comentario}"</p>
+        )}
+      </div>
+    );
+  }
+
+  async function handleSubmit() {
+    if (nota == null) {
+      toast.error('Selecione uma nota de 0 a 10');
+      return;
+    }
+    setSubmitting(true);
+    try {
+      await onSubmit(item.id, nota, comentario.trim() || null);
+    } catch {
+      // erro ja foi exibido pelo handler do pai
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <div className="space-y-3 pt-3 border-t border-border">
+      <div>
+        <p className="text-sm font-semibold flex items-center gap-2 text-foreground">
+          <Star className="h-4 w-4 text-primary" />
+          Como você avalia o atendimento?
+        </p>
+        <p className="text-xs text-muted-foreground mt-1">
+          0 = muito ruim · 10 = excelente
+        </p>
+      </div>
+      <div className="flex flex-wrap gap-1">
+        {[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map(n => (
+          <button
+            key={n}
+            type="button"
+            onClick={() => setNota(n)}
+            className={`w-9 h-9 rounded-md border text-sm font-medium transition ${
+              nota === n
+                ? 'bg-primary text-primary-foreground border-primary'
+                : 'bg-background border-border hover:border-primary'
+            }`}
+          >
+            {n}
+          </button>
+        ))}
+      </div>
+      <Textarea
+        value={comentario}
+        onChange={e => setComentario(e.target.value)}
+        placeholder="Deixe um comentário (opcional)..."
+        rows={2}
+      />
+      <Button size="sm" onClick={handleSubmit} disabled={submitting} className="w-full">
+        {submitting ? 'Enviando...' : 'Enviar avaliação'}
+      </Button>
+    </div>
   );
 }

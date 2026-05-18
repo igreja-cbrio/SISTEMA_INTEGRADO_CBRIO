@@ -16,11 +16,14 @@ const { supabase } = require('../utils/supabase');
 
 const YT_BASE = 'https://www.googleapis.com/youtube/v3';
 
+// Canal oficial CBRio · ID publico (visivel em qualquer URL do canal).
+// Pode ser sobrescrito via env YOUTUBE_CHANNEL_ID se um dia mudarmos.
+const DEFAULT_CHANNEL_ID = 'UCfjMVzaYlCS_VE3JuEJj2vQ';
+
 function getEnv() {
   const apiKey = process.env.YOUTUBE_API_KEY;
-  const channelId = process.env.YOUTUBE_CHANNEL_ID;
+  const channelId = process.env.YOUTUBE_CHANNEL_ID || DEFAULT_CHANNEL_ID;
   if (!apiKey) throw new Error('YOUTUBE_API_KEY nao configurada');
-  if (!channelId) throw new Error('YOUTUBE_CHANNEL_ID nao configurada');
   return { apiKey, channelId };
 }
 

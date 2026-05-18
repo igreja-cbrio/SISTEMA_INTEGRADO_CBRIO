@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { Users, Pencil, Trash2, Palmtree, X, Save, AlertTriangle, Download, UserPlus, Briefcase, Calendar, Search, Filter, Eye, Edit, MoreVertical, LayoutDashboard, Network, Receipt, Star, Clock, CalendarDays } from 'lucide-react';
+import { Users, Pencil, Trash2, Palmtree, X, Save, AlertTriangle, Download, UserPlus, Briefcase, Calendar, Search, Filter, Eye, Edit, MoreVertical, LayoutDashboard, Network, Receipt, Star, Clock, CalendarDays, Scale } from 'lucide-react';
 import { Button } from '../../../components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../../../components/ui/card';
 import { StatisticsCard } from '../../../components/ui/statistics-card';
@@ -16,6 +16,7 @@ import TabFolha from './TabFolha';
 import TabAvaliacoes from './TabAvaliacoes';
 import TabExtras from './TabExtras';
 import TabFeriasCalendar from './TabFeriasCalendar';
+import TabPCS from './TabPCS';
 
 // ── Toast de feedback ───────────────────────────────────────
 function Toast({ message, type = 'error', onClose }) {
@@ -129,6 +130,7 @@ function Badge({ status, map }) {
 const TABS = [
   { key: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
   { key: 'colaboradores', label: 'Colaboradores', icon: Users },
+  { key: 'pcs', label: 'PCS', icon: Scale },
   { key: 'admissao', label: 'Admissão', icon: UserPlus },
   { key: 'organograma', label: 'Organograma', icon: Network },
   { key: 'folha', label: 'Folha', icon: Receipt },
@@ -327,6 +329,7 @@ export default function RH() {
             showToast={showToast}
           />
         </TabsContent>
+        <TabsContent value="pcs"><TabPCS /></TabsContent>
         <TabsContent value="admissao"><TabAdmissao /></TabsContent>
         <TabsContent value="organograma"><OrgChartTab funcs={funcs} onDetail={openDetail} /></TabsContent>
         <TabsContent value="folha"><TabFolha /></TabsContent>

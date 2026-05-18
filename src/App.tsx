@@ -70,12 +70,13 @@ async function hardReload() {
   }
 }
 
-function lazyWithRetry<T extends ComponentType<any>>(factory: () => Promise<{ default: T }>) {
+function lazyWithRetry<T extends ComponentType<Record<string, never>>>(factory: () => Promise<{ default: T }>) {
   return lazy(async () => {
     try {
       return await factory();
-    } catch (err: any) {
-      const isChunkError = CHUNK_ERROR_RE.test(err?.message || '');
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err || '');
+      const isChunkError = CHUNK_ERROR_RE.test(message);
       if (isChunkError && getRetryCount() < MAX_RETRIES) {
         hardReload();
         return new Promise<{ default: T }>(() => {}); // Nunca resolve — pagina vai recarregar
@@ -123,7 +124,9 @@ class ErrorBoundary extends Component<{ children: ReactNode }, { hasError: boole
                       const regs = await navigator.serviceWorker.getRegistrations();
                       await Promise.all(regs.map(r => r.unregister()));
                     }
-                  } catch {}
+                  } catch {
+                    // Ignora falhas de limpeza; o reload abaixo ainda recupera o app.
+                  }
                   sessionStorage.clear();
                   // Limpa querystring (zera contador) e vai pra raiz
                   window.location.replace('/?_cb=' + Date.now());
@@ -157,6 +160,7 @@ const NotFound = lazyWithRetry(() => import('./pages/NotFound'));
 const Solicitacoes = lazyWithRetry(() => import('./pages/Solicitacoes'));
 const NotificacaoRegras = lazyWithRetry(() => import('./pages/admin/NotificacaoRegras'));
 const CruzamentosPessoas = lazyWithRetry(() => import('./pages/admin/CruzamentosPessoas'));
+const SolicitacoesResponsaveis = lazyWithRetry(() => import('./pages/admin/SolicitacoesResponsaveis'));
 const MeusKpis = lazyWithRetry(() => import('./pages/MeusKpis'));
 const Painel = lazyWithRetry(() => import('./pages/Painel'));
 // /painel/kpi/:id removido na Fase 2.5F — agora detalhe abre como modal (KpiDetalheModal)
@@ -179,6 +183,8 @@ const RevisaoDetalhe = lazyWithRetry(() => import('./pages/RevisaoDetalhe'));
 const RH = lazyWithRetry(() => import('./pages/admin/rh/RH'));
 const Logistica = lazyWithRetry(() => import('./pages/admin/logistica/Logistica'));
 const Planejamento = lazyWithRetry(() => import('./pages/Planejamento'));
+const AnualCiclos = lazyWithRetry(() => import('./pages/planejamento/AnualCiclos'));
+const AnualCicloDetalhe = lazyWithRetry(() => import('./pages/planejamento/AnualCicloDetalhe'));
 const Eventos = lazyWithRetry(() => import('./pages/eventos/Eventos'));
 const Projetos = lazyWithRetry(() => import('./pages/Projetos'));
 const Processos = lazyWithRetry(() => import('./pages/Processos'));
@@ -228,10 +234,18 @@ const Loading = () => (
   </div>
 );
 
+function loginRedirectTarget() {
+  if (typeof window === 'undefined') return '/login';
+  const searchParams = new URLSearchParams(window.location.search);
+  const hashParams = new URLSearchParams(window.location.hash.replace(/^#/, ''));
+  const hasAuthError = searchParams.has('error') || hashParams.has('error');
+  return hasAuthError ? `/login${window.location.search}${window.location.hash}` : '/login';
+}
+
 function ProtectedRoute({ children }) {
   const { user, loading } = useAuth();
   if (loading) return <Loading />;
-  if (!user) return <Navigate to="/login" replace />;
+  if (!user) return <Navigate to={loginRedirectTarget()} replace />;
   return children;
 }
 
@@ -292,7 +306,7 @@ function VolunteerShell() {
 function DefaultRedirect() {
   const { user, loading, isVoluntario } = useAuth();
   if (loading) return <Loading />;
-  if (!user) return <Navigate to="/login" replace />;
+  if (!user) return <Navigate to={loginRedirectTarget()} replace />;
   if (isVoluntario) return <Navigate to="/voluntariado/checkin" replace />;
   return <Navigate to="/dashboard" replace />;
 }
@@ -343,6 +357,8 @@ function AppRoutes() {
         <Route path="/dashboard" element={<Suspense fallback={<Loading />}><Dashboard /></Suspense>} />
         <Route path="/perfil" element={<Suspense fallback={<Loading />}><Perfil /></Suspense>} />
         <Route path="/planejamento" element={<Suspense fallback={<Loading />}><Planejamento /></Suspense>} />
+        <Route path="/planejamento/anual" element={<Suspense fallback={<Loading />}><AnualCiclos /></Suspense>} />
+        <Route path="/planejamento/anual/:id" element={<Suspense fallback={<Loading />}><AnualCicloDetalhe /></Suspense>} />
         <Route path="/eventos" element={<ModuleGuard permKey="canAgenda"><Suspense fallback={<Loading />}><Eventos /></Suspense></ModuleGuard>} />
         <Route path="/eventos/:id" element={<ModuleGuard permKey="canAgenda"><Suspense fallback={<Loading />}><EventDetail /></Suspense></ModuleGuard>} />
         <Route path="/projetos" element={<ModuleGuard permKey="canProjetos"><Suspense fallback={<Loading />}><Projetos /></Suspense></ModuleGuard>} />
@@ -381,6 +397,7 @@ function AppRoutes() {
         <Route path="/painel/nsm/pessoas" element={<Suspense fallback={<Loading />}><PainelNsmPessoas /></Suspense>} />
         <Route path="/admin/notificacao-regras" element={<Suspense fallback={<Loading />}><NotificacaoRegras /></Suspense>} />
         <Route path="/admin/cruzamentos" element={<Suspense fallback={<Loading />}><CruzamentosPessoas /></Suspense>} />
+        <Route path="/admin/solicitacoes-responsaveis" element={<Suspense fallback={<Loading />}><SolicitacoesResponsaveis /></Suspense>} />
         <Route path="/admin/kpi-areas" element={<Navigate to="/permissoes" replace />} />
         <Route path="/ritual" element={<Suspense fallback={<Loading />}><Ritual /></Suspense>} />
         <Route path="/gestao" element={<Suspense fallback={<Loading />}><Gestao /></Suspense>} />

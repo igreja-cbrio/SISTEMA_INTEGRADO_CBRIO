@@ -51,7 +51,9 @@ export const STATUS_FUNC: Record<string, StatusEntry> = {
 }
 
 export const TIPO_CONTRATO: Record<string, string> = {
-  clt: 'CLT', pj: 'PJ', voluntario: 'Voluntário', estagiario: 'Estagiário',
+  clt: 'CLT', pj: 'PJ', 'pj+': 'PJ+', prebenda: 'PREBENDA',
+  voluntario: 'Voluntário', estagiario: 'Estagiário',
+  CLT: 'CLT', PJ: 'PJ', 'PJ+': 'PJ+', PREBENDA: 'PREBENDA',
 }
 
 export const TIPO_FERIAS: Record<string, string> = {

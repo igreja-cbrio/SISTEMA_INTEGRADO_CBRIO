@@ -506,8 +506,11 @@ preenchidas pela **Alda Lorena** (responsavel da Integracao) em
 
 ### Variaveis de ambiente
 
-- `YOUTUBE_API_KEY` (ja existe, usada pelo coletor de DS/DDUS)
-- `YOUTUBE_CHANNEL_ID` (novo) — formato `UCxxxxxxxxxx` do canal CBRio
+- `YOUTUBE_API_KEY` (ja existe, usada pelo coletor de DS/DDUS) — **obrigatoria**
+- `YOUTUBE_CHANNEL_ID` (opcional) — formato `UCxxxxxxxxxx`. Default
+  hardcoded em `backend/services/youtubeCollector.js`
+  (`DEFAULT_CHANNEL_ID = 'UCfjMVzaYlCS_VE3JuEJj2vQ'`, canal oficial CBRio).
+  So setar a env se um dia o canal mudar.
 - `GOOGLE_OAUTH_CLIENT_ID` / `GOOGLE_OAUTH_CLIENT_SECRET` — credenciais OAuth
   para coleta automatica via YouTube Analytics API (pico online, DS, DDUS)
 
@@ -778,18 +781,75 @@ Jornada → KPI não entra em nenhuma célula.
 Para futuros KPIs "só de visualização" (sem cross-impacto na
 Jornada), basta deixar `valores = '{}'::text[]`.
 
-### Recálculo automático ao editar culto
+### Recálculo automático · trigger SQL em tempo real
 
-`PUT /api/kpis/cultos/:id` (backend/routes/kpis.js) dispara em
-background `coletarTodos({ fontes: ['cultos.', 'batismos.'],
-referenceDate: <data do culto> })` + `painelCache.bust('')` depois de
-salvar. KPIs do painel refletem a edição em segundos em vez de esperar
-o cron diário (`/api/kpis/v2/cron/coletar`).
+KPIs auto-cultos/batismos são recalculados via **trigger SQL** no
+banco. Migration `20260514210000_kpis_trigger_realtime.sql` cria:
 
-`coletarTodos` aceita `referenceDate` opcional · garante que editar
-culto antigo recalcula o **período do culto**, não o mês corrente.
+- `kpi_calcular_valor_auto(fonte, inicio, fim)` · CASE com a lógica de
+  cada `fonte_auto` que começa com `cultos.` ou `batismos.`
+- `kpi_recalcular_para_data(data)` · UPSERT em `kpi_registros` pra todos
+  os KPIs ativos que cobrem a data, em todas as periodicidades aplicáveis
+- Trigger `cultos_recalc_kpis AFTER INSERT/UPDATE/DELETE ON cultos`
+- Trigger `batismos_recalc_kpis AFTER INSERT/UPDATE/DELETE ON batismo_inscricoes`
+
+Latência: **zero** · KPIs sempre refletem o último dado salvo. Sem cron,
+sem `setImmediate`. O backend só limpa o cache do `/painel` no PUT.
+
+Editar culto antigo recalcula o período daquele culto (não o mês
+corrente) automaticamente porque a função usa a `data` do row mudado.
+
+Backfill na própria migration popula `kpi_registros` de todas as datas
+existentes em `cultos` + `batismo_inscricoes` (`status='realizado'`) ·
+não precisa esperar cron diário nem editar manualmente.
 
 Tabs vigentes de `/integracao`: **Cultos · Frequência · Decisões · Batismos · Histórico**.
+
+### Decisões · toggle Por culto | Pessoas (CPFs)
+
+Aba "Decisões" tem o gráfico mensal no topo (Recharts) e, embaixo, um
+`<DetalhamentoDecisoes>` com toggle entre 2 modos · estilo Batismos:
+
+- **Por culto** (default) · tabela agregada por tipo de culto
+  (Domingo/AMI/Bridge/Quarta) · cultos · presenciais · online · total
+  · média.
+- **Pessoas** · lê `vw_nsm_sem_dados` + carrega `cultos_decisoes_pessoas`
+  de cada culto. Renderiza:
+  - **Sem busca**: lista de cultos com expand (filtro Todos/Pendentes/Sem
+    dados/Completos · botão "Adicionar pessoa (faltam N)" inline)
+  - **Com busca**: tabela flat estilo `/integracao` aba Batismos (Nome ·
+    CPF · Contato · Culto · Tipo · Vínculo membro)
+
+A aba "Pessoas decididas" separada foi removida em 2026-05-14 · todo
+o fluxo passa pela aba Decisões. Arquivo `DecisoesPessoas.tsx` deletado.
+
+### Cadastro flexível · CPF/nascimento opcionais
+
+Marcos: "no momento da conversão é difícil pedir CPF/nascimento · nome
+e telefone são os dados mais fáceis · censo posterior preenche o resto".
+
+**Obrigatórios em `cultos_decisoes_pessoas`:**
+- `nome` (min 2 chars)
+- `telefone` (min 8 dígitos · backend valida)
+
+**Opcionais (sem asterisco):**
+- `cpf` · se preenchido, deve ter 11 dígitos
+- `data_nascimento`
+- `email`, `idade`, `observacoes`
+
+**Marcação visual:** pessoas com `cpf IS NULL` OU `data_nascimento IS NULL`
+ganham badge `incompleto` (amber) em todas as listas. Borda esquerda do
+card vira amber em vez de roxo.
+
+**Endpoint pra censo posterior:** `GET /api/kpis/decisoes-pessoas/incompletos`
+retorna `{ total, items[] }` com `falta_cpf` e `falta_nasc` booleanos.
+Permite Marcos/Alda exportar a lista e correr atrás dos dados depois.
+
+**Trigger BEFORE INSERT** (`tg_cultos_dec_pessoas_resolve_membro`) continua
+funcionando: se CPF/nascimento estiverem presentes, tenta match em
+`mem_membros`. Se ausentes, cai pra criar membro novo `status='visitante'`
+com os dados disponíveis (nome + telefone). NSM não quebra · `nsm_eventos`
+aceita CPF NULL.
 
 ### Cascata Seguir a Jesus → KPIs por área
 
@@ -812,6 +872,42 @@ Coletores filtram cultos por `service_type_name` (mais robusto que
 nome livre): `isAmiCulto` checa `'ami'`, `isBridgeCulto` checa
 `'bridge'`, `isSedeCulto` checa `domingo*` ou `'quarta com deus'`.
 Online usa soma de `online_pico` direto, sem filtro de tipo.
+
+### ⚠️ Meta absoluta × periodicidade do KPI · regra importante
+
+**Sempre** que adicionar novo KPI tático com `tipo_calculo != 'manual'` E meta
+cascateada via `aplicar_meta_institucional()`, lembrar:
+
+- `aplicar_meta_institucional()` materializa `meta_valor_absoluto` SEMPRE em
+  **escala anual** (baseline = ano anterior jan-dez × 1.30 / fator institucional).
+- O **coletor automático** gera registros na **periodicidade do KPI**
+  (semanal: soma da semana · mensal: soma do mês · etc).
+- Comparar valor de UMA semana contra meta ANUAL gera percentual baixo falso
+  (ex: 2.500 / 23.400 = 10.6% · vermelho falso positivo).
+
+**Onde a normalização acontece**: `vw_kpi_trajetoria_atual` e
+`vw_kpi_taticos_status` dividem `meta_valor_absoluto` pelo fator da
+periodicidade do KPI:
+
+| Periodicidade | Divisor |
+|---------------|---------|
+| `semanal`     | 52      |
+| `mensal`      | 12      |
+| `trimestral`  | 4       |
+| `semestral`   | 2       |
+| `anual`       | 1       |
+
+Migration de referência: `20260515520000_normalizar_meta_periodicidade.sql`.
+
+**Cuidados ao adicionar KPI novo:**
+1. Decidir a **periodicidade** correta no `kpi_indicadores_taticos.periodicidade`
+2. Garantir que o **coletor** (`fonte_auto` em `kpiAutoCollector.js`) retorna
+   o valor agregado naquela periodicidade (semanal = 1 semana, não acumulado)
+3. Se quiser meta **manual em escala não-anual** (ex: meta semanal direto),
+   preencher `kpi_indicadores_taticos.meta_valor` SEM passar pela cascata
+   (a view só normaliza quando `meta_valor_absoluto IS NOT NULL`)
+4. KPIs com checkpoints granulares em `kpi_trajetoria` continuam com a meta
+   do checkpoint (não passam pela normalização) · checkpoint já é por período
 
 ### Histórico de longo prazo · vw_culto_historico_anual
 
@@ -993,11 +1089,49 @@ SELECT * FROM vw_nsm_painel;
 - `GET /api/painel/alertas?limit=3`→ top KPIs em alerta
 - `GET /api/painel/kpi/:id`        → detalhe completo (camada 3)
 - `GET /api/painel/nsm/pessoas`    → pessoas convertidas (camada 4)
+- `GET /api/painel/serie-temporal/dados` → catalogo valor×dado + lista de cultos
+- `GET /api/painel/serie-temporal?valor=&dado=&culto=&inicio=&fim=&granularidade=`
+   → serie agregada `[{periodo, valor}]` pra carrossel de tendencias
+
+### Carrossel de valores (tendencias temporais · `/painel`)
+
+Abaixo do carrossel de mandalas tem o `<CarrosselValores>` · um slide
+por valor (Seguir/Conectar/Investir/Servir/Generosidade) com **3 filtros**:
+
+- **Dado** · varia por valor. Catalogo em `SERIE_DADOS` (backend/routes/painel.js):
+  - Seguir: Conversões · Frequência · Batismos
+  - Conectar: Membros em grupos ativos · Novas entradas em grupos
+  - Investir: Devocionais · Encontros Jornada 180
+  - Servir: Voluntários ativos no mês · Novos voluntários
+  - Generosidade: Valor doado (R$) · Doadores únicos no mês
+- **Culto** (só Seguir · `dadoDef.filtra_culto = true`) · dropdown com
+  os 7 service_types · default "Todos os cultos"
+- **Período** · 3m / 6m / 12m (default) / 2a / 5a
+
+Dados de snapshot (membros em grupos, voluntários ativos) calculam
+"quantos estavam ativos no fim de cada período" via overlap
+`desde <= fim AND (ate IS NULL OR ate > fim)`. Outros dados são
+soma simples por período. Cache 5min por combo
+`valor:dado:culto:inicio:fim:granularidade`.
+
+Pra adicionar novo dado: incluir entrada em `SERIE_DADOS[valor]` em
+`backend/routes/painel.js` + adicionar o branch correspondente em
+`calcularSerie()`. Frontend pega automaticamente via `/serie-temporal/dados`.
+
+### Dados extras no `SERIE_DADOS` (carrossel de tendências)
+
+`SERIE_DADOS` tem dados não-óbvios que valem listar (alimentam o carrossel
+de valores no `/painel`):
+- `conectar.grupos_ativos` · count de grupos com pelo menos 1 membro ativo
+  no fim de cada período (snapshot via `mem_grupo_membros`)
+- `generosidade.dizimistas` e `generosidade.ofertantes` · distinct membros
+  filtrando por `mem_contribuicoes.tipo = 'dizimo' | 'oferta'`
 
 ### Componentes do painel (`src/components/painel/`)
 
 - `MandalaSlide.jsx` — uma mandala SVG (5 ou 6 setores)
 - `CarrosselMandalas.jsx` — carrossel com setas, dots, swipe, teclado
+- `CarrosselValores.jsx` — 5 slides com filtros + gráfico de linha (tendências)
 - `MatrizValorArea.jsx` — tabela colorida com modal
 - `ModalCelula.jsx` — drilldown da celula
 - `AlertasCriticos.jsx` — top 3 KPIs em alerta
@@ -1063,9 +1197,21 @@ Dos 153 KPIs ativos, ~150 estao mapeados para calculo automatico.
 
 ### Permissoes (regra geral do sistema OKR)
 
-- Leitura: **todos veem todos os KPIs** (painel, mandalas, matriz, minha-area, dados-brutos)
-- Edicao: **so a propria area** (validado via `kpi_areas` em profiles)
+- **Leitura geral** (`/painel`, mandalas, matriz, alertas): qualquer autenticado
+- **`/minha-area`**: filtro client-side por `profile.kpi_areas` OU `profile.kpi_valores`:
+  - admin/diretor: vê tudo
+  - sem `kpi_areas` e sem `kpi_valores` configurados: vê tudo (fallback MVP · vai apertar depois)
+  - com permissões: KPI passa se `kpi.area` bate `kpi_areas` OU algum `kpi.valores[]` bate `kpi_valores`
+- **`/integracao` escrita** (cultos, decisões, batismos): `authorizeIntegracao` em
+  `backend/routes/kpis.js` exige `role IN ('admin','diretor')` OR `kpi_areas` contém `'integracao'`
+- **`/dados-brutos`**: `useMyKpiAreas.canEditDado()` segue mesma lógica (area + valor + ministério)
 - Admin/diretor: passa em todos os checks
+
+**Caso de uso · líder de Integração (ex: Alda Lorena):**
+- `kpi_areas = ['integracao']` → desbloqueia escrita em `/integracao`
+- `kpi_valores = ['seguir']` → `/minha-area` mostra só KPIs Seguir (que estão nas 6 áreas
+  sede/ami/bridge/online/kids/cba). Filtro client-side faz match por valor.
+- Detalhes operacionais (query de diagnóstico + UPDATE): `docs/permissoes-alda.md`
 
 ### Modulos futuros (preparados na Fase 6)
 

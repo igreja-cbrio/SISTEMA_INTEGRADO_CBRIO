@@ -8,6 +8,27 @@ const painelCache = require('../services/painelCache');
 
 router.use(authenticate);
 
+// Helper: permite escrita em cultos/decisoes/batismos pra admin/diretor OU
+// quem tem 'integracao' em kpi_areas (Alda Lorena, lider de Integracao).
+// Auditoria de pre-liberacao identificou que essas rotas estavam so com
+// authenticate · qualquer usuario logado escrevia. Agora restringido.
+function authorizeIntegracao(req, res, next) {
+  const u = req.user || {};
+  if (['admin', 'diretor'].includes(u.role)) return next();
+  const areas = (u.kpi_areas || []).map(a => String(a).toLowerCase());
+  if (areas.includes('integracao')) return next();
+  return res.status(403).json({
+    error: 'Sem permissao · necessario ser admin, diretor ou lider de Integracao',
+  });
+}
+
+// Helper: valida numero >= 0 (rejeita negativos antes do INSERT/UPDATE)
+function nonNeg(v, fallback = 0) {
+  const n = Number(v);
+  if (Number.isNaN(n) || n < 0) return fallback;
+  return n;
+}
+
 // ── Service Types (culto types) ───────────────────────────────────────────────
 router.get('/service-types', async (req, res) => {
   const { data, error } = await supabase
@@ -37,7 +58,7 @@ router.get('/cultos', async (req, res) => {
   res.json(data);
 });
 
-router.post('/cultos', async (req, res) => {
+router.post('/cultos', authorizeIntegracao, async (req, res) => {
   const {
     service_type_id, nome, data, hora,
     presencial_adulto, presencial_kids,
@@ -50,12 +71,12 @@ router.post('/cultos', async (req, res) => {
     .from('cultos')
     .insert({
       service_type_id, nome, data, hora,
-      presencial_adulto: Number(presencial_adulto) || 0,
-      presencial_kids:   Number(presencial_kids)   || 0,
-      decisoes_presenciais: Number(decisoes_presenciais) || 0,
-      decisoes_online:      Number(decisoes_online)      || 0,
+      presencial_adulto:    nonNeg(presencial_adulto),
+      presencial_kids:      nonNeg(presencial_kids),
+      decisoes_presenciais: nonNeg(decisoes_presenciais),
+      decisoes_online:      nonNeg(decisoes_online),
       youtube_video_id: youtube_video_id || null,
-      online_pico: online_pico ? Number(online_pico) : null,
+      online_pico: online_pico ? nonNeg(online_pico, null) : null,
       inserido_por: req.user.id,
     })
     .select()
@@ -64,42 +85,184 @@ router.post('/cultos', async (req, res) => {
   res.json(culto);
 });
 
-router.put('/cultos/:id', async (req, res) => {
+router.put('/cultos/:id', authorizeIntegracao, async (req, res) => {
   const allowed = [
     'presencial_adulto', 'presencial_kids',
     'decisoes_presenciais', 'decisoes_online',
     'youtube_video_id', 'online_pico', 'nome',
     'online_ds', 'online_ddus',
   ];
+  const camposNumericos = [
+    'presencial_adulto', 'presencial_kids',
+    'decisoes_presenciais', 'decisoes_online',
+    'online_pico', 'online_ds', 'online_ddus',
+  ];
   const update = { updated_at: new Date().toISOString() };
   for (const [k, v] of Object.entries(req.body)) {
-    if (allowed.includes(k)) update[k] = v === '' ? null : v;
+    if (!allowed.includes(k)) continue;
+    if (v === '' || v === null || v === undefined) { update[k] = null; continue; }
+    if (camposNumericos.includes(k)) {
+      const n = Number(v);
+      if (Number.isNaN(n) || n < 0) {
+        return res.status(400).json({ error: `Campo ${k} deve ser número >= 0 (recebido: ${v})` });
+      }
+      update[k] = n;
+    } else {
+      update[k] = v;
+    }
   }
   const { data, error } = await supabase
     .from('cultos').update(update).eq('id', req.params.id).select().single();
   if (error) return res.status(500).json({ error: error.message });
 
-  // Recalcula KPIs que dependem de cultos em background · KPIs do painel
-  // refletem mudança em segundos em vez de esperar cron diário. fire-and-forget
-  // pra nao bloquear resposta. Cache do /painel limpado pra forcar releitura.
-  //
-  // referenceDate = data do culto editado · garante que editar culto antigo
-  // recalcula o periodo do culto, nao o mes corrente (bug que existia antes).
-  const refDate = data?.data ? new Date(data.data + 'T12:00:00') : null;
-  setImmediate(async () => {
-    try {
-      await coletarTodos({ fontes: ['cultos.', 'batismos.'], referenceDate: refDate });
-      painelCache.bust('');
-    } catch (e) {
-      console.error('[kpis] recalculo pos-update culto falhou:', e.message);
-    }
-  });
+  // KPIs auto-cultos/batismos sao recalculados via trigger SQL (migration
+  // 20260514210000_kpis_trigger_realtime.sql · trg_kpi_recalcular_culto).
+  // Aqui so limpa o cache do /painel pra forcar releitura do dado novo.
+  painelCache.bust('');
 
   res.json(data);
 });
 
 router.delete('/cultos/:id', authorize('admin', 'diretor'), async (req, res) => {
   const { error } = await supabase.from('cultos').delete().eq('id', req.params.id);
+  if (error) return res.status(500).json({ error: error.message });
+  res.json({ ok: true });
+});
+
+// ── Decisões com dados das pessoas (cultos_decisoes_pessoas) ──────────────────
+// 1 row por pessoa que decidiu no culto · vincula opcionalmente a mem_membros.
+
+router.get('/cultos/:id/decisoes-pessoas', async (req, res) => {
+  const { data, error } = await supabase
+    .from('cultos_decisoes_pessoas')
+    .select('id, culto_id, membro_id, nome, telefone, email, idade, data_nascimento, cpf, tipo_decisao, observacoes, status_followup, registrado_em, registrado_por')
+    .eq('culto_id', req.params.id)
+    .order('registrado_em', { ascending: false });
+  if (error) return res.status(500).json({ error: error.message });
+  res.json(data || []);
+});
+
+// Decisoes com cadastro incompleto (sem CPF ou sem data_nascimento)
+// Marcos: "futuramente quando tivermos esse convertido ja alinhado na
+// jornada vamos conseguir buscar melhor esses dados em um censo posterior"
+router.get('/decisoes-pessoas/incompletos', async (req, res) => {
+  const limit = Math.min(Number(req.query.limit) || 200, 1000);
+  const { data, error } = await supabase
+    .from('cultos_decisoes_pessoas')
+    .select(`
+      id, culto_id, membro_id, nome, telefone, email, idade, data_nascimento, cpf,
+      tipo_decisao, status_followup, registrado_em,
+      culto:culto_id(id, data, service_type_id, service_type_name)
+    `)
+    .or('cpf.is.null,data_nascimento.is.null')
+    .order('registrado_em', { ascending: false })
+    .limit(limit);
+  if (error) {
+    console.error('[kpis/decisoes-pessoas/incompletos]', error.message);
+    return res.status(500).json({ error: error.message });
+  }
+  const items = (data || []).map(p => ({
+    ...p,
+    falta_cpf:   !p.cpf,
+    falta_nasc:  !p.data_nascimento,
+  }));
+  res.json({
+    total: items.length,
+    items,
+  });
+});
+
+// Busca de membro/visitante por nome, CPF, email, telefone
+// Usada pelo autocomplete no modal antes de cadastrar manual
+router.get('/decisoes-pessoas/buscar-membro', async (req, res) => {
+  const q = String(req.query.q || '').trim();
+  if (q.length < 2) return res.json([]);
+
+  const cpfLimpo = q.replace(/\D/g, '');
+  const isCpf = cpfLimpo.length >= 5 && /^\d+$/.test(cpfLimpo);
+
+  let query = supabase
+    .from('mem_membros')
+    .select('id, nome, email, telefone, cpf, data_nascimento, status')
+    .limit(10);
+
+  if (isCpf) {
+    query = query.ilike('cpf', `${cpfLimpo}%`);
+  } else {
+    const escaped = q.replace(/[%_,()]/g, '\\$&');
+    query = query.or(`nome.ilike.%${escaped}%,email.ilike.%${escaped}%,telefone.ilike.%${escaped}%`);
+  }
+
+  const { data, error } = await query;
+  if (error) {
+    console.error('[kpis/decisoes-pessoas buscar-membro]', error.message);
+    return res.status(500).json({ error: error.message });
+  }
+  res.json(data || []);
+});
+
+router.post('/cultos/:id/decisoes-pessoas', authorizeIntegracao, async (req, res) => {
+  const { nome, telefone, email, idade, data_nascimento, cpf, tipo_decisao, observacoes, membro_id } = req.body || {};
+  // Marcos: "no momento da conversao, dificil pedir CPF/nascimento. Nome +
+  // telefone sao os dados mais faceis. CPF/nascimento ficam opcionais ·
+  // censo posterior preenche". Cadastro incompleto = sem cpf OU sem nascimento.
+  if (!nome || String(nome).trim().length < 2) {
+    return res.status(400).json({ error: 'Nome obrigatorio (min 2 chars)' });
+  }
+  const telLimpo = telefone ? String(telefone).replace(/\D/g, '') : '';
+  if (telLimpo.length < 8) {
+    return res.status(400).json({ error: 'Telefone obrigatorio (min 8 digitos · ex: 999991234)' });
+  }
+  const cpfLimpo = cpf ? String(cpf).replace(/\D/g, '') : null;
+  if (cpfLimpo && cpfLimpo.length !== 11) {
+    return res.status(400).json({ error: 'CPF deve ter 11 digitos' });
+  }
+
+  // Se nao veio membro_id explicito, trigger BEFORE INSERT resolve/cria
+  const { data, error } = await supabase
+    .from('cultos_decisoes_pessoas')
+    .insert({
+      culto_id: req.params.id,
+      membro_id: membro_id || null,
+      nome: String(nome).trim(),
+      telefone: telefone || null,
+      email: email ? String(email).trim().toLowerCase() : null,
+      idade: idade ? Number(idade) : null,
+      data_nascimento: data_nascimento || null,
+      cpf: cpfLimpo,
+      tipo_decisao: ['presencial', 'online'].includes(tipo_decisao) ? tipo_decisao : 'presencial',
+      observacoes: observacoes || null,
+      registrado_por: req.user?.id || null,
+    })
+    .select()
+    .single();
+  if (error) {
+    console.error('[kpis/decisoes-pessoas POST]', error.message);
+    return res.status(500).json({ error: error.message });
+  }
+  res.status(201).json(data);
+});
+
+router.put('/decisoes-pessoas/:id', authorizeIntegracao, async (req, res) => {
+  const allowed = ['nome', 'telefone', 'email', 'idade', 'data_nascimento', 'cpf', 'tipo_decisao', 'observacoes', 'status_followup', 'observacoes_followup'];
+  const update = {};
+  for (const [k, v] of Object.entries(req.body || {})) {
+    if (!allowed.includes(k)) continue;
+    if (k === 'cpf' && v) update[k] = String(v).replace(/\D/g, '');
+    else if (k === 'email' && v) update[k] = String(v).trim().toLowerCase();
+    else if (k === 'idade') update[k] = v ? Number(v) : null;
+    else if (k === 'data_nascimento') update[k] = v || null;
+    else update[k] = v === '' ? null : v;
+  }
+  const { data, error } = await supabase
+    .from('cultos_decisoes_pessoas').update(update)
+    .eq('id', req.params.id).select().single();
+  if (error) return res.status(500).json({ error: error.message });
+  res.json(data);
+});
+
+router.delete('/decisoes-pessoas/:id', authorizeIntegracao, async (req, res) => {
+  const { error } = await supabase.from('cultos_decisoes_pessoas').delete().eq('id', req.params.id);
   if (error) return res.status(500).json({ error: error.message });
   res.json({ ok: true });
 });
@@ -201,7 +364,7 @@ router.get('/batismos', async (req, res) => {
   res.json(data);
 });
 
-router.post('/batismos', async (req, res) => {
+router.post('/batismos', authorizeIntegracao, async (req, res) => {
   const { cpf, nome, sobrenome, data_nascimento, telefone, email, origem = 'manual', observacoes, area_kpi } = req.body;
   if (!nome || !sobrenome) return res.status(400).json({ error: 'nome e sobrenome são obrigatórios' });
   const AREAS_OK = ['kids', 'sede', 'bridge', 'ami', 'online'];
@@ -268,7 +431,7 @@ router.post('/batismos', async (req, res) => {
   res.json(inscricao);
 });
 
-router.put('/batismos/:id', async (req, res) => {
+router.put('/batismos/:id', authorizeIntegracao, async (req, res) => {
   const { status, data_batismo, observacoes, area_kpi } = req.body;
   const update = { updated_at: new Date().toISOString() };
   if (status)       update.status = status;

@@ -435,6 +435,69 @@ router.get('/membros/:id', async (req, res) => {
   }
 });
 
+// ────────────────────────────────────────────────────────────────────────
+// GET /api/membresia/orfaos-stats · conta voluntarios e batismos sem
+// link com mem_membros. Ideal = 0 apos a migration 20260515500000.
+// ────────────────────────────────────────────────────────────────────────
+router.get('/orfaos-stats', async (_req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('vw_membros_orfaos_stats')
+      .select('*')
+      .maybeSingle();
+    if (error) throw error;
+    res.json(data || { voluntarios_sem_membro: 0, batismos_sem_membro: 0 });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// POST /api/membresia/promover-orfaos · forca backfill manual (admin/diretor).
+// A migration ja faz isso uma vez · este endpoint serve pra rodar de novo
+// caso registros antigos tenham caido pelas brechas (importacoes, etc).
+router.post('/promover-orfaos', authorize('admin', 'diretor'), async (_req, res) => {
+  try {
+    // Reusa a logica da fn_link_or_create_membro via RPC.
+    // O trigger ja age em INSERT/UPDATE · pra reprocessar antigos, basta
+    // touchear (UPDATE de nenhum campo nao dispara · forco trigger via UPDATE updated_at).
+    const stats = { voluntarios: 0, batismos: 0, erros: [] };
+
+    const { data: volOrfaos } = await supabase
+      .from('vol_profiles')
+      .select('id')
+      .is('membresia_id', null)
+      .not('full_name', 'is', null);
+
+    for (const v of volOrfaos || []) {
+      // UPDATE no proprio updated_at pra disparar BEFORE UPDATE trigger
+      const { error } = await supabase
+        .from('vol_profiles')
+        .update({ updated_at: new Date().toISOString() })
+        .eq('id', v.id);
+      if (error) stats.erros.push({ tabela: 'vol_profiles', id: v.id, msg: error.message });
+      else stats.voluntarios++;
+    }
+
+    const { data: batOrfaos } = await supabase
+      .from('batismo_inscricoes')
+      .select('id')
+      .is('membro_id', null);
+
+    for (const b of batOrfaos || []) {
+      const { error } = await supabase
+        .from('batismo_inscricoes')
+        .update({ updated_at: new Date().toISOString() })
+        .eq('id', b.id);
+      if (error) stats.erros.push({ tabela: 'batismo_inscricoes', id: b.id, msg: error.message });
+      else stats.batismos++;
+    }
+
+    res.json({ ok: true, ...stats });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // POST /api/membresia/membros
 router.post('/membros', authorize('admin', 'diretor'), async (req, res) => {
   try {

@@ -4,11 +4,11 @@
 // Usado em /minha-area (aba Dados) como forma principal de entrada de dados de culto.
 // ============================================================================
 
-import { useState, useEffect, useMemo, useCallback } from 'react';
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { kpis as kpisApi } from '../api';
 
 const cultosApi = kpisApi.cultos;
-import { Calendar, ChevronLeft, ChevronRight, CheckCircle2, AlertCircle, X, Save, Tv, Users, Sparkles } from 'lucide-react';
+import { Calendar, ChevronLeft, ChevronRight, CheckCircle2, AlertCircle, X, Save, Tv, Users, Sparkles, UserPlus, Trash2, Pencil, Search as SearchIcon, Link as LinkIcon } from 'lucide-react';
 import { toast } from 'sonner';
 import { formatErro } from '../lib/formatErro';
 
@@ -411,7 +411,8 @@ function ModalCulto({ culto, onClose, onSaved }) {
   const hasKids   = culto.service_type_has_kids   ?? false;
   const hasOnline = culto.service_type_has_online ?? false;
 
-  const [form, setForm] = useState({
+  // Valores iniciais (preservados pra detectar dirty)
+  const valoresIniciaisRef = useRef({
     presencial_adulto:    culto.presencial_adulto ?? 0,
     presencial_kids:      culto.presencial_kids ?? 0,
     decisoes_presenciais: culto.decisoes_presenciais ?? 0,
@@ -421,9 +422,37 @@ function ModalCulto({ culto, onClose, onSaved }) {
     online_ddus:          culto.online_ddus ?? '',
     youtube_video_id:     culto.youtube_video_id ?? '',
   });
+
+  const [form, setForm] = useState({ ...valoresIniciaisRef.current });
   const [saving, setSaving] = useState(false);
 
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
+
+  // Detecta alteracoes nao salvas pra avisar antes de fechar
+  // Marcos: "voce clica fora e zera tudo no meio da operacao"
+  const isDirty = useMemo(() => {
+    const orig = valoresIniciaisRef.current;
+    return Object.keys(orig).some(k => String(orig[k] ?? '') !== String(form[k] ?? ''));
+  }, [form]);
+
+  const tentarFechar = useCallback(() => {
+    if (saving) return; // nao fecha durante salvamento
+    if (isDirty) {
+      const ok = window.confirm(
+        'Tem dados preenchidos que ainda não foram salvos.\n\n'
+        + 'Tem certeza que quer fechar e perder essas alterações?'
+      );
+      if (!ok) return;
+    }
+    onClose?.();
+  }, [isDirty, onClose, saving]);
+
+  // ESC tambem usa tentarFechar
+  useEffect(() => {
+    const onKey = (e) => { if (e.key === 'Escape') tentarFechar(); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [tentarFechar]);
 
   const submit = async () => {
     setSaving(true);
@@ -453,7 +482,7 @@ function ModalCulto({ culto, onClose, onSaved }) {
   const { dia, diaSemana } = formataDataCurta(culto.data);
 
   return (
-    <div onClick={onClose}
+    <div onClick={tentarFechar}
       style={{
         position: 'fixed', inset: 0, zIndex: 1000, background: C.overlay,
         display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16,
@@ -466,6 +495,7 @@ function ModalCulto({ culto, onClose, onSaved }) {
           <div>
             <h2 style={{ fontSize: 15, fontWeight: 700, margin: 0, color: C.text }}>
               {culto.nome}
+              {isDirty && <span style={{ marginLeft: 8, fontSize: 9, fontWeight: 700, padding: '2px 6px', borderRadius: 99, background: '#F59E0B22', color: '#B45309', letterSpacing: 0.3 }}>NÃO SALVO</span>}
             </h2>
             <p style={{ fontSize: 11, color: C.t3, margin: '4px 0 0', textTransform: 'capitalize' }}>
               {diaSemana} · {dia} {MESES[Number(culto.data.split('-')[1]) - 1]} {culto.data.split('-')[0]}
@@ -473,7 +503,7 @@ function ModalCulto({ culto, onClose, onSaved }) {
               {culto.service_type_name && <> · {culto.service_type_name}</>}
             </p>
           </div>
-          <button onClick={onClose} disabled={saving} style={{ background: 'none', border: 'none', cursor: 'pointer', color: C.t3, padding: 4 }}>
+          <button onClick={tentarFechar} disabled={saving} style={{ background: 'none', border: 'none', cursor: 'pointer', color: C.t3, padding: 4 }}>
             <X size={18} />
           </button>
         </header>
@@ -492,7 +522,7 @@ function ModalCulto({ culto, onClose, onSaved }) {
           </div>
 
           <SecaoTitulo icone={Sparkles} cor="#8B5CF6" titulo="Decisões / conversões" />
-          <div style={{ display: 'grid', gridTemplateColumns: hasOnline ? '1fr 1fr' : '1fr', gap: 10, marginBottom: 16 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: hasOnline ? '1fr 1fr' : '1fr', gap: 10, marginBottom: 12 }}>
             <Field label={hasOnline ? 'Presenciais' : 'Decisões'}>
               <input type="number" min="0" value={form.decisoes_presenciais} onChange={e => set('decisoes_presenciais', e.target.value)} style={inp} />
             </Field>
@@ -502,6 +532,13 @@ function ModalCulto({ culto, onClose, onSaved }) {
               </Field>
             )}
           </div>
+
+          {/* Dados individuais das pessoas que decidiram */}
+          <DecisoesPessoasSection
+            cultoId={culto.id}
+            totalEsperado={(Number(form.decisoes_presenciais) || 0) + (hasOnline ? (Number(form.decisoes_online) || 0) : 0)}
+            hasOnline={hasOnline}
+          />
 
           {hasOnline && (
             <>
@@ -546,7 +583,7 @@ function ModalCulto({ culto, onClose, onSaved }) {
         </div>
 
         <footer style={{ padding: 14, borderTop: `1px solid ${C.border}`, display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
-          <button onClick={onClose} disabled={saving} style={btnGhost}>Cancelar</button>
+          <button onClick={tentarFechar} disabled={saving} style={btnGhost}>Cancelar</button>
           <button onClick={submit} disabled={saving} style={{ ...btnPrimary, opacity: saving ? 0.5 : 1 }}>
             <Save size={13} /> {saving ? 'Salvando...' : 'Salvar'}
           </button>
@@ -592,3 +629,457 @@ const btnGhost = {
   padding: '8px 14px', borderRadius: 6, fontSize: 12, fontWeight: 600,
   background: 'transparent', color: C.t2, border: `1px solid ${C.border}`, cursor: 'pointer',
 };
+
+// ============================================================================
+// DecisoesPessoasSection · captura nome/contato de cada pessoa que decidiu
+//
+// Marcos: "sempre que for preenchido as decisoes de pessoas, tenha um campo
+//          para ser inserido os dados de cada um que toma essa decisao em
+//          todos os cultos".
+//
+// UX:
+// - Mostra contador "X de Y registradas" baseado no valor de decisoes_presenciais
+//   + decisoes_online (totalEsperado) e quantas pessoas ja foram registradas
+// - Botao "+ Adicionar pessoa" abre form inline (nome obrigatorio, resto
+//   opcional · CPF tenta vincular a mem_membros existente no backend)
+// - Lista as pessoas ja registradas · click pra editar/remover
+// ============================================================================
+function DecisoesPessoasSection({ cultoId, totalEsperado, hasOnline }) {
+  const [pessoas, setPessoas] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [showForm, setShowForm] = useState(false);
+  const [editando, setEditando] = useState(null); // id da pessoa em edicao
+
+  const carregar = useCallback(async () => {
+    if (!cultoId) return;
+    setLoading(true);
+    try {
+      const data = await cultosApi.decisoesPessoas.list(cultoId);
+      setPessoas(Array.isArray(data) ? data : []);
+    } catch (e) {
+      console.error('[decisoes-pessoas]', e);
+    } finally {
+      setLoading(false);
+    }
+  }, [cultoId]);
+
+  useEffect(() => { carregar(); }, [carregar]);
+
+  const handleSaved = () => {
+    setShowForm(false);
+    setEditando(null);
+    carregar();
+  };
+
+  const handleDelete = async (id) => {
+    if (!window.confirm('Remover registro desta pessoa?')) return;
+    try {
+      await cultosApi.decisoesPessoas.remove(id);
+      toast.success('Removido');
+      carregar();
+    } catch (e) { toast.error(formatErro(e)); }
+  };
+
+  const registradas = pessoas.length;
+  const faltando = Math.max(0, totalEsperado - registradas);
+  const completo = totalEsperado > 0 && registradas >= totalEsperado;
+
+  // Sempre mostra a secao (mesmo sem decisoes preenchidas) pra ficar visivel
+  // como funcionalidade · so esconde quando culto ainda nao foi salvo
+
+  return (
+    <div style={{
+      marginBottom: 16, padding: 12, borderRadius: 8,
+      background: 'linear-gradient(to bottom right, #8B5CF608, var(--cbrio-input-bg))',
+      border: `2px solid ${faltando > 0 ? '#8B5CF6' : C.border}`,
+    }}>
+      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 8, marginBottom: 8, flexWrap: 'wrap' }}>
+        <div style={{ flex: 1, minWidth: 200 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, fontWeight: 700, color: '#8B5CF6' }}>
+            <UserPlus size={13} /> Dados das pessoas que decidiram Jesus
+          </div>
+          <div style={{ fontSize: 10, color: C.t3, marginTop: 2 }}>
+            Nome + telefone bastam · CPF e nascimento podem ser preenchidos depois (censo)
+          </div>
+        </div>
+        <div style={{ fontSize: 11, fontWeight: 600, color: completo ? '#10B981' : faltando > 0 ? '#F59E0B' : C.t3, whiteSpace: 'nowrap' }}>
+          {registradas} de {totalEsperado || registradas} registrada{registradas === 1 ? '' : 's'}
+          {faltando > 0 && ` · faltam ${faltando}`}
+        </div>
+      </div>
+      {totalEsperado === 0 && registradas === 0 && (
+        <div style={{ fontSize: 10, color: C.t3, padding: '6px 0', fontStyle: 'italic' }}>
+          Preencha o número de decisões acima · ou clique em "Adicionar pessoa" pra registrar diretamente
+        </div>
+      )}
+
+      {/* Banner de aviso quando há gap · accountability NSM */}
+      {faltando > 0 && (
+        <div style={{
+          background: '#F59E0B18', borderLeft: '3px solid #F59E0B',
+          padding: '8px 12px', borderRadius: 4, marginBottom: 10,
+          fontSize: 11, color: 'var(--cbrio-text)', display: 'flex', alignItems: 'flex-start', gap: 8,
+        }}>
+          <AlertCircle size={14} style={{ color: '#F59E0B', flexShrink: 0, marginTop: 1 }} />
+          <div>
+            <strong>{faltando} decisão{faltando === 1 ? '' : 'ões'} sem nome registrado.</strong>{' '}
+            Essas pessoas entram no <strong>denominador da NSM</strong> mas não conseguem ser
+            acompanhadas (sem identidade · sem trilha de valor). Registre os dados pra que
+            apareçam no painel de cuidados pastorais.
+          </div>
+        </div>
+      )}
+
+      {/* Lista de pessoas ja registradas */}
+      {pessoas.length > 0 && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 4, marginBottom: 8 }}>
+          {pessoas.map(p => editando === p.id ? (
+            <DecisaoPessoaForm
+              key={p.id}
+              cultoId={cultoId}
+              pessoa={p}
+              hasOnline={hasOnline}
+              onSaved={handleSaved}
+              onCancel={() => setEditando(null)}
+            />
+          ) : (
+            <div key={p.id} style={{
+              display: 'flex', alignItems: 'center', gap: 8, padding: '6px 10px',
+              background: C.card, border: `1px solid ${C.border}`,
+              borderLeft: `3px solid ${(!p.cpf || !p.data_nascimento) ? '#F59E0B' : '#8B5CF6'}`,
+              borderRadius: 4, fontSize: 11,
+            }}>
+              <span style={{ fontWeight: 600, color: C.text, flex: 1, minWidth: 120 }}>
+                {p.nome}
+                {(!p.cpf || !p.data_nascimento) && (
+                  <span style={{ marginLeft: 6, fontSize: 8, padding: '1px 5px', borderRadius: 99, background: '#F59E0B22', color: '#B45309', fontWeight: 700, letterSpacing: 0.3 }} title="Faltam dados pra cruzar na jornada">
+                    INCOMPLETO
+                  </span>
+                )}
+              </span>
+              {p.telefone && <span style={{ color: C.t3 }}>{p.telefone}</span>}
+              {p.email && <span style={{ color: C.t3, fontSize: 10 }}>{p.email}</span>}
+              <span style={{ fontSize: 9, padding: '1px 6px', borderRadius: 99, background: 'var(--cbrio-input-bg)', color: C.t2, fontWeight: 600 }}>
+                {p.tipo_decisao}
+              </span>
+              {p.membro_id && (
+                <span style={{ fontSize: 9, padding: '1px 6px', borderRadius: 99, background: '#10B98118', color: '#047857', fontWeight: 700 }}>vinculada a membro</span>
+              )}
+              <button onClick={() => setEditando(p.id)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: C.t2, padding: 4 }} title="Editar">
+                <Pencil size={11} />
+              </button>
+              <button onClick={() => handleDelete(p.id)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#EF4444', padding: 4 }} title="Remover">
+                <Trash2 size={11} />
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Form de adicionar */}
+      {showForm && (
+        <DecisaoPessoaForm
+          cultoId={cultoId}
+          pessoa={null}
+          hasOnline={hasOnline}
+          onSaved={handleSaved}
+          onCancel={() => setShowForm(false)}
+        />
+      )}
+
+      {/* Botao adicionar */}
+      {!showForm && (
+        <button
+          onClick={() => setShowForm(true)}
+          disabled={loading}
+          style={{
+            ...btnGhost, width: '100%', justifyContent: 'center',
+            color: faltando > 0 ? '#8B5CF6' : C.t2,
+            borderColor: faltando > 0 ? '#8B5CF6' : C.border,
+          }}
+        >
+          <UserPlus size={12} /> Adicionar pessoa{faltando > 0 ? ` (faltam ${faltando})` : ''}
+        </button>
+      )}
+    </div>
+  );
+}
+
+// Calcula idade a partir da data de nascimento
+function calcularIdade(dataNasc) {
+  if (!dataNasc) return null;
+  const hoje = new Date();
+  const nasc = new Date(dataNasc);
+  let idade = hoje.getFullYear() - nasc.getFullYear();
+  const mes = hoje.getMonth() - nasc.getMonth();
+  if (mes < 0 || (mes === 0 && hoje.getDate() < nasc.getDate())) idade--;
+  return idade >= 0 && idade <= 120 ? idade : null;
+}
+
+function DecisaoPessoaForm({ cultoId, pessoa, hasOnline, onSaved, onCancel }) {
+  const ehEdicao = !!pessoa;
+  const [form, setForm] = useState({
+    nome: pessoa?.nome || '',
+    telefone: pessoa?.telefone || '',
+    email: pessoa?.email || '',
+    data_nascimento: pessoa?.data_nascimento || '',
+    cpf: pessoa?.cpf || '',
+    membro_id: pessoa?.membro_id || null,
+    tipo_decisao: pessoa?.tipo_decisao || 'presencial',
+    observacoes: pessoa?.observacoes || '',
+  });
+  const [saving, setSaving] = useState(false);
+
+  // Autocomplete state · busca membro existente
+  const [busca, setBusca] = useState('');
+  const [resultados, setResultados] = useState([]);
+  const [buscando, setBuscando] = useState(false);
+  const [mostrarBusca, setMostrarBusca] = useState(!ehEdicao);
+
+  const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
+
+  // Debounce da busca
+  useEffect(() => {
+    if (!mostrarBusca || busca.trim().length < 2) {
+      setResultados([]);
+      return;
+    }
+    setBuscando(true);
+    const timer = setTimeout(async () => {
+      try {
+        const data = await cultosApi.decisoesPessoas.buscarMembro(busca);
+        setResultados(Array.isArray(data) ? data : []);
+      } catch (e) {
+        console.error('[buscar-membro]', e);
+      } finally {
+        setBuscando(false);
+      }
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [busca, mostrarBusca]);
+
+  const selecionarMembro = (m) => {
+    setForm({
+      nome: m.nome || '',
+      telefone: m.telefone || '',
+      email: m.email || '',
+      data_nascimento: m.data_nascimento || '',
+      cpf: m.cpf || '',
+      membro_id: m.id,
+      tipo_decisao: form.tipo_decisao,
+      observacoes: form.observacoes,
+    });
+    setMostrarBusca(false);
+    setBusca('');
+    setResultados([]);
+  };
+
+  const limparVinculo = () => {
+    setForm(f => ({ ...f, membro_id: null }));
+    setMostrarBusca(true);
+  };
+
+  const idadeCalc = calcularIdade(form.data_nascimento);
+
+  const submit = async () => {
+    // Marcos: "no momento da conversao e dificil pedir CPF/nascimento ·
+    // Nome + telefone bastam · CPF/nascimento sao opcionais (censo posterior)"
+    if (!form.nome.trim() || form.nome.trim().length < 2) {
+      toast.error('Nome obrigatório (mínimo 2 caracteres)');
+      return;
+    }
+    const telDigits = (form.telefone || '').replace(/\D/g, '');
+    if (telDigits.length < 8) {
+      toast.error('Telefone obrigatório (mínimo 8 dígitos)');
+      return;
+    }
+    const cpfDigits = (form.cpf || '').replace(/\D/g, '');
+    if (cpfDigits && cpfDigits.length !== 11) {
+      toast.error('CPF deve ter 11 dígitos (ou deixe vazio)');
+      return;
+    }
+    setSaving(true);
+    try {
+      const payload = {
+        nome: form.nome.trim(),
+        telefone: form.telefone,
+        email: form.email || null,
+        data_nascimento: form.data_nascimento || null,
+        idade: idadeCalc,
+        cpf: cpfDigits || null,
+        membro_id: form.membro_id || null,
+        tipo_decisao: form.tipo_decisao,
+        observacoes: form.observacoes || null,
+      };
+      if (ehEdicao) {
+        await cultosApi.decisoesPessoas.update(pessoa.id, payload);
+      } else {
+        await cultosApi.decisoesPessoas.create(cultoId, payload);
+      }
+      toast.success(ehEdicao ? 'Pessoa atualizada' : 'Pessoa registrada · vinculada à jornada');
+      onSaved();
+    } catch (e) {
+      toast.error(formatErro(e));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div style={{
+      background: C.card, border: `2px solid #8B5CF6`, borderRadius: 6,
+      padding: 10, display: 'flex', flexDirection: 'column', gap: 8,
+    }}>
+      {/* Busca de membro existente */}
+      {mostrarBusca && !ehEdicao && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+          <label style={{ fontSize: 10, fontWeight: 600, color: '#8B5CF6', display: 'flex', alignItems: 'center', gap: 4 }}>
+            <SearchIcon size={10} /> Buscar pessoa existente
+          </label>
+          <input
+            type="text" value={busca} autoFocus
+            onChange={e => setBusca(e.target.value)}
+            style={{ ...inp, padding: '6px 10px', fontSize: 11 }}
+            placeholder="Nome, CPF, e-mail ou telefone (mín 2 chars)"
+          />
+          {buscando && (
+            <div style={{ fontSize: 10, color: C.t3, paddingLeft: 4 }}>buscando…</div>
+          )}
+          {resultados.length > 0 && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 2, maxHeight: 160, overflowY: 'auto', border: `1px solid ${C.border}`, borderRadius: 4, background: 'var(--cbrio-input-bg)' }}>
+              {resultados.map(m => (
+                <button
+                  key={m.id}
+                  type="button"
+                  onClick={() => selecionarMembro(m)}
+                  style={{
+                    textAlign: 'left', padding: '6px 10px', background: 'transparent',
+                    border: 'none', borderBottom: `1px solid ${C.border}`, cursor: 'pointer',
+                    fontSize: 11, color: C.text, display: 'flex', flexDirection: 'column', gap: 2,
+                  }}
+                >
+                  <div style={{ fontWeight: 600 }}>{m.nome}</div>
+                  <div style={{ fontSize: 10, color: C.t3 }}>
+                    {m.cpf && <>CPF {m.cpf.replace(/(\d{3})(\d{3})(\d{3})(\d{2})/, '$1.$2.$3-$4')}{' · '}</>}
+                    {m.email && <>{m.email}{' · '}</>}
+                    {m.telefone && <>{m.telefone}</>}
+                  </div>
+                </button>
+              ))}
+            </div>
+          )}
+          {busca.length >= 2 && !buscando && resultados.length === 0 && (
+            <div style={{ fontSize: 10, color: C.t3, padding: '4px 0' }}>
+              Nenhuma pessoa encontrada · preencha os campos abaixo pra cadastrar nova
+            </div>
+          )}
+          <button
+            type="button"
+            onClick={() => setMostrarBusca(false)}
+            style={{ ...btnGhost, fontSize: 10, padding: '4px 8px', alignSelf: 'flex-start' }}
+          >
+            Pular busca e cadastrar nova pessoa
+          </button>
+        </div>
+      )}
+
+      {/* Indicador de membro vinculado */}
+      {form.membro_id && !mostrarBusca && (
+        <div style={{
+          display: 'flex', alignItems: 'center', gap: 6, padding: '4px 8px',
+          background: '#10B98115', borderRadius: 4, fontSize: 10, color: '#047857',
+        }}>
+          <LinkIcon size={10} />
+          <span style={{ fontWeight: 600 }}>Pessoa já cadastrada · dados preenchidos</span>
+          <button
+            type="button"
+            onClick={limparVinculo}
+            style={{ marginLeft: 'auto', background: 'none', border: 'none', cursor: 'pointer', color: '#047857', fontSize: 10, textDecoration: 'underline' }}
+          >
+            buscar outra
+          </button>
+        </div>
+      )}
+
+      <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 8 }}>
+        <div>
+          <label style={{ fontSize: 10, fontWeight: 600, color: C.t3, display: 'block', marginBottom: 2 }}>Nome completo *</label>
+          <input
+            type="text" value={form.nome}
+            onChange={e => set('nome', e.target.value)}
+            style={{ ...inp, padding: '6px 10px', fontSize: 11 }}
+            placeholder="Nome completo"
+          />
+        </div>
+        <div>
+          <label style={{ fontSize: 10, fontWeight: 600, color: C.t3, display: 'block', marginBottom: 2 }}>Tipo</label>
+          <select
+            value={form.tipo_decisao}
+            onChange={e => set('tipo_decisao', e.target.value)}
+            style={{ ...inp, padding: '6px 10px', fontSize: 11 }}
+          >
+            <option value="presencial">Presencial</option>
+            {hasOnline && <option value="online">Online</option>}
+          </select>
+        </div>
+      </div>
+
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+        <div>
+          <label style={{ fontSize: 10, fontWeight: 600, color: '#8B5CF6', display: 'block', marginBottom: 2 }}>Telefone *</label>
+          <input
+            type="text" value={form.telefone}
+            onChange={e => set('telefone', e.target.value)}
+            style={{ ...inp, padding: '6px 10px', fontSize: 11 }}
+            placeholder="(21) 99999-0000"
+          />
+        </div>
+        <div>
+          <label style={{ fontSize: 10, fontWeight: 600, color: C.t3, display: 'block', marginBottom: 2 }}>
+            CPF <span style={{ fontWeight: 400, fontStyle: 'italic' }}>(opcional · censo depois)</span>
+          </label>
+          <input
+            type="text" value={form.cpf} maxLength={14}
+            onChange={e => set('cpf', e.target.value)}
+            style={{ ...inp, padding: '6px 10px', fontSize: 11 }}
+            placeholder="000.000.000-00"
+          />
+        </div>
+      </div>
+
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+        <div>
+          <label style={{ fontSize: 10, fontWeight: 600, color: C.t3, display: 'block', marginBottom: 2 }}>
+            Data nascimento <span style={{ fontWeight: 400, fontStyle: 'italic' }}>(opcional)</span>
+            {idadeCalc !== null && <span style={{ fontWeight: 400, color: C.t3 }}> · {idadeCalc} anos</span>}
+          </label>
+          <input
+            type="date" value={form.data_nascimento}
+            onChange={e => set('data_nascimento', e.target.value)}
+            style={{ ...inp, padding: '6px 10px', fontSize: 11 }}
+            max={new Date().toISOString().slice(0, 10)}
+          />
+        </div>
+        <div>
+          <label style={{ fontSize: 10, fontWeight: 600, color: C.t3, display: 'block', marginBottom: 2 }}>E-mail</label>
+          <input
+            type="email" value={form.email}
+            onChange={e => set('email', e.target.value)}
+            style={{ ...inp, padding: '6px 10px', fontSize: 11 }}
+            placeholder="opcional"
+          />
+        </div>
+      </div>
+
+      <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end', alignItems: 'center' }}>
+        <span style={{ flex: 1, fontSize: 9, color: C.t3, fontStyle: 'italic' }}>
+          Nome + telefone obrigatórios · CPF e nascimento podem ser preenchidos depois (censo)
+        </span>
+        <button onClick={onCancel} disabled={saving} style={btnGhost}>Cancelar</button>
+        <button onClick={submit} disabled={saving} style={{ ...btnPrimary, background: '#8B5CF6' }}>
+          {saving ? 'Salvando...' : (ehEdicao ? 'Atualizar' : 'Registrar')}
+        </button>
+      </div>
+    </div>
+  );
+}

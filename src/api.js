@@ -28,8 +28,14 @@ async function request(path, opts = {}) {
   }
 
   if (res.status === 401) {
-    console.warn('[API] 401 – token inválido ou backend sem SUPABASE_SERVICE_ROLE_KEY');
-    throw new Error('Não autorizado. Verifique se o backend está configurado corretamente.');
+    const body = await res.json().catch(() => ({}));
+    console.warn('[API] 401', { path, reason: body.reason, detail: body.detail });
+    // Mensagens especificas pro usuario por causa raiz
+    const reasonMsg = {
+      no_token:       'Sessão expirada. Faça login novamente.',
+      invalid_token:  'Sua sessão expirou ou é de outro ambiente. Saia e entre novamente.',
+    };
+    throw new Error(reasonMsg[body.reason] || body.error || 'Não autorizado. Verifique se o backend está configurado corretamente.');
   }
   if (!res.ok) {
     const err = await res.json().catch(() => ({ error: 'Erro desconhecido' }));
@@ -279,10 +285,12 @@ export const history = {
 };
 
 export const tasks = {
+  // finalized: 'hide' (default, esconde fechadas-com-evento) | 'show' (todas, marcadas) | 'only' (só fechadas-com-evento)
   all: (params) => {
     const q = new URLSearchParams();
     if (params?.source) q.set('source', params.source);
     if (params?.area) q.set('area', params.area);
+    if (params?.finalized) q.set('finalized', params.finalized);
     const qs = q.toString();
     return get('/tasks/all' + (qs ? '?' + qs : ''));
   },
@@ -541,6 +549,9 @@ export const rh = {
     create: (data) => post('/rh/avaliacoes', data),
     update: (id, data) => patch(`/rh/avaliacoes/${id}`, data),
     remove: (id) => del(`/rh/avaliacoes/${id}`),
+    submitFatores: (id, data) => post(`/rh/avaliacoes/${id}/fatores`, data),
+    concluir: (id) => post(`/rh/avaliacoes/${id}/concluir`),
+    iniciarCiclo: (data) => post('/rh/avaliacoes/iniciar-ciclo', data),
   },
   admissoes: {
     list: (params) => get('/rh/admissoes' + (params ? '?' + new URLSearchParams(params) : '')),
@@ -550,6 +561,47 @@ export const rh = {
     remove: (id) => del(`/rh/admissoes/${id}`),
     concluir: (id) => post(`/rh/admissoes/${id}/concluir`),
   },
+};
+
+export const pcs = {
+  // Graus
+  graus: {
+    list: () => get('/pcs/graus'),
+    update: (id, data) => put(`/pcs/graus/${id}`, data),
+    reajusteColetivo: (data) => post('/pcs/graus/reajuste-coletivo', data),
+  },
+  reajustes: {
+    list: () => get('/pcs/reajustes-coletivos'),
+  },
+  // Critérios de avaliação
+  criterios: {
+    list: () => get('/pcs/criterios'),
+    update: (id, data) => put(`/pcs/criterios/${id}`, data),
+    updateNivel: (id, data) => put(`/pcs/niveis-criterio/${id}`, data),
+  },
+  // Benefícios
+  beneficios: {
+    list: () => get('/pcs/beneficios'),
+    update: (id, data) => put(`/pcs/beneficios/${id}`, data),
+    setElegibilidade: (beneficioId, grauId, status) =>
+      put(`/pcs/beneficios/${beneficioId}/grau/${grauId}`, { status }),
+    porFuncionario: (id) => get(`/pcs/funcionarios/${id}/beneficios`),
+  },
+  // Aderência
+  aderencia: {
+    list: () => get('/pcs/aderencia'),
+    resumo: () => get('/pcs/aderencia/resumo'),
+    planoAcao: () => get('/pcs/aderencia/plano-acao'),
+    aplicarEnquadramento: (data) => post('/pcs/aderencia/aplicar-enquadramento', data || {}),
+  },
+  // Progressões
+  progressoes: {
+    list: (params) => get('/pcs/progressoes' + (params ? '?' + new URLSearchParams(params) : '')),
+    create: (data) => post('/pcs/progressoes', data),
+  },
+  // Elegibilidade
+  elegibilidade: () => get('/pcs/elegibilidade'),
+  sugerirGrau: (pontos) => get(`/pcs/sugerir-grau/${pontos}`),
 };
 
 export const notificacoes = {
@@ -567,6 +619,7 @@ export const notificacoes = {
 
 export const permissoes = {
   estrutura: () => get('/permissoes/estrutura'),
+  colaboradores: () => get('/permissoes/colaboradores'),
   usuario: (id) => get(`/permissoes/usuario/${id}`),
   usuarioPorEmail: (email) => get(`/permissoes/usuario-por-email/${encodeURIComponent(email)}`),
   criarUsuario: (data) => post('/permissoes/usuario', data),
@@ -582,11 +635,17 @@ export const solicitacoes = {
   slaDefs:        () => get('/solicitacoes/sla-defs'),
   reservasEspaco: (params) => get('/solicitacoes/reservas-espaco' + (params ? '?' + new URLSearchParams(params) : '')),
   alcadas:        () => get('/solicitacoes/alcadas'),
+  areaResponsaveis: {
+    list:    () => get('/solicitacoes/area-responsaveis'),
+    save:    (area, profile_ids) => put('/solicitacoes/area-responsaveis', { area, profile_ids }),
+  },
 };
 
 export const membresia = {
   kpis: () => get('/membresia/kpis'),
   qrLookup: (token) => get(`/membresia/qr-lookup/${encodeURIComponent(token)}`),
+  orfaosStats: () => get('/membresia/orfaos-stats'),
+  promoverOrfaos: () => post('/membresia/promover-orfaos', {}),
   membros: {
     list: (params) => get('/membresia/membros' + (params ? '?' + new URLSearchParams(params) : '')),
     get: (id) => get(`/membresia/membros/${id}`),
@@ -739,6 +798,11 @@ export const cadastroPublico = {
   verificarFamilia: async (sobrenome) => {
     const res = await fetch(`${API}/public/membresia/verificar-familia?sobrenome=${encodeURIComponent(sobrenome)}`);
     if (!res.ok) return { familias: [] };
+    return res.json();
+  },
+  lookupCpf: async (cpf) => {
+    const res = await fetch(`${API}/public/membresia/lookup-cpf?cpf=${encodeURIComponent(cpf)}`);
+    if (!res.ok) return { found: false };
     return res.json();
   },
   enviar: async (data) => {
@@ -1083,6 +1147,19 @@ export const kpis = {
     create: (data) => post('/kpis/cultos', data),
     update: (id, data) => put(`/kpis/cultos/${id}`, data),
     remove: (id) => del(`/kpis/cultos/${id}`),
+    // Pessoas que tomaram decisao em culto · 1 row por pessoa
+    decisoesPessoas: {
+      list:   (cultoId) => get(`/kpis/cultos/${cultoId}/decisoes-pessoas`),
+      create: (cultoId, data) => post(`/kpis/cultos/${cultoId}/decisoes-pessoas`, data),
+      update: (id, data) => put(`/kpis/decisoes-pessoas/${id}`, data),
+      remove: (id) => del(`/kpis/decisoes-pessoas/${id}`),
+      buscarMembro: (q) => get(`/kpis/decisoes-pessoas/buscar-membro?q=${encodeURIComponent(q)}`),
+      // Pessoas com cadastro incompleto (sem CPF ou nascimento) · pra censo posterior
+      incompletos: (params = {}) => {
+        const qs = new URLSearchParams(params).toString();
+        return get('/kpis/decisoes-pessoas/incompletos' + (qs ? '?' + qs : ''));
+      },
+    },
   },
   // Batismos
   batismos: {
@@ -1328,6 +1405,21 @@ export const painel = {
     const qs = new URLSearchParams(params).toString();
     return get('/painel/nsm/pessoas' + (qs ? '?' + qs : ''));
   },
+  // Cultos com decisoes sem pessoas registradas · alimenta filtro "sem dados"
+  // no drilldown NSM. Mostra accountability da captura individual.
+  nsmSemDados: (params = {}) => {
+    const qs = new URLSearchParams(params).toString();
+    return get('/painel/nsm/sem-dados' + (qs ? '?' + qs : ''));
+  },
+  // Catalogo de combinacoes valor x dado disponiveis pro carrossel + cultos
+  serieTemporalDados: () => get('/painel/serie-temporal/dados'),
+  // Serie temporal pra grafico de linha do carrossel de valores
+  // params: { valor, dado, culto?, inicio?, fim?, granularidade? }
+  serieTemporal: (params = {}) => {
+    const clean = Object.fromEntries(Object.entries(params).filter(([, v]) => v !== null && v !== undefined && v !== ''));
+    const qs = new URLSearchParams(clean).toString();
+    return get('/painel/serie-temporal' + (qs ? '?' + qs : ''));
+  },
 };
 
 export const nps = {
@@ -1380,4 +1472,44 @@ export const online = {
     ds: () => post('/online/coletar/ds', {}),
     ddus: () => post('/online/coletar/ddus', {}),
   },
+};
+
+// ─── Planejamento Anual ────────────────────────────────────────────────
+export const planejamento = {
+  // Setores (Criativo, Ministerial, Gestão)
+  listSetores: () => get('/planejamento/setores'),
+  updateSetor: (id, data) => patch(`/planejamento/setores/${id}`, data),
+  listAreasSetor: () => get('/planejamento/areas-setor'),
+
+  // Ciclos (janela do ano N+1)
+  listCiclos: () => get('/planejamento/ciclos'),
+  getCiclo: (id) => get(`/planejamento/ciclos/${id}`),
+  createCiclo: (data) => post('/planejamento/ciclos', data),
+  updateCiclo: (id, data) => patch(`/planejamento/ciclos/${id}`, data),
+
+  // Propostas
+  listPropostas: (filters = {}) => {
+    const q = new URLSearchParams();
+    if (filters.ciclo_id) q.set('ciclo_id', filters.ciclo_id);
+    if (filters.status) q.set('status', filters.status);
+    if (filters.tipo) q.set('tipo', filters.tipo);
+    if (filters.setor_id) q.set('setor_id', filters.setor_id);
+    if (filters.mine) q.set('mine', '1');
+    const qs = q.toString();
+    return get('/planejamento/propostas' + (qs ? '?' + qs : ''));
+  },
+  getProposta: (id) => get(`/planejamento/propostas/${id}`),
+  createProposta: (data) => post('/planejamento/propostas', data),
+
+  // Filas de aprovação (PR-B)
+  filaDiretor: () => get('/planejamento/filas/diretor'),
+  filaDiretoria: () => get('/planejamento/filas/diretoria'),
+
+  // Decisões
+  decidirDiretor: (id, data) => patch(`/planejamento/propostas/${id}/decidir-diretor`, data),
+  decidirDiretoria: (id, data) => patch(`/planejamento/propostas/${id}/decidir-diretoria`, data),
+
+  // Litúrgicos (PR-C)
+  listLiturgiaTemplates: () => get('/planejamento/liturgia/templates'),
+  gerarLiturgia: (year) => post(`/planejamento/liturgia/gerar/${year}`, {}),
 };

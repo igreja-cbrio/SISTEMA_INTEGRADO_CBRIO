@@ -1,602 +1,648 @@
 // ============================================================================
-// /minha-area — Hub do lider · VISUALIZADOR de KPIs da area do user
+// /minha-area — Hub do lider · visualizador de KPIs (refator 2026-05-14)
 //
-// Refator 2026-05-13 (Marcos): "/meus-kpis deveria ser apenas visualizador de
-// relatorios da sua propria area · cada modulo tem sua aba de preenchimento".
+// Marcos: "essa aba de edicao e visualizacao de indicadores nao esta boa".
 //
-// Antes: 2 abas (KPIs · Dados de entrada via DadosBrutos)
-// Agora: 1 aba so · KPIs por valor com card 'OrigemDado' linkando pro modulo
-//        correto onde se preenche o dado · zero entrada de dado nesta tela.
-//
-// Acesso a /dados-brutos so via admin agora (ver MODULO_POR_DADO_TIPO).
+// Nova arquitetura:
+// - Lista plana com filtros pinned (busca + Pilar + Valor + Area + Status + OKR)
+// - Cards densos: valor grande + sparkline 12 periodos + % meta + delta
+// - Drilldown inline ao clicar (sem modal · expande detalhe abaixo do card)
+// - Status vem da view vw_kpi_taticos_status (mesma usada no /painel) ·
+//   sai a logica local "se preencheu vira no_alvo" que estava errada
+// - Toggle de agrupamento: Pilar | Valor | Area | Lista plana
+// - Edicao de meta + revisao OKR continuam abrindo modal (raro · tudo bem)
 // ============================================================================
 
-import { useState, useEffect, useMemo, useCallback } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { useState, useMemo } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { useAuth } from '../contexts/AuthContext';
 import { kpis as kpisApi } from '../api';
-import { useKpis } from '../hooks/useKpis';
 import { useMyKpiAreas } from '../hooks/useMyKpiAreas';
-// KpiQuickFillModal removido · /minha-area e so visualizador
-import KpiEditorModal from '../components/KpiEditorModal';
 import OkrRevisaoModal from '../components/OkrRevisaoModal';
-import KpiDetalheModal from '../components/KpiDetalheModal';
-// DadosBrutos removido daqui · cada modulo tem sua propria entrada
-import { Activity, Pencil, Plus, ChevronDown, ChevronRight, AlertCircle, CheckCircle2, Clock, TrendingDown, MinusCircle, ClipboardCheck, ExternalLink } from 'lucide-react';
+import { Badge } from '../components/ui/badge';
+import { Button } from '../components/ui/button';
+import { Input } from '../components/ui/input';
+import { Card, CardContent } from '../components/ui/card';
+import {
+  Search, ChevronDown, ChevronRight, Activity, TrendingUp, TrendingDown,
+  Minus, ExternalLink, ClipboardCheck, X, Layers,
+} from 'lucide-react';
 import { toast } from 'sonner';
-import { SkeletonBlock } from '../components/Skeleton';
-import { formatErro } from '../lib/formatErro';
+import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts';
 
-const C = {
-  bg: 'var(--cbrio-bg)', card: 'var(--cbrio-card)', text: 'var(--cbrio-text)',
-  t2: 'var(--cbrio-text2)', t3: 'var(--cbrio-text3)', border: 'var(--cbrio-border)',
-  primary: '#00B39D', primaryBg: '#00B39D18', primaryDark: '#00897B',
-};
-
+// ── Catalogos ──
 const VALORES = [
-  { key: 'seguir',       label: 'Seguir a Jesus',       cor: '#8B5CF6' },
-  { key: 'conectar',     label: 'Conectar com Pessoas', cor: '#3B82F6' },
+  { key: 'seguir',       label: 'Seguir a Jesus',         cor: '#8B5CF6' },
+  { key: 'conectar',     label: 'Conectar com Pessoas',   cor: '#3B82F6' },
   { key: 'investir',     label: 'Investir Tempo c/ Deus', cor: '#F59E0B' },
-  { key: 'servir',       label: 'Servir em Comunidade', cor: '#10B981' },
-  { key: 'generosidade', label: 'Viver Generosamente',  cor: '#EC4899' },
+  { key: 'servir',       label: 'Servir em Comunidade',   cor: '#10B981' },
+  { key: 'generosidade', label: 'Viver Generosamente',    cor: '#EC4899' },
 ];
 
-// Áreas operacionais — sustentam a NSM, não movem (PDF Planejamento 2026).
-// KPIs com valores=[] caem aqui em vez de na seção dos 5 valores.
-const AREAS_OPERACIONAIS = [
-  { key: 'financeiro',     label: 'Financeiro',     cor: '#10B981' },
-  { key: 'rh',             label: 'RH',             cor: '#F59E0B' },
-  { key: 'infraestrutura', label: 'Infraestrutura', cor: '#6B7280' },
+const STATUS_OPTS = [
+  { key: 'verde',    label: 'No alvo',  cor: '#10B981' },
+  { key: 'amarelo',  label: 'Atrás',    cor: '#F59E0B' },
+  { key: 'vermelho', label: 'Crítico',  cor: '#EF4444' },
+  { key: 'sem_dado', label: 'Sem dado', cor: '#9CA3AF' },
 ];
-const AREAS_OPER_KEYS = AREAS_OPERACIONAIS.map(a => a.key);
 
-const STATUS_VISUAL = {
-  no_alvo:  { Icon: CheckCircle2, cor: '#10B981', bg: '#10B98118', label: 'No alvo' },
-  atras:    { Icon: Clock,        cor: '#F59E0B', bg: '#F59E0B18', label: 'Atras' },
-  critico:  { Icon: TrendingDown, cor: '#EF4444', bg: '#EF444418', label: 'Critico' },
-  sem_dado: { Icon: MinusCircle,  cor: '#9CA3AF', bg: '#9CA3AF18', label: 'Sem dado' },
+const STATUS_COR = Object.fromEntries(STATUS_OPTS.map(s => [s.key, s.cor]));
+
+// Modulo onde preencher · usado no drilldown
+const MODULO_POR_DADO_TIPO = {
+  conversoes:                          { titulo: 'Integração',     path: '/ministerial/integracao?tab=frequencia' },
+  batismos:                            { titulo: 'Batismos',       path: '/ministerial/integracao?tab=batismos' },
+  frequencia_culto:                    { titulo: 'Integração',     path: '/ministerial/integracao?tab=frequencia' },
+  frequencia_kids:                     { titulo: 'Integração',     path: '/ministerial/integracao?tab=frequencia' },
+  frequencia_grupos:                   { titulo: 'Grupos',         path: '/grupos' },
+  frequencia_next:                     { titulo: 'NEXT',           path: '/ministerial/next' },
+  doacoes_valor:                       { titulo: 'Financeiro',     path: '/admin/financeiro' },
+  doacoes_qualidade:                   { titulo: 'Financeiro',     path: '/admin/financeiro' },
+  doadores_count:                      { titulo: 'Financeiro',     path: '/admin/financeiro' },
+  doadores_recorrentes:                { titulo: 'Financeiro',     path: '/admin/financeiro' },
+  voluntarios_ativos:                  { titulo: 'Voluntariado',   path: '/ministerial/voluntariado' },
+  voluntarios_checkin:                 { titulo: 'Voluntariado',   path: '/ministerial/voluntariado' },
+  voluntarios_treinamento:             { titulo: 'Voluntariado',   path: '/ministerial/voluntariado' },
+  lideres_grupos:                      { titulo: 'Grupos',         path: '/grupos' },
+  lideres_treinados:                   { titulo: 'Grupos',         path: '/grupos' },
+  lideres_acompanhados:                { titulo: 'Grupos',         path: '/grupos/supervisao' },
+  grupos_ativos:                       { titulo: 'Grupos',         path: '/grupos' },
+  inscricoes_jornada180:               { titulo: 'Cuidados',       path: '/ministerial/cuidados?tab=agregado' },
+  novos_convertidos_atend:             { titulo: 'Cuidados',       path: '/ministerial/cuidados?tab=agregado' },
+  devocional:                          { titulo: 'Cuidados',       path: '/ministerial/cuidados?tab=agregado' },
+  capelania:                           { titulo: 'Cuidados',       path: '/ministerial/cuidados?tab=agregado' },
+  aconselhamento:                      { titulo: 'Cuidados',       path: '/ministerial/cuidados?tab=agregado' },
+  nps_geral:                           { titulo: 'NPS',            path: '/nps' },
+  nps_next:                            { titulo: 'NPS',            path: '/nps' },
+  nps_lideres:                         { titulo: 'NPS',            path: '/nps' },
+  nps_voluntarios:                     { titulo: 'NPS',            path: '/nps' },
+  nps_culto:                           { titulo: 'NPS',            path: '/nps' },
 };
 
-function periodKey(periodicidade, date = new Date()) {
-  const y = date.getUTCFullYear();
-  const m = String(date.getUTCMonth() + 1).padStart(2, '0');
-  switch (periodicidade) {
-    case 'semanal': {
-      const d = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
-      const day = d.getUTCDay() || 7;
-      d.setUTCDate(d.getUTCDate() + 4 - day);
-      const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
-      const week = Math.ceil((((d - yearStart) / 86400000) + 1) / 7);
-      return `${d.getUTCFullYear()}-W${String(week).padStart(2, '0')}`;
-    }
-    case 'mensal': return `${y}-${m}`;
-    case 'trimestral': return `${y}-Q${Math.floor(date.getUTCMonth() / 3) + 1}`;
-    case 'semestral': return `${y}-S${date.getUTCMonth() < 6 ? 1 : 2}`;
-    case 'anual': return `${y}`;
-    default: return `${y}-${m}`;
-  }
+// ── Helpers ──
+function pilarKey(p) {
+  return (p || 'sem_pilar').toLowerCase();
+}
+
+function pilarLabel(p) {
+  if (!p) return 'Sem pilar';
+  return p;
+}
+
+function formatDelta(atual, anterior) {
+  if (anterior == null || anterior === 0) return null;
+  return Math.round(((atual - anterior) / anterior) * 100);
+}
+
+function dadoTipoLabel(kpi) {
+  const dt = kpi.formula_config?.dado_tipo;
+  return dt || null;
+}
+
+function moduloDoKpi(kpi) {
+  const dt = dadoTipoLabel(kpi);
+  if (dt && MODULO_POR_DADO_TIPO[dt]) return MODULO_POR_DADO_TIPO[dt];
+  // Fallback por fonte_auto (cultos.*, batismos.*)
+  if (kpi.fonte_auto?.startsWith('cultos.')) return { titulo: 'Integração', path: '/ministerial/integracao?tab=frequencia' };
+  if (kpi.fonte_auto?.startsWith('batismos.')) return { titulo: 'Batismos', path: '/ministerial/integracao?tab=batismos' };
+  return null;
 }
 
 // ============================================================================
-// Mapeamento dado_tipo → modulo onde preencher
-// (mesmo de MeusKpis · centralizado aqui pois /meus-kpis redireciona pra ca)
+// Componente principal
 // ============================================================================
-const MODULO_POR_DADO_TIPO = {
-  // Auto-coletados (so visualiza)
-  frequencia_culto: { titulo: 'Cultos',          path: '/cultos' },
-  conversoes:       { titulo: 'Visitantes',      path: '/visitantes' },
-  batismos:         { titulo: 'Batismo',         path: '/batismo' },
-  // Voluntariado
-  voluntarios_ativos:      { titulo: 'Voluntariado', path: '/voluntariado' },
-  voluntarios_inativos_3m: { titulo: 'Voluntariado', path: '/voluntariado' },
-  voluntarios_recuperados: { titulo: 'Voluntariado', path: '/voluntariado' },
-  voluntarios_checkin:     { titulo: 'Voluntariado', path: '/voluntariado' },
-  voluntarios_treinamento: { titulo: 'Voluntariado', path: '/voluntariado' },
-  voluntarios_alocados:    { titulo: 'Voluntariado', path: '/voluntariado' },
-  voluntarios_inativos:    { titulo: 'Voluntariado', path: '/voluntariado' },
-  // Generosidade
-  doacoes_valor:        { titulo: 'Generosidade', path: '/generosidade' },
-  doadores_count:       { titulo: 'Generosidade', path: '/generosidade' },
-  doadores_recorrentes: { titulo: 'Generosidade', path: '/generosidade' },
-  doacoes_qualidade:    { titulo: 'Generosidade', path: '/generosidade' },
-  // NEXT
-  frequencia_next: { titulo: 'NEXT', path: '/next' },
-  // Cuidados (Devocional, Jornada180, Capelania, Aconselhamento, Convertidos)
-  inscricoes_jornada180:   { titulo: 'Cuidados', path: '/cuidados?tab=agregado' },
-  devocionais:             { titulo: 'Cuidados', path: '/cuidados?tab=agregado' },
-  solicitacoes_capelania:  { titulo: 'Cuidados', path: '/cuidados?tab=agregado' },
-  solicitacoes_aconselh:   { titulo: 'Cuidados', path: '/cuidados?tab=agregado' },
-  novos_convertidos_atend: { titulo: 'Cuidados', path: '/cuidados?tab=agregado' },
-  // Grupos
-  frequencia_grupos: { titulo: 'Grupos',     path: '/grupos' },
-  grupos_ativos:     { titulo: 'Grupos',     path: '/grupos' },
-  lideres_grupos:    { titulo: 'Grupos · Supervisao', path: '/grupos/supervisao' },
-  lideres_treinados: { titulo: 'Grupos · Supervisao', path: '/grupos/supervisao' },
-  lideres_acompanhados: { titulo: 'Grupos · Supervisao', path: '/grupos/supervisao' },
-  // NPS
-  nps_geral:       { titulo: 'NPS', path: '/nps' },
-  nps_next:        { titulo: 'NPS', path: '/nps' },
-  nps_lideres:     { titulo: 'NPS', path: '/nps' },
-  nps_voluntarios: { titulo: 'NPS', path: '/nps' },
-  nps_culto:       { titulo: 'NPS', path: '/nps' },
-  satisfacao_lideres:     { titulo: 'NPS', path: '/nps' },
-  satisfacao_voluntarios: { titulo: 'NPS', path: '/nps' },
-  // Solicitacoes (membros pedem capelania/aconselh/servir)
-  solicitacoes_capelania_recebidas:      { titulo: 'Cuidados', path: '/cuidados?tab=agregado' },
-  solicitacoes_aconselhamento_recebidas: { titulo: 'Cuidados', path: '/cuidados?tab=agregado' },
-  solicitacoes_servir_recebidas: { titulo: 'Voluntariado', path: '/voluntariado' },
-  solicitacoes_servir_alocadas:  { titulo: 'Voluntariado', path: '/voluntariado' },
-};
-
 export default function MinhaArea() {
-  const [searchParams, setSearchParams] = useSearchParams();
-  // Aba dados removida · /minha-area e so visualizador agora
-
   const { profile } = useAuth();
-  const { kpis, isLoading, refetch } = useKpis();
-  const { kpiAreas, isAdmin, canEditAny, ministerioId, ministerioPapel } = useMyKpiAreas();
+  const { kpiAreas, kpiValores, isAdmin, ministerioId, ministerioPapel } = useMyKpiAreas();
 
-  const [registros, setRegistros] = useState([]);
-  const [trajetorias, setTrajetorias] = useState([]);
-  // fillKpi removido · cada modulo tem entrada propria
-  const [editKpi, setEditKpi] = useState(null);
-  const [createOpen, setCreateOpen] = useState(false);
+  // Filtros
+  const [busca, setBusca] = useState('');
+  const [filtroPilar, setFiltroPilar] = useState([]);
+  const [filtroValor, setFiltroValor] = useState([]);
+  const [filtroArea, setFiltroArea] = useState([]);
+  const [filtroStatus, setFiltroStatus] = useState([]);
+  const [soOkr, setSoOkr] = useState(false);
+  const [agrupamento, setAgrupamento] = useState('pilar');
+  const [expandedId, setExpandedId] = useState(null);
+
+  // Modal de revisao OKR (uso do lider · operacional, nao e configuracao).
+  // Edicao/criacao de KPI/meta foi pra /gestao · /minha-area e so visualizacao.
   const [revisarKpi, setRevisarKpi] = useState(null);
-  const [detalheKpiId, setDetalheKpiId] = useState(null);
-  const [valorExpandido, setValorExpandido] = useState(null);
 
-  // Todos veem todos os KPIs ativos (read). Edicao restrita por kpiAreas no card.
-  const meusKpis = useMemo(() => kpis.filter(k => k.ativo), [kpis]);
+  // Carga · 2 queries paralelas
+  const { data: taticos = [], isLoading, refetch } = useQuery({
+    queryKey: ['kpis', 'taticos-status'],
+    queryFn: () => kpisApi.v2.taticos(),
+    staleTime: 60_000,
+  });
 
-  // Areas que o usuario pode editar
-  const podeEditar = useCallback((kpi) => {
-    if (isAdmin) return true;
-    return kpiAreas.includes(String(kpi.area_db || '').toLowerCase());
-  }, [kpiAreas, isAdmin]);
+  const { data: registros = [] } = useQuery({
+    queryKey: ['kpis', 'registros-recentes'],
+    queryFn: () => kpisApi.v2.registros.list({ limit: 5000 }),
+    staleTime: 60_000,
+  });
 
-  // Carregar registros e trajetorias dos meus KPIs
-  const loadDados = useCallback(async () => {
-    if (!meusKpis.length) { setRegistros([]); setTrajetorias([]); return; }
-    try {
-      const areasUnicas = Array.from(new Set(meusKpis.map(k => k.area_db).filter(Boolean)));
-      const arrs = await Promise.all(areasUnicas.map(a => kpisApi.v2.registros.list({ area: a })));
-      setRegistros(arrs.flat());
-    } catch (e) {
-      console.error('[minha-area] registros', e);
-    }
-  }, [meusKpis]);
-  useEffect(() => { loadDados(); }, [loadDados]);
-
-  const ultimoRegPorIndicador = useMemo(() => {
-    const m = {};
+  // Historico por KPI (12 ultimos periodos · cronologico)
+  const historicoPorKpi = useMemo(() => {
+    const m = new Map();
     registros.forEach(r => {
-      const cur = m[r.indicador_id];
-      if (!cur || (r.data_preenchimento || '') > (cur.data_preenchimento || '')) {
-        m[r.indicador_id] = r;
-      }
+      if (!m.has(r.indicador_id)) m.set(r.indicador_id, []);
+      m.get(r.indicador_id).push(r);
     });
+    for (const arr of m.values()) {
+      arr.sort((a, b) => (b.periodo_referencia || '').localeCompare(a.periodo_referencia || ''));
+      arr.length = Math.min(arr.length, 12);
+      arr.reverse(); // cronologico asc para sparkline
+    }
     return m;
   }, [registros]);
 
-  function statusKpi(kpi) {
-    const reg = ultimoRegPorIndicador[kpi.id];
-    const periodoEsperado = periodKey(kpi.periodicidade);
-    if (!reg) return 'sem_dado';
-    // Se KPI tem trajetoria, calcular vs checkpoint. Por ora usa simples:
-    if (reg.periodo_referencia === periodoEsperado) return 'no_alvo';
-    return 'atras';
-  }
-
-  // Agrupar por valor
-  const porValor = useMemo(() => {
-    const m = {};
-    VALORES.forEach(v => { m[v.key] = []; });
-    meusKpis.forEach(k => {
-      (k.valores || []).forEach(v => {
-        if (m[v]) m[v].push(k);
-      });
+  // Filtro de permissao · /minha-area mostra KPIs que o usuario "responde por":
+  //   · admin/diretor: tudo
+  //   · perfil sem kpi_areas/kpi_valores: tudo (legado · MVP)
+  //   · perfil com kpi_areas ou kpi_valores: so KPIs cuja area OU valor batem
+  //
+  // Marcos: "Alda quer ver minha area de kpi so com seguir a Jesus".
+  // Setando profile.kpi_valores = ['seguir'] no banco, ela ve so esses.
+  const kpisAtivos = useMemo(() => {
+    return taticos.filter(k => {
+      if (k.ativo === false) return false;
+      if (isAdmin) return true;
+      // Sem permissoes configuradas · MVP mostra tudo (comportamento legado)
+      if (kpiAreas.length === 0 && kpiValores.length === 0) return true;
+      const area = String(k.area || '').toLowerCase();
+      if (kpiAreas.includes(area)) return true;
+      const valores = (k.valores || []).map(v => String(v).toLowerCase());
+      return valores.some(v => kpiValores.includes(v));
     });
-    return m;
-  }, [meusKpis]);
+  }, [taticos, isAdmin, kpiAreas, kpiValores]);
 
-  // Agrupar KPIs operacionais (admin) por área — não amarrados a nenhum valor.
-  // Sustentam a NSM, não movem (Financeiro, RH, Infraestrutura).
-  const porAreaOper = useMemo(() => {
-    const m = {};
-    AREAS_OPERACIONAIS.forEach(a => { m[a.key] = []; });
-    meusKpis.forEach(k => {
-      const a = String(k.area_db || '').toLowerCase();
-      if (m[a]) m[a].push(k);
+  // Opcoes derivadas
+  const pilaresDisponiveis = useMemo(() => {
+    const set = new Map();
+    kpisAtivos.forEach(k => {
+      const key = pilarKey(k.pilar);
+      if (!set.has(key)) set.set(key, pilarLabel(k.pilar));
     });
-    return m;
-  }, [meusKpis]);
+    return Array.from(set.entries()).map(([key, label]) => ({ key, label }));
+  }, [kpisAtivos]);
 
-  // Stats gerais
+  const areasDisponiveis = useMemo(() => {
+    const set = new Set();
+    kpisAtivos.forEach(k => { if (k.area) set.add(k.area); });
+    return Array.from(set).sort().map(a => ({ key: a, label: a }));
+  }, [kpisAtivos]);
+
+  // Filtragem
+  const kpisFiltrados = useMemo(() => {
+    return kpisAtivos.filter(k => {
+      if (busca) {
+        const q = busca.toLowerCase();
+        const hay = `${k.indicador || ''} ${k.id || ''}`.toLowerCase();
+        if (!hay.includes(q)) return false;
+      }
+      if (filtroPilar.length && !filtroPilar.includes(pilarKey(k.pilar))) return false;
+      if (filtroValor.length && !filtroValor.some(v => (k.valores || []).includes(v))) return false;
+      if (filtroArea.length && !filtroArea.includes(k.area)) return false;
+      if (filtroStatus.length && !filtroStatus.includes(k.status || 'sem_dado')) return false;
+      if (soOkr && !k.is_okr) return false;
+      return true;
+    });
+  }, [kpisAtivos, busca, filtroPilar, filtroValor, filtroArea, filtroStatus, soOkr]);
+
   const stats = useMemo(() => {
-    let no_alvo = 0, atras = 0, sem_dado = 0;
-    meusKpis.forEach(k => {
-      const s = statusKpi(k);
-      if (s === 'no_alvo') no_alvo++;
-      else if (s === 'atras' || s === 'critico') atras++;
+    let verde = 0, amarelo = 0, vermelho = 0, sem_dado = 0;
+    kpisFiltrados.forEach(k => {
+      const s = k.status || 'sem_dado';
+      if (s === 'verde') verde++;
+      else if (s === 'amarelo') amarelo++;
+      else if (s === 'vermelho') vermelho++;
       else sem_dado++;
     });
-    return { total: meusKpis.length, no_alvo, atras, sem_dado };
-  }, [meusKpis, ultimoRegPorIndicador]);
+    return { total: kpisFiltrados.length, verde, amarelo, vermelho, sem_dado };
+  }, [kpisFiltrados]);
 
-  // handleSaved removido · entrada agora e nos modulos
+  // Agrupamento
+  const grupos = useMemo(() => {
+    if (agrupamento === 'lista') return [{ key: 'todos', label: `Todos (${kpisFiltrados.length})`, kpis: kpisFiltrados }];
+
+    const map = new Map();
+    if (agrupamento === 'pilar') {
+      kpisFiltrados.forEach(k => {
+        const key = pilarKey(k.pilar);
+        const label = pilarLabel(k.pilar);
+        if (!map.has(key)) map.set(key, { key, label, kpis: [] });
+        map.get(key).kpis.push(k);
+      });
+    } else if (agrupamento === 'valor') {
+      // 1 KPI pode entrar em varios valores
+      VALORES.forEach(v => map.set(v.key, { key: v.key, label: v.label, cor: v.cor, kpis: [] }));
+      map.set('sem_valor', { key: 'sem_valor', label: 'Sem valor (operações)', kpis: [] });
+      kpisFiltrados.forEach(k => {
+        if (!k.valores?.length) {
+          map.get('sem_valor').kpis.push(k);
+        } else {
+          k.valores.forEach(v => {
+            if (map.has(v)) map.get(v).kpis.push(k);
+          });
+        }
+      });
+    } else if (agrupamento === 'area') {
+      kpisFiltrados.forEach(k => {
+        const key = k.area || 'sem_area';
+        if (!map.has(key)) map.set(key, { key, label: key, kpis: [] });
+        map.get(key).kpis.push(k);
+      });
+    }
+    return Array.from(map.values()).filter(g => g.kpis.length > 0);
+  }, [kpisFiltrados, agrupamento]);
 
   if (isLoading) {
     return (
-      <div style={{ padding: '24px 20px', maxWidth: 960, margin: '0 auto' }}>
-        <SkeletonBlock height={56} style={{ marginBottom: 16 }} />
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 8, marginBottom: 18 }}>
-          <SkeletonBlock height={64} /><SkeletonBlock height={64} /><SkeletonBlock height={64} /><SkeletonBlock height={64} /><SkeletonBlock height={64} />
+      <div className="p-4 md:p-6 max-w-[1400px] mx-auto">
+        <div className="animate-pulse space-y-4">
+          <div className="h-12 bg-muted rounded" />
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+            {[...Array(4)].map((_, i) => <div key={i} className="h-20 bg-muted rounded" />)}
+          </div>
+          {[...Array(5)].map((_, i) => <div key={i} className="h-16 bg-muted rounded" />)}
         </div>
-        <SkeletonBlock height={140} style={{ marginBottom: 10 }} />
-        <SkeletonBlock height={140} />
       </div>
     );
   }
 
-  // Todos veem todos os KPIs — quem nao lidera area ve em modo leitura
-  // (sem botao Preencher/Editar nos cards)
-  const apenasLeitura = !isAdmin && kpiAreas.length === 0;
-  if (false) {
-    return (
-      <div style={{ padding: '40px 20px', maxWidth: 720, margin: '0 auto', textAlign: 'center' }}>
-        <Activity size={32} style={{ color: C.t3, marginBottom: 12 }} />
-        <h1 style={{ fontSize: 18, fontWeight: 700, color: C.text, marginBottom: 8 }}>Voce ainda nao lidera nenhuma area</h1>
-        <p style={{ fontSize: 13, color: C.t3 }}>
-          Peca para um administrador atribuir suas areas no modulo de Permissoes.
-        </p>
-      </div>
-    );
-  }
+  const algumFiltro = busca || filtroPilar.length || filtroValor.length || filtroArea.length || filtroStatus.length || soOkr;
 
   return (
-    <div style={{ padding: '20px 16px', maxWidth: 1100, margin: '0 auto' }}>
-      <header style={{ marginBottom: 14 }}>
-        <h1 style={{ fontSize: 22, fontWeight: 700, color: C.text, margin: 0, display: 'flex', alignItems: 'center', gap: 10 }}>
-          <Activity size={22} style={{ color: C.primary }} />
-          Minha Area
-        </h1>
-        <p style={{ fontSize: 12, color: C.t3, marginTop: 6, lineHeight: 1.5 }}>
-          {isAdmin && <span>Admin/diretor — voce edita tudo. </span>}
-          {kpiAreas.length > 0 && (
-            <span>
-              Lider de area: {kpiAreas.map(a => (
-                <span key={a} style={{ marginRight: 4, padding: '2px 10px', borderRadius: 99, background: C.primaryBg, color: C.primaryDark, fontWeight: 600, fontSize: 11, textTransform: 'capitalize' }}>{a}</span>
-              ))}
-              <span style={{ marginRight: 6 }}>· cobrado pelo resultado.</span>
-            </span>
-          )}
-          {ministerioId && (
-            <span>
-              {ministerioPapel === 'lider' ? 'Lider' : 'Assistente'} do ministerio
-              <span style={{ marginLeft: 6, marginRight: 6, padding: '2px 10px', borderRadius: 99, background: '#3B82F620', color: '#3B82F6', fontWeight: 600, fontSize: 11, textTransform: 'capitalize' }}>{ministerioId}</span>
-              · responsavel pela coleta dos dados.
-            </span>
-          )}
-          {!isAdmin && !kpiAreas.length && !ministerioId && (
-            <span>Modo leitura — voce ve todos os KPIs e dados, mas nao edita.</span>
-          )}
-        </p>
+    <div className="p-4 md:p-6 space-y-4 max-w-[1400px] mx-auto">
+      <header className="flex items-start justify-between gap-4 flex-wrap">
+        <div>
+          <h1 className="text-2xl font-bold text-foreground flex items-center gap-2">
+            <Activity className="h-5 w-5 text-[#00B39D]" /> Minha Área
+          </h1>
+          <p className="text-xs text-muted-foreground mt-1">
+            Visualização dos KPIs · metas e estrutura editáveis em <a href="/gestao?aba=configurar" className="text-[#00B39D] hover:underline">/gestao</a>.
+            {kpiAreas.length > 0 && <> Líder de <strong className="capitalize">{kpiAreas.join(', ')}</strong>.</>}
+            {ministerioId && <> {ministerioPapel === 'lider' ? 'Líder' : 'Assistente'} de <strong>{ministerioId}</strong>.</>}
+          </p>
+        </div>
       </header>
 
-      {/* Aviso curto · o que e essa pagina */}
-      <div style={{
-        background: 'var(--cbrio-input-bg)', borderLeft: '3px solid var(--cbrio-text3)',
-        padding: '10px 14px', borderRadius: 6, marginBottom: 16, fontSize: 12, color: 'var(--cbrio-text2)',
-      }}>
-        Aqui voce <strong>visualiza</strong> o resultado dos KPIs da sua area.
-        Para preencher dados, va no <strong>modulo correspondente</strong>
-        (indicado em cada card abaixo).
+      {/* Stats */}
+      <div className="grid grid-cols-2 md:grid-cols-5 gap-2">
+        <StatBox label="Total" value={stats.total} cor="#737373" />
+        <StatBox label="No alvo"  value={stats.verde}    cor={STATUS_COR.verde} />
+        <StatBox label="Atrás"    value={stats.amarelo}  cor={STATUS_COR.amarelo} />
+        <StatBox label="Crítico"  value={stats.vermelho} cor={STATUS_COR.vermelho} />
+        <StatBox label="Sem dado" value={stats.sem_dado} cor={STATUS_COR.sem_dado} />
       </div>
 
-      <>
-          {canEditAny && (
-            <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 12 }}>
-              <button onClick={() => setCreateOpen(true)} style={btnPrimary}>
-                <Plus size={14} /> Novo KPI
-              </button>
+      {/* Filtros · linha 1 · busca + agrupamento + clear */}
+      <div className="flex items-center gap-2 flex-wrap">
+        <div className="relative flex-1 min-w-[200px] max-w-md">
+          <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+          <Input
+            className="pl-8 h-9"
+            placeholder="Buscar indicador ou ID..."
+            value={busca}
+            onChange={e => setBusca(e.target.value)}
+          />
+        </div>
+        <div className="inline-flex items-center gap-1 text-xs text-muted-foreground">
+          <Layers className="h-3.5 w-3.5" /> Agrupar:
+        </div>
+        <div className="inline-flex rounded-md border border-border p-0.5 bg-muted/30">
+          {[
+            { v: 'pilar', l: 'Pilar' },
+            { v: 'valor', l: 'Valor' },
+            { v: 'area',  l: 'Área' },
+            { v: 'lista', l: 'Lista' },
+          ].map(opt => (
+            <button
+              key={opt.v}
+              onClick={() => setAgrupamento(opt.v)}
+              className={`px-2.5 py-1 text-xs font-medium rounded transition-colors ${
+                agrupamento === opt.v ? 'bg-[#00B39D] text-white' : 'text-muted-foreground hover:text-foreground'
+              }`}
+            >
+              {opt.l}
+            </button>
+          ))}
+        </div>
+        {algumFiltro && (
+          <Button
+            variant="ghost" size="sm"
+            onClick={() => {
+              setBusca('');
+              setFiltroPilar([]); setFiltroValor([]); setFiltroArea([]); setFiltroStatus([]); setSoOkr(false);
+            }}
+            className="h-8 text-xs gap-1"
+          >
+            <X className="h-3 w-3" /> Limpar filtros
+          </Button>
+        )}
+      </div>
+
+      {/* Filtros · linha 2 · chips multiselect */}
+      <div className="space-y-1.5">
+        <ChipsRow label="Pilar"  opts={pilaresDisponiveis} valor={filtroPilar}  setValor={setFiltroPilar} />
+        <ChipsRow label="Valor"  opts={VALORES.map(v => ({ key: v.key, label: v.label, cor: v.cor }))} valor={filtroValor} setValor={setFiltroValor} />
+        <ChipsRow label="Área"   opts={areasDisponiveis}   valor={filtroArea}   setValor={setFiltroArea} />
+        <ChipsRow label="Status" opts={STATUS_OPTS.map(s => ({ key: s.key, label: s.label, cor: s.cor }))} valor={filtroStatus} setValor={setFiltroStatus} />
+        <div className="flex items-center gap-2 text-xs">
+          <span className="text-muted-foreground">Outros:</span>
+          <label className="inline-flex items-center gap-1.5 cursor-pointer">
+            <input type="checkbox" checked={soOkr} onChange={e => setSoOkr(e.target.checked)} className="cursor-pointer" />
+            <span className={soOkr ? 'text-[#00B39D] font-semibold' : 'text-muted-foreground'}>Só OKR (is_okr=true)</span>
+          </label>
+        </div>
+      </div>
+
+      {/* Lista agrupada */}
+      {kpisFiltrados.length === 0 ? (
+        <Card>
+          <CardContent className="py-12 text-center text-sm text-muted-foreground">
+            Nenhum KPI bate com os filtros atuais.
+          </CardContent>
+        </Card>
+      ) : (
+        <div className="space-y-3">
+          {grupos.map(g => (
+            <GrupoSecao
+              key={g.key}
+              grupo={g}
+              historicoPorKpi={historicoPorKpi}
+              expandedId={expandedId}
+              setExpandedId={setExpandedId}
+              onRevisar={setRevisarKpi}
+            />
+          ))}
+        </div>
+      )}
+
+      {revisarKpi && (
+        <OkrRevisaoModal
+          open={!!revisarKpi} kpi={revisarKpi}
+          onClose={() => setRevisarKpi(null)}
+          onSaved={() => { setRevisarKpi(null); toast.success('Revisão registrada'); }}
+        />
+      )}
+    </div>
+  );
+}
+
+// ============================================================================
+// Sub-componentes
+// ============================================================================
+
+function StatBox({ label, value, cor }) {
+  return (
+    <div className="rounded-lg border bg-card px-3 py-2.5 text-center">
+      <div className="text-xl font-bold tabular-nums leading-none" style={{ color: cor }}>{value}</div>
+      <div className="text-[10px] text-muted-foreground uppercase tracking-wide mt-1">{label}</div>
+    </div>
+  );
+}
+
+function ChipsRow({ label, opts, valor, setValor }) {
+  if (!opts?.length) return null;
+  return (
+    <div className="flex items-center gap-1.5 flex-wrap text-xs">
+      <span className="text-muted-foreground min-w-[44px]">{label}:</span>
+      {opts.map(o => {
+        const ativo = valor.includes(o.key);
+        return (
+          <button
+            key={o.key}
+            onClick={() => setValor(ativo ? valor.filter(v => v !== o.key) : [...valor, o.key])}
+            className="px-2 py-0.5 rounded-full text-[10px] font-medium border transition-colors capitalize"
+            style={ativo
+              ? { background: `${o.cor || '#00B39D'}1a`, borderColor: o.cor || '#00B39D', color: o.cor || '#00B39D' }
+              : { borderColor: 'var(--border)', color: 'var(--muted-foreground)' }
+            }
+          >
+            {o.label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+function GrupoSecao({ grupo, historicoPorKpi, expandedId, setExpandedId, onRevisar }) {
+  const [collapsed, setCollapsed] = useState(false);
+
+  const stats = useMemo(() => {
+    let v = 0, a = 0, r = 0, s = 0;
+    grupo.kpis.forEach(k => {
+      const st = k.status || 'sem_dado';
+      if (st === 'verde') v++; else if (st === 'amarelo') a++; else if (st === 'vermelho') r++; else s++;
+    });
+    return { v, a, r, s };
+  }, [grupo.kpis]);
+
+  return (
+    <section className="rounded-lg border bg-card overflow-hidden" style={grupo.cor ? { borderLeft: `3px solid ${grupo.cor}` } : undefined}>
+      <button
+        onClick={() => setCollapsed(c => !c)}
+        className="w-full px-4 py-3 flex items-center gap-3 hover:bg-muted/30 transition-colors text-left"
+      >
+        {collapsed ? <ChevronRight className="h-4 w-4 text-muted-foreground" /> : <ChevronDown className="h-4 w-4 text-muted-foreground" />}
+        <strong className="text-sm">{grupo.label}</strong>
+        <span className="text-xs text-muted-foreground">{grupo.kpis.length} KPI{grupo.kpis.length === 1 ? '' : 's'}</span>
+        <div className="flex items-center gap-1.5 ml-auto text-[10px] tabular-nums">
+          {stats.v > 0 && <span className="px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-600 font-semibold">{stats.v} ok</span>}
+          {stats.a > 0 && <span className="px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-600 font-semibold">{stats.a} atrás</span>}
+          {stats.r > 0 && <span className="px-1.5 py-0.5 rounded bg-red-500/10 text-red-600 font-semibold">{stats.r} crítico</span>}
+          {stats.s > 0 && <span className="px-1.5 py-0.5 rounded bg-muted text-muted-foreground font-semibold">{stats.s} sem dado</span>}
+        </div>
+      </button>
+      {!collapsed && (
+        <div className="border-t divide-y">
+          {grupo.kpis.map(kpi => (
+            <KpiLinha
+              key={kpi.id}
+              kpi={kpi}
+              historico={historicoPorKpi.get(kpi.id) || []}
+              expanded={expandedId === kpi.id}
+              onToggleExpand={() => setExpandedId(expandedId === kpi.id ? null : kpi.id)}
+              onRevisar={() => onRevisar(kpi)}
+            />
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function KpiLinha({ kpi, historico, expanded, onToggleExpand, onRevisar }) {
+  const status = kpi.status || 'sem_dado';
+  const cor = STATUS_COR[status];
+  const sparkData = historico.map(h => ({ x: h.periodo_referencia, y: h.valor_realizado ?? 0 }));
+  const ultimoValor = kpi.ultimo_valor;
+  const anteriorReg = sparkData.length >= 2 ? sparkData[sparkData.length - 2].y : null;
+  const delta = ultimoValor != null && anteriorReg != null ? formatDelta(ultimoValor, anteriorReg) : null;
+  // Meta efetiva: prioriza absoluto (alvo materializado por area), fallback pro %
+  const metaEfetiva = kpi.meta_valor_absoluto ?? kpi.meta_valor;
+  const usaAbsoluto = kpi.meta_valor_absoluto != null;
+  const pctMeta = metaEfetiva && ultimoValor != null && metaEfetiva !== 0
+    ? Math.round((ultimoValor / metaEfetiva) * 100)
+    : null;
+  const modulo = moduloDoKpi(kpi);
+  const podeRevisar = kpi.is_okr && (status === 'vermelho' || status === 'amarelo');
+
+  return (
+    <div style={{ borderLeft: `3px solid ${cor}` }} className="bg-card hover:bg-muted/20 transition-colors">
+      <button onClick={onToggleExpand} className="w-full px-3 py-2.5 flex items-center gap-3 text-left">
+        {/* Valor + meta */}
+        <div className="w-20 shrink-0 text-right">
+          <div className="text-xl font-bold tabular-nums leading-tight" style={{ color: cor }}>
+            {ultimoValor != null ? ultimoValor.toLocaleString('pt-BR') : '—'}
+          </div>
+          {metaEfetiva != null && (
+            <div className="text-[9px] text-muted-foreground">
+              meta {usaAbsoluto ? Math.round(metaEfetiva).toLocaleString('pt-BR') : metaEfetiva}{kpi.unidade ? ` ${kpi.unidade}` : ''}
+            </div>
+          )}
+        </div>
+
+        {/* Sparkline */}
+        <div className="w-24 h-9 shrink-0">
+          {sparkData.length > 1 ? (
+            <ResponsiveContainer width="100%" height="100%">
+              <AreaChart data={sparkData} margin={{ top: 2, right: 2, left: 2, bottom: 2 }}>
+                <Area type="monotone" dataKey="y" stroke={cor} fill={cor} fillOpacity={0.18} strokeWidth={1.5} dot={false} isAnimationActive={false} />
+              </AreaChart>
+            </ResponsiveContainer>
+          ) : (
+            <div className="h-full flex items-center justify-center text-[9px] text-muted-foreground">sem histórico</div>
+          )}
+        </div>
+
+        {/* Info principal */}
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-1.5 flex-wrap">
+            <span className="font-medium text-sm truncate">{kpi.indicador}</span>
+            {kpi.is_okr && <Badge variant="outline" className="text-[9px] px-1 py-0 h-4 bg-amber-100 dark:bg-amber-950 border-amber-400 text-amber-700 dark:text-amber-300">OKR</Badge>}
+          </div>
+          <div className="flex items-center gap-1.5 mt-0.5 text-[10px] text-muted-foreground flex-wrap">
+            <span className="font-mono">{kpi.id}</span>
+            <span>·</span>
+            <Badge variant="outline" className="text-[9px] px-1 py-0 h-4 capitalize">{kpi.area}</Badge>
+            {kpi.pilar && <Badge variant="outline" className="text-[9px] px-1 py-0 h-4 capitalize">{kpi.pilar}</Badge>}
+            {(kpi.valores || []).slice(0, 2).map(v => (
+              <Badge key={v} variant="outline" className="text-[9px] px-1 py-0 h-4 capitalize">{v}</Badge>
+            ))}
+            <span>·</span>
+            <span className="capitalize">{kpi.periodicidade}</span>
+            {kpi.ultimo_periodo && <><span>·</span><span>{kpi.ultimo_periodo}</span></>}
+          </div>
+        </div>
+
+        {/* Delta + pct + chevron */}
+        <div className="text-right shrink-0 min-w-[80px]">
+          {delta != null && (
+            <div className={`text-[11px] font-semibold inline-flex items-center gap-0.5 ${delta > 0 ? 'text-emerald-600' : delta < 0 ? 'text-red-600' : 'text-muted-foreground'}`}>
+              {delta > 0 ? <TrendingUp className="h-3 w-3" /> : delta < 0 ? <TrendingDown className="h-3 w-3" /> : <Minus className="h-3 w-3" />}
+              {delta > 0 ? '+' : ''}{delta}%
+            </div>
+          )}
+          {pctMeta != null && (
+            <div className="text-[9px] text-muted-foreground">{pctMeta}% da meta</div>
+          )}
+          {expanded ? <ChevronDown className="h-3.5 w-3.5 inline mt-1 text-muted-foreground" /> : <ChevronRight className="h-3.5 w-3.5 inline mt-1 text-muted-foreground" />}
+        </div>
+      </button>
+
+      {/* Drilldown inline */}
+      {expanded && (
+        <div className="border-t bg-muted/20 p-4 space-y-4">
+          {/* Sparkline grande */}
+          {sparkData.length > 1 ? (
+            <div className="h-40 bg-card rounded p-2">
+              <ResponsiveContainer width="100%" height="100%">
+                <AreaChart data={sparkData} margin={{ top: 8, right: 12, left: -16, bottom: 0 }}>
+                  <CartesianGrid strokeDasharray="3 3" opacity={0.25} />
+                  <XAxis dataKey="x" tick={{ fontSize: 10 }} />
+                  <YAxis tick={{ fontSize: 10 }} allowDecimals={false} />
+                  <Tooltip
+                    contentStyle={{ fontSize: 11, borderRadius: 6 }}
+                    formatter={v => [Number(v).toLocaleString('pt-BR'), kpi.unidade || 'valor']}
+                  />
+                  <Area type="monotone" dataKey="y" stroke={cor} fill={cor} fillOpacity={0.25} strokeWidth={2} />
+                </AreaChart>
+              </ResponsiveContainer>
+            </div>
+          ) : (
+            <div className="rounded border border-dashed bg-card p-6 text-center text-xs text-muted-foreground">
+              Sem histórico para gerar gráfico. Quando houver pelo menos 2 períodos, aparece aqui.
             </div>
           )}
 
-          {/* Stats */}
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))', gap: 8, marginBottom: 16 }}>
-            <Stat label="Total" value={stats.total} cor={C.text} />
-            <Stat label="Em dia" value={stats.no_alvo} cor="#10B981" />
-            <Stat label="Atras / Critico" value={stats.atras} cor="#EF4444" />
-            <Stat label="Sem dado" value={stats.sem_dado} cor="#9CA3AF" />
-          </div>
-
-          {/* Acordeao por valor */}
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-            {VALORES.map(v => {
-              const kpisDoValor = porValor[v.key] || [];
-              if (kpisDoValor.length === 0) return null;
-              const pendentes = kpisDoValor.filter(k => statusKpi(k) !== 'no_alvo').length;
-              const expanded = valorExpandido === v.key;
-              return (
-                <section key={v.key} style={{
-                  background: C.card, border: `1px solid ${C.border}`,
-                  borderLeft: `3px solid ${v.cor}`,
-                  borderRadius: 8, overflow: 'hidden',
-                }}>
-                  <button
-                    onClick={() => setValorExpandido(expanded ? null : v.key)}
-                    style={{
-                      width: '100%', padding: 14,
-                      display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap',
-                      background: 'none', border: 'none', cursor: 'pointer', textAlign: 'left',
-                    }}
-                  >
-                    {expanded ? <ChevronDown size={16} style={{ color: C.t3 }} /> : <ChevronRight size={16} style={{ color: C.t3 }} />}
-                    <div style={{ width: 12, height: 12, borderRadius: '50%', background: v.cor }} />
-                    <strong style={{ fontSize: 14, color: C.text }}>{v.label}</strong>
-                    <span style={{ fontSize: 10, padding: '2px 8px', borderRadius: 99, background: 'var(--cbrio-input-bg)', color: C.t2, fontWeight: 600, marginLeft: 'auto' }}>
-                      {kpisDoValor.length} KPI{kpisDoValor.length === 1 ? '' : 's'}
-                    </span>
-                    {pendentes > 0 && (
-                      <span style={{ fontSize: 10, padding: '2px 8px', borderRadius: 99, background: '#FEE2E2', color: '#B91C1C', fontWeight: 700 }}>
-                        {pendentes} pendente{pendentes === 1 ? '' : 's'}
-                      </span>
-                    )}
-                  </button>
-                  {expanded && (
-                    <div style={{ padding: '0 14px 14px', borderTop: `1px solid ${C.border}` }}>
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: 6, paddingTop: 12 }}>
-                        {kpisDoValor.map(kpi => (
-                          <KpiCard
-                            key={kpi.id}
-                            kpi={kpi}
-                            status={statusKpi(kpi)}
-                            ultimo={ultimoRegPorIndicador[kpi.id]}
-                            canEdit={podeEditar(kpi)}
-                            onEditar={() => setEditKpi(kpi)}
-                            onRevisar={() => setRevisarKpi(kpi)}
-                            onDetalhe={() => setDetalheKpiId(kpi.id)}
-                          />
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                </section>
-              );
-            })}
-          </div>
-
-          {/* Acordeao por área operacional (Financeiro, RH, Infraestrutura)
-              — sustenta a NSM, não move. KPIs sem amarração com os 5 valores. */}
-          {(() => {
-            const totalOper = AREAS_OPERACIONAIS.reduce((s, a) => s + (porAreaOper[a.key]?.length || 0), 0);
-            if (totalOper === 0) return null;
-            return (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 16 }}>
-                <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, padding: '0 4px', marginBottom: 2 }}>
-                  <span style={{ fontSize: 11, fontWeight: 700, color: C.t3, textTransform: 'uppercase', letterSpacing: 0.8 }}>
-                    Operações
-                  </span>
-                  <span style={{ fontSize: 11, color: C.t3 }}>· sustenta a NSM (não move)</span>
+          {/* Como mede + Onde preencher */}
+          <div className="grid md:grid-cols-2 gap-3">
+            <div className="rounded border bg-card p-3 text-xs">
+              <div className="text-[10px] uppercase tracking-wide text-muted-foreground font-semibold mb-1">Como mede</div>
+              <p className="text-foreground leading-relaxed">
+                {kpi.apuracao || kpi.descricao || <em className="text-muted-foreground">Sem descrição registrada · clique em Editar meta pra adicionar.</em>}
+              </p>
+              {kpi.meta_descricao && (
+                <div className="mt-2 pt-2 border-t border-dashed text-muted-foreground">
+                  <strong className="text-foreground">Meta:</strong> {kpi.meta_descricao}
                 </div>
-                {AREAS_OPERACIONAIS.map(a => {
-                  const kpisDaArea = porAreaOper[a.key] || [];
-                  if (kpisDaArea.length === 0) return null;
-                  const pendentes = kpisDaArea.filter(k => statusKpi(k) !== 'no_alvo').length;
-                  const expandKey = `oper:${a.key}`;
-                  const expanded = valorExpandido === expandKey;
-                  return (
-                    <section key={a.key} style={{
-                      background: C.card, border: `1px solid ${C.border}`,
-                      borderLeft: `3px solid ${a.cor}`,
-                      borderRadius: 8, overflow: 'hidden',
-                    }}>
-                      <button
-                        onClick={() => setValorExpandido(expanded ? null : expandKey)}
-                        style={{
-                          width: '100%', padding: 14,
-                          display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap',
-                          background: 'none', border: 'none', cursor: 'pointer', textAlign: 'left',
-                        }}
-                      >
-                        {expanded ? <ChevronDown size={16} style={{ color: C.t3 }} /> : <ChevronRight size={16} style={{ color: C.t3 }} />}
-                        <div style={{ width: 12, height: 12, borderRadius: 3, background: a.cor }} />
-                        <strong style={{ fontSize: 14, color: C.text }}>{a.label}</strong>
-                        <span style={{ fontSize: 10, padding: '2px 8px', borderRadius: 99, background: 'var(--cbrio-input-bg)', color: C.t2, fontWeight: 600, marginLeft: 'auto' }}>
-                          {kpisDaArea.length} KPI{kpisDaArea.length === 1 ? '' : 's'}
-                        </span>
-                        {pendentes > 0 && (
-                          <span style={{ fontSize: 10, padding: '2px 8px', borderRadius: 99, background: '#FEE2E2', color: '#B91C1C', fontWeight: 700 }}>
-                            {pendentes} pendente{pendentes === 1 ? '' : 's'}
-                          </span>
-                        )}
-                      </button>
-                      {expanded && (
-                        <div style={{ padding: '0 14px 14px', borderTop: `1px solid ${C.border}` }}>
-                          <div style={{ display: 'flex', flexDirection: 'column', gap: 6, paddingTop: 12 }}>
-                            {kpisDaArea.map(kpi => (
-                              <KpiCard
-                                key={kpi.id}
-                                kpi={kpi}
-                                status={statusKpi(kpi)}
-                                ultimo={ultimoRegPorIndicador[kpi.id]}
-                                canEdit={podeEditar(kpi)}
-                                onPreencher={() => setFillKpi(kpi)}
-                                onEditar={() => setEditKpi(kpi)}
-                                onRevisar={() => setRevisarKpi(kpi)}
-                                onDetalhe={() => setDetalheKpiId(kpi.id)}
-                              />
-                            ))}
-                          </div>
-                        </div>
-                      )}
-                    </section>
-                  );
-                })}
+              )}
+            </div>
+            <div className="rounded border bg-card p-3 text-xs space-y-2">
+              <div className="text-[10px] uppercase tracking-wide text-muted-foreground font-semibold">Onde preencher</div>
+              {modulo ? (
+                <a href={modulo.path} className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-[#00B39D]/10 text-[#00B39D] font-semibold hover:bg-[#00B39D]/20 transition-colors">
+                  Abrir {modulo.titulo} <ExternalLink className="h-3 w-3" />
+                </a>
+              ) : (
+                <p className="text-muted-foreground">Sem módulo mapeado. Lançar em <a href="/dados-brutos" className="text-[#00B39D] underline">Dados Brutos</a>.</p>
+              )}
+              {kpi.lider_nome && (
+                <div className="text-[11px] text-muted-foreground pt-1 border-t border-dashed">
+                  <strong className="text-foreground">Líder:</strong> {kpi.lider_nome}{kpi.lider_cargo ? ` · ${kpi.lider_cargo}` : ''}
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Histórico tabular */}
+          {historico.length > 0 && (
+            <div className="rounded border bg-card p-3">
+              <div className="text-[10px] uppercase tracking-wide text-muted-foreground font-semibold mb-2">Histórico · {historico.length} período{historico.length === 1 ? '' : 's'}</div>
+              <div className="grid grid-cols-3 md:grid-cols-6 gap-2 text-xs">
+                {[...historico].reverse().slice(0, 12).map(h => (
+                  <div key={h.id || h.periodo_referencia} className="rounded border px-2 py-1.5 text-center">
+                    <div className="text-[9px] text-muted-foreground">{h.periodo_referencia}</div>
+                    <div className="font-mono tabular-nums font-semibold">{h.valor_realizado?.toLocaleString('pt-BR') ?? '—'}</div>
+                    {h.origem && (
+                      <div className="text-[8px] text-muted-foreground capitalize mt-0.5">{h.origem}</div>
+                    )}
+                  </div>
+                ))}
               </div>
-            );
-          })()}
-        </>
+            </div>
+          )}
 
-      {editKpi && (
-        <KpiEditorModal
-          open={!!editKpi}
-          kpi={editKpi}
-          onClose={() => setEditKpi(null)}
-          onSaved={() => { setEditKpi(null); refetch(); toast.success('KPI atualizado'); }}
-        />
+          {/* Acoes · /minha-area e so visualizacao · meta editavel em /gestao */}
+          <div className="flex items-center gap-2 flex-wrap">
+            {podeRevisar && (
+              <Button size="sm" variant="outline" onClick={onRevisar} className="h-7 text-xs gap-1.5" style={{ borderColor: cor, color: cor }}>
+                <ClipboardCheck className="h-3 w-3" /> Registrar revisão OKR
+              </Button>
+            )}
+            {kpi.is_okr && !podeRevisar && (
+              <span className="text-[10px] text-muted-foreground">Revisão OKR disponível quando status fica amarelo/vermelho.</span>
+            )}
+            <span className="text-[10px] text-muted-foreground ml-auto">
+              Meta editável em <a href="/gestao?aba=configurar" className="text-[#00B39D] hover:underline">/gestao · Configurar</a>
+            </span>
+          </div>
+        </div>
       )}
-      {createOpen && (
-        <KpiEditorModal
-          open={createOpen}
-          kpi={null}
-          defaultArea={kpiAreas[0] || ''}
-          allowedAreas={isAdmin ? null : kpiAreas}
-          onClose={() => setCreateOpen(false)}
-          onSaved={() => { setCreateOpen(false); refetch(); toast.success('KPI criado'); }}
-        />
-      )}
-      {revisarKpi && (
-        <OkrRevisaoModal
-          open={!!revisarKpi}
-          kpi={revisarKpi}
-          onClose={() => setRevisarKpi(null)}
-          onSaved={() => { setRevisarKpi(null); toast.success('Revisao registrada'); }}
-        />
-      )}
-      <KpiDetalheModal
-        open={!!detalheKpiId}
-        kpiId={detalheKpiId}
-        onClose={() => setDetalheKpiId(null)}
-        onUpdated={() => { refetch(); loadDados(); }}
-      />
     </div>
   );
 }
-
-function KpiCard({ kpi, status, ultimo, canEdit, onEditar, onRevisar, onDetalhe }) {
-  const sv = STATUS_VISUAL[status] || STATUS_VISUAL.sem_dado;
-  const Icon = sv.Icon;
-  const podeRevisar = status === 'critico' || status === 'atras';
-
-  return (
-    <div style={{
-      background: 'var(--cbrio-input-bg)', border: `1px solid ${C.border}`,
-      borderLeft: `3px solid ${sv.cor}`,
-      borderRadius: 6, padding: 12,
-    }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginBottom: 6 }}>
-        <Icon size={14} style={{ color: sv.cor, flexShrink: 0 }} />
-        <strong style={{ fontSize: 12, color: C.text, flex: 1, minWidth: 200 }}>{kpi.indicador}</strong>
-        <span style={{ fontSize: 9, padding: '1px 6px', borderRadius: 99, background: 'var(--cbrio-card)', color: C.t2, fontWeight: 600, textTransform: 'capitalize' }}>{kpi.area}</span>
-        {kpi.is_okr && <span style={{ fontSize: 9, padding: '1px 6px', borderRadius: 99, background: '#FEF3C7', color: '#B45309', fontWeight: 700 }}>OKR</span>}
-        <span style={{ fontSize: 9, padding: '1px 6px', borderRadius: 99, background: sv.bg, color: sv.cor, fontWeight: 700 }}>{sv.label}</span>
-      </div>
-
-      <div style={{ fontSize: 10, color: C.t3, marginBottom: 8, display: 'flex', gap: 12, flexWrap: 'wrap' }}>
-        {kpi.meta_descricao && <span><strong>Meta:</strong> {kpi.meta_descricao}{kpi.unidade ? ' ' + kpi.unidade : ''}</span>}
-        {ultimo && <span><strong>Ultimo:</strong> {ultimo.valor_realizado ?? '—'} ({ultimo.periodo_referencia})</span>}
-        <span style={{ textTransform: 'capitalize' }}>{kpi.periodicidade}</span>
-      </div>
-
-      {/* Origem do dado · indica onde preencher (modulo) */}
-      <OrigemDado kpi={kpi} />
-
-      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 8 }}>
-        <button onClick={onDetalhe} style={btnGhostSm}>
-          <Activity size={11} /> Detalhe
-        </button>
-        {canEdit && (
-          <button onClick={onEditar} style={btnGhostSm}>
-            <Pencil size={11} /> Editar meta
-          </button>
-        )}
-        {podeRevisar && (
-          <button onClick={onRevisar} style={{ ...btnGhostSm, color: sv.cor, borderColor: sv.cor + '60' }}>
-            <ClipboardCheck size={11} /> Revisar
-          </button>
-        )}
-      </div>
-    </div>
-  );
-}
-
-// ============================================================================
-// OrigemDado · chip linkando pro modulo onde se preenche
-// ============================================================================
-function OrigemDado({ kpi }) {
-  const dadoTipo = kpi.formula_config?.dado_tipo;
-  const fonteAuto = kpi.fonte_auto;
-  const dadoTipoManual = !!kpi.dado_tipo_manual;
-  const moduloInfo = dadoTipo && MODULO_POR_DADO_TIPO[dadoTipo];
-
-  // Automatico: fonte_auto definida OU dado_tipo nao-manual (modulo cuida)
-  const isAutomatico = (!!fonteAuto && !dadoTipo) || (!!dadoTipo && !dadoTipoManual);
-
-  if (isAutomatico) {
-    return (
-      <div style={{
-        background: '#10B98118', borderLeft: '3px solid #10B981',
-        padding: '6px 10px', borderRadius: 4, marginTop: 8,
-        display: 'flex', alignItems: 'center', gap: 8, fontSize: 11,
-      }}>
-        <span style={{ fontSize: 9, fontWeight: 700, color: '#047857', textTransform: 'uppercase', letterSpacing: 0.5 }}>
-          Automático
-        </span>
-        <span style={{ color: 'var(--cbrio-text3)', flex: 1 }}>
-          {moduloInfo ? `Sobe via ${moduloInfo.titulo}` : 'Coletado automaticamente'}
-        </span>
-        {moduloInfo && (
-          <a href={moduloInfo.path} style={{ color: '#047857', fontWeight: 600, textDecoration: 'none', display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-            Ver módulo <ExternalLink size={10} />
-          </a>
-        )}
-      </div>
-    );
-  }
-
-  // Manual: aponta pro modulo correto (ou /dados-brutos como fallback)
-  const destino = moduloInfo || { titulo: 'Dados Brutos (admin)', path: '/dados-brutos' };
-  return (
-    <div style={{
-      background: '#F59E0B18', borderLeft: '3px solid #F59E0B',
-      padding: '6px 10px', borderRadius: 4, marginTop: 8,
-      display: 'flex', alignItems: 'center', gap: 8, fontSize: 11,
-    }}>
-      <span style={{ fontSize: 9, fontWeight: 700, color: '#B45309', textTransform: 'uppercase', letterSpacing: 0.5 }}>
-        Manual
-      </span>
-      <span style={{ color: 'var(--cbrio-text3)', flex: 1 }}>
-        Preencha em {destino.titulo}
-      </span>
-      <a href={destino.path} style={{ color: '#B45309', fontWeight: 700, textDecoration: 'none', display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-        Abrir <ExternalLink size={10} />
-      </a>
-    </div>
-  );
-}
-
-function Stat({ label, value, cor }) {
-  return (
-    <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 8, padding: '10px 12px', textAlign: 'center' }}>
-      <div style={{ fontSize: 22, fontWeight: 800, color: cor, lineHeight: 1 }}>{value}</div>
-      <div style={{ fontSize: 9, color: C.t3, marginTop: 4, letterSpacing: 0.3, textTransform: 'uppercase' }}>{label}</div>
-    </div>
-  );
-}
-
-const btnPrimary = {
-  padding: '8px 14px', borderRadius: 6, fontSize: 12, fontWeight: 600,
-  background: C.primary, color: '#fff', border: 'none', cursor: 'pointer',
-  display: 'inline-flex', alignItems: 'center', gap: 6,
-};
-const btnPrimarySm = {
-  padding: '5px 12px', borderRadius: 4, fontSize: 11, fontWeight: 600,
-  background: C.primary, color: '#fff', border: 'none',
-  display: 'inline-flex', alignItems: 'center', gap: 4,
-};
-const btnGhostSm = {
-  padding: '5px 10px', borderRadius: 4, fontSize: 10, fontWeight: 600,
-  background: 'transparent', color: C.t2, border: `1px solid ${C.border}`, cursor: 'pointer',
-  display: 'inline-flex', alignItems: 'center', gap: 4,
-};

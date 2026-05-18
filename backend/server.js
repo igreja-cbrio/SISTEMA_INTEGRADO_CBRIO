@@ -23,6 +23,10 @@ app.use(sentryRequestHandler());
 
 // ── Security middleware ──
 app.use(helmet({ contentSecurityPolicy: false, crossOriginEmbedderPolicy: false }));
+// Dominios extras configuraveis via env (CSV) · ex: EXTRA_ALLOWED_ORIGINS="https://x.com,https://y.com"
+const extraOrigins = (process.env.EXTRA_ALLOWED_ORIGINS || '')
+  .split(',').map(s => s.trim()).filter(Boolean);
+
 app.use(cors({
   origin: function (origin, callback) {
     // Allow same-origin (no origin header) and known domains
@@ -30,10 +34,20 @@ app.use(cors({
       'http://localhost:5173',
       'http://localhost:8080',
       process.env.FRONTEND_URL,
+      ...extraOrigins,
     ].filter(Boolean);
-    if (!origin || allowed.includes(origin) || /\.vercel\.app$/.test(origin) || /\.lovable\.app$/.test(origin) || /\.lovableproject\.com$/.test(origin)) {
+    if (
+      !origin ||
+      allowed.includes(origin) ||
+      /\.vercel\.app$/.test(origin) ||
+      /\.lovable\.app$/.test(origin) ||
+      /\.lovableproject\.com$/.test(origin) ||
+      // Dominio proprio CBRio · cbrio.org + qualquer subdominio
+      /^https:\/\/(.+\.)?cbrio\.org$/.test(origin)
+    ) {
       callback(null, true);
     } else {
+      console.warn('[CORS] Origem bloqueada:', origin);
       callback(new Error('Origem não permitida pelo CORS'));
     }
   },
@@ -64,6 +78,7 @@ app.use('/api/strategic', require('./routes/strategic'));
 app.use('/api/meetings', require('./routes/meetings'));
 app.use('/api/agents', require('./routes/agents'));
 app.use('/api/rh', require('./routes/rh'));
+app.use('/api/pcs', require('./routes/pcs'));
 app.use('/api/financeiro', require('./routes/financeiro'));
 app.use('/api/logistica', require('./routes/logistica'));
 app.use('/api/ml', require('./routes/ml'));
@@ -106,9 +121,22 @@ app.use('/api/gestao', require('./routes/gestao'));
 app.use('/api/dados-brutos', require('./routes/dadosBrutos'));
 app.use('/api/nps', require('./routes/nps'));
 app.use('/api/public/nps', require('./routes/publicNps'));
+app.use('/api/planejamento', require('./routes/planejamento'));
 
 // ── Health check ──
-app.get('/api/health', (req, res) => res.json({ status: 'ok', timestamp: new Date().toISOString() }));
+// Inclui status do Supabase client pra diagnostico de "Nao autorizado" em prod
+app.get('/api/health', (req, res) => {
+  const { supabase } = require('./utils/supabase');
+  res.json({
+    status: 'ok',
+    timestamp: new Date().toISOString(),
+    supabase_client: !!supabase,
+    supabase_url_set: !!process.env.SUPABASE_URL,
+    supabase_service_role_set: !!process.env.SUPABASE_SERVICE_ROLE_KEY,
+    database_url_set: !!process.env.DATABASE_URL,
+    node_env: process.env.NODE_ENV || 'unknown',
+  });
+});
 
 // ── API 404 (evita fallback HTML para rotas inexistentes) ──
 app.use('/api', (req, res) => {

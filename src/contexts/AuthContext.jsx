@@ -75,19 +75,10 @@ export function AuthProvider({ children }) {
     });
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (_event, session) => {
-      if (_event === 'SIGNED_IN' && session?.user) {
-        const u = session.user;
-        const provider = u.app_metadata?.provider;
-        if (provider === 'azure') {
-          const identities = u.identities || [];
-          const hasEmailIdentity = identities.some(i => i.provider === 'email');
-          if (hasEmailIdentity) {
-            await supabase.auth.signOut();
-            window.location.href = '/login?error=use_email_login';
-            return;
-          }
-        }
-      }
+      // ERP interno · qualquer user autenticado pelo Supabase (email ou OAuth)
+      // entra direto · nao tem cadastro publico, entao nao tem risco de
+      // hijacking de email. Microsoft eh restrito ao tenant CBRio e Google
+      // tem email verificado.
       setUser(session?.user ?? null);
       if (session?.user) {
         fetchProfile(session.user.id);
@@ -114,7 +105,9 @@ export function AuthProvider({ children }) {
     if (!supabase) return { error: { message: 'Supabase não configurado' } };
     return supabase.auth.signInWithOAuth({
       provider: 'azure',
-      options: { redirectTo: window.location.origin },
+      // Supabase sempre inclui openid; estes escopos garantem que o Azure
+      // devolva dados suficientes para criar/associar o usuario por e-mail.
+      options: { redirectTo: window.location.origin, scopes: 'email profile' },
     });
   }
 
@@ -191,6 +184,7 @@ export function AuthProvider({ children }) {
     userAreas,
     userSetores,
     signInWithMicrosoft,
+    signInWithGoogle,
     signInWithEmail,
     signOut,
   };
@@ -211,6 +205,7 @@ export function useAuth() {
       canExpansao: false, canAgenda: false, canIA: false, canCuidados: false,
       userAreas: [], userSetores: [],
       signInWithMicrosoft: async () => ({}),
+      signInWithGoogle: async () => ({}),
       signInWithEmail: async () => ({}), signOut: async () => {},
     };
   }
