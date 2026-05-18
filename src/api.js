@@ -1463,3 +1463,31 @@ export const online = {
   serie: (id) => get('/online/series/' + id),
   sync: () => post('/online/sync', {}),
 };
+
+// ─── Planejamento Anual ────────────────────────────────────────────────
+export const planejamento = {
+  // Setores (Criativo, Ministerial, Gestão)
+  listSetores: () => get('/planejamento/setores'),
+  updateSetor: (id, data) => patch(`/planejamento/setores/${id}`, data),
+  listAreasSetor: () => get('/planejamento/areas-setor'),
+
+  // Ciclos (janela do ano N+1)
+  listCiclos: () => get('/planejamento/ciclos'),
+  getCiclo: (id) => get(`/planejamento/ciclos/${id}`),
+  createCiclo: (data) => post('/planejamento/ciclos', data),
+  updateCiclo: (id, data) => patch(`/planejamento/ciclos/${id}`, data),
+
+  // Propostas
+  listPropostas: (filters = {}) => {
+    const q = new URLSearchParams();
+    if (filters.ciclo_id) q.set('ciclo_id', filters.ciclo_id);
+    if (filters.status) q.set('status', filters.status);
+    if (filters.tipo) q.set('tipo', filters.tipo);
+    if (filters.setor_id) q.set('setor_id', filters.setor_id);
+    if (filters.mine) q.set('mine', '1');
+    const qs = q.toString();
+    return get('/planejamento/propostas' + (qs ? '?' + qs : ''));
+  },
+  getProposta: (id) => get(`/planejamento/propostas/${id}`),
+  createProposta: (data) => post('/planejamento/propostas', data),
+};

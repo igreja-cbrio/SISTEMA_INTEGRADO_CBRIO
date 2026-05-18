@@ -183,6 +183,8 @@ const RevisaoDetalhe = lazyWithRetry(() => import('./pages/RevisaoDetalhe'));
 const RH = lazyWithRetry(() => import('./pages/admin/rh/RH'));
 const Logistica = lazyWithRetry(() => import('./pages/admin/logistica/Logistica'));
 const Planejamento = lazyWithRetry(() => import('./pages/Planejamento'));
+const AnualCiclos = lazyWithRetry(() => import('./pages/planejamento/AnualCiclos'));
+const AnualCicloDetalhe = lazyWithRetry(() => import('./pages/planejamento/AnualCicloDetalhe'));
 const Eventos = lazyWithRetry(() => import('./pages/eventos/Eventos'));
 const Projetos = lazyWithRetry(() => import('./pages/Projetos'));
 const Processos = lazyWithRetry(() => import('./pages/Processos'));
@@ -355,6 +357,8 @@ function AppRoutes() {
         <Route path="/dashboard" element={<Suspense fallback={<Loading />}><Dashboard /></Suspense>} />
         <Route path="/perfil" element={<Suspense fallback={<Loading />}><Perfil /></Suspense>} />
         <Route path="/planejamento" element={<Suspense fallback={<Loading />}><Planejamento /></Suspense>} />
+        <Route path="/planejamento/anual" element={<Suspense fallback={<Loading />}><AnualCiclos /></Suspense>} />
+        <Route path="/planejamento/anual/:id" element={<Suspense fallback={<Loading />}><AnualCicloDetalhe /></Suspense>} />
         <Route path="/eventos" element={<ModuleGuard permKey="canAgenda"><Suspense fallback={<Loading />}><Eventos /></Suspense></ModuleGuard>} />
         <Route path="/eventos/:id" element={<ModuleGuard permKey="canAgenda"><Suspense fallback={<Loading />}><EventDetail /></Suspense></ModuleGuard>} />
         <Route path="/projetos" element={<ModuleGuard permKey="canProjetos"><Suspense fallback={<Loading />}><Projetos /></Suspense></ModuleGuard>} />
