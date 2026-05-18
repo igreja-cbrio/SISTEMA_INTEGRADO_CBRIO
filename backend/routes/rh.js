@@ -136,7 +136,7 @@ router.get('/funcionarios/:id', async (req, res) => {
 // POST /api/rh/funcionarios
 router.post('/funcionarios', async (req, res) => {
   try {
-    const { nome, cpf, email, telefone, cargo, area, tipo_contrato, data_admissao, salario, observacoes } = req.body;
+    const { nome, cpf, email, telefone, cargo, area, tipo_contrato, data_admissao, salario, remuneracao_bruta, grau_id, data_enquadramento, observacoes } = req.body;
     if (!nome || !cargo || !data_admissao) {
       return res.status(400).json({ error: 'Nome, cargo e data de admissão são obrigatórios' });
     }
@@ -146,7 +146,11 @@ router.post('/funcionarios', async (req, res) => {
       .insert({
         nome, cpf: cpf || null, email: email || null, telefone: telefone || null,
         cargo, area: area || null, tipo_contrato: tipo_contrato || 'clt',
-        data_admissao, salario: salario || null, observacoes: observacoes || null,
+        data_admissao, salario: salario || null,
+        remuneracao_bruta: remuneracao_bruta || null,
+        grau_id: grau_id || null,
+        data_enquadramento: data_enquadramento || (grau_id ? new Date().toISOString().slice(0, 10) : null),
+        observacoes: observacoes || null,
         created_by: req.user.userId,
       })
       .select()
@@ -176,15 +180,19 @@ router.post('/funcionarios', async (req, res) => {
 // PUT /api/rh/funcionarios/:id
 router.put('/funcionarios/:id', async (req, res) => {
   try {
-    const { nome, cpf, email, telefone, cargo, area, tipo_contrato, data_admissao, data_demissao, salario, status, observacoes } = req.body;
+    const { nome, cpf, email, telefone, cargo, area, tipo_contrato, data_admissao, data_demissao, salario, remuneracao_bruta, grau_id, data_enquadramento, status, observacoes } = req.body;
+    const updatePayload = {
+      nome, cpf, email, telefone, cargo, area, tipo_contrato,
+      data_admissao, data_demissao: data_demissao || null,
+      salario, status, observacoes,
+      updated_at: new Date().toISOString(),
+    };
+    if (remuneracao_bruta !== undefined) updatePayload.remuneracao_bruta = remuneracao_bruta;
+    if (grau_id !== undefined) updatePayload.grau_id = grau_id || null;
+    if (data_enquadramento !== undefined) updatePayload.data_enquadramento = data_enquadramento || null;
     const { data, error } = await supabase
       .from('rh_funcionarios')
-      .update({
-        nome, cpf, email, telefone, cargo, area, tipo_contrato,
-        data_admissao, data_demissao: data_demissao || null,
-        salario, status, observacoes,
-        updated_at: new Date().toISOString(),
-      })
+      .update(updatePayload)
       .eq('id', req.params.id)
       .select()
       .single();
@@ -548,6 +556,236 @@ router.get('/kpis', async (req, res) => {
   } catch (e) {
     console.error('[RH] KPIs:', e.message);
     res.status(500).json({ error: 'Erro ao carregar KPIs' });
+  }
+});
+
+// ── AVALIAÇÕES 360° (ciclo PCS) ────────────────────────────
+// Cada avaliação tem 6 fatores (PCS), pode receber 3 fontes: autoavaliação, líder, calibração.
+// Pontuação final usa a calibração se presente, senão líder, senão autoavaliação.
+
+router.get('/avaliacoes', async (req, res) => {
+  try {
+    const { funcionario_id, ciclo_ano, status } = req.query;
+    let q = supabase
+      .from('rh_avaliacoes')
+      .select('*, funcionario:rh_funcionarios(id, nome, cargo, area, grau_id), grau_sugerido:grau_sugerido_id(codigo, nivel), fatores:rh_avaliacao_fatores(*)')
+      .order('ciclo_ano', { ascending: false })
+      .order('updated_at', { ascending: false });
+    if (funcionario_id) q = q.eq('funcionario_id', funcionario_id);
+    if (ciclo_ano) q = q.eq('ciclo_ano', Number(ciclo_ano));
+    if (status) q = q.eq('status', status);
+    const { data, error } = await q;
+    if (error) return res.status(400).json({ error: error.message });
+    res.json(data || []);
+  } catch (e) {
+    console.error('[RH] avaliacoes list:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+router.post('/avaliacoes', async (req, res) => {
+  try {
+    const { funcionario_id, ciclo_ano, ciclo_periodo = 'anual', metas, lider_id } = req.body;
+    if (!funcionario_id || !ciclo_ano) return res.status(400).json({ error: 'funcionario_id e ciclo_ano obrigatórios' });
+    const payload = {
+      funcionario_id,
+      ciclo_ano: Number(ciclo_ano),
+      ciclo_periodo,
+      metas: metas || null,
+      metas_definidas_em: metas ? new Date().toISOString() : null,
+      lider_id: lider_id || null,
+      status: metas ? 'em_andamento' : 'metas_pendentes',
+    };
+    const { data, error } = await supabase
+      .from('rh_avaliacoes')
+      .upsert(payload, { onConflict: 'funcionario_id,ciclo_ano,ciclo_periodo' })
+      .select()
+      .single();
+    if (error) return res.status(400).json({ error: error.message });
+    res.status(201).json(data);
+  } catch (e) {
+    console.error('[RH] avaliacoes create:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+router.patch('/avaliacoes/:id', async (req, res) => {
+  try {
+    const allowed = ['metas', 'autoavaliacao_obs', 'lider_obs', 'calibracao_obs', 'lider_id', 'status'];
+    const payload = {};
+    for (const k of allowed) if (req.body[k] !== undefined) payload[k] = req.body[k];
+    const { data, error } = await supabase
+      .from('rh_avaliacoes')
+      .update(payload)
+      .eq('id', req.params.id)
+      .select()
+      .single();
+    if (error) return res.status(400).json({ error: error.message });
+    res.json(data);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+router.delete('/avaliacoes/:id', async (req, res) => {
+  try {
+    const { error } = await supabase.from('rh_avaliacoes').delete().eq('id', req.params.id);
+    if (error) return res.status(400).json({ error: error.message });
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Submeter notas dos 6 fatores numa fonte (autoavaliacao | lider | calibracao)
+// fatores: [{ criterio_id, nivel, observacao? }]
+router.post('/avaliacoes/:id/fatores', async (req, res) => {
+  try {
+    const { fonte, fatores } = req.body;
+    if (!['autoavaliacao', 'lider', 'calibracao'].includes(fonte))
+      return res.status(400).json({ error: 'fonte inválida' });
+    if (!Array.isArray(fatores) || fatores.length === 0)
+      return res.status(400).json({ error: 'fatores obrigatórios' });
+
+    const { data: criterios } = await supabase
+      .from('pcs_criterios')
+      .select('id, peso, pontos_min, pontos_max');
+    const criterioMap = {};
+    for (const c of criterios || []) criterioMap[c.id] = c;
+
+    // Limpa fatores antigos da mesma fonte
+    await supabase
+      .from('rh_avaliacao_fatores')
+      .delete()
+      .eq('avaliacao_id', req.params.id)
+      .eq('fonte', fonte);
+
+    // Insere novos
+    const rows = fatores.map(f => {
+      const crit = criterioMap[f.criterio_id];
+      // Escala 100-500: pontos_max para nível 5, pontos_min para nível 1
+      // Linear: pontos = pontos_min + (nivel-1)/4 * (pontos_max - pontos_min)
+      let pontos = null;
+      if (crit) {
+        pontos = Number((crit.pontos_min + ((f.nivel - 1) / 4) * (crit.pontos_max - crit.pontos_min)).toFixed(2));
+      }
+      return {
+        avaliacao_id: req.params.id,
+        criterio_id: f.criterio_id,
+        fonte,
+        nivel: f.nivel,
+        pontos,
+        observacao: f.observacao || null,
+      };
+    });
+
+    const { error: errI } = await supabase.from('rh_avaliacao_fatores').insert(rows);
+    if (errI) return res.status(400).json({ error: errI.message });
+
+    // Calcula pontuação total da fonte (soma de pontos = 100-500)
+    const totalPontos = rows.reduce((acc, r) => acc + Number(r.pontos || 0), 0);
+    // Converte para escala 0-5 (multiplica nivel médio ponderado / 5 * 5 = nivel ponderado mesmo)
+    let pontuacao5 = 0;
+    let pesoSum = 0;
+    for (const r of rows) {
+      const c = criterioMap[r.criterio_id];
+      if (c) {
+        pontuacao5 += r.nivel * Number(c.peso);
+        pesoSum += Number(c.peso);
+      }
+    }
+    pontuacao5 = pesoSum > 0 ? Number((pontuacao5 / pesoSum).toFixed(2)) : 0;
+
+    // Atualiza pontuação da fonte e calcula final
+    const updateFields = {};
+    if (fonte === 'autoavaliacao') {
+      updateFields.autoavaliacao_pts = pontuacao5;
+      updateFields.autoavaliacao_em = new Date().toISOString();
+    } else if (fonte === 'lider') {
+      updateFields.lider_pts = pontuacao5;
+      updateFields.lider_avaliado_em = new Date().toISOString();
+    } else {
+      updateFields.calibracao_pts = pontuacao5;
+      updateFields.calibracao_em = new Date().toISOString();
+    }
+
+    // Busca avaliação para decidir status e final
+    const { data: aval } = await supabase
+      .from('rh_avaliacoes')
+      .select('*')
+      .eq('id', req.params.id)
+      .single();
+    if (aval) {
+      const finalPts = updateFields.calibracao_pts ?? aval.calibracao_pts ?? updateFields.lider_pts ?? aval.lider_pts ?? updateFields.autoavaliacao_pts ?? aval.autoavaliacao_pts;
+      if (finalPts != null) updateFields.pontuacao_final = finalPts;
+      updateFields.pontuacao_pcs = Math.round(totalPontos);
+
+      // Mapeia para grau sugerido
+      const { data: grau } = await supabase
+        .from('pcs_graus')
+        .select('id')
+        .lte('pontos_min', Math.round(totalPontos))
+        .gte('pontos_max', Math.round(totalPontos))
+        .limit(1)
+        .maybeSingle();
+      if (grau) updateFields.grau_sugerido_id = grau.id;
+
+      // Status transitions
+      if (fonte === 'autoavaliacao') updateFields.status = 'autoavaliada';
+      else if (fonte === 'lider')    updateFields.status = 'avaliada_lider';
+      else if (fonte === 'calibracao') updateFields.status = 'calibrada';
+    }
+
+    const { data: updated, error: errU } = await supabase
+      .from('rh_avaliacoes')
+      .update(updateFields)
+      .eq('id', req.params.id)
+      .select()
+      .single();
+    if (errU) return res.status(400).json({ error: errU.message });
+
+    res.json({ avaliacao: updated, pontos_total: Math.round(totalPontos), pontuacao_5: pontuacao5 });
+  } catch (e) {
+    console.error('[RH] avaliacoes/fatores:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Conclui o ciclo (calibração aprovada → status concluida)
+router.post('/avaliacoes/:id/concluir', async (req, res) => {
+  const { data, error } = await supabase
+    .from('rh_avaliacoes')
+    .update({ status: 'concluida' })
+    .eq('id', req.params.id)
+    .select()
+    .single();
+  if (error) return res.status(400).json({ error: error.message });
+  res.json(data);
+});
+
+// Inicia ciclo para todos os funcionários ativos (ano atual)
+router.post('/avaliacoes/iniciar-ciclo', async (req, res) => {
+  try {
+    const { ciclo_ano, ciclo_periodo = 'anual' } = req.body;
+    if (!ciclo_ano) return res.status(400).json({ error: 'ciclo_ano obrigatório' });
+    const { data: funcs } = await supabase
+      .from('rh_funcionarios')
+      .select('id')
+      .eq('status', 'ativo');
+    const rows = (funcs || []).map(f => ({
+      funcionario_id: f.id,
+      ciclo_ano: Number(ciclo_ano),
+      ciclo_periodo,
+      status: 'metas_pendentes',
+    }));
+    if (!rows.length) return res.json({ criadas: 0 });
+    const { error } = await supabase
+      .from('rh_avaliacoes')
+      .upsert(rows, { onConflict: 'funcionario_id,ciclo_ano,ciclo_periodo', ignoreDuplicates: true });
+    if (error) return res.status(400).json({ error: error.message });
+    res.json({ criadas: rows.length });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
   }
 });
 

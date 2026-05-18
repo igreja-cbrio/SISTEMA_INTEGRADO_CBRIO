@@ -549,6 +549,9 @@ export const rh = {
     create: (data) => post('/rh/avaliacoes', data),
     update: (id, data) => patch(`/rh/avaliacoes/${id}`, data),
     remove: (id) => del(`/rh/avaliacoes/${id}`),
+    submitFatores: (id, data) => post(`/rh/avaliacoes/${id}/fatores`, data),
+    concluir: (id) => post(`/rh/avaliacoes/${id}/concluir`),
+    iniciarCiclo: (data) => post('/rh/avaliacoes/iniciar-ciclo', data),
   },
   admissoes: {
     list: (params) => get('/rh/admissoes' + (params ? '?' + new URLSearchParams(params) : '')),
@@ -558,6 +561,47 @@ export const rh = {
     remove: (id) => del(`/rh/admissoes/${id}`),
     concluir: (id) => post(`/rh/admissoes/${id}/concluir`),
   },
+};
+
+export const pcs = {
+  // Graus
+  graus: {
+    list: () => get('/pcs/graus'),
+    update: (id, data) => put(`/pcs/graus/${id}`, data),
+    reajusteColetivo: (data) => post('/pcs/graus/reajuste-coletivo', data),
+  },
+  reajustes: {
+    list: () => get('/pcs/reajustes-coletivos'),
+  },
+  // Critérios de avaliação
+  criterios: {
+    list: () => get('/pcs/criterios'),
+    update: (id, data) => put(`/pcs/criterios/${id}`, data),
+    updateNivel: (id, data) => put(`/pcs/niveis-criterio/${id}`, data),
+  },
+  // Benefícios
+  beneficios: {
+    list: () => get('/pcs/beneficios'),
+    update: (id, data) => put(`/pcs/beneficios/${id}`, data),
+    setElegibilidade: (beneficioId, grauId, status) =>
+      put(`/pcs/beneficios/${beneficioId}/grau/${grauId}`, { status }),
+    porFuncionario: (id) => get(`/pcs/funcionarios/${id}/beneficios`),
+  },
+  // Aderência
+  aderencia: {
+    list: () => get('/pcs/aderencia'),
+    resumo: () => get('/pcs/aderencia/resumo'),
+    planoAcao: () => get('/pcs/aderencia/plano-acao'),
+    aplicarEnquadramento: (data) => post('/pcs/aderencia/aplicar-enquadramento', data || {}),
+  },
+  // Progressões
+  progressoes: {
+    list: (params) => get('/pcs/progressoes' + (params ? '?' + new URLSearchParams(params) : '')),
+    create: (data) => post('/pcs/progressoes', data),
+  },
+  // Elegibilidade
+  elegibilidade: () => get('/pcs/elegibilidade'),
+  sugerirGrau: (pontos) => get(`/pcs/sugerir-grau/${pontos}`),
 };
 
 export const notificacoes = {
