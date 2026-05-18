@@ -613,11 +613,10 @@ function FormPessoa({ cultoId, onSaved, onCancel }: { cultoId: string; onSaved: 
   const [saving, setSaving] = useState(false);
 
   const submit = async () => {
-    // Marcos: "no momento de conversao, nome + telefone bastam · CPF/nascimento
-    // ficam pra censo posterior"
+    // Marcos: "CPF e telefone com 11 digitos exatos · evita passar sem querer"
     if (form.nome.trim().length < 2) return toast.error('Nome obrigatório');
     const telLimpo = form.telefone.replace(/\D/g, '');
-    if (telLimpo.length < 8) return toast.error('Telefone obrigatório (mín 8 dígitos)');
+    if (telLimpo.length !== 11) return toast.error('Telefone deve ter 11 dígitos (DDD + 9 + número)');
     const cpfLimpo = form.cpf.replace(/\D/g, '');
     if (cpfLimpo && cpfLimpo.length !== 11) return toast.error('CPF deve ter 11 dígitos (ou deixe vazio)');
     setSaving(true);
@@ -663,11 +662,11 @@ function FormPessoa({ cultoId, onSaved, onCancel }: { cultoId: string; onSaved: 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
         <div>
           <label className="text-[10px] font-semibold uppercase text-muted-foreground">Telefone *</label>
-          <Input value={form.telefone} onChange={e => setForm(f => ({ ...f, telefone: e.target.value }))} placeholder="(21) 99999-0000" className="h-8 text-xs" />
+          <Input value={form.telefone} onChange={e => setForm(f => ({ ...f, telefone: maskTelefone(e.target.value) }))} maxLength={15} placeholder="(21) 99999-0000" className="h-8 text-xs" />
         </div>
         <div>
           <label className="text-[10px] font-semibold uppercase text-muted-foreground">CPF <span className="text-muted-foreground/60 normal-case font-normal">(censo depois)</span></label>
-          <Input value={form.cpf} onChange={e => setForm(f => ({ ...f, cpf: maskCpf(e.target.value) }))} maxLength={14} placeholder="opcional" className="h-8 text-xs" />
+          <Input value={form.cpf} onChange={e => setForm(f => ({ ...f, cpf: maskCpf(e.target.value) }))} maxLength={14} placeholder="opcional · 11 dígitos" className="h-8 text-xs" />
         </div>
         <div>
           <label className="text-[10px] font-semibold uppercase text-muted-foreground">Nascimento <span className="text-muted-foreground/60 normal-case font-normal">(censo depois)</span></label>
@@ -701,6 +700,15 @@ function maskCpf(v: string): string {
   if (d.length <= 6) return `${d.slice(0, 3)}.${d.slice(3)}`;
   if (d.length <= 9) return `${d.slice(0, 3)}.${d.slice(3, 6)}.${d.slice(6)}`;
   return `${d.slice(0, 3)}.${d.slice(3, 6)}.${d.slice(6, 9)}-${d.slice(9)}`;
+}
+
+// Telefone BR · 11 digitos (DDD + 9 + numero) → (21) 99999-0000
+function maskTelefone(v: string): string {
+  const d = String(v || '').replace(/\D/g, '').slice(0, 11);
+  if (d.length === 0) return '';
+  if (d.length <= 2) return `(${d}`;
+  if (d.length <= 7) return `(${d.slice(0, 2)}) ${d.slice(2)}`;
+  return `(${d.slice(0, 2)}) ${d.slice(2, 7)}-${d.slice(7)}`;
 }
 
 function formatDataCurta(iso: string): string {
