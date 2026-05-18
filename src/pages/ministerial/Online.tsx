@@ -438,8 +438,7 @@ export default function Online() {
               <h2 className="font-semibold mb-1">Sem dados do YouTube ainda</h2>
               <p className="text-sm text-muted-foreground">
                 O cron sincroniza automaticamente as <strong>6h da manha</strong> todo dia.
-                Para popular agora, configure <code className="px-1 py-0.5 rounded bg-muted text-xs">YOUTUBE_CHANNEL_ID</code> no Vercel
-                e clique em "Sincronizar agora".
+                Para popular agora, clique em <strong>"Sincronizar agora"</strong>.
               </p>
             </div>
           </CardContent>

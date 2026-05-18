@@ -506,8 +506,11 @@ preenchidas pela **Alda Lorena** (responsavel da Integracao) em
 
 ### Variaveis de ambiente
 
-- `YOUTUBE_API_KEY` (ja existe, usada pelo coletor de DS/DDUS)
-- `YOUTUBE_CHANNEL_ID` (novo) — formato `UCxxxxxxxxxx` do canal CBRio
+- `YOUTUBE_API_KEY` (ja existe, usada pelo coletor de DS/DDUS) — **obrigatoria**
+- `YOUTUBE_CHANNEL_ID` (opcional) — formato `UCxxxxxxxxxx`. Default
+  hardcoded em `backend/services/youtubeCollector.js`
+  (`DEFAULT_CHANNEL_ID = 'UCfjMVzaYlCS_VE3JuEJj2vQ'`, canal oficial CBRio).
+  So setar a env se um dia o canal mudar.
 
 ### O que **NAO fazer**
 
