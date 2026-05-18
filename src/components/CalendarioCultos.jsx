@@ -816,6 +816,23 @@ function calcularIdade(dataNasc) {
   return idade >= 0 && idade <= 120 ? idade : null;
 }
 
+// Mascaras BR · 11 digitos exatos pra CPF e telefone (DDD + 9 + numero)
+function maskCpfBr(v) {
+  const d = String(v || '').replace(/\D/g, '').slice(0, 11);
+  if (d.length <= 3) return d;
+  if (d.length <= 6) return `${d.slice(0, 3)}.${d.slice(3)}`;
+  if (d.length <= 9) return `${d.slice(0, 3)}.${d.slice(3, 6)}.${d.slice(6)}`;
+  return `${d.slice(0, 3)}.${d.slice(3, 6)}.${d.slice(6, 9)}-${d.slice(9)}`;
+}
+
+function maskTelefoneBr(v) {
+  const d = String(v || '').replace(/\D/g, '').slice(0, 11);
+  if (d.length === 0) return '';
+  if (d.length <= 2) return `(${d}`;
+  if (d.length <= 7) return `(${d.slice(0, 2)}) ${d.slice(2)}`;
+  return `(${d.slice(0, 2)}) ${d.slice(2, 7)}-${d.slice(7)}`;
+}
+
 function DecisaoPessoaForm({ cultoId, pessoa, hasOnline, onSaved, onCancel }) {
   const ehEdicao = !!pessoa;
   const [form, setForm] = useState({
@@ -882,15 +899,14 @@ function DecisaoPessoaForm({ cultoId, pessoa, hasOnline, onSaved, onCancel }) {
   const idadeCalc = calcularIdade(form.data_nascimento);
 
   const submit = async () => {
-    // Marcos: "no momento da conversao e dificil pedir CPF/nascimento ·
-    // Nome + telefone bastam · CPF/nascimento sao opcionais (censo posterior)"
+    // Marcos: "CPF e telefone com 11 digitos exatos · evita passar sem querer"
     if (!form.nome.trim() || form.nome.trim().length < 2) {
       toast.error('Nome obrigatório (mínimo 2 caracteres)');
       return;
     }
     const telDigits = (form.telefone || '').replace(/\D/g, '');
-    if (telDigits.length < 8) {
-      toast.error('Telefone obrigatório (mínimo 8 dígitos)');
+    if (telDigits.length !== 11) {
+      toast.error('Telefone deve ter 11 dígitos (DDD + 9 + número)');
       return;
     }
     const cpfDigits = (form.cpf || '').replace(/\D/g, '');
@@ -1028,19 +1044,19 @@ function DecisaoPessoaForm({ cultoId, pessoa, hasOnline, onSaved, onCancel }) {
         <div>
           <label style={{ fontSize: 10, fontWeight: 600, color: '#8B5CF6', display: 'block', marginBottom: 2 }}>Telefone *</label>
           <input
-            type="text" value={form.telefone}
-            onChange={e => set('telefone', e.target.value)}
+            type="text" value={form.telefone} maxLength={15}
+            onChange={e => set('telefone', maskTelefoneBr(e.target.value))}
             style={{ ...inp, padding: '6px 10px', fontSize: 11 }}
             placeholder="(21) 99999-0000"
           />
         </div>
         <div>
           <label style={{ fontSize: 10, fontWeight: 600, color: C.t3, display: 'block', marginBottom: 2 }}>
-            CPF <span style={{ fontWeight: 400, fontStyle: 'italic' }}>(opcional · censo depois)</span>
+            CPF <span style={{ fontWeight: 400, fontStyle: 'italic' }}>(opcional · 11 dígitos)</span>
           </label>
           <input
             type="text" value={form.cpf} maxLength={14}
-            onChange={e => set('cpf', e.target.value)}
+            onChange={e => set('cpf', maskCpfBr(e.target.value))}
             style={{ ...inp, padding: '6px 10px', fontSize: 11 }}
             placeholder="000.000.000-00"
           />

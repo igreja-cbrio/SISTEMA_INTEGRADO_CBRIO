@@ -210,8 +210,8 @@ router.post('/cultos/:id/decisoes-pessoas', authorizeIntegracao, async (req, res
     return res.status(400).json({ error: 'Nome obrigatorio (min 2 chars)' });
   }
   const telLimpo = telefone ? String(telefone).replace(/\D/g, '') : '';
-  if (telLimpo.length < 8) {
-    return res.status(400).json({ error: 'Telefone obrigatorio (min 8 digitos · ex: 999991234)' });
+  if (telLimpo.length !== 11) {
+    return res.status(400).json({ error: 'Telefone deve ter 11 digitos (DDD + 9 + numero)' });
   }
   const cpfLimpo = cpf ? String(cpf).replace(/\D/g, '') : null;
   if (cpfLimpo && cpfLimpo.length !== 11) {
@@ -225,7 +225,7 @@ router.post('/cultos/:id/decisoes-pessoas', authorizeIntegracao, async (req, res
       culto_id: req.params.id,
       membro_id: membro_id || null,
       nome: String(nome).trim(),
-      telefone: telefone || null,
+      telefone: telLimpo, // salva so digitos · UI aplica mascara ao exibir
       email: email ? String(email).trim().toLowerCase() : null,
       idade: idade ? Number(idade) : null,
       data_nascimento: data_nascimento || null,
