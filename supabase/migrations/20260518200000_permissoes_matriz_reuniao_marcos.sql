@@ -60,9 +60,12 @@ ALTER TABLE public.permissoes_modulo
 -- ---------------------------------------------------------------------
 -- 2. Tabela nova · matriz padrao por cargo (cargo_modulo_permissao)
 -- ---------------------------------------------------------------------
+-- cargos.id e modulos.id sao INTEGER em producao (apesar da migration
+-- 20260410014723 declarar UUID, a tabela foi alterada depois). Por isso
+-- cargo_id/modulo_id aqui sao INTEGER pra bater com o tipo real.
 CREATE TABLE IF NOT EXISTS public.cargo_modulo_permissao (
-  cargo_id UUID NOT NULL REFERENCES public.cargos(id) ON DELETE CASCADE,
-  modulo_id UUID NOT NULL REFERENCES public.modulos(id) ON DELETE CASCADE,
+  cargo_id INTEGER NOT NULL REFERENCES public.cargos(id) ON DELETE CASCADE,
+  modulo_id INTEGER NOT NULL REFERENCES public.modulos(id) ON DELETE CASCADE,
   nivel INTEGER NOT NULL DEFAULT 0 CHECK (nivel BETWEEN 0 AND 5),
   pode_exportar BOOLEAN NOT NULL DEFAULT false,
   pode_aprovar BOOLEAN NOT NULL DEFAULT false,
