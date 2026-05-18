@@ -157,10 +157,24 @@ export default function AnualCiclos() {
                   {c.closed_at && ` · Fechado em ${new Date(c.closed_at).toLocaleDateString('pt-BR')}`}
                 </div>
                 {isAdmin && (
-                  <button onClick={(e) => { e.preventDefault(); handleToggle(c); }}
-                    style={{ marginTop: 12, padding: '6px 12px', background: 'transparent', color: c.status === 'aberto' ? C.amber : C.green, border: `1px solid ${c.status === 'aberto' ? C.amber : C.green}`, borderRadius: 6, fontSize: 11, fontWeight: 600, cursor: 'pointer' }}>
-                    {c.status === 'aberto' ? 'Fechar ciclo' : 'Reabrir ciclo'}
-                  </button>
+                  <div style={{ display: 'flex', gap: 6, marginTop: 12, flexWrap: 'wrap' }}>
+                    <button onClick={(e) => { e.preventDefault(); handleToggle(c); }}
+                      style={{ padding: '6px 12px', background: 'transparent', color: c.status === 'aberto' ? C.amber : C.green, border: `1px solid ${c.status === 'aberto' ? C.amber : C.green}`, borderRadius: 6, fontSize: 11, fontWeight: 600, cursor: 'pointer' }}>
+                      {c.status === 'aberto' ? 'Fechar ciclo' : 'Reabrir ciclo'}
+                    </button>
+                    {c.status === 'fechado' && (
+                      <button onClick={async (e) => {
+                        e.preventDefault();
+                        if (!window.confirm(`Gerar calendário litúrgico do ano ${c.year}? Eventos fixos (ceia 1º domingo, batismo 4º domingo, etc.) serão criados automaticamente.`)) return;
+                        try {
+                          const r = await planApi.gerarLiturgia(c.year);
+                          alert(`${r.created} evento(s) criado(s), ${r.skipped} já existente(s).`);
+                        } catch (err) { alert('Erro: ' + err.message); }
+                      }} style={{ padding: '6px 12px', background: 'transparent', color: C.blue, border: `1px solid ${C.blue}`, borderRadius: 6, fontSize: 11, fontWeight: 600, cursor: 'pointer' }}>
+                        Gerar calendário litúrgico
+                      </button>
+                    )}
+                  </div>
                 )}
               </Link>
             );

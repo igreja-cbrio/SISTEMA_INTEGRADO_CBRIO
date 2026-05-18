@@ -344,6 +344,8 @@ export default function Eventos() {
   // Filtros
   const [filtroStatus, setFiltroStatus] = useState(urlStatus);
   const [filtroCategoria, setFiltroCategoria] = useState('');
+  // Filtro de ano (PR-C). Default: ano atual. Filtra events.date no range YYYY-01-01 a YYYY-12-31 via backend.
+  const [filtroAno, setFiltroAno] = useState(new Date().getFullYear());
 
   // PMO KPIs + workload
   const [pmoKpis, setPmoKpis] = useState(null);
@@ -410,10 +412,11 @@ export default function Eventos() {
       const params = {};
       if (filtroStatus) params.status = filtroStatus;
       if (filtroCategoria) params.category_id = filtroCategoria;
+      if (filtroAno) params.year = filtroAno;
       setEventList(await events.list(params));
     } catch (e) { setError(e.message); }
     finally { setLoading(false); }
-  }, [filtroStatus, filtroCategoria]);
+  }, [filtroStatus, filtroCategoria, filtroAno]);
 
   const loadDetail = useCallback(async (id) => {
     try {
@@ -456,7 +459,7 @@ export default function Eventos() {
     usersApi.list().then(d => setUsersList(Array.isArray(d) ? d : [])).catch(() => setUsersList([]));
     if (urlEventId) loadDetail(urlEventId);
   }, []);
-  useEffect(() => { loadEvents(); }, [filtroStatus, filtroCategoria]);
+  useEffect(() => { loadEvents(); }, [filtroStatus, filtroCategoria, filtroAno]);
 
   // ── Event CRUD ──
   async function saveEvent(data) {
@@ -2581,6 +2584,14 @@ export default function Eventos() {
 
         {/* Filtros */}
         <div style={styles.filterRow}>
+          <ShadSelect value={String(filtroAno)} onValueChange={v => setFiltroAno(parseInt(v, 10))}>
+            <SelectTrigger className="w-[120px]"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              {[new Date().getFullYear() - 1, new Date().getFullYear(), new Date().getFullYear() + 1, new Date().getFullYear() + 2].map(y => (
+                <SelectItem key={y} value={String(y)}>{y}</SelectItem>
+              ))}
+            </SelectContent>
+          </ShadSelect>
           <ShadSelect value={filtroStatus || '__all__'} onValueChange={v => setFiltroStatus(v === '__all__' ? '' : v)}>
             <SelectTrigger className="w-[180px]">
               <SelectValue placeholder="Todos os status" />

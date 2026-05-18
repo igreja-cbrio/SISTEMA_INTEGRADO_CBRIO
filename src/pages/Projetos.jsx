@@ -258,6 +258,9 @@ export default function Projetos() {
   const [fSearch, setFSearch] = useState('');
   const [fLeader, setFLeader] = useState('');
   const [hideDone, setHideDone] = useState(true);
+  // Filtro de ano (PR-C). Default = ano atual. Backend já tem suporte
+  // via /projects?year=YYYY.
+  const [fYear, setFYear] = useState(new Date().getFullYear());
 
   // Kanban (3 níveis: fase strip → 4 colunas tarefas → filtros)
   const [kanbanCategory, setKanbanCategory] = useState('all');
@@ -324,10 +327,11 @@ export default function Projetos() {
       if (fStatus) params.status = fStatus;
       if (fCategory) params.category_id = fCategory;
       if (fPriority) params.priority = fPriority;
+      if (fYear) params.year = fYear;
       setList(await projects.list(params));
     } catch (e) { setError(e.message); }
     finally { setLoading(false); }
-  }, [fStatus, fCategory, fPriority]);
+  }, [fStatus, fCategory, fPriority, fYear]);
 
   const loadDetail = useCallback(async (id) => {
     try {
@@ -379,7 +383,7 @@ export default function Projetos() {
   useEffect(() => {
     if (urlId) loadDetail(urlId);
   }, [urlId, loadDetail]);
-  useEffect(() => { loadList(); }, [fStatus, fCategory, fPriority]);
+  useEffect(() => { loadList(); }, [fStatus, fCategory, fPriority, fYear]);
 
   // ── Counts ──
   const counts = { total: list.length, 'no-prazo': 0, 'em-risco': 0, 'atrasado': 0, 'concluido': 0 };
@@ -780,6 +784,11 @@ export default function Projetos() {
 
         {/* Filters */}
         <div style={styles.filterRow}>
+          <select style={styles.select} value={fYear} onChange={e => setFYear(parseInt(e.target.value, 10))}>
+            {[new Date().getFullYear() - 1, new Date().getFullYear(), new Date().getFullYear() + 1, new Date().getFullYear() + 2].map(y => (
+              <option key={y} value={y}>{y}</option>
+            ))}
+          </select>
           <select style={styles.select} value={fStatus} onChange={e => setFStatus(e.target.value)}>
             <option value="">Todos os status</option>
             {Object.entries(STATUS_MAP).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}

@@ -1498,4 +1498,8 @@ export const planejamento = {
   // Decisões
   decidirDiretor: (id, data) => patch(`/planejamento/propostas/${id}/decidir-diretor`, data),
   decidirDiretoria: (id, data) => patch(`/planejamento/propostas/${id}/decidir-diretoria`, data),
+
+  // Litúrgicos (PR-C)
+  listLiturgiaTemplates: () => get('/planejamento/liturgia/templates'),
+  gerarLiturgia: (year) => post(`/planejamento/liturgia/gerar/${year}`, {}),
 };
