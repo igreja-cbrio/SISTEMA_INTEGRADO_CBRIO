@@ -550,28 +550,40 @@ function CultoPessoas({ cultoId, totalEsperado, onChanged }: { cultoId: string; 
               </TableRow>
             </TableHeader>
             <TableBody>
-              {pessoas.map((p: any) => (
-                <TableRow key={p.id}>
-                  <TableCell className="font-medium py-1.5 text-xs">{p.nome}</TableCell>
-                  <TableCell className="font-mono py-1.5 text-[11px]">{maskCpf(p.cpf || '')}</TableCell>
-                  <TableCell className="hidden md:table-cell py-1.5 text-[11px] text-muted-foreground">
-                    {p.telefone}{p.email ? ` · ${p.email}` : ''}
-                  </TableCell>
-                  <TableCell className="text-center py-1.5">
-                    <Badge variant="outline" className="text-[9px] capitalize">{p.tipo_decisao}</Badge>
-                    {p.membro_id && (
-                      <span className="ml-1 text-[8px] font-bold px-1 py-0.5 rounded bg-emerald-100 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-300">
-                        membro
-                      </span>
-                    )}
-                  </TableCell>
-                  <TableCell className="text-right py-1.5">
-                    <button onClick={() => remover(p.id)} className="text-muted-foreground hover:text-red-500" title="Remover">
-                      <Trash2 className="h-3 w-3" />
-                    </button>
-                  </TableCell>
-                </TableRow>
-              ))}
+              {pessoas.map((p: any) => {
+                const incompleto = !p.cpf || !p.data_nascimento;
+                return (
+                  <TableRow key={p.id}>
+                    <TableCell className="font-medium py-1.5 text-xs">
+                      {p.nome}
+                      {incompleto && (
+                        <span className="ml-1.5 text-[8px] font-bold px-1 py-0.5 rounded bg-amber-100 dark:bg-amber-950 text-amber-700 dark:text-amber-300" title="Faltam dados pra cruzar na jornada">
+                          incompleto
+                        </span>
+                      )}
+                    </TableCell>
+                    <TableCell className="font-mono py-1.5 text-[11px]">
+                      {p.cpf ? maskCpf(p.cpf) : <span className="text-muted-foreground italic">—</span>}
+                    </TableCell>
+                    <TableCell className="hidden md:table-cell py-1.5 text-[11px] text-muted-foreground">
+                      {p.telefone}{p.email ? ` · ${p.email}` : ''}
+                    </TableCell>
+                    <TableCell className="text-center py-1.5">
+                      <Badge variant="outline" className="text-[9px] capitalize">{p.tipo_decisao}</Badge>
+                      {p.membro_id && (
+                        <span className="ml-1 text-[8px] font-bold px-1 py-0.5 rounded bg-emerald-100 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-300">
+                          membro
+                        </span>
+                      )}
+                    </TableCell>
+                    <TableCell className="text-right py-1.5">
+                      <button onClick={() => remover(p.id)} className="text-muted-foreground hover:text-red-500" title="Remover">
+                        <Trash2 className="h-3 w-3" />
+                      </button>
+                    </TableCell>
+                  </TableRow>
+                );
+              })}
             </TableBody>
           </Table>
         </div>
@@ -601,23 +613,28 @@ function FormPessoa({ cultoId, onSaved, onCancel }: { cultoId: string; onSaved: 
   const [saving, setSaving] = useState(false);
 
   const submit = async () => {
+    // Marcos: "no momento de conversao, nome + telefone bastam · CPF/nascimento
+    // ficam pra censo posterior"
     if (form.nome.trim().length < 2) return toast.error('Nome obrigatório');
+    const telLimpo = form.telefone.replace(/\D/g, '');
+    if (telLimpo.length < 8) return toast.error('Telefone obrigatório (mín 8 dígitos)');
     const cpfLimpo = form.cpf.replace(/\D/g, '');
-    if (cpfLimpo.length !== 11) return toast.error('CPF deve ter 11 dígitos');
-    if (!form.data_nascimento) return toast.error('Data de nascimento obrigatória');
+    if (cpfLimpo && cpfLimpo.length !== 11) return toast.error('CPF deve ter 11 dígitos (ou deixe vazio)');
     setSaving(true);
     try {
       await kpisApi.cultos.decisoesPessoas.create(cultoId, {
         nome: form.nome.trim(),
-        telefone: form.telefone || null,
+        telefone: form.telefone,
         email: form.email || null,
         idade: form.idade ? Number(form.idade) : null,
-        cpf: cpfLimpo,
-        data_nascimento: form.data_nascimento,
+        cpf: cpfLimpo || null,
+        data_nascimento: form.data_nascimento || null,
         tipo_decisao: form.tipo_decisao,
         observacoes: form.observacoes || null,
       });
-      toast.success('Pessoa registrada');
+      toast.success(cpfLimpo && form.data_nascimento
+        ? 'Pessoa registrada'
+        : 'Registrada · cadastro incompleto (pode completar depois)');
       onSaved();
     } catch (e: any) {
       toast.error(e?.message || 'Erro');
@@ -645,16 +662,16 @@ function FormPessoa({ cultoId, onSaved, onCancel }: { cultoId: string; onSaved: 
       </div>
       <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
         <div>
-          <label className="text-[10px] font-semibold uppercase text-muted-foreground">CPF *</label>
-          <Input value={form.cpf} onChange={e => setForm(f => ({ ...f, cpf: maskCpf(e.target.value) }))} maxLength={14} placeholder="000.000.000-00" className="h-8 text-xs" />
-        </div>
-        <div>
-          <label className="text-[10px] font-semibold uppercase text-muted-foreground">Nascimento *</label>
-          <Input type="date" value={form.data_nascimento} onChange={e => setForm(f => ({ ...f, data_nascimento: e.target.value }))} className="h-8 text-xs" />
-        </div>
-        <div>
-          <label className="text-[10px] font-semibold uppercase text-muted-foreground">Telefone</label>
+          <label className="text-[10px] font-semibold uppercase text-muted-foreground">Telefone *</label>
           <Input value={form.telefone} onChange={e => setForm(f => ({ ...f, telefone: e.target.value }))} placeholder="(21) 99999-0000" className="h-8 text-xs" />
+        </div>
+        <div>
+          <label className="text-[10px] font-semibold uppercase text-muted-foreground">CPF <span className="text-muted-foreground/60 normal-case font-normal">(censo depois)</span></label>
+          <Input value={form.cpf} onChange={e => setForm(f => ({ ...f, cpf: maskCpf(e.target.value) }))} maxLength={14} placeholder="opcional" className="h-8 text-xs" />
+        </div>
+        <div>
+          <label className="text-[10px] font-semibold uppercase text-muted-foreground">Nascimento <span className="text-muted-foreground/60 normal-case font-normal">(censo depois)</span></label>
+          <Input type="date" value={form.data_nascimento} onChange={e => setForm(f => ({ ...f, data_nascimento: e.target.value }))} placeholder="opcional" className="h-8 text-xs" />
         </div>
       </div>
       <div className="grid grid-cols-1 md:grid-cols-2 gap-2">

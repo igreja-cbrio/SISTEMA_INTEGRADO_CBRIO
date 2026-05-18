@@ -793,6 +793,34 @@ Aba "Decisões" tem o gráfico mensal no topo (Recharts) e, embaixo, um
 A aba "Pessoas decididas" separada foi removida em 2026-05-14 · todo
 o fluxo passa pela aba Decisões. Arquivo `DecisoesPessoas.tsx` deletado.
 
+### Cadastro flexível · CPF/nascimento opcionais
+
+Marcos: "no momento da conversão é difícil pedir CPF/nascimento · nome
+e telefone são os dados mais fáceis · censo posterior preenche o resto".
+
+**Obrigatórios em `cultos_decisoes_pessoas`:**
+- `nome` (min 2 chars)
+- `telefone` (min 8 dígitos · backend valida)
+
+**Opcionais (sem asterisco):**
+- `cpf` · se preenchido, deve ter 11 dígitos
+- `data_nascimento`
+- `email`, `idade`, `observacoes`
+
+**Marcação visual:** pessoas com `cpf IS NULL` OU `data_nascimento IS NULL`
+ganham badge `incompleto` (amber) em todas as listas. Borda esquerda do
+card vira amber em vez de roxo.
+
+**Endpoint pra censo posterior:** `GET /api/kpis/decisoes-pessoas/incompletos`
+retorna `{ total, items[] }` com `falta_cpf` e `falta_nasc` booleanos.
+Permite Marcos/Alda exportar a lista e correr atrás dos dados depois.
+
+**Trigger BEFORE INSERT** (`tg_cultos_dec_pessoas_resolve_membro`) continua
+funcionando: se CPF/nascimento estiverem presentes, tenta match em
+`mem_membros`. Se ausentes, cai pra criar membro novo `status='visitante'`
+com os dados disponíveis (nome + telefone). NSM não quebra · `nsm_eventos`
+aceita CPF NULL.
+
 ### Cascata Seguir a Jesus → KPIs por área
 
 Os dados preenchidos no modal de culto agora alimentam **7 KPIs** do

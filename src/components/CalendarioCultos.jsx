@@ -669,7 +669,7 @@ function DecisoesPessoasSection({ cultoId, totalEsperado, hasOnline }) {
             <UserPlus size={13} /> Dados das pessoas que decidiram Jesus
           </div>
           <div style={{ fontSize: 10, color: C.t3, marginTop: 2 }}>
-            Captura nome + CPF + data nasc · vincula automaticamente à jornada (membro / trilha / NSM)
+            Nome + telefone bastam · CPF e nascimento podem ser preenchidos depois (censo)
           </div>
         </div>
         <div style={{ fontSize: 11, fontWeight: 600, color: completo ? '#10B981' : faltando > 0 ? '#F59E0B' : C.t3, whiteSpace: 'nowrap' }}>
@@ -715,9 +715,18 @@ function DecisoesPessoasSection({ cultoId, totalEsperado, hasOnline }) {
           ) : (
             <div key={p.id} style={{
               display: 'flex', alignItems: 'center', gap: 8, padding: '6px 10px',
-              background: C.card, border: `1px solid ${C.border}`, borderLeft: '3px solid #8B5CF6', borderRadius: 4, fontSize: 11,
+              background: C.card, border: `1px solid ${C.border}`,
+              borderLeft: `3px solid ${(!p.cpf || !p.data_nascimento) ? '#F59E0B' : '#8B5CF6'}`,
+              borderRadius: 4, fontSize: 11,
             }}>
-              <span style={{ fontWeight: 600, color: C.text, flex: 1, minWidth: 120 }}>{p.nome}</span>
+              <span style={{ fontWeight: 600, color: C.text, flex: 1, minWidth: 120 }}>
+                {p.nome}
+                {(!p.cpf || !p.data_nascimento) && (
+                  <span style={{ marginLeft: 6, fontSize: 8, padding: '1px 5px', borderRadius: 99, background: '#F59E0B22', color: '#B45309', fontWeight: 700, letterSpacing: 0.3 }} title="Faltam dados pra cruzar na jornada">
+                    INCOMPLETO
+                  </span>
+                )}
+              </span>
               {p.telefone && <span style={{ color: C.t3 }}>{p.telefone}</span>}
               {p.email && <span style={{ color: C.t3, fontSize: 10 }}>{p.email}</span>}
               <span style={{ fontSize: 9, padding: '1px 6px', borderRadius: 99, background: 'var(--cbrio-input-bg)', color: C.t2, fontWeight: 600 }}>
@@ -843,28 +852,31 @@ function DecisaoPessoaForm({ cultoId, pessoa, hasOnline, onSaved, onCancel }) {
   const idadeCalc = calcularIdade(form.data_nascimento);
 
   const submit = async () => {
+    // Marcos: "no momento da conversao e dificil pedir CPF/nascimento ·
+    // Nome + telefone bastam · CPF/nascimento sao opcionais (censo posterior)"
     if (!form.nome.trim() || form.nome.trim().length < 2) {
       toast.error('Nome obrigatório (mínimo 2 caracteres)');
       return;
     }
-    const cpfDigits = (form.cpf || '').replace(/\D/g, '');
-    if (cpfDigits.length !== 11) {
-      toast.error('CPF obrigatório (11 dígitos) — necessário pra cruzamento com a jornada');
+    const telDigits = (form.telefone || '').replace(/\D/g, '');
+    if (telDigits.length < 8) {
+      toast.error('Telefone obrigatório (mínimo 8 dígitos)');
       return;
     }
-    if (!form.data_nascimento) {
-      toast.error('Data de nascimento obrigatória — necessária pra cruzamento estável');
+    const cpfDigits = (form.cpf || '').replace(/\D/g, '');
+    if (cpfDigits && cpfDigits.length !== 11) {
+      toast.error('CPF deve ter 11 dígitos (ou deixe vazio)');
       return;
     }
     setSaving(true);
     try {
       const payload = {
         nome: form.nome.trim(),
-        telefone: form.telefone || null,
+        telefone: form.telefone,
         email: form.email || null,
-        data_nascimento: form.data_nascimento,
+        data_nascimento: form.data_nascimento || null,
         idade: idadeCalc,
-        cpf: cpfDigits,
+        cpf: cpfDigits || null,
         membro_id: form.membro_id || null,
         tipo_decisao: form.tipo_decisao,
         observacoes: form.observacoes || null,
@@ -984,7 +996,18 @@ function DecisaoPessoaForm({ cultoId, pessoa, hasOnline, onSaved, onCancel }) {
 
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
         <div>
-          <label style={{ fontSize: 10, fontWeight: 600, color: '#8B5CF6', display: 'block', marginBottom: 2 }}>CPF * <span style={{ fontWeight: 400, color: C.t3 }}>(11 dígitos)</span></label>
+          <label style={{ fontSize: 10, fontWeight: 600, color: '#8B5CF6', display: 'block', marginBottom: 2 }}>Telefone *</label>
+          <input
+            type="text" value={form.telefone}
+            onChange={e => set('telefone', e.target.value)}
+            style={{ ...inp, padding: '6px 10px', fontSize: 11 }}
+            placeholder="(21) 99999-0000"
+          />
+        </div>
+        <div>
+          <label style={{ fontSize: 10, fontWeight: 600, color: C.t3, display: 'block', marginBottom: 2 }}>
+            CPF <span style={{ fontWeight: 400, fontStyle: 'italic' }}>(opcional · censo depois)</span>
+          </label>
           <input
             type="text" value={form.cpf} maxLength={14}
             onChange={e => set('cpf', e.target.value)}
@@ -992,27 +1015,19 @@ function DecisaoPessoaForm({ cultoId, pessoa, hasOnline, onSaved, onCancel }) {
             placeholder="000.000.000-00"
           />
         </div>
+      </div>
+
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
         <div>
-          <label style={{ fontSize: 10, fontWeight: 600, color: '#8B5CF6', display: 'block', marginBottom: 2 }}>
-            Data nascimento * {idadeCalc !== null && <span style={{ fontWeight: 400, color: C.t3 }}>({idadeCalc} anos)</span>}
+          <label style={{ fontSize: 10, fontWeight: 600, color: C.t3, display: 'block', marginBottom: 2 }}>
+            Data nascimento <span style={{ fontWeight: 400, fontStyle: 'italic' }}>(opcional)</span>
+            {idadeCalc !== null && <span style={{ fontWeight: 400, color: C.t3 }}> · {idadeCalc} anos</span>}
           </label>
           <input
             type="date" value={form.data_nascimento}
             onChange={e => set('data_nascimento', e.target.value)}
             style={{ ...inp, padding: '6px 10px', fontSize: 11 }}
             max={new Date().toISOString().slice(0, 10)}
-          />
-        </div>
-      </div>
-
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
-        <div>
-          <label style={{ fontSize: 10, fontWeight: 600, color: C.t3, display: 'block', marginBottom: 2 }}>Telefone</label>
-          <input
-            type="tel" value={form.telefone}
-            onChange={e => set('telefone', e.target.value)}
-            style={{ ...inp, padding: '6px 10px', fontSize: 11 }}
-            placeholder="(21) 99999-0000"
           />
         </div>
         <div>
@@ -1028,7 +1043,7 @@ function DecisaoPessoaForm({ cultoId, pessoa, hasOnline, onSaved, onCancel }) {
 
       <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end', alignItems: 'center' }}>
         <span style={{ flex: 1, fontSize: 9, color: C.t3, fontStyle: 'italic' }}>
-          * Necessários pra cruzar com a jornada (mem_membros + NSM)
+          Nome + telefone obrigatórios · CPF e nascimento podem ser preenchidos depois (censo)
         </span>
         <button onClick={onCancel} disabled={saving} style={btnGhost}>Cancelar</button>
         <button onClick={submit} disabled={saving} style={{ ...btnPrimary, background: '#8B5CF6' }}>

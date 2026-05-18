@@ -1110,6 +1110,11 @@ export const kpis = {
       update: (id, data) => put(`/kpis/decisoes-pessoas/${id}`, data),
       remove: (id) => del(`/kpis/decisoes-pessoas/${id}`),
       buscarMembro: (q) => get(`/kpis/decisoes-pessoas/buscar-membro?q=${encodeURIComponent(q)}`),
+      // Pessoas com cadastro incompleto (sem CPF ou nascimento) · pra censo posterior
+      incompletos: (params = {}) => {
+        const qs = new URLSearchParams(params).toString();
+        return get('/kpis/decisoes-pessoas/incompletos' + (qs ? '?' + qs : ''));
+      },
     },
   },
   // Batismos
