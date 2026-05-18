@@ -412,19 +412,24 @@ function ModalCulto({ culto, onClose, onSaved }) {
   const hasOnline = culto.service_type_has_online ?? false;
 
   // Valores iniciais (preservados pra detectar dirty)
+  // online_pico/ds/ddus/youtube_video_id ficam fora do dirty tracking
+  // porque sao read-only (gerenciados pela integracao com YouTube API).
   const valoresIniciaisRef = useRef({
     presencial_adulto:    culto.presencial_adulto ?? 0,
     presencial_kids:      culto.presencial_kids ?? 0,
     decisoes_presenciais: culto.decisoes_presenciais ?? 0,
     decisoes_online:      culto.decisoes_online ?? 0,
     decisoes_kids:        culto.decisoes_kids ?? 0,
+  });
+
+  const [form, setForm] = useState({
+    ...valoresIniciaisRef.current,
+    // Estes ficam disponiveis pra exibicao read-only, mas nao entram no dirty
     online_pico:          culto.online_pico ?? '',
     online_ds:            culto.online_ds ?? '',
     online_ddus:          culto.online_ddus ?? '',
     youtube_video_id:     culto.youtube_video_id ?? '',
   });
-
-  const [form, setForm] = useState({ ...valoresIniciaisRef.current });
   const [saving, setSaving] = useState(false);
 
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
@@ -460,16 +465,15 @@ function ModalCulto({ culto, onClose, onSaved }) {
     try {
       // Zera campos que esse tipo de culto nao usa · evita lixo no banco
       // se alguem editou e depois o tipo mudou de config
+      // online_pico, online_ds, online_ddus, youtube_video_id NÃO entram no
+      // payload · sao gerenciados pela integracao com a API do YouTube
+      // (cron do Matheus). Mexer aqui sobrescreve o que vem automatizado.
       const payload = {
         presencial_adulto:    Number(form.presencial_adulto) || 0,
         presencial_kids:      hasKids ? (Number(form.presencial_kids) || 0) : 0,
         decisoes_presenciais: Number(form.decisoes_presenciais) || 0,
         decisoes_online:      hasOnline ? (Number(form.decisoes_online) || 0) : 0,
         decisoes_kids:        hasKids ? (Number(form.decisoes_kids) || 0) : 0,
-        online_pico:          hasOnline ? (form.online_pico === '' ? null : Number(form.online_pico)) : null,
-        online_ds:            hasOnline ? (form.online_ds === '' ? null : Number(form.online_ds)) : null,
-        online_ddus:          hasOnline ? (form.online_ddus === '' ? null : Number(form.online_ddus)) : null,
-        youtube_video_id:     hasOnline ? (form.youtube_video_id.trim() || null) : null,
       };
       await cultosApi.update(culto.id, payload);
       toast.success('Culto atualizado');
@@ -560,43 +564,36 @@ function ModalCulto({ culto, onClose, onSaved }) {
             hasKids={hasKids}
           />
 
-          {hasOnline && (
+          {hasOnline && (form.online_pico !== '' || form.online_ds !== '' || form.online_ddus !== '') && (
             <>
-              <SecaoTitulo icone={Tv} cor="#F59E0B" titulo="Transmissão online" />
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 10 }}>
-                <Field label="Pico online (simultâneos)">
-                  <input type="number" min="0" value={form.online_pico} onChange={e => set('online_pico', e.target.value)} style={inp} placeholder="Opcional" />
-                </Field>
-                <Field label="YouTube Video ID">
-                  <input type="text" value={form.youtube_video_id} onChange={e => set('youtube_video_id', e.target.value)} style={inp} placeholder="Opcional" />
-                </Field>
+              <SecaoTitulo icone={Tv} cor="#F59E0B" titulo="Transmissão online · automatizado" />
+              <div style={{
+                background: 'var(--cbrio-input-bg)', borderRadius: 8, padding: 12,
+                fontSize: 11, color: C.t2, display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: 10,
+              }}>
+                {form.online_pico !== '' && form.online_pico !== null && (
+                  <div>
+                    <div style={{ fontSize: 9, fontWeight: 700, color: C.t3, textTransform: 'uppercase', letterSpacing: 0.5 }}>Pico online</div>
+                    <div style={{ fontSize: 16, fontWeight: 700, color: C.text }}>{Number(form.online_pico).toLocaleString('pt-BR')}</div>
+                  </div>
+                )}
+                {form.online_ds !== '' && form.online_ds !== null && (
+                  <div>
+                    <div style={{ fontSize: 9, fontWeight: 700, color: C.t3, textTransform: 'uppercase', letterSpacing: 0.5 }}>DS · views D+1</div>
+                    <div style={{ fontSize: 16, fontWeight: 700, color: C.text }}>{Number(form.online_ds).toLocaleString('pt-BR')}</div>
+                  </div>
+                )}
+                {form.online_ddus !== '' && form.online_ddus !== null && (
+                  <div>
+                    <div style={{ fontSize: 9, fontWeight: 700, color: C.t3, textTransform: 'uppercase', letterSpacing: 0.5 }}>DDUS · views D+7</div>
+                    <div style={{ fontSize: 16, fontWeight: 700, color: C.text }}>{Number(form.online_ddus).toLocaleString('pt-BR')}</div>
+                  </div>
+                )}
               </div>
-
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
-                <Field label={`DS · views D+1${culto.ds_coletado_em ? ' (auto)' : ''}`}>
-                  <input
-                    type="number" min="0"
-                    value={form.online_ds}
-                    onChange={e => set('online_ds', e.target.value)}
-                    style={inp}
-                    placeholder="Manual ou auto via YouTube"
-                  />
-                </Field>
-                <Field label={`DDUS · views on-demand D+7${culto.ddus_coletado_em ? ' (auto)' : ''}`}>
-                  <input
-                    type="number" min="0"
-                    value={form.online_ddus}
-                    onChange={e => set('online_ddus', e.target.value)}
-                    style={inp}
-                    placeholder="Manual ou auto via YouTube"
-                  />
-                </Field>
-              </div>
-
-              <p style={{ fontSize: 10, color: C.t3, marginTop: 10, fontStyle: 'italic' }}>
-                DS (Daily Stream · views D+1 às 10h) e DDUS (Daily Demand Users · views on-demand
-                até D+7) são coletadas automaticamente quando o YouTube Video ID está preenchido.
-                Você pode editar manualmente se quiser sobrescrever.
+              <p style={{ fontSize: 10, color: C.t3, marginTop: 8, fontStyle: 'italic' }}>
+                Pico online, DS (views D+1) e DDUS (views on-demand D+7) são preenchidos
+                automaticamente pela integração com a API do YouTube. As conversões online
+                acima continuam sendo manuais (vêm do contato com a live).
               </p>
             </>
           )}
