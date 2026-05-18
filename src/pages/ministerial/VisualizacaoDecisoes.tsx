@@ -608,32 +608,50 @@ function CultoPessoas({ cultoId, totalEsperado, onChanged }: { cultoId: string; 
 function FormPessoa({ cultoId, onSaved, onCancel }: { cultoId: string; onSaved: () => void; onCancel: () => void }) {
   const [form, setForm] = useState({
     nome: '', telefone: '', email: '', idade: '', cpf: '',
-    data_nascimento: '', tipo_decisao: 'presencial' as 'presencial' | 'online', observacoes: '',
+    data_nascimento: '', tipo_decisao: 'presencial' as 'presencial' | 'online' | 'kids', observacoes: '',
+    responsavel_nome: '', responsavel_telefone: '', responsavel_cpf: '',
   });
   const [saving, setSaving] = useState(false);
+  const ehKids = form.tipo_decisao === 'kids';
 
   const submit = async () => {
-    // Marcos: "CPF e telefone com 11 digitos exatos · evita passar sem querer"
-    if (form.nome.trim().length < 2) return toast.error('Nome obrigatório');
-    const telLimpo = form.telefone.replace(/\D/g, '');
-    if (telLimpo.length !== 11) return toast.error('Telefone deve ter 11 dígitos (DDD + 9 + número)');
-    const cpfLimpo = form.cpf.replace(/\D/g, '');
-    if (cpfLimpo && cpfLimpo.length !== 11) return toast.error('CPF deve ter 11 dígitos (ou deixe vazio)');
+    if (form.nome.trim().length < 2) return toast.error(ehKids ? 'Nome da criança obrigatório' : 'Nome obrigatório');
+
+    if (ehKids) {
+      if (form.responsavel_nome.trim().length < 2) return toast.error('Nome do responsável obrigatório');
+      const respTelLimpo = form.responsavel_telefone.replace(/\D/g, '');
+      if (respTelLimpo.length !== 11) return toast.error('Telefone do responsável deve ter 11 dígitos');
+      const respCpfLimpo = form.responsavel_cpf.replace(/\D/g, '');
+      if (respCpfLimpo && respCpfLimpo.length !== 11) return toast.error('CPF do responsável deve ter 11 dígitos (ou deixe vazio)');
+    } else {
+      const telLimpo = form.telefone.replace(/\D/g, '');
+      if (telLimpo.length !== 11) return toast.error('Telefone deve ter 11 dígitos (DDD + 9 + número)');
+      const cpfLimpo = form.cpf.replace(/\D/g, '');
+      if (cpfLimpo && cpfLimpo.length !== 11) return toast.error('CPF deve ter 11 dígitos (ou deixe vazio)');
+    }
+
     setSaving(true);
     try {
+      const cpfLimpo = form.cpf.replace(/\D/g, '');
       await kpisApi.cultos.decisoesPessoas.create(cultoId, {
         nome: form.nome.trim(),
-        telefone: form.telefone,
-        email: form.email || null,
+        telefone: ehKids ? null : form.telefone,
+        email: ehKids ? null : (form.email || null),
         idade: form.idade ? Number(form.idade) : null,
         cpf: cpfLimpo || null,
         data_nascimento: form.data_nascimento || null,
         tipo_decisao: form.tipo_decisao,
         observacoes: form.observacoes || null,
+        responsavel_nome:     ehKids ? form.responsavel_nome.trim() : null,
+        responsavel_telefone: ehKids ? form.responsavel_telefone : null,
+        responsavel_cpf:      ehKids ? (form.responsavel_cpf.replace(/\D/g, '') || null) : null,
       });
-      toast.success(cpfLimpo && form.data_nascimento
-        ? 'Pessoa registrada'
-        : 'Registrada · cadastro incompleto (pode completar depois)');
+      toast.success(
+        ehKids ? 'Criança registrada · não entra no NSM' :
+        (cpfLimpo && form.data_nascimento)
+          ? 'Pessoa registrada'
+          : 'Registrada · cadastro incompleto (pode completar depois)'
+      );
       onSaved();
     } catch (e: any) {
       toast.error(e?.message || 'Erro');
@@ -641,51 +659,80 @@ function FormPessoa({ cultoId, onSaved, onCancel }: { cultoId: string; onSaved: 
   };
 
   return (
-    <div className="rounded-lg border bg-card p-3 space-y-2" style={{ borderColor: C.purple, borderWidth: 2 }}>
+    <div className="rounded-lg border bg-card p-3 space-y-2" style={{ borderColor: ehKids ? '#EC4899' : C.purple, borderWidth: 2 }}>
       <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
         <div className="md:col-span-2">
-          <label className="text-[10px] font-semibold uppercase text-muted-foreground">Nome *</label>
-          <Input value={form.nome} onChange={e => setForm(f => ({ ...f, nome: e.target.value }))} autoFocus className="h-8 text-xs" />
+          <label className="text-[10px] font-semibold uppercase text-muted-foreground">
+            {ehKids ? 'Nome da criança *' : 'Nome *'}
+          </label>
+          <Input value={form.nome} onChange={e => setForm(f => ({ ...f, nome: e.target.value }))} autoFocus className="h-8 text-xs" placeholder={ehKids ? 'Primeiro nome da criança' : ''} />
         </div>
         <div>
           <label className="text-[10px] font-semibold uppercase text-muted-foreground">Tipo</label>
           <select
             value={form.tipo_decisao}
-            onChange={e => setForm(f => ({ ...f, tipo_decisao: e.target.value as 'presencial' | 'online' }))}
+            onChange={e => setForm(f => ({ ...f, tipo_decisao: e.target.value as 'presencial' | 'online' | 'kids' }))}
             className="w-full h-8 px-2 rounded-md border border-input bg-background text-xs"
           >
             <option value="presencial">Presencial</option>
             <option value="online">Online</option>
+            <option value="kids">Kids</option>
           </select>
         </div>
       </div>
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
-        <div>
-          <label className="text-[10px] font-semibold uppercase text-muted-foreground">Telefone *</label>
-          <Input value={form.telefone} onChange={e => setForm(f => ({ ...f, telefone: maskTelefone(e.target.value) }))} maxLength={15} placeholder="(21) 99999-0000" className="h-8 text-xs" />
+
+      {ehKids ? (
+        <div className="rounded-md border p-2 space-y-2" style={{ background: '#EC489915', borderColor: '#EC489940' }}>
+          <div className="text-[10px] font-bold uppercase tracking-wide" style={{ color: '#EC4899' }}>
+            Dados do responsável (LGPD)
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+            <div>
+              <label className="text-[10px] font-semibold uppercase text-muted-foreground">Nome do responsável *</label>
+              <Input value={form.responsavel_nome} onChange={e => setForm(f => ({ ...f, responsavel_nome: e.target.value }))} placeholder="Pai · mãe · responsável legal" className="h-8 text-xs" />
+            </div>
+            <div>
+              <label className="text-[10px] font-semibold uppercase" style={{ color: '#EC4899' }}>Telefone *</label>
+              <Input value={form.responsavel_telefone} onChange={e => setForm(f => ({ ...f, responsavel_telefone: maskTelefone(e.target.value) }))} maxLength={15} placeholder="(21) 99999-0000" className="h-8 text-xs" />
+            </div>
+          </div>
+          <div>
+            <label className="text-[10px] font-semibold uppercase text-muted-foreground">CPF do responsável <span className="font-normal italic normal-case">(opcional)</span></label>
+            <Input value={form.responsavel_cpf} onChange={e => setForm(f => ({ ...f, responsavel_cpf: maskCpf(e.target.value) }))} maxLength={14} placeholder="000.000.000-00" className="h-8 text-xs" />
+          </div>
         </div>
-        <div>
-          <label className="text-[10px] font-semibold uppercase text-muted-foreground">CPF <span className="text-muted-foreground/60 normal-case font-normal">(censo depois)</span></label>
-          <Input value={form.cpf} onChange={e => setForm(f => ({ ...f, cpf: maskCpf(e.target.value) }))} maxLength={14} placeholder="opcional · 11 dígitos" className="h-8 text-xs" />
-        </div>
-        <div>
-          <label className="text-[10px] font-semibold uppercase text-muted-foreground">Nascimento <span className="text-muted-foreground/60 normal-case font-normal">(censo depois)</span></label>
-          <Input type="date" value={form.data_nascimento} onChange={e => setForm(f => ({ ...f, data_nascimento: e.target.value }))} placeholder="opcional" className="h-8 text-xs" />
-        </div>
-      </div>
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-        <div>
-          <label className="text-[10px] font-semibold uppercase text-muted-foreground">Email</label>
-          <Input type="email" value={form.email} onChange={e => setForm(f => ({ ...f, email: e.target.value }))} placeholder="opcional" className="h-8 text-xs" />
-        </div>
-        <div>
-          <label className="text-[10px] font-semibold uppercase text-muted-foreground">Observações</label>
-          <Input value={form.observacoes} onChange={e => setForm(f => ({ ...f, observacoes: e.target.value }))} placeholder="opcional" className="h-8 text-xs" />
-        </div>
-      </div>
+      ) : (
+        <>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
+            <div>
+              <label className="text-[10px] font-semibold uppercase text-muted-foreground">Telefone *</label>
+              <Input value={form.telefone} onChange={e => setForm(f => ({ ...f, telefone: maskTelefone(e.target.value) }))} maxLength={15} placeholder="(21) 99999-0000" className="h-8 text-xs" />
+            </div>
+            <div>
+              <label className="text-[10px] font-semibold uppercase text-muted-foreground">CPF <span className="text-muted-foreground/60 normal-case font-normal">(censo depois)</span></label>
+              <Input value={form.cpf} onChange={e => setForm(f => ({ ...f, cpf: maskCpf(e.target.value) }))} maxLength={14} placeholder="opcional · 11 dígitos" className="h-8 text-xs" />
+            </div>
+            <div>
+              <label className="text-[10px] font-semibold uppercase text-muted-foreground">Nascimento <span className="text-muted-foreground/60 normal-case font-normal">(censo depois)</span></label>
+              <Input type="date" value={form.data_nascimento} onChange={e => setForm(f => ({ ...f, data_nascimento: e.target.value }))} placeholder="opcional" className="h-8 text-xs" />
+            </div>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+            <div>
+              <label className="text-[10px] font-semibold uppercase text-muted-foreground">Email</label>
+              <Input type="email" value={form.email} onChange={e => setForm(f => ({ ...f, email: e.target.value }))} placeholder="opcional" className="h-8 text-xs" />
+            </div>
+            <div>
+              <label className="text-[10px] font-semibold uppercase text-muted-foreground">Observações</label>
+              <Input value={form.observacoes} onChange={e => setForm(f => ({ ...f, observacoes: e.target.value }))} placeholder="opcional" className="h-8 text-xs" />
+            </div>
+          </div>
+        </>
+      )}
+
       <div className="flex justify-end gap-2">
         <Button onClick={onCancel} size="sm" variant="outline" disabled={saving}>Cancelar</Button>
-        <Button onClick={submit} size="sm" disabled={saving} className="gap-1.5 text-white" style={{ background: C.purple }}>
+        <Button onClick={submit} size="sm" disabled={saving} className="gap-1.5 text-white" style={{ background: ehKids ? '#EC4899' : C.purple }}>
           {saving ? <Loader2 className="h-3 w-3 animate-spin" /> : <UserPlus className="h-3 w-3" />}
           Registrar
         </Button>

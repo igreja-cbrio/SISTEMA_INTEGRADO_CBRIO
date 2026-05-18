@@ -830,10 +830,10 @@ e telefone são os dados mais fáceis · censo posterior preenche o resto".
 
 **Obrigatórios em `cultos_decisoes_pessoas`:**
 - `nome` (min 2 chars)
-- `telefone` (min 8 dígitos · backend valida)
+- `telefone` · 11 dígitos exatos (DDD + 9 + número · padrão BR)
 
 **Opcionais (sem asterisco):**
-- `cpf` · se preenchido, deve ter 11 dígitos
+- `cpf` · se preenchido, 11 dígitos exatos
 - `data_nascimento`
 - `email`, `idade`, `observacoes`
 
@@ -850,6 +850,50 @@ funcionando: se CPF/nascimento estiverem presentes, tenta match em
 `mem_membros`. Se ausentes, cai pra criar membro novo `status='visitante'`
 com os dados disponíveis (nome + telefone). NSM não quebra · `nsm_eventos`
 aceita CPF NULL.
+
+### Kids · decisão de criança com dados do responsável (LGPD)
+
+Marcos (2026-05-18): "incluir Kids nas decisões · salvar pelos dados do
+responsável, só nome da criança. Crianças dificilmente seguirão a jornada
+· não devem afetar o NSM. LGPD com menores".
+
+**Schema** (migration `20260518150000_decisoes_kids_e_cutoff.sql`):
+- `cultos_decisoes_pessoas.tipo_decisao` ganha `'kids'` (era só
+  `presencial|online`)
+- 3 colunas novas em `cultos_decisoes_pessoas`:
+  - `responsavel_nome` text
+  - `responsavel_telefone` text · 11 dígitos (obrigatório quando tipo=kids)
+  - `responsavel_cpf` text · 11 dígitos (opcional)
+- `cultos.decisoes_kids int DEFAULT 0` · campo agregado separado de
+  `decisoes_presenciais` e `decisoes_online`
+
+**Triggers · Kids fica de fora do pipeline padrão:**
+- `tg_cultos_dec_pessoas_resolve_membro` retorna direto sem criar
+  `mem_membros` automaticamente (LGPD · cadastro de menor exige
+  intervenção pastoral consciente)
+- `tg_cultos_dec_pessoas_jornada` retorna direto sem criar
+  `mem_trilha_valores` etapa='conversao' nem `nsm_eventos`
+- Resultado: criança não entra no NSM, nem no numerador nem no denominador
+
+**Modal de culto** ganha o campo "Kids" na seção Decisões/conversões
+quando `service_type.has_kids = true`. Layout adaptativo:
+- só presencial → 1 coluna
+- presencial + online → 2 colunas
+- presencial + kids → 2 colunas
+- presencial + online + kids → 3 colunas
+
+**`DecisaoPessoaForm`** alterna estrutura conforme `tipo_decisao`:
+- `presencial|online`: nome + telefone + CPF + nascimento + email
+- `kids`: nome da criança + bloco rosa "Dados do responsável (LGPD)"
+  com nome/telefone/CPF do responsável · esconde CPF/nascimento/email
+  da criança
+
+### Cutoff temporal · "de hoje pra cá"
+
+Marcos: "usa a data de hoje como base, não vamos conseguir pegar os
+dados passados". A view `vw_nsm_sem_dados` filtra `c.data >= DATE '2026-05-18'`,
+escondendo gaps históricos impossíveis de preencher. Cultos anteriores
+ao cutoff não aparecem mais como pendentes na aba Pessoas.
 
 ### Cascata Seguir a Jesus → KPIs por área
 

@@ -417,6 +417,7 @@ function ModalCulto({ culto, onClose, onSaved }) {
     presencial_kids:      culto.presencial_kids ?? 0,
     decisoes_presenciais: culto.decisoes_presenciais ?? 0,
     decisoes_online:      culto.decisoes_online ?? 0,
+    decisoes_kids:        culto.decisoes_kids ?? 0,
     online_pico:          culto.online_pico ?? '',
     online_ds:            culto.online_ds ?? '',
     online_ddus:          culto.online_ddus ?? '',
@@ -464,6 +465,7 @@ function ModalCulto({ culto, onClose, onSaved }) {
         presencial_kids:      hasKids ? (Number(form.presencial_kids) || 0) : 0,
         decisoes_presenciais: Number(form.decisoes_presenciais) || 0,
         decisoes_online:      hasOnline ? (Number(form.decisoes_online) || 0) : 0,
+        decisoes_kids:        hasKids ? (Number(form.decisoes_kids) || 0) : 0,
         online_pico:          hasOnline ? (form.online_pico === '' ? null : Number(form.online_pico)) : null,
         online_ds:            hasOnline ? (form.online_ds === '' ? null : Number(form.online_ds)) : null,
         online_ddus:          hasOnline ? (form.online_ddus === '' ? null : Number(form.online_ddus)) : null,
@@ -522,22 +524,40 @@ function ModalCulto({ culto, onClose, onSaved }) {
           </div>
 
           <SecaoTitulo icone={Sparkles} cor="#8B5CF6" titulo="Decisões / conversões" />
-          <div style={{ display: 'grid', gridTemplateColumns: hasOnline ? '1fr 1fr' : '1fr', gap: 10, marginBottom: 12 }}>
-            <Field label={hasOnline ? 'Presenciais' : 'Decisões'}>
-              <input type="number" min="0" value={form.decisoes_presenciais} onChange={e => set('decisoes_presenciais', e.target.value)} style={inp} />
-            </Field>
-            {hasOnline && (
-              <Field label="Online">
-                <input type="number" min="0" value={form.decisoes_online} onChange={e => set('decisoes_online', e.target.value)} style={inp} />
-              </Field>
-            )}
-          </div>
+          {(() => {
+            // Layout adaptativo conforme o tipo de culto:
+            //   presencial só:           1 coluna (Presenciais)
+            //   presencial + online:     2 colunas
+            //   presencial + kids:       2 colunas (Presenciais + Kids)
+            //   presencial + online+kids: 3 colunas
+            const cols = (hasOnline ? 1 : 0) + (hasKids ? 1 : 0) + 1;
+            const grid = ['1fr', '1fr 1fr', '1fr 1fr 1fr'][cols - 1];
+            return (
+              <div style={{ display: 'grid', gridTemplateColumns: grid, gap: 10, marginBottom: 12 }}>
+                <Field label={(hasOnline || hasKids) ? 'Presenciais' : 'Decisões'}>
+                  <input type="number" min="0" value={form.decisoes_presenciais} onChange={e => set('decisoes_presenciais', e.target.value)} style={inp} />
+                </Field>
+                {hasOnline && (
+                  <Field label="Online">
+                    <input type="number" min="0" value={form.decisoes_online} onChange={e => set('decisoes_online', e.target.value)} style={inp} />
+                  </Field>
+                )}
+                {hasKids && (
+                  <Field label="Kids">
+                    <input type="number" min="0" value={form.decisoes_kids} onChange={e => set('decisoes_kids', e.target.value)} style={inp} />
+                  </Field>
+                )}
+              </div>
+            );
+          })()}
 
           {/* Dados individuais das pessoas que decidiram */}
           <DecisoesPessoasSection
             cultoId={culto.id}
             totalEsperado={(Number(form.decisoes_presenciais) || 0) + (hasOnline ? (Number(form.decisoes_online) || 0) : 0)}
+            totalKidsEsperado={hasKids ? (Number(form.decisoes_kids) || 0) : 0}
             hasOnline={hasOnline}
+            hasKids={hasKids}
           />
 
           {hasOnline && (
@@ -644,7 +664,7 @@ const btnGhost = {
 //   opcional · CPF tenta vincular a mem_membros existente no backend)
 // - Lista as pessoas ja registradas · click pra editar/remover
 // ============================================================================
-function DecisoesPessoasSection({ cultoId, totalEsperado, hasOnline }) {
+function DecisoesPessoasSection({ cultoId, totalEsperado, totalKidsEsperado = 0, hasOnline, hasKids }) {
   const [pessoas, setPessoas] = useState([]);
   const [loading, setLoading] = useState(false);
   const [showForm, setShowForm] = useState(false);
@@ -680,9 +700,14 @@ function DecisoesPessoasSection({ cultoId, totalEsperado, hasOnline }) {
     } catch (e) { toast.error(formatErro(e)); }
   };
 
-  const registradas = pessoas.length;
-  const faltando = Math.max(0, totalEsperado - registradas);
-  const completo = totalEsperado > 0 && registradas >= totalEsperado;
+  // Contadores separados · kids tem fluxo proprio (sem trilha/NSM)
+  const pessoasAdultos = pessoas.filter(p => p.tipo_decisao !== 'kids');
+  const pessoasKids    = pessoas.filter(p => p.tipo_decisao === 'kids');
+  const registradas    = pessoasAdultos.length;
+  const registradasKids = pessoasKids.length;
+  const faltando       = Math.max(0, totalEsperado - registradas);
+  const faltandoKids   = Math.max(0, totalKidsEsperado - registradasKids);
+  const completo       = totalEsperado > 0 && registradas >= totalEsperado;
 
   // Sempre mostra a secao (mesmo sem decisoes preenchidas) pra ficar visivel
   // como funcionalidade · so esconde quando culto ainda nao foi salvo
@@ -702,9 +727,17 @@ function DecisoesPessoasSection({ cultoId, totalEsperado, hasOnline }) {
             Nome + telefone bastam · CPF e nascimento podem ser preenchidos depois (censo)
           </div>
         </div>
-        <div style={{ fontSize: 11, fontWeight: 600, color: completo ? '#10B981' : faltando > 0 ? '#F59E0B' : C.t3, whiteSpace: 'nowrap' }}>
-          {registradas} de {totalEsperado || registradas} registrada{registradas === 1 ? '' : 's'}
-          {faltando > 0 && ` · faltam ${faltando}`}
+        <div style={{ fontSize: 11, fontWeight: 600, color: completo ? '#10B981' : faltando > 0 ? '#F59E0B' : C.t3, whiteSpace: 'nowrap', textAlign: 'right' }}>
+          <div>
+            {registradas} de {totalEsperado || registradas} registrada{registradas === 1 ? '' : 's'}
+            {faltando > 0 && ` · faltam ${faltando}`}
+          </div>
+          {hasKids && totalKidsEsperado > 0 && (
+            <div style={{ fontSize: 10, color: '#EC4899', marginTop: 2 }}>
+              Kids: {registradasKids} de {totalKidsEsperado}
+              {faltandoKids > 0 && ` · faltam ${faltandoKids}`}
+            </div>
+          )}
         </div>
       </div>
       {totalEsperado === 0 && registradas === 0 && (
@@ -833,7 +866,7 @@ function maskTelefoneBr(v) {
   return `(${d.slice(0, 2)}) ${d.slice(2, 7)}-${d.slice(7)}`;
 }
 
-function DecisaoPessoaForm({ cultoId, pessoa, hasOnline, onSaved, onCancel }) {
+function DecisaoPessoaForm({ cultoId, pessoa, hasOnline, hasKids, onSaved, onCancel }) {
   const ehEdicao = !!pessoa;
   const [form, setForm] = useState({
     nome: pessoa?.nome || '',
@@ -844,7 +877,12 @@ function DecisaoPessoaForm({ cultoId, pessoa, hasOnline, onSaved, onCancel }) {
     membro_id: pessoa?.membro_id || null,
     tipo_decisao: pessoa?.tipo_decisao || 'presencial',
     observacoes: pessoa?.observacoes || '',
+    // Kids · dados do responsavel (LGPD: crianca nao da os dados dela)
+    responsavel_nome:     pessoa?.responsavel_nome || '',
+    responsavel_telefone: pessoa?.responsavel_telefone || '',
+    responsavel_cpf:      pessoa?.responsavel_cpf || '',
   });
+  const ehKids = form.tipo_decisao === 'kids';
   const [saving, setSaving] = useState(false);
 
   // Autocomplete state · busca membro existente
@@ -899,33 +937,57 @@ function DecisaoPessoaForm({ cultoId, pessoa, hasOnline, onSaved, onCancel }) {
   const idadeCalc = calcularIdade(form.data_nascimento);
 
   const submit = async () => {
-    // Marcos: "CPF e telefone com 11 digitos exatos · evita passar sem querer"
     if (!form.nome.trim() || form.nome.trim().length < 2) {
-      toast.error('Nome obrigatório (mínimo 2 caracteres)');
+      toast.error(ehKids ? 'Nome da criança obrigatório' : 'Nome obrigatório (mínimo 2 caracteres)');
       return;
     }
-    const telDigits = (form.telefone || '').replace(/\D/g, '');
-    if (telDigits.length !== 11) {
-      toast.error('Telefone deve ter 11 dígitos (DDD + 9 + número)');
-      return;
+
+    if (ehKids) {
+      // Kids · valida dados do responsavel (crianca nao tem CPF/telefone proprios obrigatorios)
+      if (!form.responsavel_nome.trim() || form.responsavel_nome.trim().length < 2) {
+        toast.error('Nome do responsável obrigatório');
+        return;
+      }
+      const respTelDigits = (form.responsavel_telefone || '').replace(/\D/g, '');
+      if (respTelDigits.length !== 11) {
+        toast.error('Telefone do responsável deve ter 11 dígitos');
+        return;
+      }
+      const respCpfDigits = (form.responsavel_cpf || '').replace(/\D/g, '');
+      if (respCpfDigits && respCpfDigits.length !== 11) {
+        toast.error('CPF do responsável deve ter 11 dígitos (ou deixe vazio)');
+        return;
+      }
+    } else {
+      // Presencial/Online · valida dados da pessoa
+      const telDigits = (form.telefone || '').replace(/\D/g, '');
+      if (telDigits.length !== 11) {
+        toast.error('Telefone deve ter 11 dígitos (DDD + 9 + número)');
+        return;
+      }
+      const cpfDigits = (form.cpf || '').replace(/\D/g, '');
+      if (cpfDigits && cpfDigits.length !== 11) {
+        toast.error('CPF deve ter 11 dígitos (ou deixe vazio)');
+        return;
+      }
     }
-    const cpfDigits = (form.cpf || '').replace(/\D/g, '');
-    if (cpfDigits && cpfDigits.length !== 11) {
-      toast.error('CPF deve ter 11 dígitos (ou deixe vazio)');
-      return;
-    }
+
     setSaving(true);
     try {
+      const cpfDigits = (form.cpf || '').replace(/\D/g, '');
       const payload = {
         nome: form.nome.trim(),
-        telefone: form.telefone,
-        email: form.email || null,
+        telefone: form.telefone || null,
+        email: ehKids ? null : (form.email || null),
         data_nascimento: form.data_nascimento || null,
         idade: idadeCalc,
         cpf: cpfDigits || null,
-        membro_id: form.membro_id || null,
+        membro_id: ehKids ? null : (form.membro_id || null),
         tipo_decisao: form.tipo_decisao,
         observacoes: form.observacoes || null,
+        responsavel_nome:     ehKids ? form.responsavel_nome.trim() : null,
+        responsavel_telefone: ehKids ? form.responsavel_telefone : null,
+        responsavel_cpf:      ehKids ? ((form.responsavel_cpf || '').replace(/\D/g, '') || null) : null,
       };
       if (ehEdicao) {
         await cultosApi.decisoesPessoas.update(pessoa.id, payload);
@@ -1019,12 +1081,14 @@ function DecisaoPessoaForm({ cultoId, pessoa, hasOnline, onSaved, onCancel }) {
 
       <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 8 }}>
         <div>
-          <label style={{ fontSize: 10, fontWeight: 600, color: C.t3, display: 'block', marginBottom: 2 }}>Nome completo *</label>
+          <label style={{ fontSize: 10, fontWeight: 600, color: C.t3, display: 'block', marginBottom: 2 }}>
+            {ehKids ? 'Nome da criança *' : 'Nome completo *'}
+          </label>
           <input
             type="text" value={form.nome}
             onChange={e => set('nome', e.target.value)}
             style={{ ...inp, padding: '6px 10px', fontSize: 11 }}
-            placeholder="Nome completo"
+            placeholder={ehKids ? 'Primeiro nome da criança' : 'Nome completo'}
           />
         </div>
         <div>
@@ -1036,60 +1100,107 @@ function DecisaoPessoaForm({ cultoId, pessoa, hasOnline, onSaved, onCancel }) {
           >
             <option value="presencial">Presencial</option>
             {hasOnline && <option value="online">Online</option>}
+            {hasKids && <option value="kids">Kids</option>}
           </select>
         </div>
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
-        <div>
-          <label style={{ fontSize: 10, fontWeight: 600, color: '#8B5CF6', display: 'block', marginBottom: 2 }}>Telefone *</label>
-          <input
-            type="text" value={form.telefone} maxLength={15}
-            onChange={e => set('telefone', maskTelefoneBr(e.target.value))}
-            style={{ ...inp, padding: '6px 10px', fontSize: 11 }}
-            placeholder="(21) 99999-0000"
-          />
+      {/* Bloco do responsavel · so aparece quando tipo='kids' (LGPD pra menores) */}
+      {ehKids && (
+        <div style={{ background: '#EC489915', border: '1px solid #EC489940', borderRadius: 6, padding: 10, marginTop: 4 }}>
+          <div style={{ fontSize: 10, fontWeight: 700, color: '#EC4899', marginBottom: 6, textTransform: 'uppercase', letterSpacing: 0.5 }}>
+            Dados do responsável (LGPD)
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 8, marginBottom: 8 }}>
+            <div>
+              <label style={{ fontSize: 10, fontWeight: 600, color: C.t3, display: 'block', marginBottom: 2 }}>Nome do responsável *</label>
+              <input
+                type="text" value={form.responsavel_nome}
+                onChange={e => set('responsavel_nome', e.target.value)}
+                style={{ ...inp, padding: '6px 10px', fontSize: 11 }}
+                placeholder="Pai · mãe · responsável legal"
+              />
+            </div>
+            <div>
+              <label style={{ fontSize: 10, fontWeight: 600, color: '#EC4899', display: 'block', marginBottom: 2 }}>Telefone *</label>
+              <input
+                type="text" value={form.responsavel_telefone} maxLength={15}
+                onChange={e => set('responsavel_telefone', maskTelefoneBr(e.target.value))}
+                style={{ ...inp, padding: '6px 10px', fontSize: 11 }}
+                placeholder="(21) 99999-0000"
+              />
+            </div>
+          </div>
+          <div>
+            <label style={{ fontSize: 10, fontWeight: 600, color: C.t3, display: 'block', marginBottom: 2 }}>
+              CPF do responsável <span style={{ fontWeight: 400, fontStyle: 'italic' }}>(opcional)</span>
+            </label>
+            <input
+              type="text" value={form.responsavel_cpf} maxLength={14}
+              onChange={e => set('responsavel_cpf', maskCpfBr(e.target.value))}
+              style={{ ...inp, padding: '6px 10px', fontSize: 11 }}
+              placeholder="000.000.000-00"
+            />
+          </div>
         </div>
-        <div>
-          <label style={{ fontSize: 10, fontWeight: 600, color: C.t3, display: 'block', marginBottom: 2 }}>
-            CPF <span style={{ fontWeight: 400, fontStyle: 'italic' }}>(opcional · 11 dígitos)</span>
-          </label>
-          <input
-            type="text" value={form.cpf} maxLength={14}
-            onChange={e => set('cpf', maskCpfBr(e.target.value))}
-            style={{ ...inp, padding: '6px 10px', fontSize: 11 }}
-            placeholder="000.000.000-00"
-          />
-        </div>
-      </div>
+      )}
 
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
-        <div>
-          <label style={{ fontSize: 10, fontWeight: 600, color: C.t3, display: 'block', marginBottom: 2 }}>
-            Data nascimento <span style={{ fontWeight: 400, fontStyle: 'italic' }}>(opcional)</span>
-            {idadeCalc !== null && <span style={{ fontWeight: 400, color: C.t3 }}> · {idadeCalc} anos</span>}
-          </label>
-          <input
-            type="date" value={form.data_nascimento}
-            onChange={e => set('data_nascimento', e.target.value)}
-            style={{ ...inp, padding: '6px 10px', fontSize: 11 }}
-            max={new Date().toISOString().slice(0, 10)}
-          />
-        </div>
-        <div>
-          <label style={{ fontSize: 10, fontWeight: 600, color: C.t3, display: 'block', marginBottom: 2 }}>E-mail</label>
-          <input
-            type="email" value={form.email}
-            onChange={e => set('email', e.target.value)}
-            style={{ ...inp, padding: '6px 10px', fontSize: 11 }}
-            placeholder="opcional"
-          />
-        </div>
-      </div>
+      {!ehKids && (
+        <>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+            <div>
+              <label style={{ fontSize: 10, fontWeight: 600, color: '#8B5CF6', display: 'block', marginBottom: 2 }}>Telefone *</label>
+              <input
+                type="text" value={form.telefone} maxLength={15}
+                onChange={e => set('telefone', maskTelefoneBr(e.target.value))}
+                style={{ ...inp, padding: '6px 10px', fontSize: 11 }}
+                placeholder="(21) 99999-0000"
+              />
+            </div>
+            <div>
+              <label style={{ fontSize: 10, fontWeight: 600, color: C.t3, display: 'block', marginBottom: 2 }}>
+                CPF <span style={{ fontWeight: 400, fontStyle: 'italic' }}>(opcional · 11 dígitos)</span>
+              </label>
+              <input
+                type="text" value={form.cpf} maxLength={14}
+                onChange={e => set('cpf', maskCpfBr(e.target.value))}
+                style={{ ...inp, padding: '6px 10px', fontSize: 11 }}
+                placeholder="000.000.000-00"
+              />
+            </div>
+          </div>
+
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+            <div>
+              <label style={{ fontSize: 10, fontWeight: 600, color: C.t3, display: 'block', marginBottom: 2 }}>
+                Data nascimento <span style={{ fontWeight: 400, fontStyle: 'italic' }}>(opcional)</span>
+                {idadeCalc !== null && <span style={{ fontWeight: 400, color: C.t3 }}> · {idadeCalc} anos</span>}
+              </label>
+              <input
+                type="date" value={form.data_nascimento}
+                onChange={e => set('data_nascimento', e.target.value)}
+                style={{ ...inp, padding: '6px 10px', fontSize: 11 }}
+                max={new Date().toISOString().slice(0, 10)}
+              />
+            </div>
+            <div>
+              <label style={{ fontSize: 10, fontWeight: 600, color: C.t3, display: 'block', marginBottom: 2 }}>E-mail</label>
+              <input
+                type="email" value={form.email}
+                onChange={e => set('email', e.target.value)}
+                style={{ ...inp, padding: '6px 10px', fontSize: 11 }}
+                placeholder="opcional"
+              />
+            </div>
+          </div>
+        </>
+      )}
 
       <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end', alignItems: 'center' }}>
         <span style={{ flex: 1, fontSize: 9, color: C.t3, fontStyle: 'italic' }}>
-          Nome + telefone obrigatórios · CPF e nascimento podem ser preenchidos depois (censo)
+          {ehKids
+            ? 'Kids · só nome da criança + dados do responsável (LGPD). NÃO entra no NSM.'
+            : 'Nome + telefone obrigatórios · CPF e nascimento podem ser preenchidos depois (censo)'}
         </span>
         <button onClick={onCancel} disabled={saving} style={btnGhost}>Cancelar</button>
         <button onClick={submit} disabled={saving} style={{ ...btnPrimary, background: '#8B5CF6' }}>
