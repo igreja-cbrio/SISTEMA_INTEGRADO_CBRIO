@@ -62,7 +62,7 @@ router.post('/cultos', authorizeIntegracao, async (req, res) => {
   const {
     service_type_id, nome, data, hora,
     presencial_adulto, presencial_kids,
-    decisoes_presenciais, decisoes_online,
+    decisoes_presenciais, decisoes_online, decisoes_kids,
     youtube_video_id, online_pico,
   } = req.body;
   if (!data || !hora || !nome) return res.status(400).json({ error: 'data, hora e nome são obrigatórios' });
@@ -75,6 +75,7 @@ router.post('/cultos', authorizeIntegracao, async (req, res) => {
       presencial_kids:      nonNeg(presencial_kids),
       decisoes_presenciais: nonNeg(decisoes_presenciais),
       decisoes_online:      nonNeg(decisoes_online),
+      decisoes_kids:        nonNeg(decisoes_kids),
       youtube_video_id: youtube_video_id || null,
       online_pico: online_pico ? nonNeg(online_pico, null) : null,
       inserido_por: req.user.id,
@@ -88,13 +89,13 @@ router.post('/cultos', authorizeIntegracao, async (req, res) => {
 router.put('/cultos/:id', authorizeIntegracao, async (req, res) => {
   const allowed = [
     'presencial_adulto', 'presencial_kids',
-    'decisoes_presenciais', 'decisoes_online',
+    'decisoes_presenciais', 'decisoes_online', 'decisoes_kids',
     'youtube_video_id', 'online_pico', 'nome',
     'online_ds', 'online_ddus',
   ];
   const camposNumericos = [
     'presencial_adulto', 'presencial_kids',
-    'decisoes_presenciais', 'decisoes_online',
+    'decisoes_presenciais', 'decisoes_online', 'decisoes_kids',
     'online_pico', 'online_ds', 'online_ddus',
   ];
   const update = { updated_at: new Date().toISOString() };
@@ -135,7 +136,7 @@ router.delete('/cultos/:id', authorize('admin', 'diretor'), async (req, res) => 
 router.get('/cultos/:id/decisoes-pessoas', async (req, res) => {
   const { data, error } = await supabase
     .from('cultos_decisoes_pessoas')
-    .select('id, culto_id, membro_id, nome, telefone, email, idade, data_nascimento, cpf, tipo_decisao, observacoes, status_followup, registrado_em, registrado_por')
+    .select('id, culto_id, membro_id, nome, telefone, email, idade, data_nascimento, cpf, tipo_decisao, observacoes, status_followup, registrado_em, registrado_por, responsavel_nome, responsavel_telefone, responsavel_cpf')
     .eq('culto_id', req.params.id)
     .order('registrado_em', { ascending: false });
   if (error) return res.status(500).json({ error: error.message });
@@ -202,36 +203,70 @@ router.get('/decisoes-pessoas/buscar-membro', async (req, res) => {
 });
 
 router.post('/cultos/:id/decisoes-pessoas', authorizeIntegracao, async (req, res) => {
-  const { nome, telefone, email, idade, data_nascimento, cpf, tipo_decisao, observacoes, membro_id } = req.body || {};
-  // Marcos: "no momento da conversao, dificil pedir CPF/nascimento. Nome +
-  // telefone sao os dados mais faceis. CPF/nascimento ficam opcionais ·
-  // censo posterior preenche". Cadastro incompleto = sem cpf OU sem nascimento.
+  const {
+    nome, telefone, email, idade, data_nascimento, cpf,
+    tipo_decisao, observacoes, membro_id,
+    responsavel_nome, responsavel_telefone, responsavel_cpf,
+  } = req.body || {};
+
   if (!nome || String(nome).trim().length < 2) {
     return res.status(400).json({ error: 'Nome obrigatorio (min 2 chars)' });
   }
-  const telLimpo = telefone ? String(telefone).replace(/\D/g, '') : '';
-  if (telLimpo.length !== 11) {
-    return res.status(400).json({ error: 'Telefone deve ter 11 digitos (DDD + 9 + numero)' });
-  }
-  const cpfLimpo = cpf ? String(cpf).replace(/\D/g, '') : null;
-  if (cpfLimpo && cpfLimpo.length !== 11) {
-    return res.status(400).json({ error: 'CPF deve ter 11 digitos' });
+
+  const tipo = ['presencial', 'online', 'kids'].includes(tipo_decisao) ? tipo_decisao : 'presencial';
+
+  // Validacoes diferentes conforme tipo:
+  // - presencial/online: telefone da pessoa eh obrigatorio (11 digitos)
+  // - kids: nome da crianca + dados do responsavel (telefone responsavel
+  //   obrigatorio · CPF responsavel opcional)
+  let telLimpo = telefone ? String(telefone).replace(/\D/g, '') : '';
+  let cpfLimpo = cpf ? String(cpf).replace(/\D/g, '') : null;
+  let respTelLimpo = responsavel_telefone ? String(responsavel_telefone).replace(/\D/g, '') : '';
+  let respCpfLimpo = responsavel_cpf ? String(responsavel_cpf).replace(/\D/g, '') : null;
+
+  if (tipo === 'kids') {
+    if (!responsavel_nome || String(responsavel_nome).trim().length < 2) {
+      return res.status(400).json({ error: 'Nome do responsavel obrigatorio (min 2 chars) pra decisao Kids' });
+    }
+    if (respTelLimpo.length !== 11) {
+      return res.status(400).json({ error: 'Telefone do responsavel deve ter 11 digitos pra decisao Kids' });
+    }
+    if (respCpfLimpo && respCpfLimpo.length !== 11) {
+      return res.status(400).json({ error: 'CPF do responsavel deve ter 11 digitos (ou deixe vazio)' });
+    }
+    // Crianca nao precisa de telefone proprio
+    telLimpo = telLimpo || '';
+    if (telLimpo && telLimpo.length !== 11) {
+      return res.status(400).json({ error: 'Telefone da crianca (se preenchido) deve ter 11 digitos' });
+    }
+  } else {
+    // presencial / online
+    if (telLimpo.length !== 11) {
+      return res.status(400).json({ error: 'Telefone deve ter 11 digitos (DDD + 9 + numero)' });
+    }
+    if (cpfLimpo && cpfLimpo.length !== 11) {
+      return res.status(400).json({ error: 'CPF deve ter 11 digitos' });
+    }
   }
 
   // Se nao veio membro_id explicito, trigger BEFORE INSERT resolve/cria
+  // (trigger pula tipo='kids' · nao cria mem_membros pra crianca por LGPD)
   const { data, error } = await supabase
     .from('cultos_decisoes_pessoas')
     .insert({
       culto_id: req.params.id,
-      membro_id: membro_id || null,
+      membro_id: tipo === 'kids' ? null : (membro_id || null),
       nome: String(nome).trim(),
-      telefone: telLimpo, // salva so digitos · UI aplica mascara ao exibir
+      telefone: telLimpo || null,
       email: email ? String(email).trim().toLowerCase() : null,
       idade: idade ? Number(idade) : null,
       data_nascimento: data_nascimento || null,
       cpf: cpfLimpo,
-      tipo_decisao: ['presencial', 'online'].includes(tipo_decisao) ? tipo_decisao : 'presencial',
+      tipo_decisao: tipo,
       observacoes: observacoes || null,
+      responsavel_nome:     tipo === 'kids' ? String(responsavel_nome).trim() : null,
+      responsavel_telefone: tipo === 'kids' ? respTelLimpo : null,
+      responsavel_cpf:      tipo === 'kids' ? respCpfLimpo : null,
       registrado_por: req.user?.id || null,
     })
     .select()
@@ -244,11 +279,16 @@ router.post('/cultos/:id/decisoes-pessoas', authorizeIntegracao, async (req, res
 });
 
 router.put('/decisoes-pessoas/:id', authorizeIntegracao, async (req, res) => {
-  const allowed = ['nome', 'telefone', 'email', 'idade', 'data_nascimento', 'cpf', 'tipo_decisao', 'observacoes', 'status_followup', 'observacoes_followup'];
+  const allowed = [
+    'nome', 'telefone', 'email', 'idade', 'data_nascimento', 'cpf',
+    'tipo_decisao', 'observacoes', 'status_followup', 'observacoes_followup',
+    'responsavel_nome', 'responsavel_telefone', 'responsavel_cpf',
+  ];
   const update = {};
   for (const [k, v] of Object.entries(req.body || {})) {
     if (!allowed.includes(k)) continue;
-    if (k === 'cpf' && v) update[k] = String(v).replace(/\D/g, '');
+    if ((k === 'cpf' || k === 'responsavel_cpf') && v) update[k] = String(v).replace(/\D/g, '');
+    else if ((k === 'telefone' || k === 'responsavel_telefone') && v) update[k] = String(v).replace(/\D/g, '');
     else if (k === 'email' && v) update[k] = String(v).trim().toLowerCase();
     else if (k === 'idade') update[k] = v ? Number(v) : null;
     else if (k === 'data_nascimento') update[k] = v || null;
