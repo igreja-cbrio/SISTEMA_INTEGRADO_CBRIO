@@ -60,9 +60,12 @@ ALTER TABLE public.permissoes_modulo
 -- ---------------------------------------------------------------------
 -- 2. Tabela nova · matriz padrao por cargo (cargo_modulo_permissao)
 -- ---------------------------------------------------------------------
+-- cargos.id e modulos.id sao INTEGER em producao (apesar da migration
+-- 20260410014723 declarar UUID, a tabela foi alterada depois). Por isso
+-- cargo_id/modulo_id aqui sao INTEGER pra bater com o tipo real.
 CREATE TABLE IF NOT EXISTS public.cargo_modulo_permissao (
-  cargo_id UUID NOT NULL REFERENCES public.cargos(id) ON DELETE CASCADE,
-  modulo_id UUID NOT NULL REFERENCES public.modulos(id) ON DELETE CASCADE,
+  cargo_id INTEGER NOT NULL REFERENCES public.cargos(id) ON DELETE CASCADE,
+  modulo_id INTEGER NOT NULL REFERENCES public.modulos(id) ON DELETE CASCADE,
   nivel INTEGER NOT NULL DEFAULT 0 CHECK (nivel BETWEEN 0 AND 5),
   pode_exportar BOOLEAN NOT NULL DEFAULT false,
   pode_aprovar BOOLEAN NOT NULL DEFAULT false,
@@ -88,16 +91,23 @@ CREATE POLICY "Authenticated delete cargo_modulo_permissao" ON public.cargo_modu
 -- ---------------------------------------------------------------------
 UPDATE public.modulos SET ativo = false
  WHERE slug IS NULL
-   AND nome IN ('DP','Pessoas','TI','Agenda','Tarefas','Comunicação','IA / Agentes',
-                'Cuidados');
+   AND nome IN ('DP','Pessoas','TI','Agenda','Tarefas','Comunicação','IA / Agentes');
 
 -- ---------------------------------------------------------------------
 -- 4. Seed dos 25 cargos
 -- ---------------------------------------------------------------------
+-- Garante unique constraint em cargos.nome (modulos.nome ja tem em producao).
+-- Necessario pra ON CONFLICT (nome) funcionar nos INSERTs abaixo.
+DO $do$ BEGIN
+  ALTER TABLE public.cargos ADD CONSTRAINT cargos_nome_key UNIQUE (nome);
+EXCEPTION
+  WHEN duplicate_object THEN NULL;
+  WHEN duplicate_table  THEN NULL;
+END $do$;
 INSERT INTO public.cargos (slug, nome, nome_completo, titular_sugerido, ordem, categoria, descricao, nivel_padrao_leitura, nivel_padrao_escrita)
 VALUES ('pastor-senior', 'Pastor Sr', 'Pastor Senior', 'Pr. Pedrão', 10, 'pastoral', 'Pastor senior da igreja', 5, 5)
-ON CONFLICT (slug) WHERE slug IS NOT NULL DO UPDATE SET
-  nome = EXCLUDED.nome,
+ON CONFLICT (nome) DO UPDATE SET
+  slug = EXCLUDED.slug,
   nome_completo = EXCLUDED.nome_completo,
   titular_sugerido = EXCLUDED.titular_sugerido,
   ordem = EXCLUDED.ordem,
@@ -106,8 +116,8 @@ ON CONFLICT (slug) WHERE slug IS NOT NULL DO UPDATE SET
   ativo = true;
 INSERT INTO public.cargos (slug, nome, nome_completo, titular_sugerido, ordem, categoria, descricao, nivel_padrao_leitura, nivel_padrao_escrita)
 VALUES ('pastor-presidente', 'Pastor Pres', 'Pastor Presidente', 'Pr. Juninho', 20, 'pastoral', 'Pastor presidente', 5, 5)
-ON CONFLICT (slug) WHERE slug IS NOT NULL DO UPDATE SET
-  nome = EXCLUDED.nome,
+ON CONFLICT (nome) DO UPDATE SET
+  slug = EXCLUDED.slug,
   nome_completo = EXCLUDED.nome_completo,
   titular_sugerido = EXCLUDED.titular_sugerido,
   ordem = EXCLUDED.ordem,
@@ -116,8 +126,8 @@ ON CONFLICT (slug) WHERE slug IS NOT NULL DO UPDATE SET
   ativo = true;
 INSERT INTO public.cargos (slug, nome, nome_completo, titular_sugerido, ordem, categoria, descricao, nivel_padrao_leitura, nivel_padrao_escrita)
 VALUES ('diretor-administrativo', 'Dir Geral', 'Diretor Administrativo (Gestão)', 'Eduardo Gnisci', 30, 'diretoria', 'Diretor administrativo / gestão', 5, 5)
-ON CONFLICT (slug) WHERE slug IS NOT NULL DO UPDATE SET
-  nome = EXCLUDED.nome,
+ON CONFLICT (nome) DO UPDATE SET
+  slug = EXCLUDED.slug,
   nome_completo = EXCLUDED.nome_completo,
   titular_sugerido = EXCLUDED.titular_sugerido,
   ordem = EXCLUDED.ordem,
@@ -126,8 +136,8 @@ ON CONFLICT (slug) WHERE slug IS NOT NULL DO UPDATE SET
   ativo = true;
 INSERT INTO public.cargos (slug, nome, nome_completo, titular_sugerido, ordem, categoria, descricao, nivel_padrao_leitura, nivel_padrao_escrita)
 VALUES ('coordenador-estrategia', 'Dir Estrat', 'Coordenador de Estratégia (PMO)', 'Marcos Paulo', 40, 'diretoria', 'Coordenador de Estratégia · PMO', 5, 5)
-ON CONFLICT (slug) WHERE slug IS NOT NULL DO UPDATE SET
-  nome = EXCLUDED.nome,
+ON CONFLICT (nome) DO UPDATE SET
+  slug = EXCLUDED.slug,
   nome_completo = EXCLUDED.nome_completo,
   titular_sugerido = EXCLUDED.titular_sugerido,
   ordem = EXCLUDED.ordem,
@@ -136,8 +146,8 @@ ON CONFLICT (slug) WHERE slug IS NOT NULL DO UPDATE SET
   ativo = true;
 INSERT INTO public.cargos (slug, nome, nome_completo, titular_sugerido, ordem, categoria, descricao, nivel_padrao_leitura, nivel_padrao_escrita)
 VALUES ('diretor-ministerial', 'Dir Mini', 'Diretor Ministerial', 'Arthur Serpa', 50, 'diretoria', 'Diretor da frente ministerial', 4, 4)
-ON CONFLICT (slug) WHERE slug IS NOT NULL DO UPDATE SET
-  nome = EXCLUDED.nome,
+ON CONFLICT (nome) DO UPDATE SET
+  slug = EXCLUDED.slug,
   nome_completo = EXCLUDED.nome_completo,
   titular_sugerido = EXCLUDED.titular_sugerido,
   ordem = EXCLUDED.ordem,
@@ -146,8 +156,8 @@ ON CONFLICT (slug) WHERE slug IS NOT NULL DO UPDATE SET
   ativo = true;
 INSERT INTO public.cargos (slug, nome, nome_completo, titular_sugerido, ordem, categoria, descricao, nivel_padrao_leitura, nivel_padrao_escrita)
 VALUES ('diretor-criativo', 'Dir Criat', 'Diretor Criativo', 'Pedro Menezes', 60, 'diretoria', 'Diretor da frente criativa', 4, 4)
-ON CONFLICT (slug) WHERE slug IS NOT NULL DO UPDATE SET
-  nome = EXCLUDED.nome,
+ON CONFLICT (nome) DO UPDATE SET
+  slug = EXCLUDED.slug,
   nome_completo = EXCLUDED.nome_completo,
   titular_sugerido = EXCLUDED.titular_sugerido,
   ordem = EXCLUDED.ordem,
@@ -156,8 +166,8 @@ ON CONFLICT (slug) WHERE slug IS NOT NULL DO UPDATE SET
   ativo = true;
 INSERT INTO public.cargos (slug, nome, nome_completo, titular_sugerido, ordem, categoria, descricao, nivel_padrao_leitura, nivel_padrao_escrita)
 VALUES ('lider-ministerial', 'Líder Mini', 'Líder Ministerial', 'Alda + líderes AMI/Bridge/Sede/Online/Kids/etc', 70, 'lideranca', 'Líder de uma área ministerial', 3, 3)
-ON CONFLICT (slug) WHERE slug IS NOT NULL DO UPDATE SET
-  nome = EXCLUDED.nome,
+ON CONFLICT (nome) DO UPDATE SET
+  slug = EXCLUDED.slug,
   nome_completo = EXCLUDED.nome_completo,
   titular_sugerido = EXCLUDED.titular_sugerido,
   ordem = EXCLUDED.ordem,
@@ -166,8 +176,8 @@ ON CONFLICT (slug) WHERE slug IS NOT NULL DO UPDATE SET
   ativo = true;
 INSERT INTO public.cargos (slug, nome, nome_completo, titular_sugerido, ordem, categoria, descricao, nivel_padrao_leitura, nivel_padrao_escrita)
 VALUES ('assistente-area', 'Assist Área', 'Assistente de Área', 'Kevyn (AMI), Milena (KIDS)', 80, 'assistencia', 'Assistente ligado a uma área de culto', 3, 3)
-ON CONFLICT (slug) WHERE slug IS NOT NULL DO UPDATE SET
-  nome = EXCLUDED.nome,
+ON CONFLICT (nome) DO UPDATE SET
+  slug = EXCLUDED.slug,
   nome_completo = EXCLUDED.nome_completo,
   titular_sugerido = EXCLUDED.titular_sugerido,
   ordem = EXCLUDED.ordem,
@@ -176,8 +186,8 @@ ON CONFLICT (slug) WHERE slug IS NOT NULL DO UPDATE SET
   ativo = true;
 INSERT INTO public.cargos (slug, nome, nome_completo, titular_sugerido, ordem, categoria, descricao, nivel_padrao_leitura, nivel_padrao_escrita)
 VALUES ('assistente-ministerial', 'Assist Mini', 'Assistente Ministerial', 'Ariel (Voluntariado), Natasha (Grupos), Yago (Gen.)', 90, 'assistencia', 'Assistente ligado a um valor / ministério', 3, 3)
-ON CONFLICT (slug) WHERE slug IS NOT NULL DO UPDATE SET
-  nome = EXCLUDED.nome,
+ON CONFLICT (nome) DO UPDATE SET
+  slug = EXCLUDED.slug,
   nome_completo = EXCLUDED.nome_completo,
   titular_sugerido = EXCLUDED.titular_sugerido,
   ordem = EXCLUDED.ordem,
@@ -186,8 +196,8 @@ ON CONFLICT (slug) WHERE slug IS NOT NULL DO UPDATE SET
   ativo = true;
 INSERT INTO public.cargos (slug, nome, nome_completo, titular_sugerido, ordem, categoria, descricao, nivel_padrao_leitura, nivel_padrao_escrita)
 VALUES ('coordenador-financeiro', 'Coord Financ', 'Coordenador Financeiro', 'Yago Torres', 100, 'coordenacao', 'Coordenador financeiro', 3, 3)
-ON CONFLICT (slug) WHERE slug IS NOT NULL DO UPDATE SET
-  nome = EXCLUDED.nome,
+ON CONFLICT (nome) DO UPDATE SET
+  slug = EXCLUDED.slug,
   nome_completo = EXCLUDED.nome_completo,
   titular_sugerido = EXCLUDED.titular_sugerido,
   ordem = EXCLUDED.ordem,
@@ -196,8 +206,8 @@ ON CONFLICT (slug) WHERE slug IS NOT NULL DO UPDATE SET
   ativo = true;
 INSERT INTO public.cargos (slug, nome, nome_completo, titular_sugerido, ordem, categoria, descricao, nivel_padrao_leitura, nivel_padrao_escrita)
 VALUES ('assistente-financeiro', 'Assist Financ', 'Assistente Financeiro', 'Francisco José (provisório)', 110, 'assistencia', 'Assistente financeiro', 3, 3)
-ON CONFLICT (slug) WHERE slug IS NOT NULL DO UPDATE SET
-  nome = EXCLUDED.nome,
+ON CONFLICT (nome) DO UPDATE SET
+  slug = EXCLUDED.slug,
   nome_completo = EXCLUDED.nome_completo,
   titular_sugerido = EXCLUDED.titular_sugerido,
   ordem = EXCLUDED.ordem,
@@ -206,8 +216,8 @@ ON CONFLICT (slug) WHERE slug IS NOT NULL DO UPDATE SET
   ativo = true;
 INSERT INTO public.cargos (slug, nome, nome_completo, titular_sugerido, ordem, categoria, descricao, nivel_padrao_leitura, nivel_padrao_escrita)
 VALUES ('coordenador-marketing', 'Coord Mkt', 'Coordenador de Marketing', 'Pedro Paiva', 120, 'coordenacao', 'Coordenador de Marketing', 3, 3)
-ON CONFLICT (slug) WHERE slug IS NOT NULL DO UPDATE SET
-  nome = EXCLUDED.nome,
+ON CONFLICT (nome) DO UPDATE SET
+  slug = EXCLUDED.slug,
   nome_completo = EXCLUDED.nome_completo,
   titular_sugerido = EXCLUDED.titular_sugerido,
   ordem = EXCLUDED.ordem,
@@ -216,8 +226,8 @@ ON CONFLICT (slug) WHERE slug IS NOT NULL DO UPDATE SET
   ativo = true;
 INSERT INTO public.cargos (slug, nome, nome_completo, titular_sugerido, ordem, categoria, descricao, nivel_padrao_leitura, nivel_padrao_escrita)
 VALUES ('assistente-marketing', 'Assist Mkt', 'Assistente de Marketing', 'Lorena Pariz, Kauan, Letícia, Allan', 130, 'assistencia', 'Assistente de Marketing', 3, 3)
-ON CONFLICT (slug) WHERE slug IS NOT NULL DO UPDATE SET
-  nome = EXCLUDED.nome,
+ON CONFLICT (nome) DO UPDATE SET
+  slug = EXCLUDED.slug,
   nome_completo = EXCLUDED.nome_completo,
   titular_sugerido = EXCLUDED.titular_sugerido,
   ordem = EXCLUDED.ordem,
@@ -226,8 +236,8 @@ ON CONFLICT (slug) WHERE slug IS NOT NULL DO UPDATE SET
   ativo = true;
 INSERT INTO public.cargos (slug, nome, nome_completo, titular_sugerido, ordem, categoria, descricao, nivel_padrao_leitura, nivel_padrao_escrita)
 VALUES ('lider-producao', 'Líder Prod', 'Líder de Produção', 'Pedro Fernandes', 140, 'lideranca', 'Líder de Produção (criativo)', 3, 3)
-ON CONFLICT (slug) WHERE slug IS NOT NULL DO UPDATE SET
-  nome = EXCLUDED.nome,
+ON CONFLICT (nome) DO UPDATE SET
+  slug = EXCLUDED.slug,
   nome_completo = EXCLUDED.nome_completo,
   titular_sugerido = EXCLUDED.titular_sugerido,
   ordem = EXCLUDED.ordem,
@@ -236,8 +246,8 @@ ON CONFLICT (slug) WHERE slug IS NOT NULL DO UPDATE SET
   ativo = true;
 INSERT INTO public.cargos (slug, nome, nome_completo, titular_sugerido, ordem, categoria, descricao, nivel_padrao_leitura, nivel_padrao_escrita)
 VALUES ('assistente-producao', 'Assist Prod', 'Assistente de Produção', 'Gabriel Munck', 150, 'assistencia', 'Assistente de Produção', 3, 3)
-ON CONFLICT (slug) WHERE slug IS NOT NULL DO UPDATE SET
-  nome = EXCLUDED.nome,
+ON CONFLICT (nome) DO UPDATE SET
+  slug = EXCLUDED.slug,
   nome_completo = EXCLUDED.nome_completo,
   titular_sugerido = EXCLUDED.titular_sugerido,
   ordem = EXCLUDED.ordem,
@@ -246,8 +256,8 @@ ON CONFLICT (slug) WHERE slug IS NOT NULL DO UPDATE SET
   ativo = true;
 INSERT INTO public.cargos (slug, nome, nome_completo, titular_sugerido, ordem, categoria, descricao, nivel_padrao_leitura, nivel_padrao_escrita)
 VALUES ('lider-operacoes', 'Líder Op', 'Líder de Operações', 'Jéssica Salviano · Amaury', 160, 'lideranca', 'Líder de Operações (Hospitalidade)', 3, 3)
-ON CONFLICT (slug) WHERE slug IS NOT NULL DO UPDATE SET
-  nome = EXCLUDED.nome,
+ON CONFLICT (nome) DO UPDATE SET
+  slug = EXCLUDED.slug,
   nome_completo = EXCLUDED.nome_completo,
   titular_sugerido = EXCLUDED.titular_sugerido,
   ordem = EXCLUDED.ordem,
@@ -256,8 +266,8 @@ ON CONFLICT (slug) WHERE slug IS NOT NULL DO UPDATE SET
   ativo = true;
 INSERT INTO public.cargos (slug, nome, nome_completo, titular_sugerido, ordem, categoria, descricao, nivel_padrao_leitura, nivel_padrao_escrita)
 VALUES ('lider-logistica', 'Líder Log', 'Líder de Logística', 'Amaury', 170, 'lideranca', 'Líder de Logística', 3, 3)
-ON CONFLICT (slug) WHERE slug IS NOT NULL DO UPDATE SET
-  nome = EXCLUDED.nome,
+ON CONFLICT (nome) DO UPDATE SET
+  slug = EXCLUDED.slug,
   nome_completo = EXCLUDED.nome_completo,
   titular_sugerido = EXCLUDED.titular_sugerido,
   ordem = EXCLUDED.ordem,
@@ -266,8 +276,8 @@ ON CONFLICT (slug) WHERE slug IS NOT NULL DO UPDATE SET
   ativo = true;
 INSERT INTO public.cargos (slug, nome, nome_completo, titular_sugerido, ordem, categoria, descricao, nivel_padrao_leitura, nivel_padrao_escrita)
 VALUES ('assistente-logistica', 'Assist Log', 'Assistente de Logística', 'Pery, Erivelton', 180, 'assistencia', 'Assistente de Logística (compras / patrimônio)', 3, 3)
-ON CONFLICT (slug) WHERE slug IS NOT NULL DO UPDATE SET
-  nome = EXCLUDED.nome,
+ON CONFLICT (nome) DO UPDATE SET
+  slug = EXCLUDED.slug,
   nome_completo = EXCLUDED.nome_completo,
   titular_sugerido = EXCLUDED.titular_sugerido,
   ordem = EXCLUDED.ordem,
@@ -276,8 +286,8 @@ ON CONFLICT (slug) WHERE slug IS NOT NULL DO UPDATE SET
   ativo = true;
 INSERT INTO public.cargos (slug, nome, nome_completo, titular_sugerido, ordem, categoria, descricao, nivel_padrao_leitura, nivel_padrao_escrita)
 VALUES ('assistente-operacoes', 'Assist Op', 'Assistente de Operações', 'Jane, Alba, Ribamar, Leonardo Pinto, Elionardo Alves', 190, 'assistencia', 'Assistente de Operações (cozinha, limpeza, manutenção)', 3, 3)
-ON CONFLICT (slug) WHERE slug IS NOT NULL DO UPDATE SET
-  nome = EXCLUDED.nome,
+ON CONFLICT (nome) DO UPDATE SET
+  slug = EXCLUDED.slug,
   nome_completo = EXCLUDED.nome_completo,
   titular_sugerido = EXCLUDED.titular_sugerido,
   ordem = EXCLUDED.ordem,
@@ -286,8 +296,8 @@ ON CONFLICT (slug) WHERE slug IS NOT NULL DO UPDATE SET
   ativo = true;
 INSERT INTO public.cargos (slug, nome, nome_completo, titular_sugerido, ordem, categoria, descricao, nivel_padrao_leitura, nivel_padrao_escrita)
 VALUES ('diretor-rh', 'Dir RH', 'Diretora de RH', 'Juliana Leão', 200, 'diretoria', 'Diretora de RH', 4, 4)
-ON CONFLICT (slug) WHERE slug IS NOT NULL DO UPDATE SET
-  nome = EXCLUDED.nome,
+ON CONFLICT (nome) DO UPDATE SET
+  slug = EXCLUDED.slug,
   nome_completo = EXCLUDED.nome_completo,
   titular_sugerido = EXCLUDED.titular_sugerido,
   ordem = EXCLUDED.ordem,
@@ -296,8 +306,8 @@ ON CONFLICT (slug) WHERE slug IS NOT NULL DO UPDATE SET
   ativo = true;
 INSERT INTO public.cargos (slug, nome, nome_completo, titular_sugerido, ordem, categoria, descricao, nivel_padrao_leitura, nivel_padrao_escrita)
 VALUES ('coordenador-voluntarios', 'Coord Vol', 'Coordenador de Voluntários', 'qualquer líder que escala sua equipe', 210, 'coordenacao', 'Papel atribuído a qualquer líder que escala voluntários', 3, 3)
-ON CONFLICT (slug) WHERE slug IS NOT NULL DO UPDATE SET
-  nome = EXCLUDED.nome,
+ON CONFLICT (nome) DO UPDATE SET
+  slug = EXCLUDED.slug,
   nome_completo = EXCLUDED.nome_completo,
   titular_sugerido = EXCLUDED.titular_sugerido,
   ordem = EXCLUDED.ordem,
@@ -306,8 +316,8 @@ ON CONFLICT (slug) WHERE slug IS NOT NULL DO UPDATE SET
   ativo = true;
 INSERT INTO public.cargos (slug, nome, nome_completo, titular_sugerido, ordem, categoria, descricao, nivel_padrao_leitura, nivel_padrao_escrita)
 VALUES ('voluntario', 'Voluntário', 'Voluntário', 'qualquer pessoa que serve', 220, 'base', 'Voluntário ativo', 3, 3)
-ON CONFLICT (slug) WHERE slug IS NOT NULL DO UPDATE SET
-  nome = EXCLUDED.nome,
+ON CONFLICT (nome) DO UPDATE SET
+  slug = EXCLUDED.slug,
   nome_completo = EXCLUDED.nome_completo,
   titular_sugerido = EXCLUDED.titular_sugerido,
   ordem = EXCLUDED.ordem,
@@ -316,8 +326,8 @@ ON CONFLICT (slug) WHERE slug IS NOT NULL DO UPDATE SET
   ativo = true;
 INSERT INTO public.cargos (slug, nome, nome_completo, titular_sugerido, ordem, categoria, descricao, nivel_padrao_leitura, nivel_padrao_escrita)
 VALUES ('membro', 'Membro', 'Membro', 'auto-cadastro · dashboard básico', 230, 'base', 'Membro da igreja', 3, 3)
-ON CONFLICT (slug) WHERE slug IS NOT NULL DO UPDATE SET
-  nome = EXCLUDED.nome,
+ON CONFLICT (nome) DO UPDATE SET
+  slug = EXCLUDED.slug,
   nome_completo = EXCLUDED.nome_completo,
   titular_sugerido = EXCLUDED.titular_sugerido,
   ordem = EXCLUDED.ordem,
@@ -326,8 +336,8 @@ ON CONFLICT (slug) WHERE slug IS NOT NULL DO UPDATE SET
   ativo = true;
 INSERT INTO public.cargos (slug, nome, nome_completo, titular_sugerido, ordem, categoria, descricao, nivel_padrao_leitura, nivel_padrao_escrita)
 VALUES ('conselho', 'Conselho', 'Conselho Estatutário', 'não-funcionário · vê dashboards', 240, 'conselho', 'Conselho estatutário', 3, 3)
-ON CONFLICT (slug) WHERE slug IS NOT NULL DO UPDATE SET
-  nome = EXCLUDED.nome,
+ON CONFLICT (nome) DO UPDATE SET
+  slug = EXCLUDED.slug,
   nome_completo = EXCLUDED.nome_completo,
   titular_sugerido = EXCLUDED.titular_sugerido,
   ordem = EXCLUDED.ordem,
@@ -336,8 +346,8 @@ ON CONFLICT (slug) WHERE slug IS NOT NULL DO UPDATE SET
   ativo = true;
 INSERT INTO public.cargos (slug, nome, nome_completo, titular_sugerido, ordem, categoria, descricao, nivel_padrao_leitura, nivel_padrao_escrita)
 VALUES ('dev', 'Dev', 'Suporte / Dev', 'Matheus + Marcos', 250, 'tecnico', 'Suporte técnico / Dev', 5, 5)
-ON CONFLICT (slug) WHERE slug IS NOT NULL DO UPDATE SET
-  nome = EXCLUDED.nome,
+ON CONFLICT (nome) DO UPDATE SET
+  slug = EXCLUDED.slug,
   nome_completo = EXCLUDED.nome_completo,
   titular_sugerido = EXCLUDED.titular_sugerido,
   ordem = EXCLUDED.ordem,
@@ -350,8 +360,8 @@ ON CONFLICT (slug) WHERE slug IS NOT NULL DO UPDATE SET
 -- ---------------------------------------------------------------------
 INSERT INTO public.modulos (slug, nome, rota, categoria, ordem, descricao, ativo)
 VALUES ('dashboard', 'Dashboard', '/dashboard', 'estrategica', 10, 'Home com cards resumo', true)
-ON CONFLICT (slug) WHERE slug IS NOT NULL DO UPDATE SET
-  nome = EXCLUDED.nome,
+ON CONFLICT (nome) DO UPDATE SET
+  slug = EXCLUDED.slug,
   rota = EXCLUDED.rota,
   categoria = EXCLUDED.categoria,
   ordem = EXCLUDED.ordem,
@@ -359,8 +369,8 @@ ON CONFLICT (slug) WHERE slug IS NOT NULL DO UPDATE SET
   ativo = true;
 INSERT INTO public.modulos (slug, nome, rota, categoria, ordem, descricao, ativo)
 VALUES ('painel-cbrio', 'Painel CBRio', '/painel', 'estrategica', 20, 'NSM · mandalas · matrizes · alertas', true)
-ON CONFLICT (slug) WHERE slug IS NOT NULL DO UPDATE SET
-  nome = EXCLUDED.nome,
+ON CONFLICT (nome) DO UPDATE SET
+  slug = EXCLUDED.slug,
   rota = EXCLUDED.rota,
   categoria = EXCLUDED.categoria,
   ordem = EXCLUDED.ordem,
@@ -368,8 +378,8 @@ ON CONFLICT (slug) WHERE slug IS NOT NULL DO UPDATE SET
   ativo = true;
 INSERT INTO public.modulos (slug, nome, rota, categoria, ordem, descricao, ativo)
 VALUES ('minha-area', 'Minha Área', '/minha-area', 'estrategica', 30, 'KPIs do líder (filtrado por área/valor)', true)
-ON CONFLICT (slug) WHERE slug IS NOT NULL DO UPDATE SET
-  nome = EXCLUDED.nome,
+ON CONFLICT (nome) DO UPDATE SET
+  slug = EXCLUDED.slug,
   rota = EXCLUDED.rota,
   categoria = EXCLUDED.categoria,
   ordem = EXCLUDED.ordem,
@@ -377,8 +387,8 @@ ON CONFLICT (slug) WHERE slug IS NOT NULL DO UPDATE SET
   ativo = true;
 INSERT INTO public.modulos (slug, nome, rota, categoria, ordem, descricao, ativo)
 VALUES ('gestao', 'Gestão (PMO)', '/gestao', 'estrategica', 40, 'Estrutura OKR · configurar metas · saúde sistema', true)
-ON CONFLICT (slug) WHERE slug IS NOT NULL DO UPDATE SET
-  nome = EXCLUDED.nome,
+ON CONFLICT (nome) DO UPDATE SET
+  slug = EXCLUDED.slug,
   rota = EXCLUDED.rota,
   categoria = EXCLUDED.categoria,
   ordem = EXCLUDED.ordem,
@@ -386,8 +396,8 @@ ON CONFLICT (slug) WHERE slug IS NOT NULL DO UPDATE SET
   ativo = true;
 INSERT INTO public.modulos (slug, nome, rota, categoria, ordem, descricao, ativo)
 VALUES ('planejamento', 'Planejamento', '/planejamento', 'estrategica', 50, 'Ritual mensal causa-decisão', true)
-ON CONFLICT (slug) WHERE slug IS NOT NULL DO UPDATE SET
-  nome = EXCLUDED.nome,
+ON CONFLICT (nome) DO UPDATE SET
+  slug = EXCLUDED.slug,
   rota = EXCLUDED.rota,
   categoria = EXCLUDED.categoria,
   ordem = EXCLUDED.ordem,
@@ -395,8 +405,8 @@ ON CONFLICT (slug) WHERE slug IS NOT NULL DO UPDATE SET
   ativo = true;
 INSERT INTO public.modulos (slug, nome, rota, categoria, ordem, descricao, ativo)
 VALUES ('ritual', 'Ritual Mensal', '/ritual', 'estrategica', 60, 'Revisão da Diretoria Geral (5 nominais)', true)
-ON CONFLICT (slug) WHERE slug IS NOT NULL DO UPDATE SET
-  nome = EXCLUDED.nome,
+ON CONFLICT (nome) DO UPDATE SET
+  slug = EXCLUDED.slug,
   rota = EXCLUDED.rota,
   categoria = EXCLUDED.categoria,
   ordem = EXCLUDED.ordem,
@@ -404,8 +414,8 @@ ON CONFLICT (slug) WHERE slug IS NOT NULL DO UPDATE SET
   ativo = true;
 INSERT INTO public.modulos (slug, nome, rota, categoria, ordem, descricao, ativo)
 VALUES ('governanca', 'Governança', '/governanca', 'estrategica', 70, 'Ciclo mensal OKR · DRE · KPI · Conselho', true)
-ON CONFLICT (slug) WHERE slug IS NOT NULL DO UPDATE SET
-  nome = EXCLUDED.nome,
+ON CONFLICT (nome) DO UPDATE SET
+  slug = EXCLUDED.slug,
   rota = EXCLUDED.rota,
   categoria = EXCLUDED.categoria,
   ordem = EXCLUDED.ordem,
@@ -413,8 +423,8 @@ ON CONFLICT (slug) WHERE slug IS NOT NULL DO UPDATE SET
   ativo = true;
 INSERT INTO public.modulos (slug, nome, rota, categoria, ordem, descricao, ativo)
 VALUES ('revisao-estrategica', 'Revisão Estratégica', '/revisao-estrategica', 'estrategica', 80, 'Edição direta de projetos/marcos · cascata de impacto', true)
-ON CONFLICT (slug) WHERE slug IS NOT NULL DO UPDATE SET
-  nome = EXCLUDED.nome,
+ON CONFLICT (nome) DO UPDATE SET
+  slug = EXCLUDED.slug,
   rota = EXCLUDED.rota,
   categoria = EXCLUDED.categoria,
   ordem = EXCLUDED.ordem,
@@ -422,8 +432,8 @@ ON CONFLICT (slug) WHERE slug IS NOT NULL DO UPDATE SET
   ativo = true;
 INSERT INTO public.modulos (slug, nome, rota, categoria, ordem, descricao, ativo)
 VALUES ('integracao', 'Integração', '/ministerial/integracao', 'ministerial', 110, 'Cultos · Frequência · Decisões · Batismos · Histórico', true)
-ON CONFLICT (slug) WHERE slug IS NOT NULL DO UPDATE SET
-  nome = EXCLUDED.nome,
+ON CONFLICT (nome) DO UPDATE SET
+  slug = EXCLUDED.slug,
   rota = EXCLUDED.rota,
   categoria = EXCLUDED.categoria,
   ordem = EXCLUDED.ordem,
@@ -431,8 +441,8 @@ ON CONFLICT (slug) WHERE slug IS NOT NULL DO UPDATE SET
   ativo = true;
 INSERT INTO public.modulos (slug, nome, rota, categoria, ordem, descricao, ativo)
 VALUES ('cuidados', 'Cuidados', '/ministerial/cuidados', 'ministerial', 120, 'Acompanhamentos pastorais · Jornada 180 · Convertidos', true)
-ON CONFLICT (slug) WHERE slug IS NOT NULL DO UPDATE SET
-  nome = EXCLUDED.nome,
+ON CONFLICT (nome) DO UPDATE SET
+  slug = EXCLUDED.slug,
   rota = EXCLUDED.rota,
   categoria = EXCLUDED.categoria,
   ordem = EXCLUDED.ordem,
@@ -440,8 +450,8 @@ ON CONFLICT (slug) WHERE slug IS NOT NULL DO UPDATE SET
   ativo = true;
 INSERT INTO public.modulos (slug, nome, rota, categoria, ordem, descricao, ativo)
 VALUES ('online', 'Online (YouTube)', '/ministerial/online', 'ministerial', 130, 'Desempenho do canal (read-only)', true)
-ON CONFLICT (slug) WHERE slug IS NOT NULL DO UPDATE SET
-  nome = EXCLUDED.nome,
+ON CONFLICT (nome) DO UPDATE SET
+  slug = EXCLUDED.slug,
   rota = EXCLUDED.rota,
   categoria = EXCLUDED.categoria,
   ordem = EXCLUDED.ordem,
@@ -449,8 +459,8 @@ ON CONFLICT (slug) WHERE slug IS NOT NULL DO UPDATE SET
   ativo = true;
 INSERT INTO public.modulos (slug, nome, rota, categoria, ordem, descricao, ativo)
 VALUES ('next', 'NEXT', '/ministerial/next', 'ministerial', 140, 'Curso de novos membros', true)
-ON CONFLICT (slug) WHERE slug IS NOT NULL DO UPDATE SET
-  nome = EXCLUDED.nome,
+ON CONFLICT (nome) DO UPDATE SET
+  slug = EXCLUDED.slug,
   rota = EXCLUDED.rota,
   categoria = EXCLUDED.categoria,
   ordem = EXCLUDED.ordem,
@@ -458,8 +468,8 @@ ON CONFLICT (slug) WHERE slug IS NOT NULL DO UPDATE SET
   ativo = true;
 INSERT INTO public.modulos (slug, nome, rota, categoria, ordem, descricao, ativo)
 VALUES ('voluntariado', 'Voluntariado', '/ministerial/voluntariado', 'ministerial', 150, 'Checkin · escalas · perfil · disponibilidade', true)
-ON CONFLICT (slug) WHERE slug IS NOT NULL DO UPDATE SET
-  nome = EXCLUDED.nome,
+ON CONFLICT (nome) DO UPDATE SET
+  slug = EXCLUDED.slug,
   rota = EXCLUDED.rota,
   categoria = EXCLUDED.categoria,
   ordem = EXCLUDED.ordem,
@@ -467,8 +477,8 @@ ON CONFLICT (slug) WHERE slug IS NOT NULL DO UPDATE SET
   ativo = true;
 INSERT INTO public.modulos (slug, nome, rota, categoria, ordem, descricao, ativo)
 VALUES ('membresia', 'Membresia', '/ministerial/membresia', 'ministerial', 160, 'CRM de pessoas · jornada · cartão digital', true)
-ON CONFLICT (slug) WHERE slug IS NOT NULL DO UPDATE SET
-  nome = EXCLUDED.nome,
+ON CONFLICT (nome) DO UPDATE SET
+  slug = EXCLUDED.slug,
   rota = EXCLUDED.rota,
   categoria = EXCLUDED.categoria,
   ordem = EXCLUDED.ordem,
@@ -476,8 +486,8 @@ ON CONFLICT (slug) WHERE slug IS NOT NULL DO UPDATE SET
   ativo = true;
 INSERT INTO public.modulos (slug, nome, rota, categoria, ordem, descricao, ativo)
 VALUES ('grupos', 'Grupos', '/grupos', 'ministerial', 170, 'Grupos de conexão · supervisão · pedidos', true)
-ON CONFLICT (slug) WHERE slug IS NOT NULL DO UPDATE SET
-  nome = EXCLUDED.nome,
+ON CONFLICT (nome) DO UPDATE SET
+  slug = EXCLUDED.slug,
   rota = EXCLUDED.rota,
   categoria = EXCLUDED.categoria,
   ordem = EXCLUDED.ordem,
@@ -485,8 +495,8 @@ ON CONFLICT (slug) WHERE slug IS NOT NULL DO UPDATE SET
   ativo = true;
 INSERT INTO public.modulos (slug, nome, rota, categoria, ordem, descricao, ativo)
 VALUES ('eventos', 'Eventos', '/eventos', 'operacional', 210, 'Ciclo criativo · fases · documentos · KPIs por evento', true)
-ON CONFLICT (slug) WHERE slug IS NOT NULL DO UPDATE SET
-  nome = EXCLUDED.nome,
+ON CONFLICT (nome) DO UPDATE SET
+  slug = EXCLUDED.slug,
   rota = EXCLUDED.rota,
   categoria = EXCLUDED.categoria,
   ordem = EXCLUDED.ordem,
@@ -494,8 +504,8 @@ ON CONFLICT (slug) WHERE slug IS NOT NULL DO UPDATE SET
   ativo = true;
 INSERT INTO public.modulos (slug, nome, rota, categoria, ordem, descricao, ativo)
 VALUES ('projetos', 'Projetos', '/projetos', 'operacional', 220, 'Projetos com fases', true)
-ON CONFLICT (slug) WHERE slug IS NOT NULL DO UPDATE SET
-  nome = EXCLUDED.nome,
+ON CONFLICT (nome) DO UPDATE SET
+  slug = EXCLUDED.slug,
   rota = EXCLUDED.rota,
   categoria = EXCLUDED.categoria,
   ordem = EXCLUDED.ordem,
@@ -503,8 +513,8 @@ ON CONFLICT (slug) WHERE slug IS NOT NULL DO UPDATE SET
   ativo = true;
 INSERT INTO public.modulos (slug, nome, rota, categoria, ordem, descricao, ativo)
 VALUES ('expansao', 'Expansão', '/expansao', 'operacional', 230, 'Marcos estratégicos até 2029', true)
-ON CONFLICT (slug) WHERE slug IS NOT NULL DO UPDATE SET
-  nome = EXCLUDED.nome,
+ON CONFLICT (nome) DO UPDATE SET
+  slug = EXCLUDED.slug,
   rota = EXCLUDED.rota,
   categoria = EXCLUDED.categoria,
   ordem = EXCLUDED.ordem,
@@ -512,8 +522,8 @@ ON CONFLICT (slug) WHERE slug IS NOT NULL DO UPDATE SET
   ativo = true;
 INSERT INTO public.modulos (slug, nome, rota, categoria, ordem, descricao, ativo)
 VALUES ('rh', 'RH', '/admin/rh', 'operacional', 250, 'Funcionários · documentos · treinamentos', true)
-ON CONFLICT (slug) WHERE slug IS NOT NULL DO UPDATE SET
-  nome = EXCLUDED.nome,
+ON CONFLICT (nome) DO UPDATE SET
+  slug = EXCLUDED.slug,
   rota = EXCLUDED.rota,
   categoria = EXCLUDED.categoria,
   ordem = EXCLUDED.ordem,
@@ -521,8 +531,8 @@ ON CONFLICT (slug) WHERE slug IS NOT NULL DO UPDATE SET
   ativo = true;
 INSERT INTO public.modulos (slug, nome, rota, categoria, ordem, descricao, ativo)
 VALUES ('financeiro', 'Financeiro', '/admin/financeiro', 'operacional', 260, 'Receitas · despesas · relatórios', true)
-ON CONFLICT (slug) WHERE slug IS NOT NULL DO UPDATE SET
-  nome = EXCLUDED.nome,
+ON CONFLICT (nome) DO UPDATE SET
+  slug = EXCLUDED.slug,
   rota = EXCLUDED.rota,
   categoria = EXCLUDED.categoria,
   ordem = EXCLUDED.ordem,
@@ -530,8 +540,8 @@ ON CONFLICT (slug) WHERE slug IS NOT NULL DO UPDATE SET
   ativo = true;
 INSERT INTO public.modulos (slug, nome, rota, categoria, ordem, descricao, ativo)
 VALUES ('logistica', 'Logística', '/admin/logistica', 'operacional', 270, 'Estoque · compras · almoxarifado', true)
-ON CONFLICT (slug) WHERE slug IS NOT NULL DO UPDATE SET
-  nome = EXCLUDED.nome,
+ON CONFLICT (nome) DO UPDATE SET
+  slug = EXCLUDED.slug,
   rota = EXCLUDED.rota,
   categoria = EXCLUDED.categoria,
   ordem = EXCLUDED.ordem,
@@ -539,8 +549,8 @@ ON CONFLICT (slug) WHERE slug IS NOT NULL DO UPDATE SET
   ativo = true;
 INSERT INTO public.modulos (slug, nome, rota, categoria, ordem, descricao, ativo)
 VALUES ('patrimonio', 'Patrimônio', '/admin/patrimonio', 'operacional', 280, 'Espaços · equipamentos · inventário', true)
-ON CONFLICT (slug) WHERE slug IS NOT NULL DO UPDATE SET
-  nome = EXCLUDED.nome,
+ON CONFLICT (nome) DO UPDATE SET
+  slug = EXCLUDED.slug,
   rota = EXCLUDED.rota,
   categoria = EXCLUDED.categoria,
   ordem = EXCLUDED.ordem,
@@ -548,8 +558,8 @@ ON CONFLICT (slug) WHERE slug IS NOT NULL DO UPDATE SET
   ativo = true;
 INSERT INTO public.modulos (slug, nome, rota, categoria, ordem, descricao, ativo)
 VALUES ('solicitacoes', 'Solicitações', '/solicitacoes', 'operacional', 290, 'Backbone administrativo · SLA · aprovações', true)
-ON CONFLICT (slug) WHERE slug IS NOT NULL DO UPDATE SET
-  nome = EXCLUDED.nome,
+ON CONFLICT (nome) DO UPDATE SET
+  slug = EXCLUDED.slug,
   rota = EXCLUDED.rota,
   categoria = EXCLUDED.categoria,
   ordem = EXCLUDED.ordem,
@@ -557,8 +567,8 @@ ON CONFLICT (slug) WHERE slug IS NOT NULL DO UPDATE SET
   ativo = true;
 INSERT INTO public.modulos (slug, nome, rota, categoria, ordem, descricao, ativo)
 VALUES ('dados-brutos', 'Dados Brutos', '/dados-brutos', 'admin_dados', 310, 'Líder preenche números absolutos', true)
-ON CONFLICT (slug) WHERE slug IS NOT NULL DO UPDATE SET
-  nome = EXCLUDED.nome,
+ON CONFLICT (nome) DO UPDATE SET
+  slug = EXCLUDED.slug,
   rota = EXCLUDED.rota,
   categoria = EXCLUDED.categoria,
   ordem = EXCLUDED.ordem,
@@ -566,8 +576,8 @@ ON CONFLICT (slug) WHERE slug IS NOT NULL DO UPDATE SET
   ativo = true;
 INSERT INTO public.modulos (slug, nome, rota, categoria, ordem, descricao, ativo)
 VALUES ('nps', 'NPS', '/nps', 'admin_dados', 320, 'Pesquisas · respostas · link público', true)
-ON CONFLICT (slug) WHERE slug IS NOT NULL DO UPDATE SET
-  nome = EXCLUDED.nome,
+ON CONFLICT (nome) DO UPDATE SET
+  slug = EXCLUDED.slug,
   rota = EXCLUDED.rota,
   categoria = EXCLUDED.categoria,
   ordem = EXCLUDED.ordem,
@@ -575,8 +585,8 @@ ON CONFLICT (slug) WHERE slug IS NOT NULL DO UPDATE SET
   ativo = true;
 INSERT INTO public.modulos (slug, nome, rota, categoria, ordem, descricao, ativo)
 VALUES ('notificacoes-config', 'Notificações', '/admin/notificacoes', 'admin_dados', 330, 'Regras de quem recebe alertas de cada módulo', true)
-ON CONFLICT (slug) WHERE slug IS NOT NULL DO UPDATE SET
-  nome = EXCLUDED.nome,
+ON CONFLICT (nome) DO UPDATE SET
+  slug = EXCLUDED.slug,
   rota = EXCLUDED.rota,
   categoria = EXCLUDED.categoria,
   ordem = EXCLUDED.ordem,
@@ -584,8 +594,8 @@ ON CONFLICT (slug) WHERE slug IS NOT NULL DO UPDATE SET
   ativo = true;
 INSERT INTO public.modulos (slug, nome, rota, categoria, ordem, descricao, ativo)
 VALUES ('assistente-ia', 'Assistente IA', '/assistente-ia', 'admin_dados', 340, 'Agente Claude conversacional', true)
-ON CONFLICT (slug) WHERE slug IS NOT NULL DO UPDATE SET
-  nome = EXCLUDED.nome,
+ON CONFLICT (nome) DO UPDATE SET
+  slug = EXCLUDED.slug,
   rota = EXCLUDED.rota,
   categoria = EXCLUDED.categoria,
   ordem = EXCLUDED.ordem,
@@ -593,8 +603,8 @@ ON CONFLICT (slug) WHERE slug IS NOT NULL DO UPDATE SET
   ativo = true;
 INSERT INTO public.modulos (slug, nome, rota, categoria, ordem, descricao, ativo)
 VALUES ('cerebro', 'Cérebro CBRio', '(backend)', 'admin_dados', 350, 'Sync SharePoint → Obsidian via Haiku', true)
-ON CONFLICT (slug) WHERE slug IS NOT NULL DO UPDATE SET
-  nome = EXCLUDED.nome,
+ON CONFLICT (nome) DO UPDATE SET
+  slug = EXCLUDED.slug,
   rota = EXCLUDED.rota,
   categoria = EXCLUDED.categoria,
   ordem = EXCLUDED.ordem,
@@ -602,8 +612,8 @@ ON CONFLICT (slug) WHERE slug IS NOT NULL DO UPDATE SET
   ativo = true;
 INSERT INTO public.modulos (slug, nome, rota, categoria, ordem, descricao, ativo)
 VALUES ('perfil', 'Perfil próprio', '/perfil', 'admin_dados', 360, 'Dados pessoais do próprio usuário', true)
-ON CONFLICT (slug) WHERE slug IS NOT NULL DO UPDATE SET
-  nome = EXCLUDED.nome,
+ON CONFLICT (nome) DO UPDATE SET
+  slug = EXCLUDED.slug,
   rota = EXCLUDED.rota,
   categoria = EXCLUDED.categoria,
   ordem = EXCLUDED.ordem,
@@ -611,8 +621,8 @@ ON CONFLICT (slug) WHERE slug IS NOT NULL DO UPDATE SET
   ativo = true;
 INSERT INTO public.modulos (slug, nome, rota, categoria, ordem, descricao, ativo)
 VALUES ('permissoes-admin', 'Permissões', '/admin/permissoes', 'admin_dados', 370, 'UI deste sistema · gestão de cargos + overrides', true)
-ON CONFLICT (slug) WHERE slug IS NOT NULL DO UPDATE SET
-  nome = EXCLUDED.nome,
+ON CONFLICT (nome) DO UPDATE SET
+  slug = EXCLUDED.slug,
   rota = EXCLUDED.rota,
   categoria = EXCLUDED.categoria,
   ordem = EXCLUDED.ordem,
@@ -620,8 +630,8 @@ ON CONFLICT (slug) WHERE slug IS NOT NULL DO UPDATE SET
   ativo = true;
 INSERT INTO public.modulos (slug, nome, rota, categoria, ordem, descricao, ativo)
 VALUES ('usuarios-admin', 'Usuários', '/admin/usuarios', 'admin_dados', 380, 'Cadastrar/desativar pessoas', true)
-ON CONFLICT (slug) WHERE slug IS NOT NULL DO UPDATE SET
-  nome = EXCLUDED.nome,
+ON CONFLICT (nome) DO UPDATE SET
+  slug = EXCLUDED.slug,
   rota = EXCLUDED.rota,
   categoria = EXCLUDED.categoria,
   ordem = EXCLUDED.ordem,
