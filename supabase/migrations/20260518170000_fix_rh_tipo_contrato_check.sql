@@ -5,13 +5,15 @@
 -- produção ao inserir funcionários novos com tipo_contrato='PJ' porque
 -- existe um check constraint `rh_funcionarios_tipo_contrato_check` na
 -- tabela (criado manualmente direto no Supabase, fora das migrations) que
--- rejeita valores diferentes de 'CLT'.
+-- aceita apenas valores em minúsculas (pj/clt). Os 61 funcionários atuais
+-- também estão com tipo_contrato em minúsculas.
 --
--- O PCS usa 4 tipos de contrato: CLT, PJ, PJ+ (PJ com remuneração bruta
--- diferenciada), PREBENDA. Esta migration:
+-- O PCS usa 4 tipos de contrato em maiúsculas: CLT, PJ, PJ+ (PJ com
+-- remuneração bruta diferenciada), PREBENDA. Esta migration:
 --
---   1. Dropa o constraint antigo (se existir)
---   2. Recria um constraint permissivo que aceita os 4 tipos + NULL
+--   1. Normaliza valores existentes (pj → PJ, clt → CLT) via upper()
+--   2. Dropa o constraint antigo (case-sensitive lowercase)
+--   3. Recria um constraint permissivo que aceita os 4 tipos uppercase + NULL
 --
 -- Após aplicar esta migration, re-rodar a 20260518160000_pcs_modulo_fix_legacy.sql
 -- para concluir a criação do módulo PCS (ela é idempotente via IF NOT EXISTS
@@ -19,6 +21,11 @@
 -- ─────────────────────────────────────────────────────────────────────────
 
 BEGIN;
+
+UPDATE public.rh_funcionarios
+SET tipo_contrato = upper(tipo_contrato)
+WHERE tipo_contrato IS NOT NULL
+  AND tipo_contrato <> upper(tipo_contrato);
 
 ALTER TABLE public.rh_funcionarios
   DROP CONSTRAINT IF EXISTS rh_funcionarios_tipo_contrato_check;
