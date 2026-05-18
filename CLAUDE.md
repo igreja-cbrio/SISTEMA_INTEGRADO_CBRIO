@@ -1034,8 +1034,6 @@ SELECT * FROM vw_nsm_painel;
 - `GET /api/painel/serie-temporal/dados` → catalogo valor×dado + lista de cultos
 - `GET /api/painel/serie-temporal?valor=&dado=&culto=&inicio=&fim=&granularidade=`
    → serie agregada `[{periodo, valor}]` pra carrossel de tendencias
-- `GET /api/painel/indicadores-principais` → resumo dos indicadores que movem
-   cada valor (1-3 por valor) com `valor_atual`, `delta_pct` e `sparkline` 6m
 
 ### Carrossel de valores (tendencias temporais · `/painel`)
 
@@ -1062,27 +1060,10 @@ Pra adicionar novo dado: incluir entrada em `SERIE_DADOS[valor]` em
 `backend/routes/painel.js` + adicionar o branch correspondente em
 `calcularSerie()`. Frontend pega automaticamente via `/serie-temporal/dados`.
 
-### Indicadores principais (`/painel`)
+### Dados extras no `SERIE_DADOS` (carrossel de tendências)
 
-Abaixo do carrossel de tendências, `<IndicadoresPrincipais>` mostra um grid
-de **5 cards visuais** · um por valor · com os indicadores que **movem
-cada área**, escolhidos pelo Marcos:
-
-| Valor | Indicadores principais |
-|-------|------------------------|
-| Seguir a Jesus | Frequência · Decisões · Batismos |
-| Conectar | Grupos ativos na temporada |
-| Investir Tempo com Deus | Devocionais concluídos |
-| Servir em Comunidade | Voluntários ativos |
-| Generosidade | Dizimistas · Ofertantes |
-
-Cada indicador tem: número grande do **mês atual**, delta % vs mês anterior
-(verde/vermelho) e **sparkline AreaChart dos últimos 6 meses**. Backend
-delega o cálculo pra `calcularSerie()` (mesma função do carrossel de
-tendências), então adicionar novo indicador é mapear em
-`INDICADORES_PRINCIPAIS` (backend/routes/painel.js).
-
-Pra cobrir os indicadores, o `SERIE_DADOS` ganhou:
+`SERIE_DADOS` tem dados não-óbvios que valem listar (alimentam o carrossel
+de valores no `/painel`):
 - `conectar.grupos_ativos` · count de grupos com pelo menos 1 membro ativo
   no fim de cada período (snapshot via `mem_grupo_membros`)
 - `generosidade.dizimistas` e `generosidade.ofertantes` · distinct membros
@@ -1093,9 +1074,6 @@ Pra cobrir os indicadores, o `SERIE_DADOS` ganhou:
 - `MandalaSlide.jsx` — uma mandala SVG (5 ou 6 setores)
 - `CarrosselMandalas.jsx` — carrossel com setas, dots, swipe, teclado
 - `CarrosselValores.jsx` — 5 slides com filtros + gráfico de linha (tendências)
-- `IndicadoresPrincipais.jsx` — grid 5 cards · indicadores que movem cada valor
-  (frequência/decisões/batismos · grupos ativos · devocionais · voluntários ·
-   dizimistas/ofertantes) com número grande + delta % + sparkline 6m
 - `MatrizValorArea.jsx` — tabela colorida com modal
 - `ModalCelula.jsx` — drilldown da celula
 - `AlertasCriticos.jsx` — top 3 KPIs em alerta
