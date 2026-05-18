@@ -142,6 +142,36 @@ router.get('/cultos/:id/decisoes-pessoas', async (req, res) => {
   res.json(data || []);
 });
 
+// Decisoes com cadastro incompleto (sem CPF ou sem data_nascimento)
+// Marcos: "futuramente quando tivermos esse convertido ja alinhado na
+// jornada vamos conseguir buscar melhor esses dados em um censo posterior"
+router.get('/decisoes-pessoas/incompletos', async (req, res) => {
+  const limit = Math.min(Number(req.query.limit) || 200, 1000);
+  const { data, error } = await supabase
+    .from('cultos_decisoes_pessoas')
+    .select(`
+      id, culto_id, membro_id, nome, telefone, email, idade, data_nascimento, cpf,
+      tipo_decisao, status_followup, registrado_em,
+      culto:culto_id(id, data, service_type_id, service_type_name)
+    `)
+    .or('cpf.is.null,data_nascimento.is.null')
+    .order('registrado_em', { ascending: false })
+    .limit(limit);
+  if (error) {
+    console.error('[kpis/decisoes-pessoas/incompletos]', error.message);
+    return res.status(500).json({ error: error.message });
+  }
+  const items = (data || []).map(p => ({
+    ...p,
+    falta_cpf:   !p.cpf,
+    falta_nasc:  !p.data_nascimento,
+  }));
+  res.json({
+    total: items.length,
+    items,
+  });
+});
+
 // Busca de membro/visitante por nome, CPF, email, telefone
 // Usada pelo autocomplete no modal antes de cadastrar manual
 router.get('/decisoes-pessoas/buscar-membro', async (req, res) => {
@@ -173,18 +203,19 @@ router.get('/decisoes-pessoas/buscar-membro', async (req, res) => {
 
 router.post('/cultos/:id/decisoes-pessoas', authorizeIntegracao, async (req, res) => {
   const { nome, telefone, email, idade, data_nascimento, cpf, tipo_decisao, observacoes, membro_id } = req.body || {};
+  // Marcos: "no momento da conversao, dificil pedir CPF/nascimento. Nome +
+  // telefone sao os dados mais faceis. CPF/nascimento ficam opcionais ·
+  // censo posterior preenche". Cadastro incompleto = sem cpf OU sem nascimento.
   if (!nome || String(nome).trim().length < 2) {
     return res.status(400).json({ error: 'Nome obrigatorio (min 2 chars)' });
+  }
+  const telLimpo = telefone ? String(telefone).replace(/\D/g, '') : '';
+  if (telLimpo.length < 8) {
+    return res.status(400).json({ error: 'Telefone obrigatorio (min 8 digitos · ex: 999991234)' });
   }
   const cpfLimpo = cpf ? String(cpf).replace(/\D/g, '') : null;
   if (cpfLimpo && cpfLimpo.length !== 11) {
     return res.status(400).json({ error: 'CPF deve ter 11 digitos' });
-  }
-  if (!cpfLimpo) {
-    return res.status(400).json({ error: 'CPF obrigatorio para cruzamento com a jornada' });
-  }
-  if (!data_nascimento) {
-    return res.status(400).json({ error: 'Data de nascimento obrigatoria para cruzamento estavel' });
   }
 
   // Se nao veio membro_id explicito, trigger BEFORE INSERT resolve/cria
@@ -197,7 +228,7 @@ router.post('/cultos/:id/decisoes-pessoas', authorizeIntegracao, async (req, res
       telefone: telefone || null,
       email: email ? String(email).trim().toLowerCase() : null,
       idade: idade ? Number(idade) : null,
-      data_nascimento,
+      data_nascimento: data_nascimento || null,
       cpf: cpfLimpo,
       tipo_decisao: ['presencial', 'online'].includes(tipo_decisao) ? tipo_decisao : 'presencial',
       observacoes: observacoes || null,
