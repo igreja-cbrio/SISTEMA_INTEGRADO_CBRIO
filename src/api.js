@@ -646,6 +646,19 @@ export const membresia = {
   qrLookup: (token) => get(`/membresia/qr-lookup/${encodeURIComponent(token)}`),
   orfaosStats: () => get('/membresia/orfaos-stats'),
   promoverOrfaos: () => post('/membresia/promover-orfaos', {}),
+  // Detecção e merge de duplicados
+  duplicados: {
+    list: (params = {}) => {
+      const qs = new URLSearchParams(params).toString();
+      return get('/membresia/duplicados' + (qs ? '?' + qs : ''));
+    },
+    ignorar: (data) => post('/membresia/duplicados/ignorar', data),
+    merge: (data) => post('/membresia/membros/merge', data),
+    log: (params = {}) => {
+      const qs = new URLSearchParams(params).toString();
+      return get('/membresia/merge-log' + (qs ? '?' + qs : ''));
+    },
+  },
   membros: {
     list: (params) => get('/membresia/membros' + (params ? '?' + new URLSearchParams(params) : '')),
     get: (id) => get(`/membresia/membros/${id}`),

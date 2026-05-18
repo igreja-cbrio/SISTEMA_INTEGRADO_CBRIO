@@ -895,6 +895,45 @@ dados passados". A view `vw_nsm_sem_dados` filtra `c.data >= DATE '2026-05-18'`,
 escondendo gaps históricos impossíveis de preencher. Cultos anteriores
 ao cutoff não aparecem mais como pendentes na aba Pessoas.
 
+### Membros duplicados · detecção + merge
+
+Marcos (2026-05-18): "não impede cadastro duplicado · ter aba pra juntar
+depois. Pessoa pode levantar a mão 2x em cultos diferentes ou cadastrar
+em grupos sem saber que já tem".
+
+**Schema** (migration `20260518170000_membros_duplicados.sql`):
+- `vw_membros_duplicados` · view que detecta pares por 5 critérios:
+  - `cpf_igual` (100%) · mesmo CPF normalizado de 11 dígitos
+  - `nome_e_nascimento` (95%) · mesmo nome (case-insensitive) + mesma data nasc
+  - `telefone_igual` (90%) · mesmo telefone normalizado
+  - `email_igual` (85%) · mesmo email (lower/trim)
+  - `nome_similar` (70%) · `pg_trgm.similarity() >= 0.7` + (mesmo CPF OR mesmo nasc)
+- `mem_duplicados_ignorados` · pares confirmados "não é duplicata" · saem
+  automaticamente da view · UNIQUE (a, b) + CHECK (a < b) garante idempotência
+- `mem_merge_log` · audit com snapshot JSONB pré-merge
+- Função `merge_membros(keep_id, merge_ids[], feito_por, observacao)`:
+  - Atualiza FKs em 9+ tabelas conhecidas (grupo_membros, contribuicoes,
+    trilha_valores, voluntarios, devocionais, cultos_decisoes_pessoas,
+    nsm_eventos, jornada180, +6 opcionais via `EXCEPTION undefined_table`)
+  - Resolve conflitos de UNIQUE deletando linhas duplicadas antes do UPDATE
+    (ex: `mem_grupo_membros (membro_id) WHERE saiu_em IS NULL`)
+  - Enriquece `keep` com dados que tinha em `merge` mas não em `keep`
+    (CPF, telefone, email, nascimento, foto)
+  - DELETE dos `merge_ids` no final · log com snapshot
+  - Idempotente · IDs inexistentes / `keep_id` na lista são filtrados
+
+**Endpoints** (`backend/routes/membresia.js`):
+- `GET /api/membresia/duplicados?limit=200`
+- `POST /api/membresia/duplicados/ignorar` (admin/diretor)
+- `POST /api/membresia/membros/merge` (admin/diretor) · `{keep_id, merge_ids, observacao}`
+- `GET /api/membresia/merge-log` (admin/diretor)
+
+**UI** (`src/components/MembrosDuplicadosPanel.jsx`):
+- Aba "Duplicados" em `/ministerial/membresia` (entre Jornada e Cadastros)
+- Cards lado a lado com foto/nome/CPF/telefone/email/nasc · badges coloridos
+  por motivo · botão "Manter este" + "Não é duplicata"
+- Modal de confirmação destacando o cadastro que sumirá
+
 ### Cascata Seguir a Jesus → KPIs por área
 
 Os dados preenchidos no modal de culto agora alimentam **7 KPIs** do
