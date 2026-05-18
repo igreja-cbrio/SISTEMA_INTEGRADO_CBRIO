@@ -1,7 +1,10 @@
 const router = require('express').Router();
+const crypto = require('crypto');
 const { authenticate, authorize } = require('../middleware/auth');
 const { supabase } = require('../utils/supabase');
 const { syncCanal } = require('../services/youtubeCollector');
+const yt = require('../services/youtubeAnalytics');
+const collectors = require('../services/onlineCollectors');
 
 const CRON_SECRET = process.env.CRON_SECRET;
 
@@ -25,8 +28,93 @@ router.get('/cron/sync', autorizaCron, async (_req, res) => {
   }
 });
 
+// Coletores autonomos (Analytics API)
+router.get('/cron/live-monitor', autorizaCron, async (_req, res) => {
+  try { res.json(await collectors.liveMonitor()); }
+  catch (e) { console.error('[live-monitor]', e.message); res.status(500).json({ error: e.message }); }
+});
+router.get('/cron/ds-collect', autorizaCron, async (_req, res) => {
+  try { res.json(await collectors.dsCollector()); }
+  catch (e) { console.error('[ds-collect]', e.message); res.status(500).json({ error: e.message }); }
+});
+router.get('/cron/ddus-collect', autorizaCron, async (_req, res) => {
+  try { res.json(await collectors.ddusCollector()); }
+  catch (e) { console.error('[ddus-collect]', e.message); res.status(500).json({ error: e.message }); }
+});
+
+// ── OAuth callback eh publico (Google redireciona, sem nosso JWT) ──
+// State carrega: userId + nonce assinado com CRON_SECRET pra anti-CSRF
+function signState(payload) {
+  const json = JSON.stringify(payload);
+  const sig = crypto.createHmac('sha256', CRON_SECRET || 'dev').update(json).digest('hex').slice(0, 16);
+  return Buffer.from(json).toString('base64url') + '.' + sig;
+}
+function verifyState(state) {
+  try {
+    const [b64, sig] = (state || '').split('.');
+    if (!b64 || !sig) return null;
+    const json = Buffer.from(b64, 'base64url').toString();
+    const expected = crypto.createHmac('sha256', CRON_SECRET || 'dev').update(json).digest('hex').slice(0, 16);
+    if (expected !== sig) return null;
+    const payload = JSON.parse(json);
+    if (Date.now() - (payload.ts || 0) > 10 * 60 * 1000) return null;
+    return payload;
+  } catch { return null; }
+}
+
+function getRedirectUri() {
+  const base = process.env.FRONTEND_URL || `https://${process.env.VERCEL_URL}` || 'http://localhost:3000';
+  return `${base.replace(/\/$/, '')}/api/online/oauth/callback`;
+}
+
+router.get('/oauth/callback', async (req, res) => {
+  const { code, state, error } = req.query;
+  if (error) return res.redirect(`/ministerial/online?oauth_error=${encodeURIComponent(String(error))}`);
+  const payload = verifyState(String(state || ''));
+  if (!payload) return res.redirect('/ministerial/online?oauth_error=state_invalido');
+  try {
+    const { tokens, channel } = await yt.exchangeCode(String(code), getRedirectUri());
+    if (!tokens.refresh_token) {
+      return res.redirect('/ministerial/online?oauth_error=sem_refresh_token');
+    }
+    await yt.saveTokens({ channel, tokens, userId: payload.userId });
+    res.redirect(`/ministerial/online?oauth_ok=1&canal=${encodeURIComponent(channel.title || '')}`);
+  } catch (e) {
+    console.error('[oauth/callback]', e.message);
+    res.redirect(`/ministerial/online?oauth_error=${encodeURIComponent(e.message.slice(0, 100))}`);
+  }
+});
+
 // ── A partir daqui, exige auth ──
 router.use(authenticate);
+
+// Inicia fluxo OAuth (admin/diretor)
+router.get('/oauth/authorize', authorize('admin', 'diretor'), (req, res) => {
+  const state = signState({ userId: req.user?.id || null, ts: Date.now(), nonce: crypto.randomBytes(8).toString('hex') });
+  res.json({ url: yt.getAuthUrl(state, getRedirectUri()) });
+});
+
+router.get('/oauth/status', async (_req, res) => {
+  const { data } = await supabase.from('vw_online_oauth_status').select('*').limit(1).maybeSingle();
+  res.json(data || { conectado: false });
+});
+
+router.post('/oauth/disconnect', authorize('admin', 'diretor'), async (_req, res) => {
+  const { data } = await supabase.from('online_oauth_tokens').select('channel_id').is('revoked_at', null).maybeSingle();
+  if (data?.channel_id) await yt.disconnect(data.channel_id);
+  res.json({ ok: true });
+});
+
+// Execucao manual de coletor (admin/diretor)
+router.post('/coletar/live', authorize('admin', 'diretor'), async (_req, res) => {
+  try { res.json(await collectors.liveMonitor()); } catch (e) { res.status(500).json({ error: e.message }); }
+});
+router.post('/coletar/ds', authorize('admin', 'diretor'), async (_req, res) => {
+  try { res.json(await collectors.dsCollector()); } catch (e) { res.status(500).json({ error: e.message }); }
+});
+router.post('/coletar/ddus', authorize('admin', 'diretor'), async (_req, res) => {
+  try { res.json(await collectors.ddusCollector()); } catch (e) { res.status(500).json({ error: e.message }); }
+});
 
 // ---------------------------------------------------------------------------
 // GET /api/online/dashboard

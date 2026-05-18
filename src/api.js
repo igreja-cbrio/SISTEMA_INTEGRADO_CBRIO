@@ -1462,6 +1462,16 @@ export const online = {
   series: (order) => get('/online/series' + (order ? '?order=' + order : '')),
   serie: (id) => get('/online/series/' + id),
   sync: () => post('/online/sync', {}),
+  oauth: {
+    status: () => get('/online/oauth/status'),
+    authorize: () => get('/online/oauth/authorize'),
+    disconnect: () => post('/online/oauth/disconnect', {}),
+  },
+  coletar: {
+    live: () => post('/online/coletar/live', {}),
+    ds: () => post('/online/coletar/ds', {}),
+    ddus: () => post('/online/coletar/ddus', {}),
+  },
 };
 
 // ─── Planejamento Anual ────────────────────────────────────────────────

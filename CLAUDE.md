@@ -511,6 +511,33 @@ preenchidas pela **Alda Lorena** (responsavel da Integracao) em
   hardcoded em `backend/services/youtubeCollector.js`
   (`DEFAULT_CHANNEL_ID = 'UCfjMVzaYlCS_VE3JuEJj2vQ'`, canal oficial CBRio).
   So setar a env se um dia o canal mudar.
+- `GOOGLE_OAUTH_CLIENT_ID` / `GOOGLE_OAUTH_CLIENT_SECRET` — credenciais OAuth
+  para coleta automatica via YouTube Analytics API (pico online, DS, DDUS)
+
+### Coleta automatica (OAuth + Analytics API)
+
+3 jobs autonomos · tokens persistidos em `online_oauth_tokens`:
+
+- **live-monitor** · cron `*/5 * * * *` via **GitHub Actions**
+  (.github/workflows/online-live-monitor.yml) porque Vercel Hobby nao
+  permite cron sub-diario. Secrets necessarios no repo:
+  `CRON_SECRET` e `APP_BASE_URL`. So age se ha culto na janela
+  (30min antes ate 4h depois do horario marcado). Detecta live ativa via
+  `liveBroadcasts.list?broadcastStatus=active`, linka `youtube_video_id`
+  no culto e atualiza `online_pico` quando `concurrentViewers > atual`.
+- **ds-collect** · cron `0 10 * * *` · pra cultos de ontem com video_id,
+  grava `online_ds` via `youtubeAnalytics.reports.query` (views no dia D).
+- **ddus-collect** · cron `30 10 * * *` · pra cultos de 7 dias atras,
+  grava `online_ddus` (views D+1 ate D+7, on-demand).
+
+Override manual continua funcionando · coletor so atualiza se valor `null`
+ou `0` (DS/DDUS), ou se for `pico > online_pico atual`.
+
+Endpoints OAuth:
+- `GET /api/online/oauth/authorize` (admin/diretor) · retorna URL Google
+- `GET /api/online/oauth/callback` (publico, valida state HMAC) · troca code
+- `GET /api/online/oauth/status` · status atual
+- `POST /api/online/oauth/disconnect` (admin/diretor) · revoga refresh_token
 
 ### O que **NAO fazer**
 

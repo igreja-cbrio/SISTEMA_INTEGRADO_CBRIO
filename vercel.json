@@ -40,6 +40,14 @@
     {
       "path": "/api/online/cron/sync",
       "schedule": "0 6 * * *"
+    },
+    {
+      "path": "/api/online/cron/ds-collect",
+      "schedule": "0 10 * * *"
+    },
+    {
+      "path": "/api/online/cron/ddus-collect",
+      "schedule": "30 10 * * *"
     }
   ],
   "rewrites": [

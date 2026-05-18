@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useQuery, useMutation } from '@tanstack/react-query';
 import { online } from '@/api';
 import { Card, CardContent } from '@/components/ui/card';
@@ -8,7 +8,7 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import {
   Users, Eye, ThumbsUp, MessageSquare, TrendingUp, TrendingDown, ExternalLink,
   Youtube, Loader2, RefreshCw, PlayCircle, Info, Cross, HeartHandshake,
-  Clock, HandHelping, Sparkles, AlertCircle, Target, ChevronDown,
+  Clock, HandHelping, Sparkles, AlertCircle, Target, ChevronDown, Zap, Link2, Unlink, CheckCircle2,
 } from 'lucide-react';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { toast } from 'sonner';
@@ -336,6 +336,124 @@ function ValorGroupCard({ valor, kpis, open, onOpenChange }: {
 // Pagina
 // ────────────────────────────────────────────────────────────────────────────
 
+function OAuthStatusCard() {
+  const { data: status, refetch } = useQuery<any>({
+    queryKey: ['online', 'oauth-status'],
+    queryFn: () => online.oauth.status(),
+    refetchInterval: 30_000,
+  });
+
+  // Captura ?oauth_ok=1 ou ?oauth_error=... do redirect e mostra toast
+  useEffect(() => {
+    const url = new URL(window.location.href);
+    if (url.searchParams.get('oauth_ok')) {
+      toast.success(`Canal conectado · ${url.searchParams.get('canal') || ''}`);
+      url.searchParams.delete('oauth_ok');
+      url.searchParams.delete('canal');
+      window.history.replaceState({}, '', url.pathname + url.search);
+      refetch();
+    } else if (url.searchParams.get('oauth_error')) {
+      toast.error(`Falha na conexao: ${url.searchParams.get('oauth_error')}`);
+      url.searchParams.delete('oauth_error');
+      window.history.replaceState({}, '', url.pathname + url.search);
+    }
+  }, [refetch]);
+
+  const conectar = useMutation({
+    mutationFn: () => online.oauth.authorize(),
+    onSuccess: (r: any) => { if (r?.url) window.location.href = r.url; },
+    onError: (e: any) => toast.error(e?.message || 'Erro ao iniciar conexao'),
+  });
+
+  const desconectar = useMutation({
+    mutationFn: () => online.oauth.disconnect(),
+    onSuccess: () => { toast.success('Canal desconectado.'); refetch(); },
+  });
+
+  const coletarLive = useMutation({
+    mutationFn: () => online.coletar.live(),
+    onSuccess: (r: any) => toast.success(r?.atualizou ? `Pico atualizado: ${r.viewers}` : (r?.reason || 'Coleta executada')),
+    onError: (e: any) => toast.error(e?.message || 'Erro na coleta'),
+  });
+  const coletarDs = useMutation({
+    mutationFn: () => online.coletar.ds(),
+    onSuccess: (r: any) => toast.success(`DS · ${r?.processados || 0} cultos processados`),
+    onError: (e: any) => toast.error(e?.message || 'Erro na coleta'),
+  });
+  const coletarDdus = useMutation({
+    mutationFn: () => online.coletar.ddus(),
+    onSuccess: (r: any) => toast.success(`DDUS · ${r?.processados || 0} cultos processados`),
+    onError: (e: any) => toast.error(e?.message || 'Erro na coleta'),
+  });
+
+  const conectado = status?.conectado;
+
+  return (
+    <Card className={`overflow-hidden border-2 ${conectado ? 'border-emerald-500/30' : 'border-amber-500/30'}`}>
+      <div className={`p-4 md:p-5 flex flex-col md:flex-row md:items-center gap-3 ${
+        conectado ? 'bg-gradient-to-r from-emerald-500/10 to-transparent' : 'bg-gradient-to-r from-amber-500/10 to-transparent'
+      }`}>
+        <div className={`rounded-xl p-2.5 ${conectado ? 'bg-emerald-500/15' : 'bg-amber-500/15'}`}>
+          {conectado ? (
+            <CheckCircle2 className="h-6 w-6 text-emerald-600 dark:text-emerald-400" />
+          ) : (
+            <Zap className="h-6 w-6 text-amber-600 dark:text-amber-400" />
+          )}
+        </div>
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2 flex-wrap">
+            <h2 className="font-bold text-base">Coleta automatica YouTube</h2>
+            {conectado ? (
+              <Badge variant="outline" className="bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border-emerald-500/40">
+                Conectado · {status?.channel_title || status?.channel_id}
+              </Badge>
+            ) : (
+              <Badge variant="outline" className="bg-amber-500/10 text-amber-700 dark:text-amber-400 border-amber-500/40">
+                Nao conectado
+              </Badge>
+            )}
+          </div>
+          <p className="text-sm text-muted-foreground mt-1 leading-relaxed">
+            {conectado ? (
+              <>Coleta automatica de <strong>pico online</strong> (5/5min · janela do culto),
+                <strong> DS</strong> (todo dia 10h) e <strong>DDUS</strong> (10h30) ativa.</>
+            ) : (
+              <>Conecte o canal CBRio com OAuth pra automatizar pico online, DS e DDUS via YouTube Analytics API.</>
+            )}
+          </p>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          {conectado ? (
+            <>
+              <Button size="sm" variant="outline" onClick={() => coletarLive.mutate()} disabled={coletarLive.isPending}>
+                {coletarLive.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" /> : <Eye className="h-3.5 w-3.5 mr-1.5" />}
+                Coletar pico agora
+              </Button>
+              <Button size="sm" variant="outline" onClick={() => coletarDs.mutate()} disabled={coletarDs.isPending}>
+                {coletarDs.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" /> : null}
+                DS (D+1)
+              </Button>
+              <Button size="sm" variant="outline" onClick={() => coletarDdus.mutate()} disabled={coletarDdus.isPending}>
+                {coletarDdus.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" /> : null}
+                DDUS (D+7)
+              </Button>
+              <Button size="sm" variant="ghost" onClick={() => desconectar.mutate()} disabled={desconectar.isPending}>
+                <Unlink className="h-3.5 w-3.5 mr-1.5" />
+                Desconectar
+              </Button>
+            </>
+          ) : (
+            <Button onClick={() => conectar.mutate()} disabled={conectar.isPending} className="bg-red-600 hover:bg-red-700 text-white">
+              {conectar.isPending ? <Loader2 className="h-4 w-4 animate-spin mr-1.5" /> : <Link2 className="h-4 w-4 mr-1.5" />}
+              Conectar canal YouTube
+            </Button>
+          )}
+        </div>
+      </div>
+    </Card>
+  );
+}
+
 export default function Online() {
   const { data, isLoading, refetch } = useQuery<DashboardData>({
     queryKey: ['online', 'dashboard'],
@@ -412,6 +530,8 @@ export default function Online() {
           </Button>
         </div>
       </div>
+
+      <OAuthStatusCard />
 
       {/* Aviso da Alda - mais discreto */}
       <div className="rounded-xl border border-blue-500/30 bg-gradient-to-r from-blue-500/5 to-transparent p-3 flex items-start gap-3">
