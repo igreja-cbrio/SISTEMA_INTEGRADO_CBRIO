@@ -12,7 +12,7 @@ import {
   AlertCircle, LogOut, MapPin as MapPinIcon, Clock, Trash2,
   DollarSign, HandCoins, Sparkles, Activity, Inbox,
   Copy, Share2, Download, QrCode, Camera, ScanLine,
-  TrendingUp, ArrowRightLeft,
+  TrendingUp, ArrowRightLeft, GitMerge,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '../../components/ui/button';
@@ -30,6 +30,7 @@ import {
 } from '../../components/ui/tabs';
 import TabCadastros from './TabCadastros';
 import MembersJornadaPanel from '../../components/MembersJornadaPanel';
+import MembrosDuplicadosPanel from '../../components/MembrosDuplicadosPanel';
 
 const C = {
   bg: 'var(--cbrio-bg)', card: 'var(--cbrio-card)', primary: '#00B39D', primaryBg: '#00B39D18',
@@ -1013,6 +1014,7 @@ export default function Membresia() {
           {[
             { key: 'membros', label: 'Membros', icon: Users },
             { key: 'jornada', label: 'Jornada (5 valores)', icon: TrendingUp },
+            { key: 'duplicados', label: 'Duplicados', icon: GitMerge },
             { key: 'cadastros', label: 'Cadastros pendentes', icon: Inbox },
           ].map(t => {
             const Icon = t.icon;
@@ -1150,6 +1152,10 @@ export default function Membresia() {
 
         <TabsContent value="jornada">
           <MembersJornadaPanel />
+        </TabsContent>
+
+        <TabsContent value="duplicados">
+          <MembrosDuplicadosPanel />
         </TabsContent>
 
         <TabsContent value="cadastros">

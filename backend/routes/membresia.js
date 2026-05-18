@@ -1664,4 +1664,113 @@ router.get('/kpis', async (req, res) => {
   }
 });
 
+// ============================================================================
+// Duplicados · detecção + merge
+//
+// Marcos: "ter uma aba de juntar esses cadastros futuramente · não impede
+//          cadastro, mas detecta e oferece merge".
+// ============================================================================
+
+router.get('/duplicados', async (req, res) => {
+  try {
+    const limit = Math.min(Number(req.query.limit) || 100, 500);
+    const { data, error } = await supabase
+      .from('vw_membros_duplicados')
+      .select('*')
+      .order('confianca', { ascending: false })
+      .limit(limit);
+    if (error) throw error;
+
+    const items = (data || []).map(d => ({
+      par_id: `${d.membro_a_id}_${d.membro_b_id}`,
+      membro_a_id: d.membro_a_id,
+      membro_b_id: d.membro_b_id,
+      motivos: d.motivos || [],
+      confianca: d.confianca,
+      membro_a: {
+        id: d.membro_a_id,
+        nome: d.a_nome,
+        email: d.a_email,
+        telefone: d.a_telefone,
+        cpf: d.a_cpf,
+        data_nascimento: d.a_nascimento,
+        status: d.a_status,
+        foto_url: d.a_foto_url,
+        criado_em: d.a_criado_em,
+      },
+      membro_b: {
+        id: d.membro_b_id,
+        nome: d.b_nome,
+        email: d.b_email,
+        telefone: d.b_telefone,
+        cpf: d.b_cpf,
+        data_nascimento: d.b_nascimento,
+        status: d.b_status,
+        foto_url: d.b_foto_url,
+        criado_em: d.b_criado_em,
+      },
+    }));
+    res.json({ total: items.length, items });
+  } catch (e) {
+    console.error('[membresia/duplicados]', e.message);
+    res.status(500).json({ error: e.message || 'Erro ao buscar duplicados' });
+  }
+});
+
+router.post('/duplicados/ignorar', authorize('admin', 'diretor'), async (req, res) => {
+  const { membro_a_id, membro_b_id, motivo } = req.body || {};
+  if (!membro_a_id || !membro_b_id) {
+    return res.status(400).json({ error: 'membro_a_id e membro_b_id obrigatorios' });
+  }
+  // Ordena pra bater com o CHECK da tabela (a < b)
+  const [a, b] = [membro_a_id, membro_b_id].sort();
+  const { data, error } = await supabase
+    .from('mem_duplicados_ignorados')
+    .upsert({
+      membro_a_id: a,
+      membro_b_id: b,
+      ignorado_por: req.user?.id || null,
+      motivo: motivo || null,
+    }, { onConflict: 'membro_a_id,membro_b_id' })
+    .select()
+    .single();
+  if (error) {
+    console.error('[membresia/duplicados/ignorar]', error.message);
+    return res.status(500).json({ error: error.message });
+  }
+  res.json({ ok: true, registro: data });
+});
+
+router.post('/membros/merge', authorize('admin', 'diretor'), async (req, res) => {
+  const { keep_id, merge_ids, observacao } = req.body || {};
+  if (!keep_id) return res.status(400).json({ error: 'keep_id obrigatorio' });
+  if (!Array.isArray(merge_ids) || merge_ids.length === 0) {
+    return res.status(400).json({ error: 'merge_ids obrigatorio (array de uuids)' });
+  }
+  try {
+    const { data, error } = await supabase.rpc('merge_membros', {
+      p_keep_id: keep_id,
+      p_merge_ids: merge_ids,
+      p_feito_por: req.user?.id || null,
+      p_observacao: observacao || null,
+    });
+    if (error) throw error;
+    res.json(data);
+  } catch (e) {
+    console.error('[membresia/membros/merge]', e.message);
+    res.status(500).json({ error: e.message || 'Erro ao fundir membros' });
+  }
+});
+
+router.get('/merge-log', authorize('admin', 'diretor'), async (req, res) => {
+  const limit = Math.min(Number(req.query.limit) || 50, 200);
+  const { data, error } = await supabase
+    .from('mem_merge_log')
+    .select('*')
+    .order('feito_em', { ascending: false })
+    .limit(limit);
+  if (error) return res.status(500).json({ error: error.message });
+  res.json(data || []);
+});
+
 module.exports = router;
