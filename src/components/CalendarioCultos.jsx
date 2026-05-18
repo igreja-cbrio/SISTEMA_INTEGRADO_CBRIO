@@ -772,6 +772,7 @@ function DecisoesPessoasSection({ cultoId, totalEsperado, totalKidsEsperado = 0,
               cultoId={cultoId}
               pessoa={p}
               hasOnline={hasOnline}
+              hasKids={hasKids}
               onSaved={handleSaved}
               onCancel={() => setEditando(null)}
             />
@@ -815,6 +816,7 @@ function DecisoesPessoasSection({ cultoId, totalEsperado, totalKidsEsperado = 0,
           cultoId={cultoId}
           pessoa={null}
           hasOnline={hasOnline}
+          hasKids={hasKids}
           onSaved={handleSaved}
           onCancel={() => setShowForm(false)}
         />
