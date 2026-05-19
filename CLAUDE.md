@@ -79,6 +79,27 @@ usuarios). Tela em `/admin/permissoes` (arquivo
   aliases temporarios) · TODO de polish, nao bloqueante · hoje os hooks
   ja lem dos slugs novos via AuthContext
 
+### ModuleGuard aceita slug + Expansao some pra lider-ministerial (2026-05-19)
+**Bug 1**: Cuidados redirecionava pra dashboard mesmo com nivel 1.
+ModuleGuard usava hook legado `canCuidados` (nivelMinimo=2). Lorena
+com nivel 1 caia em `false`.
+
+**Fix 1** em `src/App.tsx`:
+- ModuleGuard ganha props `moduleSlug` e `nivelMinimo` (default 1)
+- Quando `moduleSlug` informado, checa `modulePerms[slug].leitura >= nivelMinimo`
+- Mantem `permKey` pra retrocompat (hooks canX legados)
+- Rota `/ministerial/cuidados` migrada pra `moduleSlug="cuidados"`
+- Rota `/expansao` migrada pra `moduleSlug="expansao"`
+- Item de menu "Expansão" trocou `perm:canExpansao` → `module:expansao`
+
+**Bug 2**: Lorena via Expansao no menu mesmo sem responsabilidade no
+planejamento. Matriz padrao tinha `lider-ministerial × expansao = 2`.
+
+**Fix 2** migration `20260519290000_lider_ministerial_expansao_zero.sql`:
+- Cargo `lider-ministerial × expansao = 0`
+- Quem precisa de acesso ganha override individual em /admin/permissoes
+  > Usuarios > [pessoa] > Overrides
+
 ### Projetos · lider ministerial so ve aba Lista filtrada por area (2026-05-19)
 Quando `modulePerms.projetos.escopo_proprio = true` (e nao eh admin/diretor),
 Projetos.jsx aplica modo restrito:
