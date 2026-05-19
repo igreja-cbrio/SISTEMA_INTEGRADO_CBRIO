@@ -79,6 +79,21 @@ usuarios). Tela em `/admin/permissoes` (arquivo
   aliases temporarios) · TODO de polish, nao bloqueante · hoje os hooks
   ja lem dos slugs novos via AuthContext
 
+### Fix · item "Cuidados" no menu (2026-05-19)
+Hook legado `canCuidados` em AuthContext usa `nivelMinimo = 2`
+(`canAccessModule(['cuidados', 'Cuidados'])` default). Aldas com
+`cuidados=1` (so leitura) caem em `canCuidados=false` e Cuidados some
+do menu.
+
+Fix · item "Cuidados" no AppShell trocou de `perm: 'canCuidados'`
+para `module: 'cuidados'`. O check do `module:` usa `leitura >= 1`
+(definido em AppShell `itemAllowed`) que e' o correto pra exibicao.
+
+**Mesmo padrao deve ser usado nos demais itens** que precisam aparecer
+mesmo em nivel 1 (visualizar): troca `perm: 'canX'` -> `module: 'slug'`.
+Hoje so Cuidados foi corrigido · outros items mantem perm legado e
+serao migrados pessoa a pessoa quando o problema aparecer.
+
 ### Consolidacao Alda · migration unica idempotente (2026-05-19)
 Migration `20260519230000_lider_ministerial_consolidado.sql` reune
 TUDO que tinha sido espalhado nas anteriores (round 1 + round 2):
