@@ -53,6 +53,10 @@ router.get('/cron/retencao-curva-collect', autorizaCron, async (_req, res) => {
   try { res.json(await collectors.retencaoCurvaCollector()); }
   catch (e) { console.error('[retencao-curva-collect]', e.message); res.status(500).json({ error: e.message }); }
 });
+router.get('/cron/sub-status-collect', autorizaCron, async (_req, res) => {
+  try { res.json(await collectors.subStatusCollector()); }
+  catch (e) { console.error('[sub-status-collect]', e.message); res.status(500).json({ error: e.message }); }
+});
 
 // ── OAuth callback eh publico (Google redireciona, sem nosso JWT) ──
 // State carrega: userId + nonce assinado com CRON_SECRET pra anti-CSRF
@@ -135,6 +139,9 @@ router.post('/coletar/trafego', authorize('admin', 'diretor'), async (_req, res)
 });
 router.post('/coletar/retencao-curva', authorize('admin', 'diretor'), async (_req, res) => {
   try { res.json(await collectors.retencaoCurvaCollector()); } catch (e) { res.status(500).json({ error: e.message }); }
+});
+router.post('/coletar/sub-status', authorize('admin', 'diretor'), async (_req, res) => {
+  try { res.json(await collectors.subStatusCollector()); } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 // ---------------------------------------------------------------------------

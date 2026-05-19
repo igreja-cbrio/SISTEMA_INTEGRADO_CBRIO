@@ -323,4 +323,48 @@ async function retencaoCurvaCollector() {
   return { ok: true, processados: cultos.length, resultados };
 }
 
-module.exports = { liveMonitor, dsCollector, ddusCollector, subsCollector, traficoCollector, retencaoCurvaCollector };
+// ---------------------------------------------------------------------------
+// subStatusCollector · D+7 · views por subscribedStatus
+// Atualiza cultos.online_views_inscritos + cultos.online_views_nao_inscritos.
+// ---------------------------------------------------------------------------
+async function subStatusCollector() {
+  const setedias = fmtData(dataMaisDias(new Date(), -7));
+  const { data: cultos } = await supabase
+    .from('cultos')
+    .select('id, data, youtube_video_id, online_views_inscritos')
+    .eq('data', setedias)
+    .not('youtube_video_id', 'is', null);
+
+  if (!cultos?.length) return { ok: true, processados: 0, motivo: 'sem_cultos_d7_com_video' };
+
+  const resultados = [];
+  for (const c of cultos) {
+    if (c.online_views_inscritos !== null && c.online_views_inscritos !== undefined) {
+      resultados.push({ culto_id: c.id, skipped: true, reason: 'ja_preenchido' });
+      continue;
+    }
+    try {
+      const inicio = c.data;
+      const fim    = fmtData(dataMaisDias(new Date(c.data + 'T00:00:00'), 7));
+      const stats = await yt.fetchVideoViewsBySubStatus(null, c.youtube_video_id, inicio, fim);
+      await supabase.from('cultos')
+        .update({
+          online_views_inscritos: stats.subscribed,
+          online_views_nao_inscritos: stats.unsubscribed,
+        })
+        .eq('id', c.id);
+      resultados.push({
+        culto_id: c.id,
+        video_id: c.youtube_video_id,
+        inscritos: stats.subscribed,
+        nao_inscritos: stats.unsubscribed,
+        periodo: `${inicio}..${fim}`,
+      });
+    } catch (e) {
+      resultados.push({ culto_id: c.id, error: e.message });
+    }
+  }
+  return { ok: true, processados: cultos.length, resultados };
+}
+
+module.exports = { liveMonitor, dsCollector, ddusCollector, subsCollector, traficoCollector, retencaoCurvaCollector, subStatusCollector };

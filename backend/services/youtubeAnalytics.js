@@ -331,6 +331,36 @@ async function fetchVideoRetentionCurve(channelId, videoId, startDate, endDate) 
   }));
 }
 
+// Analytics: views separadas por inscrito vs nao-inscrito.
+// dimension `subscribedStatus` retorna 2 rows: SUBSCRIBED e UNSUBSCRIBED.
+// Retorna { subscribed, unsubscribed }.
+async function fetchVideoViewsBySubStatus(channelId, videoId, startDate, endDate) {
+  const { token } = await getValidAccessToken(channelId);
+  const params = new URLSearchParams({
+    ids: 'channel==MINE',
+    startDate,
+    endDate,
+    metrics: 'views',
+    dimensions: 'subscribedStatus',
+    filters: `video==${videoId}`,
+  });
+  const res = await fetch(`${ANALYTICS}/reports?${params}`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!res.ok) {
+    const t = await res.text();
+    throw new Error(`Analytics subStatus falhou: ${res.status} ${t.slice(0, 200)}`);
+  }
+  const data = await res.json();
+  // data.rows = [['SUBSCRIBED', n], ['UNSUBSCRIBED', n]] (ordem nao garantida)
+  const out = { subscribed: 0, unsubscribed: 0 };
+  for (const row of (data.rows || [])) {
+    if (row[0] === 'SUBSCRIBED') out.subscribed = row[1] || 0;
+    else if (row[0] === 'UNSUBSCRIBED') out.unsubscribed = row[1] || 0;
+  }
+  return out;
+}
+
 module.exports = {
   SCOPES,
   getAuthUrl,
@@ -344,4 +374,5 @@ module.exports = {
   fetchVideoSubsChange,
   fetchVideoTrafficSources,
   fetchVideoRetentionCurve,
+  fetchVideoViewsBySubStatus,
 };

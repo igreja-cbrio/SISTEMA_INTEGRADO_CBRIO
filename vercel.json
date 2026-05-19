@@ -62,6 +62,10 @@
       "schedule": "0 12 * * *"
     },
     {
+      "path": "/api/online/cron/sub-status-collect",
+      "schedule": "30 12 * * *"
+    },
+    {
       "path": "/api/devocional-planos/cron/enviar-diario",
       "schedule": "0 9 * * *"
     }
