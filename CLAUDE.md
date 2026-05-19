@@ -60,6 +60,30 @@ Migration `20260519140000_recalcular_adm_criativo.sql` chama
 ainda, valores ficam NULL · mas a linha existe em
 `kpi_valores_calculados` e o painel para de mostrar lacuna estranha.
 
+### NPS pos-conclusao 2026-05-19 · ataque ao gap dos 11 ADM-*-Q
+A UI de avaliacao NPS pos-conclusao ja existia em `Solicitacoes.jsx`
+(componente `NpsBlock` dentro do `DetailDialog`), mas era descoberta
+passiva · solicitante so via se abrisse o modal de detalhe.
+
+Mudancas em 2026-05-19:
+- **Card destacado** na listagem (border-l-4 amber + badge "⭐ Avalie")
+  quando solicitacao tem `status='concluido'`, `solicitante_id=user`,
+  `nps_nota IS NULL`. So aparece pro solicitante · responsaveis veem
+  o Kanban normal.
+- **Notificacao especial** quando admin marca concluido · titulo
+  "Avalie: <titulo>" + mensagem chamando pra avaliar. Tipo
+  `solicitacao_avaliar` (era `solicitacao_status`).
+- **Cron diario** em `notificacaoGenerator.js` ·
+  `gerarNotificacoesSolicitacoes()` re-lembra solicitantes com
+  solicitacao concluida ha >=24h, <=14d, sem `nps_nota`. ChaveDedup
+  unico por solicitacao · so 1 lembrete, depois conta com o badge.
+
+Destrava os **11 KPIs ADM-*-Q** (Gestao + Criativo NPS) que dependiam de
+`nps_nota` em `solicitacoes` (formula `agg_solicitacoes_kpi` linha 235
+de `20260512140000_kpis_adm_operacionais.sql` faz
+`avg(nps_nota) FROM vw_solicitacoes_sla`). Trigger SQL
+`tg_solicitacoes_recalc_kpis` recalcula automaticamente no UPDATE.
+
 ---
 
 

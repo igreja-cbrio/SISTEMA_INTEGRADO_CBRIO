@@ -566,10 +566,15 @@ export default function Solicitacoes() {
               const urg = getUrgMeta(item.urgencia);
               const st = getStatusMeta(item.status);
               const date = new Date(item.created_at).toLocaleDateString('pt-BR');
+              const precisaAvaliar = item.status === 'concluido'
+                && item.solicitante_id === profile?.id
+                && item.nps_nota == null;
               return (
                 <Card
                   key={item.id}
-                  className="p-4 cursor-pointer hover:shadow-md transition-shadow"
+                  className={`p-4 cursor-pointer hover:shadow-md transition-shadow ${
+                    precisaAvaliar ? 'border-l-4 border-l-amber-500 bg-amber-500/5' : ''
+                  }`}
                   onClick={() => setDetailItem(item)}
                 >
                   <div className="flex items-center justify-between gap-4">
@@ -578,6 +583,11 @@ export default function Solicitacoes() {
                       <p className="text-sm font-medium text-foreground truncate">{item.titulo}</p>
                     </div>
                     <div className="flex items-center gap-3 shrink-0">
+                      {precisaAvaliar && (
+                        <Badge className="text-xs bg-amber-500/15 text-amber-700 dark:text-amber-400 gap-1">
+                          <Star className="h-3 w-3" /> Avalie
+                        </Badge>
+                      )}
                       {item.ml_last_status && ML_STATUS_META[item.ml_last_status] && (
                         <Badge className={`text-xs ${ML_STATUS_META[item.ml_last_status].color}`}>
                           {ML_STATUS_META[item.ml_last_status].emoji} {ML_STATUS_META[item.ml_last_status].label}

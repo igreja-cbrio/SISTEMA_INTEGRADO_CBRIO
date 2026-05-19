@@ -302,12 +302,21 @@ router.patch('/:id', async (req, res) => {
       const statusLabel = status.replace('_', ' ');
       const obsNote = observacoes ? ` — "${observacoes}"` : '';
 
+      // Conclusao · pede avaliacao NPS pro solicitante (alimenta KPIs ADM-*-Q)
+      const ehConclusao = status === 'concluido';
+      const tituloSolicitante = ehConclusao
+        ? `Avalie: ${data.titulo}`
+        : `Solicitação atualizada: ${data.titulo}`;
+      const mensagemSolicitante = ehConclusao
+        ? `Sua solicitação foi concluída${obsNote}. Avalie o atendimento em 30 segundos · ajuda muito a melhorar.`
+        : `Status alterado para "${statusLabel}"${obsNote}`;
+
       // 1. Notify the requester
       notificar({
         modulo,
-        tipo: 'solicitacao_status',
-        titulo: `Solicitação atualizada: ${data.titulo}`,
-        mensagem: `Status alterado para "${statusLabel}"${obsNote}`,
+        tipo: ehConclusao ? 'solicitacao_avaliar' : 'solicitacao_status',
+        titulo: tituloSolicitante,
+        mensagem: mensagemSolicitante,
         link: '/solicitacoes',
         severidade: status === 'rejeitado' ? 'alta' : 'info',
         chaveDedup: `solicitacao_status_${data.id}_${status}`,
