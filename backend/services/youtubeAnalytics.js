@@ -226,7 +226,7 @@ async function fetchVideoViews(channelId, videoId, startDate, endDate) {
     ids: 'channel==MINE',
     startDate,
     endDate,
-    metrics: 'views,estimatedMinutesWatched,averageViewDuration',
+    metrics: 'views,estimatedMinutesWatched,averageViewDuration,averageViewPercentage',
     filters: `video==${videoId}`,
   });
   const res = await fetch(`${ANALYTICS}/reports?${params}`, {
@@ -237,13 +237,14 @@ async function fetchVideoViews(channelId, videoId, startDate, endDate) {
     throw new Error(`Analytics views falhou: ${res.status} ${t.slice(0, 200)}`);
   }
   const data = await res.json();
-  // data.rows = [[views, watchMinutes, avgDuration]]
+  // data.rows = [[views, watchMinutes, avgDuration, avgViewPct]]
   const row = (data.rows || [])[0];
-  if (!row) return { views: 0, watch_minutes: 0, avg_duration_seconds: 0 };
+  if (!row) return { views: 0, watch_minutes: 0, avg_duration_seconds: 0, avg_view_percentage: 0 };
   return {
     views: row[0] || 0,
     watch_minutes: row[1] || 0,
     avg_duration_seconds: row[2] || 0,
+    avg_view_percentage: row[3] || 0,
   };
 }
 
