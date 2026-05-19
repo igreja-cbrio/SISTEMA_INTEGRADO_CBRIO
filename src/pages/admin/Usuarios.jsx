@@ -90,12 +90,19 @@ export default function Usuarios() {
         const matchEmail = (c.email || '').toLowerCase().includes(term);
         if (!matchNome && !matchEmail) return false;
       }
-      if (filtroCargo !== 'todos') {
+      if (filtroCargo === 'sem-cargo') {
+        if (c.cargo_id) return false;
+      } else if (filtroCargo !== 'todos') {
         if (c.cargo_slug !== filtroCargo) return false;
       }
       return true;
     });
   }, [colaboradores, busca, filtroCargo]);
+
+  const totalSemCargo = useMemo(
+    () => (colaboradores || []).filter(c => !c.cargo_id).length,
+    [colaboradores]
+  );
 
   if (loading) {
     return (
@@ -129,6 +136,11 @@ export default function Usuarios() {
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="todos">Todos cargos</SelectItem>
+              {totalSemCargo > 0 && (
+                <SelectItem value="sem-cargo">
+                  ⚠️ Sem cargo ({totalSemCargo})
+                </SelectItem>
+              )}
               {(estrutura.cargos || []).map(c => (
                 <SelectItem key={c.id} value={c.slug || c.id}>
                   {c.nome_completo || c.nome || c.slug}
@@ -146,24 +158,42 @@ export default function Usuarios() {
             Nenhum colaborador encontrado.
           </div>
         ) : (
-          filtrados.map(c => (
-            <div key={c.id} className="p-3 flex items-center gap-3 hover:bg-accent/50 transition-colors">
-              <Avatar className="h-9 w-9 shrink-0">
-                {c.avatar_url ? <AvatarImage src={c.avatar_url} /> : null}
-                <AvatarFallback className="bg-primary/15 text-primary text-xs font-bold">
-                  {iniciais(c.name)}
-                </AvatarFallback>
-              </Avatar>
-              <div className="flex-1 min-w-0">
-                <p className="text-sm font-medium text-foreground truncate">{c.name || '(sem nome)'}</p>
-                <p className="text-xs text-muted-foreground truncate">{c.email || '—'}</p>
+          filtrados.map(c => {
+            const semCargo = !c.cargo_id;
+            return (
+              <div
+                key={c.id}
+                className={`p-3 flex items-center gap-3 transition-colors ${
+                  semCargo
+                    ? 'bg-amber-500/5 border-l-4 border-l-amber-500 hover:bg-amber-500/10'
+                    : 'hover:bg-accent/50'
+                }`}
+              >
+                <Avatar className="h-9 w-9 shrink-0">
+                  {c.avatar_url ? <AvatarImage src={c.avatar_url} /> : null}
+                  <AvatarFallback className="bg-primary/15 text-primary text-xs font-bold">
+                    {iniciais(c.name)}
+                  </AvatarFallback>
+                </Avatar>
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-medium text-foreground truncate">{c.name || '(sem nome)'}</p>
+                  <p className="text-xs text-muted-foreground truncate">{c.email || '—'}</p>
+                </div>
+                {semCargo ? (
+                  <Badge variant="outline" className="text-xs shrink-0 bg-amber-500/15 text-amber-700 dark:text-amber-400 border-amber-500/40">
+                    Sem cargo
+                  </Badge>
+                ) : (
+                  <Badge variant="secondary" className="text-xs shrink-0 capitalize">
+                    {c.cargo_nome || c.cargo_slug}
+                  </Badge>
+                )}
+                <Button size="sm" variant="outline" className="gap-1.5 shrink-0" onClick={() => abrirEdicao(c)}>
+                  <Pencil className="h-3.5 w-3.5" /> Editar
+                </Button>
               </div>
-              <Badge variant="secondary" className="text-xs shrink-0 capitalize">{c.role || 'sem role'}</Badge>
-              <Button size="sm" variant="outline" className="gap-1.5 shrink-0" onClick={() => abrirEdicao(c)}>
-                <Pencil className="h-3.5 w-3.5" /> Editar
-              </Button>
-            </div>
-          ))
+            );
+          })
         )}
       </Card>
       <p className="text-xs text-muted-foreground text-right">

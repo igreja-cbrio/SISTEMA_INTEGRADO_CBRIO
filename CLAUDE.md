@@ -79,6 +79,33 @@ usuarios). Tela em `/admin/permissoes` (arquivo
   aliases temporarios) · TODO de polish, nao bloqueante · hoje os hooks
   ja lem dos slugs novos via AuthContext
 
+### Sync profiles → usuarios + UI mostra cargo atual (2026-05-19)
+**Problema diagnosticado**: a tabela `usuarios` so era populada por
+auto-provision quando alguem logava apos o middleware granular ter
+sido implementado. Profiles antigos (como Alda Lorena, que ja logava
+antes) ficavam fora · backend retornava `granular = null` · front caia
+no fallback de "carregando" que mostra tudo no menu.
+
+**Fix em 3 partes:**
+
+1. **Migration `20260519200000_sync_profiles_para_usuarios.sql`** ·
+   backfilla TODOS os profiles ativos em usuarios com cargo default por
+   role (mesmo mapeamento do auto-provision):
+   - admin/diretor → diretor-administrativo
+   - voluntario → voluntario
+   - demais → membro (mais restritivo · ajustar caso a caso)
+   Idempotente · NOT EXISTS impede duplicacao.
+
+2. **GET /api/permissoes/colaboradores** agora enriquece cada
+   colaborador com `cargo_id`, `cargo_slug` e `cargo_nome` via LEFT JOIN
+   manual em usuarios (LowerCase email pra bater).
+
+3. **UI Usuarios** (em `/admin/permissoes` aba Usuarios):
+   - Cada linha mostra o cargo atual (ou badge amber "Sem cargo")
+   - Linhas "Sem cargo" tem border amber pra destacar
+   - Filtro novo "⚠️ Sem cargo (N)" aparece quando ha pessoas sem cargo
+   - Permite o admin localizar e atribuir rapidamente
+
 ### Cache bust manual de permissoes (2026-05-19)
 **Problema**: `cargo_modulo_permissao` tem cache 5min no middleware
 (`backend/middleware/auth.js` linha 59) que so invalida automaticamente
