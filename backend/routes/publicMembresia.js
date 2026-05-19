@@ -287,6 +287,10 @@ router.post('/cadastro', cadastroLimiter, async (req, res) => {
       // match confirmado pelo usuario via lookup-nome-telefone
       // (pessoa reconheceu seu cadastro pre-existente e clicou "sou eu")
       match_membro_id,
+      // OPCIONAL: criar conta de acesso (senha · /devocional/login depois)
+      // Quando preenchido + email valido, cria auth user com senha pra
+      // permitir login com email+senha (alem do magic link).
+      senha,
       // honeypot (não deve ser preenchido por humanos)
       website,
     } = req.body || {};
@@ -314,6 +318,14 @@ router.post('/cadastro', cadastroLimiter, async (req, res) => {
     }
     if (email && !ehEmailValido(email)) {
       return res.status(400).json({ error: 'E-mail inválido.' });
+    }
+    if (senha !== undefined && senha !== null && senha !== '') {
+      if (typeof senha !== 'string' || senha.length < 6) {
+        return res.status(400).json({ error: 'Senha precisa ter pelo menos 6 caracteres.' });
+      }
+      if (!email) {
+        return res.status(400).json({ error: 'Email obrigatorio quando criar senha.' });
+      }
     }
     if (!aceita_termos) {
       return res.status(400).json({ error: 'É necessário aceitar os termos para enviar o cadastro.' });
@@ -473,8 +485,72 @@ router.post('/cadastro', cadastroLimiter, async (req, res) => {
       }
     }
 
+    // Cria conta de acesso (auth user + profile) se a pessoa preencheu senha.
+    // - Se ja existe membro vinculado (duplicadoDeId) · profile aponta pra ele
+    //   e a pessoa ja tem acesso ao devocional imediatamente.
+    // - Se for cadastro novo (sem match) · cria auth user + profile com
+    //   membro_id=null. Acesso ao devocional vai depender do admin promover
+    //   o cadastro_pendente pra mem_membros depois.
+    let accountCreated = false;
+    let canLoginDevocional = false;
+    if (senha && emailLimpo) {
+      try {
+        // 1. Acha ou cria auth user
+        let authUserId = null;
+        const { data: { users } = { users: [] } } = await supabase.auth.admin.listUsers();
+        const existing = users?.find(u => (u.email || '').toLowerCase() === emailLimpo);
+        if (existing) {
+          authUserId = existing.id;
+          // Atualiza a senha (pode ter esquecido ou estar criando senha pela 1a vez)
+          await supabase.auth.admin.updateUserById(existing.id, { password: senha });
+        } else {
+          const { data: created, error: createErr } = await supabase.auth.admin.createUser({
+            email: emailLimpo,
+            password: senha,
+            email_confirm: true,
+            user_metadata: { source: 'membresia_publica', cadastro_pendente_id: data.id },
+          });
+          if (createErr) {
+            console.error('[PUBLIC CADASTRO] createUser:', createErr.message);
+          } else {
+            authUserId = created.user?.id;
+          }
+        }
+
+        // 2. Garante profile vinculado
+        if (authUserId) {
+          const { data: profileExistente } = await supabase
+            .from('profiles')
+            .select('id, membro_id')
+            .eq('id', authUserId)
+            .maybeSingle();
+
+          if (!profileExistente) {
+            await supabase.from('profiles').insert({
+              id: authUserId,
+              email: emailLimpo,
+              name: nome.trim(),
+              role: null,
+              membro_id: duplicadoDeId || null,
+              is_membro_only: true,
+              active: true,
+            });
+          } else if (duplicadoDeId && !profileExistente.membro_id) {
+            await supabase.from('profiles')
+              .update({ membro_id: duplicadoDeId })
+              .eq('id', authUserId);
+          }
+          accountCreated = true;
+          canLoginDevocional = !!duplicadoDeId; // so quem ja e membro entra no devocional na hora
+        }
+      } catch (accErr) {
+        // Nao bloqueia o cadastro · so loga · admin pode criar acesso depois
+        console.error('[PUBLIC CADASTRO] criar conta falhou:', accErr.message);
+      }
+    }
+
     // Resposta neutra — não confirma se foi duplicado, preserva privacidade
-    res.status(201).json({ ok: true, id: data.id });
+    res.status(201).json({ ok: true, id: data.id, account_created: accountCreated, can_login_devocional: canLoginDevocional });
   } catch (e) {
     console.error('[PUBLIC CADASTRO] exception:', e.message);
     res.status(500).json({ error: 'Erro ao processar cadastro.' });

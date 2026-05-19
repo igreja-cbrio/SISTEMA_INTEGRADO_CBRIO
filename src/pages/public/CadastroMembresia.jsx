@@ -231,10 +231,13 @@ function CheckboxField({ id, checked, onChange, label }) {
 
 export default function CadastroMembresia() {
   useHomeScreenMeta('membresia');
-  const fromTotem = new URLSearchParams(window.location.search).get('from') === 'totem';
+  const searchParams = new URLSearchParams(window.location.search);
+  const fromTotem = searchParams.get('from') === 'totem';
+  const fromDevocional = searchParams.get('from') === 'devocional';
   const [currentStep, setCurrentStep] = useState(0);
   const [form, setForm] = useState({
-    nome: '', sobrenome: '', cpf: '', email: '', telefone: '',
+    nome: '', sobrenome: '', cpf: '', email: '', confirmar_email: '', telefone: '',
+    senha: '', confirmar_senha: '',
     data_nascimento: '', estado_civil: '', endereco: '', bairro: '',
     cidade: '', cep: '', profissao: '', como_conheceu: '',
     website: '', // honeypot
@@ -386,7 +389,14 @@ export default function CadastroMembresia() {
       case 0:
         return form.nome.trim() !== '' && form.sobrenome.trim() !== '' && soDigitos(form.telefone).length >= 10 && cpfValido(form.cpf);
       case 1:
-        return !!form.data_nascimento;
+        if (!form.data_nascimento) return false;
+        if (fromDevocional) {
+          if (!form.email.trim()) return false;
+          if (form.email.trim().toLowerCase() !== form.confirmar_email.trim().toLowerCase()) return false;
+          if (!form.senha || form.senha.length < 6) return false;
+          if (form.senha !== form.confirmar_senha) return false;
+        }
+        return true;
       case 2:
         return true; // address is optional
       case 3:
@@ -407,6 +417,15 @@ export default function CadastroMembresia() {
     if (soDigitos(form.telefone).length < 10) return 'Informe um celular válido com DDD.';
     if (!cpfValido(form.cpf)) return 'CPF inválido.';
     if (!form.data_nascimento) return 'Informe sua data de nascimento.';
+    if (fromDevocional) {
+      if (!form.email.trim()) return 'Email obrigatório pra criar conta de acesso.';
+      if (form.email.trim().toLowerCase() !== form.confirmar_email.trim().toLowerCase()) {
+        return 'Os emails informados não conferem.';
+      }
+      if (!form.senha) return 'Crie uma senha de acesso.';
+      if (form.senha.length < 6) return 'A senha precisa ter ao menos 6 caracteres.';
+      if (form.senha !== form.confirmar_senha) return 'As senhas não conferem.';
+    }
     if (!aceitaTermos) return 'É necessário aceitar os termos para enviar o cadastro.';
     return null;
   }
@@ -453,8 +472,8 @@ export default function CadastroMembresia() {
         setFotoUploading(false);
       }
 
-      const { sobrenome, ...rest } = form;
-      await cadastroPublico.enviar({
+      const { sobrenome, confirmar_email, confirmar_senha, ...rest } = form;
+      const resp = await cadastroPublico.enviar({
         ...rest,
         nome: `${form.nome.trim()} ${sobrenome.trim()}`.trim(),
         cpf: soDigitos(form.cpf),
@@ -466,7 +485,24 @@ export default function CadastroMembresia() {
         foto_url,
         grupo_id: grupoEscolhido?.id || null,
         match_membro_id: matchConfirmado || null,
+        senha: form.senha || undefined,
       });
+
+      // Se veio do /devocional/login e a conta foi criada com sucesso,
+      // tenta entrar direto e levar pro devocional do dia.
+      if (fromDevocional && resp?.account_created && form.email && form.senha) {
+        try {
+          const { supabase } = await import('../../supabaseClient');
+          const { error: signErr } = await supabase.auth.signInWithPassword({
+            email: form.email.trim().toLowerCase(),
+            password: form.senha,
+          });
+          if (!signErr) {
+            window.location.href = resp.can_login_devocional ? '/devocional/hoje' : '/devocional/login?cadastrado=1';
+            return;
+          }
+        } catch { /* fallback: tela de sucesso normal */ }
+      }
       setSent(true);
     } catch (err) {
       setError(err.message || 'Não foi possível enviar o cadastro. Tente novamente.');
@@ -854,8 +890,67 @@ export default function CadastroMembresia() {
                   <SectionTitle>Informações</SectionTitle>
                   <Row>
                     <Field id="data_nascimento" type="date" label="Data de nascimento" value={form.data_nascimento} onChange={set('data_nascimento')} required />
-                    <Field id="email" type="email" label="E-mail" value={form.email} onChange={set('email')} autoComplete="email" maxLength={200} />
+                    <Field
+                      id="email"
+                      type="email"
+                      label={fromDevocional ? 'E-mail *' : 'E-mail'}
+                      value={form.email}
+                      onChange={set('email')}
+                      autoComplete="email"
+                      maxLength={200}
+                      required={fromDevocional}
+                    />
                   </Row>
+
+                  {fromDevocional && (
+                    <div style={{
+                      background: 'rgba(0,179,157,0.06)',
+                      border: '1px solid rgba(0,179,157,0.25)',
+                      borderRadius: 12, padding: 16, marginBottom: 16,
+                    }}>
+                      <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--cbrio-text)', marginBottom: 4 }}>
+                        Criar acesso ao app
+                      </div>
+                      <div style={{ fontSize: 12, color: 'var(--cbrio-text3)', marginBottom: 12, lineHeight: 1.5 }}>
+                        Pra entrar depois no devocional, na membresia digital e demais ferramentas da CBRio.
+                      </div>
+                      <Row>
+                        <Field
+                          id="confirmar_email"
+                          type="email"
+                          label="Confirmar e-mail *"
+                          value={form.confirmar_email}
+                          onChange={set('confirmar_email')}
+                          autoComplete="off"
+                          maxLength={200}
+                          required
+                        />
+                      </Row>
+                      <Row>
+                        <Field
+                          id="senha"
+                          type="password"
+                          label="Senha * (min 6 caracteres)"
+                          value={form.senha}
+                          onChange={set('senha')}
+                          autoComplete="new-password"
+                          maxLength={72}
+                          required
+                        />
+                        <Field
+                          id="confirmar_senha"
+                          type="password"
+                          label="Confirmar senha *"
+                          value={form.confirmar_senha}
+                          onChange={set('confirmar_senha')}
+                          autoComplete="new-password"
+                          maxLength={72}
+                          required
+                        />
+                      </Row>
+                    </div>
+                  )}
+
                   <Row>
                     <SelectField id="estado_civil" label="Estado civil" value={form.estado_civil} onChange={set('estado_civil')} options={ESTADO_CIVIL_OPTS} />
                     <Field id="profissao" label="Profissão" value={form.profissao} onChange={set('profissao')} maxLength={120} />
