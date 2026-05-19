@@ -79,6 +79,39 @@ usuarios). Tela em `/admin/permissoes` (arquivo
   aliases temporarios) · TODO de polish, nao bloqueante · hoje os hooks
   ja lem dos slugs novos via AuthContext
 
+### Boost por area · 1 cargo + N areas = acesso modular (2026-05-19) ⭐
+**Modelo aprovado**: o sistema tem 1 cargo unico `lider-ministerial`
+(genérico) e as **áreas** da pessoa decidem onde ela ganha acesso
+maximo (nivel 5). Atribui area "Cuidados" → vira admin de Cuidados.
+Atribui "Grupos" → vira admin de Grupos. Sem precisar criar cargo
+separado pra cada lider.
+
+**Implementacao** em `backend/middleware/auth.js`:
+- Constante `AREA_MODULO_BOOST` mapeia area normalizada → modulo slug:
+  ```js
+  { cuidados→cuidados, grupos→grupos, integracao→integracao,
+    voluntariado→voluntariado, next→next, online→online }
+  ```
+- `_normalizarArea()` remove acentos · "Integração" vira "integracao"
+- `resolveEffectivePerms()` ganha param `areas` · pra cada area que
+  bate em `AREA_MODULO_BOOST`, escala `leitura+escrita` do modulo
+  correspondente pra 5 (`Math.max`, so eleva nunca rebaixa)
+- `authenticate()` carrega `userAreas` ANTES de chamar resolveEffectivePerms
+
+**Migration `20260519280000_lider_ministerial_matriz_uniforme.sql`**:
+- Os 6 modulos com boost (cuidados, grupos, integracao, voluntariado,
+  next, online) vao pra `nivel=1` na matriz do `lider-ministerial`
+- Sem boost continua: nivel 1 (so ve). Com boost: nivel 5 (admin)
+- Outros modulos do cargo intocados: membresia=3, minha-area=3,
+  projetos=3+escopo, nps=5
+
+**Operacionalmente**:
+- Pra cadastrar novo lider: atribuir cargo `lider-ministerial` + a area
+  correspondente (Cuidados, Grupos, etc) em `/admin/permissoes` aba
+  Usuários. Acesso vira automatico.
+- Pra adicionar novo modulo com mesmo padrao: adicionar entrada em
+  `AREA_MODULO_BOOST`.
+
 ### Devocional · RH vira membro + IA escreve texto biblico (2026-05-19)
 **Problema 1**: tentar abrir devocional logado e receber "voce nao e'
 membro". O `resolveMembro` em `devocionalMembro.js` exige

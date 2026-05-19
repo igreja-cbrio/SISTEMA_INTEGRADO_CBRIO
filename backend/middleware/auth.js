@@ -78,9 +78,33 @@ async function getCargoMatrix() {
   return cargoMatrixCache;
 }
 
+// Mapa: nome de area (normalizado) → slug do modulo que recebe boost de nivel 5.
+// Modelo: cargo `lider-ministerial` tem nivel 1 (so leitura) na matriz pra todos
+// os modulos ministeriais; quando a pessoa tem a area correspondente, escala
+// automaticamente pra nivel 5 (max) naquele modulo. Permite "1 cargo + N areas"
+// em vez de criar cargo separado pra cada lider.
+const AREA_MODULO_BOOST = {
+  'cuidados':     'cuidados',
+  'grupos':       'grupos',
+  'integracao':   'integracao',
+  'voluntariado': 'voluntariado',
+  'next':         'next',
+  'online':       'online',
+};
+
+function _normalizarArea(nome) {
+  if (!nome) return '';
+  return nome.toString().toLowerCase().trim()
+    .normalize('NFD')
+    .replace(/[̀-ͯ]/g, ''); // remove acentos · "Integração" → "integracao"
+}
+
 // Resolve a permissao efetiva de um usuario por modulo:
 //   override (permissoes_modulo) ?? default cargo (cargo_modulo_permissao) ?? zero
-function resolveEffectivePerms({ overrides, cargoMatrix, cargoId, modulos }) {
+// + Boost por area: se a area da pessoa esta em AREA_MODULO_BOOST, escala
+//   leitura+escrita pra 5 no modulo correspondente (e o boost so eleva,
+//   nunca rebaixa um override mais alto).
+function resolveEffectivePerms({ overrides, cargoMatrix, cargoId, modulos, areas = [] }) {
   const result = {};
   const overridesByMod = new Map();
   for (const o of overrides || []) overridesByMod.set(o.modulo_id, o);
@@ -88,14 +112,29 @@ function resolveEffectivePerms({ overrides, cargoMatrix, cargoId, modulos }) {
   for (const r of cargoMatrix || []) {
     if (r.cargo_id === cargoId) defaultsByMod.set(r.modulo_id, r);
   }
+
+  // Quais modulos recebem boost via area da pessoa
+  const slugsComBoost = new Set();
+  for (const a of areas || []) {
+    const slug = AREA_MODULO_BOOST[_normalizarArea(a)];
+    if (slug) slugsComBoost.add(slug);
+  }
+
   for (const m of modulos) {
     const o = overridesByMod.get(m.id);
     const d = defaultsByMod.get(m.id);
-    const nivelL = o?.nivel_leitura ?? d?.nivel ?? 0;
-    const nivelE = o?.nivel_escrita ?? d?.nivel ?? 0;
+    let nivelL = o?.nivel_leitura ?? d?.nivel ?? 0;
+    let nivelE = o?.nivel_escrita ?? d?.nivel ?? 0;
     const exp    = o?.pode_exportar ?? d?.pode_exportar ?? false;
     const apr    = o?.pode_aprovar  ?? d?.pode_aprovar  ?? false;
     const esc    = o?.escopo_proprio ?? d?.escopo_proprio ?? false;
+
+    // Boost por area · so eleva, nunca rebaixa override existente
+    if (m.slug && slugsComBoost.has(m.slug)) {
+      nivelL = Math.max(nivelL, 5);
+      nivelE = Math.max(nivelE, 5);
+    }
+
     // Indexa por nome E por slug (legado: alguns lookups usam 'Financeiro', etc)
     const entry = {
       leitura: nivelL,
@@ -233,20 +272,21 @@ async function authenticate(req, res, next) {
       const modulos = await getModulos();
       const cargoMatrix = await getCargoMatrix();
 
-      const modulePerms = resolveEffectivePerms({
-        overrides: validOverrides,
-        cargoMatrix,
-        cargoId: permUser.cargo_id,
-        modulos,
-      });
-
-      // Carregar areas do usuario (para filtragem por setor/area)
+      // Carregar areas ANTES de resolver perms · boost por area precisa delas
       const { data: userAreas } = await supabase.from('usuario_areas')
         .select('area_id, is_principal, areas(nome, setor_id, setores(nome))')
         .eq('usuario_id', permUser.id);
 
       const areas = (userAreas || []).map(ua => ua.areas?.nome).filter(Boolean);
       const setores = [...new Set((userAreas || []).map(ua => ua.areas?.setores?.nome).filter(Boolean))];
+
+      const modulePerms = resolveEffectivePerms({
+        overrides: validOverrides,
+        cargoMatrix,
+        cargoId: permUser.cargo_id,
+        modulos,
+        areas,
+      });
 
       granular = {
         usuarioId: permUser.id,
