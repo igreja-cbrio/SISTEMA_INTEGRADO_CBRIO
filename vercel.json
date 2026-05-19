@@ -48,6 +48,10 @@
     {
       "path": "/api/online/cron/ddus-collect",
       "schedule": "30 10 * * *"
+    },
+    {
+      "path": "/api/devocional-planos/cron/enviar-diario",
+      "schedule": "0 9 * * *"
     }
   ],
   "rewrites": [

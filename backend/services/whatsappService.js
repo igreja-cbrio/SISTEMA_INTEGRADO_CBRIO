@@ -101,9 +101,24 @@ async function sendPedidoAtualizado(telefone, vars) {
   return sendTemplate(telefone, TEMPLATE_PEDIDO, TEMPLATE_LANG, params);
 }
 
+// Envia devocional diario (template `devocional_diario`).
+// Body esperado no template (3 params):
+//   "Bom dia, {{1}}! Seu devocional de hoje: {{2}}. Leia em: {{3}}"
+// vars: { primeiroNome, titulo, link }
+const TEMPLATE_DEVOCIONAL = process.env.WHATSAPP_TEMPLATE_DEVOCIONAL || 'devocional_diario';
+async function sendDevocionalDiario(telefone, vars) {
+  const params = [
+    vars.primeiroNome || 'Ola',
+    vars.titulo || 'devocional do dia',
+    vars.link || '',
+  ];
+  return sendTemplate(telefone, TEMPLATE_DEVOCIONAL, TEMPLATE_LANG, params);
+}
+
 module.exports = {
   configurado,
   normalizarTelefone,
   sendTemplate,
   sendPedidoAtualizado,
+  sendDevocionalDiario,
 };
