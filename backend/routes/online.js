@@ -286,6 +286,87 @@ router.get('/series/:id', async (req, res) => {
 });
 
 // ---------------------------------------------------------------------------
+// GET /api/online/cultos-metricas · cultos com video_id + metricas YT completas
+// (watch time, retencao, subs ganhos, inscritos/nao-inscritos, fontes de
+// trafego e curva de retencao) · pra UI da pagina Online.
+// ---------------------------------------------------------------------------
+router.get('/cultos-metricas', async (req, res) => {
+  try {
+    const limit = Math.min(Number(req.query.limit) || 24, 100);
+    const { data: cultos, error } = await supabase
+      .from('cultos')
+      .select(`
+        id, data, youtube_video_id,
+        online_pico, online_ds, online_ddus,
+        online_watch_minutes_ds, online_watch_minutes_ddus,
+        online_retencao_pct_ds, online_retencao_pct_ddus,
+        online_subs_ganhos, online_subs_perdidos,
+        online_views_inscritos, online_views_nao_inscritos,
+        vol_service_types(name, recurrence_time)
+      `)
+      .not('youtube_video_id', 'is', null)
+      .order('data', { ascending: false })
+      .limit(limit);
+    if (error) throw error;
+
+    const videoIds = (cultos || []).map(c => c.youtube_video_id).filter(Boolean);
+    if (!videoIds.length) return res.json([]);
+
+    // Trafico por video
+    const { data: traficoRows } = await supabase
+      .from('online_video_trafico')
+      .select('video_id, fonte, views, watch_minutes')
+      .in('video_id', videoIds);
+    const traficoByVideo = {};
+    for (const r of (traficoRows || [])) {
+      if (!traficoByVideo[r.video_id]) traficoByVideo[r.video_id] = [];
+      traficoByVideo[r.video_id].push({ fonte: r.fonte, views: r.views, watch_minutes: r.watch_minutes });
+    }
+    for (const vId of Object.keys(traficoByVideo)) {
+      traficoByVideo[vId].sort((a, b) => b.views - a.views);
+    }
+
+    // Curva de retencao por video
+    const { data: curvaRows } = await supabase
+      .from('online_video_retencao_curva')
+      .select('video_id, ratio_pct, audience_watch_ratio')
+      .in('video_id', videoIds)
+      .order('ratio_pct', { ascending: true });
+    const curvaByVideo = {};
+    for (const r of (curvaRows || [])) {
+      if (!curvaByVideo[r.video_id]) curvaByVideo[r.video_id] = [];
+      curvaByVideo[r.video_id].push({ ratio_pct: r.ratio_pct, audience_watch_ratio: Number(r.audience_watch_ratio) });
+    }
+
+    const result = (cultos || []).map(c => ({
+      id: c.id,
+      data: c.data,
+      youtube_video_id: c.youtube_video_id,
+      service_type_name: c.vol_service_types?.name || null,
+      recurrence_time: c.vol_service_types?.recurrence_time || null,
+      online_pico: c.online_pico,
+      online_ds: c.online_ds,
+      online_ddus: c.online_ddus,
+      online_watch_minutes_ds: c.online_watch_minutes_ds,
+      online_watch_minutes_ddus: c.online_watch_minutes_ddus,
+      online_retencao_pct_ds: c.online_retencao_pct_ds,
+      online_retencao_pct_ddus: c.online_retencao_pct_ddus,
+      online_subs_ganhos: c.online_subs_ganhos,
+      online_subs_perdidos: c.online_subs_perdidos,
+      online_views_inscritos: c.online_views_inscritos,
+      online_views_nao_inscritos: c.online_views_nao_inscritos,
+      trafico: traficoByVideo[c.youtube_video_id] || [],
+      retencao_curva: curvaByVideo[c.youtube_video_id] || [],
+    }));
+
+    res.json(result);
+  } catch (e) {
+    console.error('[online/cultos-metricas]', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ---------------------------------------------------------------------------
 // POST /api/online/sync · refresh manual (admin/diretor)
 // ---------------------------------------------------------------------------
 router.post('/sync', authorize('admin', 'diretor'), async (_req, res) => {

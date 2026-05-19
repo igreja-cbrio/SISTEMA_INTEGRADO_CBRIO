@@ -13,6 +13,7 @@ import {
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { toast } from 'sonner';
 import { useAuth } from '@/contexts/AuthContext';
+import { CultoYouTubePanel } from '@/components/online/CultoYouTubePanel';
 
 const VALOR_META: Record<string, { label: string; cor: string; corClara: string; icon: any }> = {
   seguir:        { label: 'Seguir a Jesus',          cor: '#8B5CF6', corClara: 'from-violet-500/15 to-violet-500/5', icon: Cross },
@@ -719,6 +720,9 @@ export default function Online() {
           </CardContent>
         </Card>
       )}
+
+      {/* Performance por Culto · novas metricas YT (PRs #524, #525, #527, #530, #531) */}
+      <CultoYouTubePanel />
 
       {/* Footer info */}
       <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-2 text-xs text-muted-foreground pt-2 border-t border-border">
