@@ -367,4 +367,214 @@ async function subStatusCollector() {
   return { ok: true, processados: cultos.length, resultados };
 }
 
-module.exports = { liveMonitor, dsCollector, ddusCollector, subsCollector, traficoCollector, retencaoCurvaCollector, subStatusCollector };
+// ---------------------------------------------------------------------------
+// backfillCultoVideoIds · auto-link de cultos sem youtube_video_id usando
+// `online_videos.actual_start_time` (preenchido pelo syncCanal apos esta
+// PR). Match por proximidade temporal: video cuja `actual_start_time` cai
+// dentro da janela [horario_culto - 30min, horario_culto + 4h] vira o
+// `youtube_video_id` daquele culto.
+//
+// Idempotente · so toca cultos com youtube_video_id NULL · so olha cultos
+// dos ultimos 180 dias pra nao escanear tudo eternamente.
+// ---------------------------------------------------------------------------
+async function backfillCultoVideoIds() {
+  const horizonte = fmtData(dataMaisDias(new Date(), -180));
+
+  // 1. Cultos elegiveis · sem video_id, has_online, ultimos 180d
+  const { data: cultos, error: cErr } = await supabase
+    .from('cultos')
+    .select('id, data, vol_service_types(recurrence_time, has_online)')
+    .is('youtube_video_id', null)
+    .gte('data', horizonte)
+    .order('data', { ascending: false });
+  if (cErr) throw cErr;
+  if (!cultos?.length) return { ok: true, linkados: 0, motivo: 'sem_cultos_pendentes' };
+
+  // 2. Videos com actualStartTime nos ultimos 180d
+  const { data: videos, error: vErr } = await supabase
+    .from('online_videos')
+    .select('video_id, actual_start_time, titulo')
+    .not('actual_start_time', 'is', null)
+    .gte('actual_start_time', new Date(Date.now() - 180 * 24 * 3600_000).toISOString())
+    .order('actual_start_time', { ascending: false });
+  if (vErr) throw vErr;
+  if (!videos?.length) return { ok: true, linkados: 0, motivo: 'sem_videos_com_actual_start' };
+
+  // 3. Match por janela temporal · mesma logica do liveMonitor mas pra passado
+  const usados = new Set(); // evita linkar mesmo video em 2 cultos
+  const resultados = [];
+
+  for (const c of cultos) {
+    const st = c.vol_service_types;
+    if (!st?.has_online) continue;
+    const [h, m] = (st.recurrence_time || '').split(':').map(Number);
+    if (isNaN(h)) continue;
+
+    const horario = new Date(c.data + 'T00:00:00');
+    horario.setHours(h, m || 0, 0, 0);
+    const inicio = new Date(horario.getTime() - JANELA_LIVE_MIN_ANTES * 60_000);
+    const fim    = new Date(horario.getTime() + JANELA_LIVE_MIN_DEPOIS * 60_000);
+
+    const match = videos.find(v => {
+      if (usados.has(v.video_id)) return false;
+      const t = new Date(v.actual_start_time);
+      return t >= inicio && t <= fim;
+    });
+
+    if (match) {
+      usados.add(match.video_id);
+      const { error } = await supabase
+        .from('cultos')
+        .update({ youtube_video_id: match.video_id })
+        .eq('id', c.id);
+      if (error) {
+        resultados.push({ culto_id: c.id, error: error.message });
+      } else {
+        resultados.push({ culto_id: c.id, data: c.data, video_id: match.video_id, titulo: match.titulo });
+      }
+    }
+  }
+  return { ok: true, linkados: resultados.filter(r => !r.error).length, total_cultos: cultos.length, resultados };
+}
+
+// ---------------------------------------------------------------------------
+// catchUpMetricas · processa cultos com youtube_video_id MAS sem alguma
+// metrica preenchida. Itera todas as 6 metricas (ds, ddus, subs, trafico,
+// retencao_curva, sub_status) e dispara pra cada culto que esteja faltando
+// dado. Util pos-backfill ou quando OAuth ficou offline por um periodo.
+//
+// Idempotencia: cada coletor abaixo ja tem skip por valor preenchido.
+// ---------------------------------------------------------------------------
+async function catchUpMetricas() {
+  // 1. Pega todos os cultos com video_id nos ultimos 180d
+  const horizonte = fmtData(dataMaisDias(new Date(), -180));
+  const { data: cultos, error } = await supabase
+    .from('cultos')
+    .select(`
+      id, data, youtube_video_id,
+      online_ds, online_ddus,
+      online_subs_ganhos, online_views_inscritos
+    `)
+    .not('youtube_video_id', 'is', null)
+    .gte('data', horizonte)
+    .order('data', { ascending: false });
+  if (error) throw error;
+  if (!cultos?.length) return { ok: true, processados: 0, motivo: 'sem_cultos_com_video' };
+
+  // 2. Pra cada culto, identifica metricas faltantes e dispara
+  const out = {
+    ds: 0, ddus: 0, subs: 0, trafico: 0, retencao_curva: 0, sub_status: 0,
+    erros: [],
+  };
+
+  for (const c of cultos) {
+    const inicioD     = c.data;
+    const inicioDplus1 = fmtData(dataMaisDias(new Date(c.data + 'T00:00:00'), 1));
+    const fimDplus7    = fmtData(dataMaisDias(new Date(c.data + 'T00:00:00'), 7));
+
+    // 2a. DS · views dia D
+    if (!c.online_ds || c.online_ds === 0) {
+      try {
+        const stats = await yt.fetchVideoViews(null, c.youtube_video_id, c.data, c.data);
+        await supabase.from('cultos').update({
+          online_ds: stats.views,
+          online_watch_minutes_ds: Math.round(stats.watch_minutes || 0) || null,
+          online_retencao_pct_ds: stats.avg_view_percentage ? Number(stats.avg_view_percentage.toFixed(2)) : null,
+        }).eq('id', c.id);
+        out.ds++;
+      } catch (e) { out.erros.push({ culto: c.id, metrica: 'ds', msg: e.message }); }
+    }
+
+    // 2b. DDUS · views D+1..D+7
+    if (!c.online_ddus || c.online_ddus === 0) {
+      try {
+        const stats = await yt.fetchVideoViews(null, c.youtube_video_id, inicioDplus1, fimDplus7);
+        await supabase.from('cultos').update({
+          online_ddus: stats.views,
+          online_watch_minutes_ddus: Math.round(stats.watch_minutes || 0) || null,
+          online_retencao_pct_ddus: stats.avg_view_percentage ? Number(stats.avg_view_percentage.toFixed(2)) : null,
+        }).eq('id', c.id);
+        out.ddus++;
+      } catch (e) { out.erros.push({ culto: c.id, metrica: 'ddus', msg: e.message }); }
+    }
+
+    // 2c. Subs ganhos/perdidos · janela D..D+7
+    if (c.online_subs_ganhos === null || c.online_subs_ganhos === undefined) {
+      try {
+        const stats = await yt.fetchVideoSubsChange(null, c.youtube_video_id, inicioD, fimDplus7);
+        await supabase.from('cultos').update({
+          online_subs_ganhos: stats.gained,
+          online_subs_perdidos: stats.lost,
+        }).eq('id', c.id);
+        out.subs++;
+      } catch (e) { out.erros.push({ culto: c.id, metrica: 'subs', msg: e.message }); }
+    }
+
+    // 2d. Trafico (verifica via tabela separada)
+    try {
+      const { count } = await supabase
+        .from('online_video_trafico')
+        .select('video_id', { count: 'exact', head: true })
+        .eq('video_id', c.youtube_video_id);
+      if (!count || count === 0) {
+        const fontes = await yt.fetchVideoTrafficSources(null, c.youtube_video_id, inicioD, fimDplus7);
+        if (fontes.length) {
+          const rows = fontes.map(f => ({
+            video_id: c.youtube_video_id,
+            fonte: f.fonte,
+            views: f.views,
+            watch_minutes: f.watch_minutes,
+            periodo_inicio: inicioD,
+            periodo_fim: fimDplus7,
+            collected_at: new Date().toISOString(),
+          }));
+          await supabase.from('online_video_trafico').upsert(rows, { onConflict: 'video_id,fonte' });
+          out.trafico++;
+        }
+      }
+    } catch (e) { out.erros.push({ culto: c.id, metrica: 'trafico', msg: e.message }); }
+
+    // 2e. Retencao curva
+    try {
+      const { count } = await supabase
+        .from('online_video_retencao_curva')
+        .select('video_id', { count: 'exact', head: true })
+        .eq('video_id', c.youtube_video_id);
+      if (!count || count === 0) {
+        const curva = await yt.fetchVideoRetentionCurve(null, c.youtube_video_id, inicioD, fimDplus7);
+        if (curva.length) {
+          const rows = curva.map(p => ({
+            video_id: c.youtube_video_id,
+            ratio_pct: p.ratio_pct,
+            audience_watch_ratio: p.audience_watch_ratio,
+            periodo_inicio: inicioD,
+            periodo_fim: fimDplus7,
+            collected_at: new Date().toISOString(),
+          }));
+          await supabase.from('online_video_retencao_curva').upsert(rows, { onConflict: 'video_id,ratio_pct' });
+          out.retencao_curva++;
+        }
+      }
+    } catch (e) { out.erros.push({ culto: c.id, metrica: 'retencao_curva', msg: e.message }); }
+
+    // 2f. Sub status
+    if (c.online_views_inscritos === null || c.online_views_inscritos === undefined) {
+      try {
+        const stats = await yt.fetchVideoViewsBySubStatus(null, c.youtube_video_id, inicioD, fimDplus7);
+        await supabase.from('cultos').update({
+          online_views_inscritos: stats.subscribed,
+          online_views_nao_inscritos: stats.unsubscribed,
+        }).eq('id', c.id);
+        out.sub_status++;
+      } catch (e) { out.erros.push({ culto: c.id, metrica: 'sub_status', msg: e.message }); }
+    }
+  }
+
+  return { ok: true, processados: cultos.length, ...out };
+}
+
+module.exports = {
+  liveMonitor, dsCollector, ddusCollector, subsCollector,
+  traficoCollector, retencaoCurvaCollector, subStatusCollector,
+  backfillCultoVideoIds, catchUpMetricas,
+};
