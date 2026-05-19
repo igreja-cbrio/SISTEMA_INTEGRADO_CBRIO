@@ -488,6 +488,92 @@ router.get('/elegibilidade', async (req, res) => {
 
 
 // ──────────────────────────────────────────────────────────────────────
+// PONTUAÇÃO POR COLABORADOR (PCS estrutural)
+// ──────────────────────────────────────────────────────────────────────
+// Retorna a avaliação dos 6 critérios + grau proposto vs grau atual,
+// vinda da tabela pcs_pontuacao_colaborador e materializada na view
+// vw_pcs_proposta. Diferente de rh_avaliacoes (ciclo 360° anual).
+router.get('/pontuacao', async (_req, res) => {
+  // View já filtra por status='ativo' e join com PCS 2026 (ciclo único atual).
+  const { data, error } = await supabase
+    .from('vw_pcs_proposta')
+    .select('*')
+    .order('nome');
+  if (error) return res.status(400).json({ error: error.message });
+  res.json(data || []);
+});
+
+router.get('/pontuacao/resumo', async (_req, res) => {
+  const { data, error } = await supabase
+    .from('vw_pcs_proposta')
+    .select('status_proposta, delta_graus, gap_salarial, grau_proposto_codigo, area');
+  if (error) return res.status(400).json({ error: error.message });
+
+  const lista = data || [];
+  const buckets = { adequado: 0, abaixo_minimo: 0, acima_teto: 0, abaixo_referencia: 0, sem_dados: 0, nao_avaliado: 0 };
+  let totalGap = 0;
+  for (const d of lista) {
+    const s = d.status_proposta || 'nao_avaliado';
+    buckets[s] = (buckets[s] || 0) + 1;
+    if (d.gap_salarial != null && d.gap_salarial < 0) totalGap += Number(d.gap_salarial);
+  }
+  res.json({
+    total: lista.length,
+    buckets,
+    custoEnquadramentoMensal: Number(Math.abs(totalGap).toFixed(2)),
+    custoEnquadramentoAnual: Number((Math.abs(totalGap) * 13).toFixed(2)),
+  });
+});
+
+// PUT individual · permite admin atualizar nível por critério + recalcula
+router.put('/pontuacao/:funcionario_id', async (req, res) => {
+  const { funcionario_id } = req.params;
+  const {
+    ciclo_referencia = 'PCS 2026',
+    nivel_formacao, nivel_experiencia, nivel_complexidade,
+    nivel_responsabilidade, nivel_lideranca, nivel_competencias,
+    grau_proposto_id, status_proposta, decisao_obs,
+  } = req.body || {};
+
+  const n = (v) => (v === undefined || v === null || v === '' ? null : Number(v));
+  const nf  = n(nivel_formacao),       ne  = n(nivel_experiencia);
+  const nc  = n(nivel_complexidade),   nr  = n(nivel_responsabilidade);
+  const nl  = n(nivel_lideranca),      nt  = n(nivel_competencias);
+
+  const pf  = nf  != null ? Number((nf  * 0.15 * 200).toFixed(2)) : null;
+  const pe  = ne  != null ? Number((ne  * 0.20 * 200).toFixed(2)) : null;
+  const pc  = nc  != null ? Number((nc  * 0.20 * 200).toFixed(2)) : null;
+  const pr  = nr  != null ? Number((nr  * 0.20 * 200).toFixed(2)) : null;
+  const pl  = nl  != null ? Number((nl  * 0.15 * 200).toFixed(2)) : null;
+  const pt  = nt  != null ? Number((nt  * 0.10 * 200).toFixed(2)) : null;
+  const ptotal = Number(((pf||0) + (pe||0) + (pc||0) + (pr||0) + (pl||0) + (pt||0)).toFixed(2));
+
+  const payload = {
+    funcionario_id, ciclo_referencia,
+    nivel_formacao: nf, nivel_experiencia: ne, nivel_complexidade: nc,
+    nivel_responsabilidade: nr, nivel_lideranca: nl, nivel_competencias: nt,
+    pts_formacao: pf, pts_experiencia: pe, pts_complexidade: pc,
+    pts_responsabilidade: pr, pts_lideranca: pl, pts_competencias: pt,
+    pts_total: ptotal,
+    grau_proposto_id: grau_proposto_id || null,
+    status_proposta: status_proposta || null,
+    decisao_obs: decisao_obs || null,
+    avaliado_em: new Date().toISOString().slice(0, 10),
+    avaliado_por: req.user?.id || null,
+    avaliado_por_nome: req.user?.name || null,
+  };
+
+  const { data, error } = await supabase
+    .from('pcs_pontuacao_colaborador')
+    .upsert(payload, { onConflict: 'funcionario_id,ciclo_referencia' })
+    .select()
+    .single();
+  if (error) return res.status(400).json({ error: error.message });
+  res.json(data);
+});
+
+
+// ──────────────────────────────────────────────────────────────────────
 // PONTUAÇÃO → GRAU (utilitário pra preview)
 // ──────────────────────────────────────────────────────────────────────
 router.get('/sugerir-grau/:pontos', async (req, res) => {

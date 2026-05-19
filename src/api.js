@@ -602,6 +602,12 @@ export const pcs = {
   // Elegibilidade
   elegibilidade: () => get('/pcs/elegibilidade'),
   sugerirGrau: (pontos) => get(`/pcs/sugerir-grau/${pontos}`),
+  // Pontuação PCS estrutural (avaliação dos 6 critérios + grau proposto)
+  pontuacao: {
+    list: (ciclo) => get('/pcs/pontuacao' + (ciclo ? `?ciclo=${encodeURIComponent(ciclo)}` : '')),
+    resumo: (ciclo) => get('/pcs/pontuacao/resumo' + (ciclo ? `?ciclo=${encodeURIComponent(ciclo)}` : '')),
+    update: (funcionarioId, data) => put(`/pcs/pontuacao/${funcionarioId}`, data),
+  },
 };
 
 export const notificacoes = {
