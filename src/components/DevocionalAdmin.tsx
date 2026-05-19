@@ -338,6 +338,7 @@ function GerarIAModal({ plano, onClose, onDone }: { plano: Plano; onClose: () =>
   const [tom, setTom] = useState('pastoral, edificante, com aplicacao pratica');
   const [sobrescrever, setSobrescrever] = useState(false);
   const [gerando, setGerando] = useState(false);
+  const [progresso, setProgresso] = useState({ feitos: 0, total: 0 });
 
   const dias = useMemo(() => {
     const inicio = new Date(plano.data_inicio + 'T12:00');
@@ -347,12 +348,36 @@ function GerarIAModal({ plano, onClose, onDone }: { plano: Plano; onClose: () =>
 
   async function gerar() {
     setGerando(true);
+    setProgresso({ feitos: 0, total: dias });
+    let totalCriados = 0;
+    let totalGerados = 0;
     try {
-      const r: any = await planosApi.gerarIA(plano.id, { tema, tom, sobrescrever });
-      toast.success(`${r.criados} devocionais gerados`);
+      // Loop: cada chamada gera ate 10 dias · backend retorna `restantes`
+      // Para quando restantes=0 OU quando o lote nao criar mais nada
+      // (guard contra loop infinito).
+      // Limite de seguranca de 20 iteracoes (200 dias maximos).
+      for (let i = 0; i < 20; i++) {
+        const r: any = await planosApi.gerarIA(plano.id, { tema, tom, sobrescrever });
+        const criados = r.criados || 0;
+        const restantes = r.restantes ?? 0;
+        totalCriados += criados;
+        totalGerados += criados;
+        setProgresso(p => ({ feitos: p.feitos + criados, total: p.total }));
+        // Pra evitar regerar os mesmos dias quando sobrescrever=true,
+        // desliga o flag apos primeira passada · proximas iteracoes
+        // pulam os que acabaram de ser criados.
+        if (sobrescrever && i === 0) setSobrescrever(false);
+        if (restantes === 0 || criados === 0) break;
+      }
+      toast.success(`${totalCriados} devocionais gerados`);
       onDone();
     } catch (e: any) {
-      toast.error(e.message);
+      if (totalGerados > 0) {
+        toast.warning(`${totalGerados} gerados, mas erro no lote seguinte: ${e.message}`);
+        onDone();
+      } else {
+        toast.error(e.message);
+      }
     } finally { setGerando(false); }
   }
 
@@ -362,7 +387,8 @@ function GerarIAModal({ plano, onClose, onDone }: { plano: Plano; onClose: () =>
         <DialogHeader><DialogTitle>Gerar devocionais com IA</DialogTitle></DialogHeader>
         <div className="space-y-3">
           <p className="text-sm text-muted-foreground">
-            Vai gerar {dias} devocionais (1 por dia) usando Claude Haiku. Pode demorar 30-60s.
+            Vai gerar {dias} devocionais (1 por dia) usando Claude Haiku, em lotes de 10
+            (cada lote ~30-50s). Total estimado: {Math.ceil(dias / 10) * 40}s aproximadamente.
           </p>
           <div>
             <Label>Tema / serie biblica (opcional)</Label>
@@ -376,11 +402,22 @@ function GerarIAModal({ plano, onClose, onDone }: { plano: Plano; onClose: () =>
             <input type="checkbox" checked={sobrescrever} onChange={e => setSobrescrever(e.target.checked)} />
             Sobrescrever itens existentes no plano
           </label>
+          {gerando && progresso.total > 0 && (
+            <div className="space-y-1">
+              <div className="flex justify-between text-xs">
+                <span>Progresso</span>
+                <span>{progresso.feitos} / {progresso.total}</span>
+              </div>
+              <div className="h-2 bg-muted rounded overflow-hidden">
+                <div className="h-full bg-primary transition-all" style={{ width: `${(progresso.feitos / progresso.total) * 100}%` }} />
+              </div>
+            </div>
+          )}
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={onClose} disabled={gerando}>Cancelar</Button>
           <Button onClick={gerar} disabled={gerando}>
-            {gerando ? <><Loader2 className="h-4 w-4 mr-2 animate-spin" /> Gerando ({dias})...</> : <><Sparkles className="h-4 w-4 mr-2" /> Gerar</>}
+            {gerando ? <><Loader2 className="h-4 w-4 mr-2 animate-spin" /> Gerando...</> : <><Sparkles className="h-4 w-4 mr-2" /> Gerar</>}
           </Button>
         </DialogFooter>
       </DialogContent>
