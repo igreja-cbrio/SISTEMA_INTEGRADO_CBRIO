@@ -208,7 +208,16 @@ router.post('/:id/gerar-ia', authorize('admin', 'diretor'), async (req, res) => 
     }
 
     const client = new Anthropic();
-    const systemPrompt = `Voce e um pastor protestante brasileiro escrevendo devocionais diarios para a Igreja CBRio. Estilo: ${tom}. Cada devocional deve ter passagem biblica curta (1-3 versiculos), reflexao de 4-6 paragrafos curtos, aplicacao pratica em 1 paragrafo, e uma oracao curta. Use linguagem acessivel e contemporanea. NUNCA cite mais de uma passagem central por devocional.`;
+    const systemPrompt = `Voce e um pastor protestante brasileiro escrevendo devocionais diarios para a Igreja CBRio. Estilo: ${tom}.
+
+Cada devocional deve ter:
+- **passagem**: referencia biblica curta (1-3 versiculos) · formato "Livro Cap:Vers"
+- **passagem_texto**: o TEXTO COMPLETO da passagem em portugues, traducao NAA ou ARA. NUNCA omita · a pessoa que le o devocional deve poder ler o texto biblico ali mesmo, sem precisar abrir a Biblia.
+- **reflexao**: 4-6 paragrafos curtos
+- **aplicacao**: 1 paragrafo de aplicacao pratica
+- **oracao**: oracao curta encerrando
+
+Use linguagem acessivel e contemporanea. NUNCA cite mais de uma passagem central por devocional.`;
 
     const userPrompt = `Gere ${diasAlvo.length} devocionais diarios para o plano "${plano.titulo}".
 ${tema ? `Tema/serie: ${tema}\n` : ''}${plano.descricao ? `Contexto: ${plano.descricao}\n` : ''}
@@ -221,6 +230,7 @@ Retorne APENAS um JSON array (sem markdown, sem texto fora do JSON) com ${diasAl
     "data": "yyyy-mm-dd",
     "titulo": "...",
     "passagem": "Livro Cap:Vers",
+    "passagem_texto": "Texto biblico completo aqui, em portugues",
     "reflexao": "...",
     "aplicacao": "...",
     "oracao": "..."
@@ -260,6 +270,7 @@ Retorne APENAS um JSON array (sem markdown, sem texto fora do JSON) com ${diasAl
         data: o.data,
         titulo: String(o.titulo).slice(0, 200),
         passagem: o.passagem ? String(o.passagem).slice(0, 100) : null,
+        passagem_texto: o.passagem_texto ? String(o.passagem_texto) : null,
         reflexao: String(o.reflexao),
         aplicacao: o.aplicacao ? String(o.aplicacao) : null,
         oracao: o.oracao ? String(o.oracao) : null,
