@@ -1550,6 +1550,8 @@ export const online = {
     live: () => post('/online/coletar/live', {}),
     ds: () => post('/online/coletar/ds', {}),
     ddus: () => post('/online/coletar/ddus', {}),
+    backfillCultos: () => post('/online/coletar/backfill-cultos', {}),
+    catchUp: () => post('/online/coletar/catch-up', {}),
   },
 };
 

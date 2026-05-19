@@ -108,18 +108,20 @@ async function fetchPlaylistItems(apiKey, playlistId) {
 }
 
 // ---------------------------------------------------------------------------
-// videos.list · pega snippet+statistics+contentDetails em chunks de 50
+// videos.list · pega snippet+statistics+contentDetails+liveStreamingDetails
+// em chunks de 50
 // ---------------------------------------------------------------------------
 async function fetchVideos(apiKey, videoIds) {
   const result = [];
   for (let i = 0; i < videoIds.length; i += 50) {
     const chunk = videoIds.slice(i, i + 50);
-    const url = `${YT_BASE}/videos?part=snippet,statistics,contentDetails&id=${chunk.join(',')}&key=${apiKey}`;
+    const url = `${YT_BASE}/videos?part=snippet,statistics,contentDetails,liveStreamingDetails&id=${chunk.join(',')}&key=${apiKey}`;
     const data = await fetchJson(url);
     for (const v of data.items || []) {
       const snip = v.snippet || {};
       const stats = v.statistics || {};
       const cd = v.contentDetails || {};
+      const lsd = v.liveStreamingDetails || {};
       const views = parseInt(stats.viewCount, 10) || 0;
       const likes = parseInt(stats.likeCount, 10) || 0;
       const seconds = parseDuration(cd.duration);
@@ -135,6 +137,8 @@ async function fetchVideos(apiKey, videoIds) {
         like_count: likes,
         comment_count: parseInt(stats.commentCount, 10) || 0,
         taxa_engajamento: views > 0 ? Math.round((likes / views) * 10000) / 100 : null,
+        actual_start_time: lsd.actualStartTime || null,
+        actual_end_time:   lsd.actualEndTime   || null,
       });
     }
   }
@@ -218,6 +222,16 @@ async function syncCanal() {
       const { error } = await supabase.from('online_videos').upsert(chunk, { onConflict: 'video_id' });
       if (error) log.erros.push({ etapa: 'videos', chunk: i, msg: error.message });
     }
+  }
+
+  // 6. Auto-link de cultos passados sem youtube_video_id, agora que
+  //    `online_videos.actual_start_time` foi populado.
+  //    Lazy import pra evitar dependencia circular (collectors -> service).
+  try {
+    const { backfillCultoVideoIds } = require('./onlineCollectors');
+    log.etapas.backfill_cultos = await backfillCultoVideoIds();
+  } catch (e) {
+    log.erros.push({ etapa: 'backfill_cultos', msg: e.message });
   }
 
   log.duracao_ms = Date.now() - inicio;

@@ -57,6 +57,14 @@ router.get('/cron/sub-status-collect', autorizaCron, async (_req, res) => {
   try { res.json(await collectors.subStatusCollector()); }
   catch (e) { console.error('[sub-status-collect]', e.message); res.status(500).json({ error: e.message }); }
 });
+router.get('/cron/backfill-cultos', autorizaCron, async (_req, res) => {
+  try { res.json(await collectors.backfillCultoVideoIds()); }
+  catch (e) { console.error('[backfill-cultos]', e.message); res.status(500).json({ error: e.message }); }
+});
+router.get('/cron/catch-up', autorizaCron, async (_req, res) => {
+  try { res.json(await collectors.catchUpMetricas()); }
+  catch (e) { console.error('[catch-up]', e.message); res.status(500).json({ error: e.message }); }
+});
 
 // ── OAuth callback eh publico (Google redireciona, sem nosso JWT) ──
 // State carrega: userId + nonce assinado com CRON_SECRET pra anti-CSRF
@@ -142,6 +150,12 @@ router.post('/coletar/retencao-curva', authorize('admin', 'diretor'), async (_re
 });
 router.post('/coletar/sub-status', authorize('admin', 'diretor'), async (_req, res) => {
   try { res.json(await collectors.subStatusCollector()); } catch (e) { res.status(500).json({ error: e.message }); }
+});
+router.post('/coletar/backfill-cultos', authorize('admin', 'diretor'), async (_req, res) => {
+  try { res.json(await collectors.backfillCultoVideoIds()); } catch (e) { res.status(500).json({ error: e.message }); }
+});
+router.post('/coletar/catch-up', authorize('admin', 'diretor'), async (_req, res) => {
+  try { res.json(await collectors.catchUpMetricas()); } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 // ---------------------------------------------------------------------------
