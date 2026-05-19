@@ -10,7 +10,7 @@ import { Badge } from './ui/badge';
 import { Skeleton } from './ui/skeleton';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from './ui/tabs';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from './ui/dialog';
-import { Sparkles, Plus, Trash2, Loader2, ArrowLeft, RefreshCw, Edit2, Save, Calendar, Users, BookOpen, Send, CheckCircle2, AlertTriangle } from 'lucide-react';
+import { Sparkles, Plus, Trash2, Loader2, ArrowLeft, RefreshCw, Edit2, Save, Calendar, Users, BookOpen, Send, CheckCircle2, AlertTriangle, Link2, Copy } from 'lucide-react';
 import { toast } from 'sonner';
 import DevocionalPanel from './DevocionalPanel';
 
@@ -319,7 +319,7 @@ function PlanoDetalhe({ planoId, onVoltar, podeEditar }: { planoId: string; onVo
         </TabsContent>
 
         <TabsContent value="envios">
-          <EnviosView planoId={planoId} podeEnviar={podeEditar} />
+          <EnviosView planoId={planoId} podeEnviar={podeEditar} planoItens={itens} />
         </TabsContent>
 
         <TabsContent value="estudo">
@@ -554,20 +554,48 @@ type EnvioAgg = {
   ultimos_motivos: Record<string, number>;
 };
 
-function EnviosView({ planoId, podeEnviar }: { planoId: string; podeEnviar: boolean }) {
-  const [itens, setItens] = useState<EnvioAgg[]>([]);
+function EnviosView({ planoId, podeEnviar, planoItens }: { planoId: string; podeEnviar: boolean; planoItens: Item[] }) {
+  const [envios, setEnvios] = useState<EnvioAgg[]>([]);
   const [loading, setLoading] = useState(true);
   const [enviando, setEnviando] = useState(false);
 
   const load = useCallback(() => {
     setLoading(true);
     planosApi.envios(planoId)
-      .then((r: any) => setItens(r.itens || []))
+      .then((r: any) => setEnvios(r.itens || []))
       .catch((e: any) => toast.error(e.message))
       .finally(() => setLoading(false));
   }, [planoId]);
 
   useEffect(() => { load(); }, [load]);
+
+  const hoje = new Date().toISOString().slice(0, 10);
+  const itemHoje = useMemo(() => (planoItens || []).find(i => i.data === hoje), [planoItens, hoje]);
+
+  function buildMensagem(item: Item) {
+    const link = `${window.location.origin}/devocional/hoje`;
+    const linhas = ['📖 *Devocional de hoje*', '', `*${item.titulo}*`];
+    if (item.passagem) linhas.push(item.passagem);
+    linhas.push('', `Leia em: ${link}`);
+    return linhas.join('\n');
+  }
+
+  async function copiarMensagem() {
+    if (!itemHoje) return toast.error('Plano nao tem item pra hoje');
+    const texto = buildMensagem(itemHoje);
+    try {
+      await navigator.clipboard.writeText(texto);
+      toast.success('Mensagem copiada · cole no WhatsApp/Telegram/grupo');
+    } catch {
+      toast.error('Nao consegui copiar · selecione manualmente abaixo');
+    }
+  }
+
+  function abrirWhatsAppWeb() {
+    if (!itemHoje) return toast.error('Plano nao tem item pra hoje');
+    const texto = encodeURIComponent(buildMensagem(itemHoje));
+    window.open(`https://wa.me/?text=${texto}`, '_blank');
+  }
 
   async function enviarHoje() {
     setEnviando(true);
@@ -588,29 +616,56 @@ function EnviosView({ planoId, podeEnviar }: { planoId: string; podeEnviar: bool
   }
 
   return (
-    <div className="space-y-3">
+    <div className="space-y-4">
+      {/* Opcao Link · sempre disponivel · nao depende de template aprovado */}
+      <Card className="p-4 space-y-3 border-primary/30 bg-primary/5">
+        <div className="flex items-center gap-2">
+          <Link2 className="h-4 w-4 text-primary" />
+          <h4 className="font-semibold text-sm">Compartilhar por link</h4>
+        </div>
+        {itemHoje ? (
+          <>
+            <div className="text-xs text-muted-foreground">
+              Pre-formatado pra colar no WhatsApp Web, grupo ou status. Membro abre o link e ve o conteudo completo no app.
+            </div>
+            <pre className="text-xs bg-card border rounded p-3 whitespace-pre-wrap font-sans">{buildMensagem(itemHoje)}</pre>
+            <div className="flex flex-wrap gap-2">
+              <Button onClick={copiarMensagem} variant="default" size="sm">
+                <Copy className="h-4 w-4 mr-2" /> Copiar mensagem
+              </Button>
+              <Button onClick={abrirWhatsAppWeb} variant="outline" size="sm">
+                <Send className="h-4 w-4 mr-2" /> Abrir no WhatsApp Web
+              </Button>
+            </div>
+          </>
+        ) : (
+          <p className="text-sm text-muted-foreground">Plano nao tem item pra hoje. Gere/crie um item com data {hoje}.</p>
+        )}
+      </Card>
+
+      {/* Opcao envio automatico via WhatsApp API */}
       <div className="flex items-center justify-between">
         <p className="text-sm text-muted-foreground">
-          Cron roda diariamente as 06:00 BRT. Use o botao abaixo pra disparar manualmente o item de hoje.
+          Cron diario 06:00 BRT envia via WhatsApp Business API (precisa do template aprovado pelo Meta).
         </p>
         {podeEnviar && (
-          <Button onClick={enviarHoje} disabled={enviando}>
+          <Button onClick={enviarHoje} disabled={enviando} variant="outline">
             {enviando ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Send className="h-4 w-4 mr-2" />}
-            Enviar hoje agora
+            Disparar API agora
           </Button>
         )}
       </div>
 
       {loading ? (
         <Skeleton className="h-32 w-full" />
-      ) : itens.length === 0 ? (
+      ) : envios.length === 0 ? (
         <Card className="p-8 text-center text-sm text-muted-foreground">
           <Send className="h-8 w-8 mx-auto mb-2 opacity-50" />
           Nenhum envio registrado ainda.
         </Card>
       ) : (
         <div className="space-y-2">
-          {itens.map(it => (
+          {envios.map(it => (
             <Card key={it.item_id} className="p-3">
               <div className="flex items-center gap-3">
                 <div className="flex-1 min-w-0">
