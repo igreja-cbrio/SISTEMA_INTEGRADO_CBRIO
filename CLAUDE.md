@@ -79,6 +79,25 @@ usuarios). Tela em `/admin/permissoes` (arquivo
   aliases temporarios) · TODO de polish, nao bloqueante · hoje os hooks
   ja lem dos slugs novos via AuthContext
 
+### Alda Lorena → Lorena · preferencia de nome (2026-05-19)
+Lorena pediu pra ser chamada so de "Lorena" (Alda Lorena Cellos
+Andrade e' o nome legal, fica intocado em rh_funcionarios/PCS).
+
+Migration `20260519240000_alda_para_lorena.sql` atualiza:
+- `profiles.name` · nome de visualizacao na UI
+- `usuarios.nome` · sistema granular
+- `area_responsaveis.responsavel_nome` · referencia da Integracao
+- `projects.leader` + `projects.responsible` · CRITICO porque filtro
+  escopo_proprio em /projetos compara profile.name com esses campos
+- `kanban_tasks.responsible` + `cycle_phase_tasks.responsavel_nome`
+  (se as tabelas existirem)
+
+Textos fixos atualizados:
+- `src/pages/ministerial/Online.tsx:559`
+- `backend/routes/kpis.js:12` (comentario)
+
+Idempotente · so muda registros que ainda tem "Alda Lorena".
+
 ### Fix · item "Cuidados" no menu (2026-05-19)
 Hook legado `canCuidados` em AuthContext usa `nivelMinimo = 2`
 (`canAccessModule(['cuidados', 'Cuidados'])` default). Aldas com

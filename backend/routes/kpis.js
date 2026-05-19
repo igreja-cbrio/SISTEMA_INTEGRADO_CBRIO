@@ -9,7 +9,7 @@ const painelCache = require('../services/painelCache');
 router.use(authenticate);
 
 // Helper: permite escrita em cultos/decisoes/batismos pra admin/diretor OU
-// quem tem 'integracao' em kpi_areas (Alda Lorena, lider de Integracao).
+// quem tem 'integracao' em kpi_areas (Lorena, lider de Integracao).
 // Auditoria de pre-liberacao identificou que essas rotas estavam so com
 // authenticate · qualquer usuario logado escrevia. Agora restringido.
 function authorizeIntegracao(req, res, next) {

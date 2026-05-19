@@ -556,7 +556,7 @@ export default function Online() {
         <div className="text-xs leading-relaxed">
           <strong className="text-foreground">Modulo somente leitura.</strong>{' '}
           <span className="text-muted-foreground">
-            Frequencia online e aceitacoes sao preenchidas pela <strong>Alda Lorena</strong> em{' '}
+            Frequencia online e aceitacoes sao preenchidas pela <strong>Lorena</strong> em{' '}
             <code className="px-1 py-0.5 rounded bg-muted text-[10px]">/ministerial/integracao</code> (aba Cultos).
           </span>
         </div>
