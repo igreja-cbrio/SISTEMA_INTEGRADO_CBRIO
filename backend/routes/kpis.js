@@ -143,6 +143,52 @@ router.get('/cultos/:id/decisoes-pessoas', async (req, res) => {
   res.json(data || []);
 });
 
+// Decisoes historicas que foram importadas (planilha, etc) e NAO tem
+// culto vinculado. Vem de mem_trilha_valores etapa='conversao' filtrando
+// por observacoes/origem. Alimenta a aba Pessoas em /integracao/decisoes
+// pra incluir esse historico junto com as decisoes registradas em cultos.
+router.get('/decisoes-pessoas/historico-importado', async (req, res) => {
+  try {
+    const limit = Math.min(Number(req.query.limit) || 500, 2000);
+    const desdeDias = Number(req.query.dias) || 365;
+    const desde = new Date();
+    desde.setDate(desde.getDate() - desdeDias);
+
+    // Trilha de conversao importada · join com mem_membros pra dados
+    const { data: trilhas, error } = await supabase
+      .from('mem_trilha_valores')
+      .select('membro_id, data_conclusao, observacoes, mem_membros(id, nome, telefone, cpf, data_nascimento, status, observacoes)')
+      .eq('etapa', 'conversao')
+      .eq('concluida', true)
+      .ilike('observacoes', '%importacao%')
+      .gte('data_conclusao', desde.toISOString().slice(0, 10))
+      .order('data_conclusao', { ascending: false })
+      .limit(limit);
+
+    if (error) throw error;
+
+    const items = (trilhas || [])
+      .filter(t => t.mem_membros)
+      .map(t => ({
+        id: t.membro_id,
+        membro_id: t.membro_id,
+        nome: t.mem_membros.nome,
+        telefone: t.mem_membros.telefone,
+        cpf: t.mem_membros.cpf,
+        data_nascimento: t.mem_membros.data_nascimento,
+        data_conversao: t.data_conclusao,
+        status_membro: t.mem_membros.status,
+        origem: 'importacao_planilha',
+        observacoes_membro: t.mem_membros.observacoes,
+      }));
+
+    res.json({ total: items.length, items });
+  } catch (e) {
+    console.error('[kpis/decisoes-pessoas/historico-importado]', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // Decisoes com cadastro incompleto (sem CPF ou sem data_nascimento)
 // Marcos: "futuramente quando tivermos esse convertido ja alinhado na
 // jornada vamos conseguir buscar melhor esses dados em um censo posterior"

@@ -1178,6 +1178,11 @@ export const kpis = {
       update: (id, data) => put(`/kpis/decisoes-pessoas/${id}`, data),
       remove: (id) => del(`/kpis/decisoes-pessoas/${id}`),
       buscarMembro: (q) => get(`/kpis/decisoes-pessoas/buscar-membro?q=${encodeURIComponent(q)}`),
+      // Historico de decisoes importadas (planilha) sem culto vinculado
+      historicoImportado: (params = {}) => {
+        const qs = new URLSearchParams(params).toString();
+        return get('/kpis/decisoes-pessoas/historico-importado' + (qs ? '?' + qs : ''));
+      },
       // Pessoas com cadastro incompleto (sem CPF ou nascimento) · pra censo posterior
       incompletos: (params = {}) => {
         const qs = new URLSearchParams(params).toString();
