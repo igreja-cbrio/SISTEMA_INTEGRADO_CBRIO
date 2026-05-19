@@ -1336,6 +1336,8 @@ export const devocionalPlanos = {
   updateItem: (itemId, body) => put(`/devocional-planos/itens/${itemId}`, body),
   removeItem: (itemId) => del(`/devocional-planos/itens/${itemId}`),
   adesao: (id, params) => get(`/devocional-planos/${id}/adesao` + (params ? '?' + new URLSearchParams(params) : '')),
+  enviarHoje: (id) => post(`/devocional-planos/${id}/enviar-hoje`, {}),
+  envios: (id) => get(`/devocional-planos/${id}/envios`),
 };
 
 // Devocional · endpoints do membro (autenticado · usados por /devocional/*)

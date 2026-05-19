@@ -6,7 +6,33 @@ const router = require('express').Router();
 const Anthropic = require('@anthropic-ai/sdk');
 const { authenticate, authorize } = require('../middleware/auth');
 const { supabase } = require('../utils/supabase');
+const devSender = require('../services/devocionalSender');
 
+// ─────────────────────────────────────────────────────────────
+// GET|POST /api/devocional-planos/cron/enviar-diario
+//   Endpoint do cron Vercel · 06:00 BRT (09:00 UTC) diario
+//   Autenticado por CRON_SECRET ou user-agent vercel-cron
+// ─────────────────────────────────────────────────────────────
+async function cronEnviarDiario(req, res) {
+  const auth = req.headers['x-cron-secret'] || req.headers['authorization'];
+  const isVercelCron = req.headers['user-agent']?.includes('vercel-cron');
+  const CRON_SECRET = process.env.CRON_SECRET;
+  if (!isVercelCron && auth !== CRON_SECRET && auth !== `Bearer ${CRON_SECRET}`) {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+  try {
+    const r = await devSender.enviarDoDia();
+    console.log('[devocional-cron] resultado:', r);
+    res.json({ ok: true, ...r });
+  } catch (e) {
+    console.error('[devocional-cron]:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+}
+router.get('/cron/enviar-diario', cronEnviarDiario);
+router.post('/cron/enviar-diario', cronEnviarDiario);
+
+// Tudo abaixo requer autenticacao normal
 router.use(authenticate);
 
 // Helper: yyyy-mm-dd → Date
@@ -311,6 +337,73 @@ router.get('/:id/adesao', async (req, res) => {
   } catch (e) {
     console.error('devocional-planos adesao:', e.message);
     res.status(500).json({ error: 'Erro ao calcular adesao' });
+  }
+});
+
+// ─────────────────────────────────────────────────────────────
+// POST /api/devocional-planos/:id/enviar-hoje
+//   Disparo manual (admin) · envia o item de hoje do plano informado.
+//   So envia se o plano tiver item com data == hoje.
+// ─────────────────────────────────────────────────────────────
+router.post('/:id/enviar-hoje', authorize('admin', 'diretor'), async (req, res) => {
+  try {
+    const hoje = new Date().toISOString().slice(0, 10);
+    const { data: item, error } = await supabase
+      .from('devocional_itens')
+      .select('id, plano_id, titulo, passagem, data, devocional_planos!inner(id, ativo)')
+      .eq('plano_id', req.params.id)
+      .eq('data', hoje)
+      .maybeSingle();
+    if (error) throw error;
+    if (!item) return res.status(404).json({ error: 'Plano nao tem item pra hoje' });
+    if (!item.devocional_planos?.ativo) return res.status(400).json({ error: 'Plano esta inativo' });
+
+    const r = await devSender.enviarDoDia({ item });
+    res.json(r);
+  } catch (e) {
+    console.error('devocional-planos enviar-hoje:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ─────────────────────────────────────────────────────────────
+// GET /api/devocional-planos/:id/envios
+//   Lista envios agregados por item do plano + ultimos N erros.
+// ─────────────────────────────────────────────────────────────
+router.get('/:id/envios', async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('devocional_envios')
+      .select('item_id, enviado, motivo, devocional_itens!inner(id, data, titulo)')
+      .eq('plano_id', req.params.id)
+      .order('created_at', { ascending: false });
+    if (error) throw error;
+
+    const porItem = new Map();
+    for (const e of data || []) {
+      const key = e.item_id;
+      if (!porItem.has(key)) {
+        porItem.set(key, {
+          item_id: key,
+          data: e.devocional_itens?.data,
+          titulo: e.devocional_itens?.titulo,
+          enviados: 0,
+          erros: 0,
+          ultimos_motivos: {},
+        });
+      }
+      const agg = porItem.get(key);
+      if (e.enviado) agg.enviados++;
+      else {
+        agg.erros++;
+        if (e.motivo) agg.ultimos_motivos[e.motivo] = (agg.ultimos_motivos[e.motivo] || 0) + 1;
+      }
+    }
+    const itens = Array.from(porItem.values()).sort((a, b) => (b.data || '').localeCompare(a.data || ''));
+    res.json({ itens });
+  } catch (e) {
+    console.error('devocional-planos envios:', e.message);
+    res.status(500).json({ error: e.message });
   }
 });
 

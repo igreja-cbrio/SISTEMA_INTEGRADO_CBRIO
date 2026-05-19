@@ -10,7 +10,7 @@ import { Badge } from './ui/badge';
 import { Skeleton } from './ui/skeleton';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from './ui/tabs';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from './ui/dialog';
-import { Sparkles, Plus, Trash2, Loader2, ArrowLeft, RefreshCw, Edit2, Save, Calendar, Users, BookOpen } from 'lucide-react';
+import { Sparkles, Plus, Trash2, Loader2, ArrowLeft, RefreshCw, Edit2, Save, Calendar, Users, BookOpen, Send, CheckCircle2, AlertTriangle } from 'lucide-react';
 import { toast } from 'sonner';
 import DevocionalPanel from './DevocionalPanel';
 
@@ -269,6 +269,7 @@ function PlanoDetalhe({ planoId, onVoltar, podeEditar }: { planoId: string; onVo
         <TabsList>
           <TabsTrigger value="itens">Itens diarios</TabsTrigger>
           <TabsTrigger value="adesao">Adesao</TabsTrigger>
+          <TabsTrigger value="envios">Envios</TabsTrigger>
           <TabsTrigger value="estudo">Estudo biblico</TabsTrigger>
         </TabsList>
 
@@ -315,6 +316,10 @@ function PlanoDetalhe({ planoId, onVoltar, podeEditar }: { planoId: string; onVo
 
         <TabsContent value="adesao">
           <AdesaoView planoId={planoId} />
+        </TabsContent>
+
+        <TabsContent value="envios">
+          <EnviosView planoId={planoId} podeEnviar={podeEditar} />
         </TabsContent>
 
         <TabsContent value="estudo">
@@ -498,4 +503,110 @@ function AdesaoView({ planoId }: { planoId: string }) {
 function fmt(iso: string) {
   if (!iso) return '';
   return new Date(iso + 'T12:00').toLocaleDateString('pt-BR', { day: '2-digit', month: 'short' });
+}
+
+// ─────────────────────────────────────────────────────────────
+// Envios (WhatsApp)
+// ─────────────────────────────────────────────────────────────
+type EnvioAgg = {
+  item_id: string;
+  data: string;
+  titulo: string;
+  enviados: number;
+  erros: number;
+  ultimos_motivos: Record<string, number>;
+};
+
+function EnviosView({ planoId, podeEnviar }: { planoId: string; podeEnviar: boolean }) {
+  const [itens, setItens] = useState<EnvioAgg[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [enviando, setEnviando] = useState(false);
+
+  const load = useCallback(() => {
+    setLoading(true);
+    planosApi.envios(planoId)
+      .then((r: any) => setItens(r.itens || []))
+      .catch((e: any) => toast.error(e.message))
+      .finally(() => setLoading(false));
+  }, [planoId]);
+
+  useEffect(() => { load(); }, [load]);
+
+  async function enviarHoje() {
+    setEnviando(true);
+    try {
+      const r: any = await planosApi.enviarHoje(planoId);
+      if (r.motivo === 'sem_item_hoje') {
+        toast.error('Plano nao tem item pra hoje');
+      } else if (r.motivo === 'sem_destinatarios') {
+        toast.error('Nenhum membro elegivel (precisa ter logado pelo /devocional + telefone)');
+      } else if (r.motivo === 'whatsapp_desabilitado') {
+        toast.warning('WhatsApp desabilitado · WHATSAPP_ENABLED=true e credenciais precisam estar no Vercel');
+      } else {
+        toast.success(`Enviados: ${r.enviados} · Erros: ${r.erros} · Ja existentes: ${r.ja_existentes}`);
+      }
+      load();
+    } catch (e: any) { toast.error(e.message); }
+    finally { setEnviando(false); }
+  }
+
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center justify-between">
+        <p className="text-sm text-muted-foreground">
+          Cron roda diariamente as 06:00 BRT. Use o botao abaixo pra disparar manualmente o item de hoje.
+        </p>
+        {podeEnviar && (
+          <Button onClick={enviarHoje} disabled={enviando}>
+            {enviando ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Send className="h-4 w-4 mr-2" />}
+            Enviar hoje agora
+          </Button>
+        )}
+      </div>
+
+      {loading ? (
+        <Skeleton className="h-32 w-full" />
+      ) : itens.length === 0 ? (
+        <Card className="p-8 text-center text-sm text-muted-foreground">
+          <Send className="h-8 w-8 mx-auto mb-2 opacity-50" />
+          Nenhum envio registrado ainda.
+        </Card>
+      ) : (
+        <div className="space-y-2">
+          {itens.map(it => (
+            <Card key={it.item_id} className="p-3">
+              <div className="flex items-center gap-3">
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2 mb-1">
+                    <span className="font-mono text-xs text-muted-foreground">{fmt(it.data)}</span>
+                    <span className="text-sm font-medium truncate">{it.titulo}</span>
+                  </div>
+                  {Object.keys(it.ultimos_motivos).length > 0 && (
+                    <div className="flex flex-wrap gap-1 mt-1">
+                      {Object.entries(it.ultimos_motivos).map(([motivo, count]) => (
+                        <Badge key={motivo} variant="outline" className="text-xs">
+                          <AlertTriangle className="h-3 w-3 mr-1 text-amber-600" />
+                          {motivo}: {count}
+                        </Badge>
+                      ))}
+                    </div>
+                  )}
+                </div>
+                <div className="flex items-center gap-3 text-sm">
+                  <span className="flex items-center gap-1 text-primary">
+                    <CheckCircle2 className="h-4 w-4" /> {it.enviados}
+                  </span>
+                  {it.erros > 0 && (
+                    <span className="flex items-center gap-1 text-destructive">
+                      <AlertTriangle className="h-4 w-4" /> {it.erros}
+                    </span>
+                  )}
+                </div>
+              </div>
+            </Card>
+          ))}
+        </div>
+      )}
+    </div>
+  );
 }
