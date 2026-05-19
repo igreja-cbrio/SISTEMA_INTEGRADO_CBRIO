@@ -1,18 +1,17 @@
 import { useState, useEffect, useMemo, useCallback } from 'react';
-import { bible as bibleApi, devocionais as devApi, pessoas as pessoasApi } from '../../api';
-import { useAuth } from '../../contexts/AuthContext';
-import { Button } from '../../components/ui/button';
-import { Input } from '../../components/ui/input';
-import { Label } from '../../components/ui/label';
-import { Textarea } from '../../components/ui/textarea';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../components/ui/select';
-import { Card } from '../../components/ui/card';
-import { Badge } from '../../components/ui/badge';
-import { Skeleton } from '../../components/ui/skeleton';
-import { BookOpen, ChevronLeft, ChevronRight, Loader2, Save, Trash2, RefreshCw } from 'lucide-react';
+import { bible as bibleApi, devocionais as devApi, pessoas as pessoasApi } from '../api';
+import { useAuth } from '../contexts/AuthContext';
+import { Button } from './ui/button';
+import { Input } from './ui/input';
+import { Label } from './ui/label';
+import { Textarea } from './ui/textarea';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
+import { Card } from './ui/card';
+import { Badge } from './ui/badge';
+import { Skeleton } from './ui/skeleton';
+import { ChevronLeft, ChevronRight, Loader2, Save, Trash2, RefreshCw } from 'lucide-react';
 import { toast } from 'sonner';
 
-const C = { primary: '#00B39D', primaryBg: '#00B39D15' };
 const LS_BIBLE = 'devocionais.bibleId';
 const LS_BOOK = 'devocionais.bookId';
 const LS_CHAPTER = 'devocionais.chapterId';
@@ -31,7 +30,7 @@ type Devocional = {
   mem_membros?: { nome: string; foto_url?: string };
 };
 
-export default function Devocionais() {
+export default function DevocionalPanel() {
   const { profile } = useAuth();
 
   const [bibles, setBibles] = useState<Bible[]>([]);
@@ -45,6 +44,7 @@ export default function Devocionais() {
   const [loadingBibles, setLoadingBibles] = useState(true);
   const [loadingBooks, setLoadingBooks] = useState(false);
   const [loadingChapter, setLoadingChapter] = useState(false);
+  const [errorBibles, setErrorBibles] = useState<string | null>(null);
 
   const [membro, setMembro] = useState<{ id: string; nome: string } | null>(null);
   const [membroSearched, setMembroSearched] = useState(false);
@@ -57,30 +57,23 @@ export default function Devocionais() {
   const [historico, setHistorico] = useState<Devocional[]>([]);
   const [loadingHist, setLoadingHist] = useState(true);
 
-  useEffect(() => {
-    if (bibleId) localStorage.setItem(LS_BIBLE, bibleId);
-  }, [bibleId]);
-  useEffect(() => {
-    if (bookId) localStorage.setItem(LS_BOOK, bookId);
-  }, [bookId]);
-  useEffect(() => {
-    if (chapterId) localStorage.setItem(LS_CHAPTER, chapterId);
-  }, [chapterId]);
+  useEffect(() => { if (bibleId) localStorage.setItem(LS_BIBLE, bibleId); }, [bibleId]);
+  useEffect(() => { if (bookId) localStorage.setItem(LS_BOOK, bookId); }, [bookId]);
+  useEffect(() => { if (chapterId) localStorage.setItem(LS_CHAPTER, chapterId); }, [chapterId]);
 
-  // Carregar Biblias (filtra portugues)
   useEffect(() => {
     setLoadingBibles(true);
+    setErrorBibles(null);
     bibleApi.bibles('por')
       .then((r: any) => {
         const list: Bible[] = r?.data || [];
         setBibles(list);
         if (!bibleId && list.length) setBibleId(list[0].id);
       })
-      .catch((e: any) => toast.error('Erro ao carregar Biblias: ' + e.message))
+      .catch((e: any) => setErrorBibles(e.message || 'Falha ao listar Biblias'))
       .finally(() => setLoadingBibles(false));
   }, []);
 
-  // Carregar livros ao trocar Biblia
   useEffect(() => {
     if (!bibleId) return;
     setLoadingBooks(true);
@@ -98,7 +91,6 @@ export default function Devocionais() {
       .finally(() => setLoadingBooks(false));
   }, [bibleId]);
 
-  // Carregar capitulos ao trocar livro
   useEffect(() => {
     if (!bibleId || !bookId) return;
     bibleApi.chapters(bibleId, bookId)
@@ -110,7 +102,6 @@ export default function Devocionais() {
       .catch((e: any) => toast.error('Erro ao carregar capitulos: ' + e.message));
   }, [bibleId, bookId]);
 
-  // Carregar conteudo do capitulo
   useEffect(() => {
     if (!bibleId || !chapterId) return;
     setLoadingChapter(true);
@@ -120,7 +111,6 @@ export default function Devocionais() {
       .finally(() => setLoadingChapter(false));
   }, [bibleId, chapterId]);
 
-  // Lookup membro pelo email do profile
   useEffect(() => {
     if (!profile?.email || membroSearched) return;
     pessoasApi.lookup({ email: profile.email })
@@ -141,9 +131,7 @@ export default function Devocionais() {
       .finally(() => setLoadingHist(false));
   }, [membro?.id]);
 
-  useEffect(() => {
-    if (membroSearched) loadHistorico();
-  }, [membroSearched, loadHistorico]);
+  useEffect(() => { if (membroSearched) loadHistorico(); }, [membroSearched, loadHistorico]);
 
   const currentBook = useMemo(() => books.find(b => b.id === bookId), [books, bookId]);
   const currentChapter = useMemo(() => chapters.find(c => c.id === chapterId), [chapters, chapterId]);
@@ -155,12 +143,8 @@ export default function Devocionais() {
     return '';
   }, [chapter, currentBook, currentChapter]);
 
-  function prevChapter() {
-    if (chapterIdx > 0) setChapterId(chapters[chapterIdx - 1].id);
-  }
-  function nextChapter() {
-    if (chapterIdx >= 0 && chapterIdx < chapters.length - 1) setChapterId(chapters[chapterIdx + 1].id);
-  }
+  function prevChapter() { if (chapterIdx > 0) setChapterId(chapters[chapterIdx - 1].id); }
+  function nextChapter() { if (chapterIdx >= 0 && chapterIdx < chapters.length - 1) setChapterId(chapters[chapterIdx + 1].id); }
 
   async function salvar() {
     if (!membro?.id) {
@@ -183,11 +167,8 @@ export default function Devocionais() {
       toast.success('Devocional registrado');
       setObservacoes('');
       loadHistorico();
-    } catch (e: any) {
-      toast.error(e.message);
-    } finally {
-      setSaving(false);
-    }
+    } catch (e: any) { toast.error(e.message); }
+    finally { setSaving(false); }
   }
 
   async function remover(id: string) {
@@ -196,26 +177,18 @@ export default function Devocionais() {
       await devApi.remove(id);
       toast.success('Removido');
       loadHistorico();
-    } catch (e: any) {
-      toast.error(e.message);
-    }
+    } catch (e: any) { toast.error(e.message); }
   }
 
   return (
-    <div className="space-y-6 p-4 md:p-6">
-      <div className="flex items-center gap-3">
-        <div className="rounded-lg p-2" style={{ background: C.primaryBg }}>
-          <BookOpen className="h-6 w-6" style={{ color: C.primary }} />
-        </div>
-        <div>
-          <h1 className="text-2xl font-bold">Devocional</h1>
-          <p className="text-sm text-muted-foreground">Leia a Biblia e registre sua reflexao do dia</p>
-        </div>
-      </div>
-
+    <div className="space-y-6">
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Leitor Biblia */}
         <Card className="lg:col-span-2 p-4 space-y-4">
+          {errorBibles && (
+            <div className="rounded-md border border-destructive/50 bg-destructive/10 p-3 text-sm text-destructive">
+              {errorBibles}
+            </div>
+          )}
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
             <div>
               <Label className="text-xs">Versao</Label>
@@ -223,9 +196,7 @@ export default function Devocionais() {
                 <SelectTrigger><SelectValue placeholder={loadingBibles ? 'Carregando...' : 'Selecione'} /></SelectTrigger>
                 <SelectContent>
                   {bibles.map(b => (
-                    <SelectItem key={b.id} value={b.id}>
-                      {b.abbreviation || b.nameLocal || b.name}
-                    </SelectItem>
+                    <SelectItem key={b.id} value={b.id}>{b.abbreviation || b.nameLocal || b.name}</SelectItem>
                   ))}
                 </SelectContent>
               </Select>
@@ -272,9 +243,7 @@ export default function Devocionais() {
             ) : chapter ? (
               <div className="prose prose-sm dark:prose-invert max-w-none whitespace-pre-wrap leading-relaxed text-[15px]">
                 {chapter.content}
-                {chapter.copyright && (
-                  <p className="text-xs text-muted-foreground mt-6 not-prose">{chapter.copyright}</p>
-                )}
+                {chapter.copyright && <p className="text-xs text-muted-foreground mt-6 not-prose">{chapter.copyright}</p>}
               </div>
             ) : (
               <p className="text-muted-foreground text-sm">Selecione livro e capitulo para comecar.</p>
@@ -282,7 +251,6 @@ export default function Devocionais() {
           </div>
         </Card>
 
-        {/* Form de devocional */}
         <Card className="p-4 space-y-3 h-fit">
           <div>
             <h2 className="font-semibold">Registrar devocional</h2>
@@ -320,12 +288,7 @@ export default function Devocionais() {
 
           <div>
             <Label className="text-xs">Reflexao</Label>
-            <Textarea
-              rows={6}
-              value={observacoes}
-              onChange={e => setObservacoes(e.target.value)}
-              placeholder="O que Deus te falou hoje?"
-            />
+            <Textarea rows={6} value={observacoes} onChange={e => setObservacoes(e.target.value)} placeholder="O que Deus te falou hoje?" />
           </div>
 
           <Button onClick={salvar} disabled={saving || !membro} className="w-full">
@@ -334,7 +297,6 @@ export default function Devocionais() {
         </Card>
       </div>
 
-      {/* Historico */}
       <Card className="p-4">
         <div className="flex items-center justify-between mb-3">
           <h2 className="font-semibold">{membro ? 'Meus devocionais recentes' : 'Devocionais recentes'}</h2>

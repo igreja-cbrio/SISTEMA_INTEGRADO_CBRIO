@@ -1325,6 +1325,19 @@ export const bible = {
   chapter: (bibleId, chapterId) => get(`/bible/bibles/${bibleId}/chapters/${chapterId}`),
 };
 
+// Devocional · planos mensais (admin) + adesao
+export const devocionalPlanos = {
+  list: () => get('/devocional-planos'),
+  get: (id) => get(`/devocional-planos/${id}`),
+  create: (body) => post('/devocional-planos', body),
+  update: (id, body) => put(`/devocional-planos/${id}`, body),
+  remove: (id) => del(`/devocional-planos/${id}`),
+  gerarIA: (id, body) => post(`/devocional-planos/${id}/gerar-ia`, body || {}),
+  updateItem: (itemId, body) => put(`/devocional-planos/itens/${itemId}`, body),
+  removeItem: (itemId) => del(`/devocional-planos/itens/${itemId}`),
+  adesao: (id, params) => get(`/devocional-planos/${id}/adesao` + (params ? '?' + new URLSearchParams(params) : '')),
+};
+
 // Pessoas - lookup unificado (Membresia como fonte unica)
 export const pessoas = {
   lookup: ({ cpf, email, telefone } = {}) => {

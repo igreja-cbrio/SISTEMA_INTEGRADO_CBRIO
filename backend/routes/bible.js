@@ -9,8 +9,8 @@ const { authenticate } = require('../middleware/auth');
 
 router.use(authenticate);
 
-const API_BASE = 'https://api.scripture.api.bible/v1';
-const API_KEY = process.env.BIBLE_API_KEY || 'RhJESPBgoWMhgw8yG620H';
+const API_BASE = 'https://rest.api.bible/v1';
+const API_KEY = process.env.BIBLE_API_KEY || '4CAuTct2UZCWVU8By6l-A';
 
 const cache = new Map();
 const TTL_MS = 24 * 60 * 60 * 1000;
@@ -18,20 +18,29 @@ const TTL_MS = 24 * 60 * 60 * 1000;
 async function fetchBible(path, query) {
   const qs = query ? '?' + new URLSearchParams(query).toString() : '';
   const url = `${API_BASE}${path}${qs}`;
-  const cacheKey = url;
-  const cached = cache.get(cacheKey);
+  const cached = cache.get(url);
   if (cached && Date.now() - cached.ts < TTL_MS) return cached.data;
 
   const res = await fetch(url, { headers: { 'api-key': API_KEY } });
   if (!res.ok) {
     const text = await res.text().catch(() => '');
-    const err = new Error(`api.bible ${res.status}: ${text.slice(0, 200)}`);
+    let upstreamMsg = text.slice(0, 200);
+    try { upstreamMsg = JSON.parse(text).message || upstreamMsg; } catch {}
+    const err = new Error(`api.bible ${res.status}: ${upstreamMsg}`);
     err.status = res.status;
     throw err;
   }
   const data = await res.json();
-  cache.set(cacheKey, { ts: Date.now(), data });
+  cache.set(url, { ts: Date.now(), data });
   return data;
+}
+
+function handleErr(res, e, fallbackMsg) {
+  const status = e.status || 500;
+  const msg = status === 401
+    ? 'Chave da api.bible invalida ou nao configurada (BIBLE_API_KEY)'
+    : (e.message || fallbackMsg);
+  res.status(status).json({ error: msg });
 }
 
 // GET /api/bible/bibles?language=por
@@ -41,7 +50,7 @@ router.get('/bibles', async (req, res) => {
     res.json(data);
   } catch (e) {
     console.error('bible/bibles:', e.message);
-    res.status(e.status || 500).json({ error: 'Erro ao listar Biblias' });
+    handleErr(res, e, 'Erro ao listar Biblias');
   }
 });
 
@@ -52,7 +61,7 @@ router.get('/bibles/:bibleId/books', async (req, res) => {
     res.json(data);
   } catch (e) {
     console.error('bible/books:', e.message);
-    res.status(e.status || 500).json({ error: 'Erro ao listar livros' });
+    handleErr(res, e, 'Erro ao listar livros');
   }
 });
 
@@ -63,7 +72,7 @@ router.get('/bibles/:bibleId/books/:bookId/chapters', async (req, res) => {
     res.json(data);
   } catch (e) {
     console.error('bible/chapters:', e.message);
-    res.status(e.status || 500).json({ error: 'Erro ao listar capitulos' });
+    handleErr(res, e, 'Erro ao listar capitulos');
   }
 });
 
@@ -83,7 +92,7 @@ router.get('/bibles/:bibleId/chapters/:chapterId', async (req, res) => {
     res.json(data);
   } catch (e) {
     console.error('bible/chapter:', e.message);
-    res.status(e.status || 500).json({ error: 'Erro ao buscar capitulo' });
+    handleErr(res, e, 'Erro ao buscar capitulo');
   }
 });
 
