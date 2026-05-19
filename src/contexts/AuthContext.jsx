@@ -93,8 +93,21 @@ export function AuthProvider({ children }) {
     return () => subscription.unsubscribe();
   }, []);
 
+  function supabaseErroMsg() {
+    // Mensagem detalhada · ajuda a debugar config de preview do Vercel
+    const url = !!import.meta.env.VITE_SUPABASE_URL;
+    const key = !!(import.meta.env.VITE_SUPABASE_ANON_KEY || import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY);
+    const viteKeys = Object.keys(import.meta.env || {}).filter(k => k.startsWith('VITE_'));
+    const faltam = [];
+    if (!url) faltam.push('VITE_SUPABASE_URL');
+    if (!key) faltam.push('VITE_SUPABASE_ANON_KEY');
+    return `Supabase nao configurado · faltam: ${faltam.join(', ') || '(?)'}. `
+      + `Vite ve essas envs: [${viteKeys.join(', ') || 'nenhuma'}]. `
+      + 'Confira no Vercel se cada var tem prefixo VITE_, esta marcada para "Preview" e o deploy foi refeito.';
+  }
+
   async function signInWithGoogle() {
-    if (!supabase) return { error: { message: 'Supabase não configurado' } };
+    if (!supabase) return { error: { message: supabaseErroMsg() } };
     return supabase.auth.signInWithOAuth({
       provider: 'google',
       options: { redirectTo: window.location.origin },
@@ -102,7 +115,7 @@ export function AuthProvider({ children }) {
   }
 
   async function signInWithMicrosoft() {
-    if (!supabase) return { error: { message: 'Supabase não configurado' } };
+    if (!supabase) return { error: { message: supabaseErroMsg() } };
     return supabase.auth.signInWithOAuth({
       provider: 'azure',
       // Supabase sempre inclui openid; estes escopos garantem que o Azure
@@ -112,7 +125,7 @@ export function AuthProvider({ children }) {
   }
 
   async function signInWithEmail(email, password) {
-    if (!supabase) return { error: { message: 'Supabase não configurado' } };
+    if (!supabase) return { error: { message: supabaseErroMsg() } };
     return supabase.auth.signInWithPassword({ email, password });
   }
 
