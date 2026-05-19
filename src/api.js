@@ -618,6 +618,7 @@ export const notificacoes = {
 };
 
 export const permissoes = {
+  bustCache: () => post('/permissoes/cache/bust', {}),
   estrutura: () => get('/permissoes/estrutura'),
   colaboradores: () => get('/permissoes/colaboradores'),
   matriz: () => get('/permissoes/matriz'),

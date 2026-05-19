@@ -184,13 +184,32 @@ function MatrizTab() {
 
   return (
     <div className="space-y-6">
-      <div className="flex justify-between items-center">
+      <div className="flex justify-between items-center gap-3 flex-wrap">
         <p className="text-sm text-muted-foreground">
           Nível padrão de acesso por cargo. Overrides individuais ficam na aba <b>Usuários</b>.
         </p>
-        <Button variant="outline" size="sm" onClick={load} className="gap-1.5">
-          <RefreshCw className="h-4 w-4" /> Atualizar
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={async () => {
+              try {
+                await api.bustCache();
+                await load();
+                toast.success('Cache de permissões invalidado · users veem matriz atual.');
+              } catch (e) {
+                toast.error(e.message || 'Erro ao invalidar cache');
+              }
+            }}
+            className="gap-1.5"
+            title="Use depois de rodar UPDATE direto no SQL Editor"
+          >
+            Forçar bust de cache
+          </Button>
+          <Button variant="outline" size="sm" onClick={load} className="gap-1.5">
+            <RefreshCw className="h-4 w-4" /> Atualizar
+          </Button>
+        </div>
       </div>
 
       {/* Filtros */}
