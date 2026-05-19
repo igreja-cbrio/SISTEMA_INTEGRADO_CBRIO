@@ -79,6 +79,19 @@ usuarios). Tela em `/admin/permissoes` (arquivo
   aliases temporarios) · TODO de polish, nao bloqueante · hoje os hooks
   ja lem dos slugs novos via AuthContext
 
+### Cache bust manual de permissoes (2026-05-19)
+**Problema**: `cargo_modulo_permissao` tem cache 5min no middleware
+(`backend/middleware/auth.js` linha 59) que so invalida automaticamente
+quando o write passa pelo PUT /matriz/celula. Quando rodamos UPDATE
+direto no Supabase SQL Editor, o cache do backend continua com a
+matriz antiga ate 5min ou ate `bustPermissionCaches()` ser chamado.
+
+**Solucao**: novo endpoint `POST /api/permissoes/cache/bust` (admin)
+que chama `bustPermissionCaches()`. Exposto no front em
+`/admin/permissoes` como botao "Forçar bust de cache" ao lado do
+"Atualizar". Usar SEMPRE depois de rodar migration de matriz direto
+no SQL.
+
 ### Ajustes round 2 Alda · cuidados leitura + projetos escopo proprio (2026-05-19)
 Apos PR #492, Marcos refinou mais 2 pontos pra cargo `lider-ministerial`:
 

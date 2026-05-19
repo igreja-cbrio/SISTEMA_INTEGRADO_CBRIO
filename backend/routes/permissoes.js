@@ -94,6 +94,16 @@ router.get('/colaboradores', async (_req, res) => {
   }
 });
 
+// POST /api/permissoes/cache/bust · forca invalidacao dos caches de
+// modulos + matriz cargo×modulo. Usar quando matriz foi alterada via
+// SQL direto (fora do fluxo PUT /matriz/celula que ja faz bust auto).
+router.post('/cache/bust', async (_req, res) => {
+  try {
+    bustPermissionCaches();
+    res.json({ success: true, bustedAt: new Date().toISOString() });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // GET /api/permissoes/estrutura — setores, áreas, módulos, cargos
 router.get('/estrutura', async (req, res) => {
   try {
