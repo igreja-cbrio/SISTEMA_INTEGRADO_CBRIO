@@ -433,4 +433,53 @@ router.get('/:id/envios', async (req, res) => {
   }
 });
 
+// ─────────────────────────────────────────────────────────────
+// GET /api/devocional-planos/metricas-cuidados
+//   Resumo pro dashboard do modulo Cuidados:
+//   - checkins_hoje · membros que fizeram check-in hoje
+//   - checkins_7d · check-ins distintos nos ultimos 7 dias
+//   - membros_engajados_30d · membros com >=1 check-in nos ultimos 30d
+//   - planos_ativos · count planos com ativo=true
+//   - adesao_hoje_pct · checkins_hoje / membros logados (is_membro_only=true)
+// ─────────────────────────────────────────────────────────────
+router.get('/metricas-cuidados', async (req, res) => {
+  try {
+    const hoje = new Date().toISOString().slice(0, 10);
+    const d7 = new Date(Date.now() - 7 * 86400000).toISOString().slice(0, 10);
+    const d30 = new Date(Date.now() - 30 * 86400000).toISOString().slice(0, 10);
+
+    const [
+      { count: checkinsHoje },
+      { count: planosAtivos },
+      { count: membrosLogados },
+      { data: checkins7d },
+      { data: checkins30d },
+    ] = await Promise.all([
+      supabase.from('mem_devocionais').select('id', { count: 'exact', head: true }).eq('data_devocional', hoje),
+      supabase.from('devocional_planos').select('id', { count: 'exact', head: true }).eq('ativo', true),
+      supabase.from('profiles').select('id', { count: 'exact', head: true }).eq('is_membro_only', true).not('membro_id', 'is', null),
+      supabase.from('mem_devocionais').select('membro_id, data_devocional').gte('data_devocional', d7),
+      supabase.from('mem_devocionais').select('membro_id').gte('data_devocional', d30),
+    ]);
+
+    const checkins7dCount = (checkins7d || []).length;
+    const membrosEngajados30d = new Set((checkins30d || []).map(r => r.membro_id)).size;
+    const adesaoHojePct = (membrosLogados || 0) > 0
+      ? Math.round(((checkinsHoje || 0) / (membrosLogados || 1)) * 100)
+      : 0;
+
+    res.json({
+      checkins_hoje: checkinsHoje || 0,
+      checkins_7d: checkins7dCount,
+      membros_engajados_30d: membrosEngajados30d,
+      planos_ativos: planosAtivos || 0,
+      membros_logados: membrosLogados || 0,
+      adesao_hoje_pct: adesaoHojePct,
+    });
+  } catch (e) {
+    console.error('devocional-planos/metricas-cuidados:', e.message);
+    res.status(500).json({ error: 'Erro ao calcular metricas' });
+  }
+});
+
 module.exports = router;
