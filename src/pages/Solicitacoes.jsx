@@ -578,6 +578,11 @@ export default function Solicitacoes() {
                       <p className="text-sm font-medium text-foreground truncate">{item.titulo}</p>
                     </div>
                     <div className="flex items-center gap-3 shrink-0">
+                      {item.ml_last_status && ML_STATUS_META[item.ml_last_status] && (
+                        <Badge className={`text-xs ${ML_STATUS_META[item.ml_last_status].color}`}>
+                          {ML_STATUS_META[item.ml_last_status].emoji} {ML_STATUS_META[item.ml_last_status].label}
+                        </Badge>
+                      )}
                       <Badge className={`text-xs ${urg.color}`}>{urg.label}</Badge>
                       <Badge className={`text-xs ${st.color}`}>{st.label}</Badge>
                       <span className="text-xs text-muted-foreground">{date}</span>
@@ -601,6 +606,12 @@ export default function Solicitacoes() {
         currentUserId={profile?.id}
         onStatusChange={handleStatusChange}
         onNpsSubmit={handleNpsSubmit}
+        onItemRefresh={async () => {
+          // recarrega a lista e atualiza o detailItem com a versao fresca
+          const data = await api.list();
+          setItems(data);
+          setDetailItem(curr => (curr ? data.find(d => d.id === curr.id) || curr : curr));
+        }}
       />
     </div>
   );
@@ -653,7 +664,256 @@ function SolicitacaoCard({ item, isAdmin, onStatusChange, onClick, draggable }) 
   );
 }
 
-function DetailDialog({ item, onClose, isAdmin, currentUserId, onStatusChange, onNpsSubmit }) {
+// Status do tracking ML · ordem visual da timeline
+const ML_STATUS_FLOW = [
+  { key: 'pending',         label: 'Pedido recebido',  emoji: '📋' },
+  { key: 'handling',        label: 'Preparando envio', emoji: '📦' },
+  { key: 'ready_to_ship',   label: 'Pronto p/ envio',  emoji: '📮' },
+  { key: 'shipped',         label: 'Saiu para entrega',emoji: '🚚' },
+  { key: 'delivered',       label: 'Entregue',         emoji: '✅' },
+];
+const ML_STATUS_META = {
+  pending:          { label: 'Pedido recebido',     emoji: '📋', color: 'bg-blue-500/15 text-blue-700 dark:text-blue-400' },
+  handling:         { label: 'Preparando envio',    emoji: '📦', color: 'bg-amber-500/15 text-amber-700 dark:text-amber-400' },
+  ready_to_ship:    { label: 'Pronto p/ envio',     emoji: '📮', color: 'bg-amber-500/15 text-amber-700 dark:text-amber-400' },
+  shipped:          { label: 'Saiu p/ entrega',     emoji: '🚚', color: 'bg-orange-500/15 text-orange-700 dark:text-orange-400' },
+  in_transit:       { label: 'A caminho',           emoji: '🚚', color: 'bg-orange-500/15 text-orange-700 dark:text-orange-400' },
+  out_for_delivery: { label: 'Saiu para entrega',   emoji: '🛵', color: 'bg-orange-500/15 text-orange-700 dark:text-orange-400' },
+  delivered:        { label: 'Entregue',            emoji: '✅', color: 'bg-green-500/15 text-green-700 dark:text-green-400' },
+  not_delivered:    { label: 'Tentativa frustrada', emoji: '⚠️', color: 'bg-red-500/15 text-red-700 dark:text-red-400' },
+  cancelled:        { label: 'Cancelado',           emoji: '❌', color: 'bg-red-500/15 text-red-700 dark:text-red-400' },
+};
+
+function statusIndex(status) {
+  const i = ML_STATUS_FLOW.findIndex(s => s.key === status);
+  if (i >= 0) return i;
+  // status que nao estao no flow (in_transit, out_for_delivery) caem entre shipped e delivered
+  if (status === 'in_transit' || status === 'out_for_delivery') return 3.5;
+  return -1;
+}
+
+function MLTrackingBlock({ item, canEdit, onChanged }) {
+  const [mlInput, setMlInput] = useState('');
+  const [linking, setLinking] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
+  const [unlinking, setUnlinking] = useState(false);
+  const [eventos, setEventos] = useState([]);
+  const [showInput, setShowInput] = useState(false);
+
+  const hasLink = !!item.ml_order_id;
+  const status = item.ml_last_status;
+  const meta = ML_STATUS_META[status] || null;
+  const idx = statusIndex(status);
+
+  useEffect(() => {
+    if (!hasLink) { setEventos([]); return; }
+    api.mlTimeline(item.id)
+      .then(r => setEventos(r.eventos || []))
+      .catch(() => setEventos([]));
+  }, [item.id, hasLink, item.ml_last_status_changed_at]);
+
+  async function vincular() {
+    if (!mlInput.trim()) return;
+    setLinking(true);
+    try {
+      await api.vincularML(item.id, mlInput.trim());
+      toast.success('Pedido vinculado! Voce e o solicitante recebem as atualizacoes automaticamente.');
+      setShowInput(false);
+      setMlInput('');
+      onChanged?.();
+    } catch (e) {
+      toast.error(e.message || 'Erro ao vincular pedido');
+    } finally {
+      setLinking(false);
+    }
+  }
+
+  async function refresh() {
+    setRefreshing(true);
+    try {
+      await api.atualizarML(item.id);
+      toast.success('Status atualizado do Mercado Livre');
+      onChanged?.();
+    } catch (e) {
+      toast.error(e.message || 'Erro ao atualizar');
+    } finally {
+      setRefreshing(false);
+    }
+  }
+
+  async function unlink() {
+    if (!confirm('Tem certeza que quer desvincular o pedido do Mercado Livre? O tracking sera removido.')) return;
+    setUnlinking(true);
+    try {
+      await api.desvincularML(item.id);
+      toast.success('Pedido desvinculado');
+      onChanged?.();
+    } catch (e) {
+      toast.error(e.message || 'Erro ao desvincular');
+    } finally {
+      setUnlinking(false);
+    }
+  }
+
+  return (
+    <div className="space-y-3 pt-3 border-t border-border">
+      <div className="flex items-center justify-between gap-2">
+        <p className="text-sm font-semibold text-foreground flex items-center gap-2">
+          <span>🛒</span> Pedido no Mercado Livre
+        </p>
+        {hasLink && canEdit && (
+          <div className="flex gap-2">
+            <Button size="sm" variant="outline" onClick={refresh} disabled={refreshing}>
+              {refreshing ? 'Atualizando...' : 'Atualizar'}
+            </Button>
+            <Button size="sm" variant="ghost" onClick={unlink} disabled={unlinking}
+              className="text-red-500 hover:text-red-700">
+              Desvincular
+            </Button>
+          </div>
+        )}
+      </div>
+
+      {!hasLink && (
+        <div>
+          {!showInput ? (
+            canEdit ? (
+              <Button size="sm" variant="outline" onClick={() => setShowInput(true)}>
+                Vincular pedido do ML
+              </Button>
+            ) : (
+              <p className="text-xs text-muted-foreground italic">
+                Aguardando o comprador vincular o pedido.
+              </p>
+            )
+          ) : (
+            <div className="space-y-2">
+              <Label className="text-xs text-muted-foreground">
+                Cole a URL ou o numero do pedido do Mercado Livre
+              </Label>
+              <div className="flex gap-2">
+                <Input
+                  value={mlInput}
+                  onChange={e => setMlInput(e.target.value)}
+                  placeholder="ex: 2000012345678 ou link completo"
+                  className="text-sm"
+                  autoFocus
+                />
+                <Button size="sm" onClick={vincular} disabled={linking || !mlInput.trim()}>
+                  {linking ? 'Vinculando...' : 'Vincular'}
+                </Button>
+                <Button size="sm" variant="ghost" onClick={() => { setShowInput(false); setMlInput(''); }}>
+                  Cancelar
+                </Button>
+              </div>
+              <p className="text-xs text-muted-foreground">
+                O solicitante e voce passarao a receber atualizacoes automaticas (in-app + WhatsApp se configurado).
+              </p>
+            </div>
+          )}
+        </div>
+      )}
+
+      {hasLink && (
+        <div className="space-y-3">
+          {/* Cabecalho do pedido */}
+          <div className="grid grid-cols-2 gap-2 text-sm">
+            {item.ml_item_title && (
+              <div className="col-span-2">
+                <span className="text-muted-foreground text-xs">Item</span>
+                <p className="font-medium line-clamp-2">{item.ml_item_title}</p>
+              </div>
+            )}
+            {item.ml_total_amount != null && (
+              <div>
+                <span className="text-muted-foreground text-xs">Valor</span>
+                <p className="font-medium">R$ {Number(item.ml_total_amount).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</p>
+              </div>
+            )}
+            {item.ml_tracking_number && (
+              <div>
+                <span className="text-muted-foreground text-xs">Rastreio</span>
+                <p className="font-medium font-mono text-xs">{item.ml_tracking_number}</p>
+              </div>
+            )}
+            {meta && (
+              <div className="col-span-2">
+                <span className="text-muted-foreground text-xs">Status atual</span>
+                <p><Badge className={meta.color}>{meta.emoji} {meta.label}</Badge></p>
+              </div>
+            )}
+          </div>
+
+          {/* Timeline visual · etapas */}
+          <div className="flex items-center justify-between gap-1 pt-2">
+            {ML_STATUS_FLOW.map((step, i) => {
+              const reached = idx >= i;
+              const current = idx >= i && idx < i + 1;
+              return (
+                <div key={step.key} className="flex-1 flex flex-col items-center text-center">
+                  <div
+                    className={`w-8 h-8 rounded-full flex items-center justify-center text-sm transition-colors
+                      ${reached ? 'bg-primary text-primary-foreground' : 'bg-muted text-muted-foreground'}
+                      ${current ? 'ring-2 ring-primary ring-offset-2 ring-offset-background' : ''}`}
+                  >
+                    {reached ? step.emoji : i + 1}
+                  </div>
+                  <span className={`text-[10px] mt-1 leading-tight ${reached ? 'text-foreground' : 'text-muted-foreground'}`}>
+                    {step.label}
+                  </span>
+                  {i < ML_STATUS_FLOW.length - 1 && (
+                    <div className={`h-0.5 w-full mt-[-22px] ${idx > i ? 'bg-primary' : 'bg-border'}`}
+                      style={{ position: 'relative', top: -16, zIndex: -1 }} />
+                  )}
+                </div>
+              );
+            })}
+          </div>
+
+          {/* Historico de eventos */}
+          {eventos.length > 0 && (
+            <div className="pt-2 border-t border-border">
+              <p className="text-xs font-semibold text-muted-foreground mb-2">Historico</p>
+              <ul className="space-y-1.5">
+                {eventos.slice().reverse().map(ev => {
+                  const m = ML_STATUS_META[ev.status] || { label: ev.status, emoji: '•' };
+                  return (
+                    <li key={ev.id} className="flex items-start gap-2 text-xs">
+                      <span className="mt-0.5">{m.emoji}</span>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="font-medium">{m.label}</span>
+                          <span className="text-muted-foreground text-[10px]">
+                            {new Date(ev.ocorrido_em).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}
+                          </span>
+                        </div>
+                        {ev.descricao && ev.descricao !== m.label && (
+                          <p className="text-muted-foreground line-clamp-1">{ev.descricao}</p>
+                        )}
+                      </div>
+                    </li>
+                  );
+                })}
+              </ul>
+            </div>
+          )}
+
+          {/* Link pro pedido no ML */}
+          <a
+            href={`https://www.mercadolivre.com.br/pedidos/${item.ml_order_id}/detalhe`}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-xs text-primary hover:underline inline-flex items-center gap-1"
+          >
+            Ver pedido completo no Mercado Livre →
+          </a>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function DetailDialog({ item, onClose, isAdmin, currentUserId, onStatusChange, onNpsSubmit, onItemRefresh }) {
   const [actionPending, setActionPending] = useState(null); // e.g. 'aprovado', 'rejeitado', 'concluido', 'em_analise'
   const [obsText, setObsText] = useState('');
 
@@ -738,6 +998,17 @@ function DetailDialog({ item, onClose, isAdmin, currentUserId, onStatusChange, o
               <span className="text-sm text-muted-foreground">Observações</span>
               <p className="text-sm mt-1 whitespace-pre-wrap">{item.observacoes}</p>
             </div>
+          )}
+
+          {/* Tracking de pedido Mercado Livre (apenas compras) */}
+          {item.categoria === 'compras' && (
+            <MLTrackingBlock
+              item={item}
+              canEdit={isAdmin
+                || item.solicitante_id === currentUserId
+                || item.responsavel_id === currentUserId}
+              onChanged={() => onItemRefresh?.()}
+            />
           )}
 
           {/* Dados de reembolso */}

@@ -1,0 +1,37 @@
+name: Solicitacoes · ML Tracker (15min)
+
+# Cron que poll-a o Mercado Livre para atualizar status de entrega das
+# solicitacoes que foram vinculadas a um pedido ML. Vercel Hobby nao permite
+# cron sub-diario, entao roda aqui no GitHub Actions.
+#
+# Custo estimado: ~15s por run × 96 runs/dia × 30 dias = ~720min/mes.
+# Cabe folgadamente no free tier de 2000min/mes pra private repos.
+#
+# Secrets necessarios no repo (Settings > Secrets > Actions):
+#   CRON_SECRET    · mesmo valor da env CRON_SECRET no Vercel
+#   APP_BASE_URL   · ex.: https://cbrio.org
+
+on:
+  schedule:
+    # */15 * * * * = a cada 15 minutos
+    - cron: '*/15 * * * *'
+  workflow_dispatch:
+
+concurrency:
+  group: solicitacoes-ml-tracker
+  cancel-in-progress: false
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Call ML tracker endpoint
+        run: |
+          set -euo pipefail
+          curl --fail-with-body --max-time 120 -sS \
+            -X POST \
+            -H "x-cron-secret: ${{ secrets.CRON_SECRET }}" \
+            -H "user-agent: github-actions-cron" \
+            "${{ secrets.APP_BASE_URL }}/api/solicitacoes/cron/atualizar-ml" \
+            || echo "ML tracker falhou (possivelmente ML desconectado ou rate limit)"

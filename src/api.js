@@ -639,6 +639,11 @@ export const solicitacoes = {
     list:    () => get('/solicitacoes/area-responsaveis'),
     save:    (area, profile_ids) => put('/solicitacoes/area-responsaveis', { area, profile_ids }),
   },
+  // Vinculo com pedido Mercado Livre (compras)
+  vincularML:   (id, mlInput) => post(`/solicitacoes/${id}/vincular-ml`, { ml_input: mlInput }),
+  desvincularML: (id) => del(`/solicitacoes/${id}/vincular-ml`),
+  atualizarML:  (id) => post(`/solicitacoes/${id}/atualizar-ml`, {}),
+  mlTimeline:   (id) => get(`/solicitacoes/${id}/ml-timeline`),
 };
 
 export const membresia = {

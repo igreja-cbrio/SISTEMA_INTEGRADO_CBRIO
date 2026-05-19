@@ -3,6 +3,26 @@ const { authenticate } = require('../middleware/auth');
 const { supabase } = require('../utils/supabase');
 const { notificar, resolverDestinatarios } = require('../services/notificar');
 const painelCache = require('../services/painelCache');
+const mlTracker = require('../services/solicitacoesMlTracker');
+
+const CRON_SECRET = process.env.CRON_SECRET;
+
+// ── CRON · ATUALIZAR STATUS DE PEDIDOS ML VINCULADOS ───────────────────
+// Montado ANTES do authenticate · usa CRON_SECRET ou x-vercel-cron header.
+router.post('/cron/atualizar-ml', async (req, res) => {
+  const auth = req.headers['x-cron-secret'] || req.headers['authorization'];
+  const isVercelCron = req.headers['user-agent']?.includes('vercel-cron');
+  if (!isVercelCron && auth !== CRON_SECRET && auth !== `Bearer ${CRON_SECRET}`) {
+    return res.status(401).json({ erro: 'Nao autorizado' });
+  }
+  try {
+    const result = await mlTracker.processarUpdates({ batchSize: 30, throttleMs: 200 });
+    res.json(result);
+  } catch (e) {
+    console.error('[SOLICITACOES cron-ml] erro:', e.message);
+    res.status(500).json({ ok: false, erro: e.message });
+  }
+});
 
 router.use(authenticate);
 
@@ -421,6 +441,159 @@ router.put('/area-responsaveis', async (req, res) => {
     res.json({ ok: true, area, count: profile_ids.length });
   } catch (e) {
     console.error('[SOLICITACOES] area-responsaveis PUT:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// VINCULO COM PEDIDO DO MERCADO LIVRE
+// ─────────────────────────────────────────────────────────────────────────
+
+// POST /api/solicitacoes/:id/vincular-ml
+// Body: { ml_input } · URL ou ID do pedido do Mercado Livre
+// Apenas o solicitante, responsavel ou admin/diretor podem vincular.
+router.post('/:id/vincular-ml', async (req, res) => {
+  try {
+    const userId = req.user.userId;
+    const role = req.user.role;
+    const { ml_input } = req.body || {};
+    if (!ml_input) {
+      return res.status(400).json({ error: 'Cole a URL ou o numero do pedido do Mercado Livre.' });
+    }
+
+    // Permissao: solicitante, responsavel, admin/diretor, ou responsavel da area_responsavel
+    const { data: sol } = await supabase
+      .from('solicitacoes')
+      .select('id, solicitante_id, responsavel_id, area_responsavel, categoria')
+      .eq('id', req.params.id)
+      .maybeSingle();
+    if (!sol) return res.status(404).json({ error: 'Solicitacao nao encontrada' });
+
+    const isAdmin = ['admin', 'diretor'].includes(role);
+    const isMine = sol.solicitante_id === userId || sol.responsavel_id === userId;
+    let isAreaResp = false;
+    if (!isAdmin && !isMine && sol.area_responsavel) {
+      const { data: respRow } = await supabase
+        .from('area_solicitacoes_responsaveis')
+        .select('profile_id')
+        .eq('area', sol.area_responsavel)
+        .eq('profile_id', userId)
+        .maybeSingle();
+      isAreaResp = !!respRow;
+    }
+    if (!isAdmin && !isMine && !isAreaResp) {
+      return res.status(403).json({ error: 'Sem permissao para vincular o pedido.' });
+    }
+
+    const result = await mlTracker.linkOrder({
+      solicitacaoId: req.params.id,
+      mlOrderInput: ml_input,
+      profileId: userId,
+    });
+    if (!result.ok) return res.status(400).json({ error: result.error });
+    res.json(result);
+  } catch (e) {
+    console.error('[SOLICITACOES] vincular-ml error:', e.message);
+    res.status(500).json({ error: e.message || 'Erro ao vincular pedido.' });
+  }
+});
+
+// DELETE /api/solicitacoes/:id/vincular-ml · remove o vinculo (so admin/responsavel)
+router.delete('/:id/vincular-ml', async (req, res) => {
+  try {
+    const userId = req.user.userId;
+    const role = req.user.role;
+    const { data: sol } = await supabase
+      .from('solicitacoes')
+      .select('id, solicitante_id, responsavel_id, ml_linked_by')
+      .eq('id', req.params.id)
+      .maybeSingle();
+    if (!sol) return res.status(404).json({ error: 'Solicitacao nao encontrada' });
+
+    const isAdmin = ['admin', 'diretor'].includes(role);
+    const podeRemover = isAdmin
+      || sol.ml_linked_by === userId
+      || sol.responsavel_id === userId;
+    if (!podeRemover) {
+      return res.status(403).json({ error: 'Sem permissao para desvincular.' });
+    }
+
+    await supabase
+      .from('solicitacoes')
+      .update({
+        ml_order_id: null,
+        ml_shipment_id: null,
+        ml_tracking_number: null,
+        ml_tracking_url: null,
+        ml_item_title: null,
+        ml_total_amount: null,
+        ml_last_status: null,
+        ml_last_status_changed_at: null,
+        ml_last_checked_at: null,
+        ml_linked_at: null,
+        ml_linked_by: null,
+        ml_estimated_delivery: null,
+      })
+      .eq('id', req.params.id);
+
+    res.json({ ok: true });
+  } catch (e) {
+    console.error('[SOLICITACOES] unvincular-ml error:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// GET /api/solicitacoes/:id/ml-timeline · historico de eventos do tracking
+router.get('/:id/ml-timeline', async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('solicitacao_ml_eventos')
+      .select('*')
+      .eq('solicitacao_id', req.params.id)
+      .order('ocorrido_em', { ascending: true });
+    if (error) throw error;
+    res.json({
+      eventos: data || [],
+      statusLabels: mlTracker.STATUS_LABELS,
+    });
+  } catch (e) {
+    console.error('[SOLICITACOES] ml-timeline error:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// POST /api/solicitacoes/:id/atualizar-ml · forca refresh manual (admin/diretor)
+router.post('/:id/atualizar-ml', async (req, res) => {
+  try {
+    const role = req.user.role;
+    const userId = req.user.userId;
+    const { data: sol } = await supabase
+      .from('solicitacoes')
+      .select('id, solicitante_id, responsavel_id, ml_shipment_id')
+      .eq('id', req.params.id)
+      .maybeSingle();
+    if (!sol) return res.status(404).json({ error: 'Solicitacao nao encontrada' });
+    if (!sol.ml_shipment_id) return res.status(400).json({ error: 'Solicitacao sem pedido ML vinculado.' });
+
+    const isAdmin = ['admin', 'diretor'].includes(role);
+    const isMine = sol.solicitante_id === userId || sol.responsavel_id === userId;
+    if (!isAdmin && !isMine) return res.status(403).json({ error: 'Sem permissao.' });
+
+    // Reusa linkOrder com o order_id ja salvo (re-fetcha tudo)
+    const { data: full } = await supabase
+      .from('solicitacoes')
+      .select('ml_order_id')
+      .eq('id', req.params.id)
+      .single();
+
+    const result = await mlTracker.linkOrder({
+      solicitacaoId: req.params.id,
+      mlOrderInput: full.ml_order_id,
+      profileId: userId,
+    });
+    res.json(result);
+  } catch (e) {
+    console.error('[SOLICITACOES] atualizar-ml error:', e.message);
     res.status(500).json({ error: e.message });
   }
 });
