@@ -79,6 +79,18 @@ usuarios). Tela em `/admin/permissoes` (arquivo
   aliases temporarios) · TODO de polish, nao bloqueante · hoje os hooks
   ja lem dos slugs novos via AuthContext
 
+### Consolidacao Alda · migration unica idempotente (2026-05-19)
+Migration `20260519230000_lider_ministerial_consolidado.sql` reune
+TUDO que tinha sido espalhado nas anteriores (round 1 + round 2):
+
+- Matriz cargo `lider-ministerial`: gestao=0, ritual=0, online=1,
+  grupos=1, cuidados=1, voluntariado=5, nps=5, projetos=3+escopo_proprio
+- Atribui cargo `lider-ministerial` ao registro da Alda em `usuarios`
+  (busca por nome `%alda lorena%` ou email `%alda%`)
+- Associa Alda a area `Integração` (idempotente · NOT EXISTS)
+
+Pode rodar quantas vezes precisar · sem efeito colateral.
+
 ### Limpeza de codigo morto de permissoes (2026-05-19)
 Apos auditoria estrutural pedida pelo Marcos, identificado e removido
 o que sobrava do sistema antigo de "5 niveis por modulo":
