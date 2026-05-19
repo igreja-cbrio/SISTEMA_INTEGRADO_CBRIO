@@ -108,6 +108,87 @@ router.get('/verificar-familia', cadastroLimiter, async (req, res) => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────
+// GET /api/public/membresia/lookup-nome-telefone?nome=...&telefone=...
+//
+// Lookup proativo enquanto a pessoa preenche nome + celular no formulario.
+// Caso de uso: novos convertidos importados (planilha) ja existem como
+// mem_membros status='visitante'. Quando a pessoa volta pra completar o
+// cadastro, o sistema reconhece e vincula automaticamente em vez de
+// criar duplicata.
+//
+// Privacidade: retorna celular MASCARADO (ultimos 2 digitos antes do hifen
+// + ultimos 2 do final) para confirmacao visual. Nao expoe email/CPF/end.
+// Match key = primeiro_nome (case-insensitive) + telefone (digitos exatos).
+// ─────────────────────────────────────────────────────────────────────────
+function mascararTelefone(telefone) {
+  const d = soDigitos(telefone);
+  if (d.length !== 10 && d.length !== 11) return '';
+  // (XX) 9XXXX-XXXX → (XX) 9****-XX12  | (XX) XXXX-XXXX → (XX) ****-XX12
+  if (d.length === 11) {
+    return `(${d.slice(0, 2)}) ${d[2]}****-**${d.slice(9, 11)}`;
+  }
+  return `(${d.slice(0, 2)}) ****-**${d.slice(8, 10)}`;
+}
+
+router.get('/lookup-nome-telefone', cadastroLimiter, async (req, res) => {
+  try {
+    const nomeRaw = (req.query.nome || '').toString().trim();
+    const telefoneRaw = (req.query.telefone || '').toString();
+    const digits = soDigitos(telefoneRaw);
+
+    if (nomeRaw.length < 2 || (digits.length !== 10 && digits.length !== 11)) {
+      return res.json({ found: false, reason: 'invalid' });
+    }
+
+    const primeiroNome = nomeRaw.split(/\s+/)[0].toLowerCase();
+    if (primeiroNome.length < 2) {
+      return res.json({ found: false, reason: 'invalid' });
+    }
+
+    // Busca candidatos em mem_membros ativos pelo primeiro nome — depois
+    // filtra por telefone (digitos exatos) em JS. Lista curta porque o
+    // primeiro nome ja restringe bem.
+    const { data: candidatos } = await supabase
+      .from('mem_membros')
+      .select('id, nome, telefone, status, cpf, data_nascimento')
+      .eq('active', true)
+      .ilike('nome', `${primeiroNome}%`)
+      .limit(50);
+
+    const match = (candidatos || []).find(
+      (c) => soDigitos(c.telefone) === digits,
+    );
+
+    if (match) {
+      const partes = (match.nome || '').trim().split(/\s+/);
+      const pn = partes[0] || '';
+      const ini = partes
+        .slice(1)
+        .map((p) => p[0]?.toUpperCase() || '')
+        .join('. ')
+        .trim();
+      // Indica se ja tem cadastro completo (cpf+nascimento) ou se ainda
+      // e visitante/importado — UI usa para mensagem diferente.
+      const cadastroCompleto = !!(match.cpf && match.data_nascimento);
+      return res.json({
+        found: true,
+        matchId: match.id,
+        primeiroNome: pn,
+        iniciaisSobrenome: ini ? ini + '.' : '',
+        telefoneMascarado: mascararTelefone(match.telefone),
+        cadastroCompleto,
+        status: match.status || 'visitante',
+      });
+    }
+
+    return res.json({ found: false });
+  } catch (e) {
+    console.error('[PUBLIC] lookup-nome-telefone error:', e.message);
+    res.json({ found: false, reason: 'error' });
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────────
 // GET /api/public/membresia/lookup-cpf?cpf=...
 //
 // Lookup proativo enquanto o usuario digita CPF no formulario publico.
@@ -203,6 +284,9 @@ router.post('/cadastro', cadastroLimiter, async (req, res) => {
       // grupo de conexao opcional — cria pedido apos cadastro
       grupo_id,
       grupo_observacao,
+      // match confirmado pelo usuario via lookup-nome-telefone
+      // (pessoa reconheceu seu cadastro pre-existente e clicou "sou eu")
+      match_membro_id,
       // honeypot (não deve ser preenchido por humanos)
       website,
     } = req.body || {};
@@ -244,7 +328,21 @@ router.post('/cadastro', cadastroLimiter, async (req, res) => {
     const telefoneLimpo = soDigitos(telefone);
     const cpfLimpo = soDigitos(cpf);
 
-    if (cpfLimpo) {
+    // Se o usuario confirmou um match via lookup-nome-telefone, usa direto
+    // (e valida que o id existe e o telefone bate — defesa contra forja).
+    if (match_membro_id && typeof match_membro_id === 'string') {
+      const { data: confirmado } = await supabase
+        .from('mem_membros')
+        .select('id, telefone')
+        .eq('id', match_membro_id)
+        .eq('active', true)
+        .maybeSingle();
+      if (confirmado && soDigitos(confirmado.telefone) === telefoneLimpo) {
+        duplicadoDeId = confirmado.id;
+      }
+    }
+
+    if (!duplicadoDeId && cpfLimpo) {
       const { data: porCpf } = await supabase
         .from('mem_membros')
         .select('id')

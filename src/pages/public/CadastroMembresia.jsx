@@ -265,6 +265,16 @@ export default function CadastroMembresia() {
   const [cpfLookup, setCpfLookup] = useState(null);
   const [cpfChecando, setCpfChecando] = useState(false);
 
+  // Lookup proativo por nome + telefone (debounced).
+  // Reconhece novos convertidos ja cadastrados (importados ou registrados em
+  // culto) e oferece vincular automaticamente em vez de criar duplicata.
+  // null = nao buscou | { found: false } | { found: true, matchId, primeiroNome, telefoneMascarado, ... }
+  const [nomeTelLookup, setNomeTelLookup] = useState(null);
+  const [nomeTelChecando, setNomeTelChecando] = useState(false);
+  // matchConfirmado: id do mem_membros confirmado pelo usuario ("sou eu")
+  const [matchConfirmado, setMatchConfirmado] = useState(null);
+  const [matchDescartado, setMatchDescartado] = useState(false); // "nao sou eu" → para de perguntar
+
   const origem = useMemo(() => {
     try {
       const params = new URLSearchParams(window.location.search);
@@ -316,6 +326,35 @@ export default function CadastroMembresia() {
     }, 600);
     return () => clearTimeout(t);
   }, [form.cpf]);
+
+  // Debounce: 700ms apos parar de digitar nome/telefone — busca cadastro
+  // pre-existente (novo convertido importado, etc.) por primeiro nome +
+  // telefone exatos. Para de buscar se usuario ja confirmou ou descartou.
+  useEffect(() => {
+    if (matchConfirmado || matchDescartado) {
+      setNomeTelChecando(false);
+      return undefined;
+    }
+    const nome = form.nome.trim();
+    const tel = soDigitos(form.telefone);
+    if (nome.length < 2 || (tel.length !== 10 && tel.length !== 11)) {
+      setNomeTelLookup(null);
+      setNomeTelChecando(false);
+      return undefined;
+    }
+    setNomeTelChecando(true);
+    const t = setTimeout(async () => {
+      try {
+        const r = await cadastroPublico.lookupNomeTelefone(nome, form.telefone);
+        setNomeTelLookup(r);
+      } catch {
+        setNomeTelLookup(null);
+      } finally {
+        setNomeTelChecando(false);
+      }
+    }, 700);
+    return () => clearTimeout(t);
+  }, [form.nome, form.telefone, matchConfirmado, matchDescartado]);
 
   const [fotoDragOver, setFotoDragOver] = useState(false);
 
@@ -426,6 +465,7 @@ export default function CadastroMembresia() {
         familia_sugerida_id: familiaId || null,
         foto_url,
         grupo_id: grupoEscolhido?.id || null,
+        match_membro_id: matchConfirmado || null,
       });
       setSent(true);
     } catch (err) {
@@ -723,6 +763,86 @@ export default function CadastroMembresia() {
                           </>
                         )}
                       </div>
+                    </div>
+                  )}
+
+                  {/* Match por nome + telefone — reconhece novos convertidos */}
+                  {nomeTelChecando && !matchConfirmado && !matchDescartado && (
+                    <div style={{ marginTop: -10, marginBottom: 14, fontSize: 12, color: 'var(--cbrio-text3)' }}>
+                      Procurando seu registro...
+                    </div>
+                  )}
+                  {!nomeTelChecando && !matchConfirmado && !matchDescartado && nomeTelLookup?.found && (
+                    <div style={{
+                      marginTop: -10, marginBottom: 14,
+                      padding: '12px 14px',
+                      borderRadius: 10,
+                      background: 'rgba(0, 179, 157, 0.08)',
+                      border: '1px solid rgba(0, 179, 157, 0.35)',
+                    }}>
+                      <div style={{ fontSize: 13, lineHeight: 1.5, marginBottom: 10 }}>
+                        <strong>Encontramos um registro com esse nome e celular.</strong>
+                        <div style={{ color: 'var(--cbrio-text3)', marginTop: 4 }}>
+                          {nomeTelLookup.primeiroNome} {nomeTelLookup.iniciaisSobrenome} · celular {nomeTelLookup.telefoneMascarado}
+                        </div>
+                        <div style={{ color: 'var(--cbrio-text3)', marginTop: 4, fontSize: 12 }}>
+                          {nomeTelLookup.cadastroCompleto
+                            ? 'Esse cadastro ja existe no sistema. E voce mesmo?'
+                            : 'Provavelmente voce e um novo convertido ja registrado no nosso sistema. E voce?'}
+                        </div>
+                      </div>
+                      <div style={{ display: 'flex', gap: 8 }}>
+                        <button
+                          type="button"
+                          onClick={() => setMatchConfirmado(nomeTelLookup.matchId)}
+                          style={{
+                            flex: 1, padding: '8px 12px', borderRadius: 8,
+                            border: '1px solid #00B39D', background: '#00B39D',
+                            color: '#fff', fontWeight: 600, fontSize: 13, cursor: 'pointer',
+                          }}
+                        >
+                          Sim, sou eu
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => { setMatchDescartado(true); setNomeTelLookup(null); }}
+                          style={{
+                            flex: 1, padding: '8px 12px', borderRadius: 8,
+                            border: '1px solid var(--cbrio-border)', background: 'transparent',
+                            color: 'var(--cbrio-text)', fontWeight: 600, fontSize: 13, cursor: 'pointer',
+                          }}
+                        >
+                          Nao sou eu
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                  {matchConfirmado && (
+                    <div style={{
+                      marginTop: -10, marginBottom: 14,
+                      padding: '10px 12px',
+                      borderRadius: 10,
+                      background: 'rgba(0, 179, 157, 0.12)',
+                      border: '1px solid #00B39D',
+                      display: 'flex', alignItems: 'center', gap: 10,
+                    }}>
+                      <span style={{ fontSize: 18, lineHeight: 1, color: '#00B39D' }}>✓</span>
+                      <div style={{ fontSize: 13, lineHeight: 1.4, flex: 1 }}>
+                        <strong>Cadastro reconhecido</strong>
+                        <div style={{ color: 'var(--cbrio-text3)', marginTop: 2, fontSize: 12 }}>
+                          Vamos vincular ao seu registro existente. Continue preenchendo.
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => { setMatchConfirmado(null); setMatchDescartado(false); }}
+                        style={{
+                          background: 'none', border: 'none', color: '#ef4444',
+                          cursor: 'pointer', fontWeight: 600, fontSize: 12,
+                        }}
+                      >
+                        desfazer
+                      </button>
                     </div>
                   )}
                 </div>
