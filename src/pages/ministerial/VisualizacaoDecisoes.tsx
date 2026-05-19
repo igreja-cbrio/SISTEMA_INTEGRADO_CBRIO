@@ -334,17 +334,35 @@ function VisaoPessoas() {
     staleTime: 30_000,
   });
 
+  // Histórico importado · pessoas com trilha de conversão sem culto vinculado
+  // (vieram da planilha, sem CPF/nascimento). Marcas como 'origem=importacao'
+  // para a UI diferenciar do registro normal de culto.
+  const { data: historicoData } = useQuery({
+    queryKey: ['decisoes-pessoas', 'historico-importado', 365],
+    queryFn: () => kpisApi.cultos.decisoesPessoas.historicoImportado({ dias: 365 }),
+    staleTime: 60_000,
+  });
+  const historicoImportado = (historicoData?.items || []).map((p: any) => ({
+    ...p,
+    _importado: true,
+  }));
+
+  // Lista combinada para busca: pessoas de cultos + histórico importado
+  const todasParaBusca = useMemo(() => {
+    return [...todasPessoas, ...historicoImportado];
+  }, [todasPessoas, historicoImportado]);
+
   const pessoasFiltradas = useMemo(() => {
-    if (!busca) return todasPessoas;
+    if (!busca) return todasParaBusca;
     const q = busca.toLowerCase();
     const qCpf = q.replace(/\D/g, '');
-    return todasPessoas.filter((p: any) =>
+    return todasParaBusca.filter((p: any) =>
       (p.nome || '').toLowerCase().includes(q) ||
       (p.email || '').toLowerCase().includes(q) ||
       (p.telefone || '').toLowerCase().includes(q) ||
       (qCpf && (p.cpf || '').includes(qCpf))
     );
-  }, [todasPessoas, busca]);
+  }, [todasParaBusca, busca]);
 
   const cultosFiltrados = useMemo(() => {
     if (filtroStatus === 'todos') return items;
@@ -418,15 +436,27 @@ function VisaoPessoas() {
               </TableHeader>
               <TableBody>
                 {pessoasFiltradas.map((p: any) => (
-                  <TableRow key={p.id}>
-                    <TableCell className="font-medium">{p.nome}</TableCell>
+                  <TableRow key={(p._importado ? 'imp_' : '') + p.id}>
+                    <TableCell className="font-medium">
+                      {p.nome}
+                      {p._importado && (
+                        <Badge variant="outline" className="ml-2 text-[9px] bg-amber-50 dark:bg-amber-950 text-amber-700 dark:text-amber-400 border-amber-200 dark:border-amber-900">
+                          culto não vinculado
+                        </Badge>
+                      )}
+                    </TableCell>
                     <TableCell className="font-mono text-xs">{maskCpf(p.cpf || '')}</TableCell>
                     <TableCell className="hidden md:table-cell text-xs text-muted-foreground">
                       {p.telefone && <div>{p.telefone}</div>}
                       {p.email && <div className="truncate max-w-[200px]">{p.email}</div>}
                     </TableCell>
                     <TableCell className="text-xs">
-                      {p._culto && (
+                      {p._importado ? (
+                        <>
+                          <div>{formatDataCurta(p.data_conversao)}</div>
+                          <div className="text-muted-foreground">Culto não vinculado</div>
+                        </>
+                      ) : p._culto && (
                         <>
                           <div>{formatDataCurta(p._culto.data_culto)}</div>
                           <div className="text-muted-foreground">{p._culto.service_type_name}</div>
@@ -434,10 +464,14 @@ function VisaoPessoas() {
                       )}
                     </TableCell>
                     <TableCell className="text-center">
-                      <Badge variant="outline" className="text-[9px] capitalize">{p.tipo_decisao}</Badge>
+                      {p._importado ? (
+                        <Badge variant="outline" className="text-[9px]">culto não vinculado</Badge>
+                      ) : (
+                        <Badge variant="outline" className="text-[9px] capitalize">{p.tipo_decisao}</Badge>
+                      )}
                     </TableCell>
                     <TableCell className="text-center">
-                      {p.membro_id ? (
+                      {p.membro_id || p._importado ? (
                         <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-emerald-100 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-300">
                           membro
                         </span>
@@ -452,14 +486,21 @@ function VisaoPessoas() {
           </div>
         )
       ) : (
-        // Sem busca: lista de cultos com expand
-        cultosFiltrados.length === 0 ? (
-          <div className="rounded-xl border border-dashed bg-muted/20 p-6 text-center text-sm text-muted-foreground">
-            Nenhum culto com decisões nesse filtro.
-          </div>
-        ) : (
-          <div className="space-y-1.5">
-            {cultosFiltrados.map((c: any) => (
+        // Sem busca: histórico importado (colapsado) + lista de cultos com expand
+        <div className="space-y-1.5">
+          {historicoImportado.length > 0 && (
+            <HistoricoImportadoExpandivel
+              pessoas={historicoImportado}
+              expanded={expandedId === '__historico__'}
+              onToggle={() => setExpandedId(expandedId === '__historico__' ? null : '__historico__')}
+            />
+          )}
+          {cultosFiltrados.length === 0 && historicoImportado.length === 0 ? (
+            <div className="rounded-xl border border-dashed bg-muted/20 p-6 text-center text-sm text-muted-foreground">
+              Nenhum culto com decisões nesse filtro.
+            </div>
+          ) : (
+            cultosFiltrados.map((c: any) => (
               <CultoExpandivel
                 key={c.culto_id}
                 culto={c}
@@ -467,9 +508,91 @@ function VisaoPessoas() {
                 onToggle={() => setExpandedId(expandedId === c.culto_id ? null : c.culto_id)}
                 onChanged={() => refetch()}
               />
-            ))}
+            ))
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Bloco do historico importado (sem culto vinculado) · agrupa por data de conversao
+function HistoricoImportadoExpandivel({
+  pessoas, expanded, onToggle,
+}: { pessoas: any[]; expanded: boolean; onToggle: () => void }) {
+  const porData = useMemo(() => {
+    const map = new Map<string, any[]>();
+    pessoas.forEach(p => {
+      const d = p.data_conversao || 'sem-data';
+      if (!map.has(d)) map.set(d, []);
+      map.get(d)!.push(p);
+    });
+    return Array.from(map.entries()).sort((a, b) => b[0].localeCompare(a[0]));
+  }, [pessoas]);
+
+  return (
+    <div className="rounded-xl border border-amber-200 dark:border-amber-900 bg-amber-50/30 dark:bg-amber-950/20 overflow-hidden">
+      <button
+        type="button"
+        onClick={onToggle}
+        className="w-full flex items-center justify-between gap-3 px-4 py-3 hover:bg-amber-100/40 dark:hover:bg-amber-950/30 transition-colors"
+      >
+        <div className="flex items-center gap-3">
+          <span className="text-base">📜</span>
+          <div className="text-left">
+            <div className="text-sm font-medium text-foreground">Culto não vinculado</div>
+            <div className="text-xs text-muted-foreground">
+              {pessoas.length} {pessoas.length === 1 ? 'pessoa' : 'pessoas'} · {porData.length} {porData.length === 1 ? 'data' : 'datas'} · importadas da planilha
+            </div>
           </div>
-        )
+        </div>
+        <span className="text-xs text-muted-foreground">{expanded ? '▾' : '▸'}</span>
+      </button>
+      {expanded && (
+        <div className="border-t border-amber-200 dark:border-amber-900 p-3 space-y-3">
+          {porData.map(([data, list]) => (
+            <div key={data}>
+              <div className="text-xs font-semibold text-muted-foreground mb-1.5 px-1">
+                {formatDataCurta(data)} · {list.length} {list.length === 1 ? 'pessoa' : 'pessoas'}
+              </div>
+              <div className="rounded-lg border bg-card overflow-hidden">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Nome</TableHead>
+                      <TableHead className="hidden md:table-cell">Telefone</TableHead>
+                      <TableHead className="text-center w-24">Cadastro</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {list.map((p: any) => {
+                      const incompleto = !p.cpf || !p.data_nascimento;
+                      return (
+                        <TableRow key={p.id}>
+                          <TableCell className="font-medium">{p.nome}</TableCell>
+                          <TableCell className="hidden md:table-cell text-xs text-muted-foreground">
+                            {p.telefone || '—'}
+                          </TableCell>
+                          <TableCell className="text-center">
+                            {incompleto ? (
+                              <span className="text-[9px] font-medium px-1.5 py-0.5 rounded bg-amber-100 dark:bg-amber-950 text-amber-700 dark:text-amber-400">
+                                incompleto
+                              </span>
+                            ) : (
+                              <span className="text-[9px] font-medium px-1.5 py-0.5 rounded bg-emerald-100 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-300">
+                                completo
+                              </span>
+                            )}
+                          </TableCell>
+                        </TableRow>
+                      );
+                    })}
+                  </TableBody>
+                </Table>
+              </div>
+            </div>
+          ))}
+        </div>
       )}
     </div>
   );
