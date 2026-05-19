@@ -79,6 +79,41 @@ usuarios). Tela em `/admin/permissoes` (arquivo
   aliases temporarios) · TODO de polish, nao bloqueante · hoje os hooks
   ja lem dos slugs novos via AuthContext
 
+### Permissoes · auditoria + atribuicao em massa (2026-05-19)
+Despejo do estado real (cargos, modulos, areas, usuarios+areas) gerou
+3 PRs em sequencia:
+
+**PR #526 · Limpeza** (`20260519300000_desativar_cargos_modulos_legados.sql`)
+- 5 cargos `slug=null` viraram `ativo=false` (sobras do modelo "5 niveis")
+- 2 modulos `slug=null` viraram `ativo=false` (Banco de Arquivos, Cultura)
+
+**PR #528 · Atribuicao em massa** (`20260519310000_atribuir_cargos_em_massa.sql`)
+- Cargo `dev` recebe nivel 5 em TODOS modulos ativos (upsert idempotente)
+- Casos especiais por email:
+  - Arthur Serpa → `diretor-ministerial`
+  - Marcos (marcospaulo.almeida + marcos@cbrio.com) → `dev`
+  - Yago Torres → `coordenador-financeiro`
+  - Pedro Paiva → `coordenador-marketing`
+  - Pedro Fernandes → `lider-producao`
+- Inferencia por areas pra quem esta NULL:
+  - 6 areas Gestao → `diretor-administrativo`
+  - 4 areas Criativas → `diretor-criativo`
+  - 4 areas Ministeriais → `lider-ministerial`
+  - 1 area Ministerial / Online → `lider-ministerial` (boost cobre)
+  - 1 area Gestao especifica → assistente correspondente
+  - Fallback → `assistente-area`
+
+**PR #530 · Convergencia de duplicidades** (`20260519320000_converger_duplicidades_usuarios.sql`)
+- Apaga registros LIXO (email+cargo NULL e sem areas/overrides)
+- Matheus consolidado em `matheus.toscano@cbrio.org` (tem 6 areas Gestao)
+  com cargo `diretor-administrativo`; outros 3 emails removidos com
+  defensiva de migrar FKs antes do delete
+- Lorena Andrade ja era canonica em `lorena.andrade@cbrio.org` · lixo
+  removido pelo filtro generico
+
+Apos aplicar as 3, esperado: 0 usuarios sem cargo, 1 registro por
+pessoa, matriz coerente com a hierarquia organizacional.
+
 ### ModuleGuard aceita slug + Expansao some pra lider-ministerial (2026-05-19)
 **Bug 1**: Cuidados redirecionava pra dashboard mesmo com nivel 1.
 ModuleGuard usava hook legado `canCuidados` (nivelMinimo=2). Lorena
