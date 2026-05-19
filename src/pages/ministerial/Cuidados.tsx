@@ -14,6 +14,7 @@ import { Badge } from '../../components/ui/badge';
 import { StatisticsCard } from '../../components/ui/statistics-card';
 import { Heart, BookOpen, HandHelping, Users, UserCheck, CheckCircle2, Plus, Trash2, Loader2, Search } from 'lucide-react';
 import { toast } from 'sonner';
+import { useAuth } from '../../contexts/AuthContext';
 
 const C = { primary: '#00B39D', info: '#3b82f6', warn: '#f59e0b', purple: '#8b5cf6', pink: '#ef476f' };
 
@@ -214,6 +215,8 @@ function ConvertidoModal({ open, onClose, onSaved }: { open: boolean; onClose: (
 // Página principal
 // ──────────────────────────────────────────────────────────────────
 export default function Cuidados() {
+  const { isAdmin, getAccessLevel } = useAuth();
+  const podeEditarCuidados = isAdmin || (getAccessLevel?.(['cuidados']) ?? 0) >= 3;
   const [searchParams, setSearchParams] = useSearchParams();
   const [tab, setTab] = useState(() => searchParams.get('tab') || 'dashboard');
 
@@ -345,7 +348,9 @@ export default function Cuidados() {
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
               <Input placeholder="Buscar nome..." value={search} onChange={e => setSearch(e.target.value)} className="pl-9" />
             </div>
-            <Button onClick={() => setModalAcomp(true)}><Plus className="h-4 w-4 mr-2" />Novo</Button>
+            {podeEditarCuidados && (
+              <Button onClick={() => setModalAcomp(true)}><Plus className="h-4 w-4 mr-2" />Novo</Button>
+            )}
           </div>
           <div className="rounded-lg border border-border bg-card overflow-hidden">
             <Table>
@@ -364,10 +369,12 @@ export default function Cuidados() {
                     <TableCell>{a.data_inicio ? new Date(a.data_inicio + 'T12:00:00').toLocaleDateString('pt-BR') : '—'}</TableCell>
                     <TableCell><Badge variant={a.status === 'ativo' ? 'default' : 'secondary'}>{a.status}</Badge></TableCell>
                     <TableCell className="text-right">
-                      {a.status === 'ativo' && (
+                      {podeEditarCuidados && a.status === 'ativo' && (
                         <Button variant="ghost" size="sm" onClick={async () => { await cuidadosApi.acompanhamentos.update(a.id, { status: 'concluido', data_encerramento: new Date().toISOString().slice(0, 10) }); loadAll(); }}>Concluir</Button>
                       )}
-                      <Button variant="ghost" size="sm" onClick={async () => { if (confirm('Remover?')) { await cuidadosApi.acompanhamentos.remove(a.id); loadAll(); } }}><Trash2 className="h-3.5 w-3.5 text-destructive" /></Button>
+                      {podeEditarCuidados && (
+                        <Button variant="ghost" size="sm" onClick={async () => { if (confirm('Remover?')) { await cuidadosApi.acompanhamentos.remove(a.id); loadAll(); } }}><Trash2 className="h-3.5 w-3.5 text-destructive" /></Button>
+                      )}
                     </TableCell>
                   </TableRow>
                 ))}
@@ -379,7 +386,9 @@ export default function Cuidados() {
         {/* Jornada 180 */}
         <TabsContent value="jornada" className="space-y-4">
           <div className="flex items-center justify-end">
-            <Button onClick={() => setModalJornada(true)}><Plus className="h-4 w-4 mr-2" />Registrar encontro</Button>
+            {podeEditarCuidados && (
+              <Button onClick={() => setModalJornada(true)}><Plus className="h-4 w-4 mr-2" />Registrar encontro</Button>
+            )}
           </div>
           <div className="rounded-lg border border-border bg-card overflow-hidden">
             <Table>
@@ -397,7 +406,11 @@ export default function Cuidados() {
                     <TableCell><Badge variant="outline">Etapa {j.etapa}</Badge></TableCell>
                     <TableCell>{new Date(j.data_encontro + 'T12:00:00').toLocaleDateString('pt-BR')}</TableCell>
                     <TableCell>{j.presente ? '✓' : '✗'}</TableCell>
-                    <TableCell className="text-right"><Button variant="ghost" size="sm" onClick={async () => { if (confirm('Remover?')) { await cuidadosApi.jornada180.remove(j.id); loadAll(); } }}><Trash2 className="h-3.5 w-3.5 text-destructive" /></Button></TableCell>
+                    <TableCell className="text-right">
+                      {podeEditarCuidados && (
+                        <Button variant="ghost" size="sm" onClick={async () => { if (confirm('Remover?')) { await cuidadosApi.jornada180.remove(j.id); loadAll(); } }}><Trash2 className="h-3.5 w-3.5 text-destructive" /></Button>
+                      )}
+                    </TableCell>
                   </TableRow>
                 ))}
               </TableBody>
@@ -408,7 +421,9 @@ export default function Cuidados() {
         {/* Convertidos */}
         <TabsContent value="convertidos" className="space-y-4">
           <div className="flex items-center justify-end">
-            <Button onClick={() => setModalConvert(true)}><Plus className="h-4 w-4 mr-2" />Novo convertido</Button>
+            {podeEditarCuidados && (
+              <Button onClick={() => setModalConvert(true)}><Plus className="h-4 w-4 mr-2" />Novo convertido</Button>
+            )}
           </div>
           <div className="rounded-lg border border-border bg-card overflow-hidden">
             <Table>
@@ -425,12 +440,16 @@ export default function Cuidados() {
                     <TableCell className="font-medium">{c.nome}</TableCell>
                     <TableCell>{new Date(c.data_culto + 'T12:00:00').toLocaleDateString('pt-BR')}</TableCell>
                     <TableCell>
-                      <input type="checkbox" checked={!!c.atendido_apos_culto} onChange={async e => { await cuidadosApi.convertidos.update(c.id, { atendido_apos_culto: e.target.checked }); loadAll(); }} />
+                      <input type="checkbox" checked={!!c.atendido_apos_culto} disabled={!podeEditarCuidados} onChange={async e => { await cuidadosApi.convertidos.update(c.id, { atendido_apos_culto: e.target.checked }); loadAll(); }} />
                     </TableCell>
                     <TableCell>
-                      <input type="checkbox" checked={!!c.cadastrado} onChange={async e => { await cuidadosApi.convertidos.update(c.id, { cadastrado: e.target.checked }); loadAll(); }} />
+                      <input type="checkbox" checked={!!c.cadastrado} disabled={!podeEditarCuidados} onChange={async e => { await cuidadosApi.convertidos.update(c.id, { cadastrado: e.target.checked }); loadAll(); }} />
                     </TableCell>
-                    <TableCell className="text-right"><Button variant="ghost" size="sm" onClick={async () => { if (confirm('Remover?')) { await cuidadosApi.convertidos.remove(c.id); loadAll(); } }}><Trash2 className="h-3.5 w-3.5 text-destructive" /></Button></TableCell>
+                    <TableCell className="text-right">
+                      {podeEditarCuidados && (
+                        <Button variant="ghost" size="sm" onClick={async () => { if (confirm('Remover?')) { await cuidadosApi.convertidos.remove(c.id); loadAll(); } }}><Trash2 className="h-3.5 w-3.5 text-destructive" /></Button>
+                      )}
+                    </TableCell>
                   </TableRow>
                 ))}
               </TableBody>
@@ -461,27 +480,27 @@ export default function Cuidados() {
             <div className="rounded-lg border border-border bg-card p-4 space-y-3">
               <div className="flex items-center gap-2"><BookOpen className="h-4 w-4 text-info" /><h3 className="font-semibold">Aconselhamentos</h3></div>
               <Input type="number" min={0} value={agAcons} onChange={e => setAgAcons(e.target.value)} placeholder="Quantidade" />
-              <Button size="sm" onClick={() => salvarAgregado('aconselhamento', agAcons)}>Salvar</Button>
+              <Button size="sm" disabled={!podeEditarCuidados} onClick={() => salvarAgregado('aconselhamento', agAcons)}>Salvar</Button>
             </div>
             <div className="rounded-lg border border-border bg-card p-4 space-y-3">
               <div className="flex items-center gap-2"><HandHelping className="h-4 w-4 text-warning" /><h3 className="font-semibold">Capelania</h3></div>
               <Input type="number" min={0} value={agCapel} onChange={e => setAgCapel(e.target.value)} placeholder="Quantidade" />
-              <Button size="sm" onClick={() => salvarAgregado('capelania', agCapel)}>Salvar</Button>
+              <Button size="sm" disabled={!podeEditarCuidados} onClick={() => salvarAgregado('capelania', agCapel)}>Salvar</Button>
             </div>
             <div className="rounded-lg border border-border bg-card p-4 space-y-3">
               <div className="flex items-center gap-2"><BookOpen className="h-4 w-4" style={{ color: '#8b5cf6' }} /><h3 className="font-semibold">Devocional</h3></div>
               <Input type="number" min={0} value={agDevoc} onChange={e => setAgDevoc(e.target.value)} placeholder="Pessoas fazendo devocional" />
-              <Button size="sm" onClick={() => salvarAgregado('devocional', agDevoc)}>Salvar</Button>
+              <Button size="sm" disabled={!podeEditarCuidados} onClick={() => salvarAgregado('devocional', agDevoc)}>Salvar</Button>
             </div>
             <div className="rounded-lg border border-border bg-card p-4 space-y-3">
               <div className="flex items-center gap-2"><Users className="h-4 w-4" style={{ color: '#ef476f' }} /><h3 className="font-semibold">Jornada 180 · Inscrições</h3></div>
               <Input type="number" min={0} value={agJorn} onChange={e => setAgJorn(e.target.value)} placeholder="Inscritos no semestre" />
-              <Button size="sm" onClick={() => salvarAgregado('jornada180_inscricoes', agJorn)}>Salvar</Button>
+              <Button size="sm" disabled={!podeEditarCuidados} onClick={() => salvarAgregado('jornada180_inscricoes', agJorn)}>Salvar</Button>
             </div>
             <div className="rounded-lg border border-border bg-card p-4 space-y-3">
               <div className="flex items-center gap-2"><UserCheck className="h-4 w-4 text-primary" /><h3 className="font-semibold">Convertidos atendidos</h3></div>
               <Input type="number" min={0} value={agConvAtend} onChange={e => setAgConvAtend(e.target.value)} placeholder="Atendidos na semana da conversão" />
-              <Button size="sm" onClick={() => salvarAgregado('novos_convertidos_atend', agConvAtend)}>Salvar</Button>
+              <Button size="sm" disabled={!podeEditarCuidados} onClick={() => salvarAgregado('novos_convertidos_atend', agConvAtend)}>Salvar</Button>
             </div>
           </div>
           {agregado.length > 0 && (

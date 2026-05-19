@@ -229,13 +229,17 @@ const TABS = ['Home', 'Lista', 'Kanban', 'Gantt'];
 // COMPONENTE PRINCIPAL
 // ═══════════════════════════════════════════════════════════
 export default function Projetos() {
-  const { profile, user, isDiretor, isAdmin, getAccessLevel, userAreas } = useAuth();
+  const { profile, user, isDiretor, isAdmin, getAccessLevel, userAreas, modulePerms } = useAuth();
   const canEdit = isAdmin || isDiretor;
   const userRole = profile?.role || '';
   const userArea = profile?.area || '';
   const isPMO = ['diretor', 'admin'].includes(userRole);
   const accessLevel = getAccessLevel(['Projetos', 'Tarefas']);
   const userId = user?.id;
+  // Lider com escopo_proprio em "projetos" ve so projetos onde seu nome
+  // aparece em leader/responsible. Admin/diretor sempre veem tudo.
+  const escopoProprioProjetos = !isAdmin && !isDiretor
+    && !!modulePerms?.projetos?.escopo_proprio;
 
   // URL params drill-down
   const urlParams = new URLSearchParams(window.location.search);
@@ -328,10 +332,21 @@ export default function Projetos() {
       if (fCategory) params.category_id = fCategory;
       if (fPriority) params.priority = fPriority;
       if (fYear) params.year = fYear;
-      setList(await projects.list(params));
+      const todos = await projects.list(params);
+      // Escopo proprio: filtra na fonte pra refletir em todas as views
+      // (lista, kanban, gantt, timeline). Admin/diretor passam.
+      if (escopoProprioProjetos) {
+        const meuNome = (profile?.name || '').toLowerCase().trim();
+        setList(todos.filter(p =>
+          (p.leader || '').toLowerCase().trim() === meuNome ||
+          (p.responsible || '').toLowerCase().trim() === meuNome
+        ));
+      } else {
+        setList(todos);
+      }
     } catch (e) { setError(e.message); }
     finally { setLoading(false); }
-  }, [fStatus, fCategory, fPriority, fYear]);
+  }, [fStatus, fCategory, fPriority, fYear, escopoProprioProjetos, profile?.name]);
 
   const loadDetail = useCallback(async (id) => {
     try {
@@ -749,6 +764,7 @@ export default function Projetos() {
   // RENDER — LISTA
   // ═══════════════════════════════════════════════════════════
   function renderList() {
+    // Escopo proprio ja foi aplicado em loadList(). Aqui so visualizacao.
     let filtered = [...list];
     if (hideDone) filtered = filtered.filter(p => p.status !== 'concluido');
     if (fLeader) filtered = filtered.filter(p => p.leader === fLeader);
