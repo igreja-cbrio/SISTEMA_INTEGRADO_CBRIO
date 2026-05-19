@@ -79,6 +79,20 @@ usuarios). Tela em `/admin/permissoes` (arquivo
   aliases temporarios) · TODO de polish, nao bloqueante · hoje os hooks
   ja lem dos slugs novos via AuthContext
 
+### Fix sync v2 · coluna `nome` NOT NULL (2026-05-19)
+Migration `20260519200000_sync_profiles_para_usuarios.sql` falhou em
+prod com `null value in column "nome" of relation "usuarios" violates
+not-null constraint`. Tabela `usuarios` em prod tem `nome` NOT NULL
+(schema de 20260413145129).
+
+Fix:
+- Nova migration `20260519210000_sync_profiles_usuarios_com_nome.sql`
+  inclui `nome` com `COALESCE(p.name, split_part(email, '@', 1))`
+- Auto-provision em `backend/middleware/auth.js` agora envia `nome`
+  no insertPayload (fallback parte do email)
+- `resolverUsuarioId` em `backend/routes/permissoes.js` mesmo padrao
+  de fallback
+
 ### Sync profiles → usuarios + UI mostra cargo atual (2026-05-19)
 **Problema diagnosticado**: a tabela `usuarios` so era populada por
 auto-provision quando alguem logava apos o middleware granular ter

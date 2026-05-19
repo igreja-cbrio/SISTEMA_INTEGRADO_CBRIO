@@ -41,7 +41,10 @@ async function resolverUsuarioId(idParam) {
 
   // Cria registro novo
   const { data: novo, error } = await supabase.from('usuarios')
-    .insert({ nome: profile.name || email, email }).select('id').single();
+    .insert({
+      nome: (profile.name && profile.name.trim()) || email.split('@')[0],
+      email,
+    }).select('id').single();
   if (error || !novo) return null;
   return { id: novo.id, criado: true };
 }
