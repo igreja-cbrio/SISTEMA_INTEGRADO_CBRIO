@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { permissoes as api } from '../../api';
 import { Card } from '../../components/ui/card';
 import { Button } from '../../components/ui/button';
@@ -7,9 +8,11 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '../../components/ui/select';
 import { Checkbox } from '../../components/ui/checkbox';
-import { Shield, RefreshCw, Search } from 'lucide-react';
+import { Tabs, TabsList, TabsTrigger, TabsContent } from '../../components/ui/tabs';
+import { Shield, RefreshCw, Search, Users } from 'lucide-react';
 import { Input } from '../../components/ui/input';
 import { toast } from 'sonner';
+import Usuarios from './Usuarios';
 
 // Legenda de niveis 0-5 (espelha CLAUDE.md > Permissoes · matriz cargo x modulo)
 const NIVEIS = [
@@ -33,6 +36,51 @@ function nivelMeta(n) {
 }
 
 export default function Permissoes() {
+  const [searchParams, setSearchParams] = useSearchParams();
+  const abaInicial = searchParams.get('aba') === 'usuarios' ? 'usuarios' : 'matriz';
+  const [aba, setAba] = useState(abaInicial);
+
+  function trocarAba(novaAba) {
+    setAba(novaAba);
+    const next = new URLSearchParams(searchParams);
+    if (novaAba === 'matriz') next.delete('aba');
+    else next.set('aba', novaAba);
+    setSearchParams(next, { replace: true });
+  }
+
+  return (
+    <div className="p-6 space-y-6 max-w-6xl mx-auto">
+      <div>
+        <h1 className="text-2xl font-bold text-foreground flex items-center gap-2">
+          <Shield className="h-6 w-6 text-primary" />
+          Permissões
+        </h1>
+        <p className="text-sm text-muted-foreground mt-1">
+          Matriz padrão por cargo · overrides individuais por pessoa.
+        </p>
+      </div>
+
+      <Tabs value={aba} onValueChange={trocarAba}>
+        <TabsList>
+          <TabsTrigger value="matriz" className="gap-1.5">
+            <Shield className="h-4 w-4" /> Matriz cargo × módulo
+          </TabsTrigger>
+          <TabsTrigger value="usuarios" className="gap-1.5">
+            <Users className="h-4 w-4" /> Usuários
+          </TabsTrigger>
+        </TabsList>
+        <TabsContent value="matriz" className="mt-6">
+          <MatrizTab />
+        </TabsContent>
+        <TabsContent value="usuarios" className="mt-6">
+          <Usuarios />
+        </TabsContent>
+      </Tabs>
+    </div>
+  );
+}
+
+function MatrizTab() {
   const [loading, setLoading] = useState(true);
   const [cargos, setCargos] = useState([]);
   const [modulos, setModulos] = useState([]);
@@ -128,25 +176,18 @@ export default function Permissoes() {
 
   if (loading) {
     return (
-      <div className="p-6 flex items-center justify-center h-64">
+      <div className="flex items-center justify-center h-64">
         <div className="h-6 w-6 animate-spin rounded-full border-2 border-muted-foreground/30 border-t-primary" />
       </div>
     );
   }
 
   return (
-    <div className="p-6 space-y-6 max-w-6xl mx-auto">
-      {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-bold text-foreground flex items-center gap-2">
-            <Shield className="h-6 w-6 text-primary" />
-            Matriz de Permissões
-          </h1>
-          <p className="text-sm text-muted-foreground mt-1">
-            Define o nível padrão de acesso por cargo. Overrides individuais ficam em <span className="font-mono text-xs">/admin/usuarios</span>.
-          </p>
-        </div>
+    <div className="space-y-6">
+      <div className="flex justify-between items-center">
+        <p className="text-sm text-muted-foreground">
+          Nível padrão de acesso por cargo. Overrides individuais ficam na aba <b>Usuários</b>.
+        </p>
         <Button variant="outline" size="sm" onClick={load} className="gap-1.5">
           <RefreshCw className="h-4 w-4" /> Atualizar
         </Button>

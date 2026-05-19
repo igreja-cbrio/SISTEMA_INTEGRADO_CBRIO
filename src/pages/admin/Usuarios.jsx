@@ -12,7 +12,7 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '../../components/ui/select';
 import { Checkbox } from '../../components/ui/checkbox';
-import { Users, Search, X, Plus, Trash2, Pencil } from 'lucide-react';
+import { Search, X, Plus, Trash2, Pencil } from 'lucide-react';
 import { toast } from 'sonner';
 
 const NIVEIS = [0, 1, 2, 3, 4, 5];
@@ -99,28 +99,14 @@ export default function Usuarios() {
 
   if (loading) {
     return (
-      <div className="p-6 flex items-center justify-center h-64">
+      <div className="flex items-center justify-center h-64">
         <div className="h-6 w-6 animate-spin rounded-full border-2 border-muted-foreground/30 border-t-primary" />
       </div>
     );
   }
 
   return (
-    <div className="p-6 space-y-6 max-w-6xl mx-auto">
-      {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-bold text-foreground flex items-center gap-2">
-            <Users className="h-6 w-6 text-primary" />
-            Usuários e Acessos
-          </h1>
-          <p className="text-sm text-muted-foreground mt-1">
-            Cargo, áreas e overrides individuais. Matriz padrão por cargo fica em{' '}
-            <span className="font-mono text-xs">/admin/permissoes</span>.
-          </p>
-        </div>
-      </div>
-
+    <div className="space-y-6">
       {/* Filtros */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         <div>
