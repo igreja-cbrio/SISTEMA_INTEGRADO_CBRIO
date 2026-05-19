@@ -1339,6 +1339,7 @@ export const devocionalPlanos = {
   adesao: (id, params) => get(`/devocional-planos/${id}/adesao` + (params ? '?' + new URLSearchParams(params) : '')),
   enviarHoje: (id) => post(`/devocional-planos/${id}/enviar-hoje`, {}),
   envios: (id) => get(`/devocional-planos/${id}/envios`),
+  metricasCuidados: () => get('/devocional-planos/metricas-cuidados'),
 };
 
 // Devocional · endpoints do membro (autenticado · usados por /devocional/*)

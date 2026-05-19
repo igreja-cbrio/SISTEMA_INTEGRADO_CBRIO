@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { cuidados as cuidadosApi } from '../../api';
+import { cuidados as cuidadosApi, devocionalPlanos as devPlanosApi } from '../../api';
 import ProcessosTarefas from '../../components/ProcessosTarefas';
 import DevocionalAdmin from '../../components/DevocionalAdmin';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '../../components/ui/tabs';
@@ -12,7 +12,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../../components/ui/table';
 import { Badge } from '../../components/ui/badge';
 import { StatisticsCard } from '../../components/ui/statistics-card';
-import { Heart, BookOpen, HandHelping, Users, UserCheck, CheckCircle2, Plus, Trash2, Loader2, Search } from 'lucide-react';
+import { Heart, BookOpen, HandHelping, Users, UserCheck, CheckCircle2, Plus, Trash2, Loader2, Search, Sparkles, CalendarCheck } from 'lucide-react';
 import { toast } from 'sonner';
 import { useAuth } from '../../contexts/AuthContext';
 
@@ -227,6 +227,7 @@ export default function Cuidados() {
     setSearchParams(sp, { replace: true });
   }
   const [dash, setDash] = useState<any>(null);
+  const [devMetrics, setDevMetrics] = useState<any>(null);
   const [loading, setLoading] = useState(true);
 
   const [acomp, setAcomp] = useState<any[]>([]);
@@ -249,14 +250,15 @@ export default function Cuidados() {
   async function loadAll() {
     setLoading(true);
     try {
-      const [d, a, j, c, ag] = await Promise.all([
+      const [d, a, j, c, ag, dm] = await Promise.all([
         cuidadosApi.dashboard().catch(() => null),
         cuidadosApi.acompanhamentos.list().catch(() => []),
         cuidadosApi.jornada180.list().catch(() => []),
         cuidadosApi.convertidos.list().catch(() => []),
         cuidadosApi.agregado.list(agMes).catch(() => []),
+        devPlanosApi.metricasCuidados().catch(() => null),
       ]);
-      setDash(d); setAcomp(a); setJornada(j); setConvertidos(c); setAgregado(ag);
+      setDash(d); setAcomp(a); setJornada(j); setConvertidos(c); setAgregado(ag); setDevMetrics(dm);
       const findT = (t: string) => (ag || []).find((r: any) => r.tipo === t);
       setAgAcons(findT('aconselhamento') ? String(findT('aconselhamento').quantidade) : '');
       setAgCapel(findT('capelania') ? String(findT('capelania').quantidade) : '');
@@ -336,6 +338,42 @@ export default function Cuidados() {
                   subtitle={`Mês anterior: ${ant.convertidos_atendidos ?? 0}`} />
                 <StatisticsCard title="Convertidos Cadastrados" value={a.convertidos_cadastrados ?? 0} icon={CheckCircle2} iconColor={C.info}
                   subtitle={`Mês anterior: ${ant.convertidos_cadastrados ?? 0}`} />
+              </div>
+
+              {/* Métricas do Devocional */}
+              <div className="pt-2">
+                <div className="flex items-center gap-2 mb-3">
+                  <BookOpen className="h-4 w-4 text-primary" />
+                  <h3 className="font-semibold text-sm">Devocional</h3>
+                </div>
+                <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+                  <StatisticsCard
+                    title="Check-ins hoje"
+                    value={devMetrics?.checkins_hoje ?? 0}
+                    icon={CalendarCheck}
+                    iconColor={C.primary}
+                    subtitle={`${devMetrics?.adesao_hoje_pct ?? 0}% dos membros logados`}
+                  />
+                  <StatisticsCard
+                    title="Check-ins (7 dias)"
+                    value={devMetrics?.checkins_7d ?? 0}
+                    icon={BookOpen}
+                    iconColor={C.info}
+                  />
+                  <StatisticsCard
+                    title="Membros engajados (30d)"
+                    value={devMetrics?.membros_engajados_30d ?? 0}
+                    icon={Users}
+                    iconColor={C.purple}
+                    subtitle={`${devMetrics?.membros_logados ?? 0} membros logaram no app`}
+                  />
+                  <StatisticsCard
+                    title="Planos ativos"
+                    value={devMetrics?.planos_ativos ?? 0}
+                    icon={Sparkles}
+                    iconColor={C.warn}
+                  />
+                </div>
               </div>
             </>
           )}
