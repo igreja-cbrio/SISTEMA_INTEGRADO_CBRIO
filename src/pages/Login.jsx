@@ -101,9 +101,17 @@ const PlanningCenterIcon = () => (
 export default function Login() {
   const { signInWithEmail, signInWithMicrosoft, signInWithGoogle, user } = useAuth();
   const navigate = useNavigate();
-  const [email, setEmail] = useState('');
+  // Pré-preenche email se foi marcado "Lembrar de mim" em login anterior.
+  // A sessão Supabase em si já persiste em localStorage automaticamente, então
+  // se a sessão ainda for válida, o redirect pra '/' já acontece via useEffect
+  // abaixo (entrada automática). Esse checkbox controla só o pré-preenchimento
+  // do email pra próxima visita (depois que a sessão expira ou apaga).
+  const REMEMBER_KEY = 'cbrio_remember_email';
+  const savedEmail = typeof window !== 'undefined' ? localStorage.getItem(REMEMBER_KEY) : null;
+  const [email, setEmail] = useState(savedEmail || '');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
+  const [rememberMe, setRememberMe] = useState(!!savedEmail);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const [btnHover, setBtnHover] = useState(false);
@@ -143,6 +151,11 @@ export default function Login() {
     const { error: err } = await signInWithEmail(email, password);
     setLoading(false);
     if (err) return setError(err.message);
+    // Persiste / limpa email lembrado conforme o checkbox
+    try {
+      if (rememberMe) localStorage.setItem(REMEMBER_KEY, email);
+      else localStorage.removeItem(REMEMBER_KEY);
+    } catch { /* localStorage pode estar bloqueado (modo anonimo) */ }
     navigate('/');
   }
 
@@ -224,6 +237,26 @@ export default function Login() {
               </button>
             }
           />
+
+          <label
+            style={{
+              display: 'flex', alignItems: 'center', gap: 8,
+              fontSize: 13, color: COL.textDim,
+              marginTop: 4, marginBottom: 18, cursor: 'pointer', userSelect: 'none',
+            }}
+          >
+            <input
+              type="checkbox"
+              checked={rememberMe}
+              onChange={(e) => setRememberMe(e.target.checked)}
+              style={{
+                width: 16, height: 16,
+                accentColor: '#00B39D',
+                cursor: 'pointer',
+              }}
+            />
+            <span>Lembrar de mim neste navegador</span>
+          </label>
 
           <button
             type="submit"
