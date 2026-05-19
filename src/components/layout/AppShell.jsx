@@ -3,6 +3,7 @@ import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
 import { useTheme } from '../../contexts/ThemeContext';
 import { notificacoes as notifApi } from '../../api';
+import { supabase } from '../../supabaseClient';
 import SpotifyPlayer from './SpotifyPlayer';
 import { playNotificationSound } from '../../lib/sounds';
 import { isPushSupported, getCurrentSubscription, subscribePush, unsubscribePush } from '../../lib/pushNotifications';
@@ -180,9 +181,50 @@ export default function AppShell() {
 
   useEffect(() => {
     loadNotifCount();
-    const interval = setInterval(loadNotifCount, 10000);
+    // Polling como safety net (caso o WebSocket caia ou o navegador hiberne a aba).
+    // O canal Realtime abaixo entrega INSERTs em < 1s · o polling so existe pra
+    // ressincronizar se algum evento for perdido.
+    const interval = setInterval(loadNotifCount, 30000);
     return () => clearInterval(interval);
   }, []);
+
+  // Realtime · escuta INSERTs em `notificacoes` filtrado pelo usuario logado.
+  // Quando uma nova chega, toca o som, incrementa o badge e (se o dropdown
+  // ja estiver aberto) prepend na lista sem precisar refazer fetch.
+  useEffect(() => {
+    if (!supabase || !profile?.id) return;
+    const channel = supabase
+      .channel(`notif:${profile.id}`)
+      .on(
+        'postgres_changes',
+        {
+          event: 'INSERT',
+          schema: 'public',
+          table: 'notificacoes',
+          filter: `usuario_id=eq.${profile.id}`,
+        },
+        (payload) => {
+          const nova = payload?.new;
+          if (!nova) return;
+          playNotificationSound();
+          setNotifCount(c => {
+            const next = c + 1;
+            // Mantem o ref sincronizado pro polling subsequente nao tocar som de novo
+            // pelo mesmo evento (a comparacao em loadNotifCount usa prevNotifCount).
+            prevNotifCount.current = next;
+            return next;
+          });
+          setNotifs(prev => {
+            if (prev.some(x => x.id === nova.id)) return prev;
+            return [nova, ...prev];
+          });
+        }
+      )
+      .subscribe();
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [profile?.id]);
 
   async function loadNotifCount() {
     try {
