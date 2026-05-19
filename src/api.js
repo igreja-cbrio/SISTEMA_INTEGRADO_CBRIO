@@ -818,6 +818,12 @@ export const cadastroPublico = {
     if (!res.ok) return { found: false };
     return res.json();
   },
+  lookupNomeTelefone: async (nome, telefone) => {
+    const qs = `nome=${encodeURIComponent(nome)}&telefone=${encodeURIComponent(telefone)}`;
+    const res = await fetch(`${API}/public/membresia/lookup-nome-telefone?${qs}`);
+    if (!res.ok) return { found: false };
+    return res.json();
+  },
   enviar: async (data) => {
     const res = await fetch(`${API}/public/membresia/cadastro`, {
       method: 'POST',
