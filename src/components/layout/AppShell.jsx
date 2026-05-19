@@ -89,6 +89,7 @@ const NAV_ITEMS = [
           { label: 'Cuidados', description: 'Capelania e aconselhamento', icon: Heart, path: '/ministerial/cuidados', perm: 'canCuidados' },
           { label: 'Voluntariado', description: 'Check-in, escalas e QR codes', icon: HandHelping, path: '/ministerial/voluntariado', perm: 'canMembresia' },
           { label: 'Membresia', description: 'Cadastros, trilha dos valores e Jornada', icon: BookOpen, path: '/ministerial/membresia', perm: 'canMembresia' },
+          { label: 'Devocional', description: 'Leitura biblica diaria e registro de reflexoes', icon: BookOpen, path: '/ministerial/devocional' },
         ],
       },
       {
