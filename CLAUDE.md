@@ -79,6 +79,20 @@ usuarios). Tela em `/admin/permissoes` (arquivo
   aliases temporarios) · TODO de polish, nao bloqueante · hoje os hooks
   ja lem dos slugs novos via AuthContext
 
+### Projetos · lider ministerial so ve aba Lista filtrada por area (2026-05-19)
+Quando `modulePerms.projetos.escopo_proprio = true` (e nao eh admin/diretor),
+Projetos.jsx aplica modo restrito:
+
+- **UI**: forca `tab=1` (Lista) via useEffect · esconde TABS bar e botao
+  "Novo Projeto"
+- **Filtro**: ao inves de filtrar lista por `profile.name` (leader/responsible),
+  filtra por `p.area in userAreas` (case-insensitive)
+- Aba "Detail" (tab=4) continua acessivel via click num projeto da lista
+- Admin/diretor sempre veem todas as abas + todos os projetos
+
+Isso casa com o modelo "1 cargo + N areas" da PR boost-por-area: o lider
+ministerial atribuido a area X ve so projetos da area X.
+
 ### Boost por area · 1 cargo + N areas = acesso modular (2026-05-19) ⭐
 **Modelo aprovado**: o sistema tem 1 cargo unico `lider-ministerial`
 (genérico) e as **áreas** da pessoa decidem onde ela ganha acesso
