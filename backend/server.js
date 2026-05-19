@@ -113,6 +113,8 @@ app.use('/api/processos', require('./routes/processos'));
 app.use('/api/jornada', require('./routes/jornada'));
 app.use('/api/devocionais', require('./routes/devocionais'));
 app.use('/api/devocional-planos', require('./routes/devocionalPlanos'));
+app.use('/api/devocional-membro', require('./routes/devocionalMembro'));
+app.use('/api/public/devocional', require('./routes/publicDevocional'));
 app.use('/api/bible', require('./routes/bible'));
 app.use('/api/pessoas', require('./routes/pessoas'));
 app.use('/api/nsm', require('./routes/nsm'));
