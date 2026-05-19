@@ -1341,6 +1341,7 @@ export const devocionalPlanos = {
   update: (id, body) => put(`/devocional-planos/${id}`, body),
   remove: (id) => del(`/devocional-planos/${id}`),
   gerarIA: (id, body) => post(`/devocional-planos/${id}/gerar-ia`, body || {}),
+  createItem: (id, body) => post(`/devocional-planos/${id}/itens`, body),
   updateItem: (itemId, body) => put(`/devocional-planos/itens/${itemId}`, body),
   removeItem: (itemId) => del(`/devocional-planos/itens/${itemId}`),
   adesao: (id, params) => get(`/devocional-planos/${id}/adesao` + (params ? '?' + new URLSearchParams(params) : '')),
