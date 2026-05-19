@@ -1,18 +1,13 @@
 const { supabase } = require('../utils/supabase');
 
-// Mapeamento de roles antigas para novas
+// LEGADO · ROLE_MAP é usado apenas internamente por `authorizeCycle` (cycles.js).
+// Manter ate `authorizeCycle` migrar pra autorizacao por modulo (`authorizeModule`).
+// PERMISSIONS{} e `req.user.permissions` foram removidos em 2026-05-19 (sem
+// consumidores no codigo). Ver CLAUDE.md "Limpeza de codigo morto de permissoes".
 const ROLE_MAP = {
   'diretor': 'pmo', 'admin': 'lider_adm', 'assistente': 'membro_marketing',
   'pmo': 'pmo', 'lider_adm': 'lider_adm', 'lider_marketing': 'lider_marketing',
   'lider_area_adm': 'lider_area_adm', 'membro_marketing': 'membro_marketing',
-};
-
-const PERMISSIONS = {
-  pmo:              { canEditAll: true, canEditMarketing: true, canEditAdm: true, canViewAll: true, canManageBudget: true, label: 'PMO' },
-  lider_adm:        { canEditAdm: true, canViewAll: true, label: 'Líder Administrativo' },
-  lider_marketing:  { canEditMarketing: true, canViewMarketing: true, label: 'Líder de Marketing' },
-  lider_area_adm:   { canViewAdm: true, canMarkChecklist: true, label: 'Líder de Área ADM' },
-  membro_marketing: { canViewMarketing: true, canMarkChecklist: true, label: 'Membro de Marketing' },
 };
 
 // ── Mapeamento de rotas API → slugs dos modulos (matriz reuniao 2026-05-18) ──
@@ -171,8 +166,6 @@ async function authenticate(req, res, next) {
     }
   }
 
-  const mappedRole = ROLE_MAP[profile.role] || profile.role;
-
   // ── Carregar permissões granulares (se o usuário existe na tabela usuarios) ──
   let granular = null;
   if (profile.email) {
@@ -271,8 +264,6 @@ async function authenticate(req, res, next) {
     userId: user.id,
     email: user.email,
     role: profile.role,
-    mappedRole,
-    permissions: PERMISSIONS[mappedRole] || {},
     name: profile.name,
     area: profile.area,
     kpi_areas: profile.kpi_areas || [],
@@ -347,7 +338,10 @@ function authorizeKpiArea(areaExtractor, valoresExtractor = null) {
   };
 }
 
-// Autoriza por mappedRole (compatível com roles novas e antigas)
+// LEGADO · usado em cycles.js (ciclos criativo). Mantem ROLE_MAP por enquanto
+// porque a logica de papeis aqui ainda nao tem equivalente direto na matriz
+// cargo×modulo. TODO: migrar pra authorizeModule('eventos', nivel) quando
+// regras de ciclo forem revisadas.
 function authorizeCycle(...roles) {
   return (req, res, next) => {
     if (!req.user) return res.status(401).json({ error: 'Não autenticado' });
@@ -572,4 +566,4 @@ function applyAccessFilter(query, req, routeKey, opts = {}) {
   return query;
 }
 
-module.exports = { authenticate, authorize, authorizeCycle, authorizeModule, authorizeKpiArea, getMyPermissions, getEffectiveLevel, getUserAreas, applyAccessFilter, bustPermissionCaches, ROLE_MAP, PERMISSIONS, ROUTE_MODULE_MAP };
+module.exports = { authenticate, authorize, authorizeCycle, authorizeModule, authorizeKpiArea, getMyPermissions, getEffectiveLevel, getUserAreas, applyAccessFilter, bustPermissionCaches, ROLE_MAP, ROUTE_MODULE_MAP };

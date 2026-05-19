@@ -79,6 +79,41 @@ usuarios). Tela em `/admin/permissoes` (arquivo
   aliases temporarios) · TODO de polish, nao bloqueante · hoje os hooks
   ja lem dos slugs novos via AuthContext
 
+### Limpeza de codigo morto de permissoes (2026-05-19)
+Apos auditoria estrutural pedida pelo Marcos, identificado e removido
+o que sobrava do sistema antigo de "5 niveis por modulo":
+
+**Removido (zero consumidores no projeto):**
+- `PERMISSIONS{}` map · era usado pra retornar `req.user.permissions`
+  com flags `canEditAll`/`canViewMarketing`/etc. Nenhum handler lia.
+- `req.user.permissions` · saida do PERMISSIONS, nao consumida.
+- `req.user.mappedRole` · campo nunca lido externamente.
+- `mappedRole` variavel no `authenticate` · calculo inutil.
+- Export de `PERMISSIONS` do module.exports.
+
+**Mantido (com TODO de migracao gradual):**
+- `ROLE_MAP{}` · ainda usado internamente por `authorizeCycle` em
+  `cycles.js`. Migrar quando regras de ciclo criativo forem revisadas
+  pra usar `authorizeModule('eventos', nivel)`.
+- `profile.role` em `req.user.role` · usado em queries de membresia,
+  voluntariado, NEXT. Nao decide permissao de modulo (matriz decide),
+  mas continua identificando o tipo de usuario base.
+- Hooks `canRH`, `canFinanceiro`, etc no `AuthContext` · aliases que
+  ja leem `modulePerms[slug]`. 15+ telas dependem. Manter ate migracao
+  pra `getAccessLevel(['slug'])` direto.
+
+**Decisao arquitetural · permissao = cargo + matriz**
+
+A unica fonte de verdade pra permissao de modulo eh:
+1. Cargo do usuario em `usuarios.cargo_id`
+2. Matriz default `cargo_modulo_permissao`
+3. Overrides individuais `permissoes_modulo` (com expiracao)
+
+Qualquer permissao nova daqui pra frente:
+- Backend: `authorizeModule('slug', nivelMinimo)` em vez de `authorize('admin','diretor')`
+- Frontend: `getAccessLevel(['slug'])` em vez de hooks `canX`
+- Itens de menu: campo `module: 'slug'` no AppShell em vez de `perm: 'canX'`
+
 ### Fix sync v2 · coluna `nome` NOT NULL (2026-05-19)
 Migration `20260519200000_sync_profiles_para_usuarios.sql` falhou em
 prod com `null value in column "nome" of relation "usuarios" violates
