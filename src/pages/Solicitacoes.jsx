@@ -125,6 +125,30 @@ export default function Solicitacoes() {
 
   useEffect(() => { load(); }, []);
 
+  // Realtime · qualquer INSERT/UPDATE/DELETE em `solicitacoes` recarrega
+  // o kanban. Debounce 400ms agrega rajadas (ex: trigger de SLA atualiza
+  // a mesma row varias vezes em sequencia).
+  useEffect(() => {
+    if (!supabase || !profile?.id) return;
+    let timeout = null;
+    function schedReload() {
+      if (timeout) clearTimeout(timeout);
+      timeout = setTimeout(() => { load(); }, 400);
+    }
+    const channel = supabase
+      .channel(`solicitacoes:${profile.id}`)
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'solicitacoes' },
+        schedReload
+      )
+      .subscribe();
+    return () => {
+      if (timeout) clearTimeout(timeout);
+      supabase.removeChannel(channel);
+    };
+  }, [profile?.id, isResponsavel]);
+
   const filtered = useMemo(() => {
     if (filterCat === 'todas') return items;
     return items.filter(i => i.categoria === filterCat);
@@ -271,7 +295,7 @@ export default function Solicitacoes() {
                 <Plus className="h-4 w-4" /> Nova Solicitação
               </Button>
             </DialogTrigger>
-            <DialogContent className="sm:max-w-lg">
+            <DialogContent className="sm:max-w-lg max-h-[90vh] overflow-y-auto">
               <DialogHeader>
                 <DialogTitle>Nova Solicitação</DialogTitle>
               </DialogHeader>
@@ -953,7 +977,7 @@ function DetailDialog({ item, onClose, isAdmin, currentUserId, onStatusChange, o
 
   return (
     <Dialog open={!!item} onOpenChange={v => { if (!v) { cancelAction(); onClose(); } }}>
-      <DialogContent className="sm:max-w-lg">
+      <DialogContent className="sm:max-w-lg max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Badge className={cat.color}>{cat.label}</Badge>
