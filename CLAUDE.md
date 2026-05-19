@@ -73,9 +73,29 @@ usuarios). Tela em `/admin/permissoes` (arquivo
   `/admin/permissoes`
 
 **Falta pra fechar a PR2 inteira:**
-- `/admin/usuarios` · UI pra trocar cargo + areas + overrides
+- ~~`/admin/usuarios` · UI pra trocar cargo + areas + overrides~~ ✓ feito
+  (2026-05-19 · ver `src/pages/admin/Usuarios.jsx`)
 - Migrar `ModuleGuard` keys do front pra slugs novos (canRH, etc viram
-  aliases temporarios)
+  aliases temporarios) · TODO de polish, nao bloqueante · hoje os hooks
+  ja lem dos slugs novos via AuthContext
+
+### Usuarios UI · cargo + areas + overrides (2026-05-19)
+Tela em `/admin/usuarios` (`src/pages/admin/Usuarios.jsx`):
+
+- Lista de colaboradores via `GET /api/permissoes/colaboradores` (filtra
+  out membros, volutarios, cadastros pendentes via mem_cadastros_pendentes)
+- Busca por nome/email + filtro por cargo
+- Click em "Editar" abre Dialog com 3 secoes:
+  1. **Cargo** · Select que dispara `PUT /usuario/:id/cargo` no change
+  2. **Areas** · chips toggle (clicaveis), salva com botao explicito via
+     `PUT /usuario/:id/areas` (multi)
+  3. **Overrides** · lista com nivel + modificadores + motivo + expira_em
+     + botao remover (`DELETE /usuario/:id/modulo/:moduloId`). Form pra
+     criar novo override via `PUT /usuario/:id/modulo` (envia
+     nivel_leitura + nivel_escrita iguais · UI futura pode separar)
+
+Acesso restrito a `isAdmin` · entrada no menu Administrativo >
+Configuracoes.
 
 ### NPS pos-conclusao 2026-05-19 · ataque ao gap dos 11 ADM-*-Q
 A UI de avaliacao NPS pos-conclusao ja existia em `Solicitacoes.jsx`

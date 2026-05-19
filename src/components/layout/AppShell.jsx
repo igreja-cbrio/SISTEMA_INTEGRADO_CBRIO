@@ -59,6 +59,7 @@ const NAV_ITEMS = [
         title: 'Configurações',
         items: [
           { label: 'Permissões', description: 'Matriz cargo × módulo · niveis 0-5 + modificadores E/A/*', icon: Shield, path: '/admin/permissoes', perm: 'isAdmin' },
+          { label: 'Usuários', description: 'Cargo + áreas + overrides individuais por pessoa', icon: Users, path: '/admin/usuarios', perm: 'isAdmin' },
         ],
       },
     ],
