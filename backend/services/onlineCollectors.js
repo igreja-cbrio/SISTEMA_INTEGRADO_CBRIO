@@ -113,9 +113,19 @@ async function dsCollector() {
       // DS = views NO dia D (do culto, nao do D+1) ate fim daquele dia
       const stats = await yt.fetchVideoViews(null, c.youtube_video_id, c.data, c.data);
       await supabase.from('cultos')
-        .update({ online_ds: stats.views })
+        .update({
+          online_ds: stats.views,
+          online_watch_minutes_ds: Math.round(stats.watch_minutes || 0) || null,
+          online_retencao_pct_ds: stats.avg_view_percentage ? Number(stats.avg_view_percentage.toFixed(2)) : null,
+        })
         .eq('id', c.id);
-      resultados.push({ culto_id: c.id, video_id: c.youtube_video_id, online_ds: stats.views, watch_min: stats.watch_minutes });
+      resultados.push({
+        culto_id: c.id,
+        video_id: c.youtube_video_id,
+        online_ds: stats.views,
+        watch_min: stats.watch_minutes,
+        retencao_pct: stats.avg_view_percentage,
+      });
     } catch (e) {
       resultados.push({ culto_id: c.id, error: e.message });
     }
@@ -148,9 +158,20 @@ async function ddusCollector() {
       const fim    = fmtData(dataMaisDias(new Date(c.data + 'T00:00:00'), 7));
       const stats = await yt.fetchVideoViews(null, c.youtube_video_id, inicio, fim);
       await supabase.from('cultos')
-        .update({ online_ddus: stats.views })
+        .update({
+          online_ddus: stats.views,
+          online_watch_minutes_ddus: Math.round(stats.watch_minutes || 0) || null,
+          online_retencao_pct_ddus: stats.avg_view_percentage ? Number(stats.avg_view_percentage.toFixed(2)) : null,
+        })
         .eq('id', c.id);
-      resultados.push({ culto_id: c.id, video_id: c.youtube_video_id, online_ddus: stats.views, periodo: `${inicio}..${fim}` });
+      resultados.push({
+        culto_id: c.id,
+        video_id: c.youtube_video_id,
+        online_ddus: stats.views,
+        watch_min: stats.watch_minutes,
+        retencao_pct: stats.avg_view_percentage,
+        periodo: `${inicio}..${fim}`,
+      });
     } catch (e) {
       resultados.push({ culto_id: c.id, error: e.message });
     }
