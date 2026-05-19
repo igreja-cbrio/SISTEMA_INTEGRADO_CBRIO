@@ -139,7 +139,7 @@ async function authenticate(req, res, next) {
   // Busca perfil do usuário (role, name, area etc.)
   const { data: profile, error: profileError } = await supabase
     .from('profiles')
-    .select('id, name, email, role, area, kpi_areas, kpi_valores, ministerio_id, ministerio_papel, is_diretoria_geral, funcao_diretoria, active')
+    .select('id, name, email, role, area, kpi_areas, kpi_valores, ministerio_id, ministerio_papel, is_diretoria_geral, funcao_diretoria, active, membro_id, is_membro_only')
     .eq('id', user.id)
     .single();
 
@@ -279,6 +279,9 @@ async function authenticate(req, res, next) {
     ministerio_papel: profile.ministerio_papel || null,
     is_diretoria_geral: !!profile.is_diretoria_geral,
     funcao_diretoria: profile.funcao_diretoria || null,
+    membro_id: profile.membro_id || null,
+    is_membro_only: !!profile.is_membro_only,
+    id: user.id, // alias amigavel · req.user.id
     granular, // null se usuário não está no sistema granular
   };
 

@@ -34,7 +34,7 @@ export function AuthProvider({ children }) {
     if (!supabase) return;
     const { data } = await supabase
       .from('profiles')
-      .select('id, name, email, role, area, kpi_areas, avatar_url, ministerio_id, ministerio_papel, is_diretoria_geral, funcao_diretoria, telefone')
+      .select('id, name, email, role, area, kpi_areas, avatar_url, ministerio_id, ministerio_papel, is_diretoria_geral, funcao_diretoria, telefone, membro_id, is_membro_only')
       .eq('id', userId)
       .single();
     setProfile(data ?? null);
@@ -160,6 +160,7 @@ export function AuthProvider({ children }) {
   const userSetores = permData?.setores || [];
 
   const isVoluntario = profile?.role === 'voluntario';
+  const isMembroOnly = !!profile?.is_membro_only;
   const isAdmin = ['admin', 'diretor'].includes(profile?.role);
 
   // Helpers de gating por modulo · usa slug novo (matriz reuniao 2026-05-18)
@@ -196,6 +197,7 @@ export function AuthProvider({ children }) {
     isAdmin,
     isDiretor: profile?.role === 'diretor',
     isVoluntario,
+    isMembroOnly,
     isColaborador,
     modulePerms,
     canAccessModule,
@@ -218,7 +220,7 @@ export function useAuth() {
     // During HMR, context can temporarily be null — return a safe fallback
     return {
       user: null, profile: null, loading: true, role: null,
-      isAdmin: false, isDiretor: false, isVoluntario: false, isColaborador: false, modulePerms: null,
+      isAdmin: false, isDiretor: false, isVoluntario: false, isMembroOnly: false, isColaborador: false, modulePerms: null,
       canAccessModule: () => false, getAccessLevel: () => 1,
       canRH: false, canFinanceiro: false, canLogistica: false,
       canPatrimonio: false, canMembresia: false, canProjetos: false,

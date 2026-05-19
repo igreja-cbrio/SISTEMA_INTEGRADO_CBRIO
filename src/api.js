@@ -1338,6 +1338,18 @@ export const devocionalPlanos = {
   adesao: (id, params) => get(`/devocional-planos/${id}/adesao` + (params ? '?' + new URLSearchParams(params) : '')),
 };
 
+// Devocional · endpoints do membro (autenticado · usados por /devocional/*)
+export const devocionalMembro = {
+  hoje: () => get('/devocional-membro/hoje'),
+  checkIn: (body) => post('/devocional-membro/check-in', body || {}),
+  historico: () => get('/devocional-membro/historico'),
+};
+
+// Devocional · publico (envio do magic link)
+export const publicDevocional = {
+  login: (email) => post('/public/devocional/login', { email }),
+};
+
 // Pessoas - lookup unificado (Membresia como fonte unica)
 export const pessoas = {
   lookup: ({ cpf, email, telefone } = {}) => {

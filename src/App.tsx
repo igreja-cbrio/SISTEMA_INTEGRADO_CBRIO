@@ -210,6 +210,9 @@ const VolSelfCheckin = lazyWithRetry(() => import('./pages/ministerial/voluntari
 const PcCallback = lazyWithRetry(() => import('./pages/auth/PcCallback'));
 const SpotifyCallback = lazyWithRetry(() => import('./pages/auth/SpotifyCallback'));
 const Cuidados = lazyWithRetry(() => import('./pages/ministerial/Cuidados'));
+const DevocionalLogin = lazyWithRetry(() => import('./pages/devocional/DevocionalLogin'));
+const DevocionalHoje = lazyWithRetry(() => import('./pages/devocional/DevocionalHoje'));
+const DevocionalHistorico = lazyWithRetry(() => import('./pages/devocional/DevocionalHistorico'));
 const Integracao = lazyWithRetry(() => import('./pages/ministerial/Integracao'));
 const Next = lazyWithRetry(() => import('./pages/ministerial/Next'));
 // Jornada virou aba dentro de Membresia (componente MembersJornadaPanel).
@@ -248,6 +251,15 @@ function ProtectedRoute({ children }) {
   if (loading) return <Loading />;
   if (!user) return <Navigate to={loginRedirectTarget()} replace />;
   return children;
+}
+
+// Membros logados via magic link do devocional ficam restritos a /devocional/*.
+// Tentativa de acessar qualquer outra rota colaborador redireciona pra /devocional/hoje.
+function MemberOnlyRedirect({ children }: { children: ReactNode }) {
+  const { isMembroOnly, loading } = useAuth();
+  if (loading) return <Loading />;
+  if (isMembroOnly) return <Navigate to="/devocional/hoje" replace />;
+  return <>{children}</>;
 }
 
 /**
@@ -305,20 +317,21 @@ function VolunteerShell() {
 }
 
 function DefaultRedirect() {
-  const { user, loading, isVoluntario } = useAuth();
+  const { user, loading, isVoluntario, isMembroOnly } = useAuth();
   if (loading) return <Loading />;
   if (!user) return <Navigate to={loginRedirectTarget()} replace />;
+  if (isMembroOnly) return <Navigate to="/devocional/hoje" replace />;
   if (isVoluntario) return <Navigate to="/voluntariado/checkin" replace />;
   return <Navigate to="/dashboard" replace />;
 }
 
 function AppRoutes() {
-  const { user, loading, isVoluntario } = useAuth();
+  const { user, loading, isVoluntario, isMembroOnly } = useAuth();
   if (loading) return <Loading />;
 
   return (
     <Routes>
-      <Route path="/login" element={user ? (isVoluntario ? <Navigate to="/voluntariado/checkin" replace /> : <Navigate to="/dashboard" replace />) : <Login />} />
+      <Route path="/login" element={user ? (isMembroOnly ? <Navigate to="/devocional/hoje" replace /> : isVoluntario ? <Navigate to="/voluntariado/checkin" replace /> : <Navigate to="/dashboard" replace />) : <Login />} />
 
       {/* Rotas publicas */}
       <Route path="/cadastro-membresia" element={<Suspense fallback={<Loading />}><CadastroMembresia /></Suspense>} />
@@ -331,6 +344,13 @@ function AppRoutes() {
       <Route path="/nps/publica/:token" element={<Suspense fallback={<Loading />}><NpsPublica /></Suspense>} />
       <Route path="/auth/pc-callback" element={<Suspense fallback={<Loading />}><PcCallback /></Suspense>} />
       <Route path="/spotify/callback" element={<Suspense fallback={<Loading />}><SpotifyCallback /></Suspense>} />
+
+      {/* Devocional · pagina publica de login (magic link) + paginas autenticadas
+          do membro. Membros logados aqui ficam restritos a essas rotas via
+          MemberOnlyRedirect nas rotas de staff abaixo. */}
+      <Route path="/devocional" element={<Suspense fallback={<Loading />}><DevocionalLogin /></Suspense>} />
+      <Route path="/devocional/hoje" element={<ProtectedRoute><Suspense fallback={<Loading />}><DevocionalHoje /></Suspense></ProtectedRoute>} />
+      <Route path="/devocional/historico" element={<ProtectedRoute><Suspense fallback={<Loading />}><DevocionalHistorico /></Suspense></ProtectedRoute>} />
 
       {/* Totem — fullscreen, sem shell nenhum */}
       <Route path="/voluntariado/totem" element={<ProtectedRoute><Suspense fallback={<Loading />}><VolTotem /></Suspense></ProtectedRoute>} />
@@ -351,7 +371,9 @@ function AppRoutes() {
       <Route
         element={
           <ProtectedRoute>
-            <AppShell />
+            <MemberOnlyRedirect>
+              <AppShell />
+            </MemberOnlyRedirect>
           </ProtectedRoute>
         }
       >
