@@ -2,27 +2,28 @@
 
 Guia operacional para o Claude Code quando trabalhar neste repositório.
 
-## ⚠️ AVISO PRO MATHEUS · pendencias da sessao de ontem (2026-05-18)
+## ⚠️ Pendencias de 2026-05-18 · estado atualizado 2026-05-19
 
-Marcos pediu pra deixar registrado aqui · ele esta em outra frente hoje
-(Solicitacoes/NPS) e nao quer perder contexto. Voce precisa fechar:
+Houve troca de frentes em 2026-05-19. Matheus migrou pra modulo
+**Devocionais** (ver secao propria abaixo). Permissoes PR2 ficou com
+o Marcos · YouTube OAuth fica em validacao manual.
 
-### 1. Permissoes · PR 2/2 (UI admin)
-PR #464 ja entregou schema/seeds/middleware/endpoints. **Falta o PR 2**:
+### 1. Permissoes · PR 2/2 (UI admin) · MARCOS toca
+PR #464 ja entregou schema/seeds/middleware/endpoints. Falta a UI:
 - UI em `/admin/permissoes` pra editar a matriz cargo × modulo e overrides
   (consome `/api/permissoes/matriz`, `/matriz/celula`, `/cargo/:id`)
 - UI em `/admin/usuarios` pra gerenciar cargo + areas por pessoa
   (consome `/api/permissoes/usuario/:id`, `/usuario/:id/cargo`,
-  `/usuario/:id/modulo`)
+  `/usuario/:id/areas`, `/usuario/:id/modulo`)
 - Migrar `ModuleGuard` keys do front pra ler slugs novos diretamente
   (`canRH`, `canFinanceiro` etc viram aliases temporarios)
 
-Endpoints ja estao prontos · so falta tela. Detalhes do PR 1 estao no
-body do PR #464.
+Endpoints completos em `backend/routes/permissoes.js` (linhas 15-298).
+Detalhes do PR 1 no body do PR #464.
 
-### 2. Permissoes · 6 itens nao decididos da reuniao
-Marcar/decidir antes de promover a UI de admin (estao na secao
-"Permissoes · matriz cargo x modulo > Itens pendentes da reuniao"):
+### 2. Permissoes · 6 itens da reuniao (decisao pendente)
+Defaults ficam na matriz seedada · UI permite editar quando precisar.
+Decisao final pode esperar a UI estar pronta:
 1. Assistente do Online (ninguem atribuido)
 2. Estrutura do Marketing (lideres de subarea ou todos assistentes?)
 3. Cargo do Chico (provisorio `assistente-financeiro`, confirmar com Ju do RH)
@@ -31,20 +32,13 @@ Marcar/decidir antes de promover a UI de admin (estao na secao
 6. Inconsistencia `coordenador-financeiro × Financeiro`: planilha "4",
    resumo "4 + A + E" · segui a planilha
 
-### 3. YouTube · validar deploy do PR #424 em producao
-PRs #424, #461 e #468 mergeados ontem. Os crons do GitHub Actions
-(`online-live-monitor`) estao rodando verde · mas os jobs so produzem
-dado se o admin tiver clicado "Conectar canal" em `/ministerial/online`
-uma vez. Voce precisa validar com Marcos:
-- [ ] Migration `20260514210000_online_oauth_tokens.sql` aplicada no
-      Supabase de prod?
-- [ ] Envs `GOOGLE_OAUTH_CLIENT_ID` / `GOOGLE_OAUTH_CLIENT_SECRET`
-      configuradas no Vercel?
-- [ ] Admin ja clicou "Conectar canal" via `/ministerial/online`? Sem isso,
-      `online_oauth_tokens` fica vazio e os 3 jobs (live-monitor, ds, ddus)
-      skipam silenciosos.
-
-Confirmar via `GET /api/online/oauth/status` antes de declarar fechado.
+### 3. YouTube · validacao em prod (acao do Marcos · manual)
+PRs #424, #461 e #468 mergeados em 2026-05-18. Live-monitor cron rodando
+verde. Pendente checar:
+- [ ] Migration `20260514210000_online_oauth_tokens.sql` aplicada?
+- [ ] Envs `GOOGLE_OAUTH_CLIENT_ID` / `GOOGLE_OAUTH_CLIENT_SECRET` no Vercel?
+- [ ] Admin clicou "Conectar canal" em `/ministerial/online`?
+Confirmar via `GET /api/online/oauth/status`.
 
 ### Untracked locais (decidir)
 Marcos tem no working dir dele (nao commitou ainda):
@@ -83,6 +77,222 @@ Destrava os **11 KPIs ADM-*-Q** (Gestao + Criativo NPS) que dependiam de
 de `20260512140000_kpis_adm_operacionais.sql` faz
 `avg(nps_nota) FROM vw_solicitacoes_sla`). Trigger SQL
 `tg_solicitacoes_recalc_kpis` recalcula automaticamente no UPDATE.
+
+---
+
+
+## Modulo Devocionais (Matheus · novo · 2026-05-19)
+
+Matheus esta iniciando o modulo de Devocionais. Marcos pesquisou alternativas
+com Claude antes da escolha e bateu o martelo em **API.Bible + logica
+propria no CBRio**. Toda a pesquisa esta consolidada aqui pra Matheus pegar
+sem refazer o caminho.
+
+### Contexto da decisao (NAO refazer essa pesquisa)
+
+**1. Por que NAO usar YouVersion como backend de dados**
+- API publica do YouVersion = so conteudo biblico (`X-YVP-App-Key`) + OAuth
+  login que retorna **apenas perfil**, nao progresso de plano
+- Libs github (tushortz/Glowstudent) com `plan_progress()`/`plan_completions()`
+  sao **scraping nao-oficial · violam ToS · frageis**
+- **YouVersion Connect** (dashboard de igrejas): so agregado, delay de 3 dias,
+  sem API, sem export, sem per-member. Nao da pra cruzar com `profiles.id`
+- Outros apps (Glorify, Lectio 365, Pray.com, Olive Tree, Logos, Bible.is):
+  nenhum expoe progresso por usuario a terceiros
+- Conclusao: gap #3 da jornada (devocional) precisa de modulo proprio
+
+**2. Por que API.Bible foi escolhida**
+- Desacopla "conteudo biblico" (commodity, API.Bible resolve com licenca
+  oficial DBL) de "jornada + engajamento" (diferencial CBRio)
+- Login + dado no CBRio · leitura in-app puxando versos da API.Bible
+- Marcos JA tem conta API.Bible (Matheus tambem) · app key em
+  `API_BIBLE_KEY` no env
+
+**3. Traducoes selecionadas (Starter plan = 3 licenciadas + open access)**
+- **ARA, NAA, NTLH** (todas SBB, entram via DBL · cabem nas 3 slots Starter)
+- **NVT** fica como roadmap pra upgrade Pro (Tyndale/Mundo Cristao,
+  disponibilidade incerta no Starter)
+- ~~NVI~~ descartada (licenca restrita)
+- **Default sugerida: NAA** (linguagem contemporanea + fidelidade)
+
+**4. Rate limits**
+- Starter: 5k req/dia · Pro: 150k req/mes
+- Estimativa CBRio (1000 pessoas × 1 passagem/dia × cache 30d) ≈ 330 req/dia
+  · folga grande
+- Logica de monitoring obrigatoria pra detectar quando virar Pro (Marcos
+  ja autorizou pagar upgrade quando justificar)
+
+### Arquitetura definida
+
+| Camada | Decisao |
+|---|---|
+| Conteudo biblico | apenas `referencia_biblica` no banco · texto e FETCH via API.Bible |
+| Devocional (intro/reflexao/pergunta) | markdown no banco em `devocionais_dias` |
+| Cache | `devocionais_passagem_cache` (TTL 30d · texto biblico nao muda) + SW + IndexedDB |
+| Provider | abstracao `BibleProvider` (services/) pra trocar fonte sem rewrite |
+| Auth do membro | Supabase Auth padrao (localStorage persiste · `persistSession: true` explicito) |
+| Webapp mobile | `/devocionais/*` fora do AppShell (estilo `/public/*` existente) |
+| Admin | nova aba em `Cuidados.tsx` · gate `canCuidados` |
+| Recomendacao | keya em "Investir Tempo com Deus" (1 dos 5 valores da jornada calculada em `/api/jornada/membros`) |
+
+### Banco · tabelas a criar
+
+```
+devocionais_planos (id, titulo, descricao, dias_total, ativo,
+                    created_by profiles.id UUID, ordem)
+
+devocionais_dias (plano_id, dia_numero, titulo, referencia_biblica,
+                  intro_markdown, reflexao_markdown, pergunta, audio_url?)
+
+devocionais_checkin (id, user_id profiles.id, plano_id, dia_numero,
+                     completed_at, fonte enum 'webapp|admin|import',
+                     observacao?)
+  UNIQUE (user_id, plano_id, dia_numero)
+
+devocionais_traducoes (id, codigo 'ntlh|naa|ara|nvt', nome,
+                       bible_id_externo, ativa bool, ordem,
+                       plano_minimo 'starter|pro')
+  seed: ARA/NAA/NTLH ativa=true · NVT ativa=false plano_minimo=pro
+
+devocionais_passagem_cache (referencia, traducao_id, conteudo_jsonb,
+                            html, copyright, fetched_at, expires_at)
+  UNIQUE (referencia, traducao_id) · TTL 30 dias
+
+devocionais_uso_api (data, traducao_id, requests, cache_hits, errors)
+  agregacao diaria pro dashboard de monitoring
+
+vw_devocional_status_membro (ultimo_checkin, streak, plano_em_curso,
+                              dias_ultimos_30)
+```
+
+RLS: membro le/escreve so os proprios `devocionais_checkin` · admin
+(`canCuidados`) le todos.
+
+Atualizar calculo de "Investir Tempo com Deus" em `/api/jornada/membros`
+pra ler `vw_devocional_status_membro` (regra: >=X check-ins/30d · X a
+definir com Marcos).
+
+### Backend · endpoints novos
+
+```
+GET  /api/devocionais/planos                         · lista ativos
+GET  /api/devocionais/planos/:id/dias                · conteudo do plano
+GET  /api/devocionais/me/recomendado                 · plano sugerido pela jornada
+GET  /api/devocionais/me/historico                   · checkins do proprio user
+POST /api/devocionais/checkin                        · {plano_id, dia_numero}
+GET  /api/devocionais/traducoes                      · so ativa=true
+GET  /api/devocionais/passagem?ref=Sl+1&traducao=ntlh
+     1. lookup cache (TTL 30d)
+     2. miss · chama API.Bible · grava cache · incrementa uso_api
+     3. retorna {referencia, traducao, html, copyright}
+
+GET  /api/admin/devocionais/membros                  · gated canCuidados
+GET  /api/admin/devocionais/uso-api                  · agregacao 30d + projecao
+POST|PUT|DELETE /api/admin/devocionais/planos        · CRUD planos/dias
+```
+
+**Alert silencioso de upgrade**: se `requests_dia > 0.7 * 5000` por 3
+dias seguidos, criar notificacao admin pro Marcos (NAO quebrar · so
+avisa).
+
+**Graceful degradation**: se API.Bible cair · servir cache mesmo expirado
++ banner "leitura offline".
+
+### Logica de recomendacao
+
+```
+recomendarPlano(userId):
+  - novo (<90d desde cui_jornada180.data_encontro OU sem trilha)
+    → plano "Primeiros Passos"
+  - sem checkins ultimos 14d
+    → plano "Reiniciando o Habito" (7 dias)
+  - ativo
+    → continua plano em curso ou sugere proximo da trilha
+```
+
+Documentar em `docs/modulo-devocionais.md` (espelho do
+`docs/modulo-grupos-supervisao.md`).
+
+### Webapp mobile (`/devocionais/*`)
+
+- Rota fora do AppShell em `App.tsx` (estilo `/public/cadastro-membresia`)
+- `manifest-devocionais.json` clonando padrao `manifest-membresia.json`
+  (instalavel iOS/Android)
+- Service worker · cache do dia atual offline (network-first + fallback)
+- IndexedDB · pre-fetch passagem do dia + proximos 2 dias do plano em
+  curso (economiza API hits + funciona offline)
+- Telas:
+  - `/devocionais/login` · magic link OU OAuth (Google/Microsoft ja
+    configurados)
+  - `/devocionais` (home) · card "Recomendado pra voce" + lista
+    "Explorar outros planos" + "Continuar lendo"
+  - `/devocionais/plano/:id/dia/:n` · leitor (intro → **passagem HTML
+    da API.Bible** → reflexao → pergunta) + botao "Fiz hoje" → POST
+    checkin + feedback de streak
+  - `/devocionais/historico` · streak + calendario
+- **Seletor de traducao** sutil no header do leitor (chip "NAA ▾")
+- Preferencia salva em `profiles.devocional_traducao_preferida` (FK pra
+  `devocionais_traducoes`)
+- Rodape com **copyright dinamico** vindo da API.Bible (exigencia SBB/Tyndale)
+- Bottom nav fixa (Home / Historico / Perfil)
+- Garantir `persistSession: true, autoRefreshToken: true` no client
+  Supabase da webapp · refresh token Supabase = 1 ano (Marcos quer "nao
+  ter que ficar logando sempre")
+- **iOS PWA quirk**: testar localStorage em standalone mode (Safari tem
+  particularidades)
+
+### Admin · nova aba em `Cuidados.tsx`
+
+Adicionar `<TabsTrigger>` "Devocionais" no padrao shadcn ja existente
+(arquivo: `src/pages/ministerial/Cuidados.tsx` · gate
+`canCuidados`).
+
+Subaba **"Membros"**:
+- tabela: nome, ultimo checkin, streak, plano atual, status
+  (ativo/inativo/sem plano)
+- filtros: por area (usar `usuario_areas`, NAO `profile.area` ·
+  profile.area = SETOR, nao area)
+- responsaveis via UUID (`profiles.id`), nunca texto livre
+- drawer de detalhe do membro com historico de checkins
+
+Subaba **"Planos"**:
+- CRUD planos e dias
+- editor markdown pra intro/reflexao/pergunta
+- campo `referencia_biblica` valida formato canonico ("Sl 1",
+  "Jo 3.16-21")
+
+Subaba **"KPI"**:
+- adesao semanal · streak medio · % ativos · reaproveitar componentes
+  KPI existentes
+
+Subaba **"Uso da API"**:
+- grafico linha requests/dia ultimos 30d com linha de limite (5k)
+- card cache hit rate (%) · quanto melhor, mais longe do upgrade
+- card projecao mensal vs. Pro (150k req/mes)
+- botao "Marcar upgrade Pro feito" · libera NVT (atualiza flag
+  `plano_minimo`)
+
+Subaba **"Traducoes"**:
+- toggle on/off · reordenar · marcar default
+
+### Decisoes ainda pendentes (Matheus precisa fechar com Marcos)
+
+1. **Conteudo devocional** · quem escreve os planos "Primeiros Passos" e
+   "Reiniciando o Habito"? (Marcos ou pastoral?)
+2. **Plano unico oficial** ou multiplos paralelos? (afeta UI da home)
+3. **Traducao default** · NAA, NTLH ou ARA? (recomendacao da pesquisa: NAA)
+4. **Push/lembrete diario** · PWA push, WhatsApp via N8N, ou nada na v1?
+5. **Regra exata de "Investir Tempo com Deus"** · quantos checkins/30d
+   contam como ativo? (3? 5? 10?)
+6. **Licenca API.Bible Starter** · formalmente "non-commercial use" ·
+   confirmar com API.Bible que uso interno da igreja CBRio cobre
+
+### Fechamento
+
+- Testes Playwright · fluxo membro login → recomendado → checkin → admin ve
+- Branch sugerida: `matheus-devocionais`
+- Quando mergear · atualizar `[[project_jornada_gaps]]` removendo o gap #3
+- Atualizar CLAUDE.md a cada commit (feedback persistente do Marcos)
 
 ---
 
