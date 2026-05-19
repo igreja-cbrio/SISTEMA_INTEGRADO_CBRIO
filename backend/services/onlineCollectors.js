@@ -273,4 +273,54 @@ async function traficoCollector() {
   return { ok: true, processados: cultos.length, resultados };
 }
 
-module.exports = { liveMonitor, dsCollector, ddusCollector, subsCollector, traficoCollector };
+// ---------------------------------------------------------------------------
+// retencaoCurvaCollector · D+7 · curva de retencao por video (~100 pts).
+// Upsert por (video_id, ratio_pct).
+// ---------------------------------------------------------------------------
+async function retencaoCurvaCollector() {
+  const setedias = fmtData(dataMaisDias(new Date(), -7));
+  const { data: cultos } = await supabase
+    .from('cultos')
+    .select('id, data, youtube_video_id')
+    .eq('data', setedias)
+    .not('youtube_video_id', 'is', null);
+
+  if (!cultos?.length) return { ok: true, processados: 0, motivo: 'sem_cultos_d7_com_video' };
+
+  const resultados = [];
+  for (const c of cultos) {
+    try {
+      const inicio = c.data;
+      const fim    = fmtData(dataMaisDias(new Date(c.data + 'T00:00:00'), 7));
+      const curva = await yt.fetchVideoRetentionCurve(null, c.youtube_video_id, inicio, fim);
+      if (!curva.length) {
+        resultados.push({ culto_id: c.id, video_id: c.youtube_video_id, pontos: 0 });
+        continue;
+      }
+      const rows = curva.map(p => ({
+        video_id: c.youtube_video_id,
+        ratio_pct: p.ratio_pct,
+        audience_watch_ratio: p.audience_watch_ratio,
+        periodo_inicio: inicio,
+        periodo_fim: fim,
+        collected_at: new Date().toISOString(),
+      }));
+      const { error } = await supabase
+        .from('online_video_retencao_curva')
+        .upsert(rows, { onConflict: 'video_id,ratio_pct' });
+      if (error) throw error;
+      resultados.push({
+        culto_id: c.id,
+        video_id: c.youtube_video_id,
+        pontos: curva.length,
+        primeira: curva[0]?.audience_watch_ratio,
+        ultima: curva[curva.length - 1]?.audience_watch_ratio,
+      });
+    } catch (e) {
+      resultados.push({ culto_id: c.id, error: e.message });
+    }
+  }
+  return { ok: true, processados: cultos.length, resultados };
+}
+
+module.exports = { liveMonitor, dsCollector, ddusCollector, subsCollector, traficoCollector, retencaoCurvaCollector };

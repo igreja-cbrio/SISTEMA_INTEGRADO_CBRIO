@@ -301,6 +301,36 @@ async function fetchVideoTrafficSources(channelId, videoId, startDate, endDate) 
   }));
 }
 
+// Analytics: curva de retencao segundo-a-segundo.
+// dimension `elapsedVideoTimeRatio` retorna ~100 linhas (0.00..1.00 em 0.01).
+// metric `audienceWatchRatio` = % dos viewers ainda assistindo no ponto.
+// Retorna [{ ratio_pct (0..100), audience_watch_ratio (0..1+) }, ...].
+async function fetchVideoRetentionCurve(channelId, videoId, startDate, endDate) {
+  const { token } = await getValidAccessToken(channelId);
+  const params = new URLSearchParams({
+    ids: 'channel==MINE',
+    startDate,
+    endDate,
+    metrics: 'audienceWatchRatio',
+    dimensions: 'elapsedVideoTimeRatio',
+    filters: `video==${videoId}`,
+    maxResults: '101',
+  });
+  const res = await fetch(`${ANALYTICS}/reports?${params}`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!res.ok) {
+    const t = await res.text();
+    throw new Error(`Analytics retencao curva falhou: ${res.status} ${t.slice(0, 200)}`);
+  }
+  const data = await res.json();
+  // data.rows = [[ratio (0..1), audience_watch_ratio], ...]
+  return (data.rows || []).map(row => ({
+    ratio_pct: Math.round((row[0] || 0) * 100),
+    audience_watch_ratio: Number((row[1] || 0).toFixed(4)),
+  }));
+}
+
 module.exports = {
   SCOPES,
   getAuthUrl,
@@ -313,4 +343,5 @@ module.exports = {
   fetchVideoViews,
   fetchVideoSubsChange,
   fetchVideoTrafficSources,
+  fetchVideoRetentionCurve,
 };
