@@ -210,6 +210,7 @@ const VolSelfCheckin = lazyWithRetry(() => import('./pages/ministerial/voluntari
 const PcCallback = lazyWithRetry(() => import('./pages/auth/PcCallback'));
 const SpotifyCallback = lazyWithRetry(() => import('./pages/auth/SpotifyCallback'));
 const Cuidados = lazyWithRetry(() => import('./pages/ministerial/Cuidados'));
+const Devocionais = lazyWithRetry(() => import('./pages/ministerial/Devocionais'));
 const Integracao = lazyWithRetry(() => import('./pages/ministerial/Integracao'));
 const Next = lazyWithRetry(() => import('./pages/ministerial/Next'));
 // Jornada virou aba dentro de Membresia (componente MembersJornadaPanel).
@@ -382,6 +383,7 @@ function AppRoutes() {
         <Route path="/grupos/supervisao" element={<Suspense fallback={<Loading />}><GruposSupervisao /></Suspense>} />
         <Route path="/grupos/pedidos" element={<Suspense fallback={<Loading />}><PedidosGrupo /></Suspense>} />
         <Route path="/ministerial/cuidados" element={<ModuleGuard permKey="canCuidados"><Suspense fallback={<Loading />}><Cuidados /></Suspense></ModuleGuard>} />
+        <Route path="/ministerial/devocional" element={<Suspense fallback={<Loading />}><Devocionais /></Suspense>} />
         <Route path="/ministerial/jornada" element={<Navigate to="/ministerial/membresia" replace />} />
         <Route path="/ministerial/integracao" element={<ModuleGuard permKey="canMembresia"><Suspense fallback={<Loading />}><Integracao /></Suspense></ModuleGuard>} />
         <Route path="/ministerial/online" element={<ModuleGuard permKey="canMembresia"><Suspense fallback={<Loading />}><Online /></Suspense></ModuleGuard>} />

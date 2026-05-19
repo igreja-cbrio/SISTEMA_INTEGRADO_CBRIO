@@ -1317,6 +1317,14 @@ export const devocionais = {
   remove: (id) => del(`/devocionais/${id}`),
 };
 
+// Biblia - proxy para api.bible
+export const bible = {
+  bibles: (language) => get('/bible/bibles' + (language ? '?language=' + encodeURIComponent(language) : '')),
+  books: (bibleId) => get(`/bible/bibles/${bibleId}/books`),
+  chapters: (bibleId, bookId) => get(`/bible/bibles/${bibleId}/books/${bookId}/chapters`),
+  chapter: (bibleId, chapterId) => get(`/bible/bibles/${bibleId}/chapters/${chapterId}`),
+};
+
 // Pessoas - lookup unificado (Membresia como fonte unica)
 export const pessoas = {
   lookup: ({ cpf, email, telefone } = {}) => {
