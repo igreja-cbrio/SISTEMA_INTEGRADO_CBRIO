@@ -179,4 +179,54 @@ async function ddusCollector() {
   return { ok: true, processados: cultos.length, resultados };
 }
 
-module.exports = { liveMonitor, dsCollector, ddusCollector };
+// ---------------------------------------------------------------------------
+// traficoCollector · D+7 · fontes de trafego por video (search/suggested/etc)
+// Upsert N rows por video em `online_video_trafico` (1 por fonte).
+// ---------------------------------------------------------------------------
+async function traficoCollector() {
+  const setedias = fmtData(dataMaisDias(new Date(), -7));
+  const { data: cultos } = await supabase
+    .from('cultos')
+    .select('id, data, youtube_video_id')
+    .eq('data', setedias)
+    .not('youtube_video_id', 'is', null);
+
+  if (!cultos?.length) return { ok: true, processados: 0, motivo: 'sem_cultos_d7_com_video' };
+
+  const resultados = [];
+  for (const c of cultos) {
+    try {
+      const inicio = c.data;
+      const fim    = fmtData(dataMaisDias(new Date(c.data + 'T00:00:00'), 7));
+      const fontes = await yt.fetchVideoTrafficSources(null, c.youtube_video_id, inicio, fim);
+      if (!fontes.length) {
+        resultados.push({ culto_id: c.id, video_id: c.youtube_video_id, fontes: 0 });
+        continue;
+      }
+      const rows = fontes.map(f => ({
+        video_id: c.youtube_video_id,
+        fonte: f.fonte,
+        views: f.views,
+        watch_minutes: f.watch_minutes,
+        periodo_inicio: inicio,
+        periodo_fim: fim,
+        collected_at: new Date().toISOString(),
+      }));
+      const { error } = await supabase
+        .from('online_video_trafico')
+        .upsert(rows, { onConflict: 'video_id,fonte' });
+      if (error) throw error;
+      resultados.push({
+        culto_id: c.id,
+        video_id: c.youtube_video_id,
+        fontes: fontes.length,
+        top: fontes.slice(0, 3).map(f => `${f.fonte}:${f.views}`).join(', '),
+      });
+    } catch (e) {
+      resultados.push({ culto_id: c.id, error: e.message });
+    }
+  }
+  return { ok: true, processados: cultos.length, resultados };
+}
+
+module.exports = { liveMonitor, dsCollector, ddusCollector, traficoCollector };

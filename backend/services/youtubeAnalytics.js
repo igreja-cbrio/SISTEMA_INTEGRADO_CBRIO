@@ -248,6 +248,35 @@ async function fetchVideoViews(channelId, videoId, startDate, endDate) {
   };
 }
 
+// Analytics: views/watchMinutes por fonte de trafego em uma janela.
+// Retorna [{ fonte, views, watch_minutes }] · uma linha por insightTrafficSourceType.
+async function fetchVideoTrafficSources(channelId, videoId, startDate, endDate) {
+  const { token } = await getValidAccessToken(channelId);
+  const params = new URLSearchParams({
+    ids: 'channel==MINE',
+    startDate,
+    endDate,
+    metrics: 'views,estimatedMinutesWatched',
+    dimensions: 'insightTrafficSourceType',
+    filters: `video==${videoId}`,
+    maxResults: '25',
+  });
+  const res = await fetch(`${ANALYTICS}/reports?${params}`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!res.ok) {
+    const t = await res.text();
+    throw new Error(`Analytics trafego falhou: ${res.status} ${t.slice(0, 200)}`);
+  }
+  const data = await res.json();
+  // data.rows = [[fonte, views, watchMinutes], ...]
+  return (data.rows || []).map(row => ({
+    fonte: row[0] || 'UNKNOWN',
+    views: row[1] || 0,
+    watch_minutes: Math.round(row[2] || 0),
+  }));
+}
+
 module.exports = {
   SCOPES,
   getAuthUrl,
@@ -258,4 +287,5 @@ module.exports = {
   findActiveBroadcast,
   fetchLiveConcurrentViewers,
   fetchVideoViews,
+  fetchVideoTrafficSources,
 };
