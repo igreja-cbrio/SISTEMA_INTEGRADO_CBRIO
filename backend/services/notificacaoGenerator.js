@@ -18,6 +18,7 @@ async function gerarTodasNotificacoes() {
     total += await gerarNotificacoesCuidados();
     total += await gerarNotificacoesGrupos();
     total += await gerarNotificacoesRitual();
+    total += await gerarNotificacoesSolicitacoes();
     console.log(`[Notificações] ${total} notificação(ões) gerada(s).`);
   } catch (e) {
     console.error('[Notificações] Erro:', e.message);
@@ -701,6 +702,43 @@ async function gerarNotificacoesRitual() {
         });
       }
     }
+  }
+
+  return count;
+}
+
+// ═══════════════════════════════════════════════════════════
+// SOLICITAÇÕES · lembrete de avaliação NPS pós-conclusão
+// Solicitacao concluida ha >=24h e <=14d sem nps_nota · pede avaliacao.
+// Sem isso os KPIs ADM-*-Q (NPS Gestao+Criativo · 11 KPIs) ficam zerados.
+// ═══════════════════════════════════════════════════════════
+async function gerarNotificacoesSolicitacoes() {
+  let count = 0;
+  const agora = new Date();
+  const ha24h = new Date(agora.getTime() - 24 * 3600 * 1000).toISOString();
+  const ha14d = new Date(agora.getTime() - 14 * 86400 * 1000).toISOString();
+
+  const { data: concluidas } = await supabase
+    .from('solicitacoes')
+    .select('id, titulo, solicitante_id, concluido_em, categoria')
+    .eq('status', 'concluido')
+    .is('nps_nota', null)
+    .not('solicitante_id', 'is', null)
+    .gte('concluido_em', ha14d)
+    .lte('concluido_em', ha24h);
+
+  for (const s of concluidas || []) {
+    // Lembrete unico por solicitacao · se ignorar, o badge "Avalie" na tela cobre o resto
+    count += await notificar({
+      modulo: 'administrativo',
+      tipo: 'solicitacao_avaliar_lembrete',
+      titulo: `Lembrete: avalie "${s.titulo}"`,
+      mensagem: 'Sua solicitacao foi concluida · 30 segundos pra avaliar ajudam o time a melhorar.',
+      link: '/solicitacoes',
+      severidade: 'info',
+      chaveDedup: `solic_avaliar_${s.id}`,
+      targetIds: [s.solicitante_id],
+    });
   }
 
   return count;
