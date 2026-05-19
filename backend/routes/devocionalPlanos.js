@@ -285,6 +285,41 @@ Retorne APENAS um JSON array (sem markdown, sem texto fora do JSON) com ${diasAl
 // ─────────────────────────────────────────────────────────────
 // PUT /api/devocional-planos/itens/:id — editar item
 // ─────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────
+// POST /api/devocional-planos/:id/itens — criar item manualmente
+// body: { data, titulo, passagem?, reflexao, aplicacao?, oracao? }
+// ─────────────────────────────────────────────────────────────
+router.post('/:id/itens', authorize('admin', 'diretor'), async (req, res) => {
+  try {
+    const { data, titulo, passagem, reflexao, aplicacao, oracao } = req.body || {};
+    if (!data || !titulo || !reflexao) {
+      return res.status(400).json({ error: 'data, titulo e reflexao sao obrigatorios' });
+    }
+    const { data: novo, error } = await supabase
+      .from('devocional_itens')
+      .insert({
+        plano_id: req.params.id,
+        data,
+        titulo,
+        passagem: passagem || null,
+        reflexao,
+        aplicacao: aplicacao || null,
+        oracao: oracao || null,
+        gerado_por_ia: false,
+      })
+      .select()
+      .single();
+    if (error) {
+      if (error.code === '23505') return res.status(409).json({ error: 'Ja existe item pra essa data' });
+      throw error;
+    }
+    res.status(201).json(novo);
+  } catch (e) {
+    console.error('devocional-itens create:', e.message);
+    res.status(500).json({ error: 'Erro ao criar item' });
+  }
+});
+
 router.put('/itens/:id', authorize('admin', 'diretor'), async (req, res) => {
   try {
     const patch = {};
