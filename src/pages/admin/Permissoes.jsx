@@ -7,7 +7,6 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '../../components/ui/select';
 import { Checkbox } from '../../components/ui/checkbox';
-import { ScrollArea } from '../../components/ui/scroll-area';
 import { Shield, RefreshCw, Search } from 'lucide-react';
 import { Input } from '../../components/ui/input';
 import { toast } from 'sonner';
@@ -208,9 +207,8 @@ export default function Permissoes() {
           Escolha um cargo acima para editar a matriz.
         </Card>
       ) : (
-        <ScrollArea className="max-h-[60vh]">
-          <div className="space-y-6 pr-2">
-            {Object.entries(modulosPorCategoria).map(([cat, mods]) => (
+        <div className="space-y-6">
+          {Object.entries(modulosPorCategoria).map(([cat, mods]) => (
               <div key={cat}>
                 <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide mb-2">
                   {CATEGORIA_LABELS[cat] || cat}
@@ -286,13 +284,12 @@ export default function Permissoes() {
                 </Card>
               </div>
             ))}
-            {modulosFiltrados.length === 0 && (
-              <Card className="p-6 text-center text-sm text-muted-foreground">
-                Nenhum módulo bate com o filtro.
-              </Card>
-            )}
-          </div>
-        </ScrollArea>
+          {modulosFiltrados.length === 0 && (
+            <Card className="p-6 text-center text-sm text-muted-foreground">
+              Nenhum módulo bate com o filtro.
+            </Card>
+          )}
+        </div>
       )}
     </div>
   );
