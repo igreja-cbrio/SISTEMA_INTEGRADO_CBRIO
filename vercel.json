@@ -50,6 +50,10 @@
       "schedule": "30 10 * * *"
     },
     {
+      "path": "/api/online/cron/trafego-collect",
+      "schedule": "30 11 * * *"
+    },
+    {
       "path": "/api/devocional-planos/cron/enviar-diario",
       "schedule": "0 9 * * *"
     }
