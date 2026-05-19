@@ -54,6 +54,29 @@ Migration `20260519140000_recalcular_adm_criativo.sql` chama
 ainda, valores ficam NULL · mas a linha existe em
 `kpi_valores_calculados` e o painel para de mostrar lacuna estranha.
 
+### Permissoes UI · matriz cargo × modulo (2026-05-19)
+PR 2/2 da reuniao de permissoes (parcial · so matriz, falta tela de
+usuarios). Tela em `/admin/permissoes` (arquivo
+`src/pages/admin/Permissoes.jsx`):
+
+- Filtros: cargo (select de 25) + busca por modulo
+- Lista vertical de modulos agrupados por categoria (Estrategica /
+  Ministerial / Operacional / Dados-IA-Admin)
+- Cada linha: select de nivel 0-5 + checkboxes E (exportar) / A
+  (aprovar) / * (escopo proprio)
+- Salva por celula (UPSERT em `cargo_modulo_permissao` via
+  `PUT /api/permissoes/matriz/celula`) · cache do middleware invalida
+  automatico via `bustPermissionCaches()`
+- Acesso restrito a `isAdmin` (entrada no menu Administrativo >
+  Configuracoes)
+- Rotas legacy `/permissoes` e `/admin/kpi-areas` redirecionam pra
+  `/admin/permissoes`
+
+**Falta pra fechar a PR2 inteira:**
+- `/admin/usuarios` · UI pra trocar cargo + areas + overrides
+- Migrar `ModuleGuard` keys do front pra slugs novos (canRH, etc viram
+  aliases temporarios)
+
 ### NPS pos-conclusao 2026-05-19 · ataque ao gap dos 11 ADM-*-Q
 A UI de avaliacao NPS pos-conclusao ja existia em `Solicitacoes.jsx`
 (componente `NpsBlock` dentro do `DetailDialog`), mas era descoberta

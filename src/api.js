@@ -620,12 +620,16 @@ export const notificacoes = {
 export const permissoes = {
   estrutura: () => get('/permissoes/estrutura'),
   colaboradores: () => get('/permissoes/colaboradores'),
+  matriz: () => get('/permissoes/matriz'),
+  setCelula: (data) => put('/permissoes/matriz/celula', data),
+  cargo: (id) => get(`/permissoes/cargo/${id}`),
   usuario: (id) => get(`/permissoes/usuario/${id}`),
   usuarioPorEmail: (email) => get(`/permissoes/usuario-por-email/${encodeURIComponent(email)}`),
   criarUsuario: (data) => post('/permissoes/usuario', data),
   setCargo: (id, cargo_id) => put(`/permissoes/usuario/${id}/cargo`, { cargo_id }),
   setAreas: (id, area_ids) => put(`/permissoes/usuario/${id}/areas`, { area_ids }),
   setModulo: (id, data) => put(`/permissoes/usuario/${id}/modulo`, data),
+  removerOverride: (id, moduloId) => del(`/permissoes/usuario/${id}/modulo/${moduloId}`),
 };
 
 export const solicitacoes = {
