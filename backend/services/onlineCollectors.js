@@ -180,6 +180,50 @@ async function ddusCollector() {
 }
 
 // ---------------------------------------------------------------------------
+// subsCollector · D+7 · inscritos ganhos/perdidos atribuidos a cada culto
+// no periodo D..D+7. Roda apos o ddus pra captar tudo de uma vez.
+// ---------------------------------------------------------------------------
+async function subsCollector() {
+  const setedias = fmtData(dataMaisDias(new Date(), -7));
+  const { data: cultos } = await supabase
+    .from('cultos')
+    .select('id, data, youtube_video_id, online_subs_ganhos')
+    .eq('data', setedias)
+    .not('youtube_video_id', 'is', null);
+
+  if (!cultos?.length) return { ok: true, processados: 0, motivo: 'sem_cultos_d7_com_video' };
+
+  const resultados = [];
+  for (const c of cultos) {
+    if (c.online_subs_ganhos !== null && c.online_subs_ganhos !== undefined) {
+      resultados.push({ culto_id: c.id, skipped: true, reason: 'ja_preenchido' });
+      continue;
+    }
+    try {
+      const inicio = c.data;
+      const fim    = fmtData(dataMaisDias(new Date(c.data + 'T00:00:00'), 7));
+      const stats = await yt.fetchVideoSubsChange(null, c.youtube_video_id, inicio, fim);
+      await supabase.from('cultos')
+        .update({
+          online_subs_ganhos: stats.gained,
+          online_subs_perdidos: stats.lost,
+        })
+        .eq('id', c.id);
+      resultados.push({
+        culto_id: c.id,
+        video_id: c.youtube_video_id,
+        subs_ganhos: stats.gained,
+        subs_perdidos: stats.lost,
+        periodo: `${inicio}..${fim}`,
+      });
+    } catch (e) {
+      resultados.push({ culto_id: c.id, error: e.message });
+    }
+  }
+  return { ok: true, processados: cultos.length, resultados };
+}
+
+// ---------------------------------------------------------------------------
 // traficoCollector · D+7 · fontes de trafego por video (search/suggested/etc)
 // Upsert N rows por video em `online_video_trafico` (1 por fonte).
 // ---------------------------------------------------------------------------
@@ -229,4 +273,4 @@ async function traficoCollector() {
   return { ok: true, processados: cultos.length, resultados };
 }
 
-module.exports = { liveMonitor, dsCollector, ddusCollector, traficoCollector };
+module.exports = { liveMonitor, dsCollector, ddusCollector, subsCollector, traficoCollector };
