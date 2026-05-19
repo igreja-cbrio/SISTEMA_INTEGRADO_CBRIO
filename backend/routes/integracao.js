@@ -255,6 +255,21 @@ router.get('/dashboard', async (req, res) => {
       decisoesMes   += (c.decisoes_presenciais || 0) + (c.decisoes_online || 0);
     }
 
+    // Soma tambem decisoes sem culto vinculado · trilha 'conversao' concluida
+    // que veio de importacao (planilha) e cai no mes corrente.
+    // (Decisoes registradas via cultos_decisoes_pessoas tambem criam trilha,
+    //  mas com observacao 'Decisao registrada no culto' · filtramos por
+    //  observacao ILIKE '%importacao%' pra contar so as historicas/avulsas.)
+    const { count: decisoesImportadasMes } = await supabase
+      .from('mem_trilha_valores')
+      .select('id', { count: 'exact', head: true })
+      .eq('etapa', 'conversao')
+      .eq('concluida', true)
+      .gte('data_conclusao', inicioMes)
+      .lte('data_conclusao', hojeStr)
+      .ilike('observacoes', '%importacao%');
+    decisoesMes += decisoesImportadasMes || 0;
+
     // 3. Batismos aguardando + proxima data
     const { data: batismosAg } = await supabase
       .from('batismo_inscricoes')
