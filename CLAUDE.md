@@ -79,6 +79,32 @@ usuarios). Tela em `/admin/permissoes` (arquivo
   aliases temporarios) · TODO de polish, nao bloqueante · hoje os hooks
   ja lem dos slugs novos via AuthContext
 
+### Ajustes round 2 Alda · cuidados leitura + projetos escopo proprio (2026-05-19)
+Apos PR #492, Marcos refinou mais 2 pontos pra cargo `lider-ministerial`:
+
+**Migration `20260519180000_alda_round2_ajustes.sql`:**
+- cuidados: 3 → 1 (ve sem editar)
+- projetos: 2 → 3 com `escopo_proprio=true` (ve so projetos onde
+  ela e' `leader` ou `responsible`)
+
+**Frontend Cuidados (`Cuidados.tsx`)** · `podeEditarCuidados =
+getAccessLevel(['cuidados']) >= 3` esconde:
+- Botoes "Novo" (Acompanhamento / Encontro Jornada180 / Convertido)
+- Botoes "Concluir" e Trash em cada item
+- Disable nos checkboxes "atendido_apos_culto" e "cadastrado"
+- Disable nos botoes "Salvar" da aba Agregado
+
+**Frontend Projetos (`Projetos.jsx`)** · respeita
+`modulePerms.projetos.escopo_proprio`:
+- Em `loadList`, depois do fetch, filtra `list` por
+  `p.leader === profile.name OR p.responsible === profile.name`
+  (case-insensitive). Cobre TODAS as views (lista, kanban, gantt,
+  timeline) porque ja sai filtrado da fonte.
+- Admin/diretor sempre veem tudo.
+- Limitacao conhecida: campos `leader`/`responsible` sao texto livre
+  hoje (memoria pede UUID, mas migracao ainda nao aconteceu). Se o nome
+  estiver com typo, falha o match. Migracao futura · resolver.
+
 ### Ajustes pos-teste Alda Lorena · cargo lider-ministerial (2026-05-19)
 Marcos testou logado como Alda (lider de Integracao) e mapeou 8
 problemas. Esta PR ajusta de uma vez:
