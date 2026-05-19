@@ -1329,7 +1329,7 @@ function EditarPontuacaoModal({ pontuacao, criterios, graus, onClose, onSaved })
               <ShadSelect value={niveis[c.codigo] ? String(niveis[c.codigo]) : '__none__'}
                 onValueChange={v => setNiveis(prev => ({ ...prev, [c.codigo]: v === '__none__' ? '' : Number(v) }))}>
                 <SelectTrigger><SelectValue placeholder="Selecione o nível" /></SelectTrigger>
-                <SelectContent>
+                <SelectContent className="z-[1100]">
                   <SelectItem value="__none__">Não avaliado</SelectItem>
                   {(c.niveis || []).map(n => (
                     <SelectItem key={n.nivel} value={String(n.nivel)}>
@@ -1352,7 +1352,7 @@ function EditarPontuacaoModal({ pontuacao, criterios, graus, onClose, onSaved })
             <label className="text-xs font-semibold text-muted-foreground uppercase mb-1 block">Grau proposto</label>
             <ShadSelect value={grauPropostoId || '__none__'} onValueChange={v => setGrauPropostoId(v === '__none__' ? '' : v)}>
               <SelectTrigger><SelectValue placeholder="Selecione um grau" /></SelectTrigger>
-              <SelectContent>
+              <SelectContent className="z-[1100]">
                 <SelectItem value="__none__">Sem proposta</SelectItem>
                 {graus.map(g => (
                   <SelectItem key={g.id} value={g.id}>
@@ -1367,7 +1367,7 @@ function EditarPontuacaoModal({ pontuacao, criterios, graus, onClose, onSaved })
             <label className="text-xs font-semibold text-muted-foreground uppercase mb-1 block">Status da proposta</label>
             <ShadSelect value={statusProposta || '__none__'} onValueChange={v => setStatusProposta(v === '__none__' ? '' : v)}>
               <SelectTrigger><SelectValue placeholder="Selecione o status" /></SelectTrigger>
-              <SelectContent>
+              <SelectContent className="z-[1100]">
                 <SelectItem value="__none__">—</SelectItem>
                 <SelectItem value="adequado">Adequado</SelectItem>
                 <SelectItem value="abaixo_minimo">Abaixo do mínimo</SelectItem>
