@@ -44,8 +44,10 @@ mudança incluir qualquer destes itens:
 Sempre que uma PR incluir arquivos em `supabase/migrations/`:
 
 1. Avisar claramente o usuário **antes do merge** que há migration nova.
-2. Fornecer o SQL consolidado para rodar no SQL Editor (ou indicar
-   `supabase db push`).
+2. **Colar o SQL completo da migration direto na conversa** (dentro de um
+   bloco ```sql) para que o usuário possa copiar e rodar no SQL Editor
+   sem precisar abrir o arquivo. NÃO basta apontar o caminho do arquivo —
+   sempre enviar o conteúdo na mensagem.
 3. Aguardar confirmação do usuário de que a migration foi aplicada no
    Supabase de produção antes de mergear — senão o backend em prod
    quebra ao chamar a tabela/coluna.
