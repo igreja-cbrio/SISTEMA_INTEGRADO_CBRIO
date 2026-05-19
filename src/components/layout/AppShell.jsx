@@ -93,7 +93,7 @@ const NAV_ITEMS = [
           { label: 'Online', description: 'Visão do canal YouTube e séries de pregação', icon: Youtube, path: '/ministerial/online', perm: 'canMembresia' },
           { label: 'NEXT', description: 'Porta de entrada — inscrições, check-in e indicações', icon: ArrowRight, path: '/ministerial/next', perm: 'canMembresia' },
           { label: 'Grupos', description: 'Grupos de conexao, pedidos, QR e mapa', icon: UsersRound, path: '/grupos' },
-          { label: 'Cuidados', description: 'Capelania e aconselhamento', icon: Heart, path: '/ministerial/cuidados', perm: 'canCuidados' },
+          { label: 'Cuidados', description: 'Capelania e aconselhamento', icon: Heart, path: '/ministerial/cuidados', module: 'cuidados' },
           { label: 'Voluntariado', description: 'Check-in, escalas e QR codes', icon: HandHelping, path: '/ministerial/voluntariado', perm: 'canMembresia' },
           { label: 'Membresia', description: 'Cadastros, trilha dos valores e Jornada', icon: BookOpen, path: '/ministerial/membresia', perm: 'canMembresia' },
         ],
