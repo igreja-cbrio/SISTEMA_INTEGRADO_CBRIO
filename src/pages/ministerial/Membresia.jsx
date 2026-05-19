@@ -2056,36 +2056,99 @@ export default function Membresia() {
                       // Auto-detection from real system data
                       const auto = (() => {
                         const m = selectedMembro;
+                        const fmt = (d) => d ? new Date(d).toLocaleDateString('pt-BR') : null;
                         switch (etapa.key) {
                           case 'primeiro_contato': {
                             if (m.created_at) {
-                              const data = new Date(m.created_at).toLocaleDateString('pt-BR');
-                              return { detected: true, detail: `Cadastrado em ${data}` };
+                              return { detected: true, detail: `Cadastrado em ${fmt(m.created_at)}` };
+                            }
+                            return null;
+                          }
+                          case 'conversao': {
+                            // 1. Trilha explicita (vinda da planilha importada OU registrada)
+                            const t = m.trilha?.find(x => x.etapa === 'conversao' && x.concluida);
+                            if (t) {
+                              const obs = t.observacoes || '';
+                              const isImportado = obs.toLowerCase().includes('importacao')
+                                || obs.toLowerCase().includes('planilha');
+                              const isCulto = obs.toLowerCase().includes('culto');
+                              const fonte = isImportado
+                                ? 'historico importado'
+                                : isCulto
+                                  ? 'decisao em culto'
+                                  : 'registrado';
+                              return {
+                                detected: true,
+                                detail: `Convertido(a) em ${fmt(t.data_conclusao)} · ${fonte}`,
+                              };
+                            }
+                            // 2. Fallback · decisao registrada em culto (cultos_decisoes_pessoas)
+                            if (m.decisoes_culto?.length > 0) {
+                              const d = m.decisoes_culto[0];
+                              const cultoLabel = d.culto?.service_type?.name || 'culto';
+                              return {
+                                detected: true,
+                                detail: `Decisao em ${cultoLabel} em ${fmt(d.culto?.data || d.registrado_em)}`,
+                              };
+                            }
+                            return null;
+                          }
+                          case 'conversa_lider': {
+                            // Encontros de discipulado (jornada180)
+                            if (m.jornada180?.length > 0) {
+                              const ultimo = m.jornada180[0];
+                              const pastor = ultimo.pastor_lider?.name;
+                              const parts = [`${m.jornada180.length} ${m.jornada180.length === 1 ? 'encontro' : 'encontros'}`];
+                              if (ultimo.data_encontro) parts.push(`ultimo em ${fmt(ultimo.data_encontro)}`);
+                              if (pastor) parts.push(`com ${pastor}`);
+                              return { detected: true, detail: parts.join(' · ') };
+                            }
+                            return null;
+                          }
+                          case 'next': {
+                            // Inscricao NEXT com check-in (esteve presente)
+                            const comCheckin = (m.inscricoes_next || []).filter(i => i.check_in_at);
+                            if (comCheckin.length > 0) {
+                              const ultima = comCheckin[0];
+                              const titulo = ultima.evento?.titulo || 'NEXT';
+                              return {
+                                detected: true,
+                                detail: `${titulo} em ${fmt(ultima.check_in_at)}`,
+                              };
                             }
                             return null;
                           }
                           case 'grupo_vida': {
                             if (m.grupo_atual?.grupo) {
                               const g = m.grupo_atual.grupo;
-                              const desde = m.grupo_atual.entrou_em ? new Date(m.grupo_atual.entrou_em).toLocaleDateString('pt-BR') : null;
+                              const desde = fmt(m.grupo_atual.entrou_em);
                               return { detected: true, detail: `${g.nome}${desde ? ` · desde ${desde}` : ''}` };
+                            }
+                            // Historico · ja esteve em grupo
+                            if (m.grupo_historico?.length > 0) {
+                              const ultimo = m.grupo_historico[0];
+                              const nome = ultimo.grupo?.nome || 'grupo';
+                              return { detected: true, detail: `Esteve em ${nome} (saiu em ${fmt(ultimo.saiu_em)})` };
                             }
                             return null;
                           }
                           case 'voluntariado': {
                             if (m.ministerios_ativos?.length > 0) {
                               const nomes = m.ministerios_ativos.map(v => {
-                                const desde = v.desde ? new Date(v.desde).toLocaleDateString('pt-BR') : null;
+                                const desde = fmt(v.desde);
                                 return `${v.ministerio?.nome || 'Ministerio'}${desde ? ` (desde ${desde})` : ''}`;
                               });
                               return { detected: true, detail: nomes.join(', ') };
+                            }
+                            if (m.ministerios_historico?.length > 0) {
+                              return { detected: true, detail: `Ja serviu em ${m.ministerios_historico.length} time(s)` };
                             }
                             return null;
                           }
                           case 'generosidade': {
                             if (m.contribuicoes?.length > 0) {
                               const total = m.totais_ano?.total || 0;
-                              const ultima = m.ultima_contribuicao ? new Date(m.ultima_contribuicao).toLocaleDateString('pt-BR') : null;
+                              const ultima = fmt(m.ultima_contribuicao);
                               const parts = [];
                               if (total > 0) parts.push(`R$ ${total.toLocaleString('pt-BR', { minimumFractionDigits: 2 })} no ano`);
                               if (ultima) parts.push(`ultima em ${ultima}`);
@@ -2094,8 +2157,9 @@ export default function Membresia() {
                             return null;
                           }
                           case 'engajamento': {
+                            // Engajamento = ativo no servico OU tem check-ins recentes
                             if (m.checkins?.length >= 3 || m.nivel_servico === 'engajado' || m.nivel_servico === 'ativo') {
-                              const ultimo = m.ultimo_checkin ? new Date(m.ultimo_checkin).toLocaleDateString('pt-BR') : null;
+                              const ultimo = fmt(m.ultimo_checkin);
                               const parts = [];
                               if (m.checkins?.length > 0) parts.push(`${m.checkins.length} check-ins recentes`);
                               if (ultimo) parts.push(`ultimo em ${ultimo}`);

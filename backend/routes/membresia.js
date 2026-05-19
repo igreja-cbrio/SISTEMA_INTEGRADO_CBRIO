@@ -270,6 +270,9 @@ router.get('/membros/:id', async (req, res) => {
       contribAnoRes,
       volProfileRes,
       inscricoesNextRes,
+      jornada180Res,
+      batismoRes,
+      decisoesCultoRes,
     ] = await Promise.all([
       supabase.from('mem_membros').select('*, familia:mem_familias(id, nome)').eq('id', id).single(),
       supabase.from('mem_trilha_valores').select('*').eq('membro_id', id).order('created_at'),
@@ -286,6 +289,15 @@ router.get('/membros/:id', async (req, res) => {
       supabase.from('next_inscricoes')
         .select('id, evento_id, indicou_batismo, indicou_servir, indicou_grupo, indicou_dizimo, check_in_at, created_at, evento:next_eventos(id, data, titulo, status)')
         .eq('membro_id', id).order('created_at', { ascending: false }).limit(20),
+      supabase.from('cui_jornada180')
+        .select('id, data_encontro, observacoes, pastor_lider_id, pastor_lider:profiles(name)')
+        .eq('membro_id', id).order('data_encontro', { ascending: false }).limit(20),
+      supabase.from('batismo_inscricoes')
+        .select('id, data_batismo, status, observacoes')
+        .eq('membro_id', id).order('data_batismo', { ascending: false }).limit(5),
+      supabase.from('cultos_decisoes_pessoas')
+        .select('id, culto_id, tipo_decisao, registrado_em, culto:cultos(id, data, service_type:vol_service_types(name))')
+        .eq('membro_id', id).order('registrado_em', { ascending: false }).limit(5),
     ]);
     if (membroRes.error) throw membroRes.error;
     const membro = membroRes.data;
@@ -296,6 +308,9 @@ router.get('/membros/:id', async (req, res) => {
     const contribAno = contribAnoRes.data || [];
     const volProfile = volProfileRes.data || null;
     const inscricoesNext = inscricoesNextRes.data || [];
+    const jornada180 = jornada180Res.data || [];
+    const batismos = batismoRes.data || [];
+    const decisoesCulto = decisoesCultoRes.data || [];
 
     // Round 2: familiares depende de membro.familia_id
     let familiares = [];
@@ -429,6 +444,12 @@ router.get('/membros/:id', async (req, res) => {
       escalas_futuras: escalasFuturas || [],
       // NEXT
       inscricoes_next: inscricoesNext || [],
+      // Discipulado / encontros pastorais
+      jornada180: jornada180 || [],
+      // Batismos · realizado conta como etapa 'seguir'
+      batismos: batismos || [],
+      // Decisões registradas em culto (data + tipo + culto)
+      decisoes_culto: decisoesCulto || [],
     });
   } catch (e) {
     res.status(500).json({ error: 'Erro ao buscar membro' });
