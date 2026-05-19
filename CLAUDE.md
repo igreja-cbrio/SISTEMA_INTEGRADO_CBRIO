@@ -79,6 +79,31 @@ usuarios). Tela em `/admin/permissoes` (arquivo
   aliases temporarios) · TODO de polish, nao bloqueante · hoje os hooks
   ja lem dos slugs novos via AuthContext
 
+### Devocional · RH vira membro + IA escreve texto biblico (2026-05-19)
+**Problema 1**: tentar abrir devocional logado e receber "voce nao e'
+membro". O `resolveMembro` em `devocionalMembro.js` exige
+`profile.membro_id` ou match por email em `mem_membros`. Funcionarios
+do RH nao estavam la.
+
+**Fix 1** · migration `20260519260000_sync_rh_funcionarios_para_membros.sql`:
+- Cria `mem_membros` pra cada `rh_funcionarios.status='ativo'` com email
+- UPDATE `profiles.membro_id` linkando por email
+- Idempotente · NOT EXISTS impede duplicacao
+
+**Problema 2** · IA escrevia so a referencia ("Mateus 5:3") sem texto.
+Schema ja tinha `devocional_itens.passagem_texto` e o front renderiza
+(`DevocionalHoje.tsx:128`), mas o backend nem pedia nem salvava.
+
+**Fix 2** em `backend/routes/devocionalPlanos.js`:
+- systemPrompt agora exige `passagem_texto` (NAA/ARA) "pra pessoa poder
+  ler sem abrir a Biblia"
+- JSON format inclui o campo
+- `.map()` salva `passagem_texto: o.passagem_texto`
+
+**Importante**: devocionais ja gerados ANTES desta PR continuam sem
+texto. Pra regenerar, usar `sobrescrever=true` no endpoint
+`POST /api/devocional-planos/:id/gerar`.
+
 ### Mobile · menu hamburger + calendario com scroll horizontal (2026-05-19)
 Sem nav no mobile · MegaMenu tinha `className="hidden md:block"` e nao
 havia substituto. Pessoa entrava no `/dashboard` e nao tinha como
