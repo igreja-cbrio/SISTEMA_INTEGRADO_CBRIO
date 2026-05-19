@@ -24,6 +24,8 @@ const C = { primary: '#00B39D', info: '#3b82f6', warn: '#f59e0b', purple: '#8b5c
 
 type Status = 'pendente' | 'confirmado' | 'realizado' | 'cancelado';
 
+type CategoriaEtaria = 'crianca' | 'adolescente' | 'adulto';
+
 type BatismoInscricao = {
   id: string;
   membro_id?: string | null;
@@ -40,7 +42,42 @@ type BatismoInscricao = {
   created_at: string;
   updated_at: string;
   membro?: { id: string; nome: string; foto_url?: string | null; cpf?: string | null } | null;
+  // Novos · PR batismos categoria/camisa/deficiencia
+  tamanho_camisa?: string | null;
+  eh_crianca?: boolean;
+  categoria_etaria?: CategoriaEtaria | null;
+  possui_deficiencia?: boolean;
+  deficiencia_descricao?: string | null;
+  endereco?: string | null;
 };
+
+const CATEGORIA_LABEL: Record<CategoriaEtaria, string> = {
+  crianca: 'Criança',
+  adolescente: 'Adolescente',
+  adulto: 'Adulto',
+};
+
+const CATEGORIA_COLOR: Record<CategoriaEtaria, string> = {
+  crianca: '#ec4899',      // pink
+  adolescente: '#a855f7',  // purple
+  adulto: '#0ea5e9',       // sky
+};
+
+// Calcula categoria etaria no client (espelha logica do trigger SQL)
+function categoriaDe(b: { data_nascimento?: string | null; eh_crianca?: boolean; categoria_etaria?: CategoriaEtaria | null }): CategoriaEtaria | null {
+  if (b.categoria_etaria) return b.categoria_etaria;
+  if (b.eh_crianca) return 'crianca';
+  if (!b.data_nascimento) return null;
+  const nasc = new Date(b.data_nascimento + 'T12:00:00');
+  if (Number.isNaN(nasc.getTime())) return null;
+  const hoje = new Date();
+  let idade = hoje.getFullYear() - nasc.getFullYear();
+  const m = hoje.getMonth() - nasc.getMonth();
+  if (m < 0 || (m === 0 && hoje.getDate() < nasc.getDate())) idade -= 1;
+  if (idade < 12) return 'crianca';
+  if (idade <= 18) return 'adolescente';
+  return 'adulto';
+}
 
 const STATUS_LABEL: Record<Status, string> = {
   pendente: 'Pendente',
@@ -106,6 +143,7 @@ export default function Batismos() {
   const [statusFilter, setStatusFilter] = useState<Status | 'todos'>('todos');
   const [mesFiltro, setMesFiltro] = useState<string>('todos');
   const [busca, setBusca] = useState('');
+  const [categoriaFiltro, setCategoriaFiltro] = useState<CategoriaEtaria | 'todos'>('todos');
   const [selected, setSelected] = useState<BatismoInscricao | null>(null);
   const [novaOpen, setNovaOpen] = useState(false);
 
@@ -135,6 +173,9 @@ export default function Batismos() {
     if (statusFilter !== 'todos' && b.status !== statusFilter) return false;
     if (mesFiltro !== 'todos') {
       if (!b.data_batismo || b.data_batismo.slice(0, 7) !== mesFiltro) return false;
+    }
+    if (categoriaFiltro !== 'todos') {
+      if (categoriaDe(b) !== categoriaFiltro) return false;
     }
     if (busca) {
       const q = busca.toLowerCase();
@@ -309,6 +350,23 @@ export default function Batismos() {
             ))}
           </SelectContent>
         </Select>
+        <div className="inline-flex rounded-xl border border-border p-0.5 bg-muted/30 overflow-x-auto">
+          {(['todos', 'crianca', 'adolescente', 'adulto'] as const).map(c => {
+            const count = c === 'todos'
+              ? list.length
+              : list.filter(b => categoriaDe(b) === c).length;
+            const label = c === 'todos' ? 'Todas idades' : CATEGORIA_LABEL[c];
+            return (
+              <button
+                key={c}
+                onClick={() => setCategoriaFiltro(c)}
+                className={`px-3 py-1.5 text-xs rounded-lg transition-colors whitespace-nowrap ${categoriaFiltro === c ? 'bg-background shadow-sm font-medium' : 'text-muted-foreground hover:text-foreground'}`}
+              >
+                {label} ({count})
+              </button>
+            );
+          })}
+        </div>
         <div className="relative flex-1 min-w-[200px] max-w-md">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
           <Input value={busca} onChange={e => setBusca(e.target.value)} placeholder="Buscar nome, CPF, telefone ou email" className="pl-9" />
@@ -328,6 +386,8 @@ export default function Batismos() {
               <TableRow>
                 <TableHead>Nome</TableHead>
                 <TableHead className="hidden md:table-cell">Contato</TableHead>
+                <TableHead className="text-center hidden sm:table-cell">Categoria</TableHead>
+                <TableHead className="text-center hidden md:table-cell">Camisa</TableHead>
                 <TableHead className="text-center">Status</TableHead>
                 <TableHead className="text-center hidden sm:table-cell">Data batismo</TableHead>
                 <TableHead className="text-center hidden lg:table-cell">Origem</TableHead>
@@ -337,6 +397,8 @@ export default function Batismos() {
             <TableBody>
               {filtrada.map(b => {
                 const Icon = STATUS_ICON[b.status];
+                const cat = categoriaDe(b);
+                const hasDef = !!b.possui_deficiencia;
                 return (
                   <TableRow
                     key={b.id}
@@ -344,7 +406,19 @@ export default function Batismos() {
                     onClick={() => setSelected(b)}
                   >
                     <TableCell>
-                      <p className="font-medium">{b.nome} {b.sobrenome}</p>
+                      <p className="font-medium flex items-center gap-2">
+                        <span style={hasDef ? { color: '#dc2626' } : undefined}>
+                          {b.nome} {b.sobrenome}
+                        </span>
+                        {hasDef && (
+                          <span
+                            title={b.deficiencia_descricao || 'Possui deficiencia'}
+                            className="text-[9px] font-semibold px-1.5 py-0.5 rounded bg-red-100 dark:bg-red-950 text-red-700 dark:text-red-400 inline-flex items-center gap-1"
+                          >
+                            <AlertCircle className="h-3 w-3" /> deficiência
+                          </span>
+                        )}
+                      </p>
                       {b.cpf && <p className="text-xs text-muted-foreground">{b.cpf}</p>}
                     </TableCell>
                     <TableCell className="hidden md:table-cell">
@@ -352,6 +426,22 @@ export default function Batismos() {
                         {b.telefone && <span className="flex items-center gap-1"><Phone className="h-3 w-3" />{b.telefone}</span>}
                         {b.email && <span className="flex items-center gap-1 truncate max-w-[200px]"><Mail className="h-3 w-3" />{b.email}</span>}
                       </div>
+                    </TableCell>
+                    <TableCell className="text-center hidden sm:table-cell">
+                      {cat ? (
+                        <Badge
+                          variant="outline"
+                          className="text-[10px]"
+                          style={{ color: CATEGORIA_COLOR[cat], borderColor: CATEGORIA_COLOR[cat] + '60' }}
+                        >
+                          {CATEGORIA_LABEL[cat]}
+                        </Badge>
+                      ) : (
+                        <span className="text-xs text-muted-foreground">—</span>
+                      )}
+                    </TableCell>
+                    <TableCell className="text-center hidden md:table-cell text-sm text-muted-foreground">
+                      {b.tamanho_camisa || '—'}
                     </TableCell>
                     <TableCell className="text-center">
                       <Badge
@@ -406,9 +496,17 @@ function ModalDetalheBatismo({ batismo, onClose, onSaved }: {
   onClose: () => void;
   onSaved: () => void;
 }) {
-  const [status, setStatus] = useState<Status>(batismo.status);
+  // Auto-confirm: quando admin abre uma inscricao 'pendente', ja vem
+  // pre-selecionado como 'confirmado'. So persiste no save · se fechar
+  // sem salvar, fica pendente.
+  const [status, setStatus] = useState<Status>(batismo.status === 'pendente' ? 'confirmado' : batismo.status);
   const [dataBatismo, setDataBatismo] = useState(batismo.data_batismo || '');
   const [observacoes, setObservacoes] = useState(batismo.observacoes || '');
+  const [endereco, setEndereco] = useState(batismo.endereco || '');
+  const [tamanhoCamisa, setTamanhoCamisa] = useState(batismo.tamanho_camisa || '');
+  const [ehCrianca, setEhCrianca] = useState(!!batismo.eh_crianca);
+  const [possuiDeficiencia, setPossuiDeficiencia] = useState(!!batismo.possui_deficiencia);
+  const [deficienciaDescricao, setDeficienciaDescricao] = useState(batismo.deficiencia_descricao || '');
   const [saving, setSaving] = useState(false);
 
   const handleSave = async () => {
@@ -418,6 +516,11 @@ function ModalDetalheBatismo({ batismo, onClose, onSaved }: {
         status,
         data_batismo: dataBatismo || null,
         observacoes: observacoes || null,
+        endereco: endereco || null,
+        tamanho_camisa: tamanhoCamisa || null,
+        eh_crianca: ehCrianca,
+        possui_deficiencia: possuiDeficiencia,
+        deficiencia_descricao: possuiDeficiencia ? (deficienciaDescricao || null) : null,
       });
       toast.success('Inscricao atualizada');
       onSaved();
@@ -476,6 +579,15 @@ function ModalDetalheBatismo({ batismo, onClose, onSaved }: {
             )}
           </div>
 
+          {batismo.status === 'pendente' && status === 'confirmado' && (
+            <div className="rounded-xl border border-emerald-200 bg-emerald-50/40 dark:bg-emerald-950/20 dark:border-emerald-900/40 p-3 flex gap-2 text-xs text-emerald-800 dark:text-emerald-200">
+              <CheckCircle2 className="h-4 w-4 shrink-0 mt-0.5" />
+              <div>
+                Status pre-selecionado como <strong>confirmado</strong> ao abrir esta inscricao. Clique salvar para aplicar.
+              </div>
+            </div>
+          )}
+
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
             <div>
               <Label className="text-xs">Status</Label>
@@ -498,6 +610,64 @@ function ModalDetalheBatismo({ batismo, onClose, onSaved }: {
                 onChange={e => setDataBatismo(e.target.value)}
               />
             </div>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <div>
+              <Label htmlFor="camisa" className="text-xs">Tamanho da camisa</Label>
+              <select
+                id="camisa"
+                value={tamanhoCamisa}
+                onChange={e => setTamanhoCamisa(e.target.value)}
+                className="w-full mt-1 px-3 py-2 rounded-xl border border-border bg-background text-sm"
+              >
+                <option value="">—</option>
+                {['PP','P','M','G','GG','XG','XGG','2','4','6','8','10','12','14'].map(t => (
+                  <option key={t} value={t}>{t}</option>
+                ))}
+              </select>
+            </div>
+            <div className="flex items-end">
+              <label className="inline-flex items-center gap-2 text-sm cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={ehCrianca}
+                  onChange={e => setEhCrianca(e.target.checked)}
+                  style={{ width: 16, height: 16, accentColor: '#00B39D' }}
+                />
+                <span>É criança (categoria forçada)</span>
+              </label>
+            </div>
+          </div>
+
+          <div>
+            <Label htmlFor="end" className="text-xs">Endereço</Label>
+            <Input id="end" value={endereco} onChange={e => setEndereco(e.target.value)} />
+          </div>
+
+          <div className="rounded-xl border border-border p-3 space-y-2 bg-muted/10">
+            <label className="inline-flex items-center gap-2 text-sm cursor-pointer">
+              <input
+                type="checkbox"
+                checked={possuiDeficiencia}
+                onChange={e => setPossuiDeficiencia(e.target.checked)}
+                style={{ width: 16, height: 16, accentColor: '#dc2626' }}
+              />
+              <AlertCircle className="h-4 w-4 text-red-600" />
+              <span>Possui deficiência</span>
+            </label>
+            {possuiDeficiencia && (
+              <div>
+                <Label htmlFor="def-desc" className="text-xs">Qual? (para o time de integração saber)</Label>
+                <Textarea
+                  id="def-desc"
+                  value={deficienciaDescricao}
+                  onChange={e => setDeficienciaDescricao(e.target.value)}
+                  rows={2}
+                  placeholder="Ex.: cadeirante, deficiência auditiva, autismo..."
+                />
+              </div>
+            )}
           </div>
 
           <div>
@@ -576,6 +746,11 @@ function ModalNovaInscricao({ onClose, onCreated }: { onClose: () => void; onCre
     data_nascimento: '',
     observacoes: '',
     area_kpi: 'sede',
+    endereco: '',
+    tamanho_camisa: '',
+    eh_crianca: false,
+    possui_deficiencia: false,
+    deficiencia_descricao: '',
   });
   const [saving, setSaving] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
@@ -607,6 +782,11 @@ function ModalNovaInscricao({ onClose, onCreated }: { onClose: () => void; onCre
         observacoes: form.observacoes.trim() || null,
         origem: 'manual',
         area_kpi: form.area_kpi || 'sede',
+        endereco: form.endereco.trim() || null,
+        tamanho_camisa: form.tamanho_camisa || null,
+        eh_crianca: form.eh_crianca,
+        possui_deficiencia: form.possui_deficiencia,
+        deficiencia_descricao: form.possui_deficiencia ? (form.deficiencia_descricao.trim() || null) : null,
       });
       toast.success('Inscricao cadastrada!');
       onCreated();
@@ -674,6 +854,64 @@ function ModalNovaInscricao({ onClose, onCreated }: { onClose: () => void; onCre
               <option value="bridge">Bridge</option>
               <option value="online">Online</option>
             </select>
+          </div>
+
+          <div>
+            <Label htmlFor="bn-end" className="text-xs">Endereço</Label>
+            <Input id="bn-end" value={form.endereco} onChange={set('endereco')} />
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <div>
+              <Label htmlFor="bn-camisa" className="text-xs">Tamanho da camisa</Label>
+              <select
+                id="bn-camisa"
+                value={form.tamanho_camisa}
+                onChange={e => setForm(f => ({ ...f, tamanho_camisa: e.target.value }))}
+                className="w-full h-9 px-3 rounded-md border border-input bg-background text-sm"
+              >
+                <option value="">—</option>
+                {['PP','P','M','G','GG','XG','XGG','2','4','6','8','10','12','14'].map(t => (
+                  <option key={t} value={t}>{t}</option>
+                ))}
+              </select>
+            </div>
+            <div className="flex items-end">
+              <label className="inline-flex items-center gap-2 text-sm cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={form.eh_crianca}
+                  onChange={e => setForm(f => ({ ...f, eh_crianca: e.target.checked }))}
+                  style={{ width: 16, height: 16, accentColor: '#00B39D' }}
+                />
+                <span>É criança</span>
+              </label>
+            </div>
+          </div>
+
+          <div className="rounded-xl border border-border p-3 space-y-2 bg-muted/10">
+            <label className="inline-flex items-center gap-2 text-sm cursor-pointer">
+              <input
+                type="checkbox"
+                checked={form.possui_deficiencia}
+                onChange={e => setForm(f => ({ ...f, possui_deficiencia: e.target.checked }))}
+                style={{ width: 16, height: 16, accentColor: '#dc2626' }}
+              />
+              <AlertCircle className="h-4 w-4 text-red-600" />
+              <span>Possui deficiência</span>
+            </label>
+            {form.possui_deficiencia && (
+              <div>
+                <Label htmlFor="bn-def-desc" className="text-xs">Qual? (para o time de integração saber)</Label>
+                <Textarea
+                  id="bn-def-desc"
+                  value={form.deficiencia_descricao}
+                  onChange={e => setForm(f => ({ ...f, deficiencia_descricao: e.target.value }))}
+                  rows={2}
+                  placeholder="Ex.: cadeirante, deficiência auditiva, autismo..."
+                />
+              </div>
+            )}
           </div>
 
           <div>
