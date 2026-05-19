@@ -80,12 +80,35 @@ router.get('/colaboradores', async (_req, res) => {
       .map(c => (c.email || '').toLowerCase().trim())
       .filter(Boolean));
 
-    // 4. Filtra
-    const colaboradores = (profiles || []).filter(p => {
-      if (volSet.has(p.id)) return false;
-      if (p.email && cadSet.has(p.email.toLowerCase().trim())) return false;
-      return true;
-    });
+    // 4. Cargos por email · enriquece com cargo_id, cargo_slug, cargo_nome
+    //    (LEFT JOIN simulado: pessoa sem registro em usuarios fica com cargo null)
+    const { data: usuariosRows } = await supabase
+      .from('usuarios')
+      .select('email, cargo_id, cargos(id, slug, nome, nome_completo)')
+      .eq('ativo', true);
+    const cargoByEmail = new Map();
+    for (const u of usuariosRows || []) {
+      if (!u.email) continue;
+      cargoByEmail.set(u.email.toLowerCase().trim(), {
+        cargo_id: u.cargo_id,
+        cargo_slug: u.cargos?.slug || null,
+        cargo_nome: u.cargos?.nome_completo || u.cargos?.nome || null,
+      });
+    }
+
+    // 5. Filtra + enriquece
+    const colaboradores = (profiles || [])
+      .filter(p => {
+        if (volSet.has(p.id)) return false;
+        if (p.email && cadSet.has(p.email.toLowerCase().trim())) return false;
+        return true;
+      })
+      .map(p => {
+        const cargoInfo = cargoByEmail.get((p.email || '').toLowerCase().trim()) || {
+          cargo_id: null, cargo_slug: null, cargo_nome: null,
+        };
+        return { ...p, ...cargoInfo };
+      });
 
     res.json(colaboradores);
   } catch (e) {
