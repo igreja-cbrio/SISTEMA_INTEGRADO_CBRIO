@@ -236,17 +236,26 @@ export default function Projetos() {
   const isPMO = ['diretor', 'admin'].includes(userRole);
   const accessLevel = getAccessLevel(['Projetos', 'Tarefas']);
   const userId = user?.id;
-  // Lider com escopo_proprio em "projetos" ve so projetos onde seu nome
-  // aparece em leader/responsible. Admin/diretor sempre veem tudo.
+  // Lider ministerial · escopo_proprio em projetos. Hoje significa:
+  // 1. UI restrita · so aba "Lista" (esconde Home/Kanban/Gantt/Novo Projeto)
+  // 2. Lista filtrada por AREA (projeto cujo p.area bate com userAreas)
+  // Admin/diretor sempre veem tudo + todas as abas.
   const escopoProprioProjetos = !isAdmin && !isDiretor
     && !!modulePerms?.projetos?.escopo_proprio;
+  const apenasListaProjetos = escopoProprioProjetos;
 
   // URL params drill-down
   const urlParams = new URLSearchParams(window.location.search);
   const urlStatus = urlParams.get('status') || '';
   const urlId = urlParams.get('id') || '';
 
-  const [tab, setTab] = useState(urlStatus ? 1 : urlId ? 4 : 0);
+  const [tab, setTab] = useState(urlStatus ? 1 : urlId ? 4 : (apenasListaProjetos ? 1 : 0));
+
+  // Lider ministerial fica preso na aba Lista (ou Detail · tab 4)
+  useEffect(() => {
+    if (apenasListaProjetos && tab !== 1 && tab !== 4) setTab(1);
+  }, [apenasListaProjetos, tab]);
+
   const [list, setList] = useState([]);
   const [categories, setCategories] = useState([]);
   const [dash, setDash] = useState(null);
@@ -333,20 +342,21 @@ export default function Projetos() {
       if (fPriority) params.priority = fPriority;
       if (fYear) params.year = fYear;
       const todos = await projects.list(params);
-      // Escopo proprio: filtra na fonte pra refletir em todas as views
-      // (lista, kanban, gantt, timeline). Admin/diretor passam.
+      // Escopo proprio (lider ministerial) · filtra por AREA da pessoa.
+      // Compara case-insensitive · p.area pode ser "Integração" e userAreas
+      // pode ter "Integracao" se algum ponto normalizou.
       if (escopoProprioProjetos) {
-        const meuNome = (profile?.name || '').toLowerCase().trim();
-        setList(todos.filter(p =>
-          (p.leader || '').toLowerCase().trim() === meuNome ||
-          (p.responsible || '').toLowerCase().trim() === meuNome
-        ));
+        const minhasAreas = (userAreas || []).map(a => (a || '').toLowerCase().trim());
+        setList(todos.filter(p => {
+          const pa = (p.area || '').toLowerCase().trim();
+          return pa && minhasAreas.includes(pa);
+        }));
       } else {
         setList(todos);
       }
     } catch (e) { setError(e.message); }
     finally { setLoading(false); }
-  }, [fStatus, fCategory, fPriority, fYear, escopoProprioProjetos, profile?.name]);
+  }, [fStatus, fCategory, fPriority, fYear, escopoProprioProjetos, userAreas]);
 
   const loadDetail = useCallback(async (id) => {
     try {
@@ -2120,13 +2130,13 @@ export default function Projetos() {
           <div style={styles.title}>Projetos</div>
           <div style={styles.subtitle}>Planejamento e acompanhamento de 67 projetos estrategicos</div>
         </div>
-        {canEdit && tab !== 4 && (
+        {canEdit && tab !== 4 && !apenasListaProjetos && (
           <button style={styles.btn('primary')} onClick={() => setModalProject({})}>+ Novo Projeto</button>
         )}
       </div>
 
-      {/* Tabs (hide Detail tab from bar) */}
-      {tab !== 4 && (
+      {/* Tabs (hide Detail tab from bar) · lideres ministeriais so veem Lista */}
+      {tab !== 4 && !apenasListaProjetos && (
         <div style={styles.tabs}>
           {TABS.map((t, i) => (
             <button key={t} style={styles.tab(tab === i)} onClick={() => setTab(i)}>{t}</button>
