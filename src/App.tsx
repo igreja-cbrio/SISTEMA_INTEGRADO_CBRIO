@@ -265,13 +265,26 @@ function MemberOnlyRedirect({ children }: { children: ReactNode }) {
 /**
  * Guarda de módulo — verifica se o usuário tem permissão para acessar o módulo.
  * Se não tiver, redireciona para /dashboard.
- * permKey: chave de permissão ('canRH', 'canFinanceiro', etc.)
+ *
+ * Duas formas de uso:
+ *   - permKey: legado · usa hook canX (canRH, canFinanceiro, etc) com nivelMinimo=2
+ *   - moduleSlug: novo · checa modulePerms[slug].leitura >= nivelMinimo (default 1)
+ *     Permite liberar acesso de visualizacao (nivel 1) sem cair no fallback canX.
  */
-function ModuleGuard({ permKey, children }: { permKey: string; children: ReactNode }) {
+function ModuleGuard({ permKey, moduleSlug, nivelMinimo = 1, children }: { permKey?: string; moduleSlug?: string; nivelMinimo?: number; children: ReactNode }) {
   const auth = useAuth();
   if (auth.loading) return <Loading />;
+  if (auth.isAdmin) return <>{children}</>;
 
-  const hasAccess = permKey ? auth[permKey] : true;
+  if (moduleSlug) {
+    const perm = auth.modulePerms?.[moduleSlug];
+    const leitura = perm?.leitura ?? 0;
+    if (leitura < nivelMinimo) return <Navigate to="/dashboard" replace />;
+    return <>{children}</>;
+  }
+
+  // Legado · checa hook canX
+  const hasAccess = permKey ? (auth as Record<string, unknown>)[permKey] : true;
   if (hasAccess === false) {
     return <Navigate to="/dashboard" replace />;
   }
@@ -385,7 +398,7 @@ function AppRoutes() {
         <Route path="/eventos" element={<ModuleGuard permKey="canAgenda"><Suspense fallback={<Loading />}><Eventos /></Suspense></ModuleGuard>} />
         <Route path="/eventos/:id" element={<ModuleGuard permKey="canAgenda"><Suspense fallback={<Loading />}><EventDetail /></Suspense></ModuleGuard>} />
         <Route path="/projetos" element={<ModuleGuard permKey="canProjetos"><Suspense fallback={<Loading />}><Projetos /></Suspense></ModuleGuard>} />
-        <Route path="/expansao" element={<ModuleGuard permKey="canExpansao"><Suspense fallback={<Loading />}><Expansao /></Suspense></ModuleGuard>} />
+        <Route path="/expansao" element={<ModuleGuard moduleSlug="expansao"><Suspense fallback={<Loading />}><Expansao /></Suspense></ModuleGuard>} />
         <Route path="/revisao" element={<Suspense fallback={<Loading />}><RevisaoEstrategica /></Suspense>} />
         <Route path="/revisao/:tipo/:id" element={<Suspense fallback={<Loading />}><RevisaoDetalhe /></Suspense>} />
         {/* /processos descontinuado em 2026-05-18 (reuniao de permissoes) — redireciona pra /eventos */}
@@ -403,7 +416,7 @@ function AppRoutes() {
         <Route path="/grupos" element={<ModuleGuard permKey="canMembresia"><Suspense fallback={<Loading />}><Grupos /></Suspense></ModuleGuard>} />
         <Route path="/grupos/supervisao" element={<Suspense fallback={<Loading />}><GruposSupervisao /></Suspense>} />
         <Route path="/grupos/pedidos" element={<Suspense fallback={<Loading />}><PedidosGrupo /></Suspense>} />
-        <Route path="/ministerial/cuidados" element={<ModuleGuard permKey="canCuidados"><Suspense fallback={<Loading />}><Cuidados /></Suspense></ModuleGuard>} />
+        <Route path="/ministerial/cuidados" element={<ModuleGuard moduleSlug="cuidados"><Suspense fallback={<Loading />}><Cuidados /></Suspense></ModuleGuard>} />
         <Route path="/ministerial/devocional" element={<Navigate to="/ministerial/cuidados?tab=devocional" replace />} />
         <Route path="/ministerial/jornada" element={<Navigate to="/ministerial/membresia" replace />} />
         <Route path="/ministerial/integracao" element={<ModuleGuard permKey="canMembresia"><Suspense fallback={<Loading />}><Integracao /></Suspense></ModuleGuard>} />
