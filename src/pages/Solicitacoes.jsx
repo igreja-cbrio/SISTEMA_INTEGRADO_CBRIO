@@ -84,6 +84,11 @@ export default function Solicitacoes() {
   // Determine if user is a "responsável" (can see Kanban)
   const isResponsavel = isAdmin || canAccessModule(['DP', 'Pessoas', 'Financeiro', 'Logística', 'Patrimônio', 'Membresia', 'TI']);
 
+  // View atual · 'minhas' (lista das proprias) | 'atender' (kanban da equipe).
+  // Colaborador sem permissao de area NAO ve aba "atender" (so existe o que e dele).
+  // Responsavel comeca em 'atender' (visao operacional padrao), mas pode trocar pra 'minhas'.
+  const [view, setView] = useState(isResponsavel ? 'atender' : 'minhas');
+
   // Form state
   const FORM_INITIAL = {
     titulo: '', descricao: '', justificativa: '',
@@ -113,7 +118,9 @@ export default function Solicitacoes() {
 
   async function load() {
     try {
-      const params = isResponsavel ? {} : { mine: 'true' };
+      // view='minhas' sempre filtra pelo solicitante atual · view='atender'
+      // delega o filtro pro backend (responsavel ve da area dele, admin ve tudo).
+      const params = view === 'minhas' ? { mine: 'true' } : {};
       const data = await api.list(params);
       setItems(data);
     } catch (e) {
@@ -123,7 +130,7 @@ export default function Solicitacoes() {
     }
   }
 
-  useEffect(() => { load(); }, []);
+  useEffect(() => { load(); }, [view]);
 
   // Realtime · qualquer INSERT/UPDATE/DELETE em `solicitacoes` recarrega
   // o kanban. Debounce 400ms agrega rajadas (ex: trigger de SLA atualiza
@@ -528,12 +535,41 @@ export default function Solicitacoes() {
         </div>
       </div>
 
-      {/* Content: Kanban for responsáveis, List for collaborators */}
+      {/* Tabs · Minhas Solicitacoes vs Para Atender · so quem e responsavel
+          ve a aba "Para Atender". Colaborador comum so tem "Minhas". */}
+      {isResponsavel && (
+        <div className="flex items-center gap-1 border-b border-border">
+          <button
+            type="button"
+            onClick={() => setView('atender')}
+            className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
+              view === 'atender'
+                ? 'border-primary text-primary'
+                : 'border-transparent text-muted-foreground hover:text-foreground'
+            }`}
+          >
+            Para Atender
+          </button>
+          <button
+            type="button"
+            onClick={() => setView('minhas')}
+            className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
+              view === 'minhas'
+                ? 'border-primary text-primary'
+                : 'border-transparent text-muted-foreground hover:text-foreground'
+            }`}
+          >
+            Minhas Solicitações
+          </button>
+        </div>
+      )}
+
+      {/* Content: Kanban so na view 'atender' (responsavel) · Lista nas demais */}
       {loading ? (
         <div className="flex items-center justify-center min-h-[40vh]">
           <div className="h-6 w-6 animate-spin rounded-full border-2 border-muted-foreground/30 border-t-primary" />
         </div>
-      ) : isResponsavel ? (
+      ) : view === 'atender' ? (
         /* ── Kanban Board (managers/admins) ── */
         <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-5 gap-4">
           {columns.map(col => (
