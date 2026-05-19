@@ -233,7 +233,8 @@ function GradeSemanal({ dias, cultos, hoje, onClickCulto }) {
   }, [dias, cultos]);
 
   return (
-    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: 6 }}>
+    <div className="cbrio-calendario-semana-wrap" style={{ overflowX: 'auto', WebkitOverflowScrolling: 'touch', marginLeft: -4, marginRight: -4, paddingLeft: 4, paddingRight: 4 }}>
+      <div className="cbrio-calendario-semana-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(7, minmax(96px, 1fr))', gap: 6 }}>
       {dias.map((d, idx) => {
         const isoData = toISO(d);
         const cultosDoDia = porDia.get(isoData) || [];
@@ -266,6 +267,7 @@ function GradeSemanal({ dias, cultos, hoje, onClickCulto }) {
           </div>
         );
       })}
+      </div>
     </div>
   );
 }

@@ -14,8 +14,9 @@ import {
   CalendarDays, FolderKanban, Map, ListChecks,
   UserCheck, UsersRound, Heart, HandHelping, BookOpen, ArrowRight, TrendingUp, Youtube,
   Megaphone, BrainCircuit, ShoppingCart,
-  Sun, Moon, Bell, BellRing, BellOff, LogOut, Search, CheckCheck, Settings, MonitorSmartphone, BarChart2, ClipboardCheck, Activity, MessageSquare, Shield,
+  Sun, Moon, Bell, BellRing, BellOff, LogOut, Search, CheckCheck, Settings, MonitorSmartphone, BarChart2, ClipboardCheck, Activity, MessageSquare, Shield, Menu as MenuIcon,
 } from 'lucide-react';
+import { Sheet, SheetContent, SheetTrigger } from '../ui/sheet';
 import {
   DropdownMenu, DropdownMenuTrigger, DropdownMenuContent,
 } from '../ui/dropdown-menu';
@@ -300,16 +301,19 @@ export default function AppShell() {
 
       {/* Header */}
       <header className="sticky top-0 z-30 border-b border-border bg-card/80 backdrop-blur-md">
-        <div className="flex items-center justify-between h-14 px-6 max-w-[1800px] mx-auto">
-          {/* Left: Logo + Nav */}
-          {/* Left: Logo */}
-          <div className="flex items-center gap-2 min-w-[140px]">
+        <div className="flex items-center justify-between h-14 px-4 md:px-6 max-w-[1800px] mx-auto gap-2">
+          {/* Left: Menu mobile + Logo */}
+          <div className="flex items-center gap-2">
+            {/* Hamburger · so mobile (desktop usa MegaMenu) */}
+            {!isVoluntario && (
+              <MobileNavSheet items={filteredNavItems} />
+            )}
             <button onClick={() => navigate('/dashboard')} className="flex items-center gap-2 hover:opacity-80 transition-opacity">
               <img src="/logo-cbrio-text.png" alt="CBRio" className="h-8 object-contain" />
             </button>
           </div>
 
-          {/* Center: Navigation (hidden for volunteers) */}
+          {/* Center: Navigation desktop · escondido no mobile (vai pro Sheet) */}
           {!isVoluntario && (
             <div className="flex-1 flex justify-center">
               <MegaMenu items={filteredNavItems} role={role} />
@@ -323,16 +327,17 @@ export default function AppShell() {
 
           {/* Right: Actions */}
           <div className="flex items-center gap-2">
-            {/* Search trigger */}
+            {/* Search trigger · mobile so icon, desktop com texto + ⌘K */}
             <button
               onClick={() => {
                 window.dispatchEvent(new KeyboardEvent('keydown', { key: 'k', metaKey: true }));
               }}
-              className="flex items-center gap-2 px-3 py-1.5 rounded-lg border border-border text-muted-foreground text-xs hover:bg-accent transition-colors"
+              className="flex items-center gap-2 px-2 md:px-3 py-1.5 rounded-lg border border-border text-muted-foreground text-xs hover:bg-accent transition-colors"
+              title="Buscar (⌘K)"
             >
               <Search className="h-3.5 w-3.5" />
-              <span className="hidden sm:inline">Buscar</span>
-              <kbd className="text-[10px] px-1 py-0.5 rounded bg-muted">⌘K</kbd>
+              <span className="hidden md:inline">Buscar</span>
+              <kbd className="hidden md:inline text-[10px] px-1 py-0.5 rounded bg-muted">⌘K</kbd>
             </button>
 
             {/* Theme toggle */}
@@ -447,5 +452,72 @@ export default function AppShell() {
 
       <SpotifyPlayer />
     </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// MobileNavSheet · drawer lateral pra navegar em telas pequenas
+// Visivel so < md (768px) · desktop usa MegaMenu no centro do header.
+// ─────────────────────────────────────────────────────────────────────────
+function MobileNavSheet({ items }) {
+  const [open, setOpen] = useState(false);
+  const navigate = useNavigate();
+  const location = useLocation();
+
+  function go(path) {
+    setOpen(false);
+    navigate(path);
+  }
+
+  return (
+    <Sheet open={open} onOpenChange={setOpen}>
+      <SheetTrigger asChild>
+        <button
+          className="md:hidden p-2 rounded-lg hover:bg-accent transition-colors text-foreground"
+          aria-label="Abrir menu"
+        >
+          <MenuIcon className="h-5 w-5" />
+        </button>
+      </SheetTrigger>
+      <SheetContent side="left" className="w-80 max-w-[85vw] overflow-y-auto p-0">
+        <div className="px-4 py-4 border-b border-border">
+          <img src="/logo-cbrio-text.png" alt="CBRio" className="h-7 object-contain" />
+        </div>
+        <nav className="p-2 space-y-4">
+          {items.map(section => (
+            <div key={section.id}>
+              <p className="text-[10px] uppercase tracking-widest text-muted-foreground font-semibold px-3 mb-1.5">
+                {section.label}
+              </p>
+              {section.subMenus.map(sub => (
+                <div key={sub.title} className="mb-2">
+                  {sub.title && section.subMenus.length > 1 && (
+                    <p className="text-[10px] text-muted-foreground/70 px-3 mt-2 mb-1">{sub.title}</p>
+                  )}
+                  {sub.items.map(item => {
+                    const Icon = item.icon;
+                    const ativo = location.pathname === item.path;
+                    return (
+                      <button
+                        key={item.path}
+                        onClick={() => go(item.path)}
+                        className={`w-full text-left px-3 py-2 rounded-lg flex items-center gap-3 transition-colors ${
+                          ativo
+                            ? 'bg-primary/15 text-primary'
+                            : 'hover:bg-accent text-foreground'
+                        }`}
+                      >
+                        {Icon && <Icon className="h-4 w-4 shrink-0" />}
+                        <span className="text-sm font-medium">{item.label}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              ))}
+            </div>
+          ))}
+        </nav>
+      </SheetContent>
+    </Sheet>
   );
 }
