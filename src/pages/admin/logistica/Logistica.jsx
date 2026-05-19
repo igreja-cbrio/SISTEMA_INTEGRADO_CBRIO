@@ -13,21 +13,6 @@ const C = {
   blue: '#3b82f6', blueBg: '#3b82f618', purple: '#8b5cf6', purpleBg: '#8b5cf618',
 };
 
-const URGENCIA_COLORS = {
-  urgente: { c: C.red, bg: C.redBg, label: 'Urgente' },
-  alta: { c: C.amber, bg: C.amberBg, label: 'Alta' },
-  normal: { c: C.blue, bg: C.blueBg, label: 'Normal' },
-  baixa: { c: C.text3, bg: '#73737318', label: 'Baixa' },
-};
-
-const SOLICITACAO_STATUS = {
-  pendente: { c: C.amber, bg: C.amberBg, label: 'Pendente' },
-  aprovado: { c: C.green, bg: C.greenBg, label: 'Aprovado' },
-  rejeitado: { c: C.red, bg: C.redBg, label: 'Rejeitado' },
-  em_cotacao: { c: C.blue, bg: C.blueBg, label: 'Em Cotação' },
-  pedido_gerado: { c: C.primary, bg: C.primaryBg, label: 'Pedido Gerado' },
-};
-
 const PEDIDO_STATUS = {
   aguardando: { c: C.amber, bg: C.amberBg, label: 'Aguardando' },
   em_transito: { c: C.blue, bg: C.blueBg, label: 'Em Trânsito' },
@@ -126,7 +111,12 @@ function Badge({ status, map }) {
 }
 
 // ── TABS ────────────────────────────────────────────────────
-const TABS = ['Dashboard', 'Fornecedores', 'Solicitações', 'Pedidos', 'Notas Fiscais', 'Compras ML', 'Rastreio'];
+// Aba "Solicitações" foi removida em 19/05/2026 · Marcos pediu pra unificar
+// com /solicitacoes (sistema unificado de TI/compras/reembolso/espaco/etc).
+// Quem precisa abrir solicitacao de compras hoje vai em /solicitacoes,
+// escolhe categoria=compras e o fluxo segue com SLA/NPS/notificacao do
+// solicitante automatica.
+const TABS = ['Dashboard', 'Fornecedores', 'Pedidos', 'Notas Fiscais', 'Compras ML', 'Rastreio'];
 
 // ═══════════════════════════════════════════════════════════
 // COMPONENTE PRINCIPAL
@@ -136,7 +126,6 @@ export default function Logistica() {
   const [tab, setTab] = useState(0);
   const [dash, setDash] = useState(null);
   const [fornecedores, setFornecedores] = useState([]);
-  const [solicitacoes, setSolicitacoes] = useState([]);
   const [pedidos, setPedidos] = useState([]);
   const [notas, setNotas] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -144,11 +133,9 @@ export default function Logistica() {
 
   // Filtros
   const [filtroFornAtivo, setFiltroFornAtivo] = useState('');
-  const [filtroSolStatus, setFiltroSolStatus] = useState('');
   const [filtroPedStatus, setFiltroPedStatus] = useState('');
   // Modals
   const [modalForn, setModalForn] = useState(null);
-  const [modalSol, setModalSol] = useState(null);
   const [modalPed, setModalPed] = useState(null);
   const [modalReceber, setModalReceber] = useState(null);
   const [modalNota, setModalNota] = useState(null);
@@ -173,15 +160,6 @@ export default function Logistica() {
     setLoading(false);
   }, [filtroFornAtivo]);
 
-  const fetchSolicitacoes = useCallback(async () => {
-    setLoading(true);
-    try {
-      const params = filtroSolStatus ? { status: filtroSolStatus } : undefined;
-      setSolicitacoes(await logistica.solicitacoes.list(params) || []);
-    } catch (e) { setError(e.message); }
-    setLoading(false);
-  }, [filtroSolStatus]);
-
   const fetchPedidos = useCallback(async () => {
     setLoading(true);
     try {
@@ -200,10 +178,9 @@ export default function Logistica() {
   useEffect(() => {
     if (tab === 0) fetchDash();
     if (tab === 1) fetchFornecedores();
-    if (tab === 2) fetchSolicitacoes();
-    if (tab === 3) { fetchPedidos(); fetchFornecedores(); }
-    if (tab === 4) { fetchNotas(); fetchFornecedores(); fetchPedidos(); }
-  }, [tab, fetchDash, fetchFornecedores, fetchSolicitacoes, fetchPedidos, fetchNotas]);
+    if (tab === 2) { fetchPedidos(); fetchFornecedores(); }
+    if (tab === 3) { fetchNotas(); fetchFornecedores(); fetchPedidos(); }
+  }, [tab, fetchDash, fetchFornecedores, fetchPedidos, fetchNotas]);
 
   // ── Fornecedor CRUD ────────────────────────────────────
   const saveFornecedor = async () => {
@@ -227,24 +204,6 @@ export default function Logistica() {
 
   const toggleFornecedorAtivo = async (forn) => {
     try { await logistica.fornecedores.update(forn.id, { ativo: !forn.ativo }); fetchFornecedores(); } catch (e) { setError(e.message); }
-  };
-
-  // ── Solicitação ────────────────────────────────────────
-  const saveSolicitacao = async () => {
-    if (!modalSol?.titulo?.trim()) { setError('Título é obrigatório'); return; }
-    if (modalSol.valor_estimado && Number(modalSol.valor_estimado) < 0) { setError('Valor não pode ser negativo'); return; }
-    setSaving(true);
-    try {
-      const { id, profiles, ...rest } = modalSol;
-      if (id) await logistica.solicitacoes.atualizar(id, rest);
-      else await logistica.solicitacoes.create(rest);
-      setModalSol(null); fetchSolicitacoes(); fetchDash();
-    } catch (e) { setError(e.message); }
-    setSaving(false);
-  };
-
-  const atualizarStatusSolicitacao = async (id, status) => {
-    try { await logistica.solicitacoes.atualizar(id, { status }); fetchSolicitacoes(); fetchDash(); } catch (e) { setError(e.message); }
   };
 
   // ── Pedido CRUD ────────────────────────────────────────
@@ -295,7 +254,6 @@ export default function Logistica() {
 
   // ── Field updaters ─────────────────────────────────────
   const upForn = (k, v) => setModalForn(prev => ({ ...prev, [k]: v }));
-  const upSol = (k, v) => setModalSol(prev => ({ ...prev, [k]: v }));
   const upPed = (k, v) => setModalPed(prev => ({ ...prev, [k]: v }));
   const upRec = (k, v) => setModalReceber(prev => ({ ...prev, [k]: v }));
   const upNota = (k, v) => setModalNota(prev => ({ ...prev, [k]: v }));
@@ -331,15 +289,6 @@ export default function Logistica() {
         />
       )}
       {tab === 2 && (
-        <SolicitacoesTab data={solicitacoes} loading={loading} isDiretor={isDiretor}
-          filtroStatus={filtroSolStatus} setFiltroStatus={setFiltroSolStatus}
-          onNew={() => setModalSol({ titulo: '', descricao: '', justificativa: '', valor_estimado: '', urgencia: 'normal', area: '' })}
-          onEdit={(s) => setModalSol({ ...s })}
-          onAprovar={(id) => atualizarStatusSolicitacao(id, 'aprovado')}
-          onRejeitar={(id) => atualizarStatusSolicitacao(id, 'rejeitado')}
-        />
-      )}
-      {tab === 3 && (
         <PedidosTab data={pedidos} loading={loading} isDiretor={isDiretor}
           filtroStatus={filtroPedStatus} setFiltroStatus={setFiltroPedStatus}
           onNew={() => setModalPed({ fornecedor_id: '', descricao: '', valor_total: '', data_prevista: '', status: 'aguardando', codigo_rastreio: '', transportadora: '' })}
@@ -349,7 +298,7 @@ export default function Logistica() {
           fornecedores={fornecedores}
         />
       )}
-      {tab === 4 && (
+      {tab === 3 && (
         <NotasFiscaisTab data={notas} loading={loading}
           onNew={() => setModalNota({ pedido_id: '', fornecedor_id: '', numero: '', serie: '', chave_acesso: '', valor: '', data_emissao: '', storage_path: '' })}
           onDelete={deleteNota} fornecedores={fornecedores} pedidos={pedidos}
@@ -357,8 +306,8 @@ export default function Logistica() {
         />
       )}
 
-      {tab === 5 && <ComprasMLTab />}
-      {tab === 6 && <RastreioMLTab />}
+      {tab === 4 && <ComprasMLTab />}
+      {tab === 5 && <RastreioMLTab />}
 
       {/* ── MODAIS ─────────────────────────────────────────── */}
 
@@ -381,23 +330,6 @@ export default function Logistica() {
             {CATEGORIAS.map(c => <option key={c} value={c}>{c}</option>)}
           </Select>
           <Textarea label="Observações" value={modalForn.observacoes || ''} onChange={e => upForn('observacoes', e.target.value)} />
-        </>)}
-      </Modal>
-
-      {/* Solicitação */}
-      <Modal open={modalSol !== null} onClose={() => setModalSol(null)} title={modalSol?.id ? 'Editar Solicitação' : 'Nova Solicitação de Compra'}
-        footer={<><Button variant="outline" onClick={() => setModalSol(null)}>Cancelar</Button><Button onClick={saveSolicitacao} disabled={saving}>{saving ? 'Salvando...' : 'Salvar'}</Button></>}>
-        {modalSol && (<>
-          <Input label="Título *" value={modalSol.titulo || ''} onChange={e => upSol('titulo', e.target.value)} />
-          <Textarea label="Descrição" value={modalSol.descricao || ''} onChange={e => upSol('descricao', e.target.value)} />
-          <Textarea label="Justificativa" value={modalSol.justificativa || ''} onChange={e => upSol('justificativa', e.target.value)} />
-          <div style={styles.formRow}>
-            <Input label="Valor Estimado" type="number" step="0.01" value={modalSol.valor_estimado || ''} onChange={e => upSol('valor_estimado', e.target.value)} />
-            <Select label="Urgência" value={modalSol.urgencia || 'normal'} onChange={e => upSol('urgencia', e.target.value)}>
-              <option value="baixa">Baixa</option><option value="normal">Normal</option><option value="alta">Alta</option><option value="urgente">Urgente</option>
-            </Select>
-          </div>
-          <Input label="Área" value={modalSol.area || ''} onChange={e => upSol('area', e.target.value)} />
         </>)}
       </Modal>
 
@@ -494,15 +426,16 @@ function StatCard({ label, value, bg, svg, hint, onClick }) {
 
 function DashboardTab({ dash, onRefresh, onNavigate }) {
   if (!dash) return <div style={styles.empty}>Carregando dashboard...</div>;
-  // Tab indices: 1=Fornecedores, 2=Solicitações, 3=Pedidos, 5=Compras ML
+  // Tab indices: 1=Fornecedores, 2=Pedidos, 4=Compras ML
+  // Solicitacoes de compra agora vivem em /solicitacoes (categoria=compras) ·
+  // KPIs de "Solic. Pendentes/Aprovadas" foram removidos daqui · aparecem na
+  // tela unificada com SLA e NPS.
   const kpis = [
     { label: 'Fornecedores Ativos', value: dash.fornecedoresAtivos ?? 0, bg: '#00B39D', tab: 1 },
-    { label: 'Solic. Pendentes', value: dash.solicitacoesPendentes ?? 0, bg: '#f59e0b', tab: 2 },
-    { label: 'Ped. Aguardando', value: dash.pedidosAguardando ?? 0, bg: '#3b82f6', tab: 3 },
-    { label: 'Ped. Em Trânsito', value: dash.pedidosEmTransito ?? 0, bg: '#8b5cf6', tab: 3 },
-    { label: 'Ped. Recebidos', value: dash.pedidosRecebidos ?? 0, bg: '#10b981', tab: 3 },
-    { label: 'Solic. Aprovadas', value: dash.solicitacoesAprovadas ?? 0, bg: '#6b7280', tab: 2 },
-    { label: 'Compras do Mês', value: fmtMoney(dash.mlComprasMes ?? 0), bg: '#00B39D', hint: 'Apenas compras do Mercado Livre no mês corrente', tab: 5 },
+    { label: 'Ped. Aguardando', value: dash.pedidosAguardando ?? 0, bg: '#3b82f6', tab: 2 },
+    { label: 'Ped. Em Trânsito', value: dash.pedidosEmTransito ?? 0, bg: '#8b5cf6', tab: 2 },
+    { label: 'Ped. Recebidos', value: dash.pedidosRecebidos ?? 0, bg: '#10b981', tab: 2 },
+    { label: 'Compras do Mês', value: fmtMoney(dash.mlComprasMes ?? 0), bg: '#00B39D', hint: 'Apenas compras do Mercado Livre no mês corrente', tab: 4 },
   ];
   return (
     <>
@@ -558,44 +491,6 @@ function FornecedoresTab({ data, loading, isDiretor, filtroAtivo, setFiltroAtivo
 // ═══════════════════════════════════════════════════════════
 // TAB: Solicitações
 // ═══════════════════════════════════════════════════════════
-function SolicitacoesTab({ data, loading, isDiretor, filtroStatus, setFiltroStatus, onNew, onEdit, onAprovar, onRejeitar }) {
-  return (<>
-    <div style={styles.filterRow}>
-      <select className="flex h-9 w-full rounded-lg border border-input bg-background px-3 py-2 text-sm shadow-sm shadow-black/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" value={filtroStatus} onChange={e => setFiltroStatus(e.target.value)}>
-        <option value="">Todos</option>
-        {Object.entries(SOLICITACAO_STATUS).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
-      </select>
-      <Button onClick={onNew}>+ Nova Solicitação</Button>
-    </div>
-    <div style={styles.card}><table style={styles.table}><thead><tr>
-      <th style={styles.th}>Título</th><th style={styles.th}>Solicitante</th><th style={styles.th}>Área</th><th style={styles.th}>Valor Est.</th><th style={styles.th}>Urgência</th><th style={styles.th}>Status</th>
-      <th style={styles.th}>Ações</th>
-    </tr></thead><tbody>
-      {loading ? <tr><td colSpan={7}><div className="flex items-center justify-center py-6 gap-2"><div className="h-4 w-4 animate-spin rounded-full border-2 border-muted-foreground/25 border-t-primary" /><span className="text-xs text-muted-foreground">Carregando...</span></div></td></tr>
-      : data.length === 0 ? <tr><td colSpan={7}><div className="flex flex-col items-center py-10 gap-2"><div className="h-10 w-10 rounded-full bg-muted flex items-center justify-center mb-1"><svg className="h-5 w-5 text-muted-foreground" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M20 13V6a2 2 0 00-2-2H6a2 2 0 00-2 2v7m16 0v5a2 2 0 01-2 2H6a2 2 0 01-2-2v-5m16 0h-2.586a1 1 0 00-.707.293l-2.414 2.414a1 1 0 01-.707.293h-3.172a1 1 0 01-.707-.293l-2.414-2.414A1 1 0 006.586 13H4" /></svg></div><span className="text-sm font-medium text-foreground">Nenhuma solicitação</span></div></td></tr>
-      : data.map(s => (
-        <tr key={s.id}>
-          <td style={{ ...styles.td, fontWeight: 600 }}>{s.titulo}</td>
-          <td style={styles.td}>{s.profiles?.name || '—'}</td>
-          <td style={styles.td}>{s.area || '—'}</td>
-          <td style={styles.td}>{fmtMoney(s.valor_estimado)}</td>
-          <td style={styles.td}><Badge status={s.urgencia} map={URGENCIA_COLORS} /></td>
-          <td style={styles.td}><Badge status={s.status} map={SOLICITACAO_STATUS} /></td>
-          <td style={styles.td}>
-            <div style={{ display: 'flex', gap: 4 }}>
-              {s.status === 'pendente' && onEdit && <Button variant="ghost" size="xs" onClick={() => onEdit(s)}>Editar</Button>}
-              {s.status === 'pendente' && isDiretor && <>
-                <Button size="xs" className="bg-emerald-500 hover:bg-emerald-600 text-white" onClick={() => onAprovar(s.id)}>✓</Button>
-                <Button variant="destructive" size="xs" onClick={() => onRejeitar(s.id)}>✕</Button>
-              </>}
-            </div>
-          </td>
-        </tr>
-      ))}
-    </tbody></table></div>
-  </>);
-}
-
 // ═══════════════════════════════════════════════════════════
 // TAB: Pedidos
 // ═══════════════════════════════════════════════════════════
