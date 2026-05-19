@@ -2,6 +2,59 @@
 
 Guia operacional para o Claude Code quando trabalhar neste repositório.
 
+## ⚠️ AVISO PRO MATHEUS · pendencias da sessao de ontem (2026-05-18)
+
+Marcos pediu pra deixar registrado aqui · ele esta em outra frente hoje
+(Solicitacoes/NPS) e nao quer perder contexto. Voce precisa fechar:
+
+### 1. Permissoes · PR 2/2 (UI admin)
+PR #464 ja entregou schema/seeds/middleware/endpoints. **Falta o PR 2**:
+- UI em `/admin/permissoes` pra editar a matriz cargo × modulo e overrides
+  (consome `/api/permissoes/matriz`, `/matriz/celula`, `/cargo/:id`)
+- UI em `/admin/usuarios` pra gerenciar cargo + areas por pessoa
+  (consome `/api/permissoes/usuario/:id`, `/usuario/:id/cargo`,
+  `/usuario/:id/modulo`)
+- Migrar `ModuleGuard` keys do front pra ler slugs novos diretamente
+  (`canRH`, `canFinanceiro` etc viram aliases temporarios)
+
+Endpoints ja estao prontos · so falta tela. Detalhes do PR 1 estao no
+body do PR #464.
+
+### 2. Permissoes · 6 itens nao decididos da reuniao
+Marcar/decidir antes de promover a UI de admin (estao na secao
+"Permissoes · matriz cargo x modulo > Itens pendentes da reuniao"):
+1. Assistente do Online (ninguem atribuido)
+2. Estrutura do Marketing (lideres de subarea ou todos assistentes?)
+3. Cargo do Chico (provisorio `assistente-financeiro`, confirmar com Ju do RH)
+4. Permissoes do Lider de Producao (reuniao foi interrompida)
+5. Override flow formal (processo de pedido + aprovacao)
+6. Inconsistencia `coordenador-financeiro × Financeiro`: planilha "4",
+   resumo "4 + A + E" · segui a planilha
+
+### 3. YouTube · validar deploy do PR #424 em producao
+PRs #424, #461 e #468 mergeados ontem. Os crons do GitHub Actions
+(`online-live-monitor`) estao rodando verde · mas os jobs so produzem
+dado se o admin tiver clicado "Conectar canal" em `/ministerial/online`
+uma vez. Voce precisa validar com Marcos:
+- [ ] Migration `20260514210000_online_oauth_tokens.sql` aplicada no
+      Supabase de prod?
+- [ ] Envs `GOOGLE_OAUTH_CLIENT_ID` / `GOOGLE_OAUTH_CLIENT_SECRET`
+      configuradas no Vercel?
+- [ ] Admin ja clicou "Conectar canal" via `/ministerial/online`? Sem isso,
+      `online_oauth_tokens` fica vazio e os 3 jobs (live-monitor, ds, ddus)
+      skipam silenciosos.
+
+Confirmar via `GET /api/online/oauth/status` antes de declarar fechado.
+
+### Untracked locais (decidir)
+Marcos tem no working dir dele (nao commitou ainda):
+- `docs/permissoes-mapa.md`, `docs/permissoes-mapa.xlsx`,
+  `scripts/gerar_permissoes_xlsx.py` · artefatos da reuniao de
+  permissoes. Combinar com ele se entram no repo ou ficam locais.
+
+---
+
+
 ## Deploy autônomo (fluxo padrão)
 
 Para qualquer feature/fix/refactor solicitado pelo usuário, Claude está
