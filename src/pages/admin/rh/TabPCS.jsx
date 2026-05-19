@@ -1055,11 +1055,354 @@ function ElegibilidadeTable({ lista, tipo, flash, onApplied }) {
 }
 
 // ════════════════════════════════════════════════════════════════════
+// Sub-aba: PONTUAÇÃO PCS (avaliação dos 6 critérios + grau proposto)
+// ════════════════════════════════════════════════════════════════════
+const STATUS_PROPOSTA = {
+  adequado:           { label: 'Adequado',         color: C.green,  bg: C.greenBg,  icon: CheckCircle2 },
+  abaixo_minimo:      { label: 'Abaixo do mínimo', color: C.amber,  bg: C.amberBg,  icon: AlertTriangle },
+  abaixo_referencia:  { label: 'Abaixo da ref.',   color: C.blue,   bg: C.blueBg,   icon: AlertTriangle },
+  acima_teto:         { label: 'Acima do teto',    color: C.red,    bg: C.redBg,    icon: ArrowUpRight },
+  sem_dados:          { label: 'Sem dados',        color: C.gray,   bg: C.grayBg,   icon: AlertTriangle },
+  nao_avaliado:       { label: 'Não avaliado',     color: C.gray,   bg: C.grayBg,   icon: AlertTriangle },
+};
+
+function PontuacaoTab({ flash }) {
+  const [pontuacao, setPontuacao] = useState([]);
+  const [criterios, setCriterios] = useState([]);
+  const [graus, setGraus] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [filtroArea, setFiltroArea] = useState('');
+  const [filtroStatus, setFiltroStatus] = useState('');
+  const [busca, setBusca] = useState('');
+  const [editar, setEditar] = useState(null);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const [p, c, g] = await Promise.all([
+        pcs.pontuacao.list('PCS 2026'),
+        pcs.criterios.list(),
+        pcs.graus.list(),
+      ]);
+      setPontuacao(p);
+      setCriterios(c);
+      setGraus(g);
+    } catch (e) { flash('Erro ao carregar pontuação: ' + e.message, 'error'); }
+    finally { setLoading(false); }
+  }, [flash]);
+
+  useEffect(() => { load(); }, [load]);
+
+  const lista = useMemo(() => pontuacao.filter(f => {
+    if (filtroArea && f.area !== filtroArea) return false;
+    const st = f.status_proposta || 'nao_avaliado';
+    if (filtroStatus && st !== filtroStatus) return false;
+    if (busca && !(`${f.nome} ${f.cargo}`.toLowerCase().includes(busca.toLowerCase()))) return false;
+    return true;
+  }), [pontuacao, filtroArea, filtroStatus, busca]);
+
+  const areas = Array.from(new Set(pontuacao.map(f => f.area).filter(Boolean)));
+
+  const resumo = useMemo(() => {
+    const out = { adequado: 0, abaixo_minimo: 0, acima_teto: 0, abaixo_referencia: 0, sem_dados: 0, nao_avaliado: 0 };
+    for (const f of pontuacao) {
+      const s = f.status_proposta || 'nao_avaliado';
+      out[s] = (out[s] || 0) + 1;
+    }
+    return out;
+  }, [pontuacao]);
+
+  if (loading) return <div className="text-center py-12 text-muted-foreground">Carregando pontuação PCS...</div>;
+
+  return (
+    <div className="space-y-4">
+      {/* Cards de resumo */}
+      <div className="grid grid-cols-2 md:grid-cols-6 gap-2">
+        {['adequado','abaixo_minimo','abaixo_referencia','acima_teto','sem_dados','nao_avaliado'].map(k => {
+          const s = STATUS_PROPOSTA[k]; const Icon = s.icon;
+          return (
+            <button key={k} onClick={() => setFiltroStatus(filtroStatus === k ? '' : k)}
+              className="rounded-lg border border-border p-2 text-left transition-colors hover:bg-muted/40"
+              style={filtroStatus === k ? { borderColor: s.color, background: s.bg } : {}}>
+              <div className="flex items-center gap-1 text-[10px] font-semibold uppercase" style={{ color: s.color }}>
+                <Icon className="h-3 w-3" /> {s.label}
+              </div>
+              <div className="text-2xl font-bold tabular-nums mt-0.5">{resumo[k] || 0}</div>
+            </button>
+          );
+        })}
+      </div>
+
+      <Card>
+        <CardHeader className="pb-3">
+          <CardTitle className="text-base font-semibold flex items-center gap-2">
+            <Calculator className="h-4 w-4 text-primary" /> Pontuação PCS · Avaliação dos 6 critérios
+          </CardTitle>
+          <CardDescription className="text-xs">
+            {pontuacao.length} colaboradores · escala 200-1000 pontos · grau proposto baseado na avaliação dos critérios (PCS 2026).
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="flex flex-wrap items-center gap-2 mb-3">
+            <div className="relative flex-1 min-w-[200px]">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
+              <input className="w-full h-9 pl-9 rounded-lg border border-input bg-background px-3 text-sm" placeholder="Buscar por nome ou cargo..."
+                value={busca} onChange={e => setBusca(e.target.value)} />
+            </div>
+            <ShadSelect value={filtroArea || '__all__'} onValueChange={v => setFiltroArea(v === '__all__' ? '' : v)}>
+              <SelectTrigger className="w-36 h-9"><SelectValue placeholder="Área" /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="__all__">Todas as áreas</SelectItem>
+                {areas.map(a => <SelectItem key={a} value={a}>{a}</SelectItem>)}
+              </SelectContent>
+            </ShadSelect>
+            {filtroStatus && (
+              <Button size="sm" variant="ghost" onClick={() => setFiltroStatus('')}>Limpar filtro</Button>
+            )}
+          </div>
+
+          <div className="rounded-lg border border-border overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead className="bg-muted/40">
+                <tr>
+                  <th className="text-left px-3 py-2 text-xs font-semibold text-muted-foreground uppercase">Colaborador</th>
+                  <th className="text-left px-3 py-2 text-xs font-semibold text-muted-foreground uppercase">Cargo · Área</th>
+                  <th className="text-center px-2 py-2 text-xs font-semibold text-muted-foreground uppercase">Grau atual</th>
+                  <th className="text-center px-2 py-2 text-xs font-semibold text-muted-foreground uppercase" title="Formação · Experiência · Complexidade · Responsabilidade · Liderança · Técnicas">Critérios (níveis 1-5)</th>
+                  <th className="text-right px-2 py-2 text-xs font-semibold text-muted-foreground uppercase">Pts</th>
+                  <th className="text-center px-2 py-2 text-xs font-semibold text-muted-foreground uppercase">Grau proposto</th>
+                  <th className="text-center px-2 py-2 text-xs font-semibold text-muted-foreground uppercase">Δ</th>
+                  <th className="text-right px-2 py-2 text-xs font-semibold text-muted-foreground uppercase">Gap</th>
+                  <th className="text-left px-2 py-2 text-xs font-semibold text-muted-foreground uppercase">Status</th>
+                  <th className="px-2 py-2"></th>
+                </tr>
+              </thead>
+              <tbody>
+                {lista.map(f => {
+                  const st = STATUS_PROPOSTA[f.status_proposta || 'nao_avaliado'] || STATUS_PROPOSTA.nao_avaliado;
+                  const Icon = st.icon;
+                  const niveis = [f.nivel_formacao, f.nivel_experiencia, f.nivel_complexidade, f.nivel_responsabilidade, f.nivel_lideranca, f.nivel_competencias];
+                  return (
+                    <tr key={f.funcionario_id} className="border-t border-border hover:bg-muted/20">
+                      <td className="px-3 py-2 font-semibold">{f.nome}</td>
+                      <td className="px-3 py-2 text-xs">{f.cargo}<div className="text-muted-foreground">{f.area}</div></td>
+                      <td className="px-2 py-2 text-center">
+                        {f.grau_atual_codigo ? (
+                          <span className="inline-block px-2 py-0.5 rounded-full text-xs font-semibold font-mono"
+                            style={{ color: CATEGORIA_COLOR[f.grau_atual_categoria]?.c, background: CATEGORIA_COLOR[f.grau_atual_categoria]?.bg }}
+                            title={f.grau_atual_nivel}>{f.grau_atual_codigo}</span>
+                        ) : <span className="text-xs text-muted-foreground">—</span>}
+                      </td>
+                      <td className="px-2 py-2 text-center font-mono text-[11px]">
+                        {niveis.every(n => n == null) ? (
+                          <span className="text-muted-foreground italic">não avaliado</span>
+                        ) : (
+                          <span className="tabular-nums" title="Formação · Experiência · Complexidade · Responsabilidade · Liderança · Técnicas">
+                            {niveis.map((n, i) => (
+                              <span key={i} className={`inline-block w-5 ${n == null ? 'text-muted-foreground' : ''}`}
+                                style={n != null ? { color: n >= 4 ? C.primary : n >= 3 ? C.blue : C.gray } : {}}>
+                                {n ?? '·'}
+                              </span>
+                            ))}
+                          </span>
+                        )}
+                      </td>
+                      <td className="px-2 py-2 text-right tabular-nums font-semibold"
+                        style={{ color: (f.pts_total || 0) >= 700 ? C.primary : (f.pts_total || 0) >= 400 ? C.blue : C.gray }}>
+                        {f.pts_total != null ? Number(f.pts_total).toFixed(0) : '—'}
+                      </td>
+                      <td className="px-2 py-2 text-center">
+                        {f.grau_proposto_codigo ? (
+                          <span className="inline-block px-2 py-0.5 rounded-full text-xs font-semibold font-mono"
+                            style={{ color: CATEGORIA_COLOR[f.grau_proposto_categoria]?.c, background: CATEGORIA_COLOR[f.grau_proposto_categoria]?.bg }}
+                            title={f.grau_proposto_nivel}>{f.grau_proposto_codigo}</span>
+                        ) : <span className="text-xs text-muted-foreground">—</span>}
+                      </td>
+                      <td className="px-2 py-2 text-center font-semibold tabular-nums"
+                        style={{ color: (f.delta_graus || 0) > 0 ? C.amber : (f.delta_graus || 0) < 0 ? C.gray : C.green }}>
+                        {f.delta_graus == null ? '—' : f.delta_graus > 0 ? `+${f.delta_graus}` : f.delta_graus}
+                      </td>
+                      <td className="px-2 py-2 text-right text-xs tabular-nums"
+                        style={{ color: (f.gap_salarial || 0) < 0 ? C.amber : C.green }}>
+                        {f.gap_salarial == null ? '—' : fmtMoney(f.gap_salarial)}
+                      </td>
+                      <td className="px-2 py-2">
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold"
+                          style={{ color: st.color, background: st.bg }}>
+                          <Icon className="h-2.5 w-2.5" /> {st.label}
+                        </span>
+                      </td>
+                      <td className="px-2 py-2 text-right">
+                        <Button size="sm" variant="ghost" onClick={() => setEditar(f)}>Editar</Button>
+                      </td>
+                    </tr>
+                  );
+                })}
+                {lista.length === 0 && (
+                  <tr><td colSpan={10} className="text-center py-10 text-muted-foreground text-sm">Nenhum colaborador encontrado</td></tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </CardContent>
+      </Card>
+
+      {editar && (
+        <EditarPontuacaoModal
+          pontuacao={editar}
+          criterios={criterios}
+          graus={graus}
+          onClose={() => setEditar(null)}
+          onSaved={() => { setEditar(null); load(); flash('Pontuação atualizada', 'success'); }}
+        />
+      )}
+    </div>
+  );
+}
+
+function EditarPontuacaoModal({ pontuacao, criterios, graus, onClose, onSaved }) {
+  const [niveis, setNiveis] = useState({
+    formacao:        pontuacao.nivel_formacao || '',
+    experiencia:     pontuacao.nivel_experiencia || '',
+    complexidade:    pontuacao.nivel_complexidade || '',
+    responsabilidade:pontuacao.nivel_responsabilidade || '',
+    lideranca:       pontuacao.nivel_lideranca || '',
+    competencias:    pontuacao.nivel_competencias || '',
+  });
+  const [grauPropostoId, setGrauPropostoId] = useState(pontuacao.grau_proposto_id || '');
+  const [statusProposta, setStatusProposta] = useState(pontuacao.status_proposta || '');
+  const [decisaoObs, setDecisaoObs] = useState(pontuacao.decisao_obs || '');
+  const [saving, setSaving] = useState(false);
+
+  // Recalcula pontos sempre que muda
+  const pesos = { formacao: 0.15, experiencia: 0.20, complexidade: 0.20, responsabilidade: 0.20, lideranca: 0.15, competencias: 0.10 };
+  const total = useMemo(() => {
+    let s = 0;
+    for (const k of Object.keys(pesos)) {
+      const n = Number(niveis[k]);
+      if (n) s += n * pesos[k] * 200;
+    }
+    return Math.round(s);
+  }, [niveis]);
+
+  // Sugere grau automaticamente quando os pontos mudam (acha o grau cuja faixa de pontos engloba o total)
+  useEffect(() => {
+    if (!total) return;
+    const sugerido = graus.find(g => g.pontos_min != null && g.pontos_max != null && total >= g.pontos_min && total <= g.pontos_max);
+    if (sugerido && !pontuacao.grau_proposto_id) setGrauPropostoId(sugerido.id);
+  }, [total, graus, pontuacao.grau_proposto_id]);
+
+  const save = async () => {
+    setSaving(true);
+    try {
+      await pcs.pontuacao.update(pontuacao.funcionario_id, {
+        ciclo_referencia: 'PCS 2026',
+        nivel_formacao:        niveis.formacao || null,
+        nivel_experiencia:     niveis.experiencia || null,
+        nivel_complexidade:    niveis.complexidade || null,
+        nivel_responsabilidade:niveis.responsabilidade || null,
+        nivel_lideranca:       niveis.lideranca || null,
+        nivel_competencias:    niveis.competencias || null,
+        grau_proposto_id: grauPropostoId || null,
+        status_proposta: statusProposta || null,
+        decisao_obs: decisaoObs || null,
+      });
+      onSaved();
+    } catch (e) { alert(e.message); }
+    finally { setSaving(false); }
+  };
+
+  return (
+    <div className="fixed inset-0 z-[1000] flex items-center justify-center bg-black/50 p-4" onClick={onClose}>
+      <div className="bg-popover rounded-2xl p-6 w-full max-w-2xl max-h-[90vh] overflow-y-auto shadow-2xl" onClick={e => e.stopPropagation()}>
+        <h3 className="text-base font-bold mb-1 flex items-center gap-2">
+          <Sparkles className="h-4 w-4 text-primary" /> Pontuação PCS · {pontuacao.nome}
+        </h3>
+        <p className="text-xs text-muted-foreground mb-4">{pontuacao.cargo} · {pontuacao.area} · {pontuacao.tipo_contrato} · Grau atual: <strong>{pontuacao.grau_atual_codigo || '—'} {pontuacao.grau_atual_nivel || ''}</strong></p>
+
+        <div className="space-y-3">
+          {criterios.map(c => (
+            <div key={c.id}>
+              <label className="text-xs font-semibold text-muted-foreground uppercase mb-1 block">
+                {c.nome} <span className="text-[10px] font-normal text-muted-foreground/70">({(c.peso * 100).toFixed(0)}% · máx {c.pontos_max} pts)</span>
+              </label>
+              <ShadSelect value={niveis[c.codigo] ? String(niveis[c.codigo]) : '__none__'}
+                onValueChange={v => setNiveis(prev => ({ ...prev, [c.codigo]: v === '__none__' ? '' : Number(v) }))}>
+                <SelectTrigger><SelectValue placeholder="Selecione o nível" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__none__">Não avaliado</SelectItem>
+                  {(c.niveis || []).map(n => (
+                    <SelectItem key={n.nivel} value={String(n.nivel)}>
+                      {n.nivel} · {n.descricao} · {(n.nivel * c.peso * 200).toFixed(0)} pts
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </ShadSelect>
+            </div>
+          ))}
+
+          <div className="rounded-lg border border-primary/40 bg-primary/5 p-3 mt-2">
+            <div className="flex items-center justify-between text-sm">
+              <span className="font-semibold">Pontuação total</span>
+              <span className="text-2xl font-bold tabular-nums" style={{ color: C.primary }}>{total} <span className="text-xs font-normal text-muted-foreground">/ 1000</span></span>
+            </div>
+          </div>
+
+          <div>
+            <label className="text-xs font-semibold text-muted-foreground uppercase mb-1 block">Grau proposto</label>
+            <ShadSelect value={grauPropostoId || '__none__'} onValueChange={v => setGrauPropostoId(v === '__none__' ? '' : v)}>
+              <SelectTrigger><SelectValue placeholder="Selecione um grau" /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="__none__">Sem proposta</SelectItem>
+                {graus.map(g => (
+                  <SelectItem key={g.id} value={g.id}>
+                    {g.codigo} · {g.nivel} · pontos {g.pontos_min}-{g.pontos_max} · ref {fmtMoney(g.faixa_ref)}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </ShadSelect>
+          </div>
+
+          <div>
+            <label className="text-xs font-semibold text-muted-foreground uppercase mb-1 block">Status da proposta</label>
+            <ShadSelect value={statusProposta || '__none__'} onValueChange={v => setStatusProposta(v === '__none__' ? '' : v)}>
+              <SelectTrigger><SelectValue placeholder="Selecione o status" /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="__none__">—</SelectItem>
+                <SelectItem value="adequado">Adequado</SelectItem>
+                <SelectItem value="abaixo_minimo">Abaixo do mínimo</SelectItem>
+                <SelectItem value="abaixo_referencia">Abaixo da referência</SelectItem>
+                <SelectItem value="acima_teto">Acima do teto</SelectItem>
+                <SelectItem value="sem_dados">Sem dados</SelectItem>
+              </SelectContent>
+            </ShadSelect>
+          </div>
+
+          <div>
+            <label className="text-xs font-semibold text-muted-foreground uppercase mb-1 block">Observação / Decisão</label>
+            <textarea className="w-full min-h-[60px] rounded-lg border border-input bg-background px-3 py-2 text-sm"
+              value={decisaoObs} onChange={e => setDecisaoObs(e.target.value)}
+              placeholder="Ex: aguardar próximo ciclo · adequado por contexto pastoral · etc." />
+          </div>
+        </div>
+
+        <div className="flex gap-2 justify-end mt-5">
+          <Button variant="ghost" onClick={onClose}>Cancelar</Button>
+          <Button onClick={save} disabled={saving}>{saving ? 'Salvando...' : 'Salvar'}</Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+
+// ════════════════════════════════════════════════════════════════════
 // COMPONENTE PRINCIPAL
 // ════════════════════════════════════════════════════════════════════
 const SUB_TABS = [
   { key: 'aderencia', label: 'Aderência', icon: Scale, desc: 'Dashboard compa-ratio + plano de ação' },
   { key: 'mapa', label: 'Mapa de Funções', icon: Award, desc: 'Enquadramento individual' },
+  { key: 'pontuacao', label: 'Pontuação PCS', icon: Calculator, desc: 'Avaliação dos 6 critérios + grau proposto' },
   { key: 'progressao', label: 'Progressão', icon: TrendingUp, desc: 'Mérito, promoção, histórico' },
   { key: 'graus', label: 'Estrutura de Graus', icon: Layers, desc: '22 graus e faixas salariais' },
   { key: 'criterios', label: 'Critérios', icon: ClipboardCheck, desc: '6 fatores de avaliação' },
@@ -1096,6 +1439,7 @@ export default function TabPCS() {
 
         <TabsContent value="aderencia"><AderenciaTab flash={flash} /></TabsContent>
         <TabsContent value="mapa"><MapaFuncoesTab flash={flash} /></TabsContent>
+        <TabsContent value="pontuacao"><PontuacaoTab flash={flash} /></TabsContent>
         <TabsContent value="progressao"><ProgressaoTab flash={flash} /></TabsContent>
         <TabsContent value="graus"><GrausTab flash={flash} /></TabsContent>
         <TabsContent value="criterios"><CriteriosTab flash={flash} /></TabsContent>
