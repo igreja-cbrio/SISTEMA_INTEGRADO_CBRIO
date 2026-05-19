@@ -1,6 +1,8 @@
 import { useState, useEffect, useMemo } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { cuidados as cuidadosApi } from '../../api';
 import ProcessosTarefas from '../../components/ProcessosTarefas';
+import DevocionalAdmin from '../../components/DevocionalAdmin';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '../../components/ui/tabs';
 import { Button } from '../../components/ui/button';
 import { Input } from '../../components/ui/input';
@@ -212,7 +214,15 @@ function ConvertidoModal({ open, onClose, onSaved }: { open: boolean; onClose: (
 // Página principal
 // ──────────────────────────────────────────────────────────────────
 export default function Cuidados() {
-  const [tab, setTab] = useState('dashboard');
+  const [searchParams, setSearchParams] = useSearchParams();
+  const [tab, setTab] = useState(() => searchParams.get('tab') || 'dashboard');
+
+  function handleTabChange(v: string) {
+    setTab(v);
+    const sp = new URLSearchParams(searchParams);
+    if (v === 'dashboard') sp.delete('tab'); else sp.set('tab', v);
+    setSearchParams(sp, { replace: true });
+  }
   const [dash, setDash] = useState<any>(null);
   const [loading, setLoading] = useState(true);
 
@@ -292,13 +302,14 @@ export default function Cuidados() {
         <p className="text-sm text-muted-foreground mt-1">Acompanhamentos pastorais, Jornada 180, capelania, aconselhamento e convertidos pós-culto.</p>
       </div>
 
-      <Tabs value={tab} onValueChange={setTab}>
+      <Tabs value={tab} onValueChange={handleTabChange}>
         <TabsList>
           <TabsTrigger value="dashboard">Dashboard</TabsTrigger>
           <TabsTrigger value="acomp">Acompanhamentos</TabsTrigger>
           <TabsTrigger value="jornada">Jornada 180</TabsTrigger>
           <TabsTrigger value="convertidos">Convertidos</TabsTrigger>
           <TabsTrigger value="agregado">Mensal / Agregado</TabsTrigger>
+          <TabsTrigger value="devocional">Devocional</TabsTrigger>
           <TabsTrigger value="tarefas">Tarefas</TabsTrigger>
         </TabsList>
 
@@ -478,6 +489,10 @@ export default function Cuidados() {
               Última atualização: {new Date(agregado[0].updated_at || agregado[0].created_at).toLocaleString('pt-BR')}
             </div>
           )}
+        </TabsContent>
+
+        <TabsContent value="devocional" className="space-y-4">
+          <DevocionalAdmin />
         </TabsContent>
 
         <TabsContent value="tarefas" className="space-y-4">
