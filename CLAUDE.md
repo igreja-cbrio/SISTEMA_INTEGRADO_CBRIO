@@ -52,6 +52,14 @@ Marcos tem no working dir dele (nao commitou ainda):
   `scripts/gerar_permissoes_xlsx.py` · artefatos da reuniao de
   permissoes. Combinar com ele se entram no repo ou ficam locais.
 
+### Fix aplicado 2026-05-19 · KPIs ADM Criativo
+Migration `20260519140000_recalcular_adm_criativo.sql` chama
+`recalcular_todos_kpis_adm()` pra popular os 6 KPIs `ADM-C-*` (3 SLA
++ 3 NPS) que nunca tinham sido calculados desde o seed criativo
+(20260512280000). Sem solicitacao nas areas producao/adoracao/marketing
+ainda, valores ficam NULL · mas a linha existe em
+`kpi_valores_calculados` e o painel para de mostrar lacuna estranha.
+
 ---
 
 
