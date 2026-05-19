@@ -79,6 +79,23 @@ usuarios). Tela em `/admin/permissoes` (arquivo
   aliases temporarios) · TODO de polish, nao bloqueante · hoje os hooks
   ja lem dos slugs novos via AuthContext
 
+### Eventos · escopo_proprio trata como "lider" no kanban (2026-05-19)
+**Pedido**: Pedro Paiva (cargo `coordenador-marketing`, area Marketing)
+precisa acessar Eventos, ver todas as tarefas e preencher · filtradas
+pela area dele.
+
+**Mudancas em `src/pages/eventos/Eventos.jsx`:**
+- `accessLevel` agora le slugs novo + legado: `['eventos', 'Agenda']`
+- Novo: `eventosEscopoProprio = modulePerms?.eventos?.escopo_proprio`
+- `isLider` ganha condicao OR: `(accessLevel >= 3 || eventosEscopoProprio)`
+  permite cargos com escopo (coord-marketing, lider-producao, etc) entrar
+  no kanban filtrado pela area, mesmo com nivel < 3 na matriz base.
+- `defaultArea` continua vindo de `userAreas[0]` quando isLider=true.
+
+**Migration `20260519330000_coord_marketing_eventos_nivel3.sql`**:
+- coord-marketing × eventos: 2 → 3 + escopo_proprio=true
+- lider-producao × eventos: idem (mesma logica de filtro por area)
+
 ### Permissoes · auditoria + atribuicao em massa (2026-05-19)
 Despejo do estado real (cargos, modulos, areas, usuarios+areas) gerou
 3 PRs em sequencia:

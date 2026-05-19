@@ -306,12 +306,15 @@ function EvStatCard({ label, value, bg, svg }) {
 // COMPONENTE PRINCIPAL
 // ═══════════════════════════════════════════════════════════
 export default function Eventos() {
-  const { profile, user, getAccessLevel, userAreas } = useAuth();
+  const { profile, user, getAccessLevel, userAreas, modulePerms } = useAuth();
   const userRole = profile?.role || '';
   const userArea = profile?.area || '';
   const userId = user?.id || '';
-  const accessLevel = getAccessLevel(['Agenda']);
+  const accessLevel = getAccessLevel(['eventos', 'Agenda']);
   const isPMO = accessLevel >= 4;
+  // Cargos com escopo_proprio em eventos (ex: coord-marketing, lider-producao)
+  // sao tratados como "lider" pra filtrar kanban pela area deles.
+  const eventosEscopoProprio = !!modulePerms?.eventos?.escopo_proprio;
 
   // URL params para drill-down (ex: /eventos?status=atrasado&id=xxx)
   const urlParams = new URLSearchParams(window.location.search);
@@ -687,7 +690,9 @@ export default function Eventos() {
   const [reportModal, setReportModal] = useState(null); // null | { step: 'event' | 'scope' | 'phase' | 'generating' | 'done', eventId, eventName, type, phaseName, result, error }
 
   // ── Kanban (dois níveis)
-  const isLider = !isPMO && accessLevel >= 3;
+  // isLider · qualquer pessoa com escopo proprio (coord-marketing, lider-producao,
+  // lider-ministerial) ou com nivel >= 3. Esses tem o kanban filtrado pela area.
+  const isLider = !isPMO && (accessLevel >= 3 || eventosEscopoProprio);
   // Líderes: visão PMO filtrada pela area deles. PMO: visão completa.
   const [kanbanViewMode, setKanbanViewMode] = useState('pmo');
   const defaultArea = isLider && userAreas.length > 0 ? userAreas[0].toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '') : 'all';
