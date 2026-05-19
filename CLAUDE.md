@@ -79,8 +79,26 @@ usuarios). Tela em `/admin/permissoes` (arquivo
   aliases temporarios) · TODO de polish, nao bloqueante · hoje os hooks
   ja lem dos slugs novos via AuthContext
 
+### Fix · profile UUID vs usuarios INTEGER (2026-05-19)
+**Bug encontrado:** tabela `usuarios` em prod tem `id INTEGER` (legado da
+migration 20260410), mas frontend mandava `profile.id` (UUID). Erro
+ao mudar cargo: `invalid input syntax for type integer`.
+
+**Solucao**: helper `resolverUsuarioId(idParam)` em `permissoes.js`
+agora detecta se eh UUID ou int. Se UUID, busca `profiles.email`,
+procura/cria registro em `usuarios` por email e retorna o int id.
+Aplicado em todos endpoints que tocam usuarios: GET/:id, PUT/cargo,
+PUT/areas, PUT/modulo, DELETE/modulo. Lazy-create no momento do
+primeiro write (nao polui a tabela com profiles que ninguem editou).
+
 ### Usuarios UI · cargo + areas + overrides (2026-05-19)
-Tela em `/admin/usuarios` (`src/pages/admin/Usuarios.jsx`):
+**Local: aba "Usuários" dentro de `/admin/permissoes`** (era pagina
+separada `/admin/usuarios` · foi consolidado em 2026-05-19 a pedido
+do Marcos). Rota legacy `/admin/usuarios` redireciona pra
+`/admin/permissoes?aba=usuarios`.
+
+Componente `src/pages/admin/Usuarios.jsx` (export default · sem header
+proprio, ja vem dentro do shell de Permissoes):
 
 - Lista de colaboradores via `GET /api/permissoes/colaboradores` (filtra
   out membros, volutarios, cadastros pendentes via mem_cadastros_pendentes)

@@ -5,6 +5,48 @@ const { supabase } = require('../utils/supabase');
 router.use(authenticate, authorize('admin', 'diretor'));
 
 // ────────────────────────────────────────────────────────────────────────
+// resolverUsuarioId · ponte entre profile (UUID) e usuarios (integer/UUID)
+//
+// Tabela usuarios em prod tem id INTEGER e linka com profile por email
+// (legado da migration 20260410). Endpoints PUT/DELETE recebem profile.id
+// do frontend (UUID), entao precisamos:
+//   1. Se ja eh integer/numeric, retorna direto
+//   2. Senao, busca o profile pelo UUID → pega email
+//   3. Busca usuarios.email → se existir, retorna usuarios.id
+//   4. Senao, cria registro novo em usuarios + retorna id criado
+//
+// Retorna { id, criado } ou null se profile nao existir.
+// ────────────────────────────────────────────────────────────────────────
+async function resolverUsuarioId(idParam) {
+  if (idParam == null) return null;
+
+  // Ja eh numero (legado · alguns clientes podem mandar int direto)
+  if (/^\d+$/.test(String(idParam))) {
+    return { id: Number(idParam), criado: false };
+  }
+
+  // E' UUID · busca o profile pra pegar email + nome
+  const { data: profile } = await supabase.from('profiles')
+    .select('id, email, name').eq('id', idParam).maybeSingle();
+  if (!profile?.email) return null;
+
+  const email = profile.email.toLowerCase().trim();
+
+  // Procura usuario existente por email
+  const { data: existing } = await supabase.from('usuarios')
+    .select('id').eq('email', email).maybeSingle();
+  if (existing?.id != null) {
+    return { id: existing.id, criado: false };
+  }
+
+  // Cria registro novo
+  const { data: novo, error } = await supabase.from('usuarios')
+    .insert({ nome: profile.name || email, email }).select('id').single();
+  if (error || !novo) return null;
+  return { id: novo.id, criado: true };
+}
+
+// ────────────────────────────────────────────────────────────────────────
 // GET /api/permissoes/colaboradores
 // Retorna profiles que sao colaboradores reais do sistema (nao membros).
 // Exclui quem:
@@ -130,11 +172,16 @@ router.get('/cargo/:id', async (req, res) => {
 // GET /api/permissoes/usuario/:id — get permissions for a user
 router.get('/usuario/:id', async (req, res) => {
   try {
-    const userId = req.params.id;
+    const resolved = await resolverUsuarioId(req.params.id);
+    if (!resolved) {
+      // Profile nao existe · retorna vazio (UI mostra "sem dados")
+      return res.json({ usuario: null, areas: [], overrides: [], extraScopes: [] });
+    }
+    const userId = resolved.id;
 
     // Get user from usuarios table (permissions system)
     const { data: usuario } = await supabase.from('usuarios')
-      .select('*, cargos(*)').eq('id', userId).single();
+      .select('*, cargos(*)').eq('id', userId).maybeSingle();
 
     // Get user areas
     const { data: userAreas } = await supabase.from('usuario_areas')
@@ -195,9 +242,27 @@ router.post('/usuario', async (req, res) => {
 router.put('/usuario/:id/cargo', async (req, res) => {
   try {
     const { cargo_id } = req.body;
-    const { error } = await supabase.from('usuarios')
-      .update({ cargo_id, updated_at: new Date().toISOString() }).eq('id', req.params.id);
-    if (error) return res.status(400).json({ error: error.message });
+    const resolved = await resolverUsuarioId(req.params.id);
+    if (!resolved) return res.status(404).json({ error: 'Usuario nao encontrado' });
+
+    const updatePayload = { cargo_id };
+    // updated_at so seta se a coluna existir · em prod a tabela pode nao ter
+    try {
+      const { error } = await supabase.from('usuarios')
+        .update({ ...updatePayload, updated_at: new Date().toISOString() }).eq('id', resolved.id);
+      if (error) {
+        // Fallback sem updated_at
+        const { error: err2 } = await supabase.from('usuarios')
+          .update(updatePayload).eq('id', resolved.id);
+        if (err2) return res.status(400).json({ error: err2.message });
+      }
+    } catch {
+      const { error: err3 } = await supabase.from('usuarios')
+        .update(updatePayload).eq('id', resolved.id);
+      if (err3) return res.status(400).json({ error: err3.message });
+    }
+
+    bustPermissionCaches();
     res.json({ success: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -206,8 +271,9 @@ router.put('/usuario/:id/cargo', async (req, res) => {
 router.put('/usuario/:id/areas', async (req, res) => {
   try {
     const { area_ids } = req.body; // array of area IDs
-    const userId = parseInt(req.params.id);
-    if (isNaN(userId)) return res.status(400).json({ error: 'ID inválido' });
+    const resolved = await resolverUsuarioId(req.params.id);
+    if (!resolved) return res.status(404).json({ error: 'Usuario nao encontrado' });
+    const userId = resolved.id;
 
     // Delete existing
     await supabase.from('usuario_areas').delete().eq('usuario_id', userId);
@@ -219,6 +285,7 @@ router.put('/usuario/:id/areas', async (req, res) => {
       if (error) return res.status(400).json({ error: error.message });
     }
 
+    bustPermissionCaches();
     res.json({ success: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -234,12 +301,14 @@ router.put('/usuario/:id/modulo', async (req, res) => {
       pode_exportar = false, pode_aprovar = false, escopo_proprio = false,
       motivo = null, expira_em = null,
     } = req.body;
-    const userId = req.params.id;
-    if (!userId || !modulo_id) return res.status(400).json({ error: 'usuario e modulo sao obrigatorios' });
+    if (!req.params.id || !modulo_id) return res.status(400).json({ error: 'usuario e modulo sao obrigatorios' });
+    const resolved = await resolverUsuarioId(req.params.id);
+    if (!resolved) return res.status(404).json({ error: 'Usuario nao encontrado' });
+    const userId = resolved.id;
 
     // Busca a celula default do cargo do usuario para o modulo
     const { data: user } = await supabase.from('usuarios')
-      .select('cargo_id').eq('id', userId).single();
+      .select('cargo_id').eq('id', userId).maybeSingle();
 
     let cellDefault = null;
     if (user?.cargo_id) {
@@ -286,9 +355,11 @@ router.put('/usuario/:id/modulo', async (req, res) => {
 // DELETE /api/permissoes/usuario/:id/modulo/:moduloId — remove um override
 router.delete('/usuario/:id/modulo/:moduloId', async (req, res) => {
   try {
+    const resolved = await resolverUsuarioId(req.params.id);
+    if (!resolved) return res.status(404).json({ error: 'Usuario nao encontrado' });
     const { error } = await supabase.from('permissoes_modulo')
       .delete()
-      .eq('usuario_id', req.params.id)
+      .eq('usuario_id', resolved.id)
       .eq('modulo_id', req.params.moduloId);
     if (error) return res.status(400).json({ error: error.message });
     bustPermissionCaches();
