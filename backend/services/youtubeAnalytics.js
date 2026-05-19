@@ -248,6 +248,30 @@ async function fetchVideoViews(channelId, videoId, startDate, endDate) {
   };
 }
 
+// Analytics: subscribers gained/lost atribuidos a um video em uma janela.
+// startDate/endDate em formato YYYY-MM-DD.
+async function fetchVideoSubsChange(channelId, videoId, startDate, endDate) {
+  const { token } = await getValidAccessToken(channelId);
+  const params = new URLSearchParams({
+    ids: 'channel==MINE',
+    startDate,
+    endDate,
+    metrics: 'subscribersGained,subscribersLost',
+    filters: `video==${videoId}`,
+  });
+  const res = await fetch(`${ANALYTICS}/reports?${params}`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!res.ok) {
+    const t = await res.text();
+    throw new Error(`Analytics subs falhou: ${res.status} ${t.slice(0, 200)}`);
+  }
+  const data = await res.json();
+  const row = (data.rows || [])[0];
+  if (!row) return { gained: 0, lost: 0 };
+  return { gained: row[0] || 0, lost: row[1] || 0 };
+}
+
 // Analytics: views/watchMinutes por fonte de trafego em uma janela.
 // Retorna [{ fonte, views, watch_minutes }] · uma linha por insightTrafficSourceType.
 async function fetchVideoTrafficSources(channelId, videoId, startDate, endDate) {
@@ -287,5 +311,6 @@ module.exports = {
   findActiveBroadcast,
   fetchLiveConcurrentViewers,
   fetchVideoViews,
+  fetchVideoSubsChange,
   fetchVideoTrafficSources,
 };
