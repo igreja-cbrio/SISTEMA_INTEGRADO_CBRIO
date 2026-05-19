@@ -79,6 +79,26 @@ usuarios). Tela em `/admin/permissoes` (arquivo
   aliases temporarios) · TODO de polish, nao bloqueante · hoje os hooks
   ja lem dos slugs novos via AuthContext
 
+### Mobile · menu hamburger + calendario com scroll horizontal (2026-05-19)
+Sem nav no mobile · MegaMenu tinha `className="hidden md:block"` e nao
+havia substituto. Pessoa entrava no `/dashboard` e nao tinha como
+trocar de modulo.
+
+**Fix**:
+- Componente novo `MobileNavSheet` em `AppShell.jsx` · botao hamburger
+  (`Menu` icon · md:hidden) abre Sheet lateral esquerdo com a lista
+  completa de NAV_ITEMS filtrados (respeita matriz cargo×modulo).
+- Search button colapsa pra so icon no mobile (esconde texto + ⌘K)
+- Header passou a ter padding menor no mobile (`px-4 md:px-6`)
+
+**Integracao mobile · calendario semanal**:
+- 7 cards de dia ficavam apertados em telas estreitas.
+- Agora wrapper tem `overflow-x: auto` + cada coluna tem
+  `minmax(96px, 1fr)` · em mobile vira scroll horizontal preservando
+  legibilidade; em desktop continua grade fixa de 7 colunas.
+- Margens negativas (`marginLeft: -4`) compensam o padding pra grudar
+  na borda da tela.
+
 ### Alda Lorena → Lorena · preferencia de nome (2026-05-19)
 Lorena pediu pra ser chamada so de "Lorena" (Alda Lorena Cellos
 Andrade e' o nome legal, fica intocado em rh_funcionarios/PCS).
