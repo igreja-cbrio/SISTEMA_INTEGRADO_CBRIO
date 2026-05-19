@@ -207,6 +207,8 @@ async function authenticate(req, res, next) {
 
         const insertPayload = {
           email: profile.email,
+          // `nome` eh NOT NULL em prod · fallback pra parte do email antes do @
+          nome: (profile.name && profile.name.trim()) || profile.email.split('@')[0],
           cargo_id: cargo?.id || null,
           ativo: true,
         };
