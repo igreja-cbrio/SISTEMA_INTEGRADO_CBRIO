@@ -63,7 +63,7 @@ router.post('/cultos', authorizeIntegracao, async (req, res) => {
     service_type_id, nome, data, hora,
     presencial_adulto, presencial_kids,
     decisoes_presenciais, decisoes_online, decisoes_kids,
-    youtube_video_id, online_pico,
+    youtube_video_id, online_pico, observacoes,
   } = req.body;
   if (!data || !hora || !nome) return res.status(400).json({ error: 'data, hora e nome são obrigatórios' });
 
@@ -78,6 +78,7 @@ router.post('/cultos', authorizeIntegracao, async (req, res) => {
       decisoes_kids:        nonNeg(decisoes_kids),
       youtube_video_id: youtube_video_id || null,
       online_pico: online_pico ? nonNeg(online_pico, null) : null,
+      observacoes: observacoes ? String(observacoes).trim() : null,
       inserido_por: req.user.id,
     })
     .select()
@@ -92,6 +93,7 @@ router.put('/cultos/:id', authorizeIntegracao, async (req, res) => {
     'decisoes_presenciais', 'decisoes_online', 'decisoes_kids',
     'youtube_video_id', 'online_pico', 'nome',
     'online_ds', 'online_ddus',
+    'observacoes',
   ];
   const camposNumericos = [
     'presencial_adulto', 'presencial_kids',

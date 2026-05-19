@@ -8,7 +8,7 @@ import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { kpis as kpisApi } from '../api';
 
 const cultosApi = kpisApi.cultos;
-import { Calendar, ChevronLeft, ChevronRight, CheckCircle2, AlertCircle, X, Save, Tv, Users, Sparkles, UserPlus, Trash2, Pencil, Search as SearchIcon, Link as LinkIcon } from 'lucide-react';
+import { Calendar, ChevronLeft, ChevronRight, CheckCircle2, AlertCircle, X, Save, Tv, Users, Sparkles, UserPlus, Trash2, Pencil, Search as SearchIcon, Link as LinkIcon, FileText } from 'lucide-react';
 import { toast } from 'sonner';
 import { formatErro } from '../lib/formatErro';
 
@@ -420,6 +420,7 @@ function ModalCulto({ culto, onClose, onSaved }) {
     decisoes_presenciais: culto.decisoes_presenciais ?? 0,
     decisoes_online:      culto.decisoes_online ?? 0,
     decisoes_kids:        culto.decisoes_kids ?? 0,
+    observacoes:          culto.observacoes ?? '',
   });
 
   const [form, setForm] = useState({
@@ -474,6 +475,7 @@ function ModalCulto({ culto, onClose, onSaved }) {
         decisoes_presenciais: Number(form.decisoes_presenciais) || 0,
         decisoes_online:      hasOnline ? (Number(form.decisoes_online) || 0) : 0,
         decisoes_kids:        hasKids ? (Number(form.decisoes_kids) || 0) : 0,
+        observacoes:          (form.observacoes ?? '').trim() || null,
       };
       await cultosApi.update(culto.id, payload);
       toast.success('Culto atualizado');
@@ -597,6 +599,21 @@ function ModalCulto({ culto, onClose, onSaved }) {
               </p>
             </>
           )}
+
+          <SecaoTitulo icone={FileText} cor="#64748B" titulo="Observações" />
+          <textarea
+            value={form.observacoes}
+            onChange={e => set('observacoes', e.target.value)}
+            placeholder="Pregador convidado, evento especial, problema com som... Notas livres sobre este culto."
+            rows={3}
+            style={{
+              ...inp,
+              width: '100%',
+              minHeight: 72,
+              resize: 'vertical',
+              fontFamily: 'inherit',
+            }}
+          />
         </div>
 
         <footer style={{ padding: 14, borderTop: `1px solid ${C.border}`, display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
