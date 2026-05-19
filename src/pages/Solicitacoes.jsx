@@ -130,17 +130,24 @@ export default function Solicitacoes() {
     }
   }
 
+  // Ref pra sempre chamar a versao MAIS RECENTE do load() (com o view atual)
+  // dentro do callback do Realtime · sem isso o canal capturava o load via
+  // closure de mount e usava `view='atender'` velho mesmo quando o usuario
+  // ja estava em 'minhas', sobrescrevendo a lista 3s depois de trocar de aba.
+  const loadRef = useRef(load);
+  useEffect(() => { loadRef.current = load; });
+
   useEffect(() => { load(); }, [view]);
 
   // Realtime · qualquer INSERT/UPDATE/DELETE em `solicitacoes` recarrega
-  // o kanban. Debounce 400ms agrega rajadas (ex: trigger de SLA atualiza
-  // a mesma row varias vezes em sequencia).
+  // o kanban/lista. Debounce 400ms agrega rajadas (ex: trigger de SLA
+  // atualiza a mesma row varias vezes em sequencia).
   useEffect(() => {
     if (!supabase || !profile?.id) return;
     let timeout = null;
     function schedReload() {
       if (timeout) clearTimeout(timeout);
-      timeout = setTimeout(() => { load(); }, 400);
+      timeout = setTimeout(() => { loadRef.current?.(); }, 400);
     }
     const channel = supabase
       .channel(`solicitacoes:${profile.id}`)
