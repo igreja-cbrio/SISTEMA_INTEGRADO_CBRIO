@@ -451,7 +451,11 @@ router.get('/batismos', async (req, res) => {
 });
 
 router.post('/batismos', authorizeIntegracao, async (req, res) => {
-  const { cpf, nome, sobrenome, data_nascimento, telefone, email, origem = 'manual', observacoes, area_kpi } = req.body;
+  const {
+    cpf, nome, sobrenome, data_nascimento, telefone, email,
+    origem = 'manual', observacoes, area_kpi,
+    tamanho_camisa, eh_crianca, possui_deficiencia, deficiencia_descricao, endereco,
+  } = req.body;
   if (!nome || !sobrenome) return res.status(400).json({ error: 'nome e sobrenome são obrigatórios' });
   const AREAS_OK = ['kids', 'sede', 'bridge', 'ami', 'online'];
   const areaKpiValida = AREAS_OK.includes(area_kpi) ? area_kpi : 'sede';
@@ -499,6 +503,12 @@ router.post('/batismos', authorizeIntegracao, async (req, res) => {
       area_kpi: areaKpiValida,
       observacoes: observacoes || null,
       inscrito_por: req.user?.id || null,
+      tamanho_camisa: tamanho_camisa ? String(tamanho_camisa).trim().toUpperCase() : null,
+      eh_crianca: !!eh_crianca,
+      possui_deficiencia: !!possui_deficiencia,
+      deficiencia_descricao: possui_deficiencia && deficiencia_descricao
+        ? String(deficiencia_descricao).trim() : null,
+      endereco: endereco ? String(endereco).trim() : null,
     })
     .select('*, membro:membro_id(id, nome, foto_url)')
     .single();
@@ -518,7 +528,10 @@ router.post('/batismos', authorizeIntegracao, async (req, res) => {
 });
 
 router.put('/batismos/:id', authorizeIntegracao, async (req, res) => {
-  const { status, data_batismo, observacoes, area_kpi } = req.body;
+  const {
+    status, data_batismo, observacoes, area_kpi,
+    tamanho_camisa, eh_crianca, possui_deficiencia, deficiencia_descricao, endereco,
+  } = req.body;
   const update = { updated_at: new Date().toISOString() };
   if (status)       update.status = status;
   if (data_batismo) update.data_batismo = data_batismo;
@@ -526,6 +539,15 @@ router.put('/batismos/:id', authorizeIntegracao, async (req, res) => {
   if (area_kpi && ['kids', 'sede', 'bridge', 'ami', 'online'].includes(area_kpi)) {
     update.area_kpi = area_kpi;
   }
+  if (tamanho_camisa !== undefined) {
+    update.tamanho_camisa = tamanho_camisa ? String(tamanho_camisa).trim().toUpperCase() : null;
+  }
+  if (eh_crianca !== undefined) update.eh_crianca = !!eh_crianca;
+  if (possui_deficiencia !== undefined) update.possui_deficiencia = !!possui_deficiencia;
+  if (deficiencia_descricao !== undefined) {
+    update.deficiencia_descricao = deficiencia_descricao ? String(deficiencia_descricao).trim() : null;
+  }
+  if (endereco !== undefined) update.endereco = endereco ? String(endereco).trim() : null;
 
   const { data, error } = await supabase
     .from('batismo_inscricoes')

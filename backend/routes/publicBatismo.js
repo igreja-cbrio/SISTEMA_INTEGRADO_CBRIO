@@ -66,6 +66,8 @@ router.post('/', limiter, async (req, res) => {
       nome, sobrenome, email, telefone, cpf, data_nascimento,
       endereco, cep, tamanho_camisa, limitacao_mobilidade, motivo,
       observacoes, horario_culto, area_kpi,
+      // Novos · LGPD/integracao
+      eh_crianca, possui_deficiencia, deficiencia_descricao,
     } = req.body || {};
 
     // Validacoes basicas
@@ -124,17 +126,21 @@ router.post('/', limiter, async (req, res) => {
 
     const dataBatismo = proximoQuartoDomingoISO();
 
+    // Observacoes agora so guarda o que nao tem coluna propria
     const obsParts = [];
-    if (endereco) obsParts.push(`Endereco: ${String(endereco).trim()}`);
     if (cep) obsParts.push(`CEP: ${String(cep).trim()}`);
-    if (tamanho_camisa) obsParts.push(`Camisa: ${String(tamanho_camisa).trim()}`);
-    if (limitacao_mobilidade) obsParts.push(`Limitacao: ${String(limitacao_mobilidade).trim()}`);
     if (horario_culto) obsParts.push(`Culto: ${String(horario_culto).trim()}`);
     if (motivo) obsParts.push(`Motivo: ${String(motivo).trim()}`);
     if (observacoes) obsParts.push(`Comentario: ${String(observacoes).trim()}`);
 
     const AREAS_OK = ['kids', 'sede', 'bridge', 'ami', 'online'];
     const areaKpiValida = AREAS_OK.includes(area_kpi) ? area_kpi : 'sede';
+
+    // Deficiencia: aceita o flag novo OU o campo legado limitacao_mobilidade
+    const defDescricao = (deficiencia_descricao && String(deficiencia_descricao).trim())
+      || (limitacao_mobilidade && String(limitacao_mobilidade).trim())
+      || null;
+    const possuiDef = possui_deficiencia === true || !!defDescricao;
 
     const payload = {
       nome: nomeT,
@@ -149,6 +155,12 @@ router.post('/', limiter, async (req, res) => {
       area_kpi: areaKpiValida,
       observacoes: obsParts.length ? obsParts.join('. ') : null,
       membro_id: membroId,
+      // Colunas dedicadas (sai de observacoes)
+      tamanho_camisa: tamanho_camisa ? String(tamanho_camisa).trim().toUpperCase() : null,
+      endereco: endereco ? String(endereco).trim() : null,
+      eh_crianca: !!eh_crianca,
+      possui_deficiencia: possuiDef,
+      deficiencia_descricao: possuiDef ? defDescricao : null,
     };
 
     const { data, error } = await supabase
