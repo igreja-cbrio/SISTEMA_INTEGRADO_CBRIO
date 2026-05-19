@@ -58,6 +58,10 @@
       "schedule": "30 11 * * *"
     },
     {
+      "path": "/api/online/cron/retencao-curva-collect",
+      "schedule": "0 12 * * *"
+    },
+    {
       "path": "/api/devocional-planos/cron/enviar-diario",
       "schedule": "0 9 * * *"
     }
