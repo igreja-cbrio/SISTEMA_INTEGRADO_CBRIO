@@ -12,6 +12,7 @@ import {
 } from 'lucide-react';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { toast } from 'sonner';
+import { useAuth } from '@/contexts/AuthContext';
 
 const VALOR_META: Record<string, { label: string; cor: string; corClara: string; icon: any }> = {
   seguir:        { label: 'Seguir a Jesus',          cor: '#8B5CF6', corClara: 'from-violet-500/15 to-violet-500/5', icon: Cross },
@@ -337,6 +338,15 @@ function ValorGroupCard({ valor, kpis, open, onOpenChange }: {
 // ────────────────────────────────────────────────────────────────────────────
 
 function OAuthStatusCard() {
+  const { getAccessLevel, isAdmin } = useAuth();
+  const podeEditarOnline = isAdmin || (getAccessLevel?.(['online']) ?? 0) >= 3;
+  // Quem nao edita nao vê o card de admin · early return ANTES dos hooks
+  // de queries/mutations pra nao disparar fetches desnecessarios
+  if (!podeEditarOnline) return null;
+  return <OAuthStatusCardInner />;
+}
+
+function OAuthStatusCardInner() {
   const { data: status, refetch } = useQuery<any>({
     queryKey: ['online', 'oauth-status'],
     queryFn: () => online.oauth.status(),
@@ -455,6 +465,9 @@ function OAuthStatusCard() {
 }
 
 export default function Online() {
+  const { getAccessLevel, isAdmin } = useAuth();
+  const podeEditarOnline = isAdmin || (getAccessLevel?.(['online']) ?? 0) >= 3;
+
   const { data, isLoading, refetch } = useQuery<DashboardData>({
     queryKey: ['online', 'dashboard'],
     queryFn: () => online.dashboard(),
@@ -518,16 +531,18 @@ export default function Online() {
               </p>
             </div>
           </div>
-          <Button
-            onClick={() => syncMutation.mutate()}
-            disabled={syncMutation.isPending}
-            variant="secondary"
-            size="lg"
-            className="gap-2 bg-white text-red-600 hover:bg-white/90 shadow-lg"
-          >
-            {syncMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
-            Sincronizar agora
-          </Button>
+          {podeEditarOnline && (
+            <Button
+              onClick={() => syncMutation.mutate()}
+              disabled={syncMutation.isPending}
+              variant="secondary"
+              size="lg"
+              className="gap-2 bg-white text-red-600 hover:bg-white/90 shadow-lg"
+            >
+              {syncMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+              Sincronizar agora
+            </Button>
+          )}
         </div>
       </div>
 

@@ -126,19 +126,21 @@ export default function Painel() {
           </p>
         </div>
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-          <button
-            onClick={() => navigate('/ritual')}
-            style={{
-              padding: '8px 14px', borderRadius: 8, fontSize: 12, fontWeight: 700,
-              cursor: 'pointer',
-              background: C.primary, color: '#fff', border: 'none',
-              display: 'inline-flex', alignItems: 'center', gap: 6,
-            }}
-            title="Revisar OKRs em alerta este mes"
-          >
-            <ClipboardCheck size={14} />
-            Ritual Mensal
-          </button>
+          {isAdmin && (
+            <button
+              onClick={() => navigate('/ritual')}
+              style={{
+                padding: '8px 14px', borderRadius: 8, fontSize: 12, fontWeight: 700,
+                cursor: 'pointer',
+                background: C.primary, color: '#fff', border: 'none',
+                display: 'inline-flex', alignItems: 'center', gap: 6,
+              }}
+              title="Revisar OKRs em alerta este mes"
+            >
+              <ClipboardCheck size={14} />
+              Ritual Mensal
+            </button>
+          )}
           {isAdmin && (
             <button
               onClick={handleRecalcular}

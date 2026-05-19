@@ -44,7 +44,10 @@ function fmtDate(d) { if (!d) return ''; try { return new Date(d + 'T12:00:00').
 
 // v2 - tabs membros/arquivos
 export default function Grupos() {
-  const { profile } = useAuth();
+  const { profile, isAdmin, getAccessLevel } = useAuth();
+  // Lider de area com nivel 1 (so leitura) na matriz: ve tudo mas nao edita.
+  // Admin/diretor/lider com nivel >=3 edita. Sincroniza com cargo_modulo_permissao.
+  const podeEditarGrupos = isAdmin || (getAccessLevel?.(['grupos']) ?? 0) >= 3;
   const [gruposList, setGruposList] = useState([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
@@ -423,11 +426,15 @@ export default function Grupos() {
             <Button size="sm" variant="outline" onClick={() => setQrOpen(true)}>
               <QrCode size={14} style={{ marginRight: 4 }} /> QR / Link
             </Button>
-            <Button size="sm" variant="outline" onClick={openEdit}>Editar</Button>
-            {g.ativo
-              ? <Button size="sm" variant="destructive" onClick={handleDelete}>Desativar</Button>
-              : <Button size="sm" onClick={handleReativar}>Reativar</Button>
-            }
+            {podeEditarGrupos && (
+              <>
+                <Button size="sm" variant="outline" onClick={openEdit}>Editar</Button>
+                {g.ativo
+                  ? <Button size="sm" variant="destructive" onClick={handleDelete}>Desativar</Button>
+                  : <Button size="sm" onClick={handleReativar}>Reativar</Button>
+                }
+              </>
+            )}
           </div>
         </div>
 
@@ -490,12 +497,16 @@ export default function Grupos() {
               Membros ({isOptimistic ? (g.membros_count ?? '...') : membrosAtivos.length})
             </span>
             <div style={{ display: 'flex', gap: 8 }}>
-              <Button size="sm" variant="outline" disabled={isOptimistic || membrosAtivos.length === 0} onClick={() => setChamadaOpen(true)}>
-                <ClipboardCheck size={14} style={{ marginRight: 4 }} /> Registrar encontro
-              </Button>
-              <Button size="sm" onClick={() => { loadMembros(); setAddMembroOpen(true); }}>
-                <UserPlus size={14} style={{ marginRight: 4 }} /> Adicionar
-              </Button>
+              {podeEditarGrupos && (
+                <>
+                  <Button size="sm" variant="outline" disabled={isOptimistic || membrosAtivos.length === 0} onClick={() => setChamadaOpen(true)}>
+                    <ClipboardCheck size={14} style={{ marginRight: 4 }} /> Registrar encontro
+                  </Button>
+                  <Button size="sm" onClick={() => { loadMembros(); setAddMembroOpen(true); }}>
+                    <UserPlus size={14} style={{ marginRight: 4 }} /> Adicionar
+                  </Button>
+                </>
+              )}
             </div>
           </div>
           {isOptimistic ? (
@@ -701,7 +712,7 @@ export default function Grupos() {
     <div className="cbrio-grupos-page" style={{ padding: '24px 32px', maxWidth: 1100, margin: '0 auto' }}>
       <div className="cbrio-grupos-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
         <h1 style={{ fontSize: 22, fontWeight: 700, color: C.text, margin: 0 }}>Grupos</h1>
-        {pageTab === 'grupos' && <Button onClick={openCreate}><Plus size={16} style={{ marginRight: 6 }} /> Novo Grupo</Button>}
+        {pageTab === 'grupos' && podeEditarGrupos && <Button onClick={openCreate}><Plus size={16} style={{ marginRight: 6 }} /> Novo Grupo</Button>}
       </div>
 
       {/* Tabs principais: Grupos | Mapa | Materiais */}
@@ -754,7 +765,8 @@ export default function Grupos() {
       {/* ═══ TAB MATERIAIS ═══ */}
       {pageTab === 'materiais' && (
         <div>
-          {/* Upload */}
+          {/* Upload · so quem edita */}
+          {podeEditarGrupos && (
           <div style={{ background: C.card, borderRadius: 12, padding: 20, border: `1px solid ${C.border}`, marginBottom: 16 }}>
             <div style={{ fontSize: 14, fontWeight: 700, color: C.text, marginBottom: 12, display: 'flex', alignItems: 'center', gap: 8 }}>
               <FileUp size={16} /> Enviar material
@@ -828,6 +840,7 @@ export default function Grupos() {
             </label>
             <span style={{ fontSize: 11, color: C.t3, marginLeft: 10 }}>Max 10MB. Vai automaticamente para o SharePoint.</span>
           </div>
+          )}
 
           {/* Filtro de etiquetas */}
           <div style={{ display: 'flex', gap: 6, marginBottom: 16, flexWrap: 'wrap', alignItems: 'center' }}>
@@ -880,7 +893,9 @@ export default function Grupos() {
                   </div>
                   <div style={{ display: 'flex', gap: 8, flexShrink: 0, alignItems: 'center' }}>
                     {doc.sharepoint_url && <a href={doc.sharepoint_url} target="_blank" rel="noopener noreferrer" style={{ fontSize: 10, color: C.primary, fontWeight: 600 }}>SharePoint</a>}
-                    <button onClick={() => handleDeleteMaterial(doc.id)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: C.red }}><Trash2 size={14} /></button>
+                    {podeEditarGrupos && (
+                      <button onClick={() => handleDeleteMaterial(doc.id)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: C.red }}><Trash2 size={14} /></button>
+                    )}
                   </div>
                 </div>
               );
