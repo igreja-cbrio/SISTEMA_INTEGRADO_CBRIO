@@ -155,15 +155,25 @@ router.delete('/:id', authorize('admin', 'diretor'), async (req, res) => {
 
 // ─────────────────────────────────────────────────────────────
 // POST /api/devocional-planos/:id/gerar-ia
-// body: { tema?, tom?, sobrescrever? }
-// Gera 1 item por dia entre data_inicio/data_fim usando Haiku.
+// body: { tema?, tom?, sobrescrever?, apenas_datas?: string[] }
+// Gera ate 10 itens por chamada usando Haiku (fica dentro do timeout
+// de 60s da Vercel). Frontend chama em lotes pra cobrir todo o plano.
+//   - sem apenas_datas: gera ate 10 dias pendentes
+//   - com apenas_datas: gera so as datas listadas (filtra existentes)
 // ─────────────────────────────────────────────────────────────
+const BATCH_MAX = 10;
+
 router.post('/:id/gerar-ia', authorize('admin', 'diretor'), async (req, res) => {
   try {
     if (!process.env.ANTHROPIC_API_KEY) {
       return res.status(500).json({ error: 'ANTHROPIC_API_KEY nao configurada' });
     }
-    const { tema = '', tom = 'pastoral, edificante, com aplicacao pratica', sobrescrever = false } = req.body || {};
+    const {
+      tema = '',
+      tom = 'pastoral, edificante, com aplicacao pratica',
+      sobrescrever = false,
+      apenas_datas,
+    } = req.body || {};
 
     const { data: plano, error: e1 } = await supabase
       .from('devocional_planos')
@@ -172,17 +182,29 @@ router.post('/:id/gerar-ia', authorize('admin', 'diretor'), async (req, res) => 
       .single();
     if (e1) throw e1;
 
-    const dias = eachDay(plano.data_inicio, plano.data_fim);
-    if (dias.length > 60) return res.status(400).json({ error: 'Plano com mais de 60 dias · gerar em lotes menores' });
+    const todasDias = eachDay(plano.data_inicio, plano.data_fim);
+    const candidatas = Array.isArray(apenas_datas) && apenas_datas.length
+      ? apenas_datas.filter(d => todasDias.includes(d))
+      : todasDias;
 
     const { data: existentes } = await supabase
       .from('devocional_itens')
       .select('data')
       .eq('plano_id', plano.id);
     const setExistente = new Set((existentes || []).map(r => r.data));
-    const diasAlvo = sobrescrever ? dias : dias.filter(d => !setExistente.has(d));
+    const pendentes = sobrescrever ? candidatas : candidatas.filter(d => !setExistente.has(d));
+
+    // Limita o lote pra caber no timeout do Vercel
+    const diasAlvo = pendentes.slice(0, BATCH_MAX);
+    const restantes = Math.max(0, pendentes.length - diasAlvo.length);
+
     if (diasAlvo.length === 0) {
-      return res.json({ message: 'Todos os dias ja tem item · use sobrescrever=true pra regenerar', criados: 0 });
+      return res.json({
+        message: 'Todos os dias solicitados ja tem item',
+        criados: 0,
+        restantes: 0,
+        total_pendentes: 0,
+      });
     }
 
     const client = new Anthropic();
@@ -249,7 +271,11 @@ Retorne APENAS um JSON array (sem markdown, sem texto fora do JSON) com ${diasAl
     const { error: e2 } = await supabase.from('devocional_itens').insert(rows);
     if (e2) throw e2;
 
-    res.json({ criados: rows.length, total_solicitado: diasAlvo.length });
+    res.json({
+      criados: rows.length,
+      total_solicitado: diasAlvo.length,
+      restantes,
+    });
   } catch (e) {
     console.error('devocional-planos gerar-ia:', e.message);
     res.status(500).json({ error: e.message || 'Erro na geracao IA' });
