@@ -441,7 +441,7 @@ function VisaoPessoas() {
                       {p.nome}
                       {p._importado && (
                         <Badge variant="outline" className="ml-2 text-[9px] bg-amber-50 dark:bg-amber-950 text-amber-700 dark:text-amber-400 border-amber-200 dark:border-amber-900">
-                          importado
+                          culto não vinculado
                         </Badge>
                       )}
                     </TableCell>
@@ -454,7 +454,7 @@ function VisaoPessoas() {
                       {p._importado ? (
                         <>
                           <div>{formatDataCurta(p.data_conversao)}</div>
-                          <div className="text-muted-foreground">Planilha (sem culto)</div>
+                          <div className="text-muted-foreground">Culto não vinculado</div>
                         </>
                       ) : p._culto && (
                         <>
@@ -465,7 +465,7 @@ function VisaoPessoas() {
                     </TableCell>
                     <TableCell className="text-center">
                       {p._importado ? (
-                        <Badge variant="outline" className="text-[9px]">historico</Badge>
+                        <Badge variant="outline" className="text-[9px]">culto não vinculado</Badge>
                       ) : (
                         <Badge variant="outline" className="text-[9px] capitalize">{p.tipo_decisao}</Badge>
                       )}
@@ -540,9 +540,9 @@ function HistoricoImportadoExpandivel({
         <div className="flex items-center gap-3">
           <span className="text-base">📜</span>
           <div className="text-left">
-            <div className="text-sm font-medium text-foreground">Histórico importado · sem culto vinculado</div>
+            <div className="text-sm font-medium text-foreground">Culto não vinculado</div>
             <div className="text-xs text-muted-foreground">
-              {pessoas.length} {pessoas.length === 1 ? 'pessoa' : 'pessoas'} de planilha · {porData.length} {porData.length === 1 ? 'data' : 'datas'}
+              {pessoas.length} {pessoas.length === 1 ? 'pessoa' : 'pessoas'} · {porData.length} {porData.length === 1 ? 'data' : 'datas'} · importadas da planilha
             </div>
           </div>
         </div>
