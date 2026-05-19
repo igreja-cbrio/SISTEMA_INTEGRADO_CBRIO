@@ -346,6 +346,130 @@ function ConvertidoModal({
   );
 }
 
+function ConvertidoDetailDialog({
+  convertido, onClose, onEdit, onRemove, canEdit,
+}: {
+  convertido: any | null;
+  onClose: () => void;
+  onEdit: () => void;
+  onRemove: () => void;
+  canEdit: boolean;
+}) {
+  if (!convertido) return null;
+  const c = convertido;
+  const tags: string[] = Array.isArray(c.tags) ? c.tags : [];
+  const fmtData = (d: string | null) =>
+    d ? new Date(d + 'T12:00:00').toLocaleDateString('pt-BR') : '—';
+  const fmtCpf = (v: string | null) => {
+    if (!v) return null;
+    const d = String(v).replace(/\D/g, '').slice(0, 11);
+    return d.length === 11
+      ? d.replace(/(\d{3})(\d)/, '$1.$2').replace(/(\d{3})(\d)/, '$1.$2').replace(/(\d{3})(\d{1,2})$/, '$1-$2')
+      : v;
+  };
+
+  return (
+    <Dialog open={!!convertido} onOpenChange={(v) => !v && onClose()}>
+      <DialogContent className="max-w-xl">
+        <DialogHeader>
+          <DialogTitle className="flex items-center justify-between gap-3">
+            <span>{c.nome}</span>
+            <div className="flex items-center gap-1 text-xs font-normal">
+              {c.atendido_apos_culto ? (
+                <Badge className="bg-primary/15 text-primary border-primary/30">Atendido</Badge>
+              ) : (
+                <Badge className="bg-warning/15 text-warning border-warning/30">Pendente</Badge>
+              )}
+              {c.encontro_marcado && (
+                <Badge className="bg-info/15 text-info border-info/30">Encontro marcado</Badge>
+              )}
+              {c.cadastrado && (
+                <Badge className="bg-purple-500/15 text-purple-500 border-purple-500/30">Cadastrado</Badge>
+              )}
+            </div>
+          </DialogTitle>
+        </DialogHeader>
+        <div className="space-y-4 max-h-[70vh] overflow-y-auto pr-1">
+          <section>
+            <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2">Contato</h3>
+            <dl className="grid grid-cols-2 gap-y-1.5 text-sm">
+              <dt className="text-muted-foreground">Telefone</dt>
+              <dd>{c.telefone || '—'}</dd>
+              <dt className="text-muted-foreground">CPF</dt>
+              <dd>{fmtCpf(c.cpf) || '—'}</dd>
+              <dt className="text-muted-foreground">Membro vinculado</dt>
+              <dd>{c.membro_id ? 'Sim' : 'Não'}</dd>
+            </dl>
+          </section>
+
+          <section>
+            <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2">Conversão</h3>
+            <dl className="grid grid-cols-2 gap-y-1.5 text-sm">
+              <dt className="text-muted-foreground">Data do culto</dt>
+              <dd>{fmtData(c.data_culto)}</dd>
+              <dt className="text-muted-foreground">Registrado em</dt>
+              <dd>{c.created_at ? new Date(c.created_at).toLocaleDateString('pt-BR') : '—'}</dd>
+            </dl>
+          </section>
+
+          <section className="rounded-md border border-border p-3" style={{ background: 'var(--cbrio-input-bg)' }}>
+            <h3 className="text-xs font-semibold uppercase tracking-wide mb-2 flex items-center gap-1.5">
+              <CalendarCheck className="h-3.5 w-3.5 text-primary" />
+              Acompanhamento pastoral
+            </h3>
+            {c.encontro_marcado ? (
+              <div className="text-sm">
+                Encontro marcado para <strong className="text-primary">{fmtData(c.data_encontro)}</strong>
+              </div>
+            ) : (
+              <div className="text-sm text-muted-foreground">Nenhum encontro marcado ainda · clique em Editar pra agendar.</div>
+            )}
+          </section>
+
+          <section>
+            <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2">Tags pastorais</h3>
+            {tags.length === 0 ? (
+              <div className="text-sm text-muted-foreground">Sem tags · clique em Editar pra triagem.</div>
+            ) : (
+              <div className="flex flex-wrap gap-1.5">
+                {tags.map(t => (
+                  <span key={t} className="text-xs px-2.5 py-1 rounded-full font-medium" style={{
+                    background: (TAG_COLORS[t] || '#94a3b8') + '20',
+                    color: TAG_COLORS[t] || '#94a3b8',
+                    border: `1px solid ${(TAG_COLORS[t] || '#94a3b8')}40`,
+                  }}>{TAG_LABELS[t] || t}</span>
+                ))}
+              </div>
+            )}
+          </section>
+
+          <section>
+            <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2">Observações</h3>
+            {c.observacoes ? (
+              <p className="text-sm whitespace-pre-wrap rounded-md border border-border p-3" style={{ background: 'var(--cbrio-input-bg)' }}>
+                {c.observacoes}
+              </p>
+            ) : (
+              <p className="text-sm text-muted-foreground italic">Sem observações registradas.</p>
+            )}
+          </section>
+        </div>
+        <DialogFooter className="flex-row justify-between sm:justify-between">
+          {canEdit ? (
+            <Button variant="ghost" onClick={onRemove} className="text-destructive hover:text-destructive">
+              <Trash2 className="h-3.5 w-3.5 mr-1.5" />Remover
+            </Button>
+          ) : <div />}
+          <div className="flex gap-2">
+            <Button variant="outline" onClick={onClose}>Fechar</Button>
+            {canEdit && <Button onClick={onEdit}>Editar</Button>}
+          </div>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 // ──────────────────────────────────────────────────────────────────
 // Página principal
 // ──────────────────────────────────────────────────────────────────
@@ -381,10 +505,13 @@ export default function Cuidados() {
   const [modalJornada, setModalJornada] = useState(false);
   const [modalConvert, setModalConvert] = useState(false);
   const [editConvert, setEditConvert] = useState<any | null>(null);
+  const [detailConvert, setDetailConvert] = useState<any | null>(null);
   const [convertTags, setConvertTags] = useState<string[]>([]);
   const [convertSearch, setConvertSearch] = useState('');
   const [convertFilter, setConvertFilter] = useState<'todos' | 'pendentes' | 'encontro_marcado' | 'sem_encontro'>('todos');
   const [convertFilterTag, setConvertFilterTag] = useState<string>('');
+  const [convertFilterFrom, setConvertFilterFrom] = useState<string>('');
+  const [convertFilterTo, setConvertFilterTo] = useState<string>('');
   const [search, setSearch] = useState('');
 
   async function loadAll() {
@@ -422,13 +549,24 @@ export default function Cuidados() {
       if (convertFilter === 'encontro_marcado' && !c.encontro_marcado) return false;
       if (convertFilter === 'sem_encontro' && c.encontro_marcado) return false;
       if (convertFilterTag && !(Array.isArray(c.tags) && c.tags.includes(convertFilterTag))) return false;
+      if (convertFilterFrom && c.data_culto < convertFilterFrom) return false;
+      if (convertFilterTo && c.data_culto > convertFilterTo) return false;
       if (q) {
         const hay = `${c.nome || ''} ${c.telefone || ''} ${c.cpf || ''} ${c.observacoes || ''}`.toLowerCase();
         if (!hay.includes(q)) return false;
       }
       return true;
     });
-  }, [convertidos, convertSearch, convertFilter, convertFilterTag]);
+  }, [convertidos, convertSearch, convertFilter, convertFilterTag, convertFilterFrom, convertFilterTo]);
+
+  const filtersActive = convertSearch || convertFilter !== 'todos' || convertFilterTag || convertFilterFrom || convertFilterTo;
+  function limparFiltrosConvertidos() {
+    setConvertSearch('');
+    setConvertFilter('todos');
+    setConvertFilterTag('');
+    setConvertFilterFrom('');
+    setConvertFilterTo('');
+  }
 
   const convertPendentes = useMemo(
     () => convertidos.filter((c: any) => !c.atendido_apos_culto).length,
@@ -661,6 +799,17 @@ export default function Cuidados() {
                 ))}
               </SelectContent>
             </Select>
+            <div className="flex items-center gap-1 text-xs">
+              <Label className="text-xs text-muted-foreground">De</Label>
+              <Input type="date" value={convertFilterFrom} onChange={e => setConvertFilterFrom(e.target.value)} className="w-36 h-9" />
+              <Label className="text-xs text-muted-foreground">ate</Label>
+              <Input type="date" value={convertFilterTo} onChange={e => setConvertFilterTo(e.target.value)} className="w-36 h-9" />
+            </div>
+            {filtersActive && (
+              <Button variant="ghost" size="sm" onClick={limparFiltrosConvertidos} className="text-xs">
+                Limpar filtros
+              </Button>
+            )}
           </div>
           <div className="rounded-lg border border-border bg-card overflow-hidden">
             <Table>
@@ -684,8 +833,14 @@ export default function Cuidados() {
                   return (
                     <TableRow key={c.id} className={!c.atendido_apos_culto ? 'border-l-2 border-l-warning' : undefined}>
                       <TableCell className="font-medium">
-                        <div>{c.nome}</div>
-                        {c.telefone && <div className="text-xs text-muted-foreground">{c.telefone}</div>}
+                        <button
+                          type="button"
+                          onClick={() => setDetailConvert(c)}
+                          className="text-left hover:text-primary transition-colors"
+                        >
+                          <div className="underline-offset-2 hover:underline">{c.nome}</div>
+                          {c.telefone && <div className="text-xs text-muted-foreground">{c.telefone}</div>}
+                        </button>
                       </TableCell>
                       <TableCell className="whitespace-nowrap">{new Date(c.data_culto + 'T12:00:00').toLocaleDateString('pt-BR')}</TableCell>
                       <TableCell>
@@ -804,6 +959,23 @@ export default function Cuidados() {
         onSaved={loadAll}
         allTags={convertTags}
         initial={editConvert}
+      />
+      <ConvertidoDetailDialog
+        convertido={detailConvert}
+        onClose={() => setDetailConvert(null)}
+        canEdit={podeEditarCuidados}
+        onEdit={() => {
+          setEditConvert(detailConvert);
+          setDetailConvert(null);
+          setModalConvert(true);
+        }}
+        onRemove={async () => {
+          if (!detailConvert) return;
+          if (!confirm(`Remover ${detailConvert.nome}?`)) return;
+          await cuidadosApi.convertidos.remove(detailConvert.id);
+          setDetailConvert(null);
+          loadAll();
+        }}
       />
     </div>
   );
