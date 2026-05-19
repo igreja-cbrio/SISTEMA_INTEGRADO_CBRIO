@@ -1,7 +1,7 @@
 const router = require('express').Router();
 const rateLimit = require('express-rate-limit');
 const crypto = require('crypto');
-const { authenticate, authorize } = require('../middleware/auth');
+const { authenticate, authorize, authorizeModule } = require('../middleware/auth');
 const { supabase } = require('../utils/supabase');
 const { notificar } = require('../services/notificar');
 const npsService = require('../services/npsService');
@@ -24,7 +24,7 @@ router.use(authenticate);
 // Geração de perguntas (preview antes de criar)
 // POST /api/nps/gerar-perguntas
 // ────────────────────────────────────────────────────────────────────
-router.post('/gerar-perguntas', authorize('admin', 'diretor'), iaLimiter, async (req, res) => {
+router.post('/gerar-perguntas', authorizeModule('nps', 3), iaLimiter, async (req, res) => {
   try {
     const { valor, objetivo, contexto_kpi, area } = req.body || {};
     if (!objetivo) {
@@ -102,7 +102,7 @@ router.get('/:id', async (req, res) => {
 });
 
 // POST /api/nps  → cria pesquisa (com perguntas já geradas) e notifica
-router.post('/', authorize('admin', 'diretor'), async (req, res) => {
+router.post('/', authorizeModule('nps', 3), async (req, res) => {
   try {
     const d = req.body || {};
     if (!d.titulo || !d.objetivo || !d.perguntas) {
@@ -177,7 +177,7 @@ router.post('/', authorize('admin', 'diretor'), async (req, res) => {
 });
 
 // PUT /api/nps/:id  → atualizar (encerrar, mudar título, etc)
-router.put('/:id', authorize('admin', 'diretor'), async (req, res) => {
+router.put('/:id', authorizeModule('nps', 3), async (req, res) => {
   try {
     const d = req.body || {};
     const update = {};
@@ -203,7 +203,7 @@ router.put('/:id', authorize('admin', 'diretor'), async (req, res) => {
 });
 
 // DELETE /api/nps/:id  → soft delete (arquivar)
-router.delete('/:id', authorize('admin', 'diretor'), async (req, res) => {
+router.delete('/:id', authorizeModule('nps', 3), async (req, res) => {
   try {
     const { error } = await supabase
       .from('nps_pesquisas')
@@ -291,7 +291,7 @@ router.post('/:id/responder', async (req, res) => {
 });
 
 // POST /api/nps/:id/analisar  → roda análise IA (admin/diretor)
-router.post('/:id/analisar', authorize('admin', 'diretor'), iaLimiter, async (req, res) => {
+router.post('/:id/analisar', authorizeModule('nps', 3), iaLimiter, async (req, res) => {
   try {
     const { data: pesquisa, error: pErr } = await supabase
       .from('nps_pesquisas').select('*').eq('id', req.params.id).single();
@@ -323,7 +323,7 @@ router.post('/:id/analisar', authorize('admin', 'diretor'), iaLimiter, async (re
 });
 
 // POST /api/nps/:id/notificar  → re-notifica colaboradores (admin/diretor)
-router.post('/:id/notificar', authorize('admin', 'diretor'), async (req, res) => {
+router.post('/:id/notificar', authorizeModule('nps', 3), async (req, res) => {
   try {
     const { data: pesquisa } = await supabase
       .from('nps_pesquisas').select('*').eq('id', req.params.id).single();

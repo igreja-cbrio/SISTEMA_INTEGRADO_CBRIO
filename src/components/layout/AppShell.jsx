@@ -49,10 +49,10 @@ const NAV_ITEMS = [
       {
         title: 'Inteligência',
         items: [
-          { label: 'Painel CBRio', description: 'NSM · 5 valores · 6 áreas — visão macro · ritual mensal', icon: Activity, path: '/painel' },
-          { label: 'NPS', description: 'Pesquisas de satisfação geradas por IA · análise automática', icon: MessageSquare, path: '/nps' },
-          { label: 'Minha Área', description: 'KPIs (resultado) e Dados (entrada) da sua área', icon: BarChart2, path: '/minha-area' },
-          { label: 'Gestão (PMO)', description: 'Pulso · Estrutura OKR · Saúde · Configurar (admin)', icon: Settings, path: '/gestao' },
+          { label: 'Painel CBRio', description: 'NSM · 5 valores · 6 áreas — visão macro · ritual mensal', icon: Activity, path: '/painel', module: 'painel-cbrio' },
+          { label: 'NPS', description: 'Pesquisas de satisfação geradas por IA · análise automática', icon: MessageSquare, path: '/nps', module: 'nps' },
+          { label: 'Minha Área', description: 'KPIs (resultado) e Dados (entrada) da sua área', icon: BarChart2, path: '/minha-area', module: 'minha-area' },
+          { label: 'Gestão (PMO)', description: 'Pulso · Estrutura OKR · Saúde · Configurar (admin)', icon: Settings, path: '/gestao', module: 'gestao' },
           { label: 'Assistente IA', description: 'Agentes de auditoria e análise', icon: BrainCircuit, path: '/assistente-ia', perm: 'canIA' },
         ],
       },
@@ -101,7 +101,7 @@ const NAV_ITEMS = [
       {
         title: 'Ferramentas',
         items: [
-          { label: 'Totem Membro', description: 'Modo kiosk para self-service no hall', icon: MonitorSmartphone, path: '/totem', perm: 'canMembresia' },
+          { label: 'Totem Membro', description: 'Modo kiosk para self-service no hall', icon: MonitorSmartphone, path: '/totem', perm: 'isAdmin' },
         ],
       },
     ],
@@ -109,6 +109,7 @@ const NAV_ITEMS = [
   {
     id: 4,
     label: 'Criativo',
+    roles: ['admin', 'diretor'],
     subMenus: [
       {
         title: 'Áreas',
@@ -127,13 +128,35 @@ export default function AppShell() {
   // If permissions haven't loaded yet (modulePerms is null), show all items
   const permsLoaded = modulePerms !== null || isAdmin;
 
-  const filteredNavItems = NAV_ITEMS.map(section => ({
-    ...section,
-    subMenus: section.subMenus.map(sub => ({
-      ...sub,
-      items: sub.items.filter(item => !item.perm || !permsLoaded || permMap[item.perm] !== false),
-    })).filter(sub => sub.items.length > 0),
-  })).filter(section => section.subMenus.length > 0);
+  // Item passa se: sem perm + sem module · OU perm explicita true · OU
+  // module com nivel leitura >= 1 (admin sempre passa)
+  function itemAllowed(item) {
+    if (!permsLoaded) return true;
+    if (isAdmin) return true;
+    if (item.perm && permMap[item.perm] === false) return false;
+    if (item.module && modulePerms) {
+      const m = modulePerms[item.module];
+      const leitura = m?.leitura ?? 0;
+      if (leitura < 1) return false;
+    }
+    return true;
+  }
+
+  function sectionAllowed(section) {
+    if (!section.roles) return true;
+    if (isAdmin) return true;
+    return section.roles.includes(role);
+  }
+
+  const filteredNavItems = NAV_ITEMS
+    .filter(sectionAllowed)
+    .map(section => ({
+      ...section,
+      subMenus: section.subMenus.map(sub => ({
+        ...sub,
+        items: sub.items.filter(itemAllowed),
+      })).filter(sub => sub.items.length > 0),
+    })).filter(section => section.subMenus.length > 0);
 
   const { isDark, toggleTheme } = useTheme();
   const navigate = useNavigate();

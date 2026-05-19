@@ -79,6 +79,48 @@ usuarios). Tela em `/admin/permissoes` (arquivo
   aliases temporarios) · TODO de polish, nao bloqueante · hoje os hooks
   ja lem dos slugs novos via AuthContext
 
+### Ajustes pos-teste Alda Lorena · cargo lider-ministerial (2026-05-19)
+Marcos testou logado como Alda (lider de Integracao) e mapeou 8
+problemas. Esta PR ajusta de uma vez:
+
+**Migration `20260519160000_matriz_lider_ministerial_ajustes.sql`** ·
+muda nivel default do cargo `lider-ministerial` em 5 modulos:
+- gestao: 1 → 0 (some do menu)
+- online: 3 → 1 (so leitura · modulo eh somente leitura per design)
+- grupos: 3 → 1 (so leitura · nao cria/edita grupo)
+- voluntariado: 3 → 5 (gerencia time completo da area)
+- nps: 2 → 5 (cria pesquisas, vincula, analisa)
+
+**Menu (AppShell)** · gateway de visibilidade:
+- Items podem declarar `module: '<slug>'` · so aparece se
+  `modulePerms[slug].leitura >= 1`
+- Items 'Painel CBRio', 'NPS', 'Minha Area', 'Gestao (PMO)' ganham
+  module key (era visivel pra qualquer um antes)
+- Totem Membro: trocou `perm: canMembresia` → `perm: isAdmin`
+- Grupo "Criativo" do menu agora tem `roles: ['admin', 'diretor']`
+- Helper `sectionAllowed(section)` filtra grupos por role
+
+**Painel.jsx** · botao "Ritual Mensal" envolvido em `{isAdmin && ...}`
+(antes mostrava pra todo mundo e o /ritual e' diretoria-only).
+
+**Backend NPS** · `authorize('admin', 'diretor')` virou
+`authorizeModule('nps', 3)` em 4 endpoints (gerar-perguntas, POST /,
+PUT /:id, POST /:id/analisar). Lider com nivel 3+ em `nps` cria e
+analisa pesquisas da sua area.
+
+**Online.tsx** · `OAuthStatusCard` retorna null pra quem nao tem
+`getAccessLevel(['online']) >= 3`; botao "Sincronizar agora" do header
+escondido pela mesma condicao.
+
+**Grupos.jsx** · `podeEditarGrupos` deriva de
+`getAccessLevel(['grupos']) >= 3`. Esconde botoes:
+- Editar / Desativar / Reativar grupo
+- Registrar encontro (chamada) · Adicionar membro
+- Novo Grupo · Upload material · Trash material
+
+QR/Link, visualizacao de membros, materiais e KPIs continuam
+acessiveis (so leitura).
+
 ### Fix · profile UUID vs usuarios INTEGER (2026-05-19)
 **Bug encontrado:** tabela `usuarios` em prod tem `id INTEGER` (legado da
 migration 20260410), mas frontend mandava `profile.id` (UUID). Erro
