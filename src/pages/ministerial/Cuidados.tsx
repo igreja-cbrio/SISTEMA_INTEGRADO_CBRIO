@@ -166,45 +166,180 @@ function JornadaModal({ open, onClose, onSaved }: { open: boolean; onClose: () =
   );
 }
 
-function ConvertidoModal({ open, onClose, onSaved }: { open: boolean; onClose: () => void; onSaved: () => void }) {
-  const [form, setForm] = useState({ nome: '', cpf: '', telefone: '', data_culto: new Date().toISOString().slice(0, 10), atendido_apos_culto: true, cadastrado: false, observacoes: '' });
+// Cores/labels das tags pastorais · espelham as fixas do backend
+const TAG_LABELS: Record<string, string> = {
+  casamento: 'Casamento',
+  familia: 'Família',
+  espiritual: 'Espiritual',
+  saude: 'Saúde',
+  financeiro: 'Financeiro',
+  luto: 'Luto',
+  emocional: 'Emocional',
+  vicios: 'Vícios',
+  profissional: 'Profissional',
+  outro: 'Outro',
+};
+const TAG_COLORS: Record<string, string> = {
+  casamento: '#ef476f',
+  familia: '#8b5cf6',
+  espiritual: '#00B39D',
+  saude: '#10b981',
+  financeiro: '#f59e0b',
+  luto: '#6b7280',
+  emocional: '#3b82f6',
+  vicios: '#dc2626',
+  profissional: '#0ea5e9',
+  outro: '#94a3b8',
+};
+
+function emptyConvertidoForm() {
+  return {
+    nome: '',
+    cpf: '',
+    telefone: '',
+    data_culto: new Date().toISOString().slice(0, 10),
+    atendido_apos_culto: true,
+    cadastrado: false,
+    encontro_marcado: false,
+    data_encontro: '',
+    tags: [] as string[],
+    observacoes: '',
+  };
+}
+
+function ConvertidoModal({
+  open, onClose, onSaved, allTags, initial,
+}: {
+  open: boolean;
+  onClose: () => void;
+  onSaved: () => void;
+  allTags: string[];
+  initial?: any | null;
+}) {
+  const [form, setForm] = useState(emptyConvertidoForm());
   const [membro, setMembro] = useState<any>(null);
   const [saving, setSaving] = useState(false);
+  const editing = !!initial?.id;
+
+  useEffect(() => {
+    if (!open) return;
+    if (initial) {
+      setForm({
+        nome: initial.nome || '',
+        cpf: initial.cpf || '',
+        telefone: initial.telefone || '',
+        data_culto: initial.data_culto || new Date().toISOString().slice(0, 10),
+        atendido_apos_culto: !!initial.atendido_apos_culto,
+        cadastrado: !!initial.cadastrado,
+        encontro_marcado: !!initial.encontro_marcado,
+        data_encontro: initial.data_encontro || '',
+        tags: Array.isArray(initial.tags) ? initial.tags : [],
+        observacoes: initial.observacoes || '',
+      });
+    } else {
+      setForm(emptyConvertidoForm());
+    }
+    setMembro(null);
+  }, [open, initial]);
+
+  function toggleTag(t: string) {
+    setForm(f => ({
+      ...f,
+      tags: f.tags.includes(t) ? f.tags.filter(x => x !== t) : [...f.tags, t],
+    }));
+  }
 
   async function save() {
     if (!form.nome) return toast.error('Nome obrigatório');
     setSaving(true);
     try {
       const payload: any = { ...form };
-      if (membro) { payload.membro_id = membro.id; payload.nome = membro.nome; payload.cadastrado = true; }
-      await cuidadosApi.convertidos.create(payload);
-      toast.success('Convertido registrado');
+      // marcar encontro implica ter data · se desmarcou, limpa a data
+      if (!payload.encontro_marcado) payload.data_encontro = null;
+      else if (!payload.data_encontro) payload.data_encontro = null;
+      if (editing) {
+        await cuidadosApi.convertidos.update(initial.id, payload);
+        toast.success('Convertido atualizado');
+      } else {
+        if (membro) { payload.membro_id = membro.id; payload.nome = membro.nome; payload.cadastrado = true; }
+        await cuidadosApi.convertidos.create(payload);
+        toast.success('Convertido registrado');
+      }
       onSaved();
       onClose();
-      setForm({ nome: '', cpf: '', telefone: '', data_culto: new Date().toISOString().slice(0, 10), atendido_apos_culto: true, cadastrado: false, observacoes: '' });
-      setMembro(null);
     } catch (e: any) { toast.error(e.message); }
     finally { setSaving(false); }
   }
 
   return (
     <Dialog open={open} onOpenChange={(v) => !v && onClose()}>
-      <DialogContent>
-        <DialogHeader><DialogTitle>Registrar Convertido pós-culto</DialogTitle></DialogHeader>
-        <div className="space-y-3">
-          <div><Label>Nome *</Label><Input value={form.nome} onChange={e => setForm({ ...form, nome: e.target.value })} /></div>
-          <div><Label>CPF</Label><CpfMembroLookup value={form.cpf} onChange={v => setForm({ ...form, cpf: v })} onMembro={setMembro} /></div>
+      <DialogContent className="max-w-xl">
+        <DialogHeader>
+          <DialogTitle>{editing ? 'Editar Convertido' : 'Registrar Convertido pós-culto'}</DialogTitle>
+        </DialogHeader>
+        <div className="space-y-3 max-h-[70vh] overflow-y-auto pr-1">
+          <div><Label>Nome *</Label><Input value={form.nome} onChange={e => setForm({ ...form, nome: e.target.value })} disabled={editing} /></div>
+          {!editing && (
+            <div><Label>CPF</Label><CpfMembroLookup value={form.cpf} onChange={v => setForm({ ...form, cpf: v })} onMembro={setMembro} /></div>
+          )}
           <div><Label>Telefone</Label><Input value={form.telefone} onChange={e => setForm({ ...form, telefone: e.target.value })} /></div>
           <div><Label>Data do culto</Label><Input type="date" value={form.data_culto} onChange={e => setForm({ ...form, data_culto: e.target.value })} /></div>
-          <div className="flex items-center gap-4">
+          <div className="flex items-center gap-4 flex-wrap">
             <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={form.atendido_apos_culto} onChange={e => setForm({ ...form, atendido_apos_culto: e.target.checked })} />Atendido após culto</label>
             <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={form.cadastrado} onChange={e => setForm({ ...form, cadastrado: e.target.checked })} />Cadastrado</label>
           </div>
-          <div><Label>Observações</Label><Input value={form.observacoes} onChange={e => setForm({ ...form, observacoes: e.target.value })} /></div>
+          <div className="rounded-md border border-border p-3 space-y-2" style={{ background: 'var(--cbrio-input-bg)' }}>
+            <label className="flex items-center gap-2 text-sm font-medium">
+              <input type="checkbox" checked={form.encontro_marcado} onChange={e => setForm({ ...form, encontro_marcado: e.target.checked, data_encontro: e.target.checked ? form.data_encontro : '' })} />
+              <CalendarCheck className="h-4 w-4 text-primary" />
+              Encontro pastoral marcado
+            </label>
+            {form.encontro_marcado && (
+              <div>
+                <Label className="text-xs">Data do encontro</Label>
+                <Input type="date" value={form.data_encontro} onChange={e => setForm({ ...form, data_encontro: e.target.value })} />
+              </div>
+            )}
+          </div>
+          <div>
+            <Label>Tags pastorais</Label>
+            <p className="text-xs text-muted-foreground mb-2">Marque tudo que aplica · serve pra triagem do time de cuidados.</p>
+            <div className="flex flex-wrap gap-1.5">
+              {allTags.map(t => {
+                const active = form.tags.includes(t);
+                const color = TAG_COLORS[t] || '#94a3b8';
+                return (
+                  <button
+                    key={t}
+                    type="button"
+                    onClick={() => toggleTag(t)}
+                    className="text-xs px-2.5 py-1 rounded-full border transition-colors"
+                    style={{
+                      borderColor: color,
+                      background: active ? color : 'transparent',
+                      color: active ? '#fff' : color,
+                    }}
+                  >
+                    {TAG_LABELS[t] || t}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+          <div>
+            <Label>Observações</Label>
+            <textarea
+              className="w-full min-h-[80px] rounded-md border border-border p-2 text-sm"
+              style={{ background: 'var(--cbrio-input-bg)' }}
+              value={form.observacoes}
+              onChange={e => setForm({ ...form, observacoes: e.target.value })}
+              placeholder="Resumo da conversa, próximos passos, contexto da família, etc."
+            />
+          </div>
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={onClose}>Cancelar</Button>
-          <Button onClick={save} disabled={saving}>{saving ? 'Salvando...' : 'Registrar'}</Button>
+          <Button onClick={save} disabled={saving}>{saving ? 'Salvando...' : editing ? 'Salvar' : 'Registrar'}</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
@@ -245,6 +380,11 @@ export default function Cuidados() {
   const [modalAcomp, setModalAcomp] = useState(false);
   const [modalJornada, setModalJornada] = useState(false);
   const [modalConvert, setModalConvert] = useState(false);
+  const [editConvert, setEditConvert] = useState<any | null>(null);
+  const [convertTags, setConvertTags] = useState<string[]>([]);
+  const [convertSearch, setConvertSearch] = useState('');
+  const [convertFilter, setConvertFilter] = useState<'todos' | 'pendentes' | 'encontro_marcado' | 'sem_encontro'>('todos');
+  const [convertFilterTag, setConvertFilterTag] = useState<string>('');
   const [search, setSearch] = useState('');
 
   async function loadAll() {
@@ -269,6 +409,31 @@ export default function Cuidados() {
   }
 
   useEffect(() => { loadAll(); }, []);
+
+  // Catalogo de tags pastorais · fonte de verdade no backend
+  useEffect(() => {
+    cuidadosApi.convertidos.tags().then(setConvertTags).catch(() => {});
+  }, []);
+
+  const convertidosFiltrados = useMemo(() => {
+    const q = convertSearch.trim().toLowerCase();
+    return convertidos.filter((c: any) => {
+      if (convertFilter === 'pendentes' && c.atendido_apos_culto) return false;
+      if (convertFilter === 'encontro_marcado' && !c.encontro_marcado) return false;
+      if (convertFilter === 'sem_encontro' && c.encontro_marcado) return false;
+      if (convertFilterTag && !(Array.isArray(c.tags) && c.tags.includes(convertFilterTag))) return false;
+      if (q) {
+        const hay = `${c.nome || ''} ${c.telefone || ''} ${c.cpf || ''} ${c.observacoes || ''}`.toLowerCase();
+        if (!hay.includes(q)) return false;
+      }
+      return true;
+    });
+  }, [convertidos, convertSearch, convertFilter, convertFilterTag]);
+
+  const convertPendentes = useMemo(
+    () => convertidos.filter((c: any) => !c.atendido_apos_culto).length,
+    [convertidos]
+  );
 
   // Recarregar agregado quando mudar mês
   useEffect(() => {
@@ -458,38 +623,112 @@ export default function Cuidados() {
 
         {/* Convertidos */}
         <TabsContent value="convertidos" className="space-y-4">
-          <div className="flex items-center justify-end">
+          <div className="flex items-center justify-between gap-3 flex-wrap">
+            <div className="text-sm text-muted-foreground">
+              <strong className="text-foreground">{convertidos.length}</strong> convertidos · {convertPendentes > 0 ? <span className="text-warning">{convertPendentes} ainda nao atendidos</span> : <span className="text-primary">todos atendidos</span>}
+            </div>
             {podeEditarCuidados && (
-              <Button onClick={() => setModalConvert(true)}><Plus className="h-4 w-4 mr-2" />Novo convertido</Button>
+              <Button onClick={() => { setEditConvert(null); setModalConvert(true); }}>
+                <Plus className="h-4 w-4 mr-2" />Novo convertido
+              </Button>
             )}
+          </div>
+          <div className="flex items-center gap-3 flex-wrap">
+            <div className="relative flex-1 min-w-[220px]">
+              <Search className="absolute left-2.5 top-2.5 h-3.5 w-3.5 text-muted-foreground" />
+              <Input
+                placeholder="Buscar por nome, telefone, CPF ou observacao..."
+                value={convertSearch}
+                onChange={e => setConvertSearch(e.target.value)}
+                className="pl-8"
+              />
+            </div>
+            <Select value={convertFilter} onValueChange={(v: any) => setConvertFilter(v)}>
+              <SelectTrigger className="w-48"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="todos">Todos</SelectItem>
+                <SelectItem value="pendentes">Pendentes de atendimento</SelectItem>
+                <SelectItem value="encontro_marcado">Com encontro marcado</SelectItem>
+                <SelectItem value="sem_encontro">Sem encontro marcado</SelectItem>
+              </SelectContent>
+            </Select>
+            <Select value={convertFilterTag || '__all'} onValueChange={(v: any) => setConvertFilterTag(v === '__all' ? '' : v)}>
+              <SelectTrigger className="w-44"><SelectValue placeholder="Filtrar por tag" /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="__all">Todas as tags</SelectItem>
+                {convertTags.map(t => (
+                  <SelectItem key={t} value={t}>{TAG_LABELS[t] || t}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
           <div className="rounded-lg border border-border bg-card overflow-hidden">
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>Nome</TableHead><TableHead>Data culto</TableHead><TableHead>Atendido</TableHead><TableHead>Cadastrado</TableHead><TableHead></TableHead>
+                  <TableHead>Nome</TableHead>
+                  <TableHead>Data culto</TableHead>
+                  <TableHead>Atendido</TableHead>
+                  <TableHead>Encontro</TableHead>
+                  <TableHead>Tags</TableHead>
+                  <TableHead></TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {convertidos.length === 0 ? (
-                  <TableRow><TableCell colSpan={5} className="text-center text-muted-foreground py-8">Nenhum convertido.</TableCell></TableRow>
-                ) : convertidos.map(c => (
-                  <TableRow key={c.id}>
-                    <TableCell className="font-medium">{c.nome}</TableCell>
-                    <TableCell>{new Date(c.data_culto + 'T12:00:00').toLocaleDateString('pt-BR')}</TableCell>
-                    <TableCell>
-                      <input type="checkbox" checked={!!c.atendido_apos_culto} disabled={!podeEditarCuidados} onChange={async e => { await cuidadosApi.convertidos.update(c.id, { atendido_apos_culto: e.target.checked }); loadAll(); }} />
-                    </TableCell>
-                    <TableCell>
-                      <input type="checkbox" checked={!!c.cadastrado} disabled={!podeEditarCuidados} onChange={async e => { await cuidadosApi.convertidos.update(c.id, { cadastrado: e.target.checked }); loadAll(); }} />
-                    </TableCell>
-                    <TableCell className="text-right">
-                      {podeEditarCuidados && (
-                        <Button variant="ghost" size="sm" onClick={async () => { if (confirm('Remover?')) { await cuidadosApi.convertidos.remove(c.id); loadAll(); } }}><Trash2 className="h-3.5 w-3.5 text-destructive" /></Button>
-                      )}
-                    </TableCell>
-                  </TableRow>
-                ))}
+                {convertidosFiltrados.length === 0 ? (
+                  <TableRow><TableCell colSpan={6} className="text-center text-muted-foreground py-8">
+                    {convertidos.length === 0 ? 'Nenhum convertido.' : 'Nenhum resultado nos filtros atuais.'}
+                  </TableCell></TableRow>
+                ) : convertidosFiltrados.map(c => {
+                  const tags: string[] = Array.isArray(c.tags) ? c.tags : [];
+                  return (
+                    <TableRow key={c.id} className={!c.atendido_apos_culto ? 'border-l-2 border-l-warning' : undefined}>
+                      <TableCell className="font-medium">
+                        <div>{c.nome}</div>
+                        {c.telefone && <div className="text-xs text-muted-foreground">{c.telefone}</div>}
+                      </TableCell>
+                      <TableCell className="whitespace-nowrap">{new Date(c.data_culto + 'T12:00:00').toLocaleDateString('pt-BR')}</TableCell>
+                      <TableCell>
+                        <input type="checkbox" checked={!!c.atendido_apos_culto} disabled={!podeEditarCuidados} onChange={async e => { await cuidadosApi.convertidos.update(c.id, { atendido_apos_culto: e.target.checked }); loadAll(); }} />
+                      </TableCell>
+                      <TableCell>
+                        {c.encontro_marcado ? (
+                          <div className="flex items-center gap-1.5 text-primary text-xs">
+                            <CalendarCheck className="h-3.5 w-3.5" />
+                            {c.data_encontro
+                              ? new Date(c.data_encontro + 'T12:00:00').toLocaleDateString('pt-BR')
+                              : 'marcado'}
+                          </div>
+                        ) : (
+                          <span className="text-xs text-muted-foreground">—</span>
+                        )}
+                      </TableCell>
+                      <TableCell>
+                        {tags.length === 0 ? <span className="text-xs text-muted-foreground">—</span> : (
+                          <div className="flex flex-wrap gap-1">
+                            {tags.slice(0, 3).map(t => (
+                              <span key={t} className="text-[10px] px-1.5 py-0.5 rounded-full font-medium" style={{
+                                background: (TAG_COLORS[t] || '#94a3b8') + '20',
+                                color: TAG_COLORS[t] || '#94a3b8',
+                              }}>{TAG_LABELS[t] || t}</span>
+                            ))}
+                            {tags.length > 3 && (
+                              <span className="text-[10px] text-muted-foreground">+{tags.length - 3}</span>
+                            )}
+                          </div>
+                        )}
+                      </TableCell>
+                      <TableCell className="text-right whitespace-nowrap">
+                        {podeEditarCuidados && (
+                          <>
+                            <Button variant="ghost" size="sm" onClick={() => { setEditConvert(c); setModalConvert(true); }}>Editar</Button>
+                            <Button variant="ghost" size="sm" onClick={async () => { if (confirm('Remover?')) { await cuidadosApi.convertidos.remove(c.id); loadAll(); } }}><Trash2 className="h-3.5 w-3.5 text-destructive" /></Button>
+                          </>
+                        )}
+                      </TableCell>
+                    </TableRow>
+                  );
+                })}
               </TableBody>
             </Table>
           </div>
@@ -559,7 +798,13 @@ export default function Cuidados() {
 
       <AcompanhamentoModal open={modalAcomp} onClose={() => setModalAcomp(false)} onSaved={loadAll} />
       <JornadaModal open={modalJornada} onClose={() => setModalJornada(false)} onSaved={loadAll} />
-      <ConvertidoModal open={modalConvert} onClose={() => setModalConvert(false)} onSaved={loadAll} />
+      <ConvertidoModal
+        open={modalConvert}
+        onClose={() => { setModalConvert(false); setEditConvert(null); }}
+        onSaved={loadAll}
+        allTags={convertTags}
+        initial={editConvert}
+      />
     </div>
   );
 }

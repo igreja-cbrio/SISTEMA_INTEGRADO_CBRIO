@@ -214,12 +214,27 @@ router.delete('/jornada180/:id', async (req, res) => {
 // ─────────────────────────────────────────────────────────────
 // Convertidos
 // ─────────────────────────────────────────────────────────────
+// Tags fixas de triagem pastoral · alimenta o multiselect no front
+const CONVERTIDO_TAGS = [
+  'casamento', 'familia', 'espiritual', 'saude', 'financeiro',
+  'luto', 'emocional', 'vicios', 'profissional', 'outro',
+];
+
+router.get('/convertidos/tags', (_req, res) => {
+  res.json(CONVERTIDO_TAGS);
+});
+
 router.get('/convertidos', async (req, res) => {
   try {
-    const { from, to } = req.query;
-    let q = supabase.from('cui_convertidos').select('*').order('data_culto', { ascending: false }).limit(500);
+    const { from, to, tag, encontro_marcado, atendido } = req.query;
+    let q = supabase.from('cui_convertidos').select('*').order('data_culto', { ascending: false }).limit(2000);
     if (from) q = q.gte('data_culto', from);
     if (to) q = q.lte('data_culto', to);
+    if (tag) q = q.contains('tags', [tag]);
+    if (encontro_marcado === 'true') q = q.eq('encontro_marcado', true);
+    if (encontro_marcado === 'false') q = q.eq('encontro_marcado', false);
+    if (atendido === 'true') q = q.eq('atendido_apos_culto', true);
+    if (atendido === 'false') q = q.eq('atendido_apos_culto', false);
     const { data, error } = await q;
     if (error) throw error;
     res.json(data || []);
