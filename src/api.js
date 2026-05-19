@@ -1275,6 +1275,7 @@ export const cuidados = {
     create: (data) => post('/cuidados/convertidos', data),
     update: (id, data) => patch(`/cuidados/convertidos/${id}`, data),
     remove: (id) => del(`/cuidados/convertidos/${id}`),
+    tags: () => get('/cuidados/convertidos/tags'),
   },
   agregado: {
     list: (mes) => get(`/cuidados/agregado${mes ? `?mes=${mes}` : ''}`),
