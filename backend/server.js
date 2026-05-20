@@ -128,6 +128,7 @@ app.use('/api/dashboard-semanal', require('./routes/dashboardSemanal'));
 app.use('/api/nps', require('./routes/nps'));
 app.use('/api/public/nps', require('./routes/publicNps'));
 app.use('/api/planejamento', require('./routes/planejamento'));
+app.use('/api/apresentacoes', require('./routes/apresentacoes'));
 
 // ── Health check ──
 // Inclui status do Supabase client pra diagnostico de "Nao autorizado" em prod

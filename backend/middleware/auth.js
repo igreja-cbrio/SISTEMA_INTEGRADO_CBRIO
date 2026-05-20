@@ -50,6 +50,7 @@ const ROUTE_MODULE_MAP = {
   'notificacoes': ['notificacoes-config'],
   'permissoes':   ['permissoes-admin'],
   'cerebro':      ['cerebro'],
+  'apresentacoes': ['apresentacoes'],
 };
 
 // Cache de módulos (carrega uma vez e reutiliza)

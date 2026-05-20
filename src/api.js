@@ -1640,3 +1640,30 @@ export const auth = {
     return requestFile('/auth/profile/foto', fd);
   },
 };
+
+// ── Apresentacoes · gerador de slides via Claude Opus ────────────────
+export const apresentacoes = {
+  list: (params = {}) => {
+    const q = new URLSearchParams(params).toString();
+    return get('/apresentacoes' + (q ? '?' + q : ''));
+  },
+  get: (id) => get(`/apresentacoes/${id}`),
+  create: (body) => post('/apresentacoes', body),
+  remove: (id) => del(`/apresentacoes/${id}`),
+  gerar: (id, body = {}) => post(`/apresentacoes/${id}/gerar`, body),
+  uploadArquivos: (id, files) => {
+    const fd = new FormData();
+    for (const f of files) fd.append('files', f);
+    return requestFile(`/apresentacoes/${id}/arquivos`, fd);
+  },
+  removerArquivo: (id, arquivoId) => del(`/apresentacoes/${id}/arquivos/${arquivoId}`),
+  // Busca HTML completo pra usar em <iframe srcDoc={...}>
+  // (iframes nao mandam Authorization automaticamente · precisamos do fetch)
+  fetchHtml: async (id) => {
+    const h = await headers();
+    const res = await fetch(`${API}/apresentacoes/${id}/render`, { headers: h });
+    if (!res.ok) throw new Error(`Erro ao carregar HTML (${res.status})`);
+    return res.text();
+  },
+  resumoUso: () => get('/apresentacoes/uso/resumo'),
+};

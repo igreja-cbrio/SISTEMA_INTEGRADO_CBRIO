@@ -15,7 +15,7 @@ import {
   UserCheck, UsersRound, Heart, HandHelping, BookOpen, ArrowRight, TrendingUp, Youtube,
   Megaphone, BrainCircuit, ShoppingCart, LayoutDashboard,
   Sun, Moon, Bell, BellRing, BellOff, LogOut, Search, CheckCheck, Settings, MonitorSmartphone, BarChart2, ClipboardCheck, Activity, MessageSquare, Shield, Menu as MenuIcon,
-  Baby, GraduationCap, ArrowRightLeft,
+  Baby, GraduationCap, ArrowRightLeft, Sparkles,
 } from 'lucide-react';
 import { Sheet, SheetContent, SheetTrigger } from '../ui/sheet';
 import {
@@ -76,6 +76,7 @@ const NAV_ITEMS = [
           { label: 'NPS', description: 'Pesquisas de satisfação geradas por IA · análise automática', icon: MessageSquare, path: '/nps', module: 'nps' },
           { label: 'Gestão (PMO)', description: 'Pulso · Estrutura OKR · Saúde · Configurar (admin)', icon: Settings, path: '/gestao', module: 'gestao' },
           { label: 'Assistente IA', description: 'Agentes de auditoria e análise', icon: BrainCircuit, path: '/assistente-ia', perm: 'canIA' },
+          { label: 'Apresentações', description: 'Gera slides HTML premium via Claude Opus · upload opcional', icon: Sparkles, path: '/admin/apresentacoes', module: 'apresentacoes' },
         ],
       },
     ],
