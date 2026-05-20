@@ -595,20 +595,6 @@ export default function Online() {
 
       <OAuthStatusCard />
 
-      {/* Aviso da Alda - mais discreto */}
-      <div className="rounded-xl border border-blue-500/30 bg-gradient-to-r from-blue-500/5 to-transparent p-3 flex items-start gap-3">
-        <div className="rounded-lg bg-blue-500/15 p-1.5 mt-0.5">
-          <Info className="h-3.5 w-3.5 text-blue-600 dark:text-blue-400" />
-        </div>
-        <div className="text-xs leading-relaxed">
-          <strong className="text-foreground">Modulo somente leitura.</strong>{' '}
-          <span className="text-muted-foreground">
-            Frequencia online e aceitacoes sao preenchidas pela <strong>Lorena</strong> em{' '}
-            <code className="px-1 py-0.5 rounded bg-muted text-[10px]">/ministerial/integracao</code> (aba Cultos).
-          </span>
-        </div>
-      </div>
-
       {/* Estado vazio - card menor e amigavel */}
       {semDados && (
         <Card className="border-dashed border-2 border-amber-500/30 bg-amber-500/5">
