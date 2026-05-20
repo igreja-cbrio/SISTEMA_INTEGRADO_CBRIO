@@ -84,60 +84,68 @@ router.get('/:area', authorizeModule('painel-area', 1), async (req, res) => {
     }
 
     // ──────────────────────────────────────────────────────────────────────
-    // 2. Dados brutos · ultimas 6 entradas por tipo + agregados de periodo
+    // 2. Dados brutos · TODOS os tipos esperados (do formula_config dos KPIs)
+    //    + registros existentes (se houver). Tipos sem registro retornam
+    //    placeholder vazio · UI mostra card aguardando preenchimento.
     // ──────────────────────────────────────────────────────────────────────
     const hoje = new Date();
-    const mesAtual = hoje.toISOString().slice(0, 7); // YYYY-MM
+    const mesAtual = hoje.toISOString().slice(0, 7);
     const mesAnteriorD = new Date(hoje); mesAnteriorD.setMonth(mesAnteriorD.getMonth() - 1);
     const mesAnterior = mesAnteriorD.toISOString().slice(0, 7);
     const dataLimite = new Date(hoje); dataLimite.setDate(dataLimite.getDate() - 180);
     const dataLimiteStr = dataLimite.toISOString().slice(0, 10);
 
-    const { data: dadosRaw } = await supabase
-      .from('dados_brutos')
-      .select('tipo_id, data, valor, tipos_dado_bruto(id, nome, descricao, unidade, agregacao, granularidade, ordem)')
-      .eq('area', area)
-      .gte('data', dataLimiteStr)
-      .order('data', { ascending: false });
-
-    // Agrupa por tipo
-    const dadosPorTipo = new Map();
-    for (const d of dadosRaw || []) {
-      const tipo = d.tipos_dado_bruto;
-      if (!tipo) continue;
-      if (!dadosPorTipo.has(tipo.id)) {
-        dadosPorTipo.set(tipo.id, {
-          tipo_id: tipo.id,
-          tipo_nome: tipo.nome,
-          descricao: tipo.descricao,
-          unidade: tipo.unidade,
-          agregacao: tipo.agregacao,
-          granularidade: tipo.granularidade,
-          ordem: tipo.ordem ?? 999,
-          registros: [],
-        });
-      }
-      dadosPorTipo.get(tipo.id).registros.push({ data: d.data, valor: Number(d.valor) });
-    }
-
-    // Mapa · tipo_id → valores da Jornada (somando valores de todos KPIs
-    // da area que usam aquele dado_tipo na formula_config)
+    // 2a. Extrai tipos esperados a partir de formula_config dos KPIs +
+    //     mapeia valores da Jornada que cada tipo alimenta
+    const tiposEsperados = new Set();
     const valoresPorTipo = new Map();
     for (const k of kpis) {
-      const dadoTipo = k.formula_config?.dado_tipo
-        || k.formula_config?.numerador
-        || k.formula_config?.denominador;
-      if (!dadoTipo) continue;
-      const tipos = Array.isArray(dadoTipo) ? dadoTipo : [dadoTipo];
+      const fc = k.formula_config || {};
+      const candidatos = [fc.dado_tipo, fc.numerador, fc.denominador].filter(Boolean);
+      const tiposK = [];
+      for (const c of candidatos) {
+        if (Array.isArray(c)) tiposK.push(...c);
+        else tiposK.push(c);
+      }
       const vals = Array.isArray(k.valores) ? k.valores : [];
-      for (const t of tipos) {
+      for (const t of tiposK) {
+        if (!t) continue;
+        tiposEsperados.add(t);
         if (!valoresPorTipo.has(t)) valoresPorTipo.set(t, new Set());
         vals.forEach(v => valoresPorTipo.get(t).add(v));
       }
     }
 
-    const dados = Array.from(dadosPorTipo.values()).map(t => {
-      const regs = t.registros; // ja em ordem desc
+    // 2b. Busca metadados de TODOS os tipos esperados (sempre aparecem
+    //     na UI, mesmo sem registro)
+    const tiposIds = Array.from(tiposEsperados);
+    let tiposCatalogo = [];
+    if (tiposIds.length > 0) {
+      const { data: catalogo } = await supabase
+        .from('tipos_dado_bruto')
+        .select('id, nome, descricao, unidade, agregacao, granularidade, ordem')
+        .in('id', tiposIds);
+      tiposCatalogo = catalogo || [];
+    }
+
+    // 2c. Busca registros existentes (180d · pra sparkline + variacao mes)
+    const { data: dadosRaw } = await supabase
+      .from('dados_brutos')
+      .select('tipo_id, data, valor')
+      .eq('area', area)
+      .gte('data', dataLimiteStr)
+      .order('data', { ascending: false });
+
+    // Indexa registros por tipo
+    const registrosPorTipo = new Map();
+    for (const d of dadosRaw || []) {
+      if (!registrosPorTipo.has(d.tipo_id)) registrosPorTipo.set(d.tipo_id, []);
+      registrosPorTipo.get(d.tipo_id).push({ data: d.data, valor: Number(d.valor) });
+    }
+
+    // 2d. Monta a lista final · 1 entrada por tipo esperado · com ou sem dado
+    const dados = tiposCatalogo.map(t => {
+      const regs = registrosPorTipo.get(t.id) || []; // ja em ordem desc
       const ultimo = regs[0] || null;
       const historico6 = regs.slice(0, 6).reverse();
       const totalMesAtual = regs
@@ -149,16 +157,16 @@ router.get('/:area', authorizeModule('painel-area', 1), async (req, res) => {
       const variacaoMes = totalMesAnterior > 0
         ? ((totalMesAtual - totalMesAnterior) / totalMesAnterior) * 100
         : null;
-      const valoresJornada = Array.from(valoresPorTipo.get(t.tipo_id) || []);
+      const valoresJornada = Array.from(valoresPorTipo.get(t.id) || []);
       return {
-        tipo_id: t.tipo_id,
-        tipo_nome: t.tipo_nome,
+        tipo_id: t.id,
+        tipo_nome: t.nome,
         descricao: t.descricao,
         unidade: t.unidade,
         agregacao: t.agregacao,
         granularidade: t.granularidade,
-        ordem: t.ordem,
-        valores_jornada: valoresJornada,  // ← novo · valores que esse dado alimenta
+        ordem: t.ordem ?? 999,
+        valores_jornada: valoresJornada,
         total_registros: regs.length,
         ultimo_valor: ultimo?.valor ?? null,
         ultima_data: ultimo?.data ?? null,
@@ -166,6 +174,7 @@ router.get('/:area', authorizeModule('painel-area', 1), async (req, res) => {
         total_mes_anterior: totalMesAnterior,
         variacao_mes_pct: variacaoMes,
         historico_6: historico6,
+        vazio: regs.length === 0,  // ← UI usa pra mostrar placeholder
       };
     }).sort((a, b) => a.ordem - b.ordem);
 
