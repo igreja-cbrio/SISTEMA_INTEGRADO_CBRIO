@@ -188,6 +188,21 @@ export const integracao = {
   historicoBatismos: () => get('/integracao/historico-batismos'),
 };
 
+export const dashboardSemanal = {
+  cultos: () => get('/dashboard-semanal/cultos'),
+  semanasDisponiveis: (ano) => get(`/dashboard-semanal/semanas-disponiveis?ano=${ano}`),
+  semanal: (params) => get('/dashboard-semanal/semanal?' + new URLSearchParams(params)),
+  mensal: (params) => get('/dashboard-semanal/mensal?' + new URLSearchParams(params)),
+  metasList: () => get('/dashboard-semanal/metas'),
+  metaCreate: (data) => post('/dashboard-semanal/metas', data),
+  metaUpdate: (id, data) => put(`/dashboard-semanal/metas/${id}`, data),
+  metaRemove: (id) => del(`/dashboard-semanal/metas/${id}`),
+  iaSugerirIndicador: (pergunta) => post('/dashboard-semanal/ia/sugerir-indicador', { pergunta }),
+  indicadoresCustomList: (status) => get('/dashboard-semanal/indicadores-custom' + (status ? `?status=${status}` : '')),
+  indicadorCustomPatch: (id, data) => patch(`/dashboard-semanal/indicadores-custom/${id}`, data),
+  indicadorCustomRemove: (id) => del(`/dashboard-semanal/indicadores-custom/${id}`),
+};
+
 export const grupos = {
   list: (params) => get('/grupos' + (params ? '?' + new URLSearchParams(params) : '')),
   get: (id) => get(`/grupos/${id}`),
