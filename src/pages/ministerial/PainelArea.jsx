@@ -362,6 +362,8 @@ function Progress({ pct, color }) {
 }
 
 function DadoRow({ dado, accent }) {
+  const vazio = dado.vazio || dado.total_registros === 0;
+
   const variacao = dado.variacao_mes_pct;
   const variacaoTexto = variacao == null
     ? null
@@ -372,19 +374,24 @@ function DadoRow({ dado, accent }) {
     : variacao <= -10 ? 'text-red-600 dark:text-red-400'
     : 'text-muted-foreground';
 
-  // Mini sparkline
-  const valoresHist = dado.historico_6.map(h => h.valor);
+  const valoresHist = (dado.historico_6 || []).map(h => h.valor);
   const maxV = Math.max(...valoresHist, 1);
   const minV = Math.min(...valoresHist, 0);
   const range = maxV - minV || 1;
 
-  // Valores da Jornada que esse dado alimenta
   const valoresJornada = dado.valores_jornada || [];
 
   return (
-    <div className="p-4 flex items-start gap-4 flex-wrap">
+    <div className={`p-4 flex items-start gap-4 flex-wrap ${vazio ? 'opacity-75' : ''}`}>
       <div className="flex-1 min-w-0">
-        <p className="text-sm font-medium text-foreground">{dado.tipo_nome}</p>
+        <div className="flex items-center gap-2">
+          <p className="text-sm font-medium text-foreground">{dado.tipo_nome}</p>
+          {vazio && (
+            <span className="text-[10px] px-1.5 py-0.5 rounded font-medium bg-muted text-muted-foreground border border-border">
+              aguardando dado
+            </span>
+          )}
+        </div>
         {dado.descricao && (
           <p className="text-xs text-muted-foreground mt-0.5 line-clamp-2">{dado.descricao}</p>
         )}
@@ -397,9 +404,11 @@ function DadoRow({ dado, accent }) {
               · último em {formatData(dado.ultima_data)}
             </span>
           )}
-          <span className="text-muted-foreground">
-            · {dado.total_registros} registros (180d)
-          </span>
+          {dado.total_registros > 0 && (
+            <span className="text-muted-foreground">
+              · {dado.total_registros} registros (180d)
+            </span>
+          )}
         </div>
         {valoresJornada.length > 0 && (
           <div className="flex items-center gap-1 mt-2 flex-wrap">
@@ -420,27 +429,37 @@ function DadoRow({ dado, accent }) {
         )}
       </div>
 
-      {/* Sparkline mini */}
-      {valores.length > 1 && (
+      {/* Sparkline mini · só se tem >= 2 registros */}
+      {valoresHist.length > 1 ? (
         <svg width="80" height="32" className="shrink-0">
           <polyline
             fill="none"
             stroke={accent}
             strokeWidth="2"
-            points={valores.map((v, i) => {
-              const x = (i / (valores.length - 1)) * 78 + 1;
+            points={valoresHist.map((v, i) => {
+              const x = (i / (valoresHist.length - 1)) * 78 + 1;
               const y = 30 - ((v - minV) / range) * 28;
               return `${x},${y}`;
             }).join(' ')}
           />
         </svg>
+      ) : (
+        <div className="w-[80px] h-[32px] shrink-0 rounded bg-muted/40 flex items-center justify-center">
+          <span className="text-[9px] text-muted-foreground">sem histórico</span>
+        </div>
       )}
 
       <div className="text-right shrink-0 min-w-[100px]">
-        <p className="text-2xl font-bold text-foreground">{formatNum(dado.ultimo_valor)}</p>
-        <p className="text-[10px] text-muted-foreground">{dado.unidade}</p>
-        {variacaoTexto && (
-          <p className={`text-[11px] mt-1 ${variacaoColor}`}>{variacaoTexto}</p>
+        {vazio ? (
+          <p className="text-sm text-muted-foreground italic">sem dado</p>
+        ) : (
+          <>
+            <p className="text-2xl font-bold text-foreground">{formatNum(dado.ultimo_valor)}</p>
+            <p className="text-[10px] text-muted-foreground">{dado.unidade}</p>
+            {variacaoTexto && (
+              <p className={`text-[11px] mt-1 ${variacaoColor}`}>{variacaoTexto}</p>
+            )}
+          </>
         )}
       </div>
     </div>
