@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useQuery, useMutation } from '@tanstack/react-query';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { online } from '@/api';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -474,6 +474,8 @@ export default function Online() {
     queryFn: () => online.dashboard(),
   });
 
+  const queryClient = useQueryClient();
+
   const syncMutation = useMutation({
     mutationFn: () => online.sync(),
     onSuccess: () => {
@@ -481,6 +483,37 @@ export default function Online() {
       refetch();
     },
     onError: (err: any) => toast.error(err?.message || 'Erro ao sincronizar'),
+  });
+
+  // Recoleta TUDO · sync (com auto-link de cultos via actualStartTime) +
+  // catch-up das 6 metricas pros cultos linkados. Demora 1-3min dependendo
+  // de quantos cultos do passado precisam preencher.
+  const recoletarMutation = useMutation({
+    mutationFn: async () => {
+      const syncRes: any = await online.sync();
+      const linkados = syncRes?.log?.etapas?.backfill_cultos?.linkados ?? 0;
+      const catchRes: any = await online.coletar.catchUp();
+      return {
+        linkados,
+        processados: catchRes?.processados ?? 0,
+        ds: catchRes?.ds ?? 0,
+        ddus: catchRes?.ddus ?? 0,
+        subs: catchRes?.subs ?? 0,
+        trafico: catchRes?.trafico ?? 0,
+        retencao_curva: catchRes?.retencao_curva ?? 0,
+        sub_status: catchRes?.sub_status ?? 0,
+      };
+    },
+    onSuccess: (r) => {
+      const metricasTotais = r.ds + r.ddus + r.subs + r.trafico + r.retencao_curva + r.sub_status;
+      toast.success(
+        `Recoleta completa · ${r.linkados} cultos linkados · ${metricasTotais} metricas preenchidas em ${r.processados} cultos`,
+        { duration: 6000 }
+      );
+      refetch();
+      queryClient.invalidateQueries({ queryKey: ['online', 'cultos-metricas'] });
+    },
+    onError: (err: any) => toast.error(err?.message || 'Erro ao recoletar'),
   });
 
   const [topTab, setTopTab] = useState<'views' | 'engajamento'>('views');
@@ -533,16 +566,29 @@ export default function Online() {
             </div>
           </div>
           {podeEditarOnline && (
-            <Button
-              onClick={() => syncMutation.mutate()}
-              disabled={syncMutation.isPending}
-              variant="secondary"
-              size="lg"
-              className="gap-2 bg-white text-red-600 hover:bg-white/90 shadow-lg"
-            >
-              {syncMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
-              Sincronizar agora
-            </Button>
+            <div className="flex flex-col sm:flex-row gap-2">
+              <Button
+                onClick={() => syncMutation.mutate()}
+                disabled={syncMutation.isPending || recoletarMutation.isPending}
+                variant="secondary"
+                size="lg"
+                className="gap-2 bg-white text-red-600 hover:bg-white/90 shadow-lg"
+              >
+                {syncMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+                Sincronizar agora
+              </Button>
+              <Button
+                onClick={() => recoletarMutation.mutate()}
+                disabled={syncMutation.isPending || recoletarMutation.isPending}
+                variant="secondary"
+                size="lg"
+                className="gap-2 bg-red-700 text-white hover:bg-red-800 shadow-lg border border-white/20"
+                title="Linka cultos do passado por proximidade temporal com videos do canal + puxa todas as 6 metricas (DS, DDUS, watch time, retencao, subs, trafego, sub-status) onde estiver faltando dado. Pode demorar 1-3min."
+              >
+                {recoletarMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+                Recoletar tudo
+              </Button>
+            </div>
           )}
         </div>
       </div>
