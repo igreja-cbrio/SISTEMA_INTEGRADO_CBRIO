@@ -24,6 +24,16 @@
 
 > Marcos: trabalhou apenas as 8h regulares por dia útil. Matheus: 8h regulares + 4h extras diárias (mencionou trabalhar de madrugada/noite). Commits do "Claude" e "gpt-engineer-app[bot]" (Lovable) atribuídos ao Matheus conforme orientação. Horas arredondadas · não incluem reuniões de alinhamento.
 
+### Leitura recomendada · output produzido (não tempo presente)
+
+A medida mais defensável é **output equivalente**, não horas de relógio:
+- **Marcos · 224h de output** (dev manual · 8h/dia × 28 dias úteis · ritmo manual)
+- **Matheus · 336h de output** (8h manuais + 4h equivalentes via IA em paralelo · 28 dias úteis)
+
+A produtividade por hora é praticamente idêntica entre os dois (295 vs 337 linhas/hora · 1,47 vs 1,49 commits/hora). A diferença está no **multiplicador de ferramentas**: Matheus opera Lovable + Claude em paralelo, gerando volume equivalente a mais horas de dev manual em menos tempo de presença real. Por isso o número 336h **não significa "Matheus enrolado mais tempo"**, e sim **"Matheus entregou volume equivalente a 336h de dev manual"**.
+
+Conforme as IAs evoluem, esse multiplicador tende a crescer · o número 336h pode subir sem necessariamente aumentar o tempo de presença.
+
 ---
 
 ## Legenda · status
