@@ -123,6 +123,7 @@ app.use('/api/estrategia', require('./routes/estrategia'));
 app.use('/api/ritual', require('./routes/ritual'));
 app.use('/api/gestao', require('./routes/gestao'));
 app.use('/api/dados-brutos', require('./routes/dadosBrutos'));
+app.use('/api/dashboard-semanal', require('./routes/dashboardSemanal'));
 app.use('/api/nps', require('./routes/nps'));
 app.use('/api/public/nps', require('./routes/publicNps'));
 app.use('/api/planejamento', require('./routes/planejamento'));
