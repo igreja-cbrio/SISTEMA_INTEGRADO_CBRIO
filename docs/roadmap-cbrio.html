@@ -74,9 +74,9 @@
   <h2 style="margin-top:0; border:none; background:none; padding:0;">Sumário Executivo</h2>
   <div class="summary-grid">
     <div class="summary-card">
-      <div class="label">Horas gastas (40 dias)</div>
-      <div class="value green">540h</div>
-      <div class="footnote">829 commits · Marcos+Matheus</div>
+      <div class="label">Horas gastas (40 dias / 28 úteis)</div>
+      <div class="value green">560h</div>
+      <div class="footnote">829 commits · sendo 112h extras (Matheus)</div>
     </div>
     <div class="summary-card">
       <div class="label">Horas restantes (estimativa)</div>
@@ -90,27 +90,47 @@
     </div>
     <div class="summary-card">
       <div class="label">Total projetado</div>
-      <div class="value">~1.560h</div>
+      <div class="value">~1.580h</div>
       <div class="footnote">Dev + onboarding · 2 devs</div>
     </div>
   </div>
 
-  <h3 style="margin-top:24px; font-size:14px; text-transform:uppercase; letter-spacing:0.5px; color:#64748b;">Distribuição por dev (40 dias)</h3>
+  <h3 style="margin-top:24px; font-size:14px; text-transform:uppercase; letter-spacing:0.5px; color:#64748b;">Distribuição por dev (28 dias úteis · 10/04 → 20/05)</h3>
   <table class="gantt">
+    <thead><tr>
+      <th>Dev</th>
+      <th class="col-bar">Proporção</th>
+      <th class="col-h">Regulares</th>
+      <th class="col-h">Extras</th>
+      <th class="col-h">Total</th>
+      <th>Detalhe</th>
+    </tr></thead>
     <tr>
       <td><strong>Marcos Paulo</strong> · 330 commits</td>
       <td class="col-bar"><span class="bar-track"><span class="bar-fill green" style="width: 40%;"></span></span></td>
-      <td class="col-h"><strong>220h</strong></td>
-      <td>~5,5h/dia · backend + UI integrações</td>
+      <td class="col-h">224h</td>
+      <td class="col-h">0h</td>
+      <td class="col-h"><strong>224h</strong></td>
+      <td>8h/dia · 28 dias úteis · sem extras</td>
     </tr>
     <tr>
       <td><strong>Matheus Toscano</strong> · 500 commits</td>
-      <td class="col-bar"><span class="bar-track"><span class="bar-fill green" style="width: 60%;"></span></span></td>
-      <td class="col-h"><strong>320h</strong></td>
-      <td>~8h/dia · Claude AI + Lovable + dev direto</td>
+      <td class="col-bar"><span class="bar-track"><span class="bar-fill amber" style="width: 60%;"></span></span></td>
+      <td class="col-h">224h</td>
+      <td class="col-h">112h</td>
+      <td class="col-h"><strong>336h</strong></td>
+      <td>8h regulares + 4h extras/dia · Claude AI + Lovable</td>
+    </tr>
+    <tr style="background:#f1f5f9; font-weight:700;">
+      <td>TOTAL</td>
+      <td class="col-bar"><span class="bar-track"><span class="bar-fill green" style="width:100%;"></span></span></td>
+      <td class="col-h">448h</td>
+      <td class="col-h">112h</td>
+      <td class="col-h">560h</td>
+      <td></td>
     </tr>
   </table>
-  <p class="footnote">Commits do "Claude" e "gpt-engineer-app[bot]" (Lovable) atribuídos ao Matheus conforme orientação. Horas brutas arredondadas para cima · não inclui reuniões.</p>
+  <p class="footnote">Marcos: trabalhou apenas as 8h regulares/dia útil. Matheus: 8h normais + 4h extras (noite/madrugada). Commits do "Claude" e "gpt-engineer-app[bot]" (Lovable) atribuídos ao Matheus conforme orientação. Não inclui reuniões.</p>
 </section>
 
 <!-- ════════════════════════════════════════════════════════════════════════
@@ -935,12 +955,14 @@
   <h3>C. Custos · horas brutas de desenvolvimento</h3>
   <table class="gantt">
     <thead><tr><th>Período</th><th class="col-h">Marcos</th><th class="col-h">Matheus</th><th class="col-h">Total</th><th>Comentário</th></tr></thead>
-    <tr><td><strong>40 dias gastos</strong> (10/04 → 20/05)</td><td class="col-h">220h</td><td class="col-h">320h</td><td class="col-h"><strong>540h</strong></td><td>Commits + ~30% inflação p/ reuniões</td></tr>
+    <tr><td><strong>Regulares</strong> (28 dias × 8h)</td><td class="col-h">224h</td><td class="col-h">224h</td><td class="col-h"><strong>448h</strong></td><td>Expediente normal · 10/04 → 20/05</td></tr>
+    <tr><td><strong>Horas extras</strong> (Matheus 4h/dia)</td><td class="col-h">0h</td><td class="col-h">112h</td><td class="col-h"><strong>112h</strong></td><td>Só Matheus · noite/madrugada</td></tr>
+    <tr style="background:#f1f5f9;"><td><strong>40 dias gastos · subtotal</strong></td><td class="col-h"><strong>224h</strong></td><td class="col-h"><strong>336h</strong></td><td class="col-h"><strong>560h</strong></td><td>829 commits</td></tr>
     <tr><td><strong>Estimado restante</strong> (dev puro)</td><td class="col-h"><em>~250h</em></td><td class="col-h"><em>~350h</em></td><td class="col-h"><strong><em>~600h</em></strong></td><td>Pendências de cada módulo + Criativo do zero</td></tr>
     <tr><td><strong>Onboarding</strong> (horas extras)</td><td class="col-h"><em>~210h</em></td><td class="col-h"><em>~210h</em></td><td class="col-h"><strong><em>~420h</em></strong></td><td>15 pessoas × 28h cada · não bloqueia dev</td></tr>
-    <tr style="background:#f1f5f9; font-weight:700;"><td>TOTAL projetado</td><td class="col-h">~680h</td><td class="col-h">~880h</td><td class="col-h">~1.560h</td><td>Marcos + Matheus combinados</td></tr>
+    <tr style="background:#f1f5f9; font-weight:700;"><td>TOTAL projetado</td><td class="col-h">~684h</td><td class="col-h">~896h</td><td class="col-h">~1.580h</td><td>Marcos + Matheus combinados</td></tr>
   </table>
-  <p class="footnote">Marcos: backend + integrações + UI principal. Matheus: Lovable/Claude + UI complementar + integrações externas (YouTube, ML, devocional). Horas brutas, arredondadas pra cima · não incluem reuniões de alinhamento.</p>
+  <p class="footnote">Marcos: 8h/dia em dias úteis · backend + integrações + UI principal · sem horas extras. Matheus: 8h regulares + 4h extras/dia (noite/madrugada) · Lovable + Claude AI + UI complementar + integrações externas (YouTube, ML, devocional). Onboarding pós go-live é tratado como horas extras de ambos. Não inclui reuniões de alinhamento.</p>
 </div>
 
 <div class="ap-section">

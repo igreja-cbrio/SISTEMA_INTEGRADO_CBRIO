@@ -8,19 +8,21 @@
 
 | Métrica | Valor | Detalhe |
 |---|---|---|
-| **Horas gastas (40 dias)** | **540h** | 829 commits · Marcos + Matheus |
+| **Horas gastas (40 dias)** | **560h** | 829 commits · 28 dias úteis · Marcos + Matheus |
+| **das quais horas extras** | **112h** | Só Matheus (4h/dia extras × 28 dias) |
 | **Horas restantes (estimativa)** | **~600h** | Pendências + módulos novos |
 | **Onboarding (horas extras)** | **~420h** | 15 entregas × 28h (2h/dia × 14d) |
-| **Total projetado** | **~1.560h** | Dev + onboarding · 2 devs |
+| **Total projetado** | **~1.580h** | Dev + onboarding · 2 devs |
 
-### Distribuição por desenvolvedor (40 dias)
+### Distribuição por desenvolvedor (40 dias · 28 dias úteis)
 
-| Dev | Commits | Horas | Detalhe |
-|---|---|---|---|
-| **Marcos Paulo** | 330 | **220h** | ~5,5h/dia · backend + UI integrações |
-| **Matheus Toscano** | 500 | **320h** | ~8h/dia · Claude AI + Lovable + dev direto |
+| Dev | Commits | Regulares | Extras | Total | Detalhe |
+|---|---|---|---|---|---|
+| **Marcos Paulo** | 330 | **224h** | 0h | **224h** | 8h/dia · 28 dias úteis · sem horas extras |
+| **Matheus Toscano** | 500 | **224h** | **112h** | **336h** | 8h normais + 4h extras/dia × 28 dias |
+| **TOTAL** | 830 | 448h | 112h | **560h** | |
 
-> Commits do "Claude" e "gpt-engineer-app[bot]" (Lovable) atribuídos ao Matheus conforme orientação. Horas brutas arredondadas para cima · não inclui reuniões.
+> Marcos: trabalhou apenas as 8h regulares por dia útil. Matheus: 8h regulares + 4h extras diárias (mencionou trabalhar de madrugada/noite). Commits do "Claude" e "gpt-engineer-app[bot]" (Lovable) atribuídos ao Matheus conforme orientação. Horas arredondadas · não incluem reuniões de alinhamento.
 
 ---
 
@@ -459,16 +461,18 @@ Cada módulo entregue a uma pessoa-chave demanda **2h/dia × 14 dias = 28h** de 
 - **Particionamento de tabelas grandes** (mem_contribuicoes ~600k/ano): planejado pra quando passar 10k+ membros.
 - **Read replica do Supabase**: planejado pra quando crescer 25k+ pessoas.
 
-### C. Custos · horas brutas de desenvolvimento
+### C. Custos · horas de desenvolvimento (base: 28 dias úteis)
 
 | Período | Marcos | Matheus | Total | Comentário |
 |---|---|---|---|---|
-| **40 dias gastos** (10/04 → 20/05) | 220h | 320h | **540h** | Commits + ~30% inflação p/ reuniões |
+| **Regulares** (28 dias × 8h) | 224h | 224h | **448h** | 10/04 → 20/05 |
+| **Horas extras** (Matheus 4h/dia) | 0h | 112h | **112h** | Só Matheus · noite/madrugada |
+| **40 dias gastos · subtotal** | **224h** | **336h** | **560h** | Commits 829 |
 | **Estimado restante** (dev puro) | *~250h* | *~350h* | ***~600h*** | Pendências de cada módulo + Criativo do zero |
 | **Onboarding** (horas extras) | *~210h* | *~210h* | ***~420h*** | 15 pessoas × 28h cada · não bloqueia dev |
-| **TOTAL projetado** | **~680h** | **~880h** | **~1.560h** | Marcos + Matheus combinados |
+| **TOTAL projetado** | **~684h** | **~896h** | **~1.580h** | Marcos + Matheus combinados |
 
-> Marcos: backend + integrações + UI principal. Matheus: Lovable/Claude + UI complementar + integrações externas (YouTube, ML, devocional). Horas brutas, arredondadas pra cima · não incluem reuniões de alinhamento.
+> Marcos: 8h/dia em dias úteis · backend + integrações + UI principal · sem horas extras. Matheus: 8h regulares + 4h extras/dia (noite/madrugada) · Lovable + Claude AI + UI complementar + integrações externas (YouTube, ML, devocional). Onboarding pós go-live é tratado como horas extras de ambos. Não inclui reuniões de alinhamento.
 
 ### D. Stack técnica
 
