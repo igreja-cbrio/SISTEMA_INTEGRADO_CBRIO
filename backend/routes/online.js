@@ -147,7 +147,26 @@ router.get('/debug/analytics-test', authorize('admin', 'diretor'), async (req, r
 });
 
 router.get('/oauth/status', async (_req, res) => {
-  const { data } = await supabase.from('vw_online_oauth_status').select('*').limit(1).maybeSingle();
+  // Prioriza row ATIVA (revoked_at null) e mais recente · evita confusao quando
+  // ha tokens antigos revogados na mesma tabela (ex: trocou de conta OAuth).
+  let { data } = await supabase
+    .from('vw_online_oauth_status')
+    .select('*')
+    .is('revoked_at', null)
+    .order('connected_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  // Fallback · se nao tem ativa, retorna a mais recente (mesmo revogada) pra
+  // UI exibir o ultimo estado com last_error.
+  if (!data) {
+    const r = await supabase
+      .from('vw_online_oauth_status')
+      .select('*')
+      .order('connected_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    data = r.data;
+  }
   res.json(data || { conectado: false });
 });
 
