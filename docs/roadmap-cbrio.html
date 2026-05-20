@@ -1,0 +1,966 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<title>Sistema CBRio · Project View (10/04/2026 → 20/05/2026 + futuro)</title>
+<style>
+  * { box-sizing: border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; max-width: 1400px; margin: 0 auto; padding: 32px; color: #0f172a; background: #f8fafc; line-height: 1.5; }
+  h1 { font-size: 28px; margin: 0 0 6px; color: #00B39D; }
+  h2 { font-size: 22px; margin: 32px 0 12px; padding: 8px 12px; border-left: 5px solid #00B39D; background: #fff; border-radius: 4px; }
+  h3 { font-size: 16px; margin: 18px 0 8px; color: #334155; }
+  .subtitle { color: #64748b; margin-bottom: 24px; }
+  .summary { background: #fff; padding: 20px; border-radius: 12px; box-shadow: 0 1px 3px rgba(0,0,0,0.06); margin-bottom: 32px; border: 1px solid #e2e8f0; }
+  .summary-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin-top: 12px; }
+  .summary-card { background: #f1f5f9; padding: 16px; border-radius: 8px; border: 1px solid #e2e8f0; }
+  .summary-card .label { font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; color: #64748b; font-weight: 600; }
+  .summary-card .value { font-size: 28px; font-weight: 800; color: #0f172a; margin-top: 4px; }
+  .summary-card .value.green { color: #059669; }
+  .summary-card .value.amber { color: #d97706; }
+  .summary-card .value.blue { color: #2563eb; }
+  table.gantt { width: 100%; border-collapse: collapse; margin: 12px 0; background: #fff; border: 1px solid #e2e8f0; border-radius: 8px; overflow: hidden; }
+  table.gantt th, table.gantt td { padding: 8px 12px; font-size: 13px; text-align: left; border-bottom: 1px solid #f1f5f9; }
+  table.gantt th { background: #f8fafc; font-weight: 700; font-size: 11px; text-transform: uppercase; color: #64748b; letter-spacing: 0.5px; }
+  table.gantt tr:last-child td { border-bottom: none; }
+  .col-bar { width: 30%; }
+  .col-h { width: 80px; text-align: right; font-variant-numeric: tabular-nums; font-weight: 600; }
+  .col-status { width: 110px; }
+  .col-data { width: 100px; }
+  .col-resp { width: 130px; color: #475569; }
+  .bar { display: inline-block; height: 14px; border-radius: 4px; min-width: 6px; vertical-align: middle; }
+  .bar-track { display: block; width: 100%; height: 14px; background: #e2e8f0; border-radius: 4px; overflow: hidden; position: relative; }
+  .bar-fill { display: block; height: 100%; transition: width 0.3s ease; }
+  .bar-fill.green  { background: linear-gradient(90deg, #10b981, #059669); }
+  .bar-fill.amber  { background: linear-gradient(90deg, #f59e0b, #d97706); }
+  .bar-fill.gray   { background: linear-gradient(90deg, #94a3b8, #64748b); }
+  .bar-fill.blue   { background: linear-gradient(90deg, #3b82f6, #2563eb); }
+  .pill { display: inline-block; padding: 2px 8px; border-radius: 99px; font-size: 11px; font-weight: 600; line-height: 1.6; }
+  .pill.green { background: #d1fae5; color: #065f46; }
+  .pill.amber { background: #fef3c7; color: #92400e; }
+  .pill.gray  { background: #f1f5f9; color: #475569; }
+  .pill.blue  { background: #dbeafe; color: #1e40af; }
+  .subetapas { padding-left: 24px; font-size: 12px; color: #475569; margin-top: 4px; }
+  .subetapa { padding: 4px 0; display: grid; grid-template-columns: 1fr 80px 130px 90px; gap: 8px; align-items: center; font-size: 12px; border-bottom: 1px dashed #e2e8f0; }
+  .subetapa:last-child { border-bottom: none; }
+  .subetapa-titulo { color: #1e293b; }
+  .subetapa-desc { color: #64748b; font-size: 11px; margin-top: 2px; }
+  .area-header { background: linear-gradient(90deg, #00B39D, #0d9488); color: #fff; padding: 16px 20px; border-radius: 12px 12px 0 0; margin-top: 32px; display: flex; align-items: center; justify-content: space-between; }
+  .area-header h2 { color: #fff; background: transparent; border: none; padding: 0; margin: 0; }
+  .area-stats { font-size: 13px; opacity: 0.92; }
+  .area-body { background: #fff; padding: 16px 20px; border-radius: 0 0 12px 12px; border: 1px solid #e2e8f0; border-top: none; margin-bottom: 24px; }
+  .legend { background: #fff; padding: 12px 16px; border-radius: 8px; border: 1px solid #e2e8f0; margin-bottom: 24px; font-size: 12px; color: #475569; }
+  .legend strong { color: #0f172a; }
+  .ap-section { background: #fff; padding: 18px 20px; border-radius: 12px; border: 1px solid #e2e8f0; margin-bottom: 16px; }
+  .ap-section h3 { margin-top: 0; color: #00B39D; font-size: 18px; }
+  ul.checklist { padding-left: 20px; }
+  ul.checklist li { margin: 4px 0; font-size: 13px; }
+  .footnote { font-size: 11px; color: #94a3b8; font-style: italic; margin-top: 8px; }
+  .nota { background: #fef3c7; border-left: 3px solid #d97706; padding: 10px 14px; font-size: 12px; color: #78350f; border-radius: 4px; margin: 8px 0; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Sistema CBRio · Project View</h1>
+  <p class="subtitle">
+    Período: <strong>10/04/2026</strong> (início) → <strong>20/05/2026</strong> (hoje · 40 dias) · documento solicitado por Eduardo Gnisci
+  </p>
+</header>
+
+<!-- ════════════════════════════════════════════════════════════════════════
+     SUMÁRIO EXECUTIVO
+     ════════════════════════════════════════════════════════════════════════ -->
+<section class="summary">
+  <h2 style="margin-top:0; border:none; background:none; padding:0;">Sumário Executivo</h2>
+  <div class="summary-grid">
+    <div class="summary-card">
+      <div class="label">Horas gastas (40 dias)</div>
+      <div class="value green">540h</div>
+      <div class="footnote">829 commits · Marcos+Matheus</div>
+    </div>
+    <div class="summary-card">
+      <div class="label">Horas restantes (estimativa)</div>
+      <div class="value amber">~600h</div>
+      <div class="footnote">Pendências + módulos novos</div>
+    </div>
+    <div class="summary-card">
+      <div class="label">Onboarding (horas extras)</div>
+      <div class="value blue">~420h</div>
+      <div class="footnote">15 entregas × 28h (2h/dia × 14d)</div>
+    </div>
+    <div class="summary-card">
+      <div class="label">Total projetado</div>
+      <div class="value">~1.560h</div>
+      <div class="footnote">Dev + onboarding · 2 devs</div>
+    </div>
+  </div>
+
+  <h3 style="margin-top:24px; font-size:14px; text-transform:uppercase; letter-spacing:0.5px; color:#64748b;">Distribuição por dev (40 dias)</h3>
+  <table class="gantt">
+    <tr>
+      <td><strong>Marcos Paulo</strong> · 330 commits</td>
+      <td class="col-bar"><span class="bar-track"><span class="bar-fill green" style="width: 40%;"></span></span></td>
+      <td class="col-h"><strong>220h</strong></td>
+      <td>~5,5h/dia · backend + UI integrações</td>
+    </tr>
+    <tr>
+      <td><strong>Matheus Toscano</strong> · 500 commits</td>
+      <td class="col-bar"><span class="bar-track"><span class="bar-fill green" style="width: 60%;"></span></span></td>
+      <td class="col-h"><strong>320h</strong></td>
+      <td>~8h/dia · Claude AI + Lovable + dev direto</td>
+    </tr>
+  </table>
+  <p class="footnote">Commits do "Claude" e "gpt-engineer-app[bot]" (Lovable) atribuídos ao Matheus conforme orientação. Horas brutas arredondadas para cima · não inclui reuniões.</p>
+</section>
+
+<!-- ════════════════════════════════════════════════════════════════════════
+     LEGENDA
+     ════════════════════════════════════════════════════════════════════════ -->
+<div class="legend">
+  <strong>Legenda · status:</strong>
+  &nbsp;<span class="pill green">Entregue</span> em produção
+  &nbsp;<span class="pill amber">Em curso</span> parcialmente feito
+  &nbsp;<span class="pill gray">Pendente</span> nada feito ainda
+  &nbsp;<span class="pill blue">Planejado</span> previsto, não iniciado
+  &nbsp;·&nbsp;<strong>Horas restantes</strong> são estimativas marcadas em <em>itálico</em>
+</div>
+
+<!-- ════════════════════════════════════════════════════════════════════════
+     RESUMO POR MÓDULO (top-level)
+     ════════════════════════════════════════════════════════════════════════ -->
+<h2>Entregas Intermediárias · 6 módulos</h2>
+<table class="gantt">
+  <thead><tr>
+    <th>Módulo</th>
+    <th class="col-bar">Progresso visual</th>
+    <th class="col-h">Gasto</th>
+    <th class="col-h">Restante</th>
+    <th class="col-status">Status macro</th>
+  </tr></thead>
+  <tr>
+    <td><strong>1. Administração</strong></td>
+    <td class="col-bar"><span class="bar-track"><span class="bar-fill green" style="width: 75%;"></span></span></td>
+    <td class="col-h">160h</td>
+    <td class="col-h"><em>175h</em></td>
+    <td><span class="pill amber">Em curso</span></td>
+  </tr>
+  <tr>
+    <td><strong>2. Inteligência</strong></td>
+    <td class="col-bar"><span class="bar-track"><span class="bar-fill green" style="width: 70%;"></span></span></td>
+    <td class="col-h">125h</td>
+    <td class="col-h"><em>110h</em></td>
+    <td><span class="pill amber">Em curso</span></td>
+  </tr>
+  <tr>
+    <td><strong>3. Planejamento</strong></td>
+    <td class="col-bar"><span class="bar-track"><span class="bar-fill green" style="width: 60%;"></span></span></td>
+    <td class="col-h">110h</td>
+    <td class="col-h"><em>120h</em></td>
+    <td><span class="pill amber">Em curso</span></td>
+  </tr>
+  <tr>
+    <td><strong>4. Ministerial</strong></td>
+    <td class="col-bar"><span class="bar-track"><span class="bar-fill green" style="width: 65%;"></span></span></td>
+    <td class="col-h">115h</td>
+    <td class="col-h"><em>80h</em></td>
+    <td><span class="pill amber">Em curso</span></td>
+  </tr>
+  <tr>
+    <td><strong>5. Cultos</strong></td>
+    <td class="col-bar"><span class="bar-track"><span class="bar-fill green" style="width: 25%;"></span></span></td>
+    <td class="col-h">30h</td>
+    <td class="col-h"><em>55h</em></td>
+    <td><span class="pill amber">Em curso</span></td>
+  </tr>
+  <tr>
+    <td><strong>6. Criativo</strong> (Marketing)</td>
+    <td class="col-bar"><span class="bar-track"><span class="bar-fill gray" style="width: 5%;"></span></span></td>
+    <td class="col-h">0h</td>
+    <td class="col-h"><em>120h</em></td>
+    <td><span class="pill gray">Pendente</span></td>
+  </tr>
+</table>
+
+<!-- ════════════════════════════════════════════════════════════════════════
+     1. ADMINISTRAÇÃO
+     ════════════════════════════════════════════════════════════════════════ -->
+<div class="area-header">
+  <h2>1. Administração</h2>
+  <div class="area-stats">160h gastas · ~175h restantes · 75% concluído</div>
+</div>
+<div class="area-body">
+  <p style="font-size:13px; color:#475569; margin-top:0;">Gestão (RH, Financeiro, Logística, Hospitalidade, Patrimônio, TI) + Solicitações + Permissões. Cobertura ampla, refinamento em andamento.</p>
+
+  <table class="gantt">
+    <thead><tr>
+      <th>Aba / Etapa</th>
+      <th class="col-bar">Progresso</th>
+      <th class="col-h">Gasto</th>
+      <th class="col-h">Restante</th>
+      <th class="col-status">Status</th>
+      <th class="col-resp">Responsável</th>
+    </tr></thead>
+
+    <tr>
+      <td><strong>RH</strong><div class="subetapa-desc">Dashboard · PCS · Cargos · Salários · Colaboradores · Organograma · Folha · Avaliações 360 · Treinamentos · Férias · Licenças · Onboarding Juliana</div></td>
+      <td><span class="bar-track"><span class="bar-fill green" style="width:70%;"></span></span></td>
+      <td class="col-h">45h</td>
+      <td class="col-h"><em>50h</em></td>
+      <td><span class="pill amber">Em curso</span></td>
+      <td>Marcos · Matheus</td>
+    </tr>
+    <tr><td colspan="6">
+      <div class="subetapas">
+        <div class="subetapa"><span>Dashboard de funcionários ativos/inativos</span><span>6h</span><span class="pill green">Entregue</span><span></span></div>
+        <div class="subetapa"><span>Lista de colaboradores + filtros</span><span>4h</span><span class="pill green">Entregue</span><span></span></div>
+        <div class="subetapa"><span>Organograma visual</span><span>5h</span><span class="pill green">Entregue</span><span></span></div>
+        <div class="subetapa"><span>Folha salarial + custo mensal</span><span>5h</span><span class="pill green">Entregue</span><span></span></div>
+        <div class="subetapa"><span>PCS · Plano de Cargos e Salários (graus, critérios, progressões)</span><span>14h</span><span class="pill green">Entregue</span><span></span></div>
+        <div class="subetapa"><span>Férias / licenças / dia extra</span><span>6h</span><span class="pill green">Entregue</span><span></span></div>
+        <div class="subetapa"><span>Foto funcionário + avatar</span><span>3h</span><span class="pill green">Entregue</span><span></span></div>
+        <div class="subetapa"><span>Avaliações 360 (FIDS)</span><span><em>~20h</em></span><span class="pill gray">Pendente</span><span></span></div>
+        <div class="subetapa"><span>Módulo de treinamentos</span><span><em>~16h</em></span><span class="pill gray">Pendente</span><span></span></div>
+        <div class="subetapa"><span>Onboarding Juliana (RH) ajustes finais</span><span><em>~14h</em></span><span class="pill gray">Pendente</span><span></span></div>
+      </div>
+    </td></tr>
+
+    <tr>
+      <td><strong>Financeiro</strong><div class="subetapa-desc">Contas a pagar/receber · Reembolsos · Vencimentos · API bancária (Santander)</div></td>
+      <td><span class="bar-track"><span class="bar-fill amber" style="width:35%;"></span></span></td>
+      <td class="col-h">20h</td>
+      <td class="col-h"><em>80h</em></td>
+      <td><span class="pill amber">Em curso</span></td>
+      <td>Matheus</td>
+    </tr>
+    <tr><td colspan="6">
+      <div class="subetapas">
+        <div class="subetapa"><span>Lançamentos básicos (entradas/saídas)</span><span>10h</span><span class="pill green">Entregue</span><span></span></div>
+        <div class="subetapa"><span>Reembolsos via Solicitações (PIX/transferência + comprovante)</span><span>10h</span><span class="pill green">Entregue</span><span></span></div>
+        <div class="subetapa"><span>Integração API Santander (banco principal)</span><span><em>~60h</em></span><span class="pill gray">Pendente</span><span>Apoio dev Santander</span></div>
+        <div class="subetapa"><span>Outras APIs bancárias</span><span><em>~20h</em></span><span class="pill gray">Pendente</span><span></span></div>
+      </div>
+    </td></tr>
+
+    <tr>
+      <td><strong>Logística & Compras</strong><div class="subetapa-desc">Fornecedores · Pedidos · Notas fiscais · Mercado Livre · Rastreio · WhatsApp</div></td>
+      <td><span class="bar-track"><span class="bar-fill green" style="width:75%;"></span></span></td>
+      <td class="col-h">25h</td>
+      <td class="col-h"><em>30h</em></td>
+      <td><span class="pill amber">Em curso</span></td>
+      <td>Matheus · Marcos</td>
+    </tr>
+    <tr><td colspan="6">
+      <div class="subetapas">
+        <div class="subetapa"><span>Dashboard de logística + fornecedores</span><span>5h</span><span class="pill green">Entregue</span><span></span></div>
+        <div class="subetapa"><span>Pedidos via Solicitações (categoria compras)</span><span>5h</span><span class="pill green">Entregue</span><span></span></div>
+        <div class="subetapa"><span>Integração Mercado Livre (9/10 compras)</span><span>10h</span><span class="pill green">Entregue</span><span></span></div>
+        <div class="subetapa"><span>Tracking ML auto (cron 15min)</span><span>5h</span><span class="pill green">Entregue</span><span></span></div>
+        <div class="subetapa"><span>WhatsApp Business (cadastro número + integração)</span><span><em>~16h</em></span><span class="pill amber">Em curso</span><span>Aguarda número</span></div>
+        <div class="subetapa"><span>Notas fiscais não-ML (API genérica)</span><span><em>~12h</em></span><span class="pill gray">Pendente</span><span></span></div>
+        <div class="subetapa"><span>Teste vinculação compras → solicitações</span><span><em>~2h</em></span><span class="pill amber">Em curso</span><span>Feito, sem teste</span></div>
+      </div>
+    </td></tr>
+
+    <tr>
+      <td><strong>Patrimônio</strong><div class="subetapa-desc">Bens · QR codes · Movimentações</div></td>
+      <td><span class="bar-track"><span class="bar-fill green" style="width:90%;"></span></span></td>
+      <td class="col-h">18h</td>
+      <td class="col-h"><em>5h</em></td>
+      <td><span class="pill green">Entregue</span></td>
+      <td>Marcos</td>
+    </tr>
+    <tr><td colspan="6">
+      <div class="subetapas">
+        <div class="subetapa"><span>Lista de bens + categoria + localização</span><span>8h</span><span class="pill green">Entregue</span><span></span></div>
+        <div class="subetapa"><span>QR code + scanner mobile</span><span>5h</span><span class="pill green">Entregue</span><span></span></div>
+        <div class="subetapa"><span>Movimentações (de→para, responsável, data)</span><span>5h</span><span class="pill green">Entregue</span><span></span></div>
+        <div class="subetapa"><span>Decidir manter ou remover aba "Inventário"</span><span><em>~5h</em></span><span class="pill amber">Em curso</span><span></span></div>
+      </div>
+    </td></tr>
+
+    <tr>
+      <td><strong>Hospitalidade</strong><div class="subetapa-desc">Secretaria (reserva espaço) · Cozinha · Manutenção</div></td>
+      <td><span class="bar-track"><span class="bar-fill green" style="width:80%;"></span></span></td>
+      <td class="col-h">12h</td>
+      <td class="col-h"><em>10h</em></td>
+      <td><span class="pill amber">Em curso</span></td>
+      <td>Marcos · Matheus</td>
+    </tr>
+    <tr><td colspan="6">
+      <div class="subetapas">
+        <div class="subetapa"><span>Reserva de espaço via Solicitações</span><span>6h</span><span class="pill green">Entregue</span><span></span></div>
+        <div class="subetapa"><span>Categoria cozinha (eventos) via Solicitações</span><span>3h</span><span class="pill green">Entregue</span><span></span></div>
+        <div class="subetapa"><span>Categoria manutenção via Solicitações</span><span>3h</span><span class="pill green">Entregue</span><span></span></div>
+        <div class="subetapa"><span>Calendário visual de reservas (conflitos)</span><span><em>~10h</em></span><span class="pill gray">Pendente</span><span></span></div>
+      </div>
+    </td></tr>
+
+    <tr>
+      <td><strong>TI</strong><div class="subetapa-desc">Chamados via Solicitações</div></td>
+      <td><span class="bar-track"><span class="bar-fill green" style="width:90%;"></span></span></td>
+      <td class="col-h">5h</td>
+      <td class="col-h"><em>0h</em></td>
+      <td><span class="pill green">Entregue</span></td>
+      <td>Marcos</td>
+    </tr>
+
+    <tr>
+      <td><strong>Solicitações</strong><div class="subetapa-desc">Coração dos KPIs ADM · 8+ categorias · SLA · NPS interno · Kanban</div></td>
+      <td><span class="bar-track"><span class="bar-fill green" style="width:85%;"></span></span></td>
+      <td class="col-h">35h</td>
+      <td class="col-h"><em>15h</em></td>
+      <td><span class="pill green">Entregue</span></td>
+      <td>Marcos · Matheus</td>
+    </tr>
+    <tr><td colspan="6">
+      <div class="subetapas">
+        <div class="subetapa"><span>Schema com SLA + áreas responsáveis + categorias</span><span>10h</span><span class="pill green">Entregue</span><span></span></div>
+        <div class="subetapa"><span>Backend CRUD + triggers SLA realtime</span><span>10h</span><span class="pill green">Entregue</span><span></span></div>
+        <div class="subetapa"><span>UI Kanban + filtros + minhas solicitações</span><span>8h</span><span class="pill green">Entregue</span><span></span></div>
+        <div class="subetapa"><span>NPS pós-conclusão (badge + cron lembrete)</span><span>5h</span><span class="pill green">Entregue</span><span></span></div>
+        <div class="subetapa"><span>ML tracking + WhatsApp notify (stub feature flag)</span><span>2h</span><span class="pill green">Entregue</span><span></span></div>
+        <div class="subetapa"><span>Calendário visual de reservas</span><span><em>~10h</em></span><span class="pill gray">Pendente</span><span></span></div>
+        <div class="subetapa"><span>Dashboard de urgência frequente</span><span><em>~5h</em></span><span class="pill gray">Pendente</span><span></span></div>
+      </div>
+    </td></tr>
+
+    <tr>
+      <td><strong>Permissões</strong><div class="subetapa-desc">Matriz cargo×módulo · Usuários · Overrides · Boost por área</div></td>
+      <td><span class="bar-track"><span class="bar-fill green" style="width:80%;"></span></span></td>
+      <td class="col-h">30h</td>
+      <td class="col-h"><em>20h</em></td>
+      <td><span class="pill amber">Em curso</span></td>
+      <td>Marcos</td>
+    </tr>
+    <tr><td colspan="6">
+      <div class="subetapas">
+        <div class="subetapa"><span>Schema · cargos, módulos, matriz, overrides</span><span>8h</span><span class="pill green">Entregue</span><span></span></div>
+        <div class="subetapa"><span>Middleware authorizeModule + cache 5min</span><span>5h</span><span class="pill green">Entregue</span><span></span></div>
+        <div class="subetapa"><span>Boost por área · 1 cargo + N áreas dão admin no módulo</span><span>4h</span><span class="pill green">Entregue</span><span></span></div>
+        <div class="subetapa"><span>UI /admin/permissoes · Matriz + Usuários (cargo, áreas, overrides)</span><span>10h</span><span class="pill green">Entregue</span><span></span></div>
+        <div class="subetapa"><span>Sync profiles→usuarios + ROLE_MAP limpeza</span><span>3h</span><span class="pill green">Entregue</span><span></span></div>
+        <div class="subetapa"><span>Atribuição cargos em massa + cargos novos (coord adoração/produção/online)</span><span><em>~10h</em></span><span class="pill amber">Em curso</span><span></span></div>
+        <div class="subetapa"><span>Migrar ModuleGuard pra slugs (limpeza)</span><span><em>~10h</em></span><span class="pill gray">Pendente</span><span></span></div>
+      </div>
+    </td></tr>
+  </table>
+</div>
+
+<!-- ════════════════════════════════════════════════════════════════════════
+     2. INTELIGÊNCIA
+     ════════════════════════════════════════════════════════════════════════ -->
+<div class="area-header">
+  <h2>2. Inteligência</h2>
+  <div class="area-stats">125h gastas · ~110h restantes · 70% concluído</div>
+</div>
+<div class="area-body">
+  <p style="font-size:13px; color:#475569; margin-top:0;">Painel CBRio · ~150 KPIs · Dashboard semanal · NPS · Minha Área · Dados Brutos · Assistente IA. Estrutura completa, validação pós-uso em andamento.</p>
+
+  <table class="gantt">
+    <thead><tr>
+      <th>Aba / Etapa</th>
+      <th class="col-bar">Progresso</th>
+      <th class="col-h">Gasto</th>
+      <th class="col-h">Restante</th>
+      <th class="col-status">Status</th>
+      <th class="col-resp">Responsável</th>
+    </tr></thead>
+
+    <tr>
+      <td><strong>Painel CBRio</strong><div class="subetapa-desc">NSM · Mandalas · Matriz 6×5 · Alertas · Drill-down de KPI/pessoas</div></td>
+      <td><span class="bar-track"><span class="bar-fill green" style="width:90%;"></span></span></td>
+      <td class="col-h">35h</td>
+      <td class="col-h"><em>20h</em></td>
+      <td><span class="pill green">Entregue</span></td>
+      <td>Marcos · Matheus</td>
+    </tr>
+    <tr><td colspan="6">
+      <div class="subetapas">
+        <div class="subetapa"><span>NSM + 3 segmentados (CBRio, Online, CBA)</span><span>5h</span><span class="pill green">Entregue</span><span></span></div>
+        <div class="subetapa"><span>Carrossel de 6 mandalas (5 valores + visão geral)</span><span>5h</span><span class="pill green">Entregue</span><span></span></div>
+        <div class="subetapa"><span>Matriz Valor × Área 6×5 colorida + drill-down célula</span><span>6h</span><span class="pill green">Entregue</span><span></span></div>
+        <div class="subetapa"><span>Carrossel de tendências temporais (5 valores)</span><span>5h</span><span class="pill green">Entregue</span><span></span></div>
+        <div class="subetapa"><span>Top 3 alertas críticos</span><span>3h</span><span class="pill green">Entregue</span><span></span></div>
+        <div class="subetapa"><span>Drill-down de KPI individual (/painel/kpi/:id)</span><span>6h</span><span class="pill green">Entregue</span><span></span></div>
+        <div class="subetapa"><span>Lista de pessoas NSM (camada 4)</span><span>5h</span><span class="pill green">Entregue</span><span></span></div>
+        <div class="subetapa"><span>Validação pós-implementação (1 mês de avaliação)</span><span><em>~20h</em></span><span class="pill amber">Em curso</span><span></span></div>
+      </div>
+    </td></tr>
+
+    <tr>
+      <td><strong>Dashboard Semanal</strong><div class="subetapa-desc">Substitui Power BI · indicadores semanais + metas + tipos de gráfico</div></td>
+      <td><span class="bar-track"><span class="bar-fill green" style="width:75%;"></span></span></td>
+      <td class="col-h">20h</td>
+      <td class="col-h"><em>15h</em></td>
+      <td><span class="pill amber">Em curso</span></td>
+      <td>Matheus</td>
+    </tr>
+    <tr><td colspan="6">
+      <div class="subetapas">
+        <div class="subetapa"><span>Dashboard semanal (substitui Power BI)</span><span>10h</span><span class="pill green">Entregue</span><span></span></div>
+        <div class="subetapa"><span>Filtros por indicador, semana, acumulado mensal</span><span>4h</span><span class="pill green">Entregue</span><span></span></div>
+        <div class="subetapa"><span>Aba "Metas" pra diretoria (alto nível, sem operacional)</span><span>6h</span><span class="pill green">Entregue</span><span></span></div>
+        <div class="subetapa"><span>Criar indicador com IA (descrição → indicador)</span><span><em>~8h</em></span><span class="pill amber">Em curso</span><span></span></div>
+        <div class="subetapa"><span>Unificar metas (dashboard ↔ /gestao)</span><span><em>~7h</em></span><span class="pill gray">Pendente</span><span></span></div>
+      </div>
+    </td></tr>
+
+    <tr>
+      <td><strong>Minha Área</strong><div class="subetapa-desc">KPIs filtrados pela área/valor do líder</div></td>
+      <td><span class="bar-track"><span class="bar-fill green" style="width:80%;"></span></span></td>
+      <td class="col-h">12h</td>
+      <td class="col-h"><em>8h</em></td>
+      <td><span class="pill green">Entregue</span></td>
+      <td>Marcos</td>
+    </tr>
+
+    <tr>
+      <td><strong>Dados Brutos</strong><div class="subetapa-desc">Líder preenche número absoluto · sistema calcula KPI · ~35 tipos seedados</div></td>
+      <td><span class="bar-track"><span class="bar-fill green" style="width:85%;"></span></span></td>
+      <td class="col-h">18h</td>
+      <td class="col-h"><em>8h</em></td>
+      <td><span class="pill green">Entregue</span></td>
+      <td>Marcos</td>
+    </tr>
+
+    <tr>
+      <td><strong>NPS</strong><div class="subetapa-desc">Pesquisas geradas por IA · análise automática · 5 contextos KPI</div></td>
+      <td><span class="bar-track"><span class="bar-fill amber" style="width:50%;"></span></span></td>
+      <td class="col-h">16h</td>
+      <td class="col-h"><em>40h</em></td>
+      <td><span class="pill amber">Em curso</span></td>
+      <td>Matheus</td>
+    </tr>
+    <tr><td colspan="6">
+      <div class="subetapas">
+        <div class="subetapa"><span>Schema · pesquisas + respostas + sync KPI</span><span>5h</span><span class="pill green">Entregue</span><span></span></div>
+        <div class="subetapa"><span>IA Haiku gera perguntas + análise sentimento</span><span>6h</span><span class="pill green">Entregue</span><span></span></div>
+        <div class="subetapa"><span>NPS Culto · contexto + KPIs CULTO-NPS-*</span><span>5h</span><span class="pill green">Entregue</span><span></span></div>
+        <div class="subetapa"><span>Avaliação de voluntários (NPS específico)</span><span><em>~12h</em></span><span class="pill gray">Pendente</span><span></span></div>
+        <div class="subetapa"><span>Avaliação institucional geral</span><span><em>~12h</em></span><span class="pill gray">Pendente</span><span></span></div>
+        <div class="subetapa"><span>Apresentação telão (QR pra preencher pós-culto)</span><span><em>~16h</em></span><span class="pill gray">Pendente</span><span></span></div>
+      </div>
+    </td></tr>
+
+    <tr>
+      <td><strong>Gestão (PMO)</strong><div class="subetapa-desc">Estrutura OKR · saúde do sistema · líderes em pendência</div></td>
+      <td><span class="bar-track"><span class="bar-fill amber" style="width:55%;"></span></span></td>
+      <td class="col-h">15h</td>
+      <td class="col-h"><em>15h</em></td>
+      <td><span class="pill amber">Em curso</span></td>
+      <td>Marcos</td>
+    </tr>
+
+    <tr>
+      <td><strong>Assistente IA / Cérebro CBRio</strong><div class="subetapa-desc">Chat IA + agentes auditoria + processamento SharePoint→Obsidian</div></td>
+      <td><span class="bar-track"><span class="bar-fill amber" style="width:45%;"></span></span></td>
+      <td class="col-h">9h</td>
+      <td class="col-h"><em>10h</em></td>
+      <td><span class="pill amber">Em curso</span></td>
+      <td>Matheus</td>
+    </tr>
+    <tr><td colspan="6">
+      <div class="subetapas">
+        <div class="subetapa"><span>Chat IA com documentos da igreja</span><span>5h</span><span class="pill green">Entregue</span><span></span></div>
+        <div class="subetapa"><span>Cérebro · Sharepoint → notas Obsidian (Haiku)</span><span>4h</span><span class="pill amber">Em curso</span><span></span></div>
+        <div class="subetapa"><span>Agentes de auditoria (membresia, financeiro, etc)</span><span><em>~10h</em></span><span class="pill amber">Em curso</span><span></span></div>
+      </div>
+    </td></tr>
+  </table>
+</div>
+
+<!-- ════════════════════════════════════════════════════════════════════════
+     3. PLANEJAMENTO
+     ════════════════════════════════════════════════════════════════════════ -->
+<div class="area-header">
+  <h2>3. Planejamento</h2>
+  <div class="area-stats">110h gastas · ~120h restantes · 60% concluído</div>
+</div>
+<div class="area-body">
+  <p style="font-size:13px; color:#475569; margin-top:0;">Eventos (ciclo criativo + KPIs) · Projetos · Expansão · Planejamento Anual · Governança · Ritual · Revisão Estratégica.</p>
+
+  <table class="gantt">
+    <thead><tr>
+      <th>Aba / Etapa</th>
+      <th class="col-bar">Progresso</th>
+      <th class="col-h">Gasto</th>
+      <th class="col-h">Restante</th>
+      <th class="col-status">Status</th>
+      <th class="col-resp">Responsável</th>
+    </tr></thead>
+
+    <tr>
+      <td><strong>Eventos</strong><div class="subetapa-desc">Ciclo criativo · Fases · Tarefas · Documentos · KPIs por evento</div></td>
+      <td><span class="bar-track"><span class="bar-fill green" style="width:75%;"></span></span></td>
+      <td class="col-h">35h</td>
+      <td class="col-h"><em>30h</em></td>
+      <td><span class="pill amber">Em curso</span></td>
+      <td>Marcos</td>
+    </tr>
+    <tr><td colspan="6">
+      <div class="subetapas">
+        <div class="subetapa"><span>Schema · eventos + ciclos + fases + tarefas + subtarefas</span><span>10h</span><span class="pill green">Entregue</span><span></span></div>
+        <div class="subetapa"><span>UI Lista + Kanban + Gantt + Home</span><span>15h</span><span class="pill green">Entregue</span><span></span></div>
+        <div class="subetapa"><span>Templates por categoria de evento</span><span>5h</span><span class="pill green">Entregue</span><span></span></div>
+        <div class="subetapa"><span>KPIs operacionais (score documento → área → evento)</span><span>5h</span><span class="pill green">Entregue</span><span></span></div>
+        <div class="subetapa"><span>Filtro kanban por área (coord-marketing, etc)</span><span><em>~5h</em></span><span class="pill amber">Em curso</span><span></span></div>
+        <div class="subetapa"><span>Teste com Criativo (Pedro Paiva)</span><span><em>~10h</em></span><span class="pill amber">Em curso</span><span></span></div>
+        <div class="subetapa"><span>Approvals + workflow aprovação documentos</span><span><em>~15h</em></span><span class="pill gray">Pendente</span><span></span></div>
+      </div>
+    </td></tr>
+
+    <tr>
+      <td><strong>Projetos</strong><div class="subetapa-desc">Lista · Kanban · Gantt · Detalhe · Tarefas · Riscos · Orçamento</div></td>
+      <td><span class="bar-track"><span class="bar-fill green" style="width:80%;"></span></span></td>
+      <td class="col-h">25h</td>
+      <td class="col-h"><em>15h</em></td>
+      <td><span class="pill green">Entregue</span></td>
+      <td>Marcos · Matheus</td>
+    </tr>
+
+    <tr>
+      <td><strong>Expansão</strong><div class="subetapa-desc">Marcos estratégicos · cascata de impacto · até 2029</div></td>
+      <td><span class="bar-track"><span class="bar-fill amber" style="width:50%;"></span></span></td>
+      <td class="col-h">15h</td>
+      <td class="col-h"><em>30h</em></td>
+      <td><span class="pill amber">Em curso</span></td>
+      <td>Marcos</td>
+    </tr>
+
+    <tr>
+      <td><strong>Planejamento Anual</strong><div class="subetapa-desc">Ciclo de propostas · workflow aprovação · filtro de ano</div></td>
+      <td><span class="bar-track"><span class="bar-fill green" style="width:70%;"></span></span></td>
+      <td class="col-h">12h</td>
+      <td class="col-h"><em>10h</em></td>
+      <td><span class="pill amber">Em curso</span></td>
+      <td>Marcos</td>
+    </tr>
+
+    <tr>
+      <td><strong>Governança</strong><div class="subetapa-desc">Ciclo mensal (OKR → DRE → KPI → Conselho)</div></td>
+      <td><span class="bar-track"><span class="bar-fill green" style="width:75%;"></span></span></td>
+      <td class="col-h">10h</td>
+      <td class="col-h"><em>8h</em></td>
+      <td><span class="pill amber">Em curso</span></td>
+      <td>Marcos</td>
+    </tr>
+
+    <tr>
+      <td><strong>Ritual</strong><div class="subetapa-desc">Revisão mensal diretoria · 5 nominais · causa-decisão-resp-próximo passo</div></td>
+      <td><span class="bar-track"><span class="bar-fill amber" style="width:50%;"></span></span></td>
+      <td class="col-h">8h</td>
+      <td class="col-h"><em>15h</em></td>
+      <td><span class="pill amber">Em curso</span></td>
+      <td>Marcos</td>
+    </tr>
+
+    <tr>
+      <td><strong>Revisão Estratégica</strong><div class="subetapa-desc">Edição direta de projetos/marcos · cascata de impacto · log</div></td>
+      <td><span class="bar-track"><span class="bar-fill green" style="width:80%;"></span></span></td>
+      <td class="col-h">5h</td>
+      <td class="col-h"><em>5h</em></td>
+      <td><span class="pill green">Entregue</span></td>
+      <td>Marcos</td>
+    </tr>
+
+    <tr>
+      <td><strong>Processos / OKR estratégico</strong><div class="subetapa-desc">Substitui pelos módulos acima · descontinuado</div></td>
+      <td><span class="bar-track"><span class="bar-fill gray" style="width:100%;"></span></span></td>
+      <td class="col-h">0h</td>
+      <td class="col-h"><em>0h</em></td>
+      <td><span class="pill gray">Descontinuado</span></td>
+      <td>—</td>
+    </tr>
+  </table>
+  <div class="nota">
+    Decisão da reunião de permissões (2026-05-18): módulo Processos foi removido. Rota <code>/processos</code> redireciona pra <code>/eventos</code>.
+  </div>
+</div>
+
+<!-- ════════════════════════════════════════════════════════════════════════
+     4. MINISTERIAL
+     ════════════════════════════════════════════════════════════════════════ -->
+<div class="area-header">
+  <h2>4. Ministerial · preenchimento por valor da Jornada</h2>
+  <div class="area-stats">115h gastas · ~80h restantes · 65% concluído</div>
+</div>
+<div class="area-body">
+  <p style="font-size:13px; color:#475569; margin-top:0;">Cadastro e jornada dos membros nos 5 valores (Seguir, Conectar, Investir, Servir, Generosidade).</p>
+
+  <table class="gantt">
+    <thead><tr>
+      <th>Aba / Etapa</th>
+      <th class="col-bar">Progresso</th>
+      <th class="col-h">Gasto</th>
+      <th class="col-h">Restante</th>
+      <th class="col-status">Status</th>
+      <th class="col-resp">Responsável</th>
+    </tr></thead>
+
+    <tr>
+      <td><strong>Integração</strong><div class="subetapa-desc">Cultos · Frequência · Decisões (presencial/online/Kids) · Batismos · Histórico</div></td>
+      <td><span class="bar-track"><span class="bar-fill green" style="width:90%;"></span></span></td>
+      <td class="col-h">30h</td>
+      <td class="col-h"><em>10h</em></td>
+      <td><span class="pill green">Entregue</span></td>
+      <td>Marcos</td>
+    </tr>
+    <tr><td colspan="6">
+      <div class="subetapas">
+        <div class="subetapa"><span>Schema cultos + decisões + batismos + triggers</span><span>10h</span><span class="pill green">Entregue</span><span></span></div>
+        <div class="subetapa"><span>Calendário semanal de cultos (mobile-friendly)</span><span>5h</span><span class="pill green">Entregue</span><span></span></div>
+        <div class="subetapa"><span>Modal adaptativo (presencial/online/Kids/Bridge/AMI)</span><span>5h</span><span class="pill green">Entregue</span><span></span></div>
+        <div class="subetapa"><span>Aba Decisões (toggle Por culto / Pessoas + CPF) </span><span>5h</span><span class="pill green">Entregue</span><span></span></div>
+        <div class="subetapa"><span>Cadastro flexível (CPF/nascimento opcionais)</span><span>3h</span><span class="pill green">Entregue</span><span></span></div>
+        <div class="subetapa"><span>Cutoff de gaps históricos (2026-05-18)</span><span>2h</span><span class="pill green">Entregue</span><span></span></div>
+        <div class="subetapa"><span>Onboarding com Lorena (Integração) finalização</span><span><em>~10h</em></span><span class="pill amber">Em curso</span><span></span></div>
+      </div>
+    </td></tr>
+
+    <tr>
+      <td><strong>Membresia</strong><div class="subetapa-desc">Cadastros · Trilha 5 valores · Jornada 180 · Duplicados · Merge</div></td>
+      <td><span class="bar-track"><span class="bar-fill green" style="width:85%;"></span></span></td>
+      <td class="col-h">25h</td>
+      <td class="col-h"><em>10h</em></td>
+      <td><span class="pill green">Entregue</span></td>
+      <td>Matheus · Marcos</td>
+    </tr>
+    <tr><td colspan="6">
+      <div class="subetapas">
+        <div class="subetapa"><span>Schema membros + famílias + trilha valores</span><span>8h</span><span class="pill green">Entregue</span><span></span></div>
+        <div class="subetapa"><span>Aba Duplicados · detecção + merge_membros()</span><span>5h</span><span class="pill green">Entregue</span><span></span></div>
+        <div class="subetapa"><span>Jornada 180 cadastros + encontros</span><span>5h</span><span class="pill green">Entregue</span><span></span></div>
+        <div class="subetapa"><span>Foto membro + scanner ID</span><span>4h</span><span class="pill green">Entregue</span><span></span></div>
+        <div class="subetapa"><span>Importação CSV histórico</span><span>3h</span><span class="pill green">Entregue</span><span></span></div>
+        <div class="subetapa"><span>Promover órfãos · cadastros pendentes</span><span><em>~10h</em></span><span class="pill amber">Em curso</span><span></span></div>
+      </div>
+    </td></tr>
+
+    <tr>
+      <td><strong>Cuidados</strong><div class="subetapa-desc">Capelania · Aconselhamento · Jornada 180 acompanhamentos · Convertidos</div></td>
+      <td><span class="bar-track"><span class="bar-fill green" style="width:80%;"></span></span></td>
+      <td class="col-h">15h</td>
+      <td class="col-h"><em>8h</em></td>
+      <td><span class="pill green">Entregue</span></td>
+      <td>Marcos · Matheus</td>
+    </tr>
+
+    <tr>
+      <td><strong>NEXT</strong><div class="subetapa-desc">Porta de entrada · inscrições · check-in · indicações</div></td>
+      <td><span class="bar-track"><span class="bar-fill green" style="width:75%;"></span></span></td>
+      <td class="col-h">12h</td>
+      <td class="col-h"><em>10h</em></td>
+      <td><span class="pill amber">Em curso</span></td>
+      <td>Matheus</td>
+    </tr>
+
+    <tr>
+      <td><strong>Voluntariado</strong><div class="subetapa-desc">Check-in · Escalas · QR codes · Self-service</div></td>
+      <td><span class="bar-track"><span class="bar-fill green" style="width:80%;"></span></span></td>
+      <td class="col-h">18h</td>
+      <td class="col-h"><em>10h</em></td>
+      <td><span class="pill green">Entregue</span></td>
+      <td>Matheus · Marcos</td>
+    </tr>
+
+    <tr>
+      <td><strong>Grupos</strong><div class="subetapa-desc">Grupos de conexão · supervisão · QR · mapa · materiais</div></td>
+      <td><span class="bar-track"><span class="bar-fill green" style="width:80%;"></span></span></td>
+      <td class="col-h">15h</td>
+      <td class="col-h"><em>10h</em></td>
+      <td><span class="pill amber">Em curso</span></td>
+      <td>Matheus</td>
+    </tr>
+
+    <tr>
+      <td><strong>Devocional</strong><div class="subetapa-desc">Planos · API.Bible · Haiku gera reflexão · check-in · WhatsApp envio</div></td>
+      <td><span class="bar-track"><span class="bar-fill amber" style="width:55%;"></span></span></td>
+      <td class="col-h">15h</td>
+      <td class="col-h"><em>25h</em></td>
+      <td><span class="pill amber">Em curso</span></td>
+      <td>Matheus</td>
+    </tr>
+    <tr><td colspan="6">
+      <div class="subetapas">
+        <div class="subetapa"><span>Schema · planos + itens + check-in mem_devocionais</span><span>5h</span><span class="pill green">Entregue</span><span></span></div>
+        <div class="subetapa"><span>Geração IA (Haiku) · prompt com texto bíblico completo</span><span>5h</span><span class="pill green">Entregue</span><span></span></div>
+        <div class="subetapa"><span>UI /devocional/hoje + login membro</span><span>5h</span><span class="pill green">Entregue</span><span></span></div>
+        <div class="subetapa"><span>Sync RH → mem_membros (todos funcionários acessam)</span><span>1h</span><span class="pill green">Entregue</span><span></span></div>
+        <div class="subetapa"><span>Envio WhatsApp diário (feature flag)</span><span><em>~12h</em></span><span class="pill amber">Em curso</span><span>Aguarda credenciais Meta</span></div>
+        <div class="subetapa"><span>Trilha personalizada · multiplos planos por pessoa</span><span><em>~10h</em></span><span class="pill gray">Pendente</span><span></span></div>
+        <div class="subetapa"><span>Métricas (engajamento · streak · semana)</span><span><em>~3h</em></span><span class="pill amber">Em curso</span><span></span></div>
+      </div>
+    </td></tr>
+
+    <tr>
+      <td><strong>Notificações</strong><div class="subetapa-desc">Push web · cron diário · regras por módulo · realtime</div></td>
+      <td><span class="bar-track"><span class="bar-fill green" style="width:85%;"></span></span></td>
+      <td class="col-h">10h</td>
+      <td class="col-h"><em>5h</em></td>
+      <td><span class="pill green">Entregue</span></td>
+      <td>Matheus</td>
+    </tr>
+  </table>
+</div>
+
+<!-- ════════════════════════════════════════════════════════════════════════
+     5. CULTOS
+     ════════════════════════════════════════════════════════════════════════ -->
+<div class="area-header">
+  <h2>5. Cultos · visualização de dados por culto</h2>
+  <div class="area-stats">30h gastas · ~55h restantes · 25% concluído</div>
+</div>
+<div class="area-body">
+  <p style="font-size:13px; color:#475569; margin-top:0;">Drill-down read-only de indicadores filtrados por tipo de culto. Preenchimento via Integração. AMI/Kids/Bridge/Online; Sede e CBA são representados pelos indicadores totais.</p>
+
+  <table class="gantt">
+    <thead><tr>
+      <th>Aba / Etapa</th>
+      <th class="col-bar">Progresso</th>
+      <th class="col-h">Gasto</th>
+      <th class="col-h">Restante</th>
+      <th class="col-status">Status</th>
+      <th class="col-resp">Responsável</th>
+    </tr></thead>
+
+    <tr>
+      <td><strong>Online (YouTube)</strong><div class="subetapa-desc">Canal · séries · vídeos · OAuth Analytics · DS/DDUS auto · pico live</div></td>
+      <td><span class="bar-track"><span class="bar-fill green" style="width:85%;"></span></span></td>
+      <td class="col-h">25h</td>
+      <td class="col-h"><em>15h</em></td>
+      <td><span class="pill green">Entregue</span></td>
+      <td>Matheus</td>
+    </tr>
+    <tr><td colspan="6">
+      <div class="subetapas">
+        <div class="subetapa"><span>Schema · canal_snapshot + series + videos</span><span>5h</span><span class="pill green">Entregue</span><span></span></div>
+        <div class="subetapa"><span>Sync YouTube Data API (séries = playlists)</span><span>5h</span><span class="pill green">Entregue</span><span></span></div>
+        <div class="subetapa"><span>OAuth + Analytics API · pico, DS, DDUS auto</span><span>8h</span><span class="pill green">Entregue</span><span></span></div>
+        <div class="subetapa"><span>UI redesign mobile + cards de série</span><span>5h</span><span class="pill green">Entregue</span><span></span></div>
+        <div class="subetapa"><span>Métricas avançadas (retenção, share, CTR)</span><span><em>~12h</em></span><span class="pill amber">Em curso</span><span></span></div>
+        <div class="subetapa"><span>Status assinaturas + tráfego por vídeo</span><span><em>~3h</em></span><span class="pill amber">Em curso</span><span></span></div>
+      </div>
+    </td></tr>
+
+    <tr>
+      <td><strong>CBKids</strong><div class="subetapa-desc">Indicadores do ministério infantil (read-only)</div></td>
+      <td><span class="bar-track"><span class="bar-fill amber" style="width:40%;"></span></span></td>
+      <td class="col-h">2h</td>
+      <td class="col-h"><em>8h</em></td>
+      <td><span class="pill amber">Em curso</span></td>
+      <td>Marcos</td>
+    </tr>
+    <tr><td colspan="6">
+      <div class="subetapas">
+        <div class="subetapa"><span>Página PainelArea (componente reusável)</span><span>1h</span><span class="pill green">Entregue</span><span></span></div>
+        <div class="subetapa"><span>Migration módulo kids + matriz · boost por área</span><span>1h</span><span class="pill green">Entregue</span><span></span></div>
+        <div class="subetapa"><span>Popular KPIs específicos (decisões kids, frequência, batismos)</span><span><em>~5h</em></span><span class="pill gray">Pendente</span><span></span></div>
+        <div class="subetapa"><span>Definir líder + onboarding</span><span><em>~3h</em></span><span class="pill gray">Pendente</span><span></span></div>
+      </div>
+    </td></tr>
+
+    <tr>
+      <td><strong>AMI</strong><div class="subetapa-desc">Indicadores do culto AMI (adolescentes/jovens)</div></td>
+      <td><span class="bar-track"><span class="bar-fill amber" style="width:40%;"></span></span></td>
+      <td class="col-h">2h</td>
+      <td class="col-h"><em>8h</em></td>
+      <td><span class="pill amber">Em curso</span></td>
+      <td>Marcos</td>
+    </tr>
+
+    <tr>
+      <td><strong>Bridge</strong><div class="subetapa-desc">Indicadores do culto Bridge (transição)</div></td>
+      <td><span class="bar-track"><span class="bar-fill amber" style="width:30%;"></span></span></td>
+      <td class="col-h">1h</td>
+      <td class="col-h"><em>14h</em></td>
+      <td><span class="pill amber">Em curso</span></td>
+      <td>Marcos</td>
+    </tr>
+    <tr><td colspan="6">
+      <div class="subetapas">
+        <div class="subetapa"><span>Módulo criado · página pronta</span><span>1h</span><span class="pill green">Entregue</span><span></span></div>
+        <div class="subetapa"><span>Popular KPIs Bridge (nenhum ativo hoje)</span><span><em>~10h</em></span><span class="pill gray">Pendente</span><span></span></div>
+        <div class="subetapa"><span>Definir líder + onboarding</span><span><em>~4h</em></span><span class="pill gray">Pendente</span><span></span></div>
+      </div>
+    </td></tr>
+
+    <tr>
+      <td><strong>Sede / CBA</strong><div class="subetapa-desc">Não terão módulo próprio · representados nos indicadores totais</div></td>
+      <td><span class="bar-track"><span class="bar-fill gray" style="width:100%;"></span></span></td>
+      <td class="col-h">0h</td>
+      <td class="col-h"><em>0h</em></td>
+      <td><span class="pill gray">Descartado</span></td>
+      <td>—</td>
+    </tr>
+
+    <tr>
+      <td><strong>Futuro · menu agregado "Cultos"</strong><div class="subetapa-desc">Submenu lateral com 4 cultos · idea levantada na conversa</div></td>
+      <td><span class="bar-track"><span class="bar-fill gray" style="width:0%;"></span></span></td>
+      <td class="col-h">0h</td>
+      <td class="col-h"><em>10h</em></td>
+      <td><span class="pill blue">Planejado</span></td>
+      <td>—</td>
+    </tr>
+  </table>
+</div>
+
+<!-- ════════════════════════════════════════════════════════════════════════
+     6. CRIATIVO
+     ════════════════════════════════════════════════════════════════════════ -->
+<div class="area-header">
+  <h2>6. Criativo · Marketing</h2>
+  <div class="area-stats">0h gastas · ~120h restantes · 5% concluído</div>
+</div>
+<div class="area-body">
+  <p style="font-size:13px; color:#475569; margin-top:0;">Único módulo praticamente intocado · vamos definir com Pepe Menezes (Diretor Criativo) o que precisa antes de desenvolver.</p>
+
+  <table class="gantt">
+    <thead><tr>
+      <th>Aba / Etapa</th>
+      <th class="col-bar">Progresso</th>
+      <th class="col-h">Gasto</th>
+      <th class="col-h">Restante</th>
+      <th class="col-status">Status</th>
+      <th class="col-resp">Responsável</th>
+    </tr></thead>
+
+    <tr>
+      <td><strong>Discovery</strong><div class="subetapa-desc">Definir requisitos com Pepe + Pedro Paiva</div></td>
+      <td><span class="bar-track"><span class="bar-fill gray" style="width:5%;"></span></span></td>
+      <td class="col-h">0h</td>
+      <td class="col-h"><em>10h</em></td>
+      <td><span class="pill blue">Planejado</span></td>
+      <td>Marcos</td>
+    </tr>
+    <tr>
+      <td><strong>Campanhas · Calendário editorial</strong></td>
+      <td><span class="bar-track"><span class="bar-fill gray" style="width:0%;"></span></span></td>
+      <td class="col-h">0h</td>
+      <td class="col-h"><em>30h</em></td>
+      <td><span class="pill gray">Pendente</span></td>
+      <td>—</td>
+    </tr>
+    <tr>
+      <td><strong>Banco de criativos (peças entregues)</strong></td>
+      <td><span class="bar-track"><span class="bar-fill gray" style="width:0%;"></span></span></td>
+      <td class="col-h">0h</td>
+      <td class="col-h"><em>25h</em></td>
+      <td><span class="pill gray">Pendente</span></td>
+      <td>—</td>
+    </tr>
+    <tr>
+      <td><strong>KPIs marketing (engajamento social, alcance, conversão)</strong></td>
+      <td><span class="bar-track"><span class="bar-fill gray" style="width:0%;"></span></span></td>
+      <td class="col-h">0h</td>
+      <td class="col-h"><em>25h</em></td>
+      <td><span class="pill gray">Pendente</span></td>
+      <td>—</td>
+    </tr>
+    <tr>
+      <td><strong>Integração com fluxo de Solicitações (job criativo)</strong></td>
+      <td><span class="bar-track"><span class="bar-fill gray" style="width:0%;"></span></span></td>
+      <td class="col-h">0h</td>
+      <td class="col-h"><em>20h</em></td>
+      <td><span class="pill gray">Pendente</span></td>
+      <td>—</td>
+    </tr>
+    <tr>
+      <td><strong>Subáreas (Produção, Adoração, Online)</strong><div class="subetapa-desc">Cada uma com módulo próprio · estrutura nos cargos já criados</div></td>
+      <td><span class="bar-track"><span class="bar-fill amber" style="width:30%;"></span></span></td>
+      <td class="col-h">0h</td>
+      <td class="col-h"><em>10h</em></td>
+      <td><span class="pill amber">Estrutura pronta</span></td>
+      <td>Marcos</td>
+    </tr>
+  </table>
+</div>
+
+<!-- ════════════════════════════════════════════════════════════════════════
+     ONBOARDING (HORAS EXTRAS)
+     ════════════════════════════════════════════════════════════════════════ -->
+<h2>Onboarding · 15 entregas previstas (horas extras · não bloqueia dev)</h2>
+<p style="font-size:13px; color:#475569;">Cada módulo entregue a uma pessoa-chave demanda <strong>2h/dia × 14 dias = 28h</strong> de acompanhamento de 1 dev (Marcos ou Matheus), em horas extras do expediente. Não impede desenvolvimento de outros módulos no período.</p>
+<table class="gantt">
+  <thead><tr><th>#</th><th>Pessoa</th><th>Módulo</th><th class="col-h">Horas</th><th class="col-resp">Dev acompanhando</th><th class="col-status">Status</th></tr></thead>
+  <tr><td>1</td><td>Lorena Andrade</td><td>Integração</td><td class="col-h">28h</td><td>Marcos</td><td><span class="pill amber">Em curso</span></td></tr>
+  <tr><td>2</td><td>Juliana Leão</td><td>RH</td><td class="col-h">28h</td><td>Marcos</td><td><span class="pill blue">Planejado</span></td></tr>
+  <tr><td>3</td><td>Yago Torres</td><td>Financeiro</td><td class="col-h">28h</td><td>Matheus</td><td><span class="pill blue">Planejado</span></td></tr>
+  <tr><td>4</td><td>Amaury</td><td>Compras (Logística)</td><td class="col-h">28h</td><td>Matheus</td><td><span class="pill blue">Planejado</span></td></tr>
+  <tr><td>5</td><td>Erivelton</td><td>Patrimônio</td><td class="col-h">28h</td><td>Marcos</td><td><span class="pill blue">Planejado</span></td></tr>
+  <tr><td>6</td><td>Diego Assis</td><td>TI / Solicitações</td><td class="col-h">28h</td><td>Marcos</td><td><span class="pill blue">Planejado</span></td></tr>
+  <tr><td>7</td><td>Jéssica Salviano</td><td>Hospitalidade (cozinha/manutenção)</td><td class="col-h">28h</td><td>Marcos</td><td><span class="pill blue">Planejado</span></td></tr>
+  <tr><td>8</td><td>Arthur Serpa</td><td>Painel CBRio + Ritual</td><td class="col-h">28h</td><td>Marcos</td><td><span class="pill blue">Planejado</span></td></tr>
+  <tr><td>9</td><td>Eduardo Gnisci</td><td>Gestão (PMO)</td><td class="col-h">28h</td><td>Marcos</td><td><span class="pill blue">Planejado</span></td></tr>
+  <tr><td>10</td><td>Pedro Paiva</td><td>Eventos · Marketing</td><td class="col-h">28h</td><td>Marcos</td><td><span class="pill amber">Em curso</span></td></tr>
+  <tr><td>11</td><td>Pepe Menezes</td><td>Cultos · Criativo</td><td class="col-h">28h</td><td>Matheus</td><td><span class="pill blue">Planejado</span></td></tr>
+  <tr><td>12</td><td>Pedro Fernandes</td><td>Produção</td><td class="col-h">28h</td><td>Matheus</td><td><span class="pill blue">Planejado</span></td></tr>
+  <tr><td>13</td><td>Renata Martins</td><td>Online</td><td class="col-h">28h</td><td>Matheus</td><td><span class="pill blue">Planejado</span></td></tr>
+  <tr><td>14</td><td>Nélio (Grupos)</td><td>Grupos</td><td class="col-h">28h</td><td>Matheus</td><td><span class="pill blue">Planejado</span></td></tr>
+  <tr><td>15</td><td>Líder NEXT (a definir)</td><td>NEXT</td><td class="col-h">28h</td><td>Matheus</td><td><span class="pill blue">Planejado</span></td></tr>
+  <tr style="background:#f1f5f9;"><td colspan="3"><strong>TOTAL ONBOARDING</strong></td><td class="col-h"><strong>420h</strong></td><td colspan="2"></td></tr>
+</table>
+
+<!-- ════════════════════════════════════════════════════════════════════════
+     APÊNDICES
+     ════════════════════════════════════════════════════════════════════════ -->
+<h2>Apêndices · requisitos cross</h2>
+
+<div class="ap-section">
+  <h3>A. Segurança da Informação & LGPD</h3>
+  <ul class="checklist">
+    <li><strong>RLS (Row-Level Security)</strong> habilitado em todas as tabelas críticas (Supabase). Backend usa service-role · escrita controlada por middleware.</li>
+    <li><strong>Permissões granulares</strong>: cargo × módulo + override individual + expiração. Auditável.</li>
+    <li><strong>Modificadores LGPD</strong>: <code>+E</code> (pode exportar) controla exportação de CPF, telefone e dados financeiros. Sem isso, dados sensíveis bloqueados na UI.</li>
+    <li><strong>Dados de menores (Kids)</strong>: decisões de crianças cadastradas com dados do responsável; fluxo separado da Jornada (não impacta NSM, evita criação automática de membro).</li>
+    <li><strong>OAuth YouTube</strong>: refresh_token guardado em <code>online_oauth_tokens</code> com RLS service_role only. State HMAC anti-CSRF.</li>
+    <li><strong>WhatsApp Business</strong>: pendente · credenciais Meta sob feature flag (<code>WHATSAPP_ENABLED</code>).</li>
+    <li><strong>Senhas/tokens</strong>: nada hardcoded · só em variáveis de ambiente do Vercel.</li>
+    <li><strong>Audit trail</strong>: <code>revision_log</code> (revisão estratégica), <code>governance_meetings</code> (atas), <code>mem_merge_log</code> (snapshot pré-merge de duplicados).</li>
+  </ul>
+  <p class="footnote">Reforço sugerido: revisão LGPD formal antes do go-live geral. Estimado <em>~16h</em> de auditoria interna.</p>
+</div>
+
+<div class="ap-section">
+  <h3>B. Manutenção prevista pós go-live</h3>
+  <ul class="checklist">
+    <li><strong>1 mês de avaliação Painel + Dashboard semanal</strong> (mencionado na reunião): garantir que os 150 KPIs estão sendo preenchidos corretamente e calculados como esperado.</li>
+    <li><strong>Bugs de produção</strong>: ~4h/semana de cada dev nos primeiros 2 meses (estimativa).</li>
+    <li><strong>Migração de schema futura</strong>: planejada quando colunas <code>responsible</code>/<code>leader</code> em <code>projects</code> migrarem de texto livre pra UUID.</li>
+    <li><strong>Particionamento de tabelas grandes</strong> (mem_contribuicoes ~600k/ano): planejado pra quando passar 10k+ membros.</li>
+    <li><strong>Read replica do Supabase</strong>: planejado pra quando crescer 25k+ pessoas.</li>
+  </ul>
+</div>
+
+<div class="ap-section">
+  <h3>C. Custos · horas brutas de desenvolvimento</h3>
+  <table class="gantt">
+    <thead><tr><th>Período</th><th class="col-h">Marcos</th><th class="col-h">Matheus</th><th class="col-h">Total</th><th>Comentário</th></tr></thead>
+    <tr><td><strong>40 dias gastos</strong> (10/04 → 20/05)</td><td class="col-h">220h</td><td class="col-h">320h</td><td class="col-h"><strong>540h</strong></td><td>Commits + ~30% inflação p/ reuniões</td></tr>
+    <tr><td><strong>Estimado restante</strong> (dev puro)</td><td class="col-h"><em>~250h</em></td><td class="col-h"><em>~350h</em></td><td class="col-h"><strong><em>~600h</em></strong></td><td>Pendências de cada módulo + Criativo do zero</td></tr>
+    <tr><td><strong>Onboarding</strong> (horas extras)</td><td class="col-h"><em>~210h</em></td><td class="col-h"><em>~210h</em></td><td class="col-h"><strong><em>~420h</em></strong></td><td>15 pessoas × 28h cada · não bloqueia dev</td></tr>
+    <tr style="background:#f1f5f9; font-weight:700;"><td>TOTAL projetado</td><td class="col-h">~680h</td><td class="col-h">~880h</td><td class="col-h">~1.560h</td><td>Marcos + Matheus combinados</td></tr>
+  </table>
+  <p class="footnote">Marcos: backend + integrações + UI principal. Matheus: Lovable/Claude + UI complementar + integrações externas (YouTube, ML, devocional). Horas brutas, arredondadas pra cima · não incluem reuniões de alinhamento.</p>
+</div>
+
+<div class="ap-section">
+  <h3>D. Stack técnica</h3>
+  <ul class="checklist">
+    <li><strong>Frontend</strong>: React 18 + Vite + TypeScript/JSX (misto) + shadcn/ui + Tailwind + react-router</li>
+    <li><strong>Backend</strong>: Express.js · Vercel serverless (api/index.js)</li>
+    <li><strong>Banco</strong>: Supabase (PostgreSQL + Auth + RLS) · 238 migrations versionadas em 40 dias</li>
+    <li><strong>Integrações</strong>: YouTube Data + Analytics API (OAuth), Mercado Livre API, Microsoft Graph (SharePoint/Cérebro), Anthropic Claude (Haiku) para IA, WhatsApp Cloud API (planejado)</li>
+    <li><strong>Cron</strong>: Vercel cron (diários) + GitHub Actions (sub-diários · ex: live monitor YouTube 5min)</li>
+  </ul>
+</div>
+
+<!-- ════════════════════════════════════════════════════════════════════════
+     RODAPÉ
+     ════════════════════════════════════════════════════════════════════════ -->
+<footer style="margin-top:48px; padding:24px; text-align:center; color:#94a3b8; font-size:12px; border-top:1px solid #e2e8f0;">
+  Gerado em 2026-05-20 · base: <code>git log</code> de 10/04 a 20/05 · 829 commits · 238 migrations · ~177k linhas adicionadas<br>
+  Sistema CBRio · documento solicitado por Eduardo Gnisci (Diretor Geral)
+</footer>
+
+</body>
+</html>
