@@ -32,6 +32,10 @@ const ROUTE_MODULE_MAP = {
   'voluntariado': ['voluntariado'],
   'membresia':    ['membresia'],
   'grupos':       ['grupos'],
+  'kids':         ['kids'],
+  'ami':          ['ami'],
+  'bridge':       ['bridge'],
+  'painel-area':  ['kids', 'ami', 'bridge', 'online'],
   // estrategicos
   'gestao':       ['gestao'],
   'planejamento': ['planejamento'],
@@ -90,6 +94,10 @@ const AREA_MODULO_BOOST = {
   'voluntariado': 'voluntariado',
   'next':         'next',
   'online':       'online',
+  // Areas de culto (drill-down de KPIs) · modulos kids/ami/bridge
+  'kids':         'kids',
+  'ami':          'ami',
+  'bridge':       'bridge',
 };
 
 function _normalizarArea(nome) {

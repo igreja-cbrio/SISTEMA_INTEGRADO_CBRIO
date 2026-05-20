@@ -79,6 +79,44 @@ usuarios). Tela em `/admin/permissoes` (arquivo
   aliases temporarios) · TODO de polish, nao bloqueante · hoje os hooks
   ja lem dos slugs novos via AuthContext
 
+### Modulos kids/ami/bridge · drill-down de KPIs por area (2026-05-20)
+Espelho do modulo Online · 3 paginas read-only com indicadores filtrados
+por area de culto. Preenchimento continua via /integracao.
+
+**Migration `20260520140000_modulos_area_culto.sql`**:
+- INSERT 3 modulos em public.modulos: kids, ami, bridge (categoria=ministerial)
+- Matriz default · copia da matriz do modulo `online` pra cada cargo
+
+**Backend**:
+- `backend/middleware/auth.js` · AREA_MODULO_BOOST estendido:
+  - 'kids' → 'kids', 'ami' → 'ami', 'bridge' → 'bridge'
+  - Pessoas com area "KIDS"/"AMI"/"Bridge" ganham nivel 5 no modulo correspondente
+- `backend/middleware/auth.js` · ROUTE_MODULE_MAP estendido com kids/ami/bridge
+  e 'painel-area' que aceita qualquer dos 4
+- `backend/routes/painelArea.js` (novo) · `GET /api/painel-area/:area`
+  retorna kpis ativos onde `kpi_indicadores_taticos.area ILIKE area`,
+  agrupados por valor + trajetoria + lider. Protegido por
+  `authorizeModule('painel-area', 1)` · nivel 1 suficiente (read-only).
+
+**Frontend**:
+- `src/pages/ministerial/PainelArea.jsx` (novo) · componente reusavel
+  parametrizado por `area`. Header com cor+icone temático, 4 stats cards
+  (total, no alvo, atrasado, critico), filtro por valor da Jornada,
+  lista de KPIs com trajetoria + meta + lider. Click navega pro detalhe
+  `/painel/kpi/:id`. Botao "Preencher dados" redireciona pra
+  `/integracao?aba=cultos`.
+- 3 wrappers · PainelKids.jsx, PainelAmi.jsx, PainelBridge.jsx (cada um
+  renderiza `<PainelArea area="X" />`)
+- 3 rotas em `src/App.tsx` com `<ModuleGuard moduleSlug="X">` (nivel 1)
+- 3 itens de menu em AppShell · Ministerial > Areas, abaixo de Online,
+  com `module: 'kids|ami|bridge'` pra filtragem automatica
+
+**Cores temáticas**:
+- Kids → pink-500 (#EC4899)
+- AMI → violet-500 (#8B5CF6)
+- Bridge → blue-500 (#3B82F6)
+- Online → red-500 (#EF4444 · mantido)
+
 ### Eventos · escopo_proprio trata como "lider" no kanban (2026-05-19)
 **Pedido**: Pedro Paiva (cargo `coordenador-marketing`, area Marketing)
 precisa acessar Eventos, ver todas as tarefas e preencher · filtradas
