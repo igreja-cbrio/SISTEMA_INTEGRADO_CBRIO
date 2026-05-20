@@ -1551,7 +1551,7 @@ export const online = {
     ds: () => post('/online/coletar/ds', {}),
     ddus: () => post('/online/coletar/ddus', {}),
     backfillCultos: () => post('/online/coletar/backfill-cultos', {}),
-    catchUp: () => post('/online/coletar/catch-up', {}),
+    catchUp: (limit = 5) => post(`/online/coletar/catch-up?limit=${limit}`, {}),
   },
 };
 

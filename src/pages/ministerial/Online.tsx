@@ -490,24 +490,34 @@ export default function Online() {
   // de quantos cultos do passado precisam preencher.
   const recoletarMutation = useMutation({
     mutationFn: async () => {
+      // 1. sync · puxa actual_start_time e auto-linka cultos
       const syncRes: any = await online.sync();
       const linkados = syncRes?.log?.etapas?.backfill_cultos?.linkados ?? 0;
-      const catchRes: any = await online.coletar.catchUp();
-      return {
-        linkados,
-        processados: catchRes?.processados ?? 0,
-        ds: catchRes?.ds ?? 0,
-        ddus: catchRes?.ddus ?? 0,
-        subs: catchRes?.subs ?? 0,
-        trafico: catchRes?.trafico ?? 0,
-        retencao_curva: catchRes?.retencao_curva ?? 0,
-        sub_status: catchRes?.sub_status ?? 0,
-      };
+
+      // 2. catch-up em batches de 5 cultos por chamada · loop ate remaining=0
+      // pra nao estourar o limite de 60s da serverless do Vercel.
+      const acc = { processados: 0, ds: 0, ddus: 0, subs: 0, trafico: 0, retencao_curva: 0, sub_status: 0 };
+      let batches = 0;
+      while (batches < 30) { // ~150 cultos no maximo
+        const r: any = await online.coletar.catchUp(5);
+        acc.processados   += r?.processados   ?? 0;
+        acc.ds            += r?.ds            ?? 0;
+        acc.ddus          += r?.ddus          ?? 0;
+        acc.subs          += r?.subs          ?? 0;
+        acc.trafico       += r?.trafico       ?? 0;
+        acc.retencao_curva += r?.retencao_curva ?? 0;
+        acc.sub_status    += r?.sub_status    ?? 0;
+        batches++;
+        if ((r?.remaining ?? 0) === 0) break;
+        // invalidacao parcial entre batches · UI atualiza progressivamente
+        queryClient.invalidateQueries({ queryKey: ['online', 'cultos-metricas'] });
+      }
+      return { linkados, batches, ...acc };
     },
     onSuccess: (r) => {
       const metricasTotais = r.ds + r.ddus + r.subs + r.trafico + r.retencao_curva + r.sub_status;
       toast.success(
-        `Recoleta completa · ${r.linkados} cultos linkados · ${metricasTotais} metricas preenchidas em ${r.processados} cultos`,
+        `Recoleta completa · ${r.linkados} cultos linkados · ${metricasTotais} metricas em ${r.processados} cultos (${r.batches} lotes)`,
         { duration: 6000 }
       );
       refetch();

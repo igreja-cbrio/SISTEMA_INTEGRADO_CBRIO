@@ -445,10 +445,13 @@ async function backfillCultoVideoIds() {
 //
 // Idempotencia: cada coletor abaixo ja tem skip por valor preenchido.
 // ---------------------------------------------------------------------------
-async function catchUpMetricas() {
-  // 1. Pega todos os cultos com video_id nos ultimos 180d
+async function catchUpMetricas({ limit = 5 } = {}) {
+  // 1. Pega cultos com video_id nos ultimos 180d que tem PELO MENOS uma
+  //    metrica faltando (idempotencia · evita reprocessar quem ja terminou).
+  //    Limit pequeno (5 cultos = ate 30 chamadas Analytics ≈ 30s) pra caber
+  //    no limite de 60s da funcao serverless Vercel.
   const horizonte = fmtData(dataMaisDias(new Date(), -180));
-  const { data: cultos, error } = await supabase
+  const { data: cultosCandidatos, error } = await supabase
     .from('cultos')
     .select(`
       id, data, youtube_video_id,
@@ -459,7 +462,22 @@ async function catchUpMetricas() {
     .gte('data', horizonte)
     .order('data', { ascending: false });
   if (error) throw error;
-  if (!cultos?.length) return { ok: true, processados: 0, motivo: 'sem_cultos_com_video' };
+  if (!cultosCandidatos?.length) return { ok: true, processados: 0, remaining: 0, motivo: 'sem_cultos_com_video' };
+
+  // Pre-filtra cultos que ainda precisam de pelo menos 1 metrica
+  // (DS, DDUS, subs ou sub_status faltando · trafico/retencao_curva nao
+  // sao checados aqui pra simplicidade · o loop interno faz NULL-check
+  // antes de chamar API).
+  const pendentes = cultosCandidatos.filter(c =>
+    !c.online_ds || c.online_ds === 0 ||
+    !c.online_ddus || c.online_ddus === 0 ||
+    c.online_subs_ganhos === null || c.online_subs_ganhos === undefined ||
+    c.online_views_inscritos === null || c.online_views_inscritos === undefined
+  );
+
+  const remaining = Math.max(0, pendentes.length - limit);
+  const cultos = pendentes.slice(0, limit);
+  if (!cultos.length) return { ok: true, processados: 0, remaining: 0, motivo: 'todos_completos' };
 
   // 2. Pra cada culto, identifica metricas faltantes e dispara
   const out = {
@@ -570,7 +588,7 @@ async function catchUpMetricas() {
     }
   }
 
-  return { ok: true, processados: cultos.length, ...out };
+  return { ok: true, processados: cultos.length, remaining, ...out };
 }
 
 module.exports = {
