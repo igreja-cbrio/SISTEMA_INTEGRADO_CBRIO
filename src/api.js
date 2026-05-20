@@ -1657,6 +1657,7 @@ export const apresentacoes = {
     return requestFile(`/apresentacoes/${id}/arquivos`, fd);
   },
   removerArquivo: (id, arquivoId) => del(`/apresentacoes/${id}/arquivos/${arquivoId}`),
+  reset: (id) => post(`/apresentacoes/${id}/reset`, {}),
   // Busca HTML completo pra usar em <iframe srcDoc={...}>
   // (iframes nao mandam Authorization automaticamente · precisamos do fetch)
   fetchHtml: async (id) => {

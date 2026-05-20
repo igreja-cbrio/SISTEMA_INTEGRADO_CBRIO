@@ -10,7 +10,7 @@ const multer = require('multer');
 const { authenticate, authorizeModule } = require('../middleware/auth');
 const { supabase } = require('../utils/supabase');
 const { extractText } = require('../services/textExtractor');
-const { gerarApresentacao, MODEL_DEFAULT } = require('../services/apresentacaoGenerator');
+const { gerarApresentacao, MODEL_DEFAULT, MODEL_PREMIUM, PRICING } = require('../services/apresentacaoGenerator');
 
 // Multer em memoria · arquivos pequenos (15MB max por arquivo)
 const upload = multer({
@@ -90,13 +90,16 @@ router.get('/:id', authorizeModule('apresentacoes', 1), async (req, res) => {
 // ─────────────────────────────────────────────────────────────
 router.post('/', authorizeModule('apresentacoes', 3), async (req, res) => {
   try {
-    const { titulo, prompt, tom } = req.body || {};
+    const { titulo, prompt, tom, modelo } = req.body || {};
     if (!titulo || titulo.length < 3) {
       return res.status(400).json({ error: 'titulo obrigatorio (min 3 chars)' });
     }
     if (!prompt || prompt.length < 20) {
       return res.status(400).json({ error: 'prompt obrigatorio (min 20 chars · descreva o que quer apresentar)' });
     }
+
+    // Valida modelo (so aceita ids conhecidos no PRICING map)
+    const modeloFinal = modelo && PRICING[modelo] ? modelo : MODEL_DEFAULT;
 
     const { data, error } = await supabase
       .from('apresentacoes')
@@ -105,7 +108,7 @@ router.post('/', authorizeModule('apresentacoes', 3), async (req, res) => {
         titulo: String(titulo).slice(0, 200),
         prompt: String(prompt).slice(0, 8000),
         tom: ['executivo', 'comercial', 'relatorio', 'criativo'].includes(tom) ? tom : 'executivo',
-        modelo_ia: MODEL_DEFAULT,
+        modelo_ia: modeloFinal,
         status: 'pendente',
       })
       .select('id, status')
@@ -315,6 +318,47 @@ router.post('/:id/gerar', authorizeModule('apresentacoes', 3), async (req, res) 
   } catch (e) {
     console.error('apresentacoes gerar:', e.message);
     res.status(500).json({ error: 'Erro ao iniciar geracao · ' + e.message });
+  }
+});
+
+// ─────────────────────────────────────────────────────────────
+// POST /api/apresentacoes/:id/reset · marca como erro se travada
+// em 'gerando' ha mais de 90s (timeout da Vercel ja deve ter matado).
+// Permite ao usuario destravar e clicar "Tentar novamente".
+// ─────────────────────────────────────────────────────────────
+router.post('/:id/reset', authorizeModule('apresentacoes', 3), async (req, res) => {
+  try {
+    const { data: apres } = await supabase
+      .from('apresentacoes')
+      .select('id, profile_id, status, updated_at')
+      .eq('id', req.params.id)
+      .single();
+    if (!apres) return res.status(404).end();
+    if (apres.profile_id !== req.user.id && req.user.role !== 'admin') {
+      return res.status(403).json({ error: 'Sem acesso' });
+    }
+    if (apres.status !== 'gerando') {
+      return res.status(409).json({ error: `Status atual: ${apres.status} · reset so vale pra 'gerando'` });
+    }
+    const idadeMs = Date.now() - new Date(apres.updated_at).getTime();
+    if (idadeMs < 90_000) {
+      return res.status(409).json({
+        error: 'Aguarde · ainda esta dentro do tempo normal de geracao (90s)',
+        idade_segundos: Math.floor(idadeMs / 1000),
+      });
+    }
+    const { error } = await supabase
+      .from('apresentacoes')
+      .update({
+        status: 'erro',
+        erro_mensagem: 'Timeout · function Vercel limita 60s. Tente com prompt mais enxuto ou use Sonnet (modo rapido).',
+      })
+      .eq('id', apres.id);
+    if (error) throw error;
+    res.json({ status: 'erro', idade_segundos: Math.floor(idadeMs / 1000) });
+  } catch (e) {
+    console.error('apresentacoes reset:', e.message);
+    res.status(500).json({ error: 'Erro ao resetar · ' + e.message });
   }
 });
 
