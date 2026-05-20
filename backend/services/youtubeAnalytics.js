@@ -361,6 +361,64 @@ async function fetchVideoViewsBySubStatus(channelId, videoId, startDate, endDate
   return out;
 }
 
+// Lista canais que a conta OAuth atual gerencia. Util pra diagnosticar se
+// o token autorizou a conta CERTA · `mine=true` retorna so canais que o
+// usuario do token possui/gerencia. Se vier vazio ou canal errado, o
+// problema dos zeros e' OAuth na conta errada.
+async function listAuthorizedChannels() {
+  const { token } = await getValidAccessToken();
+  const url = `${DATA_API}/channels?part=id,snippet,statistics&mine=true&maxResults=10`;
+  const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+  if (!res.ok) {
+    const t = await res.text();
+    throw new Error(`Channels mine falhou: ${res.status} ${t.slice(0, 200)}`);
+  }
+  const data = await res.json();
+  return (data.items || []).map(c => ({
+    id: c.id,
+    title: c.snippet?.title,
+    subscriber_count: parseInt(c.statistics?.subscriberCount || '0', 10),
+    video_count: parseInt(c.statistics?.videoCount || '0', 10),
+  }));
+}
+
+// Faz UMA chamada Analytics e retorna a resposta CRUA · diagnostico.
+// Se rows for null/[] e ok=true · 99% e' OAuth na conta errada.
+async function debugAnalyticsCall(videoId, startDate, endDate) {
+  const { token, channel_id } = await getValidAccessToken();
+  const params = new URLSearchParams({
+    ids: 'channel==MINE',
+    startDate,
+    endDate,
+    metrics: 'views,estimatedMinutesWatched,averageViewPercentage,subscribersGained',
+    filters: `video==${videoId}`,
+  });
+  const url = `${ANALYTICS}/reports?${params}`;
+  const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+  const text = await res.text();
+  let body;
+  try { body = JSON.parse(text); } catch { body = { raw: text.slice(0, 500) }; }
+  return {
+    request: {
+      channel_id_oauth: channel_id,
+      url: url.replace(token, 'TOKEN_REDACTED'),
+      startDate,
+      endDate,
+      filter: `video==${videoId}`,
+    },
+    response: {
+      status: res.status,
+      ok: res.ok,
+      body,
+    },
+    interpretacao: !res.ok
+      ? `ERRO HTTP ${res.status} · ${body?.error?.message || 'sem detalhe'}`
+      : !body.rows || body.rows.length === 0
+      ? 'ROWS VAZIO · conta OAuth provavelmente nao gerencia o canal dono deste video, OU video nao existe nessa data range'
+      : 'OK · veio dado',
+  };
+}
+
 module.exports = {
   SCOPES,
   getAuthUrl,
@@ -375,4 +433,6 @@ module.exports = {
   fetchVideoTrafficSources,
   fetchVideoRetentionCurve,
   fetchVideoViewsBySubStatus,
+  listAuthorizedChannels,
+  debugAnalyticsCall,
 };

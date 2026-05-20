@@ -120,6 +120,32 @@ router.get('/oauth/authorize', authorize('admin', 'diretor'), (req, res) => {
   res.json({ url: yt.getAuthUrl(state, getRedirectUri()) });
 });
 
+// Diagnostico · lista canais que a conta OAuth atual gerencia
+// Se vier vazio ou nao incluir CBRio, autorizacao foi feita na conta errada
+router.get('/debug/canais-autorizados', authorize('admin', 'diretor'), async (_req, res) => {
+  try {
+    const canais = await yt.listAuthorizedChannels();
+    res.json({ ok: true, canais, total: canais.length });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// Diagnostico · chama Analytics pra um video especifico e retorna resposta crua
+// Uso: GET /api/online/debug/analytics-test?video_id=XXX&start=2026-05-10&end=2026-05-17
+router.get('/debug/analytics-test', authorize('admin', 'diretor'), async (req, res) => {
+  try {
+    const { video_id, start, end } = req.query;
+    if (!video_id) return res.status(400).json({ error: 'video_id obrigatorio' });
+    const startDate = start || new Date(Date.now() - 7 * 86400_000).toISOString().slice(0, 10);
+    const endDate   = end   || new Date().toISOString().slice(0, 10);
+    const result = await yt.debugAnalyticsCall(String(video_id), String(startDate), String(endDate));
+    res.json(result);
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
 router.get('/oauth/status', async (_req, res) => {
   const { data } = await supabase.from('vw_online_oauth_status').select('*').limit(1).maybeSingle();
   res.json(data || { conectado: false });
