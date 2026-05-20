@@ -198,6 +198,7 @@ export const dashboardSemanal = {
   metaUpdate: (id, data) => put(`/dashboard-semanal/metas/${id}`, data),
   metaRemove: (id) => del(`/dashboard-semanal/metas/${id}`),
   metaSugerir: (params) => get('/dashboard-semanal/metas/sugerir?' + new URLSearchParams(params)),
+  metaValorAtual: (params) => get('/dashboard-semanal/metas/valor-atual?' + new URLSearchParams(params)),
   iaSugerirIndicador: (pergunta) => post('/dashboard-semanal/ia/sugerir-indicador', { pergunta }),
   indicadoresCustomList: (status) => get('/dashboard-semanal/indicadores-custom' + (status ? `?status=${status}` : '')),
   indicadorCustomPatch: (id, data) => patch(`/dashboard-semanal/indicadores-custom/${id}`, data),

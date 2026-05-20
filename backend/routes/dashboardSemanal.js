@@ -314,6 +314,70 @@ router.get('/mensal', async (req, res) => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
+// GET /metas/valor-atual · valor acumulado do indicador no periodo corrente
+//   query: indicador, periodicidade (semanal | mensal | anual)
+//
+// Semanal: soma da semana anterior completa (que termina no ultimo domingo)
+// Mensal:  soma do mes atual
+// Anual:   soma do ano atual
+// ─────────────────────────────────────────────────────────────────────────────
+router.get('/metas/valor-atual', async (req, res) => {
+  try {
+    const indicadorKey = req.query.indicador;
+    const periodicidade = req.query.periodicidade || 'semanal';
+    const indDef = INDICADORES[indicadorKey];
+    if (!indDef) return res.status(400).json({ error: 'indicador inválido' });
+
+    const hoje = new Date();
+    let inicio, fim, label;
+
+    if (periodicidade === 'semanal') {
+      // Semana anterior · de segunda a domingo
+      const ultimoDomingo = new Date(hoje);
+      const dow = ultimoDomingo.getUTCDay();
+      const diasParaUltimoDomingo = dow === 0 ? 7 : dow;
+      ultimoDomingo.setUTCDate(ultimoDomingo.getUTCDate() - diasParaUltimoDomingo);
+      const segunda = new Date(ultimoDomingo);
+      segunda.setUTCDate(segunda.getUTCDate() - 6);
+      inicio = segunda;
+      fim = ultimoDomingo;
+      label = `semana ${segunda.toISOString().slice(0,10)} a ${ultimoDomingo.toISOString().slice(0,10)}`;
+    } else if (periodicidade === 'mensal') {
+      inicio = new Date(Date.UTC(hoje.getUTCFullYear(), hoje.getUTCMonth(), 1));
+      fim = new Date(Date.UTC(hoje.getUTCFullYear(), hoje.getUTCMonth() + 1, 0));
+      label = `${formatMesAno(inicio)}`;
+    } else if (periodicidade === 'anual') {
+      inicio = new Date(Date.UTC(hoje.getUTCFullYear(), 0, 1));
+      fim = new Date(Date.UTC(hoje.getUTCFullYear(), 11, 31));
+      label = `${hoje.getUTCFullYear()}`;
+    } else {
+      return res.status(400).json({ error: 'periodicidade inválida' });
+    }
+
+    const { data, error } = await supabase
+      .from('cultos')
+      .select(`${colunaCrua(indicadorKey)}`)
+      .gte('data', inicio.toISOString().slice(0, 10))
+      .lte('data', fim.toISOString().slice(0, 10));
+    if (error) throw error;
+
+    const total = (data || []).reduce((s, r) => s + (Number(r[colunaCrua(indicadorKey)]) || 0), 0);
+
+    res.json({
+      indicador: indicadorKey,
+      periodicidade,
+      label,
+      inicio: inicio.toISOString().slice(0, 10),
+      fim: fim.toISOString().slice(0, 10),
+      total,
+    });
+  } catch (e) {
+    console.error('[DASH-SEM] valor-atual', e.message);
+    res.status(500).json({ error: 'Erro ao buscar valor atual' });
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
 // GET /metas/sugerir · calcula meta sugerida com base em histórico
 //   query: indicador, base (mes_anterior | trimestre_anterior | ano_anterior | mesmo_mes_ano_anterior)
 //          periodicidade (semanal | mensal · default semanal)

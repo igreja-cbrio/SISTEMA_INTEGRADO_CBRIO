@@ -124,8 +124,6 @@ export default function DashMetasAba() {
             >
               <MetaCard
                 meta={m}
-                ano={anoAtual}
-                semana={semanaAnterior}
                 mountKey={mountKey}
                 onEdit={() => abrirEdit(m)}
                 onDelete={() => remover.mutate(m.id)}
@@ -321,27 +319,30 @@ function MetaForm({ editing, setEditing }) {
   );
 }
 
-function MetaCard({ meta, ano, semana, mountKey, onEdit, onDelete }) {
-  // Carrega o valor atual da semana anterior pra esse indicador
+function MetaCard({ meta, mountKey, onEdit, onDelete }) {
+  // Busca valor atual respeitando a periodicidade da meta (semanal/mensal/anual)
   const { data } = useQuery({
-    queryKey: ['dash-sem', 'meta-atual', meta.indicador, ano, semana, meta.periodicidade],
-    queryFn: () => api.semanal({ ano, semana, indicador: meta.indicador, culto: 'todos' }),
-    enabled: meta.periodicidade === 'semanal' && meta.ativa,
+    queryKey: ['dash-sem', 'meta-valor', meta.indicador, meta.periodicidade],
+    queryFn: () => api.metaValorAtual({ indicador: meta.indicador, periodicidade: meta.periodicidade }),
+    enabled: meta.ativa,
     staleTime: 60_000,
   });
 
-  const atual = data?.resumo.total || 0;
+  const atual = data?.total || 0;
+  const periodoLabel = data?.label || meta.periodicidade;
   const metaValor = Number(meta.meta_valor);
   const pct = Math.min(200, Math.round((atual / metaValor) * 100));
   const cor = pct >= 100 ? '#10b981' : pct >= 70 ? '#f59e0b' : '#ef4444';
-  const tipoGrafico = meta.tipo_grafico || 'barra';
+  const tipoGrafico = meta.tipo_grafico || 'gauge';
 
   return (
     <Card className={!meta.ativa ? 'opacity-60' : ''}>
       <CardHeader className="pb-2 flex flex-row items-start justify-between gap-2 space-y-0">
         <div>
           <CardTitle className="text-sm font-medium">{meta.rotulo}</CardTitle>
-          <p className="text-[11px] text-muted-foreground capitalize mt-0.5">{meta.periodicidade}</p>
+          <p className="text-[11px] text-muted-foreground capitalize mt-0.5">
+            {meta.periodicidade} · <span className="lowercase normal-case">{periodoLabel}</span>
+          </p>
         </div>
         <div className="flex gap-1">
           <button
@@ -363,24 +364,15 @@ function MetaCard({ meta, ano, semana, mountKey, onEdit, onDelete }) {
         </div>
       </CardHeader>
       <CardContent>
-        {meta.periodicidade !== 'semanal' ? (
-          <div className="py-4 text-center text-sm text-muted-foreground">
-            <div className="text-3xl font-bold text-foreground">
-              {metaValor.toLocaleString('pt-BR')}
-            </div>
-            <div className="text-xs mt-1">meta {meta.periodicidade}</div>
-          </div>
-        ) : tipoGrafico === 'gauge' ? (
+        {tipoGrafico === 'gauge' ? (
           <div>
-            <MetaGauge atual={atual} meta={metaValor} anim={mountKey} />
-            <div className="flex items-baseline justify-between mt-1 text-xs">
-              <span className="font-semibold tabular-nums" style={{ color: cor }}>
-                {atual.toLocaleString('pt-BR')}
-              </span>
-              <span className="text-muted-foreground tabular-nums">
-                / {metaValor.toLocaleString('pt-BR')} · sem {semana}
-              </span>
-            </div>
+            <MetaGauge
+              atual={atual}
+              meta={metaValor}
+              anim={`${mountKey}-${atual}`}
+              size={240}
+              label={`${pct}% atingido`}
+            />
           </div>
         ) : (
           <div>
@@ -411,7 +403,7 @@ function MetaCard({ meta, ano, semana, mountKey, onEdit, onDelete }) {
             </div>
             <div className="flex items-baseline justify-between mt-1 text-xs">
               <span className="font-semibold" style={{ color: cor }}>{pct}%</span>
-              <span className="text-muted-foreground">semana {semana}</span>
+              <span className="text-muted-foreground">{periodoLabel}</span>
             </div>
           </div>
         )}
