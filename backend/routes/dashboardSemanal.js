@@ -314,6 +314,142 @@ router.get('/mensal', async (req, res) => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
+// GET /metas/sugerir · calcula meta sugerida com base em histórico
+//   query: indicador, base (mes_anterior | trimestre_anterior | ano_anterior | mesmo_mes_ano_anterior)
+//          periodicidade (semanal | mensal · default semanal)
+//          culto (uuid opcional)
+//
+// Retorna: { sugestao, base_label, periodo_referencia, valores_amostra }
+// ─────────────────────────────────────────────────────────────────────────────
+router.get('/metas/sugerir', async (req, res) => {
+  try {
+    const indicadorKey = req.query.indicador;
+    const base = req.query.base || 'mes_anterior';
+    const periodicidade = req.query.periodicidade || 'semanal';
+    const cultoId = req.query.culto && req.query.culto !== 'todos' ? req.query.culto : null;
+    const indDef = INDICADORES[indicadorKey];
+    if (!indDef) return res.status(400).json({ error: 'indicador inválido' });
+
+    const hoje = new Date();
+    let inicio, fim, baseLabel;
+
+    if (base === 'mes_anterior') {
+      const mesAtual = hoje.getUTCMonth();
+      const anoAtual = hoje.getUTCFullYear();
+      const inicioMesAnt = new Date(Date.UTC(anoAtual, mesAtual - 1, 1));
+      const fimMesAnt = new Date(Date.UTC(anoAtual, mesAtual, 0)); // último dia mês anterior
+      inicio = inicioMesAnt;
+      fim = fimMesAnt;
+      baseLabel = `mês anterior (${formatMesAno(inicioMesAnt)})`;
+    } else if (base === 'trimestre_anterior') {
+      const inicioTri = new Date(Date.UTC(hoje.getUTCFullYear(), hoje.getUTCMonth() - 3, 1));
+      const fimTri = new Date(Date.UTC(hoje.getUTCFullYear(), hoje.getUTCMonth(), 0));
+      inicio = inicioTri;
+      fim = fimTri;
+      baseLabel = 'últimos 3 meses';
+    } else if (base === 'ano_anterior') {
+      const inicioAno = new Date(Date.UTC(hoje.getUTCFullYear() - 1, 0, 1));
+      const fimAno = new Date(Date.UTC(hoje.getUTCFullYear() - 1, 11, 31));
+      inicio = inicioAno;
+      fim = fimAno;
+      baseLabel = `ano anterior (${hoje.getUTCFullYear() - 1})`;
+    } else if (base === 'mesmo_mes_ano_anterior') {
+      const inicioMes = new Date(Date.UTC(hoje.getUTCFullYear() - 1, hoje.getUTCMonth(), 1));
+      const fimMes = new Date(Date.UTC(hoje.getUTCFullYear() - 1, hoje.getUTCMonth() + 1, 0));
+      inicio = inicioMes;
+      fim = fimMes;
+      baseLabel = `mesmo mês ano passado (${formatMesAno(inicioMes)})`;
+    } else {
+      return res.status(400).json({ error: 'base inválida' });
+    }
+
+    // Pega dados brutos da tabela cultos no período
+    let q = supabase
+      .from('cultos')
+      .select(`data, service_type_id, ${colunaCrua(indicadorKey)}`)
+      .gte('data', inicio.toISOString().slice(0, 10))
+      .lte('data', fim.toISOString().slice(0, 10));
+    if (cultoId) q = q.eq('service_type_id', cultoId);
+
+    const { data, error } = await q;
+    if (error) throw error;
+
+    // Agrupa por (semana ISO) ou (mês) e soma
+    const grupos = new Map();
+    for (const row of (data || [])) {
+      const d = new Date(row.data + 'T12:00:00Z');
+      let key;
+      if (periodicidade === 'semanal') {
+        const w = isoWeekOfDate(d);
+        key = `${w.ano}-W${w.semana}`;
+      } else if (periodicidade === 'mensal') {
+        key = `${d.getUTCFullYear()}-M${d.getUTCMonth() + 1}`;
+      } else {
+        key = String(d.getUTCFullYear());
+      }
+      const valor = Number(row[colunaCrua(indicadorKey)]) || 0;
+      grupos.set(key, (grupos.get(key) || 0) + valor);
+    }
+
+    const valores = Array.from(grupos.values()).filter(v => v > 0);
+    if (valores.length === 0) {
+      return res.json({
+        sugestao: 0,
+        base_label: baseLabel,
+        periodo_referencia: `${inicio.toISOString().slice(0, 10)} a ${fim.toISOString().slice(0, 10)}`,
+        amostra: 0,
+        valores_amostra: [],
+        aviso: 'Sem dados preenchidos no período. Verifique os cultos.',
+      });
+    }
+
+    const media = valores.reduce((s, v) => s + v, 0) / valores.length;
+    const sugestao = Math.round(media);
+
+    res.json({
+      sugestao,
+      base_label: baseLabel,
+      periodo_referencia: `${inicio.toISOString().slice(0, 10)} a ${fim.toISOString().slice(0, 10)}`,
+      amostra: valores.length,
+      valores_amostra: valores.slice(0, 8),
+      media_exata: Math.round(media * 100) / 100,
+    });
+  } catch (e) {
+    console.error('[DASH-SEM] meta sugerir', e.message, e);
+    res.status(500).json({ error: 'Erro ao calcular sugestão' });
+  }
+});
+
+function colunaCrua(indKey) {
+  // Mapeia indicador (slug do dashboard) pra coluna real em cultos
+  const map = {
+    frequencia:        'presencial_adulto',
+    frequencia_kids:   'presencial_kids',
+    aceitacoes:        'decisoes_presenciais',
+    aceitacoes_online: 'decisoes_online',
+    ao_vivo:           'online_pico',
+    online_ds:         'online_ds',
+    online_ddus:       'online_ddus',
+    voluntariado:      'voluntarios',
+  };
+  return map[indKey] || indKey;
+}
+
+function isoWeekOfDate(date) {
+  const d = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
+  const dayNum = d.getUTCDay() || 7;
+  d.setUTCDate(d.getUTCDate() + 4 - dayNum);
+  const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
+  const week = Math.ceil(((d - yearStart) / 86400000 + 1) / 7);
+  return { ano: d.getUTCFullYear(), semana: week };
+}
+
+function formatMesAno(d) {
+  const MESES = ['jan','fev','mar','abr','mai','jun','jul','ago','set','out','nov','dez'];
+  return `${MESES[d.getUTCMonth()]}/${d.getUTCFullYear()}`;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // METAS · CRUD
 // ─────────────────────────────────────────────────────────────────────────────
 router.get('/metas', async (req, res) => {
@@ -332,7 +468,7 @@ router.get('/metas', async (req, res) => {
 
 router.post('/metas', async (req, res) => {
   try {
-    const { indicador, rotulo, meta_valor, periodicidade, service_type_id, cor } = req.body || {};
+    const { indicador, rotulo, meta_valor, periodicidade, service_type_id, cor, tipo_grafico } = req.body || {};
     if (!indicador || !rotulo || !meta_valor) {
       return res.status(400).json({ error: 'indicador, rotulo e meta_valor são obrigatórios' });
     }
@@ -342,6 +478,7 @@ router.post('/metas', async (req, res) => {
       periodicidade: periodicidade || 'semanal',
       service_type_id: service_type_id || null,
       cor: cor || null,
+      tipo_grafico: tipo_grafico || 'barra',
       criado_por: req.user?.userId || null,
     };
     const { data, error } = await supabase
@@ -359,7 +496,7 @@ router.post('/metas', async (req, res) => {
 
 router.put('/metas/:id', async (req, res) => {
   try {
-    const allowed = ['indicador','rotulo','meta_valor','periodicidade','service_type_id','cor','ativa'];
+    const allowed = ['indicador','rotulo','meta_valor','periodicidade','service_type_id','cor','ativa','tipo_grafico'];
     const payload = { updated_at: new Date().toISOString() };
     for (const k of allowed) if (req.body[k] !== undefined) payload[k] = req.body[k];
     if (payload.meta_valor !== undefined) payload.meta_valor = Number(payload.meta_valor);
