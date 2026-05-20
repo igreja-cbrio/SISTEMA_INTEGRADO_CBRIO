@@ -1,11 +1,11 @@
 // ============================================================================
-// PainelArea · drill-down read-only de KPIs por area de culto (kids/ami/bridge/online)
+// PainelArea v2 · drill-down de KPIs + DADOS BRUTOS + saude por area
 // ============================================================================
-// Marcos (2026-05-20): "criar Kids, AMI e Bridge no padrao do Online · visualizar
-// todos os indicadores ligados a area". Preenchimento continua em /integracao.
+// Marcos (2026-05-20): "torne mais bonito · separe dado de indicador · adicione
+// visualizacao de saude da area que filtre/passe pro lado".
 //
-// Visual sem icones · cores temáticas suaves · NPS de culto destacado no topo
-// quando existir · botao "Preencher dados" so pra coordenador/admin.
+// Estrutura: header com score + 3 tabs (Saude · Dados · Indicadores) + NPS
+// destacado no topo.
 // ============================================================================
 
 import { useState, useEffect, useMemo } from 'react';
@@ -23,29 +23,29 @@ const AREA_META = {
     nome: 'Kids',
     descricao: 'Indicadores do ministério infantil',
     accent: '#EC4899',
-    accentBg: 'rgba(236, 72, 153, 0.08)',
-    accentBorder: 'rgba(236, 72, 153, 0.25)',
+    accentSoft: 'rgba(236, 72, 153, 0.08)',
+    accentBorder: 'rgba(236, 72, 153, 0.30)',
   },
   ami: {
     nome: 'AMI',
     descricao: 'Indicadores do culto AMI (adolescentes e jovens)',
     accent: '#8B5CF6',
-    accentBg: 'rgba(139, 92, 246, 0.08)',
-    accentBorder: 'rgba(139, 92, 246, 0.25)',
+    accentSoft: 'rgba(139, 92, 246, 0.08)',
+    accentBorder: 'rgba(139, 92, 246, 0.30)',
   },
   bridge: {
     nome: 'Bridge',
     descricao: 'Indicadores do culto Bridge (transição entre AMI e Sede)',
     accent: '#3B82F6',
-    accentBg: 'rgba(59, 130, 246, 0.08)',
-    accentBorder: 'rgba(59, 130, 246, 0.25)',
+    accentSoft: 'rgba(59, 130, 246, 0.08)',
+    accentBorder: 'rgba(59, 130, 246, 0.30)',
   },
   online: {
     nome: 'Online',
     descricao: 'Indicadores do culto Online (YouTube)',
     accent: '#EF4444',
-    accentBg: 'rgba(239, 68, 68, 0.08)',
-    accentBorder: 'rgba(239, 68, 68, 0.25)',
+    accentSoft: 'rgba(239, 68, 68, 0.08)',
+    accentBorder: 'rgba(239, 68, 68, 0.30)',
   },
 };
 
@@ -58,15 +58,35 @@ const VALOR_LABELS = {
 };
 
 const STATUS_META = {
-  no_alvo:   { label: 'No alvo',  color: 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-400' },
-  atrasado:  { label: 'Atrasado', color: 'bg-amber-500/15 text-amber-700 dark:text-amber-400' },
-  critico:   { label: 'Crítico',  color: 'bg-red-500/15 text-red-700 dark:text-red-400' },
-  sem_dado:  { label: 'Sem dado', color: 'bg-muted text-muted-foreground' },
+  no_alvo:   { label: 'No alvo',  className: 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-400' },
+  atrasado:  { label: 'Atrasado', className: 'bg-amber-500/15 text-amber-700 dark:text-amber-400' },
+  critico:   { label: 'Crítico',  className: 'bg-red-500/15 text-red-700 dark:text-red-400' },
+  sem_dado:  { label: 'Sem dado', className: 'bg-muted text-muted-foreground' },
+};
+
+const SAUDE_META = {
+  saudavel: { label: 'Saudável', color: '#10b981', bg: '#10b98115' },
+  atencao:  { label: 'Atenção',  color: '#f59e0b', bg: '#f59e0b15' },
+  risco:    { label: 'Em risco', color: '#ef4444', bg: '#ef444415' },
+  critico:  { label: 'Crítico',  color: '#dc2626', bg: '#dc262615' },
 };
 
 function statusKey(traj) {
   if (!traj || traj.ultimo_valor == null) return 'sem_dado';
   return traj.status_trajetoria || 'sem_dado';
+}
+
+function formatNum(v) {
+  if (v == null) return '—';
+  return Number(v).toLocaleString('pt-BR', { maximumFractionDigits: 2 });
+}
+
+function formatData(d) {
+  if (!d) return '';
+  try {
+    const parts = d.split('-');
+    return `${parts[2]}/${parts[1]}`;
+  } catch { return d; }
 }
 
 export default function PainelArea({ area }) {
@@ -75,9 +95,7 @@ export default function PainelArea({ area }) {
   const meta = AREA_META[area] || AREA_META.online;
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [valorFiltro, setValorFiltro] = useState('todos');
 
-  // Botao "Preencher dados" so pra coordenador da area ou admin
   const podePreencher = isAdmin || (getAccessLevel?.([area]) ?? 0) >= 3;
 
   useEffect(() => {
@@ -90,7 +108,6 @@ export default function PainelArea({ area }) {
     return () => { cancelled = true; };
   }, [area]);
 
-  // NPS de culto destacado no topo · KPIs com id começando em CULTO-NPS-*
   const npsDestaque = useMemo(() => {
     if (!data?.kpis) return [];
     return data.kpis.filter(k => /^CULTO-NPS-/i.test(k.id));
@@ -98,13 +115,8 @@ export default function PainelArea({ area }) {
 
   const kpisRegulares = useMemo(() => {
     if (!data?.kpis) return [];
-    const naoNps = data.kpis.filter(k => !/^CULTO-NPS-/i.test(k.id));
-    if (valorFiltro === 'todos') return naoNps;
-    if (valorFiltro === 'sem-valor') {
-      return naoNps.filter(k => !Array.isArray(k.valores) || k.valores.length === 0);
-    }
-    return naoNps.filter(k => Array.isArray(k.valores) && k.valores.includes(valorFiltro));
-  }, [data, valorFiltro]);
+    return data.kpis.filter(k => !/^CULTO-NPS-/i.test(k.id));
+  }, [data]);
 
   if (loading) {
     return (
@@ -124,62 +136,78 @@ export default function PainelArea({ area }) {
     );
   }
 
-  const stats = data.stats || { com_meta: 0, no_alvo: 0, atrasado: 0, critico: 0 };
-  const valoresComKpis = data.por_valor
-    ? Object.keys(data.por_valor).filter(v => (data.por_valor[v] || []).length > 0)
-    : [];
+  const saude = data.saude || {};
+  const saudeMeta = SAUDE_META[saude.diagnostico] || SAUDE_META.atencao;
 
   return (
     <div className="p-6 space-y-6 max-w-7xl mx-auto">
-      {/* Header limpo · barra de cor lateral só */}
+      {/* ─────────────────────────── HEADER ─────────────────────────── */}
       <div
-        className="rounded-lg p-5 border"
+        className="rounded-xl p-6 border-l-4 grid grid-cols-1 md:grid-cols-[1fr_auto] gap-6 items-center"
         style={{
-          background: meta.accentBg,
+          background: meta.accentSoft,
           borderColor: meta.accentBorder,
-          borderLeftWidth: 4,
           borderLeftColor: meta.accent,
         }}
       >
-        <div className="flex items-start justify-between gap-4 flex-wrap">
+        <div>
+          <h1 className="text-3xl font-bold text-foreground">{meta.nome}</h1>
+          <p className="text-sm text-muted-foreground mt-1">{meta.descricao}</p>
+          <div className="flex items-center gap-2 mt-3 text-xs">
+            <Badge variant="outline">Somente leitura</Badge>
+            <span className="text-muted-foreground">·</span>
+            <span className="text-muted-foreground">
+              Preenchimento via <span className="font-mono">/integracao</span>
+            </span>
+            {podePreencher && (
+              <>
+                <span className="text-muted-foreground">·</span>
+                <button
+                  onClick={() => navigate('/ministerial/integracao?aba=cultos')}
+                  className="font-semibold hover:underline"
+                  style={{ color: meta.accent }}
+                >
+                  Preencher dados →
+                </button>
+              </>
+            )}
+          </div>
+        </div>
+
+        {/* Score de saúde */}
+        <div className="flex items-center gap-4">
+          <div
+            className="w-32 h-32 rounded-full flex flex-col items-center justify-center border-4"
+            style={{
+              borderColor: saudeMeta.color,
+              background: saudeMeta.bg,
+            }}
+          >
+            <span className="text-3xl font-bold" style={{ color: saudeMeta.color }}>
+              {saude.score ?? 0}
+            </span>
+            <span className="text-[10px] uppercase tracking-widest text-muted-foreground">
+              Score
+            </span>
+          </div>
           <div>
-            <h1 className="text-2xl font-bold text-foreground">{meta.nome}</h1>
-            <p className="text-sm text-muted-foreground mt-1">{meta.descricao}</p>
-            <div className="flex items-center gap-2 mt-2 text-xs">
-              <Badge variant="outline">Somente leitura</Badge>
-              <span className="text-muted-foreground">·</span>
-              <span className="text-muted-foreground">
-                Preenchimento via <span className="font-mono">/integracao</span>
-              </span>
+            <div className="text-sm font-semibold" style={{ color: saudeMeta.color }}>
+              {saudeMeta.label}
+            </div>
+            <div className="text-xs text-muted-foreground mt-1 max-w-[150px]">
+              {saude.pct_no_alvo ?? 0}% dos indicadores no alvo
             </div>
           </div>
-          {podePreencher && (
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => navigate('/ministerial/integracao?aba=cultos')}
-            >
-              Preencher dados
-            </Button>
-          )}
         </div>
       </div>
 
-      {/* Cards de stats */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        <StatCard label="Total de indicadores" value={data.total} />
-        <StatCard label="No alvo" value={stats.no_alvo} color="text-emerald-600 dark:text-emerald-400" />
-        <StatCard label="Atrasados" value={stats.atrasado} color="text-amber-600 dark:text-amber-400" />
-        <StatCard label="Críticos" value={stats.critico} color="text-red-600 dark:text-red-400" />
-      </div>
-
-      {/* NPS do culto destacado no topo */}
+      {/* ─────────────────────── NPS DESTACADO ─────────────────────── */}
       {npsDestaque.length > 0 && (
         <Card
           className="overflow-hidden"
           style={{ borderColor: meta.accentBorder, borderWidth: 2 }}
         >
-          <div className="p-4 border-b border-border" style={{ background: meta.accentBg }}>
+          <div className="p-4 border-b border-border" style={{ background: meta.accentSoft }}>
             <h2 className="text-sm font-semibold uppercase tracking-wide" style={{ color: meta.accent }}>
               NPS do culto · avaliação dos participantes
             </h2>
@@ -192,58 +220,265 @@ export default function PainelArea({ area }) {
         </Card>
       )}
 
-      {data.total === 0 ? (
-        <Card className="p-8 text-center text-sm text-muted-foreground">
-          Nenhum KPI ativo cadastrado para esta área ainda.
-        </Card>
-      ) : (
-        <>
-          {/* Filtro por valor da Jornada */}
-          <Tabs value={valorFiltro} onValueChange={setValorFiltro}>
-            <TabsList className="flex flex-wrap h-auto">
-              <TabsTrigger value="todos">Todos ({kpisRegulares.length})</TabsTrigger>
-              {valoresComKpis.map(v => {
-                const count = (data.por_valor[v] || []).filter(k => !/^CULTO-NPS-/i.test(k.id)).length;
-                if (count === 0) return null;
-                return (
-                  <TabsTrigger key={v} value={v}>
-                    {VALOR_LABELS[v] || v} ({count})
-                  </TabsTrigger>
-                );
-              })}
-              {(data.sem_valor || []).length > 0 && (
-                <TabsTrigger value="sem-valor">
-                  Sem valor ({data.sem_valor.length})
-                </TabsTrigger>
-              )}
-            </TabsList>
+      {/* ─────────────────────── TABS PRINCIPAIS ─────────────────────── */}
+      <Tabs defaultValue="saude">
+        <TabsList className="grid grid-cols-3 w-full max-w-md">
+          <TabsTrigger value="saude">Saúde</TabsTrigger>
+          <TabsTrigger value="dados">
+            Dados {data.dados?.length > 0 && <span className="ml-1 opacity-60">({data.dados.length})</span>}
+          </TabsTrigger>
+          <TabsTrigger value="indicadores">
+            Indicadores {kpisRegulares.length > 0 && <span className="ml-1 opacity-60">({kpisRegulares.length})</span>}
+          </TabsTrigger>
+        </TabsList>
 
-            <TabsContent value={valorFiltro} className="mt-4">
-              <Card className="divide-y divide-border">
-                {kpisRegulares.length === 0 ? (
-                  <div className="p-6 text-center text-sm text-muted-foreground">
-                    Nenhum indicador neste filtro.
-                  </div>
-                ) : (
-                  kpisRegulares.map(k => (
-                    <KpiRow key={k.id} kpi={k} onClick={() => navigate(`/painel/kpi/${k.id}`)} />
-                  ))
-                )}
-              </Card>
-            </TabsContent>
-          </Tabs>
-        </>
-      )}
+        {/* ──────── ABA SAÚDE ──────── */}
+        <TabsContent value="saude" className="mt-6 space-y-4">
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+            <StatCard
+              label="Indicadores totais"
+              value={saude.kpis_total ?? 0}
+              hint="cadastrados pra essa área"
+            />
+            <StatCard
+              label="No alvo"
+              value={saude.kpis_no_alvo ?? 0}
+              color="text-emerald-600 dark:text-emerald-400"
+              hint={`de ${saude.kpis_total ?? 0} (${saude.pct_no_alvo ?? 0}%)`}
+            />
+            <StatCard
+              label="Atrasados"
+              value={saude.kpis_atrasado ?? 0}
+              color="text-amber-600 dark:text-amber-400"
+              hint="precisam de atenção"
+            />
+            <StatCard
+              label="Críticos"
+              value={saude.kpis_critico ?? 0}
+              color="text-red-600 dark:text-red-400"
+              hint="abaixo do limite"
+            />
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+            <Card className="p-4">
+              <p className="text-xs text-muted-foreground uppercase tracking-wide">Cobertura de KPIs</p>
+              <p className="text-2xl font-bold text-foreground mt-1">{saude.pct_cobertos ?? 0}%</p>
+              <p className="text-[11px] text-muted-foreground mt-1">
+                {(saude.kpis_total ?? 0) - (saude.kpis_sem_dado ?? 0)} de {saude.kpis_total ?? 0} têm dado preenchido
+              </p>
+              <Progress pct={saude.pct_cobertos ?? 0} color={meta.accent} />
+            </Card>
+
+            <Card className="p-4">
+              <p className="text-xs text-muted-foreground uppercase tracking-wide">Dados recentes</p>
+              <p className="text-2xl font-bold text-foreground mt-1">{saude.pct_dados_recentes ?? 0}%</p>
+              <p className="text-[11px] text-muted-foreground mt-1">
+                {saude.dados_recentes_30d ?? 0} de {saude.tipos_dado ?? 0} tipos com registro nos últimos 30 dias
+              </p>
+              <Progress pct={saude.pct_dados_recentes ?? 0} color={meta.accent} />
+            </Card>
+
+            <Card className="p-4">
+              <p className="text-xs text-muted-foreground uppercase tracking-wide">Indicadores no alvo</p>
+              <p className="text-2xl font-bold text-foreground mt-1">{saude.pct_no_alvo ?? 0}%</p>
+              <p className="text-[11px] text-muted-foreground mt-1">
+                {saude.kpis_no_alvo ?? 0} de {saude.kpis_total ?? 0} acima da meta
+              </p>
+              <Progress pct={saude.pct_no_alvo ?? 0} color={meta.accent} />
+            </Card>
+          </div>
+
+          <Card className="p-4">
+            <h3 className="text-sm font-semibold text-foreground mb-2">Como o score é calculado</h3>
+            <ul className="text-xs text-muted-foreground space-y-1">
+              <li>· 50% · % de indicadores no alvo</li>
+              <li>· 30% · % de KPIs com dado preenchido (cobertura)</li>
+              <li>· 20% · % de tipos de dado com registro nos últimos 30 dias</li>
+            </ul>
+          </Card>
+        </TabsContent>
+
+        {/* ──────── ABA DADOS ──────── */}
+        <TabsContent value="dados" className="mt-6">
+          {data.dados?.length === 0 ? (
+            <Card className="p-8 text-center text-sm text-muted-foreground">
+              Nenhum dado bruto registrado pra esta área ainda.
+            </Card>
+          ) : (
+            <Card className="divide-y divide-border">
+              {(data.dados || []).map(d => (
+                <DadoRow key={d.tipo_id} dado={d} accent={meta.accent} />
+              ))}
+            </Card>
+          )}
+          <p className="text-xs text-muted-foreground mt-3">
+            Dados brutos são os números preenchidos diretamente em <span className="font-mono">/integracao</span>.
+            Os indicadores (aba ao lado) são calculados automaticamente a partir desses dados.
+          </p>
+        </TabsContent>
+
+        {/* ──────── ABA INDICADORES ──────── */}
+        <TabsContent value="indicadores" className="mt-6">
+          {kpisRegulares.length === 0 ? (
+            <Card className="p-8 text-center text-sm text-muted-foreground">
+              Nenhum indicador cadastrado pra esta área ainda.
+            </Card>
+          ) : (
+            <IndicadoresPorValor kpis={kpisRegulares} porValor={data.por_valor} semValor={data.sem_valor} navigate={navigate} accent={meta.accent} />
+          )}
+        </TabsContent>
+      </Tabs>
     </div>
   );
 }
 
-function StatCard({ label, value, color = '' }) {
+// ─────────────────────────── COMPONENTES ───────────────────────────
+
+function StatCard({ label, value, color = '', hint }) {
   return (
     <Card className="p-4">
-      <p className="text-xs text-muted-foreground uppercase tracking-wide">{label}</p>
-      <p className={`text-2xl font-bold mt-1 ${color || 'text-foreground'}`}>{value}</p>
+      <p className="text-[11px] text-muted-foreground uppercase tracking-wide font-semibold">{label}</p>
+      <p className={`text-3xl font-bold mt-1 ${color || 'text-foreground'}`}>{value}</p>
+      {hint && <p className="text-[11px] text-muted-foreground mt-1">{hint}</p>}
     </Card>
+  );
+}
+
+function Progress({ pct, color }) {
+  return (
+    <div className="mt-2 h-1.5 bg-muted rounded-full overflow-hidden">
+      <div
+        className="h-full transition-all"
+        style={{ width: `${Math.max(0, Math.min(100, pct))}%`, background: color }}
+      />
+    </div>
+  );
+}
+
+function DadoRow({ dado, accent }) {
+  const variacao = dado.variacao_mes_pct;
+  const variacaoTexto = variacao == null
+    ? null
+    : `${variacao >= 0 ? '+' : ''}${Math.round(variacao)}% vs mês anterior`;
+  const variacaoColor = variacao == null
+    ? 'text-muted-foreground'
+    : variacao >= 10 ? 'text-emerald-600 dark:text-emerald-400'
+    : variacao <= -10 ? 'text-red-600 dark:text-red-400'
+    : 'text-muted-foreground';
+
+  // Mini sparkline
+  const valores = dado.historico_6.map(h => h.valor);
+  const maxV = Math.max(...valores, 1);
+  const minV = Math.min(...valores, 0);
+  const range = maxV - minV || 1;
+
+  return (
+    <div className="p-4 flex items-start gap-4 flex-wrap">
+      <div className="flex-1 min-w-0">
+        <p className="text-sm font-medium text-foreground">{dado.tipo_nome}</p>
+        {dado.descricao && (
+          <p className="text-xs text-muted-foreground mt-0.5 line-clamp-2">{dado.descricao}</p>
+        )}
+        <div className="flex items-center gap-3 mt-2 text-xs">
+          <span className="text-muted-foreground">
+            {dado.granularidade} · {dado.agregacao}
+          </span>
+          {dado.ultima_data && (
+            <span className="text-muted-foreground">
+              último em {formatData(dado.ultima_data)}
+            </span>
+          )}
+          <span className="text-muted-foreground">
+            {dado.total_registros} registros (180d)
+          </span>
+        </div>
+      </div>
+
+      {/* Sparkline mini */}
+      {valores.length > 1 && (
+        <svg width="80" height="32" className="shrink-0">
+          <polyline
+            fill="none"
+            stroke={accent}
+            strokeWidth="2"
+            points={valores.map((v, i) => {
+              const x = (i / (valores.length - 1)) * 78 + 1;
+              const y = 30 - ((v - minV) / range) * 28;
+              return `${x},${y}`;
+            }).join(' ')}
+          />
+        </svg>
+      )}
+
+      <div className="text-right shrink-0 min-w-[100px]">
+        <p className="text-2xl font-bold text-foreground">{formatNum(dado.ultimo_valor)}</p>
+        <p className="text-[10px] text-muted-foreground">{dado.unidade}</p>
+        {variacaoTexto && (
+          <p className={`text-[11px] mt-1 ${variacaoColor}`}>{variacaoTexto}</p>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function IndicadoresPorValor({ kpis, porValor, semValor, navigate, accent }) {
+  const [filtro, setFiltro] = useState('todos');
+
+  const kpisFiltrados = useMemo(() => {
+    if (filtro === 'todos') return kpis;
+    if (filtro === 'sem-valor') return semValor.filter(k => !/^CULTO-NPS-/i.test(k.id));
+    return (porValor?.[filtro] || []).filter(k => !/^CULTO-NPS-/i.test(k.id));
+  }, [filtro, kpis, porValor, semValor]);
+
+  const valoresDisp = porValor
+    ? Object.keys(porValor).filter(v => (porValor[v] || []).some(k => !/^CULTO-NPS-/i.test(k.id)))
+    : [];
+
+  return (
+    <div className="space-y-4">
+      <div className="flex flex-wrap gap-2">
+        <FilterPill active={filtro === 'todos'} onClick={() => setFiltro('todos')} accent={accent}>
+          Todos ({kpis.length})
+        </FilterPill>
+        {valoresDisp.map(v => {
+          const count = (porValor[v] || []).filter(k => !/^CULTO-NPS-/i.test(k.id)).length;
+          return (
+            <FilterPill key={v} active={filtro === v} onClick={() => setFiltro(v)} accent={accent}>
+              {VALOR_LABELS[v] || v} ({count})
+            </FilterPill>
+          );
+        })}
+      </div>
+
+      <Card className="divide-y divide-border">
+        {kpisFiltrados.length === 0 ? (
+          <div className="p-6 text-center text-sm text-muted-foreground">
+            Nenhum indicador neste filtro.
+          </div>
+        ) : (
+          kpisFiltrados.map(k => (
+            <KpiRow key={k.id} kpi={k} onClick={() => navigate(`/painel/kpi/${k.id}`)} />
+          ))
+        )}
+      </Card>
+    </div>
+  );
+}
+
+function FilterPill({ active, onClick, accent, children }) {
+  return (
+    <button
+      onClick={onClick}
+      className="px-3 py-1.5 rounded-full text-xs font-medium border transition-colors"
+      style={
+        active
+          ? { background: accent, color: '#fff', borderColor: accent }
+          : { background: 'transparent', color: 'inherit', borderColor: 'rgb(226, 232, 240)' }
+      }
+    >
+      {children}
+    </button>
   );
 }
 
@@ -264,7 +499,7 @@ function KpiRow({ kpi, onClick }) {
         <div className="flex items-center gap-2 flex-wrap">
           <span className="text-xs font-mono text-muted-foreground">{kpi.id}</span>
           {kpi.is_okr && <Badge variant="secondary" className="text-[10px]">OKR</Badge>}
-          <Badge className={`text-[10px] ${sMeta.color}`}>{sMeta.label}</Badge>
+          <Badge className={`text-[10px] ${sMeta.className}`}>{sMeta.label}</Badge>
           {kpi.periodicidade && (
             <span className="text-[10px] text-muted-foreground">{kpi.periodicidade}</span>
           )}
@@ -283,12 +518,12 @@ function KpiRow({ kpi, onClick }) {
         {valor != null ? (
           <>
             <p className="text-lg font-bold">
-              {Number(valor).toLocaleString('pt-BR')}
+              {formatNum(valor)}
               {kpi.unidade && kpi.unidade !== 'unidade' ? ` ${kpi.unidade}` : ''}
             </p>
             {meta != null && (
               <p className="text-[11px] text-muted-foreground">
-                meta {Number(meta).toLocaleString('pt-BR')}
+                meta {formatNum(meta)}
                 {pct != null && (
                   <span className={pct >= 100 ? 'text-emerald-600 ml-1' : pct >= 70 ? 'text-amber-600 ml-1' : 'text-red-600 ml-1'}>
                     ({Math.round(pct)}%)

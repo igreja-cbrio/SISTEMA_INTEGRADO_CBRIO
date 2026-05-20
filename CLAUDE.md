@@ -79,6 +79,36 @@ usuarios). Tela em `/admin/permissoes` (arquivo
   aliases temporarios) · TODO de polish, nao bloqueante · hoje os hooks
   ja lem dos slugs novos via AuthContext
 
+### PainelArea v2 · saude + dados vs indicadores (2026-05-20)
+Marcos pediu visualizacao mais bonita + separacao clara entre **dados**
+(numeros brutos preenchidos) e **indicadores** (KPIs calculados) +
+visualizacao de saude da area.
+
+**Backend** (`backend/routes/painelArea.js`):
+- Resposta passou a incluir `dados[]` agregados a partir de `dados_brutos`
+  filtrados pela area · ultimo valor, total mes atual vs anterior,
+  variacao %, historico de 6 registros pra sparkline
+- Resposta inclui `saude` com score 0-100 calculado:
+  - 50% % indicadores no alvo
+  - 30% cobertura (KPIs com dado)
+  - 20% % tipos de dado com registro nos ultimos 30 dias
+- Score mapeado pra diagnostico: saudavel / atencao / risco / critico
+
+**Frontend** (`src/pages/ministerial/PainelArea.jsx`):
+- Header com **score circular** colorido por diagnostico (verde/ambar/
+  vermelho) · ao lado do nome da area
+- NPS do culto continua destacado em card no topo (antes das tabs)
+- **3 tabs principais**:
+  - **Saude** (default) · stats cards + barras de progresso (cobertura,
+    dados recentes, % no alvo) + explicacao do score
+  - **Dados** · linha por tipo de dado bruto, com mini-sparkline (SVG)
+    dos ultimos 6 registros + variacao % vs mes anterior
+  - **Indicadores** · KPIs calculados com filtro por valor da Jornada
+    (pills · nao tabs)
+- Coracao da decisao: dado eh `dados_brutos.valor` (numero absoluto),
+  indicador eh KPI derivado em `kpi_indicadores_taticos`. UI deixa
+  isso explicito.
+
 ### Modulos de culto · finalizacao (2026-05-20)
 Decisoes do Marcos pos-organograma:
 
