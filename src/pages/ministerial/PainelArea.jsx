@@ -57,6 +57,14 @@ const VALOR_LABELS = {
   generosidade: 'Viver Generosamente',
 };
 
+const VALOR_CORES = {
+  seguir: '#8B5CF6',
+  conectar: '#3B82F6',
+  investir: '#F59E0B',
+  servir: '#10B981',
+  generosidade: '#EC4899',
+};
+
 const STATUS_META = {
   no_alvo:   { label: 'No alvo',  className: 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-400' },
   atrasado:  { label: 'Atrasado', className: 'bg-amber-500/15 text-amber-700 dark:text-amber-400' },
@@ -306,15 +314,12 @@ export default function PainelArea({ area }) {
               Nenhum dado bruto registrado pra esta área ainda.
             </Card>
           ) : (
-            <Card className="divide-y divide-border">
-              {(data.dados || []).map(d => (
-                <DadoRow key={d.tipo_id} dado={d} accent={meta.accent} />
-              ))}
-            </Card>
+            <DadosPorValor dados={data.dados || []} accent={meta.accent} />
           )}
           <p className="text-xs text-muted-foreground mt-3">
             Dados brutos são os números preenchidos diretamente em <span className="font-mono">/integracao</span>.
             Os indicadores (aba ao lado) são calculados automaticamente a partir desses dados.
+            Cada dado pode alimentar KPIs de um ou mais <strong>valores da Jornada</strong>.
           </p>
         </TabsContent>
 
@@ -368,10 +373,13 @@ function DadoRow({ dado, accent }) {
     : 'text-muted-foreground';
 
   // Mini sparkline
-  const valores = dado.historico_6.map(h => h.valor);
-  const maxV = Math.max(...valores, 1);
-  const minV = Math.min(...valores, 0);
+  const valoresHist = dado.historico_6.map(h => h.valor);
+  const maxV = Math.max(...valoresHist, 1);
+  const minV = Math.min(...valoresHist, 0);
   const range = maxV - minV || 1;
+
+  // Valores da Jornada que esse dado alimenta
+  const valoresJornada = dado.valores_jornada || [];
 
   return (
     <div className="p-4 flex items-start gap-4 flex-wrap">
@@ -380,19 +388,36 @@ function DadoRow({ dado, accent }) {
         {dado.descricao && (
           <p className="text-xs text-muted-foreground mt-0.5 line-clamp-2">{dado.descricao}</p>
         )}
-        <div className="flex items-center gap-3 mt-2 text-xs">
+        <div className="flex items-center gap-2 mt-2 text-xs flex-wrap">
           <span className="text-muted-foreground">
             {dado.granularidade} · {dado.agregacao}
           </span>
           {dado.ultima_data && (
             <span className="text-muted-foreground">
-              último em {formatData(dado.ultima_data)}
+              · último em {formatData(dado.ultima_data)}
             </span>
           )}
           <span className="text-muted-foreground">
-            {dado.total_registros} registros (180d)
+            · {dado.total_registros} registros (180d)
           </span>
         </div>
+        {valoresJornada.length > 0 && (
+          <div className="flex items-center gap-1 mt-2 flex-wrap">
+            <span className="text-[10px] uppercase tracking-wider text-muted-foreground">Alimenta:</span>
+            {valoresJornada.map(v => (
+              <span
+                key={v}
+                className="text-[10px] px-1.5 py-0.5 rounded font-medium"
+                style={{
+                  background: (VALOR_CORES[v] || '#94a3b8') + '20',
+                  color: VALOR_CORES[v] || '#475569',
+                }}
+              >
+                {VALOR_LABELS[v]?.split(' ')[0] || v}
+              </span>
+            ))}
+          </div>
+        )}
       </div>
 
       {/* Sparkline mini */}
@@ -422,6 +447,64 @@ function DadoRow({ dado, accent }) {
   );
 }
 
+function DadosPorValor({ dados, accent }) {
+  const [filtro, setFiltro] = useState('todos');
+
+  // Conta dados por valor (dado pode alimentar varios valores)
+  const contagem = useMemo(() => {
+    const c = { todos: dados.length, sem_valor: 0 };
+    for (const d of dados) {
+      const vals = d.valores_jornada || [];
+      if (vals.length === 0) c.sem_valor++;
+      for (const v of vals) c[v] = (c[v] || 0) + 1;
+    }
+    return c;
+  }, [dados]);
+
+  const valoresDisp = useMemo(
+    () => Object.keys(contagem).filter(v => v !== 'todos' && v !== 'sem_valor' && contagem[v] > 0),
+    [contagem]
+  );
+
+  const dadosFiltrados = useMemo(() => {
+    if (filtro === 'todos') return dados;
+    if (filtro === 'sem-valor') return dados.filter(d => !d.valores_jornada || d.valores_jornada.length === 0);
+    return dados.filter(d => (d.valores_jornada || []).includes(filtro));
+  }, [filtro, dados]);
+
+  return (
+    <div className="space-y-4">
+      <div className="flex flex-wrap gap-2">
+        <FilterPill active={filtro === 'todos'} onClick={() => setFiltro('todos')} accent={accent}>
+          Todos ({contagem.todos})
+        </FilterPill>
+        {valoresDisp.map(v => (
+          <FilterPill key={v} active={filtro === v} onClick={() => setFiltro(v)} accent={VALOR_CORES[v] || accent}>
+            {VALOR_LABELS[v] || v} ({contagem[v]})
+          </FilterPill>
+        ))}
+        {contagem.sem_valor > 0 && (
+          <FilterPill active={filtro === 'sem-valor'} onClick={() => setFiltro('sem-valor')} accent={accent}>
+            Sem valor ({contagem.sem_valor})
+          </FilterPill>
+        )}
+      </div>
+
+      <Card className="divide-y divide-border">
+        {dadosFiltrados.length === 0 ? (
+          <div className="p-6 text-center text-sm text-muted-foreground">
+            Nenhum dado neste filtro.
+          </div>
+        ) : (
+          dadosFiltrados.map(d => (
+            <DadoRow key={d.tipo_id} dado={d} accent={accent} />
+          ))
+        )}
+      </Card>
+    </div>
+  );
+}
+
 function IndicadoresPorValor({ kpis, porValor, semValor, navigate, accent }) {
   const [filtro, setFiltro] = useState('todos');
 
@@ -444,7 +527,7 @@ function IndicadoresPorValor({ kpis, porValor, semValor, navigate, accent }) {
         {valoresDisp.map(v => {
           const count = (porValor[v] || []).filter(k => !/^CULTO-NPS-/i.test(k.id)).length;
           return (
-            <FilterPill key={v} active={filtro === v} onClick={() => setFiltro(v)} accent={accent}>
+            <FilterPill key={v} active={filtro === v} onClick={() => setFiltro(v)} accent={VALOR_CORES[v] || accent}>
               {VALOR_LABELS[v] || v} ({count})
             </FilterPill>
           );

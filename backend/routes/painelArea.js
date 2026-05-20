@@ -26,11 +26,11 @@ router.get('/:area', authorizeModule('painel-area', 1), async (req, res) => {
     }
 
     // ──────────────────────────────────────────────────────────────────────
-    // 1. KPIs ativos da area + trajetoria + lideres
+    // 1. KPIs ativos da area + trajetoria + lideres + formula (pra cruzar com dados)
     // ──────────────────────────────────────────────────────────────────────
     const { data: kpisRaw } = await supabase
       .from('kpi_indicadores_taticos')
-      .select('id, indicador, descricao, area, valores, periodicidade, meta_descricao, meta_valor, unidade, is_okr, tipo_kpi, lider_funcionario_id')
+      .select('id, indicador, descricao, area, valores, periodicidade, meta_descricao, meta_valor, unidade, is_okr, tipo_kpi, lider_funcionario_id, formula_config')
       .eq('ativo', true)
       .ilike('area', area)
       .order('indicador', { ascending: true });
@@ -120,6 +120,22 @@ router.get('/:area', authorizeModule('painel-area', 1), async (req, res) => {
       dadosPorTipo.get(tipo.id).registros.push({ data: d.data, valor: Number(d.valor) });
     }
 
+    // Mapa · tipo_id → valores da Jornada (somando valores de todos KPIs
+    // da area que usam aquele dado_tipo na formula_config)
+    const valoresPorTipo = new Map();
+    for (const k of kpis) {
+      const dadoTipo = k.formula_config?.dado_tipo
+        || k.formula_config?.numerador
+        || k.formula_config?.denominador;
+      if (!dadoTipo) continue;
+      const tipos = Array.isArray(dadoTipo) ? dadoTipo : [dadoTipo];
+      const vals = Array.isArray(k.valores) ? k.valores : [];
+      for (const t of tipos) {
+        if (!valoresPorTipo.has(t)) valoresPorTipo.set(t, new Set());
+        vals.forEach(v => valoresPorTipo.get(t).add(v));
+      }
+    }
+
     const dados = Array.from(dadosPorTipo.values()).map(t => {
       const regs = t.registros; // ja em ordem desc
       const ultimo = regs[0] || null;
@@ -133,6 +149,7 @@ router.get('/:area', authorizeModule('painel-area', 1), async (req, res) => {
       const variacaoMes = totalMesAnterior > 0
         ? ((totalMesAtual - totalMesAnterior) / totalMesAnterior) * 100
         : null;
+      const valoresJornada = Array.from(valoresPorTipo.get(t.tipo_id) || []);
       return {
         tipo_id: t.tipo_id,
         tipo_nome: t.tipo_nome,
@@ -141,6 +158,7 @@ router.get('/:area', authorizeModule('painel-area', 1), async (req, res) => {
         agregacao: t.agregacao,
         granularidade: t.granularidade,
         ordem: t.ordem,
+        valores_jornada: valoresJornada,  // ← novo · valores que esse dado alimenta
         total_registros: regs.length,
         ultimo_valor: ultimo?.valor ?? null,
         ultima_data: ultimo?.data ?? null,
