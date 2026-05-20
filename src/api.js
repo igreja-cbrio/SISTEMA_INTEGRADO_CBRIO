@@ -644,6 +644,10 @@ export const notificacoes = {
   },
 };
 
+export const painelArea = {
+  get: (area) => get(`/painel-area/${encodeURIComponent(area)}`),
+};
+
 export const permissoes = {
   bustCache: () => post('/permissoes/cache/bust', {}),
   estrutura: () => get('/permissoes/estrutura'),
