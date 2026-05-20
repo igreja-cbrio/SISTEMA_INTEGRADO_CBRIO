@@ -209,6 +209,7 @@ export function AuthProvider({ children }) {
     signInWithGoogle,
     signInWithEmail,
     signOut,
+    refreshProfile: () => user?.id && fetchProfile(user.id),
   };
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

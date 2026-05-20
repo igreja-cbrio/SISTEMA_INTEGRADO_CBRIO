@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { Users, Pencil, Trash2, Palmtree, X, Save, AlertTriangle, Download, UserPlus, Briefcase, Calendar, Search, Filter, Eye, Edit, MoreVertical, LayoutDashboard, Network, Receipt, Star, Clock, CalendarDays, Scale } from 'lucide-react';
+import { Users, Pencil, Trash2, Palmtree, X, Save, AlertTriangle, Download, UserPlus, Briefcase, Calendar, Search, Filter, Eye, Edit, MoreVertical, LayoutDashboard, Network, Receipt, Star, Clock, CalendarDays, Scale, Camera } from 'lucide-react';
 import { Button } from '../../../components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../../../components/ui/card';
 import { StatisticsCard } from '../../../components/ui/statistics-card';
@@ -367,6 +367,10 @@ export default function RH() {
           const refreshed = await rh.funcionarios.get(modalDetail.id);
           setModalDetail(refreshed);
           loadFuncs(); loadDash();
+        }}
+        onPhotoUpdated={(novoUrl) => {
+          setModalDetail((prev) => prev ? { ...prev, foto_url: novoUrl } : prev);
+          loadFuncs();
         }}
       />
       <DocumentoFormModal open={!!modalDoc} data={modalDoc} onClose={() => setModalDoc(null)} onSave={saveDocumento} />
@@ -2196,7 +2200,7 @@ function NotasColaborador({ funcId, initialValue }) {
 const NIVEL_LABELS = { 1: 'Sem acesso', 2: 'Pessoal', 3: 'Área', 4: 'Setor', 5: 'Admin' };
 const NIVEL_COLORS = { 1: C.red, 2: C.amber, 3: C.blue, 4: C.green, 5: '#8b5cf6' };
 
-function FuncionarioDetailPanel({ open, data, onClose, onEdit, onDelete, onNewDoc, onDeleteDoc, onSaveInline }) {
+function FuncionarioDetailPanel({ open, data, onClose, onEdit, onDelete, onNewDoc, onDeleteDoc, onSaveInline, onPhotoUpdated }) {
   const [showPerms, setShowPerms] = useState(false);
   const [permData, setPermData] = useState(null);
   const [estrutura, setEstrutura] = useState(null);
@@ -2206,6 +2210,25 @@ function FuncionarioDetailPanel({ open, data, onClose, onEdit, onDelete, onNewDo
   const [editMode, setEditMode] = useState(false);
   const [editForm, setEditForm] = useState({});
   const [savingInline, setSavingInline] = useState(false);
+  const [uploadingFoto, setUploadingFoto] = useState(false);
+  const fotoInputRef = useRef(null);
+
+  async function handleFotoChange(e) {
+    const file = e.target.files?.[0];
+    if (!file || !data?.id) return;
+    if (!file.type.startsWith('image/')) { alert('Selecione uma imagem'); return; }
+    if (file.size > 10 * 1024 * 1024) { alert('Imagem precisa ter no maximo 10 MB'); return; }
+    setUploadingFoto(true);
+    try {
+      const result = await rh.funcionarios.uploadFoto(data.id, file);
+      onPhotoUpdated?.(result.foto_url);
+    } catch (err) {
+      alert(err.message || 'Erro ao enviar foto');
+    } finally {
+      setUploadingFoto(false);
+      if (fotoInputRef.current) fotoInputRef.current.value = '';
+    }
+  }
 
   // Estado local das permissões (editável, salva só no botão)
   const [localCargo, setLocalCargo] = useState(null);
@@ -2345,17 +2368,36 @@ function FuncionarioDetailPanel({ open, data, onClose, onEdit, onDelete, onNewDo
         <div style={{ padding: '24px 28px' }}>
       {/* Avatar + Info principal */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 16, marginBottom: 24 }}>
-        {data.foto_url ? (
-          <img src={data.foto_url} alt="" style={{ width: 72, height: 72, borderRadius: '50%', objectFit: 'cover', border: `3px solid ${C.primary}`, flexShrink: 0 }} />
-        ) : (
-          <div style={{ width: 72, height: 72, borderRadius: '50%', background: C.primaryBg, color: C.primary, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 28, fontWeight: 700, flexShrink: 0 }}>
-            {(data.nome || '?')[0].toUpperCase()}
-          </div>
-        )}
+        <div style={{ position: 'relative', flexShrink: 0 }}>
+          {data.foto_url ? (
+            <img src={data.foto_url} alt="" style={{ width: 72, height: 72, borderRadius: '50%', objectFit: 'cover', border: `3px solid ${C.primary}` }} />
+          ) : (
+            <div style={{ width: 72, height: 72, borderRadius: '50%', background: C.primaryBg, color: C.primary, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 28, fontWeight: 700 }}>
+              {(data.nome || '?')[0].toUpperCase()}
+            </div>
+          )}
+          <button
+            type="button"
+            onClick={() => fotoInputRef.current?.click()}
+            disabled={uploadingFoto}
+            title="Trocar foto"
+            style={{ position: 'absolute', bottom: -2, right: -2, width: 28, height: 28, borderRadius: '50%', background: C.primary, color: '#fff', border: '2px solid var(--cbrio-card)', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: uploadingFoto ? 'wait' : 'pointer', opacity: uploadingFoto ? 0.6 : 1 }}
+          >
+            <Camera className="h-3.5 w-3.5" />
+          </button>
+          <input
+            ref={fotoInputRef}
+            type="file"
+            accept="image/*"
+            onChange={handleFotoChange}
+            style={{ display: 'none' }}
+          />
+        </div>
         <div>
           <div style={{ fontSize: 18, fontWeight: 700, color: C.text }}>{data.nome}</div>
           <div style={{ fontSize: 14, color: C.text2 }}>{data.cargo}{data.area ? ` · ${data.area}` : ''}</div>
           <Badge status={data.status} map={STATUS_COLORS} />
+          {uploadingFoto ? <div style={{ fontSize: 11, color: C.text2, marginTop: 4 }}>Enviando foto...</div> : null}
         </div>
       </div>
       {editMode ? (

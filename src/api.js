@@ -507,6 +507,11 @@ export const rh = {
     create: (data) => post('/rh/funcionarios', data),
     update: (id, data) => put(`/rh/funcionarios/${id}`, data),
     remove: (id) => del(`/rh/funcionarios/${id}`),
+    uploadFoto: (id, file) => {
+      const fd = new FormData();
+      fd.append('foto', file);
+      return requestFile(`/rh/funcionarios/${id}/foto`, fd);
+    },
   },
   documentos: {
     create: (funcId, data) => post(`/rh/funcionarios/${funcId}/documentos`, data),
@@ -1593,4 +1598,12 @@ export const planejamento = {
   // Litúrgicos (PR-C)
   listLiturgiaTemplates: () => get('/planejamento/liturgia/templates'),
   gerarLiturgia: (year) => post(`/planejamento/liturgia/gerar/${year}`, {}),
+};
+
+export const auth = {
+  uploadFoto: (file) => {
+    const fd = new FormData();
+    fd.append('foto', file);
+    return requestFile('/auth/profile/foto', fd);
+  },
 };
