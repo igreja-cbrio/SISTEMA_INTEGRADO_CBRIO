@@ -460,12 +460,23 @@ export default function DashSemanalAba() {
                     <CartesianGrid strokeDasharray="3 3" opacity={0.25} />
                     <XAxis dataKey="nome" tick={{ fontSize: 12 }} />
                     <YAxis yAxisId="left" tick={{ fontSize: 11 }} allowDecimals={false} />
-                    {isSingle && (
+                    {isSingle && primario?.indDef?.usa_ocupacao && (
                       <YAxis
                         yAxisId="right"
                         orientation="right"
                         tick={{ fontSize: 11 }}
                         unit="%"
+                        domain={[0, 'auto']}
+                      />
+                    )}
+                    {/* Eixo invisivel da linha de variacao · permite valores
+                        negativos sem afetar o eixo das barras laranja */}
+                    {isSingle && (
+                      <YAxis
+                        yAxisId="var"
+                        orientation="right"
+                        hide
+                        domain={['dataMin - 10', 'dataMax + 10']}
                       />
                     )}
                     <Tooltip
@@ -541,9 +552,10 @@ export default function DashSemanalAba() {
                             />
                           </Bar>
                         )}
-                        {/* Linha de variacao % por culto · sempre visivel em modo single */}
+                        {/* Linha de variacao % por culto · eixo invisivel proprio
+                            (var) pra nao afetar a escala das barras laranjas */}
                         <Line
-                          yAxisId="right"
+                          yAxisId="var"
                           type="monotone"
                           dataKey="variacao"
                           name="Variação por culto"
