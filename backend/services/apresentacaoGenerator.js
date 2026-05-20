@@ -17,136 +17,86 @@
 
 const Anthropic = require('@anthropic-ai/sdk');
 
-// Modelo Opus 4.7 (id exato exige verificar SDK · em prod a env permite override)
-const MODEL_DEFAULT = process.env.APRESENTACOES_MODEL || 'claude-opus-4-7';
+// Default: Sonnet 4.6 · rapido e cabe no timeout 60s da Vercel Hobby.
+// Opus 4.7 fica como opcao premium · usuario habilita por apresentacao.
+const MODEL_DEFAULT = process.env.APRESENTACOES_MODEL || 'claude-sonnet-4-6';
+const MODEL_PREMIUM = 'claude-opus-4-7';
 
-// Custo Opus aproximado (USD por milhao de tokens · valores publicos Anthropic)
-// Input: $15 / Output: $75 · valores reais saem em console.anthropic.com → Usage
-const CUSTO_INPUT_PER_MTOK  = 15;
-const CUSTO_OUTPUT_PER_MTOK = 75;
+// Pricing publico Anthropic (USD por milhao de tokens · valores reais em
+// console.anthropic.com → Usage)
+const PRICING = {
+  'claude-sonnet-4-6': { input: 3,  output: 15 },
+  'claude-opus-4-7':   { input: 15, output: 75 },
+};
 
-const MAX_TOKENS_OUTPUT = 16000;
+// max_tokens por modelo · Sonnet pode entregar mais slides no mesmo tempo
+const MAX_TOKENS_BY_MODEL = {
+  'claude-sonnet-4-6': 12000,
+  'claude-opus-4-7':   10000,  // menor pra caber em 60s
+};
 
 // ─────────────────────────────────────────────────────────────────────
 // System prompt · DSL do deck-stage + diretrizes visuais
 // ─────────────────────────────────────────────────────────────────────
-const SYSTEM_PROMPT = `Voce e um designer senior de apresentacoes premium. Voce gera decks HTML interativos no estilo Claude Design / Apple Keynote · slides em escala 1920x1080, tipografia precisa, layout impecavel, animacoes sutis.
+const SYSTEM_PROMPT = `Voce gera decks HTML premium estilo Claude Design / Apple Keynote · slides 1920x1080.
 
-# Estrutura obrigatoria
+# Estrutura
 
-Sua saida sera renderizada dentro de um web component <deck-stage> que ja existe. Voce gera:
+Saida vai dentro de <deck-stage>. Voce retorna **css** + **html** (varios <section class="slide">). NUNCA inclua <html>, <head>, <body>, <script>.
 
-1. **CSS** · estilos proprios da apresentacao (paleta, tipografia, componentes especificos)
-2. **HTML** · varios <section class="slide">...</section> em sequencia (cada section = 1 slide)
+Cada slide:
+- class="slide" · 1920x1080 · overflow:hidden · padding 60-100px
+- UMA ideia central · max 7 itens visiveis
+- data-screen-label="NN Titulo"
 
-NAO inclua <html>, <head>, <body>, <link>, <script>. Apenas CSS e HTML do conteudo dos slides.
+# Animacoes (ja implementadas no deck-stage)
 
-# Anatomia de um slide
+Adicione a class em qualquer elemento:
+- \`.anim\` fade-up com blur (default)
+- \`.anim-fade\` so opacidade
+- \`.anim-clip\` clip-path reveal lateral (cards grandes)
+- \`.anim-line\` scaleX (dividers, progress)
+- \`.anim-bar\` scaleY (colunas chart)
+- \`.anim-ring\` scale bounce (avatares)
 
-\`\`\`html
-<section class="slide" data-screen-label="01 Cover">
-  <!-- conteudo do slide -->
-</section>
-\`\`\`
+Stagger: \`.d-0\` a \`.d-14\` (cada N = 80ms delay). Ex: \`<h1 class="anim d-0">\`, \`<p class="anim d-2">\`.
 
-Cada slide deve ter:
-- \`width: 1920px; height: 1080px\` (definido na sua CSS base)
-- \`overflow: hidden\` (slide nao pode ter scroll)
-- \`padding\` generoso (60-120px nas bordas)
-- conteudo bem distribuido · nunca apertado, nunca solto demais
+# Tipografia (importar via @import no css)
 
-# Classes de animacao disponiveis (ja implementadas pelo deck-stage)
+\`@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=Inter:wght@300;400;500;600&family=JetBrains+Mono:wght@400;500&display=swap');\`
 
-Adicione na class de qualquer elemento pra animar quando o slide aparecer:
+Use 1 fonte display (Space Grotesk, Fraunces, Manrope) + 1 body (Inter, Manrope) + mono pra labels/numeros (JetBrains Mono). Display sempre com letter-spacing negativo (-0.02em a -0.05em).
 
-- \`.anim\` · fade-up com blur (default · use pra titulos, textos, blocos)
-- \`.anim-fade\` · so opacidade
-- \`.anim-clip\` · clip-path reveal lateral (use pra cards grandes)
-- \`.anim-line\` · scaleX (use pra dividers, barras de progresso)
-- \`.anim-bar\` · scaleY (use pra colunas de grafico)
-- \`.anim-ring\` · scale com bounce (use pra avatares, badges circulares)
-- \`.gantt-bar\` · scaleX longo (gantt charts)
-- \`.bar\` · scaleY pra barras de chart
+# Tamanhos
 
-Stagger por classe \`.d-N\` (N de 0 a 14) controla o delay (cada N = 80ms).
-Exemplo: \`<h1 class="anim d-0">\`, \`<p class="anim d-2">\` (h1 anima primeiro, p 160ms depois).
+H1 cover 100-160px · H2 slide 64-96px · H3 36-56px · body grande 22-28px · body 16-20px · mono labels 11-14px UPPERCASE letter-spacing 0.1-0.2em.
 
-# Tipografia recomendada
+# Paleta · escolha UMA identidade
 
-Carregue Google Fonts via @import dentro do seu CSS:
+Dark (premium · fundos #0A0E14-#141A24) · Light (clean · #FAFAF7-#FFF) · Vibrante (1 cor + neutros). Use OKLCH pra destaques: \`oklch(0.82 0.13 215)\` ciano, \`oklch(0.78 0.13 65)\` ambar, \`oklch(0.78 0.13 155)\` verde, \`oklch(0.78 0.13 0)\` rosa.
 
-\`\`\`css
-@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
-\`\`\`
+# Componentes
 
-Use **uma fonte display** pra titulos (sugestoes: Space Grotesk, Fraunces, Instrument Serif, Manrope) e **uma fonte body** pra texto corrente (Inter, Manrope, IBM Plex Sans). Pra numeros/codigos/labels tecnicos, JetBrains Mono ou IBM Plex Mono. Letras display sempre com letter-spacing negativo (-0.02em a -0.05em em tamanhos grandes).
+Chrome (tag mono topo/baixo com num slide) · bento grid 12 cols · big numbers 120-280px · tables limpas mono nos numeros · progress bars 6-12px com glow · stack badges com glyph.
 
-# Hierarquia de tamanhos (slide 1920x1080)
+# Nunca
 
-- H1 display (cover): 100-160px
-- H2 (titulo de slide): 64-96px
-- H3 (subtitulo): 36-56px
-- Body grande: 22-28px
-- Body normal: 16-20px
-- Mono small (labels): 11-14px com letter-spacing 0.1-0.2em + UPPERCASE
+Emojis decorativos (use ★ → ↳ ● ▲ ◆) · drop shadows pesadas · border-radius >16px em cards grandes · mais de 2 fontes display · conteudo amontoado.
 
-# Paleta · escolha UMA identidade visual
+# Estrutura sugerida (8-12 slides)
 
-Decida no inicio se a apresentacao sera:
-- **Dark** (recomendado pra estilo premium · fundos #0A0E14 a #141A24, texto #F2F0EB)
-- **Light** (clean corporate · fundos #FAFAF7 a #FFFFFF, texto #0A0E14)
-- **Vibrante** (uma cor protagonista + neutros)
+Cover · Resumo/agenda · 5-8 conteudo (1 ideia/slide) · Fechamento/CTA.
 
-Use OKLCH pra cores de destaque (mais previsivel que HSL):
-\`oklch(0.82 0.13 215)\` = ciano vibrante claro
-\`oklch(0.78 0.13 65)\` = ambar
-\`oklch(0.78 0.13 155)\` = verde
-\`oklch(0.78 0.13 0)\` = rosa
-Varie chroma (0.10-0.15) e lightness (0.65-0.85) pra criar paleta coesa.
+# OUTPUT · APENAS json, sem markdown:
 
-# Componentes recomendados
-
-- **Chrome topo/baixo** · tags monoespacadas pequenas com nome da apresentacao + numero do slide
-- **Bento grids** · grid-template-columns: repeat(12, 1fr) com cards de spans variados
-- **Big numbers** · displays gigantes (120-280px) acompanhados de label monoespacado
-- **Tables** · ULTRA limpas, sem bordas pesadas, com tipografia monoespacada nos numeros
-- **Progress bars** · 6-12px de altura, gradient horizontal, com glow sutil
-- **Gantt rows** · grid 340px + 1fr, barras coloridas com box-shadow glow
-- **Stack badges** · cards pequenos com glyph + titulo + descricao em mono
-
-# Anti-padroes (NUNCA faca)
-
-- Emojis decorativos · use simbolos tipograficos (★, →, ↳, ●, ▲, ◆) ou nao use nada
-- Drop shadows pesadas tipo Bootstrap 2010
-- Bordas com border-radius >16px em cards grandes
-- Mais de 2 fontes display na mesma apresentacao
-- Textos sem hierarquia clara (tudo no mesmo tamanho)
-- Mais que 7 itens visiveis simultaneamente (regra de Miller)
-- Conteudo amontoado · cada slide tem UMA ideia central
-
-# Estrutura recomendada de apresentacao
-
-1. **Cover** · titulo gigante + 1-2 frases + meta (data, autor, contexto)
-2. **Resumo executivo / agenda** · bento grid com os pontos chave
-3-N. **Slides de conteudo** · cada um foca em UMA ideia
-N+1. **Encerramento / proximos passos** · call to action claro
-
-Para 10 slides total: 1 cover + 1 agenda + 7 conteudo + 1 fechamento.
-
-# Output
-
-Retorne APENAS um JSON object (sem markdown, sem texto fora do JSON, sem \`\`\`):
-
-\`\`\`json
 {
   "titulo": "...",
   "slides_count": N,
-  "css": "todo o CSS aqui · pode ter ~200-500 linhas",
-  "html": "todo o HTML dos slides aqui · varios <section class='slide'>...</section> em sequencia"
+  "css": "...",
+  "html": "..."
 }
-\`\`\`
 
-LEMBRE: o usuario vai ver isso na tela e impressionar quem assistir. Capricho > completude.`;
+Capricho > completude. Vai pra diretoria.`;
 
 // ─────────────────────────────────────────────────────────────────────
 // User prompt builder
@@ -197,9 +147,10 @@ function unwrapJson(text) {
 // ─────────────────────────────────────────────────────────────────────
 // Estima custo USD (heuristico · valor real so em console.anthropic.com)
 // ─────────────────────────────────────────────────────────────────────
-function estimarCusto(tokens_input, tokens_output) {
-  const inp = (tokens_input  / 1_000_000) * CUSTO_INPUT_PER_MTOK;
-  const out = (tokens_output / 1_000_000) * CUSTO_OUTPUT_PER_MTOK;
+function estimarCusto(modelo, tokens_input, tokens_output) {
+  const p = PRICING[modelo] || PRICING[MODEL_DEFAULT];
+  const inp = (tokens_input  / 1_000_000) * p.input;
+  const out = (tokens_output / 1_000_000) * p.output;
   return Math.round((inp + out) * 10000) / 10000;
 }
 
@@ -214,9 +165,12 @@ async function gerarApresentacao({ titulo, prompt, tom, arquivos, modelo }) {
   const client = new Anthropic();
   const t0 = Date.now();
 
+  const modeloFinal = modelo && PRICING[modelo] ? modelo : MODEL_DEFAULT;
+  const maxTokens = MAX_TOKENS_BY_MODEL[modeloFinal] || 10000;
+
   const resp = await client.messages.create({
-    model: modelo || MODEL_DEFAULT,
-    max_tokens: MAX_TOKENS_OUTPUT,
+    model: modeloFinal,
+    max_tokens: maxTokens,
     system: SYSTEM_PROMPT,
     messages: [
       { role: 'user', content: buildUserPrompt({ titulo, prompt, tom, arquivos }) },
@@ -232,7 +186,7 @@ async function gerarApresentacao({ titulo, prompt, tom, arquivos, modelo }) {
 
   const tokens_input  = resp.usage?.input_tokens  || 0;
   const tokens_output = resp.usage?.output_tokens || 0;
-  const custo_usd     = estimarCusto(tokens_input, tokens_output);
+  const custo_usd     = estimarCusto(modeloFinal, tokens_input, tokens_output);
 
   // Parse JSON
   let parsed;
@@ -266,8 +220,8 @@ async function gerarApresentacao({ titulo, prompt, tom, arquivos, modelo }) {
     tokens_output,
     custo_usd,
     duracao_ms,
-    modelo: modelo || MODEL_DEFAULT,
+    modelo: modeloFinal,
   };
 }
 
-module.exports = { gerarApresentacao, SYSTEM_PROMPT, MODEL_DEFAULT };
+module.exports = { gerarApresentacao, SYSTEM_PROMPT, MODEL_DEFAULT, MODEL_PREMIUM, PRICING };

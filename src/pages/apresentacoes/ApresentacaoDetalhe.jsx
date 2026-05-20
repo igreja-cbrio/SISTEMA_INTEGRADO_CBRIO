@@ -35,6 +35,8 @@ export default function ApresentacaoDetalhe() {
   const [html, setHtml] = useState('');
   const [loadingHtml, setLoadingHtml] = useState(false);
   const [regenerando, setRegenerando] = useState(false);
+  const [resetando, setResetando] = useState(false);
+  const [tickSec, setTickSec] = useState(0);
 
   const carregar = useCallback(async () => {
     try {
@@ -55,6 +57,18 @@ export default function ApresentacaoDetalhe() {
     const t = setInterval(carregar, POLL_INTERVAL_MS);
     return () => clearInterval(t);
   }, [apres, carregar]);
+
+  // Contador de segundos desde o updated_at enquanto status='gerando'
+  useEffect(() => {
+    if (apres?.status !== 'gerando') { setTickSec(0); return; }
+    function updateTick() {
+      const ms = Date.now() - new Date(apres.updated_at || apres.created_at).getTime();
+      setTickSec(Math.floor(ms / 1000));
+    }
+    updateTick();
+    const t = setInterval(updateTick, 1000);
+    return () => clearInterval(t);
+  }, [apres?.status, apres?.updated_at, apres?.created_at]);
 
   // Quando status vira pronto, carrega HTML do viewer
   useEffect(() => {
@@ -90,6 +104,20 @@ export default function ApresentacaoDetalhe() {
       toast.error('Erro: ' + e.message);
     } finally {
       setRegenerando(false);
+    }
+  }
+
+  async function marcarTravada() {
+    if (!window.confirm('Marcar como travada? Você poderá tentar de novo em seguida.')) return;
+    setResetando(true);
+    try {
+      await api.reset(id);
+      toast.success('Resetada · tente novamente');
+      carregar();
+    } catch (e) {
+      toast.error(e.message);
+    } finally {
+      setResetando(false);
     }
   }
 
@@ -210,10 +238,24 @@ export default function ApresentacaoDetalhe() {
       {apres.status === 'gerando' && (
         <Card className="p-8 text-center border-dashed">
           <Loader2 className="h-8 w-8 mx-auto text-cyan-400 animate-spin mb-3" />
-          <h3 className="font-medium mb-1">Claude Opus está montando seus slides</h3>
-          <p className="text-sm text-muted-foreground max-w-md mx-auto">
-            Isso leva 30-60 segundos. A página atualiza automaticamente quando ficar pronto · não precisa recarregar.
+          <h3 className="font-medium mb-1">
+            {apres.modelo_ia === 'claude-opus-4-7' ? 'Claude Opus' : 'Claude Sonnet'} está montando seus slides
+          </h3>
+          <p className="text-sm text-muted-foreground max-w-md mx-auto mb-3">
+            {tickSec < 60 ? (
+              <>Decorridos <span className="text-cyan-300 font-mono">{tickSec}s</span> · normalmente leva 20-50s · pode fechar a aba (notifica no sino).</>
+            ) : tickSec < 90 ? (
+              <>Decorridos <span className="text-amber-300 font-mono">{tickSec}s</span> · acima do esperado. Vercel limita 60s, pode dar timeout.</>
+            ) : (
+              <>Decorridos <span className="text-rose-300 font-mono">{tickSec}s</span> · provavelmente travou no timeout. Marque como erro pra tentar novamente.</>
+            )}
           </p>
+          {tickSec >= 90 && (
+            <Button onClick={marcarTravada} disabled={resetando} variant="outline" className="mt-2">
+              {resetando ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <AlertCircle className="h-4 w-4 mr-1" />}
+              Marcar como travada
+            </Button>
+          )}
         </Card>
       )}
 
