@@ -119,10 +119,11 @@ export function CommandSearch() {
 
   return (
     <div className="fixed inset-0 z-[999]" onClick={handleClose}>
-      <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" />
-      <div className="flex items-start justify-center pt-[20vh]">
+      <div className="absolute inset-0 bg-black/70" />
+      <div className="relative flex items-start justify-center pt-[20vh]">
         <div
-          className="w-full max-w-lg rounded-2xl border border-border bg-card shadow-2xl overflow-hidden"
+          className="w-full max-w-lg rounded-2xl border border-border shadow-2xl overflow-hidden"
+          style={{ background: 'var(--cbrio-card)' }}
           onClick={(e) => e.stopPropagation()}
         >
           <div className="flex items-center gap-3 px-4 py-3 border-b border-border">
