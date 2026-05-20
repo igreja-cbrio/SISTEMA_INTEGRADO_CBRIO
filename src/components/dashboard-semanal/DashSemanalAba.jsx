@@ -1,10 +1,10 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useRef } from 'react';
 import { useQueries, useQuery } from '@tanstack/react-query';
 import { motion, AnimatePresence } from 'framer-motion';
 import { dashboardSemanal as api } from '../../api';
 import { Card, CardContent, CardHeader, CardTitle } from '../ui/card';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../ui/select';
-import { Loader2, TrendingUp, TrendingDown, Users, GitCompare, Check } from 'lucide-react';
+import { Loader2, TrendingUp, TrendingDown, Users, GitCompare, Check, Calendar as CalIcon, Tv } from 'lucide-react';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend, LabelList, Cell,
 } from 'recharts';
@@ -155,6 +155,36 @@ export default function DashSemanalAba() {
     setCulto(prev => prev === entry.service_type_id ? 'todos' : entry.service_type_id);
   };
 
+  // Modo DDUS completo: DDUS so fecha 7 dias depois do culto, entao a semana
+  // que estamos apresentando ainda nao tem dados completos. Esse modo mostra
+  // SO online_ddus + semana = (semana atual selecionada) - 1, garantindo
+  // a janela completa.
+  const [modoDdus, setModoDdus] = useState(false);
+  const estadoSalvo = useRef(null);
+
+  const toggleModoDdus = () => {
+    if (modoDdus) {
+      if (estadoSalvo.current) {
+        setIndicadoresSel(estadoSalvo.current.indicadoresSel);
+        setSemana(estadoSalvo.current.semana);
+        setAno(estadoSalvo.current.ano);
+      }
+      estadoSalvo.current = null;
+      setModoDdus(false);
+    } else {
+      estadoSalvo.current = { indicadoresSel: [...indicadoresSel], semana, ano };
+      setIndicadoresSel(['online_ddus']);
+      // Volta 1 semana · trata cruzamento de ano (semana 1 -> 52/53 do ano anterior)
+      if (semana > 1) {
+        setSemana(semana - 1);
+      } else {
+        setAno(ano - 1);
+        setSemana(52);
+      }
+      setModoDdus(true);
+    }
+  };
+
   return (
     <div className="grid grid-cols-12 gap-4">
       {/* Sidebar com botões de indicador */}
@@ -252,7 +282,42 @@ export default function DashSemanalAba() {
           {isFetching && (
             <Loader2 className="h-4 w-4 animate-spin text-muted-foreground ml-2" />
           )}
+
+          {/* Botao DDUS completo · 1 semana antes da apresentada */}
+          <button
+            onClick={toggleModoDdus}
+            className={`ml-auto inline-flex items-center gap-1.5 px-3 py-2 text-xs font-medium rounded-lg border transition-colors ${
+              modoDdus
+                ? 'bg-purple-600 text-white border-purple-600'
+                : 'bg-card text-foreground border-border hover:border-purple-500/40'
+            }`}
+            title="DDUS so fecha 7 dias depois do culto. Esse modo mostra a semana anterior com dados completos."
+          >
+            <Tv className="h-3.5 w-3.5" />
+            {modoDdus ? 'Sair · DDUS completo' : 'DDUS completo (1 semana antes)'}
+          </button>
         </div>
+
+        {/* Banner explicativo quando modo DDUS esta ativo */}
+        {modoDdus && (
+          <motion.div
+            initial={{ opacity: 0, y: -8 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="flex items-start gap-3 rounded-lg border border-purple-500/40 bg-purple-500/5 px-3 py-2.5 text-xs"
+          >
+            <Tv className="h-4 w-4 text-purple-600 mt-0.5 shrink-0" />
+            <div className="flex-1">
+              <p className="font-medium text-foreground">
+                Modo DDUS completo · semana {semana}{ano !== anoSemAnterior && `/${ano}`}
+              </p>
+              <p className="text-muted-foreground mt-0.5">
+                Online DDUS (views D+1 a D+7) só fecha 7 dias depois do culto. Pra ter
+                dados completos, exibimos a semana anterior à da apresentação atual.
+                Dados coletados automaticamente do YouTube via API.
+              </p>
+            </div>
+          </motion.div>
+        )}
 
         {/* Aviso quando culto está filtrado (via dropdown ou click na barra) */}
         {cultoSelInfo && (
