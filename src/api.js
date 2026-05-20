@@ -1558,6 +1558,11 @@ export const online = {
     backfillCultos: () => post('/online/coletar/backfill-cultos', {}),
     catchUp: (limit = 5) => post(`/online/coletar/catch-up?limit=${limit}`, {}),
   },
+  debug: {
+    canaisAutorizados: () => get('/online/debug/canais-autorizados'),
+    analyticsTest: (video_id, start, end) =>
+      get(`/online/debug/analytics-test?video_id=${encodeURIComponent(video_id)}${start ? `&start=${start}` : ''}${end ? `&end=${end}` : ''}`),
+  },
 };
 
 // ─── Planejamento Anual ────────────────────────────────────────────────
