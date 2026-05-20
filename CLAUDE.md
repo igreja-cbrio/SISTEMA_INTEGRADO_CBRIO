@@ -79,6 +79,33 @@ usuarios). Tela em `/admin/permissoes` (arquivo
   aliases temporarios) · TODO de polish, nao bloqueante · hoje os hooks
   ja lem dos slugs novos via AuthContext
 
+### Modulos de culto · finalizacao (2026-05-20)
+Decisoes do Marcos pos-organograma:
+
+**Migration `20260520150000_cultos_finalizacao.sql`**:
+- Modulo "CBKids" renomeado pra "Kids"
+- 3 cargos novos · coordenador-kids, coordenador-ami, coordenador-bridge
+  (matriz copiada do coordenador-online)
+- **Matriz universal**: nivel 1 nos 4 modulos de culto (kids/ami/bridge/
+  online) pra TODOS os cargos ativos · qualquer pessoa pode visualizar
+- **Sem export**: `pode_exportar=false` forcado em todos os cargos nesses
+  modulos · read-only de verdade
+- Titulares atribuidos:
+  - Mariane Gaia · coordenador-kids · area KIDS
+  - Arthur Cecconi · coordenador-ami · area AMI
+  - Lillian Xavier (novo cadastro · lillian.xavier@cbrio.org) ·
+    coordenador-bridge · area Bridge
+- Boost por area continua dando nivel 5 (admin) automatico pros titulares
+  no proprio modulo
+
+**Frontend PainelArea.jsx · reformulado**:
+- SEM icones (header limpo com cor lateral sutil) · "evita cara de IA"
+- Card destacado de NPS de culto (CULTO-NPS-*) no topo, antes da lista
+  geral · separado dos outros KPIs por importancia
+- Botao "Preencher dados" so aparece pra quem tem nivel 3+ no modulo
+  (coordenador da area ou admin) · redireciona /integracao?aba=cultos
+- Outros usuarios apenas leem · sem botao de acao
+
 ### Modulos kids/ami/bridge · drill-down de KPIs por area (2026-05-20)
 Espelho do modulo Online · 3 paginas read-only com indicadores filtrados
 por area de culto. Preenchimento continua via /integracao.
