@@ -222,6 +222,38 @@ router.delete('/funcionarios/:id', async (req, res) => {
   }
 });
 
+// POST /api/rh/funcionarios/:id/foto — upload foto de perfil (multipart 'foto')
+router.post('/funcionarios/:id/foto', uploadMw.single('foto'), async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ error: 'Arquivo "foto" obrigatorio' });
+    if (!req.file.mimetype?.startsWith('image/')) {
+      return res.status(400).json({ error: 'Arquivo precisa ser uma imagem' });
+    }
+
+    const ext = (req.file.originalname?.split('.').pop() || 'jpg').toLowerCase().slice(0, 5);
+    const path = `funcionarios/${req.params.id}/avatar-${Date.now()}.${ext}`;
+
+    const { error: upErr } = await supabase.storage
+      .from('rh-fotos')
+      .upload(path, req.file.buffer, { contentType: req.file.mimetype, upsert: true });
+    if (upErr) return res.status(500).json({ error: 'Falha ao salvar imagem: ' + upErr.message });
+
+    const { data: urlData } = supabase.storage.from('rh-fotos').getPublicUrl(path);
+    const foto_url = urlData.publicUrl;
+
+    const { error: updErr } = await supabase
+      .from('rh_funcionarios')
+      .update({ foto_url, updated_at: new Date().toISOString() })
+      .eq('id', req.params.id);
+    if (updErr) return res.status(400).json({ error: updErr.message });
+
+    res.json({ foto_url });
+  } catch (e) {
+    console.error('[RH] Upload foto:', e.message);
+    res.status(500).json({ error: 'Erro ao enviar foto' });
+  }
+});
+
 // ── DOCUMENTOS ─────────────────────────────────────────────
 // POST /api/rh/funcionarios/:id/documentos — aceita JSON ou multipart com arquivo
 router.post('/funcionarios/:id/documentos', uploadMw.single('arquivo'), async (req, res) => {

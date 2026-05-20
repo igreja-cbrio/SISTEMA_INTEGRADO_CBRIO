@@ -1,10 +1,12 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { useAuth } from '../contexts/AuthContext';
-import { Avatar, AvatarFallback } from '../components/ui/avatar';
+import { Avatar, AvatarFallback, AvatarImage } from '../components/ui/avatar';
 import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
 import { supabase } from '../supabaseClient';
 import { toast } from 'sonner';
+import { auth } from '../api';
+import { Camera } from 'lucide-react';
 
 function mascaraTelefone(v) {
   const d = (v || '').replace(/\D+/g, '').slice(0, 11);
@@ -15,9 +17,11 @@ function mascaraTelefone(v) {
 }
 
 export default function Perfil() {
-  const { profile, role } = useAuth();
+  const { profile, role, refreshProfile } = useAuth();
   const [telefone, setTelefone] = useState(profile?.telefone || '');
   const [savingTel, setSavingTel] = useState(false);
+  const [uploadingFoto, setUploadingFoto] = useState(false);
+  const fileInputRef = useRef(null);
 
   const initials = (profile?.name || '??')
     .split(' ')
@@ -25,6 +29,30 @@ export default function Perfil() {
     .slice(0, 2)
     .join('')
     .toUpperCase();
+
+  async function handleFotoChange(e) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (!file.type.startsWith('image/')) {
+      toast.error('Selecione uma imagem');
+      return;
+    }
+    if (file.size > 5 * 1024 * 1024) {
+      toast.error('Imagem precisa ter no maximo 5 MB');
+      return;
+    }
+    setUploadingFoto(true);
+    try {
+      await auth.uploadFoto(file);
+      await refreshProfile?.();
+      toast.success('Foto atualizada');
+    } catch (err) {
+      toast.error(err.message || 'Erro ao enviar foto');
+    } finally {
+      setUploadingFoto(false);
+      if (fileInputRef.current) fileInputRef.current.value = '';
+    }
+  }
 
   async function salvarTelefone() {
     if (!profile?.id || !supabase) return;
@@ -55,17 +83,37 @@ export default function Perfil() {
 
       <div className="rounded-xl border border-border bg-card p-6">
         <div className="flex items-center gap-4 mb-6">
-          <Avatar className="h-16 w-16">
-            <AvatarFallback className="bg-primary/20 text-primary text-xl font-bold">
-              {initials}
-            </AvatarFallback>
-          </Avatar>
+          <div className="relative group">
+            <Avatar className="h-20 w-20">
+              {profile?.avatar_url ? <AvatarImage src={profile.avatar_url} alt={profile.name || ''} /> : null}
+              <AvatarFallback className="bg-primary/20 text-primary text-xl font-bold">
+                {initials}
+              </AvatarFallback>
+            </Avatar>
+            <button
+              type="button"
+              onClick={() => fileInputRef.current?.click()}
+              disabled={uploadingFoto}
+              className="absolute -bottom-1 -right-1 h-7 w-7 rounded-full bg-primary text-primary-foreground border-2 border-card shadow-md flex items-center justify-center hover:scale-105 transition disabled:opacity-50"
+              title="Trocar foto"
+            >
+              <Camera className="h-3.5 w-3.5" />
+            </button>
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="image/*"
+              onChange={handleFotoChange}
+              className="hidden"
+            />
+          </div>
           <div>
             <h2 className="text-lg font-semibold text-foreground">{profile?.name || '—'}</h2>
             <p className="text-sm text-muted-foreground">{profile?.email || '—'}</p>
             <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-primary/15 text-primary mt-1 inline-block">
               {role || 'Membro'}
             </span>
+            {uploadingFoto ? <p className="text-xs text-muted-foreground mt-1">Enviando foto...</p> : null}
           </div>
         </div>
 

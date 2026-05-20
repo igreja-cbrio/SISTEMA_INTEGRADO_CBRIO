@@ -1,6 +1,12 @@
 const router = require('express').Router();
+const multer = require('multer');
 const { supabase } = require('../utils/supabase');
 const { authenticate, getMyPermissions } = require('../middleware/auth');
+
+const uploadMw = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 5 * 1024 * 1024 }, // 5 MB
+});
 
 // GET /api/auth/me — retorna perfil do usuário autenticado
 router.get('/me', authenticate, async (req, res) => {
@@ -34,6 +40,38 @@ router.patch('/profile', authenticate, async (req, res) => {
     res.json(data);
   } catch (err) {
     res.status(500).json({ error: 'Erro interno' });
+  }
+});
+
+// POST /api/auth/profile/foto — upload foto de perfil do proprio usuario (multipart 'foto')
+router.post('/profile/foto', authenticate, uploadMw.single('foto'), async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ error: 'Arquivo "foto" obrigatorio' });
+    if (!req.file.mimetype?.startsWith('image/')) {
+      return res.status(400).json({ error: 'Arquivo precisa ser uma imagem' });
+    }
+
+    const ext = (req.file.originalname?.split('.').pop() || 'jpg').toLowerCase().slice(0, 5);
+    const path = `${req.user.userId}/avatar-${Date.now()}.${ext}`;
+
+    const { error: upErr } = await supabase.storage
+      .from('avatars')
+      .upload(path, req.file.buffer, { contentType: req.file.mimetype, upsert: true });
+    if (upErr) return res.status(500).json({ error: 'Falha ao salvar imagem: ' + upErr.message });
+
+    const { data: urlData } = supabase.storage.from('avatars').getPublicUrl(path);
+    const avatar_url = urlData.publicUrl;
+
+    const { error: updErr } = await supabase
+      .from('profiles')
+      .update({ avatar_url, updated_at: new Date().toISOString() })
+      .eq('id', req.user.userId);
+    if (updErr) return res.status(400).json({ error: updErr.message });
+
+    res.json({ avatar_url });
+  } catch (e) {
+    console.error('[AUTH] Upload foto:', e.message);
+    res.status(500).json({ error: 'Erro ao enviar foto' });
   }
 });
 
