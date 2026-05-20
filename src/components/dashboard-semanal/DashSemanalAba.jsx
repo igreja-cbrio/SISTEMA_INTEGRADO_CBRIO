@@ -6,7 +6,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '../ui/card';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../ui/select';
 import { Loader2, TrendingUp, TrendingDown, Users, GitCompare, Check } from 'lucide-react';
 import {
-  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend, LabelList,
+  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend, LabelList, Cell,
 } from 'recharts';
 import { INDICADORES } from '../../pages/DashboardSemanal';
 import KpiCard from './KpiCard';
@@ -53,27 +53,58 @@ export default function DashSemanalAba() {
     staleTime: 5 * 60_000,
   });
 
-  // Fetch paralelo · 1 query por indicador selecionado
+  // Fetch paralelo · 1 query por indicador selecionado · sempre busca TODOS os
+  // cultos (o filtro `culto` é aplicado client-side nos cards/taxa pra manter o
+  // chart com todas as barras visíveis · click numa barra alterna o filtro).
   const results = useQueries({
     queries: indicadoresSel.map(ind => ({
-      queryKey: ['dash-sem', 'semanal', ano, semana, ind, culto],
-      queryFn: () => api.semanal({ ano, semana, indicador: ind, culto }),
+      queryKey: ['dash-sem', 'semanal', ano, semana, ind],
+      queryFn: () => api.semanal({ ano, semana, indicador: ind, culto: 'todos' }),
       staleTime: 60_000,
     })),
   });
 
   const isLoading = results.some(r => r.isLoading);
   const isFetching = results.some(r => r.isFetching);
-  const datasets = results.map((r, i) => ({
-    indicador: indicadoresSel[i],
-    indDef: INDICADORES.find(x => x.key === indicadoresSel[i]),
-    data: r.data,
-    cor: PALETA_MULTI[i % PALETA_MULTI.length],
-  })).filter(d => d.data);
+
+  // Recalcula resumo client-side aplicando o filtro `culto`
+  const datasets = results.map((r, i) => {
+    const indDef = INDICADORES.find(x => x.key === indicadoresSel[i]);
+    if (!r.data) return null;
+    const itemsFiltrados = culto === 'todos'
+      ? r.data.items
+      : (r.data.items || []).filter(it => it.service_type_id === culto);
+
+    const total = itemsFiltrados.reduce((s, it) => s + (it.valor_absoluto || 0), 0);
+    const sumMedias = itemsFiltrados.reduce((s, it) => s + (it.media || 0), 0);
+    const mediaGeral = itemsFiltrados.length ? Math.round(sumMedias / itemsFiltrados.length) : 0;
+    const variacao_pct = mediaGeral > 0 ? Math.round(((total - mediaGeral) / mediaGeral) * 100) : 0;
+    const totalPresencial = itemsFiltrados.reduce((s, it) => s + (it.total_presencial || 0), 0);
+    const taxa_ocupacao_geral = indDef?.usa_ocupacao
+      ? Math.round((total / 1200) * 1000) / 10
+      : Math.round((totalPresencial / 1200) * 1000) / 10;
+
+    return {
+      indicador: indicadoresSel[i],
+      indDef,
+      data: {
+        ...r.data,
+        resumo: { total, media_geral: mediaGeral, variacao_pct, taxa_ocupacao_geral },
+      },
+      cor: PALETA_MULTI[i % PALETA_MULTI.length],
+    };
+  }).filter(Boolean);
 
   const isMulti = indicadoresSel.length > 1;
   const isSingle = indicadoresSel.length === 1;
+  const isEmpty = indicadoresSel.length === 0;
   const primario = datasets[0];
+
+  // Nome do culto selecionado (pra mostrar nos titulos quando filtrado)
+  const cultoSelInfo = useMemo(() => {
+    if (culto === 'todos') return null;
+    return (cultos || []).find(c => c.id === culto) || null;
+  }, [culto, cultos]);
 
   // Quando 1 indicador: estrutura atual (valor_absoluto + media + taxa)
   // Quando 2+ indicadores: combina por culto · uma chave por indicador
@@ -82,6 +113,7 @@ export default function DashSemanalAba() {
     if (isSingle) {
       return (primario.data.items || []).map(i => ({
         nome: shortLabel(i.nome, i.recurrence_day, i.recurrence_time),
+        service_type_id: i.service_type_id,
         valor_absoluto: i.valor_absoluto,
         media: i.media,
         taxa: i.taxa_ocupacao,
@@ -92,7 +124,11 @@ export default function DashSemanalAba() {
     datasets.forEach(d => {
       (d.data.items || []).forEach(i => {
         const k = shortLabel(i.nome, i.recurrence_day, i.recurrence_time);
-        const row = mapPorNome.get(k) || { nome: k, _order: i.recurrence_day * 100 + parseInt((i.recurrence_time || '0').slice(0, 2), 10) };
+        const row = mapPorNome.get(k) || {
+          nome: k,
+          service_type_id: i.service_type_id,
+          _order: i.recurrence_day * 100 + parseInt((i.recurrence_time || '0').slice(0, 2), 10),
+        };
         row[d.indicador] = i.valor_absoluto;
         mapPorNome.set(k, row);
       });
@@ -108,13 +144,15 @@ export default function DashSemanalAba() {
 
   const toggleIndicador = (key) => {
     setIndicadoresSel(prev => {
-      if (prev.includes(key)) {
-        // não deixa esvaziar · mantém ao menos 1
-        if (prev.length === 1) return prev;
-        return prev.filter(k => k !== key);
-      }
+      if (prev.includes(key)) return prev.filter(k => k !== key);
       return [...prev, key];
     });
+  };
+
+  // Click numa barra do chart · filtra culto. Click no mesmo culto reseta.
+  const onClickBarra = (entry) => {
+    if (!entry?.service_type_id) return;
+    setCulto(prev => prev === entry.service_type_id ? 'todos' : entry.service_type_id);
   };
 
   return (
@@ -216,9 +254,42 @@ export default function DashSemanalAba() {
           )}
         </div>
 
+        {/* Aviso quando culto está filtrado (via dropdown ou click na barra) */}
+        {cultoSelInfo && (
+          <motion.div
+            initial={{ opacity: 0, scale: 0.95 }}
+            animate={{ opacity: 1, scale: 1 }}
+            className="flex items-center justify-between gap-3 rounded-lg border border-[#00B39D]/40 bg-[#00B39D]/5 px-3 py-2 text-xs"
+          >
+            <span className="text-foreground">
+              Filtrado por culto: <span className="font-semibold text-[#00B39D]">{cultoSelInfo.name}</span>
+              {' · '}
+              <span className="text-muted-foreground">cards e taxa de ocupação refletem apenas esse culto</span>
+            </span>
+            <button
+              onClick={() => setCulto('todos')}
+              className="px-2 py-1 rounded text-[11px] font-medium border border-border hover:border-[#00B39D] text-muted-foreground hover:text-[#00B39D] transition-colors"
+            >
+              Limpar filtro
+            </button>
+          </motion.div>
+        )}
+
         {/* KPI cards · modo single mostra os 3 cards · modo multi mostra um por indicador */}
         <AnimatePresence mode="wait">
-          {isSingle ? (
+          {isEmpty ? (
+            <motion.div
+              key="empty"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="rounded-xl border border-dashed border-border bg-card p-8 text-center"
+            >
+              <p className="text-sm text-muted-foreground">
+                Nenhum indicador selecionado. Clique em um ou mais indicadores na barra lateral pra montar o painel.
+              </p>
+            </motion.div>
+          ) : isSingle ? (
             <motion.div
               key={`single-${ano}-${semana}-${indicadoresSel[0]}-${culto}`}
               initial={{ opacity: 0, y: 8 }}
@@ -278,7 +349,8 @@ export default function DashSemanalAba() {
           )}
         </AnimatePresence>
 
-        {/* Bar chart principal */}
+        {/* Bar chart principal · só renderiza com indicador selecionado */}
+        {!isEmpty && (
         <Card>
           <CardHeader className="pb-2 flex flex-row items-center justify-between gap-2 space-y-0">
             <CardTitle className="text-sm font-medium">
@@ -336,20 +408,36 @@ export default function DashSemanalAba() {
                           yAxisId="left"
                           dataKey="valor_absoluto"
                           name="Valor Absoluto"
-                          fill={C.primary}
                           radius={[6, 6, 0, 0]}
                           animationDuration={900}
+                          onClick={onClickBarra}
+                          style={{ cursor: 'pointer' }}
                         >
+                          {chartData.map((e, i) => (
+                            <Cell
+                              key={`va-${i}`}
+                              fill={C.primary}
+                              opacity={culto === 'todos' || culto === e.service_type_id ? 1 : 0.35}
+                            />
+                          ))}
                           <LabelList dataKey="valor_absoluto" position="top" style={{ fontSize: 11, fontWeight: 600 }} />
                         </Bar>
                         <Bar
                           yAxisId="left"
                           dataKey="media"
                           name="Média Histórica"
-                          fill={C.media}
                           radius={[6, 6, 0, 0]}
                           animationDuration={1100}
+                          onClick={onClickBarra}
+                          style={{ cursor: 'pointer' }}
                         >
+                          {chartData.map((e, i) => (
+                            <Cell
+                              key={`md-${i}`}
+                              fill={C.media}
+                              opacity={culto === 'todos' || culto === e.service_type_id ? 1 : 0.35}
+                            />
+                          ))}
                           <LabelList dataKey="media" position="top" style={{ fontSize: 11, fontWeight: 600, fill: '#7BAEC2' }} />
                         </Bar>
                         {primario?.indDef?.usa_ocupacao && (
@@ -357,10 +445,18 @@ export default function DashSemanalAba() {
                             yAxisId="right"
                             dataKey="taxa"
                             name="Taxa de ocupação"
-                            fill={C.taxa}
                             radius={[6, 6, 0, 0]}
                             animationDuration={1300}
+                            onClick={onClickBarra}
+                            style={{ cursor: 'pointer' }}
                           >
+                            {chartData.map((e, i) => (
+                              <Cell
+                                key={`tx-${i}`}
+                                fill={C.taxa}
+                                opacity={culto === 'todos' || culto === e.service_type_id ? 1 : 0.35}
+                              />
+                            ))}
                             <LabelList
                               dataKey="taxa"
                               position="top"
@@ -377,10 +473,18 @@ export default function DashSemanalAba() {
                           yAxisId="left"
                           dataKey={d.indicador}
                           name={d.indDef?.label}
-                          fill={d.cor}
                           radius={[6, 6, 0, 0]}
                           animationDuration={800 + idx * 150}
+                          onClick={onClickBarra}
+                          style={{ cursor: 'pointer' }}
                         >
+                          {chartData.map((e, i) => (
+                            <Cell
+                              key={`m-${idx}-${i}`}
+                              fill={d.cor}
+                              opacity={culto === 'todos' || culto === e.service_type_id ? 1 : 0.35}
+                            />
+                          ))}
                           {datasets.length <= 3 && (
                             <LabelList
                               dataKey={d.indicador}
@@ -398,6 +502,7 @@ export default function DashSemanalAba() {
             )}
           </CardContent>
         </Card>
+        )}
 
         {/* Meta · só aparece em modo single */}
         {isSingle && primario?.data?.meta && (
