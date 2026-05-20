@@ -314,6 +314,70 @@ router.get('/mensal', async (req, res) => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
+// GET /metas/valor-atual · valor acumulado do indicador no periodo corrente
+//   query: indicador, periodicidade (semanal | mensal | anual)
+//
+// Semanal: soma da semana anterior completa (que termina no ultimo domingo)
+// Mensal:  soma do mes atual
+// Anual:   soma do ano atual
+// ─────────────────────────────────────────────────────────────────────────────
+router.get('/metas/valor-atual', async (req, res) => {
+  try {
+    const indicadorKey = req.query.indicador;
+    const periodicidade = req.query.periodicidade || 'semanal';
+    const indDef = INDICADORES[indicadorKey];
+    if (!indDef) return res.status(400).json({ error: 'indicador inválido' });
+
+    const hoje = new Date();
+    let inicio, fim, label;
+
+    if (periodicidade === 'semanal') {
+      // Semana anterior · de segunda a domingo
+      const ultimoDomingo = new Date(hoje);
+      const dow = ultimoDomingo.getUTCDay();
+      const diasParaUltimoDomingo = dow === 0 ? 7 : dow;
+      ultimoDomingo.setUTCDate(ultimoDomingo.getUTCDate() - diasParaUltimoDomingo);
+      const segunda = new Date(ultimoDomingo);
+      segunda.setUTCDate(segunda.getUTCDate() - 6);
+      inicio = segunda;
+      fim = ultimoDomingo;
+      label = `semana ${segunda.toISOString().slice(0,10)} a ${ultimoDomingo.toISOString().slice(0,10)}`;
+    } else if (periodicidade === 'mensal') {
+      inicio = new Date(Date.UTC(hoje.getUTCFullYear(), hoje.getUTCMonth(), 1));
+      fim = new Date(Date.UTC(hoje.getUTCFullYear(), hoje.getUTCMonth() + 1, 0));
+      label = `${formatMesAno(inicio)}`;
+    } else if (periodicidade === 'anual') {
+      inicio = new Date(Date.UTC(hoje.getUTCFullYear(), 0, 1));
+      fim = new Date(Date.UTC(hoje.getUTCFullYear(), 11, 31));
+      label = `${hoje.getUTCFullYear()}`;
+    } else {
+      return res.status(400).json({ error: 'periodicidade inválida' });
+    }
+
+    const { data, error } = await supabase
+      .from('cultos')
+      .select(`${colunaCrua(indicadorKey)}`)
+      .gte('data', inicio.toISOString().slice(0, 10))
+      .lte('data', fim.toISOString().slice(0, 10));
+    if (error) throw error;
+
+    const total = (data || []).reduce((s, r) => s + (Number(r[colunaCrua(indicadorKey)]) || 0), 0);
+
+    res.json({
+      indicador: indicadorKey,
+      periodicidade,
+      label,
+      inicio: inicio.toISOString().slice(0, 10),
+      fim: fim.toISOString().slice(0, 10),
+      total,
+    });
+  } catch (e) {
+    console.error('[DASH-SEM] valor-atual', e.message);
+    res.status(500).json({ error: 'Erro ao buscar valor atual' });
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
 // GET /metas/sugerir · calcula meta sugerida com base em histórico
 //   query: indicador, base (mes_anterior | trimestre_anterior | ano_anterior | mesmo_mes_ano_anterior)
 //          periodicidade (semanal | mensal · default semanal)
@@ -363,28 +427,43 @@ router.get('/metas/sugerir', async (req, res) => {
       return res.status(400).json({ error: 'base inválida' });
     }
 
-    // Pega dados brutos da tabela cultos no período
+    // Pega dados brutos da tabela cultos no período · janela estendida pra
+    // capturar cultos da terça/quarta cuja semana fecha no domingo do período
+    const inicioExt = new Date(inicio);
+    inicioExt.setUTCDate(inicioExt.getUTCDate() - 7);
+    const fimExt = new Date(fim);
+    fimExt.setUTCDate(fimExt.getUTCDate() + 7);
+
     let q = supabase
       .from('cultos')
       .select(`data, service_type_id, ${colunaCrua(indicadorKey)}`)
-      .gte('data', inicio.toISOString().slice(0, 10))
-      .lte('data', fim.toISOString().slice(0, 10));
+      .gte('data', inicioExt.toISOString().slice(0, 10))
+      .lte('data', fimExt.toISOString().slice(0, 10));
     if (cultoId) q = q.eq('service_type_id', cultoId);
 
     const { data, error } = await q;
     if (error) throw error;
 
-    // Agrupa por (semana ISO) ou (mês) e soma
+    // Agrupa por (semana ISO · usando o domingo daquela semana como ancora) ou (mês)
+    // Regra do Marcos: semana so conta se o DOMINGO dela cai dentro do periodo
+    // (mes anterior = 4 ou 5 semanas conforme calendario)
+    const inicioMs = inicio.getTime();
+    const fimMs = fim.getTime();
     const grupos = new Map();
     for (const row of (data || [])) {
       const d = new Date(row.data + 'T12:00:00Z');
       let key;
       if (periodicidade === 'semanal') {
-        const w = isoWeekOfDate(d);
-        key = `${w.ano}-W${w.semana}`;
+        const sun = sundayOfWeek(d);
+        // Filtro: o domingo da semana precisa estar dentro do periodo alvo
+        if (sun.getTime() < inicioMs || sun.getTime() > fimMs) continue;
+        key = sun.toISOString().slice(0, 10);
       } else if (periodicidade === 'mensal') {
+        // Pra agrupamento mensal mantemos filtro por data direta
+        if (d.getTime() < inicioMs || d.getTime() > fimMs) continue;
         key = `${d.getUTCFullYear()}-M${d.getUTCMonth() + 1}`;
       } else {
+        if (d.getTime() < inicioMs || d.getTime() > fimMs) continue;
         key = String(d.getUTCFullYear());
       }
       const valor = Number(row[colunaCrua(indicadorKey)]) || 0;
@@ -433,6 +512,17 @@ function colunaCrua(indKey) {
     voluntariado:      'voluntarios',
   };
   return map[indKey] || indKey;
+}
+
+function sundayOfWeek(date) {
+  // Retorna o domingo da mesma semana ISO (Mon-Sun) que contem `date`.
+  // Mantemos UTC pra evitar ajuste de timezone que poderia trocar o dia.
+  const d = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
+  const dow = d.getUTCDay(); // 0=Domingo, 1=Segunda, ..., 6=Sabado
+  // ISO trata segunda como inicio · domingo como dia 7 (proximo domingo)
+  const diasAteDomingo = (7 - dow) % 7;
+  d.setUTCDate(d.getUTCDate() + diasAteDomingo);
+  return d;
 }
 
 function isoWeekOfDate(date) {
