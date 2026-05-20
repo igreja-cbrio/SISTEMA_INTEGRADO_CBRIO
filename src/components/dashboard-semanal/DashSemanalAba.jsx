@@ -374,11 +374,15 @@ export default function DashSemanalAba() {
                 Sem dados pra essa semana. Confira se os cultos foram preenchidos em /ministerial/integracao.
               </div>
             ) : (
-              <div className="h-[420px]">
+              <div className="h-[420px]" style={{ cursor: 'pointer' }}>
                 <ResponsiveContainer width="100%" height="100%">
                   <BarChart
                     data={chartData}
                     margin={{ top: 24, right: 20, left: 0, bottom: 20 }}
+                    onClick={(state) => {
+                      const payload = state?.activePayload?.[0]?.payload;
+                      if (payload) onClickBarra(payload);
+                    }}
                   >
                     <CartesianGrid strokeDasharray="3 3" opacity={0.25} />
                     <XAxis dataKey="nome" tick={{ fontSize: 12 }} />
@@ -410,7 +414,6 @@ export default function DashSemanalAba() {
                           name="Valor Absoluto"
                           radius={[6, 6, 0, 0]}
                           animationDuration={900}
-                          onClick={onClickBarra}
                           style={{ cursor: 'pointer' }}
                         >
                           {chartData.map((e, i) => (
@@ -428,7 +431,6 @@ export default function DashSemanalAba() {
                           name="Média Histórica"
                           radius={[6, 6, 0, 0]}
                           animationDuration={1100}
-                          onClick={onClickBarra}
                           style={{ cursor: 'pointer' }}
                         >
                           {chartData.map((e, i) => (
@@ -475,7 +477,6 @@ export default function DashSemanalAba() {
                           name={d.indDef?.label}
                           radius={[6, 6, 0, 0]}
                           animationDuration={800 + idx * 150}
-                          onClick={onClickBarra}
                           style={{ cursor: 'pointer' }}
                         >
                           {chartData.map((e, i) => (
