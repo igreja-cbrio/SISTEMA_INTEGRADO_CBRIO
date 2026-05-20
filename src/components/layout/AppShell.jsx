@@ -28,10 +28,12 @@ const SEV_COLORS = { urgente: '#ef4444', aviso: '#f59e0b', info: '#00B39D' };
 const MOD_COLORS = { rh: '#8b5cf6', financeiro: '#10b981', logistica: '#ef4444', patrimonio: '#6366f1', membresia: '#00B39D', eventos: '#3b82f6', projetos: '#ec4899', kpis: '#f97316', cuidados: '#ef476f', processos: '#00B39D', nps: '#06b6d4', sistema: '#6b7280' };
 const MOD_LABELS = { rh: 'RH', financeiro: 'Financeiro', logistica: 'Logística', patrimonio: 'Patrimônio', membresia: 'Membresia', eventos: 'Eventos', projetos: 'Projetos', kpis: 'KPIs', cuidados: 'Cuidados', processos: 'Processos', nps: 'NPS', sistema: 'Sistema' };
 
+// 6 módulos macro · alinhados com o roadmap apresentado ao gestor
+// (Administração · Inteligência · Planejamento · Ministerial · Cultos · Criativo)
 const NAV_ITEMS = [
   {
     id: 1,
-    label: 'Administrativo',
+    label: 'Administração',
     subMenus: [
       {
         title: 'Gestão',
@@ -49,17 +51,6 @@ const NAV_ITEMS = [
         ],
       },
       {
-        title: 'Inteligência',
-        items: [
-          { label: 'Painel CBRio', description: 'NSM · 5 valores · 6 áreas — visão macro · ritual mensal', icon: Activity, path: '/painel', module: 'painel-cbrio' },
-          { label: 'Dashboard Semanal', description: 'Painel da reunião de quarta · semanal · mensal · metas · gerador de indicador com IA', icon: LayoutDashboard, path: '/dashboard-semanal' },
-          { label: 'NPS', description: 'Pesquisas de satisfação geradas por IA · análise automática', icon: MessageSquare, path: '/nps', module: 'nps' },
-          { label: 'Minha Área', description: 'KPIs (resultado) e Dados (entrada) da sua área', icon: BarChart2, path: '/minha-area', module: 'minha-area' },
-          { label: 'Gestão (PMO)', description: 'Pulso · Estrutura OKR · Saúde · Configurar (admin)', icon: Settings, path: '/gestao', module: 'gestao' },
-          { label: 'Assistente IA', description: 'Agentes de auditoria e análise', icon: BrainCircuit, path: '/assistente-ia', perm: 'canIA' },
-        ],
-      },
-      {
         title: 'Configurações',
         items: [
           { label: 'Permissões', description: 'Matriz cargo × módulo + usuários (cargo, áreas, overrides)', icon: Shield, path: '/admin/permissoes', perm: 'isAdmin' },
@@ -69,39 +60,53 @@ const NAV_ITEMS = [
   },
   {
     id: 2,
-    label: 'Acompanhamento',
-    path: '/planejamento',
+    label: 'Inteligência',
     subMenus: [
       {
-        title: 'Módulos',
+        title: 'Visão macro',
         items: [
-          { label: 'Eventos', description: 'Gestão de eventos da igreja', icon: CalendarDays, path: '/eventos', perm: 'canAgenda' },
-          { label: 'Projetos', description: 'Acompanhamento de projetos', icon: FolderKanban, path: '/projetos', perm: 'canProjetos' },
-          { label: 'Expansão', description: 'Metas de expansão', icon: Map, path: '/expansao', module: 'expansao' },
-          // Removidos do menu (rotas continuam ativas):
-          // - Revisão (/revisao): será substituído pelo /ritual da Fase 5
-          // - Processos (/processos): redundante com /painel + /admin/estrutura-okr
+          { label: 'Painel CBRio', description: 'NSM · 5 valores · 6 áreas — visão macro · ritual mensal', icon: Activity, path: '/painel', module: 'painel-cbrio' },
+          { label: 'Dashboard Semanal', description: 'Painel da reunião de quarta · semanal · mensal · metas · gerador IA', icon: LayoutDashboard, path: '/dashboard-semanal' },
+          { label: 'Minha Área', description: 'KPIs (resultado) e Dados (entrada) da sua área', icon: BarChart2, path: '/minha-area', module: 'minha-area' },
+        ],
+      },
+      {
+        title: 'Análise',
+        items: [
+          { label: 'NPS', description: 'Pesquisas de satisfação geradas por IA · análise automática', icon: MessageSquare, path: '/nps', module: 'nps' },
+          { label: 'Gestão (PMO)', description: 'Pulso · Estrutura OKR · Saúde · Configurar (admin)', icon: Settings, path: '/gestao', module: 'gestao' },
+          { label: 'Assistente IA', description: 'Agentes de auditoria e análise', icon: BrainCircuit, path: '/assistente-ia', perm: 'canIA' },
         ],
       },
     ],
   },
   {
     id: 3,
+    label: 'Planejamento',
+    subMenus: [
+      {
+        title: 'Execução',
+        items: [
+          { label: 'Eventos', description: 'Ciclo criativo · fases · documentos · KPIs', icon: CalendarDays, path: '/eventos', perm: 'canAgenda' },
+          { label: 'Projetos', description: 'Acompanhamento de projetos com Kanban/Gantt', icon: FolderKanban, path: '/projetos', perm: 'canProjetos' },
+          { label: 'Expansão', description: 'Marcos estratégicos · cascata até 2029', icon: Map, path: '/expansao', module: 'expansao' },
+        ],
+      },
+    ],
+  },
+  {
+    id: 4,
     label: 'Ministerial',
     subMenus: [
       {
-        title: 'Áreas',
+        title: 'Áreas ministeriais',
         items: [
           { label: 'Integração', description: 'Batismo, apresentação e cultos', icon: UserCheck, path: '/ministerial/integracao' },
-          { label: 'Online', description: 'Visão do canal YouTube e séries de pregação', icon: Youtube, path: '/ministerial/online', perm: 'canMembresia' },
-          { label: 'CBKids', description: 'Indicadores do ministério infantil', icon: Baby, path: '/ministerial/kids', module: 'kids' },
-          { label: 'AMI', description: 'Indicadores do culto AMI', icon: GraduationCap, path: '/ministerial/ami', module: 'ami' },
-          { label: 'Bridge', description: 'Indicadores do culto Bridge', icon: ArrowRightLeft, path: '/ministerial/bridge', module: 'bridge' },
-          { label: 'NEXT', description: 'Porta de entrada — inscrições, check-in e indicações', icon: ArrowRight, path: '/ministerial/next', perm: 'canMembresia' },
-          { label: 'Grupos', description: 'Grupos de conexao, pedidos, QR e mapa', icon: UsersRound, path: '/grupos' },
-          { label: 'Cuidados', description: 'Capelania e aconselhamento', icon: Heart, path: '/ministerial/cuidados', module: 'cuidados' },
-          { label: 'Voluntariado', description: 'Check-in, escalas e QR codes', icon: HandHelping, path: '/ministerial/voluntariado', perm: 'canMembresia' },
           { label: 'Membresia', description: 'Cadastros, trilha dos valores e Jornada', icon: BookOpen, path: '/ministerial/membresia', perm: 'canMembresia' },
+          { label: 'Cuidados', description: 'Capelania e aconselhamento', icon: Heart, path: '/ministerial/cuidados', module: 'cuidados' },
+          { label: 'Grupos', description: 'Grupos de conexão · pedidos · QR · mapa', icon: UsersRound, path: '/grupos' },
+          { label: 'Voluntariado', description: 'Check-in, escalas e QR codes', icon: HandHelping, path: '/ministerial/voluntariado', perm: 'canMembresia' },
+          { label: 'NEXT', description: 'Porta de entrada — inscrições, check-in e indicações', icon: ArrowRight, path: '/ministerial/next', perm: 'canMembresia' },
         ],
       },
       {
@@ -113,7 +118,22 @@ const NAV_ITEMS = [
     ],
   },
   {
-    id: 4,
+    id: 5,
+    label: 'Cultos',
+    subMenus: [
+      {
+        title: 'Visualização por culto',
+        items: [
+          { label: 'Online', description: 'Visão do canal YouTube e séries de pregação', icon: Youtube, path: '/ministerial/online', perm: 'canMembresia' },
+          { label: 'Kids', description: 'Indicadores do ministério infantil', icon: Baby, path: '/ministerial/kids', module: 'kids' },
+          { label: 'AMI', description: 'Indicadores do culto AMI', icon: GraduationCap, path: '/ministerial/ami', module: 'ami' },
+          { label: 'Bridge', description: 'Indicadores do culto Bridge', icon: ArrowRightLeft, path: '/ministerial/bridge', module: 'bridge' },
+        ],
+      },
+    ],
+  },
+  {
+    id: 6,
     label: 'Criativo',
     roles: ['admin', 'diretor'],
     subMenus: [
