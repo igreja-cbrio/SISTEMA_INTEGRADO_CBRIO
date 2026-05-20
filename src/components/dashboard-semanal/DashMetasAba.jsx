@@ -275,9 +275,11 @@ function MetaForm({ editing, setEditing }) {
               <p className="text-foreground">
                 Média {editing.periodicidade} no {sugestaoResult.base_label}:{' '}
                 <span className="font-bold text-[#00B39D]">{sugestaoResult.sugestao.toLocaleString('pt-BR')}</span>
-                {' '}<span className="text-muted-foreground">(n={sugestaoResult.amostra})</span>
+                {' '}<span className="text-muted-foreground">
+                  ({sugestaoResult.amostra} {editing.periodicidade === 'semanal' ? 'semana(s) completa(s) · domingo dentro do mês' : 'período(s)'})
+                </span>
                 {' · '}
-                <span className="text-muted-foreground">já preenchido no campo</span>
+                <span className="text-muted-foreground">preenchido no campo</span>
               </p>
             )}
           </div>

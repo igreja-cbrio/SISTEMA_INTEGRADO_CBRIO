@@ -363,28 +363,43 @@ router.get('/metas/sugerir', async (req, res) => {
       return res.status(400).json({ error: 'base inválida' });
     }
 
-    // Pega dados brutos da tabela cultos no período
+    // Pega dados brutos da tabela cultos no período · janela estendida pra
+    // capturar cultos da terça/quarta cuja semana fecha no domingo do período
+    const inicioExt = new Date(inicio);
+    inicioExt.setUTCDate(inicioExt.getUTCDate() - 7);
+    const fimExt = new Date(fim);
+    fimExt.setUTCDate(fimExt.getUTCDate() + 7);
+
     let q = supabase
       .from('cultos')
       .select(`data, service_type_id, ${colunaCrua(indicadorKey)}`)
-      .gte('data', inicio.toISOString().slice(0, 10))
-      .lte('data', fim.toISOString().slice(0, 10));
+      .gte('data', inicioExt.toISOString().slice(0, 10))
+      .lte('data', fimExt.toISOString().slice(0, 10));
     if (cultoId) q = q.eq('service_type_id', cultoId);
 
     const { data, error } = await q;
     if (error) throw error;
 
-    // Agrupa por (semana ISO) ou (mês) e soma
+    // Agrupa por (semana ISO · usando o domingo daquela semana como ancora) ou (mês)
+    // Regra do Marcos: semana so conta se o DOMINGO dela cai dentro do periodo
+    // (mes anterior = 4 ou 5 semanas conforme calendario)
+    const inicioMs = inicio.getTime();
+    const fimMs = fim.getTime();
     const grupos = new Map();
     for (const row of (data || [])) {
       const d = new Date(row.data + 'T12:00:00Z');
       let key;
       if (periodicidade === 'semanal') {
-        const w = isoWeekOfDate(d);
-        key = `${w.ano}-W${w.semana}`;
+        const sun = sundayOfWeek(d);
+        // Filtro: o domingo da semana precisa estar dentro do periodo alvo
+        if (sun.getTime() < inicioMs || sun.getTime() > fimMs) continue;
+        key = sun.toISOString().slice(0, 10);
       } else if (periodicidade === 'mensal') {
+        // Pra agrupamento mensal mantemos filtro por data direta
+        if (d.getTime() < inicioMs || d.getTime() > fimMs) continue;
         key = `${d.getUTCFullYear()}-M${d.getUTCMonth() + 1}`;
       } else {
+        if (d.getTime() < inicioMs || d.getTime() > fimMs) continue;
         key = String(d.getUTCFullYear());
       }
       const valor = Number(row[colunaCrua(indicadorKey)]) || 0;
@@ -433,6 +448,17 @@ function colunaCrua(indKey) {
     voluntariado:      'voluntarios',
   };
   return map[indKey] || indKey;
+}
+
+function sundayOfWeek(date) {
+  // Retorna o domingo da mesma semana ISO (Mon-Sun) que contem `date`.
+  // Mantemos UTC pra evitar ajuste de timezone que poderia trocar o dia.
+  const d = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
+  const dow = d.getUTCDay(); // 0=Domingo, 1=Segunda, ..., 6=Sabado
+  // ISO trata segunda como inicio · domingo como dia 7 (proximo domingo)
+  const diasAteDomingo = (7 - dow) % 7;
+  d.setUTCDate(d.getUTCDate() + diasAteDomingo);
+  return d;
 }
 
 function isoWeekOfDate(date) {
