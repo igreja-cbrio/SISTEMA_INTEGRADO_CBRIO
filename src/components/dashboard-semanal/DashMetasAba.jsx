@@ -8,7 +8,7 @@ import { Input } from '../ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../ui/select';
 import { Switch } from '../ui/switch';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '../ui/dialog';
-import { Loader2, Plus, Trash2, Target, Edit2, Sparkles, BarChart2, Activity } from 'lucide-react';
+import { Loader2, Plus, Trash2, Target, Edit2, Sparkles, BarChart2, Activity, Archive, LineChart, AreaChart, PieChart, Radar } from 'lucide-react';
 import { INDICADORES } from '../../pages/DashboardSemanal';
 import MetaGauge from './MetaGauge';
 
@@ -45,6 +45,19 @@ export default function DashMetasAba() {
     queryKey: ['dash-sem', 'metas'],
     queryFn: () => api.metasList(),
     staleTime: 60_000,
+  });
+
+  // Indicadores customizados ativos (criados via aba Criar com IA) aparecem
+  // junto com as metas pra centralizar o painel de acompanhamento
+  const { data: indicadoresCustom } = useQuery({
+    queryKey: ['dash-sem', 'indic-custom', 'ativo'],
+    queryFn: () => api.indicadoresCustomList('ativo'),
+    staleTime: 60_000,
+  });
+
+  const arquivarIndicador = useMutation({
+    mutationFn: (id) => api.indicadorCustomPatch(id, { status: 'arquivado' }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['dash-sem', 'indic-custom'] }),
   });
 
   const hoje = new Date();
@@ -130,6 +143,37 @@ export default function DashMetasAba() {
               />
             </motion.div>
           ))}
+        </div>
+      )}
+
+      {/* Indicadores criados via IA · promovidos a ativo */}
+      {indicadoresCustom?.length > 0 && (
+        <div className="space-y-3 pt-4">
+          <div className="flex items-center gap-2">
+            <Sparkles className="h-4 w-4 text-[#00B39D]" />
+            <h3 className="text-sm font-semibold">Indicadores criados com IA</h3>
+            <span className="text-[11px] text-muted-foreground">
+              · {indicadoresCustom.length} ativo{indicadoresCustom.length === 1 ? '' : 's'}
+            </span>
+          </div>
+          <p className="text-xs text-muted-foreground -mt-1">
+            Estes indicadores foram criados na aba <span className="font-medium">Criar com IA</span> e promovidos a ativos. Use a sugestão (fórmula, gráfico, tabelas) como base pra implementação no banco.
+          </p>
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            {indicadoresCustom.map((ind, idx) => (
+              <motion.div
+                key={`ind-${ind.id}-${mountKey}`}
+                initial={{ opacity: 0, y: 12 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.4, delay: idx * 0.05, ease: 'easeOut' }}
+              >
+                <IndicadorCustomCard
+                  ind={ind}
+                  onArchive={() => arquivarIndicador.mutate(ind.id)}
+                />
+              </motion.div>
+            ))}
+          </div>
         </div>
       )}
 
@@ -407,6 +451,79 @@ function MetaCard({ meta, mountKey, onEdit, onDelete }) {
             </div>
           </div>
         )}
+      </CardContent>
+    </Card>
+  );
+}
+
+const ICONES_GRAFICO_IA = {
+  barra: BarChart2,
+  linha: LineChart,
+  area:  AreaChart,
+  pizza: PieChart,
+  gauge: Activity,
+  radar: Radar,
+};
+
+function IndicadorCustomCard({ ind, onArchive }) {
+  const Icone = ICONES_GRAFICO_IA[ind.sugestao_ia?.tipo_grafico] || BarChart2;
+  const sug = ind.sugestao_ia || {};
+
+  return (
+    <Card className="border-[#00B39D]/30 bg-[#00B39D]/[0.02]">
+      <CardHeader className="pb-2 flex flex-row items-start justify-between gap-2 space-y-0">
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-1.5 mb-1">
+            <span className="text-[10px] font-semibold uppercase tracking-wider text-[#00B39D] bg-[#00B39D]/10 px-1.5 py-0.5 rounded">
+              IA
+            </span>
+            <span className="text-[10px] text-muted-foreground capitalize">
+              {sug.tipo_grafico || 'grafico'} · {sug.periodicidade_sugerida || ind.periodicidade || '—'}
+            </span>
+          </div>
+          <CardTitle className="text-sm font-medium leading-tight">{ind.nome}</CardTitle>
+        </div>
+        <div className="flex gap-1 items-start">
+          <div className="rounded-lg p-1.5 bg-[#00B39D]/10">
+            <Icone className="h-4 w-4 text-[#00B39D]" />
+          </div>
+          <button
+            onClick={() => { if (confirm('Arquivar este indicador?')) onArchive(); }}
+            className="p-1.5 rounded hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
+            title="Arquivar"
+          >
+            <Archive className="h-3.5 w-3.5" />
+          </button>
+        </div>
+      </CardHeader>
+      <CardContent className="space-y-2">
+        {ind.descricao && (
+          <p className="text-xs text-muted-foreground">
+            {ind.descricao.length > 160 ? ind.descricao.slice(0, 157) + '…' : ind.descricao}
+          </p>
+        )}
+        {sug.formula && (
+          <div>
+            <p className="text-[10px] uppercase tracking-wider text-muted-foreground mb-0.5">Fórmula</p>
+            <code className="text-[11px] block bg-muted/50 px-2 py-1 rounded font-mono whitespace-pre-wrap">
+              {sug.formula.length > 180 ? sug.formula.slice(0, 177) + '…' : sug.formula}
+            </code>
+          </div>
+        )}
+        <div className="grid grid-cols-2 gap-2 text-[10px]">
+          {sug.eixo_x && (
+            <div>
+              <p className="uppercase tracking-wider text-muted-foreground">Eixo X</p>
+              <p className="text-foreground mt-0.5 capitalize line-clamp-2">{sug.eixo_x}</p>
+            </div>
+          )}
+          {sug.eixo_y && (
+            <div>
+              <p className="uppercase tracking-wider text-muted-foreground">Eixo Y</p>
+              <p className="text-foreground mt-0.5 capitalize line-clamp-2">{sug.eixo_y}</p>
+            </div>
+          )}
+        </div>
       </CardContent>
     </Card>
   );
