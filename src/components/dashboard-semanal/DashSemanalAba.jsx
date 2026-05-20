@@ -7,6 +7,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '.
 import { Loader2, TrendingUp, TrendingDown, Users, GitCompare, Check, Calendar as CalIcon, Tv } from 'lucide-react';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend, LabelList, Cell,
+  ComposedChart, Line,
 } from 'recharts';
 import { INDICADORES } from '../../pages/DashboardSemanal';
 import KpiCard from './KpiCard';
@@ -111,13 +112,20 @@ export default function DashSemanalAba() {
   const chartData = useMemo(() => {
     if (!datasets.length) return [];
     if (isSingle) {
-      return (primario.data.items || []).map(i => ({
-        nome: shortLabel(i.nome, i.recurrence_day, i.recurrence_time),
-        service_type_id: i.service_type_id,
-        valor_absoluto: i.valor_absoluto,
-        media: i.media,
-        taxa: i.taxa_ocupacao,
-      }));
+      return (primario.data.items || []).map(i => {
+        // Variacao por culto = (atual - media) / media * 100
+        const variacao = i.media > 0
+          ? Math.round(((i.valor_absoluto - i.media) / i.media) * 1000) / 10
+          : null;
+        return {
+          nome: shortLabel(i.nome, i.recurrence_day, i.recurrence_time),
+          service_type_id: i.service_type_id,
+          valor_absoluto: i.valor_absoluto,
+          media: i.media,
+          taxa: i.taxa_ocupacao,
+          variacao,
+        };
+      });
     }
     // Multi · merge por nome do culto
     const mapPorNome = new Map();
@@ -441,7 +449,7 @@ export default function DashSemanalAba() {
             ) : (
               <div className="h-[420px]" style={{ cursor: 'pointer' }}>
                 <ResponsiveContainer width="100%" height="100%">
-                  <BarChart
+                  <ComposedChart
                     data={chartData}
                     margin={{ top: 24, right: 20, left: 0, bottom: 20 }}
                     onClick={(state) => {
@@ -452,20 +460,21 @@ export default function DashSemanalAba() {
                     <CartesianGrid strokeDasharray="3 3" opacity={0.25} />
                     <XAxis dataKey="nome" tick={{ fontSize: 12 }} />
                     <YAxis yAxisId="left" tick={{ fontSize: 11 }} allowDecimals={false} />
-                    {isSingle && primario?.indDef?.usa_ocupacao && (
+                    {isSingle && (
                       <YAxis
                         yAxisId="right"
                         orientation="right"
                         tick={{ fontSize: 11 }}
                         unit="%"
-                        domain={[0, 'auto']}
                       />
                     )}
                     <Tooltip
                       cursor={{ fill: 'rgba(0,179,157,0.06)' }}
                       contentStyle={{ borderRadius: 8, fontSize: 12 }}
                       formatter={(v, name) => {
-                        if (name === 'Taxa de ocupação') return [`${v}%`, name];
+                        if (name === 'Taxa de ocupação' || name === 'Variação por culto') {
+                          return [v != null ? `${v}%` : '—', name];
+                        }
                         return [Number(v).toLocaleString('pt-BR'), name];
                       }}
                     />
@@ -532,6 +541,30 @@ export default function DashSemanalAba() {
                             />
                           </Bar>
                         )}
+                        {/* Linha de variacao % por culto · sempre visivel em modo single */}
+                        <Line
+                          yAxisId="right"
+                          type="monotone"
+                          dataKey="variacao"
+                          name="Variação por culto"
+                          stroke="#8b5cf6"
+                          strokeWidth={2.5}
+                          dot={{ r: 4, fill: '#8b5cf6', strokeWidth: 0 }}
+                          activeDot={{ r: 6 }}
+                          animationDuration={1500}
+                          connectNulls
+                        >
+                          <LabelList
+                            dataKey="variacao"
+                            position="top"
+                            formatter={v => {
+                              if (v == null) return '';
+                              const s = v > 0 ? '+' : '';
+                              return `${s}${v}%`;
+                            }}
+                            style={{ fontSize: 10, fontWeight: 700, fill: '#8b5cf6' }}
+                          />
+                        </Line>
                       </>
                     ) : (
                       datasets.map((d, idx) => (
@@ -562,7 +595,7 @@ export default function DashSemanalAba() {
                         </Bar>
                       ))
                     )}
-                  </BarChart>
+                  </ComposedChart>
                 </ResponsiveContainer>
               </div>
             )}

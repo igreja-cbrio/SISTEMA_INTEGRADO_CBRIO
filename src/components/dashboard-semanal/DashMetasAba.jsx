@@ -8,9 +8,10 @@ import { Input } from '../ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../ui/select';
 import { Switch } from '../ui/switch';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '../ui/dialog';
-import { Loader2, Plus, Trash2, Target, Edit2, Sparkles, BarChart2, Activity, Archive, LineChart, AreaChart, PieChart, Radar } from 'lucide-react';
+import { Loader2, Plus, Trash2, Target, Edit2, Sparkles, BarChart2, Activity, Archive, LineChart, AreaChart, PieChart, Radar, ChevronDown, ChevronUp } from 'lucide-react';
 import { INDICADORES } from '../../pages/DashboardSemanal';
 import MetaGauge from './MetaGauge';
+import PreviewChartIA from './PreviewChartIA';
 
 const PERIODICIDADES = [
   { value: 'semanal', label: 'Semanal' },
@@ -468,6 +469,9 @@ const ICONES_GRAFICO_IA = {
 function IndicadorCustomCard({ ind, onArchive }) {
   const Icone = ICONES_GRAFICO_IA[ind.sugestao_ia?.tipo_grafico] || BarChart2;
   const sug = ind.sugestao_ia || {};
+  const [detalhesAbertos, setDetalhesAbertos] = useState(false);
+  // Semente unica por indicador pra dados placeholder variarem visualmente
+  const semente = (ind.id || '').split('').reduce((s, c) => s + c.charCodeAt(0), 0) % 100;
 
   return (
     <Card className="border-[#00B39D]/30 bg-[#00B39D]/[0.02]">
@@ -496,34 +500,65 @@ function IndicadorCustomCard({ ind, onArchive }) {
           </button>
         </div>
       </CardHeader>
-      <CardContent className="space-y-2">
+      <CardContent className="space-y-3">
+        {/* Preview do grafico baseado no tipo sugerido pela IA */}
+        <div className="bg-card/60 rounded-lg border border-border/40 p-2">
+          <PreviewChartIA tipoGrafico={sug.tipo_grafico} semente={semente} height={160} />
+          <p className="text-[9px] text-center text-muted-foreground mt-1">
+            Preview · dados de exemplo · implementar fórmula pra ativar com dados reais
+          </p>
+        </div>
+
         {ind.descricao && (
           <p className="text-xs text-muted-foreground">
             {ind.descricao.length > 160 ? ind.descricao.slice(0, 157) + '…' : ind.descricao}
           </p>
         )}
-        {sug.formula && (
-          <div>
-            <p className="text-[10px] uppercase tracking-wider text-muted-foreground mb-0.5">Fórmula</p>
-            <code className="text-[11px] block bg-muted/50 px-2 py-1 rounded font-mono whitespace-pre-wrap">
-              {sug.formula.length > 180 ? sug.formula.slice(0, 177) + '…' : sug.formula}
-            </code>
+
+        <button
+          onClick={() => setDetalhesAbertos(o => !o)}
+          className="w-full flex items-center justify-between text-[11px] font-medium text-muted-foreground hover:text-foreground transition-colors px-1 py-1.5 border-t border-border/40"
+        >
+          <span>Detalhes da sugestão da IA</span>
+          {detalhesAbertos ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
+        </button>
+
+        {detalhesAbertos && (
+          <div className="space-y-2 pt-1">
+            {sug.formula && (
+              <div>
+                <p className="text-[10px] uppercase tracking-wider text-muted-foreground mb-0.5">Fórmula</p>
+                <code className="text-[11px] block bg-muted/50 px-2 py-1 rounded font-mono whitespace-pre-wrap">
+                  {sug.formula}
+                </code>
+              </div>
+            )}
+            <div className="grid grid-cols-2 gap-2 text-[10px]">
+              {sug.eixo_x && (
+                <div>
+                  <p className="uppercase tracking-wider text-muted-foreground">Eixo X</p>
+                  <p className="text-foreground mt-0.5 capitalize line-clamp-2">{sug.eixo_x}</p>
+                </div>
+              )}
+              {sug.eixo_y && (
+                <div>
+                  <p className="uppercase tracking-wider text-muted-foreground">Eixo Y</p>
+                  <p className="text-foreground mt-0.5 capitalize line-clamp-2">{sug.eixo_y}</p>
+                </div>
+              )}
+            </div>
+            {sug.tabelas_envolvidas?.length > 0 && (
+              <div>
+                <p className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1">Tabelas envolvidas</p>
+                <div className="flex flex-wrap gap-1">
+                  {sug.tabelas_envolvidas.map((t, i) => (
+                    <span key={i} className="text-[10px] bg-muted/60 px-1.5 py-0.5 rounded">{t}</span>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
         )}
-        <div className="grid grid-cols-2 gap-2 text-[10px]">
-          {sug.eixo_x && (
-            <div>
-              <p className="uppercase tracking-wider text-muted-foreground">Eixo X</p>
-              <p className="text-foreground mt-0.5 capitalize line-clamp-2">{sug.eixo_x}</p>
-            </div>
-          )}
-          {sug.eixo_y && (
-            <div>
-              <p className="uppercase tracking-wider text-muted-foreground">Eixo Y</p>
-              <p className="text-foreground mt-0.5 capitalize line-clamp-2">{sug.eixo_y}</p>
-            </div>
-          )}
-        </div>
       </CardContent>
     </Card>
   );
