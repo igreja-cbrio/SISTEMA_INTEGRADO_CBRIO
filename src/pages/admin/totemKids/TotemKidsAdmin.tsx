@@ -14,7 +14,7 @@ import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
-import { Loader2, Plus, Pencil, Baby, Calendar, MapPin, Printer, ShieldAlert, ExternalLink } from 'lucide-react';
+import { Loader2, Plus, Pencil, Baby, Calendar, MapPin, Printer, ShieldAlert, ExternalLink, ArrowLeft } from 'lucide-react';
 import { toast } from 'sonner';
 import { totemKids, kpis } from '@/api';
 import { useNavigate } from 'react-router-dom';
@@ -28,12 +28,12 @@ export default function TotemKidsAdmin() {
     <div className="max-w-6xl mx-auto p-4 space-y-4">
       <div className="flex items-start justify-between flex-wrap gap-2">
         <div>
-          <h1 className="text-2xl font-bold text-pink-700 dark:text-pink-300">Totem Kids · Administração</h1>
-          <p className="text-sm text-muted-foreground">Configuração de sessões, salas, estações, crianças e auditoria.</p>
+          <h1 className="text-2xl font-bold text-pink-700 dark:text-pink-300">Totem Kids · Configurações</h1>
+          <p className="text-sm text-muted-foreground">Sessões, salas, estações, crianças e auditoria de overrides.</p>
         </div>
         <div className="flex gap-2 flex-wrap">
-          <Button variant="outline" size="sm" onClick={() => navigate('/ministerial/totem-kids')}>
-            <ExternalLink className="h-4 w-4 mr-1" /> Ir pro Totem (check-in)
+          <Button variant="default" size="sm" onClick={() => navigate('/ministerial/totem-kids')} className="bg-pink-600 hover:bg-pink-700">
+            <ArrowLeft className="h-4 w-4 mr-1" /> Voltar ao Totem
           </Button>
           <Button variant="outline" size="sm" onClick={() => navigate('/ministerial/totem-kids/teste-etiqueta')}>
             <Printer className="h-4 w-4 mr-1" /> Testar etiqueta
@@ -76,22 +76,23 @@ function AbaSessoes() {
   async function carregar() {
     setCarregando(true);
     try {
-      // Pega cultos dos ultimos 7 dias + proximos 14 dias (3 semanas total).
-      // Marcos: "ele sempre mostra o do dia, faz sentido" · entao janela
-      // larga ate o admin conseguir criar com antecedencia.
+      // Janela de cultos: ultimos 7 + proximos 14 dias.
+      // Filtra so cultos cujo service_type tem has_kids=true · evita
+      // listar AMI/Bridge que nao tem programacao infantil (Marcos 2026-05-21).
       const hoje = new Date();
       const inicio = new Date(hoje); inicio.setDate(hoje.getDate() - 7);
       const fim = new Date(hoje); fim.setDate(hoje.getDate() + 14);
       const [s, c] = await Promise.all([
         totemKids.sessoes.list({ limit: 30 }),
         kpis.cultos.list({
-          limit: 50,
+          limit: 100,
           data_inicio: inicio.toISOString().slice(0, 10),
           data_fim: fim.toISOString().slice(0, 10),
         }).catch(() => []),
       ]);
       setSessoes(s);
-      setCultos(c || []);
+      // Filtra so cultos com service_type_has_kids=true
+      setCultos((c || []).filter((culto: any) => culto.service_type_has_kids === true));
     } finally {
       setCarregando(false);
     }

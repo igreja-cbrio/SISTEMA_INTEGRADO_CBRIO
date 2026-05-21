@@ -429,8 +429,10 @@ function AppRoutes() {
         <Route path="/ministerial/totem-kids/checkout" element={<ModuleGuard moduleSlug="kids"><Suspense fallback={<Loading />}><TotemKidsCheckout /></Suspense></ModuleGuard>} />
         <Route path="/ministerial/totem-kids/painel" element={<ModuleGuard moduleSlug="kids"><Suspense fallback={<Loading />}><TotemKidsPainel /></Suspense></ModuleGuard>} />
         <Route path="/ministerial/totem-kids/teste-etiqueta" element={<ModuleGuard moduleSlug="kids"><Suspense fallback={<Loading />}><TotemKidsTesteEtiqueta /></Suspense></ModuleGuard>} />
-        <Route path="/admin/totem-kids" element={<ModuleGuard moduleSlug="kids"><Suspense fallback={<Loading />}><TotemKidsAdmin /></Suspense></ModuleGuard>} />
-        <Route path="/admin/totem-kids/sessoes" element={<Navigate to="/admin/totem-kids?aba=sessoes" replace />} />
+        <Route path="/ministerial/totem-kids/configuracoes" element={<ModuleGuard moduleSlug="kids"><Suspense fallback={<Loading />}><TotemKidsAdmin /></Suspense></ModuleGuard>} />
+        {/* Redirects das URLs antigas (admin separado) · 2026-05-21 */}
+        <Route path="/admin/totem-kids" element={<Navigate to="/ministerial/totem-kids/configuracoes" replace />} />
+        <Route path="/admin/totem-kids/sessoes" element={<Navigate to="/ministerial/totem-kids/configuracoes?aba=sessoes" replace />} />
         <Route path="/grupos" element={<ModuleGuard permKey="canMembresia"><Suspense fallback={<Loading />}><Grupos /></Suspense></ModuleGuard>} />
         <Route path="/grupos/supervisao" element={<Suspense fallback={<Loading />}><GruposSupervisao /></Suspense>} />
         <Route path="/grupos/pedidos" element={<Suspense fallback={<Loading />}><PedidosGrupo /></Suspense>} />
