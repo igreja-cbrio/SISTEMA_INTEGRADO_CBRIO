@@ -185,14 +185,32 @@ function escapeHtml(s: string): string {
   } as Record<string, string>)[c]);
 }
 
-function imprimirHtml(html: string): Promise<void> {
+function imprimirHtml(html: string, preview = false): Promise<void> {
+  if (preview) {
+    // Modo preview · abre popup visivel pro usuario conferir layout antes de
+    // ir pra impressora. Útil pra teste/debug.
+    return new Promise((resolve) => {
+      const win = window.open('', '_blank', 'width=320,height=520,scrollbars=yes');
+      if (!win) {
+        console.warn('[totemKids/imprimir] popup bloqueado · libere popups do site');
+        resolve();
+        return;
+      }
+      win.document.open();
+      win.document.write(html);
+      win.document.close();
+      resolve();
+    });
+  }
   return new Promise((resolve) => {
     const iframe = document.createElement('iframe');
+    // Renderiza com tamanho real MAS fora da tela. Evita bugs de iframe 0x0
+    // em Chrome/Edge que ignoram print() quando o iframe nao tem dimensao.
     iframe.style.position = 'fixed';
-    iframe.style.right = '0';
-    iframe.style.bottom = '0';
-    iframe.style.width = '0';
-    iframe.style.height = '0';
+    iframe.style.top = '0';
+    iframe.style.left = '-9999px';
+    iframe.style.width = '62mm';
+    iframe.style.height = '100mm';
     iframe.style.border = '0';
     document.body.appendChild(iframe);
 
@@ -206,6 +224,7 @@ function imprimirHtml(html: string): Promise<void> {
     doc.write(html);
     doc.close();
 
+    // Delay pra fontes + barcode SVG renderizarem
     setTimeout(() => {
       try {
         iframe.contentWindow?.focus();
@@ -213,37 +232,41 @@ function imprimirHtml(html: string): Promise<void> {
       } catch (e) {
         console.error('[totemKids/imprimir] erro print:', e);
       }
-      // Remove apos 2s (tempo do print spool)
+      // Remove apos 3s (tempo do spool + confirmacao do dialogo)
       setTimeout(() => {
         try { document.body.removeChild(iframe); } catch { /* iframe ja removido */ }
         resolve();
-      }, 2000);
-    }, 300);
+      }, 3000);
+    }, 400);
   });
 }
 
 // API pública · imprime as 2 etiquetas e loga
-export async function imprimirEtiquetas(d: DadosImpressao): Promise<void> {
+// preview=true abre as etiquetas em popup ao inves de mandar pra impressora
+export async function imprimirEtiquetas(d: DadosImpressao, preview = false): Promise<void> {
   const barcodeSvg = await gerarBarcodeSvg(d.codigoBarras);
 
   // Etiqueta da criança
-  await imprimirHtml(htmlEtiquetaCrianca(d, barcodeSvg));
-  totemKids.etiquetas.log({
-    checkin_id: d.checkinId,
-    estacao_id: d.estacaoId,
-    tipo: 'crianca',
-    conteudo: {
-      nome: d.crianca.nome,
-      sala: d.crianca.salaNome,
-      idade: d.crianca.idadeLabel,
-      codigo: d.codigoSeguranca,
-      observacoes_medicas: d.crianca.observacoesMedicas,
-    },
-    status: 'enviada',
-  }).catch(() => {});
+  await imprimirHtml(htmlEtiquetaCrianca(d, barcodeSvg), preview);
+  if (!preview) {
+    totemKids.etiquetas.log({
+      checkin_id: d.checkinId,
+      estacao_id: d.estacaoId,
+      tipo: 'crianca',
+      conteudo: {
+        nome: d.crianca.nome,
+        sala: d.crianca.salaNome,
+        idade: d.crianca.idadeLabel,
+        codigo: d.codigoSeguranca,
+        observacoes_medicas: d.crianca.observacoesMedicas,
+      },
+      status: 'enviada',
+    }).catch(() => {});
+  }
 
   // Etiqueta do responsável
-  await imprimirHtml(htmlEtiquetaResponsavel(d, barcodeSvg));
+  await imprimirHtml(htmlEtiquetaResponsavel(d, barcodeSvg), preview);
+  if (preview) return;  // nao loga impressao em modo preview
   totemKids.etiquetas.log({
     checkin_id: d.checkinId,
     estacao_id: d.estacaoId,

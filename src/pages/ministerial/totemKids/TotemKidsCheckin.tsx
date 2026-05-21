@@ -219,24 +219,39 @@ export default function TotemKidsCheckin() {
             {sessao.culto?.nome} · {sessao.culto?.data && format(new Date(sessao.culto.data + 'T00:00:00'), "EEEE, dd 'de' MMMM", { locale: ptBR })}
           </p>
         </div>
-        <Button variant="outline" size="sm" onClick={() => navigate('/ministerial/totem-kids/painel')}>
-          Painel ao vivo
-        </Button>
+        <div className="flex gap-2">
+          <Button variant="outline" size="sm" onClick={() => navigate('/ministerial/totem-kids/painel')}>
+            Painel ao vivo
+          </Button>
+          <Button variant="outline" size="sm" onClick={() => navigate('/ministerial/totem-kids/teste-etiqueta')}>
+            <Printer className="h-4 w-4 mr-1" /> Testar etiqueta
+          </Button>
+        </div>
       </div>
 
       {!crianca ? (
         <Card>
           <CardContent className="p-4 space-y-4">
-            <div className="relative">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5 text-muted-foreground" />
-              <Input
-                ref={buscaRef}
-                placeholder="Buscar criança por nome ou telefone do responsável..."
-                value={busca}
-                onChange={e => setBusca(e.target.value)}
-                className="pl-10 h-14 text-lg"
-                autoFocus
-              />
+            <div className="flex gap-2">
+              <div className="relative flex-1">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5 text-muted-foreground" />
+                <Input
+                  ref={buscaRef}
+                  placeholder="Buscar criança por nome ou telefone do responsável..."
+                  value={busca}
+                  onChange={e => setBusca(e.target.value)}
+                  className="pl-10 h-14 text-lg"
+                  autoFocus
+                />
+              </div>
+              <Button
+                onClick={() => setModalNovo(true)}
+                variant="default"
+                size="lg"
+                className="h-14 bg-pink-600 hover:bg-pink-700 whitespace-nowrap"
+              >
+                <Plus className="h-5 w-5 mr-1" /> Nova criança
+              </Button>
             </div>
 
             {buscando && (
@@ -274,13 +289,18 @@ export default function TotemKidsCheckin() {
                 </button>
               ))}
               {!buscando && busca.trim().length >= 2 && resultados.length === 0 && (
-                <div className="text-center py-6 space-y-3">
-                  <p className="text-muted-foreground">Nenhuma criança encontrada</p>
-                  <Button onClick={() => setModalNovo(true)} variant="default">
+                <div className="text-center py-6 space-y-3 border-2 border-dashed border-pink-200 dark:border-pink-900 rounded-lg">
+                  <p className="text-muted-foreground">Nenhuma criança encontrada com "{busca}"</p>
+                  <Button onClick={() => setModalNovo(true)} variant="default" className="bg-pink-600 hover:bg-pink-700">
                     <Plus className="h-4 w-4 mr-2" />
-                    Cadastrar criança nova
+                    Cadastrar "{busca}" como criança nova
                   </Button>
                 </div>
+              )}
+              {!buscando && busca.trim().length < 2 && resultados.length === 0 && (
+                <p className="text-center py-6 text-sm text-muted-foreground">
+                  Digite o nome da criança ou clique em <b>Nova criança</b> pra cadastrar.
+                </p>
               )}
             </div>
           </CardContent>

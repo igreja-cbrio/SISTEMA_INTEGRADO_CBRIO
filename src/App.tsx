@@ -183,6 +183,7 @@ const PainelBridge = lazyWithRetry(() => import('./pages/ministerial/PainelBridg
 const TotemKidsCheckin = lazyWithRetry(() => import('./pages/ministerial/totemKids/TotemKidsCheckin'));
 const TotemKidsCheckout = lazyWithRetry(() => import('./pages/ministerial/totemKids/TotemKidsCheckout'));
 const TotemKidsPainel = lazyWithRetry(() => import('./pages/ministerial/totemKids/TotemKidsPainel'));
+const TotemKidsTesteEtiqueta = lazyWithRetry(() => import('./pages/ministerial/totemKids/TotemKidsTesteEtiqueta'));
 const TotemKidsAdmin = lazyWithRetry(() => import('./pages/admin/totemKids/TotemKidsAdmin'));
 const AssistenteIA = lazyWithRetry(() => import('./pages/admin/AssistenteIA'));
 const EventDetail = lazyWithRetry(() => import('./pages/eventos/EventDetail'));
@@ -427,6 +428,7 @@ function AppRoutes() {
         <Route path="/ministerial/totem-kids" element={<ModuleGuard moduleSlug="kids"><Suspense fallback={<Loading />}><TotemKidsCheckin /></Suspense></ModuleGuard>} />
         <Route path="/ministerial/totem-kids/checkout" element={<ModuleGuard moduleSlug="kids"><Suspense fallback={<Loading />}><TotemKidsCheckout /></Suspense></ModuleGuard>} />
         <Route path="/ministerial/totem-kids/painel" element={<ModuleGuard moduleSlug="kids"><Suspense fallback={<Loading />}><TotemKidsPainel /></Suspense></ModuleGuard>} />
+        <Route path="/ministerial/totem-kids/teste-etiqueta" element={<ModuleGuard moduleSlug="kids"><Suspense fallback={<Loading />}><TotemKidsTesteEtiqueta /></Suspense></ModuleGuard>} />
         <Route path="/admin/totem-kids" element={<ModuleGuard moduleSlug="kids"><Suspense fallback={<Loading />}><TotemKidsAdmin /></Suspense></ModuleGuard>} />
         <Route path="/admin/totem-kids/sessoes" element={<Navigate to="/admin/totem-kids?aba=sessoes" replace />} />
         <Route path="/grupos" element={<ModuleGuard permKey="canMembresia"><Suspense fallback={<Loading />}><Grupos /></Suspense></ModuleGuard>} />
