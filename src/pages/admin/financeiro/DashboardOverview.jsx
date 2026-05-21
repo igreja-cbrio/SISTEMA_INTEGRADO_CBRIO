@@ -121,7 +121,7 @@ export default function DashboardOverview({ onNavigate }) {
           bgColor="bg-primary/10"
           title="Importar extratos"
           subtitle={ultimo_upload ? `Último: ${daysAgo(ultimo_upload.created_at)}` : 'Nenhum upload ainda'}
-          onClick={() => onNavigate?.(8)}
+          onClick={() => onNavigate?.(10)}
         />
         <ShortcutCard
           icon={ClipboardList}
@@ -132,7 +132,7 @@ export default function DashboardOverview({ onNavigate }) {
             ? `${pendencias.fila_classificacao} aguardando revisão`
             : 'Sem pendências ✓'}
           badge={pendencias.fila_classificacao}
-          onClick={() => onNavigate?.(9)}
+          onClick={() => onNavigate?.(11)}
         />
         <ShortcutCard
           icon={CreditCard}
