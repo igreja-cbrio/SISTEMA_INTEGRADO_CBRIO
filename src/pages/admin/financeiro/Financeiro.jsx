@@ -11,6 +11,7 @@ import DashboardSemanal from './DashboardSemanal';
 import DashboardOverview from './DashboardOverview';
 import CultoAoVivo from './CultoAoVivo';
 import DreAuto from './DreAuto';
+import Analises from './Analises';
 
 // ── Tema ────────────────────────────────────────────────────
 const C = {
@@ -144,7 +145,7 @@ function Badge({ status, map }) {
 }
 
 // ── TABS ────────────────────────────────────────────────────
-const TABS = ['Dashboard', 'Contas', 'Transacoes', 'Contas a Pagar', 'Reembolsos', 'DRE', 'DRE Auto', 'Banco Santander', 'Culto ao Vivo', 'Semana qua-ter', 'Importar extratos', 'Fila de classificacao', 'Estrutura fiscal'];
+const TABS = ['Dashboard', 'Analises', 'Contas', 'Transacoes', 'Contas a Pagar', 'Reembolsos', 'DRE', 'DRE Auto', 'Banco Santander', 'Culto ao Vivo', 'Semana qua-ter', 'Importar extratos', 'Fila de classificacao', 'Estrutura fiscal'];
 
 // ── KPI Cards (estilo unificado) ─────────────────────────────
 const FIN_STAT_SVGS = [
@@ -1044,18 +1045,19 @@ export default function Financeiro() {
       </div>
 
       {tab === 0 && renderDashboard()}
-      {tab === 1 && renderContas()}
-      {tab === 2 && renderTransacoes()}
-      {tab === 3 && renderContasPagar()}
-      {tab === 4 && renderReembolsos()}
-      {tab === 5 && renderDRE()}
-      {tab === 6 && <DreAuto />}
-      {tab === 7 && <SantanderTab />}
-      {tab === 8 && <CultoAoVivo />}
-      {tab === 9 && <DashboardSemanal />}
-      {tab === 10 && <ImportarExtratos />}
-      {tab === 11 && <FilaClassificacao />}
-      {tab === 12 && <EstruturaFiscal />}
+      {tab === 1 && <Analises />}
+      {tab === 2 && renderContas()}
+      {tab === 3 && renderTransacoes()}
+      {tab === 4 && renderContasPagar()}
+      {tab === 5 && renderReembolsos()}
+      {tab === 6 && renderDRE()}
+      {tab === 7 && <DreAuto />}
+      {tab === 8 && <SantanderTab />}
+      {tab === 9 && <CultoAoVivo />}
+      {tab === 10 && <DashboardSemanal />}
+      {tab === 11 && <ImportarExtratos />}
+      {tab === 12 && <FilaClassificacao />}
+      {tab === 13 && <EstruturaFiscal />}
 
       {modalConta && renderModalConta()}
       {modalTransacao && renderModalTransacao()}
