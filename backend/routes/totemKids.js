@@ -16,10 +16,21 @@
 // ============================================================================
 
 const router = require('express').Router();
+const multer = require('multer');
+const XLSX = require('xlsx');
 const { authenticate, authorizeModule } = require('../middleware/auth');
 const { supabase } = require('../utils/supabase');
 
 router.use(authenticate);
+
+const xlsxUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 20 * 1024 * 1024 }, // 20 MB
+  fileFilter: (_req, file, cb) => {
+    const ok = /\.(xlsx|xls|csv)$/i.test(file.originalname);
+    cb(ok ? null : new Error('Formato invalido · use .xlsx, .xls ou .csv'), ok);
+  },
+});
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
@@ -1045,6 +1056,346 @@ router.get('/historico/crianca/:id', authorizeModule('kids', 1), async (req, res
   } catch (e) {
     res.status(500).json({ error: 'Erro ao buscar historico' });
   }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// IMPORT XLSX · cadastro em massa de criancas + responsaveis
+// ═══════════════════════════════════════════════════════════════════════════
+
+// Normaliza nome de coluna pra match · lowercase, sem acento, sem espaco
+function normalizeColName(s) {
+  return String(s || '').toLowerCase()
+    .normalize('NFD').replace(/[̀-ͯ]/g, '')
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '');
+}
+
+// Aliases aceitos por campo logico
+const COL_ALIASES = {
+  nome_crianca:           ['nome_crianca','nome','crianca','child_name','first_name'],
+  data_nascimento:        ['data_nascimento','nascimento','aniversario','birthdate','dob','data_nasc'],
+  sexo:                   ['sexo','genero','gender'],
+  alergia:                ['alergia','alergias','observacoes_medicas','medical','medical_notes','allergies'],
+  observacoes:            ['observacoes','obs','notas','notes','observacao'],
+  responsavel_nome:       ['responsavel_nome','responsavel','mae','pai','household_name','parent_name'],
+  responsavel_telefone:   ['responsavel_telefone','telefone','phone','mobile'],
+  responsavel_cpf:        ['responsavel_cpf','cpf'],
+  responsavel_parentesco: ['responsavel_parentesco','parentesco','relationship'],
+  responsavel2_nome:      ['responsavel2_nome','responsavel_2','segundo_responsavel','parent2_name'],
+  responsavel2_telefone:  ['responsavel2_telefone','telefone2','phone2'],
+  responsavel2_cpf:       ['responsavel2_cpf','cpf2'],
+  responsavel2_parentesco: ['responsavel2_parentesco','parentesco2'],
+  ultima_visita:          ['ultima_visita','ultima_presenca','last_visit'],
+};
+
+// Resolve mapa coluna_planilha → campo_logico
+function resolveColumnMap(firstRow) {
+  const keys = Object.keys(firstRow).map(k => ({ original: k, norm: normalizeColName(k) }));
+  const map = {};
+  for (const [logico, aliases] of Object.entries(COL_ALIASES)) {
+    const found = keys.find(k => aliases.includes(k.norm));
+    if (found) map[logico] = found.original;
+  }
+  return map;
+}
+
+function pickRowValue(row, colMap, logico) {
+  const orig = colMap[logico];
+  if (!orig) return null;
+  const v = row[orig];
+  if (v == null || v === '') return null;
+  return typeof v === 'string' ? v.trim() : v;
+}
+
+function normalizeTelefone(t) {
+  if (!t) return null;
+  const d = String(t).replace(/\D/g, '');
+  return d.length >= 8 ? d : null;
+}
+function normalizeCpf(c) {
+  if (!c) return null;
+  const d = String(c).replace(/\D/g, '');
+  return d.length === 11 ? d : null;
+}
+function normalizeDateStr(v) {
+  if (v == null || v === '') return null;
+  // Excel date number
+  if (typeof v === 'number') {
+    try {
+      const d = XLSX.SSF.parse_date_code(v);
+      if (d) return `${d.y}-${String(d.m).padStart(2,'0')}-${String(d.d).padStart(2,'0')}`;
+    } catch { /* fallthrough */ }
+  }
+  // Date object
+  if (v instanceof Date && !isNaN(v.getTime())) {
+    return v.toISOString().slice(0, 10);
+  }
+  const s = String(v).trim();
+  // dd/mm/yyyy
+  const m1 = /^(\d{1,2})[/-](\d{1,2})[/-](\d{2,4})$/.exec(s);
+  if (m1) {
+    const ano = m1[3].length === 2 ? `20${m1[3]}` : m1[3];
+    return `${ano}-${m1[2].padStart(2,'0')}-${m1[1].padStart(2,'0')}`;
+  }
+  // yyyy-mm-dd
+  if (/^\d{4}-\d{2}-\d{2}/.test(s)) return s.slice(0, 10);
+  return null;
+}
+function normalizeSexo(v) {
+  if (!v) return null;
+  const s = String(v).trim().toLowerCase();
+  if (['m','masc','masculino','male','menino','boy','h','homem'].includes(s)) return 'M';
+  if (['f','fem','feminino','female','menina','girl','mulher'].includes(s)) return 'F';
+  return null;
+}
+function normalizeParentesco(v) {
+  if (!v) return null;
+  const s = String(v).trim().toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+  if (['mae','mother','mom'].includes(s)) return 'mae';
+  if (['pai','father','dad'].includes(s)) return 'pai';
+  if (['padrasto','step_father','step-father'].includes(s)) return 'padrasto';
+  if (['madrasta','step_mother','step-mother'].includes(s)) return 'madrasta';
+  if (['avo','avo_a','avo(a)','grandparent','grandpa','grandma','vovo','vovó'].includes(s)) return 'avo_a';
+  if (['tio','tia','tio_a','tio(a)','uncle','aunt'].includes(s)) return 'tio_a';
+  if (['irmao','irma','irmao_a','irmao(a)','brother','sister'].includes(s)) return 'irmao_a';
+  if (['tutor','guardian'].includes(s)) return 'tutor';
+  return 'outro';
+}
+
+// Resolve ou cria mem_membros do responsavel
+async function resolveOrCreateMembro({ nome, telefone, cpf, parentesco }) {
+  let membro = null;
+  if (cpf) {
+    const { data } = await supabase.from('mem_membros').select('id, nome, familia_id, parentesco').eq('cpf', cpf).maybeSingle();
+    if (data) membro = data;
+  }
+  if (!membro && telefone) {
+    const { data } = await supabase.from('mem_membros').select('id, nome, familia_id, parentesco').eq('telefone', telefone).maybeSingle();
+    if (data) membro = data;
+  }
+  if (membro) return { membro, criado: false };
+
+  const { data, error } = await supabase.from('mem_membros')
+    .insert({
+      nome,
+      telefone,
+      cpf,
+      status: 'visitante',
+      active: true,
+      parentesco: parentesco === 'mae' || parentesco === 'pai' ? 'responsavel' : null,
+    })
+    .select('id, nome, familia_id')
+    .single();
+  if (error) throw error;
+  return { membro: data, criado: true };
+}
+
+async function getOrCreateFamilia(membro) {
+  if (membro.familia_id) return membro.familia_id;
+  const primeiroNome = (membro.nome || 'Familia').split(' ')[0];
+  const { data, error } = await supabase.from('mem_familias')
+    .insert({ nome: `Familia ${primeiroNome}` })
+    .select('id').single();
+  if (error) throw error;
+  await supabase.from('mem_membros').update({ familia_id: data.id }).eq('id', membro.id);
+  return data.id;
+}
+
+// Processa 1 linha · retorna { status, msg } pra relatorio
+async function processarLinhaImport(row, colMap, dryRun, userId) {
+  const nomeCrianca = pickRowValue(row, colMap, 'nome_crianca');
+  const respNome = pickRowValue(row, colMap, 'responsavel_nome');
+  const respTel = normalizeTelefone(pickRowValue(row, colMap, 'responsavel_telefone'));
+
+  if (!nomeCrianca) return { status: 'erro', msg: 'nome_crianca obrigatorio' };
+  if (!respNome) return { status: 'erro', msg: 'responsavel_nome obrigatorio' };
+  if (!respTel) return { status: 'erro', msg: 'responsavel_telefone obrigatorio (>=8 digitos)' };
+
+  const dataNasc = normalizeDateStr(pickRowValue(row, colMap, 'data_nascimento'));
+  const sexo = normalizeSexo(pickRowValue(row, colMap, 'sexo'));
+  const alergia = pickRowValue(row, colMap, 'alergia');
+  const obs = pickRowValue(row, colMap, 'observacoes');
+  const respCpf = normalizeCpf(pickRowValue(row, colMap, 'responsavel_cpf'));
+  const respParentesco = normalizeParentesco(pickRowValue(row, colMap, 'responsavel_parentesco'));
+
+  if (dryRun) {
+    return { status: 'preview', msg: `${nomeCrianca} → resp ${respNome}` };
+  }
+
+  // 1. Resolve responsavel
+  const { membro: resp1, criado: resp1Criado } = await resolveOrCreateMembro({
+    nome: respNome, telefone: respTel, cpf: respCpf, parentesco: respParentesco,
+  });
+
+  // 2. Familia
+  const familiaId = await getOrCreateFamilia(resp1);
+
+  // 3. Crianca · match por nome (case-insensitive) + familia
+  const { data: jaExiste } = await supabase
+    .from('kids_criancas')
+    .select('id')
+    .ilike('nome', nomeCrianca)
+    .eq('familia_id', familiaId)
+    .maybeSingle();
+
+  let criancaId;
+  let statusResp;
+  if (jaExiste) {
+    criancaId = jaExiste.id;
+    const update = {};
+    if (dataNasc) update.data_nascimento = dataNasc;
+    if (sexo) update.sexo = sexo;
+    if (alergia) update.observacoes_medicas = alergia;
+    if (obs) update.observacoes_internas = obs;
+    if (Object.keys(update).length) {
+      await supabase.from('kids_criancas').update(update).eq('id', criancaId);
+    }
+    statusResp = 'atualizada';
+  } else {
+    const { data: nova, error } = await supabase.from('kids_criancas').insert({
+      nome: nomeCrianca,
+      data_nascimento: dataNasc,
+      sexo,
+      familia_id: familiaId,
+      observacoes_medicas: alergia,
+      observacoes_internas: obs,
+      visitante: true,
+      ativo: true,
+      created_by: userId,
+    }).select('id').single();
+    if (error) throw error;
+    criancaId = nova.id;
+    statusResp = 'criada';
+  }
+
+  // 4. Liga responsavel 1 (se nao tem)
+  await supabase.from('kids_responsaveis').upsert({
+    crianca_id: criancaId,
+    membro_id: resp1.id,
+    parentesco: respParentesco,
+    autorizado_buscar: true,
+  }, { onConflict: 'crianca_id,membro_id', ignoreDuplicates: false });
+
+  // 5. Responsavel 2 (opcional)
+  const resp2Nome = pickRowValue(row, colMap, 'responsavel2_nome');
+  const resp2Tel = normalizeTelefone(pickRowValue(row, colMap, 'responsavel2_telefone'));
+  if (resp2Nome && resp2Tel) {
+    const resp2Cpf = normalizeCpf(pickRowValue(row, colMap, 'responsavel2_cpf'));
+    const resp2Parentesco = normalizeParentesco(pickRowValue(row, colMap, 'responsavel2_parentesco'));
+    try {
+      const { membro: resp2 } = await resolveOrCreateMembro({
+        nome: resp2Nome, telefone: resp2Tel, cpf: resp2Cpf, parentesco: resp2Parentesco,
+      });
+      // Mesma familia
+      if (!resp2.familia_id) {
+        await supabase.from('mem_membros').update({ familia_id: familiaId }).eq('id', resp2.id);
+      }
+      await supabase.from('kids_responsaveis').upsert({
+        crianca_id: criancaId,
+        membro_id: resp2.id,
+        parentesco: resp2Parentesco,
+        autorizado_buscar: true,
+      }, { onConflict: 'crianca_id,membro_id', ignoreDuplicates: false });
+    } catch (e) {
+      console.warn('[import] resp2 falhou:', e.message);
+    }
+  }
+
+  return {
+    status: statusResp,
+    msg: `${nomeCrianca} → ${respNome}${resp1Criado ? ' (resp novo)' : ''}`,
+  };
+}
+
+// POST /api/totem-kids/criancas/importar?dry_run=1
+router.post(
+  '/criancas/importar',
+  authorizeModule('kids', 3),
+  xlsxUpload.single('arquivo'),
+  async (req, res) => {
+    try {
+      if (!req.file) return res.status(400).json({ error: 'arquivo obrigatorio (campo "arquivo")' });
+
+      const dryRun = ['1','true','yes'].includes(String(req.query.dry_run || '').toLowerCase());
+
+      const wb = XLSX.read(req.file.buffer, { type: 'buffer', cellDates: true });
+      const sheetName = wb.SheetNames[0];
+      if (!sheetName) return res.status(400).json({ error: 'planilha vazia' });
+      const sheet = wb.Sheets[sheetName];
+      const rows = XLSX.utils.sheet_to_json(sheet, { defval: null, raw: false });
+      if (!rows.length) return res.status(400).json({ error: 'nenhuma linha encontrada' });
+
+      const colMap = resolveColumnMap(rows[0]);
+
+      const colObrigatorias = ['nome_crianca','responsavel_nome','responsavel_telefone'];
+      const faltando = colObrigatorias.filter(c => !colMap[c]);
+      if (faltando.length) {
+        return res.status(400).json({
+          error: 'colunas obrigatorias faltando',
+          faltando,
+          colunas_encontradas: Object.keys(rows[0]),
+          colunas_mapeadas: colMap,
+        });
+      }
+
+      const relatorio = { total: rows.length, criadas: 0, atualizadas: 0, preview: 0, erros: 0, detalhes: [] };
+
+      for (let i = 0; i < rows.length; i++) {
+        try {
+          const r = await processarLinhaImport(rows[i], colMap, dryRun, req.user.userId);
+          if (r.status === 'criada') relatorio.criadas++;
+          else if (r.status === 'atualizada') relatorio.atualizadas++;
+          else if (r.status === 'preview') relatorio.preview++;
+          else if (r.status === 'erro') relatorio.erros++;
+          relatorio.detalhes.push({ linha: i + 2, ...r }); // +2 = +1 header +1 base 1
+        } catch (e) {
+          relatorio.erros++;
+          relatorio.detalhes.push({ linha: i + 2, status: 'erro', msg: e.message || 'erro desconhecido' });
+        }
+      }
+
+      res.json({ dry_run: dryRun, coluna_mapeamento: colMap, ...relatorio });
+    } catch (e) {
+      console.error('[totemKids/importar]', e);
+      res.status(500).json({ error: e.message || 'Erro ao processar planilha' });
+    }
+  }
+);
+
+// GET /api/totem-kids/criancas/modelo-importacao · gera modelo XLSX
+router.get('/criancas/modelo-importacao', authorizeModule('kids', 1), async (req, res) => {
+  const ws = XLSX.utils.aoa_to_sheet([
+    [
+      'nome_crianca', 'data_nascimento', 'sexo', 'alergia', 'observacoes',
+      'responsavel_nome', 'responsavel_telefone', 'responsavel_cpf', 'responsavel_parentesco',
+      'responsavel2_nome', 'responsavel2_telefone', 'responsavel2_cpf', 'responsavel2_parentesco',
+      'ultima_visita',
+    ],
+    [
+      'Maria Clara Silva', '2020-05-15', 'F', 'Amendoim', 'Usa óculos',
+      'Cláudia Silva', '21999998888', '12345678900', 'mae',
+      'João Silva', '21988887777', '98765432100', 'pai',
+      '2026-05-15',
+    ],
+    [
+      'Pedro Oliveira', '2019-08-20', 'M', '', '',
+      'Ana Oliveira', '21977776666', '', 'mae',
+      '', '', '', '',
+      '',
+    ],
+  ]);
+  ws['!cols'] = [
+    { wch: 22 }, { wch: 14 }, { wch: 6 }, { wch: 16 }, { wch: 18 },
+    { wch: 22 }, { wch: 14 }, { wch: 14 }, { wch: 16 },
+    { wch: 22 }, { wch: 14 }, { wch: 14 }, { wch: 16 },
+    { wch: 14 },
+  ];
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'Criancas');
+  const buf = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+  res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+  res.setHeader('Content-Disposition', 'attachment; filename="modelo-importacao-criancas.xlsx"');
+  res.send(buf);
 });
 
 module.exports = router;

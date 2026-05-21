@@ -775,6 +775,14 @@ export const totemKids = {
     historico: (id) => get(`/totem-kids/historico/crianca/${id}`),
     addResponsavel: (id, data) => post(`/totem-kids/criancas/${id}/responsaveis`, data),
     removeResponsavel: (responsavelId) => del(`/totem-kids/responsaveis/${responsavelId}`),
+    // Importacao XLSX · dryRun=true valida sem gravar
+    importar: (file, { dryRun = false } = {}) => {
+      const fd = new FormData();
+      fd.append('arquivo', file);
+      return requestFile(`/totem-kids/criancas/importar${dryRun ? '?dry_run=1' : ''}`, fd);
+    },
+    // URL pra abrir e baixar modelo (browser cuida da auth via cookie/header)
+    modeloImportacaoUrl: () => `${API}/totem-kids/criancas/modelo-importacao`,
   },
   checkin: {
     criar: (data) => post('/totem-kids/checkin', data),

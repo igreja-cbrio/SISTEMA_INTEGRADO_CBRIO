@@ -14,7 +14,7 @@ import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
-import { Loader2, Plus, Pencil, Baby, Calendar, MapPin, Printer, ShieldAlert, ExternalLink, ArrowLeft, Sparkles } from 'lucide-react';
+import { Loader2, Plus, Pencil, Baby, Calendar, MapPin, Printer, ShieldAlert, ExternalLink, ArrowLeft, Sparkles, Upload, Download, AlertTriangle, CheckCircle2, FileSpreadsheet } from 'lucide-react';
 import { toast } from 'sonner';
 import { totemKids, kpis } from '@/api';
 import { useNavigate } from 'react-router-dom';
@@ -434,6 +434,7 @@ function AbaCriancas() {
   const [criancas, setCriancas] = useState<any[]>([]);
   const [carregando, setCarregando] = useState(true);
   const [busca, setBusca] = useState('');
+  const [modalImport, setModalImport] = useState(false);
 
   async function carregar() {
     setCarregando(true);
@@ -449,12 +450,18 @@ function AbaCriancas() {
   return (
     <Card>
       <CardContent className="p-4 space-y-3">
-        <div className="flex gap-2 items-center">
+        <div className="flex gap-2 items-center flex-wrap">
           <Input placeholder="Buscar..." value={busca} onChange={e => setBusca(e.target.value)} className="max-w-xs" />
           <span className="text-sm text-muted-foreground">
             {filtradas.length} de {criancas.length}
           </span>
+          <div className="ml-auto flex gap-2">
+            <Button variant="outline" size="sm" onClick={() => setModalImport(true)}>
+              <Upload className="h-4 w-4 mr-1" /> Importar XLSX
+            </Button>
+          </div>
         </div>
+        <ImportarCriancasModal open={modalImport} onClose={() => setModalImport(false)} onImportado={carregar} />
         {carregando ? <Loader2 className="h-6 w-6 animate-spin text-pink-500 mx-auto my-6" /> : (
           <div className="space-y-2 max-h-[600px] overflow-y-auto">
             {filtradas.map(c => (
@@ -483,6 +490,185 @@ function AbaCriancas() {
         )}
       </CardContent>
     </Card>
+  );
+}
+
+// ─── Modal de Importação XLSX ────────────────────────────────────────────────
+function ImportarCriancasModal({ open, onClose, onImportado }: { open: boolean; onClose: () => void; onImportado: () => void }) {
+  const [arquivo, setArquivo] = useState<File | null>(null);
+  const [analisando, setAnalisando] = useState(false);
+  const [importando, setImportando] = useState(false);
+  const [preview, setPreview] = useState<any>(null);
+  const [resultado, setResultado] = useState<any>(null);
+
+  useEffect(() => {
+    if (open) {
+      setArquivo(null); setPreview(null); setResultado(null);
+    }
+  }, [open]);
+
+  async function executarPreview() {
+    if (!arquivo) return;
+    setAnalisando(true);
+    setResultado(null);
+    try {
+      const r = await totemKids.criancas.importar(arquivo, { dryRun: true });
+      setPreview(r);
+    } catch (e: any) {
+      toast.error(e?.message || 'Erro ao analisar planilha');
+      setPreview({ erro: e?.message, faltando: e?.faltando, colunas_encontradas: e?.colunas_encontradas });
+    } finally {
+      setAnalisando(false);
+    }
+  }
+
+  async function executarImport() {
+    if (!arquivo) return;
+    if (!confirm(`Confirma importar ${preview?.total || '?'} linhas? Não dá pra desfazer em lote.`)) return;
+    setImportando(true);
+    try {
+      const r = await totemKids.criancas.importar(arquivo, { dryRun: false });
+      setResultado(r);
+      toast.success(`Import OK · ${r.criadas} criadas · ${r.atualizadas} atualizadas · ${r.erros} erros`);
+      onImportado();
+    } catch (e: any) {
+      toast.error(e?.message || 'Erro no import');
+    } finally {
+      setImportando(false);
+    }
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
+      <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <FileSpreadsheet className="h-5 w-5" /> Importar planilha de crianças
+          </DialogTitle>
+          <DialogDescription>
+            Cadastro em massa a partir de XLSX/CSV · idempotente (não duplica) · faz match com
+            <code>mem_membros</code> existentes por CPF/telefone do responsável.
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="space-y-4">
+          <div className="bg-pink-50 dark:bg-pink-950/30 border border-pink-200 dark:border-pink-900 rounded-lg p-3 text-sm">
+            <p className="font-semibold mb-1">Colunas esperadas:</p>
+            <p className="text-xs text-muted-foreground">
+              <b>Obrigatórias</b>: nome_crianca, responsavel_nome, responsavel_telefone<br />
+              <b>Recomendadas</b>: data_nascimento, alergia, responsavel_cpf, responsavel_parentesco<br />
+              <b>Opcionais</b>: sexo, observacoes, responsavel2_*, ultima_visita
+            </p>
+            <a
+              href="/api/totem-kids/criancas/modelo-importacao"
+              className="text-pink-700 dark:text-pink-300 hover:underline text-sm inline-flex items-center gap-1 mt-2"
+              target="_blank" rel="noopener"
+            >
+              <Download className="h-3 w-3" /> Baixar modelo de planilha
+            </a>
+          </div>
+
+          <div>
+            <label className="text-sm font-medium block mb-2">Arquivo (.xlsx, .xls ou .csv)</label>
+            <Input
+              type="file"
+              accept=".xlsx,.xls,.csv"
+              onChange={e => {
+                setArquivo(e.target.files?.[0] || null);
+                setPreview(null);
+                setResultado(null);
+              }}
+            />
+            {arquivo && (
+              <p className="text-xs text-muted-foreground mt-1">
+                {arquivo.name} · {(arquivo.size / 1024).toFixed(1)} KB
+              </p>
+            )}
+          </div>
+
+          {preview?.erro && (
+            <div className="bg-red-100 dark:bg-red-950/30 border border-red-300 dark:border-red-800 rounded-lg p-3 text-sm">
+              <p className="font-semibold text-red-900 dark:text-red-200 flex items-center gap-1">
+                <AlertTriangle className="h-4 w-4" /> {preview.erro}
+              </p>
+              {preview.faltando && (
+                <p className="mt-1">Faltando: <b>{preview.faltando.join(', ')}</b></p>
+              )}
+              {preview.colunas_encontradas && (
+                <p className="text-xs mt-1">Colunas encontradas: {preview.colunas_encontradas.join(', ')}</p>
+              )}
+            </div>
+          )}
+
+          {preview && !preview.erro && (
+            <div className="bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-300 dark:border-emerald-800 rounded-lg p-3 text-sm space-y-1">
+              <p className="font-semibold flex items-center gap-1">
+                <CheckCircle2 className="h-4 w-4" /> Planilha válida · {preview.total} linhas
+              </p>
+              <p className="text-xs">Preview: {preview.preview} ok · {preview.erros} com erro</p>
+              {preview.detalhes && preview.erros > 0 && (
+                <details className="text-xs mt-2">
+                  <summary className="cursor-pointer">Ver erros</summary>
+                  <ul className="mt-1 space-y-1 max-h-32 overflow-y-auto">
+                    {preview.detalhes.filter((d: any) => d.status === 'erro').slice(0, 20).map((d: any, i: number) => (
+                      <li key={i}>Linha {d.linha}: {d.msg}</li>
+                    ))}
+                  </ul>
+                </details>
+              )}
+            </div>
+          )}
+
+          {resultado && (
+            <div className="bg-blue-50 dark:bg-blue-950/30 border border-blue-300 dark:border-blue-800 rounded-lg p-3 text-sm space-y-1">
+              <p className="font-semibold flex items-center gap-1">
+                <CheckCircle2 className="h-4 w-4" /> Importação concluída
+              </p>
+              <ul className="text-xs space-y-0.5">
+                <li>✅ Criadas: <b>{resultado.criadas}</b></li>
+                <li>🔄 Atualizadas: <b>{resultado.atualizadas}</b></li>
+                <li>❌ Erros: <b>{resultado.erros}</b></li>
+                <li>Total: {resultado.total}</li>
+              </ul>
+              {resultado.erros > 0 && (
+                <details className="text-xs mt-2">
+                  <summary className="cursor-pointer">Ver erros</summary>
+                  <ul className="mt-1 space-y-1 max-h-32 overflow-y-auto">
+                    {resultado.detalhes.filter((d: any) => d.status === 'erro').slice(0, 20).map((d: any, i: number) => (
+                      <li key={i}>Linha {d.linha}: {d.msg}</li>
+                    ))}
+                  </ul>
+                </details>
+              )}
+            </div>
+          )}
+
+          <div className="flex justify-end gap-2 pt-2 border-t">
+            <Button variant="outline" onClick={onClose}>Fechar</Button>
+            {!resultado && (
+              <>
+                <Button
+                  variant="outline"
+                  onClick={executarPreview}
+                  disabled={!arquivo || analisando}
+                >
+                  {analisando ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Sparkles className="h-4 w-4 mr-2" />}
+                  Analisar (preview)
+                </Button>
+                <Button
+                  onClick={executarImport}
+                  disabled={!arquivo || importando || (preview?.erro)}
+                  className="bg-pink-600 hover:bg-pink-700"
+                >
+                  {importando ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Upload className="h-4 w-4 mr-2" />}
+                  Importar
+                </Button>
+              </>
+            )}
+          </div>
+        </div>
+      </DialogContent>
+    </Dialog>
   );
 }
 
