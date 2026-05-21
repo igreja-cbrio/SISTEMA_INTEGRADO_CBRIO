@@ -460,6 +460,67 @@ export const financeiro = {
   },
 };
 
+// ============================================================
+// FINANCEIRO V2 · estrutura fiscal (plano de contas, centros de custo, OFX, PIX)
+// ============================================================
+export const financeiroV2 = {
+  planoContas: {
+    list: (params) => get('/financeiro-v2/plano-contas' + (params ? '?' + new URLSearchParams(params) : '')),
+    create: (data) => post('/financeiro-v2/plano-contas', data),
+    update: (id, data) => put(`/financeiro-v2/plano-contas/${id}`, data),
+    remove: (id) => del(`/financeiro-v2/plano-contas/${id}`),
+  },
+  centrosCusto: {
+    list: (params) => get('/financeiro-v2/centros-custo' + (params ? '?' + new URLSearchParams(params) : '')),
+    create: (data) => post('/financeiro-v2/centros-custo', data),
+    update: (id, data) => put(`/financeiro-v2/centros-custo/${id}`, data),
+    remove: (id) => del(`/financeiro-v2/centros-custo/${id}`),
+  },
+  identificadores: {
+    list: () => get('/financeiro-v2/identificadores'),
+    create: (data) => post('/financeiro-v2/identificadores', data),
+    update: (id, data) => put(`/financeiro-v2/identificadores/${id}`, data),
+    remove: (id) => del(`/financeiro-v2/identificadores/${id}`),
+  },
+  cultoSlots: {
+    list: () => get('/financeiro-v2/culto-slots'),
+    create: (data) => post('/financeiro-v2/culto-slots', data),
+    update: (id, data) => put(`/financeiro-v2/culto-slots/${id}`, data),
+    remove: (id) => del(`/financeiro-v2/culto-slots/${id}`),
+  },
+  regras: {
+    list: () => get('/financeiro-v2/regras-classificacao'),
+    create: (data) => post('/financeiro-v2/regras-classificacao', data),
+    update: (id, data) => put(`/financeiro-v2/regras-classificacao/${id}`, data),
+    remove: (id) => del(`/financeiro-v2/regras-classificacao/${id}`),
+  },
+  importar: {
+    ofx: (file, conta_id) => {
+      const fd = new FormData();
+      fd.append('arquivo', file);
+      fd.append('conta_id', conta_id);
+      return requestFile('/financeiro-v2/importar/ofx', fd);
+    },
+    pixExtrato: (file, conta_id) => {
+      const fd = new FormData();
+      fd.append('arquivo', file);
+      if (conta_id) fd.append('conta_id', conta_id);
+      return requestFile('/financeiro-v2/importar/pix-extrato', fd);
+    },
+  },
+  uploads: (params) => get('/financeiro-v2/uploads' + (params ? '?' + new URLSearchParams(params) : '')),
+  lancamentosBrutos: (params) => get('/financeiro-v2/lancamentos-brutos' + (params ? '?' + new URLSearchParams(params) : '')),
+  fila: {
+    list: (params) => get('/financeiro-v2/fila-classificacao' + (params ? '?' + new URLSearchParams(params) : '')),
+    aprovar: (filaId, data) => post(`/financeiro-v2/classificar/${filaId}/aprovar`, data),
+    ignorar: (filaId) => post(`/financeiro-v2/classificar/${filaId}/ignorar`, {}),
+  },
+  transacoes: (params) => get('/financeiro-v2/transacoes' + (params ? '?' + new URLSearchParams(params) : '')),
+  dashboard: {
+    semana: (semana) => get('/financeiro-v2/dashboard/semana' + (semana ? `?semana=${semana}` : '')),
+  },
+};
+
 export const santander = {
   health: () => get('/santander/health'),
   saldo: () => get('/santander/saldo'),

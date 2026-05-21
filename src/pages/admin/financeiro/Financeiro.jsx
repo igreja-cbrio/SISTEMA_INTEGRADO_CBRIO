@@ -4,6 +4,10 @@ import { financeiro } from '../../../api';
 import { Button } from '../../../components/ui/button';
 import { exportPDF } from '../../../lib/export';
 import SantanderTab from './SantanderTab';
+import EstruturaFiscal from './EstruturaFiscal';
+import ImportarExtratos from './ImportarExtratos';
+import FilaClassificacao from './FilaClassificacao';
+import DashboardSemanal from './DashboardSemanal';
 
 // ── Tema ────────────────────────────────────────────────────
 const C = {
@@ -137,7 +141,7 @@ function Badge({ status, map }) {
 }
 
 // ── TABS ────────────────────────────────────────────────────
-const TABS = ['Dashboard', 'Contas', 'Transacoes', 'Contas a Pagar', 'Reembolsos', 'DRE', 'Banco Santander'];
+const TABS = ['Dashboard', 'Contas', 'Transacoes', 'Contas a Pagar', 'Reembolsos', 'DRE', 'Banco Santander', 'Semana qua-ter', 'Importar extratos', 'Fila de classificacao', 'Estrutura fiscal'];
 
 // ── KPI Cards (estilo unificado) ─────────────────────────────
 const FIN_STAT_SVGS = [
@@ -1061,6 +1065,10 @@ export default function Financeiro() {
       {tab === 4 && renderReembolsos()}
       {tab === 5 && renderDRE()}
       {tab === 6 && <SantanderTab />}
+      {tab === 7 && <DashboardSemanal />}
+      {tab === 8 && <ImportarExtratos />}
+      {tab === 9 && <FilaClassificacao />}
+      {tab === 10 && <EstruturaFiscal />}
 
       {modalConta && renderModalConta()}
       {modalTransacao && renderModalTransacao()}
