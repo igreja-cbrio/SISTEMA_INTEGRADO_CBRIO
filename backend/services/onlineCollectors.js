@@ -97,7 +97,7 @@ async function dsCollector() {
   const ontem = fmtData(dataMaisDias(new Date(), -1));
   const { data: cultos } = await supabase
     .from('cultos')
-    .select('id, data, youtube_video_id, online_ds')
+    .select('id, data, youtube_video_id, online_ds, online_pico')
     .eq('data', ontem)
     .not('youtube_video_id', 'is', null);
 
@@ -105,6 +105,19 @@ async function dsCollector() {
 
   const resultados = [];
   for (const c of cultos) {
+    // Pico ao vivo · recovery post-live via Analytics peakConcurrentViewers.
+    // Roda mesmo se DS ja esta preenchido (idempotente · so age se online_pico vazio).
+    if (!c.online_pico) {
+      try {
+        const live = await yt.fetchLivePeakConcurrentViewers(null, c.youtube_video_id, c.data, c.data);
+        if (live.peak) {
+          await supabase.from('cultos').update({ online_pico: live.peak }).eq('id', c.id);
+        }
+      } catch (e) {
+        resultados.push({ culto_id: c.id, pico_error: e.message });
+      }
+    }
+
     if (c.online_ds && c.online_ds > 0) {
       resultados.push({ culto_id: c.id, skipped: true, reason: 'ja_preenchido' });
       continue;
@@ -455,6 +468,7 @@ async function catchUpMetricas({ limit = 5 } = {}) {
     .from('cultos')
     .select(`
       id, data, youtube_video_id,
+      online_pico,
       online_ds, online_ddus,
       online_subs_ganhos, online_views_inscritos
     `)
@@ -465,10 +479,11 @@ async function catchUpMetricas({ limit = 5 } = {}) {
   if (!cultosCandidatos?.length) return { ok: true, processados: 0, remaining: 0, motivo: 'sem_cultos_com_video' };
 
   // Pre-filtra cultos que ainda precisam de pelo menos 1 metrica
-  // (DS, DDUS, subs ou sub_status faltando · trafico/retencao_curva nao
+  // (pico, DS, DDUS, subs ou sub_status faltando · trafico/retencao_curva nao
   // sao checados aqui pra simplicidade · o loop interno faz NULL-check
   // antes de chamar API).
   const pendentes = cultosCandidatos.filter(c =>
+    !c.online_pico || c.online_pico === 0 ||
     !c.online_ds || c.online_ds === 0 ||
     !c.online_ddus || c.online_ddus === 0 ||
     c.online_subs_ganhos === null || c.online_subs_ganhos === undefined ||
@@ -481,7 +496,7 @@ async function catchUpMetricas({ limit = 5 } = {}) {
 
   // 2. Pra cada culto, identifica metricas faltantes e dispara
   const out = {
-    ds: 0, ddus: 0, subs: 0, trafico: 0, retencao_curva: 0, sub_status: 0,
+    pico: 0, ds: 0, ddus: 0, subs: 0, trafico: 0, retencao_curva: 0, sub_status: 0,
     erros: [],
   };
 
@@ -489,6 +504,18 @@ async function catchUpMetricas({ limit = 5 } = {}) {
     const inicioD     = c.data;
     const inicioDplus1 = fmtData(dataMaisDias(new Date(c.data + 'T00:00:00'), 1));
     const fimDplus7    = fmtData(dataMaisDias(new Date(c.data + 'T00:00:00'), 7));
+
+    // 2a-pico. Pico ao vivo · recovery post-live via peakConcurrentViewers.
+    // Analytics tem este metric com delay de 1-2 dias · idempotente (so age se vazio).
+    if (!c.online_pico || c.online_pico === 0) {
+      try {
+        const live = await yt.fetchLivePeakConcurrentViewers(null, c.youtube_video_id, c.data, c.data);
+        if (live.peak) {
+          await supabase.from('cultos').update({ online_pico: live.peak }).eq('id', c.id);
+          out.pico++;
+        }
+      } catch (e) { out.erros.push({ culto: c.id, metrica: 'pico', msg: e.message }); }
+    }
 
     // 2a. DS · views dia D
     if (!c.online_ds || c.online_ds === 0) {
