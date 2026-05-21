@@ -460,6 +460,29 @@ export const financeiro = {
   },
 };
 
+export const santander = {
+  health: () => get('/santander/health'),
+  saldo: () => get('/santander/saldo'),
+  saldoHistorico: (dias = 30) => get(`/santander/saldo/historico?dias=${dias}`),
+  contas: () => get('/santander/contas'),
+  extrato: (inicio, fim, refresh = false) =>
+    get(`/santander/extrato?inicio=${inicio}&fim=${fim}${refresh ? '&refresh=1' : ''}`),
+  comprovantes: {
+    list: (params) => get('/santander/comprovantes?' + new URLSearchParams(params)),
+    local: (params) => get('/santander/comprovantes-local' + (params ? '?' + new URLSearchParams(params) : '')),
+    baixar: (paymentId, metadata) => post(`/santander/comprovantes/${encodeURIComponent(paymentId)}/baixar`, { metadata }),
+    pdfUrl: (paymentId) => get(`/santander/comprovantes/${encodeURIComponent(paymentId)}/pdf-url`),
+    vincular: (paymentId, data) => post(`/santander/comprovantes/${encodeURIComponent(paymentId)}/vincular`, data),
+    desvincular: (paymentId) => del(`/santander/comprovantes/${encodeURIComponent(paymentId)}/vincular`),
+  },
+  bulk: {
+    list: () => get('/santander/bulk'),
+    create: (data) => post('/santander/bulk', data),
+    get: (orderId) => get(`/santander/bulk/${encodeURIComponent(orderId)}`),
+  },
+  log: () => get('/santander/log'),
+};
+
 export const logistica = {
   dashboard: (refresh = false) => get('/logistica/dashboard' + (refresh ? '?refresh=1' : '')),
   fornecedores: {

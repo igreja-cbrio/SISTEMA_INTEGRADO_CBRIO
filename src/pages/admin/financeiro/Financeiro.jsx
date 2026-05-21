@@ -3,6 +3,7 @@ import { useAuth } from '../../../contexts/AuthContext';
 import { financeiro } from '../../../api';
 import { Button } from '../../../components/ui/button';
 import { exportPDF } from '../../../lib/export';
+import SantanderTab from './SantanderTab';
 
 // ── Tema ────────────────────────────────────────────────────
 const C = {
@@ -136,7 +137,7 @@ function Badge({ status, map }) {
 }
 
 // ── TABS ────────────────────────────────────────────────────
-const TABS = ['Dashboard', 'Contas', 'Transacoes', 'Contas a Pagar', 'Reembolsos', 'DRE'];
+const TABS = ['Dashboard', 'Contas', 'Transacoes', 'Contas a Pagar', 'Reembolsos', 'DRE', 'Banco Santander'];
 
 // ── KPI Cards (estilo unificado) ─────────────────────────────
 const FIN_STAT_SVGS = [
@@ -1059,6 +1060,7 @@ export default function Financeiro() {
       {tab === 3 && renderContasPagar()}
       {tab === 4 && renderReembolsos()}
       {tab === 5 && renderDRE()}
+      {tab === 6 && <SantanderTab />}
 
       {modalConta && renderModalConta()}
       {modalTransacao && renderModalTransacao()}
