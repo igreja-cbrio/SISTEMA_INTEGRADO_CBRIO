@@ -5,9 +5,14 @@ const { supabase } = require('../../utils/supabase');
 
 const BASE = '/bank_account_information/v1';
 
+// Santander exige formato AGENCIA.CONTA · 4 digitos de agencia + 12 de conta
+// Ex: 3957.000130004222 (zero-padding a esquerda na conta se vier curta)
+function padAgencia(a) { return String(a || '').padStart(4, '0'); }
+function padConta(c) { return String(c || '').padStart(12, '0'); }
+
 function balanceId() {
   if (!AGENCIA || !CONTA) throw new Error('SANTANDER_AGENCIA / SANTANDER_CONTA nao configurados');
-  return `${AGENCIA}.${CONTA}`;
+  return `${padAgencia(AGENCIA)}.${padConta(CONTA)}`;
 }
 
 async function listarContas({ userId } = {}) {
@@ -81,8 +86,8 @@ function fatiarPeriodo(inicio, fim) {
 async function buscarExtratoSantander({ inicio, fim, userId }) {
   return callApi(`${BASE}/banks/${BANK_ID}/statements`, {
     query: {
-      branchCode: AGENCIA,
-      accountNumber: CONTA,
+      branchCode: padAgencia(AGENCIA),
+      accountNumber: padConta(CONTA),
       initialDate: inicio,
       finalDate: fim,
     },
