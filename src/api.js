@@ -665,6 +665,62 @@ export const painelArea = {
   registrarNps: (area, body) => post(`/painel-area/${encodeURIComponent(area)}/nps`, body),
 };
 
+// ── Totem Kids · modulo Ministerial > Totem Kids ──
+export const totemKids = {
+  sessoes: {
+    atual: () => get('/totem-kids/sessoes/atual'),
+    list: (params = {}) => {
+      const qs = new URLSearchParams(Object.entries(params).filter(([, v]) => v != null && v !== '')).toString();
+      return get(`/totem-kids/sessoes${qs ? `?${qs}` : ''}`);
+    },
+    create: (data) => post('/totem-kids/sessoes', data),
+    abrir: (id) => post(`/totem-kids/sessoes/${id}/abrir`, {}),
+    encerrar: (id) => post(`/totem-kids/sessoes/${id}/encerrar`, {}),
+  },
+  criancas: {
+    buscar: (q) => get(`/totem-kids/criancas/buscar?q=${encodeURIComponent(q)}`),
+    get: (id) => get(`/totem-kids/criancas/${id}`),
+    list: (params = {}) => {
+      const qs = new URLSearchParams(Object.entries(params).filter(([, v]) => v != null && v !== '')).toString();
+      return get(`/totem-kids/criancas${qs ? `?${qs}` : ''}`);
+    },
+    create: (data) => post('/totem-kids/criancas', data),
+    update: (id, data) => patch(`/totem-kids/criancas/${id}`, data),
+    historico: (id) => get(`/totem-kids/historico/crianca/${id}`),
+    addResponsavel: (id, data) => post(`/totem-kids/criancas/${id}/responsaveis`, data),
+    removeResponsavel: (responsavelId) => del(`/totem-kids/responsaveis/${responsavelId}`),
+  },
+  checkin: {
+    criar: (data) => post('/totem-kids/checkin', data),
+    porCodigo: (codigo) => get(`/totem-kids/checkin/codigo/${encodeURIComponent(codigo)}`),
+    atualizar: (id, data) => patch(`/totem-kids/checkin/${id}`, data),
+  },
+  checkout: {
+    realizar: (data) => post('/totem-kids/checkout', data),
+  },
+  painel: {
+    aoVivo: (sessaoId) => get(`/totem-kids/painel/ao-vivo${sessaoId ? `?sessao_id=${sessaoId}` : ''}`),
+    sala: (salaId, sessaoId) => get(`/totem-kids/painel/sala/${salaId}${sessaoId ? `?sessao_id=${sessaoId}` : ''}`),
+  },
+  salas: {
+    list: () => get('/totem-kids/salas'),
+    create: (data) => post('/totem-kids/salas', data),
+    update: (id, data) => patch(`/totem-kids/salas/${id}`, data),
+    remove: (id) => del(`/totem-kids/salas/${id}`),
+  },
+  estacoes: {
+    list: () => get('/totem-kids/estacoes'),
+    create: (data) => post('/totem-kids/estacoes', data),
+    update: (id, data) => patch(`/totem-kids/estacoes/${id}`, data),
+  },
+  etiquetas: {
+    log: (data) => post('/totem-kids/etiquetas-log', data),
+  },
+  auditoria: {
+    overrides: () => get('/totem-kids/auditoria/overrides'),
+  },
+};
+
 export const permissoes = {
   bustCache: () => post('/permissoes/cache/bust', {}),
   estrutura: () => get('/permissoes/estrutura'),

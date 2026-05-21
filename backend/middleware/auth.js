@@ -33,6 +33,7 @@ const ROUTE_MODULE_MAP = {
   'membresia':    ['membresia'],
   'grupos':       ['grupos'],
   'kids':         ['kids'],
+  'totem-kids':   ['kids'],
   'ami':          ['ami'],
   'bridge':       ['bridge'],
   'painel-area':  ['kids', 'ami', 'bridge', 'online'],
