@@ -2,6 +2,52 @@
 
 Guia operacional para o Claude Code quando trabalhar neste repositório.
 
+## RLS contextual Financeiro/RH (2026-05-21 · Onda 2 PR3)
+
+Migration `20260521200000_onda2_rls_financeiro_rh.sql` substitui as
+policies `USING(true)` das tabelas financeiras/RH/PCS por policies
+contextuais. Resolve exposição de salários, CPF e dízimos via anon key.
+
+### Helpers novos
+
+- **`public.current_user_funcionario_id() → UUID`** · `rh_funcionarios.id`
+  do user logado (match por email LOWER). NULL se não é funcionário ativo.
+- **`public.user_is_lider_de(funcionario_id UUID) → BOOLEAN`** · TRUE se
+  user logado é gestor direto (via `rh_funcionarios.gestor_id`).
+
+### Matriz · tabelas afetadas
+
+| Tabela | READ | INSERT | UPDATE | DELETE |
+|---|---|---|---|---|
+| `mem_contribuicoes` | próprias OR financeiro≥3 | financeiro≥3 | financeiro≥3 | super-admin |
+| `rh_funcionarios` | próprio OR rh≥3 OR financeiro≥3 | rh≥3 | próprio OR rh≥3 | super-admin |
+| `rh_documentos` | próprio OR rh≥3 | rh≥3 | rh≥3 | super-admin |
+| `rh_avaliacoes` | próprio OR líder OR rh≥3 | próprio OR líder OR rh≥3 | mesmo | super-admin |
+| `rh_avaliacao_fatores` | herda via avaliacao_id | herda | herda | super-admin |
+| `rh_treinamentos` (catálogo) | todos | rh≥3 | rh≥3 | super-admin |
+| `rh_treinamentos_funcionarios` | próprio OR rh≥3 | rh≥3 | rh≥3 | super-admin |
+| `rh_ferias_licencas` | próprio OR líder OR rh≥3 | próprio OR rh≥3 | líder OR rh≥3 | super-admin |
+| **PCS config**: graus, criterios, niveis_criterio, beneficios, beneficio_grau, reajustes_coletivos | rh≥1 | super-admin | super-admin | super-admin |
+| **PCS histórico**: progressoes, pontuacao_colaborador, avaliacoes_funcionario | próprio OR rh≥3 | rh≥3 | rh≥3 | super-admin |
+
+### Conceitos importantes
+
+**Líder hierárquico** · vai pra `rh_avaliacoes` e `rh_ferias_licencas`.
+A função `user_is_lider_de(funcionario_id)` consulta
+`rh_funcionarios.gestor_id` (self-FK). Pra alguém aparecer como líder,
+precisa estar em `gestor_id` do funcionário alvo.
+
+**PCS dividido em 2 grupos** · tabelas de **configuração** (graus,
+critérios, etc) ficam read pra todos com `rh≥1` (precisa ler pra
+exibir nas avaliações), mas write é só super-admin (mudança crítica
+de política salarial). Tabelas de **histórico individual**
+(progressões, pontuação, avaliações) seguem o padrão "próprio funcionário
+vê + RH≥3 vê tudo".
+
+**Funcionários CLT/PJ que também são membros da igreja** · matches
+por email LOWER em ambos os helpers (`current_user_membro_id()` e
+`current_user_funcionario_id()`).
+
 ## RLS contextual Kids · LGPD menores (2026-05-21 · Onda 2)
 
 Migration `20260521190000_onda2_rls_kids_lgpd.sql` substitui as
