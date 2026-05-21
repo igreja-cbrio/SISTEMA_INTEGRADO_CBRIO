@@ -60,6 +60,17 @@ export default function DashboardOverview({ onNavigate }) {
     }),
   };
 
+  // IMPORTANTE: hooks (useMemo) devem vir ANTES de qualquer early return
+  // pra nao violar a regra dos hooks do React (erro #310)
+  const fluxoCaixa = useMemo(
+    () => normalizarSerieAnual(data?.serie_6_meses),
+    [data?.serie_6_meses]
+  );
+  const maxFluxo = useMemo(
+    () => Math.max(...fluxoCaixa.map(p => Math.max(p.receita, p.despesa)), 1),
+    [fluxoCaixa]
+  );
+
   if (loading || !data) {
     return (
       <div className="flex items-center justify-center py-16 gap-2 text-muted-foreground text-sm">
@@ -69,11 +80,7 @@ export default function DashboardOverview({ onNavigate }) {
     );
   }
 
-  const { stats, pendencias, contas, serie_6_meses, top_despesas, transacoes_recentes, ultimo_upload } = data;
-
-  // Normaliza serie_6_meses pra todos os 12 meses (preenche com 0 onde falta)
-  const fluxoCaixa = useMemo(() => normalizarSerieAnual(serie_6_meses), [serie_6_meses]);
-  const maxFluxo = Math.max(...fluxoCaixa.map(p => Math.max(p.receita, p.despesa)), 1);
+  const { stats, pendencias, contas, top_despesas, transacoes_recentes, ultimo_upload } = data;
 
   return (
     <div className="space-y-6">
