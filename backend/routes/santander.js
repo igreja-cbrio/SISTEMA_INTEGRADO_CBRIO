@@ -341,4 +341,25 @@ router.get('/log', authorizeModule('santander', 3), async (req, res) => {
   }
 });
 
+// ── PIX API · diagnostico do produto PIX (descobre se Santander libera) ────
+const pixApi = require('../services/santander/pixApiService');
+
+router.get('/pix-api/diagnostico', async (req, res) => {
+  try {
+    if (!pixApi.isEnabled()) {
+      return res.json({
+        habilitado: false,
+        hint: 'Defina env SANTANDER_PIX_API_ENABLED=true pra ativar tentativa de descobrir endpoint PIX',
+        paths_que_serao_testados: pixApi.PIX_API_PATHS,
+      });
+    }
+    const hoje = new Date().toISOString().slice(0, 10);
+    const ontem = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
+    const result = await pixApi.buscarPixRecebidos({ inicio: ontem, fim: hoje });
+    res.json(result);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 module.exports = router;
