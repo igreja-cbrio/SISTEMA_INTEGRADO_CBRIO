@@ -2,6 +2,73 @@
 
 Guia operacional para o Claude Code quando trabalhar neste repositório.
 
+## RLS contextual Kids · LGPD menores (2026-05-21 · Onda 2)
+
+Migration `20260521190000_onda2_rls_kids_lgpd.sql` substitui as
+policies `USING(true)` das 7 tabelas Kids por policies contextuais.
+LGPD com menores é o maior risco legal.
+
+### Funções helpers (reutilizáveis nas próximas ondas)
+
+- **`public.current_user_membro_id() → UUID`** · `mem_membros.id` do
+  user logado (via `profiles.membro_id` ou fallback email LOWER).
+  SECURITY DEFINER. Use em policies que precisam "só meus dados".
+
+- **`public.current_user_module_level(slug TEXT) → INTEGER`** · replica
+  `resolveEffectivePerms()` do middleware no SQL:
+  - Super-admin → 5
+  - Override em `permissoes_modulo` (com expira_em)
+  - Default da matriz `cargo_modulo_permissao`
+  - `AREA_MODULO_BOOST` (kids/ami/bridge/online/cuidados/grupos/
+    integracao/voluntariado/next · escala pra 5 se user tem área
+    correspondente em `usuario_areas`)
+  - Usa extension `unaccent` pra normalizar acentos
+
+- **`public.user_is_kids_responsavel(crianca_id UUID) → BOOLEAN`** ·
+  TRUE se user é responsável da criança. Reusa
+  `current_user_membro_id()`.
+
+### Matriz de acesso · 7 tabelas Kids
+
+| Tabela | READ | INSERT | UPDATE | DELETE |
+|---|---|---|---|---|
+| `kids_criancas` | responsável OR kids≥1 | kids≥3 | kids≥3 | super-admin |
+| `kids_responsaveis` | próprio OR kids≥1 | kids≥3 | kids≥3 | super-admin |
+| `kids_checkins` | responsável OR kids≥1 | kids≥2 | kids≥3 | super-admin |
+| `kids_sessoes` | kids≥1 | kids≥3 | kids≥3 | super-admin |
+| `kids_salas` | kids≥1 | kids≥5 | kids≥5 | super-admin |
+| `kids_estacoes` | kids≥1 | kids≥5 | kids≥5 | super-admin |
+| `kids_etiquetas_log` | kids≥3 | kids≥1 | **só super-admin** (audit) | super-admin |
+
+Todas as tabelas têm policy `service_role FOR ALL USING (true)` pra
+backend continuar funcionando via service_role.
+
+### Como o boost por área funciona
+
+Mariane Gaia tem cargo `coordenador-kids` + área `KIDS` em
+`usuario_areas`. A função `current_user_module_level('kids')`:
+1. Não é super-admin → segue
+2. Pega cargo_id da Mariane via `usuarios` (match por email)
+3. Olha matriz: `coordenador-kids × kids` (ex: nível 3)
+4. AREA_MODULO_BOOST detecta área "KIDS" normalizada
+5. Como `kids` está na whitelist de boost, retorna `max(3, 5) = 5`
+
+### Pra responsável (pai/mãe) ler dados do filho
+
+Não precisa ter cargo. Basta:
+1. Estar em `mem_membros` (com email = profile.email)
+2. Ter linha em `kids_responsaveis` linkando ao filho
+3. `profiles.membro_id` apontar pra `mem_membros.id` (auto-linkado
+   no primeiro login pelo backend ou via migration de sincronização)
+
+SELECT só retorna filhos onde a pessoa é responsável.
+
+### DELETE bloqueado · usar app_soft_delete
+
+`kids_criancas`, `kids_checkins` etc · DELETE direto só super-admin.
+Resto do staff usa `app_soft_delete()` (criada na Onda 3). LGPD pede
+preservar histórico de auditoria.
+
 ## Soft-delete + FK fix · substitui PITR via código (2026-05-21)
 
 Migration `20260521180000_onda3_soft_delete_fk_fix.sql` resolve o problema
