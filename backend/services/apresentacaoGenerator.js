@@ -41,12 +41,14 @@ const PRICING = {
   'claude-opus-4-7':              { input: 15, output: 75 },
 };
 
+// Limite Vercel Pro = 300s · Sonnet ~80 tok/s ≈ 24k tokens max seguros.
+// 16k de output deixa margem confortavel pra apresentacoes ricas (12-15 slides).
 const MAX_TOKENS_BY_MODEL = {
-  'claude-sonnet-4-6':            12000,
-  'claude-sonnet-4-6-20250101':   12000,
-  'claude-sonnet-4-5':            12000,
-  'claude-sonnet-4-20250514':     12000,
-  'claude-opus-4-7':              10000,
+  'claude-sonnet-4-6':            16000,
+  'claude-sonnet-4-6-20250101':   16000,
+  'claude-sonnet-4-5':            16000,
+  'claude-sonnet-4-20250514':     16000,
+  'claude-opus-4-7':              14000,  // Opus mais lento · margem maior
 };
 
 // ─────────────────────────────────────────────────────────────────────

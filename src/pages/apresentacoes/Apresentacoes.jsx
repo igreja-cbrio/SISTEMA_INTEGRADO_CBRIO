@@ -331,7 +331,7 @@ function NovaApresentacaoDialog({ open, onClose, onCriada }) {
           </div>
 
           <div className="rounded-md bg-cyan-500/10 border border-cyan-500/30 px-3 py-2 text-xs text-cyan-100">
-            Gerado pelo Claude Sonnet · 20-40 segundos. Pode fechar a aba — você recebe notificação no sino quando ficar pronta.
+            Gerado pelo Claude Sonnet · 1-3 minutos. Pode fechar a aba — você recebe notificação no sino quando ficar pronta.
           </div>
         </div>
 

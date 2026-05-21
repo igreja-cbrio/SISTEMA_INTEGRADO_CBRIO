@@ -341,9 +341,9 @@ router.post('/:id/reset', authorizeModule('apresentacoes', 3), async (req, res) 
       return res.status(409).json({ error: `Status atual: ${apres.status} · reset so vale pra 'gerando'` });
     }
     const idadeMs = Date.now() - new Date(apres.updated_at).getTime();
-    if (idadeMs < 90_000) {
+    if (idadeMs < 300_000) {
       return res.status(409).json({
-        error: 'Aguarde · ainda esta dentro do tempo normal de geracao (90s)',
+        error: 'Aguarde · ainda esta dentro do tempo normal de geracao (5min)',
         idade_segundos: Math.floor(idadeMs / 1000),
       });
     }
@@ -351,7 +351,7 @@ router.post('/:id/reset', authorizeModule('apresentacoes', 3), async (req, res) 
       .from('apresentacoes')
       .update({
         status: 'erro',
-        erro_mensagem: 'Timeout · function Vercel limita 60s. Tente com prompt mais enxuto ou use Sonnet (modo rapido).',
+        erro_mensagem: 'Timeout · function Vercel limita 5min. Tente com prompt mais enxuto.',
       })
       .eq('id', apres.id);
     if (error) throw error;
