@@ -507,6 +507,77 @@ router.post('/criancas/:id/responsaveis', authorizeModule('kids', 2), async (req
   }
 });
 
+// POST /api/totem-kids/criancas/:id/responsavel-rapido
+// Cria/vincula responsavel a partir de dados crus (nome, tel, cpf, parentesco).
+// Cria mem_membros se nao existir (match por cpf/telefone) + liga em kids_responsaveis.
+// Usado pelo modal de auto-cadastro quando crianca chega sem responsavel.
+router.post('/criancas/:id/responsavel-rapido', authorizeModule('kids', 2), async (req, res) => {
+  try {
+    const { nome, telefone, cpf, parentesco, autorizado_buscar } = req.body || {};
+    if (!nome || !nome.trim()) return res.status(400).json({ error: 'nome obrigatorio' });
+    if (!telefone || !telefone.trim()) return res.status(400).json({ error: 'telefone obrigatorio' });
+
+    const tel = normalizarTelefone(telefone);
+    const cpfNorm = normalizarCpf(cpf);
+    if (!tel) return res.status(400).json({ error: 'telefone invalido (precisa ter pelo menos 8 digitos)' });
+
+    // 1. Resolve crianca + familia (pra vincular novo mem_membros na familia)
+    const { data: crianca, error: errC } = await supabase
+      .from('kids_criancas')
+      .select('id, nome, familia_id')
+      .eq('id', req.params.id)
+      .maybeSingle();
+    if (errC) throw errC;
+    if (!crianca) return res.status(404).json({ error: 'crianca nao encontrada' });
+
+    // 2. Match mem_membros por cpf > telefone
+    let membro = null;
+    if (cpfNorm) {
+      const { data } = await supabase.from('mem_membros').select('id, nome, familia_id').eq('cpf', cpfNorm).maybeSingle();
+      if (data) membro = data;
+    }
+    if (!membro && tel) {
+      const { data } = await supabase.from('mem_membros').select('id, nome, familia_id').eq('telefone', tel).maybeSingle();
+      if (data) membro = data;
+    }
+
+    // 3. Cria mem_membros se nao existe
+    if (!membro) {
+      const { data, error } = await supabase.from('mem_membros').insert({
+        nome: nome.trim(),
+        telefone: tel,
+        cpf: cpfNorm,
+        status: 'visitante',
+        familia_id: crianca.familia_id,
+        active: true,
+      }).select('id, nome, familia_id').single();
+      if (error) throw error;
+      membro = data;
+    } else if (crianca.familia_id && !membro.familia_id) {
+      // Atualiza familia_id do membro existente se nao tinha
+      await supabase.from('mem_membros').update({ familia_id: crianca.familia_id }).eq('id', membro.id);
+    }
+
+    // 4. Vincula kids_responsaveis (upsert · idempotente)
+    const { data: ligacao, error: errLig } = await supabase
+      .from('kids_responsaveis')
+      .upsert({
+        crianca_id: req.params.id,
+        membro_id: membro.id,
+        parentesco: parentesco || 'outro',
+        autorizado_buscar: autorizado_buscar !== false,
+      }, { onConflict: 'crianca_id,membro_id', ignoreDuplicates: false })
+      .select('*, membro:mem_membros(id, nome, telefone, foto_url)')
+      .single();
+    if (errLig) throw errLig;
+
+    res.status(201).json(ligacao);
+  } catch (e) {
+    console.error('[totemKids/responsavel-rapido]', e.message);
+    res.status(500).json({ error: e.message || 'Erro ao adicionar responsavel' });
+  }
+});
+
 // DELETE /api/totem-kids/responsaveis/:id · remove responsavel
 router.delete('/responsaveis/:id', authorizeModule('kids', 3), async (req, res) => {
   try {
@@ -966,9 +1037,12 @@ router.post('/estacoes', authorizeModule('kids', 3), async (req, res) => {
 
 router.patch('/estacoes/:id', authorizeModule('kids', 3), async (req, res) => {
   try {
+    // Bloqueia mexer no token via PATCH normal · usar /regenerar-token
+    const { token_pareamento, pareada_em, user_agent_pareada, ...resto } = req.body;
+    void token_pareamento; void pareada_em; void user_agent_pareada;
     const { data, error } = await supabase
       .from('kids_estacoes')
-      .update(req.body)
+      .update(resto)
       .eq('id', req.params.id)
       .select()
       .single();
@@ -976,6 +1050,88 @@ router.patch('/estacoes/:id', authorizeModule('kids', 3), async (req, res) => {
     res.json(data);
   } catch (e) {
     res.status(500).json({ error: 'Erro ao editar estacao' });
+  }
+});
+
+// ── Pareamento de tablet ↔ estacao ──
+
+// GET /api/totem-kids/estacoes/:id/info-pareamento · pra admin gerar QR
+// Retorna URL completa pareada · so coord-kids/admin (nivel 3+)
+router.get('/estacoes/:id/info-pareamento', authorizeModule('kids', 3), async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('kids_estacoes')
+      .select('id, nome, tipo, token_pareamento, pareada_em, user_agent_pareada')
+      .eq('id', req.params.id)
+      .maybeSingle();
+    if (error) throw error;
+    if (!data) return res.status(404).json({ error: 'Estacao nao encontrada' });
+
+    const baseUrl = process.env.FRONTEND_URL || `https://${req.get('host')}`;
+    const url = `${baseUrl}/ministerial/totem-kids/parear?estacao=${data.id}&token=${data.token_pareamento}`;
+    res.json({ ...data, url });
+  } catch (e) {
+    res.status(500).json({ error: 'Erro ao buscar info de pareamento' });
+  }
+});
+
+// POST /api/totem-kids/estacoes/:id/regenerar-token · revoga pareamentos anteriores
+router.post('/estacoes/:id/regenerar-token', authorizeModule('kids', 3), async (req, res) => {
+  try {
+    const novoToken = require('crypto').randomUUID();
+    const { data, error } = await supabase
+      .from('kids_estacoes')
+      .update({ token_pareamento: novoToken, pareada_em: null, user_agent_pareada: null })
+      .eq('id', req.params.id)
+      .select('id, nome, token_pareamento')
+      .single();
+    if (error) throw error;
+    const baseUrl = process.env.FRONTEND_URL || `https://${req.get('host')}`;
+    const url = `${baseUrl}/ministerial/totem-kids/parear?estacao=${data.id}&token=${data.token_pareamento}`;
+    res.json({ ...data, url });
+  } catch (e) {
+    res.status(500).json({ error: 'Erro ao regenerar token' });
+  }
+});
+
+// POST /api/totem-kids/estacoes/parear · tablet confirma pareamento
+// Body: { estacao_id, token }
+// Returns: { id, nome, tipo, printer_modelo } (sem expor o token de volta)
+router.post('/estacoes/parear', authorizeModule('kids', 1), async (req, res) => {
+  try {
+    const { estacao_id, token } = req.body || {};
+    if (!estacao_id || !token) return res.status(400).json({ error: 'estacao_id e token obrigatorios' });
+
+    const { data: estacao } = await supabase
+      .from('kids_estacoes')
+      .select('id, nome, tipo, printer_modelo, token_pareamento, ativo')
+      .eq('id', estacao_id)
+      .maybeSingle();
+
+    if (!estacao) return res.status(404).json({ error: 'Estacao nao encontrada' });
+    if (!estacao.ativo) return res.status(400).json({ error: 'Estacao inativa' });
+    if (estacao.token_pareamento !== token) {
+      return res.status(403).json({ error: 'Token invalido · pareamento foi revogado · peca admin pra gerar QR novo' });
+    }
+
+    // Atualiza auditoria
+    await supabase
+      .from('kids_estacoes')
+      .update({
+        pareada_em: new Date().toISOString(),
+        user_agent_pareada: req.get('user-agent')?.slice(0, 200) || null,
+      })
+      .eq('id', estacao_id);
+
+    res.json({
+      id: estacao.id,
+      nome: estacao.nome,
+      tipo: estacao.tipo,
+      printer_modelo: estacao.printer_modelo,
+    });
+  } catch (e) {
+    console.error('[totemKids/parear]', e);
+    res.status(500).json({ error: 'Erro ao parear' });
   }
 });
 

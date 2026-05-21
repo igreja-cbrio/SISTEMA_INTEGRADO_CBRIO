@@ -774,6 +774,7 @@ export const totemKids = {
     update: (id, data) => patch(`/totem-kids/criancas/${id}`, data),
     historico: (id) => get(`/totem-kids/historico/crianca/${id}`),
     addResponsavel: (id, data) => post(`/totem-kids/criancas/${id}/responsaveis`, data),
+    addResponsavelRapido: (id, data) => post(`/totem-kids/criancas/${id}/responsavel-rapido`, data),
     removeResponsavel: (responsavelId) => del(`/totem-kids/responsaveis/${responsavelId}`),
     // Importacao XLSX · dryRun=true valida sem gravar
     importar: (file, { dryRun = false } = {}) => {
@@ -814,6 +815,11 @@ export const totemKids = {
     list: () => get('/totem-kids/estacoes'),
     create: (data) => post('/totem-kids/estacoes', data),
     update: (id, data) => patch(`/totem-kids/estacoes/${id}`, data),
+    // Pareamento de tablet · admin gera QR a partir disso
+    infoPareamento: (id) => get(`/totem-kids/estacoes/${id}/info-pareamento`),
+    regenerarToken: (id) => post(`/totem-kids/estacoes/${id}/regenerar-token`, {}),
+    // Tablet confirma pareamento · body: {estacao_id, token}
+    parear: (data) => post('/totem-kids/estacoes/parear', data),
   },
   etiquetas: {
     log: (data) => post('/totem-kids/etiquetas-log', data),

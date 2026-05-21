@@ -7,7 +7,7 @@
 
 import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Search, Baby, Printer, AlertTriangle, Plus, ArrowLeft, Loader2, CheckCircle2, Phone, Settings, LogOut, Sparkles } from 'lucide-react';
+import { Search, Baby, Printer, AlertTriangle, Plus, ArrowLeft, Loader2, CheckCircle2, Phone, Settings, LogOut, Sparkles, UserPlus, Tablet } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent } from '@/components/ui/card';
@@ -18,6 +18,7 @@ import { toast } from 'sonner';
 import { totemKids } from '@/api';
 import { formatIdade, formatIdadeShort } from './lib/idade';
 import { imprimirEtiquetas } from './lib/imprimir';
+import { getEstacaoPareada } from './lib/estacaoPareada';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 
@@ -130,10 +131,12 @@ export default function TotemKidsCheckin() {
 
     setImprimindo(true);
     try {
+      const estacao = getEstacaoPareada();
       const payload: Record<string, unknown> = {
         sessao_id: sessao.id,
         crianca_id: crianca.id,
         sala_id: salaSelecionada,
+        estacao_id: estacao?.id || null,
       };
       if (usarRespManual) {
         payload.responsavel_nome_manual = respManualNome.trim();
@@ -150,6 +153,7 @@ export default function TotemKidsCheckin() {
       // Dispara impressão
       await imprimirEtiquetas({
         checkinId: r.checkin.id,
+        estacaoId: estacao?.id || null,
         crianca: {
           nome: r.crianca.nome,
           idadeLabel: formatIdade(crianca.idade_meses),
@@ -210,30 +214,42 @@ export default function TotemKidsCheckin() {
     );
   }
 
+  const estacaoPareada = getEstacaoPareada();
+
   return (
-    <div className="max-w-4xl mx-auto p-4 space-y-4">
-      <div className="flex items-center justify-between">
+    <div className="max-w-4xl mx-auto p-3 md:p-4 space-y-3 md:space-y-4">
+      <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-bold text-pink-700 dark:text-pink-300">Totem Kids · Check-in</h1>
-          <p className="text-sm text-muted-foreground">
-            {sessao.culto?.nome} · {sessao.culto?.data && format(new Date(sessao.culto.data + 'T00:00:00'), "EEEE, dd 'de' MMMM", { locale: ptBR })}
+          <h1 className="text-xl md:text-2xl font-bold text-pink-700 dark:text-pink-300">Totem Kids · Check-in</h1>
+          <p className="text-xs md:text-sm text-muted-foreground">
+            {sessao.culto?.nome}
+            {sessao.culto?.data && ` · ${format(new Date(sessao.culto.data + 'T00:00:00'), "EEE, dd/MM", { locale: ptBR })}`}
           </p>
+          {estacaoPareada ? (
+            <Badge variant="secondary" className="mt-1 text-xs">
+              <Tablet className="h-3 w-3 mr-1" /> {estacaoPareada.nome}
+            </Badge>
+          ) : (
+            <Badge variant="outline" className="mt-1 text-xs text-amber-600 border-amber-400">
+              <Tablet className="h-3 w-3 mr-1" /> Dispositivo não pareado · etiquetas saem sem estação
+            </Badge>
+          )}
         </div>
         <div className="flex gap-2 flex-wrap">
           <Button variant="outline" size="sm" onClick={() => navigate('/ministerial/totem-kids/checkout')}>
-            <LogOut className="h-4 w-4 mr-1" /> Checkout
+            <LogOut className="h-4 w-4 md:mr-1" /> <span className="hidden md:inline">Checkout</span>
           </Button>
           <Button variant="outline" size="sm" onClick={() => navigate('/ministerial/totem-kids/decisoes')}>
-            <Sparkles className="h-4 w-4 mr-1" /> Decisões
+            <Sparkles className="h-4 w-4 md:mr-1" /> <span className="hidden md:inline">Decisões</span>
           </Button>
           <Button variant="outline" size="sm" onClick={() => navigate('/ministerial/totem-kids/painel')}>
-            Painel
+            <span className="md:inline">Painel</span>
           </Button>
           <Button variant="outline" size="sm" onClick={() => navigate('/ministerial/totem-kids/teste-etiqueta')}>
-            <Printer className="h-4 w-4 mr-1" /> Testar etiqueta
+            <Printer className="h-4 w-4 md:mr-1" /> <span className="hidden md:inline">Etiqueta</span>
           </Button>
           <Button variant="outline" size="sm" onClick={() => navigate('/ministerial/totem-kids/configuracoes')}>
-            <Settings className="h-4 w-4 mr-1" /> Configurações
+            <Settings className="h-4 w-4 md:mr-1" /> <span className="hidden md:inline">Config</span>
           </Button>
         </div>
       </div>
@@ -331,6 +347,13 @@ export default function TotemKidsCheckin() {
           onCancelar={() => setCrianca(null)}
           onConfirmar={confirmarCheckin}
           imprimindo={imprimindo}
+          onResponsavelCadastrado={async () => {
+            // Recarrega dados da crianca (com os responsaveis novos)
+            try {
+              const fresh = await totemKids.criancas.get(crianca.id);
+              setCrianca({ ...crianca, responsaveis: fresh.responsaveis || [] });
+            } catch { /* mantem state atual */ }
+          }}
         />
       )}
 
@@ -365,12 +388,21 @@ function CheckinSelecao(props: {
   onCancelar: () => void;
   onConfirmar: () => void;
   imprimindo: boolean;
+  onResponsavelCadastrado: () => void;
 }) {
   const { crianca, salas, salaSelecionada, setSalaSelecionada,
     responsavelSelecionado, setResponsavelSelecionado,
     usarRespManual, setUsarRespManual,
     respManualNome, setRespManualNome, respManualTel, setRespManualTel,
-    onCancelar, onConfirmar, imprimindo } = props;
+    onCancelar, onConfirmar, imprimindo, onResponsavelCadastrado } = props;
+
+  // Auto-abre modal de cadastro se crianca chegar sem responsavel
+  const [modalCadResp, setModalCadResp] = useState(false);
+  useEffect(() => {
+    if (crianca.responsaveis.filter(r => r.autorizado_buscar).length === 0) {
+      setModalCadResp(true);
+    }
+  }, [crianca.id, crianca.responsaveis]);
 
   return (
     <Card>
@@ -465,17 +497,31 @@ function CheckinSelecao(props: {
                   </button>
                 ))}
                 {crianca.responsaveis.length === 0 && (
-                  <p className="text-sm text-muted-foreground italic">Sem responsáveis cadastrados</p>
+                  <div className="text-sm bg-amber-50 dark:bg-amber-950/30 border border-amber-300 dark:border-amber-800 rounded-lg p-3">
+                    <p className="font-semibold mb-1">⚠ Sem responsáveis cadastrados</p>
+                    <p className="text-muted-foreground text-xs">
+                      Cadastre o responsável agora pra deixar o histórico completo, ou clique em "Outro responsável" pra registrar manualmente.
+                    </p>
+                  </div>
                 )}
               </div>
-              <Button
-                variant="ghost"
-                size="sm"
-                className="mt-2"
-                onClick={() => setUsarRespManual(true)}
-              >
-                Outro responsável (não está na lista)
-              </Button>
+              <div className="flex gap-2 mt-2 flex-wrap">
+                <Button
+                  variant="default"
+                  size="sm"
+                  className="bg-pink-600 hover:bg-pink-700"
+                  onClick={() => setModalCadResp(true)}
+                >
+                  <Plus className="h-4 w-4 mr-1" /> Cadastrar responsável
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setUsarRespManual(true)}
+                >
+                  Outro responsável (manual · não cadastra)
+                </Button>
+              </div>
             </>
           ) : (
             <div className="space-y-2">
@@ -515,6 +561,17 @@ function CheckinSelecao(props: {
           </Button>
         </div>
       </CardContent>
+
+      <ModalCadastrarResponsavel
+        open={modalCadResp}
+        onClose={() => setModalCadResp(false)}
+        criancaId={crianca.id}
+        criancaNome={crianca.nome}
+        onCadastrado={() => {
+          setModalCadResp(false);
+          onResponsavelCadastrado();
+        }}
+      />
     </Card>
   );
 }
@@ -635,6 +692,93 @@ function ModalNovaCrianca(props: {
             <Button variant="outline" onClick={props.onClose}>Cancelar</Button>
             <Button onClick={salvar} disabled={salvando} className="bg-pink-600 hover:bg-pink-700">
               {salvando ? <><Loader2 className="h-4 w-4 mr-2 animate-spin" /> Salvando...</> : <><CheckCircle2 className="h-4 w-4 mr-2" /> Cadastrar</>}
+            </Button>
+          </div>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// ── Modal: cadastrar responsavel rápido (auto-abre se criança sem responsável) ──
+function ModalCadastrarResponsavel(props: {
+  open: boolean;
+  onClose: () => void;
+  criancaId: string;
+  criancaNome: string;
+  onCadastrado: () => void;
+}) {
+  const [nome, setNome] = useState('');
+  const [telefone, setTelefone] = useState('');
+  const [cpf, setCpf] = useState('');
+  const [parentesco, setParentesco] = useState('mae');
+  const [salvando, setSalvando] = useState(false);
+
+  useEffect(() => {
+    if (props.open) {
+      setNome(''); setTelefone(''); setCpf(''); setParentesco('mae');
+    }
+  }, [props.open]);
+
+  async function salvar() {
+    if (!nome.trim()) return toast.error('Nome obrigatório');
+    if (!telefone.trim()) return toast.error('Telefone obrigatório');
+    setSalvando(true);
+    try {
+      await totemKids.criancas.addResponsavelRapido(props.criancaId, {
+        nome: nome.trim(),
+        telefone: telefone.trim(),
+        cpf: cpf.trim() || null,
+        parentesco,
+      });
+      toast.success(`Responsável de ${props.criancaNome} cadastrado`);
+      props.onCadastrado();
+    } catch (e: unknown) {
+      toast.error((e as { message?: string })?.message || 'Erro');
+    } finally {
+      setSalvando(false);
+    }
+  }
+
+  return (
+    <Dialog open={props.open} onOpenChange={(o) => !o && props.onClose()}>
+      <DialogContent className="max-w-md max-h-[95vh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <UserPlus className="h-5 w-5 text-pink-500" /> Cadastrar responsável
+          </DialogTitle>
+          <DialogDescription>
+            {props.criancaNome} ainda não tem responsável vinculado.
+            Cadastre quem está trazendo agora pra deixar o histórico completo · pode fechar e seguir manual se preferir.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="space-y-3">
+          <Input placeholder="Nome do responsável *" value={nome} onChange={e => setNome(e.target.value)} autoFocus />
+          <div className="grid grid-cols-2 gap-2">
+            <Input placeholder="Telefone *" value={telefone} onChange={e => setTelefone(e.target.value)} />
+            <Input placeholder="CPF (opcional)" value={cpf} onChange={e => setCpf(e.target.value)} />
+          </div>
+          <Select value={parentesco} onValueChange={setParentesco}>
+            <SelectTrigger><SelectValue placeholder="Parentesco" /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="mae">Mãe</SelectItem>
+              <SelectItem value="pai">Pai</SelectItem>
+              <SelectItem value="padrasto">Padrasto</SelectItem>
+              <SelectItem value="madrasta">Madrasta</SelectItem>
+              <SelectItem value="avo_a">Avô/Avó</SelectItem>
+              <SelectItem value="tio_a">Tio/Tia</SelectItem>
+              <SelectItem value="irmao_a">Irmão/Irmã</SelectItem>
+              <SelectItem value="tutor">Tutor</SelectItem>
+              <SelectItem value="outro">Outro</SelectItem>
+            </SelectContent>
+          </Select>
+          <div className="flex justify-end gap-2 pt-2">
+            <Button variant="outline" onClick={props.onClose} disabled={salvando}>
+              Pular agora
+            </Button>
+            <Button onClick={salvar} disabled={salvando} className="bg-pink-600 hover:bg-pink-700">
+              {salvando ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <CheckCircle2 className="h-4 w-4 mr-2" />}
+              Cadastrar
             </Button>
           </div>
         </div>

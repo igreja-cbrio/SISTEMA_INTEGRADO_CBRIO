@@ -141,14 +141,14 @@ export default function TotemKidsCheckout() {
   }
 
   return (
-    <div className="max-w-2xl mx-auto p-4 space-y-4">
-      <div className="flex items-center justify-between">
+    <div className="max-w-2xl mx-auto p-3 md:p-4 space-y-3 md:space-y-4">
+      <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-2">
         <div>
-          <h1 className="text-2xl font-bold text-pink-700 dark:text-pink-300">Totem Kids · Checkout</h1>
-          <p className="text-sm text-muted-foreground">Digite o código da etiqueta do responsável</p>
+          <h1 className="text-xl md:text-2xl font-bold text-pink-700 dark:text-pink-300">Totem Kids · Checkout</h1>
+          <p className="text-xs md:text-sm text-muted-foreground">Digite o código da etiqueta do responsável</p>
         </div>
-        <Button variant="outline" size="sm" onClick={() => navigate('/ministerial/totem-kids')}>
-          Check-in
+        <Button variant="outline" size="sm" onClick={() => navigate('/ministerial/totem-kids')} className="self-start md:self-auto">
+          <ArrowLeft className="h-4 w-4 mr-1" /> Check-in
         </Button>
       </div>
 
