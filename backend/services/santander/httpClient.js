@@ -219,14 +219,28 @@ async function callApi(path, { method = 'GET', query, body, retries = 1, userId 
 
   if (!res.ok) {
     // Inclui body do Santander na mensagem · ajuda diagnosticar 4xx
-    // (ex: "invalid accountId format", "consent not authorized", etc)
+    // Santander usa padrao com underscore: _errorCode, _message, _details,
+    // _errors: [{ _code, _field, _message }]
+    // Tambem aceita formatos OAuth (error_description) e generico (message)
     let bodyMsg = '';
     if (json && typeof json === 'object') {
-      bodyMsg = json.errorMessage
+      const errorsArr = Array.isArray(json._errors) ? json._errors
+        : Array.isArray(json.errors) ? json.errors
+        : [];
+      const errorsDetailed = errorsArr.map(e => {
+        const code = e._code || e.code || '';
+        const field = e._field || e.field || '';
+        const msg = e._message || e.message || e._description || '';
+        return [code, field, msg].filter(Boolean).join(':');
+      }).filter(Boolean).join(' | ');
+
+      bodyMsg = errorsDetailed
+        || json._message
+        || json._details
+        || json.errorMessage
         || json.message
         || json.error_description
-        || (Array.isArray(json.errors) ? json.errors.map(e => e.message || e.code).filter(Boolean).join(' | ') : '')
-        || JSON.stringify(json).slice(0, 220);
+        || JSON.stringify(json).slice(0, 400);
     }
     const err = new Error(
       `Santander API ${method} ${path} -> ${res.status}${bodyMsg ? ` · ${bodyMsg}` : ''}`
