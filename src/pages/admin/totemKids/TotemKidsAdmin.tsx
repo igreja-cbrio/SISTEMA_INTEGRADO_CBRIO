@@ -14,7 +14,7 @@ import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
-import { Loader2, Plus, Pencil, Baby, Calendar, MapPin, Printer, ShieldAlert, ExternalLink, ArrowLeft } from 'lucide-react';
+import { Loader2, Plus, Pencil, Baby, Calendar, MapPin, Printer, ShieldAlert, ExternalLink, ArrowLeft, Sparkles } from 'lucide-react';
 import { toast } from 'sonner';
 import { totemKids, kpis } from '@/api';
 import { useNavigate } from 'react-router-dom';
@@ -35,11 +35,14 @@ export default function TotemKidsAdmin() {
           <Button variant="default" size="sm" onClick={() => navigate('/ministerial/totem-kids')} className="bg-pink-600 hover:bg-pink-700">
             <ArrowLeft className="h-4 w-4 mr-1" /> Voltar ao Totem
           </Button>
+          <Button variant="outline" size="sm" onClick={() => navigate('/ministerial/totem-kids/decisoes')}>
+            <Sparkles className="h-4 w-4 mr-1" /> Decisões
+          </Button>
           <Button variant="outline" size="sm" onClick={() => navigate('/ministerial/totem-kids/teste-etiqueta')}>
             <Printer className="h-4 w-4 mr-1" /> Testar etiqueta
           </Button>
           <Button variant="outline" size="sm" onClick={() => navigate('/ministerial/totem-kids/painel')}>
-            <Calendar className="h-4 w-4 mr-1" /> Painel ao vivo
+            <Calendar className="h-4 w-4 mr-1" /> Painel
           </Button>
           <Button variant="outline" size="sm" onClick={() => window.open('/manuais/totem-kids/', '_blank')}>
             <ExternalLink className="h-4 w-4 mr-1" /> Manual (HTML)
