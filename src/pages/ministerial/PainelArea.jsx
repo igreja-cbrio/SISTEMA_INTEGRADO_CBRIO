@@ -19,7 +19,11 @@ import { painelArea as api } from '../../api';
 import { Card } from '../../components/ui/card';
 import { Badge } from '../../components/ui/badge';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '../../components/ui/tabs';
-import { ArrowLeft, ChevronRight } from 'lucide-react';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter } from '../../components/ui/dialog';
+import { Button } from '../../components/ui/button';
+import { Input } from '../../components/ui/input';
+import { Label } from '../../components/ui/label';
+import { ArrowLeft, ChevronRight, Plus } from 'lucide-react';
 import { toast } from 'sonner';
 
 const AREA_META = {
@@ -274,10 +278,17 @@ export default function PainelArea({ area }) {
           className="overflow-hidden"
           style={{ borderColor: meta.accentBorder, borderWidth: 2 }}
         >
-          <div className="p-4 border-b border-border" style={{ background: meta.accentSoft }}>
+          <div className="p-4 border-b border-border flex items-center justify-between" style={{ background: meta.accentSoft }}>
             <h2 className="text-sm font-semibold uppercase tracking-wide" style={{ color: meta.accent }}>
               NPS do culto · avaliação dos participantes
             </h2>
+            {podePreencher && (
+              <NpsRegistrarButton
+                area={area}
+                accent={meta.accent}
+                onSaved={() => api.get(area, { periodo }).then(setData)}
+              />
+            )}
           </div>
           <div className="divide-y divide-border">
             {npsDestaque.map(k => (
@@ -414,6 +425,111 @@ export default function PainelArea({ area }) {
 }
 
 // ─────────────────────────── COMPONENTES ───────────────────────────
+
+function NpsRegistrarButton({ area, accent, onSaved }) {
+  const [open, setOpen] = useState(false);
+  const [nota, setNota] = useState('');
+  const [qtd, setQtd] = useState('');
+  const [mes, setMes] = useState(() => new Date().toISOString().slice(0, 7));
+  const [obs, setObs] = useState('');
+  const [saving, setSaving] = useState(false);
+
+  const handleSave = async () => {
+    const notaNum = Number(nota);
+    if (!Number.isFinite(notaNum) || notaNum < 0 || notaNum > 10) {
+      toast.error('Nota deve ser entre 0 e 10');
+      return;
+    }
+    setSaving(true);
+    try {
+      await api.registrarNps(area, {
+        nota: notaNum,
+        mes,
+        qtd_respostas: qtd ? Number(qtd) : null,
+        observacao: obs.trim() || null,
+      });
+      toast.success(`NPS de ${mes} registrado · trigger recalculou o KPI`);
+      setOpen(false);
+      setNota(''); setQtd(''); setObs('');
+      onSaved?.();
+    } catch (e) {
+      toast.error(e.message || 'Erro ao registrar NPS');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={setOpen}>
+      <DialogTrigger asChild>
+        <button
+          className="text-xs font-semibold flex items-center gap-1 hover:underline"
+          style={{ color: accent }}
+        >
+          <Plus className="h-3.5 w-3.5" /> Registrar nota
+        </button>
+      </DialogTrigger>
+      <DialogContent className="max-w-md">
+        <DialogHeader>
+          <DialogTitle>Registrar NPS · {area}</DialogTitle>
+        </DialogHeader>
+        <div className="space-y-3 py-2">
+          <p className="text-xs text-muted-foreground">
+            Nota média (0-10) das avaliações pos-culto do mes selecionado.
+            Substitui registro existente · idempotente.
+          </p>
+          <div>
+            <Label htmlFor="nps-mes">Mês de referência</Label>
+            <Input id="nps-mes" type="month" value={mes} onChange={e => setMes(e.target.value)} />
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <Label htmlFor="nps-nota">Nota média (0-10) *</Label>
+              <Input
+                id="nps-nota"
+                type="number"
+                min="0"
+                max="10"
+                step="0.1"
+                value={nota}
+                onChange={e => setNota(e.target.value)}
+                placeholder="ex: 8.7"
+                autoFocus
+              />
+            </div>
+            <div>
+              <Label htmlFor="nps-qtd">Qtd avaliações</Label>
+              <Input
+                id="nps-qtd"
+                type="number"
+                min="0"
+                value={qtd}
+                onChange={e => setQtd(e.target.value)}
+                placeholder="ex: 24"
+              />
+            </div>
+          </div>
+          <div>
+            <Label htmlFor="nps-obs">Observação (opcional)</Label>
+            <Input
+              id="nps-obs"
+              value={obs}
+              onChange={e => setObs(e.target.value)}
+              placeholder="contexto da avaliação"
+              maxLength={500}
+            />
+          </div>
+        </div>
+        <DialogFooter>
+          <Button variant="ghost" onClick={() => setOpen(false)}>Cancelar</Button>
+          <Button onClick={handleSave} disabled={saving || !nota} style={{ background: accent }}>
+            {saving ? 'Salvando...' : 'Salvar'}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
 
 function TotaisCultoCards({ totais, area, accent }) {
   const cards = [

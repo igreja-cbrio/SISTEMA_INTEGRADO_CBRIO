@@ -339,4 +339,56 @@ router.get('/:area', authorizeModule('painel-area', 1), async (req, res) => {
   }
 });
 
+// ============================================================================
+// POST /:area/nps · registra NPS mensal da area (coord da area · nivel >= 3)
+// ============================================================================
+// Os 5 KPIs CULTO-NPS-* (kids/ami/bridge/online/sede) ja apontam pra
+// tipo_id='nps_culto' via formula_config. So falta o canal de coleta ·
+// este endpoint grava nota agregada em dados_brutos · trigger SQL recalcula.
+//
+// Body: { nota: 0-10, mes: 'YYYY-MM' (default mes atual), qtd_respostas?: number, observacao?: string }
+//
+// Pra automacao futura: quando o modulo NPS rodar com pesquisa pos-culto,
+// substituir este endpoint por agregacao automatica.
+// ============================================================================
+router.post('/:area/nps', authorizeModule('painel-area', 3), async (req, res) => {
+  try {
+    const area = String(req.params.area).toLowerCase();
+    if (!AREAS_VALIDAS.includes(area)) {
+      return res.status(400).json({ error: 'Area invalida', validas: AREAS_VALIDAS });
+    }
+    const { nota, mes, qtd_respostas, observacao } = req.body || {};
+    const notaNum = Number(nota);
+    if (!Number.isFinite(notaNum) || notaNum < 0 || notaNum > 10) {
+      return res.status(400).json({ error: 'nota deve ser entre 0 e 10' });
+    }
+    const mesUsado = (mes && /^\d{4}-\d{2}$/.test(mes)) ? mes : new Date().toISOString().slice(0, 7);
+    // Data canonica: dia 1 do mes (granularidade mensal do tipo nps_culto)
+    const dataReg = `${mesUsado}-01`;
+
+    const payload = {
+      tipo_id: 'nps_culto',
+      area,
+      data: dataReg,
+      valor: notaNum,
+      contexto: qtd_respostas ? { qtd_respostas: Number(qtd_respostas) } : {},
+      observacao: observacao ? String(observacao).slice(0, 500) : null,
+      registrado_por: req.user?.id || null,
+      origem: 'painel-area-nps',
+    };
+
+    // UNIQUE em (tipo, area, data, contexto) · UPSERT
+    const { data, error } = await supabase
+      .from('dados_brutos')
+      .upsert(payload, { onConflict: 'tipo_id,area,data,contexto' })
+      .select()
+      .single();
+    if (error) return res.status(500).json({ error: error.message });
+    res.json({ ok: true, registro: data });
+  } catch (e) {
+    console.error('painel-area/nps:', e.message);
+    res.status(500).json({ error: 'Erro ao registrar NPS' });
+  }
+});
+
 module.exports = router;

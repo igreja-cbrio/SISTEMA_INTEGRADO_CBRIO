@@ -1340,9 +1340,21 @@ devocionais por area) quando o onboarding evoluir.
 Bridge tem KPIs proprios (BRG-01, BRG-02 etc com fonte_auto cultos.bridge_*).
 Marcos: "Bridge eh diferente de AMI, separe isso · os dados sao diferentes".
 
+**PR NPS dos cultos** · `claude/cultos-nps-input`:
+- Tipo `nps_culto` ja existia em `tipos_dado_bruto` (granularidade mensal,
+  agregacao avg) e os 5 KPIs CULTO-NPS-* ja apontavam pra ele via
+  formula_config.dado_tipo. Faltava o canal de input.
+- Backend `painelArea.js` ganha `POST /:area/nps` (nivel >= 3) aceitando
+  `{ nota: 0-10, mes?, qtd_respostas?, observacao? }` · faz UPSERT em
+  `dados_brutos` (UNIQUE tipo_id+area+data+contexto). Trigger SQL existente
+  recalcula o KPI automaticamente.
+- Frontend `PainelArea.jsx`: botao "Registrar nota" no card NPS destacado.
+  Dialog com mes (input type=month) + nota (0-10, step 0.1) + qtd
+  avaliacoes (opcional) + observacao. Aparece so pra quem tem >=3 na area.
+- Substitui canal definitivo quando modulo NPS rodar pesquisa pos-culto
+  (formula vai espelhar agregada na mesma tipo_id='nps_culto').
+
 **Pendente proximas PRs**:
-- NPS dos cultos · CULTO-NPS-* (5 KPIs) sem coletor · criar tipo dado
-  ou tabela cultos_nps
 - Drill-down decisoes (lista de pessoas no culto)
 - Time da area (voluntarios ativos por area)
 - Online · aba Saude + aba Dados (hoje sem)

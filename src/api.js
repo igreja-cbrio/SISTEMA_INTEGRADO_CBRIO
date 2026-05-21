@@ -660,6 +660,9 @@ export const painelArea = {
     ).toString();
     return get(`/painel-area/${encodeURIComponent(area)}${qs ? `?${qs}` : ''}`);
   },
+  // Registra NPS mensal · body: { nota: 0-10, mes?: 'YYYY-MM', qtd_respostas?, observacao? }
+  // Requer nivel >= 3 no modulo da area (coord da area)
+  registrarNps: (area, body) => post(`/painel-area/${encodeURIComponent(area)}/nps`, body),
 };
 
 export const permissoes = {
