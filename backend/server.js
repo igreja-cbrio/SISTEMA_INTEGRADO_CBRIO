@@ -81,6 +81,8 @@ app.use('/api/rh', require('./routes/rh'));
 app.use('/api/pcs', require('./routes/pcs'));
 app.use('/api/financeiro', require('./routes/financeiro'));
 app.use('/api/financeiro-v2', require('./routes/financeiroV2'));
+// Cron · registrar ANTES do /api/santander pra evitar collision com middleware authenticate
+app.use('/api/santander/cron', require('./routes/santanderCron'));
 app.use('/api/santander', require('./routes/santander'));
 app.use('/api/logistica', require('./routes/logistica'));
 app.use('/api/ml', require('./routes/ml'));

@@ -8,6 +8,7 @@ import EstruturaFiscal from './EstruturaFiscal';
 import ImportarExtratos from './ImportarExtratos';
 import FilaClassificacao from './FilaClassificacao';
 import DashboardSemanal from './DashboardSemanal';
+import DashboardOverview from './DashboardOverview';
 
 // ── Tema ────────────────────────────────────────────────────
 const C = {
@@ -333,25 +334,7 @@ export default function Financeiro() {
   // ═══════════════════════════════════════════════════════════
   // TAB: DASHBOARD
   // ═══════════════════════════════════════════════════════════
-  const renderDashboard = () => {
-    if (!dash) return <div style={styles.empty}><div className="flex items-center justify-center py-6 gap-2"><div className="h-4 w-4 animate-spin rounded-full border-2 border-muted-foreground/25 border-t-primary" /><span className="text-xs text-muted-foreground">Carregando...</span></div></div>;
-    const kpis = [
-      { label: 'Saldo Total', value: fmtMoney(dash.saldoTotal), bg: '#00B39D' },
-      { label: 'Contas Ativas', value: dash.contasAtivas ?? 0, bg: '#3b82f6' },
-      { label: 'Receitas do Mês', value: fmtMoney(dash.receitasMes), bg: '#10b981' },
-      { label: 'Despesas do Mês', value: fmtMoney(dash.despesasMes), bg: '#ef4444' },
-      { label: 'A Pagar Pendentes', value: dash.contasPagarPendentes ?? 0, bg: '#f59e0b' },
-      { label: 'A Pagar Vencidas', value: dash.contasPagarVencidas ?? 0, bg: '#dc2626' },
-      { label: 'Valor a Pagar', value: fmtMoney(dash.valorPagarPendente), bg: '#f59e0b' },
-      { label: 'Reembolsos Pend.', value: dash.reembolsosPendentes ?? 0, bg: '#3b82f6' },
-      { label: 'Valor Reembolsos', value: fmtMoney(dash.valorReembolsosPendentes), bg: 'var(--cbrio-card)' },
-    ];
-    return (
-      <div className="cbrio-stagger" style={styles.kpiGrid}>
-        {kpis.map((k, i) => <StatCard key={k.label} label={k.label} value={k.value} bg={k.bg} svg={FIN_STAT_SVGS[i % FIN_STAT_SVGS.length]} />)}
-      </div>
-    );
-  };
+  const renderDashboard = () => <DashboardOverview onNavigate={setTab} />;
 
   // ═══════════════════════════════════════════════════════════
   // TAB: CONTAS

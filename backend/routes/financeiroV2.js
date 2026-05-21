@@ -170,14 +170,17 @@ router.get('/identificadores', async (req, res) => {
 router.post('/identificadores', async (req, res) => {
   try {
     const { centavo, plano_contas_id, centro_custo_id, descricao, observacao } = req.body;
-    if (!centavo || !plano_contas_id || !descricao) {
-      return res.status(400).json({ error: 'centavo, plano_contas_id e descricao obrigatorios' });
+    if (!centavo || !descricao) {
+      return res.status(400).json({ error: 'centavo e descricao obrigatorios' });
     }
     const centavoNorm = String(centavo).padStart(2, '0');
     const { data, error } = await supabase
       .from('fin_identificadores_centavo')
       .insert({
-        centavo: centavoNorm, plano_contas_id, centro_custo_id, descricao, observacao,
+        centavo: centavoNorm,
+        plano_contas_id: plano_contas_id || null,
+        centro_custo_id: centro_custo_id || null,
+        descricao, observacao,
         created_by: req.user.userId,
       })
       .select().single();
@@ -686,6 +689,228 @@ router.get('/transacoes', async (req, res) => {
     if (error) return res.status(400).json({ error: error.message });
     res.json(data);
   } catch (e) { res.status(500).json({ error: 'Erro ao listar transacoes' }); }
+});
+
+// ====================================================================
+// DASHBOARD OVERVIEW · agrega tudo do /admin/financeiro home
+// ====================================================================
+router.get('/dashboard/overview', async (req, res) => {
+  try {
+    const hoje = new Date();
+    const hojeStr = hoje.toISOString().slice(0, 10);
+    const mesAtual = hojeStr.slice(0, 7);
+    const mesAnterior = new Date(hoje.getFullYear(), hoje.getMonth() - 1, 1).toISOString().slice(0, 7);
+    const seisMesesAtras = new Date(hoje.getFullYear(), hoje.getMonth() - 5, 1).toISOString().slice(0, 10);
+
+    // Paralelo · todas as queries
+    const [
+      contas,
+      transMes,
+      transMesAnt,
+      trans6m,
+      pagar,
+      reembolsos,
+      filaPendente,
+      ultimoUpload,
+      naoClassificadas,
+      receitaPorCulto,
+      topDespesas,
+    ] = await Promise.all([
+      supabase.from('fin_contas').select('id, nome, saldo, ativa, banco'),
+      supabase.from('fin_transacoes').select('tipo, valor, status')
+        .gte('data_competencia', `${mesAtual}-01`)
+        .lt('data_competencia', `${mesAtual}-32`)
+        .neq('status', 'cancelado'),
+      supabase.from('fin_transacoes').select('tipo, valor')
+        .gte('data_competencia', `${mesAnterior}-01`)
+        .lt('data_competencia', `${mesAnterior}-32`)
+        .neq('status', 'cancelado'),
+      supabase.from('fin_transacoes')
+        .select('tipo, valor, data_competencia')
+        .gte('data_competencia', seisMesesAtras)
+        .neq('status', 'cancelado'),
+      supabase.from('fin_contas_pagar').select('id, valor, status, data_vencimento, descricao')
+        .eq('status', 'pendente'),
+      supabase.from('fin_reembolsos').select('id, valor, status').eq('status', 'pendente'),
+      supabase.from('fin_fila_classificacao').select('id', { count: 'exact', head: true }).eq('status', 'pendente'),
+      supabase.from('fin_uploads').select('created_at, tipo, status').order('created_at', { ascending: false }).limit(1),
+      supabase.from('fin_lancamentos_brutos').select('id', { count: 'exact', head: true }).eq('ja_classificado', false),
+      supabase.from('vw_fin_transacoes_completa')
+        .select('culto_nome, culto_service_type_slug, plano_contas_codigo, valor')
+        .gte('data_competencia', seisMesesAtras)
+        .eq('tipo', 'receita')
+        .not('culto_slot_id', 'is', null),
+      supabase.from('vw_fin_transacoes_completa')
+        .select('plano_contas_codigo, plano_contas_nome, valor')
+        .gte('data_competencia', `${mesAtual}-01`)
+        .eq('tipo', 'despesa')
+        .not('plano_contas_id', 'is', null),
+    ]);
+
+    const contasAtivas = (contas.data || []).filter(c => c.ativa);
+    const saldoTotal = contasAtivas.reduce((s, c) => s + Number(c.saldo || 0), 0);
+
+    const tMes = transMes.data || [];
+    const receitaMes = tMes.filter(t => t.tipo === 'receita').reduce((s, t) => s + Number(t.valor), 0);
+    const despesaMes = tMes.filter(t => t.tipo === 'despesa').reduce((s, t) => s + Number(t.valor), 0);
+
+    const tMesAnt = transMesAnt.data || [];
+    const receitaMesAnt = tMesAnt.filter(t => t.tipo === 'receita').reduce((s, t) => s + Number(t.valor), 0);
+    const despesaMesAnt = tMesAnt.filter(t => t.tipo === 'despesa').reduce((s, t) => s + Number(t.valor), 0);
+
+    // Serie 6 meses · agrupa por YYYY-MM
+    const serieMap = new Map();
+    for (const t of trans6m.data || []) {
+      const mes = t.data_competencia.slice(0, 7);
+      if (!serieMap.has(mes)) serieMap.set(mes, { mes, receita: 0, despesa: 0 });
+      const row = serieMap.get(mes);
+      if (t.tipo === 'receita') row.receita += Number(t.valor);
+      else if (t.tipo === 'despesa') row.despesa += Number(t.valor);
+    }
+    const serie6m = Array.from(serieMap.values()).sort((a, b) => a.mes.localeCompare(b.mes));
+
+    // Receita por culto · agregado dos ultimos 6 meses
+    const cultoMap = new Map();
+    for (const t of receitaPorCulto.data || []) {
+      const k = t.culto_service_type_slug || t.culto_nome;
+      if (!k) continue;
+      if (!cultoMap.has(k)) cultoMap.set(k, { slug: k, nome: t.culto_nome, dizimo: 0, oferta: 0, total: 0 });
+      const r = cultoMap.get(k);
+      const code = t.plano_contas_codigo || '';
+      if (code.startsWith('3.01.01')) r.dizimo += Number(t.valor);
+      else if (code.startsWith('3.01.02')) r.oferta += Number(t.valor);
+      r.total += Number(t.valor);
+    }
+
+    // Top 5 categorias de despesa do mes
+    const despMap = new Map();
+    for (const t of topDespesas.data || []) {
+      const code = t.plano_contas_codigo || '';
+      // Agrupa por nivel 2 (ex: 4.01, 4.02)
+      const grupo = code.split('.').slice(0, 2).join('.');
+      if (!grupo) continue;
+      if (!despMap.has(grupo)) despMap.set(grupo, { codigo: grupo, nome: t.plano_contas_nome?.split(' ').slice(0, 3).join(' ') || grupo, total: 0 });
+      despMap.get(grupo).total += Number(t.valor);
+    }
+    const topDespCategorias = Array.from(despMap.values()).sort((a, b) => b.total - a.total).slice(0, 5);
+
+    // Pagar vencendo em 7 dias
+    const pgList = pagar.data || [];
+    const em7d = new Date(hoje.getTime() + 7 * 86400000).toISOString().slice(0, 10);
+    const pagarVencendo = pgList.filter(p => p.data_vencimento <= em7d).length;
+    const pagarVencidas = pgList.filter(p => p.data_vencimento < hojeStr).length;
+
+    res.json({
+      stats: {
+        saldoTotal,
+        contasAtivas: contasAtivas.length,
+        receitaMes,
+        receitaMesAnt,
+        receitaVariacao: receitaMesAnt > 0 ? ((receitaMes - receitaMesAnt) / receitaMesAnt) * 100 : null,
+        despesaMes,
+        despesaMesAnt,
+        despesaVariacao: despesaMesAnt > 0 ? ((despesaMes - despesaMesAnt) / despesaMesAnt) * 100 : null,
+        resultadoMes: receitaMes - despesaMes,
+        resultadoMesAnt: receitaMesAnt - despesaMesAnt,
+      },
+      pendencias: {
+        fila_classificacao: filaPendente.count || 0,
+        lancamentos_brutos_pendentes: naoClassificadas.count || 0,
+        contas_pagar: pgList.length,
+        contas_pagar_vencendo_7d: pagarVencendo,
+        contas_pagar_vencidas: pagarVencidas,
+        valor_pagar: pgList.reduce((s, p) => s + Number(p.valor), 0),
+        reembolsos: (reembolsos.data || []).length,
+        valor_reembolsos: (reembolsos.data || []).reduce((s, r) => s + Number(r.valor), 0),
+      },
+      contas: contasAtivas.map(c => ({ id: c.id, nome: c.nome, banco: c.banco, saldo: Number(c.saldo) })),
+      serie_6_meses: serie6m,
+      receita_por_culto: Array.from(cultoMap.values()).sort((a, b) => b.total - a.total),
+      top_despesas: topDespCategorias,
+      ultimo_upload: (ultimoUpload.data || [])[0] || null,
+    });
+  } catch (e) {
+    console.error('[FIN-V2] overview:', e);
+    res.status(500).json({ error: e.message || 'Erro ao montar overview' });
+  }
+});
+
+// ====================================================================
+// BACKFILL · tenta classificar fin_transacoes sem plano_contas_id
+// ====================================================================
+router.post('/backfill/transacoes', async (req, res) => {
+  try {
+    if (!['admin', 'diretor'].includes(req.user.role)) {
+      return res.status(403).json({ error: 'Apenas admin/diretor' });
+    }
+    const { limit = 1000, dry_run = false } = req.body || {};
+
+    const { data: pendentes, error } = await supabase
+      .from('fin_transacoes')
+      .select('id, conta_id, tipo, descricao, valor, data_competencia, referencia')
+      .is('plano_contas_id', null)
+      .neq('status', 'cancelado')
+      .limit(Number(limit));
+    if (error) return res.status(500).json({ error: error.message });
+
+    let classificadas = 0;
+    let ambiguas = 0;
+    const exemplos = [];
+
+    for (const t of pendentes || []) {
+      // Monta payload simulando lancamento bruto
+      const fakeLanc = {
+        valor: t.tipo === 'receita' ? Math.abs(t.valor) : -Math.abs(t.valor),
+        tipo_trn: t.tipo === 'receita' ? 'CREDIT' : 'DEBIT',
+        memo: t.descricao || '',
+        documento_contraparte: null,
+        nome_contraparte: null,
+        banco_origem: null,
+      };
+
+      // Extrai CPF/CNPJ se houver na descricao
+      const onlyDigits = (t.descricao || '').replace(/\D/g, '');
+      const cpfMatch = (t.descricao || '').match(/\d{11}/);
+      const cnpjMatch = (t.descricao || '').match(/\d{14}/);
+      if (cnpjMatch) fakeLanc.documento_contraparte = cnpjMatch[0];
+      else if (cpfMatch) fakeLanc.documento_contraparte = cpfMatch[0];
+
+      const sug = await classificarLancamento(fakeLanc);
+      if (!sug) { ambiguas++; continue; }
+
+      if (!dry_run) {
+        await supabase.from('fin_transacoes')
+          .update({
+            plano_contas_id: sug.plano_contas_id,
+            centro_custo_id: sug.centro_custo_id,
+            classificacao_origem: sug.origem,
+            classificacao_confianca: sug.confianca,
+          })
+          .eq('id', t.id);
+      }
+
+      classificadas++;
+      if (exemplos.length < 10) {
+        exemplos.push({
+          id: t.id, descricao: t.descricao, valor: t.valor,
+          plano_sugerido: sug.explicacao,
+          origem: sug.origem,
+          confianca: sug.confianca,
+        });
+      }
+    }
+
+    res.json({
+      total_pendentes: (pendentes || []).length,
+      classificadas,
+      ambiguas,
+      dry_run,
+      exemplos,
+    });
+  } catch (e) {
+    console.error('[FIN-V2] backfill:', e);
+    res.status(500).json({ error: e.message || 'Erro no backfill' });
+  }
 });
 
 module.exports = router;

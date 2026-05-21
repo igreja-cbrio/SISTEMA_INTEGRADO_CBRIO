@@ -56,13 +56,18 @@ async function classificarLancamento(lancamento) {
         .maybeSingle();
 
       if (ident) {
+        // Se o identificador tem plano definido · sugestao completa (1.0)
+        // Se nao tem · sugestao parcial (centro custo + identificador, sem conta)
+        // O admin escolhe a conta na fila
         return {
-          plano_contas_id: ident.plano_contas_id,
+          plano_contas_id: ident.plano_contas_id || null,
           centro_custo_id: ident.centro_custo_id,
           identificador_centavo: centavo,
           origem: 'centavo',
-          confianca: 1.0,
-          explicacao: `Centavo ${centavo} -> ${ident.descricao}`,
+          confianca: ident.plano_contas_id ? 1.0 : 0.5,
+          explicacao: ident.plano_contas_id
+            ? `Centavo ${centavo} -> ${ident.descricao}`
+            : `Centavo ${centavo} -> ${ident.descricao} (escolher conta)`,
         };
       }
     }
