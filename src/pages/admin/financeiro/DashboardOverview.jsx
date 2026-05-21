@@ -402,9 +402,27 @@ export default function DashboardOverview({ onNavigate }) {
               <CardTitle className="text-base">Contas bancárias</CardTitle>
               <p className="text-xs text-muted-foreground">{contas.length} contas ativas</p>
             </div>
-            <Button variant="ghost" size="sm" onClick={() => onNavigate?.('contas')}>
-              Ver todas <ChevronRight className="h-3 w-3 ml-1" />
-            </Button>
+            <div className="flex items-center gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={async () => {
+                  try {
+                    const r = await (await import('../../../api')).financeiroV2.syncSaldoBancos();
+                    if (r?.ok) {
+                      window.location.reload();
+                    }
+                  } catch (e) {
+                    alert('Erro ao sincronizar: ' + e.message);
+                  }
+                }}
+              >
+                ↻ Sincronizar saldos
+              </Button>
+              <Button variant="ghost" size="sm" onClick={() => onNavigate?.('contas')}>
+                Ver todas <ChevronRight className="h-3 w-3 ml-1" />
+              </Button>
+            </div>
           </div>
         </CardHeader>
         <CardContent>

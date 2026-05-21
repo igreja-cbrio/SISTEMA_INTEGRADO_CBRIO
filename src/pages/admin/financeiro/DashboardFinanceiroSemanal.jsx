@@ -60,30 +60,38 @@ function CountUp({ value, format = fmtMoney, duration = 1.2 }) {
 export default function DashboardSemanal() {
   const [data, setData] = useState(null);
   const [completo, setCompleto] = useState(null);
+  const [melhorSemana, setMelhorSemana] = useState(null);
+  const [saidas, setSaidas] = useState(null);
+  const [metas, setMetas] = useState([]);
   const [loading, setLoading] = useState(true);
   const [refData, setRefData] = useState(new Date().toISOString().slice(0, 10));
 
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
+    const failsafe = (label) => (e) => { console.warn(`[Dashboard FinSemanal] ${label}:`, e.message); return null; };
     Promise.all([
-      financeiroV2.dashboard.semanaCompleta?.(refData)?.catch((e) => {
-        console.warn('[Dashboard FinSemanal] semanaCompleta:', e.message);
-        return null;
-      }),
-      financeiroV2.dashboard.financeiroCompleto?.()?.catch((e) => {
-        console.warn('[Dashboard FinSemanal] financeiroCompleto:', e.message);
-        return null;
-      }),
-    ]).then(([s, c]) => {
+      financeiroV2.dashboard.semanaCompleta?.(refData)?.catch(failsafe('semanaCompleta')),
+      financeiroV2.dashboard.financeiroCompleto?.()?.catch(failsafe('financeiroCompleto')),
+      financeiroV2.dashboard.melhorSemana?.()?.catch(failsafe('melhorSemana')),
+      financeiroV2.dashboard.saidasDetalhadas?.()?.catch(failsafe('saidasDetalhadas')),
+      financeiroV2.metas?.list?.({ ativa: 'true' })?.catch(failsafe('metas')),
+    ]).then(([s, c, m, sd, mt]) => {
       if (cancelled) return;
       setData(s);
       setCompleto(c);
+      setMelhorSemana(m);
+      setSaidas(sd);
+      setMetas(mt || []);
     }).finally(() => {
       if (!cancelled) setLoading(false);
     });
     return () => { cancelled = true; };
   }, [refData]);
+
+  const reloadMetas = () => {
+    financeiroV2.metas?.list?.({ ativa: 'true' }).then(setMetas).catch(() => {});
+  };
 
   const navegar = (delta) => {
     const d = new Date(refData);
@@ -406,6 +414,37 @@ export default function DashboardSemanal() {
           </motion.div>
         </>
       )}
+
+      {/* ============================================================
+          PR B · Melhor semana + Saidas detalhadas + Metas
+          ============================================================ */}
+      {melhorSemana && (melhorSemana.melhor_do_mes || melhorSemana.melhor_do_ano) && (
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.9, duration: 0.5 }}
+        >
+          <MelhorSemanaCards melhor={melhorSemana} />
+        </motion.div>
+      )}
+
+      {saidas && (
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.95, duration: 0.5 }}
+        >
+          <SaidasDetalhadas saidas={saidas} />
+        </motion.div>
+      )}
+
+      <motion.div
+        initial={{ opacity: 0, y: 20 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ delay: 1.0, duration: 0.5 }}
+      >
+        <MetasFinanceiras metas={metas} onChange={reloadMetas} />
+      </motion.div>
     </motion.div>
   );
 }
@@ -834,5 +873,362 @@ function LoadingPretty() {
       />
       <div className="text-sm text-muted-foreground">Montando dashboard semanal...</div>
     </div>
+  );
+}
+
+// ============================================================
+// PR B · COMPONENTES NOVOS
+// ============================================================
+
+function MelhorSemanaCards({ melhor }) {
+  return (
+    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+      <DestaqueCard
+        titulo="🏆 Melhor semana do mês"
+        semana={melhor.melhor_do_mes}
+        gradient="from-amber-500 to-orange-500"
+        bgClass="bg-amber-500/10"
+      />
+      <DestaqueCard
+        titulo="👑 Melhor semana do ano"
+        semana={melhor.melhor_do_ano}
+        gradient="from-purple-500 to-pink-500"
+        bgClass="bg-purple-500/10"
+      />
+    </div>
+  );
+}
+
+function DestaqueCard({ titulo, semana, gradient, bgClass }) {
+  if (!semana) {
+    return (
+      <Card>
+        <CardContent className="pt-6 pb-6 text-center">
+          <div className="text-xs text-muted-foreground uppercase tracking-wide mb-2">{titulo}</div>
+          <div className="text-sm text-muted-foreground">Sem dados ainda</div>
+        </CardContent>
+      </Card>
+    );
+  }
+  return (
+    <Card className="relative overflow-hidden">
+      <div className={`absolute top-0 left-0 right-0 h-1 bg-gradient-to-r ${gradient}`} />
+      <div className={`absolute -top-8 -right-8 h-32 w-32 rounded-full opacity-20 ${bgClass} blur-2xl`} />
+      <CardContent className="pt-6 pb-6 relative">
+        <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground mb-2">
+          {titulo}
+        </div>
+        <div className="text-2xl font-bold tabular-nums mb-1" style={{ color: COL.green }}>
+          <CountUp value={semana.receita} />
+        </div>
+        <div className="text-sm font-semibold">{semana.semana_label}</div>
+        <div className="text-xs text-muted-foreground mt-1">
+          {semana.semana_inicio} a {semana.semana_fim}
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+function SaidasDetalhadas({ saidas }) {
+  const [view, setView] = useState('categoria');
+  const dados = saidas[view];
+
+  return (
+    <Card>
+      <CardContent className="pt-6">
+        <div className="flex items-start justify-between mb-3 flex-wrap gap-2">
+          <div>
+            <h3 className="text-base font-semibold">Saídas detalhadas · {saidas.mes}</h3>
+            <p className="text-xs text-muted-foreground">
+              Total: <strong>{fmtMoney(dados.total)}</strong>
+            </p>
+          </div>
+          <div className="flex gap-1">
+            {[
+              { key: 'categoria', label: 'Por categoria' },
+              { key: 'plano', label: 'Por plano' },
+              { key: 'centro', label: 'Por centro' },
+            ].map(t => (
+              <Button
+                key={t.key}
+                size="sm"
+                variant={view === t.key ? 'default' : 'outline'}
+                onClick={() => setView(t.key)}
+              >
+                {t.label}
+              </Button>
+            ))}
+          </div>
+        </div>
+
+        {dados.linhas.length === 0 ? (
+          <div className="py-8 text-center text-sm text-muted-foreground">
+            Sem despesas classificadas no mês
+          </div>
+        ) : view === 'categoria' ? (
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {/* Donut + lista */}
+            <div style={{ width: '100%', height: 260 }}>
+              <ResponsiveContainer>
+                <PieChartLite linhas={dados.linhas} />
+              </ResponsiveContainer>
+            </div>
+            <SaidasList linhas={dados.linhas} labelKey="categoria_nome" />
+          </div>
+        ) : (
+          <SaidasList linhas={dados.linhas} labelKey={view === 'plano' ? 'plano_nome' : 'centro_nome'} extraKey={view === 'plano' ? 'plano_codigo' : 'centro_codigo'} />
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+// Componente leve · pie chart com cores rotativas
+function PieChartLite({ linhas }) {
+  const COLORS_PIE = ['#00B39D', '#3b82f6', '#f59e0b', '#8b5cf6', '#ec4899', '#10b981', '#ef4444', '#06b6d4'];
+  const data = linhas.slice(0, 8).map((l, i) => ({
+    name: l.categoria_nome || l.plano_nome || l.centro_nome,
+    value: Number(l.total),
+    color: COLORS_PIE[i % COLORS_PIE.length],
+  }));
+  // Usa Recharts.PieChart via Pie · simples
+  const PieChart = require('recharts').PieChart;
+  const Pie = require('recharts').Pie;
+  const Cell = require('recharts').Cell;
+  return (
+    <PieChart>
+      <Pie data={data} cx="50%" cy="50%" outerRadius={90} innerRadius={50} dataKey="value" paddingAngle={2}>
+        {data.map((d, i) => <Cell key={i} fill={d.color} />)}
+      </Pie>
+      <Tooltip formatter={(v) => fmtMoney(v)} contentStyle={{ borderRadius: 8, fontSize: 12 }} />
+    </PieChart>
+  );
+}
+
+function SaidasList({ linhas, labelKey, extraKey }) {
+  const max = Math.max(...linhas.map(l => Number(l.total)), 1);
+  return (
+    <div className="space-y-2">
+      {linhas.slice(0, 12).map((l, i) => (
+        <motion.div
+          key={i}
+          initial={{ opacity: 0, x: -10 }}
+          animate={{ opacity: 1, x: 0 }}
+          transition={{ delay: i * 0.03 }}
+        >
+          <div className="flex items-center justify-between text-sm mb-1">
+            <span className="truncate" title={l[labelKey]}>
+              {extraKey && <span className="font-mono opacity-50 text-xs mr-2">{l[extraKey]}</span>}
+              {l[labelKey]}
+            </span>
+            <div className="flex items-center gap-2 tabular-nums shrink-0">
+              <span className="text-xs text-muted-foreground">{l.pct?.toFixed(1)}%</span>
+              <span className="font-semibold" style={{ color: COL.red }}>{fmtMoney(l.total)}</span>
+            </div>
+          </div>
+          <div className="h-1.5 bg-muted rounded-full overflow-hidden">
+            <motion.div
+              className="h-full rounded-full"
+              style={{ background: COL.red }}
+              initial={{ width: 0 }}
+              animate={{ width: `${(Number(l.total) / max) * 100}%` }}
+              transition={{ duration: 0.7, delay: i * 0.03 }}
+            />
+          </div>
+        </motion.div>
+      ))}
+    </div>
+  );
+}
+
+function MetasFinanceiras({ metas, onChange }) {
+  const [editing, setEditing] = useState(null);
+  const [showForm, setShowForm] = useState(false);
+
+  const tiposLabel = {
+    receita_mensal: 'Receita mensal',
+    receita_anual: 'Receita anual',
+    despesa_max_mensal: 'Teto despesa mensal',
+    saldo_minimo: 'Saldo mínimo',
+    pct_categoria: '% por categoria',
+    meta_centro_custo: 'Meta centro de custo',
+  };
+
+  const salvar = async (payload) => {
+    try {
+      if (payload.id) await financeiroV2.metas.update(payload.id, payload);
+      else await financeiroV2.metas.create(payload);
+      setEditing(null);
+      setShowForm(false);
+      onChange?.();
+    } catch (e) {
+      alert(`Erro: ${e.message}`);
+    }
+  };
+
+  const remover = async (id) => {
+    if (!confirm('Remover esta meta?')) return;
+    await financeiroV2.metas.remove(id);
+    onChange?.();
+  };
+
+  return (
+    <Card>
+      <CardContent className="pt-6">
+        <div className="flex items-center justify-between mb-3">
+          <div>
+            <h3 className="text-base font-semibold">Metas Financeiras</h3>
+            <p className="text-xs text-muted-foreground">{metas.length} metas ativas</p>
+          </div>
+          <Button size="sm" onClick={() => { setEditing(null); setShowForm(true); }}>
+            + Nova meta
+          </Button>
+        </div>
+
+        {metas.length === 0 ? (
+          <div className="py-8 text-center text-sm text-muted-foreground">
+            Nenhuma meta cadastrada · crie a primeira pra ver progresso
+          </div>
+        ) : (
+          <div className="space-y-2">
+            {metas.map((m, i) => (
+              <motion.div
+                key={m.id}
+                initial={{ opacity: 0, x: -10 }}
+                animate={{ opacity: 1, x: 0 }}
+                transition={{ delay: i * 0.05 }}
+                className="flex items-center justify-between p-3 rounded-lg border border-border hover:bg-muted/30 transition-colors"
+              >
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <Badge variant="outline" className="text-[10px]">{tiposLabel[m.tipo] || m.tipo}</Badge>
+                    <span className="text-sm font-semibold">{m.descricao || tiposLabel[m.tipo]}</span>
+                  </div>
+                  {(m.plano || m.centro) && (
+                    <div className="text-[11px] text-muted-foreground mt-1">
+                      {m.plano && `Conta: ${m.plano.codigo} ${m.plano.nome}`}
+                      {m.centro && ` · Centro: ${m.centro.codigo} ${m.centro.nome}`}
+                    </div>
+                  )}
+                  {m.observacao && <div className="text-[11px] text-muted-foreground mt-0.5">{m.observacao}</div>}
+                </div>
+                <div className="flex items-center gap-3 shrink-0">
+                  <div className="text-right">
+                    <div className="text-base font-bold tabular-nums">{fmtMoney(m.valor)}</div>
+                    <div className="text-[10px] text-muted-foreground">
+                      {m.tipo.includes('mensal') ? '/mês' : m.tipo.includes('anual') ? '/ano' : ''}
+                      {m.ano && ` · ${m.ano}`}
+                    </div>
+                  </div>
+                  <Button size="sm" variant="ghost" onClick={() => { setEditing(m); setShowForm(true); }}>
+                    Editar
+                  </Button>
+                  <Button size="sm" variant="ghost" onClick={() => remover(m.id)}>
+                    🗑
+                  </Button>
+                </div>
+              </motion.div>
+            ))}
+          </div>
+        )}
+
+        {showForm && (
+          <MetaForm
+            inicial={editing || {}}
+            onCancel={() => { setEditing(null); setShowForm(false); }}
+            onSave={salvar}
+          />
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+function MetaForm({ inicial, onCancel, onSave }) {
+  const [form, setForm] = useState({
+    tipo: inicial.tipo || 'receita_mensal',
+    descricao: inicial.descricao || '',
+    valor: inicial.valor || '',
+    ano: inicial.ano || new Date().getFullYear(),
+    mes_inicio: inicial.mes_inicio || 1,
+    mes_fim: inicial.mes_fim || 12,
+    observacao: inicial.observacao || '',
+    ativa: inicial.ativa !== false,
+    id: inicial.id,
+  });
+  const tipos = [
+    { v: 'receita_mensal', l: 'Receita mensal' },
+    { v: 'receita_anual', l: 'Receita anual' },
+    { v: 'despesa_max_mensal', l: 'Teto despesa mensal' },
+    { v: 'saldo_minimo', l: 'Saldo mínimo' },
+    { v: 'pct_categoria', l: '% por categoria' },
+    { v: 'meta_centro_custo', l: 'Meta centro de custo' },
+  ];
+  return (
+    <motion.div
+      initial={{ opacity: 0, height: 0 }}
+      animate={{ opacity: 1, height: 'auto' }}
+      className="mt-4 p-4 border border-border rounded-lg bg-muted/30"
+    >
+      <h4 className="text-sm font-semibold mb-3">{form.id ? 'Editar' : 'Nova'} meta</h4>
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+        <div>
+          <label className="text-xs font-medium text-muted-foreground block mb-1">Tipo</label>
+          <select
+            value={form.tipo}
+            onChange={(e) => setForm({ ...form, tipo: e.target.value })}
+            className="w-full px-3 py-2 text-sm rounded-md border border-border bg-background"
+          >
+            {tipos.map(t => <option key={t.v} value={t.v}>{t.l}</option>)}
+          </select>
+        </div>
+        <div>
+          <label className="text-xs font-medium text-muted-foreground block mb-1">Valor (R$)</label>
+          <input
+            type="number"
+            step="0.01"
+            value={form.valor}
+            onChange={(e) => setForm({ ...form, valor: e.target.value })}
+            className="w-full px-3 py-2 text-sm rounded-md border border-border bg-background tabular-nums"
+            placeholder="0.00"
+          />
+        </div>
+        <div>
+          <label className="text-xs font-medium text-muted-foreground block mb-1">Descrição</label>
+          <input
+            type="text"
+            value={form.descricao}
+            onChange={(e) => setForm({ ...form, descricao: e.target.value })}
+            className="w-full px-3 py-2 text-sm rounded-md border border-border bg-background"
+            placeholder="Ex: Receita mínima de janeiro"
+          />
+        </div>
+        <div>
+          <label className="text-xs font-medium text-muted-foreground block mb-1">Ano</label>
+          <input
+            type="number"
+            value={form.ano}
+            onChange={(e) => setForm({ ...form, ano: parseInt(e.target.value) || 2026 })}
+            className="w-full px-3 py-2 text-sm rounded-md border border-border bg-background tabular-nums"
+          />
+        </div>
+        <div className="md:col-span-2">
+          <label className="text-xs font-medium text-muted-foreground block mb-1">Observação</label>
+          <input
+            type="text"
+            value={form.observacao}
+            onChange={(e) => setForm({ ...form, observacao: e.target.value })}
+            className="w-full px-3 py-2 text-sm rounded-md border border-border bg-background"
+          />
+        </div>
+      </div>
+      <div className="flex justify-end gap-2 mt-4">
+        <Button size="sm" variant="outline" onClick={onCancel}>Cancelar</Button>
+        <Button size="sm" onClick={() => onSave({ ...form, valor: Number(form.valor) })}>
+          {form.id ? 'Salvar' : 'Criar meta'}
+        </Button>
+      </div>
+    </motion.div>
   );
 }
