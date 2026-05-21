@@ -53,6 +53,131 @@ router.get('/', authorizeModule('apresentacoes', 1), async (req, res) => {
 });
 
 // ─────────────────────────────────────────────────────────────
+// GET /api/apresentacoes/contexto/explorar-vault
+// Lista TODOS os .md do vault Cerebro CBRio recursivamente · admin
+// usa pra descobrir o que ja existe e me passar a lista pra eu
+// decidir o que injetar no contexto das apresentacoes.
+// ─────────────────────────────────────────────────────────────
+router.get('/contexto/explorar-vault', authorizeModule('apresentacoes', 5), async (req, res) => {
+  try {
+    const { getGraphToken } = require('../services/storageService');
+    const HUB_SITE_ID = 'infracbrio.sharepoint.com,04b50f10-ea32-40ba-84bd-44a3b38ee2a7,94fe6af6-f064-455d-afc5-67a377f5e82c';
+
+    const token = await getGraphToken();
+
+    // Descobre drive do vault
+    const drivesRes = await fetch(
+      `https://graph.microsoft.com/v1.0/sites/${HUB_SITE_ID}/drives`,
+      { headers: { Authorization: `Bearer ${token}` } },
+    );
+    if (!drivesRes.ok) {
+      return res.status(500).json({ error: 'Falha ao listar drives', status: drivesRes.status });
+    }
+    const drives = await drivesRes.json();
+    const vault = drives.value?.find(d => d.name === 'Cerebro CBRio');
+    if (!vault) {
+      return res.status(404).json({
+        error: 'Drive "Cerebro CBRio" nao encontrado',
+        drives_disponiveis: drives.value?.map(d => d.name) || [],
+      });
+    }
+
+    // BFS · lista recursivo
+    async function listChildren(folderEndpoint) {
+      const r = await fetch(folderEndpoint + '?$top=200&$select=id,name,file,folder,size,parentReference', {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!r.ok) return [];
+      const j = await r.json();
+      return j.value || [];
+    }
+
+    const arquivos = [];
+    const pastas = [];
+    const queue = [{
+      endpoint: `https://graph.microsoft.com/v1.0/drives/${vault.id}/root/children`,
+      path: '/',
+    }];
+
+    let visitados = 0;
+    const MAX = 100;
+
+    while (queue.length > 0 && visitados < MAX) {
+      const { endpoint, path } = queue.shift();
+      visitados++;
+      const children = await listChildren(endpoint);
+      for (const item of children) {
+        const fullPath = path + item.name;
+        if (item.folder) {
+          pastas.push({ path: fullPath + '/', count: item.folder.childCount });
+          queue.push({
+            endpoint: `https://graph.microsoft.com/v1.0/drives/${vault.id}/items/${item.id}/children`,
+            path: fullPath + '/',
+          });
+        } else if (item.file) {
+          // Lista TODOS os arquivos (nao so .md) pra Marcos ver
+          arquivos.push({
+            path: fullPath,
+            nome: item.name,
+            tamanho: item.size,
+            md: /\.md$/i.test(item.name),
+          });
+        }
+      }
+    }
+
+    res.json({
+      vault_drive: { id: vault.id, nome: vault.name },
+      total_pastas: pastas.length,
+      total_arquivos: arquivos.length,
+      total_md: arquivos.filter(a => a.md).length,
+      visitados_recursao: visitados,
+      pastas: pastas.sort((a, b) => a.path.localeCompare(b.path)),
+      arquivos_md: arquivos.filter(a => a.md).sort((a, b) => a.path.localeCompare(b.path)),
+      outros_arquivos_amostra: arquivos.filter(a => !a.md).slice(0, 30),
+    });
+  } catch (e) {
+    console.error('explorar-vault:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ─────────────────────────────────────────────────────────────
+// GET /api/apresentacoes/contexto/ler-arquivo?path=...
+// Le conteudo de um arquivo .md especifico do vault · admin usa
+// pra confirmar conteudo antes de injetar no contexto.
+// ─────────────────────────────────────────────────────────────
+router.get('/contexto/ler-arquivo', authorizeModule('apresentacoes', 5), async (req, res) => {
+  try {
+    const path = req.query.path;
+    if (!path || !path.startsWith('/')) {
+      return res.status(400).json({ error: 'parametro path obrigatorio · formato /pasta/arquivo.md' });
+    }
+    const { getGraphToken } = require('../services/storageService');
+    const HUB_SITE_ID = 'infracbrio.sharepoint.com,04b50f10-ea32-40ba-84bd-44a3b38ee2a7,94fe6af6-f064-455d-afc5-67a377f5e82c';
+    const token = await getGraphToken();
+    const drivesRes = await fetch(
+      `https://graph.microsoft.com/v1.0/sites/${HUB_SITE_ID}/drives`,
+      { headers: { Authorization: `Bearer ${token}` } },
+    );
+    const drives = await drivesRes.json();
+    const vault = drives.value?.find(d => d.name === 'Cerebro CBRio');
+    if (!vault) return res.status(404).json({ error: 'vault nao encontrado' });
+
+    const cleanPath = path.replace(/^\//, '');
+    const r = await fetch(
+      `https://graph.microsoft.com/v1.0/drives/${vault.id}/root:/${encodeURIComponent(cleanPath).replace(/%2F/g, '/')}:/content`,
+      { headers: { Authorization: `Bearer ${token}` } },
+    );
+    if (!r.ok) return res.status(r.status).json({ error: 'arquivo nao encontrado', status: r.status });
+    const conteudo = await r.text();
+    res.json({ path, tamanho: conteudo.length, conteudo });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ─────────────────────────────────────────────────────────────
 // GET /api/apresentacoes/:id · detalhe (sem html/css pra UI leve)
 // ─────────────────────────────────────────────────────────────
 router.get('/:id', authorizeModule('apresentacoes', 1), async (req, res) => {
