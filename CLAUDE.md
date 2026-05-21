@@ -1340,6 +1340,37 @@ devocionais por area) quando o onboarding evoluir.
 Bridge tem KPIs proprios (BRG-01, BRG-02 etc com fonte_auto cultos.bridge_*).
 Marcos: "Bridge eh diferente de AMI, separe isso · os dados sao diferentes".
 
+**PR KPIs semanais → YoY (2026-05-21)** · `claude/kpis-semanais-yoy`:
+- Marcos: "todos os KPIs comparando com mesma semana do ano anterior · igreja
+  tem eventos/liturgias mensais que fazem variar a frequencia". Aplicar so
+  nos semanais por enquanto · mensais/semestrais ficam intocados.
+- Migration `20260521140000_kpi_periodo_anterior_yoy_semanal.sql` · estende
+  funcao SQL `_kpi_periodo_anterior` pra suportar `ano_anterior` em
+  semanal/trimestral/semestral (mensal ja suportava). W53-2026 → NULL se
+  ano anterior tem 52 semanas (edge case ISO).
+- Migration `20260521150000_kpis_semanais_yoy.sql` · UPDATE 22 KPIs (todos
+  delta_pct/delta_abs com periodicidade='semanal') · comparacao
+  `semana_anterior|ciclo_anterior` → `ano_anterior`. Categorias:
+  frequencia (5), conversoes (6), frequencia NEXT (5), NPS NEXT (5),
+  YouTube comentarios (1).
+- Mantido: 6 KPIs `evento_anterior` (batismos vs ultimo evento) ·
+  faz sentido vs evento, nao ano. Mensais e semestrais nao alterados.
+- Pos-migration, bulk recalc rodado · 11/22 com valor (resto sem dado
+  em 2025 · Bridge novo, NEXT recente, YouTube comments etc). Marcos
+  ja sabia · "alguns vao ficar sem dado pois nem todos tinhamos no ano
+  passado".
+- Triggers SQL (`tg_cultos_recalc_kpis`, `tg_dados_brutos_*`) ja apontam
+  pra funcao atualizada · proximas semanas atualizam automatico.
+- Frontend `KpiEditorModal.jsx` ja tinha 'ano_anterior' como opcao no
+  dropdown · sem mudancas. Labels genericos "vs periodo anterior"
+  funcionam pra qualquer comparacao.
+
+Exemplos reais pos-migration:
+- KIDS-01: -7.02% (W20-2026: 225 pessoas · W20-2025: 242)
+- SED-21: +13.63% (1667 vs 1467)
+- SED-18 decisoes: -78.57% (6 vs 28)
+- ONL-13 decisoes online: -100% (0 vs 10)
+
 **PR convertidos em "Seguir"** · `claude/cultos-convertidos-em-seguir`:
 - Migration `20260521130000_convertidos_atendidos_em_seguir.sql`
 - Marcos (2026-05-21): "conversoes nao esta em investir tempo com Deus,
