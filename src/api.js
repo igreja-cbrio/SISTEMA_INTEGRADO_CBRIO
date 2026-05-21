@@ -653,7 +653,13 @@ export const notificacoes = {
 };
 
 export const painelArea = {
-  get: (area) => get(`/painel-area/${encodeURIComponent(area)}`),
+  // params: { periodo?: '30d'|'90d'|'180d'|'365d', desde?: 'YYYY-MM-DD', ate?: 'YYYY-MM-DD' }
+  get: (area, params = {}) => {
+    const qs = new URLSearchParams(
+      Object.entries(params).filter(([, v]) => v != null && v !== '')
+    ).toString();
+    return get(`/painel-area/${encodeURIComponent(area)}${qs ? `?${qs}` : ''}`);
+  },
 };
 
 export const permissoes = {

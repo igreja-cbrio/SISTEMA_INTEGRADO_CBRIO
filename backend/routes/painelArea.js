@@ -18,11 +18,66 @@ router.use(authenticate);
 
 const AREAS_VALIDAS = ['kids', 'ami', 'bridge', 'online', 'sede', 'cba'];
 
+// Filtra cultos da `vw_culto_stats` pela area pedida · usa service_type_name
+// porque eh mais robusto que nome livre (mesma logica do kpiAutoCollector)
+function filtrarCultosPorArea(cultos, area) {
+  if (!cultos || cultos.length === 0) return [];
+  const n = (s) => String(s || '').toLowerCase();
+  if (area === 'ami') {
+    return cultos.filter(c => {
+      const st = n(c.service_type_name);
+      const nm = n(c.nome);
+      return (st.includes('ami') || nm.includes('ami')) && !st.includes('bridge') && !nm.includes('bridge');
+    });
+  }
+  if (area === 'bridge') {
+    return cultos.filter(c => {
+      const st = n(c.service_type_name);
+      const nm = n(c.nome);
+      return st.includes('bridge') || nm.includes('bridge');
+    });
+  }
+  if (area === 'online') {
+    // Todos cultos com transmissao online (pico online > 0 OU has_online)
+    return cultos.filter(c => (c.online_pico || 0) > 0);
+  }
+  if (area === 'kids') {
+    // Cultos com Kids presencial · Sede (manha/noite) + Quarta com Kids
+    return cultos.filter(c => {
+      const st = n(c.service_type_name);
+      const nm = n(c.nome);
+      // Sede ou quarta com kids · cultos que tem campo presencial_kids
+      const sede = st.startsWith('domingo') || nm.startsWith('domingo');
+      const quartaKids = st.includes('quarta') || nm.includes('quarta');
+      return (sede || quartaKids) && (c.presencial_kids != null);
+    });
+  }
+  if (area === 'sede') {
+    return cultos.filter(c => {
+      const st = n(c.service_type_name);
+      return st.startsWith('domingo') || st.includes('quarta');
+    });
+  }
+  return cultos;
+}
+
 router.get('/:area', authorizeModule('painel-area', 1), async (req, res) => {
   try {
     const area = String(req.params.area).toLowerCase();
     if (!AREAS_VALIDAS.includes(area)) {
       return res.status(400).json({ error: 'Area invalida', validas: AREAS_VALIDAS });
+    }
+
+    // Filtro de periodo via query param · desde=YYYY-MM-DD&ate=YYYY-MM-DD
+    // OU periodo=30d|90d|180d|365d (default 180d)
+    const hoje = new Date();
+    let desde = req.query.desde;
+    let ate = req.query.ate || hoje.toISOString().slice(0, 10);
+    if (!desde) {
+      const periodo = String(req.query.periodo || '180d');
+      const dias = parseInt(periodo, 10) || 180;
+      const d = new Date(hoje); d.setDate(d.getDate() - dias);
+      desde = d.toISOString().slice(0, 10);
     }
 
     // ──────────────────────────────────────────────────────────────────────
@@ -88,12 +143,10 @@ router.get('/:area', authorizeModule('painel-area', 1), async (req, res) => {
     //    + registros existentes (se houver). Tipos sem registro retornam
     //    placeholder vazio · UI mostra card aguardando preenchimento.
     // ──────────────────────────────────────────────────────────────────────
-    const hoje = new Date();
     const mesAtual = hoje.toISOString().slice(0, 7);
     const mesAnteriorD = new Date(hoje); mesAnteriorD.setMonth(mesAnteriorD.getMonth() - 1);
     const mesAnterior = mesAnteriorD.toISOString().slice(0, 7);
-    const dataLimite = new Date(hoje); dataLimite.setDate(dataLimite.getDate() - 180);
-    const dataLimiteStr = dataLimite.toISOString().slice(0, 10);
+    const dataLimiteStr = desde;
 
     // 2a. Extrai tipos esperados a partir de formula_config dos KPIs +
     //     mapeia valores da Jornada que cada tipo alimenta
@@ -128,12 +181,13 @@ router.get('/:area', authorizeModule('painel-area', 1), async (req, res) => {
       tiposCatalogo = catalogo || [];
     }
 
-    // 2c. Busca registros existentes (180d · pra sparkline + variacao mes)
+    // 2c. Busca registros existentes (no periodo · pra sparkline + variacao)
     const { data: dadosRaw } = await supabase
       .from('dados_brutos')
       .select('tipo_id, data, valor')
       .eq('area', area)
       .gte('data', dataLimiteStr)
+      .lte('data', ate)
       .order('data', { ascending: false });
 
     // Indexa registros por tipo
@@ -177,6 +231,50 @@ router.get('/:area', authorizeModule('painel-area', 1), async (req, res) => {
         vazio: regs.length === 0,  // ← UI usa pra mostrar placeholder
       };
     }).sort((a, b) => a.ordem - b.ordem);
+
+    // ──────────────────────────────────────────────────────────────────────
+    // 2e. Cultos recentes da area · principal fonte de dado pro lider hoje
+    // ──────────────────────────────────────────────────────────────────────
+    // Marcos: "decisao arquitetural · pode ler de vw_culto_stats, bom adicionar
+    // filtro por data tambem". Os 4 modulos veem os cultos da sua area
+    // diretamente (cultos.X eh source-of-truth de frequencia/decisoes/batismos
+    // hoje, NAO dados_brutos).
+    let cultosRecentes = [];
+    let totaisCultos = null;
+    if (area !== 'sede' && area !== 'cba') {
+      const { data: cultosRaw } = await supabase
+        .from('vw_culto_stats')
+        .select('id, data, hora, nome, service_type_name, presencial_adulto, presencial_kids, decisoes_presenciais, decisoes_online, decisoes_kids, online_pico, online_ds, online_ddus, observacoes')
+        .gte('data', dataLimiteStr)
+        .lte('data', ate)
+        .order('data', { ascending: false });
+
+      const cultosArea = filtrarCultosPorArea(cultosRaw || [], area);
+      cultosRecentes = cultosArea.slice(0, 60); // limit · mais que isso virou ruido
+
+      // Totais agregados pro card de header
+      if (cultosArea.length > 0) {
+        const sum = (arr, k) => arr.reduce((a, c) => a + (Number(c[k]) || 0), 0);
+        const total_pres = sum(cultosArea, 'presencial_adulto');
+        const total_kids = sum(cultosArea, 'presencial_kids');
+        const total_dec_pres = sum(cultosArea, 'decisoes_presenciais');
+        const total_dec_onl = sum(cultosArea, 'decisoes_online');
+        const total_dec_kids = sum(cultosArea, 'decisoes_kids');
+        const total_pico = sum(cultosArea, 'online_pico');
+        const total_ddus = sum(cultosArea, 'online_ddus');
+        totaisCultos = {
+          total_cultos: cultosArea.length,
+          presencial_adulto: total_pres,
+          presencial_kids: total_kids,
+          decisoes_presenciais: total_dec_pres,
+          decisoes_online: total_dec_onl,
+          decisoes_kids: total_dec_kids,
+          decisoes_total: total_dec_pres + total_dec_onl + total_dec_kids,
+          online_pico_total: total_pico,
+          online_ddus_total: total_ddus,
+        };
+      }
+    }
 
     // ──────────────────────────────────────────────────────────────────────
     // 3. Score de saude
@@ -225,12 +323,15 @@ router.get('/:area', authorizeModule('painel-area', 1), async (req, res) => {
     res.json({
       area,
       total: totalKpis,
+      periodo: { desde: dataLimiteStr, ate },
       stats: { com_meta: comMeta, no_alvo: noAlvo, atrasado, critico },
       por_valor: porValor,
       sem_valor: semValor,
       kpis: enriched,
       dados,
       saude,
+      cultos_recentes: cultosRecentes,
+      totais_cultos: totaisCultos,
     });
   } catch (e) {
     console.error('painel-area:', e.message);
