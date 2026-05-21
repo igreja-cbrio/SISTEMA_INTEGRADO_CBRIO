@@ -81,7 +81,16 @@ export default function SantanderTab() {
   useEffect(() => {
     santander.health()
       .then(setHealth)
-      .catch((e) => setHealth({ ok: false, error: e.message }))
+      .catch((e) => setHealth({
+        ok: false,
+        // Se o backend respondeu com configured: false (envs faltando) preserva.
+        // Senao (erro 5xx · OAuth/cert falhou), assume configured: true pra cair
+        // no branch "Falha na autenticacao" com o error message detalhado.
+        configured: e.configured ?? true,
+        missing_env: e.missing_env || [],
+        ambiente: e.ambiente,
+        error: e.message,
+      }))
       .finally(() => setLoadingHealth(false));
   }, []);
 
