@@ -170,14 +170,17 @@ router.get('/identificadores', async (req, res) => {
 router.post('/identificadores', async (req, res) => {
   try {
     const { centavo, plano_contas_id, centro_custo_id, descricao, observacao } = req.body;
-    if (!centavo || !plano_contas_id || !descricao) {
-      return res.status(400).json({ error: 'centavo, plano_contas_id e descricao obrigatorios' });
+    if (!centavo || !descricao) {
+      return res.status(400).json({ error: 'centavo e descricao obrigatorios' });
     }
     const centavoNorm = String(centavo).padStart(2, '0');
     const { data, error } = await supabase
       .from('fin_identificadores_centavo')
       .insert({
-        centavo: centavoNorm, plano_contas_id, centro_custo_id, descricao, observacao,
+        centavo: centavoNorm,
+        plano_contas_id: plano_contas_id || null,
+        centro_custo_id: centro_custo_id || null,
+        descricao, observacao,
         created_by: req.user.userId,
       })
       .select().single();
@@ -686,6 +689,305 @@ router.get('/transacoes', async (req, res) => {
     if (error) return res.status(400).json({ error: error.message });
     res.json(data);
   } catch (e) { res.status(500).json({ error: 'Erro ao listar transacoes' }); }
+});
+
+// ====================================================================
+// DASHBOARD OVERVIEW · agrega tudo do /admin/financeiro home
+// ====================================================================
+
+// Calcula range [inicio, fim] e ranges anteriores baseados no period
+function calcPeriodRanges(period) {
+  const hoje = new Date();
+  let inicio, fim, inicioAnt, fimAnt;
+
+  fim = new Date(hoje);
+  fimAnt = new Date(hoje);
+
+  if (period === 'week') {
+    // Domingo a sabado (esta semana)
+    const dow = hoje.getDay();
+    inicio = new Date(hoje); inicio.setDate(hoje.getDate() - dow);
+    fim = new Date(inicio); fim.setDate(inicio.getDate() + 6);
+    inicioAnt = new Date(inicio); inicioAnt.setDate(inicio.getDate() - 7);
+    fimAnt = new Date(fim); fimAnt.setDate(fim.getDate() - 7);
+  } else if (period === 'quarter') {
+    const q = Math.floor(hoje.getMonth() / 3);
+    inicio = new Date(hoje.getFullYear(), q * 3, 1);
+    fim = new Date(hoje.getFullYear(), q * 3 + 3, 0);
+    inicioAnt = new Date(hoje.getFullYear(), (q - 1) * 3, 1);
+    fimAnt = new Date(hoje.getFullYear(), q * 3, 0);
+  } else if (period === 'year') {
+    inicio = new Date(hoje.getFullYear(), 0, 1);
+    fim = new Date(hoje.getFullYear(), 11, 31);
+    inicioAnt = new Date(hoje.getFullYear() - 1, 0, 1);
+    fimAnt = new Date(hoje.getFullYear() - 1, 11, 31);
+  } else {
+    // month (default)
+    inicio = new Date(hoje.getFullYear(), hoje.getMonth(), 1);
+    fim = new Date(hoje.getFullYear(), hoje.getMonth() + 1, 0);
+    inicioAnt = new Date(hoje.getFullYear(), hoje.getMonth() - 1, 1);
+    fimAnt = new Date(hoje.getFullYear(), hoje.getMonth(), 0);
+  }
+
+  const fmt = (d) => d.toISOString().slice(0, 10);
+  return {
+    inicio: fmt(inicio),
+    fim: fmt(fim),
+    inicio_ant: fmt(inicioAnt),
+    fim_ant: fmt(fimAnt),
+  };
+}
+
+router.get('/dashboard/overview', async (req, res) => {
+  try {
+    const period = ['week', 'month', 'quarter', 'year'].includes(req.query.period) ? req.query.period : 'month';
+    const hoje = new Date();
+    const hojeStr = hoje.toISOString().slice(0, 10);
+    const ranges = calcPeriodRanges(period);
+    // 12 meses atras (pra grafico de fluxo de caixa anual)
+    const dozeMesesAtras = new Date(hoje.getFullYear(), hoje.getMonth() - 11, 1).toISOString().slice(0, 10);
+
+    // Paralelo · todas as queries
+    const [
+      contas,
+      transPeriodo,
+      transPeriodoAnt,
+      trans6m,
+      pagar,
+      reembolsos,
+      filaPendente,
+      ultimoUpload,
+      naoClassificadas,
+      receitaPorCulto,
+      topDespesas,
+      recentes,
+    ] = await Promise.all([
+      supabase.from('fin_contas').select('id, nome, saldo, ativa, banco'),
+      supabase.from('fin_transacoes').select('tipo, valor, status')
+        .gte('data_competencia', ranges.inicio).lte('data_competencia', ranges.fim)
+        .neq('status', 'cancelado'),
+      supabase.from('fin_transacoes').select('tipo, valor')
+        .gte('data_competencia', ranges.inicio_ant).lte('data_competencia', ranges.fim_ant)
+        .neq('status', 'cancelado'),
+      supabase.from('fin_transacoes')
+        .select('tipo, valor, data_competencia')
+        .gte('data_competencia', dozeMesesAtras)
+        .neq('status', 'cancelado'),
+      supabase.from('fin_contas_pagar').select('id, valor, status, data_vencimento, descricao')
+        .eq('status', 'pendente'),
+      supabase.from('fin_reembolsos').select('id, valor, status').eq('status', 'pendente'),
+      supabase.from('fin_fila_classificacao').select('id', { count: 'exact', head: true }).eq('status', 'pendente'),
+      supabase.from('fin_uploads').select('created_at, tipo, status').order('created_at', { ascending: false }).limit(1),
+      supabase.from('fin_lancamentos_brutos').select('id', { count: 'exact', head: true }).eq('ja_classificado', false),
+      supabase.from('vw_fin_transacoes_completa')
+        .select('culto_nome, culto_service_type_slug, plano_contas_codigo, valor')
+        .gte('data_competencia', dozeMesesAtras)
+        .eq('tipo', 'receita')
+        .not('culto_slot_id', 'is', null),
+      supabase.from('vw_fin_transacoes_completa')
+        .select('plano_contas_codigo, plano_contas_nome, valor')
+        .gte('data_competencia', ranges.inicio).lte('data_competencia', ranges.fim)
+        .eq('tipo', 'despesa')
+        .not('plano_contas_id', 'is', null),
+      supabase.from('vw_fin_transacoes_completa')
+        .select('id, descricao, valor, tipo, status, data_competencia, plano_contas_nome, culto_nome')
+        .order('data_competencia', { ascending: false })
+        .neq('status', 'cancelado')
+        .limit(8),
+    ]);
+
+    const contasAtivas = (contas.data || []).filter(c => c.ativa);
+    const saldoTotal = contasAtivas.reduce((s, c) => s + Number(c.saldo || 0), 0);
+
+    const tMes = transPeriodo.data || [];
+    const receitaMes = tMes.filter(t => t.tipo === 'receita').reduce((s, t) => s + Number(t.valor), 0);
+    const despesaMes = tMes.filter(t => t.tipo === 'despesa').reduce((s, t) => s + Number(t.valor), 0);
+
+    const tMesAnt = transPeriodoAnt.data || [];
+    const receitaMesAnt = tMesAnt.filter(t => t.tipo === 'receita').reduce((s, t) => s + Number(t.valor), 0);
+    const despesaMesAnt = tMesAnt.filter(t => t.tipo === 'despesa').reduce((s, t) => s + Number(t.valor), 0);
+
+    // Serie 6 meses · agrupa por YYYY-MM
+    const serieMap = new Map();
+    for (const t of trans6m.data || []) {
+      const mes = t.data_competencia.slice(0, 7);
+      if (!serieMap.has(mes)) serieMap.set(mes, { mes, receita: 0, despesa: 0 });
+      const row = serieMap.get(mes);
+      if (t.tipo === 'receita') row.receita += Number(t.valor);
+      else if (t.tipo === 'despesa') row.despesa += Number(t.valor);
+    }
+    const serie6m = Array.from(serieMap.values()).sort((a, b) => a.mes.localeCompare(b.mes));
+
+    // Receita por culto · agregado dos ultimos 6 meses
+    const cultoMap = new Map();
+    for (const t of receitaPorCulto.data || []) {
+      const k = t.culto_service_type_slug || t.culto_nome;
+      if (!k) continue;
+      if (!cultoMap.has(k)) cultoMap.set(k, { slug: k, nome: t.culto_nome, dizimo: 0, oferta: 0, total: 0 });
+      const r = cultoMap.get(k);
+      const code = t.plano_contas_codigo || '';
+      if (code.startsWith('3.01.01')) r.dizimo += Number(t.valor);
+      else if (code.startsWith('3.01.02')) r.oferta += Number(t.valor);
+      r.total += Number(t.valor);
+    }
+
+    // Top 5 categorias de despesa do periodo
+    // Mapeamento nivel 2 -> rotulo amigavel (codigo aceita curtos)
+    const CATEGORIA_LABELS = {
+      '4.01': 'Recursos Humanos',
+      '4.02': 'Despesas Prediais',
+      '4.03': 'Servicos Terceirizados',
+      '4.04': 'Repasse a Missoes',
+      '4.05': 'Acao Social',
+      '4.06': 'Materiais de Consumo',
+      '4.07': 'Viagens',
+      '4.08': 'Veiculos',
+      '4.09': 'Patrimoniais',
+      '4.10': 'Eventos',
+      '4.11': 'Marketing',
+      '4.12': 'Outras',
+      '4.13': 'Impostos e Tributos',
+      '4.14': 'Despesas Financeiras',
+    };
+    const despMap = new Map();
+    for (const t of topDespesas.data || []) {
+      const code = t.plano_contas_codigo || '';
+      const grupo = code.split('.').slice(0, 2).join('.');
+      if (!grupo) continue;
+      if (!despMap.has(grupo)) {
+        despMap.set(grupo, {
+          codigo: grupo,
+          nome: CATEGORIA_LABELS[grupo] || (t.plano_contas_nome?.split(' ').slice(0, 3).join(' ') || grupo),
+          total: 0,
+        });
+      }
+      despMap.get(grupo).total += Number(t.valor);
+    }
+    const topDespCategorias = Array.from(despMap.values()).sort((a, b) => b.total - a.total).slice(0, 5);
+    // Calcula percentual relativo
+    const totalDesp = topDespCategorias.reduce((s, c) => s + c.total, 0) || 1;
+    topDespCategorias.forEach(c => { c.percentual = (c.total / totalDesp) * 100; });
+
+    // Pagar vencendo em 7 dias
+    const pgList = pagar.data || [];
+    const em7d = new Date(hoje.getTime() + 7 * 86400000).toISOString().slice(0, 10);
+    const pagarVencendo = pgList.filter(p => p.data_vencimento <= em7d).length;
+    const pagarVencidas = pgList.filter(p => p.data_vencimento < hojeStr).length;
+
+    res.json({
+      period,
+      ranges,
+      stats: {
+        saldoTotal,
+        contasAtivas: contasAtivas.length,
+        receitaMes,
+        receitaMesAnt,
+        receitaVariacao: receitaMesAnt > 0 ? ((receitaMes - receitaMesAnt) / receitaMesAnt) * 100 : null,
+        despesaMes,
+        despesaMesAnt,
+        despesaVariacao: despesaMesAnt > 0 ? ((despesaMes - despesaMesAnt) / despesaMesAnt) * 100 : null,
+        resultadoMes: receitaMes - despesaMes,
+        resultadoMesAnt: receitaMesAnt - despesaMesAnt,
+      },
+      pendencias: {
+        fila_classificacao: filaPendente.count || 0,
+        lancamentos_brutos_pendentes: naoClassificadas.count || 0,
+        contas_pagar: pgList.length,
+        contas_pagar_vencendo_7d: pagarVencendo,
+        contas_pagar_vencidas: pagarVencidas,
+        valor_pagar: pgList.reduce((s, p) => s + Number(p.valor), 0),
+        reembolsos: (reembolsos.data || []).length,
+        valor_reembolsos: (reembolsos.data || []).reduce((s, r) => s + Number(r.valor), 0),
+      },
+      contas: contasAtivas.map(c => ({ id: c.id, nome: c.nome, banco: c.banco, saldo: Number(c.saldo) })),
+      serie_6_meses: serie6m,
+      receita_por_culto: Array.from(cultoMap.values()).sort((a, b) => b.total - a.total),
+      top_despesas: topDespCategorias,
+      transacoes_recentes: recentes.data || [],
+      ultimo_upload: (ultimoUpload.data || [])[0] || null,
+    });
+  } catch (e) {
+    console.error('[FIN-V2] overview:', e);
+    res.status(500).json({ error: e.message || 'Erro ao montar overview' });
+  }
+});
+
+// ====================================================================
+// BACKFILL · tenta classificar fin_transacoes sem plano_contas_id
+// ====================================================================
+router.post('/backfill/transacoes', async (req, res) => {
+  try {
+    if (!['admin', 'diretor'].includes(req.user.role)) {
+      return res.status(403).json({ error: 'Apenas admin/diretor' });
+    }
+    const { limit = 1000, dry_run = false } = req.body || {};
+
+    const { data: pendentes, error } = await supabase
+      .from('fin_transacoes')
+      .select('id, conta_id, tipo, descricao, valor, data_competencia, referencia')
+      .is('plano_contas_id', null)
+      .neq('status', 'cancelado')
+      .limit(Number(limit));
+    if (error) return res.status(500).json({ error: error.message });
+
+    let classificadas = 0;
+    let ambiguas = 0;
+    const exemplos = [];
+
+    for (const t of pendentes || []) {
+      // Monta payload simulando lancamento bruto
+      const fakeLanc = {
+        valor: t.tipo === 'receita' ? Math.abs(t.valor) : -Math.abs(t.valor),
+        tipo_trn: t.tipo === 'receita' ? 'CREDIT' : 'DEBIT',
+        memo: t.descricao || '',
+        documento_contraparte: null,
+        nome_contraparte: null,
+        banco_origem: null,
+      };
+
+      // Extrai CPF/CNPJ se houver na descricao
+      const onlyDigits = (t.descricao || '').replace(/\D/g, '');
+      const cpfMatch = (t.descricao || '').match(/\d{11}/);
+      const cnpjMatch = (t.descricao || '').match(/\d{14}/);
+      if (cnpjMatch) fakeLanc.documento_contraparte = cnpjMatch[0];
+      else if (cpfMatch) fakeLanc.documento_contraparte = cpfMatch[0];
+
+      const sug = await classificarLancamento(fakeLanc);
+      if (!sug) { ambiguas++; continue; }
+
+      if (!dry_run) {
+        await supabase.from('fin_transacoes')
+          .update({
+            plano_contas_id: sug.plano_contas_id,
+            centro_custo_id: sug.centro_custo_id,
+            classificacao_origem: sug.origem,
+            classificacao_confianca: sug.confianca,
+          })
+          .eq('id', t.id);
+      }
+
+      classificadas++;
+      if (exemplos.length < 10) {
+        exemplos.push({
+          id: t.id, descricao: t.descricao, valor: t.valor,
+          plano_sugerido: sug.explicacao,
+          origem: sug.origem,
+          confianca: sug.confianca,
+        });
+      }
+    }
+
+    res.json({
+      total_pendentes: (pendentes || []).length,
+      classificadas,
+      ambiguas,
+      dry_run,
+      exemplos,
+    });
+  } catch (e) {
+    console.error('[FIN-V2] backfill:', e);
+    res.status(500).json({ error: e.message || 'Erro no backfill' });
+  }
 });
 
 module.exports = router;

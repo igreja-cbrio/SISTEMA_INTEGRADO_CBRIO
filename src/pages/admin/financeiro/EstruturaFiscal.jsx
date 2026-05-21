@@ -253,17 +253,15 @@ function CentrosCustoPanel() {
 // ============================================================
 function IdentificadoresPanel() {
   const [data, setData] = useState([]);
-  const [planos, setPlanos] = useState([]);
   const [centros, setCentros] = useState([]);
   const [modal, setModal] = useState(null);
 
   const load = async () => {
-    const [d, p, c] = await Promise.all([
+    const [d, c] = await Promise.all([
       financeiroV2.identificadores.list(),
-      financeiroV2.planoContas.list({ aceita_lancamento: 'true', ativo: 'true' }),
       financeiroV2.centrosCusto.list({ aceita_lancamento: 'true', ativo: 'true' }),
     ]);
-    setData(d); setPlanos(p); setCentros(c);
+    setData(d); setCentros(c);
   };
   useEffect(() => { load(); }, []);
 
@@ -304,7 +302,6 @@ function IdentificadoresPanel() {
             <tr>
               <th style={th}>Centavo</th>
               <th style={th}>Descricao</th>
-              <th style={th}>Conta</th>
               <th style={th}>Centro de Custo</th>
               <th style={th}>Ativo</th>
               <th style={th}></th>
@@ -320,10 +317,6 @@ function IdentificadoresPanel() {
                 </td>
                 <td style={{ ...td, fontWeight: 600 }}>{d.descricao}</td>
                 <td style={{ ...td, fontSize: 11, color: C.text2 }}>
-                  {d.plano_contas?.codigo} <br />
-                  <span style={{ color: C.text3 }}>{d.plano_contas?.nome}</span>
-                </td>
-                <td style={{ ...td, fontSize: 11, color: C.text2 }}>
                   {d.centro_custo?.codigo || '—'} <br />
                   <span style={{ color: C.text3 }}>{d.centro_custo?.nome}</span>
                 </td>
@@ -335,7 +328,7 @@ function IdentificadoresPanel() {
               </tr>
             ))}
             {data.length === 0 && (
-              <tr><td colSpan={6} style={{ padding: 24, textAlign: 'center', color: C.text3 }}>Nenhum identificador cadastrado</td></tr>
+              <tr><td colSpan={5} style={{ padding: 24, textAlign: 'center', color: C.text3 }}>Nenhum identificador cadastrado</td></tr>
             )}
           </tbody>
         </table>
@@ -344,48 +337,69 @@ function IdentificadoresPanel() {
       {modal && (
         <IdentificadorModal
           modal={modal} setModal={setModal} salvar={salvar}
-          planos={planos} centros={centros}
+          centros={centros}
         />
       )}
     </div>
   );
 }
 
-function IdentificadorModal({ modal, setModal, salvar, planos, centros }) {
+function IdentificadorModal({ modal, setModal, salvar, centros }) {
   const [form, setForm] = useState(modal);
   return (
     <div style={modalOverlay} onClick={() => setModal(null)}>
       <div style={modalBox} onClick={e => e.stopPropagation()}>
-        <h3 style={{ fontSize: 16, fontWeight: 700, marginBottom: 16, color: C.text }}>
+        <h3 style={{ fontSize: 16, fontWeight: 700, marginBottom: 6, color: C.text }}>
           {form.id ? 'Editar' : 'Novo'} identificador de centavo
         </h3>
-        <div style={{ display: 'grid', gridTemplateColumns: '120px 1fr', gap: 12, alignItems: 'center', marginBottom: 16 }}>
-          <label style={labelSt}>Centavo</label>
-          <input value={form.centavo || ''} onChange={e => setForm({ ...form, centavo: e.target.value.replace(/\D/g, '').slice(0, 2) })}
-            placeholder="17" maxLength={2} disabled={!!form.id} style={inputSt} />
-          <label style={labelSt}>Descricao</label>
-          <input value={form.descricao || ''} onChange={e => setForm({ ...form, descricao: e.target.value })}
-            placeholder="Templo · campanha do templo" style={inputSt} />
-          <label style={labelSt}>Conta</label>
-          <select value={form.plano_contas_id || ''} onChange={e => setForm({ ...form, plano_contas_id: e.target.value })} style={inputSt}>
-            <option value="">Selecione...</option>
-            {planos.map(p => <option key={p.id} value={p.id}>{p.codigo} · {p.nome}</option>)}
-          </select>
-          <label style={labelSt}>Centro de Custo</label>
-          <select value={form.centro_custo_id || ''} onChange={e => setForm({ ...form, centro_custo_id: e.target.value || null })} style={inputSt}>
-            <option value="">(opcional)</option>
-            {centros.map(c => <option key={c.id} value={c.id}>{c.codigo} · {c.nome}</option>)}
-          </select>
-          <label style={labelSt}>Observacao</label>
-          <input value={form.observacao || ''} onChange={e => setForm({ ...form, observacao: e.target.value })} style={inputSt} />
+        <p style={{ fontSize: 12, color: C.text3, marginBottom: 16, lineHeight: 1.4 }}>
+          O centavo marca a campanha/destino especial. A conta do plano de contas eh escolhida na hora da classificacao de cada lancamento.
+        </p>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 12, marginBottom: 20 }}>
+          <Field label="Centavo">
+            <input value={form.centavo || ''} onChange={e => setForm({ ...form, centavo: e.target.value.replace(/\D/g, '').slice(0, 2) })}
+              placeholder="25" maxLength={2} disabled={!!form.id} style={inputSt} />
+          </Field>
+          <Field label="Descricao">
+            <input value={form.descricao || ''} onChange={e => setForm({ ...form, descricao: e.target.value })}
+              placeholder="Templo · campanha do templo central" style={inputSt} />
+          </Field>
+          <Field label="Centro de Custo (opcional)">
+            <select value={form.centro_custo_id || ''} onChange={e => setForm({ ...form, centro_custo_id: e.target.value || null })}
+              style={{ ...inputSt, maxWidth: '100%' }}>
+              <option value="">— Nenhum —</option>
+              {centros.map(c => (
+                <option key={c.id} value={c.id} title={`${c.codigo} · ${c.nome}`}>
+                  {c.codigo} · {truncate(c.nome, 60)}
+                </option>
+              ))}
+            </select>
+          </Field>
+          <Field label="Observacao (opcional)">
+            <input value={form.observacao || ''} onChange={e => setForm({ ...form, observacao: e.target.value })} style={inputSt} />
+          </Field>
         </div>
         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
           <Button variant="outline" onClick={() => setModal(null)}>Cancelar</Button>
-          <Button onClick={() => salvar(form)}>Salvar</Button>
+          <Button onClick={() => salvar(form)} disabled={!form.centavo || !form.descricao}>Salvar</Button>
         </div>
       </div>
     </div>
   );
+}
+
+function Field({ label, children }) {
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+      <label style={labelSt}>{label}</label>
+      {children}
+    </div>
+  );
+}
+
+function truncate(s, n) {
+  if (!s) return '';
+  return s.length > n ? s.slice(0, n - 1) + '…' : s;
 }
 
 // ============================================================
@@ -498,6 +512,31 @@ const th = { padding: '10px 12px', textAlign: 'left', fontSize: 11, fontWeight: 
 const td = { padding: '10px 12px', color: C.text };
 const btnLink = { background: 'none', border: 'none', color: C.primary, cursor: 'pointer', fontSize: 12, fontWeight: 600, padding: '0 6px' };
 const labelSt = { fontSize: 12, fontWeight: 600, color: C.text2 };
-const inputSt = { padding: 8, borderRadius: 6, border: `1px solid ${C.border}`, background: 'var(--cbrio-input-bg)', color: C.text, fontSize: 13 };
-const modalOverlay = { position: 'fixed', inset: 0, background: 'var(--cbrio-overlay)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 };
-const modalBox = { background: 'var(--cbrio-modal-bg)', padding: 24, borderRadius: 10, width: '90%', maxWidth: 560, border: `1px solid ${C.border}` };
+const inputSt = {
+  width: '100%',
+  boxSizing: 'border-box',
+  maxWidth: '100%',
+  padding: 8,
+  borderRadius: 6,
+  border: `1px solid ${C.border}`,
+  background: 'var(--cbrio-input-bg)',
+  color: C.text,
+  fontSize: 13,
+};
+const modalOverlay = {
+  position: 'fixed', inset: 0,
+  background: 'var(--cbrio-overlay)',
+  display: 'flex', alignItems: 'center', justifyContent: 'center',
+  zIndex: 1000,
+  padding: 16,
+  overflowY: 'auto',
+};
+const modalBox = {
+  background: 'var(--cbrio-modal-bg)',
+  padding: 24, borderRadius: 10,
+  width: '100%', maxWidth: 480,
+  maxHeight: 'calc(100vh - 48px)',
+  overflowY: 'auto',
+  border: `1px solid ${C.border}`,
+  boxSizing: 'border-box',
+};

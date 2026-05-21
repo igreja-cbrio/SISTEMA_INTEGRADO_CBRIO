@@ -197,22 +197,38 @@ function ModalEditarClassificacao({ item, onClose, planos, centros, onSalvar }) 
           </div>
         </div>
 
-        <div style={{ display: 'grid', gridTemplateColumns: '140px 1fr', gap: 12, alignItems: 'center', marginBottom: 16 }}>
-          <label style={labelSt}>Conta</label>
-          <select value={planoId} onChange={e => setPlanoId(e.target.value)} style={inputSt}>
-            <option value="">Selecione...</option>
-            {planos.map(p => <option key={p.id} value={p.id}>{p.codigo} · {p.nome}</option>)}
-          </select>
-          <label style={labelSt}>Centro de Custo</label>
-          <select value={centroId} onChange={e => setCentroId(e.target.value)} style={inputSt}>
-            <option value="">(nenhum)</option>
-            {centros.map(c => <option key={c.id} value={c.id}>{c.codigo} · {c.nome}</option>)}
-          </select>
-          <label style={labelSt}>Centavo identificador</label>
-          <input value={centavo} onChange={e => setCentavo(e.target.value.replace(/\D/g, '').slice(0, 2))}
-            placeholder="(opcional)" maxLength={2} style={inputSt} />
-          <label style={labelSt}>Observacoes</label>
-          <input value={obs} onChange={e => setObs(e.target.value)} style={inputSt} />
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 12, marginBottom: 16 }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+            <label style={labelSt}>Conta do plano</label>
+            <select value={planoId} onChange={e => setPlanoId(e.target.value)} style={inputSt}>
+              <option value="">Selecione...</option>
+              {planos.map(p => (
+                <option key={p.id} value={p.id} title={`${p.codigo} · ${p.nome}`}>
+                  {p.codigo} · {truncateOpt(p.nome, 60)}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+            <label style={labelSt}>Centro de Custo (opcional)</label>
+            <select value={centroId} onChange={e => setCentroId(e.target.value)} style={inputSt}>
+              <option value="">— Nenhum —</option>
+              {centros.map(c => (
+                <option key={c.id} value={c.id} title={`${c.codigo} · ${c.nome}`}>
+                  {c.codigo} · {truncateOpt(c.nome, 60)}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+            <label style={labelSt}>Centavo identificador (opcional)</label>
+            <input value={centavo} onChange={e => setCentavo(e.target.value.replace(/\D/g, '').slice(0, 2))}
+              placeholder="ex: 17" maxLength={2} style={inputSt} />
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+            <label style={labelSt}>Observacoes</label>
+            <input value={obs} onChange={e => setObs(e.target.value)} style={inputSt} />
+          </div>
         </div>
 
         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
@@ -231,6 +247,23 @@ function ModalEditarClassificacao({ item, onClose, planos, centros, onSalvar }) 
 }
 
 const labelSt = { fontSize: 12, fontWeight: 600, color: C.text2 };
-const inputSt = { padding: 8, borderRadius: 6, border: `1px solid ${C.border}`, background: 'var(--cbrio-input-bg)', color: C.text, fontSize: 13 };
-const modalOverlay = { position: 'fixed', inset: 0, background: 'var(--cbrio-overlay)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 };
-const modalBox = { background: 'var(--cbrio-modal-bg)', padding: 24, borderRadius: 10, width: '90%', maxWidth: 560, border: `1px solid ${C.border}` };
+
+function truncateOpt(s, n) {
+  if (!s) return '';
+  return s.length > n ? s.slice(0, n - 1) + '…' : s;
+}
+const inputSt = {
+  width: '100%', boxSizing: 'border-box', maxWidth: '100%',
+  padding: 8, borderRadius: 6, border: `1px solid ${C.border}`,
+  background: 'var(--cbrio-input-bg)', color: C.text, fontSize: 13,
+};
+const modalOverlay = {
+  position: 'fixed', inset: 0, background: 'var(--cbrio-overlay)',
+  display: 'flex', alignItems: 'center', justifyContent: 'center',
+  zIndex: 1000, padding: 16, overflowY: 'auto',
+};
+const modalBox = {
+  background: 'var(--cbrio-modal-bg)', padding: 24, borderRadius: 10,
+  width: '100%', maxWidth: 520, maxHeight: 'calc(100vh - 48px)',
+  overflowY: 'auto', border: `1px solid ${C.border}`, boxSizing: 'border-box',
+};

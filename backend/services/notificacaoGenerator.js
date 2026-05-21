@@ -243,6 +243,76 @@ async function gerarNotificacoesFinanceiro() {
     });
   }
 
+  // 4. Fila de classificacao acumulada (PR B · estrutura fiscal)
+  // Tabela pode nao existir em ambientes antigos · try/catch silencioso
+  try {
+    const { count: filaCount } = await supabase
+      .from('fin_fila_classificacao')
+      .select('id', { count: 'exact', head: true })
+      .eq('status', 'pendente');
+
+    const hoje = new Date().toISOString().slice(0, 10);
+    if (filaCount && filaCount >= 20) {
+      count += await notificar({
+        modulo: 'financeiro',
+        tipo: 'fila_classificacao_alta',
+        titulo: `Fila de classificacao com ${filaCount} itens`,
+        mensagem: `Ha ${filaCount} lancamentos aguardando classificacao. Revise em /admin/financeiro -> Fila de classificacao.`,
+        link: '/admin/financeiro',
+        severidade: filaCount >= 50 ? 'urgente' : 'aviso',
+        chaveDedup: `fila_classificacao_alta_${hoje}`,
+      });
+    }
+
+    // 5. Lancamentos brutos pendentes ha muito tempo (>7d sem classificacao)
+    const seteDiasAtras = new Date(Date.now() - 7 * 86400000).toISOString();
+    const { count: brutosVelhos } = await supabase
+      .from('fin_lancamentos_brutos')
+      .select('id', { count: 'exact', head: true })
+      .eq('ja_classificado', false)
+      .lt('created_at', seteDiasAtras);
+
+    if (brutosVelhos && brutosVelhos > 0) {
+      count += await notificar({
+        modulo: 'financeiro',
+        tipo: 'lancamentos_pendentes_antigos',
+        titulo: `${brutosVelhos} lancamentos sem classificar ha >7 dias`,
+        mensagem: `Ha ${brutosVelhos} transacoes importadas ha mais de 7 dias ainda sem classificacao. Verifique a fila.`,
+        link: '/admin/financeiro',
+        severidade: 'aviso',
+        chaveDedup: `lanc_pendentes_antigos_${hoje}`,
+      });
+    }
+
+    // 6. Sem upload de extrato ha 10+ dias (alerta operacional)
+    const { data: ultimoUpload } = await supabase
+      .from('fin_uploads')
+      .select('created_at, tipo')
+      .eq('status', 'concluido')
+      .order('created_at', { ascending: false })
+      .limit(1);
+
+    if (ultimoUpload && ultimoUpload[0]) {
+      const diasSemUpload = Math.floor((Date.now() - new Date(ultimoUpload[0].created_at).getTime()) / 86400000);
+      if (diasSemUpload >= 10) {
+        count += await notificar({
+          modulo: 'financeiro',
+          tipo: 'sem_upload_recente',
+          titulo: `Sem importar extrato ha ${diasSemUpload} dias`,
+          mensagem: `Ultimo upload foi ha ${diasSemUpload} dias. Considere importar o extrato mais recente.`,
+          link: '/admin/financeiro',
+          severidade: 'aviso',
+          chaveDedup: `sem_upload_${hoje}`,
+        });
+      }
+    }
+  } catch (e) {
+    // Tabelas da PR B podem nao existir em ambientes antigos · ignora
+    if (!String(e.message || '').includes('does not exist')) {
+      console.warn('[NOTIF-FIN] Erro nas regras PR B:', e.message);
+    }
+  }
+
   return count;
 }
 
