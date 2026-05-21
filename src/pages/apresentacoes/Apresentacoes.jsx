@@ -200,7 +200,6 @@ function NovaApresentacaoDialog({ open, onClose, onCriada }) {
   const [titulo, setTitulo] = useState('');
   const [prompt, setPrompt] = useState('');
   const [tom, setTom] = useState('executivo');
-  const [modeloPremium, setModeloPremium] = useState(false);
   const [arquivos, setArquivos] = useState([]);
   const [criando, setCriando] = useState(false);
 
@@ -229,9 +228,8 @@ function NovaApresentacaoDialog({ open, onClose, onCriada }) {
     }
     setCriando(true);
     try {
-      // 1. Cria registro
-      const modelo = modeloPremium ? 'claude-opus-4-7' : 'claude-sonnet-4-6';
-      const { id } = await api.create({ titulo: titulo.trim(), prompt: prompt.trim(), tom, modelo });
+      // 1. Cria registro · backend resolve o modelo (Sonnet com fallback automatico)
+      const { id } = await api.create({ titulo: titulo.trim(), prompt: prompt.trim(), tom });
 
       // 2. Upload de arquivos (se houver)
       if (arquivos.length > 0) {
@@ -332,32 +330,8 @@ function NovaApresentacaoDialog({ open, onClose, onCriada }) {
             </label>
           </div>
 
-          {/* Toggle modelo · Sonnet (default rapido) ou Opus (premium lento) */}
-          <div className="rounded-md border bg-secondary/30 px-3 py-2.5">
-            <label className="flex items-start gap-2.5 cursor-pointer">
-              <input
-                type="checkbox"
-                checked={modeloPremium}
-                onChange={(e) => setModeloPremium(e.target.checked)}
-                className="mt-0.5"
-              />
-              <div className="flex-1 text-xs">
-                <div className="font-medium text-foreground mb-0.5">
-                  Modo Premium (Claude Opus 4.7) {modeloPremium && <span className="text-amber-400">· ativado</span>}
-                </div>
-                <div className="text-muted-foreground leading-relaxed">
-                  {modeloPremium ? (
-                    <>⚠ ~US$ 2-5 por apresentação · pode dar timeout (60s da Vercel). Use só pra apresentação importante de diretoria.</>
-                  ) : (
-                    <>Padrão: Claude Sonnet 4.6 · ~US$ 0.30-1 · 3x mais rápido · qualidade visual excelente pra slides.</>
-                  )}
-                </div>
-              </div>
-            </label>
-          </div>
-
           <div className="rounded-md bg-cyan-500/10 border border-cyan-500/30 px-3 py-2 text-xs text-cyan-100">
-            A geração leva 20-50 segundos. Pode fechar a aba — você recebe notificação no sino quando ficar pronta.
+            Gerado pelo Claude Sonnet · 20-40 segundos. Pode fechar a aba — você recebe notificação no sino quando ficar pronta.
           </div>
         </div>
 
