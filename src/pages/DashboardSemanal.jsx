@@ -1,11 +1,12 @@
 import { useState, useEffect, useRef } from 'react';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '../components/ui/tabs';
 import { Button } from '../components/ui/button';
-import { Calendar, TrendingUp, Target, Sparkles, Maximize2, Minimize2 } from 'lucide-react';
+import { Calendar, TrendingUp, Target, Sparkles, Maximize2, Minimize2, Banknote } from 'lucide-react';
 import DashSemanalAba from '../components/dashboard-semanal/DashSemanalAba';
 import DashMensalAba from '../components/dashboard-semanal/DashMensalAba';
 import DashMetasAba from '../components/dashboard-semanal/DashMetasAba';
 import DashIaAba from '../components/dashboard-semanal/DashIaAba';
+import DashboardFinanceiroSemanal from './admin/financeiro/DashboardFinanceiroSemanal';
 
 export const INDICADORES = [
   { key: 'frequencia',        label: 'Frequência',        usa_ocupacao: true },
@@ -85,9 +86,10 @@ export default function DashboardSemanal() {
       </div>
 
       <Tabs value={tab} onValueChange={setTab} className="w-full">
-        <TabsList className="grid w-full grid-cols-4 max-w-[640px]">
+        <TabsList className="grid w-full grid-cols-5 max-w-[800px]">
           <TabsTrigger value="semanal"><Calendar className="h-4 w-4 mr-1.5" />Semanal</TabsTrigger>
           <TabsTrigger value="mensal"><TrendingUp className="h-4 w-4 mr-1.5" />Mensal</TabsTrigger>
+          <TabsTrigger value="financeiro"><Banknote className="h-4 w-4 mr-1.5" />Financeiro</TabsTrigger>
           <TabsTrigger value="metas"><Target className="h-4 w-4 mr-1.5" />Metas</TabsTrigger>
           <TabsTrigger value="ia"><Sparkles className="h-4 w-4 mr-1.5" />Criar com IA</TabsTrigger>
         </TabsList>
@@ -97,6 +99,9 @@ export default function DashboardSemanal() {
         </TabsContent>
         <TabsContent value="mensal" className="mt-4">
           <DashMensalAba />
+        </TabsContent>
+        <TabsContent value="financeiro" className="mt-4">
+          <DashboardFinanceiroSemanal />
         </TabsContent>
         <TabsContent value="metas" className="mt-4">
           <DashMetasAba />
