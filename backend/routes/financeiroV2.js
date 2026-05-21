@@ -1143,4 +1143,100 @@ router.get('/dre/comparativo', async (req, res) => {
   }
 });
 
+// ====================================================================
+// ANALISES + ALERTAS · H do roadmap
+// ====================================================================
+const analise = require('../services/analiseFinanceira');
+
+router.get('/analises/heatmap', async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('vw_fin_heatmap_arrecadacao')
+      .select('*');
+    if (error) return res.status(500).json({ error: error.message });
+
+    // Matriz 7x24 inicializada com zeros
+    const matriz = Array.from({ length: 7 }, () => Array(24).fill(0));
+    const qtd = Array.from({ length: 7 }, () => Array(24).fill(0));
+    let maxTotal = 0;
+
+    for (const r of data || []) {
+      matriz[r.dia_semana][r.hora] = Number(r.total);
+      qtd[r.dia_semana][r.hora] = Number(r.qtd);
+      if (Number(r.total) > maxTotal) maxTotal = Number(r.total);
+    }
+
+    res.json({
+      matriz,
+      qtd,
+      max: maxTotal,
+      dias_label: ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sab'],
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+router.get('/analises/forecast', async (req, res) => {
+  try {
+    const semanasAdiante = Math.min(Math.max(Number(req.query.semanas) || 4, 1), 12);
+    const result = await analise.gerarForecast({ semanasAdiante });
+    if (!result) return res.json({ erro: 'historico_insuficiente', minimo: 4 });
+    res.json(result);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+router.get('/alertas', async (req, res) => {
+  try {
+    const { status = 'pendente', tipo, severidade, limit = 100 } = req.query;
+    let q = supabase
+      .from('fin_alertas')
+      .select('*, recorrencia:recorrencia_id(descricao), membro:membro_id(nome)')
+      .order('created_at', { ascending: false })
+      .limit(Number(limit));
+    if (status === 'pendente') q = q.is('atendido_em', null);
+    if (status === 'atendido') q = q.not('atendido_em', 'is', null);
+    if (tipo) q = q.eq('tipo', tipo);
+    if (severidade) q = q.eq('severidade', severidade);
+    const { data, error } = await q;
+    if (error) return res.status(500).json({ error: error.message });
+    res.json(data);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+router.post('/alertas/:id/dismiss', async (req, res) => {
+  try {
+    const { comentario } = req.body || {};
+    const { data, error } = await supabase
+      .from('fin_alertas')
+      .update({
+        atendido_em: new Date().toISOString(),
+        atendido_por: req.user.userId,
+        comentario_atendimento: comentario || null,
+      })
+      .eq('id', req.params.id)
+      .select().single();
+    if (error) return res.status(400).json({ error: error.message });
+    res.json(data);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+router.post('/analises/rodar', async (req, res) => {
+  try {
+    if (!['admin', 'diretor'].includes(req.user.role)) {
+      return res.status(403).json({ error: 'Apenas admin/diretor' });
+    }
+    const result = await analise.rodarAnaliseDiaria();
+    res.json(result);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 module.exports = router;

@@ -530,6 +530,15 @@ export const financeiroV2 = {
     mensal: (mes) => get(`/financeiro-v2/dre/mensal?mes=${mes}`),
     comparativo: (meses = 6) => get(`/financeiro-v2/dre/comparativo?meses=${meses}`),
   },
+  analises: {
+    heatmap: () => get('/financeiro-v2/analises/heatmap'),
+    forecast: (semanas = 4) => get(`/financeiro-v2/analises/forecast?semanas=${semanas}`),
+    rodar: () => post('/financeiro-v2/analises/rodar', {}),
+  },
+  alertas: {
+    list: (params) => get('/financeiro-v2/alertas' + (params ? '?' + new URLSearchParams(params) : '')),
+    dismiss: (id, data) => post(`/financeiro-v2/alertas/${id}/dismiss`, data || {}),
+  },
 };
 
 export const santander = {

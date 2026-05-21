@@ -11,6 +11,7 @@ async function gerarTodasNotificacoes() {
   try {
     total += await gerarNotificacoesRH();
     total += await gerarNotificacoesFinanceiro();
+    total += await rodarAnaliseFinanceiraDiaria();
     total += await gerarNotificacoesLogistica();
     total += await gerarNotificacoesPatrimonio();
     total += await gerarNotificacoesMembresia();
@@ -812,6 +813,29 @@ async function gerarNotificacoesSolicitacoes() {
   }
 
   return count;
+}
+
+// ═══════════════════════════════════════════════════════════
+// ANALISE FINANCEIRA DIARIA (H · alertas + forecast)
+// ═══════════════════════════════════════════════════════════
+async function rodarAnaliseFinanceiraDiaria() {
+  try {
+    const { rodarAnaliseDiaria } = require('./analiseFinanceira');
+    const r = await rodarAnaliseDiaria();
+    // Conta criados nao-null
+    let count = 0;
+    if (r.queda) count++;
+    if (Array.isArray(r.sumidos)) count += r.sumidos.length;
+    if (Array.isArray(r.atrasadas)) count += r.atrasadas.length;
+    if (r.pico) count++;
+    return count;
+  } catch (e) {
+    // Tabelas ainda nao existem em ambientes antigos · ignora
+    if (!String(e.message || '').includes('does not exist')) {
+      console.warn('[Analise financeira] Erro:', e.message);
+    }
+    return 0;
+  }
 }
 
 module.exports = { gerarTodasNotificacoes };
