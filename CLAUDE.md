@@ -1340,6 +1340,25 @@ devocionais por area) quando o onboarding evoluir.
 Bridge tem KPIs proprios (BRG-01, BRG-02 etc com fonte_auto cultos.bridge_*).
 Marcos: "Bridge eh diferente de AMI, separe isso · os dados sao diferentes".
 
+**PR convertidos em "Seguir"** · `claude/cultos-convertidos-em-seguir`:
+- Migration `20260521130000_convertidos_atendidos_em_seguir.sql`
+- Marcos (2026-05-21): "conversoes nao esta em investir tempo com Deus,
+  verifica isso". Apos varredura, 5 KPIs ("% solicitacoes de novos
+  convertidos atendidos" · AMI-21, BRG-19, KIDS-19, ONL-04, SED-17)
+  estavam em `valores=['investir']` por engano. Movido pra `['seguir']`.
+- Logica: "Investir tempo com Deus" = devocional/jornada180 do cristao
+  ativo. Atendimento pastoral a novo convertido = trilha de discipulado
+  recem-decidido = pertence a "Seguir a Jesus".
+- Demais cruzamentos validados como corretos · ver query de auditoria
+  no banco se quiser refazer.
+
+**Sobre cross-area**: confirmado por Marcos · `kpi_indicadores_taticos.area`
+eh `text` singular (nao array). 9 areas distintas (4 cultos + cba + sede
++ financeiro/infraestrutura/rh). Nenhum KPI cobre 2 areas. Cruzamento
+inter-area acontece via NSM (matriz Valor x Area) ou dashs agregados
+(painel/mandalas, dash semanal do Matheus). Se precisar de cross-area
+no futuro, e' analise · nao schema novo.
+
 **PR NPS dos cultos** · `claude/cultos-nps-input`:
 - Tipo `nps_culto` ja existia em `tipos_dado_bruto` (granularidade mensal,
   agregacao avg) e os 5 KPIs CULTO-NPS-* ja apontavam pra ele via
