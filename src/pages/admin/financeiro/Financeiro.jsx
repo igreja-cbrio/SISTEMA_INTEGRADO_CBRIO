@@ -9,6 +9,7 @@ import ImportarExtratos from './ImportarExtratos';
 import FilaClassificacao from './FilaClassificacao';
 import DashboardSemanal from './DashboardSemanal';
 import DashboardOverview from './DashboardOverview';
+import CultoAoVivo from './CultoAoVivo';
 
 // ── Tema ────────────────────────────────────────────────────
 const C = {
@@ -142,7 +143,7 @@ function Badge({ status, map }) {
 }
 
 // ── TABS ────────────────────────────────────────────────────
-const TABS = ['Dashboard', 'Contas', 'Transacoes', 'Contas a Pagar', 'Reembolsos', 'DRE', 'Banco Santander', 'Semana qua-ter', 'Importar extratos', 'Fila de classificacao', 'Estrutura fiscal'];
+const TABS = ['Dashboard', 'Contas', 'Transacoes', 'Contas a Pagar', 'Reembolsos', 'DRE', 'Banco Santander', 'Culto ao Vivo', 'Semana qua-ter', 'Importar extratos', 'Fila de classificacao', 'Estrutura fiscal'];
 
 // ── KPI Cards (estilo unificado) ─────────────────────────────
 const FIN_STAT_SVGS = [
@@ -1048,10 +1049,11 @@ export default function Financeiro() {
       {tab === 4 && renderReembolsos()}
       {tab === 5 && renderDRE()}
       {tab === 6 && <SantanderTab />}
-      {tab === 7 && <DashboardSemanal />}
-      {tab === 8 && <ImportarExtratos />}
-      {tab === 9 && <FilaClassificacao />}
-      {tab === 10 && <EstruturaFiscal />}
+      {tab === 7 && <CultoAoVivo />}
+      {tab === 8 && <DashboardSemanal />}
+      {tab === 9 && <ImportarExtratos />}
+      {tab === 10 && <FilaClassificacao />}
+      {tab === 11 && <EstruturaFiscal />}
 
       {modalConta && renderModalConta()}
       {modalTransacao && renderModalTransacao()}

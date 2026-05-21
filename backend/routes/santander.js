@@ -68,6 +68,59 @@ router.get('/saldo/historico', async (req, res) => {
   }
 });
 
+// ── Culto ao Vivo · stats + ultimas transacoes ─────────────────────────────
+router.get('/pix/culto-atual', async (req, res) => {
+  try {
+    const limit = Math.min(Math.max(Number(req.query.limit) || 30, 1), 100);
+
+    // 1. Stats do culto/dia/semana (view consolidada)
+    const { data: stats, error: errStats } = await supabase
+      .from('vw_fin_culto_ao_vivo')
+      .select('*')
+      .maybeSingle();
+    if (errStats) console.warn('[culto-atual] view stats:', errStats.message);
+
+    // 2. Ultimas transacoes (creditos · dizimos/ofertas)
+    const { data: transacoes, error: errTrans } = await supabase
+      .from('fin_lancamentos_brutos')
+      .select('id, data_lancamento, hora_lancamento, valor, memo, documento_contraparte, nome_contraparte, created_at')
+      .eq('tipo_trn', 'CREDIT')
+      .order('created_at', { ascending: false })
+      .limit(limit);
+    if (errTrans) return res.status(500).json({ error: errTrans.message });
+
+    // 3. Soma do dia (fallback se nao ha culto ativo · stats fica null)
+    const hoje = new Date().toISOString().slice(0, 10);
+    const { data: doDia } = await supabase
+      .from('fin_lancamentos_brutos')
+      .select('valor')
+      .eq('tipo_trn', 'CREDIT')
+      .gte('created_at', `${hoje}T00:00:00`);
+    const totalDia = (doDia || []).reduce((s, t) => s + Number(t.valor), 0);
+    const qtdDia = (doDia || []).length;
+
+    res.json({
+      culto_ativo: stats ? {
+        slot_id: stats.culto_slot_id,
+        nome: stats.culto_nome,
+        service_type_slug: stats.service_type_slug,
+        janela_inicio: stats.janela_inicio,
+        janela_fim: stats.janela_fim,
+        total: Number(stats.total_culto || 0),
+        qtd: Number(stats.qtd_culto || 0),
+      } : null,
+      total_dia: stats ? Number(stats.total_dia || 0) : totalDia,
+      qtd_dia: stats ? Number(stats.qtd_dia || 0) : qtdDia,
+      total_semana: stats ? Number(stats.total_semana || 0) : 0,
+      qtd_semana: stats ? Number(stats.qtd_semana || 0) : 0,
+      transacoes: transacoes || [],
+    });
+  } catch (e) {
+    console.error('[culto-atual]', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // ── Contas (lista contas do CNPJ na API) ───────────────────────────────────
 router.get('/contas', async (req, res) => {
   try {
