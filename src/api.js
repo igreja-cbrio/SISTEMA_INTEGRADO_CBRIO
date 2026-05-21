@@ -519,6 +519,7 @@ export const financeiroV2 = {
   dashboard: {
     overview: (period) => get('/financeiro-v2/dashboard/overview' + (period ? `?period=${period}` : '')),
     semana: (semana) => get('/financeiro-v2/dashboard/semana' + (semana ? `?semana=${semana}` : '')),
+    semanaCompleta: (semana) => get('/financeiro-v2/dashboard/semana-completa' + (semana ? `?semana=${semana}` : '')),
   },
   backfill: (data) => post('/financeiro-v2/backfill/transacoes', data || {}),
   recorrencias: {
