@@ -1658,12 +1658,6 @@ export const apresentacoes = {
   },
   removerArquivo: (id, arquivoId) => del(`/apresentacoes/${id}/arquivos/${arquivoId}`),
   reset: (id) => post(`/apresentacoes/${id}/reset`, {}),
-  contexto: {
-    list: () => get('/apresentacoes/contexto'),
-    create: (body) => post('/apresentacoes/contexto', body),
-    update: (id, body) => put(`/apresentacoes/contexto/${id}`, body),
-    remove: (id) => del(`/apresentacoes/contexto/${id}`),
-  },
   // Busca HTML completo pra usar em <iframe srcDoc={...}>
   // (iframes nao mandam Authorization automaticamente · precisamos do fetch)
   fetchHtml: async (id) => {

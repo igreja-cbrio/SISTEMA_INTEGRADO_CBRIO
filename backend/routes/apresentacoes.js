@@ -53,86 +53,6 @@ router.get('/', authorizeModule('apresentacoes', 1), async (req, res) => {
 });
 
 // ─────────────────────────────────────────────────────────────
-// CONTEXTO · base de conhecimento injetada no prompt da IA
-// (5 valores CBRio, 6 areas, lideranca, etc · admin gerencia)
-// IMPORTANTE: declarado ANTES de GET /:id pra Express nao tratar
-// "contexto" como id.
-// ─────────────────────────────────────────────────────────────
-
-router.get('/contexto', authorizeModule('apresentacoes', 1), async (req, res) => {
-  try {
-    const { data, error } = await supabase
-      .from('apresentacoes_contexto')
-      .select('id, chave, titulo, conteudo, ordem, ativo, updated_at')
-      .order('ordem', { ascending: true });
-    if (error) throw error;
-    res.json({ data: data || [] });
-  } catch (e) {
-    console.error('apres contexto list:', e.message);
-    res.status(500).json({ error: 'Erro ao listar contexto' });
-  }
-});
-
-router.post('/contexto', authorizeModule('apresentacoes', 5), async (req, res) => {
-  try {
-    const { chave, titulo, conteudo, ordem, ativo } = req.body || {};
-    if (!chave || !titulo || !conteudo) {
-      return res.status(400).json({ error: 'chave, titulo e conteudo sao obrigatorios' });
-    }
-    const { data, error } = await supabase
-      .from('apresentacoes_contexto')
-      .insert({
-        chave: String(chave).slice(0, 80),
-        titulo: String(titulo).slice(0, 200),
-        conteudo: String(conteudo),
-        ordem: parseInt(ordem) || 0,
-        ativo: ativo !== false,
-      })
-      .select()
-      .single();
-    if (error) throw error;
-    res.status(201).json(data);
-  } catch (e) {
-    console.error('apres contexto create:', e.message);
-    res.status(500).json({ error: 'Erro ao criar entrada · ' + e.message });
-  }
-});
-
-router.put('/contexto/:id', authorizeModule('apresentacoes', 5), async (req, res) => {
-  try {
-    const patch = {};
-    ['titulo', 'conteudo', 'ordem', 'ativo'].forEach(k => {
-      if (req.body[k] !== undefined) patch[k] = req.body[k];
-    });
-    const { data, error } = await supabase
-      .from('apresentacoes_contexto')
-      .update(patch)
-      .eq('id', req.params.id)
-      .select()
-      .single();
-    if (error) throw error;
-    res.json(data);
-  } catch (e) {
-    console.error('apres contexto update:', e.message);
-    res.status(500).json({ error: 'Erro ao atualizar' });
-  }
-});
-
-router.delete('/contexto/:id', authorizeModule('apresentacoes', 5), async (req, res) => {
-  try {
-    const { error } = await supabase
-      .from('apresentacoes_contexto')
-      .delete()
-      .eq('id', req.params.id);
-    if (error) throw error;
-    res.status(204).end();
-  } catch (e) {
-    console.error('apres contexto delete:', e.message);
-    res.status(500).json({ error: 'Erro ao deletar' });
-  }
-});
-
-// ─────────────────────────────────────────────────────────────
 // GET /api/apresentacoes/:id · detalhe (sem html/css pra UI leve)
 // ─────────────────────────────────────────────────────────────
 router.get('/:id', authorizeModule('apresentacoes', 1), async (req, res) => {
@@ -299,19 +219,13 @@ router.post('/:id/gerar', authorizeModule('apresentacoes', 3), async (req, res) 
       return res.status(409).json({ error: 'Ja gerada · use regenerar=true pra sobrescrever' });
     }
 
-    // Carrega arquivos com texto extraido
+    // Carrega arquivos com texto extraido (contexto CBRio vem do codigo,
+    // veja backend/services/apresentacaoContextoCbrio.js)
     const { data: arquivos } = await supabase
       .from('apresentacoes_arquivos')
       .select('nome, texto_extraido')
       .eq('apresentacao_id', apres.id)
       .order('created_at', { ascending: true });
-
-    // Carrega contexto organizacional (CBRio knowledge base)
-    const { data: contexto } = await supabase
-      .from('apresentacoes_contexto')
-      .select('titulo, conteudo')
-      .eq('ativo', true)
-      .order('ordem', { ascending: true });
 
     // Marca como gerando
     await supabase.from('apresentacoes')
@@ -325,7 +239,6 @@ router.post('/:id/gerar', authorizeModule('apresentacoes', 3), async (req, res) 
         tom:      apres.tom,
         arquivos: arquivos || [],
         modelo:   apres.modelo_ia,
-        contexto: contexto || [],
       });
 
       const { error: e2 } = await supabase.from('apresentacoes')
