@@ -68,6 +68,43 @@ regras. **Quebrar qualquer uma delas é regressão crítica.**
 | `public.app_restore(table, id)` | BOOLEAN | Desfaz soft-delete |
 | `public.app_soft_deletable_tables()` | TEXT[] | Whitelist de 30 tabelas com soft-delete |
 
+## UUID FKs canônicos · responsável/líder (transição em curso · 2026-05-21)
+
+Memória `feedback_responsible_by_uuid`: "Responsáveis por UUID · profiles.id".
+Migration `20260521220000_onda3_uuid_fks_responsavel.sql` adiciona colunas
+UUID em 5 tabelas (mantém TEXT antigas backward-compatible).
+
+### Estado da transição
+
+| Tabela | Coluna TEXT antiga | Coluna UUID nova | Status |
+|---|---|---|---|
+| `area_responsaveis` | `responsavel_nome` | `responsavel_id` | ⚠️ Coexistem |
+| `projects` | `leader` | `leader_id` | ⚠️ Coexistem |
+| `projects` | `responsible` | `responsible_id` | ⚠️ Coexistem |
+| `event_tasks` | `responsible` | `responsible_id` | ⚠️ Coexistem |
+| `cycle_phase_tasks` | `responsavel_nome` | `responsavel_id` | ⚠️ Coexistem |
+| `project_tasks` | `responsible` | `responsible_id` | ⚠️ Coexistem |
+
+### Regras durante a transição
+
+1. **Código novo** · SEMPRE usar `*_id` (UUID FK pra profiles)
+2. **Código legado** · pode ler tanto TEXT quanto UUID (`leader_id` ou `leader`)
+3. **Backend update** · ao mudar `*_id`, também atualizar TEXT (snapshot)
+   pra retrocompatibilidade · ou remover coluna TEXT no PR follow-up
+4. **Frontend** · trocar autocomplete de TEXT pra select de profiles UUID
+
+### Migração futura · dropar colunas TEXT (PR follow-up)
+
+Quando backend + frontend estiverem 100% usando os `*_id`:
+
+```sql
+ALTER TABLE area_responsaveis  DROP COLUMN responsavel_nome;
+ALTER TABLE projects           DROP COLUMN leader, DROP COLUMN responsible;
+ALTER TABLE event_tasks        DROP COLUMN responsible;
+ALTER TABLE cycle_phase_tasks  DROP COLUMN responsavel_nome;
+ALTER TABLE project_tasks      DROP COLUMN responsible;
+```
+
 ## Padrão · adicionar nova tabela com PII
 
 ```sql
