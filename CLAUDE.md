@@ -37,7 +37,7 @@ PRs #424, #461 e #468 mergeados em 2026-05-18. Live-monitor cron rodando
 verde. Pendente checar:
 - [ ] Migration `20260514210000_online_oauth_tokens.sql` aplicada?
 - [ ] Envs `GOOGLE_OAUTH_CLIENT_ID` / `GOOGLE_OAUTH_CLIENT_SECRET` no Vercel?
-- [ ] Admin clicou "Conectar canal" em `/ministerial/online`?
+- [ ] Admin clicou "Conectar canal" em `/online`?
 Confirmar via `GET /api/online/oauth/status`.
 
 ### Untracked locais (decidir)
@@ -1301,9 +1301,30 @@ Para alterar: `PUT /api/cycles/area-responsaveis/:area` com
 o novo responsável; tarefas já criadas não são afetadas
 retroativamente.
 
+### Cultos · rotas saem de /ministerial pra raiz (2026-05-21)
+PR #576 mergeada. Marcos pediu: "tire o endpoint /ministerial coloque so /ami".
+Os 4 modulos de culto agora moram na raiz:
+
+| Antes                  | Depois    |
+|------------------------|-----------|
+| `/ministerial/online`  | `/online` |
+| `/ministerial/kids`    | `/kids`   |
+| `/ministerial/ami`     | `/ami`    |
+| `/ministerial/bridge`  | `/bridge` |
+
+Implementacao:
+- `src/App.tsx` ganhou 4 rotas raiz + 4 `<Navigate>` redirects das antigas
+  pra nao quebrar bookmarks
+- `src/components/layout/AppShell.jsx` · menu items aponta pros novos paths
+- Migration `20260521100000_rotas_cultos_raiz.sql` · UPDATE modulos.rota
+  pros 4 slugs (kids/ami/bridge/online)
+- PR #577 · ajusta os 4 `res.redirect` do callback OAuth YouTube
+  (`backend/routes/online.js`) pra ja apontar `/online` em vez de
+  `/ministerial/online` (evita double-redirect)
+
 ## Online · visao do canal YouTube (somente leitura)
 
-Modulo `/ministerial/online` mostra desempenho do canal YouTube CBRio com
+Modulo `/online` mostra desempenho do canal YouTube CBRio com
 inscritos, views, melhores videos do mes (por views e por engajamento) e
 analise por serie de pregacao.
 
@@ -1351,7 +1372,7 @@ preenchidas pela **Alda Lorena** (responsavel da Integracao) em
   `liveBroadcasts.list?broadcastStatus=active`, linka `youtube_video_id`
   no culto e atualiza `online_pico` quando `concurrentViewers > atual`.
   Pra evento atipico fora de janela, usar botao "Coletar pico agora"
-  da UI em `/ministerial/online`.
+  da UI em `/online`.
 - **ds-collect** · cron `0 10 * * *` · pra cultos de ontem com video_id,
   grava `online_ds` via `youtubeAnalytics.reports.query` (views no dia D).
 - **ddus-collect** · cron `30 10 * * *` · pra cultos de 7 dias atras,

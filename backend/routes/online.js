@@ -95,19 +95,19 @@ function getRedirectUri() {
 
 router.get('/oauth/callback', async (req, res) => {
   const { code, state, error } = req.query;
-  if (error) return res.redirect(`/ministerial/online?oauth_error=${encodeURIComponent(String(error))}`);
+  if (error) return res.redirect(`/online?oauth_error=${encodeURIComponent(String(error))}`);
   const payload = verifyState(String(state || ''));
-  if (!payload) return res.redirect('/ministerial/online?oauth_error=state_invalido');
+  if (!payload) return res.redirect('/online?oauth_error=state_invalido');
   try {
     const { tokens, channel } = await yt.exchangeCode(String(code), getRedirectUri());
     if (!tokens.refresh_token) {
-      return res.redirect('/ministerial/online?oauth_error=sem_refresh_token');
+      return res.redirect('/online?oauth_error=sem_refresh_token');
     }
     await yt.saveTokens({ channel, tokens, userId: payload.userId });
-    res.redirect(`/ministerial/online?oauth_ok=1&canal=${encodeURIComponent(channel.title || '')}`);
+    res.redirect(`/online?oauth_ok=1&canal=${encodeURIComponent(channel.title || '')}`);
   } catch (e) {
     console.error('[oauth/callback]', e.message);
-    res.redirect(`/ministerial/online?oauth_error=${encodeURIComponent(e.message.slice(0, 100))}`);
+    res.redirect(`/online?oauth_error=${encodeURIComponent(e.message.slice(0, 100))}`);
   }
 });
 
