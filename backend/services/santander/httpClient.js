@@ -1,6 +1,10 @@
 // Cliente HTTP base para Santander Open APIs
 // Responsabilidades: mTLS, OAuth token, retries leves, logging de erro
-const https = require('https');
+//
+// IMPORTANTE: o fetch nativo do Node 18+ (undici) NAO aceita https.Agent.
+// Precisa usar undici.Agent passado via opcao 'dispatcher'. Caso contrario,
+// a request vai sem mTLS e a Akamai do Santander rejeita com 403 Access Denied.
+const { Agent, fetch: undiciFetch } = require('undici');
 const { supabase } = require('../../utils/supabase');
 
 const AMBIENTE = (process.env.SANTANDER_AMBIENTE || 'homologacao').toLowerCase();
@@ -36,11 +40,14 @@ function buildHttpsAgent() {
   if (!CERT_B64 || !KEY_B64) {
     throw new Error('Santander mTLS nao configurado: defina SANTANDER_CERT_PEM_BASE64 e SANTANDER_KEY_PEM_BASE64');
   }
-  httpsAgentCache = new https.Agent({
-    cert: Buffer.from(CERT_B64, 'base64'),
-    key: Buffer.from(KEY_B64, 'base64'),
-    keepAlive: true,
-    maxSockets: 10,
+  // undici.Agent · usado via opcao 'dispatcher' do fetch (NAO 'agent')
+  httpsAgentCache = new Agent({
+    connect: {
+      cert: Buffer.from(CERT_B64, 'base64'),
+      key: Buffer.from(KEY_B64, 'base64'),
+    },
+    keepAliveTimeout: 60_000,
+    keepAliveMaxTimeout: 300_000,
   });
   return httpsAgentCache;
 }
@@ -93,12 +100,11 @@ async function fetchNewToken() {
   const url = `${BASE_URL}${OAUTH_PATH}`;
   const start = Date.now();
 
-  const res = await fetch(url, {
+  const res = await undiciFetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body,
-    // @ts-ignore - undici aceita agent via dispatcher; em runtime Node se mantem
-    agent,
+    dispatcher: agent,
   });
 
   const duration = Date.now() - start;
@@ -177,12 +183,11 @@ async function callApi(path, { method = 'GET', query, body, retries = 1, userId 
   const start = Date.now();
   let res;
   try {
-    res = await fetch(url.toString(), {
+    res = await undiciFetch(url.toString(), {
       method,
       headers,
       body: body !== undefined ? JSON.stringify(body) : undefined,
-      // @ts-ignore
-      agent,
+      dispatcher: agent,
     });
   } catch (err) {
     await logCall({ endpoint: path, method, error_message: err.message, user_id: userId });
