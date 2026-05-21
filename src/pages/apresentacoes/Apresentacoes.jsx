@@ -10,7 +10,7 @@ import { Input } from '../../components/ui/input';
 import { Textarea } from '../../components/ui/textarea';
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '../../components/ui/select';
 import { toast } from 'sonner';
-import { Sparkles, Plus, Trash2, Eye, Clock, AlertCircle, Loader2, Upload, X, FileText } from 'lucide-react';
+import { Sparkles, Plus, Trash2, Eye, Clock, AlertCircle, Loader2, Upload, X, FileText, Brain } from 'lucide-react';
 
 const TONS = [
   { value: 'executivo', label: 'Executivo · diretoria · dark premium' },
@@ -100,11 +100,18 @@ export default function Apresentacoes() {
             Descreva o que você quer apresentar (e anexe arquivos se tiver) — o Claude Opus monta uma apresentação HTML interativa em estilo premium. Use Ctrl+P pra exportar PDF.
           </p>
         </div>
-        {podeGerar && (
-          <Button onClick={() => setNovaOpen(true)} className="bg-cyan-600 hover:bg-cyan-500">
-            <Plus className="h-4 w-4 mr-1" /> Nova apresentação
-          </Button>
-        )}
+        <div className="flex items-center gap-2">
+          {podeGerar && (
+            <Button variant="outline" size="sm" onClick={() => navigate('/admin/apresentacoes/contexto')}>
+              <Brain className="h-4 w-4 mr-1" /> Base de conhecimento
+            </Button>
+          )}
+          {podeGerar && (
+            <Button onClick={() => setNovaOpen(true)} className="bg-cyan-600 hover:bg-cyan-500">
+              <Plus className="h-4 w-4 mr-1" /> Nova apresentação
+            </Button>
+          )}
+        </div>
       </div>
 
       {/* Lista */}

@@ -123,7 +123,7 @@ Capricho > completude. Vai pra diretoria.`;
 // ─────────────────────────────────────────────────────────────────────
 // User prompt builder
 // ─────────────────────────────────────────────────────────────────────
-function buildUserPrompt({ titulo, prompt, tom, arquivos }) {
+function buildUserPrompt({ titulo, prompt, tom, arquivos, contexto }) {
   const tomDescricoes = {
     executivo:  'tom corporativo serio, focado em decisao · paleta dark premium · numeros grandes · bento grids',
     comercial:  'tom comercial atrativo, focado em vendas · paleta vibrante · CTAs claros · destaques visuais',
@@ -131,7 +131,21 @@ function buildUserPrompt({ titulo, prompt, tom, arquivos }) {
     criativo:   'tom criativo expressivo, focado em conceito · paleta arriscada · tipografia grande · espaco em branco',
   };
 
-  let p = `# Apresentacao a gerar\n\n`;
+  let p = '';
+
+  // Contexto organizacional · injetado SEMPRE que houver entries ativas.
+  // Isso garante que pedidos tipo "5 valores da CBRio" sejam respondidos
+  // com os 5 valores corretos, nao alucinados.
+  if (contexto && contexto.length > 0) {
+    p += `# Contexto da organizacao (CBRio · use isso como fonte de verdade)\n\n`;
+    p += `Quando o briefing mencionar algo dessa lista, use exatamente esses dados · NUNCA invente fatos sobre a organizacao.\n\n`;
+    for (const c of contexto) {
+      p += `## ${c.titulo}\n\n${c.conteudo}\n\n`;
+    }
+    p += `---\n\n`;
+  }
+
+  p += `# Apresentacao a gerar\n\n`;
   p += `**Titulo sugerido:** ${titulo}\n\n`;
   p += `**Tom:** ${tom || 'executivo'} · ${tomDescricoes[tom] || tomDescricoes.executivo}\n\n`;
   p += `**Briefing:**\n${prompt}\n\n`;
@@ -228,7 +242,7 @@ async function callAnthropic({ client, model, maxTokens, system, userPrompt }) {
   });
 }
 
-async function gerarApresentacao({ titulo, prompt, tom, arquivos, modelo }) {
+async function gerarApresentacao({ titulo, prompt, tom, arquivos, modelo, contexto }) {
   if (!process.env.ANTHROPIC_API_KEY) {
     throw new Error('ANTHROPIC_API_KEY nao configurada no ambiente');
   }
@@ -242,7 +256,7 @@ async function gerarApresentacao({ titulo, prompt, tom, arquivos, modelo }) {
     ? [modelo]
     : SONNET_IDS;
 
-  const userPrompt = buildUserPrompt({ titulo, prompt, tom, arquivos });
+  const userPrompt = buildUserPrompt({ titulo, prompt, tom, arquivos, contexto });
 
   let resp = null;
   let modeloFinal = null;

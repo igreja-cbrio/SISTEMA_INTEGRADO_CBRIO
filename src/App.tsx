@@ -164,6 +164,7 @@ const SolicitacoesResponsaveis = lazyWithRetry(() => import('./pages/admin/Solic
 const PermissoesAdmin = lazyWithRetry(() => import('./pages/admin/Permissoes'));
 const Apresentacoes = lazyWithRetry(() => import('./pages/apresentacoes/Apresentacoes'));
 const ApresentacaoDetalhe = lazyWithRetry(() => import('./pages/apresentacoes/ApresentacaoDetalhe'));
+const ApresentacoesContexto = lazyWithRetry(() => import('./pages/apresentacoes/ApresentacoesContexto'));
 const MeusKpis = lazyWithRetry(() => import('./pages/MeusKpis'));
 const Painel = lazyWithRetry(() => import('./pages/Painel'));
 // /painel/kpi/:id removido na Fase 2.5F — agora detalhe abre como modal (KpiDetalheModal)
@@ -448,6 +449,7 @@ function AppRoutes() {
         <Route path="/admin/solicitacoes-responsaveis" element={<Suspense fallback={<Loading />}><SolicitacoesResponsaveis /></Suspense>} />
         <Route path="/admin/permissoes" element={<Suspense fallback={<Loading />}><PermissoesAdmin /></Suspense>} />
         <Route path="/admin/apresentacoes" element={<ModuleGuard moduleSlug="apresentacoes"><Suspense fallback={<Loading />}><Apresentacoes /></Suspense></ModuleGuard>} />
+        <Route path="/admin/apresentacoes/contexto" element={<ModuleGuard moduleSlug="apresentacoes"><Suspense fallback={<Loading />}><ApresentacoesContexto /></Suspense></ModuleGuard>} />
         <Route path="/admin/apresentacoes/:id" element={<ModuleGuard moduleSlug="apresentacoes"><Suspense fallback={<Loading />}><ApresentacaoDetalhe /></Suspense></ModuleGuard>} />
         <Route path="/admin/usuarios" element={<Navigate to="/admin/permissoes?aba=usuarios" replace />} />
         <Route path="/admin/kpi-areas" element={<Navigate to="/admin/permissoes" replace />} />
