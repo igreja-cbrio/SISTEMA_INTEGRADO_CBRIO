@@ -1501,4 +1501,150 @@ router.get('/dashboard/financeiro-completo', async (req, res) => {
   }
 });
 
+// ====================================================================
+// METAS FINANCEIRAS · PR B do roadmap
+// ====================================================================
+router.get('/metas', async (req, res) => {
+  try {
+    const { ativa, ano } = req.query;
+    let q = supabase
+      .from('fin_metas')
+      .select('*, plano:plano_contas_id(codigo, nome), centro:centro_custo_id(codigo, nome)')
+      .order('tipo').order('mes_inicio');
+    if (ativa !== undefined) q = q.eq('ativa', ativa === 'true');
+    if (ano) q = q.eq('ano', Number(ano));
+    const { data, error } = await q;
+    if (error) return res.status(400).json({ error: error.message });
+    res.json(data);
+  } catch (e) { res.status(500).json({ error: 'Erro ao listar metas' }); }
+});
+
+router.post('/metas', async (req, res) => {
+  try {
+    const payload = req.body || {};
+    if (!payload.tipo || payload.valor === undefined) {
+      return res.status(400).json({ error: 'tipo e valor obrigatorios' });
+    }
+    const { data, error } = await supabase
+      .from('fin_metas')
+      .insert({ ...payload, created_by: req.user?.userId })
+      .select().single();
+    if (error) return res.status(400).json({ error: error.message });
+    res.json(data);
+  } catch (e) { res.status(500).json({ error: 'Erro ao criar meta' }); }
+});
+
+router.put('/metas/:id', async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('fin_metas')
+      .update({ ...req.body, updated_at: new Date().toISOString() })
+      .eq('id', req.params.id).select().single();
+    if (error) return res.status(400).json({ error: error.message });
+    res.json(data);
+  } catch (e) { res.status(500).json({ error: 'Erro ao atualizar meta' }); }
+});
+
+router.delete('/metas/:id', async (req, res) => {
+  try {
+    const { error } = await supabase.from('fin_metas').delete().eq('id', req.params.id);
+    if (error) return res.status(400).json({ error: error.message });
+    res.json({ success: true });
+  } catch (e) { res.status(500).json({ error: 'Erro ao remover meta' }); }
+});
+
+// ====================================================================
+// SAIDAS DETALHADAS · por categoria, plano, centro
+// ====================================================================
+router.get('/dashboard/saidas-detalhadas', async (req, res) => {
+  try {
+    const { mes } = req.query;
+    const refMes = mes && /^\d{4}-\d{2}$/.test(mes) ? mes : new Date().toISOString().slice(0, 7);
+
+    const [categoria, plano, centro] = await Promise.all([
+      supabase.from('vw_fin_saidas_categoria').select('*').eq('mes_label', refMes),
+      supabase.from('vw_fin_saidas_plano').select('*').eq('mes_label', refMes).order('total', { ascending: false }).limit(20),
+      supabase.from('vw_fin_saidas_centro').select('*').eq('mes_label', refMes).order('total', { ascending: false }).limit(20),
+    ]);
+
+    const totalCategoria = (categoria.data || []).reduce((s, r) => s + Number(r.total), 0);
+    const totalPlano = (plano.data || []).reduce((s, r) => s + Number(r.total), 0);
+    const totalCentro = (centro.data || []).reduce((s, r) => s + Number(r.total), 0);
+
+    res.json({
+      mes: refMes,
+      categoria: {
+        total: totalCategoria,
+        linhas: (categoria.data || []).map(r => ({
+          ...r,
+          total: Number(r.total),
+          pct: totalCategoria > 0 ? (Number(r.total) / totalCategoria) * 100 : 0,
+        })),
+      },
+      plano: {
+        total: totalPlano,
+        linhas: (plano.data || []).map(r => ({
+          ...r,
+          total: Number(r.total),
+          pct: totalPlano > 0 ? (Number(r.total) / totalPlano) * 100 : 0,
+        })),
+      },
+      centro: {
+        total: totalCentro,
+        linhas: (centro.data || []).map(r => ({
+          ...r,
+          total: Number(r.total),
+          pct: totalCentro > 0 ? (Number(r.total) / totalCentro) * 100 : 0,
+        })),
+      },
+    });
+  } catch (e) {
+    console.error('[FIN-V2] saidas-detalhadas:', e);
+    res.status(500).json({ error: 'Erro ao montar saidas' });
+  }
+});
+
+// ====================================================================
+// MELHOR SEMANA · do mes atual e do ano
+// ====================================================================
+router.get('/dashboard/melhor-semana', async (req, res) => {
+  try {
+    const hoje = new Date();
+    const mesAtual = `${hoje.getFullYear()}-${String(hoje.getMonth() + 1).padStart(2, '0')}`;
+    const anoAtual = hoje.getFullYear();
+
+    const [mes, ano] = await Promise.all([
+      supabase.from('vw_fin_melhor_semana_mes').select('*').eq('mes_label', mesAtual).maybeSingle(),
+      supabase.from('vw_fin_melhor_semana_ano').select('*').eq('ano', anoAtual).maybeSingle(),
+    ]);
+
+    res.json({
+      melhor_do_mes: mes.data ? {
+        ...mes.data,
+        receita: Number(mes.data.receita),
+      } : null,
+      melhor_do_ano: ano.data ? {
+        ...ano.data,
+        receita: Number(ano.data.receita),
+      } : null,
+    });
+  } catch (e) {
+    res.status(500).json({ error: 'Erro ao buscar melhor semana' });
+  }
+});
+
+// ====================================================================
+// FORCE SYNC · saldo dos bancos via RPC SQL
+// ====================================================================
+router.post('/sync-saldo-bancos', async (req, res) => {
+  try {
+    const { data, error } = await supabase.rpc('fin_force_sync_saldo_bancos');
+    if (error) return res.status(500).json({ error: error.message });
+    res.json({ ok: true, atualizados: data });
+  } catch (e) {
+    console.error('[FIN-V2] sync-saldo-bancos:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 module.exports = router;

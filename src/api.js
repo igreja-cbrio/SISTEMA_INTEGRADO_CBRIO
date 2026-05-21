@@ -521,7 +521,16 @@ export const financeiroV2 = {
     semana: (semana) => get('/financeiro-v2/dashboard/semana' + (semana ? `?semana=${semana}` : '')),
     semanaCompleta: (semana) => get('/financeiro-v2/dashboard/semana-completa' + (semana ? `?semana=${semana}` : '')),
     financeiroCompleto: () => get('/financeiro-v2/dashboard/financeiro-completo'),
+    saidasDetalhadas: (mes) => get('/financeiro-v2/dashboard/saidas-detalhadas' + (mes ? `?mes=${mes}` : '')),
+    melhorSemana: () => get('/financeiro-v2/dashboard/melhor-semana'),
   },
+  metas: {
+    list: (params) => get('/financeiro-v2/metas' + (params ? '?' + new URLSearchParams(params) : '')),
+    create: (data) => post('/financeiro-v2/metas', data),
+    update: (id, data) => put(`/financeiro-v2/metas/${id}`, data),
+    remove: (id) => del(`/financeiro-v2/metas/${id}`),
+  },
+  syncSaldoBancos: () => post('/financeiro-v2/sync-saldo-bancos', {}),
   backfill: (data) => post('/financeiro-v2/backfill/transacoes', data || {}),
   recorrencias: {
     list: (params) => get('/financeiro-v2/recorrencias' + (params ? '?' + new URLSearchParams(params) : '')),
