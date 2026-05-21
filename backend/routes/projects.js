@@ -37,7 +37,7 @@ router.get('/views/workload', async (req, res) => {
 router.get('/', async (req, res) => {
   try {
     const { year, status, area } = req.query;
-    let q = supabase.from('projects').select('*, project_categories(name, color)');
+    let q = supabase.from('projects').select('*, project_categories(name, color)').is('deleted_at', null);
     if (year) q = q.eq('year', year);
     if (status) q = q.eq('status', status);
     if (area) q = q.eq('area', area);
@@ -131,10 +131,15 @@ router.put('/:id', authorize('admin', 'diretor'), async (req, res) => {
   } catch (e) { res.status(500).json({ error: 'Erro ao atualizar projeto' }); }
 });
 
-// ── DELETE ──
+// ── DELETE · soft-delete (preserva historico de projeto) ──
 router.delete('/:id', authorize('admin', 'diretor'), async (req, res) => {
   try {
-    await supabase.from('projects').delete().eq('id', req.params.id);
+    const { error } = await supabase.rpc('app_soft_delete', {
+      p_table_name: 'projects',
+      p_row_id: req.params.id,
+      p_deleted_by: req.user?.id ?? null,
+    });
+    if (error) throw error;
     res.json({ success: true });
   } catch (e) { res.status(500).json({ error: 'Erro ao excluir projeto' }); }
 });
