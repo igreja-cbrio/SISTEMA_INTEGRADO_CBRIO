@@ -786,6 +786,14 @@ export const totemKids = {
     aoVivo: (sessaoId) => get(`/totem-kids/painel/ao-vivo${sessaoId ? `?sessao_id=${sessaoId}` : ''}`),
     sala: (salaId, sessaoId) => get(`/totem-kids/painel/sala/${salaId}${sessaoId ? `?sessao_id=${sessaoId}` : ''}`),
   },
+  decisoes: {
+    // Lista criancas com check-in numa sessao (pra UI de decisoes selecionar)
+    presentesNaSessao: (sessaoId) => get(`/totem-kids/sessoes/${sessaoId}/criancas-presentes`),
+    // Historico de decisoes de uma crianca · com sequencia (1a vez, 2a vez, etc)
+    historicoCrianca: (criancaId) => get(`/totem-kids/decisoes/historico/${criancaId}`),
+    // Ranking de criancas com mais decisoes
+    resumoPorCrianca: () => get('/totem-kids/decisoes/resumo-por-crianca'),
+  },
   salas: {
     list: () => get('/totem-kids/salas'),
     create: (data) => post('/totem-kids/salas', data),
