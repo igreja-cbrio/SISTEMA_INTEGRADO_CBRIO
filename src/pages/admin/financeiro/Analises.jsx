@@ -72,13 +72,22 @@ function VisaoGeral({ onJumpToAlertas }) {
 
   const load = async () => {
     setLoading(true);
-    const [a, f] = await Promise.all([
-      financeiroV2.alertas.list({ status: 'pendente', limit: 10 }),
-      financeiroV2.analises.forecast(4),
-    ]);
-    setAlertas(a || []);
-    setForecast(f);
-    setLoading(false);
+    try {
+      const [a, f] = await Promise.all([
+        financeiroV2.alertas.list({ status: 'pendente', limit: 10 }).catch((e) => {
+          console.warn('[Analises] alertas falhou:', e.message);
+          return [];
+        }),
+        financeiroV2.analises.forecast(4).catch((e) => {
+          console.warn('[Analises] forecast falhou:', e.message);
+          return null;
+        }),
+      ]);
+      setAlertas(a || []);
+      setForecast(f);
+    } finally {
+      setLoading(false);
+    }
   };
 
   useEffect(() => { load(); }, []);
@@ -201,15 +210,30 @@ function ResumoCard({ icon: Icon, color, label, valor, onClick }) {
 function Heatmap() {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [erro, setErro] = useState(null);
   const [hover, setHover] = useState(null);
 
   useEffect(() => {
+    setLoading(true);
     financeiroV2.analises.heatmap()
       .then(setData)
+      .catch((e) => {
+        console.warn('[Heatmap] falhou:', e.message);
+        setErro(e.message || 'Erro ao carregar heatmap');
+      })
       .finally(() => setLoading(false));
   }, []);
 
-  if (loading || !data) return <Loading />;
+  if (loading) return <Loading />;
+  if (erro || !data) return (
+    <Card>
+      <CardContent className="py-12 text-center text-sm text-muted-foreground">
+        {erro
+          ? `Erro: ${erro}. Verifique se a migration de análises foi aplicada no Supabase.`
+          : 'Sem dados de heatmap · ainda não há transações suficientes'}
+      </CardContent>
+    </Card>
+  );
 
   const max = data.max || 1;
   const corFundo = (valor) => {
@@ -454,11 +478,17 @@ function Alertas() {
 
   const load = async () => {
     setLoading(true);
-    const params = { status, limit: 100 };
-    if (tipo) params.tipo = tipo;
-    const result = await financeiroV2.alertas.list(params);
-    setData(result || []);
-    setLoading(false);
+    try {
+      const params = { status, limit: 100 };
+      if (tipo) params.tipo = tipo;
+      const result = await financeiroV2.alertas.list(params).catch((e) => {
+        console.warn('[Analises/Alertas] list falhou:', e.message);
+        return [];
+      });
+      setData(result || []);
+    } finally {
+      setLoading(false);
+    }
   };
 
   useEffect(() => { load(); }, [status, tipo]);
