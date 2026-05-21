@@ -2,6 +2,111 @@
 
 Guia operacional para o Claude Code quando trabalhar neste repositório.
 
+## Soft-delete + FK fix · substitui PITR via código (2026-05-21)
+
+Migration `20260521180000_onda3_soft_delete_fk_fix.sql` resolve o problema
+de delete acidental irreversível sem custo de PITR (US$100/mês). Marcos
+decidiu não pagar add-on e resolver via schema.
+
+### Tabelas com `deleted_at` (30 críticas)
+
+> Nota: `kpi_valores_calculados` e `cargo_modulo_permissao` ficaram **fora**
+> da lista porque têm PK composta. A primeira é cache derivado (FK CASCADE
+> → SET NULL no `kpi_id` já preserva valores) · a segunda é matriz de
+> configuração (célula existe ou não existe, soft-delete não se aplica).
+
+
+PII: `mem_membros`, `mem_familias`, `mem_grupos`, `mem_grupo_membros`,
+`mem_voluntarios`, `mem_contribuicoes`, `mem_trilha_valores`,
+`mem_devocionais`, `mem_historico`, `mem_grupo_encontros`,
+`mem_grupo_pedidos`
+
+Cultos: `cultos`, `cultos_decisoes_pessoas`, `batismo_inscricoes`,
+`nsm_eventos`
+
+Kids (LGPD): `kids_criancas`, `kids_checkins`, `kids_sessoes`
+
+Cuidados/Integração: `cui_jornada180`, `cui_acompanhamentos`,
+`cui_convertidos`, `int_visitantes`
+
+KPI: `kpi_indicadores_taticos`, `kpi_metas`
+
+RH: `rh_funcionarios`, `rh_documentos`, `pcs_progressoes`
+
+Operacional: `projects`, `solicitacoes`, `usuarios`
+
+### Como usar no backend
+
+**Pra deletar** · trocar `.delete()` direto por chamada RPC:
+```js
+// ANTES (hard delete):
+await supabase.from('mem_membros').delete().eq('id', memberId);
+
+// DEPOIS (soft delete · reversível):
+await supabase.rpc('app_soft_delete', {
+  p_table_name: 'mem_membros',
+  p_row_id: memberId,
+  p_deleted_by: req.user.id
+});
+```
+
+**Pra listar ativos** · filtrar `deleted_at IS NULL`:
+```js
+await supabase.from('mem_membros').select('*').is('deleted_at', null);
+```
+
+**Pra restaurar** · chama RPC `app_restore`:
+```js
+await supabase.rpc('app_restore', {
+  p_table_name: 'mem_membros',
+  p_row_id: memberId
+});
+```
+
+### Whitelist · adicionar nova tabela
+
+```sql
+-- 1. ADD COLUMN deleted_at + indice parcial
+ALTER TABLE public.nova_tabela ADD COLUMN deleted_at TIMESTAMPTZ;
+CREATE INDEX idx_nova_tabela_active ON public.nova_tabela (id) WHERE deleted_at IS NULL;
+
+-- 2. Atualizar app_soft_deletable_tables() pra incluir 'nova_tabela'
+```
+
+### FKs CASCADE → SET NULL (Phase 1)
+
+**21 FKs convertidas.** Agora delete (ou soft-delete) de:
+
+- **mem_membros** preserva 11 tabelas filhas históricas:
+  contribuições, trilha de valores, histórico, voluntariado, escalas,
+  checkins, devocionais, grupo_membros, devocional_envios,
+  **nsm_eventos** (jornada NSM), **grupo_encontro_presencas**
+- **rh_funcionarios** preserva 8 tabelas: documentos, treinamentos,
+  férias, **avaliações** (PCS atual + legacy), **progressões**,
+  **pontuação colaborador**
+- **cultos** preserva decisões e sessões Kids
+- **kpi_indicadores_taticos** preserva registros e trajetória
+  (cálculos cacheados em `kpi_valores_calculados` continuam CASCADE
+  porque `kpi_id` é parte da PK composta · recalculáveis)
+
+**CASCADE intencionalmente mantidos** (parent-child verdadeiro · não
+faz sentido preservar filho sem pai):
+- `mem_duplicados_ignorados.membro_a/b_id` (par de dedup)
+- `mem_grupo_pedidos.membro_id` (pedido transient)
+- `rh_escalas_extras`, `rh_materiais_funcionarios` (operacional)
+- `kpi_krs`, `okr_revisoes` (estrutura OKR)
+- `kpi_valores_calculados` (cache · PK composta)
+
+Colunas filhas que eram NOT NULL agora aceitam NULL (necessário pra
+SET NULL funcionar). Backend continua sempre fornecendo valor em INSERT
+· o NULL só aparece se o pai for deletado posteriormente.
+
+### CASCADE que permanecem (Phase 2 futura)
+
+- `auth.users → profiles` (identidade · MANTER)
+- `mem_grupos`, `mem_ministerios`, `usuarios` (próximo PR)
+- `kids_criancas → kids_responsaveis` (vai virar RESTRICT na onda Kids)
+
 ## Super-admin · lockdown crítico de tabelas sensíveis (2026-05-21)
 
 Migration `20260521170000_p0_super_admin_lockdown.sql` criou estrutura
