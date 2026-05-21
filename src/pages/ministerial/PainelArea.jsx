@@ -1,11 +1,15 @@
 // ============================================================================
-// PainelArea v2 · drill-down de KPIs + DADOS BRUTOS + saude por area
+// PainelArea v3 · drill-down de KPIs + CULTOS + DADOS BRUTOS + saude por area
 // ============================================================================
-// Marcos (2026-05-20): "torne mais bonito · separe dado de indicador · adicione
-// visualizacao de saude da area que filtre/passe pro lado".
-//
-// Estrutura: header com score + 3 tabs (Saude · Dados · Indicadores) + NPS
-// destacado no topo.
+// Mudancas v3 (2026-05-21 · varredura fina):
+//   - Nova aba "Cultos" (default) · puxa cultos recentes da area direto da
+//     vw_culto_stats · resolve o problema "aba Dados sempre vazia"
+//   - Filtro de periodo (30d/90d/180d/365d) no header · backend respeita
+//   - Score com label maior + diagnostico em destaque
+//   - Botao "Voltar ao painel mestre" no header
+//   - Variacao % nos KPIs (mesma logica dos dados)
+//   - Sparkline com hover tooltip
+//   - Filtro "Sem valor" so aparece quando > 0
 // ============================================================================
 
 import { useState, useEffect, useMemo } from 'react';
@@ -14,8 +18,8 @@ import { useAuth } from '../../contexts/AuthContext';
 import { painelArea as api } from '../../api';
 import { Card } from '../../components/ui/card';
 import { Badge } from '../../components/ui/badge';
-import { Button } from '../../components/ui/button';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '../../components/ui/tabs';
+import { ArrowLeft, ChevronRight } from 'lucide-react';
 import { toast } from 'sonner';
 
 const AREA_META = {
@@ -79,6 +83,13 @@ const SAUDE_META = {
   critico:  { label: 'Crítico',  color: '#dc2626', bg: '#dc262615' },
 };
 
+const PERIODOS = [
+  { id: '30d',  label: '30 dias' },
+  { id: '90d',  label: '90 dias' },
+  { id: '180d', label: '6 meses' },
+  { id: '365d', label: '1 ano' },
+];
+
 function statusKey(traj) {
   if (!traj || traj.ultimo_valor == null) return 'sem_dado';
   return traj.status_trajetoria || 'sem_dado';
@@ -97,24 +108,33 @@ function formatData(d) {
   } catch { return d; }
 }
 
+function formatDataCompleta(d) {
+  if (!d) return '';
+  try {
+    const [a, m, dia] = d.split('-');
+    return `${dia}/${m}/${a}`;
+  } catch { return d; }
+}
+
 export default function PainelArea({ area }) {
   const navigate = useNavigate();
   const { isAdmin, getAccessLevel } = useAuth();
   const meta = AREA_META[area] || AREA_META.online;
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [periodo, setPeriodo] = useState('90d');
 
   const podePreencher = isAdmin || (getAccessLevel?.([area]) ?? 0) >= 3;
 
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
-    api.get(area)
+    api.get(area, { periodo })
       .then(d => { if (!cancelled) setData(d); })
       .catch(e => { if (!cancelled) toast.error(e.message || 'Erro ao carregar área'); })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
-  }, [area]);
+  }, [area, periodo]);
 
   const npsDestaque = useMemo(() => {
     if (!data?.kpis) return [];
@@ -126,7 +146,7 @@ export default function PainelArea({ area }) {
     return data.kpis.filter(k => !/^CULTO-NPS-/i.test(k.id));
   }, [data]);
 
-  if (loading) {
+  if (loading && !data) {
     return (
       <div className="p-6 flex items-center justify-center h-64">
         <div className="h-6 w-6 animate-spin rounded-full border-2 border-muted-foreground/30 border-t-primary" />
@@ -146,9 +166,23 @@ export default function PainelArea({ area }) {
 
   const saude = data.saude || {};
   const saudeMeta = SAUDE_META[saude.diagnostico] || SAUDE_META.atencao;
+  const cultos = data.cultos_recentes || [];
+  const totaisCultos = data.totais_cultos;
+  const temCultos = cultos.length > 0;
 
   return (
     <div className="p-6 space-y-6 max-w-7xl mx-auto">
+      {/* ─────────────────────────── BREADCRUMB ─────────────────────────── */}
+      <button
+        onClick={() => navigate('/painel')}
+        className="inline-flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors"
+      >
+        <ArrowLeft className="h-3.5 w-3.5" />
+        Painel CBRio
+        <ChevronRight className="h-3 w-3 opacity-50" />
+        <span className="text-foreground font-medium">{meta.nome}</span>
+      </button>
+
       {/* ─────────────────────────── HEADER ─────────────────────────── */}
       <div
         className="rounded-xl p-6 border-l-4 grid grid-cols-1 md:grid-cols-[1fr_auto] gap-6 items-center"
@@ -161,7 +195,7 @@ export default function PainelArea({ area }) {
         <div>
           <h1 className="text-3xl font-bold text-foreground">{meta.nome}</h1>
           <p className="text-sm text-muted-foreground mt-1">{meta.descricao}</p>
-          <div className="flex items-center gap-2 mt-3 text-xs">
+          <div className="flex items-center gap-2 mt-3 text-xs flex-wrap">
             <Badge variant="outline">Somente leitura</Badge>
             <span className="text-muted-foreground">·</span>
             <span className="text-muted-foreground">
@@ -182,7 +216,7 @@ export default function PainelArea({ area }) {
           </div>
         </div>
 
-        {/* Score de saúde */}
+        {/* Score de saúde · agora com diagnostico em destaque */}
         <div className="flex items-center gap-4">
           <div
             className="w-32 h-32 rounded-full flex flex-col items-center justify-center border-4"
@@ -191,22 +225,47 @@ export default function PainelArea({ area }) {
               background: saudeMeta.bg,
             }}
           >
-            <span className="text-3xl font-bold" style={{ color: saudeMeta.color }}>
+            <span className="text-3xl font-bold leading-none" style={{ color: saudeMeta.color }}>
               {saude.score ?? 0}
             </span>
-            <span className="text-[10px] uppercase tracking-widest text-muted-foreground">
+            <span className="text-[10px] uppercase tracking-widest text-muted-foreground mt-1">
               Score
             </span>
           </div>
           <div>
-            <div className="text-sm font-semibold" style={{ color: saudeMeta.color }}>
+            <div className="text-lg font-bold leading-tight" style={{ color: saudeMeta.color }}>
               {saudeMeta.label}
             </div>
-            <div className="text-xs text-muted-foreground mt-1 max-w-[150px]">
-              {saude.pct_no_alvo ?? 0}% dos indicadores no alvo
+            <div className="text-xs text-muted-foreground mt-1 max-w-[160px]">
+              {saude.pct_no_alvo ?? 0}% dos indicadores no alvo · {saude.kpis_total ?? 0} KPIs
             </div>
           </div>
         </div>
+      </div>
+
+      {/* ─────────────────── FILTRO DE PERIODO ─────────────────── */}
+      <div className="flex items-center gap-2 text-xs">
+        <span className="text-muted-foreground">Periodo:</span>
+        {PERIODOS.map(p => (
+          <button
+            key={p.id}
+            onClick={() => setPeriodo(p.id)}
+            disabled={loading}
+            className="px-2.5 py-1 rounded-md border transition-colors disabled:opacity-50"
+            style={
+              periodo === p.id
+                ? { background: meta.accent, color: '#fff', borderColor: meta.accent }
+                : { background: 'transparent', borderColor: 'rgb(226, 232, 240)' }
+            }
+          >
+            {p.label}
+          </button>
+        ))}
+        {data.periodo && (
+          <span className="text-muted-foreground ml-auto">
+            {formatDataCompleta(data.periodo.desde)} → {formatDataCompleta(data.periodo.ate)}
+          </span>
+        )}
       </div>
 
       {/* ─────────────────────── NPS DESTACADO ─────────────────────── */}
@@ -229,16 +288,59 @@ export default function PainelArea({ area }) {
       )}
 
       {/* ─────────────────────── TABS PRINCIPAIS ─────────────────────── */}
-      <Tabs defaultValue="saude">
-        <TabsList className="grid grid-cols-3 w-full max-w-md">
-          <TabsTrigger value="saude">Saúde</TabsTrigger>
-          <TabsTrigger value="dados">
-            Dados {data.dados?.length > 0 && <span className="ml-1 opacity-60">({data.dados.length})</span>}
-          </TabsTrigger>
+      <Tabs defaultValue={temCultos ? 'cultos' : 'indicadores'}>
+        <TabsList className={`grid w-full max-w-2xl ${temCultos ? 'grid-cols-4' : 'grid-cols-3'}`}>
+          {temCultos && (
+            <TabsTrigger value="cultos">
+              Cultos <span className="ml-1 opacity-60">({cultos.length})</span>
+            </TabsTrigger>
+          )}
           <TabsTrigger value="indicadores">
             Indicadores {kpisRegulares.length > 0 && <span className="ml-1 opacity-60">({kpisRegulares.length})</span>}
           </TabsTrigger>
+          <TabsTrigger value="dados">
+            Dados {data.dados?.length > 0 && <span className="ml-1 opacity-60">({data.dados.length})</span>}
+          </TabsTrigger>
+          <TabsTrigger value="saude">Saúde</TabsTrigger>
         </TabsList>
+
+        {/* ──────── ABA CULTOS ──────── */}
+        {temCultos && (
+          <TabsContent value="cultos" className="mt-6 space-y-4">
+            {totaisCultos && (
+              <TotaisCultoCards totais={totaisCultos} area={area} accent={meta.accent} />
+            )}
+            <CultosLista cultos={cultos} area={area} accent={meta.accent} />
+          </TabsContent>
+        )}
+
+        {/* ──────── ABA INDICADORES ──────── */}
+        <TabsContent value="indicadores" className="mt-6">
+          {kpisRegulares.length === 0 ? (
+            <Card className="p-8 text-center text-sm text-muted-foreground">
+              Nenhum indicador cadastrado pra esta área ainda.
+            </Card>
+          ) : (
+            <IndicadoresPorValor kpis={kpisRegulares} porValor={data.por_valor} semValor={data.sem_valor} navigate={navigate} accent={meta.accent} />
+          )}
+        </TabsContent>
+
+        {/* ──────── ABA DADOS ──────── */}
+        <TabsContent value="dados" className="mt-6">
+          {data.dados?.length === 0 ? (
+            <Card className="p-8 text-center text-sm text-muted-foreground">
+              Nenhum tipo de dado bruto esperado nesta área ainda. KPIs simples
+              usam só os números dos cultos (aba "Cultos").
+            </Card>
+          ) : (
+            <DadosPorValor dados={data.dados || []} accent={meta.accent} />
+          )}
+          <p className="text-xs text-muted-foreground mt-3">
+            <strong>Dados brutos</strong> são números preenchidos por área em <span className="font-mono">/dados-brutos</span>
+            {' '}(voluntários, grupos, devocionais etc). Os <strong>cultos</strong> (frequência, decisões, batismos)
+            vivem em tabela própria e aparecem na aba ao lado.
+          </p>
+        </TabsContent>
 
         {/* ──────── ABA SAÚDE ──────── */}
         <TabsContent value="saude" className="mt-6 space-y-4">
@@ -306,39 +408,102 @@ export default function PainelArea({ area }) {
             </ul>
           </Card>
         </TabsContent>
-
-        {/* ──────── ABA DADOS ──────── */}
-        <TabsContent value="dados" className="mt-6">
-          {data.dados?.length === 0 ? (
-            <Card className="p-8 text-center text-sm text-muted-foreground">
-              Nenhum dado bruto registrado pra esta área ainda.
-            </Card>
-          ) : (
-            <DadosPorValor dados={data.dados || []} accent={meta.accent} />
-          )}
-          <p className="text-xs text-muted-foreground mt-3">
-            Dados brutos são os números preenchidos diretamente em <span className="font-mono">/integracao</span>.
-            Os indicadores (aba ao lado) são calculados automaticamente a partir desses dados.
-            Cada dado pode alimentar KPIs de um ou mais <strong>valores da Jornada</strong>.
-          </p>
-        </TabsContent>
-
-        {/* ──────── ABA INDICADORES ──────── */}
-        <TabsContent value="indicadores" className="mt-6">
-          {kpisRegulares.length === 0 ? (
-            <Card className="p-8 text-center text-sm text-muted-foreground">
-              Nenhum indicador cadastrado pra esta área ainda.
-            </Card>
-          ) : (
-            <IndicadoresPorValor kpis={kpisRegulares} porValor={data.por_valor} semValor={data.sem_valor} navigate={navigate} accent={meta.accent} />
-          )}
-        </TabsContent>
       </Tabs>
     </div>
   );
 }
 
 // ─────────────────────────── COMPONENTES ───────────────────────────
+
+function TotaisCultoCards({ totais, area, accent }) {
+  const cards = [
+    { label: 'Cultos no período', value: totais.total_cultos, full: true },
+    { label: 'Frequência total', value: totais.presencial_adulto + totais.presencial_kids },
+    { label: 'Decisões total', value: totais.decisoes_total },
+  ];
+  // Cards extras especificos por area
+  if (area === 'online') {
+    cards.push({ label: 'Pico online (soma)', value: totais.online_pico_total });
+    cards.push({ label: 'Views D+7 (DDUS)', value: totais.online_ddus_total });
+  } else if (area === 'kids') {
+    cards.push({ label: 'Frequência Kids', value: totais.presencial_kids });
+    cards.push({ label: 'Decisões Kids', value: totais.decisoes_kids });
+  } else {
+    cards.push({ label: 'Decisões presenciais', value: totais.decisoes_presenciais });
+    cards.push({ label: 'Decisões online', value: totais.decisoes_online });
+  }
+
+  return (
+    <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+      {cards.map((c, i) => (
+        <Card
+          key={i}
+          className={`p-4 ${c.full ? 'md:col-span-1' : ''}`}
+          style={i === 0 ? { borderLeft: `3px solid ${accent}` } : undefined}
+        >
+          <p className="text-[11px] text-muted-foreground uppercase tracking-wide font-semibold">{c.label}</p>
+          <p className="text-2xl font-bold text-foreground mt-1">{formatNum(c.value)}</p>
+        </Card>
+      ))}
+    </div>
+  );
+}
+
+function CultosLista({ cultos, area, accent }) {
+  return (
+    <Card>
+      <div className="p-4 border-b border-border flex items-center justify-between">
+        <h3 className="text-sm font-semibold text-foreground">Cultos do período</h3>
+        <span className="text-xs text-muted-foreground">mais recentes primeiro</span>
+      </div>
+      <div className="divide-y divide-border">
+        {cultos.map(c => (
+          <CultoRow key={c.id} culto={c} area={area} accent={accent} />
+        ))}
+      </div>
+    </Card>
+  );
+}
+
+function CultoRow({ culto, area, accent }) {
+  const items = [];
+  if (area === 'online') {
+    items.push({ label: 'Pico', v: culto.online_pico });
+    items.push({ label: 'D+1', v: culto.online_ds });
+    items.push({ label: 'D+7', v: culto.online_ddus });
+    items.push({ label: 'Dec.', v: culto.decisoes_online });
+  } else if (area === 'kids') {
+    items.push({ label: 'Kids', v: culto.presencial_kids });
+    items.push({ label: 'Dec. kids', v: culto.decisoes_kids });
+  } else {
+    items.push({ label: 'Presencial', v: culto.presencial_adulto });
+    items.push({ label: 'Dec. pres.', v: culto.decisoes_presenciais });
+    items.push({ label: 'Dec. onl.', v: culto.decisoes_online });
+  }
+  return (
+    <div className="p-4 flex items-center gap-4 flex-wrap">
+      <div className="flex-1 min-w-0">
+        <p className="text-sm font-medium text-foreground">{culto.nome}</p>
+        <p className="text-xs text-muted-foreground mt-0.5">
+          {formatDataCompleta(culto.data)}{culto.hora ? ` · ${culto.hora.slice(0, 5)}` : ''}
+        </p>
+        {culto.observacoes && (
+          <p className="text-[11px] text-muted-foreground italic mt-1 line-clamp-2">{culto.observacoes}</p>
+        )}
+      </div>
+      <div className="flex items-center gap-4">
+        {items.map((it, i) => (
+          <div key={i} className="text-right min-w-[60px]">
+            <p className="text-lg font-bold" style={{ color: it.v > 0 ? accent : 'rgb(148, 163, 184)' }}>
+              {it.v == null ? '—' : formatNum(it.v)}
+            </p>
+            <p className="text-[10px] uppercase tracking-wider text-muted-foreground">{it.label}</p>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
 
 function StatCard({ label, value, color = '', hint }) {
   return (
@@ -361,6 +526,61 @@ function Progress({ pct, color }) {
   );
 }
 
+function Sparkline({ historico, accent }) {
+  const [hover, setHover] = useState(null);
+  if (!historico || historico.length < 2) {
+    return (
+      <div className="w-[100px] h-[36px] shrink-0 rounded bg-muted/40 flex items-center justify-center">
+        <span className="text-[9px] text-muted-foreground">sem histórico</span>
+      </div>
+    );
+  }
+  const valoresHist = historico.map(h => h.valor);
+  const maxV = Math.max(...valoresHist, 1);
+  const minV = Math.min(...valoresHist, 0);
+  const range = maxV - minV || 1;
+  const W = 100, H = 36;
+  const pts = valoresHist.map((v, i) => {
+    const x = (i / (valoresHist.length - 1)) * (W - 4) + 2;
+    const y = (H - 4) - ((v - minV) / range) * (H - 8);
+    return { x, y, v, data: historico[i].data };
+  });
+  return (
+    <div className="relative" onMouseLeave={() => setHover(null)}>
+      <svg width={W} height={H} className="shrink-0">
+        <polyline
+          fill="none"
+          stroke={accent}
+          strokeWidth="2"
+          points={pts.map(p => `${p.x},${p.y}`).join(' ')}
+        />
+        {pts.map((p, i) => (
+          <circle
+            key={i}
+            cx={p.x}
+            cy={p.y}
+            r="6"
+            fill="transparent"
+            onMouseEnter={() => setHover(p)}
+            style={{ cursor: 'crosshair' }}
+          />
+        ))}
+        {hover && (
+          <circle cx={hover.x} cy={hover.y} r="3" fill={accent} stroke="#fff" strokeWidth="1.5" />
+        )}
+      </svg>
+      {hover && (
+        <div
+          className="absolute z-10 px-2 py-1 rounded-md text-[10px] bg-popover border border-border shadow-md pointer-events-none whitespace-nowrap"
+          style={{ left: Math.min(hover.x, W - 70), top: -28 }}
+        >
+          <strong>{formatNum(hover.v)}</strong> · {formatData(hover.data)}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function DadoRow({ dado, accent }) {
   const vazio = dado.vazio || dado.total_registros === 0;
 
@@ -373,11 +593,6 @@ function DadoRow({ dado, accent }) {
     : variacao >= 10 ? 'text-emerald-600 dark:text-emerald-400'
     : variacao <= -10 ? 'text-red-600 dark:text-red-400'
     : 'text-muted-foreground';
-
-  const valoresHist = (dado.historico_6 || []).map(h => h.valor);
-  const maxV = Math.max(...valoresHist, 1);
-  const minV = Math.min(...valoresHist, 0);
-  const range = maxV - minV || 1;
 
   const valoresJornada = dado.valores_jornada || [];
 
@@ -406,7 +621,7 @@ function DadoRow({ dado, accent }) {
           )}
           {dado.total_registros > 0 && (
             <span className="text-muted-foreground">
-              · {dado.total_registros} registros (180d)
+              · {dado.total_registros} registros
             </span>
           )}
         </div>
@@ -429,25 +644,7 @@ function DadoRow({ dado, accent }) {
         )}
       </div>
 
-      {/* Sparkline mini · só se tem >= 2 registros */}
-      {valoresHist.length > 1 ? (
-        <svg width="80" height="32" className="shrink-0">
-          <polyline
-            fill="none"
-            stroke={accent}
-            strokeWidth="2"
-            points={valoresHist.map((v, i) => {
-              const x = (i / (valoresHist.length - 1)) * 78 + 1;
-              const y = 30 - ((v - minV) / range) * 28;
-              return `${x},${y}`;
-            }).join(' ')}
-          />
-        </svg>
-      ) : (
-        <div className="w-[80px] h-[32px] shrink-0 rounded bg-muted/40 flex items-center justify-center">
-          <span className="text-[9px] text-muted-foreground">sem histórico</span>
-        </div>
-      )}
+      <Sparkline historico={dado.historico_6} accent={accent} />
 
       <div className="text-right shrink-0 min-w-[100px]">
         {vazio ? (
@@ -469,7 +666,6 @@ function DadoRow({ dado, accent }) {
 function DadosPorValor({ dados, accent }) {
   const [filtro, setFiltro] = useState('todos');
 
-  // Conta dados por valor (dado pode alimentar varios valores)
   const contagem = useMemo(() => {
     const c = { todos: dados.length, sem_valor: 0 };
     for (const d of dados) {
@@ -480,8 +676,9 @@ function DadosPorValor({ dados, accent }) {
     return c;
   }, [dados]);
 
+  const ordemValores = ['seguir', 'conectar', 'investir', 'servir', 'generosidade'];
   const valoresDisp = useMemo(
-    () => Object.keys(contagem).filter(v => v !== 'todos' && v !== 'sem_valor' && contagem[v] > 0),
+    () => ordemValores.filter(v => contagem[v] > 0),
     [contagem]
   );
 
@@ -502,6 +699,7 @@ function DadosPorValor({ dados, accent }) {
             {VALOR_LABELS[v] || v} ({contagem[v]})
           </FilterPill>
         ))}
+        {/* So mostra "Sem valor" quando ha tipos sem valor */}
         {contagem.sem_valor > 0 && (
           <FilterPill active={filtro === 'sem-valor'} onClick={() => setFiltro('sem-valor')} accent={accent}>
             Sem valor ({contagem.sem_valor})
@@ -527,14 +725,17 @@ function DadosPorValor({ dados, accent }) {
 function IndicadoresPorValor({ kpis, porValor, semValor, navigate, accent }) {
   const [filtro, setFiltro] = useState('todos');
 
+  const semValorFiltered = (semValor || []).filter(k => !/^CULTO-NPS-/i.test(k.id));
+
   const kpisFiltrados = useMemo(() => {
     if (filtro === 'todos') return kpis;
-    if (filtro === 'sem-valor') return semValor.filter(k => !/^CULTO-NPS-/i.test(k.id));
+    if (filtro === 'sem-valor') return semValorFiltered;
     return (porValor?.[filtro] || []).filter(k => !/^CULTO-NPS-/i.test(k.id));
-  }, [filtro, kpis, porValor, semValor]);
+  }, [filtro, kpis, porValor, semValor, semValorFiltered]);
 
+  const ordemValores = ['seguir', 'conectar', 'investir', 'servir', 'generosidade'];
   const valoresDisp = porValor
-    ? Object.keys(porValor).filter(v => (porValor[v] || []).some(k => !/^CULTO-NPS-/i.test(k.id)))
+    ? ordemValores.filter(v => (porValor[v] || []).some(k => !/^CULTO-NPS-/i.test(k.id)))
     : [];
 
   return (
@@ -551,6 +752,12 @@ function IndicadoresPorValor({ kpis, porValor, semValor, navigate, accent }) {
             </FilterPill>
           );
         })}
+        {/* So mostra "Sem valor" quando ha KPIs sem valor */}
+        {semValorFiltered.length > 0 && (
+          <FilterPill active={filtro === 'sem-valor'} onClick={() => setFiltro('sem-valor')} accent={accent}>
+            Sem valor ({semValorFiltered.length})
+          </FilterPill>
+        )}
       </div>
 
       <Card className="divide-y divide-border">

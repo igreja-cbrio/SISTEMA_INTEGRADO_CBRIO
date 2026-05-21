@@ -1301,6 +1301,52 @@ Para alterar: `PUT /api/cycles/area-responsaveis/:area` com
 o novo responsável; tarefas já criadas não são afetadas
 retroativamente.
 
+### Cultos · varredura fina + PainelArea v3 (2026-05-21)
+Apos varredura nos modulos kids/ami/bridge/online, batemos 3 PRs:
+
+**PR de hotfix + UX (esta)** · `claude/cultos-hotfix-lideres`:
+- Migration `20260521120000_cultos_hotfix_lideres.sql`:
+  - AMI-05 e AMI-06 com `fonte_auto = cultos.bridge_*` (cross-wiring de
+    migration antiga) · zeradas pra null. AMI-01 ja cobre frequencia.
+  - Lillian Xavier criada em rh_funcionarios (faltava cadastro RH)
+  - `lider_funcionario_id` preenchido em TODOS os KPIs ativos das 4 areas:
+    - kids   · Mariane Gaia      (323db85c-a46f...)
+    - ami    · Arthur Cecconi    (92186f0c-85e8...)
+    - bridge · Lillian Xavier    (gerado · 909b97ad-...)
+    - online · Renata Martins    (b28e8b30-f7f2...)
+- Backend `painelArea.js`:
+  - Aceita `?periodo=30d|90d|180d|365d` ou `?desde&ate` (default 180d)
+  - Nova seção `cultos_recentes` + `totais_cultos` · agrega de
+    `vw_culto_stats` filtrada por area (logica espelho do kpiAutoCollector)
+  - Resposta inclui `periodo: { desde, ate }`
+- Frontend `PainelArea.jsx` v3:
+  - Nova aba "Cultos" (tab default quando ha cultos) com cards de totais
+    + lista de cultos do periodo
+  - Filtro de periodo (30/90/180/365d) no header acima das tabs
+  - Score com label maior + diagnostico em destaque
+  - Breadcrumb "Painel CBRio > [Area]" com seta de volta
+  - Sparkline com hover tooltip
+  - Filtros "Sem valor" so aparecem quando count > 0
+  - Ordem fixa dos valores da Jornada (seguir/conectar/investir/servir/gen)
+  - Aba "Dados" agora explica que cultos vivem em outra aba
+
+**Decisao arquitetural** (Marcos 2026-05-21): aba Cultos puxa direto da
+`vw_culto_stats` filtrada por area, porque dados de culto (frequencia/
+decisoes/batismos) vivem em `cultos.*` e nao em `dados_brutos`. A aba
+Dados bruta continua existindo pra outros tipos (voluntarios, grupos,
+devocionais por area) quando o onboarding evoluir.
+
+**Bridge separado de AMI**: AMI-05/06 nao puxam mais cultos.bridge_*.
+Bridge tem KPIs proprios (BRG-01, BRG-02 etc com fonte_auto cultos.bridge_*).
+Marcos: "Bridge eh diferente de AMI, separe isso · os dados sao diferentes".
+
+**Pendente proximas PRs**:
+- NPS dos cultos · CULTO-NPS-* (5 KPIs) sem coletor · criar tipo dado
+  ou tabela cultos_nps
+- Drill-down decisoes (lista de pessoas no culto)
+- Time da area (voluntarios ativos por area)
+- Online · aba Saude + aba Dados (hoje sem)
+
 ### Cultos · rotas saem de /ministerial pra raiz (2026-05-21)
 PR #576 mergeada. Marcos pediu: "tire o endpoint /ministerial coloque so /ami".
 Os 4 modulos de culto agora moram na raiz:
