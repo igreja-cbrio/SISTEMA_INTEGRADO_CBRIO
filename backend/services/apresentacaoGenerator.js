@@ -17,22 +17,36 @@
 
 const Anthropic = require('@anthropic-ai/sdk');
 
-// Default: Sonnet 4.6 · rapido e cabe no timeout 60s da Vercel Hobby.
-// Opus 4.7 fica como opcao premium · usuario habilita por apresentacao.
-const MODEL_DEFAULT = process.env.APRESENTACOES_MODEL || 'claude-sonnet-4-6';
+// Default: Sonnet · rapido e cabe no timeout 60s da Vercel Hobby.
+// Lista de IDs em ordem de preferencia · se o primeiro nao for reconhecido
+// pela SDK, tenta o proximo. Cobre o caso do alias `claude-sonnet-4-6`
+// nao funcionar na versao 0.86.1 do SDK em prod.
+const SONNET_IDS = [
+  process.env.APRESENTACOES_MODEL,        // override manual (env)
+  'claude-sonnet-4-6',                     // alias 4.6
+  'claude-sonnet-4-6-20250101',            // possivel ID com data
+  'claude-sonnet-4-5',                     // alias 4.5
+  'claude-sonnet-4-20250514',              // Sonnet 4 (existe em agentService.js)
+].filter(Boolean);
+
+const MODEL_DEFAULT = SONNET_IDS[0] || 'claude-sonnet-4-6';
 const MODEL_PREMIUM = 'claude-opus-4-7';
 
-// Pricing publico Anthropic (USD por milhao de tokens · valores reais em
-// console.anthropic.com → Usage)
+// Pricing publico Anthropic (USD por milhao de tokens)
 const PRICING = {
-  'claude-sonnet-4-6': { input: 3,  output: 15 },
-  'claude-opus-4-7':   { input: 15, output: 75 },
+  'claude-sonnet-4-6':            { input: 3,  output: 15 },
+  'claude-sonnet-4-6-20250101':   { input: 3,  output: 15 },
+  'claude-sonnet-4-5':            { input: 3,  output: 15 },
+  'claude-sonnet-4-20250514':     { input: 3,  output: 15 },
+  'claude-opus-4-7':              { input: 15, output: 75 },
 };
 
-// max_tokens por modelo · Sonnet pode entregar mais slides no mesmo tempo
 const MAX_TOKENS_BY_MODEL = {
-  'claude-sonnet-4-6': 12000,
-  'claude-opus-4-7':   10000,  // menor pra caber em 60s
+  'claude-sonnet-4-6':            12000,
+  'claude-sonnet-4-6-20250101':   12000,
+  'claude-sonnet-4-5':            12000,
+  'claude-sonnet-4-20250514':     12000,
+  'claude-opus-4-7':              10000,
 };
 
 // ─────────────────────────────────────────────────────────────────────
@@ -157,6 +171,24 @@ function estimarCusto(modelo, tokens_input, tokens_output) {
 // ─────────────────────────────────────────────────────────────────────
 // Funcao principal · chama Claude e retorna o resultado parseado
 // ─────────────────────────────────────────────────────────────────────
+// Detecta erro de "modelo nao encontrado/invalido" da SDK Anthropic
+function isModelError(err) {
+  const msg = String(err?.message || '').toLowerCase();
+  return msg.includes('not_found') || msg.includes('not found')
+      || msg.includes('invalid_request')
+      || msg.includes('does not exist') || msg.includes('unknown model')
+      || msg.includes('model:');
+}
+
+async function callAnthropic({ client, model, maxTokens, system, userPrompt }) {
+  return client.messages.create({
+    model,
+    max_tokens: maxTokens,
+    system,
+    messages: [{ role: 'user', content: userPrompt }],
+  });
+}
+
 async function gerarApresentacao({ titulo, prompt, tom, arquivos, modelo }) {
   if (!process.env.ANTHROPIC_API_KEY) {
     throw new Error('ANTHROPIC_API_KEY nao configurada no ambiente');
@@ -165,17 +197,42 @@ async function gerarApresentacao({ titulo, prompt, tom, arquivos, modelo }) {
   const client = new Anthropic();
   const t0 = Date.now();
 
-  const modeloFinal = modelo && PRICING[modelo] ? modelo : MODEL_DEFAULT;
-  const maxTokens = MAX_TOKENS_BY_MODEL[modeloFinal] || 10000;
+  // Se modelo foi explicitamente pedido (e existe no PRICING), tenta so ele.
+  // Caso contrario, tenta a lista de Sonnet IDs em ordem (fallback automatico).
+  const modelosATentar = modelo && PRICING[modelo]
+    ? [modelo]
+    : SONNET_IDS;
 
-  const resp = await client.messages.create({
-    model: modeloFinal,
-    max_tokens: maxTokens,
-    system: SYSTEM_PROMPT,
-    messages: [
-      { role: 'user', content: buildUserPrompt({ titulo, prompt, tom, arquivos }) },
-    ],
-  });
+  const userPrompt = buildUserPrompt({ titulo, prompt, tom, arquivos });
+
+  let resp = null;
+  let modeloFinal = null;
+  let ultimoErro = null;
+
+  for (const m of modelosATentar) {
+    const maxTokens = MAX_TOKENS_BY_MODEL[m] || 10000;
+    try {
+      console.log(`[apresentacoes] tentando modelo: ${m}`);
+      resp = await callAnthropic({ client, model: m, maxTokens, system: SYSTEM_PROMPT, userPrompt });
+      modeloFinal = m;
+      console.log(`[apresentacoes] modelo ${m} respondeu ok`);
+      break;
+    } catch (err) {
+      ultimoErro = err;
+      console.warn(`[apresentacoes] modelo ${m} falhou: ${err.message}`);
+      // So tenta proximo se for erro de modelo invalido · outros erros (timeout,
+      // rate limit, etc) propagam imediatamente.
+      if (!isModelError(err)) throw err;
+    }
+  }
+
+  if (!resp) {
+    throw new Error(
+      `Nenhum modelo aceito pela API. Ultimo erro: ${ultimoErro?.message || 'desconhecido'}. ` +
+      `Tentados: ${modelosATentar.join(', ')}. ` +
+      `Defina APRESENTACOES_MODEL no Vercel com um ID valido.`
+    );
+  }
 
   const duracao_ms = Date.now() - t0;
 
