@@ -280,9 +280,9 @@ router.get('/membros/:id', async (req, res) => {
       supabase.from('mem_grupo_membros')
         .select('*, grupo:mem_grupos(id, nome, categoria, local, dia_semana, horario, lider:mem_membros!lider_id(id, nome))')
         .eq('membro_id', id).order('entrou_em', { ascending: false }),
-      supabase.from('mem_contribuicoes').select('*').eq('membro_id', id).order('data', { ascending: false }).limit(30),
+      supabase.from('mem_contribuicoes').select('*').eq('membro_id', id).is('deleted_at', null).order('data', { ascending: false }).limit(30),
       supabase.from('mem_contribuicoes').select('tipo, valor')
-        .eq('membro_id', id).gte('data', `${anoAtual}-01-01`).lte('data', `${anoAtual}-12-31`),
+        .eq('membro_id', id).is('deleted_at', null).gte('data', `${anoAtual}-01-01`).lte('data', `${anoAtual}-12-31`),
       supabase.from('vol_profiles')
         .select('id, full_name, planning_center_id, allocation_status, profile_complete')
         .eq('membresia_id', id).maybeSingle(),
@@ -1043,10 +1043,14 @@ router.put('/contribuicoes/:id', authorize('admin', 'diretor'), async (req, res)
   }
 });
 
-// DELETE /api/membresia/contribuicoes/:id
+// DELETE /api/membresia/contribuicoes/:id · soft-delete (preserva historico financeiro)
 router.delete('/contribuicoes/:id', authorize('admin', 'diretor'), async (req, res) => {
   try {
-    const { error } = await supabase.from('mem_contribuicoes').delete().eq('id', req.params.id);
+    const { error } = await supabase.rpc('app_soft_delete', {
+      p_table_name: 'mem_contribuicoes',
+      p_row_id: req.params.id,
+      p_deleted_by: req.user?.id ?? null,
+    });
     if (error) throw error;
     res.json({ ok: true });
   } catch (e) {

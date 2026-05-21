@@ -90,6 +90,7 @@ router.get('/acompanhamentos', async (req, res) => {
     let q = supabase
       .from('cui_acompanhamentos')
       .select('*')
+      .is('deleted_at', null)
       .order('created_at', { ascending: false })
       .limit(500);
     if (status) q = q.eq('status', status);
@@ -155,7 +156,11 @@ router.patch('/acompanhamentos/:id', async (req, res) => {
 
 router.delete('/acompanhamentos/:id', async (req, res) => {
   try {
-    const { error } = await supabase.from('cui_acompanhamentos').delete().eq('id', req.params.id);
+    const { error } = await supabase.rpc('app_soft_delete', {
+      p_table_name: 'cui_acompanhamentos',
+      p_row_id: req.params.id,
+      p_deleted_by: req.user?.id ?? null,
+    });
     if (error) throw error;
     enqueueSync('acompanhamento', req.params.id, 'delete').catch(() => {});
     res.json({ ok: true });
@@ -170,7 +175,7 @@ router.delete('/acompanhamentos/:id', async (req, res) => {
 router.get('/jornada180', async (req, res) => {
   try {
     const { etapa, mes } = req.query;
-    let q = supabase.from('cui_jornada180').select('*').order('data_encontro', { ascending: false }).limit(500);
+    let q = supabase.from('cui_jornada180').select('*').is('deleted_at', null).order('data_encontro', { ascending: false }).limit(500);
     if (etapa) q = q.eq('etapa', Number(etapa));
     if (mes) {
       const start = `${mes}-01`;
@@ -203,7 +208,11 @@ router.post('/jornada180', async (req, res) => {
 
 router.delete('/jornada180/:id', async (req, res) => {
   try {
-    const { error } = await supabase.from('cui_jornada180').delete().eq('id', req.params.id);
+    const { error } = await supabase.rpc('app_soft_delete', {
+      p_table_name: 'cui_jornada180',
+      p_row_id: req.params.id,
+      p_deleted_by: req.user?.id ?? null,
+    });
     if (error) throw error;
     res.json({ ok: true });
   } catch (e) {
@@ -227,7 +236,7 @@ router.get('/convertidos/tags', (_req, res) => {
 router.get('/convertidos', async (req, res) => {
   try {
     const { from, to, tag, encontro_marcado, atendido } = req.query;
-    let q = supabase.from('cui_convertidos').select('*').order('data_culto', { ascending: false }).limit(2000);
+    let q = supabase.from('cui_convertidos').select('*').is('deleted_at', null).order('data_culto', { ascending: false }).limit(2000);
     if (from) q = q.gte('data_culto', from);
     if (to) q = q.lte('data_culto', to);
     if (tag) q = q.contains('tags', [tag]);
@@ -275,7 +284,11 @@ router.patch('/convertidos/:id', async (req, res) => {
 
 router.delete('/convertidos/:id', async (req, res) => {
   try {
-    const { error } = await supabase.from('cui_convertidos').delete().eq('id', req.params.id);
+    const { error } = await supabase.rpc('app_soft_delete', {
+      p_table_name: 'cui_convertidos',
+      p_row_id: req.params.id,
+      p_deleted_by: req.user?.id ?? null,
+    });
     if (error) throw error;
     res.json({ ok: true });
   } catch (e) {
