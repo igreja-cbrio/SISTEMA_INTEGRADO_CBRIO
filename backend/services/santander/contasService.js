@@ -19,25 +19,59 @@ async function listarContas({ userId } = {}) {
   return callApi(`${BASE}/banks/${BANK_ID}/accounts`, { userId });
 }
 
+// Busca info de limite de cheque especial via endpoint /accounts
+// (o endpoint /balances retorna so saldo, sem limite)
+// Retorna 0 silenciosamente se a chamada falhar ou a conta nao tiver limite
+async function buscarLimiteOverdraft({ userId } = {}) {
+  try {
+    const raw = await callApi(`${BASE}/banks/${BANK_ID}/accounts`, { userId });
+    // Resposta tipica: { accounts: [{ accountId, branchCode, accountNumber, overdraftLimitAmount, ... }] }
+    // Ou pode vir direto como array
+    const accounts = Array.isArray(raw) ? raw : (raw?.accounts || raw?.data || []);
+    const myAccount = accounts.find(a => {
+      const ag = String(a.branchCode || '').padStart(4, '0');
+      const ct = String(a.accountNumber || a.accountId || '').padStart(12, '0');
+      return ag === padAgencia(AGENCIA) && ct.includes(padConta(CONTA));
+    }) || accounts[0]; // se nao achar match, pega a 1a (caso so tenha 1 conta)
+    if (!myAccount) return { overdraftLimit: 0, overdraftUsed: 0 };
+
+    return {
+      overdraftLimit: Number(
+        myAccount.overdraftLimitAmount
+        || myAccount.overdraftContractedLimit
+        || myAccount.checkSpecialContractedLimit
+        || myAccount.contractedOverdraft
+        || myAccount.overdraftLimit
+        || 0
+      ),
+      overdraftUsed: Number(
+        myAccount.overdraftUsedAmount
+        || myAccount.checkSpecialUsedAmount
+        || myAccount.overdraftUsed
+        || 0
+      ),
+      rawAccount: myAccount,
+    };
+  } catch (e) {
+    // Best-effort: nao quebra a chamada de saldo se /accounts falhar
+    console.warn('[Santander] /accounts falhou (silencioso):', e.message);
+    return { overdraftLimit: 0, overdraftUsed: 0 };
+  }
+}
+
 async function consultarSaldo({ userId } = {}) {
-  const raw = await callApi(`${BASE}/banks/${BANK_ID}/balances/${balanceId()}`, { userId });
+  // Em paralelo: saldo + limite (via endpoint /accounts)
+  const [raw, limite] = await Promise.all([
+    callApi(`${BASE}/banks/${BANK_ID}/balances/${balanceId()}`, { userId }),
+    buscarLimiteOverdraft({ userId }),
+  ]);
+
   // Normaliza · API retorna campos como string
   const available = Number(raw.availableAmount || 0);
   const blocked = Number(raw.blockedAmount || 0);
   const invested = Number(raw.automaticallyInvestedAmount || 0);
-  // Limite de cheque especial · campo do Open Banking
-  // Tenta varias chaves possiveis (Santander as vezes muda nomenclatura)
-  const overdraftLimit = Number(
-    raw.overdraftLimitAmount
-    || raw.overdraftContractedLimit
-    || raw.checkSpecialContractedLimit
-    || 0
-  );
-  const overdraftUsed = Number(
-    raw.overdraftUsedAmount
-    || raw.checkSpecialUsedAmount
-    || 0
-  );
+  const { overdraftLimit, overdraftUsed, rawAccount } = limite;
+
   return {
     available,
     blocked,
@@ -47,7 +81,7 @@ async function consultarSaldo({ userId } = {}) {
     overdraftAvailable: overdraftLimit > 0 ? overdraftLimit - overdraftUsed : 0,
     total: available + blocked + invested,
     currency: raw.availableAmountCurrency || 'BRL',
-    raw,
+    raw: { balance: raw, account: rawAccount },
   };
 }
 
