@@ -68,6 +68,68 @@ regras. **Quebrar qualquer uma delas é regressão crítica.**
 | `public.app_restore(table, id)` | BOOLEAN | Desfaz soft-delete |
 | `public.app_soft_deletable_tables()` | TEXT[] | Whitelist de 30 tabelas com soft-delete |
 
+## Audit log · mudanças em dados sensíveis (2026-05-21)
+
+Migration `20260521230000_onda3_audit_log_pii.sql` cria sistema de
+auditoria pra rastrear mudanças em colunas sensíveis.
+
+**Postgres não tem trigger de SELECT** · auditamos só
+INSERT/UPDATE/DELETE. Pra "quem leu CPF" precisaria de proxy de queries
+(overkill por agora).
+
+### Tabela `app_audit_log`
+
+Colunas: `id, table_name, row_id, action, user_id, user_email,
+changes (JSONB), created_at`.
+
+Imutável: RLS bloqueia UPDATE/DELETE. Só super-admin lê via SELECT.
+
+### Função genérica `audit_log_changes()`
+
+Trigger AFTER INSERT/UPDATE/DELETE com argumento opcional `TG_ARGV[0]`
+= CSV de colunas a auditar. Se vazio, audita todas exceto
+`updated_at`/`created_at`. Salva diff `{col: {old, new}}` em JSONB.
+
+### Triggers ativos (8 tabelas críticas)
+
+| Tabela | Colunas auditadas |
+|---|---|
+| `rh_funcionarios` | salario, remuneracao_bruta, grau_id, status, data_demissao, cpf, email, deleted_at |
+| `mem_membros` | cpf, status, deleted_at, nome, email, telefone |
+| `mem_contribuicoes` | valor, tipo, membro_id, deleted_at |
+| `pcs_progressoes` | salarios, graus, aprovado_por, deleted_at |
+| `batismo_inscricoes` | cpf, status, membro_id, deleted_at |
+| `cultos_decisoes_pessoas` | cpf, responsavel_cpf, telefones, membro_id, deleted_at |
+| `cargo_modulo_permissao` | nivel, pode_exportar, pode_aprovar, escopo_proprio |
+| `app_super_admins` | email, ativo, nome |
+
+### Consultar audit log (super-admin)
+
+```sql
+-- Quem mudou o salário do funcionário X?
+SELECT user_email, changes->'salario', created_at
+FROM app_audit_log
+WHERE table_name = 'rh_funcionarios' AND row_id = '<uuid>'
+  AND changes ? 'salario'
+ORDER BY created_at DESC;
+
+-- Histórico de alterações na matriz de permissões
+SELECT user_email, changes, created_at
+FROM app_audit_log
+WHERE table_name = 'cargo_modulo_permissao'
+ORDER BY created_at DESC LIMIT 100;
+```
+
+### Adicionar audit a nova tabela
+
+```sql
+CREATE TRIGGER trg_audit_nova_tabela
+AFTER INSERT OR UPDATE OR DELETE ON public.nova_tabela
+FOR EACH ROW EXECUTE FUNCTION public.audit_log_changes(
+  'col_sensivel1,col_sensivel2,deleted_at'  -- TG_ARGV opcional
+);
+```
+
 ## UUID FKs canônicos · responsável/líder (transição em curso · 2026-05-21)
 
 Memória `feedback_responsible_by_uuid`: "Responsáveis por UUID · profiles.id".
