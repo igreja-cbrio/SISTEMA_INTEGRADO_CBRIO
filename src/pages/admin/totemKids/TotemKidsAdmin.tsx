@@ -337,6 +337,7 @@ function AbaEstacoes() {
   const [carregando, setCarregando] = useState(true);
   const [modalAberto, setModalAberto] = useState(false);
   const [editando, setEditando] = useState<any>(null);
+  const [modalQr, setModalQr] = useState<any>(null);
 
   async function carregar() {
     setCarregando(true);
@@ -363,12 +364,33 @@ function AbaEstacoes() {
     }
   }
 
+  async function abrirQr(e: any) {
+    try {
+      const info = await totemKids.estacoes.infoPareamento(e.id);
+      setModalQr(info);
+    } catch (err: any) {
+      toast.error(err?.message || 'Erro ao gerar QR');
+    }
+  }
+
+  async function regenerarToken(estacaoId: string) {
+    if (!confirm('Regenerar o token vai REVOGAR tablets já pareados. Eles vão precisar escanear o QR novo. Continuar?')) return;
+    try {
+      const info = await totemKids.estacoes.regenerarToken(estacaoId);
+      setModalQr(info);
+      toast.success('Token regenerado · QR novo gerado');
+      carregar();
+    } catch (err: any) {
+      toast.error(err?.message || 'Erro');
+    }
+  }
+
   return (
     <Card>
       <CardContent className="p-4 space-y-3">
         <div className="flex justify-between items-center">
           <div className="text-sm text-muted-foreground">
-            Totems físicos · MVP usa só <b>manned</b>
+            Totems físicos · cada tablet pareia com 1 estação via QR
           </div>
           <Button onClick={() => abrir()} size="sm" className="bg-pink-600 hover:bg-pink-700">
             <Plus className="h-4 w-4 mr-1" /> Nova estação
@@ -377,20 +399,69 @@ function AbaEstacoes() {
         {carregando ? <Loader2 className="h-6 w-6 animate-spin text-pink-500 mx-auto my-6" /> : (
           <div className="space-y-2">
             {estacoes.map(e => (
-              <div key={e.id} className="flex items-center justify-between p-3 border rounded-lg">
-                <div>
-                  <div className="font-medium">{e.nome} <Badge variant="outline" className="ml-1">{e.tipo}</Badge> {!e.ativo && <Badge variant="outline">inativa</Badge>}</div>
-                  <div className="text-xs text-muted-foreground">
+              <div key={e.id} className="flex items-center justify-between p-3 border rounded-lg gap-2">
+                <div className="min-w-0 flex-1">
+                  <div className="font-medium truncate">{e.nome} <Badge variant="outline" className="ml-1">{e.tipo}</Badge> {!e.ativo && <Badge variant="outline">inativa</Badge>}</div>
+                  <div className="text-xs text-muted-foreground truncate">
                     {e.printer_modelo} {e.printer_target && `· ${e.printer_target}`}
+                    {e.pareada_em && <span className="text-emerald-600"> · pareada {format(new Date(e.pareada_em), 'dd/MM HH:mm', { locale: ptBR })}</span>}
                   </div>
                 </div>
-                <Button size="sm" variant="ghost" onClick={() => abrir(e)}>
-                  <Pencil className="h-4 w-4" />
-                </Button>
+                <div className="flex gap-1 flex-shrink-0">
+                  <Button size="sm" variant="outline" onClick={() => abrirQr(e)} title="QR de pareamento">
+                    <Sparkles className="h-4 w-4" />
+                  </Button>
+                  <Button size="sm" variant="ghost" onClick={() => abrir(e)} title="Editar">
+                    <Pencil className="h-4 w-4" />
+                  </Button>
+                </div>
               </div>
             ))}
           </div>
         )}
+
+        {/* Modal: QR de pareamento */}
+        <Dialog open={!!modalQr} onOpenChange={(o) => !o && setModalQr(null)}>
+          <DialogContent className="max-w-md">
+            <DialogHeader>
+              <DialogTitle>QR de pareamento · {modalQr?.nome}</DialogTitle>
+              <DialogDescription>
+                Escaneie no tablet/celular pra vincular esse dispositivo à estação.
+                O pareamento dura até regenerar o token.
+              </DialogDescription>
+            </DialogHeader>
+            {modalQr && (
+              <div className="space-y-3">
+                <div className="bg-white p-4 rounded-lg flex justify-center">
+                  <img
+                    src={`https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(modalQr.url)}`}
+                    alt="QR de pareamento"
+                    className="rounded"
+                  />
+                </div>
+                <div className="text-xs bg-muted/50 p-2 rounded font-mono break-all">
+                  {modalQr.url}
+                </div>
+                <div className="flex justify-between items-center">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => { navigator.clipboard.writeText(modalQr.url); toast.success('URL copiada'); }}
+                  >
+                    Copiar URL
+                  </Button>
+                  <Button variant="destructive" size="sm" onClick={() => regenerarToken(modalQr.id)}>
+                    Regenerar token
+                  </Button>
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  <b>Como usar</b>: abre essa URL no tablet (escaneando o QR), aceita o pareamento, pronto. Daí pra frente os check-ins desse tablet vinculam à estação <b>{modalQr.nome}</b>.
+                </p>
+              </div>
+            )}
+          </DialogContent>
+        </Dialog>
+
         <Dialog open={modalAberto} onOpenChange={(o) => !o && setModalAberto(false)}>
           <DialogContent>
             <DialogHeader><DialogTitle>{editando?.id ? 'Editar estação' : 'Nova estação'}</DialogTitle></DialogHeader>
