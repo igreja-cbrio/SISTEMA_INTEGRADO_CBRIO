@@ -219,20 +219,52 @@ export default function SantanderTab() {
         </div>
         {saldo?.erro && <div style={styles.alertBox(C.redBg, C.red)}>{saldo.erro}</div>}
         {saldo && !saldo.erro && (
-          <div style={styles.grid3}>
-            <div style={styles.kpi}>
-              <div style={styles.kpiLabel}>Disponivel</div>
-              <div style={{ ...styles.kpiValue, color: C.green }}>{brl(saldo.available)}</div>
+          <>
+            <div style={styles.grid3}>
+              <div style={styles.kpi} title="Saldo livre pra movimentar agora. Negativo = uso do cheque especial">
+                <div style={styles.kpiLabel}>Disponivel</div>
+                <div style={{ ...styles.kpiValue, color: saldo.available >= 0 ? C.green : C.red }}>
+                  {brl(saldo.available)}
+                </div>
+                <div style={styles.kpiSub}>Saldo livre pra usar</div>
+              </div>
+              <div style={styles.kpi} title="Valores retidos temporariamente (PIX agendado, debito autorizado, garantias)">
+                <div style={styles.kpiLabel}>Bloqueado</div>
+                <div style={styles.kpiValue}>{brl(saldo.blocked)}</div>
+                <div style={styles.kpiSub}>Retido temporariamente</div>
+              </div>
+              <div style={styles.kpi} title="Aplicacao automatica (ContaMax). Resgata sozinho quando precisa">
+                <div style={styles.kpiLabel}>Investido automatico</div>
+                <div style={styles.kpiValue}>{brl(saldo.invested)}</div>
+                <div style={styles.kpiSub}>ContaMax</div>
+              </div>
             </div>
-            <div style={styles.kpi}>
-              <div style={styles.kpiLabel}>Bloqueado</div>
-              <div style={styles.kpiValue}>{brl(saldo.blocked)}</div>
-            </div>
-            <div style={styles.kpi}>
-              <div style={styles.kpiLabel}>Investido automatico</div>
-              <div style={styles.kpiValue}>{brl(saldo.invested)}</div>
-            </div>
-          </div>
+            {saldo.overdraftLimit > 0 && (
+              <div style={{ ...styles.grid3, marginTop: 12 }}>
+                <div style={styles.kpi} title="Limite total de cheque especial contratado com o banco">
+                  <div style={styles.kpiLabel}>Limite contratado</div>
+                  <div style={{ ...styles.kpiValue, color: C.blue }}>{brl(saldo.overdraftLimit)}</div>
+                  <div style={styles.kpiSub}>Cheque especial</div>
+                </div>
+                <div style={styles.kpi} title="Quanto do limite esta sendo usado agora">
+                  <div style={styles.kpiLabel}>Limite usado</div>
+                  <div style={{ ...styles.kpiValue, color: saldo.overdraftUsed > 0 ? C.amber : C.text }}>
+                    {brl(saldo.overdraftUsed)}
+                  </div>
+                  <div style={styles.kpiSub}>
+                    {saldo.overdraftLimit > 0
+                      ? `${((saldo.overdraftUsed / saldo.overdraftLimit) * 100).toFixed(1)}% do limite`
+                      : '—'}
+                  </div>
+                </div>
+                <div style={styles.kpi} title="Quanto ainda sobra do limite de cheque especial">
+                  <div style={styles.kpiLabel}>Limite disponivel</div>
+                  <div style={{ ...styles.kpiValue, color: C.green }}>{brl(saldo.overdraftAvailable)}</div>
+                  <div style={styles.kpiSub}>Pra usar emergencialmente</div>
+                </div>
+              </div>
+            )}
+          </>
         )}
       </div>
 

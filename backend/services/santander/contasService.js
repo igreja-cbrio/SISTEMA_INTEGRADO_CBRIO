@@ -25,10 +25,26 @@ async function consultarSaldo({ userId } = {}) {
   const available = Number(raw.availableAmount || 0);
   const blocked = Number(raw.blockedAmount || 0);
   const invested = Number(raw.automaticallyInvestedAmount || 0);
+  // Limite de cheque especial · campo do Open Banking
+  // Tenta varias chaves possiveis (Santander as vezes muda nomenclatura)
+  const overdraftLimit = Number(
+    raw.overdraftLimitAmount
+    || raw.overdraftContractedLimit
+    || raw.checkSpecialContractedLimit
+    || 0
+  );
+  const overdraftUsed = Number(
+    raw.overdraftUsedAmount
+    || raw.checkSpecialUsedAmount
+    || 0
+  );
   return {
     available,
     blocked,
     invested,
+    overdraftLimit,
+    overdraftUsed,
+    overdraftAvailable: overdraftLimit > 0 ? overdraftLimit - overdraftUsed : 0,
     total: available + blocked + invested,
     currency: raw.availableAmountCurrency || 'BRL',
     raw,
@@ -46,6 +62,8 @@ async function snapshotSaldoDoDia({ userId } = {}) {
       available_amount: saldo.available,
       blocked_amount: saldo.blocked,
       invested_amount: saldo.invested,
+      overdraft_limit: saldo.overdraftLimit,
+      overdraft_used: saldo.overdraftUsed,
       currency: saldo.currency,
       raw_response: saldo.raw,
       capturado_em: new Date().toISOString(),
