@@ -348,6 +348,35 @@ async function fetchVideoRetentionCurve(channelId, videoId, startDate, endDate) 
   }));
 }
 
+// Analytics: pico de viewers simultaneos durante uma live (peakConcurrentViewers).
+// IMPORTANTE: este metric eh um RECOVERY POST-LIVE pro online_pico. O live-monitor
+// captura concurrentViewers via Data API enquanto a live ta ativa · mas se o cron
+// nao rodar em algum momento (GitHub Actions atrasado, OAuth com escopo de Manager
+// que nao retorna liveBroadcasts.list, etc), o pico se perde. Analytics tem este
+// metric disponivel POST-LIVE (com delay de 1-2 dias) e nao depende de scope owner.
+// Retorna { peak, avg } · null se video nao foi live OU se Analytics nao tem dado ainda.
+async function fetchLivePeakConcurrentViewers(channelId, videoId, startDate, endDate) {
+  const { token, channel_id } = await getValidAccessToken(channelId);
+  const params = new URLSearchParams({
+    ids: `channel==${channel_id}`,
+    startDate,
+    endDate,
+    metrics: 'peakConcurrentViewers,averageConcurrentViewers',
+    filters: `video==${videoId}`,
+  });
+  const res = await fetch(`${ANALYTICS}/reports?${params}`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!res.ok) {
+    const t = await res.text();
+    throw new Error(`Analytics peakConcurrentViewers falhou: ${res.status} ${t.slice(0, 200)}`);
+  }
+  const data = await res.json();
+  const row = (data.rows || [])[0];
+  if (!row) return { peak: null, avg: null };
+  return { peak: row[0] || null, avg: row[1] || null };
+}
+
 // Analytics: views separadas por inscrito vs nao-inscrito.
 // dimension `subscribedStatus` retorna 2 rows: SUBSCRIBED e UNSUBSCRIBED.
 // Retorna { subscribed, unsubscribed }.
@@ -445,6 +474,7 @@ module.exports = {
   disconnect,
   findActiveBroadcast,
   fetchLiveConcurrentViewers,
+  fetchLivePeakConcurrentViewers,
   fetchVideoViews,
   fetchVideoSubsChange,
   fetchVideoTrafficSources,

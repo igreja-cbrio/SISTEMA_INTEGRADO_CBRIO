@@ -497,11 +497,12 @@ export default function Online() {
 
       // 2. catch-up em batches de 5 cultos por chamada · loop ate remaining=0
       // pra nao estourar o limite de 60s da serverless do Vercel.
-      const acc = { processados: 0, ds: 0, ddus: 0, subs: 0, trafico: 0, retencao_curva: 0, sub_status: 0 };
+      const acc = { processados: 0, pico: 0, ds: 0, ddus: 0, subs: 0, trafico: 0, retencao_curva: 0, sub_status: 0 };
       let batches = 0;
       while (batches < 30) { // ~150 cultos no maximo
         const r: any = await online.coletar.catchUp(5);
         acc.processados   += r?.processados   ?? 0;
+        acc.pico          += r?.pico          ?? 0;
         acc.ds            += r?.ds            ?? 0;
         acc.ddus          += r?.ddus          ?? 0;
         acc.subs          += r?.subs          ?? 0;
@@ -516,7 +517,7 @@ export default function Online() {
       return { linkados, batches, ...acc };
     },
     onSuccess: (r) => {
-      const metricasTotais = r.ds + r.ddus + r.subs + r.trafico + r.retencao_curva + r.sub_status;
+      const metricasTotais = r.pico + r.ds + r.ddus + r.subs + r.trafico + r.retencao_curva + r.sub_status;
       toast.success(
         `Recoleta completa · ${r.linkados} cultos linkados · ${metricasTotais} metricas em ${r.processados} cultos (${r.batches} lotes)`,
         { duration: 6000 }
@@ -594,7 +595,7 @@ export default function Online() {
                 variant="secondary"
                 size="lg"
                 className="gap-2 bg-red-700 text-white hover:bg-red-800 shadow-lg border border-white/20"
-                title="Linka cultos do passado por proximidade temporal com videos do canal + puxa todas as 6 metricas (DS, DDUS, watch time, retencao, subs, trafego, sub-status) onde estiver faltando dado. Pode demorar 1-3min."
+                title="Linka cultos do passado por proximidade temporal com videos do canal + puxa todas as 7 metricas (pico ao vivo, DS, DDUS, watch time, retencao, subs, trafego, sub-status) onde estiver faltando dado. Pico recuperado via peakConcurrentViewers do Analytics (delay de 1-2 dias). Pode demorar 1-3min."
               >
                 {recoletarMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
                 Recoletar tudo
