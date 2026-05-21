@@ -694,19 +694,64 @@ router.get('/transacoes', async (req, res) => {
 // ====================================================================
 // DASHBOARD OVERVIEW · agrega tudo do /admin/financeiro home
 // ====================================================================
+
+// Calcula range [inicio, fim] e ranges anteriores baseados no period
+function calcPeriodRanges(period) {
+  const hoje = new Date();
+  let inicio, fim, inicioAnt, fimAnt;
+
+  fim = new Date(hoje);
+  fimAnt = new Date(hoje);
+
+  if (period === 'week') {
+    // Domingo a sabado (esta semana)
+    const dow = hoje.getDay();
+    inicio = new Date(hoje); inicio.setDate(hoje.getDate() - dow);
+    fim = new Date(inicio); fim.setDate(inicio.getDate() + 6);
+    inicioAnt = new Date(inicio); inicioAnt.setDate(inicio.getDate() - 7);
+    fimAnt = new Date(fim); fimAnt.setDate(fim.getDate() - 7);
+  } else if (period === 'quarter') {
+    const q = Math.floor(hoje.getMonth() / 3);
+    inicio = new Date(hoje.getFullYear(), q * 3, 1);
+    fim = new Date(hoje.getFullYear(), q * 3 + 3, 0);
+    inicioAnt = new Date(hoje.getFullYear(), (q - 1) * 3, 1);
+    fimAnt = new Date(hoje.getFullYear(), q * 3, 0);
+  } else if (period === 'year') {
+    inicio = new Date(hoje.getFullYear(), 0, 1);
+    fim = new Date(hoje.getFullYear(), 11, 31);
+    inicioAnt = new Date(hoje.getFullYear() - 1, 0, 1);
+    fimAnt = new Date(hoje.getFullYear() - 1, 11, 31);
+  } else {
+    // month (default)
+    inicio = new Date(hoje.getFullYear(), hoje.getMonth(), 1);
+    fim = new Date(hoje.getFullYear(), hoje.getMonth() + 1, 0);
+    inicioAnt = new Date(hoje.getFullYear(), hoje.getMonth() - 1, 1);
+    fimAnt = new Date(hoje.getFullYear(), hoje.getMonth(), 0);
+  }
+
+  const fmt = (d) => d.toISOString().slice(0, 10);
+  return {
+    inicio: fmt(inicio),
+    fim: fmt(fim),
+    inicio_ant: fmt(inicioAnt),
+    fim_ant: fmt(fimAnt),
+  };
+}
+
 router.get('/dashboard/overview', async (req, res) => {
   try {
+    const period = ['week', 'month', 'quarter', 'year'].includes(req.query.period) ? req.query.period : 'month';
     const hoje = new Date();
     const hojeStr = hoje.toISOString().slice(0, 10);
-    const mesAtual = hojeStr.slice(0, 7);
-    const mesAnterior = new Date(hoje.getFullYear(), hoje.getMonth() - 1, 1).toISOString().slice(0, 7);
-    const seisMesesAtras = new Date(hoje.getFullYear(), hoje.getMonth() - 5, 1).toISOString().slice(0, 10);
+    const ranges = calcPeriodRanges(period);
+    // 12 meses atras (pra grafico de fluxo de caixa anual)
+    const dozeMesesAtras = new Date(hoje.getFullYear(), hoje.getMonth() - 11, 1).toISOString().slice(0, 10);
 
     // Paralelo · todas as queries
     const [
       contas,
-      transMes,
-      transMesAnt,
+      transPeriodo,
+      transPeriodoAnt,
       trans6m,
       pagar,
       reembolsos,
@@ -715,19 +760,18 @@ router.get('/dashboard/overview', async (req, res) => {
       naoClassificadas,
       receitaPorCulto,
       topDespesas,
+      recentes,
     ] = await Promise.all([
       supabase.from('fin_contas').select('id, nome, saldo, ativa, banco'),
       supabase.from('fin_transacoes').select('tipo, valor, status')
-        .gte('data_competencia', `${mesAtual}-01`)
-        .lt('data_competencia', `${mesAtual}-32`)
+        .gte('data_competencia', ranges.inicio).lte('data_competencia', ranges.fim)
         .neq('status', 'cancelado'),
       supabase.from('fin_transacoes').select('tipo, valor')
-        .gte('data_competencia', `${mesAnterior}-01`)
-        .lt('data_competencia', `${mesAnterior}-32`)
+        .gte('data_competencia', ranges.inicio_ant).lte('data_competencia', ranges.fim_ant)
         .neq('status', 'cancelado'),
       supabase.from('fin_transacoes')
         .select('tipo, valor, data_competencia')
-        .gte('data_competencia', seisMesesAtras)
+        .gte('data_competencia', dozeMesesAtras)
         .neq('status', 'cancelado'),
       supabase.from('fin_contas_pagar').select('id, valor, status, data_vencimento, descricao')
         .eq('status', 'pendente'),
@@ -737,24 +781,29 @@ router.get('/dashboard/overview', async (req, res) => {
       supabase.from('fin_lancamentos_brutos').select('id', { count: 'exact', head: true }).eq('ja_classificado', false),
       supabase.from('vw_fin_transacoes_completa')
         .select('culto_nome, culto_service_type_slug, plano_contas_codigo, valor')
-        .gte('data_competencia', seisMesesAtras)
+        .gte('data_competencia', dozeMesesAtras)
         .eq('tipo', 'receita')
         .not('culto_slot_id', 'is', null),
       supabase.from('vw_fin_transacoes_completa')
         .select('plano_contas_codigo, plano_contas_nome, valor')
-        .gte('data_competencia', `${mesAtual}-01`)
+        .gte('data_competencia', ranges.inicio).lte('data_competencia', ranges.fim)
         .eq('tipo', 'despesa')
         .not('plano_contas_id', 'is', null),
+      supabase.from('vw_fin_transacoes_completa')
+        .select('id, descricao, valor, tipo, status, data_competencia, plano_contas_nome, culto_nome')
+        .order('data_competencia', { ascending: false })
+        .neq('status', 'cancelado')
+        .limit(8),
     ]);
 
     const contasAtivas = (contas.data || []).filter(c => c.ativa);
     const saldoTotal = contasAtivas.reduce((s, c) => s + Number(c.saldo || 0), 0);
 
-    const tMes = transMes.data || [];
+    const tMes = transPeriodo.data || [];
     const receitaMes = tMes.filter(t => t.tipo === 'receita').reduce((s, t) => s + Number(t.valor), 0);
     const despesaMes = tMes.filter(t => t.tipo === 'despesa').reduce((s, t) => s + Number(t.valor), 0);
 
-    const tMesAnt = transMesAnt.data || [];
+    const tMesAnt = transPeriodoAnt.data || [];
     const receitaMesAnt = tMesAnt.filter(t => t.tipo === 'receita').reduce((s, t) => s + Number(t.valor), 0);
     const despesaMesAnt = tMesAnt.filter(t => t.tipo === 'despesa').reduce((s, t) => s + Number(t.valor), 0);
 
@@ -782,17 +831,42 @@ router.get('/dashboard/overview', async (req, res) => {
       r.total += Number(t.valor);
     }
 
-    // Top 5 categorias de despesa do mes
+    // Top 5 categorias de despesa do periodo
+    // Mapeamento nivel 2 -> rotulo amigavel (codigo aceita curtos)
+    const CATEGORIA_LABELS = {
+      '4.01': 'Recursos Humanos',
+      '4.02': 'Despesas Prediais',
+      '4.03': 'Servicos Terceirizados',
+      '4.04': 'Repasse a Missoes',
+      '4.05': 'Acao Social',
+      '4.06': 'Materiais de Consumo',
+      '4.07': 'Viagens',
+      '4.08': 'Veiculos',
+      '4.09': 'Patrimoniais',
+      '4.10': 'Eventos',
+      '4.11': 'Marketing',
+      '4.12': 'Outras',
+      '4.13': 'Impostos e Tributos',
+      '4.14': 'Despesas Financeiras',
+    };
     const despMap = new Map();
     for (const t of topDespesas.data || []) {
       const code = t.plano_contas_codigo || '';
-      // Agrupa por nivel 2 (ex: 4.01, 4.02)
       const grupo = code.split('.').slice(0, 2).join('.');
       if (!grupo) continue;
-      if (!despMap.has(grupo)) despMap.set(grupo, { codigo: grupo, nome: t.plano_contas_nome?.split(' ').slice(0, 3).join(' ') || grupo, total: 0 });
+      if (!despMap.has(grupo)) {
+        despMap.set(grupo, {
+          codigo: grupo,
+          nome: CATEGORIA_LABELS[grupo] || (t.plano_contas_nome?.split(' ').slice(0, 3).join(' ') || grupo),
+          total: 0,
+        });
+      }
       despMap.get(grupo).total += Number(t.valor);
     }
     const topDespCategorias = Array.from(despMap.values()).sort((a, b) => b.total - a.total).slice(0, 5);
+    // Calcula percentual relativo
+    const totalDesp = topDespCategorias.reduce((s, c) => s + c.total, 0) || 1;
+    topDespCategorias.forEach(c => { c.percentual = (c.total / totalDesp) * 100; });
 
     // Pagar vencendo em 7 dias
     const pgList = pagar.data || [];
@@ -801,6 +875,8 @@ router.get('/dashboard/overview', async (req, res) => {
     const pagarVencidas = pgList.filter(p => p.data_vencimento < hojeStr).length;
 
     res.json({
+      period,
+      ranges,
       stats: {
         saldoTotal,
         contasAtivas: contasAtivas.length,
@@ -827,6 +903,7 @@ router.get('/dashboard/overview', async (req, res) => {
       serie_6_meses: serie6m,
       receita_por_culto: Array.from(cultoMap.values()).sort((a, b) => b.total - a.total),
       top_despesas: topDespCategorias,
+      transacoes_recentes: recentes.data || [],
       ultimo_upload: (ultimoUpload.data || [])[0] || null,
     });
   } catch (e) {

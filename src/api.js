@@ -517,7 +517,7 @@ export const financeiroV2 = {
   },
   transacoes: (params) => get('/financeiro-v2/transacoes' + (params ? '?' + new URLSearchParams(params) : '')),
   dashboard: {
-    overview: () => get('/financeiro-v2/dashboard/overview'),
+    overview: (period) => get('/financeiro-v2/dashboard/overview' + (period ? `?period=${period}` : '')),
     semana: (semana) => get('/financeiro-v2/dashboard/semana' + (semana ? `?semana=${semana}` : '')),
   },
   backfill: (data) => post('/financeiro-v2/backfill/transacoes', data || {}),
