@@ -2,6 +2,98 @@
 
 Guia operacional para o Claude Code quando trabalhar neste repositório.
 
+## Totem Kids · modulo novo (2026-05-21 · branch marcos-totem-kids)
+
+Pedido do Eduardo (gestor) repassado pelo Marcos · substituir o **Planning
+Center Check-Ins** por modulo proprio pra ministerio infantil. Diferente do
+totem do voluntariado: crianca **nao** e escalada antes, mae digita o nome no
+totem, voluntario imprime 2 etiquetas (crianca + recibo do responsavel) com
+codigo de seguranca de 4 chars · no checkout, etiqueta da mae bate com etiqueta
+da crianca pra liberar a saida.
+
+### Localizacao
+- Menu **Ministerial > Ferramentas > Totem Kids** (vizinho do Totem Membro)
+- Operacao: `/ministerial/totem-kids` (check-in), `/checkout`, `/painel`
+- Admin (Mariane/coord-kids): `/admin/totem-kids` com 5 abas (Sessoes, Salas,
+  Estacoes, Criancas, Auditoria)
+- Painel KPI continua em `/kids` (nao mudou)
+
+### Plano completo
+`docs/checkin-kids-plano.md` · arquitetura, schema, fluxos, 10 decisoes
+fechadas com o Marcos em 2026-05-21:
+1. **0-12 anos** (13+ → AMI)
+2. Estacoes MVP: **so manned** (voluntario sempre opera) · self/roster em v2
+3. Foto: **opcional com consentimento**, NUNCA na etiqueta
+4. Salas iniciais: 5 padrao (Bercario, Maternal, Infantil 1, Infantil 2, Pre-AMI)
+5. Multi-campus: campo `igreja_id`, hoje so Sede
+6. Override: coord-kids + admin + lider Kids do dia (3 papeis)
+7. Codigo sem expiracao · cron noturno 23h fecha pendentes
+8. App pra mae: **nunca** · so totem fisico
+9. Historico pra mae: nao · so staff ve
+10. Driver Brother: **navegador** (window.print + @page 62mm x 100mm) · Brother
+    como printer default do Windows do totem. v2 = agente local TCP:9100
+
+### Schema (7 tabelas + 1 view + 1 view historico + 3 triggers + 2 funcoes)
+- `kids_criancas` (cadastro minimo · sem CPF · LGPD)
+- `kids_responsaveis` (M:N criança × mem_membros)
+- `kids_salas` (Berçário, Maternal, etc · faixa etaria em meses · igreja_id)
+- `kids_sessoes` (1 por culto · FK cultos.id UNIQUE)
+- `kids_estacoes` (totem fisico · printer_target informativo)
+- `kids_checkins` (1 por sessao × crianca · codigo_seguranca + barras)
+- `kids_etiquetas_log` (auditoria impressao + reimpressao)
+- `fn_kids_gerar_codigo_seguranca()` · alfabeto 32 chars [A-HJ-NP-Z2-9] · 32^4 unicos
+- Trigger `fn_kids_sessao_consolida_culto` · status='encerrada' → atualiza
+  `cultos.presencial_kids` e `cultos.decisoes_kids` (alimenta KID-01 automatico)
+- Trigger `fn_kids_decisao_para_culto` · `fez_decisao_jesus=true` → cria
+  registro em `cultos_decisoes_pessoas` com tipo='kids' (schema da migration
+  20260518150000 ja suportava)
+- `fn_kids_checkout_forcado_pendentes()` · pra rodar via cron 23h
+
+### Permissoes
+- Coord-kids (Mariane) ganha nivel 5 automatico pelo `AREA_MODULO_BOOST` da
+  area KIDS (auth.js linha ~99). Matriz default: 3 em `cargo_modulo_permissao`.
+- Admin/diretor: sempre passa
+- "Lider Kids do dia": verificado dinamicamente no backend (`isLiderKidsDoDia`)
+  via `vol_check_ins` ativo hoje em culto com `has_kids=true`. Permite override
+  no checkout sem ter cargo formal.
+- ROUTE_MODULE_MAP estendido: `'totem-kids': ['kids']`
+
+### Backend
+- `backend/routes/totemKids.js` · todas as rotas (~600 linhas)
+- Registrado em `server.js` linha ~123: `/api/totem-kids`
+- Padrao igual aos outros: `authenticate` + `authorizeModule('kids', N)`
+
+### Frontend
+- `src/pages/ministerial/totemKids/`
+  - `TotemKidsCheckin.tsx` · busca + flow + impressao
+  - `TotemKidsCheckout.tsx` · codigo de 4 chars + match + override
+  - `TotemKidsPainel.tsx` · ao vivo · refresh 15s · botao encerrar sessao
+  - `lib/imprimir.ts` · usa `bwip-js` (added na PR) pra Code128 · window.print
+  - `lib/idade.ts` · helpers de calc/format
+- `src/pages/admin/totemKids/TotemKidsAdmin.tsx` · 5 abas
+- Rotas em `src/App.tsx` linha ~422 (lazyWithRetry)
+- Menu em `src/components/layout/AppShell.jsx` secao Ministerial > Ferramentas
+
+### Setup do hardware (uma vez)
+1. Brother QL-820NWB com cabo ethernet, IP fixo no DHCP da igreja
+2. Driver Brother no Windows do totem
+3. Brother como printer DEFAULT do Windows
+4. Browser do totem com "Imprimir sem dialogo" (default em kiosk mode)
+5. Etiqueta DK-22251 (62mm × 100mm continua)
+
+### Migrations
+- `20260521160000_totem_kids_schema.sql` · schema completo
+- `20260521160100_totem_kids_seed.sql` · 5 salas + 1 estacao + ajuste matriz
+
+### Dependencias adicionadas
+- `bwip-js@4.10.1` (frontend · gera SVG do Code128 lazy)
+
+### Proximos passos quando voltar
+- Testar fluxo manned end-to-end num culto de menor movimento
+- Configurar Brother como printer default no totem fisico
+- Decidir se vamos adicionar Self/Roster (fase 2)
+- Eventualmente: agente local TCP pra impressao programatica (v2)
+
 ## ⚠️ Pendencias de 2026-05-18 · estado atualizado 2026-05-19
 
 Houve troca de frentes em 2026-05-19. Matheus migrou pra modulo
