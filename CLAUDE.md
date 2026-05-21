@@ -2,6 +2,46 @@
 
 Guia operacional para o Claude Code quando trabalhar neste repositório.
 
+## RLS contextual PII · membros/decisões/batismos/cuidados (2026-05-21 · Onda 2 PR4)
+
+Migration `20260521210000_onda2_rls_pii.sql` finaliza a Onda 2 RLS.
+Substitui as policies `USING(true)` das 8 tabelas com PII mais sensível.
+
+### Tabelas (8)
+
+| Tabela | READ | INSERT/UPDATE | DELETE |
+|---|---|---|---|
+| `mem_membros` | próprio OR membresia≥1 | membresia≥3 (próprio update OK) | super-admin |
+| `cultos_decisoes_pessoas` | linkado OR integracao/cuidados≥1 OR membresia≥3 | integracao≥2 ou kids≥2 (INSERT) · integracao/cuidados≥3 (UPDATE) | super-admin |
+| `batismo_inscricoes` | linkado OR integracao≥1 OR membresia≥3 | integracao≥2 (INSERT) · ≥3 (UPDATE) | super-admin |
+| `nsm_eventos` | linkado OR integracao/cuidados/painel-cbrio≥1 | integracao/cuidados≥2 · integracao≥3 (UPDATE) | super-admin |
+| `int_visitantes` | linkado OR integracao/cuidados≥1 | integracao/cuidados≥2 (INSERT) · ≥3 (UPDATE) | super-admin |
+| `cui_acompanhamentos`, `cui_jornada180`, `cui_convertidos` | próprio OR cuidados/integracao≥1 | cuidados/integracao≥2 (INSERT) · ≥3 (UPDATE) | super-admin |
+
+### Conceito · "linkado"
+
+Cada tabela define como a pessoa se identifica:
+- `mem_membros.id` = `current_user_membro_id()`
+- `cultos_decisoes_pessoas.membro_id` = `current_user_membro_id()`
+- `batismo_inscricoes.membro_id` = `current_user_membro_id()`
+- `nsm_eventos.membro_id` = `current_user_membro_id()`
+- `int_visitantes.membresia_id` = `current_user_membro_id()`
+- `cui_*.membro_id` = `current_user_membro_id()`
+
+### Conceito · "vários módulos podem ver"
+
+Decisões/batismos/visitantes/cuidados são naturalmente vistos por
+**múltiplos cargos** com responsabilidades complementares. A RLS aceita
+qualquer um:
+- Alda Lorena (integracao) preenche decisões nos cultos
+- Pastoral (cuidados) acompanha convertidos pós-decisão
+- Painel CBRio (analytics) lê nsm_eventos pra mandalas
+
+### DELETE bloqueado pra todos exceto super-admin
+
+PII + LGPD pedem retenção mínima auditável. Use `app_soft_delete()`
+(criada na Onda 3) pra "delete" reversível. Hard delete só Marcos/Matheus.
+
 ## RLS contextual Financeiro/RH (2026-05-21 · Onda 2 PR3)
 
 Migration `20260521200000_onda2_rls_financeiro_rh.sql` substitui as
