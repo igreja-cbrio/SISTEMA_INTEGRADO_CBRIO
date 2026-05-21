@@ -1397,4 +1397,108 @@ router.get('/dashboard/semana-completa', async (req, res) => {
   }
 });
 
+// ====================================================================
+// DASHBOARD FINANCEIRO COMPLETO · PR A do roadmap
+// (graficos mensal/semanal/decendio/YTD/YoY/freq vs receita)
+// ====================================================================
+router.get('/dashboard/financeiro-completo', async (req, res) => {
+  try {
+    const hoje = new Date();
+    const anoAtual = hoje.getFullYear();
+    const anoAnterior = anoAtual - 1;
+    const mesAtual = `${anoAtual}-${String(hoje.getMonth() + 1).padStart(2, '0')}`;
+
+    const inicio12m = new Date(anoAtual, hoje.getMonth() - 11, 1).toISOString().slice(0, 10);
+    const inicio52s = new Date(hoje.getTime() - 365 * 86400000).toISOString().slice(0, 10);
+
+    const [
+      mensal,
+      semanal,
+      decendio,
+      ytd,
+      yoySemanal,
+      freqReceita,
+    ] = await Promise.all([
+      supabase.from('vw_fin_arrecadacao_mensal').select('*')
+        .gte('mes', inicio12m.slice(0, 7)).order('mes'),
+      supabase.from('vw_fin_arrecadacao_semanal').select('*')
+        .gte('semana_inicio', inicio52s).order('semana_inicio'),
+      supabase.from('vw_fin_decendio').select('*')
+        .eq('mes', mesAtual).order('decendio'),
+      supabase.from('vw_fin_ano_acumulado').select('*')
+        .in('ano', [anoAtual, anoAnterior]),
+      supabase.from('vw_fin_yoy_semanal').select('*')
+        .eq('ano_atual', anoAtual).order('semana_inicio'),
+      supabase.from('vw_fin_freq_vs_receita_mensal').select('*')
+        .gte('mes', inicio12m.slice(0, 7)).order('mes'),
+    ]);
+
+    const ytdMap = new Map((ytd.data || []).map(r => [r.ano, r]));
+    const ytdAtual = ytdMap.get(anoAtual) || { receita_ytd: 0, despesa_ytd: 0, resultado_ytd: 0 };
+    const ytdAnt = ytdMap.get(anoAnterior) || { receita_ytd: 0, despesa_ytd: 0, resultado_ytd: 0 };
+    const ytdDelta = Number(ytdAnt.receita_ytd) > 0
+      ? ((Number(ytdAtual.receita_ytd) - Number(ytdAnt.receita_ytd)) / Number(ytdAnt.receita_ytd)) * 100
+      : null;
+
+    // Frequencia vs Arrecadacao · crescimento % mes a mes
+    const fr = (freqReceita.data || []);
+    const freqVsReceita = fr.map((m, i) => {
+      if (i === 0) return { ...m, delta_freq_pct: null, delta_receita_pct: null, elasticidade: null };
+      const ant = fr[i - 1];
+      const dFreq = Number(ant.presencial) > 0 ? ((Number(m.presencial) - Number(ant.presencial)) / Number(ant.presencial)) * 100 : null;
+      const dRec = Number(ant.receita) > 0 ? ((Number(m.receita) - Number(ant.receita)) / Number(ant.receita)) * 100 : null;
+      const elast = (dFreq !== null && dFreq !== 0) ? dRec / dFreq : null;
+      return { ...m, delta_freq_pct: dFreq, delta_receita_pct: dRec, elasticidade: elast };
+    });
+
+    res.json({
+      mes_atual: mesAtual,
+      ano_atual: anoAtual,
+      ano_anterior: anoAnterior,
+      mensal: (mensal.data || []).map(r => ({
+        ...r,
+        receita: Number(r.receita),
+        despesa: Number(r.despesa),
+        resultado: Number(r.resultado),
+      })),
+      semanal: (semanal.data || []).map(r => ({
+        ...r,
+        receita: Number(r.receita),
+        despesa: Number(r.despesa),
+        resultado: Number(r.resultado),
+      })),
+      decendio: (decendio.data || []).map(r => ({
+        ...r,
+        receita: Number(r.receita),
+        despesa: Number(r.despesa),
+      })),
+      ytd: {
+        ano_atual: {
+          ano: anoAtual,
+          receita: Number(ytdAtual.receita_ytd || 0),
+          despesa: Number(ytdAtual.despesa_ytd || 0),
+          resultado: Number(ytdAtual.resultado_ytd || 0),
+        },
+        ano_anterior: {
+          ano: anoAnterior,
+          receita: Number(ytdAnt.receita_ytd || 0),
+          despesa: Number(ytdAnt.despesa_ytd || 0),
+          resultado: Number(ytdAnt.resultado_ytd || 0),
+        },
+        delta_pct: ytdDelta,
+      },
+      yoy_semanal: (yoySemanal.data || []).map(r => ({
+        ...r,
+        receita_atual: Number(r.receita_atual || 0),
+        receita_ano_anterior: Number(r.receita_ano_anterior || 0),
+        delta_pct: r.delta_pct !== null ? Number(r.delta_pct) : null,
+      })),
+      freq_vs_receita: freqVsReceita,
+    });
+  } catch (e) {
+    console.error('[FIN-V2] financeiro-completo:', e);
+    res.status(500).json({ error: e.message || 'Erro ao montar dashboard' });
+  }
+});
+
 module.exports = router;

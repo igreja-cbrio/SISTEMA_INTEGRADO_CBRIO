@@ -9,7 +9,7 @@ import { Button } from '../../../components/ui/button';
 import { Badge } from '../../../components/ui/badge';
 import { financeiroV2 } from '../../../api';
 import {
-  ComposedChart, Line, Bar, Area, AreaChart, XAxis, YAxis, CartesianGrid,
+  ComposedChart, Line, Bar, Area, AreaChart, BarChart, XAxis, YAxis, CartesianGrid,
   Tooltip, ResponsiveContainer, Legend,
 } from 'recharts';
 
@@ -59,14 +59,30 @@ function CountUp({ value, format = fmtMoney, duration = 1.2 }) {
 // ============================================================
 export default function DashboardSemanal() {
   const [data, setData] = useState(null);
+  const [completo, setCompleto] = useState(null);
   const [loading, setLoading] = useState(true);
   const [refData, setRefData] = useState(new Date().toISOString().slice(0, 10));
 
   useEffect(() => {
+    let cancelled = false;
     setLoading(true);
-    financeiroV2.dashboard.semanaCompleta?.(refData)
-      ?.then(setData)
-      ?.finally(() => setLoading(false));
+    Promise.all([
+      financeiroV2.dashboard.semanaCompleta?.(refData)?.catch((e) => {
+        console.warn('[Dashboard FinSemanal] semanaCompleta:', e.message);
+        return null;
+      }),
+      financeiroV2.dashboard.financeiroCompleto?.()?.catch((e) => {
+        console.warn('[Dashboard FinSemanal] financeiroCompleto:', e.message);
+        return null;
+      }),
+    ]).then(([s, c]) => {
+      if (cancelled) return;
+      setData(s);
+      setCompleto(c);
+    }).finally(() => {
+      if (!cancelled) setLoading(false);
+    });
+    return () => { cancelled = true; };
   }, [refData]);
 
   const navegar = (delta) => {
@@ -326,8 +342,362 @@ export default function DashboardSemanal() {
           </Card>
         </motion.div>
       )}
+
+      {/* ============================================================
+          PR A · Novas seções: Mensal · Semanal · Decêndio · YTD · YoY · Freq×Receita
+          ============================================================ */}
+      {completo && (
+        <>
+          {/* YTD card destacado */}
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.6, duration: 0.5 }}
+          >
+            <YtdCard ytd={completo.ytd} />
+          </motion.div>
+
+          {/* Arrecadação mensal (12 meses) */}
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.65, duration: 0.5 }}
+          >
+            <ArrecadacaoMensalChart dados={completo.mensal} />
+          </motion.div>
+
+          {/* Arrecadação semanal + Decêndio (grid 2 colunas) */}
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+            <motion.div
+              initial={{ opacity: 0, x: -20 }}
+              animate={{ opacity: 1, x: 0 }}
+              transition={{ delay: 0.7, duration: 0.5 }}
+              className="lg:col-span-2"
+            >
+              <ArrecadacaoSemanalChart dados={completo.semanal} anoAtual={completo.ano_atual} />
+            </motion.div>
+            <motion.div
+              initial={{ opacity: 0, x: 20 }}
+              animate={{ opacity: 1, x: 0 }}
+              transition={{ delay: 0.75, duration: 0.5 }}
+            >
+              <DecendioCard dados={completo.decendio} mes={completo.mes_atual} />
+            </motion.div>
+          </div>
+
+          {/* YoY Semanal */}
+          {completo.yoy_semanal?.length > 0 && (
+            <motion.div
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: 0.8, duration: 0.5 }}
+            >
+              <YoYSemanalChart dados={completo.yoy_semanal} anoAtual={completo.ano_atual} anoAnterior={completo.ano_anterior} />
+            </motion.div>
+          )}
+
+          {/* Frequência vs Arrecadação */}
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.85, duration: 0.5 }}
+          >
+            <FreqVsReceitaChart dados={completo.freq_vs_receita} />
+          </motion.div>
+        </>
+      )}
     </motion.div>
   );
+}
+
+// ============================================================
+// PR A · COMPONENTES NOVOS
+// ============================================================
+
+function YtdCard({ ytd }) {
+  const at = ytd.ano_atual;
+  const an = ytd.ano_anterior;
+  const delta = ytd.delta_pct;
+  const positive = delta !== null && delta > 0;
+  return (
+    <Card className="relative overflow-hidden">
+      <div className="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-primary via-blue-500 to-purple-500" />
+      <div className="absolute top-2 right-4 h-24 w-24 rounded-full opacity-10 bg-primary blur-2xl" />
+      <CardContent className="pt-6 pb-6 relative">
+        <div className="flex items-center gap-2 mb-3">
+          <Calendar className="h-4 w-4 text-primary" />
+          <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+            Ano acumulado · {at.ano}
+          </div>
+        </div>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <div>
+            <div className="text-xs text-muted-foreground">Receita YTD</div>
+            <div className="text-2xl font-bold tabular-nums" style={{ color: COL.green }}>
+              <CountUp value={at.receita} />
+            </div>
+            {delta !== null && (
+              <div className={`text-xs flex items-center gap-1 mt-1 ${positive ? 'text-emerald-600' : 'text-rose-600'}`}>
+                {positive ? <ArrowUp className="h-3 w-3" /> : <ArrowDown className="h-3 w-3" />}
+                {delta >= 0 ? '+' : ''}{delta.toFixed(1)}% vs {an.ano}
+              </div>
+            )}
+          </div>
+          <div>
+            <div className="text-xs text-muted-foreground">Despesa YTD</div>
+            <div className="text-2xl font-bold tabular-nums" style={{ color: COL.red }}>
+              <CountUp value={at.despesa} />
+            </div>
+            <div className="text-xs text-muted-foreground mt-1">
+              vs {an.ano}: {fmtMoney(an.despesa)}
+            </div>
+          </div>
+          <div>
+            <div className="text-xs text-muted-foreground">Resultado YTD</div>
+            <div className={`text-2xl font-bold tabular-nums ${at.resultado >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
+              <CountUp value={at.resultado} />
+            </div>
+            <div className="text-xs text-muted-foreground mt-1">
+              vs {an.ano}: {fmtMoney(an.resultado)}
+            </div>
+          </div>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+function ArrecadacaoMensalChart({ dados }) {
+  const formatado = dados.map(d => ({
+    label: monthShort(d.mes),
+    Receita: d.receita,
+    Despesa: d.despesa,
+    Resultado: d.resultado,
+  }));
+  return (
+    <Card>
+      <CardContent className="pt-6">
+        <h3 className="text-base font-semibold mb-1">Arrecadação Mensal · últimos 12 meses</h3>
+        <p className="text-xs text-muted-foreground mb-4">Linha de receita, despesa e resultado</p>
+        <div style={{ width: '100%', height: 280 }}>
+          <ResponsiveContainer>
+            <ComposedChart data={formatado}>
+              <defs>
+                <linearGradient id="gradReceitaMes" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stopColor={COL.green} stopOpacity={0.4} />
+                  <stop offset="100%" stopColor={COL.green} stopOpacity={0.05} />
+                </linearGradient>
+              </defs>
+              <CartesianGrid strokeDasharray="3 3" opacity={0.2} />
+              <XAxis dataKey="label" tick={{ fontSize: 10 }} />
+              <YAxis tick={{ fontSize: 10 }} tickFormatter={(v) => fmtKbrl(v)} />
+              <Tooltip
+                formatter={(v) => fmtMoney(v)}
+                contentStyle={{ borderRadius: 8, fontSize: 12 }}
+              />
+              <Legend wrapperStyle={{ fontSize: 11 }} />
+              <Area type="monotone" dataKey="Receita" stroke={COL.green} fill="url(#gradReceitaMes)" strokeWidth={2.5} animationDuration={1200} />
+              <Line type="monotone" dataKey="Despesa" stroke={COL.red} strokeWidth={2} dot={{ r: 3 }} animationDuration={1400} />
+              <Line type="monotone" dataKey="Resultado" stroke={COL.purple} strokeWidth={2} strokeDasharray="5 5" dot={{ r: 3 }} animationDuration={1600} />
+            </ComposedChart>
+          </ResponsiveContainer>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+function ArrecadacaoSemanalChart({ dados, anoAtual }) {
+  const filtrado = dados
+    .filter(d => d.ano === anoAtual)
+    .map(d => ({
+      label: d.semana_label,
+      Receita: d.receita,
+    }));
+  return (
+    <Card>
+      <CardContent className="pt-6">
+        <h3 className="text-base font-semibold mb-1">Arrecadação Semanal · {anoAtual}</h3>
+        <p className="text-xs text-muted-foreground mb-4">{filtrado.length} semanas qua-ter</p>
+        <div style={{ width: '100%', height: 280 }}>
+          <ResponsiveContainer>
+            <BarChart data={filtrado}>
+              <defs>
+                <linearGradient id="gradSemanal" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stopColor={COL.primary} stopOpacity={0.95} />
+                  <stop offset="100%" stopColor={COL.primary} stopOpacity={0.5} />
+                </linearGradient>
+              </defs>
+              <CartesianGrid strokeDasharray="3 3" opacity={0.2} />
+              <XAxis dataKey="label" tick={{ fontSize: 9 }} interval={Math.floor(filtrado.length / 12)} />
+              <YAxis tick={{ fontSize: 10 }} tickFormatter={(v) => fmtKbrl(v)} />
+              <Tooltip
+                formatter={(v) => fmtMoney(v)}
+                contentStyle={{ borderRadius: 8, fontSize: 12 }}
+              />
+              <Bar dataKey="Receita" fill="url(#gradSemanal)" radius={[3, 3, 0, 0]} animationDuration={1200} />
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+function DecendioCard({ dados, mes }) {
+  const total = dados.reduce((s, d) => s + Number(d.receita), 0);
+  return (
+    <Card>
+      <CardContent className="pt-6">
+        <h3 className="text-base font-semibold mb-1">Decêndio · {monthShort(mes)}</h3>
+        <p className="text-xs text-muted-foreground mb-4">10 em 10 dias do mês</p>
+        <div className="space-y-3">
+          {[1, 2, 3].map((d, i) => {
+            const item = dados.find(x => x.decendio === d) || { receita: 0, despesa: 0, decendio_label: ['1-10', '11-20', '21-fim'][i] };
+            const pct = total > 0 ? (Number(item.receita) / total) * 100 : 0;
+            return (
+              <motion.div
+                key={d}
+                initial={{ opacity: 0, x: -10 }}
+                animate={{ opacity: 1, x: 0 }}
+                transition={{ delay: 0.8 + i * 0.1 }}
+              >
+                <div className="flex items-center justify-between text-sm mb-1">
+                  <span className="font-medium">Dias {item.decendio_label}</span>
+                  <span className="tabular-nums" style={{ color: COL.green }}>
+                    {fmtMoney(item.receita)}
+                  </span>
+                </div>
+                <div className="h-2 bg-muted rounded-full overflow-hidden">
+                  <motion.div
+                    className="h-full rounded-full"
+                    style={{ background: COL.green }}
+                    initial={{ width: 0 }}
+                    animate={{ width: `${pct}%` }}
+                    transition={{ delay: 0.9 + i * 0.1, duration: 0.8 }}
+                  />
+                </div>
+                <div className="text-[10px] text-muted-foreground mt-0.5 tabular-nums">
+                  {pct.toFixed(1)}% do mês
+                </div>
+              </motion.div>
+            );
+          })}
+        </div>
+        <div className="mt-4 pt-3 border-t border-border flex items-center justify-between text-sm">
+          <span className="text-muted-foreground">Total do mês</span>
+          <span className="font-bold tabular-nums">{fmtMoney(total)}</span>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+function YoYSemanalChart({ dados, anoAtual, anoAnterior }) {
+  const formatado = dados.map(d => ({
+    label: d.semana_label,
+    [`${anoAtual}`]: d.receita_atual,
+    [`${anoAnterior}`]: d.receita_ano_anterior,
+  }));
+  return (
+    <Card>
+      <CardContent className="pt-6">
+        <h3 className="text-base font-semibold mb-1">Comparativo Ano a Ano · Semanal</h3>
+        <p className="text-xs text-muted-foreground mb-4">
+          Mesma semana qua-ter de {anoAtual} vs {anoAnterior}
+        </p>
+        <div style={{ width: '100%', height: 280 }}>
+          <ResponsiveContainer>
+            <ComposedChart data={formatado}>
+              <CartesianGrid strokeDasharray="3 3" opacity={0.2} />
+              <XAxis dataKey="label" tick={{ fontSize: 9 }} interval={Math.floor(formatado.length / 12)} />
+              <YAxis tick={{ fontSize: 10 }} tickFormatter={(v) => fmtKbrl(v)} />
+              <Tooltip formatter={(v) => fmtMoney(v)} contentStyle={{ borderRadius: 8, fontSize: 12 }} />
+              <Legend wrapperStyle={{ fontSize: 11 }} />
+              <Bar dataKey={`${anoAtual}`} fill={COL.primary} radius={[3, 3, 0, 0]} animationDuration={1000} />
+              <Line type="monotone" dataKey={`${anoAnterior}`} stroke={COL.amber} strokeWidth={2} strokeDasharray="5 5" dot={{ r: 3 }} animationDuration={1400} />
+            </ComposedChart>
+          </ResponsiveContainer>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+function FreqVsReceitaChart({ dados }) {
+  const formatado = dados.map(d => ({
+    label: monthShort(d.mes),
+    Frequência: Number(d.presencial),
+    Receita: Number(d.receita),
+    'Δ Freq %': d.delta_freq_pct,
+    'Δ Receita %': d.delta_receita_pct,
+    Elasticidade: d.elasticidade,
+  }));
+  // Cálculo agregado · qual cresce mais
+  const ult = dados[dados.length - 1] || {};
+  const elasticidadeMedia = dados
+    .filter(d => d.elasticidade !== null && Number.isFinite(d.elasticidade))
+    .reduce((s, d, _, arr) => s + d.elasticidade / arr.length, 0);
+
+  return (
+    <Card>
+      <CardContent className="pt-6">
+        <h3 className="text-base font-semibold mb-1">Frequência vs Arrecadação</h3>
+        <p className="text-xs text-muted-foreground mb-4">
+          Crescimento % mês a mês · elasticidade média {elasticidadeMedia.toFixed(2)}
+          {elasticidadeMedia > 1.1 && ' · receita cresce mais que frequência ✓'}
+          {elasticidadeMedia < 0.9 && elasticidadeMedia > 0 && ' · receita cresce menos que frequência ⚠'}
+        </p>
+        <div style={{ width: '100%', height: 280 }}>
+          <ResponsiveContainer>
+            <ComposedChart data={formatado}>
+              <CartesianGrid strokeDasharray="3 3" opacity={0.2} />
+              <XAxis dataKey="label" tick={{ fontSize: 10 }} />
+              <YAxis yAxisId="left" tick={{ fontSize: 10 }} tickFormatter={(v) => fmtKbrl(v)} />
+              <YAxis yAxisId="right" orientation="right" tick={{ fontSize: 10 }} tickFormatter={(v) => `${(v || 0).toFixed(0)}%`} />
+              <Tooltip
+                formatter={(v, name) => {
+                  if (name === 'Receita') return [fmtMoney(v), name];
+                  if (name === 'Frequência') return [v?.toLocaleString('pt-BR'), name];
+                  if (typeof v === 'number') return [`${v.toFixed(1)}%`, name];
+                  return [v, name];
+                }}
+                contentStyle={{ borderRadius: 8, fontSize: 12 }}
+              />
+              <Legend wrapperStyle={{ fontSize: 11 }} />
+              <Bar yAxisId="left" dataKey="Receita" fill={COL.green} fillOpacity={0.7} radius={[3, 3, 0, 0]} animationDuration={1200} />
+              <Line yAxisId="right" type="monotone" dataKey="Δ Freq %" stroke={COL.blue} strokeWidth={2} dot={{ r: 3 }} animationDuration={1400} />
+              <Line yAxisId="right" type="monotone" dataKey="Δ Receita %" stroke={COL.purple} strokeWidth={2} dot={{ r: 3 }} animationDuration={1600} />
+            </ComposedChart>
+          </ResponsiveContainer>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+// Helpers compartilhados (poderia extrair, mas inline ok pra essa PR)
+const COL = {
+  primary: '#00B39D',
+  green: '#10b981',
+  red: '#ef4444',
+  amber: '#f59e0b',
+  blue: '#3b82f6',
+  purple: '#8b5cf6',
+};
+
+function monthShort(yyyymm) {
+  if (!yyyymm) return '';
+  const meses = ['jan', 'fev', 'mar', 'abr', 'mai', 'jun', 'jul', 'ago', 'set', 'out', 'nov', 'dez'];
+  const [y, m] = yyyymm.split('-');
+  return `${meses[parseInt(m, 10) - 1]}/${y.slice(2)}`;
+}
+
+function fmtKbrl(v) {
+  const n = Math.abs(Number(v || 0));
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+  if (n >= 1000) return `${(n / 1000).toFixed(0)}k`;
+  return String(n);
 }
 
 // ============================================================
