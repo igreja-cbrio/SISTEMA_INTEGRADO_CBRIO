@@ -121,7 +121,7 @@ export default function DashboardOverview({ onNavigate }) {
           bgColor="bg-primary/10"
           title="Importar extratos"
           subtitle={ultimo_upload ? `Último: ${daysAgo(ultimo_upload.created_at)}` : 'Nenhum upload ainda'}
-          onClick={() => onNavigate?.(11)}
+          onClick={() => onNavigate?.('importar')}
         />
         <ShortcutCard
           icon={ClipboardList}
@@ -132,7 +132,7 @@ export default function DashboardOverview({ onNavigate }) {
             ? `${pendencias.fila_classificacao} aguardando revisão`
             : 'Sem pendências ✓'}
           badge={pendencias.fila_classificacao}
-          onClick={() => onNavigate?.(12)}
+          onClick={() => onNavigate?.('fila')}
         />
         <ShortcutCard
           icon={CreditCard}
@@ -145,7 +145,7 @@ export default function DashboardOverview({ onNavigate }) {
               ? `${pendencias.contas_pagar_vencendo_7d} vencem em 7d`
               : `${pendencias.contas_pagar} pendentes`}
           badge={pendencias.contas_pagar_vencidas || null}
-          onClick={() => onNavigate?.(4)}
+          onClick={() => onNavigate?.('contas_pagar')}
         />
         <ShortcutCard
           icon={Receipt}
@@ -156,7 +156,7 @@ export default function DashboardOverview({ onNavigate }) {
             ? `${pendencias.reembolsos} pendentes`
             : 'Sem pendências ✓'}
           badge={pendencias.reembolsos}
-          onClick={() => onNavigate?.(5)}
+          onClick={() => onNavigate?.('reembolsos')}
         />
       </div>
 
@@ -332,7 +332,7 @@ export default function DashboardOverview({ onNavigate }) {
           <CardHeader>
             <div className="flex items-center justify-between">
               <CardTitle className="text-base">Transações Recentes</CardTitle>
-              <Button variant="outline" size="sm" onClick={() => onNavigate?.(3)}>
+              <Button variant="outline" size="sm" onClick={() => onNavigate?.('transacoes')}>
                 Ver Todas
                 <ChevronRight className="ml-1 h-4 w-4" />
               </Button>
@@ -402,7 +402,7 @@ export default function DashboardOverview({ onNavigate }) {
               <CardTitle className="text-base">Contas bancárias</CardTitle>
               <p className="text-xs text-muted-foreground">{contas.length} contas ativas</p>
             </div>
-            <Button variant="ghost" size="sm" onClick={() => onNavigate?.(2)}>
+            <Button variant="ghost" size="sm" onClick={() => onNavigate?.('contas')}>
               Ver todas <ChevronRight className="h-3 w-3 ml-1" />
             </Button>
           </div>
