@@ -2,6 +2,228 @@
 
 Guia operacional para o Claude Code quando trabalhar neste repositório.
 
+# ⚠️ REGRAS OBRIGATÓRIAS DE SEGURANÇA (não regredir · 2026-05-21)
+
+Esta seção é a lei do projeto após a Auditoria de Segurança 2026-05-21
+(PRs #586 → #599). Qualquer sessão futura do Claude DEVE seguir estas
+regras. **Quebrar qualquer uma delas é regressão crítica.**
+
+## Proibições absolutas
+
+1. **NUNCA criar policy RLS `USING(true) WITH CHECK(true)` em tabela
+   com PII** (nome, CPF, telefone, email, endereço, salário, dados de
+   menor, financeiro). Sempre usar helpers `current_user_*` ou
+   `is_super_admin()`. Lista canônica de tabelas com PII está em
+   `app_soft_deletable_tables()`.
+
+2. **NUNCA fazer `DELETE` direto em tabela com `deleted_at`** (30
+   tabelas listadas em `app_soft_deletable_tables()`). Sempre usar
+   `app_soft_delete(table_name, id, deleted_by)` RPC. Hard delete só
+   super-admin via SQL Editor com justificativa.
+
+3. **NUNCA armazenar `responsavel`, `leader`, `gestor` como TEXT
+   livre.** Sempre coluna `UUID` com `REFERENCES profiles(id)` ou
+   `mem_membros(id)`. Comparação por `===` com `profile.name` quebra
+   com renomeação ou typo. Lista de pontos onde isto ainda existe e
+   precisa ser convertido: `area_responsaveis.responsavel_nome`,
+   `projects.leader`, `projects.responsible`, `kanban_tasks.responsible`.
+
+4. **NUNCA criar tabela com PII sem `deleted_at TIMESTAMPTZ`** + índice
+   parcial `WHERE deleted_at IS NULL` + entrada na whitelist
+   `app_soft_deletable_tables()`. PK composta é exceção (impede
+   soft-delete via id::text · documentar a razão).
+
+5. **NUNCA mudar matriz `cargo_modulo_permissao` ou `usuario_areas`
+   direto no SQL Editor sem fazer bust de cache do middleware**
+   depois (`POST /api/permissoes/cache/bust` ou botão em
+   `/admin/permissoes`). E pedir que o user afetado faça logout/login
+   pra renovar o JWT.
+
+6. **NUNCA criar policy com `FOR ALL TO authenticated USING(true)`**
+   exceto se for catálogo público (modulos, cargos, areas, igrejas
+   read-only, rh_treinamentos catálogo).
+
+7. **NUNCA adicionar policy de INSERT/UPDATE/DELETE pra role `anon`.**
+   Forms públicos vão SEMPRE via backend (`/api/public/*`) que usa
+   service_role.
+
+8. **NUNCA expor `SUPABASE_SERVICE_ROLE_KEY` no frontend.** Já está em
+   `backend/.env` apenas. Frontend usa `VITE_SUPABASE_ANON_KEY`.
+
+9. **NUNCA criar policy que faça query recursiva em tabela com RLS
+   sem usar SECURITY DEFINER no helper.** Causa stack overflow.
+   Padrão: helper SQL `STABLE SECURITY DEFINER SET search_path = public`.
+
+## Inventário de helpers SQL (usar SEMPRE em policies novas)
+
+| Função | Retorna | Uso típico |
+|---|---|---|
+| `public.is_super_admin()` | BOOLEAN | Curto-circuito em policies. Marcos + Matheus + lista em `app_super_admins` |
+| `public.current_user_membro_id()` | UUID | "Só meus dados" em tabelas com `membro_id` |
+| `public.current_user_funcionario_id()` | UUID | "Só meus dados" em tabelas com `funcionario_id` |
+| `public.current_user_module_level(slug)` | INTEGER | Nivel 0-5 do user no módulo (super-admin=5, override, matriz, area boost) |
+| `public.user_is_kids_responsavel(crianca_id)` | BOOLEAN | Pai/mãe lê dados do filho |
+| `public.user_is_lider_de(funcionario_id)` | BOOLEAN | Gestor hierárquico (via `rh_funcionarios.gestor_id`) |
+| `public.app_soft_delete(table, id, by)` | BOOLEAN | Substitui DELETE direto |
+| `public.app_restore(table, id)` | BOOLEAN | Desfaz soft-delete |
+| `public.app_soft_deletable_tables()` | TEXT[] | Whitelist de 30 tabelas com soft-delete |
+
+## Padrão · adicionar nova tabela com PII
+
+```sql
+-- 1. Schema com deleted_at
+CREATE TABLE public.nova_tabela_pii (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  membro_id UUID REFERENCES public.mem_membros(id) ON DELETE SET NULL,
+  -- ... outras colunas ...
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  deleted_at TIMESTAMPTZ
+);
+
+-- 2. Índice parcial pra performance
+CREATE INDEX idx_nova_tabela_pii_active
+  ON public.nova_tabela_pii (id) WHERE deleted_at IS NULL;
+
+-- 3. Adicionar à whitelist (NUNCA esquecer)
+CREATE OR REPLACE FUNCTION public.app_soft_deletable_tables()
+RETURNS TEXT[] LANGUAGE sql IMMUTABLE AS $$
+  SELECT ARRAY[
+    'mem_membros', 'mem_familias', /* ... lista existente ... */,
+    'nova_tabela_pii'  -- ← adicionar aqui
+  ]::TEXT[]
+$$;
+
+-- 4. RLS obrigatório
+ALTER TABLE public.nova_tabela_pii ENABLE ROW LEVEL SECURITY;
+
+-- 5. Policies contextuais (5 mínimo)
+CREATE POLICY nova_tabela_pii_select ON public.nova_tabela_pii
+  FOR SELECT TO authenticated
+  USING (
+    membro_id = public.current_user_membro_id()
+    OR public.current_user_module_level('modulo_relevante') >= 1
+  );
+
+CREATE POLICY nova_tabela_pii_insert ON public.nova_tabela_pii
+  FOR INSERT TO authenticated
+  WITH CHECK (public.current_user_module_level('modulo_relevante') >= 2);
+
+CREATE POLICY nova_tabela_pii_update ON public.nova_tabela_pii
+  FOR UPDATE TO authenticated
+  USING (public.current_user_module_level('modulo_relevante') >= 3)
+  WITH CHECK (public.current_user_module_level('modulo_relevante') >= 3);
+
+CREATE POLICY nova_tabela_pii_delete ON public.nova_tabela_pii
+  FOR DELETE TO authenticated
+  USING (public.is_super_admin());
+
+CREATE POLICY nova_tabela_pii_service ON public.nova_tabela_pii
+  FOR ALL TO service_role USING (true) WITH CHECK (true);
+```
+
+## Padrão · adicionar novo módulo no menu/permissões
+
+```sql
+-- 1. INSERT no catálogo
+INSERT INTO public.modulos (slug, nome, rota, categoria, ordem, descricao, ativo)
+SELECT 'novo-modulo', 'Nome Modulo', '/nova-rota', 'ministerial', 999,
+       'descricao', true
+WHERE NOT EXISTS (SELECT 1 FROM public.modulos WHERE slug = 'novo-modulo');
+
+-- 2. Seed matriz default · copia de modulo similar
+DO $$
+DECLARE base_modulo_id int;
+BEGIN
+  SELECT id INTO base_modulo_id FROM public.modulos WHERE slug = 'modulo_similar';
+  INSERT INTO public.cargo_modulo_permissao (cargo_id, modulo_id, nivel, pode_exportar, pode_aprovar, escopo_proprio)
+  SELECT cmp.cargo_id, novo.id, cmp.nivel, cmp.pode_exportar, cmp.pode_aprovar, cmp.escopo_proprio
+    FROM public.cargo_modulo_permissao cmp
+    CROSS JOIN public.modulos novo
+   WHERE cmp.modulo_id = base_modulo_id
+     AND novo.slug = 'novo-modulo'
+  ON CONFLICT (cargo_id, modulo_id) DO NOTHING;
+END $$;
+
+-- 3. Se tem boost por área · adicionar a AREA_MODULO_BOOST em
+-- backend/middleware/auth.js E no array da função current_user_module_level
+-- (se módulo segue o padrão "área = slug")
+```
+
+## Padrão · adicionar super-admin
+
+```sql
+INSERT INTO public.app_super_admins (email, nome, added_by, notes)
+VALUES ('email@cbrio.com.br', 'Nome', 'marcos', 'motivo')
+ON CONFLICT (email) DO NOTHING;
+```
+
+Match é por email LOWER contra `auth.users.email`.
+Desativar (preserva histórico): `UPDATE app_super_admins SET ativo = false WHERE email = '...'`.
+
+## Padrão · backend executar soft-delete
+
+```js
+// ❌ ERRADO · hard delete irreversível
+await supabase.from('mem_membros').delete().eq('id', memberId);
+
+// ✅ CERTO · soft delete reversível
+await supabase.rpc('app_soft_delete', {
+  p_table_name: 'mem_membros',
+  p_row_id: memberId,
+  p_deleted_by: req.user?.id ?? null
+});
+
+// ✅ Listar só ativos
+await supabase.from('mem_membros').select('*').is('deleted_at', null);
+
+// ✅ Restaurar
+await supabase.rpc('app_restore', {
+  p_table_name: 'mem_membros',
+  p_row_id: memberId
+});
+```
+
+## FKs CASCADE → SET NULL (Phase 1 · 21 FKs convertidas)
+
+**Não converter de volta pra CASCADE** as FKs que apontam para:
+- `mem_membros` (11 filhas: contribuições, trilha, histórico, voluntariado, escalas, checkins, devocionais, grupo_membros, devocional_envios, nsm_eventos, grupo_encontro_presencas)
+- `rh_funcionarios` (6 filhas: documentos, treinamentos, ferias, avaliacoes, avaliacoes_legacy, progressoes, pontuacao_colaborador)
+- `cultos` (2 filhas: decisoes_pessoas, kids_sessoes)
+- `kpi_indicadores_taticos` (2 filhas: registros, trajetoria)
+
+CASCADE mantido intencionalmente:
+- `mem_duplicados_ignorados` (par de dedup · sem sentido sem o membro)
+- `mem_grupo_pedidos` (transient)
+- `rh_escalas_extras`, `rh_materiais_funcionarios` (operacional)
+- `kpi_krs`, `okr_revisoes` (estrutura OKR · parent-child)
+- `kpi_valores_calculados` (cache · `kpi_id` é parte da PK composta)
+
+## Inventário · 65 tabelas com RLS contextual (Onda 2 + 3)
+
+| Bloco | Tabelas | Padrão de acesso |
+|---|---|---|
+| **P0 Super-admin** | `cargo_modulo_permissao`, `igrejas`, `kpi_metas`, `app_super_admins` | Write só super-admin; read aberto |
+| **Onda 3 Soft-delete** | 30 tabelas com `deleted_at` | Use `app_soft_delete()` no backend |
+| **Onda 2 Kids (LGPD)** | `kids_criancas`, `kids_responsaveis`, `kids_checkins`, `kids_sessoes`, `kids_salas`, `kids_estacoes`, `kids_etiquetas_log` | Responsável + kids≥1/2/3 + super-admin |
+| **Onda 2 Financeiro/RH** | `mem_contribuicoes`, `rh_funcionarios`, `rh_documentos`, `rh_avaliacoes`, `rh_avaliacao_fatores`, `rh_treinamentos`, `rh_treinamentos_funcionarios`, `rh_ferias_licencas`, `pcs_*` (8 tabelas) | Próprio funcionário + módulo rh/financeiro |
+| **Onda 2 PII** | `mem_membros`, `cultos_decisoes_pessoas`, `batismo_inscricoes`, `nsm_eventos`, `int_visitantes`, `cui_acompanhamentos`, `cui_jornada180`, `cui_convertidos` | Próprio + módulos relevantes (membresia/integracao/cuidados/painel) |
+
+## Quando precisar quebrar uma regra (raro · justificar)
+
+Algumas situações legítimas pra exceção:
+- Tabela de catálogo público (ex: `modulos`, `cargos`, `areas`)
+  pode ter `FOR SELECT USING(true)` se não contém PII
+- Migration de hotfix urgente (incidente em produção) pode usar
+  service_role bypass diretamente · mas DEVE incluir comentário no
+  arquivo justificando + criar issue follow-up pra normalizar
+- `kpi_valores_calculados` e `cargo_modulo_permissao` não têm
+  `deleted_at` porque têm PK composta · documentado nas migrations
+
+Sempre justifique no arquivo da migration com `COMMENT ON ... IS '...'`
+ou comentário SQL `-- NOTA: ...`.
+
+---
+
 ## RLS contextual PII · membros/decisões/batismos/cuidados (2026-05-21 · Onda 2 PR4)
 
 Migration `20260521210000_onda2_rls_pii.sql` finaliza a Onda 2 RLS.
