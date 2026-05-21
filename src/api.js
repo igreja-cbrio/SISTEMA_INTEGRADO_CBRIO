@@ -534,6 +534,7 @@ export const financeiroV2 = {
 
 export const santander = {
   pixCultoAtual: (limit = 30) => get(`/santander/pix/culto-atual?limit=${limit}`),
+  pixApiDiagnostico: () => get('/santander/pix-api/diagnostico'),
   health: () => get('/santander/health'),
   saldo: () => get('/santander/saldo'),
   saldoHistorico: (dias = 30) => get(`/santander/saldo/historico?dias=${dias}`),

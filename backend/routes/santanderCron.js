@@ -17,6 +17,7 @@ const {
   isConfigured, missingEnv,
 } = require('../services/santander/httpClient');
 const contasService = require('../services/santander/contasService');
+const pixApiService = require('../services/santander/pixApiService');
 const { matchOfxPix, classificarBatch } = require('../services/financeiroClassificador');
 
 function checkCronSecret(req, res, next) {
@@ -210,13 +211,50 @@ router.post('/pix-sync', async (req, res) => {
       return res.json({ ok: false, erro: 'conta_santander_nao_cadastrada' });
     }
 
-    // Pega extrato (cache 10min · evita estourar quota)
-    const extrato = await contasService.extrato({ inicio, fim, refresh: false });
-    if (!extrato?.transacoes) {
-      return res.json({ ok: true, conta_id: contaLocal.id, sem_transacoes: true });
+    // ─── ESTRATEGIA 1: API PIX dedicada (quando habilitada) ───
+    // Quando SANTANDER_PIX_API_ENABLED=true, busca PIX direto da API PIX
+    // que retorna End-to-End ID + hora exata. Insere em fin_pix_detalhe.
+    let pixApiResult = null;
+    if (pixApiService.isEnabled()) {
+      try {
+        pixApiResult = await pixApiService.buscarPixRecebidos({ inicio, fim });
+        if (pixApiResult?.transacoes?.length) {
+          let pixInseridos = 0;
+          let pixDup = 0;
+          for (const pix of pixApiResult.transacoes) {
+            const { error } = await supabase
+              .from('fin_pix_detalhe')
+              .insert({
+                ...pix,
+                conta_id: contaLocal.id,
+              });
+            if (error) {
+              if (error.code === '23505') pixDup++;
+            } else {
+              pixInseridos++;
+            }
+          }
+          pixApiResult.inseridos = pixInseridos;
+          pixApiResult.duplicados = pixDup;
+        }
+      } catch (e) {
+        console.warn('[pix-sync] API PIX erro:', e.message);
+        pixApiResult = { erro: e.message };
+      }
     }
 
-    // Filtra so creditos (PIX recebidos = dizimos/ofertas)
+    // ─── ESTRATEGIA 2: extrato regular (sempre roda · cobre TED/DOC/PIX out) ───
+    const extrato = await contasService.extrato({ inicio, fim, refresh: false });
+    if (!extrato?.transacoes) {
+      return res.json({
+        ok: true,
+        conta_id: contaLocal.id,
+        sem_transacoes: true,
+        pix_api: pixApiResult,
+      });
+    }
+
+    // Filtra so creditos
     const creditos = extrato.transacoes.filter(t => Number(t.valor) > 0);
 
     let inseridos = 0;
@@ -262,6 +300,7 @@ router.post('/pix-sync', async (req, res) => {
       inseridos, duplicados,
       match_pix: matchResult,
       classificacao: classifResult,
+      pix_api: pixApiResult,
       duracao_ms: Date.now() - startTime,
     });
   } catch (e) {
