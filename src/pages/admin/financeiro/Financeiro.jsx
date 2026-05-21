@@ -7,7 +7,6 @@ import SantanderTab from './SantanderTab';
 import EstruturaFiscal from './EstruturaFiscal';
 import ImportarExtratos from './ImportarExtratos';
 import FilaClassificacao from './FilaClassificacao';
-import DashboardSemanal from './DashboardSemanal';
 import DashboardOverview from './DashboardOverview';
 import CultoAoVivo from './CultoAoVivo';
 import DreAuto from './DreAuto';
@@ -145,7 +144,12 @@ function Badge({ status, map }) {
 }
 
 // ── TABS ────────────────────────────────────────────────────
-const TABS = ['Dashboard', 'Analises', 'Contas', 'Transacoes', 'Contas a Pagar', 'Reembolsos', 'DRE', 'DRE Auto', 'Banco Santander', 'Culto ao Vivo', 'Semana qua-ter', 'Importar extratos', 'Fila de classificacao', 'Estrutura fiscal'];
+// 6 grupos top-level (em vez de 14 abas em sequencia)
+// Cada grupo composto tem sub-abas dentro
+const TABS = ['Dashboard', 'Análises', 'Movimentação', 'DRE', 'Banco', 'Configuração'];
+const SUBS_MOVIMENTACAO = ['Contas', 'Transações', 'Contas a Pagar', 'Reembolsos', 'Importar extratos', 'Fila de classificação'];
+const SUBS_DRE = ['DRE Auto', 'DRE (legacy)'];
+const SUBS_BANCO = ['Banco Santander', 'Culto ao Vivo'];
 
 // ── KPI Cards (estilo unificado) ─────────────────────────────
 const FIN_STAT_SVGS = [
@@ -157,6 +161,35 @@ const FIN_STAT_SVGS = [
   <svg key="f5" style={{ position: 'absolute', right: 0, top: 0, height: '100%', width: '67%', pointerEvents: 'none', zIndex: 0 }} viewBox="0 0 300 200" fill="none"><circle cx="200" cy="100" r="90" fill="#fff" fillOpacity="0.07" /><circle cx="260" cy="40" r="60" fill="#fff" fillOpacity="0.10" /></svg>,
   <svg key="f6" style={{ position: 'absolute', right: 0, top: 0, height: '100%', width: '67%', pointerEvents: 'none', zIndex: 0 }} viewBox="0 0 300 200" fill="none"><circle cx="220" cy="110" r="88" fill="#fff" fillOpacity="0.08" /><circle cx="275" cy="55" r="52" fill="#fff" fillOpacity="0.09" /></svg>,
 ];
+
+// SubTabBar · usado dentro dos grupos Movimentação, DRE, Banco
+function SubTabBar({ items, current, onSelect }) {
+  return (
+    <div style={{ display: 'flex', gap: 6, marginBottom: 20, flexWrap: 'wrap' }}>
+      {items.map((label, i) => {
+        const active = i === current;
+        return (
+          <button
+            key={label}
+            onClick={() => onSelect(i)}
+            style={{
+              padding: '8px 14px',
+              fontSize: 13,
+              fontWeight: 600,
+              borderRadius: 6,
+              cursor: 'pointer',
+              border: `1px solid ${active ? '#00B39D' : 'var(--cbrio-border)'}`,
+              background: active ? '#00B39D18' : 'transparent',
+              color: active ? '#00B39D' : 'var(--cbrio-text2)',
+            }}
+          >
+            {label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
 
 function StatCard({ label, value, bg, svg }) {
   return (
@@ -179,6 +212,28 @@ function StatCard({ label, value, bg, svg }) {
 export default function Financeiro() {
   const { isDiretor } = useAuth();
   const [tab, setTab] = useState(0);
+  const [subMov, setSubMov] = useState(0);
+  const [subDre, setSubDre] = useState(0);
+  const [subBanco, setSubBanco] = useState(0);
+
+  // Navegacao por string-id usada por DashboardOverview shortcuts
+  const goTo = (id) => {
+    switch (id) {
+      case 'contas':       setTab(2); setSubMov(0); break;
+      case 'transacoes':   setTab(2); setSubMov(1); break;
+      case 'contas_pagar': setTab(2); setSubMov(2); break;
+      case 'reembolsos':   setTab(2); setSubMov(3); break;
+      case 'importar':     setTab(2); setSubMov(4); break;
+      case 'fila':         setTab(2); setSubMov(5); break;
+      case 'dre_auto':     setTab(3); setSubDre(0); break;
+      case 'dre_legacy':   setTab(3); setSubDre(1); break;
+      case 'banco':        setTab(4); setSubBanco(0); break;
+      case 'culto_vivo':   setTab(4); setSubBanco(1); break;
+      case 'config':       setTab(5); break;
+      case 'analises':     setTab(1); break;
+      default:             setTab(0);
+    }
+  };
   const [dash, setDash] = useState(null);
   const [contas, setContas] = useState([]);
   const [categorias, setCategorias] = useState([]);
@@ -1044,20 +1099,45 @@ export default function Financeiro() {
         ))}
       </div>
 
-      {tab === 0 && renderDashboard()}
+      {/* Tab 0: Dashboard · onNavigate aceita string id */}
+      {tab === 0 && <DashboardOverview onNavigate={goTo} />}
+
+      {/* Tab 1: Análises */}
       {tab === 1 && <Analises />}
-      {tab === 2 && renderContas()}
-      {tab === 3 && renderTransacoes()}
-      {tab === 4 && renderContasPagar()}
-      {tab === 5 && renderReembolsos()}
-      {tab === 6 && renderDRE()}
-      {tab === 7 && <DreAuto />}
-      {tab === 8 && <SantanderTab />}
-      {tab === 9 && <CultoAoVivo />}
-      {tab === 10 && <DashboardSemanal />}
-      {tab === 11 && <ImportarExtratos />}
-      {tab === 12 && <FilaClassificacao />}
-      {tab === 13 && <EstruturaFiscal />}
+
+      {/* Tab 2: Movimentação · sub-abas */}
+      {tab === 2 && (
+        <div>
+          <SubTabBar items={SUBS_MOVIMENTACAO} current={subMov} onSelect={setSubMov} />
+          {subMov === 0 && renderContas()}
+          {subMov === 1 && renderTransacoes()}
+          {subMov === 2 && renderContasPagar()}
+          {subMov === 3 && renderReembolsos()}
+          {subMov === 4 && <ImportarExtratos />}
+          {subMov === 5 && <FilaClassificacao />}
+        </div>
+      )}
+
+      {/* Tab 3: DRE · sub-abas */}
+      {tab === 3 && (
+        <div>
+          <SubTabBar items={SUBS_DRE} current={subDre} onSelect={setSubDre} />
+          {subDre === 0 && <DreAuto />}
+          {subDre === 1 && renderDRE()}
+        </div>
+      )}
+
+      {/* Tab 4: Banco · sub-abas */}
+      {tab === 4 && (
+        <div>
+          <SubTabBar items={SUBS_BANCO} current={subBanco} onSelect={setSubBanco} />
+          {subBanco === 0 && <SantanderTab />}
+          {subBanco === 1 && <CultoAoVivo />}
+        </div>
+      )}
+
+      {/* Tab 5: Configuração */}
+      {tab === 5 && <EstruturaFiscal />}
 
       {modalConta && renderModalConta()}
       {modalTransacao && renderModalTransacao()}
