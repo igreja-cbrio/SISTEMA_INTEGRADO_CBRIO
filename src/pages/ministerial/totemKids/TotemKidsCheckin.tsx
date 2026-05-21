@@ -7,7 +7,7 @@
 
 import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Search, Baby, Printer, AlertTriangle, Plus, ArrowLeft, Loader2, CheckCircle2, Phone } from 'lucide-react';
+import { Search, Baby, Printer, AlertTriangle, Plus, ArrowLeft, Loader2, CheckCircle2, Phone, Settings, LogOut } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent } from '@/components/ui/card';
@@ -201,7 +201,7 @@ export default function TotemKidsCheckin() {
             <p className="text-sm text-muted-foreground">
               Crie uma sessão na administração antes de iniciar o check-in.
             </p>
-            <Button onClick={() => navigate('/admin/totem-kids/sessoes')}>
+            <Button onClick={() => navigate('/ministerial/totem-kids/configuracoes?aba=sessoes')}>
               Gerenciar sessões
             </Button>
           </CardContent>
@@ -219,12 +219,18 @@ export default function TotemKidsCheckin() {
             {sessao.culto?.nome} · {sessao.culto?.data && format(new Date(sessao.culto.data + 'T00:00:00'), "EEEE, dd 'de' MMMM", { locale: ptBR })}
           </p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex gap-2 flex-wrap">
+          <Button variant="outline" size="sm" onClick={() => navigate('/ministerial/totem-kids/checkout')}>
+            <LogOut className="h-4 w-4 mr-1" /> Checkout
+          </Button>
           <Button variant="outline" size="sm" onClick={() => navigate('/ministerial/totem-kids/painel')}>
             Painel ao vivo
           </Button>
           <Button variant="outline" size="sm" onClick={() => navigate('/ministerial/totem-kids/teste-etiqueta')}>
             <Printer className="h-4 w-4 mr-1" /> Testar etiqueta
+          </Button>
+          <Button variant="outline" size="sm" onClick={() => navigate('/ministerial/totem-kids/configuracoes')}>
+            <Settings className="h-4 w-4 mr-1" /> Configurações
           </Button>
         </div>
       </div>
