@@ -103,14 +103,20 @@ Emojis decorativos (use ★ → ↳ ● ▲ ◆) · drop shadows pesadas · bord
 
 Cover · Resumo/agenda · 5-8 conteudo (1 ideia/slide) · Fechamento/CTA.
 
-# OUTPUT · APENAS json, sem markdown:
+# OUTPUT · use tags delimitadoras (NAO use JSON · CSS/HTML quebram JSON.parse)
 
-{
-  "titulo": "...",
-  "slides_count": N,
-  "css": "...",
-  "html": "..."
-}
+Retorne EXATAMENTE neste formato, sem mais nada antes ou depois:
+
+<TITULO>texto curto do titulo</TITULO>
+<SLIDES_COUNT>numero inteiro</SLIDES_COUNT>
+<CSS>
+todo o CSS aqui · pode ter newlines, aspas, qualquer coisa
+</CSS>
+<HTML>
+<section class="slide" data-screen-label="01 Cover">...</section>
+<section class="slide" data-screen-label="02 ...">...</section>
+... (continua pra todos os slides)
+</HTML>
 
 Capricho > completude. Vai pra diretoria.`;
 
@@ -145,19 +151,50 @@ function buildUserPrompt({ titulo, prompt, tom, arquivos }) {
 }
 
 // ─────────────────────────────────────────────────────────────────────
-// Limpa wrapper de markdown que a IA as vezes coloca apesar do prompt
+// Parser do output em tags · alternativa ao JSON.parse que quebra
+// quando CSS/HTML grande tem newlines/quotes literais.
 // ─────────────────────────────────────────────────────────────────────
-function unwrapJson(text) {
-  let t = text.trim();
-  // Remove ```json ... ``` ou ``` ... ```
-  t = t.replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/i, '').trim();
-  // Tenta achar { ... } maior · IA as vezes adiciona texto antes/depois
-  const first = t.indexOf('{');
-  const last  = t.lastIndexOf('}');
-  if (first > 0 || last < t.length - 1) {
-    if (first >= 0 && last > first) t = t.slice(first, last + 1);
+function extractTag(text, tag) {
+  // Regex tolerante: aceita espacos, quebras de linha entre a tag e o conteudo,
+  // e pega o ULTIMO fechamento (greedy) pra cobrir casos onde o HTML interno
+  // contem tags similares.
+  const re = new RegExp(`<${tag}>([\\s\\S]*?)<\\/${tag}>`, 'i');
+  const m = text.match(re);
+  return m ? m[1].trim() : null;
+}
+
+function parseOutput(text) {
+  // Limpa cerca markdown que a IA as vezes coloca apesar do prompt
+  const cleaned = text
+    .replace(/^```(?:html|xml|markdown|md)?\s*/i, '')
+    .replace(/```\s*$/i, '')
+    .trim();
+
+  const titulo = extractTag(cleaned, 'TITULO');
+  const slidesCountRaw = extractTag(cleaned, 'SLIDES_COUNT');
+  const css = extractTag(cleaned, 'CSS');
+  const html = extractTag(cleaned, 'HTML');
+
+  if (!css && !html) {
+    // Fallback · talvez a IA mandou JSON apesar do prompt
+    try {
+      const j = JSON.parse(cleaned);
+      if (j && j.css && j.html) return {
+        titulo: j.titulo || null,
+        slides_count: j.slides_count || null,
+        css: j.css,
+        html: j.html,
+      };
+    } catch (e) { /* ignora */ }
+    return null;
   }
-  return t;
+
+  return {
+    titulo,
+    slides_count: slidesCountRaw ? parseInt(slidesCountRaw, 10) : null,
+    css: css || '',
+    html: html || '',
+  };
 }
 
 // ─────────────────────────────────────────────────────────────────────
@@ -247,26 +284,16 @@ async function gerarApresentacao({ titulo, prompt, tom, arquivos, modelo }) {
   const tokens_output = resp.usage?.output_tokens || 0;
   const custo_usd     = estimarCusto(modeloFinal, tokens_input, tokens_output);
 
-  // Parse JSON
-  let parsed;
-  try {
-    parsed = JSON.parse(unwrapJson(text));
-  } catch (err) {
+  // Parse output em tags <TITULO>/<CSS>/<HTML> · com fallback pra JSON
+  const parsed = parseOutput(text);
+  if (!parsed) {
     const preview = text.slice(0, 800);
-    throw new Error('IA retornou JSON invalido. Inicio da resposta: ' + preview);
+    throw new Error('IA retornou formato invalido. Inicio: ' + preview);
   }
+  if (!parsed.html) throw new Error('IA nao retornou <HTML> dos slides');
+  if (!parsed.css)  throw new Error('IA nao retornou <CSS> da apresentacao');
 
-  if (!parsed || typeof parsed !== 'object') {
-    throw new Error('IA retornou estrutura invalida');
-  }
-  if (!parsed.html || typeof parsed.html !== 'string') {
-    throw new Error('IA nao retornou html dos slides');
-  }
-  if (!parsed.css || typeof parsed.css !== 'string') {
-    throw new Error('IA nao retornou css da apresentacao');
-  }
-
-  // Conta slides aproximadamente (procurando <section class="slide")
+  // Conta slides procurando <section class="slide")
   const slidesCount = (parsed.html.match(/<section\s+class="slide"/g) || []).length;
   const slides_count = parsed.slides_count || slidesCount;
 
