@@ -990,4 +990,157 @@ router.post('/backfill/transacoes', async (req, res) => {
   }
 });
 
+// ====================================================================
+// RECORRENCIAS · CRUD + detector
+// ====================================================================
+const { detectarRecorrencias } = require('../services/recorrenciaDetector');
+
+router.get('/recorrencias', async (req, res) => {
+  try {
+    const { ativa, classe, ordem = 'valor_medio' } = req.query;
+    let q = supabase
+      .from('fin_despesas_recorrentes')
+      .select('*, plano:plano_contas_id(codigo, nome)')
+      .order(ordem, { ascending: false });
+    if (ativa !== undefined) q = q.eq('ativa', ativa === 'true');
+    if (classe) q = q.eq('classe', classe);
+    const { data, error } = await q;
+    if (error) return res.status(400).json({ error: error.message });
+    res.json(data);
+  } catch (e) { res.status(500).json({ error: 'Erro ao listar recorrencias' }); }
+});
+
+router.put('/recorrencias/:id', async (req, res) => {
+  try {
+    const { confirmada, classe, ativa, observacao, plano_contas_id } = req.body;
+    const upd = { updated_at: new Date().toISOString() };
+    if (confirmada !== undefined) upd.confirmada = confirmada;
+    if (classe !== undefined) upd.classe = classe;
+    if (ativa !== undefined) upd.ativa = ativa;
+    if (observacao !== undefined) upd.observacao = observacao;
+    if (plano_contas_id !== undefined) upd.plano_contas_id = plano_contas_id;
+    const { data, error } = await supabase
+      .from('fin_despesas_recorrentes')
+      .update(upd)
+      .eq('id', req.params.id).select().single();
+    if (error) return res.status(400).json({ error: error.message });
+    res.json(data);
+  } catch (e) { res.status(500).json({ error: 'Erro ao atualizar' }); }
+});
+
+router.post('/recorrencias/detectar', async (req, res) => {
+  try {
+    if (!['admin', 'diretor'].includes(req.user.role)) {
+      return res.status(403).json({ error: 'Apenas admin/diretor' });
+    }
+    const { meses = 6, dry_run = false } = req.body || {};
+    const result = await detectarRecorrencias({
+      mesesHistorico: Number(meses),
+      dryRun: !!dry_run,
+    });
+    res.json(result);
+  } catch (e) {
+    console.error('[FIN-V2] detectar recorrencias:', e);
+    res.status(500).json({ error: e.message || 'Erro ao detectar' });
+  }
+});
+
+// ====================================================================
+// DRE · mensal hierarquico + comparativo
+// ====================================================================
+router.get('/dre/mensal', async (req, res) => {
+  try {
+    const { mes } = req.query;
+    if (!mes || !/^\d{4}-\d{2}$/.test(mes)) {
+      return res.status(400).json({ error: 'mes obrigatorio no formato YYYY-MM' });
+    }
+
+    const [linhas, porClasse] = await Promise.all([
+      supabase.from('vw_fin_dre_mensal').select('*').eq('mes', mes),
+      supabase.from('vw_fin_dre_classe').select('*').eq('mes', mes),
+    ]);
+
+    if (linhas.error) return res.status(500).json({ error: linhas.error.message });
+
+    const rows = linhas.data || [];
+    const receitasOrdinarias = rows.filter(r => r.tipo === 'receita' && r.natureza === 'ordinaria');
+    const receitasExtraord = rows.filter(r => r.tipo === 'receita' && r.natureza !== 'ordinaria');
+    const despesasFixas = rows.filter(r => r.tipo === 'despesa' && r.classe === 'fixa');
+    const despesasVariaveis = rows.filter(r => r.tipo === 'despesa' && r.classe === 'variavel');
+    const despesasEventuais = rows.filter(r => r.tipo === 'despesa' && r.classe === 'eventual');
+    const despesasSemClasse = rows.filter(r => r.tipo === 'despesa' && !r.classe);
+
+    const sumar = (arr) => arr.reduce((s, r) => s + Number(r.total), 0);
+
+    const totalReceitasOrd = sumar(receitasOrdinarias);
+    const totalReceitasExt = sumar(receitasExtraord);
+    const totalReceitas = totalReceitasOrd + totalReceitasExt;
+    const totalFixas = sumar(despesasFixas);
+    const totalVariaveis = sumar(despesasVariaveis);
+    const totalEventuais = sumar(despesasEventuais);
+    const totalSemClasse = sumar(despesasSemClasse);
+    const totalDespesas = totalFixas + totalVariaveis + totalEventuais + totalSemClasse;
+    const resultado = totalReceitas - totalDespesas;
+    const margem = totalReceitas > 0 ? (resultado / totalReceitas) * 100 : 0;
+
+    res.json({
+      mes,
+      receitas: {
+        ordinarias: receitasOrdinarias, total_ordinarias: totalReceitasOrd,
+        extraordinarias: receitasExtraord, total_extraordinarias: totalReceitasExt,
+        total: totalReceitas,
+      },
+      despesas: {
+        fixas: despesasFixas, total_fixas: totalFixas,
+        variaveis: despesasVariaveis, total_variaveis: totalVariaveis,
+        eventuais: despesasEventuais, total_eventuais: totalEventuais,
+        sem_classe: despesasSemClasse, total_sem_classe: totalSemClasse,
+        total: totalDespesas,
+      },
+      resultado,
+      margem,
+      por_classe: porClasse.data || [],
+    });
+  } catch (e) {
+    console.error('[FIN-V2] dre/mensal:', e);
+    res.status(500).json({ error: 'Erro ao montar DRE' });
+  }
+});
+
+router.get('/dre/comparativo', async (req, res) => {
+  try {
+    const { meses = 6 } = req.query;
+    const n = Math.min(Math.max(Number(meses), 2), 24);
+    const hoje = new Date();
+    const mesesArray = [];
+    for (let i = n - 1; i >= 0; i--) {
+      const d = new Date(hoje.getFullYear(), hoje.getMonth() - i, 1);
+      mesesArray.push(d.toISOString().slice(0, 7));
+    }
+
+    const { data: classes } = await supabase
+      .from('vw_fin_dre_classe')
+      .select('*')
+      .in('mes', mesesArray);
+
+    // Pivot · mes → totais
+    const pivot = {};
+    mesesArray.forEach(m => {
+      pivot[m] = { mes: m, receita: 0, fixa: 0, variavel: 0, eventual: 0, sem_classe: 0 };
+    });
+    for (const row of classes || []) {
+      if (!pivot[row.mes]) continue;
+      if (row.tipo === 'receita') pivot[row.mes].receita += Number(row.total);
+      else if (row.classe === 'fixa') pivot[row.mes].fixa += Number(row.total);
+      else if (row.classe === 'variavel') pivot[row.mes].variavel += Number(row.total);
+      else if (row.classe === 'eventual') pivot[row.mes].eventual += Number(row.total);
+      else pivot[row.mes].sem_classe += Number(row.total);
+    }
+
+    res.json({ meses: mesesArray, dados: Object.values(pivot) });
+  } catch (e) {
+    res.status(500).json({ error: 'Erro ao montar comparativo' });
+  }
+});
+
 module.exports = router;

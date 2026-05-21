@@ -521,6 +521,15 @@ export const financeiroV2 = {
     semana: (semana) => get('/financeiro-v2/dashboard/semana' + (semana ? `?semana=${semana}` : '')),
   },
   backfill: (data) => post('/financeiro-v2/backfill/transacoes', data || {}),
+  recorrencias: {
+    list: (params) => get('/financeiro-v2/recorrencias' + (params ? '?' + new URLSearchParams(params) : '')),
+    update: (id, data) => put(`/financeiro-v2/recorrencias/${id}`, data),
+    detectar: (data) => post('/financeiro-v2/recorrencias/detectar', data || {}),
+  },
+  dre: {
+    mensal: (mes) => get(`/financeiro-v2/dre/mensal?mes=${mes}`),
+    comparativo: (meses = 6) => get(`/financeiro-v2/dre/comparativo?meses=${meses}`),
+  },
 };
 
 export const santander = {
