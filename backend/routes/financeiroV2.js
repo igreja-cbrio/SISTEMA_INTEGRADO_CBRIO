@@ -1239,4 +1239,142 @@ router.post('/analises/rodar', async (req, res) => {
   }
 });
 
+// ====================================================================
+// DASHBOARD SEMANAL COMPLETO · receita + frequencia + ticket medio
+// ====================================================================
+router.get('/dashboard/semana-completa', async (req, res) => {
+  try {
+    const { semana } = req.query;
+    const dataRef = semana || new Date().toISOString().slice(0, 10);
+    const { data: rangeRow } = await supabase.rpc('fin_semana_qua_ter', { p_data: dataRef });
+    const range = (rangeRow || [])[0];
+    if (!range) return res.json({ erro: 'semana_invalida' });
+
+    // Calcula semana anterior + mesma semana ano anterior pra comparativos
+    const anterior = new Date(range.inicio); anterior.setDate(anterior.getDate() - 7);
+    const yoy = new Date(range.inicio); yoy.setFullYear(yoy.getFullYear() - 1);
+
+    const [
+      cultosSemana,
+      resumo,
+      resumoAnterior,
+      resumoYoY,
+      historico,
+      topContribuintes,
+      categorias,
+    ] = await Promise.all([
+      // Cultos da semana com frequencia + receita
+      supabase.from('vw_fin_semana_cultos').select('*')
+        .gte('culto_data', range.inicio).lte('culto_data', range.fim)
+        .order('culto_data').order('hora_culto'),
+      // Resumo da semana atual
+      supabase.from('vw_fin_semana_resumo').select('*')
+        .eq('semana_inicio', range.inicio).maybeSingle(),
+      // Semana anterior
+      supabase.from('vw_fin_semana_resumo').select('*')
+        .eq('semana_inicio', anterior.toISOString().slice(0, 10)).maybeSingle(),
+      // YoY (mesma semana ano anterior)
+      supabase.from('vw_fin_semana_resumo').select('*')
+        .gte('semana_inicio', new Date(yoy.getTime() - 4 * 86400000).toISOString().slice(0, 10))
+        .lte('semana_inicio', new Date(yoy.getTime() + 4 * 86400000).toISOString().slice(0, 10))
+        .limit(1).maybeSingle(),
+      // Historico 12 semanas pra tendencia
+      supabase.from('vw_fin_semana_resumo').select('*')
+        .lte('semana_inicio', range.inicio)
+        .order('semana_inicio', { ascending: false }).limit(12),
+      // Top 10 contribuintes da semana
+      supabase.from('vw_fin_top_contribuintes_semana').select('*')
+        .eq('semana_inicio', range.inicio)
+        .order('total_doado', { ascending: false }).limit(10),
+      // Quebra por categoria (plano de contas nivel 3)
+      supabase.from('vw_fin_transacoes_completa')
+        .select('plano_contas_codigo, plano_contas_nome, plano_contas_natureza, valor, culto_nome, culto_service_type_slug')
+        .gte('data_competencia', range.inicio).lte('data_competencia', range.fim)
+        .eq('tipo', 'receita').neq('status', 'cancelado'),
+    ]);
+
+    // Agrupa categorias em 4 buckets estilo Power BI
+    const buckets = {
+      quarta: { nome: 'Quarta com Deus', categorias: {}, total: 0 },
+      domingo: { nome: 'Final de Semana', categorias: {}, total: 0 },
+      outros: { nome: 'Durante a Semana', categorias: {}, total: 0 },
+      acumulada: { nome: 'Semana Acumulada', categorias: {}, total: 0 },
+    };
+    const labelCategoria = (codigo, nome, natureza) => {
+      if (codigo?.startsWith('3.01.01')) return 'Dízimos';
+      if (codigo?.startsWith('3.01.02')) return 'Ofertas Regulares';
+      if (codigo?.startsWith('3.02.01')) return 'Campanha 2025';
+      if (codigo?.startsWith('3.02.02')) return 'Eventos';
+      if (codigo?.startsWith('3.02.03')) return 'Outras Ofertas';
+      if (codigo?.startsWith('3.02.06')) return 'Financeiras';
+      if (natureza === 'extraordinaria') return 'Ministerial, Campanhas e Outros';
+      return nome?.split('·')[0]?.trim() || 'Outros';
+    };
+
+    for (const t of categorias.data || []) {
+      const cat = labelCategoria(t.plano_contas_codigo, t.plano_contas_nome, t.plano_contas_natureza);
+      const v = Number(t.valor);
+      const slug = (t.culto_service_type_slug || '').toLowerCase();
+      // Bucket por culto
+      let key;
+      if (slug.includes('quarta')) key = 'quarta';
+      else if (slug.startsWith('domingo') || slug === 'sede') key = 'domingo';
+      else key = 'outros';
+      buckets[key].categorias[cat] = (buckets[key].categorias[cat] || 0) + v;
+      buckets[key].total += v;
+      buckets.acumulada.categorias[cat] = (buckets.acumulada.categorias[cat] || 0) + v;
+      buckets.acumulada.total += v;
+    }
+    const formatBucket = (b) => ({
+      nome: b.nome,
+      total: b.total,
+      categorias: Object.entries(b.categorias)
+        .map(([cat, valor]) => ({ categoria: cat, valor, pct: b.total > 0 ? (valor / b.total) * 100 : 0 }))
+        .sort((a, b) => b.valor - a.valor),
+    });
+
+    const r = resumo.data || { receita_total: 0, total_presencial: 0, total_online: 0, ticket_medio_presencial: 0 };
+    const ra = resumoAnterior.data || { receita_total: 0, total_presencial: 0, ticket_medio_presencial: 0 };
+    const ry = resumoYoY.data || null;
+
+    const delta = (atual, ant) => ant > 0 ? ((atual - ant) / ant) * 100 : null;
+
+    res.json({
+      semana: range,
+      kpis: {
+        receita: Number(r.receita_total),
+        receita_delta_wow: delta(Number(r.receita_total), Number(ra.receita_total)),
+        receita_yoy: ry ? Number(ry.receita_total) : null,
+        receita_delta_yoy: ry ? delta(Number(r.receita_total), Number(ry.receita_total)) : null,
+        presencial: Number(r.total_presencial),
+        presencial_delta_wow: delta(Number(r.total_presencial), Number(ra.total_presencial)),
+        online: Number(r.total_online || 0),
+        ticket_medio: Number(r.ticket_medio_presencial || 0),
+        ticket_delta_wow: delta(Number(r.ticket_medio_presencial), Number(ra.ticket_medio_presencial)),
+      },
+      cultos: (cultosSemana.data || []).map(c => ({
+        ...c,
+        ticket: c.total_presencial > 0 ? Number(c.receita_total) / c.total_presencial : 0,
+      })),
+      buckets: {
+        quarta: formatBucket(buckets.quarta),
+        domingo: formatBucket(buckets.domingo),
+        outros: formatBucket(buckets.outros),
+        acumulada: formatBucket(buckets.acumulada),
+      },
+      historico: (historico.data || []).reverse().map(h => ({
+        semana_label: h.semana_label,
+        semana_inicio: h.semana_inicio,
+        receita: Number(h.receita_total),
+        presencial: Number(h.total_presencial),
+        ticket: Number(h.ticket_medio_presencial),
+      })),
+      top_contribuintes: topContribuintes.data || [],
+    });
+  } catch (e) {
+    console.error('[FIN-V2] semana-completa:', e);
+    res.status(500).json({ error: e.message || 'Erro ao montar dashboard semanal' });
+  }
+});
+
 module.exports = router;
