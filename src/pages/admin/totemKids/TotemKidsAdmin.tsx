@@ -14,19 +14,37 @@ import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
-import { Loader2, Plus, Pencil, Trash2, Power, Baby, Calendar, MapPin, Printer, ShieldAlert, ListChecks } from 'lucide-react';
+import { Loader2, Plus, Pencil, Baby, Calendar, MapPin, Printer, ShieldAlert, ExternalLink } from 'lucide-react';
 import { toast } from 'sonner';
-import { totemKids } from '@/api';
-import { formatIdade, formatIdadeShort } from '@/pages/ministerial/totemKids/lib/idade';
+import { totemKids, kpis } from '@/api';
+import { useNavigate } from 'react-router-dom';
+import { formatIdadeShort } from '@/pages/ministerial/totemKids/lib/idade';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 
 export default function TotemKidsAdmin() {
+  const navigate = useNavigate();
   return (
     <div className="max-w-6xl mx-auto p-4 space-y-4">
-      <div>
-        <h1 className="text-2xl font-bold text-pink-700 dark:text-pink-300">Totem Kids · Administração</h1>
-        <p className="text-sm text-muted-foreground">Configuração de sessões, salas, estações, crianças e auditoria.</p>
+      <div className="flex items-start justify-between flex-wrap gap-2">
+        <div>
+          <h1 className="text-2xl font-bold text-pink-700 dark:text-pink-300">Totem Kids · Administração</h1>
+          <p className="text-sm text-muted-foreground">Configuração de sessões, salas, estações, crianças e auditoria.</p>
+        </div>
+        <div className="flex gap-2 flex-wrap">
+          <Button variant="outline" size="sm" onClick={() => navigate('/ministerial/totem-kids')}>
+            <ExternalLink className="h-4 w-4 mr-1" /> Ir pro Totem (check-in)
+          </Button>
+          <Button variant="outline" size="sm" onClick={() => navigate('/ministerial/totem-kids/teste-etiqueta')}>
+            <Printer className="h-4 w-4 mr-1" /> Testar etiqueta
+          </Button>
+          <Button variant="outline" size="sm" onClick={() => navigate('/ministerial/totem-kids/painel')}>
+            <Calendar className="h-4 w-4 mr-1" /> Painel ao vivo
+          </Button>
+          <Button variant="outline" size="sm" onClick={() => window.open('/manuais/totem-kids/', '_blank')}>
+            <ExternalLink className="h-4 w-4 mr-1" /> Manual (HTML)
+          </Button>
+        </div>
       </div>
 
       <Tabs defaultValue="sessoes">
@@ -58,23 +76,25 @@ function AbaSessoes() {
   async function carregar() {
     setCarregando(true);
     try {
+      // Pega cultos dos ultimos 7 dias + proximos 14 dias (3 semanas total).
+      // Marcos: "ele sempre mostra o do dia, faz sentido" · entao janela
+      // larga ate o admin conseguir criar com antecedencia.
+      const hoje = new Date();
+      const inicio = new Date(hoje); inicio.setDate(hoje.getDate() - 7);
+      const fim = new Date(hoje); fim.setDate(hoje.getDate() + 14);
       const [s, c] = await Promise.all([
         totemKids.sessoes.list({ limit: 30 }),
-        // Cultos futuros + recentes · usa endpoint do voluntariado (que retorna cultos)
-        fetchCultos(),
+        kpis.cultos.list({
+          limit: 50,
+          data_inicio: inicio.toISOString().slice(0, 10),
+          data_fim: fim.toISOString().slice(0, 10),
+        }).catch(() => []),
       ]);
       setSessoes(s);
-      setCultos(c);
+      setCultos(c || []);
     } finally {
       setCarregando(false);
     }
-  }
-  async function fetchCultos() {
-    try {
-      const res = await fetch('/api/cultos?periodo=futuro', { credentials: 'include' });
-      if (res.ok) return res.json();
-    } catch { /* sem cultos · admin cria depois */ }
-    return [];
   }
 
   useEffect(() => { carregar(); }, []);
@@ -157,21 +177,39 @@ function AbaSessoes() {
           <DialogContent>
             <DialogHeader>
               <DialogTitle>Nova sessão Kids</DialogTitle>
-              <DialogDescription>Escolha o culto que vai ter Kids</DialogDescription>
+              <DialogDescription>
+                Cultos dos últimos 7 dias até próximos 14. Selecione o culto
+                que vai ter Kids · sessão sai já <b>aberta</b>.
+              </DialogDescription>
             </DialogHeader>
-            <Select value={cultoSelecionado} onValueChange={setCultoSelecionado}>
-              <SelectTrigger><SelectValue placeholder="Selecione o culto" /></SelectTrigger>
-              <SelectContent>
-                {cultos.map((c: any) => (
-                  <SelectItem key={c.id} value={c.id}>
-                    {c.nome} · {c.data && format(new Date(c.data + 'T00:00:00'), 'dd/MM/yyyy')}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            {cultos.length === 0 ? (
+              <div className="text-sm text-muted-foreground py-4 text-center">
+                Nenhum culto cadastrado nessa janela.
+                <br />
+                <Button variant="link" className="text-pink-600" onClick={() => window.open('/integracao?aba=cultos', '_blank')}>
+                  Abrir /integração para cadastrar cultos
+                </Button>
+              </div>
+            ) : (
+              <Select value={cultoSelecionado} onValueChange={setCultoSelecionado}>
+                <SelectTrigger><SelectValue placeholder="Selecione o culto" /></SelectTrigger>
+                <SelectContent className="max-h-[300px]">
+                  {cultos.map((c: any) => {
+                    const dt = c.data && new Date(c.data + 'T00:00:00');
+                    const jaTemSessao = sessoes.some(s => s.culto_id === c.id);
+                    return (
+                      <SelectItem key={c.id} value={c.id} disabled={jaTemSessao}>
+                        {dt && format(dt, "EEE dd/MM", { locale: ptBR })} · {c.nome}
+                        {jaTemSessao && ' (já tem sessão)'}
+                      </SelectItem>
+                    );
+                  })}
+                </SelectContent>
+              </Select>
+            )}
             <div className="flex justify-end gap-2">
               <Button variant="outline" onClick={() => setModalAberto(false)}>Cancelar</Button>
-              <Button onClick={criarSessao} className="bg-pink-600 hover:bg-pink-700">Criar</Button>
+              <Button onClick={criarSessao} disabled={!cultoSelecionado} className="bg-pink-600 hover:bg-pink-700">Criar</Button>
             </div>
           </DialogContent>
         </Dialog>
