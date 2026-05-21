@@ -3,6 +3,7 @@ import { motion, AnimatePresence, useSpring, useTransform, animate } from 'frame
 import {
   ChevronLeft, ChevronRight, TrendingUp, TrendingDown, Users, Banknote,
   Sparkles, ArrowUp, ArrowDown, Minus, Award, Calendar,
+  BarChart3, Activity, Target, FileText,
 } from 'lucide-react';
 import { Card, CardContent } from '../../../components/ui/card';
 import { Button } from '../../../components/ui/button';
@@ -57,6 +58,15 @@ function CountUp({ value, format = fmtMoney, duration = 1.2 }) {
 // ============================================================
 // MAIN
 // ============================================================
+const SLIDES = [
+  { key: 'resumo',       label: 'Resumo',         icon: Sparkles,   desc: 'KPIs · cultos · top contribuintes' },
+  { key: 'por_culto',    label: 'Por Culto',      icon: Calendar,   desc: 'Quarta · domingo · outros · acumulada' },
+  { key: 'tendencias',   label: 'Tendências',     icon: TrendingUp, desc: 'Histórico semanal e mensal' },
+  { key: 'comparativos', label: 'Comparativos',   icon: BarChart3,  desc: 'YTD · YoY · decêndio' },
+  { key: 'performance',  label: 'Performance',    icon: Activity,   desc: 'Frequência × receita · melhores' },
+  { key: 'controle',     label: 'Saídas & Metas', icon: Target,     desc: 'Despesas detalhadas · metas' },
+];
+
 export default function DashboardSemanal() {
   const [data, setData] = useState(null);
   const [completo, setCompleto] = useState(null);
@@ -65,6 +75,19 @@ export default function DashboardSemanal() {
   const [metas, setMetas] = useState([]);
   const [loading, setLoading] = useState(true);
   const [refData, setRefData] = useState(new Date().toISOString().slice(0, 10));
+  const [slide, setSlide] = useState(0);
+
+  // Navegação por teclado · ← → entre slides
+  useEffect(() => {
+    const handler = (e) => {
+      // ignora se está digitando em input/textarea
+      if (e.target?.tagName === 'INPUT' || e.target?.tagName === 'TEXTAREA' || e.target?.tagName === 'SELECT') return;
+      if (e.key === 'ArrowRight') setSlide(i => Math.min(i + 1, SLIDES.length - 1));
+      else if (e.key === 'ArrowLeft') setSlide(i => Math.max(i - 1, 0));
+    };
+    document.addEventListener('keydown', handler);
+    return () => document.removeEventListener('keydown', handler);
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -105,28 +128,19 @@ export default function DashboardSemanal() {
   const { semana, kpis, cultos, buckets, historico, top_contribuintes } = data;
 
   return (
-    <motion.div
-      className="space-y-6"
-      initial="hidden"
-      animate="visible"
-      variants={{ visible: { transition: { staggerChildren: 0.08 } } }}
-    >
-      {/* HEADER · navegação semana */}
-      <motion.div
-        initial={{ opacity: 0, y: -16 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.5 }}
-      >
+    <div className="space-y-4">
+      {/* HEADER · navegação semana (sticky · sempre visível) */}
+      <div className="sticky top-0 z-20 pb-2 -mx-1 px-1 bg-gradient-to-b from-background via-background to-transparent backdrop-blur-sm">
         <Card className="overflow-hidden border-primary/30">
           <div className="absolute inset-0 bg-gradient-to-r from-primary/5 via-transparent to-primary/5 pointer-events-none" />
-          <CardContent className="pt-5 pb-5 flex items-center justify-between flex-wrap gap-3 relative">
+          <CardContent className="pt-4 pb-4 flex items-center justify-between flex-wrap gap-3 relative">
             <Button variant="outline" size="sm" onClick={() => navegar(-1)}>
               <ChevronLeft className="h-4 w-4 mr-1" /> Semana anterior
             </Button>
             <div className="text-center">
-              <div className="text-xs text-muted-foreground uppercase tracking-wider">Semana qua-ter</div>
-              <div className="text-xl font-bold text-foreground capitalize">{semana.label}</div>
-              <div className="text-xs text-muted-foreground mt-0.5">
+              <div className="text-[10px] text-muted-foreground uppercase tracking-wider">Semana qua-ter</div>
+              <div className="text-lg font-bold text-foreground capitalize">{semana.label}</div>
+              <div className="text-[10px] text-muted-foreground">
                 {semana.inicio} a {semana.fim}
               </div>
             </div>
@@ -135,8 +149,113 @@ export default function DashboardSemanal() {
             </Button>
           </CardContent>
         </Card>
-      </motion.div>
 
+        {/* SlideNav · botões de navegação entre slides */}
+        <SlideNav current={slide} onChange={setSlide} />
+      </div>
+
+      {/* CONTENT · slides animados com AnimatePresence */}
+      <AnimatePresence mode="wait">
+        <motion.div
+          key={SLIDES[slide].key}
+          initial={{ opacity: 0, x: 30 }}
+          animate={{ opacity: 1, x: 0 }}
+          exit={{ opacity: 0, x: -30 }}
+          transition={{ duration: 0.25, ease: 'easeOut' }}
+          className="space-y-6"
+        >
+          {slide === 0 && (
+            <Slide0Resumo
+              kpis={kpis} cultos={cultos} top_contribuintes={top_contribuintes}
+              historico={historico}
+            />
+          )}
+          {slide === 1 && (
+            <Slide1PorCulto
+              buckets={buckets}
+              melhorSemana={melhorSemana}
+            />
+          )}
+          {slide === 2 && (
+            <Slide2Tendencias
+              historico={historico}
+              completo={completo}
+            />
+          )}
+          {slide === 3 && (
+            <Slide3Comparativos
+              completo={completo}
+            />
+          )}
+          {slide === 4 && (
+            <Slide4Performance
+              completo={completo}
+              melhorSemana={melhorSemana}
+            />
+          )}
+          {slide === 5 && (
+            <Slide5Controle
+              saidas={saidas}
+              metas={metas}
+              onMetasChange={reloadMetas}
+            />
+          )}
+        </motion.div>
+      </AnimatePresence>
+
+      {/* Footer · atalhos */}
+      <div className="text-center text-[10px] text-muted-foreground">
+        Use ← → no teclado pra navegar entre slides · {slide + 1} de {SLIDES.length}
+      </div>
+    </div>
+  );
+}
+
+// ============================================================
+// SLIDE NAVIGATION · botões em pílula sticky
+// ============================================================
+function SlideNav({ current, onChange }) {
+  return (
+    <div className="flex items-center gap-2 mt-3 overflow-x-auto pb-1">
+      {SLIDES.map((s, i) => {
+        const active = i === current;
+        const Icon = s.icon;
+        return (
+          <motion.button
+            key={s.key}
+            onClick={() => onChange(i)}
+            whileHover={{ y: -1 }}
+            whileTap={{ scale: 0.97 }}
+            className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium transition-all shrink-0 ${
+              active
+                ? 'bg-primary text-primary-foreground shadow-sm'
+                : 'bg-card border border-border hover:border-primary/50 text-foreground'
+            }`}
+            title={s.desc}
+          >
+            <Icon className="h-3.5 w-3.5" />
+            <span>{s.label}</span>
+            {active && (
+              <motion.span
+                layoutId="slide-active-indicator"
+                className="absolute inset-0 rounded-lg pointer-events-none"
+                style={{ background: 'transparent' }}
+              />
+            )}
+          </motion.button>
+        );
+      })}
+    </div>
+  );
+}
+
+// ============================================================
+// SLIDES · conteudo de cada aba
+// ============================================================
+
+function Slide0Resumo({ kpis, cultos, top_contribuintes, historico }) {
+  return (
+    <>
       {/* 4 KPIs principais com count-up + comparativos */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
         <KpiBig
@@ -179,20 +298,8 @@ export default function DashboardSemanal() {
         />
       </div>
 
-      {/* 4 Buckets estilo Power BI · Quarta · Final de Semana · Outros · Acumulada */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        <BucketCard custom={0} bucket={buckets.quarta} color={C.blue} />
-        <BucketCard custom={1} bucket={buckets.domingo} color={C.primary} />
-        <BucketCard custom={2} bucket={buckets.outros} color={C.amber} />
-        <BucketCard custom={3} bucket={buckets.acumulada} color={C.purple} isAcumulado />
-      </div>
-
-      {/* Tabela de cultos × frequência */}
-      <motion.div
-        initial={{ opacity: 0, y: 20 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ delay: 0.4, duration: 0.5 }}
-      >
+      {/* Tabela cultos */}
+      <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.2, duration: 0.4 }}>
         <Card>
           <CardContent className="pt-6">
             <h3 className="text-base font-semibold mb-1">Cultos da semana</h3>
@@ -212,45 +319,32 @@ export default function DashboardSemanal() {
                   </tr>
                 </thead>
                 <tbody>
-                  <AnimatePresence>
-                    {cultos.map((c, i) => (
-                      <motion.tr
-                        key={c.culto_id}
-                        initial={{ opacity: 0, x: -20 }}
-                        animate={{ opacity: 1, x: 0 }}
-                        transition={{ delay: 0.5 + i * 0.04 }}
-                        className="border-b border-border/50 hover:bg-muted/30 transition-colors"
-                      >
-                        <td className="py-2.5 px-3 font-medium">{c.culto_nome}</td>
-                        <td className="py-2.5 px-3 text-xs text-muted-foreground">
-                          {DIAS[c.dia_semana]} · {c.culto_data?.slice(8, 10)}/{c.culto_data?.slice(5, 7)}
-                        </td>
-                        <td className="py-2.5 px-3 text-right tabular-nums">
-                          {c.total_presencial > 0 ? (
-                            <>
-                              <strong>{fmtInt(c.total_presencial)}</strong>
-                              {c.presencial_kids > 0 && (
-                                <span className="text-[10px] text-muted-foreground ml-1">
-                                  ({fmtInt(c.presencial_kids)} kids)
-                                </span>
-                              )}
-                            </>
-                          ) : '—'}
-                        </td>
-                        <td className="py-2.5 px-3 text-right tabular-nums text-muted-foreground">
-                          {c.online_pico > 0 ? fmtInt(c.online_pico) : '—'}
-                        </td>
-                        <td className="py-2.5 px-3 text-right tabular-nums font-semibold" style={{ color: C.green }}>
-                          {c.receita_total > 0 ? fmtMoney(c.receita_total) : '—'}
-                        </td>
-                        <td className="py-2.5 px-3 text-right tabular-nums">
-                          {c.ticket > 0 ? (
-                            <span style={{ color: C.purple }}>{fmtMoney(c.ticket)}</span>
-                          ) : '—'}
-                        </td>
-                      </motion.tr>
-                    ))}
-                  </AnimatePresence>
+                  {cultos.map((c, i) => (
+                    <motion.tr
+                      key={c.culto_id}
+                      initial={{ opacity: 0, x: -20 }}
+                      animate={{ opacity: 1, x: 0 }}
+                      transition={{ delay: 0.3 + i * 0.04 }}
+                      className="border-b border-border/50 hover:bg-muted/30 transition-colors"
+                    >
+                      <td className="py-2.5 px-3 font-medium">{c.culto_nome}</td>
+                      <td className="py-2.5 px-3 text-xs text-muted-foreground">
+                        {DIAS[c.dia_semana]} · {c.culto_data?.slice(8, 10)}/{c.culto_data?.slice(5, 7)}
+                      </td>
+                      <td className="py-2.5 px-3 text-right tabular-nums">
+                        {c.total_presencial > 0 ? <strong>{fmtInt(c.total_presencial)}</strong> : '—'}
+                      </td>
+                      <td className="py-2.5 px-3 text-right tabular-nums text-muted-foreground">
+                        {c.online_pico > 0 ? fmtInt(c.online_pico) : '—'}
+                      </td>
+                      <td className="py-2.5 px-3 text-right tabular-nums font-semibold" style={{ color: C.green }}>
+                        {c.receita_total > 0 ? fmtMoney(c.receita_total) : '—'}
+                      </td>
+                      <td className="py-2.5 px-3 text-right tabular-nums">
+                        {c.ticket > 0 ? <span style={{ color: C.purple }}>{fmtMoney(c.ticket)}</span> : '—'}
+                      </td>
+                    </motion.tr>
+                  ))}
                 </tbody>
               </table>
             </div>
@@ -258,56 +352,9 @@ export default function DashboardSemanal() {
         </Card>
       </motion.div>
 
-      {/* Tendência 12 semanas · receita × frequência × ticket */}
-      <motion.div
-        initial={{ opacity: 0, y: 20 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ delay: 0.5, duration: 0.5 }}
-      >
-        <Card>
-          <CardContent className="pt-6">
-            <h3 className="text-base font-semibold mb-1">Tendência das últimas 12 semanas</h3>
-            <p className="text-xs text-muted-foreground mb-4">
-              Receita (barras verdes) · presença (linha azul) · ticket médio (linha roxa pontilhada)
-            </p>
-            <div style={{ width: '100%', height: 320 }}>
-              <ResponsiveContainer>
-                <ComposedChart data={historico}>
-                  <defs>
-                    <linearGradient id="gradReceita" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="0%" stopColor={C.green} stopOpacity={0.9} />
-                      <stop offset="100%" stopColor={C.green} stopOpacity={0.4} />
-                    </linearGradient>
-                  </defs>
-                  <CartesianGrid strokeDasharray="3 3" opacity={0.2} />
-                  <XAxis dataKey="semana_label" tick={{ fontSize: 10 }} />
-                  <YAxis yAxisId="left" tick={{ fontSize: 10 }} tickFormatter={(v) => fmtCompact(v).replace('R$ ', '')} />
-                  <YAxis yAxisId="right" orientation="right" tick={{ fontSize: 10 }} />
-                  <Tooltip
-                    formatter={(v, n) => {
-                      if (n === 'Presença') return [fmtInt(v), n];
-                      return [fmtMoney(v), n];
-                    }}
-                    contentStyle={{ borderRadius: 8, fontSize: 12 }}
-                  />
-                  <Legend wrapperStyle={{ fontSize: 11 }} />
-                  <Bar yAxisId="left" dataKey="receita" name="Receita" fill="url(#gradReceita)" radius={[4, 4, 0, 0]} />
-                  <Line yAxisId="right" type="monotone" dataKey="presencial" name="Presença" stroke={C.blue} strokeWidth={2.5} dot={{ r: 3 }} />
-                  <Line yAxisId="left" type="monotone" dataKey="ticket" name="Ticket médio" stroke={C.purple} strokeWidth={2} strokeDasharray="5 5" dot={false} />
-                </ComposedChart>
-              </ResponsiveContainer>
-            </div>
-          </CardContent>
-        </Card>
-      </motion.div>
-
       {/* Top contribuintes */}
       {top_contribuintes && top_contribuintes.length > 0 && (
-        <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.6, duration: 0.5 }}
-        >
+        <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.3, duration: 0.4 }}>
           <Card>
             <CardContent className="pt-6">
               <h3 className="text-base font-semibold mb-4 flex items-center gap-2">
@@ -320,7 +367,7 @@ export default function DashboardSemanal() {
                     key={t.membro_id || i}
                     initial={{ opacity: 0, x: 20 }}
                     animate={{ opacity: 1, x: 0 }}
-                    transition={{ delay: 0.7 + i * 0.05 }}
+                    transition={{ delay: 0.4 + i * 0.05 }}
                     className="flex items-center justify-between p-3 rounded-lg border border-border hover:bg-muted/30 transition-colors"
                   >
                     <div className="flex items-center gap-3">
@@ -350,102 +397,112 @@ export default function DashboardSemanal() {
           </Card>
         </motion.div>
       )}
+    </>
+  );
+}
 
-      {/* ============================================================
-          PR A · Novas seções: Mensal · Semanal · Decêndio · YTD · YoY · Freq×Receita
-          ============================================================ */}
+function Slide1PorCulto({ buckets, melhorSemana }) {
+  return (
+    <>
+      {/* 4 Buckets estilo Power BI */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        <BucketCard custom={0} bucket={buckets.quarta} color={C.blue} />
+        <BucketCard custom={1} bucket={buckets.domingo} color={C.primary} />
+        <BucketCard custom={2} bucket={buckets.outros} color={C.amber} />
+        <BucketCard custom={3} bucket={buckets.acumulada} color={C.purple} isAcumulado />
+      </div>
+
+      {/* Melhor semana */}
+      {melhorSemana && (melhorSemana.melhor_do_mes || melhorSemana.melhor_do_ano) && (
+        <MelhorSemanaCards melhor={melhorSemana} />
+      )}
+    </>
+  );
+}
+
+function Slide2Tendencias({ historico, completo }) {
+  return (
+    <>
+      {/* Tendência 12 semanas */}
+      <Card>
+        <CardContent className="pt-6">
+          <h3 className="text-base font-semibold mb-1">Tendência das últimas 12 semanas</h3>
+          <p className="text-xs text-muted-foreground mb-4">
+            Receita (barras verdes) · presença (linha azul) · ticket médio (linha roxa pontilhada)
+          </p>
+          <div style={{ width: '100%', height: 320 }}>
+            <ResponsiveContainer>
+              <ComposedChart data={historico}>
+                <defs>
+                  <linearGradient id="gradReceita" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stopColor={C.green} stopOpacity={0.9} />
+                    <stop offset="100%" stopColor={C.green} stopOpacity={0.4} />
+                  </linearGradient>
+                </defs>
+                <CartesianGrid strokeDasharray="3 3" opacity={0.2} />
+                <XAxis dataKey="semana_label" tick={{ fontSize: 10 }} />
+                <YAxis yAxisId="left" tick={{ fontSize: 10 }} tickFormatter={(v) => fmtCompact(v).replace('R$ ', '')} />
+                <YAxis yAxisId="right" orientation="right" tick={{ fontSize: 10 }} />
+                <Tooltip
+                  formatter={(v, n) => n === 'Presença' ? [fmtInt(v), n] : [fmtMoney(v), n]}
+                  contentStyle={{ borderRadius: 8, fontSize: 12 }}
+                />
+                <Legend wrapperStyle={{ fontSize: 11 }} />
+                <Bar yAxisId="left" dataKey="receita" name="Receita" fill="url(#gradReceita)" radius={[4, 4, 0, 0]} />
+                <Line yAxisId="right" type="monotone" dataKey="presencial" name="Presença" stroke={C.blue} strokeWidth={2.5} dot={{ r: 3 }} />
+                <Line yAxisId="left" type="monotone" dataKey="ticket" name="Ticket médio" stroke={C.purple} strokeWidth={2} strokeDasharray="5 5" dot={false} />
+              </ComposedChart>
+            </ResponsiveContainer>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* PR A · Mensal + Semanal */}
       {completo && (
         <>
-          {/* YTD card destacado */}
-          <motion.div
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 0.6, duration: 0.5 }}
-          >
-            <YtdCard ytd={completo.ytd} />
-          </motion.div>
-
-          {/* Arrecadação mensal (12 meses) */}
-          <motion.div
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 0.65, duration: 0.5 }}
-          >
-            <ArrecadacaoMensalChart dados={completo.mensal} />
-          </motion.div>
-
-          {/* Arrecadação semanal + Decêndio (grid 2 colunas) */}
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-            <motion.div
-              initial={{ opacity: 0, x: -20 }}
-              animate={{ opacity: 1, x: 0 }}
-              transition={{ delay: 0.7, duration: 0.5 }}
-              className="lg:col-span-2"
-            >
-              <ArrecadacaoSemanalChart dados={completo.semanal} anoAtual={completo.ano_atual} />
-            </motion.div>
-            <motion.div
-              initial={{ opacity: 0, x: 20 }}
-              animate={{ opacity: 1, x: 0 }}
-              transition={{ delay: 0.75, duration: 0.5 }}
-            >
-              <DecendioCard dados={completo.decendio} mes={completo.mes_atual} />
-            </motion.div>
-          </div>
-
-          {/* YoY Semanal */}
-          {completo.yoy_semanal?.length > 0 && (
-            <motion.div
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: 0.8, duration: 0.5 }}
-            >
-              <YoYSemanalChart dados={completo.yoy_semanal} anoAtual={completo.ano_atual} anoAnterior={completo.ano_anterior} />
-            </motion.div>
-          )}
-
-          {/* Frequência vs Arrecadação */}
-          <motion.div
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 0.85, duration: 0.5 }}
-          >
-            <FreqVsReceitaChart dados={completo.freq_vs_receita} />
-          </motion.div>
+          <ArrecadacaoMensalChart dados={completo.mensal} />
+          <ArrecadacaoSemanalChart dados={completo.semanal} anoAtual={completo.ano_atual} />
         </>
       )}
+    </>
+  );
+}
 
-      {/* ============================================================
-          PR B · Melhor semana + Saidas detalhadas + Metas
-          ============================================================ */}
+function Slide3Comparativos({ completo }) {
+  if (!completo) {
+    return <div className="text-sm text-muted-foreground text-center py-10">Sem dados de comparativos · aplicar migrations e classificar transações</div>;
+  }
+  return (
+    <>
+      <YtdCard ytd={completo.ytd} />
+      <DecendioCard dados={completo.decendio} mes={completo.mes_atual} />
+      {completo.yoy_semanal?.length > 0 && (
+        <YoYSemanalChart dados={completo.yoy_semanal} anoAtual={completo.ano_atual} anoAnterior={completo.ano_anterior} />
+      )}
+    </>
+  );
+}
+
+function Slide4Performance({ completo, melhorSemana }) {
+  return (
+    <>
+      {completo && <FreqVsReceitaChart dados={completo.freq_vs_receita} />}
       {melhorSemana && (melhorSemana.melhor_do_mes || melhorSemana.melhor_do_ano) && (
-        <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.9, duration: 0.5 }}
-        >
-          <MelhorSemanaCards melhor={melhorSemana} />
-        </motion.div>
+        <MelhorSemanaCards melhor={melhorSemana} />
       )}
-
-      {saidas && (
-        <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.95, duration: 0.5 }}
-        >
-          <SaidasDetalhadas saidas={saidas} />
-        </motion.div>
+      {!completo && !melhorSemana && (
+        <div className="text-sm text-muted-foreground text-center py-10">Sem dados de performance ainda</div>
       )}
+    </>
+  );
+}
 
-      <motion.div
-        initial={{ opacity: 0, y: 20 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ delay: 1.0, duration: 0.5 }}
-      >
-        <MetasFinanceiras metas={metas} onChange={reloadMetas} />
-      </motion.div>
-    </motion.div>
+function Slide5Controle({ saidas, metas, onMetasChange }) {
+  return (
+    <>
+      {saidas && <SaidasDetalhadas saidas={saidas} />}
+      <MetasFinanceiras metas={metas} onChange={onMetasChange} />
+    </>
   );
 }
 
