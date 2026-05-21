@@ -242,15 +242,15 @@ export default function ApresentacaoDetalhe() {
             {apres.modelo_ia === 'claude-opus-4-7' ? 'Claude Opus' : 'Claude Sonnet'} está montando seus slides
           </h3>
           <p className="text-sm text-muted-foreground max-w-md mx-auto mb-3">
-            {tickSec < 60 ? (
-              <>Decorridos <span className="text-cyan-300 font-mono">{tickSec}s</span> · normalmente leva 20-50s · pode fechar a aba (notifica no sino).</>
-            ) : tickSec < 90 ? (
-              <>Decorridos <span className="text-amber-300 font-mono">{tickSec}s</span> · acima do esperado. Vercel limita 60s, pode dar timeout.</>
+            {tickSec < 120 ? (
+              <>Decorridos <span className="text-cyan-300 font-mono">{tickSec}s</span> · normalmente leva 1-3min · pode fechar a aba (notifica no sino).</>
+            ) : tickSec < 300 ? (
+              <>Decorridos <span className="text-amber-300 font-mono">{tickSec}s</span> · ainda dentro do esperado pra apresentações complexas.</>
             ) : (
               <>Decorridos <span className="text-rose-300 font-mono">{tickSec}s</span> · provavelmente travou no timeout. Marque como erro pra tentar novamente.</>
             )}
           </p>
-          {tickSec >= 90 && (
+          {tickSec >= 300 && (
             <Button onClick={marcarTravada} disabled={resetando} variant="outline" className="mt-2">
               {resetando ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <AlertCircle className="h-4 w-4 mr-1" />}
               Marcar como travada

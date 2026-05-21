@@ -5,7 +5,7 @@
   "functions": {
     "api/index.js": {
       "includeFiles": "backend/{server.js,package.json,routes/**,middleware/**,utils/**,services/**,config/**,agents/**,templates/**,adm_tasks_template.json}",
-      "maxDuration": 60
+      "maxDuration": 300
     }
   },
   "crons": [
