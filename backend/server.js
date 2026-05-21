@@ -80,6 +80,8 @@ app.use('/api/agents', require('./routes/agents'));
 app.use('/api/rh', require('./routes/rh'));
 app.use('/api/pcs', require('./routes/pcs'));
 app.use('/api/financeiro', require('./routes/financeiro'));
+app.use('/api/financeiro-v2', require('./routes/financeiroV2'));
+app.use('/api/santander', require('./routes/santander'));
 app.use('/api/logistica', require('./routes/logistica'));
 app.use('/api/ml', require('./routes/ml'));
 app.use('/api/arquivei', require('./routes/arquivei'));

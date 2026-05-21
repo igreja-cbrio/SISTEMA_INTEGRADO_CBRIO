@@ -17,6 +17,7 @@ const ROUTE_MODULE_MAP = {
   // operacionais
   'rh':           ['rh'],
   'financeiro':   ['financeiro'],
+  'santander':    ['financeiro'],
   'logistica':    ['logistica'],
   'patrimonio':   ['patrimonio'],
   'eventos':      ['eventos'],
