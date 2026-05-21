@@ -218,7 +218,19 @@ async function callApi(path, { method = 'GET', query, body, retries = 1, userId 
   });
 
   if (!res.ok) {
-    const err = new Error(`Santander API ${method} ${path} -> ${res.status}`);
+    // Inclui body do Santander na mensagem · ajuda diagnosticar 4xx
+    // (ex: "invalid accountId format", "consent not authorized", etc)
+    let bodyMsg = '';
+    if (json && typeof json === 'object') {
+      bodyMsg = json.errorMessage
+        || json.message
+        || json.error_description
+        || (Array.isArray(json.errors) ? json.errors.map(e => e.message || e.code).filter(Boolean).join(' | ') : '')
+        || JSON.stringify(json).slice(0, 220);
+    }
+    const err = new Error(
+      `Santander API ${method} ${path} -> ${res.status}${bodyMsg ? ` · ${bodyMsg}` : ''}`
+    );
     err.status = res.status;
     err.traceId = traceId;
     err.body = json;
