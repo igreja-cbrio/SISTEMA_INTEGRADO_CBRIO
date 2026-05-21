@@ -179,6 +179,98 @@ router.post('/sync', async (req, res) => {
 });
 
 // ─────────────────────────────────────────────────────────────────────
+// POST /api/santander/cron/pix-sync · sync rapido em janelas de culto
+// ─────────────────────────────────────────────────────────────────────
+// Diferente do /sync diario (puxa 3 dias completos), este puxa apenas
+// as ultimas 4h do extrato. Roda a cada 3min durante cultos pra alimentar
+// a aba "Culto ao Vivo". Idempotente · transacoes ja inseridas viram
+// duplicados via FITID UNIQUE.
+router.post('/pix-sync', async (req, res) => {
+  const startTime = Date.now();
+
+  if (!isConfigured()) {
+    return res.json({ ok: true, skipped: 'santander_nao_configurado' });
+  }
+
+  try {
+    const hoje = new Date();
+    const horas = Math.min(Math.max(Number(req.body?.horas) || 4, 1), 24);
+    const desde = new Date(hoje.getTime() - horas * 3600000);
+    const inicio = desde.toISOString().slice(0, 10);
+    const fim = hoje.toISOString().slice(0, 10);
+
+    // Acha conta Santander
+    const { data: contas } = await supabase
+      .from('fin_contas')
+      .select('*')
+      .or(`banco.ilike.%santander%,conta.ilike.%${CONTA}%`);
+    const contaLocal = (contas || [])[0];
+
+    if (!contaLocal) {
+      return res.json({ ok: false, erro: 'conta_santander_nao_cadastrada' });
+    }
+
+    // Pega extrato (cache 10min · evita estourar quota)
+    const extrato = await contasService.extrato({ inicio, fim, refresh: false });
+    if (!extrato?.transacoes) {
+      return res.json({ ok: true, conta_id: contaLocal.id, sem_transacoes: true });
+    }
+
+    // Filtra so creditos (PIX recebidos = dizimos/ofertas)
+    const creditos = extrato.transacoes.filter(t => Number(t.valor) > 0);
+
+    let inseridos = 0;
+    let duplicados = 0;
+
+    for (const t of creditos) {
+      const memo = t.descricao || t.memo || '';
+      let documento = null;
+      const cnpjM = memo.match(/\d{14}/);
+      const cpfM = memo.match(/\d{11}/);
+      if (cnpjM) documento = cnpjM[0];
+      else if (cpfM) documento = cpfM[0];
+
+      const payload = {
+        fonte: 'santander_api',
+        conta_id: contaLocal.id,
+        data_lancamento: t.data,
+        valor: Number(t.valor),
+        tipo_trn: 'CREDIT',
+        memo,
+        fitid: t.id || t.fitid || `santander-${t.data}-${t.valor}-${Math.random().toString(36).slice(2, 8)}`,
+        documento_contraparte: documento,
+        raw_data: { santander_api: t, source: 'pix-sync' },
+      };
+
+      const { error } = await supabase.from('fin_lancamentos_brutos').insert(payload);
+      if (error) {
+        if (error.code === '23505') duplicados++;
+      } else {
+        inseridos++;
+      }
+    }
+
+    // Roda match com PIX detalhe + classificacao em batch
+    const matchResult = await matchOfxPix({ conta_id: contaLocal.id });
+    const classifResult = await classificarBatch({});
+
+    res.json({
+      ok: true,
+      ambiente: AMBIENTE,
+      janela_horas: horas,
+      total_creditos: creditos.length,
+      inseridos, duplicados,
+      match_pix: matchResult,
+      classificacao: classifResult,
+      duracao_ms: Date.now() - startTime,
+    });
+  } catch (e) {
+    console.error('[SANTANDER-PIX-SYNC] erro:', e);
+    res.status(500).json({ error: e.message || 'Erro no pix-sync' });
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────
 // GET /api/santander/cron/health · checa se sync vai funcionar
 // ─────────────────────────────────────────────────────────────────────
 router.get('/health', async (req, res) => {

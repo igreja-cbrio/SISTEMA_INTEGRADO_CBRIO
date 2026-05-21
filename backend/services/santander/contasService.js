@@ -25,15 +25,21 @@ async function listarContas({ userId } = {}) {
 async function buscarLimiteOverdraft({ userId } = {}) {
   try {
     const raw = await callApi(`${BASE}/banks/${BANK_ID}/accounts`, { userId });
-    // Resposta tipica: { accounts: [{ accountId, branchCode, accountNumber, overdraftLimitAmount, ... }] }
-    // Ou pode vir direto como array
     const accounts = Array.isArray(raw) ? raw : (raw?.accounts || raw?.data || []);
     const myAccount = accounts.find(a => {
       const ag = String(a.branchCode || '').padStart(4, '0');
       const ct = String(a.accountNumber || a.accountId || '').padStart(12, '0');
       return ag === padAgencia(AGENCIA) && ct.includes(padConta(CONTA));
-    }) || accounts[0]; // se nao achar match, pega a 1a (caso so tenha 1 conta)
-    if (!myAccount) return { overdraftLimit: 0, overdraftUsed: 0 };
+    }) || accounts[0];
+
+    if (!myAccount) {
+      // Salva o raw mesmo sem account · ajuda debug (snapshot persiste rawAccount)
+      return {
+        overdraftLimit: 0,
+        overdraftUsed: 0,
+        rawAccount: { _debug_no_account: true, _accountsResponse: raw },
+      };
+    }
 
     return {
       overdraftLimit: Number(
@@ -53,9 +59,13 @@ async function buscarLimiteOverdraft({ userId } = {}) {
       rawAccount: myAccount,
     };
   } catch (e) {
-    // Best-effort: nao quebra a chamada de saldo se /accounts falhar
-    console.warn('[Santander] /accounts falhou (silencioso):', e.message);
-    return { overdraftLimit: 0, overdraftUsed: 0 };
+    // Best-effort · nao quebra a chamada de saldo. Persiste erro pra debug.
+    console.warn('[Santander] /accounts falhou:', e.message);
+    return {
+      overdraftLimit: 0,
+      overdraftUsed: 0,
+      rawAccount: { _debug_error: e.message, _debug_status: e.status, _debug_body: e.body },
+    };
   }
 }
 
