@@ -779,7 +779,7 @@ router.get('/painel/sala/:id', authorizeModule('kids', 1), async (req, res) => {
     let q = supabase
       .from('kids_checkins')
       .select(`
-        id, checkin_at, checkout_at, codigo_seguranca,
+        id, checkin_at, checkout_at, codigo_seguranca, crianca_id,
         responsavel_checkin_nome, fez_decisao_jesus, observacoes_no_dia,
         crianca:kids_criancas(id, nome, data_nascimento, foto_url, observacoes_medicas)
       `)
@@ -788,15 +788,79 @@ router.get('/painel/sala/:id', authorizeModule('kids', 1), async (req, res) => {
     if (sessaoId) q = q.eq('sessao_id', sessaoId);
     const { data, error } = await q;
     if (error) throw error;
+
+    // Anexa total de decisoes anteriores por crianca (vw_kids_decisoes_resumo_crianca)
+    const criancaIds = [...new Set((data || []).map(d => d.crianca_id).filter(Boolean))];
+    let resumoPorCrianca = {};
+    if (criancaIds.length) {
+      const { data: resumo } = await supabase
+        .from('vw_kids_decisoes_resumo_crianca')
+        .select('crianca_id, total_decisoes')
+        .in('crianca_id', criancaIds);
+      resumoPorCrianca = Object.fromEntries((resumo || []).map(r => [r.crianca_id, r.total_decisoes]));
+    }
+
     res.json((data || []).map(ci => ({
       ...ci,
       crianca: ci.crianca && {
         ...ci.crianca,
         idade_label: formatIdade(calcIdadeMeses(ci.crianca.data_nascimento)),
       },
+      total_decisoes_historico: resumoPorCrianca[ci.crianca_id] || 0,
     })));
   } catch (e) {
     res.status(500).json({ error: 'Erro ao listar criancas da sala' });
+  }
+});
+
+// GET /api/totem-kids/sessoes/:id/criancas-presentes · lista quem fez check-in
+// Usado pela UI de decisoes pra selecionar criancas reais (nao texto livre).
+router.get('/sessoes/:id/criancas-presentes', authorizeModule('kids', 1), async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('vw_kids_criancas_presentes_sessao')
+      .select('*')
+      .eq('sessao_id', req.params.id)
+      .order('crianca_nome');
+    if (error) throw error;
+    res.json((data || []).map(c => ({
+      ...c,
+      idade_label: formatIdade(calcIdadeMeses(c.data_nascimento)),
+    })));
+  } catch (e) {
+    console.error('[totemKids/sessoes/criancas-presentes]', e.message);
+    res.status(500).json({ error: 'Erro ao listar criancas presentes' });
+  }
+});
+
+// GET /api/totem-kids/decisoes/historico/:criancaId · todas as decisoes da crianca
+router.get('/decisoes/historico/:criancaId', authorizeModule('kids', 1), async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('vw_kids_decisoes_historico_crianca')
+      .select('*')
+      .eq('crianca_id', req.params.criancaId)
+      .order('sequencia_decisao');
+    if (error) throw error;
+    res.json(data || []);
+  } catch (e) {
+    res.status(500).json({ error: 'Erro ao buscar historico de decisoes' });
+  }
+});
+
+// GET /api/totem-kids/decisoes/resumo-por-crianca · ranking de decisoes
+router.get('/decisoes/resumo-por-crianca', authorizeModule('kids', 1), async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('vw_kids_decisoes_resumo_crianca')
+      .select('*')
+      .gt('total_decisoes', 0)
+      .order('total_decisoes', { ascending: false })
+      .order('nome');
+    if (error) throw error;
+    res.json(data || []);
+  } catch (e) {
+    res.status(500).json({ error: 'Erro ao buscar resumo de decisoes' });
   }
 });
 
