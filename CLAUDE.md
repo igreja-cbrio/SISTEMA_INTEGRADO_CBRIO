@@ -2,6 +2,69 @@
 
 Guia operacional para o Claude Code quando trabalhar neste repositório.
 
+## Super-admin · lockdown crítico de tabelas sensíveis (2026-05-21)
+
+Migration `20260521170000_p0_super_admin_lockdown.sql` criou estrutura
+de super-admin pra resolver achados de auditoria. Antes, várias tabelas
+sensíveis tinham policies `USING (true) WITH CHECK (true)` que permitiam
+qualquer authenticated alterá-las via anon key direto.
+
+### Tabela `app_super_admins`
+
+Lista de pessoas com acesso elevado. Gerenciada por **email** (match
+contra `auth.users.email`), não UUID — assim dá pra cadastrar antes
+mesmo do signup. Bootstrap: Marcos (`infra@cbrio.com.br`) +
+Matheus (`matheus.toscano@cbrio.org`).
+
+Pra adicionar mais alguém:
+```sql
+INSERT INTO public.app_super_admins (email, nome, added_by, notes)
+VALUES ('novo.admin@cbrio.com.br', 'Nome', 'marcos', 'motivo');
+```
+
+Pra desativar (preserva histórico):
+```sql
+UPDATE public.app_super_admins SET ativo = false WHERE email = '...';
+```
+
+### Função `is_super_admin()`
+
+`SECURITY DEFINER` (evita recursão de RLS na própria tabela). Match
+case-insensitive por email. Usar em policies:
+
+```sql
+CREATE POLICY tabela_write_super ON public.tabela
+  FOR INSERT TO authenticated WITH CHECK (public.is_super_admin());
+```
+
+### Tabelas que ganharam lockdown nesta migration
+
+| Tabela | Read | Write |
+|---|---|---|
+| `cargo_modulo_permissao` | authenticated | super-admin **(privilege escalation fix)** |
+| `igrejas` | authenticated | super-admin |
+| `kpi_metas` | authenticated | super-admin |
+| `app_super_admins` | super-admin | super-admin |
+
+UI `/admin/permissoes` continua funcionando porque salva via backend
+(`PUT /api/permissoes/matriz/celula`) que usa service_role e bypassa RLS.
+
+### `mem_grupo_pedidos` · anon insert removido
+
+Policy `"Anon insert mem_grupo_pedidos"` era resíduo morto · o form
+público `/inscricao-grupos` usa `POST /public/grupos/inscrever` (backend
+com service_role). Drop seguro · sem mudança no fluxo público.
+
+### Próximas ondas planejadas (auditoria 2026-05-21)
+
+- **Onda 2** · RLS contextual em `kids_*`, `mem_contribuicoes`, `rh_funcionarios`,
+  `pcs_*`, `cultos_decisoes_pessoas`, `batismo_inscricoes`, `mem_membros`
+  (usuário lê só o próprio + super-admin lê tudo + cargos com permissão
+  lêem por escopo de área)
+- **Onda 3** · `deleted_at` em tabelas críticas, converter
+  `area_responsaveis.responsavel_nome`/`projects.leader` pra UUID FK,
+  CASCADE → SET NULL em FKs históricas, audit log de leituras de CPF/salário
+
 ## Totem Kids · modulo novo (2026-05-21 · branch marcos-totem-kids)
 
 Pedido do Eduardo (gestor) repassado pelo Marcos · substituir o **Planning
