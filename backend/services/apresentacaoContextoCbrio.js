@@ -98,11 +98,140 @@ Identidade visual:
 ];
 
 /**
- * Retorna apenas entries ativas, na ordem do array.
+ * Retorna apenas entries hardcoded ativas, na ordem do array.
  * Filtro 'ativo' permite desabilitar uma entrada sem deletar.
  */
 function getContextoAtivo() {
   return CONTEXTO_CBRIO.filter(c => c.ativo !== false);
 }
 
-module.exports = { CONTEXTO_CBRIO, getContextoAtivo };
+// =====================================================================
+// Contexto extra · arquivos do vault Obsidian no SharePoint
+// =====================================================================
+// Le todos os .md da pasta `_contexto-apresentacoes/` no vault
+// "Cerebro CBRio" e injeta como contexto adicional. Permite Marcos
+// adicionar/atualizar contexto sem precisar deploy.
+//
+// Cache 5min em memoria · evita 1 chamada Graph por apresentacao.
+// Falha silenciosa · se Graph nao responder, usa so o hardcoded.
+// =====================================================================
+
+const HUB_SITE_ID = 'infracbrio.sharepoint.com,04b50f10-ea32-40ba-84bd-44a3b38ee2a7,94fe6af6-f064-455d-afc5-67a377f5e82c';
+const CONTEXTO_FOLDER = '_contexto-apresentacoes';
+const VAULT_DRIVE_NAME = 'Cerebro CBRio';
+const CACHE_TTL_MS = 5 * 60 * 1000;
+const MAX_CHARS_PER_FILE = 4000;
+const MAX_TOTAL_CHARS = 16000;
+
+let _cacheData = null;
+let _cacheTime = 0;
+
+async function lerContextoSharePoint() {
+  if (_cacheData && Date.now() - _cacheTime < CACHE_TTL_MS) return _cacheData;
+
+  try {
+    const { getGraphToken } = require('./storageService');
+    const token = await getGraphToken();
+
+    // Descobrir drive do vault
+    const drivesRes = await fetch(
+      `https://graph.microsoft.com/v1.0/sites/${HUB_SITE_ID}/drives`,
+      { headers: { Authorization: `Bearer ${token}` } },
+    );
+    if (!drivesRes.ok) {
+      console.warn('[apresentacoes-ctx] falha ao listar drives:', drivesRes.status);
+      return [];
+    }
+    const drives = await drivesRes.json();
+    const vault = drives.value?.find(d => d.name === VAULT_DRIVE_NAME);
+    if (!vault) {
+      console.warn(`[apresentacoes-ctx] drive "${VAULT_DRIVE_NAME}" nao encontrado`);
+      return [];
+    }
+
+    // Listar arquivos na pasta de contexto
+    const listRes = await fetch(
+      `https://graph.microsoft.com/v1.0/drives/${vault.id}/root:/${CONTEXTO_FOLDER}:/children?$select=id,name,file&$top=50`,
+      { headers: { Authorization: `Bearer ${token}` } },
+    );
+    if (!listRes.ok) {
+      if (listRes.status === 404) {
+        console.log(`[apresentacoes-ctx] pasta /${CONTEXTO_FOLDER}/ nao existe no vault · ok, sem contexto extra`);
+      } else {
+        console.warn('[apresentacoes-ctx] falha ao listar pasta:', listRes.status);
+      }
+      _cacheData = [];
+      _cacheTime = Date.now();
+      return _cacheData;
+    }
+    const list = await listRes.json();
+    const mdFiles = (list.value || []).filter(f => f.file && /\.md$/i.test(f.name));
+
+    // Baixa conteudo de cada
+    const entries = [];
+    let totalChars = 0;
+    for (const f of mdFiles) {
+      if (totalChars >= MAX_TOTAL_CHARS) break;
+      try {
+        const dlRes = await fetch(
+          `https://graph.microsoft.com/v1.0/drives/${vault.id}/items/${f.id}/content`,
+          { headers: { Authorization: `Bearer ${token}` } },
+        );
+        if (!dlRes.ok) continue;
+        let conteudo = await dlRes.text();
+        if (conteudo.length > MAX_CHARS_PER_FILE) {
+          conteudo = conteudo.slice(0, MAX_CHARS_PER_FILE) + '\n\n[...truncado]';
+        }
+        const restante = MAX_TOTAL_CHARS - totalChars;
+        if (conteudo.length > restante) {
+          conteudo = conteudo.slice(0, restante) + '\n\n[...truncado]';
+        }
+        entries.push({
+          chave: `sp_${f.id.slice(0, 16)}`,
+          titulo: f.name.replace(/\.md$/i, '').replace(/[-_]/g, ' '),
+          conteudo,
+        });
+        totalChars += conteudo.length;
+      } catch (err) {
+        console.warn(`[apresentacoes-ctx] falha ao baixar ${f.name}:`, err.message);
+      }
+    }
+
+    console.log(`[apresentacoes-ctx] carregou ${entries.length} arquivos do vault (${totalChars} chars)`);
+    _cacheData = entries;
+    _cacheTime = Date.now();
+    return entries;
+  } catch (e) {
+    console.warn('[apresentacoes-ctx] erro geral:', e.message);
+    return [];
+  }
+}
+
+/**
+ * Retorna contexto completo: hardcoded + arquivos do SharePoint.
+ * Falha silenciosa pra SharePoint · sempre devolve pelo menos o hardcoded.
+ */
+async function getContextoCompleto() {
+  const hardcoded = getContextoAtivo();
+  let sharepoint = [];
+  try {
+    sharepoint = await lerContextoSharePoint();
+  } catch (e) {
+    console.warn('[apresentacoes-ctx] falha em SharePoint, seguindo so com hardcoded:', e.message);
+  }
+  return [...hardcoded, ...sharepoint];
+}
+
+// Invalida cache manualmente · pode ser chamado por endpoint admin futuro
+function bustContextoCache() {
+  _cacheData = null;
+  _cacheTime = 0;
+}
+
+module.exports = {
+  CONTEXTO_CBRIO,
+  getContextoAtivo,
+  getContextoCompleto,
+  lerContextoSharePoint,
+  bustContextoCache,
+};

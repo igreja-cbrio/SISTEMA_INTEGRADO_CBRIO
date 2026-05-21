@@ -16,7 +16,7 @@
 // =====================================================================
 
 const Anthropic = require('@anthropic-ai/sdk');
-const { getContextoAtivo } = require('./apresentacaoContextoCbrio');
+const { getContextoCompleto } = require('./apresentacaoContextoCbrio');
 
 // Default: Sonnet · rapido e cabe no timeout 60s da Vercel Hobby.
 // Lista de IDs em ordem de preferencia · se o primeiro nao for reconhecido
@@ -124,9 +124,9 @@ Capricho > completude. Vai pra diretoria.`;
 // ─────────────────────────────────────────────────────────────────────
 // User prompt builder
 // ─────────────────────────────────────────────────────────────────────
-function buildUserPrompt({ titulo, prompt, tom, arquivos }) {
-  // Carrega contexto CBRio do arquivo de codigo (versionado em git)
-  const contexto = getContextoAtivo();
+async function buildUserPrompt({ titulo, prompt, tom, arquivos }) {
+  // Contexto CBRio: hardcoded (arquivo de codigo) + dinamico (vault SharePoint)
+  const contexto = await getContextoCompleto();
   const tomDescricoes = {
     executivo:  'tom corporativo serio, focado em decisao · paleta dark premium · numeros grandes · bento grids',
     comercial:  'tom comercial atrativo, focado em vendas · paleta vibrante · CTAs claros · destaques visuais',
@@ -259,7 +259,7 @@ async function gerarApresentacao({ titulo, prompt, tom, arquivos, modelo }) {
     ? [modelo]
     : SONNET_IDS;
 
-  const userPrompt = buildUserPrompt({ titulo, prompt, tom, arquivos });
+  const userPrompt = await buildUserPrompt({ titulo, prompt, tom, arquivos });
 
   let resp = null;
   let modeloFinal = null;
