@@ -186,7 +186,7 @@ router.get('/:id', authorizeModule('apresentacoes', 1), async (req, res) => {
 
     const { data: apres, error } = await supabase
       .from('apresentacoes')
-      .select('id, profile_id, titulo, prompt, tom, modelo_ia, status, slides_count, slides_html, slides_css, tokens_input, tokens_output, custo_usd, duracao_ms, erro_mensagem, created_at, generated_at')
+      .select('id, profile_id, titulo, prompt, tom, modelo_ia, usar_contexto_cerebro, status, slides_count, slides_html, slides_css, tokens_input, tokens_output, custo_usd, duracao_ms, erro_mensagem, created_at, generated_at')
       .eq('id', req.params.id)
       .single();
     if (error) throw error;
@@ -215,7 +215,7 @@ router.get('/:id', authorizeModule('apresentacoes', 1), async (req, res) => {
 // ─────────────────────────────────────────────────────────────
 router.post('/', authorizeModule('apresentacoes', 3), async (req, res) => {
   try {
-    const { titulo, prompt, tom, modelo } = req.body || {};
+    const { titulo, prompt, tom, modelo, usar_contexto_cerebro } = req.body || {};
     if (!titulo || titulo.length < 3) {
       return res.status(400).json({ error: 'titulo obrigatorio (min 3 chars)' });
     }
@@ -234,6 +234,7 @@ router.post('/', authorizeModule('apresentacoes', 3), async (req, res) => {
         prompt: String(prompt).slice(0, 8000),
         tom: ['executivo', 'comercial', 'relatorio', 'criativo'].includes(tom) ? tom : 'executivo',
         modelo_ia: modeloFinal,
+        usar_contexto_cerebro: !!usar_contexto_cerebro,
         status: 'pendente',
       })
       .select('id, status')
@@ -357,6 +358,19 @@ router.post('/:id/gerar', authorizeModule('apresentacoes', 3), async (req, res) 
       .update({ status: 'gerando', erro_mensagem: null })
       .eq('id', apres.id);
 
+    // Coleta contexto do Cerebro CBRio se solicitado · pode demorar no cold start
+    // (lista + baixa dezenas/centenas de .md do SharePoint). Cache 15min ameniza.
+    let contextoCerebro = null;
+    if (apres.usar_contexto_cerebro) {
+      try {
+        const { coletarContextoCompleto } = require('../services/cerebroContext');
+        contextoCerebro = await coletarContextoCompleto();
+        console.log(`[apresentacoes] contexto Cerebro: ${contextoCerebro.notasIncluidas}/${contextoCerebro.totalNotas} notas, ${contextoCerebro.totalChars} chars, ${contextoCerebro.doCache ? 'cache' : 'fresco'} (${contextoCerebro.duracaoMs}ms)`);
+      } catch (ctxErr) {
+        console.warn('[apresentacoes] falha ao coletar contexto Cerebro (segue sem):', ctxErr.message);
+      }
+    }
+
     try {
       const r = await gerarApresentacao({
         titulo:   apres.titulo,
@@ -364,6 +378,7 @@ router.post('/:id/gerar', authorizeModule('apresentacoes', 3), async (req, res) 
         tom:      apres.tom,
         arquivos: arquivos || [],
         modelo:   apres.modelo_ia,
+        contextoCerebro,
       });
 
       const { error: e2 } = await supabase.from('apresentacoes')

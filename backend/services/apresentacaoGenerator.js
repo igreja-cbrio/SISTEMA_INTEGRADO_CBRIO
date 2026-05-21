@@ -124,8 +124,8 @@ Capricho > completude. Vai pra diretoria.`;
 // ─────────────────────────────────────────────────────────────────────
 // User prompt builder
 // ─────────────────────────────────────────────────────────────────────
-async function buildUserPrompt({ titulo, prompt, tom, arquivos }) {
-  // Contexto CBRio: hardcoded (arquivo de codigo) + dinamico (vault SharePoint)
+async function buildUserPrompt({ titulo, prompt, tom, arquivos, contextoCerebro }) {
+  // Contexto CBRio: hardcoded (arquivo de codigo) + dinamico (vault SharePoint pasta curada)
   const contexto = await getContextoCompleto();
   const tomDescricoes = {
     executivo:  'tom corporativo serio, focado em decisao · paleta dark premium · numeros grandes · bento grids',
@@ -152,6 +152,16 @@ async function buildUserPrompt({ titulo, prompt, tom, arquivos }) {
   p += `**Titulo sugerido:** ${titulo}\n\n`;
   p += `**Tom:** ${tom || 'executivo'} · ${tomDescricoes[tom] || tomDescricoes.executivo}\n\n`;
   p += `**Briefing:**\n${prompt}\n\n`;
+
+  if (contextoCerebro && contextoCerebro.textoCompleto) {
+    p += `# Contexto institucional CBRio (Cerebro CBRio)\n\n`;
+    p += `Abaixo estao ${contextoCerebro.notasIncluidas} notas resumidas da base de conhecimento da Igreja CBRio`;
+    if (contextoCerebro.truncado) p += ` (de ${contextoCerebro.totalNotas} totais · truncadas as mais antigas)`;
+    p += `. Use como fonte de verdade pra fatos, nomes, processos, numeros e narrativa institucional. `;
+    p += `Se o briefing acima for vago, escolha os recortes mais relevantes desta base pra montar a apresentacao. NAO invente dados que nao apareçam aqui ou nos arquivos anexados.\n`;
+    p += contextoCerebro.textoCompleto;
+    p += `\n\n---\n\n`;
+  }
 
   if (arquivos && arquivos.length > 0) {
     p += `# Material de referencia (anexado pelo usuario)\n\n`;
@@ -245,7 +255,7 @@ async function callAnthropic({ client, model, maxTokens, system, userPrompt }) {
   });
 }
 
-async function gerarApresentacao({ titulo, prompt, tom, arquivos, modelo }) {
+async function gerarApresentacao({ titulo, prompt, tom, arquivos, modelo, contextoCerebro }) {
   if (!process.env.ANTHROPIC_API_KEY) {
     throw new Error('ANTHROPIC_API_KEY nao configurada no ambiente');
   }
@@ -259,7 +269,7 @@ async function gerarApresentacao({ titulo, prompt, tom, arquivos, modelo }) {
     ? [modelo]
     : SONNET_IDS;
 
-  const userPrompt = await buildUserPrompt({ titulo, prompt, tom, arquivos });
+  const userPrompt = await buildUserPrompt({ titulo, prompt, tom, arquivos, contextoCerebro });
 
   let resp = null;
   let modeloFinal = null;

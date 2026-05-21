@@ -10,7 +10,7 @@ import { Input } from '../../components/ui/input';
 import { Textarea } from '../../components/ui/textarea';
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '../../components/ui/select';
 import { toast } from 'sonner';
-import { Sparkles, Plus, Trash2, Eye, Clock, AlertCircle, Loader2, Upload, X, FileText } from 'lucide-react';
+import { Sparkles, Plus, Trash2, Eye, Clock, AlertCircle, Loader2, Upload, X, FileText, Brain } from 'lucide-react';
 
 const TONS = [
   { value: 'executivo', label: 'Executivo · diretoria · dark premium' },
@@ -201,6 +201,7 @@ function NovaApresentacaoDialog({ open, onClose, onCriada }) {
   const [prompt, setPrompt] = useState('');
   const [tom, setTom] = useState('executivo');
   const [arquivos, setArquivos] = useState([]);
+  const [usarContextoCerebro, setUsarContextoCerebro] = useState(false);
   const [criando, setCriando] = useState(false);
 
   function handleFiles(e) {
@@ -229,7 +230,12 @@ function NovaApresentacaoDialog({ open, onClose, onCriada }) {
     setCriando(true);
     try {
       // 1. Cria registro · backend resolve o modelo (Sonnet com fallback automatico)
-      const { id } = await api.create({ titulo: titulo.trim(), prompt: prompt.trim(), tom });
+      const { id } = await api.create({
+        titulo: titulo.trim(),
+        prompt: prompt.trim(),
+        tom,
+        usar_contexto_cerebro: usarContextoCerebro,
+      });
 
       // 2. Upload de arquivos (se houver)
       if (arquivos.length > 0) {
@@ -301,6 +307,30 @@ function NovaApresentacaoDialog({ open, onClose, onCriada }) {
               </SelectContent>
             </Select>
           </div>
+
+          <label className={`flex items-start gap-3 p-3 rounded-md border cursor-pointer transition-colors ${
+            usarContextoCerebro
+              ? 'border-cyan-500/60 bg-cyan-500/10'
+              : 'border-border hover:bg-secondary/40'
+          }`}>
+            <input
+              type="checkbox"
+              checked={usarContextoCerebro}
+              onChange={(e) => setUsarContextoCerebro(e.target.checked)}
+              className="mt-0.5 h-4 w-4 accent-cyan-500"
+            />
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center gap-2 text-sm font-medium">
+                <Brain className="h-4 w-4 text-cyan-400" />
+                Usar todo o contexto da CBRio
+              </div>
+              <p className="text-xs text-muted-foreground mt-0.5">
+                Injeta todas as notas do <strong>Cerebro CBRio</strong> (vault no SharePoint) como
+                base de conhecimento. A IA vai puxar fatos, números e narrativa direto da
+                documentação institucional. Aumenta tempo e custo (~$0.20-0.40 a mais).
+              </p>
+            </div>
+          </label>
 
           <div>
             <label className="text-xs font-medium uppercase tracking-wider text-muted-foreground mb-1.5 block">
