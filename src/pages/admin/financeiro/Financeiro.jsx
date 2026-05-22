@@ -23,6 +23,7 @@ import DreCentroCusto from './DreCentroCusto';
 import DreComparativo from './DreComparativo';
 import ClosingMensal from './ClosingMensal';
 import AuditLog from './AuditLog';
+import Arrecadacoes from './Arrecadacoes';
 
 // ── Tema ────────────────────────────────────────────────────
 const C = {
@@ -158,8 +159,15 @@ function Badge({ status, map }) {
 // ── TABS ────────────────────────────────────────────────────
 // 6 grupos top-level (em vez de 14 abas em sequencia)
 // Cada grupo composto tem sub-abas dentro
-const TABS = ['Dashboard', 'Análises', 'Movimentação', 'DRE', 'Banco', 'Solicitações', 'Generosidade', 'Alertas', 'Calendário', 'Fechamento', 'Auditoria', 'Configuração'];
-const SUBS_MOVIMENTACAO = ['Contas', 'Transações', 'Contas a Pagar', 'Recorrentes', 'Reembolsos', 'Importar extratos', 'Fila de classificação'];
+// Reorganizacao 2026-05-22 · Marcos pediu clareza · destaque pras coisas
+// que ele mais usa (Transacoes, Arrecadacoes, Contas a Pagar).
+const TABS = [
+  'Dashboard', 'Transações', 'Arrecadações', 'Contas a Pagar',
+  'Análises', 'DRE', 'Generosidade', 'Banco',
+  'Operacional', 'Gestão', 'Configuração',
+];
+const SUBS_OPERACIONAL = ['Contas', 'Recorrentes', 'Reembolsos', 'Importar extratos', 'Fila de classificação', 'Calendário'];
+const SUBS_GESTAO = ['Solicitações', 'Alertas', 'Fechamento', 'Auditoria'];
 const SUBS_DRE = ['DRE Auto', 'Por Centro de Custo', 'Comparativo Temporal', 'DRE (legacy)'];
 const SUBS_BANCO = ['Banco Santander', 'Culto ao Vivo', 'PIX Cobrança', 'Pagamentos', 'Boletos'];
 
@@ -224,35 +232,40 @@ function StatCard({ label, value, bg, svg }) {
 export default function Financeiro() {
   const { isDiretor } = useAuth();
   const [tab, setTab] = useState(0);
-  const [subMov, setSubMov] = useState(0);
+  const [subOp, setSubOp] = useState(0);
+  const [subGestao, setSubGestao] = useState(0);
   const [subDre, setSubDre] = useState(0);
   const [subBanco, setSubBanco] = useState(0);
 
   // Navegacao por string-id usada por DashboardOverview shortcuts
   const goTo = (id) => {
     switch (id) {
-      case 'contas':       setTab(2); setSubMov(0); break;
-      case 'transacoes':   setTab(2); setSubMov(1); break;
-      case 'contas_pagar': setTab(2); setSubMov(2); break;
-      case 'recorrentes':  setTab(2); setSubMov(3); break;
-      case 'reembolsos':   setTab(2); setSubMov(4); break;
-      case 'importar':     setTab(2); setSubMov(5); break;
-      case 'fila':         setTab(2); setSubMov(6); break;
-      case 'dre_auto':     setTab(3); setSubDre(0); break;
-      case 'dre_legacy':   setTab(3); setSubDre(1); break;
-      case 'banco':        setTab(4); setSubBanco(0); break;
-      case 'culto_vivo':   setTab(4); setSubBanco(1); break;
-      case 'pix_cob':      setTab(4); setSubBanco(2); break;
-      case 'pagamentos':   setTab(4); setSubBanco(3); break;
-      case 'boletos':      setTab(4); setSubBanco(4); break;
-      case 'solicitacoes_fin': setTab(5); break;
-      case 'generosidade': setTab(6); break;
-      case 'alertas':      setTab(7); break;
-      case 'calendario':   setTab(8); break;
-      case 'closing':      setTab(9); break;
-      case 'audit':        setTab(10); break;
-      case 'config':       setTab(11); break;
-      case 'analises':     setTab(1); break;
+      // Nova estrutura · 11 abas topo
+      case 'transacoes':       setTab(1); break;
+      case 'arrecadacoes':     setTab(2); break;
+      case 'contas_pagar':     setTab(3); break;
+      case 'analises':         setTab(4); break;
+      case 'dre_auto':         setTab(5); setSubDre(0); break;
+      case 'dre_centro':       setTab(5); setSubDre(1); break;
+      case 'dre_comparativo':  setTab(5); setSubDre(2); break;
+      case 'dre_legacy':       setTab(5); setSubDre(3); break;
+      case 'generosidade':     setTab(6); break;
+      case 'banco':            setTab(7); setSubBanco(0); break;
+      case 'culto_vivo':       setTab(7); setSubBanco(1); break;
+      case 'pix_cob':          setTab(7); setSubBanco(2); break;
+      case 'pagamentos':       setTab(7); setSubBanco(3); break;
+      case 'boletos':          setTab(7); setSubBanco(4); break;
+      case 'contas':           setTab(8); setSubOp(0); break;
+      case 'recorrentes':      setTab(8); setSubOp(1); break;
+      case 'reembolsos':       setTab(8); setSubOp(2); break;
+      case 'importar':         setTab(8); setSubOp(3); break;
+      case 'fila':             setTab(8); setSubOp(4); break;
+      case 'calendario':       setTab(8); setSubOp(5); break;
+      case 'solicitacoes_fin': setTab(9); setSubGestao(0); break;
+      case 'alertas':          setTab(9); setSubGestao(1); break;
+      case 'closing':          setTab(9); setSubGestao(2); break;
+      case 'audit':            setTab(9); setSubGestao(3); break;
+      case 'config':           setTab(10); break;
       default:             setTab(0);
     }
   };
@@ -337,9 +350,11 @@ export default function Financeiro() {
   }, [filtroReembolsoStatus]);
 
   useEffect(() => { loadDash(); loadContas(); loadCategorias(); }, [loadDash, loadContas, loadCategorias]);
-  useEffect(() => { if (tab === 2) loadTransacoes(); }, [tab, loadTransacoes]);
+  // Nova estrutura · tab 1 = Transações, tab 3 = Contas a Pagar,
+  // tab 8 + subOp 2 = Reembolsos, tab 8 + subOp 0 = Contas
+  useEffect(() => { if (tab === 1) loadTransacoes(); }, [tab, loadTransacoes]);
   useEffect(() => { if (tab === 3) loadContasPagar(); }, [tab, loadContasPagar]);
-  useEffect(() => { if (tab === 4) loadReembolsos(); }, [tab, loadReembolsos]);
+  useEffect(() => { if (tab === 8 && subOp === 2) loadReembolsos(); }, [tab, subOp, loadReembolsos]);
 
   // ── Ações ──
   const handleError = (e) => { setError(e.message); setTimeout(() => setError(''), 4000); };
@@ -1121,28 +1136,23 @@ export default function Financeiro() {
         ))}
       </div>
 
-      {/* Tab 0: Dashboard · onNavigate aceita string id */}
+      {/* 0 · Dashboard */}
       {tab === 0 && <DashboardOverview onNavigate={goTo} />}
 
-      {/* Tab 1: Análises */}
-      {tab === 1 && <Analises />}
+      {/* 1 · Transações · todas as transacoes classificadas */}
+      {tab === 1 && renderTransacoes()}
 
-      {/* Tab 2: Movimentação · sub-abas */}
-      {tab === 2 && (
-        <div>
-          <SubTabBar items={SUBS_MOVIMENTACAO} current={subMov} onSelect={setSubMov} />
-          {subMov === 0 && renderContas()}
-          {subMov === 1 && renderTransacoes()}
-          {subMov === 2 && renderContasPagar()}
-          {subMov === 3 && <Recorrentes />}
-          {subMov === 4 && renderReembolsos()}
-          {subMov === 5 && <ImportarExtratos />}
-          {subMov === 6 && <FilaClassificacao />}
-        </div>
-      )}
+      {/* 2 · Arrecadações · apenas contribuicoes (3.01.*) */}
+      {tab === 2 && <Arrecadacoes />}
 
-      {/* Tab 3: DRE · sub-abas */}
-      {tab === 3 && (
+      {/* 3 · Contas a Pagar */}
+      {tab === 3 && renderContasPagar()}
+
+      {/* 4 · Análises */}
+      {tab === 4 && <Analises />}
+
+      {/* 5 · DRE · sub-abas */}
+      {tab === 5 && (
         <div>
           <SubTabBar items={SUBS_DRE} current={subDre} onSelect={setSubDre} />
           {subDre === 0 && <DreAuto />}
@@ -1152,8 +1162,11 @@ export default function Financeiro() {
         </div>
       )}
 
-      {/* Tab 4: Banco · sub-abas */}
-      {tab === 4 && (
+      {/* 6 · Generosidade */}
+      {tab === 6 && <Generosidade />}
+
+      {/* 7 · Banco · sub-abas */}
+      {tab === 7 && (
         <div>
           <SubTabBar items={SUBS_BANCO} current={subBanco} onSelect={setSubBanco} />
           {subBanco === 0 && <SantanderTab />}
@@ -1164,26 +1177,32 @@ export default function Financeiro() {
         </div>
       )}
 
-      {/* Tab 5: Solicitações · aprovação financeira de compras/reembolsos */}
-      {tab === 5 && <SolicitacoesFinanceiro />}
+      {/* 8 · Operacional · sub-abas (contas, recorrentes, reembolsos, importar, fila, calendário) */}
+      {tab === 8 && (
+        <div>
+          <SubTabBar items={SUBS_OPERACIONAL} current={subOp} onSelect={setSubOp} />
+          {subOp === 0 && renderContas()}
+          {subOp === 1 && <Recorrentes />}
+          {subOp === 2 && renderReembolsos()}
+          {subOp === 3 && <ImportarExtratos />}
+          {subOp === 4 && <FilaClassificacao />}
+          {subOp === 5 && <CalendarioFinanceiro />}
+        </div>
+      )}
 
-      {/* Tab 6: Generosidade · dashboard de doações */}
-      {tab === 6 && <Generosidade />}
+      {/* 9 · Gestão · sub-abas (solicitacoes, alertas, fechamento, auditoria) */}
+      {tab === 9 && (
+        <div>
+          <SubTabBar items={SUBS_GESTAO} current={subGestao} onSelect={setSubGestao} />
+          {subGestao === 0 && <SolicitacoesFinanceiro />}
+          {subGestao === 1 && <Alertas />}
+          {subGestao === 2 && <ClosingMensal />}
+          {subGestao === 3 && <AuditLog />}
+        </div>
+      )}
 
-      {/* Tab 7: Alertas Financeiros Inteligentes */}
-      {tab === 7 && <Alertas />}
-
-      {/* Tab 8: Calendário Financeiro */}
-      {tab === 8 && <CalendarioFinanceiro />}
-
-      {/* Tab 9: Fechamento Mensal */}
-      {tab === 9 && <ClosingMensal />}
-
-      {/* Tab 10: Audit Log */}
-      {tab === 10 && <AuditLog />}
-
-      {/* Tab 11: Configuração */}
-      {tab === 11 && <EstruturaFiscal />}
+      {/* 10 · Configuração */}
+      {tab === 10 && <EstruturaFiscal />}
 
       {modalConta && renderModalConta()}
       {modalTransacao && renderModalTransacao()}
