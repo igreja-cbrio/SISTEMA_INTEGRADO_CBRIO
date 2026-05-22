@@ -416,7 +416,7 @@ router.post('/cadastro', cadastroLimiter, async (req, res) => {
       origem: origemFinal,
       aceita_termos: !!aceita_termos,
       aceita_contato: !!aceita_contato,
-      consentimento_texto: consentimento_texto || null,
+      consentimento_texto: consentimento_texto ? String(consentimento_texto).slice(0, 2000) : null,
       familia_sugerida_id: familia_sugerida_id || null,
       foto_url: foto_url || null,
       status: duplicadoDeId ? 'duplicado' : 'pendente',
@@ -457,7 +457,7 @@ router.post('/cadastro', cadastroLimiter, async (req, res) => {
           email: emailLimpo,
           telefone: telefone || null,
           origem: 'cadastro_interno',
-          observacao: grupo_observacao || null,
+          observacao: grupo_observacao ? String(grupo_observacao).slice(0, 500) : null,
           status: 'pendente',
         };
         if (duplicadoDeId) {

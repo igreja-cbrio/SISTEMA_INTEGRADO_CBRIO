@@ -74,8 +74,13 @@ router.post('/:token/responder', publicLimiter, async (req, res) => {
         nome_publico: String(nome).slice(0, 120),
         email_publico: String(email).toLowerCase().slice(0, 200),
         score: Math.round(score),
-        respostas: respostas || {},
-        comentario: comentario || null,
+        // respostas: objeto JSONB · limita tamanho serializado pra evitar DoS
+        respostas: (() => {
+          if (!respostas || typeof respostas !== 'object') return {};
+          const serialized = JSON.stringify(respostas);
+          return serialized.length > 10000 ? {} : respostas;
+        })(),
+        comentario: comentario ? String(comentario).slice(0, 2000) : null,
         origem: 'publico',
         ip_hash: hashIp(ip),
         user_agent: (req.headers['user-agent'] || '').slice(0, 200),

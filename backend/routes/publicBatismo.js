@@ -128,10 +128,10 @@ router.post('/', limiter, async (req, res) => {
 
     // Observacoes agora so guarda o que nao tem coluna propria
     const obsParts = [];
-    if (cep) obsParts.push(`CEP: ${String(cep).trim()}`);
-    if (horario_culto) obsParts.push(`Culto: ${String(horario_culto).trim()}`);
-    if (motivo) obsParts.push(`Motivo: ${String(motivo).trim()}`);
-    if (observacoes) obsParts.push(`Comentario: ${String(observacoes).trim()}`);
+    if (cep) obsParts.push(`CEP: ${String(cep).trim().slice(0, 20)}`);
+    if (horario_culto) obsParts.push(`Culto: ${String(horario_culto).trim().slice(0, 80)}`);
+    if (motivo) obsParts.push(`Motivo: ${String(motivo).trim().slice(0, 500)}`);
+    if (observacoes) obsParts.push(`Comentario: ${String(observacoes).trim().slice(0, 1000)}`);
 
     const AREAS_OK = ['kids', 'sede', 'bridge', 'ami', 'online'];
     const areaKpiValida = AREAS_OK.includes(area_kpi) ? area_kpi : 'sede';
@@ -153,14 +153,18 @@ router.post('/', limiter, async (req, res) => {
       data_batismo: dataBatismo,
       origem: 'publico',
       area_kpi: areaKpiValida,
-      observacoes: obsParts.length ? obsParts.join('. ') : null,
+      observacoes: obsParts.length ? obsParts.join('. ').slice(0, 2500) : null,
       membro_id: membroId,
-      // Colunas dedicadas (sai de observacoes)
-      tamanho_camisa: tamanho_camisa ? String(tamanho_camisa).trim().toUpperCase() : null,
-      endereco: endereco ? String(endereco).trim() : null,
+      // Colunas dedicadas · tamanho_camisa whitelist
+      tamanho_camisa: (() => {
+        const v = tamanho_camisa ? String(tamanho_camisa).trim().toUpperCase() : null;
+        const validos = ['PP', 'P', 'M', 'G', 'GG', 'XG', 'XGG'];
+        return v && validos.includes(v) ? v : null;
+      })(),
+      endereco: endereco ? String(endereco).trim().slice(0, 300) : null,
       eh_crianca: !!eh_crianca,
       possui_deficiencia: possuiDef,
-      deficiencia_descricao: possuiDef ? defDescricao : null,
+      deficiencia_descricao: possuiDef && defDescricao ? defDescricao.slice(0, 500) : null,
     };
 
     const { data, error } = await supabase
