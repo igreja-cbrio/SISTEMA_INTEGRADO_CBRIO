@@ -14,6 +14,7 @@ import Analises from './Analises';
 import PixCobranca from './PixCobranca';
 import PagamentosContas from './PagamentosContas';
 import BoletosEmitidos from './BoletosEmitidos';
+import SolicitacoesFinanceiro from './SolicitacoesFinanceiro';
 
 // ── Tema ────────────────────────────────────────────────────
 const C = {
@@ -149,7 +150,7 @@ function Badge({ status, map }) {
 // ── TABS ────────────────────────────────────────────────────
 // 6 grupos top-level (em vez de 14 abas em sequencia)
 // Cada grupo composto tem sub-abas dentro
-const TABS = ['Dashboard', 'Análises', 'Movimentação', 'DRE', 'Banco', 'Configuração'];
+const TABS = ['Dashboard', 'Análises', 'Movimentação', 'DRE', 'Banco', 'Solicitações', 'Configuração'];
 const SUBS_MOVIMENTACAO = ['Contas', 'Transações', 'Contas a Pagar', 'Reembolsos', 'Importar extratos', 'Fila de classificação'];
 const SUBS_DRE = ['DRE Auto', 'DRE (legacy)'];
 const SUBS_BANCO = ['Banco Santander', 'Culto ao Vivo', 'PIX Cobrança', 'Pagamentos', 'Boletos'];
@@ -235,7 +236,8 @@ export default function Financeiro() {
       case 'pix_cob':      setTab(4); setSubBanco(2); break;
       case 'pagamentos':   setTab(4); setSubBanco(3); break;
       case 'boletos':      setTab(4); setSubBanco(4); break;
-      case 'config':       setTab(5); break;
+      case 'solicitacoes_fin': setTab(5); break;
+      case 'config':       setTab(6); break;
       case 'analises':     setTab(1); break;
       default:             setTab(0);
     }
@@ -1145,8 +1147,11 @@ export default function Financeiro() {
         </div>
       )}
 
-      {/* Tab 5: Configuração */}
-      {tab === 5 && <EstruturaFiscal />}
+      {/* Tab 5: Solicitações · aprovação financeira de compras/reembolsos */}
+      {tab === 5 && <SolicitacoesFinanceiro />}
+
+      {/* Tab 6: Configuração */}
+      {tab === 6 && <EstruturaFiscal />}
 
       {modalConta && renderModalConta()}
       {modalTransacao && renderModalTransacao()}

@@ -446,6 +446,10 @@ export const financeiro = {
     update: (id, data) => put(`/financeiro/contas-pagar/${id}`, data),
     remove: (id) => del(`/financeiro/contas-pagar/${id}`),
   },
+  solicitacoesPendentesFinanceiro: () => get('/solicitacoes/pendentes-financeiro'),
+  solicitacaoAprovarFinanceiro: (id, observacao) => post(`/solicitacoes/${id}/aprovar-financeiro`, { observacao }),
+  solicitacaoReprovarFinanceiro: (id, motivo) => post(`/solicitacoes/${id}/reprovar-financeiro`, { motivo }),
+  urgenciaFrequente: () => get('/solicitacoes/dashboard/urgencia-frequente'),
   reembolsos: {
     list: (params) => get('/financeiro/reembolsos' + (params ? '?' + new URLSearchParams(params) : '')),
     create: (data) => post('/financeiro/reembolsos', data),
