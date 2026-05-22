@@ -15,8 +15,11 @@ export default function ImportarExtratos() {
   const [uploads, setUploads] = useState([]);
   const [contaOFX, setContaOFX] = useState('');
   const [contaPIX, setContaPIX] = useState('');
-  const [processando, setProcessando] = useState(null);
-  const [resultado, setResultado] = useState(null);
+  // Estados independentes · permitem importar OFX e PIX em paralelo
+  const [procOfx, setProcOfx] = useState(false);
+  const [procPix, setProcPix] = useState(false);
+  const [resultadoOfx, setResultadoOfx] = useState(null);
+  const [resultadoPix, setResultadoPix] = useState(null);
 
   const loadUploads = useCallback(async () => {
     const u = await financeiroV2.uploads({ limit: 20 });
@@ -30,30 +33,30 @@ export default function ImportarExtratos() {
 
   const importarOFX = async (file) => {
     if (!contaOFX) { alert('Selecione a conta antes de subir o OFX'); return; }
-    setProcessando('ofx');
-    setResultado(null);
+    setProcOfx(true);
+    setResultadoOfx(null);
     try {
       const r = await financeiroV2.importar.ofx(file, contaOFX);
-      setResultado({ tipo: 'ofx', ...r });
+      setResultadoOfx({ tipo: 'ofx', ...r });
       loadUploads();
     } catch (e) {
-      setResultado({ erro: e.message });
+      setResultadoOfx({ erro: e.message });
     } finally {
-      setProcessando(null);
+      setProcOfx(false);
     }
   };
 
   const importarPIX = async (file) => {
-    setProcessando('pix');
-    setResultado(null);
+    setProcPix(true);
+    setResultadoPix(null);
     try {
       const r = await financeiroV2.importar.pixExtrato(file, contaPIX || undefined);
-      setResultado({ tipo: 'pix', ...r });
+      setResultadoPix({ tipo: 'pix', ...r });
       loadUploads();
     } catch (e) {
-      setResultado({ erro: e.message });
+      setResultadoPix({ erro: e.message });
     } finally {
-      setProcessando(null);
+      setProcPix(false);
     }
   };
 
@@ -68,7 +71,7 @@ export default function ImportarExtratos() {
           icon="📑"
           color={C.blue}
           colorBg={C.blueBg}
-          processando={processando === 'ofx'}
+          processando={procOfx}
           onUpload={importarOFX}
           children={
             <div style={{ marginBottom: 8 }}>
@@ -94,7 +97,7 @@ export default function ImportarExtratos() {
           icon="🔄"
           color={C.primary}
           colorBg={C.primaryBg}
-          processando={processando === 'pix'}
+          processando={procPix}
           onUpload={importarPIX}
           children={
             <div style={{ marginBottom: 8 }}>
@@ -112,7 +115,8 @@ export default function ImportarExtratos() {
         />
       </div>
 
-      {resultado && <ResultadoCard r={resultado} />}
+      {resultadoOfx && <ResultadoCard r={resultadoOfx} />}
+      {resultadoPix && <ResultadoCard r={resultadoPix} />}
 
       {/* Historico de uploads */}
       <div style={{ marginTop: 24 }}>
