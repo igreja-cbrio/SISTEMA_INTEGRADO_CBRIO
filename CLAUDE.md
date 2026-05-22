@@ -5,8 +5,12 @@ Guia operacional para o Claude Code quando trabalhar neste repositório.
 # ⚠️ REGRAS OBRIGATÓRIAS DE SEGURANÇA (não regredir · 2026-05-21)
 
 Esta seção é a lei do projeto após a Auditoria de Segurança 2026-05-21
-(PRs #586 → #599). Qualquer sessão futura do Claude DEVE seguir estas
+(PRs #586 → #642). Qualquer sessão futura do Claude DEVE seguir estas
 regras. **Quebrar qualquer uma delas é regressão crítica.**
+
+> 📖 **Referência completa**: `docs/SEGURANCA_RUNBOOK.md` · runbook
+> canônico com TODAS as PRs, helpers, matriz de permissões, troubleshooting
+> e frentes deferidas. Consultar pra contexto profundo.
 
 ## Proibições absolutas
 
