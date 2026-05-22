@@ -19,6 +19,7 @@ import Recorrentes from './Recorrentes';
 import Generosidade from './Generosidade';
 import Alertas from './Alertas';
 import CalendarioFinanceiro from './CalendarioFinanceiro';
+import DreCentroCusto from './DreCentroCusto';
 
 // ── Tema ────────────────────────────────────────────────────
 const C = {
@@ -156,7 +157,7 @@ function Badge({ status, map }) {
 // Cada grupo composto tem sub-abas dentro
 const TABS = ['Dashboard', 'Análises', 'Movimentação', 'DRE', 'Banco', 'Solicitações', 'Generosidade', 'Alertas', 'Calendário', 'Configuração'];
 const SUBS_MOVIMENTACAO = ['Contas', 'Transações', 'Contas a Pagar', 'Recorrentes', 'Reembolsos', 'Importar extratos', 'Fila de classificação'];
-const SUBS_DRE = ['DRE Auto', 'DRE (legacy)'];
+const SUBS_DRE = ['DRE Auto', 'Por Centro de Custo', 'DRE (legacy)'];
 const SUBS_BANCO = ['Banco Santander', 'Culto ao Vivo', 'PIX Cobrança', 'Pagamentos', 'Boletos'];
 
 // ── KPI Cards (estilo unificado) ─────────────────────────────
@@ -1140,7 +1141,8 @@ export default function Financeiro() {
         <div>
           <SubTabBar items={SUBS_DRE} current={subDre} onSelect={setSubDre} />
           {subDre === 0 && <DreAuto />}
-          {subDre === 1 && renderDRE()}
+          {subDre === 1 && <DreCentroCusto />}
+          {subDre === 2 && renderDRE()}
         </div>
       )}
 

@@ -796,4 +796,80 @@ router.get('/calendario', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// ══════════════════════════════════════════════════════════════════════════
+// DRE POR CENTRO DE CUSTO
+// ══════════════════════════════════════════════════════════════════════════
+
+// Lista centros de custo cadastrados (pro selector da UI)
+router.get('/centros-custo', async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('fin_centros_custo')
+      .select('id, codigo, nome, campus, area_slug, nivel, aceita_lancamento, ativo')
+      .eq('ativo', true)
+      .order('codigo');
+    if (error) throw error;
+    res.json(data || []);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Ranking do mes corrente · receita+despesa por centro
+router.get('/dre-centro-custo/atual', async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('vw_dre_centro_custo_atual').select('*');
+    if (error) throw error;
+    // Agrupa por centro · soma receita e despesa em uma linha
+    const byId = {};
+    (data || []).forEach(r => {
+      const k = r.centro_custo_id;
+      if (!byId[k]) {
+        byId[k] = {
+          centro_custo_id: k, codigo: r.codigo, centro_nome: r.centro_nome,
+          campus: r.campus, area_slug: r.area_slug,
+          receita: 0, despesa: 0, receita_anterior: 0, despesa_anterior: 0,
+        };
+      }
+      const tgt = r.tipo === 'receita' ? 'receita' : 'despesa';
+      byId[k][tgt] += Math.abs(Number(r.atual || 0));
+      byId[k][`${tgt}_anterior`] += Math.abs(Number(r.anterior || 0));
+    });
+    const lista = Object.values(byId).map(c => ({
+      ...c,
+      resultado: c.receita - c.despesa,
+      resultado_anterior: c.receita_anterior - c.despesa_anterior,
+      total_movimentado: c.receita + c.despesa,
+    })).sort((a, b) => b.total_movimentado - a.total_movimentado);
+    res.json(lista);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Historico 12 meses de 1 centro
+router.get('/dre-centro-custo/:id/historico', async (req, res) => {
+  try {
+    const desde = new Date();
+    desde.setMonth(desde.getMonth() - 11); desde.setDate(1);
+    const { data, error } = await supabase
+      .from('vw_dre_centro_custo_mensal')
+      .select('mes, tipo, total, qtd_lancamentos')
+      .eq('centro_custo_id', req.params.id)
+      .gte('mes', desde.toISOString().slice(0, 10))
+      .order('mes');
+    if (error) throw error;
+    // Pivot · 1 linha por mes com receita+despesa
+    const byMes = {};
+    (data || []).forEach(r => {
+      const k = r.mes;
+      if (!byMes[k]) byMes[k] = { mes: k, receita: 0, despesa: 0, qtd: 0 };
+      const v = Math.abs(Number(r.total || 0));
+      byMes[k][r.tipo === 'receita' ? 'receita' : 'despesa'] += v;
+      byMes[k].qtd += Number(r.qtd_lancamentos || 0);
+    });
+    res.json(Object.values(byMes).map(m => ({
+      ...m,
+      resultado: m.receita - m.despesa,
+    })));
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 module.exports = router;
