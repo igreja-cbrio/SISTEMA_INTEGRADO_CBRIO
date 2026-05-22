@@ -11,14 +11,50 @@ const { callApi } = require('./httpClient');
 const { supabase } = require('../../utils/supabase');
 
 const ENABLED = (process.env.SANTANDER_BOLETOS_ENABLED || 'false').toLowerCase() === 'true';
-const BASE_PATH = process.env.SANTANDER_BOLETOS_BASE_PATH || '/collection_bill_management/v2';
+const BASE_PATH_OVERRIDE = process.env.SANTANDER_BOLETOS_BASE_PATH || '';
 const WORKSPACE_ID = process.env.SANTANDER_BOLETOS_WORKSPACE_ID || '';
 const COVENANT_CODE = process.env.SANTANDER_BOLETOS_COVENANT_CODE || process.env.SANTANDER_CONTA || '';
 const BENEFICIARY_DOC = process.env.SANTANDER_CNPJ_TITULAR || '';
 
-function isEnabled() {
-  return ENABLED;
+// Paths plausiveis · ordem de tentativa (primeiro !=404 ganha)
+const BOLETOS_PATHS = BASE_PATH_OVERRIDE ? [BASE_PATH_OVERRIDE] : [
+  '/collection_bill_management/v2',
+  '/collection_bill_management/v1',
+  '/bill_management/v2',
+  '/bills/v1',
+  '/cobranca/v2',
+  '/banking/v1/collection',
+];
+
+let pathFuncionando = null;
+
+function isPathNaoExiste(err) {
+  const msg = (err.message || '').toLowerCase();
+  return msg.includes('404')
+    || msg.includes('applicationnotfound')
+    || msg.includes('unable to identify proxy')
+    || msg.includes('not found')
+    || msg.includes('resource not found');
 }
+
+async function tentarComPaths(fn) {
+  if (pathFuncionando) return fn(pathFuncionando);
+  let ultimoErro = null;
+  for (const p of BOLETOS_PATHS) {
+    try {
+      const res = await fn(p);
+      pathFuncionando = p;
+      return res;
+    } catch (e) {
+      ultimoErro = e;
+      if (!isPathNaoExiste(e)) throw e;
+    }
+  }
+  throw ultimoErro || new Error('Nenhum path Santander Boletos respondeu');
+}
+
+function isEnabled() { return ENABLED; }
+function getPathFuncionando() { return pathFuncionando; }
 
 function getConfig() {
   return {
@@ -27,7 +63,8 @@ function getConfig() {
     workspace_preview: WORKSPACE_ID ? WORKSPACE_ID.slice(0, 6) + '***' : null,
     covenant_code: COVENANT_CODE ? COVENANT_CODE.slice(0, 4) + '***' : null,
     beneficiary_doc: BENEFICIARY_DOC ? BENEFICIARY_DOC.slice(0, 4) + '***' : null,
-    base_path: BASE_PATH,
+    base_paths_tested: BOLETOS_PATHS,
+    base_path_working: pathFuncionando,
   };
 }
 
@@ -118,33 +155,32 @@ async function emitirBoleto({
     };
   }
 
-  return callApi(`${BASE_PATH}/workspaces/${encodeURIComponent(WORKSPACE_ID)}/bank_slips`, {
-    method: 'POST',
-    body,
-  });
+  return tentarComPaths(base =>
+    callApi(`${base}/workspaces/${encodeURIComponent(WORKSPACE_ID)}/bank_slips`, {
+      method: 'POST', body,
+    })
+  );
 }
 
-/**
- * Consulta boleto pelo nossoNumero.
- */
 async function consultarBoleto(nossoNumero) {
   if (!ENABLED) throw new Error('Boletos desabilitado');
   if (!WORKSPACE_ID) throw new Error('WORKSPACE_ID nao configurado');
-  return callApi(`${BASE_PATH}/workspaces/${encodeURIComponent(WORKSPACE_ID)}/bank_slips/${encodeURIComponent(nossoNumero)}`, {
-    method: 'GET',
-  });
+  return tentarComPaths(base =>
+    callApi(`${base}/workspaces/${encodeURIComponent(WORKSPACE_ID)}/bank_slips/${encodeURIComponent(nossoNumero)}`, {
+      method: 'GET',
+    })
+  );
 }
 
-/**
- * Cancela/baixa boleto (PATCH com operation = BAIXAR).
- */
 async function cancelarBoleto(nossoNumero) {
   if (!ENABLED) throw new Error('Boletos desabilitado');
   if (!WORKSPACE_ID) throw new Error('WORKSPACE_ID nao configurado');
-  return callApi(`${BASE_PATH}/workspaces/${encodeURIComponent(WORKSPACE_ID)}/bank_slips/${encodeURIComponent(nossoNumero)}`, {
-    method: 'PATCH',
-    body: { operation: 'BAIXAR', status: 'BAIXADO' },
-  });
+  return tentarComPaths(base =>
+    callApi(`${base}/workspaces/${encodeURIComponent(WORKSPACE_ID)}/bank_slips/${encodeURIComponent(nossoNumero)}`, {
+      method: 'PATCH',
+      body: { operation: 'BAIXAR', status: 'BAIXADO' },
+    })
+  );
 }
 
 /**

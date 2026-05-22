@@ -373,7 +373,10 @@ router.get('/pix-cob/health', async (req, res) => {
     habilitado: pixCob.isEnabled(),
     chave_configurada: !!pixCob.getChave(),
     chave_preview: pixCob.getChave() ? pixCob.getChave().slice(0, 4) + '***' : null,
-    hint: pixCob.isEnabled() ? null : 'Setar SANTANDER_PIX_COB_ENABLED=true + SANTANDER_PIX_COB_CHAVE',
+    paths_testados: pixCob.getPathsTestados ? pixCob.getPathsTestados() : null,
+    path_funcionando: pixCob.getPathFuncionando ? pixCob.getPathFuncionando() : null,
+    env_value_raw: process.env.SANTANDER_PIX_COB_ENABLED || '<unset>',
+    hint: pixCob.isEnabled() ? null : 'Setar SANTANDER_PIX_COB_ENABLED=true + SANTANDER_PIX_COB_CHAVE no Vercel (Production) + redeploy',
   });
 });
 
@@ -521,7 +524,14 @@ const pagamentos = require('../services/santander/pagamentosService');
 router.get('/pagamentos/health', async (req, res) => {
   res.json({
     habilitado: pagamentos.isEnabled(),
-    hint: pagamentos.isEnabled() ? null : 'Setar SANTANDER_PAGTO_ENABLED=true no Vercel',
+    paths_testados: pagamentos.getPathsTestados ? pagamentos.getPathsTestados() : null,
+    path_funcionando: {
+      boleto: pagamentos.getPathFuncionando ? pagamentos.getPathFuncionando('boleto') : null,
+      tributo: pagamentos.getPathFuncionando ? pagamentos.getPathFuncionando('tributo') : null,
+      concessionaria: pagamentos.getPathFuncionando ? pagamentos.getPathFuncionando('concessionaria') : null,
+    },
+    env_value_raw: process.env.SANTANDER_PAGTO_ENABLED || '<unset>',
+    hint: pagamentos.isEnabled() ? null : 'Setar SANTANDER_PAGTO_ENABLED=true no Vercel (Production) + redeploy',
   });
 });
 
@@ -705,6 +715,9 @@ router.get('/boletos/health', async (req, res) => {
     workspace_configurado: !!cfg.workspace_id,
     workspace_preview: cfg.workspace_preview,
     beneficiary_doc: cfg.beneficiary_doc,
+    paths_testados: cfg.base_paths_tested,
+    path_funcionando: cfg.base_path_working,
+    env_value_raw: process.env.SANTANDER_BOLETOS_ENABLED || '<unset>',
     hint: cfg.enabled && cfg.workspace_id ? null :
       'Setar SANTANDER_BOLETOS_ENABLED=true + SANTANDER_BOLETOS_WORKSPACE_ID',
   });

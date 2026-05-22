@@ -18,12 +18,74 @@
 const { callApi } = require('./httpClient');
 
 const ENABLED = (process.env.SANTANDER_PAGTO_ENABLED || 'false').toLowerCase() === 'true';
-const BASE_PATH = process.env.SANTANDER_PAGTO_BASE_PATH || '/payments/v1';
-const PATH_BOLETO = process.env.SANTANDER_PAGTO_BOLETO_PATH || `${BASE_PATH}/bank_slips`;
-const PATH_TRIBUTO = process.env.SANTANDER_PAGTO_TRIBUTO_PATH || `${BASE_PATH}/tax_payments`;
-const PATH_CONCESS = process.env.SANTANDER_PAGTO_CONCESS_PATH || `${BASE_PATH}/utility_bills`;
+
+const OVERRIDE_BOLETO = process.env.SANTANDER_PAGTO_BOLETO_PATH || '';
+const OVERRIDE_TRIBUTO = process.env.SANTANDER_PAGTO_TRIBUTO_PATH || '';
+const OVERRIDE_CONCESS = process.env.SANTANDER_PAGTO_CONCESS_PATH || '';
+
+// Lista de paths plausiveis por tipo · primeiro que retornar !=404 ganha
+const PATHS_POR_TIPO = {
+  boleto: OVERRIDE_BOLETO ? [OVERRIDE_BOLETO] : [
+    '/payments/v1/bank_slips',
+    '/bank_slips_payment/v1/payments',
+    '/payment_bank_slip/v1/payments',
+    '/bank_slips/v1/payments',
+    '/pagamento_boletos/v1/payments',
+    '/banking/v1/payments/bank-slips',
+  ],
+  tributo: OVERRIDE_TRIBUTO ? [OVERRIDE_TRIBUTO] : [
+    '/payments/v1/tax_payments',
+    '/tax_payments/v1/payments',
+    '/payment_tax/v1/payments',
+    '/pagamento_tributos/v1/payments',
+    '/banking/v1/payments/taxes',
+  ],
+  concessionaria: OVERRIDE_CONCESS ? [OVERRIDE_CONCESS] : [
+    '/payments/v1/utility_bills',
+    '/concessionary_bills/v1/payments',
+    '/payment_concessionary/v1/payments',
+    '/pagamento_concessionarias/v1/payments',
+    '/banking/v1/payments/utilities',
+  ],
+};
+
+const pathFuncionando = {};
 
 function isEnabled() { return ENABLED; }
+function getPathsTestados() { return PATHS_POR_TIPO; }
+function getPathFuncionando(tipo) { return pathFuncionando[tipo] || null; }
+
+function pathsParaTipo(tipo) {
+  if (tipo === 'darf') tipo = 'tributo';
+  return PATHS_POR_TIPO[tipo] || PATHS_POR_TIPO.boleto;
+}
+
+function isPathNaoExiste(err) {
+  const msg = (err.message || '').toLowerCase();
+  return msg.includes('404')
+    || msg.includes('applicationnotfound')
+    || msg.includes('unable to identify proxy')
+    || msg.includes('not found')
+    || msg.includes('resource not found');
+}
+
+async function tentarComPaths(tipo, fn) {
+  const cached = pathFuncionando[tipo];
+  if (cached) return fn(cached);
+  const paths = pathsParaTipo(tipo);
+  let ultimoErro = null;
+  for (const p of paths) {
+    try {
+      const res = await fn(p);
+      pathFuncionando[tipo] = p;
+      return res;
+    } catch (e) {
+      ultimoErro = e;
+      if (!isPathNaoExiste(e)) throw e;
+    }
+  }
+  throw ultimoErro || new Error(`Nenhum path Santander para ${tipo} respondeu`);
+}
 
 /**
  * Normaliza linha digitavel · remove pontos, espacos, hifens.
@@ -146,13 +208,6 @@ async function criarPagamento({ tipo, linhaDigitavel, codigoBarras, valor, dataP
   if (!dataPagamento) throw new Error('dataPagamento obrigatorio');
   if (!valor || valor <= 0) throw new Error('valor invalido');
 
-  // Path varia por produto
-  let path;
-  if (tipo === 'boleto') path = PATH_BOLETO;
-  else if (tipo === 'tributo' || tipo === 'darf') path = PATH_TRIBUTO;
-  else path = PATH_CONCESS;
-
-  // Body Open Finance padrao
   const body = {
     paymentDate: dataPagamento,
     amount: Number(valor).toFixed(2),
@@ -162,31 +217,21 @@ async function criarPagamento({ tipo, linhaDigitavel, codigoBarras, valor, dataP
     beneficiary: beneficiarioNome ? { name: String(beneficiarioNome).slice(0, 100) } : undefined,
   };
 
-  return callApi(path, { method: 'POST', body });
+  return tentarComPaths(tipo, p => callApi(p, { method: 'POST', body }));
 }
 
-/**
- * Consulta status de pagamento.
- */
 async function consultarPagamento({ tipo, paymentId }) {
   if (!ENABLED) throw new Error('Pagamentos desabilitado');
-  let path;
-  if (tipo === 'boleto') path = PATH_BOLETO;
-  else if (tipo === 'tributo' || tipo === 'darf') path = PATH_TRIBUTO;
-  else path = PATH_CONCESS;
-  return callApi(`${path}/${encodeURIComponent(paymentId)}`, { method: 'GET' });
+  return tentarComPaths(tipo, p =>
+    callApi(`${p}/${encodeURIComponent(paymentId)}`, { method: 'GET' })
+  );
 }
 
-/**
- * Cancela pagamento agendado.
- */
 async function cancelarPagamento({ tipo, paymentId }) {
   if (!ENABLED) throw new Error('Pagamentos desabilitado');
-  let path;
-  if (tipo === 'boleto') path = PATH_BOLETO;
-  else if (tipo === 'tributo' || tipo === 'darf') path = PATH_TRIBUTO;
-  else path = PATH_CONCESS;
-  return callApi(`${path}/${encodeURIComponent(paymentId)}`, { method: 'DELETE' });
+  return tentarComPaths(tipo, p =>
+    callApi(`${p}/${encodeURIComponent(paymentId)}`, { method: 'DELETE' })
+  );
 }
 
 /**
@@ -216,4 +261,6 @@ module.exports = {
   consultarPagamento,
   cancelarPagamento,
   mapStatus,
+  getPathsTestados,
+  getPathFuncionando,
 };
