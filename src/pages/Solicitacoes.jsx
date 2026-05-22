@@ -97,6 +97,7 @@ export default function Solicitacoes() {
     eh_urgente: false, justificativa_urgencia: '',
     data_necessaria: '',
     espaco_solicitado: '', data_uso: '', horario_inicio: '', horario_fim: '', qtde_pessoas: '',
+    motivo_reembolso: '', data_compra: '',
     forma_pagamento: '', chave_pix: '', banco: '', agencia: '', conta: '', documento_file: null,
   };
   const [form, setForm] = useState(FORM_INITIAL);
@@ -193,6 +194,8 @@ export default function Solicitacoes() {
       else payload.qtde_pessoas = parseInt(payload.qtde_pessoas, 10);
       if (!payload.justificativa_urgencia) delete payload.justificativa_urgencia;
       if (!payload.espaco_solicitado) delete payload.espaco_solicitado;
+      if (!payload.data_compra) delete payload.data_compra;
+      if (!payload.motivo_reembolso) delete payload.motivo_reembolso;
 
       // Upload do comprovante para Supabase Storage (bucket: solicitacoes)
       if (form.documento_file && supabase) {
@@ -254,6 +257,8 @@ export default function Solicitacoes() {
   const isReembolso = form.categoria === 'reembolso';
   const isReservaEspaco = form.categoria === 'reserva_espaco';
   const reembolsoValid = !isReembolso || (
+    form.motivo_reembolso.trim().length >= 5 &&
+    form.data_compra &&
     form.forma_pagamento &&
     (form.forma_pagamento !== 'pix' || form.chave_pix.trim()) &&
     (form.forma_pagamento !== 'transferencia_bancaria' || (form.banco.trim() && form.agencia.trim() && form.conta.trim()))
@@ -453,9 +458,24 @@ export default function Solicitacoes() {
                 </div>
                 {isReembolso && (
                   <>
+                    <div className="space-y-2">
+                      <Label>Motivo do reembolso *</Label>
+                      <Textarea
+                        value={form.motivo_reembolso}
+                        onChange={e => setForm(f => ({ ...f, motivo_reembolso: e.target.value }))}
+                        placeholder="Ex: 'Compra de material gráfico pra Conferência X · não havia tempo de pedir cotação'"
+                        rows={2}
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Data da compra *</Label>
+                      <Input type="date" max={new Date().toISOString().slice(0, 10)}
+                        value={form.data_compra}
+                        onChange={e => setForm(f => ({ ...f, data_compra: e.target.value }))} />
+                    </div>
                     {/* Comprovante — drag and drop */}
                     <div className="space-y-2">
-                      <Label>Comprovante / Documento</Label>
+                      <Label>Comprovante / Documento *</Label>
                       <div
                         className={`border-2 border-dashed rounded-lg p-5 text-center transition-colors cursor-pointer
                           ${dragOver ? 'border-primary bg-primary/5' : 'border-border hover:border-primary/40'}
@@ -694,11 +714,31 @@ export default function Solicitacoes() {
   );
 }
 
+function getSlaBadge(item) {
+  const concluido = ['concluido', 'avaliado', 'rejeitado', 'cancelado', 'aprovado'].includes(item.status);
+  if (concluido) return null;
+  const ativo = !item.respondido_em ? item.sla_resposta_deadline : item.sla_resolucao_deadline;
+  if (!ativo) return null;
+  const horas = (new Date(ativo).getTime() - Date.now()) / 3600000;
+  if (horas < 0) {
+    return { label: `${Math.abs(Math.round(horas))}h atrasado`, color: 'bg-rose-500/15 text-rose-700 dark:text-rose-400 border border-rose-500/30' };
+  }
+  if (horas < 4) {
+    return { label: `${Math.round(horas)}h`, color: 'bg-amber-500/15 text-amber-700 dark:text-amber-400 border border-amber-500/30' };
+  }
+  if (horas < 24) {
+    return { label: `${Math.round(horas)}h`, color: 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-400' };
+  }
+  return null;
+}
+
 function SolicitacaoCard({ item, isAdmin, onStatusChange, onClick, draggable }) {
   const cat = getCatMeta(item.categoria);
   const urg = getUrgMeta(item.urgencia);
   const solicitante = item.solicitante?.name || 'Desconhecido';
   const date = new Date(item.created_at).toLocaleDateString('pt-BR', { day: '2-digit', month: 'short' });
+  const sla = getSlaBadge(item);
+  const aguardandoFin = item.status === 'aguardando_aprovacao_financeira';
 
   return (
     <Card
@@ -713,10 +753,18 @@ function SolicitacaoCard({ item, isAdmin, onStatusChange, onClick, draggable }) 
         <span className="text-[10px] text-muted-foreground whitespace-nowrap">{date}</span>
       </div>
       <p className="text-sm font-medium text-foreground line-clamp-2 mb-1.5">{item.titulo}</p>
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between gap-1.5 flex-wrap">
         <span className="text-[11px] text-muted-foreground truncate max-w-[120px]">{solicitante}</span>
-        <Badge className={`text-[10px] px-1.5 py-0.5 ${urg.color}`}>{urg.label}</Badge>
+        <div className="flex items-center gap-1">
+          {sla && <Badge className={`text-[10px] px-1.5 py-0.5 ${sla.color}`}>⏱ {sla.label}</Badge>}
+          <Badge className={`text-[10px] px-1.5 py-0.5 ${urg.color}`}>{urg.label}</Badge>
+        </div>
       </div>
+      {aguardandoFin && (
+        <div className="mt-2 text-[10px] text-amber-700 dark:text-amber-400 bg-amber-500/10 border border-amber-500/30 rounded px-2 py-1">
+          ⏳ Aguardando aprovação do financeiro
+        </div>
+      )}
       {isAdmin && item.status === 'pendente' && (
         <div className="flex gap-1.5 mt-2 pt-2 border-t border-border">
           <Button size="sm" variant="outline" className="h-6 text-[10px] flex-1" onClick={e => { e.stopPropagation(); onStatusChange(item.id, 'em_analise'); }}>
