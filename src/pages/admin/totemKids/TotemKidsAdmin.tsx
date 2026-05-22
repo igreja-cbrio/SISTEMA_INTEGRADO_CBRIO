@@ -44,7 +44,7 @@ export default function TotemKidsAdmin() {
           <Button variant="outline" size="sm" onClick={() => navigate('/ministerial/totem-kids/painel')}>
             <Calendar className="h-4 w-4 mr-1" /> Painel
           </Button>
-          <Button variant="outline" size="sm" onClick={() => window.open('/manuais/totem-kids/', '_blank')}>
+          <Button variant="outline" size="sm" onClick={() => window.open('https://github.com/igreja-cbrio/SISTEMA_INTEGRADO_CBRIO/blob/main/docs/totem-kids-manual.md', '_blank')}>
             <ExternalLink className="h-4 w-4 mr-1" /> Manual (HTML)
           </Button>
         </div>
