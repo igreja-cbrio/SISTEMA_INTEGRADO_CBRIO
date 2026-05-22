@@ -990,4 +990,92 @@ router.get('/sync-extrato-historico', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// ── Importar histórico completo · varios meses em fatias ─────────────────
+// Marcos pediu · importar desde 01/01/2026 (ou outra data) de uma vez.
+// API Santander limita janela por chamada · service ja fatia automaticamente.
+router.post('/importar-historico', authorizeModule('santander', 3), async (req, res) => {
+  try {
+    const { desde, ate } = req.body || {};
+    if (!desde) return res.status(400).json({ error: 'desde obrigatorio (YYYY-MM-DD)' });
+    const fim = ate || new Date().toISOString().slice(0, 10);
+
+    const contasService = require('../services/santander/contasService');
+    const { matchOfxPix, classificarBatch } = require('../services/financeiroClassificador');
+    const { CONTA, isConfigured, missingEnv } = require('../services/santander/httpClient');
+
+    if (!isConfigured()) {
+      return res.json({ ok: false, erro: 'Santander nao configurado', missing: missingEnv() });
+    }
+
+    const { data: contas } = await supabase
+      .from('fin_contas').select('*')
+      .or(`banco.ilike.%santander%,conta.ilike.%${CONTA}%`);
+    const contaLocal = (contas || [])[0];
+    if (!contaLocal) return res.status(400).json({ ok: false, erro: 'Conta Santander nao cadastrada' });
+
+    const extratoApi = await contasService.consultarExtrato({ inicio: desde, fim, usarCache: false });
+    const itens = Array.isArray(extratoApi?._content) ? extratoApi._content : [];
+    if (itens.length === 0) {
+      return res.json({ ok: true, sem_transacoes: true, periodo: { inicio: desde, fim } });
+    }
+
+    const { data: uploadRow } = await supabase.from('fin_uploads').insert({
+      tipo: 'ofx', conta_id: contaLocal.id,
+      arquivo_nome: `[historico] santander-${desde}-${fim}.json`,
+      arquivo_tamanho: 0, total_registros: itens.length,
+      data_inicio: desde, data_fim: fim, status: 'processando',
+    }).select().single();
+
+    let inseridos = 0, duplicados = 0, erros = 0;
+    for (const t of itens) {
+      const isDebito = t.creditDebitType === 'DEBITO';
+      const valorAbs = Number(t.amount || 0);
+      let doc = t.partieDocumentNumber || null;
+      const memo = t.transactionName || '';
+      if (!doc) {
+        const cnpjM = memo.match(/\d{14}/);
+        const cpfM = memo.match(/\d{11}/);
+        if (cnpjM) doc = cnpjM[0];
+        else if (cpfM) doc = cpfM[0];
+      }
+      const { error } = await supabase.from('fin_lancamentos_brutos').insert({
+        fonte: 'santander_api', conta_id: contaLocal.id,
+        data_lancamento: t.transactionDate, valor: valorAbs,
+        tipo_trn: isDebito ? 'DEBIT' : 'CREDIT', memo,
+        nome_contraparte: t.partieName || null, documento_contraparte: doc,
+        fitid: t.transactionId || `santander-${t.transactionDate}-${valorAbs}-${Math.random().toString(36).slice(2, 8)}`,
+        raw_data: { santander_api: t },
+        upload_id: uploadRow?.id,
+      });
+      if (error) {
+        if (error.code === '23505') duplicados++;
+        else erros++;
+      } else inseridos++;
+    }
+
+    const matchResult = await matchOfxPix({ uploadId: uploadRow?.id });
+    const classifResult = await classificarBatch({ uploadId: uploadRow?.id });
+
+    if (uploadRow) {
+      await supabase.from('fin_uploads').update({
+        total_novos: inseridos, total_duplicados: duplicados,
+        total_matched_pix: matchResult.matched,
+        total_classificados_auto: classifResult.sugeridos,
+        status: erros > 0 ? 'erro' : 'concluido',
+        erro_msg: erros > 0 ? `${erros} erros` : null,
+        concluido_em: new Date().toISOString(),
+      }).eq('id', uploadRow.id);
+    }
+
+    res.json({
+      ok: true, periodo: { inicio: desde, fim }, total: itens.length,
+      inseridos, duplicados, erros,
+      match_pix: matchResult, classificacao: classifResult,
+    });
+  } catch (e) {
+    console.error('[santander/importar-historico]', e);
+    res.status(500).json({ ok: false, erro: e.message });
+  }
+});
+
 module.exports = router;

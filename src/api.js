@@ -620,6 +620,7 @@ export const santander = {
   log: () => get('/santander/log'),
   syncExtratoFila: (dias = 3) => post('/santander/sync-extrato-fila', { dias }),
   syncExtratoHistorico: () => get('/santander/sync-extrato-historico'),
+  importarHistorico: (desde, ate) => post('/santander/importar-historico', { desde, ate }),
   pixCob: {
     health: () => get('/santander/pix-cob/health'),
     list: (params) => get('/santander/pix-cob' + (params ? '?' + new URLSearchParams(params) : '')),
