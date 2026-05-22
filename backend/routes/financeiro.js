@@ -4,6 +4,23 @@ const XLSX = require('xlsx');
 const { authenticate, authorizeModule } = require('../middleware/auth');
 const { supabase } = require('../utils/supabase');
 
+const CRON_SECRET_FIN = process.env.CRON_SECRET;
+
+// ── Cron · alertas (definido ANTES de router.use(authenticate)) ──
+router.get('/alertas/cron-gerar', async (req, res) => {
+  const auth = req.headers['x-cron-secret'] || req.headers['authorization'];
+  const isVercelCron = req.headers['user-agent']?.includes('vercel-cron');
+  if (!isVercelCron && auth !== CRON_SECRET_FIN && auth !== `Bearer ${CRON_SECRET_FIN}`) {
+    return res.status(401).json({ erro: 'Nao autorizado' });
+  }
+  try {
+    const { data, error } = await supabase.rpc('gerar_alertas_financeiros');
+    if (error) throw error;
+    const total = (data || []).reduce((s, r) => s + Number(r.qtd_criados || 0), 0);
+    res.json({ ok: true, total_criados: total, por_tipo: data || [] });
+  } catch (e) { res.status(500).json({ ok: false, erro: e.message }); }
+});
+
 router.use(authenticate, authorizeModule('financeiro'));
 
 const dreUpload = multer({
@@ -711,6 +728,71 @@ router.post('/fila-classificacao/reclassificar', async (req, res) => {
     const { data, error } = await supabase.rpc('reclassificar_fila_pendente');
     if (error) throw error;
     res.json({ reclassificadas: data });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ══════════════════════════════════════════════════════════════════════════
+// ALERTAS FINANCEIROS INTELIGENTES
+// ══════════════════════════════════════════════════════════════════════════
+
+// Lista alertas abertos
+router.get('/alertas', async (req, res) => {
+  try {
+    const { atendido } = req.query;
+    if (atendido === 'true') {
+      const { data, error } = await supabase
+        .from('fin_alertas').select('*')
+        .not('atendido_em', 'is', null)
+        .order('atendido_em', { ascending: false }).limit(100);
+      if (error) throw error;
+      return res.json(data || []);
+    }
+    const { data, error } = await supabase
+      .from('vw_fin_alertas_abertos').select('*');
+    if (error) throw error;
+    res.json(data || []);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Marca atendido
+router.post('/alertas/:id/atender', async (req, res) => {
+  try {
+    const { comentario } = req.body || {};
+    const { data, error } = await supabase
+      .from('fin_alertas').update({
+        atendido_em: new Date().toISOString(),
+        atendido_por: req.user.userId,
+        comentario_atendimento: comentario || null,
+      }).eq('id', req.params.id).select('*').single();
+    if (error) throw error;
+    res.json(data);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Roda gerador (admin ou cron)
+router.post('/alertas/gerar', async (req, res) => {
+  try {
+    const { data, error } = await supabase.rpc('gerar_alertas_financeiros');
+    if (error) throw error;
+    const total = (data || []).reduce((s, r) => s + Number(r.qtd_criados || 0), 0);
+    res.json({ total_criados: total, por_tipo: data || [] });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ══════════════════════════════════════════════════════════════════════════
+// CALENDARIO FINANCEIRO
+// ══════════════════════════════════════════════════════════════════════════
+
+router.get('/calendario', async (req, res) => {
+  try {
+    const { inicio, fim, tipo } = req.query;
+    let q = supabase.from('vw_calendario_financeiro').select('*').order('data');
+    if (inicio) q = q.gte('data', inicio);
+    if (fim) q = q.lte('data', fim);
+    if (tipo) q = q.eq('tipo', tipo);
+    const { data, error } = await q;
+    if (error) throw error;
+    res.json(data || []);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
