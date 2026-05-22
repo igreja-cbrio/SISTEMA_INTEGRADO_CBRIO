@@ -733,9 +733,13 @@ export default function Projetos() {
             </div>
           </div>
         )}
-        {/* Minhas Tarefas */}
-        {profile?.name && (() => {
-          const myTasks = kanbanTasks.filter(t => t.responsible === profile.name && t.status !== 'concluida').slice(0, 8);
+        {/* Minhas Tarefas · prioriza UUID FK · fallback TEXT (compat) */}
+        {(profile?.id || profile?.name) && (() => {
+          const myTasks = kanbanTasks.filter(t => {
+            const matchById = profile?.id && t.responsible_id === profile.id;
+            const matchByName = !t.responsible_id && profile?.name && t.responsible === profile.name;
+            return (matchById || matchByName) && t.status !== 'concluida';
+          }).slice(0, 8);
           if (myTasks.length === 0) return null;
           return (
             <div style={{ ...styles.card, marginTop: 16 }}>

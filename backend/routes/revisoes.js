@@ -13,7 +13,7 @@ router.get('/diagnostico', async (req, res) => {
     const hoje = new Date().toISOString().split('T')[0];
 
     const [projRes, marcosRes, depsRes] = await Promise.all([
-      supabase.from('projects').select('id, name, status, date_start, date_end, responsible, budget_planned, budget_spent, priority, area, description, year, notes').neq('status', 'concluido').neq('status', 'cancelado').order('name'),
+      supabase.from('projects').select('id, name, status, date_start, date_end, responsible, responsible_id, leader, leader_id, budget_planned, budget_spent, priority, area, description, year, notes').neq('status', 'concluido').neq('status', 'cancelado').order('name'),
       supabase.from('expansion_milestones').select('id, name, status, date_start, date_end, budget_planned, budget_spent, responsible, sort_order, year, area, description, phase').order('sort_order'),
       supabase.from('expansion_milestone_dependencies').select('milestone_id, depends_on_id'),
     ]);
@@ -145,7 +145,7 @@ router.get('/simular/:tipo/:id', async (req, res) => {
 router.put('/projeto/:id', authorize('admin', 'diretor'), async (req, res) => {
   try {
     const { motivo, ...campos } = req.body;
-    const allowed = ['name', 'year', 'description', 'status', 'responsible', 'area', 'date_start', 'date_end', 'budget_planned', 'budget_spent', 'priority', 'notes'];
+    const allowed = ['name', 'year', 'description', 'status', 'responsible', 'responsible_id', 'leader', 'leader_id', 'area', 'date_start', 'date_end', 'budget_planned', 'budget_spent', 'priority', 'notes'];
     const update = {};
     for (const k of allowed) { if (campos[k] !== undefined) update[k] = campos[k]; }
     if (Object.keys(update).length === 0) return res.status(400).json({ error: 'Nenhum campo para atualizar' });

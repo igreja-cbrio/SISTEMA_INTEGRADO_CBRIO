@@ -23,7 +23,7 @@ router.get('/all', async (req, res) => {
     // Tarefas de eventos
     if (!source || source === 'evento') {
       let q = supabase.from('event_tasks')
-        .select('id, name, responsible, area, deadline, status, priority, is_milestone, event_id, created_at, closed_with_event_at, events(name)')
+        .select('id, name, responsible, responsible_id, area, deadline, status, priority, is_milestone, event_id, created_at, closed_with_event_at, events(name)')
         .order('deadline', { nullsFirst: false });
       if (area) q = q.eq('area', area);
       if (finalized === 'hide') q = q.is('closed_with_event_at', null);
@@ -38,7 +38,7 @@ router.get('/all', async (req, res) => {
     // Tarefas do ciclo criativo (com subtarefas)
     if (!source || source === 'ciclo') {
       let q = supabase.from('cycle_phase_tasks')
-        .select('id, titulo, responsavel_nome, area, prazo, status, prioridade, event_id, observacoes, created_at, closed_with_event_at, events(name), event_cycle_phases(nome_fase)')
+        .select('id, titulo, responsavel_nome, responsavel_id, area, prazo, status, prioridade, event_id, observacoes, created_at, closed_with_event_at, events(name), event_cycle_phases(nome_fase)')
         .order('prazo', { nullsFirst: false });
       if (area) q = q.eq('area', area);
       if (finalized === 'hide') q = q.is('closed_with_event_at', null);
@@ -54,7 +54,10 @@ router.get('/all', async (req, res) => {
       (allSubs || []).forEach(s => { if (!subsMap[s.task_id]) subsMap[s.task_id] = []; subsMap[s.task_id].push(s); });
 
       (data || []).forEach(t => results.push({
-        id: t.id, name: t.titulo, responsible: t.responsavel_nome, area: t.area,
+        id: t.id, name: t.titulo,
+        responsible: t.responsavel_nome,
+        responsible_id: t.responsavel_id,
+        area: t.area,
         deadline: t.prazo, status: t.status === 'a_fazer' ? 'pendente' : t.status === 'em_andamento' ? 'em-andamento' : t.status,
         priority: t.prioridade, parent_name: (t.events?.name || '—') + ' → ' + (t.event_cycle_phases?.nome_fase || ''),
         parent_id: t.event_id, source: 'ciclo', created_at: t.created_at,
@@ -68,7 +71,7 @@ router.get('/all', async (req, res) => {
     // Tarefas de projetos
     if (!source || source === 'projeto') {
       let q = supabase.from('project_tasks')
-        .select('id, name, responsible, area, deadline, status, priority, is_milestone, project_id, created_at, projects(name)')
+        .select('id, name, responsible, responsible_id, area, deadline, status, priority, is_milestone, project_id, created_at, projects(name)')
         .order('deadline', { nullsFirst: false });
       if (area) q = q.eq('area', area);
       const { data } = await q;

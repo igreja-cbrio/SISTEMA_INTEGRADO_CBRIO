@@ -102,7 +102,12 @@ router.post('/', authorize('admin', 'diretor'), async (req, res) => {
     const d = req.body;
     const { data, error } = await supabase.from('projects').insert({
       name: d.name, year: d.year || new Date().getFullYear(), description: d.description || '',
-      status: d.status || 'planejamento', responsible: d.responsible || '', area: d.area || '',
+      status: d.status || 'planejamento',
+      responsible: d.responsible || '',           // snapshot TEXT (UI legacy)
+      responsible_id: d.responsible_id || null,   // UUID FK (canonico)
+      leader: d.leader || '',
+      leader_id: d.leader_id || null,
+      area: d.area || '',
       date_start: d.date_start || null, date_end: d.date_end || null,
       budget_planned: d.budget_planned || 0, category_id: d.category_id || null,
       priority: d.priority || 'media', notes: d.notes || '', created_by: req.user.userId,
@@ -120,7 +125,11 @@ router.put('/:id', authorize('admin', 'diretor'), async (req, res) => {
     const d = req.body;
     const { data, error } = await supabase.from('projects').update({
       name: d.name, year: d.year, description: d.description || '', status: d.status,
-      responsible: d.responsible || '', area: d.area || '',
+      responsible: d.responsible || '',
+      responsible_id: d.responsible_id || null,
+      leader: d.leader || '',
+      leader_id: d.leader_id || null,
+      area: d.area || '',
       date_start: d.date_start || null, date_end: d.date_end || null,
       budget_planned: d.budget_planned || 0, budget_spent: d.budget_spent || 0,
       category_id: d.category_id || null, priority: d.priority || 'media', notes: d.notes || '',
@@ -176,7 +185,9 @@ router.post('/:id/tasks', authorize('admin', 'diretor'), async (req, res) => {
     const d = req.body;
     const { data, error } = await supabase.from('project_tasks').insert({
       project_id: req.params.id, milestone_id: d.milestone_id || null, name: d.name,
-      responsible: d.responsible || '', area: d.area || '',
+      responsible: d.responsible || '',
+      responsible_id: d.responsible_id || null,
+      area: d.area || '',
       start_date: d.start_date || null, deadline: d.deadline || null,
       status: d.status || 'pendente', priority: d.priority || 'media', description: d.description || '',
       created_by: req.user.userId,
@@ -190,7 +201,10 @@ router.put('/tasks/:taskId', authorize('admin', 'diretor'), async (req, res) => 
   try {
     const d = req.body;
     const { data, error } = await supabase.from('project_tasks').update({
-      name: d.name, responsible: d.responsible || '', area: d.area || '',
+      name: d.name,
+      responsible: d.responsible || '',
+      responsible_id: d.responsible_id || null,
+      area: d.area || '',
       start_date: d.start_date || null, deadline: d.deadline || null,
       status: d.status, priority: d.priority || 'media', description: d.description || '',
     }).eq('id', req.params.taskId).select().single();
