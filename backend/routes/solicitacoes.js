@@ -647,7 +647,23 @@ router.get('/pendentes-financeiro', async (req, res) => {
       .order('eh_urgente', { ascending: false })
       .order('created_at', { ascending: true });
     if (error) throw error;
-    res.json(data || []);
+
+    // Enriquece com nome/email do solicitante (consulta separada em profiles
+    // pra evitar JOIN PostgREST que tem comportamento erratico).
+    const ids = [...new Set((data || []).map(s => s.solicitante_id).filter(Boolean))];
+    let byId = {};
+    if (ids.length > 0) {
+      const { data: profs } = await supabase
+        .from('profiles').select('id, name, email').in('id', ids);
+      byId = Object.fromEntries((profs || []).map(p => [p.id, p]));
+    }
+    const enriched = (data || []).map(s => ({
+      ...s,
+      solicitante_nome: byId[s.solicitante_id]?.name || null,
+      solicitante_email: byId[s.solicitante_id]?.email || null,
+    }));
+
+    res.json(enriched);
   } catch (e) {
     console.error('[SOLICITACOES] pendentes-financeiro:', e.message);
     res.status(500).json({ error: e.message });

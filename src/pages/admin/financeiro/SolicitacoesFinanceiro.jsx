@@ -142,8 +142,11 @@ function AbaPendentes() {
                         {s.descricao && (
                           <p className="text-xs text-muted-foreground mt-1 line-clamp-1">{s.descricao}</p>
                         )}
-                        <div className="flex gap-3 mt-1.5 text-[11px] text-muted-foreground">
+                        <div className="flex gap-3 mt-1.5 text-[11px] text-muted-foreground flex-wrap">
                           <span><strong className="text-foreground">{fmtMoney(s.valor_estimado)}</strong></span>
+                          {s.solicitante_nome && (
+                            <span>👤 <strong className="text-foreground">{s.solicitante_nome}</strong></span>
+                          )}
                           <span>{fmtDate(s.created_at)}</span>
                           {s.area_cliente && <span>Área: {s.area_cliente}</span>}
                         </div>
@@ -222,6 +225,15 @@ function DetalheDialog({ solicitacao: s, onClose, onAction }) {
         {s.descricao && <p className="text-sm text-muted-foreground mb-3">{s.descricao}</p>}
 
         <div className="grid grid-cols-2 gap-3 text-sm mb-4 bg-muted/30 rounded-md p-3">
+          {(s.solicitante_nome || s.solicitante_email) && (
+            <div className="col-span-2">
+              <div className="text-[10px] uppercase text-muted-foreground">Solicitante</div>
+              <div className="text-sm font-semibold">{s.solicitante_nome || s.solicitante_email}</div>
+              {s.solicitante_nome && s.solicitante_email && (
+                <div className="text-[10px] text-muted-foreground">{s.solicitante_email}</div>
+              )}
+            </div>
+          )}
           <div>
             <div className="text-[10px] uppercase text-muted-foreground">Valor</div>
             <div className="font-bold tabular-nums">{fmtMoney(s.valor_estimado)}</div>
