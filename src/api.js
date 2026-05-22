@@ -575,6 +575,13 @@ export const santander = {
     get: (orderId) => get(`/santander/bulk/${encodeURIComponent(orderId)}`),
   },
   log: () => get('/santander/log'),
+  pixCob: {
+    health: () => get('/santander/pix-cob/health'),
+    list: (params) => get('/santander/pix-cob' + (params ? '?' + new URLSearchParams(params) : '')),
+    get: (txid) => get(`/santander/pix-cob/${encodeURIComponent(txid)}`),
+    criar: (data) => post('/santander/pix-cob', data),
+    cancelar: (txid) => patch(`/santander/pix-cob/${encodeURIComponent(txid)}/cancelar`, {}),
+  },
 };
 
 export const logistica = {
