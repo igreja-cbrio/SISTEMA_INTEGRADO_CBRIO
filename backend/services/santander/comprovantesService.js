@@ -41,9 +41,24 @@ async function listReceipts({ startDate, endDate, limit = 50, offset = 0, catego
 // ── File request (assincrono) ──────────────────────────────────────────────
 async function createFileRequest(paymentId, { userId = null, paymentDate = null } = {}) {
   if (!paymentId) throw new Error('paymentId obrigatorio');
-  // Santander exige 'data do comprovante' (paymentDate) no body
-  // Sem isso retorna 400 · 016:Campo obrigatorio data do comprovante nao informado
-  const body = { payment: { paymentId, ...(paymentDate ? { paymentDate } : {}) } };
+  // Santander erro literal · '016: Campo obrigatorio data do comprovante nao informado'.
+  // Nome exato nao documentado · enviamos varios aliases · Santander usa o que
+  // reconhecer e ignora os outros.
+  const body = paymentDate
+    ? {
+        payment: {
+          paymentId,
+          paymentDate,
+          date: paymentDate,
+          paymentDateTime: paymentDate,
+          valueDate: paymentDate,
+          requestValueDateTime: paymentDate,
+        },
+        // Tambem no top-level · alguns endpoints Santander leem assim
+        paymentDate,
+        date: paymentDate,
+      }
+    : { payment: { paymentId } };
   return callApi(`${BASE}/payment_receipts/${encodeURIComponent(paymentId)}/file_requests`, {
     method: 'POST',
     body,

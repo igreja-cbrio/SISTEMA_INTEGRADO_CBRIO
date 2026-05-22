@@ -696,15 +696,39 @@ router.get('/transacoes', async (req, res) => {
 // ====================================================================
 
 // Calcula range [inicio, fim] e ranges anteriores baseados no period
-function calcPeriodRanges(period) {
+// Aceita period preset (week/month/quarter/year), ano/mes explicitos
+// (year=2022, year=2022&month=3), ou range custom (inicio=YYYY-MM-DD&fim=YYYY-MM-DD).
+function calcPeriodRanges(period, queryOpts = {}) {
   const hoje = new Date();
   let inicio, fim, inicioAnt, fimAnt;
 
-  fim = new Date(hoje);
-  fimAnt = new Date(hoje);
-
-  if (period === 'week') {
-    // Domingo a sabado (esta semana)
+  // 1. Range custom explicito
+  if (queryOpts.inicio && queryOpts.fim) {
+    inicio = new Date(queryOpts.inicio + 'T12:00:00');
+    fim = new Date(queryOpts.fim + 'T12:00:00');
+    const dias = Math.round((fim - inicio) / 86400000);
+    fimAnt = new Date(inicio); fimAnt.setDate(inicio.getDate() - 1);
+    inicioAnt = new Date(fimAnt); inicioAnt.setDate(fimAnt.getDate() - dias);
+  }
+  // 2. Ano + mes explicitos
+  else if (queryOpts.year && queryOpts.month != null) {
+    const y = Number(queryOpts.year);
+    const m = Number(queryOpts.month);
+    inicio = new Date(y, m, 1);
+    fim = new Date(y, m + 1, 0);
+    inicioAnt = new Date(y, m - 1, 1);
+    fimAnt = new Date(y, m, 0);
+  }
+  // 3. So ano explicito · ano inteiro
+  else if (queryOpts.year) {
+    const y = Number(queryOpts.year);
+    inicio = new Date(y, 0, 1);
+    fim = new Date(y, 11, 31);
+    inicioAnt = new Date(y - 1, 0, 1);
+    fimAnt = new Date(y - 1, 11, 31);
+  }
+  // 4. Presets legados (retrocompat)
+  else if (period === 'week') {
     const dow = hoje.getDay();
     inicio = new Date(hoje); inicio.setDate(hoje.getDate() - dow);
     fim = new Date(inicio); fim.setDate(inicio.getDate() + 6);
@@ -769,7 +793,12 @@ router.get('/dashboard/overview', async (req, res) => {
     const period = ['week', 'month', 'quarter', 'year'].includes(req.query.period) ? req.query.period : 'month';
     const hoje = new Date();
     const hojeStr = hoje.toISOString().slice(0, 10);
-    const ranges = calcPeriodRanges(period);
+    const ranges = calcPeriodRanges(period, {
+      year: req.query.year,
+      month: req.query.month,
+      inicio: req.query.inicio,
+      fim: req.query.fim,
+    });
     // 12 meses atras (pra grafico de fluxo de caixa anual)
     const dozeMesesAtras = new Date(hoje.getFullYear(), hoje.getMonth() - 11, 1).toISOString().slice(0, 10);
 

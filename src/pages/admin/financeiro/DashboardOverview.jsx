@@ -40,17 +40,39 @@ const PERIOD_LABEL = {
   year: 'Este Ano',
 };
 
+const MES_NOMES = ['Jan','Fev','Mar','Abr','Mai','Jun','Jul','Ago','Set','Out','Nov','Dez'];
+
 export default function DashboardOverview({ onNavigate }) {
+  const hoje = new Date();
+  const [modo, setModo] = useState('preset'); // 'preset' | 'mes' | 'ano'
   const [period, setPeriod] = useState('month');
+  const [ano, setAno] = useState(hoje.getFullYear());
+  const [mes, setMes] = useState(hoje.getMonth());
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
 
+  const queryKey = modo === 'preset' ? `p:${period}` : modo === 'ano' ? `y:${ano}` : `ym:${ano}-${mes}`;
+
   useEffect(() => {
     setLoading(true);
-    financeiroV2.dashboard.overview(period)
+    const opts = modo === 'preset' ? { period }
+      : modo === 'ano' ? { year: ano }
+      : { year: ano, month: mes };
+    financeiroV2.dashboard.overview(opts)
       .then(setData)
       .finally(() => setLoading(false));
-  }, [period]);
+  }, [queryKey]); // eslint-disable-line
+
+  // Lista de anos · 2022 ate ano corrente
+  const anosDisponiveis = useMemo(() => {
+    const arr = [];
+    for (let y = hoje.getFullYear(); y >= 2022; y--) arr.push(y);
+    return arr;
+  }, [hoje.getFullYear()]);
+
+  const labelPeriodo = modo === 'preset' ? PERIOD_LABEL[period]
+    : modo === 'ano' ? `Ano ${ano}`
+    : `${MES_NOMES[mes]} ${ano}`;
 
   const cardVariants = {
     hidden: { opacity: 0, y: 20 },
@@ -94,25 +116,67 @@ export default function DashboardOverview({ onNavigate }) {
         className="flex flex-col md:flex-row md:items-center md:justify-between gap-4"
       >
         <div>
-          <h2 className="text-2xl font-bold text-foreground">Visão geral financeira</h2>
+          <h2 className="text-2xl font-bold text-foreground">Visão geral · {labelPeriodo}</h2>
           <p className="text-sm text-muted-foreground mt-1">
-            Acompanhe receitas, despesas e saldo em tempo real
+            Receitas, despesas e saldo do período selecionado
           </p>
         </div>
-        <div className="flex items-center gap-3">
-          <Select value={period} onValueChange={setPeriod} disabled={loading}>
-            <SelectTrigger className="w-[180px]">
-              <Calendar className="w-4 h-4 mr-2" />
-              <SelectValue />
-              {loading && <div className="h-3 w-3 ml-1 animate-spin rounded-full border-2 border-muted-foreground/25 border-t-primary" />}
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="week">Esta Semana</SelectItem>
-              <SelectItem value="month">Este Mês</SelectItem>
-              <SelectItem value="quarter">Este Trimestre</SelectItem>
-              <SelectItem value="year">Este Ano</SelectItem>
-            </SelectContent>
-          </Select>
+        <div className="flex items-center gap-2 flex-wrap">
+          <div className="flex items-center gap-1 rounded bg-muted/40 p-0.5">
+            {[
+              { v: 'preset', label: 'Atual' },
+              { v: 'mes', label: 'Mês' },
+              { v: 'ano', label: 'Ano' },
+            ].map(m => (
+              <button
+                key={m.v}
+                onClick={() => setModo(m.v)}
+                className={`px-3 py-1 text-xs rounded transition ${
+                  modo === m.v ? 'bg-background shadow-sm font-medium' : 'text-muted-foreground hover:text-foreground'
+                }`}
+              >
+                {m.label}
+              </button>
+            ))}
+          </div>
+
+          {modo === 'preset' && (
+            <Select value={period} onValueChange={setPeriod} disabled={loading}>
+              <SelectTrigger className="w-[170px]">
+                <Calendar className="w-4 h-4 mr-2" />
+                <SelectValue />
+                {loading && <div className="h-3 w-3 ml-1 animate-spin rounded-full border-2 border-muted-foreground/25 border-t-primary" />}
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="week">Esta Semana</SelectItem>
+                <SelectItem value="month">Este Mês</SelectItem>
+                <SelectItem value="quarter">Este Trimestre</SelectItem>
+                <SelectItem value="year">Este Ano</SelectItem>
+              </SelectContent>
+            </Select>
+          )}
+
+          {modo === 'mes' && (
+            <>
+              <select value={mes} onChange={e => setMes(Number(e.target.value))}
+                className="px-2 py-1.5 text-xs rounded border bg-background">
+                {MES_NOMES.map((n, i) => <option key={i} value={i}>{n}</option>)}
+              </select>
+              <select value={ano} onChange={e => setAno(Number(e.target.value))}
+                className="px-2 py-1.5 text-xs rounded border bg-background">
+                {anosDisponiveis.map(a => <option key={a} value={a}>{a}</option>)}
+              </select>
+            </>
+          )}
+
+          {modo === 'ano' && (
+            <select value={ano} onChange={e => setAno(Number(e.target.value))}
+              className="px-2 py-1.5 text-xs rounded border bg-background">
+              {anosDisponiveis.map(a => <option key={a} value={a}>{a}</option>)}
+            </select>
+          )}
+
+          {loading && modo !== 'preset' && <div className="h-3 w-3 animate-spin rounded-full border-2 border-muted-foreground/25 border-t-primary" />}
         </div>
       </motion.div>
 
@@ -281,7 +345,7 @@ export default function DashboardOverview({ onNavigate }) {
         <Card className="border-border">
           <CardHeader>
             <CardTitle className="text-base">Distribuição de Despesas</CardTitle>
-            <p className="text-xs text-muted-foreground">{PERIOD_LABEL[period]}</p>
+            <p className="text-xs text-muted-foreground">{labelPeriodo}</p>
           </CardHeader>
           <CardContent>
             {top_despesas.length === 0 ? (
