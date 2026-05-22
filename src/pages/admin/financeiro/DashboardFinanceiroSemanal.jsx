@@ -3,7 +3,7 @@ import { motion, AnimatePresence, useSpring, useTransform, animate } from 'frame
 import {
   ChevronLeft, ChevronRight, TrendingUp, TrendingDown, Users, Banknote,
   Sparkles, ArrowUp, ArrowDown, Minus, Award, Calendar,
-  BarChart3, Activity, Target, FileText,
+  BarChart3, Activity, Target, FileText, Loader2,
 } from 'lucide-react';
 import { Card, CardContent } from '../../../components/ui/card';
 import { Button } from '../../../components/ui/button';
@@ -172,28 +172,34 @@ export default function DashboardSemanal() {
     setRefData(semanas[novoIdx].ref);
   };
 
-  if (loading || !data) return <LoadingPretty />;
+  // Stale-while-revalidate · so bloqueia tela no carregamento INICIAL.
+  // Trocas de semana mantem UI anterior visivel + spinner sutil no header.
+  if (!data) return <LoadingPretty />;
   if (data.erro) return <div className="text-sm text-muted-foreground">Erro: {data.erro}</div>;
 
   const { semana, kpis, cultos, buckets, historico, top_contribuintes } = data;
 
   return (
-    <div className="space-y-4">
+    <div className={`space-y-4 transition-opacity ${loading ? 'opacity-60' : 'opacity-100'}`}>
       {/* HEADER · navegação semana (sticky · sempre visível) */}
       <div className="sticky top-0 z-20 pb-2 -mx-1 px-1 bg-gradient-to-b from-background via-background to-transparent backdrop-blur-sm">
         <Card className="overflow-hidden border-primary/30">
           <div className="absolute inset-0 bg-gradient-to-r from-primary/5 via-transparent to-primary/5 pointer-events-none" />
           <CardContent className="pt-4 pb-4 flex items-center justify-between flex-wrap gap-3 relative">
-            <Button variant="outline" size="sm" onClick={() => navegar(1)} disabled={semanas.findIndex(s => s.ref === refData) >= semanas.length - 1}>
+            <Button variant="outline" size="sm" onClick={() => navegar(1)} disabled={semanas.findIndex(s => s.ref === refData) >= semanas.length - 1 || loading}>
               <ChevronLeft className="h-4 w-4 mr-1" /> Anterior
             </Button>
 
             <div className="flex flex-col items-center flex-1 min-w-[240px]">
-              <div className="text-[10px] text-muted-foreground uppercase tracking-wider mb-1">Semana qua-ter</div>
+              <div className="text-[10px] text-muted-foreground uppercase tracking-wider mb-1 flex items-center gap-1">
+                Semana qua-ter
+                {loading && <Loader2 className="h-3 w-3 animate-spin text-primary" />}
+              </div>
               <select
                 value={refData}
                 onChange={(e) => setRefData(e.target.value)}
-                className="text-sm font-bold text-foreground bg-background border border-border rounded-md px-3 py-1.5 hover:border-primary/50 transition-colors cursor-pointer tabular-nums min-w-[240px] text-center"
+                disabled={loading}
+                className="text-sm font-bold text-foreground bg-background border border-border rounded-md px-3 py-1.5 hover:border-primary/50 transition-colors cursor-pointer tabular-nums min-w-[240px] text-center disabled:opacity-60"
               >
                 {semanas.map(s => (
                   <option key={s.ref} value={s.ref}>{s.label}</option>
@@ -207,7 +213,7 @@ export default function DashboardSemanal() {
               </div>
             </div>
 
-            <Button variant="outline" size="sm" onClick={() => navegar(-1)} disabled={semanas.findIndex(s => s.ref === refData) <= 0}>
+            <Button variant="outline" size="sm" onClick={() => navegar(-1)} disabled={semanas.findIndex(s => s.ref === refData) <= 0 || loading}>
               Próxima <ChevronRight className="h-4 w-4 ml-1" />
             </Button>
           </CardContent>

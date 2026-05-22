@@ -477,6 +477,11 @@ export const financeiro = {
   },
   calendario: (params) => get('/financeiro/calendario' + (params ? '?' + new URLSearchParams(params) : '')),
   centrosCustoLista: () => get('/financeiro/centros-custo'),
+  closing: {
+    list: () => get('/financeiro/closing'),
+    fechar: (ano, mes, observacao) => post('/financeiro/closing/fechar', { ano, mes, observacao }),
+    reabrir: (ano, mes, motivo) => post('/financeiro/closing/reabrir', { ano, mes, motivo }),
+  },
   dreCentroAtual: () => get('/financeiro/dre-centro-custo/atual'),
   dreCentroHistorico: (id) => get(`/financeiro/dre-centro-custo/${id}/historico`),
   reembolsos: {
