@@ -47,12 +47,14 @@ router.get('/dashboard', async (req, res) => {
   try {
     const { count: totalMembros } = await supabase
       .from('mem_membros').select('id', { count: 'exact', head: true })
+      .is('deleted_at', null)
       .eq('active', true);
 
     // 1. Seguir a Jesus: trilha_valores com conversao/primeiro_contato concluida
     let seguirCount = 0;
     const { count: seguirQ } = await supabase.from('mem_trilha_valores')
       .select('membro_id', { count: 'exact', head: true })
+      .is('deleted_at', null)
       .in('etapa', ['conversao', 'primeiro_contato', 'batismo'])
       .eq('concluida', true);
     seguirCount = seguirQ || 0;
@@ -60,22 +62,26 @@ router.get('/dashboard', async (req, res) => {
     // 2. Conectar: em grupo ativo
     const { count: conectar } = await supabase
       .from('mem_grupo_membros').select('membro_id', { count: 'exact', head: true })
+      .is('deleted_at', null)
       .is('saiu_em', null);
 
     // 3. Investir: jornada 180 com encontro nos ultimos 90 dias (usa data_encontro)
     const { data: j180Ids } = await supabase
       .from('cui_jornada180').select('membro_id')
+      .is('deleted_at', null)
       .gte('data_encontro', daysAgo(90));
     const investirCount = new Set((j180Ids || []).map(r => r.membro_id).filter(Boolean)).size;
 
     // 4. Servir: voluntario ativo (ate IS NULL)
     const { count: servir } = await supabase
       .from('mem_voluntarios').select('membro_id', { count: 'exact', head: true })
+      .is('deleted_at', null)
       .is('ate', null);
 
     // 5. Generosidade: contribuicao nos ultimos 90 dias
     const { data: genIds } = await supabase
       .from('mem_contribuicoes').select('membro_id')
+      .is('deleted_at', null)
       .gte('data', daysAgo(90));
     const genCount = new Set((genIds || []).map(r => r.membro_id).filter(Boolean)).size;
 
@@ -103,6 +109,7 @@ router.get('/membros', async (req, res) => {
     const offset = (page - 1) * limit;
 
     let q = supabase.from('mem_membros').select('id, nome, email, telefone, status, foto_url', { count: 'exact' })
+      .is('deleted_at', null)
       .eq('active', true).order('nome').range(offset, offset + parseInt(limit) - 1);
     if (search) q = q.ilike('nome', `%${search}%`);
 
@@ -113,11 +120,11 @@ router.get('/membros', async (req, res) => {
     const ids = membros.map(m => m.id);
 
     const [trilha, grupos, j180, voluntarios, contribuicoes] = await Promise.all([
-      supabase.from('mem_trilha_valores').select('membro_id, etapa, concluida').in('membro_id', ids).eq('concluida', true),
-      supabase.from('mem_grupo_membros').select('membro_id').in('membro_id', ids).is('saiu_em', null),
-      supabase.from('cui_jornada180').select('membro_id').in('membro_id', ids).gte('data_encontro', daysAgo(90)),
-      supabase.from('mem_voluntarios').select('membro_id').in('membro_id', ids).is('ate', null),
-      supabase.from('mem_contribuicoes').select('membro_id').in('membro_id', ids).gte('data', daysAgo(90)),
+      supabase.from('mem_trilha_valores').select('membro_id, etapa, concluida').is('deleted_at', null).in('membro_id', ids).eq('concluida', true),
+      supabase.from('mem_grupo_membros').select('membro_id').is('deleted_at', null).in('membro_id', ids).is('saiu_em', null),
+      supabase.from('cui_jornada180').select('membro_id').is('deleted_at', null).in('membro_id', ids).gte('data_encontro', daysAgo(90)),
+      supabase.from('mem_voluntarios').select('membro_id').is('deleted_at', null).in('membro_id', ids).is('ate', null),
+      supabase.from('mem_contribuicoes').select('membro_id').is('deleted_at', null).in('membro_id', ids).gte('data', daysAgo(90)),
     ]);
 
     const trilhaSet = new Set((trilha.data || []).filter(t => ['conversao', 'primeiro_contato', 'batismo'].includes(t.etapa)).map(t => t.membro_id));
@@ -156,11 +163,11 @@ router.get('/membro/:id', async (req, res) => {
 
     const [membro, trilha, grupo, j180, vol, contrib] = await Promise.all([
       supabase.from('mem_membros').select('*').eq('id', id).single(),
-      supabase.from('mem_trilha_valores').select('*').eq('membro_id', id).order('created_at'),
-      supabase.from('mem_grupo_membros').select('*, mem_grupos(nome)').eq('membro_id', id).order('entrou_em', { ascending: false }),
-      supabase.from('cui_jornada180').select('*').eq('membro_id', id).order('data_encontro', { ascending: false }),
-      supabase.from('mem_voluntarios').select('*, mem_ministerios(nome)').eq('membro_id', id).order('desde', { ascending: false }),
-      supabase.from('mem_contribuicoes').select('*').eq('membro_id', id).order('data', { ascending: false }).limit(10),
+      supabase.from('mem_trilha_valores').select('*').is('deleted_at', null).eq('membro_id', id).order('created_at'),
+      supabase.from('mem_grupo_membros').select('*, mem_grupos(nome)').is('deleted_at', null).eq('membro_id', id).order('entrou_em', { ascending: false }),
+      supabase.from('cui_jornada180').select('*').is('deleted_at', null).eq('membro_id', id).order('data_encontro', { ascending: false }),
+      supabase.from('mem_voluntarios').select('*, mem_ministerios(nome)').is('deleted_at', null).eq('membro_id', id).order('desde', { ascending: false }),
+      supabase.from('mem_contribuicoes').select('*').is('deleted_at', null).eq('membro_id', id).order('data', { ascending: false }).limit(10),
     ]);
 
     if (membro.error || !membro.data) return res.status(404).json({ error: 'Membro nao encontrado' });

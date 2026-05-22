@@ -52,9 +52,9 @@ router.get('/dashboard', async (req, res) => {
     const [{ count: aconsAnt }, { count: capelAnt }, { count: jornAnt }, { count: convAtAnt }, { count: convCadAnt }] = await Promise.all([
       supabase.from('cui_atendimentos_agregado').select('id', { count: 'exact', head: true }).eq('mes', iniIso).eq('tipo', 'aconselhamento'),
       supabase.from('cui_atendimentos_agregado').select('id', { count: 'exact', head: true }).eq('mes', iniIso).eq('tipo', 'capelania'),
-      supabase.from('cui_jornada180').select('id', { count: 'exact', head: true }).gte('data_encontro', iniIso).lt('data_encontro', fimIso),
-      supabase.from('cui_convertidos').select('id', { count: 'exact', head: true }).eq('atendido_apos_culto', true).gte('data_culto', iniIso).lt('data_culto', fimIso),
-      supabase.from('cui_convertidos').select('id', { count: 'exact', head: true }).eq('cadastrado', true).gte('data_culto', iniIso).lt('data_culto', fimIso),
+      supabase.from('cui_jornada180').select('id', { count: 'exact', head: true }).is('deleted_at', null).gte('data_encontro', iniIso).lt('data_encontro', fimIso),
+      supabase.from('cui_convertidos').select('id', { count: 'exact', head: true }).is('deleted_at', null).eq('atendido_apos_culto', true).gte('data_culto', iniIso).lt('data_culto', fimIso),
+      supabase.from('cui_convertidos').select('id', { count: 'exact', head: true }).is('deleted_at', null).eq('cadastrado', true).gte('data_culto', iniIso).lt('data_culto', fimIso),
     ]);
 
     // Soma de quantidade por tipo no mês anterior (agregado é quantidade, não count)

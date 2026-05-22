@@ -101,6 +101,7 @@ router.get('/qr-lookup/:token', async (req, res) => {
         supabase
           .from('mem_grupo_membros')
           .select('grupo:mem_grupos(id, nome, categoria, local, dia_semana, horario)')
+          .is('deleted_at', null)
           .eq('membro_id', membro.id)
           .is('saiu_em', null)
           .maybeSingle(),

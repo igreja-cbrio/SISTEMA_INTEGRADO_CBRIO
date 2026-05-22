@@ -14,7 +14,7 @@ router.use(authenticate);
 router.get('/', async (req, res) => {
   try {
     const { ativo, categoria, bairro, temporada, status_temporada, codigo } = req.query;
-    let q = supabase.from('mem_grupos').select('*');
+    let q = supabase.from('mem_grupos').select('*').is('deleted_at', null);
     // ativo=all retorna tudo (ativos + arquivados); default e so ativos
     if (ativo === 'all') {
       // sem filtro
@@ -40,7 +40,7 @@ router.get('/', async (req, res) => {
     const liderIds = [...new Set((grupos || []).map(g => g.lider_id).filter(Boolean))];
     let lideresMap = {};
     if (liderIds.length > 0) {
-      const { data: lideres } = await supabase.from('mem_membros').select('id, nome, foto_url').in('id', liderIds);
+      const { data: lideres } = await supabase.from('mem_membros').select('id, nome, foto_url').is('deleted_at', null).in('id', liderIds);
       (lideres || []).forEach(l => { lideresMap[l.id] = l; });
     }
 
@@ -48,7 +48,7 @@ router.get('/', async (req, res) => {
     const origemIds = [...new Set((grupos || []).map(g => g.grupo_origem_id).filter(Boolean))];
     let origensMap = {};
     if (origemIds.length > 0) {
-      const { data: origens } = await supabase.from('mem_grupos').select('id, nome').in('id', origemIds);
+      const { data: origens } = await supabase.from('mem_grupos').select('id, nome').is('deleted_at', null).in('id', origemIds);
       (origens || []).forEach(o => { origensMap[o.id] = o.nome; });
     }
 
@@ -371,8 +371,8 @@ router.get('/:id/metricas', async (req, res) => {
     const id = req.params.id;
     const [grupoRes, encontrosRes, partRes] = await Promise.all([
       supabase.from('mem_grupos').select('id, nome, recorrencia, ativo').eq('id', id).single(),
-      supabase.from('mem_grupo_encontros').select('id, data').eq('grupo_id', id).order('data', { ascending: false }).limit(20),
-      supabase.from('mem_grupo_membros').select('membro_id', { count: 'exact', head: true }).eq('grupo_id', id).is('saiu_em', null),
+      supabase.from('mem_grupo_encontros').select('id, data').is('deleted_at', null).eq('grupo_id', id).order('data', { ascending: false }).limit(20),
+      supabase.from('mem_grupo_membros').select('membro_id', { count: 'exact', head: true }).is('deleted_at', null).eq('grupo_id', id).is('saiu_em', null),
     ]);
     if (grupoRes.error) throw grupoRes.error;
 
@@ -400,6 +400,7 @@ router.get('/saude/agregado', async (req, res) => {
     const { temporada } = req.query;
     let q = supabase.from('mem_grupos')
       .select('id, nome, recorrencia, lider_id')
+      .is('deleted_at', null)
       .eq('ativo', true);
     if (temporada) q = q.eq('temporada', temporada);
     const { data: grupos } = await q;
@@ -408,9 +409,9 @@ router.get('/saude/agregado', async (req, res) => {
 
     const grupoIds = grupos.map(g => g.id);
     const [encRes, partRes, lidRes] = await Promise.all([
-      supabase.from('mem_grupo_encontros').select('id, grupo_id, data').in('grupo_id', grupoIds).order('data', { ascending: false }),
-      supabase.from('mem_grupo_membros').select('grupo_id, membro_id').in('grupo_id', grupoIds).is('saiu_em', null),
-      supabase.from('mem_membros').select('id, nome').in('id', grupos.map(g => g.lider_id).filter(Boolean)),
+      supabase.from('mem_grupo_encontros').select('id, grupo_id, data').is('deleted_at', null).in('grupo_id', grupoIds).order('data', { ascending: false }),
+      supabase.from('mem_grupo_membros').select('grupo_id, membro_id').is('deleted_at', null).in('grupo_id', grupoIds).is('saiu_em', null),
+      supabase.from('mem_membros').select('id, nome').is('deleted_at', null).in('id', grupos.map(g => g.lider_id).filter(Boolean)),
     ]);
 
     const lideresMap = {};
@@ -494,7 +495,7 @@ router.get('/buscar', async (req, res) => {
   try {
     const { lider_nome, categoria, bairro, cep, raio_km, temporada, status_temporada, q } = req.query;
 
-    let query = supabase.from('mem_grupos').select('*').eq('ativo', true);
+    let query = supabase.from('mem_grupos').select('*').is('deleted_at', null).eq('ativo', true);
     if (categoria) query = query.eq('categoria', categoria);
     if (bairro) query = query.eq('bairro', bairro);
     if (temporada) query = query.eq('temporada', temporada);
@@ -508,7 +509,7 @@ router.get('/buscar', async (req, res) => {
     const liderIds = [...new Set((grupos || []).map(g => g.lider_id).filter(Boolean))];
     let lideresMap = {};
     if (liderIds.length > 0) {
-      const { data: lideres } = await supabase.from('mem_membros').select('id, nome, foto_url').in('id', liderIds);
+      const { data: lideres } = await supabase.from('mem_membros').select('id, nome, foto_url').is('deleted_at', null).in('id', liderIds);
       (lideres || []).forEach(l => { lideresMap[l.id] = l; });
     }
 

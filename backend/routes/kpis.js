@@ -577,9 +577,9 @@ router.get('/dashboard', async (req, res) => {
     { data: metas },
   ] = await Promise.all([
     supabase.from('vw_culto_stats').select('*').gte('data', dataInicioStr).order('data', { ascending: true }),
-    supabase.from('batismo_inscricoes').select('*', { count: 'exact', head: true }).eq('status', 'pendente'),
-    supabase.from('batismo_inscricoes').select('*', { count: 'exact', head: true }).eq('status', 'realizado'),
-    supabase.from('mem_grupos').select('*', { count: 'exact', head: true }).eq('ativo', true),
+    supabase.from('batismo_inscricoes').select('*', { count: 'exact', head: true }).is('deleted_at', null).eq('status', 'pendente'),
+    supabase.from('batismo_inscricoes').select('*', { count: 'exact', head: true }).is('deleted_at', null).eq('status', 'realizado'),
+    supabase.from('mem_grupos').select('*', { count: 'exact', head: true }).is('deleted_at', null).eq('ativo', true),
     supabase.from('mem_checkins').select('membro_id', { count: 'exact', head: true })
       .gte('data', new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString().split('T')[0]),
     supabase.from('kpi_metas').select('*').eq('ativo', true).order('area'),
@@ -669,8 +669,8 @@ router.post('/youtube/sync', async (req, res) => {
   // D+1 (online_ds): cultos com data <= ontem, com video, sem online_ds
   // D+7 (online_ddus): cultos com data <= 7 dias atras, com video, com online_ds, sem online_ddus
   const [{ data: cultosDSRaw }, { data: cultosDDUSRaw }] = await Promise.all([
-    supabase.from('cultos').select('id, data, youtube_video_id, service_type_id').lte('data', ontemStr).not('youtube_video_id', 'is', null).is('online_ds', null).order('data', { ascending: false }).limit(50),
-    supabase.from('cultos').select('id, data, youtube_video_id, online_ds, service_type_id').lte('data', seteDiasStr).not('youtube_video_id', 'is', null).not('online_ds', 'is', null).is('online_ddus', null).order('data', { ascending: false }).limit(50),
+    supabase.from('cultos').select('id, data, youtube_video_id, service_type_id').is('deleted_at', null).lte('data', ontemStr).not('youtube_video_id', 'is', null).is('online_ds', null).order('data', { ascending: false }).limit(50),
+    supabase.from('cultos').select('id, data, youtube_video_id, online_ds, service_type_id').is('deleted_at', null).lte('data', seteDiasStr).not('youtube_video_id', 'is', null).not('online_ds', 'is', null).is('online_ddus', null).order('data', { ascending: false }).limit(50),
   ]);
   const cultosDS = (cultosDSRaw || []).filter(isOnline);
   const cultosDDUS = (cultosDDUSRaw || []).filter(isOnline);
@@ -791,7 +791,7 @@ router.get('/cultura', async (req, res) => {
         .select('presencial_adulto, presencial_kids, decisoes_presenciais, decisoes_online, online_ds')
         .gte('data', inicioStr).lte('data', fimInclusivoStr),
       // mem_grupo_membros (saiu_em IS NULL = ativo). Tabela pode não existir — tolerante.
-      supabase.from('mem_grupo_membros').select('id', { count: 'exact', head: true }).is('saiu_em', null),
+      supabase.from('mem_grupo_membros').select('id', { count: 'exact', head: true }).is('deleted_at', null).is('saiu_em', null),
       supabase.from('pense_videos')
         .select('views')
         .eq('ativo', true)
