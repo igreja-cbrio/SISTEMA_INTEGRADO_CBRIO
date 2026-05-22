@@ -590,6 +590,13 @@ export const santander = {
     criar: (data) => post('/santander/pagamentos', data),
     cancelar: (id) => patch(`/santander/pagamentos/${id}/cancelar`, {}),
   },
+  boletos: {
+    health: () => get('/santander/boletos/health'),
+    list: (params) => get('/santander/boletos' + (params ? '?' + new URLSearchParams(params) : '')),
+    get: (id) => get(`/santander/boletos/${id}`),
+    emitir: (data) => post('/santander/boletos', data),
+    cancelar: (id) => patch(`/santander/boletos/${id}/cancelar`, {}),
+  },
 };
 
 export const logistica = {
