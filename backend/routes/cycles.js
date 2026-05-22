@@ -237,10 +237,13 @@ async function activateCycleForEvent(eventId, userId) {
       'Debriefing': 'Debrief',
     };
 
-    // Buscar responsáveis padrão por área
-    const { data: areaResp } = await supabase.from('area_responsaveis').select('area, responsavel_nome');
+    // Buscar responsáveis padrão por área (UUID + TEXT snapshot)
+    const { data: areaResp } = await supabase.from('area_responsaveis')
+      .select('area, responsavel_nome, responsavel_id');
     const respMap = {};
-    (areaResp || []).forEach(r => { respMap[r.area] = r.responsavel_nome; });
+    (areaResp || []).forEach(r => {
+      respMap[r.area] = { nome: r.responsavel_nome, id: r.responsavel_id };
+    });
 
     // Criar tarefas detalhadas com subtarefas do banco (filtrado por categoria)
     let admTplQuery = supabase.from('adm_task_templates').select('*, adm_task_template_subtasks(*)').eq('ativo', true).order('sort_order');
@@ -253,6 +256,7 @@ async function activateCycleForEvent(eventId, userId) {
       const dataInicio = new Date(diaDObj); dataInicio.setDate(diaDObj.getDate() + tmpl.offset_start);
       const dataFim = new Date(diaDObj); dataFim.setDate(diaDObj.getDate() + tmpl.offset_end);
 
+      const resp = respMap[tmpl.area] || null;
       const { data: task, error: taskErr } = await supabase.from('cycle_phase_tasks').insert({
         event_phase_id: phaseId,
         event_id: eventId,
@@ -261,7 +265,8 @@ async function activateCycleForEvent(eventId, userId) {
         prazo: dataFim.toISOString().split('T')[0],
         status: 'a_fazer',
         prioridade: 'normal',
-        responsavel_nome: respMap[tmpl.area] || null,
+        responsavel_nome: resp?.nome || null,    // snapshot TEXT (UI legacy)
+        responsavel_id: resp?.id || null,         // UUID FK (canonico)
         observacoes: `Área: ${tmpl.area} | Início: ${dataInicio.toISOString().split('T')[0]} | Fim: ${dataFim.toISOString().split('T')[0]}`,
       }).select().single();
 
@@ -769,9 +774,11 @@ async function propagarParaEventosAtivos(tmpl) {
   const etapaToFase = { 'Pré-Briefing': 'Pré Briefing', 'Aprovação': 'Aprovação', 'Execução Estratégica': 'Execução Estratégica', 'Pré-Testes': 'Pré-Testes', 'Finalizações': 'Finalizações', 'Alinhamentos Operacionais Finais': 'Alinhamentos Operacionais Finais', 'Dia D': 'Dia D', 'Debriefing': 'Debrief' };
   const faseNome = etapaToFase[tmpl.etapa] || tmpl.etapa;
 
-  // Buscar responsável padrão da área
-  const { data: areaResp } = await supabase.from('area_responsaveis').select('responsavel_nome').eq('area', tmpl.area).maybeSingle();
-  const responsavel = areaResp?.responsavel_nome || null;
+  // Buscar responsável padrão da área (UUID + TEXT snapshot)
+  const { data: areaResp } = await supabase.from('area_responsaveis')
+    .select('responsavel_nome, responsavel_id').eq('area', tmpl.area).maybeSingle();
+  const responsavelNome = areaResp?.responsavel_nome || null;
+  const responsavelId = areaResp?.responsavel_id || null;
 
   const { data: cycles } = await supabase.from('event_cycles').select('event_id, data_dia_d').eq('status', 'ativo');
   let propagados = 0;
@@ -783,7 +790,8 @@ async function propagarParaEventosAtivos(tmpl) {
     const { data: task } = await supabase.from('cycle_phase_tasks').insert({
       event_phase_id: phase.id, event_id: c.event_id, titulo: tmpl.titulo,
       area: tmpl.area, prazo: dataFim.toISOString().split('T')[0], status: 'a_fazer', prioridade: 'normal',
-      responsavel_nome: responsavel,
+      responsavel_nome: responsavelNome,
+      responsavel_id: responsavelId,
     }).select().single();
     if (task && tmpl.adm_task_template_subtasks?.length) {
       await supabase.from('cycle_task_subtasks').insert(tmpl.adm_task_template_subtasks.map((s, i) => ({ task_id: task.id, name: s.name, sort_order: i })));
@@ -927,12 +935,27 @@ router.get('/area-responsaveis', async (req, res) => {
 });
 
 // PUT /api/cycles/area-responsaveis/:area — atualizar responsável de uma área
+// Aceita responsavel_id (UUID FK profiles) opcional · senao resolve via nome
 router.put('/area-responsaveis/:area', authorize('admin', 'diretor'), async (req, res) => {
   try {
-    const { responsavel_nome } = req.body;
+    const { responsavel_nome, responsavel_id } = req.body;
     if (!responsavel_nome?.trim()) return res.status(400).json({ error: 'responsavel_nome é obrigatório' });
+
+    // Se responsavel_id nao fornecido, tenta resolver via nome (LOWER + TRIM)
+    let respId = responsavel_id || null;
+    if (!respId) {
+      const { data: profile } = await supabase.from('profiles')
+        .select('id').ilike('name', responsavel_nome.trim()).limit(1).maybeSingle();
+      respId = profile?.id || null;
+    }
+
     const { data, error } = await supabase.from('area_responsaveis')
-      .upsert({ area: req.params.area, responsavel_nome: responsavel_nome.trim(), updated_at: new Date().toISOString() }, { onConflict: 'area' })
+      .upsert({
+        area: req.params.area,
+        responsavel_nome: responsavel_nome.trim(),  // snapshot TEXT
+        responsavel_id: respId,                      // UUID FK
+        updated_at: new Date().toISOString(),
+      }, { onConflict: 'area' })
       .select().single();
     if (error) throw error;
     res.json(data);
