@@ -541,6 +541,7 @@ function labelStatus(s) {
     conciliado: 'Conciliado',
     pendente: 'Pendente',
     cancelado: 'Cancelado',
+    bruto: 'A classificar',
   };
   return m[s] || s;
 }
