@@ -27,7 +27,7 @@ export default function Arrecadacoes() {
     const hoje = new Date();
     const inicio = new Date(hoje.getFullYear(), hoje.getMonth(), 1).toISOString().slice(0, 10);
     const fim = new Date(hoje.getFullYear(), hoje.getMonth() + 1, 0).toISOString().slice(0, 10);
-    financeiroV2.transacoes.list({ tipo: 'receita', inicio, fim, limit: 1000 })
+    financeiroV2.transacoes({ tipo: 'receita', inicio, fim, limit: 1000 })
       .then(data => {
         const arr = Array.isArray(data) ? data : (data?.items || []);
         // So contribuicoes (plano 3.01.*)
