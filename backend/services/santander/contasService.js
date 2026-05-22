@@ -89,7 +89,11 @@ async function consultarSaldo({ userId } = {}) {
     overdraftLimit,
     overdraftUsed,
     overdraftAvailable: overdraftLimit > 0 ? overdraftLimit - overdraftUsed : 0,
-    total: available + blocked + invested,
+    // saldo "real" do dashboard = available_amount (campo oficial do Santander).
+    // NUNCA somar invested_amount aqui · em alguns retornos o campo
+    // automaticallyInvestedAmount vem com valores anomalos (ex: negativo)
+    // que distorcem o saldo. Bug visto em 2026-05-22.
+    total: available,
     currency: raw.availableAmountCurrency || 'BRL',
     raw: { balance: raw, account: rawAccount },
   };
