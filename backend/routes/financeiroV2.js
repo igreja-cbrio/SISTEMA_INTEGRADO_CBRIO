@@ -738,6 +738,32 @@ function calcPeriodRanges(period) {
   };
 }
 
+// Fallback · se nao ha fin_transacoes classificadas, exibe lancamentos brutos
+// pra dashboard nao ficar vazio enquanto fila de classificacao nao foi processada
+async function getTransacoesRecentes(transacoesClassificadas) {
+  if (transacoesClassificadas && transacoesClassificadas.length > 0) {
+    return transacoesClassificadas;
+  }
+  const { data } = await supabase
+    .from('fin_lancamentos_brutos')
+    .select('id, memo, valor, tipo_trn, data_lancamento, nome_contraparte')
+    .order('data_lancamento', { ascending: false })
+    .order('hora_lancamento', { ascending: false, nullsFirst: false })
+    .limit(8);
+  // Normaliza formato pro frontend nao precisar mudar
+  return (data || []).map(l => ({
+    id: l.id,
+    descricao: l.nome_contraparte || l.memo || '—',
+    valor: Math.abs(Number(l.valor)),
+    tipo: l.tipo_trn === 'CREDIT' ? 'receita' : 'despesa',
+    status: 'bruto',
+    data_competencia: l.data_lancamento,
+    plano_contas_nome: null,
+    culto_nome: null,
+    _bruto: true,
+  }));
+}
+
 router.get('/dashboard/overview', async (req, res) => {
   try {
     const period = ['week', 'month', 'quarter', 'year'].includes(req.query.period) ? req.query.period : 'month';
@@ -923,7 +949,7 @@ router.get('/dashboard/overview', async (req, res) => {
       serie_6_meses: serie6m,
       receita_por_culto: Array.from(cultoMap.values()).sort((a, b) => b.total - a.total),
       top_despesas: topDespCategorias,
-      transacoes_recentes: recentes.data || [],
+      transacoes_recentes: await getTransacoesRecentes(recentes.data),
       ultimo_upload: (ultimoUpload.data || [])[0] || null,
     });
   } catch (e) {

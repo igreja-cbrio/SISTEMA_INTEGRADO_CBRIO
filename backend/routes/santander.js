@@ -80,22 +80,27 @@ router.get('/pix/culto-atual', async (req, res) => {
       .maybeSingle();
     if (errStats) console.warn('[culto-atual] view stats:', errStats.message);
 
-    // 2. Ultimas transacoes (creditos · dizimos/ofertas)
+    // 2. Ultimas transacoes (creditos · dizimos/ofertas) · ordenadas por
+    // data_lancamento real (nao created_at · evita imports retroativos
+    // virem antes de transacoes recentes)
     const { data: transacoes, error: errTrans } = await supabase
       .from('fin_lancamentos_brutos')
       .select('id, data_lancamento, hora_lancamento, valor, memo, documento_contraparte, nome_contraparte, created_at')
       .eq('tipo_trn', 'CREDIT')
-      .order('created_at', { ascending: false })
+      .order('data_lancamento', { ascending: false })
+      .order('hora_lancamento', { ascending: false, nullsFirst: false })
       .limit(limit);
     if (errTrans) return res.status(500).json({ error: errTrans.message });
 
     // 3. Soma do dia (fallback se nao ha culto ativo · stats fica null)
+    // Filtra por data_lancamento (data real da transacao) e nao created_at
+    // (data de importacao) · senao import retroativo conta como 'hoje'
     const hoje = new Date().toISOString().slice(0, 10);
     const { data: doDia } = await supabase
       .from('fin_lancamentos_brutos')
       .select('valor')
       .eq('tipo_trn', 'CREDIT')
-      .gte('created_at', `${hoje}T00:00:00`);
+      .eq('data_lancamento', hoje);
     const totalDia = (doDia || []).reduce((s, t) => s + Number(t.valor), 0);
     const qtdDia = (doDia || []).length;
 
