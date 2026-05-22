@@ -163,6 +163,9 @@ export default function ImportarExtratos() {
 
 function UploadCard({ title, subtitle, accept, icon, color, colorBg, processando, onUpload, children }) {
   const [drag, setDrag] = useState(false);
+  const inputRef = useRef(null);
+  // ID estavel pra label htmlFor · evita conflito se houver multiplos UploadCard
+  const inputId = useMemo(() => `upload-${Math.random().toString(36).slice(2, 9)}`, []);
 
   const onDrop = (e) => {
     e.preventDefault();
@@ -174,6 +177,8 @@ function UploadCard({ title, subtitle, accept, icon, color, colorBg, processando
   const onSelect = (e) => {
     const file = e.target.files?.[0];
     if (file) onUpload(file);
+    // Reseta value pra permitir reupload do mesmo arquivo
+    e.target.value = '';
   };
 
   return (
@@ -188,19 +193,40 @@ function UploadCard({ title, subtitle, accept, icon, color, colorBg, processando
       </div>
       <p style={{ fontSize: 12, color: C.text2, marginBottom: 16, lineHeight: 1.4 }}>{subtitle}</p>
       {children}
+      {/* Input file FORA do label · posicionado off-screen (display:none quebra
+          em alguns browsers · principalmente Safari/iOS) */}
+      <input
+        ref={inputRef}
+        id={inputId}
+        type="file"
+        accept={accept}
+        onChange={onSelect}
+        disabled={processando}
+        style={{
+          position: 'absolute', left: '-9999px', width: 1, height: 1,
+          opacity: 0, pointerEvents: 'none',
+        }}
+      />
       <label
+        htmlFor={inputId}
         onDragOver={e => { e.preventDefault(); setDrag(true); }}
         onDragLeave={() => setDrag(false)}
         onDrop={onDrop}
+        onClick={(e) => {
+          // Fallback explicito · alguns browsers nao disparam click via htmlFor
+          // quando o input esta off-screen. Click direto garante.
+          if (!processando && inputRef.current) {
+            e.preventDefault();
+            inputRef.current.click();
+          }
+        }}
         style={{
           display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
           minHeight: 100, padding: 16, marginTop: 8,
           border: `2px dashed ${drag ? color : C.border}`,
           background: drag ? colorBg : 'transparent',
-          borderRadius: 8, cursor: 'pointer', transition: 'all 0.2s',
+          borderRadius: 8, cursor: processando ? 'wait' : 'pointer', transition: 'all 0.2s',
         }}>
-        <input type="file" accept={accept} onChange={onSelect}
-          style={{ display: 'none' }} disabled={processando} />
         <div style={{ fontSize: 13, color: color, fontWeight: 600 }}>
           {processando ? 'Processando...' : 'Arraste o arquivo ou clique pra selecionar'}
         </div>
