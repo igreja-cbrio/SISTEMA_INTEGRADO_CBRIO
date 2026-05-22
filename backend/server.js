@@ -96,6 +96,18 @@ app.use('/api/dashboard', require('./routes/dashboard'));
 app.use('/api/notificacoes', require('./routes/notificacoes'));
 app.use('/api/permissoes', require('./routes/permissoes'));
 app.use('/api/membresia', require('./routes/membresia'));
+// Rate limit dedicado pros forms publicos (anti-spam · sem auth)
+// Mais restritivo que o limiter global · 30 req/15min por IP em prod
+const publicLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: parseInt(process.env.PUBLIC_RATE_LIMIT_MAX) || (process.env.NODE_ENV === 'production' ? 30 : 5000),
+  message: { error: 'Muitas tentativas. Aguarde 15 minutos.' },
+  skip: () => process.env.NODE_ENV !== 'production',
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+app.use('/api/public', publicLimiter);
+
 app.use('/api/public/membresia', require('./routes/publicMembresia'));
 app.use('/api/public/voluntariado', require('./routes/publicVoluntariado'));
 app.use('/api/public/next', require('./routes/publicNext'));
@@ -134,6 +146,7 @@ app.use('/api/nps', require('./routes/nps'));
 app.use('/api/public/nps', require('./routes/publicNps'));
 app.use('/api/planejamento', require('./routes/planejamento'));
 app.use('/api/apresentacoes', require('./routes/apresentacoes'));
+app.use('/api/lgpd', require('./routes/lgpd'));
 
 // ── Health check ──
 // Inclui status do Supabase client pra diagnostico de "Nao autorizado" em prod

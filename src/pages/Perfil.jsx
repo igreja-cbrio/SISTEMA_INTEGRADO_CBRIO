@@ -6,7 +6,7 @@ import { Input } from '../components/ui/input';
 import { supabase } from '../supabaseClient';
 import { toast } from 'sonner';
 import { auth } from '../api';
-import { Camera } from 'lucide-react';
+import { Camera, ShieldCheck, FileText } from 'lucide-react';
 
 function mascaraTelefone(v) {
   const d = (v || '').replace(/\D+/g, '').slice(0, 11);
@@ -160,6 +160,58 @@ export default function Perfil() {
                 {savingTel ? 'Salvando...' : 'Salvar'}
               </Button>
             </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Card LGPD · direitos do titular */}
+      <div className="rounded-xl border border-border bg-card p-6">
+        <div className="flex items-start gap-3 mb-3">
+          <div className="h-9 w-9 rounded-full bg-primary/10 text-primary flex items-center justify-center flex-shrink-0">
+            <ShieldCheck className="h-5 w-5" />
+          </div>
+          <div>
+            <h2 className="text-base font-semibold text-foreground">Seus dados · LGPD</h2>
+            <p className="text-xs text-muted-foreground mt-0.5">
+              Lei Geral de Proteção de Dados (Lei 13.709/2018)
+            </p>
+          </div>
+        </div>
+
+        <div className="space-y-3 text-sm text-foreground/90">
+          <p>
+            A CBRio respeita seus direitos como titular dos seus dados pessoais.
+            Você pode solicitar a qualquer momento:
+          </p>
+          <ul className="space-y-1.5 text-sm text-muted-foreground pl-4">
+            <li className="flex items-start gap-2">
+              <FileText className="h-3.5 w-3.5 mt-0.5 text-primary flex-shrink-0" />
+              <span>
+                <strong className="text-foreground">Acesso</strong> · um relatório completo
+                com todos os seus dados que armazenamos
+              </span>
+            </li>
+            <li className="flex items-start gap-2">
+              <FileText className="h-3.5 w-3.5 mt-0.5 text-primary flex-shrink-0" />
+              <span>
+                <strong className="text-foreground">Correção</strong> · ajustes em dados
+                desatualizados ou incorretos
+              </span>
+            </li>
+            <li className="flex items-start gap-2">
+              <FileText className="h-3.5 w-3.5 mt-0.5 text-primary flex-shrink-0" />
+              <span>
+                <strong className="text-foreground">Exclusão</strong> · remoção de dados que
+                não sejam necessários para fins legítimos (financeiros, fiscais, históricos)
+              </span>
+            </li>
+          </ul>
+          <div className="bg-primary/5 border border-primary/20 rounded-lg p-3 mt-3">
+            <p className="text-sm text-foreground">
+              <strong>Como solicitar:</strong> presencialmente na secretaria da CBRio
+              (com documento de identidade) ou por telefone (CPF + dados do contato
+              cadastrado serão verificados). Resposta em até 15 dias úteis.
+            </p>
           </div>
         </div>
       </div>

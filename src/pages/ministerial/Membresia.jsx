@@ -5,6 +5,7 @@ import { StatisticsCard } from '../../components/ui/statistics-card';
 import { MultistepFormShell } from '../../components/ui/multistep-form';
 import { useAuth } from '../../contexts/AuthContext';
 import { membresia, voluntariado } from '../../api';
+import { supabase } from '../../supabaseClient';
 import {
   Users, Search, Plus, ChevronRight, X,
   Phone, Mail, MapPin, Heart, Calendar, Star,
@@ -12,7 +13,7 @@ import {
   AlertCircle, LogOut, MapPin as MapPinIcon, Clock, Trash2,
   DollarSign, HandCoins, Sparkles, Activity, Inbox,
   Copy, Share2, Download, QrCode, Camera, ScanLine,
-  TrendingUp, ArrowRightLeft, GitMerge,
+  TrendingUp, ArrowRightLeft, GitMerge, ShieldCheck,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '../../components/ui/button';
@@ -689,6 +690,40 @@ export default function Membresia() {
     }
   };
 
+  // LGPD · gera relatório completo de dados do membro (auditável)
+  const exportarLgpd = async (membro) => {
+    if (!membro?.id) return;
+    const motivo = window.prompt(
+      `Motivo da exportação LGPD de "${membro.nome}":\n\n` +
+      `(Ex: "Solicitação presencial · CPF verificado", "Pedido por telefone · dados confirmados")\n\n` +
+      `Esta ação fica auditada no sistema. Cancelar pra desistir.`
+    );
+    if (!motivo || !motivo.trim()) return;
+    try {
+      toast.info('Gerando relatório LGPD...');
+      const apiBase = import.meta.env.VITE_API_URL || '/api';
+      const url = `${apiBase}/lgpd/membro/${membro.id}/exportar?motivo=${encodeURIComponent(motivo.trim())}`;
+      const { data: { session } } = await supabase.auth.getSession();
+      const r = await fetch(url, {
+        headers: { Authorization: `Bearer ${session?.access_token || ''}` },
+      });
+      if (!r.ok) {
+        const err = await r.json().catch(() => ({}));
+        throw new Error(err.error || 'Erro ao gerar relatório');
+      }
+      const json = await r.json();
+      const blob = new Blob([JSON.stringify(json, null, 2)], { type: 'application/json' });
+      const dl = document.createElement('a');
+      dl.href = URL.createObjectURL(blob);
+      dl.download = `lgpd-${membro.nome.replace(/\s+/g, '-').toLowerCase()}-${new Date().toISOString().split('T')[0]}.json`;
+      dl.click();
+      URL.revokeObjectURL(dl.href);
+      toast.success('Relatório LGPD gerado e baixado. Auditado.');
+    } catch (e) {
+      toast.error(`Erro: ${e.message}`);
+    }
+  };
+
   const indicarParaServir = async () => {
     if (!selectedMembro || indicandoServir) return;
     setIndicandoServir(true);
@@ -1190,6 +1225,16 @@ export default function Membresia() {
                 </div>
               </div>
               <div style={{ display: 'flex', gap: 4 }}>
+                {isDiretor && (
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    onClick={() => exportarLgpd(selectedMembro)}
+                    title="Exportar dados (LGPD) · gerar relatório completo"
+                  >
+                    <ShieldCheck style={{ width: 16, height: 16 }} />
+                  </Button>
+                )}
                 {isDiretor && (
                   <Button variant="ghost" size="icon" onClick={() => openEdit(selectedMembro)} title="Editar">
                     <Pencil style={{ width: 16, height: 16 }} />
