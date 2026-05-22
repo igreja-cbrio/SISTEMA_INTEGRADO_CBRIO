@@ -883,4 +883,106 @@ router.patch('/boletos/:id/cancelar', authorizeModule('financeiro', 3), async (r
   }
 });
 
+// ── Sync manual do extrato pra fila de classificacao ─────────────────────
+// Reusa o handler do cron internamente. Autenticado · so admin/financeiro >=3
+router.post('/sync-extrato-fila', authorizeModule('santander', 3), async (req, res) => {
+  try {
+    const { dias = 3 } = req.body || {};
+    // Faz a chamada interna via axios? Nao · vamos chamar a logica direto
+    // importando os modulos. Mais simples · evita HTTP interno.
+    const contasService = require('../services/santander/contasService');
+    const { matchOfxPix, classificarBatch } = require('../services/financeiroClassificador');
+    const { CONTA, isConfigured, missingEnv } = require('../services/santander/httpClient');
+
+    if (!isConfigured()) {
+      return res.json({ ok: false, erro: 'Santander nao configurado', missing: missingEnv() });
+    }
+
+    const hoje = new Date();
+    const desde = new Date(hoje.getTime() - Math.min(Math.max(Number(dias) || 3, 1), 30) * 86400000);
+    const inicio = desde.toISOString().slice(0, 10);
+    const fim = hoje.toISOString().slice(0, 10);
+
+    const { data: contas } = await supabase
+      .from('fin_contas').select('*')
+      .or(`banco.ilike.%santander%,conta.ilike.%${CONTA}%`);
+    const contaLocal = (contas || [])[0];
+    if (!contaLocal) return res.status(400).json({ ok: false, erro: 'Conta Santander não cadastrada' });
+
+    const extratoApi = await contasService.consultarExtrato({ inicio, fim, usarCache: false });
+    const itens = Array.isArray(extratoApi?._content) ? extratoApi._content : [];
+    if (itens.length === 0) {
+      return res.json({ ok: true, sem_transacoes: true, periodo: { inicio, fim } });
+    }
+
+    const { data: uploadRow } = await supabase.from('fin_uploads').insert({
+      tipo: 'ofx', conta_id: contaLocal.id,
+      arquivo_nome: `[manual] santander-${fim}.json`,
+      arquivo_tamanho: 0, total_registros: itens.length,
+      data_inicio: inicio, data_fim: fim, status: 'processando',
+    }).select().single();
+
+    let inseridos = 0, duplicados = 0, erros = 0;
+    for (const t of itens) {
+      const isDebito = t.creditDebitType === 'DEBITO';
+      const valorAbs = Number(t.amount || 0);
+      let doc = t.partieDocumentNumber || null;
+      const memo = t.transactionName || '';
+      if (!doc) {
+        const cnpjM = memo.match(/\d{14}/);
+        const cpfM = memo.match(/\d{11}/);
+        if (cnpjM) doc = cnpjM[0];
+        else if (cpfM) doc = cpfM[0];
+      }
+      const { error } = await supabase.from('fin_lancamentos_brutos').insert({
+        fonte: 'santander_api', conta_id: contaLocal.id,
+        data_lancamento: t.transactionDate, valor: valorAbs,
+        tipo_trn: isDebito ? 'DEBIT' : 'CREDIT', memo,
+        nome_contraparte: t.partieName || null, documento_contraparte: doc,
+        fitid: t.transactionId || `santander-${t.transactionDate}-${valorAbs}-${Math.random().toString(36).slice(2, 8)}`,
+        raw_data: { santander_api: t },
+        upload_id: uploadRow?.id,
+      });
+      if (error) {
+        if (error.code === '23505') duplicados++;
+        else erros++;
+      } else inseridos++;
+    }
+
+    const matchResult = await matchOfxPix({ uploadId: uploadRow?.id });
+    const classifResult = await classificarBatch({ uploadId: uploadRow?.id });
+
+    if (uploadRow) {
+      await supabase.from('fin_uploads').update({
+        total_novos: inseridos, total_duplicados: duplicados,
+        total_matched_pix: matchResult.matched,
+        total_classificados_auto: classifResult.sugeridos,
+        status: erros > 0 ? 'erro' : 'concluido',
+        erro_msg: erros > 0 ? `${erros} erros` : null,
+        concluido_em: new Date().toISOString(),
+      }).eq('id', uploadRow.id);
+    }
+
+    res.json({ ok: true, total: itens.length, inseridos, duplicados, erros,
+      match_pix: matchResult, classificacao: classifResult });
+  } catch (e) {
+    console.error('[santander/sync-extrato-fila]', e);
+    res.status(500).json({ ok: false, erro: e.message });
+  }
+});
+
+// Histórico de syncs recentes
+router.get('/sync-extrato-historico', async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('fin_uploads')
+      .select('id, arquivo_nome, data_inicio, data_fim, total_registros, total_novos, total_duplicados, total_matched_pix, total_classificados_auto, status, erro_msg, created_at, concluido_em')
+      .like('arquivo_nome', '%santander-%')
+      .order('created_at', { ascending: false })
+      .limit(20);
+    if (error) throw error;
+    res.json(data || []);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 module.exports = router;

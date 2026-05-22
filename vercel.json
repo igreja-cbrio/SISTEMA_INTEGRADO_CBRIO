@@ -76,6 +76,10 @@
     {
       "path": "/api/financeiro/alertas/cron-gerar",
       "schedule": "0 8 * * *"
+    },
+    {
+      "path": "/api/santander/cron/sync",
+      "schedule": "0 5 * * *"
     }
   ],
   "rewrites": [

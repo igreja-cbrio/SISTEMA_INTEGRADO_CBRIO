@@ -608,6 +608,8 @@ export const santander = {
     get: (orderId) => get(`/santander/bulk/${encodeURIComponent(orderId)}`),
   },
   log: () => get('/santander/log'),
+  syncExtratoFila: (dias = 3) => post('/santander/sync-extrato-fila', { dias }),
+  syncExtratoHistorico: () => get('/santander/sync-extrato-historico'),
   pixCob: {
     health: () => get('/santander/pix-cob/health'),
     list: (params) => get('/santander/pix-cob' + (params ? '?' + new URLSearchParams(params) : '')),

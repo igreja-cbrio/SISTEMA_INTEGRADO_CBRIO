@@ -271,6 +271,7 @@ export default function SantanderTab() {
       {/* Extrato */}
       <div style={styles.section}>
         <div style={styles.sectionTitle}><span>Extrato</span></div>
+        <SyncFilaCard />
         <div style={styles.filtros}>
           <input type="date" value={extratoInicio} onChange={(e) => setExtratoInicio(e.target.value)} style={styles.input} />
           <span style={{ color: C.text3 }}>ate</span>
@@ -406,6 +407,120 @@ function ComprovantesTabela({ data, baixandoId, onBaixar, onAbrirPdf }) {
           })}
         </tbody>
       </table>
+    </div>
+  );
+}
+
+// ── Sync extrato → fila de classificacao ──────────────────────────────
+function SyncFilaCard() {
+  const [historico, setHistorico] = useState([]);
+  const [loadingHist, setLoadingHist] = useState(false);
+  const [dias, setDias] = useState(3);
+  const [sincronizando, setSincronizando] = useState(false);
+  const [resultado, setResultado] = useState(null);
+
+  const loadHist = async () => {
+    setLoadingHist(true);
+    try {
+      const data = await santander.syncExtratoHistorico();
+      setHistorico(Array.isArray(data) ? data : []);
+    } finally { setLoadingHist(false); }
+  };
+  useEffect(() => { loadHist(); }, []);
+
+  const sincronizar = async () => {
+    if (!confirm(`Buscar últimos ${dias} dias do extrato e enviar pra fila de classificação?`)) return;
+    setSincronizando(true);
+    setResultado(null);
+    try {
+      const r = await santander.syncExtratoFila(dias);
+      setResultado(r);
+      loadHist();
+    } catch (e) {
+      setResultado({ ok: false, erro: e.message });
+    } finally { setSincronizando(false); }
+  };
+
+  return (
+    <div style={{
+      background: 'var(--cbrio-bg)', border: `1px solid ${C.primary}40`,
+      borderRadius: 8, padding: 14, marginBottom: 16,
+    }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 10 }}>
+        <div>
+          <div style={{ fontSize: 13, fontWeight: 700, color: C.text, marginBottom: 2 }}>
+            ⚡ Sync automático · extrato → fila de classificação
+          </div>
+          <div style={{ fontSize: 11, color: C.text2 }}>
+            Puxa o extrato Santander e dispara classificação inteligente automática.
+            <span style={{ color: C.text3 }}> · Cron diário às 5h. Última: {historico[0]?.created_at ? new Date(historico[0].created_at).toLocaleString('pt-BR') : '—'}</span>
+          </div>
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <select value={dias} onChange={(e) => setDias(Number(e.target.value))}
+            style={{ padding: '6px 8px', borderRadius: 6, border: `1px solid ${C.border}`, fontSize: 12, background: 'var(--cbrio-input-bg)' }}>
+            <option value={1}>Hoje</option>
+            <option value={3}>3 dias</option>
+            <option value={7}>7 dias</option>
+            <option value={15}>15 dias</option>
+            <option value={30}>30 dias</option>
+          </select>
+          <Button size="sm" onClick={sincronizar} disabled={sincronizando}>
+            {sincronizando ? 'Sincronizando...' : '⚡ Sincronizar agora'}
+          </Button>
+        </div>
+      </div>
+
+      {resultado && (
+        <div style={{
+          marginTop: 10, padding: 10, borderRadius: 6, fontSize: 12,
+          background: resultado.ok ? C.greenBg : C.redBg,
+          color: resultado.ok ? C.green : C.red,
+        }}>
+          {resultado.ok ? (
+            resultado.sem_transacoes
+              ? '✓ Sem transações novas no período'
+              : `✓ ${resultado.inseridos} novas · ${resultado.duplicados} duplicadas · ${resultado.classificacao?.sugeridos || 0} classificadas automaticamente`
+          ) : `✗ ${resultado.erro}`}
+        </div>
+      )}
+
+      {historico.length > 0 && (
+        <details style={{ marginTop: 10 }}>
+          <summary style={{ fontSize: 11, color: C.text3, cursor: 'pointer' }}>
+            Histórico de syncs ({historico.length})
+          </summary>
+          <table style={{ ...styles.table, marginTop: 8 }}>
+            <thead>
+              <tr>
+                <th style={{ ...styles.th, fontSize: 10 }}>Quando</th>
+                <th style={{ ...styles.th, fontSize: 10 }}>Período</th>
+                <th style={{ ...styles.th, fontSize: 10, textAlign: 'right' }}>Novas</th>
+                <th style={{ ...styles.th, fontSize: 10, textAlign: 'right' }}>Duplicadas</th>
+                <th style={{ ...styles.th, fontSize: 10, textAlign: 'right' }}>Auto-classif.</th>
+                <th style={{ ...styles.th, fontSize: 10 }}>Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              {historico.map(h => (
+                <tr key={h.id}>
+                  <td style={{ ...styles.td, fontSize: 11 }}>{new Date(h.created_at).toLocaleString('pt-BR')}</td>
+                  <td style={{ ...styles.td, fontSize: 11 }}>{fmtData(h.data_inicio)} → {fmtData(h.data_fim)}</td>
+                  <td style={{ ...styles.td, fontSize: 11, textAlign: 'right', fontWeight: 600 }}>{h.total_novos || 0}</td>
+                  <td style={{ ...styles.td, fontSize: 11, textAlign: 'right', color: C.text3 }}>{h.total_duplicados || 0}</td>
+                  <td style={{ ...styles.td, fontSize: 11, textAlign: 'right', color: C.primary }}>{h.total_classificados_auto || 0}</td>
+                  <td style={{ ...styles.td, fontSize: 11 }}>
+                    <span style={styles.badge(
+                      h.status === 'concluido' ? C.green : h.status === 'erro' ? C.red : C.amber,
+                      h.status === 'concluido' ? C.greenBg : h.status === 'erro' ? C.redBg : C.amberBg
+                    )}>{h.status}</span>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </details>
+      )}
     </div>
   );
 }
