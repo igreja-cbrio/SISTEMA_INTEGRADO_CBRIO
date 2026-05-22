@@ -512,4 +512,184 @@ router.patch('/pix-cob/:txid/cancelar', authorizeModule('financeiro', 3), async 
   }
 });
 
+// ════════════════════════════════════════════════════════════════════════════
+// PAGAMENTOS · boleto, tributo, concessionaria, DARF
+// ════════════════════════════════════════════════════════════════════════════
+const pagamentos = require('../services/santander/pagamentosService');
+
+// Health
+router.get('/pagamentos/health', async (req, res) => {
+  res.json({
+    habilitado: pagamentos.isEnabled(),
+    hint: pagamentos.isEnabled() ? null : 'Setar SANTANDER_PAGTO_ENABLED=true no Vercel',
+  });
+});
+
+// Parse linha digitavel · valida e retorna metadados
+router.post('/pagamentos/parse', async (req, res) => {
+  try {
+    const { linha } = req.body || {};
+    if (!linha) return res.status(400).json({ error: 'linha obrigatoria' });
+    const parsed = pagamentos.parseLinha(linha);
+    res.json(parsed);
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+// POST · criar pagamento agendado
+router.post('/pagamentos', authorizeModule('financeiro', 3), async (req, res) => {
+  try {
+    const {
+      linha, dataPagamento, descricao, beneficiarioNome, beneficiarioCnpj,
+      origem, contaPagarId, metadata,
+    } = req.body || {};
+
+    if (!linha) return res.status(400).json({ error: 'linha obrigatoria' });
+    if (!dataPagamento) return res.status(400).json({ error: 'dataPagamento obrigatoria (YYYY-MM-DD)' });
+
+    let parsed;
+    try {
+      parsed = pagamentos.parseLinha(linha);
+    } catch (e) {
+      return res.status(400).json({ error: e.message });
+    }
+
+    // Cria registro local primeiro (status PENDENTE)
+    const baseRow = {
+      tipo: parsed.tipo,
+      linha_digitavel: parsed.linha_digitavel,
+      codigo_barras: parsed.codigo_barras,
+      valor: parsed.valor,
+      data_vencimento: parsed.vencimento,
+      data_pagamento: dataPagamento,
+      beneficiario_nome: beneficiarioNome || null,
+      beneficiario_cnpj: (beneficiarioCnpj || '').replace(/\D/g, '') || null,
+      descricao: descricao || null,
+      status: 'PENDENTE',
+      origem: origem || 'manual_admin',
+      conta_pagar_id: contaPagarId || null,
+      metadata: metadata || null,
+      criado_por: userId(req),
+    };
+
+    let api;
+    try {
+      api = await pagamentos.criarPagamento({
+        tipo: parsed.tipo,
+        linhaDigitavel: parsed.linha_digitavel,
+        codigoBarras: parsed.codigo_barras,
+        valor: parsed.valor,
+        dataPagamento,
+        descricao,
+        beneficiarioNome,
+      });
+    } catch (e) {
+      const { data } = await supabase.from('santander_pagamentos').insert({
+        ...baseRow,
+        status: 'ERRO',
+        status_detalhe: (e.message || '').slice(0, 500),
+      }).select().single();
+      return res.status(502).json({ error: e.message, pagamento: data });
+    }
+
+    const paymentId = api?.paymentId || api?.id || api?.payment_id || null;
+    const apiStatus = pagamentos.mapStatus(api?.status || api?.paymentStatus);
+
+    const { data, error } = await supabase.from('santander_pagamentos').insert({
+      ...baseRow,
+      payment_id: paymentId,
+      status: apiStatus || 'AGENDADO',
+      status_detalhe: api?.statusMessage || api?.message || null,
+      metadata: { ...(metadata || {}), api_response: api },
+    }).select().single();
+
+    if (error) return res.status(500).json({ error: error.message, api });
+    res.json({ pagamento: data, api });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// GET · lista
+router.get('/pagamentos', async (req, res) => {
+  try {
+    const { status, tipo, limit = 50 } = req.query;
+    let q = supabase
+      .from('santander_pagamentos')
+      .select('*')
+      .order('created_at', { ascending: false })
+      .limit(Math.min(200, Number(limit) || 50));
+    if (status) q = q.eq('status', status);
+    if (tipo) q = q.eq('tipo', tipo);
+    const { data, error } = await q;
+    if (error) return res.status(500).json({ error: error.message });
+    res.json({ items: data, total: data?.length || 0 });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// GET · detalhe + refresh status
+router.get('/pagamentos/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { data: local } = await supabase
+      .from('santander_pagamentos').select('*').eq('id', id).single();
+    if (!local) return res.status(404).json({ error: 'Pagamento nao encontrado' });
+
+    // Refresh se ainda em fluxo
+    const inFlight = ['AGENDADO', 'AGUARDANDO_APROVACAO', 'PENDENTE'];
+    if (inFlight.includes(local.status) && local.payment_id && pagamentos.isEnabled()) {
+      try {
+        const api = await pagamentos.consultarPagamento({
+          tipo: local.tipo, paymentId: local.payment_id,
+        });
+        const novoStatus = pagamentos.mapStatus(api?.status || api?.paymentStatus);
+        if (novoStatus && novoStatus !== local.status) {
+          const patch = { status: novoStatus, status_detalhe: api?.statusMessage || null };
+          if (novoStatus === 'EFETIVADO') patch.efetivado_em = new Date().toISOString();
+          if (novoStatus === 'REJEITADO') patch.rejeitado_em = new Date().toISOString();
+          await supabase.from('santander_pagamentos').update(patch).eq('id', id);
+          return res.json({ ...local, ...patch });
+        }
+      } catch (_) { /* silencioso */ }
+    }
+    res.json(local);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// PATCH · cancelar agendado
+router.patch('/pagamentos/:id/cancelar', authorizeModule('financeiro', 3), async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { data: local } = await supabase
+      .from('santander_pagamentos').select('*').eq('id', id).single();
+    if (!local) return res.status(404).json({ error: 'nao encontrado' });
+    if (!['AGENDADO', 'AGUARDANDO_APROVACAO', 'PENDENTE'].includes(local.status)) {
+      return res.status(400).json({ error: `Nao pode cancelar com status ${local.status}` });
+    }
+
+    if (local.payment_id && pagamentos.isEnabled()) {
+      try {
+        await pagamentos.cancelarPagamento({ tipo: local.tipo, paymentId: local.payment_id });
+      } catch (e) {
+        console.warn('[pagamentos/cancelar] API falhou:', e.message);
+      }
+    }
+
+    const { data, error } = await supabase.from('santander_pagamentos').update({
+      status: 'CANCELADO',
+      cancelado_em: new Date().toISOString(),
+      cancelado_por: userId(req),
+    }).eq('id', id).select().single();
+    if (error) return res.status(500).json({ error: error.message });
+    res.json(data);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 module.exports = router;

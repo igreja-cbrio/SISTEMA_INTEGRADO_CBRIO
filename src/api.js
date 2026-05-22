@@ -582,6 +582,14 @@ export const santander = {
     criar: (data) => post('/santander/pix-cob', data),
     cancelar: (txid) => patch(`/santander/pix-cob/${encodeURIComponent(txid)}/cancelar`, {}),
   },
+  pagamentos: {
+    health: () => get('/santander/pagamentos/health'),
+    parse: (linha) => post('/santander/pagamentos/parse', { linha }),
+    list: (params) => get('/santander/pagamentos' + (params ? '?' + new URLSearchParams(params) : '')),
+    get: (id) => get(`/santander/pagamentos/${id}`),
+    criar: (data) => post('/santander/pagamentos', data),
+    cancelar: (id) => patch(`/santander/pagamentos/${id}/cancelar`, {}),
+  },
 };
 
 export const logistica = {

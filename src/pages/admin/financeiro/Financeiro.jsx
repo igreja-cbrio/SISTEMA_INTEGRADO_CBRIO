@@ -12,6 +12,7 @@ import CultoAoVivo from './CultoAoVivo';
 import DreAuto from './DreAuto';
 import Analises from './Analises';
 import PixCobranca from './PixCobranca';
+import PagamentosContas from './PagamentosContas';
 
 // ── Tema ────────────────────────────────────────────────────
 const C = {
@@ -150,7 +151,7 @@ function Badge({ status, map }) {
 const TABS = ['Dashboard', 'Análises', 'Movimentação', 'DRE', 'Banco', 'Configuração'];
 const SUBS_MOVIMENTACAO = ['Contas', 'Transações', 'Contas a Pagar', 'Reembolsos', 'Importar extratos', 'Fila de classificação'];
 const SUBS_DRE = ['DRE Auto', 'DRE (legacy)'];
-const SUBS_BANCO = ['Banco Santander', 'Culto ao Vivo', 'PIX Cobrança'];
+const SUBS_BANCO = ['Banco Santander', 'Culto ao Vivo', 'PIX Cobrança', 'Pagamentos'];
 
 // ── KPI Cards (estilo unificado) ─────────────────────────────
 const FIN_STAT_SVGS = [
@@ -231,6 +232,7 @@ export default function Financeiro() {
       case 'banco':        setTab(4); setSubBanco(0); break;
       case 'culto_vivo':   setTab(4); setSubBanco(1); break;
       case 'pix_cob':      setTab(4); setSubBanco(2); break;
+      case 'pagamentos':   setTab(4); setSubBanco(3); break;
       case 'config':       setTab(5); break;
       case 'analises':     setTab(1); break;
       default:             setTab(0);
@@ -1136,6 +1138,7 @@ export default function Financeiro() {
           {subBanco === 0 && <SantanderTab />}
           {subBanco === 1 && <CultoAoVivo />}
           {subBanco === 2 && <PixCobranca />}
+          {subBanco === 3 && <PagamentosContas />}
         </div>
       )}
 
