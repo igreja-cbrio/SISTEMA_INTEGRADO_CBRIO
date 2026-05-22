@@ -144,8 +144,14 @@ export default function SantanderTab() {
     if (!paymentId) return;
     setBaixandoId(paymentId);
     try {
+      // Tenta varios campos de data · estrutura varia conforme tipo do pagamento
+      const data = payment?.payment?.requestValueDateTime
+        || payment?.payment?.paymentDate
+        || payment?.payment?.processingDateTime
+        || payment?.payment?.creditDateTime
+        || payment?.payment?.bookingDateTime;
       await santander.comprovantes.baixar(paymentId, {
-        payment_date: payment?.payment?.requestValueDateTime?.slice(0, 10),
+        payment_date: data ? String(data).slice(0, 10) : null,
         category: payment?.category?.code,
         channel: payment?.channel?.code,
         amount: payment?.payment?.paymentAmountInfo?.direct?.amount,
