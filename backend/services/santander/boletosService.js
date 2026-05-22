@@ -16,8 +16,9 @@ const WORKSPACE_ID = process.env.SANTANDER_BOLETOS_WORKSPACE_ID || '';
 const COVENANT_CODE = process.env.SANTANDER_BOLETOS_COVENANT_CODE || process.env.SANTANDER_CONTA || '';
 const BENEFICIARY_DOC = process.env.SANTANDER_CNPJ_TITULAR || '';
 
-// Paths plausiveis · ordem de tentativa (primeiro !=404 ganha)
-const BOLETOS_PATHS = BASE_PATH_OVERRIDE ? [BASE_PATH_OVERRIDE] : [
+// Paths plausiveis · ordem de tentativa
+// Override eh PREPENDED · primeiro a tentar, mas fallback continua na lista
+const DEFAULT_BOLETOS_PATHS = [
   '/collection_bill_management/v2',
   '/collection_bill_management/v1',
   '/bill_management/v2',
@@ -25,6 +26,10 @@ const BOLETOS_PATHS = BASE_PATH_OVERRIDE ? [BASE_PATH_OVERRIDE] : [
   '/cobranca/v2',
   '/banking/v1/collection',
 ];
+
+const BOLETOS_PATHS = BASE_PATH_OVERRIDE
+  ? [BASE_PATH_OVERRIDE, ...DEFAULT_BOLETOS_PATHS.filter(p => p !== BASE_PATH_OVERRIDE)]
+  : DEFAULT_BOLETOS_PATHS;
 
 let pathFuncionando = null;
 

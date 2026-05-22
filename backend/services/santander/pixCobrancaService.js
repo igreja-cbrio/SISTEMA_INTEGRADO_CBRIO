@@ -23,7 +23,9 @@ const BASE_PATH_OVERRIDE = process.env.SANTANDER_PIX_COB_BASE_PATH || '';
 const CHAVE_PIX = process.env.SANTANDER_PIX_COB_CHAVE || process.env.SANTANDER_CNPJ_TITULAR || '';
 
 // Paths plausiveis · ordem de tentativa
-const PIX_COB_PATHS = BASE_PATH_OVERRIDE ? [{ base: BASE_PATH_OVERRIDE, cobSegment: 'cob' }] : [
+// Override (SANTANDER_PIX_COB_BASE_PATH) eh PREPENDED · vai primeiro,
+// mas os outros 8 continuam como fallback se falhar.
+const DEFAULT_PIX_COB_PATHS = [
   { base: '/pix/v1',                     cobSegment: 'cob' },
   { base: '/cob_management/v1',          cobSegment: 'cobs' },
   { base: '/cob_management/v1',          cobSegment: 'cob' },
@@ -33,6 +35,13 @@ const PIX_COB_PATHS = BASE_PATH_OVERRIDE ? [{ base: BASE_PATH_OVERRIDE, cobSegme
   { base: '/pix_charge/v1',              cobSegment: 'cob' },
   { base: '/banking/v1/pix',             cobSegment: 'cob' },
 ];
+
+const PIX_COB_PATHS = BASE_PATH_OVERRIDE
+  ? [
+      { base: BASE_PATH_OVERRIDE, cobSegment: 'cob' },
+      ...DEFAULT_PIX_COB_PATHS.filter(p => p.base !== BASE_PATH_OVERRIDE),
+    ]
+  : DEFAULT_PIX_COB_PATHS;
 
 let pathFuncionando = null;
 
