@@ -323,6 +323,37 @@ ou comentário SQL `-- NOTA: ...`.
 
 ---
 
+## Lockdown final · todas policies contextuais (2026-05-22)
+
+Migration `20260522190000_lockdown_policies_legacy.sql` fechou as
+últimas 13 tabelas com policies `USING(true)` legacy que escaparam
+das ondas anteriores:
+
+- **Kids (7)** · kids_criancas, kids_responsaveis, kids_checkins,
+  kids_sessoes, kids_salas, kids_estacoes, kids_etiquetas_log ·
+  policies legacy recriadas por migrations recentes do totem-kids
+  (#587-#595) com sufixo `_write` em vez de `_insert`
+- **Operacionais (6)** · mem_grupo_pedidos, grupo_supervisao_observacoes,
+  grupo_supervisao_visitas, cui_atendimentos_agregado, vol_inscricoes,
+  okr_revisoes
+
+Validação pós-aplicação: **0 policies com `USING(true)` ou
+`WITH CHECK(true)` em writes em todas as 53 tabelas auditadas** (excluídas
+service_role e SELECT abertas pra catálogos legítimos).
+
+### Estado final da defesa em profundidade
+
+| Métrica | Valor |
+|---|---|
+| Total policies aplicadas | 541 |
+| Policies user-facing | 462 |
+| Policies service_role | 79 |
+| Funções helpers SQL | 10 |
+| Tabelas com `deleted_at` | 30 |
+| Tabelas com audit log triggers | 8 |
+| FKs CASCADE → SET NULL convertidas | 21 |
+| Índices FK criados | 35 |
+
 ## RLS contextual PII · membros/decisões/batismos/cuidados (2026-05-21 · Onda 2 PR4)
 
 Migration `20260521210000_onda2_rls_pii.sql` finaliza a Onda 2 RLS.
