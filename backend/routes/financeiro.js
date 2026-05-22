@@ -543,4 +543,78 @@ router.get('/projecao-caixa', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// ══════════════════════════════════════════════════════════════════════════
+// DASHBOARD DE GENEROSIDADE
+// ══════════════════════════════════════════════════════════════════════════
+
+router.get('/generosidade/overview', async (req, res) => {
+  try {
+    const { data: mensal, error } = await supabase
+      .from('vw_doacoes_mensal').select('*').order('mes');
+    if (error) throw error;
+
+    const arr = mensal || [];
+    const mesAtual = arr[arr.length - 1] || {};
+    const mesAnterior = arr[arr.length - 2] || {};
+    const totalAtual = Number(mesAtual.total || 0);
+    const totalAnterior = Number(mesAnterior.total || 0);
+    const variacaoPct = totalAnterior > 0 ? ((totalAtual - totalAnterior) / totalAnterior) * 100 : null;
+    const dizimoMedio = mesAtual.qtd_doadores_unicos > 0
+      ? Number(mesAtual.dizimo || 0) / Number(mesAtual.qtd_doadores_unicos)
+      : 0;
+
+    // % membros doando · doadores unicos com membro_id / total membros ativos
+    const { count: membrosAtivos } = await supabase
+      .from('mem_membros')
+      .select('id', { count: 'exact', head: true })
+      .is('deleted_at', null)
+      .eq('status', 'membro_ativo');
+
+    const desdeMes = new Date();
+    desdeMes.setDate(1);
+    const { data: doadoresMes } = await supabase
+      .from('vw_doacoes_unificada')
+      .select('membro_id', { count: 'exact' })
+      .not('membro_id', 'is', null)
+      .gte('data', desdeMes.toISOString().slice(0, 10));
+    const doadoresUnicos = new Set((doadoresMes || []).map(r => r.membro_id)).size;
+    const pctMembrosDoando = membrosAtivos > 0 ? (doadoresUnicos / membrosAtivos) * 100 : 0;
+
+    res.json({
+      mensal: arr,
+      mes_atual: {
+        total: totalAtual,
+        dizimo: Number(mesAtual.dizimo || 0),
+        oferta: Number(mesAtual.oferta || 0),
+        outras: Number(mesAtual.outras || 0),
+        qtd_doacoes: Number(mesAtual.qtd_doacoes || 0),
+        qtd_doadores_unicos: Number(mesAtual.qtd_doadores_unicos || 0),
+      },
+      variacao_pct: variacaoPct,
+      dizimo_medio: dizimoMedio,
+      membros_ativos: membrosAtivos || 0,
+      doadores_unicos_mes: doadoresUnicos,
+      pct_membros_doando: pctMembrosDoando,
+    });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+router.get('/generosidade/anonimos', async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('vw_doadores_anonimos_top').select('*');
+    if (error) throw error;
+    res.json(data || []);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+router.get('/generosidade/pararam', async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('vw_doadores_pararam').select('*');
+    if (error) throw error;
+    res.json(data || []);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 module.exports = router;
