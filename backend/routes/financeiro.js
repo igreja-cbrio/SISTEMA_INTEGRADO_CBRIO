@@ -617,4 +617,101 @@ router.get('/generosidade/pararam', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// ══════════════════════════════════════════════════════════════════════════
+// CONCILIACAO INTELIGENTE · fila + stats + bulk approve + reclassificar
+// ══════════════════════════════════════════════════════════════════════════
+
+router.get('/fila-classificacao/stats', async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('vw_classificacao_stats').select('*').single();
+    if (error) throw error;
+    const total = Number(data?.total_ult30 || 0);
+    const auto = Number(data?.classificadas_auto_ult30 || 0);
+    res.json({
+      ...data,
+      pct_automatico: total > 0 ? (auto / total) * 100 : 0,
+    });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+router.get('/fila-classificacao/items', async (req, res) => {
+  try {
+    const { confianca_min, origem, limit = 100 } = req.query;
+    let q = supabase
+      .from('fin_fila_classificacao')
+      .select(`
+        id, status, sugestao_confianca, sugestao_origem, sugestao_explicacao,
+        sugestao_plano_contas_id, sugestao_centro_custo_id, sugestao_membro_id,
+        created_at,
+        bruto:fin_lancamentos_brutos!fin_fila_classificacao_lancamento_bruto_id_fkey(
+          id, data_lancamento, valor, tipo_trn, memo, nome_contraparte, documento_contraparte
+        )
+      `)
+      .eq('status', 'pendente')
+      .order('sugestao_confianca', { ascending: false, nullsFirst: false })
+      .order('created_at', { ascending: false })
+      .limit(Math.min(500, Number(limit)));
+    if (confianca_min) q = q.gte('sugestao_confianca', Number(confianca_min));
+    if (origem) q = q.eq('sugestao_origem', origem);
+    const { data, error } = await q;
+    if (error) throw error;
+    res.json(data || []);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Aprova em massa todas as fila pendentes com confianca >= X
+router.post('/fila-classificacao/aprovar-massa', async (req, res) => {
+  try {
+    const { confianca_min = 0.8 } = req.body || {};
+    const { data: pendentes, error: e1 } = await supabase
+      .from('fin_fila_classificacao')
+      .select('id, sugestao_plano_contas_id')
+      .eq('status', 'pendente')
+      .gte('sugestao_confianca', Number(confianca_min))
+      .not('sugestao_plano_contas_id', 'is', null);
+    if (e1) throw e1;
+    if (!pendentes || pendentes.length === 0) {
+      return res.json({ aprovadas: 0, mensagem: 'Nenhuma item elegivel' });
+    }
+    const ids = pendentes.map(p => p.id);
+    const { error: e2 } = await supabase
+      .from('fin_fila_classificacao')
+      .update({ status: 'decidido', decidido_em: new Date().toISOString(), decidido_por: req.user.userId })
+      .in('id', ids);
+    if (e2) throw e2;
+    res.json({ aprovadas: ids.length });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Decide manualmente (1 item)
+router.post('/fila-classificacao/:id/decidir', async (req, res) => {
+  try {
+    const { plano_contas_id, centro_custo_id, membro_id } = req.body || {};
+    if (!plano_contas_id) return res.status(400).json({ error: 'plano_contas_id obrigatorio' });
+    const { data, error } = await supabase
+      .from('fin_fila_classificacao')
+      .update({
+        sugestao_plano_contas_id: plano_contas_id,
+        sugestao_centro_custo_id: centro_custo_id || null,
+        sugestao_membro_id: membro_id || null,
+        status: 'decidido',
+        decidido_em: new Date().toISOString(),
+        decidido_por: req.user.userId,
+      })
+      .eq('id', req.params.id).select('*').single();
+    if (error) throw error;
+    res.json(data);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Re-roda classificacao em toda fila pendente (apos cadastrar regra nova)
+router.post('/fila-classificacao/reclassificar', async (req, res) => {
+  try {
+    const { data, error } = await supabase.rpc('reclassificar_fila_pendente');
+    if (error) throw error;
+    res.json({ reclassificadas: data });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 module.exports = router;

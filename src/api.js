@@ -463,6 +463,13 @@ export const financeiro = {
     anonimos: () => get('/financeiro/generosidade/anonimos'),
     pararam: () => get('/financeiro/generosidade/pararam'),
   },
+  filaClassificacao: {
+    stats: () => get('/financeiro/fila-classificacao/stats'),
+    items: (params) => get('/financeiro/fila-classificacao/items' + (params ? '?' + new URLSearchParams(params) : '')),
+    aprovarMassa: (confianca_min) => post('/financeiro/fila-classificacao/aprovar-massa', { confianca_min }),
+    decidir: (id, data) => post(`/financeiro/fila-classificacao/${id}/decidir`, data),
+    reclassificar: () => post('/financeiro/fila-classificacao/reclassificar', {}),
+  },
   reembolsos: {
     list: (params) => get('/financeiro/reembolsos' + (params ? '?' + new URLSearchParams(params) : '')),
     create: (data) => post('/financeiro/reembolsos', data),

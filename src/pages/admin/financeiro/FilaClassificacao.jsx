@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { financeiroV2 } from '../../../api';
+import { financeiroV2, financeiro } from '../../../api';
 import { Button } from '../../../components/ui/button';
 
 const C = {
@@ -24,20 +24,46 @@ export default function FilaClassificacao() {
   const [centros, setCentros] = useState([]);
   const [loading, setLoading] = useState(false);
   const [edit, setEdit] = useState(null);
+  const [stats, setStats] = useState(null);
+  const [bulkProcessing, setBulkProcessing] = useState(false);
+  const [confiancaMin, setConfiancaMin] = useState(0.8);
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [f, p, c] = await Promise.all([
+      const [f, p, c, s] = await Promise.all([
         financeiroV2.fila.list({ status: 'pendente', limit: 100 }),
         financeiroV2.planoContas.list({ aceita_lancamento: 'true', ativo: 'true' }),
         financeiroV2.centrosCusto.list({ aceita_lancamento: 'true', ativo: 'true' }),
+        financeiro.filaClassificacao.stats().catch(() => null),
       ]);
-      setFila(f); setPlanos(p); setCentros(c);
+      setFila(f); setPlanos(p); setCentros(c); setStats(s);
     } finally {
       setLoading(false);
     }
   }, []);
+
+  const aprovarMassa = async () => {
+    if (!confirm(`Aprovar TODAS as ${stats?.pendentes || 0} sugestoes com confianca >= ${Math.round(confiancaMin * 100)}%?`)) return;
+    setBulkProcessing(true);
+    try {
+      const r = await financeiro.filaClassificacao.aprovarMassa(confiancaMin);
+      alert(`${r.aprovadas} classificacoes aprovadas em massa.`);
+      load();
+    } catch (e) {
+      alert('Erro: ' + e.message);
+    } finally { setBulkProcessing(false); }
+  };
+
+  const reclassificar = async () => {
+    setBulkProcessing(true);
+    try {
+      const r = await financeiro.filaClassificacao.reclassificar();
+      alert(`${r.reclassificadas} itens re-analisados com regras/memoria atualizadas.`);
+      load();
+    } catch (e) { alert('Erro: ' + e.message); }
+    finally { setBulkProcessing(false); }
+  };
 
   useEffect(() => { load(); }, [load]);
 
@@ -52,6 +78,10 @@ export default function FilaClassificacao() {
     load();
   };
 
+  const pctAuto = stats?.pct_automatico || 0;
+  const memoriaTotal = stats?.memoria_total || 0;
+  const confiancaMedia = stats?.confianca_media_ult30 ? Math.round(Number(stats.confianca_media_ult30) * 100) : 0;
+
   return (
     <div>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
@@ -65,6 +95,69 @@ export default function FilaClassificacao() {
           {loading ? 'Atualizando...' : 'Atualizar'}
         </Button>
       </div>
+
+      {/* Stats inteligentes */}
+      {stats && (
+        <div style={{
+          display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))',
+          gap: 12, marginBottom: 16,
+        }}>
+          <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 10, padding: 14 }}>
+            <div style={{ fontSize: 10, textTransform: 'uppercase', color: C.text3, letterSpacing: 0.5 }}>Acerto automático · 30d</div>
+            <div style={{ fontSize: 24, fontWeight: 700, color: pctAuto >= 80 ? C.green : pctAuto >= 50 ? C.amber : C.red, marginTop: 4 }}>
+              {pctAuto.toFixed(0)}%
+            </div>
+            <div style={{ fontSize: 10, color: C.text3 }}>
+              {stats.classificadas_auto_ult30 || 0} de {stats.total_ult30 || 0} bateram em regra/memória
+            </div>
+          </div>
+          <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 10, padding: 14 }}>
+            <div style={{ fontSize: 10, textTransform: 'uppercase', color: C.text3, letterSpacing: 0.5 }}>Memória aprendida</div>
+            <div style={{ fontSize: 24, fontWeight: 700, color: C.blue, marginTop: 4 }}>{memoriaTotal}</div>
+            <div style={{ fontSize: 10, color: C.text3 }}>pagadores/recebedores conhecidos</div>
+          </div>
+          <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 10, padding: 14 }}>
+            <div style={{ fontSize: 10, textTransform: 'uppercase', color: C.text3, letterSpacing: 0.5 }}>Confiança média</div>
+            <div style={{ fontSize: 24, fontWeight: 700, color: C.primary, marginTop: 4 }}>{confiancaMedia}%</div>
+            <div style={{ fontSize: 10, color: C.text3 }}>das sugestões dos últimos 30 dias</div>
+          </div>
+          <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 10, padding: 14 }}>
+            <div style={{ fontSize: 10, textTransform: 'uppercase', color: C.text3, letterSpacing: 0.5 }}>Sem sugestão</div>
+            <div style={{ fontSize: 24, fontWeight: 700, color: C.text2, marginTop: 4 }}>{stats.sem_sugestao_ult30 || 0}</div>
+            <div style={{ fontSize: 10, color: C.text3 }}>casos novos · cadastre regra ou decida manual</div>
+          </div>
+        </div>
+      )}
+
+      {/* Acoes em massa */}
+      {fila.length > 0 && (
+        <div style={{
+          display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16, padding: 12,
+          background: C.primaryBg, border: `1px solid ${C.primary}40`, borderRadius: 8, flexWrap: 'wrap',
+        }}>
+          <span style={{ fontSize: 13, fontWeight: 600, color: C.text }}>⚡ Ações em massa:</span>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            <span style={{ fontSize: 12, color: C.text2 }}>Confiança ≥</span>
+            <select
+              value={confiancaMin}
+              onChange={(e) => setConfiancaMin(Number(e.target.value))}
+              style={{ padding: '4px 8px', borderRadius: 6, border: `1px solid ${C.border}`, fontSize: 12, background: 'var(--cbrio-input-bg)' }}
+            >
+              <option value={0.95}>95%</option>
+              <option value={0.9}>90%</option>
+              <option value={0.85}>85%</option>
+              <option value={0.8}>80%</option>
+              <option value={0.7}>70%</option>
+            </select>
+          </div>
+          <Button variant="default" size="sm" onClick={aprovarMassa} disabled={bulkProcessing}>
+            ✓ Aprovar todas com confiança alta
+          </Button>
+          <Button variant="outline" size="sm" onClick={reclassificar} disabled={bulkProcessing}>
+            🔄 Re-classificar pendentes
+          </Button>
+        </div>
+      )}
 
       <div style={{ display: 'grid', gap: 12 }}>
         {fila.map(item => (
