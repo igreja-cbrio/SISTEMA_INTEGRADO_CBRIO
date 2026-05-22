@@ -476,6 +476,9 @@ export const financeiro = {
     gerar: () => post('/financeiro/alertas/gerar', {}),
   },
   calendario: (params) => get('/financeiro/calendario' + (params ? '?' + new URLSearchParams(params) : '')),
+  centrosCustoLista: () => get('/financeiro/centros-custo'),
+  dreCentroAtual: () => get('/financeiro/dre-centro-custo/atual'),
+  dreCentroHistorico: (id) => get(`/financeiro/dre-centro-custo/${id}/historico`),
   reembolsos: {
     list: (params) => get('/financeiro/reembolsos' + (params ? '?' + new URLSearchParams(params) : '')),
     create: (data) => post('/financeiro/reembolsos', data),
