@@ -845,6 +845,53 @@ router.get('/dre-centro-custo/atual', async (req, res) => {
 });
 
 // ══════════════════════════════════════════════════════════════════════════
+// AUDIT LOG · histórico de mudanças em registros financeiros
+// ══════════════════════════════════════════════════════════════════════════
+
+const TABELAS_FIN_AUDITAVEIS = [
+  'fin_transacoes', 'fin_contas', 'fin_contas_pagar',
+  'fin_closing_mensal', 'fin_despesas_recorrentes',
+];
+
+// Historico de 1 registro especifico
+router.get('/audit/:tabela/:row_id', async (req, res) => {
+  try {
+    const { tabela, row_id } = req.params;
+    if (!TABELAS_FIN_AUDITAVEIS.includes(tabela)) {
+      return res.status(400).json({ error: 'Tabela nao auditavel' });
+    }
+    const { data, error } = await supabase
+      .from('app_audit_log')
+      .select('id, action, user_id, user_email, changes, created_at')
+      .eq('table_name', tabela)
+      .eq('row_id', row_id)
+      .order('created_at', { ascending: false });
+    if (error) throw error;
+    res.json(data || []);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Audit log financeiro geral · filtros opcionais
+router.get('/audit', authorizeModule('financeiro', 3), async (req, res) => {
+  try {
+    const { tabela, user_email, desde, ate, limit = 100 } = req.query;
+    let q = supabase
+      .from('app_audit_log')
+      .select('id, table_name, row_id, action, user_id, user_email, changes, created_at')
+      .in('table_name', TABELAS_FIN_AUDITAVEIS)
+      .order('created_at', { ascending: false })
+      .limit(Math.min(500, Number(limit)));
+    if (tabela && TABELAS_FIN_AUDITAVEIS.includes(tabela)) q = q.eq('table_name', tabela);
+    if (user_email) q = q.eq('user_email', user_email.toLowerCase());
+    if (desde) q = q.gte('created_at', desde);
+    if (ate) q = q.lte('created_at', ate);
+    const { data, error } = await q;
+    if (error) throw error;
+    res.json(data || []);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ══════════════════════════════════════════════════════════════════════════
 // DRE COMPARATIVO TEMPORAL · atual vs anterior vs ano passado
 // ══════════════════════════════════════════════════════════════════════════
 

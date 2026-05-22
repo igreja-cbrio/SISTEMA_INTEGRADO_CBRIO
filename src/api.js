@@ -483,6 +483,10 @@ export const financeiro = {
     reabrir: (ano, mes, motivo) => post('/financeiro/closing/reabrir', { ano, mes, motivo }),
   },
   dreComparativo: () => get('/financeiro/dre-comparativo'),
+  audit: {
+    geral: (params) => get('/financeiro/audit' + (params ? '?' + new URLSearchParams(params) : '')),
+    porRegistro: (tabela, rowId) => get(`/financeiro/audit/${encodeURIComponent(tabela)}/${encodeURIComponent(rowId)}`),
+  },
   dreCentroAtual: () => get('/financeiro/dre-centro-custo/atual'),
   dreCentroHistorico: (id) => get(`/financeiro/dre-centro-custo/${id}/historico`),
   reembolsos: {
