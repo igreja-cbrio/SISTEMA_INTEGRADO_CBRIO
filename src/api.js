@@ -560,7 +560,18 @@ export const financeiroV2 = {
   },
   transacoes: (params) => get('/financeiro-v2/transacoes' + (params ? '?' + new URLSearchParams(params) : '')),
   dashboard: {
-    overview: (period) => get('/financeiro-v2/dashboard/overview' + (period ? `?period=${period}` : '')),
+    overview: (opts) => {
+      // Aceita string (period legado) ou objeto {period, year, month, inicio, fim}
+      if (!opts) return get('/financeiro-v2/dashboard/overview');
+      if (typeof opts === 'string') return get(`/financeiro-v2/dashboard/overview?period=${opts}`);
+      const qs = new URLSearchParams();
+      if (opts.period) qs.set('period', opts.period);
+      if (opts.year != null) qs.set('year', opts.year);
+      if (opts.month != null) qs.set('month', opts.month);
+      if (opts.inicio) qs.set('inicio', opts.inicio);
+      if (opts.fim) qs.set('fim', opts.fim);
+      return get(`/financeiro-v2/dashboard/overview${qs.toString() ? `?${qs}` : ''}`);
+    },
     semana: (semana) => get('/financeiro-v2/dashboard/semana' + (semana ? `?semana=${semana}` : '')),
     semanaCompleta: (semana) => get('/financeiro-v2/dashboard/semana-completa' + (semana ? `?semana=${semana}` : '')),
     financeiroCompleto: () => get('/financeiro-v2/dashboard/financeiro-completo'),
