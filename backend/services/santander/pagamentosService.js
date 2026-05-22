@@ -23,30 +23,39 @@ const OVERRIDE_BOLETO = process.env.SANTANDER_PAGTO_BOLETO_PATH || '';
 const OVERRIDE_TRIBUTO = process.env.SANTANDER_PAGTO_TRIBUTO_PATH || '';
 const OVERRIDE_CONCESS = process.env.SANTANDER_PAGTO_CONCESS_PATH || '';
 
-// Lista de paths plausiveis por tipo · primeiro que retornar !=404 ganha
+// Lista de paths plausiveis por tipo · override eh PREPENDED, mantem fallback
+const DEFAULTS_BOLETO = [
+  '/payments/v1/bank_slips',
+  '/bank_slips_payment/v1/payments',
+  '/payment_bank_slip/v1/payments',
+  '/bank_slips/v1/payments',
+  '/pagamento_boletos/v1/payments',
+  '/banking/v1/payments/bank-slips',
+];
+const DEFAULTS_TRIBUTO = [
+  '/payments/v1/tax_payments',
+  '/tax_payments/v1/payments',
+  '/payment_tax/v1/payments',
+  '/pagamento_tributos/v1/payments',
+  '/banking/v1/payments/taxes',
+];
+const DEFAULTS_CONCESS = [
+  '/payments/v1/utility_bills',
+  '/concessionary_bills/v1/payments',
+  '/payment_concessionary/v1/payments',
+  '/pagamento_concessionarias/v1/payments',
+  '/banking/v1/payments/utilities',
+];
+
+function mergePaths(override, defaults) {
+  if (!override) return defaults;
+  return [override, ...defaults.filter(p => p !== override)];
+}
+
 const PATHS_POR_TIPO = {
-  boleto: OVERRIDE_BOLETO ? [OVERRIDE_BOLETO] : [
-    '/payments/v1/bank_slips',
-    '/bank_slips_payment/v1/payments',
-    '/payment_bank_slip/v1/payments',
-    '/bank_slips/v1/payments',
-    '/pagamento_boletos/v1/payments',
-    '/banking/v1/payments/bank-slips',
-  ],
-  tributo: OVERRIDE_TRIBUTO ? [OVERRIDE_TRIBUTO] : [
-    '/payments/v1/tax_payments',
-    '/tax_payments/v1/payments',
-    '/payment_tax/v1/payments',
-    '/pagamento_tributos/v1/payments',
-    '/banking/v1/payments/taxes',
-  ],
-  concessionaria: OVERRIDE_CONCESS ? [OVERRIDE_CONCESS] : [
-    '/payments/v1/utility_bills',
-    '/concessionary_bills/v1/payments',
-    '/payment_concessionary/v1/payments',
-    '/pagamento_concessionarias/v1/payments',
-    '/banking/v1/payments/utilities',
-  ],
+  boleto: mergePaths(OVERRIDE_BOLETO, DEFAULTS_BOLETO),
+  tributo: mergePaths(OVERRIDE_TRIBUTO, DEFAULTS_TRIBUTO),
+  concessionaria: mergePaths(OVERRIDE_CONCESS, DEFAULTS_CONCESS),
 };
 
 const pathFuncionando = {};
