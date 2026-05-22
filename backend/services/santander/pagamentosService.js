@@ -73,18 +73,29 @@ async function tentarComPaths(tipo, fn) {
   const cached = pathFuncionando[tipo];
   if (cached) return fn(cached);
   const paths = pathsParaTipo(tipo);
-  let ultimoErro = null;
+  const errosPorPath = [];
   for (const p of paths) {
     try {
       const res = await fn(p);
       pathFuncionando[tipo] = p;
       return res;
     } catch (e) {
-      ultimoErro = e;
-      if (!isPathNaoExiste(e)) throw e;
+      errosPorPath.push({ path: p, status: e.status || '?', msg: (e.message || '').slice(0, 120) });
+      if (!isPathNaoExiste(e)) {
+        const ag = new Error(`${e.message}\n\nPaths tentados antes deste:\n${errosPorPath.map((x, i) => `  ${i+1}. [${x.status}] ${x.path}`).join('\n')}`);
+        ag.status = e.status;
+        ag.body = e.body;
+        ag.tentativas = errosPorPath;
+        throw ag;
+      }
     }
   }
-  throw ultimoErro || new Error(`Nenhum path Santander para ${tipo} respondeu`);
+  const ag = new Error(
+    `Nenhum dos ${paths.length} paths Santander para ${tipo} respondeu. Tentativas:\n` +
+    errosPorPath.map((x, i) => `  ${i+1}. [${x.status}] ${x.path}`).join('\n')
+  );
+  ag.tentativas = errosPorPath;
+  throw ag;
 }
 
 /**
