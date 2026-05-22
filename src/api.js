@@ -450,6 +450,14 @@ export const financeiro = {
   solicitacaoAprovarFinanceiro: (id, observacao) => post(`/solicitacoes/${id}/aprovar-financeiro`, { observacao }),
   solicitacaoReprovarFinanceiro: (id, motivo) => post(`/solicitacoes/${id}/reprovar-financeiro`, { motivo }),
   urgenciaFrequente: () => get('/solicitacoes/dashboard/urgencia-frequente'),
+  recorrentes: {
+    list: (params) => get('/financeiro/recorrentes' + (params ? '?' + new URLSearchParams(params) : '')),
+    create: (data) => post('/financeiro/recorrentes', data),
+    update: (id, data) => patch(`/financeiro/recorrentes/${id}`, data),
+    remove: (id) => del(`/financeiro/recorrentes/${id}`),
+    gerarContasPagar: () => post('/financeiro/recorrentes/gerar-contas-pagar', {}),
+  },
+  projecaoCaixa: () => get('/financeiro/projecao-caixa'),
   reembolsos: {
     list: (params) => get('/financeiro/reembolsos' + (params ? '?' + new URLSearchParams(params) : '')),
     create: (data) => post('/financeiro/reembolsos', data),
