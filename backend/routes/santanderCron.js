@@ -338,6 +338,31 @@ router.post('/pix-sync', async (req, res) => {
 });
 
 // ─────────────────────────────────────────────────────────────────────
+// GET/POST /api/santander/cron/saldo · atualiza snapshot do saldo + fin_contas
+// Roda de hora em hora pra manter o dashboard atualizado sem usuario sincronizar.
+// ─────────────────────────────────────────────────────────────────────
+async function handlerSaldoCron(req, res) {
+  if (!isConfigured()) {
+    return res.json({ ok: true, skipped: 'santander_nao_configurado' });
+  }
+  try {
+    const contas = require('../services/santander/contasService');
+    const saldo = await contas.snapshotSaldoDoDia({ userId: null });
+    res.json({
+      ok: true,
+      available: saldo.available,
+      total: saldo.total,
+      atualizado_em: new Date().toISOString(),
+    });
+  } catch (e) {
+    console.error('[SANTANDER-CRON saldo]', e.message);
+    res.status(500).json({ ok: false, erro: e.message });
+  }
+}
+router.post('/saldo', handlerSaldoCron);
+router.get('/saldo', handlerSaldoCron);
+
+// ─────────────────────────────────────────────────────────────────────
 // GET /api/santander/cron/health · checa se sync vai funcionar
 // ─────────────────────────────────────────────────────────────────────
 router.get('/health', async (req, res) => {

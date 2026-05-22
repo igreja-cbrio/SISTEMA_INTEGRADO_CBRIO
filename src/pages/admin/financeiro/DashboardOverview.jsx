@@ -71,7 +71,9 @@ export default function DashboardOverview({ onNavigate }) {
     [fluxoCaixa]
   );
 
-  if (loading || !data) {
+  // Stale-while-revalidate · so bloqueia carregamento INICIAL.
+  // Trocas de periodo mantem dados anteriores + spinner sutil.
+  if (!data) {
     return (
       <div className="flex items-center justify-center py-16 gap-2 text-muted-foreground text-sm">
         <div className="h-4 w-4 animate-spin rounded-full border-2 border-muted-foreground/25 border-t-primary" />
@@ -83,7 +85,7 @@ export default function DashboardOverview({ onNavigate }) {
   const { stats, pendencias, contas, top_despesas, transacoes_recentes, ultimo_upload } = data;
 
   return (
-    <div className="space-y-6">
+    <div className={`space-y-6 transition-opacity ${loading ? 'opacity-60' : 'opacity-100'}`}>
       {/* Header */}
       <motion.div
         initial={{ opacity: 0, y: -20 }}
@@ -98,10 +100,11 @@ export default function DashboardOverview({ onNavigate }) {
           </p>
         </div>
         <div className="flex items-center gap-3">
-          <Select value={period} onValueChange={setPeriod}>
+          <Select value={period} onValueChange={setPeriod} disabled={loading}>
             <SelectTrigger className="w-[180px]">
               <Calendar className="w-4 h-4 mr-2" />
               <SelectValue />
+              {loading && <div className="h-3 w-3 ml-1 animate-spin rounded-full border-2 border-muted-foreground/25 border-t-primary" />}
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="week">Esta Semana</SelectItem>

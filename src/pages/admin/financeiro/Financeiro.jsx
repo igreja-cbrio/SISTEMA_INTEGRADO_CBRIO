@@ -20,6 +20,7 @@ import Generosidade from './Generosidade';
 import Alertas from './Alertas';
 import CalendarioFinanceiro from './CalendarioFinanceiro';
 import DreCentroCusto from './DreCentroCusto';
+import ClosingMensal from './ClosingMensal';
 
 // ── Tema ────────────────────────────────────────────────────
 const C = {
@@ -155,7 +156,7 @@ function Badge({ status, map }) {
 // ── TABS ────────────────────────────────────────────────────
 // 6 grupos top-level (em vez de 14 abas em sequencia)
 // Cada grupo composto tem sub-abas dentro
-const TABS = ['Dashboard', 'Análises', 'Movimentação', 'DRE', 'Banco', 'Solicitações', 'Generosidade', 'Alertas', 'Calendário', 'Configuração'];
+const TABS = ['Dashboard', 'Análises', 'Movimentação', 'DRE', 'Banco', 'Solicitações', 'Generosidade', 'Alertas', 'Calendário', 'Fechamento', 'Configuração'];
 const SUBS_MOVIMENTACAO = ['Contas', 'Transações', 'Contas a Pagar', 'Recorrentes', 'Reembolsos', 'Importar extratos', 'Fila de classificação'];
 const SUBS_DRE = ['DRE Auto', 'Por Centro de Custo', 'DRE (legacy)'];
 const SUBS_BANCO = ['Banco Santander', 'Culto ao Vivo', 'PIX Cobrança', 'Pagamentos', 'Boletos'];
@@ -246,7 +247,8 @@ export default function Financeiro() {
       case 'generosidade': setTab(6); break;
       case 'alertas':      setTab(7); break;
       case 'calendario':   setTab(8); break;
-      case 'config':       setTab(9); break;
+      case 'closing':      setTab(9); break;
+      case 'config':       setTab(10); break;
       case 'analises':     setTab(1); break;
       default:             setTab(0);
     }
@@ -1170,8 +1172,11 @@ export default function Financeiro() {
       {/* Tab 8: Calendário Financeiro */}
       {tab === 8 && <CalendarioFinanceiro />}
 
-      {/* Tab 9: Configuração */}
-      {tab === 9 && <EstruturaFiscal />}
+      {/* Tab 9: Fechamento Mensal */}
+      {tab === 9 && <ClosingMensal />}
+
+      {/* Tab 10: Configuração */}
+      {tab === 10 && <EstruturaFiscal />}
 
       {modalConta && renderModalConta()}
       {modalTransacao && renderModalTransacao()}

@@ -844,6 +844,57 @@ router.get('/dre-centro-custo/atual', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// ══════════════════════════════════════════════════════════════════════════
+// CLOSING MENSAL FINANCEIRO
+// ══════════════════════════════════════════════════════════════════════════
+
+router.get('/closing', async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('fin_closing_mensal').select('*')
+      .order('ano', { ascending: false })
+      .order('mes', { ascending: false })
+      .limit(36);
+    if (error) throw error;
+    res.json(data || []);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+router.post('/closing/fechar', authorizeModule('financeiro', 4), async (req, res) => {
+  try {
+    const { ano, mes, observacao } = req.body || {};
+    if (!ano || !mes) return res.status(400).json({ error: 'ano e mes obrigatorios' });
+    // Nao fecha mes corrente nem futuro
+    const hoje = new Date();
+    if (Number(ano) > hoje.getFullYear() ||
+        (Number(ano) === hoje.getFullYear() && Number(mes) >= hoje.getMonth() + 1)) {
+      return res.status(400).json({ error: 'Nao eh possivel fechar mes corrente ou futuro' });
+    }
+    const { data, error } = await supabase.rpc('fechar_mes_financeiro', {
+      p_ano: Number(ano), p_mes: Number(mes),
+      p_fechado_por: req.user.userId,
+      p_observacao: observacao || null,
+    });
+    if (error) throw error;
+    res.json({ id: data, ano, mes });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+router.post('/closing/reabrir', authorizeModule('financeiro', 5), async (req, res) => {
+  try {
+    const { ano, mes, motivo } = req.body || {};
+    if (!ano || !mes) return res.status(400).json({ error: 'ano e mes obrigatorios' });
+    if (!motivo || motivo.length < 5) return res.status(400).json({ error: 'motivo obrigatorio (>=5 chars)' });
+    const { data, error } = await supabase.rpc('reabrir_mes_financeiro', {
+      p_ano: Number(ano), p_mes: Number(mes),
+      p_reaberto_por: req.user.userId, p_motivo: motivo,
+    });
+    if (error) throw error;
+    if (!data) return res.status(404).json({ error: 'Mes nao estava fechado' });
+    res.json({ reaberto: true, ano, mes });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // Historico 12 meses de 1 centro
 router.get('/dre-centro-custo/:id/historico', async (req, res) => {
   try {
