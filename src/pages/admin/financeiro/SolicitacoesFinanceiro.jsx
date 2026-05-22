@@ -7,11 +7,19 @@ import {
 import { Card, CardContent } from '../../../components/ui/card';
 import { Button } from '../../../components/ui/button';
 import { Badge } from '../../../components/ui/badge';
+import { Avatar, AvatarImage, AvatarFallback } from '../../../components/ui/avatar';
 import { financeiro } from '../../../api';
 
 const fmtMoney = (v) => v == null ? '—' : Number(v).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 const fmtDate = (iso) => iso ? new Date(iso).toLocaleString('pt-BR') : '—';
 const fmtDateShort = (iso) => iso ? new Date(iso + 'T00:00:00').toLocaleDateString('pt-BR') : '—';
+
+const iniciais = (nome) => {
+  if (!nome) return '?';
+  const parts = nome.trim().split(/\s+/);
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+};
 
 const SLA_COR = (deadline) => {
   if (!deadline) return null;
@@ -142,10 +150,18 @@ function AbaPendentes() {
                         {s.descricao && (
                           <p className="text-xs text-muted-foreground mt-1 line-clamp-1">{s.descricao}</p>
                         )}
-                        <div className="flex gap-3 mt-1.5 text-[11px] text-muted-foreground flex-wrap">
+                        <div className="flex gap-3 mt-1.5 text-[11px] text-muted-foreground flex-wrap items-center">
                           <span><strong className="text-foreground">{fmtMoney(s.valor_estimado)}</strong></span>
                           {s.solicitante_nome && (
-                            <span>👤 <strong className="text-foreground">{s.solicitante_nome}</strong></span>
+                            <span className="flex items-center gap-1.5">
+                              <Avatar className="h-5 w-5">
+                                {s.solicitante_avatar && <AvatarImage src={s.solicitante_avatar} alt={s.solicitante_nome} />}
+                                <AvatarFallback className="text-[8px] bg-primary/20 text-primary font-bold">
+                                  {iniciais(s.solicitante_nome)}
+                                </AvatarFallback>
+                              </Avatar>
+                              <strong className="text-foreground">{s.solicitante_nome}</strong>
+                            </span>
                           )}
                           <span>{fmtDate(s.created_at)}</span>
                           {s.area_cliente && <span>Área: {s.area_cliente}</span>}
@@ -227,11 +243,21 @@ function DetalheDialog({ solicitacao: s, onClose, onAction }) {
         <div className="grid grid-cols-2 gap-3 text-sm mb-4 bg-muted/30 rounded-md p-3">
           {(s.solicitante_nome || s.solicitante_email) && (
             <div className="col-span-2">
-              <div className="text-[10px] uppercase text-muted-foreground">Solicitante</div>
-              <div className="text-sm font-semibold">{s.solicitante_nome || s.solicitante_email}</div>
-              {s.solicitante_nome && s.solicitante_email && (
-                <div className="text-[10px] text-muted-foreground">{s.solicitante_email}</div>
-              )}
+              <div className="text-[10px] uppercase text-muted-foreground mb-1">Solicitante</div>
+              <div className="flex items-center gap-2.5">
+                <Avatar className="h-10 w-10 shrink-0">
+                  {s.solicitante_avatar && <AvatarImage src={s.solicitante_avatar} alt={s.solicitante_nome || ''} />}
+                  <AvatarFallback className="text-xs bg-primary/20 text-primary font-bold">
+                    {iniciais(s.solicitante_nome || s.solicitante_email)}
+                  </AvatarFallback>
+                </Avatar>
+                <div className="min-w-0">
+                  <div className="text-sm font-semibold truncate">{s.solicitante_nome || s.solicitante_email}</div>
+                  {s.solicitante_nome && s.solicitante_email && (
+                    <div className="text-[10px] text-muted-foreground truncate">{s.solicitante_email}</div>
+                  )}
+                </div>
+              </div>
             </div>
           )}
           <div>

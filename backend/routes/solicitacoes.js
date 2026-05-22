@@ -648,19 +648,20 @@ router.get('/pendentes-financeiro', async (req, res) => {
       .order('created_at', { ascending: true });
     if (error) throw error;
 
-    // Enriquece com nome/email do solicitante (consulta separada em profiles
+    // Enriquece com nome/email/foto do solicitante (consulta separada em profiles
     // pra evitar JOIN PostgREST que tem comportamento erratico).
     const ids = [...new Set((data || []).map(s => s.solicitante_id).filter(Boolean))];
     let byId = {};
     if (ids.length > 0) {
       const { data: profs } = await supabase
-        .from('profiles').select('id, name, email').in('id', ids);
+        .from('profiles').select('id, name, email, avatar_url').in('id', ids);
       byId = Object.fromEntries((profs || []).map(p => [p.id, p]));
     }
     const enriched = (data || []).map(s => ({
       ...s,
       solicitante_nome: byId[s.solicitante_id]?.name || null,
       solicitante_email: byId[s.solicitante_id]?.email || null,
+      solicitante_avatar: byId[s.solicitante_id]?.avatar_url || null,
     }));
 
     res.json(enriched);
