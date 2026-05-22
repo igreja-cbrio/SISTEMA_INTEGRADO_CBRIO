@@ -23,10 +23,11 @@ const { matchOfxPix, classificarBatch } = require('../services/financeiroClassif
 function checkCronSecret(req, res, next) {
   const sent = req.headers['x-cron-secret'] || req.headers['authorization']?.replace('Bearer ', '');
   const expected = process.env.CRON_SECRET;
+  const isVercelCron = req.headers['user-agent']?.includes('vercel-cron');
   if (!expected) {
     return res.status(500).json({ error: 'CRON_SECRET nao configurado' });
   }
-  if (!sent || sent !== expected) {
+  if (!isVercelCron && (!sent || sent !== expected)) {
     return res.status(401).json({ error: 'Cron secret invalido' });
   }
   next();
@@ -37,7 +38,8 @@ router.use(checkCronSecret);
 // ─────────────────────────────────────────────────────────────────────
 // POST /api/santander/cron/sync · sync diario do extrato
 // ─────────────────────────────────────────────────────────────────────
-router.post('/sync', async (req, res) => {
+// Handler reutilizavel pra GET (Vercel cron) e POST (manual via secret)
+async function handlerSync(req, res) {
   const startTime = Date.now();
 
   // 1. Verifica config Santander
@@ -79,10 +81,31 @@ router.post('/sync', async (req, res) => {
       });
     }
 
-    // 3. Pega extrato via API Santander
-    const extrato = await contasService.extrato({ inicio, fim, refresh: true });
+    // 3. Pega extrato via API Santander · parsea formato Santander (_content)
+    const extratoApi = await contasService.consultarExtrato({ inicio, fim, usarCache: false });
+    const itens = Array.isArray(extratoApi?._content) ? extratoApi._content : [];
 
-    if (!extrato || !extrato.transacoes) {
+    // Normaliza formato Santander · estrutura real:
+    //   { transactionId, transactionDate, type, transactionName,
+    //     creditDebitType: 'CREDITO'|'DEBITO', amount, partieNumber, partieBranchCode, ... }
+    const transacoes = itens.map(t => {
+      const isDebito = t.creditDebitType === 'DEBITO';
+      const valorAbs = Number(t.amount || 0);
+      return {
+        id: t.transactionId,
+        data: t.transactionDate,
+        valor: isDebito ? -valorAbs : valorAbs,
+        tipo: t.type,
+        descricao: t.transactionName,
+        partieNome: t.partieName || null,
+        partieDoc: t.partieDocumentNumber || null,
+        partieBranch: t.partieBranchCode || null,
+        partieAccount: t.partieNumber || null,
+        raw: t,
+      };
+    });
+
+    if (transacoes.length === 0) {
       return res.json({
         ok: true,
         conta_id: contaLocal.id,
@@ -90,6 +113,7 @@ router.post('/sync', async (req, res) => {
         periodo: { inicio, fim },
       });
     }
+    const extrato = { transacoes };
 
     // 4. Cria registro de upload
     const { data: uploadRow } = await supabase
@@ -112,28 +136,29 @@ router.post('/sync', async (req, res) => {
     let erros = 0;
 
     for (const t of extrato.transacoes) {
-      // Estrutura do extrato (esperado de contasService.extrato):
-      //   { data, valor, tipo, descricao, id }
       const tipoTrn = Number(t.valor) >= 0 ? 'CREDIT' : 'DEBIT';
-      const memo = t.descricao || t.memo || '';
+      const memo = t.descricao || '';
 
-      // Extrai CPF/CNPJ do memo
-      let documento = null;
-      const cnpjM = memo.match(/\d{14}/);
-      const cpfM = memo.match(/\d{11}/);
-      if (cnpjM) documento = cnpjM[0];
-      else if (cpfM) documento = cpfM[0];
+      // Preferencia: doc da Santander (partieDoc), fallback regex no memo
+      let documento = t.partieDoc || null;
+      if (!documento) {
+        const cnpjM = memo.match(/\d{14}/);
+        const cpfM = memo.match(/\d{11}/);
+        if (cnpjM) documento = cnpjM[0];
+        else if (cpfM) documento = cpfM[0];
+      }
 
       const payload = {
         fonte: 'santander_api',
         conta_id: contaLocal.id,
         data_lancamento: t.data,
-        valor: Number(t.valor),
+        valor: Math.abs(Number(t.valor)),
         tipo_trn: tipoTrn,
         memo,
-        fitid: t.id || t.fitid || `santander-${t.data}-${t.valor}-${Math.random().toString(36).slice(2, 8)}`,
+        nome_contraparte: t.partieNome || null,
         documento_contraparte: documento,
-        raw_data: { santander_api: t },
+        fitid: t.id || `santander-${t.data}-${t.valor}-${Math.random().toString(36).slice(2, 8)}`,
+        raw_data: { santander_api: t.raw || t },
         upload_id: uploadRow?.id,
       };
 
@@ -177,7 +202,10 @@ router.post('/sync', async (req, res) => {
     console.error('[SANTANDER-CRON] erro:', e);
     res.status(500).json({ error: e.message || 'Erro no sync', stack: e.stack });
   }
-});
+}
+
+router.post('/sync', handlerSync);
+router.get('/sync', handlerSync);  // Vercel cron usa GET
 
 // ─────────────────────────────────────────────────────────────────────
 // POST /api/santander/cron/pix-sync · sync rapido em janelas de culto
