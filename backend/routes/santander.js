@@ -373,7 +373,10 @@ router.get('/pix-cob/health', async (req, res) => {
     habilitado: pixCob.isEnabled(),
     chave_configurada: !!pixCob.getChave(),
     chave_preview: pixCob.getChave() ? pixCob.getChave().slice(0, 4) + '***' : null,
-    hint: pixCob.isEnabled() ? null : 'Setar SANTANDER_PIX_COB_ENABLED=true + SANTANDER_PIX_COB_CHAVE',
+    paths_testados: pixCob.getPathsTestados ? pixCob.getPathsTestados() : null,
+    path_funcionando: pixCob.getPathFuncionando ? pixCob.getPathFuncionando() : null,
+    env_value_raw: process.env.SANTANDER_PIX_COB_ENABLED || '<unset>',
+    hint: pixCob.isEnabled() ? null : 'Setar SANTANDER_PIX_COB_ENABLED=true + SANTANDER_PIX_COB_CHAVE no Vercel (Production) + redeploy',
   });
 });
 
@@ -521,7 +524,14 @@ const pagamentos = require('../services/santander/pagamentosService');
 router.get('/pagamentos/health', async (req, res) => {
   res.json({
     habilitado: pagamentos.isEnabled(),
-    hint: pagamentos.isEnabled() ? null : 'Setar SANTANDER_PAGTO_ENABLED=true no Vercel',
+    paths_testados: pagamentos.getPathsTestados ? pagamentos.getPathsTestados() : null,
+    path_funcionando: {
+      boleto: pagamentos.getPathFuncionando ? pagamentos.getPathFuncionando('boleto') : null,
+      tributo: pagamentos.getPathFuncionando ? pagamentos.getPathFuncionando('tributo') : null,
+      concessionaria: pagamentos.getPathFuncionando ? pagamentos.getPathFuncionando('concessionaria') : null,
+    },
+    env_value_raw: process.env.SANTANDER_PAGTO_ENABLED || '<unset>',
+    hint: pagamentos.isEnabled() ? null : 'Setar SANTANDER_PAGTO_ENABLED=true no Vercel (Production) + redeploy',
   });
 });
 
@@ -681,6 +691,187 @@ router.patch('/pagamentos/:id/cancelar', authorizeModule('financeiro', 3), async
     }
 
     const { data, error } = await supabase.from('santander_pagamentos').update({
+      status: 'CANCELADO',
+      cancelado_em: new Date().toISOString(),
+      cancelado_por: userId(req),
+    }).eq('id', id).select().single();
+    if (error) return res.status(500).json({ error: error.message });
+    res.json(data);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+// BOLETOS · emissao de boletos pra receita
+// ════════════════════════════════════════════════════════════════════════════
+const boletos = require('../services/santander/boletosService');
+
+// Health · checa config
+router.get('/boletos/health', async (req, res) => {
+  const cfg = boletos.getConfig();
+  res.json({
+    habilitado: cfg.enabled,
+    workspace_configurado: !!cfg.workspace_id,
+    workspace_preview: cfg.workspace_preview,
+    beneficiary_doc: cfg.beneficiary_doc,
+    paths_testados: cfg.base_paths_tested,
+    path_funcionando: cfg.base_path_working,
+    env_value_raw: process.env.SANTANDER_BOLETOS_ENABLED || '<unset>',
+    hint: cfg.enabled && cfg.workspace_id ? null :
+      'Setar SANTANDER_BOLETOS_ENABLED=true + SANTANDER_BOLETOS_WORKSPACE_ID',
+  });
+});
+
+// POST · emitir boleto
+router.post('/boletos', authorizeModule('financeiro', 3), async (req, res) => {
+  try {
+    const {
+      valor, vencimento, pagador, descricao, instrucoes, encargos,
+      origem, metadata,
+    } = req.body || {};
+
+    if (!valor || Number(valor) <= 0) return res.status(400).json({ error: 'valor invalido' });
+    if (!vencimento) return res.status(400).json({ error: 'vencimento obrigatorio (YYYY-MM-DD)' });
+    if (!pagador?.nome) return res.status(400).json({ error: 'pagador.nome obrigatorio' });
+
+    const nossoNumero = await boletos.gerarNossoNumero();
+    const docNorm = String(pagador.documento || '').replace(/\D/g, '');
+    const tipoDoc = docNorm.length === 11 ? 'CPF' : docNorm.length === 14 ? 'CNPJ' : null;
+
+    const baseRow = {
+      nosso_numero: nossoNumero,
+      workspace_id: boletos.getConfig().workspace_id,
+      valor: Number(valor),
+      data_vencimento: vencimento,
+      pagador_nome: pagador.nome,
+      pagador_documento: docNorm || null,
+      pagador_tipo_doc: tipoDoc,
+      pagador_email: pagador.email || null,
+      pagador_telefone: (pagador.telefone || '').replace(/\D/g, '') || null,
+      pagador_logradouro: pagador.logradouro || null,
+      pagador_numero: pagador.numero || null,
+      pagador_bairro: pagador.bairro || null,
+      pagador_cidade: pagador.cidade || null,
+      pagador_uf: pagador.uf || null,
+      pagador_cep: (pagador.cep || '').replace(/\D/g, '') || null,
+      descricao: descricao || null,
+      instrucoes: instrucoes || null,
+      multa_pct: encargos?.multaPct || null,
+      juros_pct_dia: encargos?.jurosPctDia || null,
+      desconto_valor: encargos?.descontoValor || null,
+      desconto_data_limite: encargos?.descontoDataLimite || null,
+      origem: origem || 'manual_admin',
+      metadata: metadata || null,
+      criado_por: userId(req),
+      status: 'PENDENTE',
+    };
+
+    let api;
+    try {
+      api = await boletos.emitirBoleto({
+        nossoNumero,
+        valor: Number(valor),
+        vencimento,
+        pagador,
+        descricao,
+        instrucoes,
+        encargos,
+      });
+    } catch (e) {
+      const { data } = await supabase.from('santander_boletos').insert({
+        ...baseRow, status: 'ERRO',
+        status_detalhe: (e.message || '').slice(0, 500),
+      }).select().single();
+      return res.status(502).json({ error: e.message, boleto: data });
+    }
+
+    const { data, error } = await supabase.from('santander_boletos').insert({
+      ...baseRow,
+      bill_id: api?.id || api?.billId || api?.nsuCode || null,
+      status: boletos.mapStatus(api?.status || api?.bankSlipStatus || 'REGISTRADO'),
+      status_detalhe: api?.statusMessage || null,
+      linha_digitavel: api?.digitableLine || api?.linhaDigitavel || null,
+      codigo_barras: api?.barCode || api?.barcode || null,
+      qrcode_pix: api?.qrCodePix || api?.pix?.emv || null,
+      pdf_url: api?.pdfUrl || api?.documentUrl || null,
+      metadata: { ...(metadata || {}), api_response: api },
+    }).select().single();
+
+    if (error) return res.status(500).json({ error: error.message, api });
+    res.json({ boleto: data, api });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// GET · lista
+router.get('/boletos', async (req, res) => {
+  try {
+    const { status, limit = 50 } = req.query;
+    let q = supabase
+      .from('santander_boletos')
+      .select('*')
+      .order('created_at', { ascending: false })
+      .limit(Math.min(200, Number(limit) || 50));
+    if (status) q = q.eq('status', status);
+    const { data, error } = await q;
+    if (error) return res.status(500).json({ error: error.message });
+    res.json({ items: data, total: data?.length || 0 });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// GET · detalhe + refresh status
+router.get('/boletos/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { data: local } = await supabase
+      .from('santander_boletos').select('*').eq('id', id).single();
+    if (!local) return res.status(404).json({ error: 'Boleto nao encontrado' });
+
+    if (['PENDENTE', 'REGISTRADO'].includes(local.status) && boletos.isEnabled()) {
+      try {
+        const api = await boletos.consultarBoleto(local.nosso_numero);
+        const novoStatus = boletos.mapStatus(api?.status || api?.bankSlipStatus);
+        if (novoStatus && novoStatus !== local.status) {
+          const patch = { status: novoStatus, status_detalhe: api?.statusMessage || null };
+          if (novoStatus === 'LIQUIDADO') {
+            patch.liquidado_em = api?.paymentDate || new Date().toISOString();
+            patch.liquidado_valor = Number(api?.paidValue || api?.paymentValue || local.valor);
+          }
+          await supabase.from('santander_boletos').update(patch).eq('id', id);
+          return res.json({ ...local, ...patch });
+        }
+      } catch (_) { /* silencioso */ }
+    }
+    res.json(local);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// PATCH · baixar (cancelar) boleto
+router.patch('/boletos/:id/cancelar', authorizeModule('financeiro', 3), async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { data: local } = await supabase
+      .from('santander_boletos').select('*').eq('id', id).single();
+    if (!local) return res.status(404).json({ error: 'nao encontrado' });
+    if (['LIQUIDADO', 'BAIXADO', 'CANCELADO'].includes(local.status)) {
+      return res.status(400).json({ error: `Nao pode cancelar com status ${local.status}` });
+    }
+
+    if (local.bill_id && boletos.isEnabled()) {
+      try {
+        await boletos.cancelarBoleto(local.nosso_numero);
+      } catch (e) {
+        console.warn('[boletos/cancelar] API falhou:', e.message);
+      }
+    }
+
+    const { data, error } = await supabase.from('santander_boletos').update({
       status: 'CANCELADO',
       cancelado_em: new Date().toISOString(),
       cancelado_por: userId(req),
