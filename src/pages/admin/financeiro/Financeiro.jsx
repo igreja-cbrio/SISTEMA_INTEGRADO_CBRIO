@@ -15,6 +15,7 @@ import PixCobranca from './PixCobranca';
 import PagamentosContas from './PagamentosContas';
 import BoletosEmitidos from './BoletosEmitidos';
 import SolicitacoesFinanceiro from './SolicitacoesFinanceiro';
+import Recorrentes from './Recorrentes';
 
 // ── Tema ────────────────────────────────────────────────────
 const C = {
@@ -151,7 +152,7 @@ function Badge({ status, map }) {
 // 6 grupos top-level (em vez de 14 abas em sequencia)
 // Cada grupo composto tem sub-abas dentro
 const TABS = ['Dashboard', 'Análises', 'Movimentação', 'DRE', 'Banco', 'Solicitações', 'Configuração'];
-const SUBS_MOVIMENTACAO = ['Contas', 'Transações', 'Contas a Pagar', 'Reembolsos', 'Importar extratos', 'Fila de classificação'];
+const SUBS_MOVIMENTACAO = ['Contas', 'Transações', 'Contas a Pagar', 'Recorrentes', 'Reembolsos', 'Importar extratos', 'Fila de classificação'];
 const SUBS_DRE = ['DRE Auto', 'DRE (legacy)'];
 const SUBS_BANCO = ['Banco Santander', 'Culto ao Vivo', 'PIX Cobrança', 'Pagamentos', 'Boletos'];
 
@@ -226,9 +227,10 @@ export default function Financeiro() {
       case 'contas':       setTab(2); setSubMov(0); break;
       case 'transacoes':   setTab(2); setSubMov(1); break;
       case 'contas_pagar': setTab(2); setSubMov(2); break;
-      case 'reembolsos':   setTab(2); setSubMov(3); break;
-      case 'importar':     setTab(2); setSubMov(4); break;
-      case 'fila':         setTab(2); setSubMov(5); break;
+      case 'recorrentes':  setTab(2); setSubMov(3); break;
+      case 'reembolsos':   setTab(2); setSubMov(4); break;
+      case 'importar':     setTab(2); setSubMov(5); break;
+      case 'fila':         setTab(2); setSubMov(6); break;
       case 'dre_auto':     setTab(3); setSubDre(0); break;
       case 'dre_legacy':   setTab(3); setSubDre(1); break;
       case 'banco':        setTab(4); setSubBanco(0); break;
@@ -1120,9 +1122,10 @@ export default function Financeiro() {
           {subMov === 0 && renderContas()}
           {subMov === 1 && renderTransacoes()}
           {subMov === 2 && renderContasPagar()}
-          {subMov === 3 && renderReembolsos()}
-          {subMov === 4 && <ImportarExtratos />}
-          {subMov === 5 && <FilaClassificacao />}
+          {subMov === 3 && <Recorrentes />}
+          {subMov === 4 && renderReembolsos()}
+          {subMov === 5 && <ImportarExtratos />}
+          {subMov === 6 && <FilaClassificacao />}
         </div>
       )}
 

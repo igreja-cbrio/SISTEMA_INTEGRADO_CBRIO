@@ -447,4 +447,100 @@ router.post('/dre/processar', dreUpload.array('arquivos', 20), async (req, res) 
   }
 });
 
+// ══════════════════════════════════════════════════════════════════════════
+// DESPESAS RECORRENTES + PROJECAO DE CAIXA
+// ══════════════════════════════════════════════════════════════════════════
+
+router.get('/recorrentes', async (req, res) => {
+  try {
+    const { ativa, confirmada } = req.query;
+    let q = supabase.from('fin_despesas_recorrentes').select('*').order('descricao');
+    if (ativa !== undefined) q = q.eq('ativa', ativa === 'true');
+    if (confirmada !== undefined) q = q.eq('confirmada', confirmada === 'true');
+    const { data, error } = await q;
+    if (error) throw error;
+    res.json(data || []);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+router.post('/recorrentes', async (req, res) => {
+  try {
+    const {
+      descricao, fornecedor, valor_medio, cadencia_dias, dia_vencimento,
+      plano_contas_id, conta_id, classe, pix_chave, observacao,
+      gera_n_dias_antes, proxima_estimada,
+    } = req.body || {};
+    if (!descricao || !valor_medio) {
+      return res.status(400).json({ error: 'descricao e valor_medio sao obrigatorios' });
+    }
+    const valor = Number(valor_medio);
+    const { data, error } = await supabase.from('fin_despesas_recorrentes').insert({
+      descricao,
+      fornecedor: fornecedor || null,
+      chave_match: (fornecedor || descricao).toLowerCase().trim(),
+      tipo_chave: 'manual',
+      valor_medio: valor,
+      valor_minimo: valor,
+      valor_maximo: valor,
+      cadencia_dias: cadencia_dias ? Number(cadencia_dias) : 30,
+      dia_vencimento: dia_vencimento ? Number(dia_vencimento) : null,
+      plano_contas_id: plano_contas_id || null,
+      conta_id: conta_id || null,
+      classe: classe || 'fixa',
+      pix_chave: pix_chave || null,
+      observacao: observacao || null,
+      gera_n_dias_antes: gera_n_dias_antes ? Number(gera_n_dias_antes) : 7,
+      proxima_estimada: proxima_estimada || null,
+      ativa: true, confirmada: true, confianca: 1.0,
+    }).select('*').single();
+    if (error) throw error;
+    res.status(201).json(data);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+router.patch('/recorrentes/:id', async (req, res) => {
+  try {
+    const patch = { ...req.body };
+    delete patch.id; delete patch.created_at;
+    patch.updated_at = new Date().toISOString();
+    const { data, error } = await supabase
+      .from('fin_despesas_recorrentes').update(patch).eq('id', req.params.id).select('*').single();
+    if (error) throw error;
+    res.json(data);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+router.delete('/recorrentes/:id', async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('fin_despesas_recorrentes').update({ ativa: false }).eq('id', req.params.id).select('*').single();
+    if (error) throw error;
+    res.json(data);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+router.post('/recorrentes/gerar-contas-pagar', async (req, res) => {
+  try {
+    const { data, error } = await supabase.rpc('gerar_contas_pagar_recorrentes', {
+      p_user_id: req.user.userId,
+    });
+    if (error) throw error;
+    res.json({
+      total: (data || []).length,
+      criadas: (data || []).filter(r => r.acao === 'criado').length,
+      ja_existiam: (data || []).filter(r => r.acao === 'ja_existe').length,
+      detalhes: data || [],
+    });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+router.get('/projecao-caixa', async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('vw_projecao_caixa_mensal').select('*').order('mes_inicio');
+    if (error) throw error;
+    res.json(data || []);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 module.exports = router;
