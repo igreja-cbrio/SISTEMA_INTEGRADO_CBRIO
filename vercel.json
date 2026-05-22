@@ -72,6 +72,10 @@
     {
       "path": "/api/devocional-planos/cron/enviar-diario",
       "schedule": "0 9 * * *"
+    },
+    {
+      "path": "/api/financeiro/alertas/cron-gerar",
+      "schedule": "0 8 * * *"
     }
   ],
   "rewrites": [

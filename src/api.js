@@ -470,6 +470,12 @@ export const financeiro = {
     decidir: (id, data) => post(`/financeiro/fila-classificacao/${id}/decidir`, data),
     reclassificar: () => post('/financeiro/fila-classificacao/reclassificar', {}),
   },
+  alertas: {
+    list: (params) => get('/financeiro/alertas' + (params ? '?' + new URLSearchParams(params) : '')),
+    atender: (id, comentario) => post(`/financeiro/alertas/${id}/atender`, { comentario }),
+    gerar: () => post('/financeiro/alertas/gerar', {}),
+  },
+  calendario: (params) => get('/financeiro/calendario' + (params ? '?' + new URLSearchParams(params) : '')),
   reembolsos: {
     list: (params) => get('/financeiro/reembolsos' + (params ? '?' + new URLSearchParams(params) : '')),
     create: (data) => post('/financeiro/reembolsos', data),
