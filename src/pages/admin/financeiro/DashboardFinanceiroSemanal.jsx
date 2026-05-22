@@ -40,7 +40,19 @@ const DIAS = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
 
 // ============================================================
 // SEMANAS QUA-TER · gera lista das ultimas N semanas
+// Numeracao: 1 = primeira semana qua-ter cuja quarta-feira cai em
+// ou apos 01/01 do ano. Pode dar W53 em anos com 53 semanas qua-ter.
 // ============================================================
+function numeroSemanaQuaTer(quarta) {
+  const ano = quarta.getFullYear();
+  const jan1 = new Date(ano, 0, 1);
+  const dowJan1 = jan1.getDay(); // 0=Dom ... 3=Qua
+  const diasAteQuarta = (3 - dowJan1 + 7) % 7;
+  const primeiraQuarta = new Date(ano, 0, 1 + diasAteQuarta);
+  const dias = Math.round((quarta - primeiraQuarta) / 86400000);
+  return Math.floor(dias / 7) + 1;
+}
+
 function gerarSemanasQuaTer(qtd = 26) {
   const hoje = new Date();
   const dow = hoje.getDay(); // 0=Dom ... 3=Qua ... 6=Sab
@@ -58,11 +70,16 @@ function gerarSemanasQuaTer(qtd = 26) {
     const fim = new Date(inicio);
     fim.setDate(inicio.getDate() + 6);
     const fmt = (d) => `${String(d.getDate()).padStart(2, '0')}/${String(d.getMonth() + 1).padStart(2, '0')}`;
+    const num = numeroSemanaQuaTer(inicio);
+    const numStr = String(num).padStart(2, '0');
     out.push({
       ref: inicio.toISOString().slice(0, 10),
       inicio: inicio.toISOString().slice(0, 10),
       fim: fim.toISOString().slice(0, 10),
-      label: `${fmt(inicio)} – ${fmt(fim)}${i === 0 ? ' · esta semana' : ''}`,
+      numero: num,
+      ano: inicio.getFullYear(),
+      label: `Semana ${numStr} · ${fmt(inicio)}–${fmt(fim)}${i === 0 ? ' (atual)' : ''}`,
+      labelCurto: `Semana ${numStr}/${inicio.getFullYear()}`,
     });
   }
   return out;
@@ -171,19 +188,22 @@ export default function DashboardSemanal() {
               <ChevronLeft className="h-4 w-4 mr-1" /> Anterior
             </Button>
 
-            <div className="flex flex-col items-center flex-1 min-w-[220px]">
+            <div className="flex flex-col items-center flex-1 min-w-[240px]">
               <div className="text-[10px] text-muted-foreground uppercase tracking-wider mb-1">Semana qua-ter</div>
               <select
                 value={refData}
                 onChange={(e) => setRefData(e.target.value)}
-                className="text-sm font-bold text-foreground bg-background border border-border rounded-md px-3 py-1.5 hover:border-primary/50 transition-colors cursor-pointer tabular-nums min-w-[200px] text-center"
+                className="text-sm font-bold text-foreground bg-background border border-border rounded-md px-3 py-1.5 hover:border-primary/50 transition-colors cursor-pointer tabular-nums min-w-[240px] text-center"
               >
                 {semanas.map(s => (
                   <option key={s.ref} value={s.ref}>{s.label}</option>
                 ))}
               </select>
-              <div className="text-[10px] text-muted-foreground mt-1">
-                {semana.inicio} a {semana.fim}
+              <div className="text-[10px] text-muted-foreground mt-1 tabular-nums">
+                {(() => {
+                  const s = semanas.find(x => x.ref === refData);
+                  return s ? `${s.labelCurto} · ${semana.inicio} a ${semana.fim}` : `${semana.inicio} a ${semana.fim}`;
+                })()}
               </div>
             </div>
 
