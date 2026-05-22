@@ -845,6 +845,22 @@ router.get('/dre-centro-custo/atual', async (req, res) => {
 });
 
 // ══════════════════════════════════════════════════════════════════════════
+// DRE COMPARATIVO TEMPORAL · atual vs anterior vs ano passado
+// ══════════════════════════════════════════════════════════════════════════
+
+router.get('/dre-comparativo', async (req, res) => {
+  try {
+    const [linhas, totais] = await Promise.all([
+      supabase.from('vw_dre_comparativo').select('*'),
+      supabase.from('vw_dre_comparativo_totais').select('*'),
+    ]);
+    if (linhas.error) throw linhas.error;
+    if (totais.error) throw totais.error;
+    res.json({ linhas: linhas.data || [], totais: totais.data || [] });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ══════════════════════════════════════════════════════════════════════════
 // CLOSING MENSAL FINANCEIRO
 // ══════════════════════════════════════════════════════════════════════════
 
