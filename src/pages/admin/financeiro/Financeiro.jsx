@@ -16,6 +16,7 @@ import PagamentosContas from './PagamentosContas';
 import BoletosEmitidos from './BoletosEmitidos';
 import SolicitacoesFinanceiro from './SolicitacoesFinanceiro';
 import Recorrentes from './Recorrentes';
+import Generosidade from './Generosidade';
 
 // ── Tema ────────────────────────────────────────────────────
 const C = {
@@ -151,7 +152,7 @@ function Badge({ status, map }) {
 // ── TABS ────────────────────────────────────────────────────
 // 6 grupos top-level (em vez de 14 abas em sequencia)
 // Cada grupo composto tem sub-abas dentro
-const TABS = ['Dashboard', 'Análises', 'Movimentação', 'DRE', 'Banco', 'Solicitações', 'Configuração'];
+const TABS = ['Dashboard', 'Análises', 'Movimentação', 'DRE', 'Banco', 'Solicitações', 'Generosidade', 'Configuração'];
 const SUBS_MOVIMENTACAO = ['Contas', 'Transações', 'Contas a Pagar', 'Recorrentes', 'Reembolsos', 'Importar extratos', 'Fila de classificação'];
 const SUBS_DRE = ['DRE Auto', 'DRE (legacy)'];
 const SUBS_BANCO = ['Banco Santander', 'Culto ao Vivo', 'PIX Cobrança', 'Pagamentos', 'Boletos'];
@@ -239,7 +240,8 @@ export default function Financeiro() {
       case 'pagamentos':   setTab(4); setSubBanco(3); break;
       case 'boletos':      setTab(4); setSubBanco(4); break;
       case 'solicitacoes_fin': setTab(5); break;
-      case 'config':       setTab(6); break;
+      case 'generosidade': setTab(6); break;
+      case 'config':       setTab(7); break;
       case 'analises':     setTab(1); break;
       default:             setTab(0);
     }
@@ -1153,8 +1155,11 @@ export default function Financeiro() {
       {/* Tab 5: Solicitações · aprovação financeira de compras/reembolsos */}
       {tab === 5 && <SolicitacoesFinanceiro />}
 
-      {/* Tab 6: Configuração */}
-      {tab === 6 && <EstruturaFiscal />}
+      {/* Tab 6: Generosidade · dashboard de doações */}
+      {tab === 6 && <Generosidade />}
+
+      {/* Tab 7: Configuração */}
+      {tab === 7 && <EstruturaFiscal />}
 
       {modalConta && renderModalConta()}
       {modalTransacao && renderModalTransacao()}

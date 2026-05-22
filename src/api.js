@@ -458,6 +458,11 @@ export const financeiro = {
     gerarContasPagar: () => post('/financeiro/recorrentes/gerar-contas-pagar', {}),
   },
   projecaoCaixa: () => get('/financeiro/projecao-caixa'),
+  generosidade: {
+    overview: () => get('/financeiro/generosidade/overview'),
+    anonimos: () => get('/financeiro/generosidade/anonimos'),
+    pararam: () => get('/financeiro/generosidade/pararam'),
+  },
   reembolsos: {
     list: (params) => get('/financeiro/reembolsos' + (params ? '?' + new URLSearchParams(params) : '')),
     create: (data) => post('/financeiro/reembolsos', data),
