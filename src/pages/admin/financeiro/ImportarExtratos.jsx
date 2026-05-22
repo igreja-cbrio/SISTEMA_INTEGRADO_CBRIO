@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { financeiro, financeiroV2 } from '../../../api';
 import { Button } from '../../../components/ui/button';
 
