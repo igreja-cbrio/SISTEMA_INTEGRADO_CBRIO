@@ -7,7 +7,7 @@ const KEY = 'totem_kids_estacao_pareada';
 export interface EstacaoPareada {
   id: string;
   nome: string;
-  tipo: 'manned' | 'self' | 'roster';
+  tipo: 'manned' | 'self' | 'roster' | 'display' | 'display_foyer';
   printer_modelo?: string | null;
   pareada_em: string; // ISO timestamp
 }

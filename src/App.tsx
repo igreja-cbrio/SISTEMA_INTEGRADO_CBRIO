@@ -186,6 +186,8 @@ const TotemKidsPainel = lazyWithRetry(() => import('./pages/ministerial/totemKid
 const TotemKidsTesteEtiqueta = lazyWithRetry(() => import('./pages/ministerial/totemKids/TotemKidsTesteEtiqueta'));
 const TotemKidsDecisoes = lazyWithRetry(() => import('./pages/ministerial/totemKids/TotemKidsDecisoes'));
 const TotemKidsParear = lazyWithRetry(() => import('./pages/ministerial/totemKids/TotemKidsParear'));
+const TotemKidsDisplaySala = lazyWithRetry(() => import('./pages/ministerial/totemKids/TotemKidsDisplaySala'));
+const TotemKidsDisplayFoyer = lazyWithRetry(() => import('./pages/ministerial/totemKids/TotemKidsDisplayFoyer'));
 const TotemKidsAdmin = lazyWithRetry(() => import('./pages/admin/totemKids/TotemKidsAdmin'));
 const AssistenteIA = lazyWithRetry(() => import('./pages/admin/AssistenteIA'));
 const EventDetail = lazyWithRetry(() => import('./pages/eventos/EventDetail'));
@@ -382,6 +384,12 @@ function AppRoutes() {
       <Route path="/voluntariado/totem" element={<ProtectedRoute><Suspense fallback={<Loading />}><VolTotem /></Suspense></ProtectedRoute>} />
       <Route path="/totem" element={<ProtectedRoute><Suspense fallback={<Loading />}><TotemMembro /></Suspense></ProtectedRoute>} />
 
+      {/* Display Totem Kids · TV/Fire TV · publica (autentica via token de estacao) */}
+      <Route path="/ministerial/totem-kids/display-sala" element={<Suspense fallback={<Loading />}><TotemKidsDisplaySala /></Suspense>} />
+      <Route path="/ministerial/totem-kids/display-foyer" element={<Suspense fallback={<Loading />}><TotemKidsDisplayFoyer /></Suspense>} />
+      {/* Pareamento publico · token na URL ja autoriza */}
+      <Route path="/ministerial/totem-kids/parear" element={<Suspense fallback={<Loading />}><TotemKidsParear /></Suspense>} />
+
       {/* Self check-in — voluntario escaneia QR do totem com celular.
           Rota PUBLICA: se nao estiver autenticado, a propria pagina oferece
           cadastro via CPF (fluxo de registration / magic link). */}
@@ -432,7 +440,6 @@ function AppRoutes() {
         <Route path="/ministerial/totem-kids/painel" element={<ModuleGuard moduleSlug="kids"><Suspense fallback={<Loading />}><TotemKidsPainel /></Suspense></ModuleGuard>} />
         <Route path="/ministerial/totem-kids/teste-etiqueta" element={<ModuleGuard moduleSlug="kids"><Suspense fallback={<Loading />}><TotemKidsTesteEtiqueta /></Suspense></ModuleGuard>} />
         <Route path="/ministerial/totem-kids/decisoes" element={<ModuleGuard moduleSlug="kids"><Suspense fallback={<Loading />}><TotemKidsDecisoes /></Suspense></ModuleGuard>} />
-        <Route path="/ministerial/totem-kids/parear" element={<ModuleGuard moduleSlug="kids"><Suspense fallback={<Loading />}><TotemKidsParear /></Suspense></ModuleGuard>} />
         <Route path="/ministerial/totem-kids/configuracoes" element={<ModuleGuard moduleSlug="kids"><Suspense fallback={<Loading />}><TotemKidsAdmin /></Suspense></ModuleGuard>} />
         {/* Redirects das URLs antigas (admin separado) · 2026-05-21 */}
         <Route path="/admin/totem-kids" element={<Navigate to="/ministerial/totem-kids/configuracoes" replace />} />

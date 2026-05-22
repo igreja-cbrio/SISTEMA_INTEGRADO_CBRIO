@@ -41,12 +41,23 @@ export default function TotemKidsParear() {
   async function parear() {
     try {
       const e = await totemKids.estacoes.parear({ estacao_id: estacaoId, token });
-      setEstacaoPareada({
-        id: e.id,
-        nome: e.nome,
-        tipo: e.tipo,
-        printer_modelo: e.printer_modelo,
-      });
+      // Salva no localStorage certo conforme o tipo:
+      //   manned/self  → totem_kids_estacao_pareada (usado por Checkin/Checkout)
+      //   display      → totem_kids_display_token   (usado por display-sala)
+      //   display_foyer→ totem_kids_display_foyer_token (usado por display-foyer)
+      if (e.tipo === 'display') {
+        localStorage.setItem('totem_kids_display_token', token);
+      } else if (e.tipo === 'display_foyer') {
+        localStorage.setItem('totem_kids_display_foyer_token', token);
+      } else {
+        // manned, self ou roster · estação operacional
+        setEstacaoPareada({
+          id: e.id,
+          nome: e.nome,
+          tipo: e.tipo,
+          printer_modelo: e.printer_modelo,
+        });
+      }
       setEstacao(e);
       setStatus('ok');
     } catch (e: unknown) {
@@ -54,6 +65,19 @@ export default function TotemKidsParear() {
       setErro(err?.message || 'Erro ao parear');
       setStatus('erro');
     }
+  }
+
+  function destinoNavegar(): string {
+    if (estacao?.tipo === 'display') return '/ministerial/totem-kids/display-sala';
+    if (estacao?.tipo === 'display_foyer') return '/ministerial/totem-kids/display-foyer';
+    if (estacao?.tipo === 'self') return '/ministerial/totem-kids/checkout';
+    return '/ministerial/totem-kids';
+  }
+  function destinoLabel(): string {
+    if (estacao?.tipo === 'display') return 'Abrir display da sala';
+    if (estacao?.tipo === 'display_foyer') return 'Abrir painel do foyer';
+    if (estacao?.tipo === 'self') return 'Abrir checkout self-service';
+    return 'Ir pro Totem';
   }
 
   return (
@@ -83,10 +107,12 @@ export default function TotemKidsParear() {
                 {estacao.printer_modelo && <p><b>Impressora</b>: {estacao.printer_modelo}</p>}
               </div>
               <p className="text-sm text-muted-foreground">
-                A partir de agora, todo check-in feito neste dispositivo será registrado nessa estação.
+                {estacao?.tipo === 'display' && 'A TV vai exibir as chamadas dessa sala.'}
+                {estacao?.tipo === 'display_foyer' && 'A TV vai exibir o painel central de todas as salas.'}
+                {(estacao?.tipo === 'manned' || estacao?.tipo === 'self') && 'Daqui em diante, check-ins/checkouts neste dispositivo vinculam à estação.'}
               </p>
-              <Button onClick={() => navigate('/ministerial/totem-kids')} className="w-full bg-pink-600 hover:bg-pink-700" size="lg">
-                Ir pro Totem <ArrowRight className="h-5 w-5 ml-2" />
+              <Button onClick={() => navigate(destinoNavegar() + (estacao?.tipo?.startsWith('display') ? `?token=${token}` : ''))} className="w-full bg-pink-600 hover:bg-pink-700" size="lg">
+                {destinoLabel()} <ArrowRight className="h-5 w-5 ml-2" />
               </Button>
             </>
           )}
