@@ -36,6 +36,12 @@ function ehEmailValido(email) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
 }
 
+// Valida que serviceId é UUID v4 (evita open redirect via path injection)
+const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+function ehUuidValido(s) {
+  return typeof s === 'string' && UUID_REGEX.test(s);
+}
+
 function cpfValido(cpf) {
   const d = soDigitos(cpf);
   if (d.length !== 11) return false;
@@ -238,8 +244,10 @@ router.post('/request-login', publicLimiter, async (req, res) => {
 
     // Gerar magic link
     const frontendUrl = getFrontendUrl();
-    const redirectPath = serviceId
-      ? `/voluntariado/self-checkin?serviceId=${encodeURIComponent(serviceId)}`
+    // Valida serviceId como UUID v4 (anti open redirect)
+    const serviceIdSeguro = ehUuidValido(serviceId) ? serviceId : null;
+    const redirectPath = serviceIdSeguro
+      ? `/voluntariado/self-checkin?serviceId=${encodeURIComponent(serviceIdSeguro)}`
       : '/voluntariado/checkin/painel';
 
     const { error: linkErr } = await supabase.auth.admin.generateLink({
@@ -270,10 +278,12 @@ router.post('/register', publicLimiter, async (req, res) => {
     if (website) return res.status(200).json({ ok: true }); // honeypot
 
     if (!cpfValido(cpf)) return res.status(400).json({ error: 'CPF invalido' });
-    if (!full_name || full_name.trim().length < 3) return res.status(400).json({ error: 'Nome invalido' });
+    if (!full_name || full_name.trim().length < 3 || full_name.trim().length > 200) {
+      return res.status(400).json({ error: 'Nome invalido (3-200 chars)' });
+    }
     if (!ehEmailValido(rawEmail)) return res.status(400).json({ error: 'Email invalido' });
 
-    const email = rawEmail.toLowerCase().trim();
+    const email = rawEmail.toLowerCase().trim().slice(0, 200);
     const cleanCpf = soDigitos(cpf);
 
     // Defesa: se ja existe em algum lugar, rejeitar (o fluxo de request-login
@@ -338,8 +348,10 @@ router.post('/register', publicLimiter, async (req, res) => {
 
     // Magic link
     const frontendUrl = getFrontendUrl();
-    const redirectPath = serviceId
-      ? `/voluntariado/self-checkin?serviceId=${encodeURIComponent(serviceId)}`
+    // Valida serviceId como UUID v4 (anti open redirect)
+    const serviceIdSeguro = ehUuidValido(serviceId) ? serviceId : null;
+    const redirectPath = serviceIdSeguro
+      ? `/voluntariado/self-checkin?serviceId=${encodeURIComponent(serviceIdSeguro)}`
       : '/voluntariado/checkin/painel';
 
     const { error: linkErr } = await supabase.auth.admin.generateLink({

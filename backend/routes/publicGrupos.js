@@ -261,7 +261,7 @@ router.post('/inscrever', async (req, res) => {
         origem: 'qr_code',
         aceita_termos: !!aceita_termos,
         aceita_contato: true,
-        consentimento_texto: consentimento_texto || null,
+        consentimento_texto: consentimento_texto ? String(consentimento_texto).slice(0, 2000) : null,
         status: 'pendente',
         ip_origem: ip,
         user_agent: userAgent,
@@ -280,7 +280,7 @@ router.post('/inscrever', async (req, res) => {
       email: emailLimpo,
       telefone: telefone || null,
       origem: 'formulario_publico',
-      observacao: observacao || null,
+      observacao: observacao ? String(observacao).trim().slice(0, 500) : null,
       status: 'pendente',
     };
     if (membroId) pedidoBase.membro_id = membroId;

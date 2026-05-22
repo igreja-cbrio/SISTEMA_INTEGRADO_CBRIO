@@ -23,7 +23,19 @@ function soDigitos(s) { return String(s || '').replace(/\D/g, ''); }
 function ehEmailValido(s) { return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(s || '')); }
 function ehCpfValido(cpf) {
   const c = soDigitos(cpf);
-  return c.length === 11 && !/^(\d)\1+$/.test(c);
+  if (c.length !== 11) return false;
+  if (/^(\d)\1+$/.test(c)) return false;
+  // Algoritmo oficial dos dígitos verificadores
+  let soma = 0;
+  for (let i = 0; i < 9; i++) soma += parseInt(c[i]) * (10 - i);
+  let d1 = (soma * 10) % 11;
+  if (d1 === 10) d1 = 0;
+  if (d1 !== parseInt(c[9])) return false;
+  soma = 0;
+  for (let i = 0; i < 10; i++) soma += parseInt(c[i]) * (11 - i);
+  let d2 = (soma * 10) % 11;
+  if (d2 === 10) d2 = 0;
+  return d2 === parseInt(c[10]);
 }
 
 // ----------------------------------------------------------------------------
@@ -129,7 +141,7 @@ router.post('/inscrever', async (req, res) => {
         telefone: telefone ? soDigitos(telefone) : null,
         email: cleanEmail,
         data_nascimento: data_nascimento || null,
-        observacoes: observacoes ? observacoes.trim() : null,
+        observacoes: observacoes ? String(observacoes).trim().slice(0, 1000) : null,
         membro_id: membroId,
         ja_batizado: jaBatizado,
         ja_voluntario: jaVoluntario,
