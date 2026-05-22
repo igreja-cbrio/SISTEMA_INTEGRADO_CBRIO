@@ -838,14 +838,15 @@ router.get('/dashboard/overview', async (req, res) => {
       recentes,
     ] = await Promise.all([
       supabase.from('fin_contas').select('id, nome, saldo, ativa, banco'),
-      supabase.from('fin_transacoes').select('tipo, valor, status')
+      // Transacoes do periodo · join com plano pra filtrar transferencias (planos 1.x e 2.x)
+      supabase.from('vw_fin_transacoes_completa').select('tipo, valor, status, plano_contas_codigo')
         .gte('data_competencia', ranges.inicio).lte('data_competencia', ranges.fim)
         .neq('status', 'cancelado'),
-      supabase.from('fin_transacoes').select('tipo, valor')
+      supabase.from('vw_fin_transacoes_completa').select('tipo, valor, plano_contas_codigo')
         .gte('data_competencia', ranges.inicio_ant).lte('data_competencia', ranges.fim_ant)
         .neq('status', 'cancelado'),
-      supabase.from('fin_transacoes')
-        .select('tipo, valor, data_competencia')
+      supabase.from('vw_fin_transacoes_completa')
+        .select('tipo, valor, data_competencia, plano_contas_codigo')
         .gte('data_competencia', dozeMesesAtras)
         .neq('status', 'cancelado'),
       supabase.from('fin_contas_pagar').select('id, valor, status, data_vencimento, descricao')
@@ -874,13 +875,19 @@ router.get('/dashboard/overview', async (req, res) => {
     const contasAtivas = (contas.data || []).filter(c => c.ativa);
     const saldoTotal = contasAtivas.reduce((s, c) => s + Number(c.saldo || 0), 0);
 
+    // Filtra transferencias internas (plano 1.x = caixa/banco, 2.x = passivo)
+    // Receitas reais = plano 3.x · Despesas reais = plano 4.x
+    // Lancamentos sem plano (recem importados) entram pelo tipo declarado
+    const isReceitaReal = (t) => t.tipo === 'receita' && (!t.plano_contas_codigo || String(t.plano_contas_codigo).startsWith('3.'));
+    const isDespesaReal = (t) => t.tipo === 'despesa' && (!t.plano_contas_codigo || String(t.plano_contas_codigo).startsWith('4.'));
+
     const tMes = transPeriodo.data || [];
-    const receitaMes = tMes.filter(t => t.tipo === 'receita').reduce((s, t) => s + Number(t.valor), 0);
-    const despesaMes = tMes.filter(t => t.tipo === 'despesa').reduce((s, t) => s + Number(t.valor), 0);
+    const receitaMes = tMes.filter(isReceitaReal).reduce((s, t) => s + Number(t.valor), 0);
+    const despesaMes = tMes.filter(isDespesaReal).reduce((s, t) => s + Number(t.valor), 0);
 
     const tMesAnt = transPeriodoAnt.data || [];
-    const receitaMesAnt = tMesAnt.filter(t => t.tipo === 'receita').reduce((s, t) => s + Number(t.valor), 0);
-    const despesaMesAnt = tMesAnt.filter(t => t.tipo === 'despesa').reduce((s, t) => s + Number(t.valor), 0);
+    const receitaMesAnt = tMesAnt.filter(isReceitaReal).reduce((s, t) => s + Number(t.valor), 0);
+    const despesaMesAnt = tMesAnt.filter(isDespesaReal).reduce((s, t) => s + Number(t.valor), 0);
 
     // Serie 6 meses · agrupa por YYYY-MM
     const serieMap = new Map();
@@ -888,8 +895,9 @@ router.get('/dashboard/overview', async (req, res) => {
       const mes = t.data_competencia.slice(0, 7);
       if (!serieMap.has(mes)) serieMap.set(mes, { mes, receita: 0, despesa: 0 });
       const row = serieMap.get(mes);
-      if (t.tipo === 'receita') row.receita += Number(t.valor);
-      else if (t.tipo === 'despesa') row.despesa += Number(t.valor);
+      // Mesma regra · ignora transferencias internas (1.x e 2.x) na serie
+      if (isReceitaReal(t)) row.receita += Number(t.valor);
+      else if (isDespesaReal(t)) row.despesa += Number(t.valor);
     }
     const serie6m = Array.from(serieMap.values()).sort((a, b) => a.mes.localeCompare(b.mes));
 
