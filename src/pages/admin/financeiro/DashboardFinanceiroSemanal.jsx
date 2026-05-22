@@ -9,6 +9,7 @@ import { Card, CardContent } from '../../../components/ui/card';
 import { Button } from '../../../components/ui/button';
 import { Badge } from '../../../components/ui/badge';
 import { financeiroV2 } from '../../../api';
+import MetaGauge from '../../../components/dashboard-semanal/MetaGauge';
 import {
   ComposedChart, Line, Bar, Area, AreaChart, BarChart, XAxis, YAxis, CartesianGrid,
   Tooltip, ResponsiveContainer, Legend,
@@ -36,6 +37,36 @@ const fmtPct = (v) => v === null || v === undefined ? '—' : `${v >= 0 ? '+' : 
 const fmtInt = (v) => Number(v || 0).toLocaleString('pt-BR');
 
 const DIAS = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
+
+// ============================================================
+// SEMANAS QUA-TER · gera lista das ultimas N semanas
+// ============================================================
+function gerarSemanasQuaTer(qtd = 26) {
+  const hoje = new Date();
+  const dow = hoje.getDay(); // 0=Dom ... 3=Qua ... 6=Sab
+  // dias para voltar ate a quarta da semana atual qua-ter
+  // qua=0, qui=1, sex=2, sab=3, dom=4, seg=5, ter=6
+  const diasParaQuarta = (dow + 4) % 7;
+  const quartaAtual = new Date(hoje);
+  quartaAtual.setHours(0, 0, 0, 0);
+  quartaAtual.setDate(hoje.getDate() - diasParaQuarta);
+
+  const out = [];
+  for (let i = 0; i < qtd; i++) {
+    const inicio = new Date(quartaAtual);
+    inicio.setDate(quartaAtual.getDate() - i * 7);
+    const fim = new Date(inicio);
+    fim.setDate(inicio.getDate() + 6);
+    const fmt = (d) => `${String(d.getDate()).padStart(2, '0')}/${String(d.getMonth() + 1).padStart(2, '0')}`;
+    out.push({
+      ref: inicio.toISOString().slice(0, 10),
+      inicio: inicio.toISOString().slice(0, 10),
+      fim: fim.toISOString().slice(0, 10),
+      label: `${fmt(inicio)} – ${fmt(fim)}${i === 0 ? ' · esta semana' : ''}`,
+    });
+  }
+  return out;
+}
 
 // ============================================================
 // COUNT-UP animado
@@ -74,7 +105,8 @@ export default function DashboardSemanal() {
   const [saidas, setSaidas] = useState(null);
   const [metas, setMetas] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [refData, setRefData] = useState(new Date().toISOString().slice(0, 10));
+  const semanas = useMemo(() => gerarSemanasQuaTer(26), []);
+  const [refData, setRefData] = useState(semanas[0].ref);
   const [slide, setSlide] = useState(0);
 
   // Navegação por teclado · ← → entre slides
@@ -117,9 +149,10 @@ export default function DashboardSemanal() {
   };
 
   const navegar = (delta) => {
-    const d = new Date(refData);
-    d.setDate(d.getDate() + delta * 7);
-    setRefData(d.toISOString().slice(0, 10));
+    const idx = semanas.findIndex(s => s.ref === refData);
+    const base = idx === -1 ? 0 : idx;
+    const novoIdx = Math.max(0, Math.min(semanas.length - 1, base + delta));
+    setRefData(semanas[novoIdx].ref);
   };
 
   if (loading || !data) return <LoadingPretty />;
@@ -134,18 +167,28 @@ export default function DashboardSemanal() {
         <Card className="overflow-hidden border-primary/30">
           <div className="absolute inset-0 bg-gradient-to-r from-primary/5 via-transparent to-primary/5 pointer-events-none" />
           <CardContent className="pt-4 pb-4 flex items-center justify-between flex-wrap gap-3 relative">
-            <Button variant="outline" size="sm" onClick={() => navegar(-1)}>
-              <ChevronLeft className="h-4 w-4 mr-1" /> Semana anterior
+            <Button variant="outline" size="sm" onClick={() => navegar(1)} disabled={semanas.findIndex(s => s.ref === refData) >= semanas.length - 1}>
+              <ChevronLeft className="h-4 w-4 mr-1" /> Anterior
             </Button>
-            <div className="text-center">
-              <div className="text-[10px] text-muted-foreground uppercase tracking-wider">Semana qua-ter</div>
-              <div className="text-lg font-bold text-foreground capitalize">{semana.label}</div>
-              <div className="text-[10px] text-muted-foreground">
+
+            <div className="flex flex-col items-center flex-1 min-w-[220px]">
+              <div className="text-[10px] text-muted-foreground uppercase tracking-wider mb-1">Semana qua-ter</div>
+              <select
+                value={refData}
+                onChange={(e) => setRefData(e.target.value)}
+                className="text-sm font-bold text-foreground bg-background border border-border rounded-md px-3 py-1.5 hover:border-primary/50 transition-colors cursor-pointer tabular-nums min-w-[200px] text-center"
+              >
+                {semanas.map(s => (
+                  <option key={s.ref} value={s.ref}>{s.label}</option>
+                ))}
+              </select>
+              <div className="text-[10px] text-muted-foreground mt-1">
                 {semana.inicio} a {semana.fim}
               </div>
             </div>
-            <Button variant="outline" size="sm" onClick={() => navegar(1)}>
-              Próxima semana <ChevronRight className="h-4 w-4 ml-1" />
+
+            <Button variant="outline" size="sm" onClick={() => navegar(-1)} disabled={semanas.findIndex(s => s.ref === refData) <= 0}>
+              Próxima <ChevronRight className="h-4 w-4 ml-1" />
             </Button>
           </CardContent>
         </Card>
@@ -198,6 +241,8 @@ export default function DashboardSemanal() {
               saidas={saidas}
               metas={metas}
               onMetasChange={reloadMetas}
+              completo={completo}
+              receitaSemana={kpis.receita}
             />
           )}
         </motion.div>
@@ -497,13 +542,46 @@ function Slide4Performance({ completo, melhorSemana }) {
   );
 }
 
-function Slide5Controle({ saidas, metas, onMetasChange }) {
+function Slide5Controle({ saidas, metas, onMetasChange, completo, receitaSemana }) {
   return (
     <>
       {saidas && <SaidasDetalhadas saidas={saidas} />}
-      <MetasFinanceiras metas={metas} onChange={onMetasChange} />
+      <MetasFinanceiras
+        metas={metas}
+        onChange={onMetasChange}
+        completo={completo}
+        receitaSemana={receitaSemana}
+      />
     </>
   );
+}
+
+// ============================================================
+// CALCULA "valor atual" da meta usando dados ja carregados
+// ============================================================
+function calcularAtualMeta(meta, ctx) {
+  const { completo, receitaSemana } = ctx;
+  if (!meta) return null;
+  const mensal = completo?.mensal || [];
+  const mesAtual = mensal[mensal.length - 1] || {};
+  const ytd = completo?.ytd?.ano_atual || {};
+
+  switch (meta.tipo) {
+    case 'receita_mensal':       return Number(mesAtual.receita || 0);
+    case 'receita_anual':        return Number(ytd.receita || 0);
+    case 'despesa_max_mensal':   return Number(mesAtual.despesa || 0);
+    case 'saldo_minimo':         return Number(ytd.resultado || 0);
+    case 'pct_categoria':        return null;
+    case 'meta_centro_custo':    return null;
+    default:                     return null;
+  }
+}
+
+function labelPeriodoMeta(tipo) {
+  if (tipo === 'receita_anual')      return 'no ano';
+  if (tipo === 'saldo_minimo')       return 'resultado YTD';
+  if (tipo?.includes('mensal'))      return 'no mês';
+  return '';
 }
 
 // ============================================================
@@ -1099,18 +1177,18 @@ function SaidasList({ linhas, labelKey, extraKey }) {
   );
 }
 
-function MetasFinanceiras({ metas, onChange }) {
+const TIPO_META_LABEL = {
+  receita_mensal: 'Receita mensal',
+  receita_anual: 'Receita anual',
+  despesa_max_mensal: 'Teto despesa mensal',
+  saldo_minimo: 'Saldo mínimo',
+  pct_categoria: '% por categoria',
+  meta_centro_custo: 'Meta centro de custo',
+};
+
+function MetasFinanceiras({ metas, onChange, completo, receitaSemana }) {
   const [editing, setEditing] = useState(null);
   const [showForm, setShowForm] = useState(false);
-
-  const tiposLabel = {
-    receita_mensal: 'Receita mensal',
-    receita_anual: 'Receita anual',
-    despesa_max_mensal: 'Teto despesa mensal',
-    saldo_minimo: 'Saldo mínimo',
-    pct_categoria: '% por categoria',
-    meta_centro_custo: 'Meta centro de custo',
-  };
 
   const salvar = async (payload) => {
     try {
@@ -1133,10 +1211,10 @@ function MetasFinanceiras({ metas, onChange }) {
   return (
     <Card>
       <CardContent className="pt-6">
-        <div className="flex items-center justify-between mb-3">
+        <div className="flex items-center justify-between mb-4">
           <div>
             <h3 className="text-base font-semibold">Metas Financeiras</h3>
-            <p className="text-xs text-muted-foreground">{metas.length} metas ativas</p>
+            <p className="text-xs text-muted-foreground">{metas.length} metas ativas · gauge ou barra de progresso</p>
           </div>
           <Button size="sm" onClick={() => { setEditing(null); setShowForm(true); }}>
             + Nova meta
@@ -1144,48 +1222,24 @@ function MetasFinanceiras({ metas, onChange }) {
         </div>
 
         {metas.length === 0 ? (
-          <div className="py-8 text-center text-sm text-muted-foreground">
-            Nenhuma meta cadastrada · crie a primeira pra ver progresso
+          <div className="py-12 text-center">
+            <Target className="h-12 w-12 mx-auto text-muted-foreground mb-3" />
+            <p className="text-sm text-muted-foreground">Nenhuma meta cadastrada</p>
+            <Button size="sm" className="mt-3" onClick={() => { setEditing(null); setShowForm(true); }}>
+              + Criar primeira meta
+            </Button>
           </div>
         ) : (
-          <div className="space-y-2">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
             {metas.map((m, i) => (
-              <motion.div
+              <MetaCardFin
                 key={m.id}
-                initial={{ opacity: 0, x: -10 }}
-                animate={{ opacity: 1, x: 0 }}
-                transition={{ delay: i * 0.05 }}
-                className="flex items-center justify-between p-3 rounded-lg border border-border hover:bg-muted/30 transition-colors"
-              >
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <Badge variant="outline" className="text-[10px]">{tiposLabel[m.tipo] || m.tipo}</Badge>
-                    <span className="text-sm font-semibold">{m.descricao || tiposLabel[m.tipo]}</span>
-                  </div>
-                  {(m.plano || m.centro) && (
-                    <div className="text-[11px] text-muted-foreground mt-1">
-                      {m.plano && `Conta: ${m.plano.codigo} ${m.plano.nome}`}
-                      {m.centro && ` · Centro: ${m.centro.codigo} ${m.centro.nome}`}
-                    </div>
-                  )}
-                  {m.observacao && <div className="text-[11px] text-muted-foreground mt-0.5">{m.observacao}</div>}
-                </div>
-                <div className="flex items-center gap-3 shrink-0">
-                  <div className="text-right">
-                    <div className="text-base font-bold tabular-nums">{fmtMoney(m.valor)}</div>
-                    <div className="text-[10px] text-muted-foreground">
-                      {m.tipo.includes('mensal') ? '/mês' : m.tipo.includes('anual') ? '/ano' : ''}
-                      {m.ano && ` · ${m.ano}`}
-                    </div>
-                  </div>
-                  <Button size="sm" variant="ghost" onClick={() => { setEditing(m); setShowForm(true); }}>
-                    Editar
-                  </Button>
-                  <Button size="sm" variant="ghost" onClick={() => remover(m.id)}>
-                    🗑
-                  </Button>
-                </div>
-              </motion.div>
+                meta={m}
+                idx={i}
+                ctx={{ completo, receitaSemana }}
+                onEdit={() => { setEditing(m); setShowForm(true); }}
+                onDelete={() => remover(m.id)}
+              />
             ))}
           </div>
         )}
@@ -1202,6 +1256,125 @@ function MetasFinanceiras({ metas, onChange }) {
   );
 }
 
+function MetaCardFin({ meta, idx, ctx, onEdit, onDelete }) {
+  const atualBruto = calcularAtualMeta(meta, ctx);
+  const atual = atualBruto === null ? 0 : Math.max(0, Number(atualBruto));
+  const metaValor = Number(meta.valor) || 1;
+  const semDado = atualBruto === null;
+
+  // Para despesa_max_mensal · meta = teto · pct invertido (quanto MAIOR atual, PIOR)
+  const isInverso = meta.tipo === 'despesa_max_mensal';
+  const pct = isInverso
+    ? Math.min(200, Math.round((atual / metaValor) * 100))
+    : Math.min(200, Math.round((atual / metaValor) * 100));
+  const cor = isInverso
+    ? (pct <= 80 ? '#10b981' : pct <= 100 ? '#f59e0b' : '#ef4444')
+    : (pct >= 100 ? '#10b981' : pct >= 70 ? '#f59e0b' : '#ef4444');
+
+  const tipoGrafico = meta.tipo_grafico || 'gauge';
+  const tipoLabel = TIPO_META_LABEL[meta.tipo] || meta.tipo;
+  const periodoTxt = labelPeriodoMeta(meta.tipo);
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 12 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.4, delay: idx * 0.05, ease: 'easeOut' }}
+    >
+      <Card className={`relative overflow-hidden ${!meta.ativa ? 'opacity-60' : ''}`}>
+        <div className="absolute top-0 left-0 right-0 h-1" style={{ background: cor }} />
+        <CardContent className="pt-5 pb-4">
+          <div className="flex items-start justify-between gap-2 mb-3">
+            <div className="min-w-0 flex-1">
+              <Badge variant="outline" className="text-[10px] mb-1">{tipoLabel}</Badge>
+              <h4 className="text-sm font-semibold leading-tight truncate" title={meta.descricao || tipoLabel}>
+                {meta.descricao || tipoLabel}
+              </h4>
+              {(meta.plano || meta.centro) && (
+                <div className="text-[10px] text-muted-foreground mt-1 truncate">
+                  {meta.plano && `${meta.plano.codigo} ${meta.plano.nome}`}
+                  {meta.centro && ` · ${meta.centro.codigo} ${meta.centro.nome}`}
+                </div>
+              )}
+            </div>
+            <div className="flex gap-0.5 shrink-0">
+              <button
+                onClick={onEdit}
+                className="p-1.5 rounded hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
+                title="Editar"
+              >
+                <FileText className="h-3.5 w-3.5" />
+              </button>
+              <button
+                onClick={onDelete}
+                className="p-1.5 rounded hover:bg-red-500/10 text-muted-foreground hover:text-red-500 transition-colors"
+                title="Remover"
+              >
+                <span className="text-sm leading-none">×</span>
+              </button>
+            </div>
+          </div>
+
+          {semDado ? (
+            <div className="py-8 text-center text-xs text-muted-foreground">
+              Cálculo automático ainda não disponível para este tipo
+            </div>
+          ) : tipoGrafico === 'gauge' ? (
+            <div className="-mt-2">
+              <MetaGauge
+                atual={atual}
+                meta={metaValor}
+                anim={`${meta.id}-${atual}`}
+                size={200}
+                label={`${pct}% ${isInverso ? 'consumido' : 'atingido'}`}
+                showLabels={false}
+              />
+              <div className="text-center text-[11px] text-muted-foreground -mt-2">
+                <span className="tabular-nums font-medium" style={{ color: cor }}>{fmtCompact(atual)}</span>
+                <span className="mx-1">de</span>
+                <span className="tabular-nums">{fmtCompact(metaValor)}</span>
+                {periodoTxt && <span className="ml-1">· {periodoTxt}</span>}
+              </div>
+            </div>
+          ) : (
+            <div className="space-y-2">
+              <div className="flex items-baseline justify-between">
+                <motion.div
+                  key={`val-${meta.id}-${atual}`}
+                  initial={{ scale: 0.85, opacity: 0 }}
+                  animate={{ scale: 1, opacity: 1 }}
+                  transition={{ duration: 0.4 }}
+                  className="text-2xl font-bold tabular-nums"
+                  style={{ color: cor }}
+                >
+                  <CountUp value={atual} format={fmtCompact} />
+                </motion.div>
+                <div className="text-xs text-muted-foreground tabular-nums">
+                  / {fmtCompact(metaValor)}
+                </div>
+              </div>
+              <div className="h-3 rounded-full bg-muted overflow-hidden">
+                <motion.div
+                  key={`bar-${meta.id}-${pct}`}
+                  className="h-full rounded-full"
+                  style={{ background: cor }}
+                  initial={{ width: 0 }}
+                  animate={{ width: `${Math.min(100, pct)}%` }}
+                  transition={{ duration: 1.0, ease: 'easeOut' }}
+                />
+              </div>
+              <div className="flex items-baseline justify-between text-[11px]">
+                <span className="font-semibold tabular-nums" style={{ color: cor }}>{pct}%</span>
+                <span className="text-muted-foreground">{periodoTxt}</span>
+              </div>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+    </motion.div>
+  );
+}
+
 function MetaForm({ inicial, onCancel, onSave }) {
   const [form, setForm] = useState({
     tipo: inicial.tipo || 'receita_mensal',
@@ -1211,6 +1384,7 @@ function MetaForm({ inicial, onCancel, onSave }) {
     mes_inicio: inicial.mes_inicio || 1,
     mes_fim: inicial.mes_fim || 12,
     observacao: inicial.observacao || '',
+    tipo_grafico: inicial.tipo_grafico || 'gauge',
     ativa: inicial.ativa !== false,
     id: inicial.id,
   });
@@ -1269,6 +1443,33 @@ function MetaForm({ inicial, onCancel, onSave }) {
             onChange={(e) => setForm({ ...form, ano: parseInt(e.target.value) || 2026 })}
             className="w-full px-3 py-2 text-sm rounded-md border border-border bg-background tabular-nums"
           />
+        </div>
+        <div className="md:col-span-2">
+          <label className="text-xs font-medium text-muted-foreground block mb-1">Visualização</label>
+          <div className="grid grid-cols-2 gap-2">
+            {[
+              { v: 'gauge', l: 'Gauge (meia-lua)', icon: Activity },
+              { v: 'barra', l: 'Barra de progresso', icon: BarChart3 },
+            ].map(t => {
+              const ativo = form.tipo_grafico === t.v;
+              const Icone = t.icon;
+              return (
+                <button
+                  key={t.v}
+                  type="button"
+                  onClick={() => setForm({ ...form, tipo_grafico: t.v })}
+                  className={`p-2 rounded-lg border text-xs font-medium transition-all flex items-center gap-2 ${
+                    ativo
+                      ? 'bg-primary/10 border-primary text-primary'
+                      : 'border-border text-muted-foreground hover:border-foreground/30'
+                  }`}
+                >
+                  <Icone className="h-4 w-4" />
+                  {t.l}
+                </button>
+              );
+            })}
+          </div>
         </div>
         <div className="md:col-span-2">
           <label className="text-xs font-medium text-muted-foreground block mb-1">Observação</label>
