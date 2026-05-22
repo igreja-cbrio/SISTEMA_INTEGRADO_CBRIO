@@ -59,18 +59,30 @@ function isPathNaoExiste(err) {
 
 async function tentarComPaths(fn) {
   if (pathFuncionando) return fn(pathFuncionando);
-  let ultimoErro = null;
+  const errosPorPath = [];
   for (const p of PIX_COB_PATHS) {
     try {
       const res = await fn(p);
       pathFuncionando = p;
       return res;
     } catch (e) {
-      ultimoErro = e;
-      if (!isPathNaoExiste(e)) throw e;
+      errosPorPath.push({ path: `${p.base}/${p.cobSegment}`, status: e.status || '?', msg: (e.message || '').slice(0, 120) });
+      if (!isPathNaoExiste(e)) {
+        const ag = new Error(`${e.message}\n\nPaths tentados antes deste:\n${errosPorPath.map((x, i) => `  ${i+1}. [${x.status}] ${x.path}`).join('\n')}`);
+        ag.status = e.status;
+        ag.body = e.body;
+        ag.tentativas = errosPorPath;
+        throw ag;
+      }
     }
   }
-  throw ultimoErro || new Error('Nenhum path Santander PIX Cobranca respondeu');
+  const ag = new Error(
+    `Nenhum dos ${PIX_COB_PATHS.length} paths Santander PIX Cobranca respondeu. Tentativas:\n` +
+    errosPorPath.map((x, i) => `  ${i+1}. [${x.status}] ${x.path}`).join('\n') +
+    `\n\nUltimo erro: ${errosPorPath[errosPorPath.length-1]?.msg || ''}`
+  );
+  ag.tentativas = errosPorPath;
+  throw ag;
 }
 
 async function criarCobranca({ txid, valor, devedor, solicitacao, expiracao = 3600 }) {
