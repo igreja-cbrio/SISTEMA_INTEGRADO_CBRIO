@@ -482,6 +482,7 @@ export const financeiro = {
     fechar: (ano, mes, observacao) => post('/financeiro/closing/fechar', { ano, mes, observacao }),
     reabrir: (ano, mes, motivo) => post('/financeiro/closing/reabrir', { ano, mes, motivo }),
   },
+  dreComparativo: () => get('/financeiro/dre-comparativo'),
   dreCentroAtual: () => get('/financeiro/dre-centro-custo/atual'),
   dreCentroHistorico: (id) => get(`/financeiro/dre-centro-custo/${id}/historico`),
   reembolsos: {
