@@ -39,9 +39,11 @@ async function listReceipts({ startDate, endDate, limit = 50, offset = 0, catego
 }
 
 // ── File request (assincrono) ──────────────────────────────────────────────
-async function createFileRequest(paymentId, { userId = null } = {}) {
+async function createFileRequest(paymentId, { userId = null, paymentDate = null } = {}) {
   if (!paymentId) throw new Error('paymentId obrigatorio');
-  const body = { payment: { paymentId } };
+  // Santander exige 'data do comprovante' (paymentDate) no body
+  // Sem isso retorna 400 · 016:Campo obrigatorio data do comprovante nao informado
+  const body = { payment: { paymentId, ...(paymentDate ? { paymentDate } : {}) } };
   return callApi(`${BASE}/payment_receipts/${encodeURIComponent(paymentId)}/file_requests`, {
     method: 'POST',
     body,
@@ -86,8 +88,12 @@ async function waitForAvailable(paymentId, requestId, { maxTries = 15, intervalM
 async function baixarComprovante(paymentId, { userId = null, metadata = {} } = {}) {
   if (!supabase) throw new Error('Supabase nao configurado');
 
-  // 1. Cria file_request (ou pega existente)
-  const created = await createFileRequest(paymentId, { userId });
+  // 1. Cria file_request (ou pega existente) · paymentDate vem do metadata
+  // (frontend captura de payment.requestValueDateTime · campo do Santander)
+  const created = await createFileRequest(paymentId, {
+    userId,
+    paymentDate: metadata?.payment_date || null,
+  });
   const requestId = created?.request?.requestId;
   if (!requestId) throw new Error('Santander nao retornou requestId');
 
