@@ -75,8 +75,8 @@ async function getModulos() {
 let cargoMatrixCache = null;
 let cargoMatrixCacheTime = 0;
 
-async function getCargoMatrix() {
-  if (cargoMatrixCache && Date.now() - cargoMatrixCacheTime < CACHE_TTL) return cargoMatrixCache;
+async function getCargoMatrix({ forceRefresh = false } = {}) {
+  if (!forceRefresh && cargoMatrixCache && Date.now() - cargoMatrixCacheTime < CACHE_TTL) return cargoMatrixCache;
   const { data } = await supabase
     .from('cargo_modulo_permissao')
     .select('cargo_id, modulo_id, nivel, pode_exportar, pode_aprovar, escopo_proprio');
@@ -281,7 +281,21 @@ async function authenticate(req, res, next) {
       const validOverrides = (overrides || []).filter(o => !o.expira_em || new Date(o.expira_em).getTime() > now);
 
       const modulos = await getModulos();
-      const cargoMatrix = await getCargoMatrix();
+      let cargoMatrix = await getCargoMatrix();
+
+      // Safety net · se a matriz em cache nao tem NENHUMA linha pro cargo do
+      // usuario (caso comum quando um cargo foi criado via migration mas o
+      // bust de cache so atingiu uma instancia serverless), forca refetch.
+      // Sem isso, defaultsByMod fica vazio e o usuario perde acesso a tudo
+      // que nao recebe boost por area.
+      if (
+        permUser.cargo_id &&
+        cargoMatrix.length > 0 &&
+        !cargoMatrix.some(r => r.cargo_id === permUser.cargo_id)
+      ) {
+        console.warn(`[AUTH] cargoMatrix sem linhas pro cargo_id=${permUser.cargo_id} (${profile.email}) · forcando refresh`);
+        cargoMatrix = await getCargoMatrix({ forceRefresh: true });
+      }
 
       // Carregar areas ANTES de resolver perms · boost por area precisa delas
       const { data: userAreas } = await supabase.from('usuario_areas')
