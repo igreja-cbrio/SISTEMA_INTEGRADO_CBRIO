@@ -188,6 +188,123 @@ router.get('/qr-lookup/:token', async (req, res) => {
   }
 });
 
+// ── CPF Lookup (identidade do membro por CPF) ──
+//
+// GET /api/membresia/cpf-lookup/:cpf
+// Mesma logica do qr-lookup, mas resolve direto pelo CPF (sem token).
+// Usado no totem como alternativa pra quem nao tem a carteirinha digital.
+// CPF e' normalizado pra so digitos antes do match.
+router.get('/cpf-lookup/:cpf', async (req, res) => {
+  try {
+    const cpf = String(req.params.cpf || '').replace(/\D/g, '');
+    if (!cpf || cpf.length !== 11) {
+      return res.status(400).json({ error: 'CPF invalido' });
+    }
+
+    // 1) Tenta membro ativo em mem_membros
+    const { data: membro } = await supabase
+      .from('mem_membros')
+      .select(`
+        id, nome, foto_url, status, email, telefone, data_nascimento, cpf,
+        endereco, bairro, cidade, estado_civil, cep, lat, lng,
+        familia:mem_familias(id, nome)
+      `)
+      .eq('cpf', cpf)
+      .eq('active', true)
+      .maybeSingle();
+
+    if (membro) {
+      const [grupoAtualRes, ministeriosRes, ultContribRes, ultCheckinRes, trilhaRes] = await Promise.all([
+        supabase
+          .from('mem_grupo_membros')
+          .select('grupo:mem_grupos(id, nome, categoria, local, dia_semana, horario)')
+          .is('deleted_at', null)
+          .eq('membro_id', membro.id)
+          .is('saiu_em', null)
+          .maybeSingle(),
+        supabase
+          .from('mem_voluntarios')
+          .select('ministerio:mem_ministerios(id, nome, cor)')
+          .eq('membro_id', membro.id)
+          .is('ate', null),
+        supabase
+          .from('mem_contribuicoes')
+          .select('data')
+          .eq('membro_id', membro.id)
+          .order('data', { ascending: false })
+          .limit(1)
+          .maybeSingle(),
+        supabase
+          .from('mem_checkins')
+          .select('data')
+          .eq('membro_id', membro.id)
+          .order('data', { ascending: false })
+          .limit(1)
+          .maybeSingle(),
+        supabase
+          .from('mem_trilha_valores')
+          .select('etapa, data_conclusao, concluida')
+          .eq('membro_id', membro.id),
+      ]);
+
+      const ultimaContribuicao = ultContribRes?.data?.data || null;
+      const ultimoCheckin = ultCheckinRes?.data?.data || null;
+      const ministerios = (ministeriosRes?.data || [])
+        .map((v) => v.ministerio)
+        .filter(Boolean);
+      const trilha = trilhaRes?.data || [];
+
+      return res.json({
+        found: true,
+        pending: false,
+        membro: {
+          id: membro.id,
+          nome: membro.nome,
+          foto_url: membro.foto_url,
+          status: membro.status,
+          email: membro.email,
+          telefone: membro.telefone,
+          data_nascimento: membro.data_nascimento,
+          cpf: membro.cpf,
+          endereco: membro.endereco,
+          bairro: membro.bairro,
+          cidade: membro.cidade,
+          cep: membro.cep,
+          estado_civil: membro.estado_civil,
+          familia: membro.familia || null,
+          grupo_atual: grupoAtualRes?.data?.grupo || null,
+          ministerios,
+          trilha,
+          ultima_contribuicao: ultimaContribuicao,
+          nivel_generosidade: calcularNivelGenerosidade(ultimaContribuicao),
+          ultimo_checkin: ultimoCheckin,
+          nivel_servico: calcularNivelServico(ultimoCheckin),
+        },
+      });
+    }
+
+    // 2) Fallback: cadastro pendente
+    const { data: pendente } = await supabase
+      .from('mem_cadastros_pendentes')
+      .select('id, nome, foto_url, email, telefone, data_nascimento, cpf, endereco, bairro, cidade, estado_civil, status, created_at')
+      .eq('cpf', cpf)
+      .maybeSingle();
+
+    if (pendente) {
+      return res.json({
+        found: true,
+        pending: true,
+        cadastro: pendente,
+      });
+    }
+
+    return res.status(404).json({ error: 'Cadastro nao encontrado' });
+  } catch (e) {
+    console.error('[MEMBRESIA] cpf-lookup error:', e.message);
+    res.status(500).json({ error: 'Erro ao consultar CPF' });
+  }
+});
+
 // ── Membros ──
 
 // GET /api/membresia/membros
