@@ -679,14 +679,55 @@ com service_role). Drop seguro · sem mudança no fluxo público.
   `area_responsaveis.responsavel_nome`/`projects.leader` pra UUID FK,
   CASCADE → SET NULL em FKs históricas, audit log de leituras de CPF/salário
 
-## Totem Kids · modulo novo (2026-05-21 · branch marcos-totem-kids)
+## Totem Kids · estado 2026-05-25 (sessao encerrada · aguardando teste real)
 
+Marcos: "deixe tudo no contexto para ser testado, quando for a hora te chamo
+novamente". Codigo 100% implementado. Falta hardware (Fire TVs) + setup
+Brother no Windows do totem + culto piloto.
+
+### Estado atual
+- **Banco**: 660 familias + 894 criancas importadas do PC (CSV attendance
+  dez/25→mai/26) + 2637 vinculos kids_responsaveis · 498/892 com responsavel
+  (56%) · 394 sem (vao preencher via modal auto-cadastro no 1o check-in)
+- **App**: 100% funcional · checkin manned, checkout, decisoes, painel ao
+  vivo, sala de decisoes, configuracoes, parear, display sala, display foyer,
+  teste etiqueta
+- **TV das salas**: codigo pronto · falta comprar 6 Fire TV Sticks (~R$ 1800)
+- **Brother**: instrucoes em docs/totem-kids-setup-brother.md · Marcos ainda
+  nao configurou no Windows do totem fisico
+- **Etiqueta DK-1201** paisagem 90×29mm (corrigi de 29×90 retrato)
+- **Migrations aplicadas no Supabase**: 1-5 (ver lista abaixo). Marcos
+  precisa aplicar a #6 (`20260522300000_totem_kids_chamadas_display.sql`)
+  quando voltar pra testar TVs.
+
+### Pendencias quando voltar (ordem sugerida)
+1. Aplicar `20260522300000_totem_kids_chamadas_display.sql` no Supabase
+2. Configurar Brother no Windows do totem (docs/totem-kids-setup-brother.md)
+3. Comprar 6 Fire TV Sticks + cabos HDMI
+4. Setup pareamento de cada Fire TV (1 por sala + 1 foyer):
+   - Admin → /configuracoes → Estacoes → cria "TV Infantil 1" tipo `display`
+     vinculada a sala
+   - Clica ✨ QR · escaneia no Silk Browser do Fire TV
+   - Page `/parear?estacao=X&token=Y` valida + redireciona display-sala
+   - Marca URL como homepage do Silk Browser
+   - Repete pras 5 salas + 1 foyer
+5. PC touch da recepcao · criar estacao tipo `self` + parear · checkout
+   self-service (pai opera sem login)
+6. Teste num culto pequeno (Quarta com Deus) antes do domingo grande
+7. (Opcional) Agendar pg_cron 23h pra `fn_kids_checkout_forcado_pendentes()`
+
+### Pedido original
 Pedido do Eduardo (gestor) repassado pelo Marcos · substituir o **Planning
 Center Check-Ins** por modulo proprio pra ministerio infantil. Diferente do
 totem do voluntariado: crianca **nao** e escalada antes, mae digita o nome no
 totem, voluntario imprime 2 etiquetas (crianca + recibo do responsavel) com
 codigo de seguranca de 4 chars · no checkout, etiqueta da mae bate com etiqueta
 da crianca pra liberar a saida.
+
+Apos primeira implementacao, Marcos pediu **TVs nas salas chamando o pickup**
+(2026-05-22): pai digita codigo na recepcao, sistema dispara chamada pra TV
+da sala, professora ve "F8K3 · MARIA CLARA" gigante + TTS pt-BR "Maria Clara
+sua familia chegou", leva crianca pra recepcao. Painel foyer agregado.
 
 ### Localizacao
 - Menu **Ministerial > Ferramentas > Totem Kids** (vizinho do Totem Membro)
