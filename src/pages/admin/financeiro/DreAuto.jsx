@@ -94,21 +94,44 @@ function DreMensal() {
     setMes(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`);
   };
 
+  // Seletores explícitos · ano vai de 2022 até atual
+  const [anoAtual, mesAtualNum] = mes.split('-').map(Number);
+  const MES_NOMES = ['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'];
+  const anosDisponiveis = [];
+  for (let y = hoje.getFullYear(); y >= 2022; y--) anosDisponiveis.push(y);
+
+  const trocarAno = (y) => setMes(`${y}-${String(mesAtualNum).padStart(2, '0')}`);
+  const trocarMes = (m) => setMes(`${anoAtual}-${String(m + 1).padStart(2, '0')}`);
+
   if (loading || !data) return <Loading />;
 
   return (
     <div className="space-y-4">
-      {/* Header com navegação de mês */}
+      {/* Header com navegação + dropdowns */}
       <Card>
-        <CardContent className="pt-4 pb-4 flex items-center justify-between">
-          <Button variant="outline" size="sm" onClick={() => navegar(-1)}>← Mês anterior</Button>
-          <div className="text-center">
-            <div className="text-sm text-muted-foreground">Demonstrativo</div>
-            <div className="text-lg font-bold capitalize">{monthLabel(mes)}</div>
+        <CardContent className="pt-4 pb-4">
+          <div className="flex items-center justify-between gap-3 flex-wrap">
+            <Button variant="outline" size="sm" onClick={() => navegar(-1)}>← Mês anterior</Button>
+            <div className="flex items-center gap-2">
+              <select
+                value={mesAtualNum - 1}
+                onChange={e => trocarMes(Number(e.target.value))}
+                className="px-3 py-1.5 text-sm rounded border bg-background font-medium"
+              >
+                {MES_NOMES.map((n, i) => <option key={i} value={i}>{n}</option>)}
+              </select>
+              <select
+                value={anoAtual}
+                onChange={e => trocarAno(Number(e.target.value))}
+                className="px-3 py-1.5 text-sm rounded border bg-background font-medium"
+              >
+                {anosDisponiveis.map(a => <option key={a} value={a}>{a}</option>)}
+              </select>
+            </div>
+            <Button variant="outline" size="sm" onClick={() => navegar(1)} disabled={mes >= mesAtual}>
+              Próximo mês →
+            </Button>
           </div>
-          <Button variant="outline" size="sm" onClick={() => navegar(1)} disabled={mes >= mesAtual}>
-            Próximo mês →
-          </Button>
         </CardContent>
       </Card>
 
