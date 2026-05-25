@@ -29,7 +29,10 @@ const ANALYTICS  = 'https://youtubeanalytics.googleapis.com/v2';
 // Canal CBRio fixo · usado quando a conta OAuth NAO possui canal proprio mas
 // tem permissao de Manager via YT Studio Permissions. Override via env
 // YOUTUBE_CHANNEL_ID se um dia precisar.
-const CBRIO_CHANNEL_ID = process.env.YOUTUBE_CHANNEL_ID || 'UCfjMVzaYlCS_VE3JuEJj2vQ';
+// Canal CBRio · 'Rede Social CBrio' (UCMJOg5...) é onde os cultos vivem.
+// Antes apontava pra UCfjMVz... IgrejaCBRio (canal genérico). Mantém override
+// via env caso troque no futuro.
+const CBRIO_CHANNEL_ID = process.env.YOUTUBE_CHANNEL_ID || 'UCMJOg5mDnHbKsxeS8MLWkUw';
 
 const SCOPES = [
   'https://www.googleapis.com/auth/youtube.readonly',

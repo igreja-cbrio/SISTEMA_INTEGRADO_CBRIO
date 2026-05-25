@@ -198,6 +198,11 @@ router.post('/coletar/retencao-curva', authorize('admin', 'diretor'), async (_re
 router.post('/coletar/sub-status', authorize('admin', 'diretor'), async (_req, res) => {
   try { res.json(await collectors.subStatusCollector()); } catch (e) { res.status(500).json({ error: e.message }); }
 });
+router.post('/coletar/backfill-range', authorize('admin', 'diretor'), async (req, res) => {
+  const { data_inicio, data_fim } = req.body || {};
+  if (!data_inicio || !data_fim) return res.status(400).json({ error: 'data_inicio e data_fim obrigatorios' });
+  try { res.json(await collectors.backfillRange(data_inicio, data_fim)); } catch (e) { res.status(500).json({ error: e.message }); }
+});
 router.post('/coletar/backfill-cultos', authorize('admin', 'diretor'), async (_req, res) => {
   try { res.json(await collectors.backfillCultoVideoIds()); } catch (e) { res.status(500).json({ error: e.message }); }
 });
