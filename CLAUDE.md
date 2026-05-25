@@ -2,33 +2,53 @@
 
 Guia operacional para o Claude Code quando trabalhar neste repositório.
 
-## ⚠️ Supabase JS limita queries em 1000 linhas por default (2026-05-25)
+## ⚠️ PostgREST do Supabase capa em 1000 linhas server-side (2026-05-25)
 
-Bug pego em producao · cargo `supervisor-jornada` criado, matriz seedada
-com nivel 3 nos modulos da jornada, mas o Marcelo Soares (atribuido ao
-cargo) ficava com leitura=0 em tudo que nao tinha boost por area.
+Bug pego em producao · cargo `supervisor-jornada` (cargo_id=63) criado,
+matriz seedada com nivel 3 nos modulos da jornada, mas o Marcelo Soares
+ficava com leitura=0 em tudo sem boost por area.
 
-Causa · `getCargoMatrix()` no `backend/middleware/auth.js` fazia
-`supabase.from('cargo_modulo_permissao').select(...)` sem `.range()`.
-O Supabase JS client v2 retorna **no maximo 1000 linhas por query**
-quando nao especificado. A matriz tinha ~1073 linhas (29 cargos × 37
-modulos) · as linhas dos cargos com `id` mais alto (supervisor-jornada
-cargo_id=63 foi o ultimo criado) cairam fora dos primeiros 1000 e o
-backend nunca conseguia computar `defaultsByMod` pra esses cargos.
+**Causa** · `supabase.from('cargo_modulo_permissao').select(...)`
+retornava no maximo 1000 linhas. A matriz tinha ~1073 linhas. Os cargos
+com id mais alto (incluindo supervisor-jornada=63) ficaram fora.
 
-**Sempre adicionar `.range(0, 19999)`** (ou paginar) quando a query
-puder retornar > 1000 linhas. Aplicado em:
-- `getCargoMatrix()` em `auth.js`
-- `GET /api/permissoes/matriz` (consumido pela UI admin)
-- `GET /api/permissoes/diagnostico/:email`
+**Importante** · `.range(0, 19999)` no Supabase JS NAO contorna o limite.
+O cap eh server-side no PostgREST (`db-max-rows` no projeto Supabase) e
+vale pra qualquer cliente. Tentar passar do cap retorna ate o cap.
 
-Outros candidatos a auditar:
-- exports de `mem_membros`, `mem_voluntarios`, `mem_contribuicoes`, `cultos`
-- qualquer agg em massa que nao use `.range()` ou paginacao
+**Solucoes (em ordem de preferencia)**:
+
+1. **Filtrar no DB** quando souber o filtro · ex: `.eq('cargo_id', X)`.
+   Reduz pra ~30 linhas, longe do cap.
+2. **Paginar com loop** quando precisar de tudo:
+   ```js
+   let all = [];
+   let offset = 0;
+   const pageSize = 1000;
+   while (true) {
+     const { data } = await supabase.from('tabela').select('*')
+       .range(offset, offset + pageSize - 1);
+     if (!data || data.length === 0) break;
+     all = all.concat(data);
+     if (data.length < pageSize) break;
+     offset += pageSize;
+   }
+   ```
+3. **RPC** com server-side aggregation quando precisar de stats.
+
+**Aplicado em**:
+- `getCargoMatrix(cargoId)` em `auth.js` · filtra por cargo (opcao 1)
+- `GET /api/permissoes/matriz` · paginado (opcao 2)
+- `GET /api/permissoes/diagnostico/:email` · paginado (opcao 2)
+
+**Auditar quando crescer**:
+- `mem_membros` (ja >1000), `mem_voluntarios`, `mem_contribuicoes`
+- `cultos`, `mem_grupo_membros`, `nsm_eventos`
+- Qualquer exports ou agg que `.select('*')` sem filtro/paginacao
 
 Pra debug similar futuro · `/api/permissoes/diagnostico/:email` mostra
-`matrix_stats.cargoMatrix_total_rows`. Se for exatamente 1000, o
-sintoma de truncamento esta presente.
+`matrix_stats.cargoMatrix_total_rows`. Se for exatamente 1000, sintoma
+do cap presente.
 
 ## Cargo · supervisor-jornada (Marcelo Soares · 2026-05-25)
 

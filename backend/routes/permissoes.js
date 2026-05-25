@@ -212,10 +212,22 @@ router.get('/diagnostico/:email', async (req, res) => {
       .from('modulos')
       .select('id, nome, slug, categoria, rota, ordem')
       .eq('ativo', true);
-    const { data: cargoMatrixRaw } = await supabase
-      .from('cargo_modulo_permissao')
-      .select('cargo_id, modulo_id, nivel, pode_exportar, pode_aprovar, escopo_proprio')
-      .range(0, 19999);
+    // Paginacao manual pra contornar o cap PostgREST de 1000 linhas
+    let cargoMatrixRaw = [];
+    {
+      let offset = 0;
+      const pageSize = 1000;
+      while (true) {
+        const { data: page } = await supabase
+          .from('cargo_modulo_permissao')
+          .select('cargo_id, modulo_id, nivel, pode_exportar, pode_aprovar, escopo_proprio')
+          .range(offset, offset + pageSize - 1);
+        if (!page || page.length === 0) break;
+        cargoMatrixRaw = cargoMatrixRaw.concat(page);
+        if (page.length < pageSize) break;
+        offset += pageSize;
+      }
+    }
 
     const cargoId = usuario?.cargo_id;
     const cargoIdType = typeof cargoId;
@@ -302,17 +314,31 @@ router.get('/estrutura', async (req, res) => {
 // ────────────────────────────────────────────────────────────────────────
 router.get('/matriz', async (_req, res) => {
   try {
-    const [cargos, modulos, celulas] = await Promise.all([
+    const [cargos, modulos] = await Promise.all([
       supabase.from('cargos').select('*').eq('ativo', true).order('ordem'),
       supabase.from('modulos').select('*').eq('ativo', true).order('ordem'),
-      // .range(0, 19999) · default do Supabase JS eh 1000 linhas · sem isso
-      // a matriz fica truncada e UI admin nao mostra celulas dos cargos novos
-      supabase.from('cargo_modulo_permissao').select('*').range(0, 19999),
     ]);
+
+    // PostgREST capa em 1000 linhas por response · paginamos via .range()
+    // ate exaurir. Matriz tem ~1073 linhas hoje (29 cargos × 37 modulos).
+    let celulas = [];
+    let offset = 0;
+    const pageSize = 1000;
+    while (true) {
+      const { data, error } = await supabase
+        .from('cargo_modulo_permissao')
+        .select('*')
+        .range(offset, offset + pageSize - 1);
+      if (error) return res.status(400).json({ error: error.message });
+      if (!data || data.length === 0) break;
+      celulas = celulas.concat(data);
+      if (data.length < pageSize) break;
+      offset += pageSize;
+    }
     res.json({
       cargos: cargos.data || [],
       modulos: modulos.data || [],
-      celulas: celulas.data || [],
+      celulas,
     });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });

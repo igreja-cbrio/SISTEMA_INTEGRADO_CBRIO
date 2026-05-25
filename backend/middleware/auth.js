@@ -75,20 +75,21 @@ async function getModulos() {
 }
 
 // Matriz cargo×modulo · SEM CACHE PERSISTENTE entre requests.
-// A matriz tem ~1000+ linhas (cresce com cargos × modulos) · query <50ms.
-// Vale a confiabilidade de sempre ter dado fresco · cada cargo novo
-// criado via migration vira efetivo na proxima requisicao.
 //
-// IMPORTANTE · Supabase JS limita resultados em 1000 linhas por default.
-// Sem .range() explicito, perdiamos as linhas dos cargos com id mais alto
-// (caso real · supervisor-jornada cargo_id=63 ficou fora do retorno e o
-// Marcelo Soares teve permissoes zeradas em todos os modulos sem boost
-// por area). .range(0, 19999) cobre crescimento ate ~600 cargos × 30 mod.
-async function getCargoMatrix() {
-  const { data } = await supabase
+// IMPORTANTE · PostgREST do Supabase capa em 1000 linhas por response
+// (`db-max-rows` no projeto). `.range(0, N)` nao passa do cap. Solucao:
+// filtrar por cargo direto no DB (`eq('cargo_id', cargoId)`) ja que so
+// precisamos das linhas do cargo do usuario. Sao ~30 linhas por cargo
+// vs 1000+ na matriz inteira · query <20ms.
+//
+// Sem cargoId, retorna ate o cap (uso legado / admin UI que precise
+// agregar todos cargos · ai vai paginado via /api/permissoes/matriz).
+async function getCargoMatrix(cargoId = null) {
+  let query = supabase
     .from('cargo_modulo_permissao')
-    .select('cargo_id, modulo_id, nivel, pode_exportar, pode_aprovar, escopo_proprio')
-    .range(0, 19999);
+    .select('cargo_id, modulo_id, nivel, pode_exportar, pode_aprovar, escopo_proprio');
+  if (cargoId != null) query = query.eq('cargo_id', cargoId);
+  const { data } = await query;
   return data || [];
 }
 
@@ -288,7 +289,8 @@ async function authenticate(req, res, next) {
       const validOverrides = (overrides || []).filter(o => !o.expira_em || new Date(o.expira_em).getTime() > now);
 
       const modulos = await getModulos();
-      const cargoMatrix = await getCargoMatrix();
+      // Passa cargoId · DB filtra (so ~30 linhas vs 1000+ cap PostgREST)
+      const cargoMatrix = await getCargoMatrix(permUser.cargo_id);
 
       // Carregar areas ANTES de resolver perms · boost por area precisa delas
       const { data: userAreas } = await supabase.from('usuario_areas')
