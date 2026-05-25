@@ -8,7 +8,7 @@ import {
   ArrowRight, HandHeart, Lock, Eye, EyeOff, ChevronLeft,
   QrCode, Loader2, CheckCircle2, Maximize, Minimize,
   MapPin, Clock, Star, Map, List, Navigation, Sun, Moon,
-  Camera, RotateCcw, Save, X, ChevronRight,
+  Camera, RotateCcw, Save, X, ChevronRight, Delete, KeyRound,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -30,7 +30,7 @@ const MENU_OPTIONS = [
 ] as const;
 
 type OptionId = (typeof MENU_OPTIONS)[number]['id'];
-type KioskState = 'setup' | 'locked' | 'idle' | 'scanning' | 'greeting' | 'option' | 'done' | 'exit_confirm';
+type KioskState = 'setup' | 'locked' | 'idle' | 'cpf_input' | 'scanning' | 'greeting' | 'option' | 'done' | 'exit_confirm';
 
 interface MemberData {
   nome: string;
@@ -89,24 +89,28 @@ export default function TotemMembro() {
 
   // ── USB scanner ─────────────────────────────────────────────────────────────
 
+  const applyLookupResult = useCallback((data: any) => {
+    const src = data.membro || data.cadastro || {};
+    setMember({
+      nome: src.nome || 'Membro',
+      foto_url: src.foto_url,
+      id: src.id,
+      cpf: src.cpf,
+      email: src.email,
+      telefone: src.telefone,
+      pending: !!data.pending,
+      raw: data,
+    });
+    setState('greeting');
+    resetInactivity();
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
   const handleQrToken = useCallback(async (token: string) => {
     setState('scanning');
     try {
       const data = await membresia.qrLookup(token);
       if (data.found) {
-        const src = data.membro || data.cadastro || {};
-        setMember({
-          nome: src.nome || 'Membro',
-          foto_url: src.foto_url,
-          id: src.id,
-          cpf: src.cpf,
-          email: src.email,
-          telefone: src.telefone,
-          pending: !!data.pending,
-          raw: data,
-        });
-        setState('greeting');
-        resetInactivity();
+        applyLookupResult(data);
       } else {
         setScanError('QR Code não reconhecido');
         setState('idle');
@@ -117,7 +121,22 @@ export default function TotemMembro() {
       setState('idle');
       setTimeout(() => setScanError(''), 3000);
     }
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [applyLookupResult]);
+
+  const handleCpfLookup = useCallback(async (cpf: string) => {
+    const digits = cpf.replace(/\D/g, '');
+    if (digits.length !== 11) return { ok: false, error: 'CPF incompleto' };
+    try {
+      const data = await membresia.cpfLookup(digits);
+      if (data.found) {
+        applyLookupResult(data);
+        return { ok: true };
+      }
+      return { ok: false, error: 'CPF não encontrado' };
+    } catch (e: any) {
+      return { ok: false, error: e?.message || 'Erro ao consultar CPF' };
+    }
+  }, [applyLookupResult]);
 
   useEffect(() => {
     if (state !== 'idle') return;
@@ -413,6 +432,14 @@ export default function TotemMembro() {
     </div>
   );
 
+  // ── CPF input ─────────────────────────────────────────────────────────────
+  if (state === 'cpf_input') return (
+    <CpfInputScreen
+      onBack={() => setState('idle')}
+      onLookup={handleCpfLookup}
+    />
+  );
+
   // ── Idle (default) ────────────────────────────────────────────────────────
   if (showNovoCadastro) return (
     <NovoCadastroScreen onBack={() => setShowNovoCadastro(false)} />
@@ -452,12 +479,21 @@ export default function TotemMembro() {
           </div>
         )}
 
-        <button
-          onClick={() => setShowNovoCadastro(true)}
-          className="px-6 py-3 rounded-2xl border border-white/15 bg-white/5 hover:bg-white/10 transition-all text-sm text-white/60 hover:text-white/90"
-        >
-          Novo na CBRio? Faça seu cadastro aqui
-        </button>
+        <div className="flex flex-col items-center gap-3">
+          <button
+            onClick={() => setShowNovoCadastro(true)}
+            className="px-6 py-3 rounded-2xl border border-white/15 bg-white/5 hover:bg-white/10 transition-all text-sm text-white/60 hover:text-white/90"
+          >
+            Novo na CBRio? Faça seu cadastro aqui
+          </button>
+          <button
+            onClick={() => setState('cpf_input')}
+            className="flex items-center gap-2 text-xs text-white/30 hover:text-white/60 transition-colors py-1 px-3"
+          >
+            <KeyRound className="h-3.5 w-3.5" />
+            Não tem a carteirinha? Entrar com CPF
+          </button>
+        </div>
       </div>
 
       <div className="flex items-center justify-between px-6 py-3">
@@ -465,6 +501,151 @@ export default function TotemMembro() {
         <button onClick={() => setState('exit_confirm')} className="text-white/5 hover:text-white/20 text-xs transition-colors">
           Sair do modo totem
         </button>
+      </div>
+    </div>
+  );
+}
+
+// ── CPF Input screen ───────────────────────────────────────────────────────
+
+function CpfInputScreen({ onBack, onLookup }: {
+  onBack: () => void;
+  onLookup: (cpf: string) => Promise<{ ok: boolean; error?: string }>;
+}) {
+  const [cpf, setCpf] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+
+  const maskCpf = (digits: string) => {
+    const d = digits.slice(0, 11);
+    if (d.length <= 3) return d;
+    if (d.length <= 6) return `${d.slice(0,3)}.${d.slice(3)}`;
+    if (d.length <= 9) return `${d.slice(0,3)}.${d.slice(3,6)}.${d.slice(6)}`;
+    return `${d.slice(0,3)}.${d.slice(3,6)}.${d.slice(6,9)}-${d.slice(9)}`;
+  };
+
+  const digits = cpf.replace(/\D/g, '');
+  const canSubmit = digits.length === 11 && !loading;
+
+  const pressDigit = (d: string) => {
+    if (loading) return;
+    setError('');
+    setCpf(prev => {
+      const cur = prev.replace(/\D/g, '');
+      if (cur.length >= 11) return prev;
+      return maskCpf(cur + d);
+    });
+  };
+
+  const pressBackspace = () => {
+    if (loading) return;
+    setError('');
+    setCpf(prev => {
+      const cur = prev.replace(/\D/g, '');
+      if (cur.length === 0) return '';
+      return maskCpf(cur.slice(0, -1));
+    });
+  };
+
+  const submit = async () => {
+    if (!canSubmit) return;
+    setLoading(true);
+    setError('');
+    const r = await onLookup(digits);
+    if (!r.ok) {
+      setError(r.error || 'Não foi possível identificar');
+      setLoading(false);
+    }
+  };
+
+  const handleHwKey = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter') { e.preventDefault(); submit(); }
+  };
+
+  const KEYS = ['1','2','3','4','5','6','7','8','9'];
+
+  return (
+    <div className="min-h-screen bg-gradient-to-b from-gray-950 via-gray-900 to-gray-950 text-white flex flex-col select-none">
+      <div className="flex items-center gap-3 px-6 py-4 border-b border-white/10">
+        <button onClick={onBack} className="text-white/40 hover:text-white transition-colors p-1 -ml-1">
+          <ChevronLeft className="h-6 w-6" />
+        </button>
+        <h2 className="text-xl font-semibold">Entrar com CPF</h2>
+      </div>
+
+      <div className="flex-1 flex flex-col items-center justify-center p-6">
+        <div className="w-full max-w-md space-y-6">
+          <div className="text-center space-y-2">
+            <div className="h-16 w-16 rounded-2xl bg-[#00B39D]/15 border border-[#00B39D]/30 flex items-center justify-center mx-auto">
+              <KeyRound className="h-8 w-8 text-[#00B39D]" />
+            </div>
+            <h1 className="text-2xl font-bold">Digite seu CPF</h1>
+            <p className="text-white/50 text-sm">Use o teclado para informar seu CPF</p>
+          </div>
+
+          <input
+            value={cpf}
+            onChange={e => { setError(''); setCpf(maskCpf(e.target.value.replace(/\D/g, ''))); }}
+            onKeyDown={handleHwKey}
+            placeholder="000.000.000-00"
+            inputMode="numeric"
+            autoFocus
+            className="w-full px-4 py-4 rounded-2xl border border-white/15 bg-white/5 text-white text-center text-2xl font-mono tracking-widest placeholder:text-white/20 outline-none focus:border-[#00B39D]"
+            maxLength={14}
+            disabled={loading}
+          />
+
+          {/* Numpad */}
+          <div className="grid grid-cols-3 gap-3">
+            {KEYS.map(k => (
+              <button
+                key={k}
+                type="button"
+                onClick={() => pressDigit(k)}
+                disabled={loading}
+                className="py-5 rounded-2xl border border-white/10 bg-white/5 hover:bg-white/10 active:bg-white/20 transition-colors text-2xl font-semibold disabled:opacity-40"
+              >
+                {k}
+              </button>
+            ))}
+            <button
+              type="button"
+              onClick={pressBackspace}
+              disabled={loading}
+              className="py-5 rounded-2xl border border-white/10 bg-white/5 hover:bg-white/10 active:bg-white/20 transition-colors flex items-center justify-center disabled:opacity-40"
+              aria-label="Apagar"
+            >
+              <Delete className="h-6 w-6 text-white/60" />
+            </button>
+            <button
+              type="button"
+              onClick={() => pressDigit('0')}
+              disabled={loading}
+              className="py-5 rounded-2xl border border-white/10 bg-white/5 hover:bg-white/10 active:bg-white/20 transition-colors text-2xl font-semibold disabled:opacity-40"
+            >
+              0
+            </button>
+            <button
+              type="button"
+              onClick={submit}
+              disabled={!canSubmit}
+              className="py-5 rounded-2xl bg-[#00B39D] hover:bg-[#00B39D]/90 active:bg-[#00B39D]/80 transition-colors flex items-center justify-center disabled:opacity-40 disabled:cursor-not-allowed"
+              aria-label="Confirmar"
+            >
+              {loading ? <Loader2 className="h-6 w-6 animate-spin" /> : <ArrowRight className="h-6 w-6" />}
+            </button>
+          </div>
+
+          {error && (
+            <p className="text-center text-red-300 text-sm bg-red-500/10 border border-red-500/20 rounded-xl py-2 px-4">
+              {error}
+            </p>
+          )}
+
+          <p className="text-center text-white/30 text-xs">
+            Seus dados são protegidos. Usamos o CPF apenas para identificar seu cadastro.
+          </p>
+        </div>
       </div>
     </div>
   );
