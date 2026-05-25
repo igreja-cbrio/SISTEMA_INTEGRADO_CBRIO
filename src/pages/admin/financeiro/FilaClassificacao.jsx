@@ -39,11 +39,6 @@ export default function FilaClassificacao() {
       return next;
     });
   };
-  // Toggle/marca opera apenas sobre a lista filtrada (filaFiltrada definida mais abaixo)
-  const idsVisiveis = () => filaFiltrada.map(i => i.id);
-  const todosMarcados = filaFiltrada.length > 0 && filaFiltrada.every(i => selecionados.has(i.id));
-  const algunsMarcados = selecionados.size > 0 && !todosMarcados;
-  const toggleTodos = () => setSelecionados(todosMarcados ? new Set() : new Set(idsVisiveis()));
 
   // Confirmação inline via toast.warning + action (sem confirm() nativo)
   const aprovarSelecionados = () => {
@@ -167,6 +162,12 @@ export default function FilaClassificacao() {
     if (filtroCard === 'baixa_confianca') return conf > 0 && conf < 0.7;
     return true;
   });
+
+  // Selecao opera apenas sobre a lista filtrada (declarado DEPOIS de filaFiltrada
+  // pra evitar TDZ "Cannot access 'ue' before initialization" no build minificado)
+  const todosMarcados = filaFiltrada.length > 0 && filaFiltrada.every(i => selecionados.has(i.id));
+  const algunsMarcados = selecionados.size > 0 && !todosMarcados;
+  const toggleTodos = () => setSelecionados(todosMarcados ? new Set() : new Set(filaFiltrada.map(i => i.id)));
 
   return (
     <div>
