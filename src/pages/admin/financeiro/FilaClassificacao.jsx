@@ -27,6 +27,50 @@ export default function FilaClassificacao() {
   const [stats, setStats] = useState(null);
   const [bulkProcessing, setBulkProcessing] = useState(false);
   const [confiancaMin, setConfiancaMin] = useState(0.8);
+  const [selecionados, setSelecionados] = useState(new Set());
+
+  const toggleSel = (id) => {
+    setSelecionados(prev => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+  };
+  const todosMarcados = fila.length > 0 && selecionados.size === fila.length;
+  const algunsMarcados = selecionados.size > 0 && !todosMarcados;
+  const toggleTodos = () => setSelecionados(todosMarcados ? new Set() : new Set(fila.map(i => i.id)));
+
+  const aprovarSelecionados = async () => {
+    if (selecionados.size === 0) return;
+    if (!confirm(`Aprovar ${selecionados.size} item${selecionados.size === 1 ? '' : 's'} selecionado${selecionados.size === 1 ? '' : 's'}?`)) return;
+    setBulkProcessing(true);
+    try {
+      let ok = 0, err = 0;
+      for (const id of selecionados) {
+        try { await financeiroV2.fila.aprovar(id, {}); ok++; }
+        catch { err++; }
+      }
+      alert(`${ok} aprovado${ok === 1 ? '' : 's'}${err ? ` · ${err} com erro` : ''}.`);
+      setSelecionados(new Set());
+      load();
+    } finally { setBulkProcessing(false); }
+  };
+
+  const ignorarSelecionados = async () => {
+    if (selecionados.size === 0) return;
+    if (!confirm(`Ignorar ${selecionados.size} item${selecionados.size === 1 ? '' : 's'}? Não viram transação.`)) return;
+    setBulkProcessing(true);
+    try {
+      let ok = 0, err = 0;
+      for (const id of selecionados) {
+        try { await financeiroV2.fila.ignorar(id); ok++; }
+        catch { err++; }
+      }
+      alert(`${ok} ignorado${ok === 1 ? '' : 's'}${err ? ` · ${err} com erro` : ''}.`);
+      setSelecionados(new Set());
+      load();
+    } finally { setBulkProcessing(false); }
+  };
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -159,12 +203,50 @@ export default function FilaClassificacao() {
         </div>
       )}
 
+      {/* Barra de selecao · marcar todos + acoes em selecionados */}
+      {fila.length > 0 && (
+        <div style={{
+          display: 'flex', alignItems: 'center', gap: 12, marginBottom: 12, padding: '10px 14px',
+          background: selecionados.size > 0 ? '#3b82f618' : 'var(--cbrio-input-bg)',
+          border: `1px solid ${selecionados.size > 0 ? '#3b82f660' : C.border}`,
+          borderRadius: 8, flexWrap: 'wrap',
+        }}>
+          <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', fontSize: 13, color: C.text, fontWeight: 500 }}>
+            <input
+              type="checkbox"
+              checked={todosMarcados}
+              ref={el => { if (el) el.indeterminate = algunsMarcados; }}
+              onChange={toggleTodos}
+              style={{ width: 16, height: 16, cursor: 'pointer' }}
+            />
+            {selecionados.size === 0 ? `Marcar todos (${fila.length})` :
+              todosMarcados ? `Todos selecionados (${fila.length})` :
+              `${selecionados.size} de ${fila.length} selecionado${selecionados.size === 1 ? '' : 's'}`}
+          </label>
+          {selecionados.size > 0 && (
+            <div style={{ display: 'flex', gap: 6, marginLeft: 'auto' }}>
+              <Button variant="default" size="sm" onClick={aprovarSelecionados} disabled={bulkProcessing}>
+                ✓ Aprovar selecionados
+              </Button>
+              <Button variant="outline" size="sm" onClick={ignorarSelecionados} disabled={bulkProcessing}>
+                🚫 Ignorar selecionados
+              </Button>
+              <Button variant="ghost" size="sm" onClick={() => setSelecionados(new Set())}>
+                Limpar
+              </Button>
+            </div>
+          )}
+        </div>
+      )}
+
       <div style={{ display: 'grid', gap: 12 }}>
         {fila.map(item => (
           <CardFila key={item.id}
             item={item}
             planos={planos}
             centros={centros}
+            selecionado={selecionados.has(item.id)}
+            onToggleSelecionar={() => toggleSel(item.id)}
             onAprovar={aprovar}
             onEditar={() => setEdit(item)}
             onIgnorar={() => ignorar(item)}
@@ -191,7 +273,7 @@ export default function FilaClassificacao() {
   );
 }
 
-function CardFila({ item, onAprovar, onEditar, onIgnorar }) {
+function CardFila({ item, selecionado, onToggleSelecionar, onAprovar, onEditar, onIgnorar }) {
   const lanc = item.lancamento;
   const sug = item.sugestao_plano;
   const origem = ORIGEM_LABELS[item.sugestao_origem] || ORIGEM_LABELS.manual;
@@ -199,9 +281,20 @@ function CardFila({ item, onAprovar, onEditar, onIgnorar }) {
 
   return (
     <div style={{
-      background: C.card, border: `1px solid ${C.border}`, borderRadius: 10, padding: 16,
-      display: 'grid', gridTemplateColumns: '1fr auto', gap: 16, alignItems: 'center',
+      background: C.card,
+      border: `1px solid ${selecionado ? '#3b82f6' : C.border}`,
+      boxShadow: selecionado ? '0 0 0 1px #3b82f640' : 'none',
+      borderRadius: 10, padding: 16,
+      display: 'grid', gridTemplateColumns: 'auto 1fr auto', gap: 16, alignItems: 'center',
+      transition: 'border-color 0.15s',
     }}>
+      <input
+        type="checkbox"
+        checked={!!selecionado}
+        onChange={onToggleSelecionar}
+        style={{ width: 18, height: 18, cursor: 'pointer', alignSelf: 'flex-start', marginTop: 4 }}
+        onClick={e => e.stopPropagation()}
+      />
       <div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
           <span style={{ fontSize: 14, fontWeight: 700, color: ehCredito ? C.green : C.red }}>
