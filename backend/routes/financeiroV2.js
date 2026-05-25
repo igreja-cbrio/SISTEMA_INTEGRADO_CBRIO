@@ -605,7 +605,7 @@ router.post('/classificar/:filaId/aprovar', async (req, res) => {
         valor: Math.abs(lanc.valor),
         data_competencia: lanc.data_lancamento,
         data_pagamento: lanc.data_lancamento,
-        status: 'pago',
+        status: 'conciliado',
         referencia: lanc.fitid || lanc.end_to_end_id,
         observacoes,
         plano_contas_id: finalPlanoContas,
