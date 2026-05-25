@@ -55,10 +55,13 @@ const ROUTE_MODULE_MAP = {
   'apresentacoes': ['apresentacoes'],
 };
 
-// Cache de módulos (carrega uma vez e reutiliza)
+// Cache de modulos · TTL CURTISSIMO (30s) pra balancear performance e
+// frescor. Caches longos (era 5min) causam usuario novo perder acesso ate
+// o cache expirar em instancias Vercel que nao receberam o bust.
+const CACHE_TTL = 30 * 1000; // 30 segundos
+
 let modulosCache = null;
 let modulosCacheTime = 0;
-const CACHE_TTL = 5 * 60 * 1000; // 5 minutos
 
 async function getModulos() {
   if (modulosCache && Date.now() - modulosCacheTime < CACHE_TTL) return modulosCache;
@@ -71,18 +74,23 @@ async function getModulos() {
   return modulosCache;
 }
 
-// Cache da matriz cargo×modulo (defaults por cargo)
-let cargoMatrixCache = null;
-let cargoMatrixCacheTime = 0;
-
-async function getCargoMatrix() {
-  if (cargoMatrixCache && Date.now() - cargoMatrixCacheTime < CACHE_TTL) return cargoMatrixCache;
-  const { data } = await supabase
+// Matriz cargo×modulo · SEM CACHE PERSISTENTE entre requests.
+//
+// IMPORTANTE · PostgREST do Supabase capa em 1000 linhas por response
+// (`db-max-rows` no projeto). `.range(0, N)` nao passa do cap. Solucao:
+// filtrar por cargo direto no DB (`eq('cargo_id', cargoId)`) ja que so
+// precisamos das linhas do cargo do usuario. Sao ~30 linhas por cargo
+// vs 1000+ na matriz inteira · query <20ms.
+//
+// Sem cargoId, retorna ate o cap (uso legado / admin UI que precise
+// agregar todos cargos · ai vai paginado via /api/permissoes/matriz).
+async function getCargoMatrix(cargoId = null) {
+  let query = supabase
     .from('cargo_modulo_permissao')
     .select('cargo_id, modulo_id, nivel, pode_exportar, pode_aprovar, escopo_proprio');
-  cargoMatrixCache = data || [];
-  cargoMatrixCacheTime = Date.now();
-  return cargoMatrixCache;
+  if (cargoId != null) query = query.eq('cargo_id', cargoId);
+  const { data } = await query;
+  return data || [];
 }
 
 // Mapa: nome de area (normalizado) → slug do modulo que recebe boost de nivel 5.
@@ -281,7 +289,8 @@ async function authenticate(req, res, next) {
       const validOverrides = (overrides || []).filter(o => !o.expira_em || new Date(o.expira_em).getTime() > now);
 
       const modulos = await getModulos();
-      const cargoMatrix = await getCargoMatrix();
+      // Passa cargoId · DB filtra (so ~30 linhas vs 1000+ cap PostgREST)
+      const cargoMatrix = await getCargoMatrix(permUser.cargo_id);
 
       // Carregar areas ANTES de resolver perms · boost por area precisa delas
       const { data: userAreas } = await supabase.from('usuario_areas')
@@ -537,12 +546,11 @@ async function getMyPermissions(req, res) {
   });
 }
 
-// Invalida caches de modulos e matriz (chamado pela UI de admin apos editar)
+// Invalida cache de modulos (chamado pela UI de admin apos editar).
+// cargoMatrix nao tem mais cache · sempre fresco.
 function bustPermissionCaches() {
   modulosCache = null;
   modulosCacheTime = 0;
-  cargoMatrixCache = null;
-  cargoMatrixCacheTime = 0;
 }
 
 /**

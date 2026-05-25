@@ -2,6 +2,92 @@
 
 Guia operacional para o Claude Code quando trabalhar neste repositório.
 
+## ⚠️ PostgREST do Supabase capa em 1000 linhas server-side (2026-05-25)
+
+Bug pego em producao · cargo `supervisor-jornada` (cargo_id=63) criado,
+matriz seedada com nivel 3 nos modulos da jornada, mas o Marcelo Soares
+ficava com leitura=0 em tudo sem boost por area.
+
+**Causa** · `supabase.from('cargo_modulo_permissao').select(...)`
+retornava no maximo 1000 linhas. A matriz tinha ~1073 linhas. Os cargos
+com id mais alto (incluindo supervisor-jornada=63) ficaram fora.
+
+**Importante** · `.range(0, 19999)` no Supabase JS NAO contorna o limite.
+O cap eh server-side no PostgREST (`db-max-rows` no projeto Supabase) e
+vale pra qualquer cliente. Tentar passar do cap retorna ate o cap.
+
+**Solucoes (em ordem de preferencia)**:
+
+1. **Filtrar no DB** quando souber o filtro · ex: `.eq('cargo_id', X)`.
+   Reduz pra ~30 linhas, longe do cap.
+2. **Paginar com loop** quando precisar de tudo:
+   ```js
+   let all = [];
+   let offset = 0;
+   const pageSize = 1000;
+   while (true) {
+     const { data } = await supabase.from('tabela').select('*')
+       .range(offset, offset + pageSize - 1);
+     if (!data || data.length === 0) break;
+     all = all.concat(data);
+     if (data.length < pageSize) break;
+     offset += pageSize;
+   }
+   ```
+3. **RPC** com server-side aggregation quando precisar de stats.
+
+**Aplicado em**:
+- `getCargoMatrix(cargoId)` em `auth.js` · filtra por cargo (opcao 1)
+- `GET /api/permissoes/matriz` · paginado (opcao 2)
+- `GET /api/permissoes/diagnostico/:email` · paginado (opcao 2)
+
+**Auditar quando crescer**:
+- `mem_membros` (ja >1000), `mem_voluntarios`, `mem_contribuicoes`
+- `cultos`, `mem_grupo_membros`, `nsm_eventos`
+- Qualquer exports ou agg que `.select('*')` sem filtro/paginacao
+
+Pra debug similar futuro · `/api/permissoes/diagnostico/:email` mostra
+`matrix_stats.cargoMatrix_total_rows`. Se for exatamente 1000, sintoma
+do cap presente.
+
+## Cargo · supervisor-jornada (Marcelo Soares · 2026-05-25)
+
+Marcelo Soares saiu de `assistente-ministerial` (Assistente Ministerio
+Cuidados) e virou **`supervisor-jornada`** · callback de cuidado pastoral
+que VE e PREENCHE dados de jornada em TODOS os ministerios.
+
+**Conceito chave**: ele NAO substitui os lideres. Soma com eles como
+rede de seguranca. Se Mariane (Kids), Arthur (AMI), Lillian (Bridge),
+Renata (Online) ou Alda (Integracao) esquecerem de marcar uma decisao,
+batismo, devocional ou checkin, Marcelo entra, corrige e mantem o NSM
+saudavel.
+
+**Matriz** (migration `20260525160000_supervisor_jornada_marcelo.sql`):
+- Nivel 3 (CRUD) **SEM escopo_proprio** em: `integracao`, `cuidados`,
+  `online`, `kids`, `ami`, `bridge`, `next`, `voluntariado`,
+  `membresia`, `grupos`, `dados-brutos`, `minha-area`
+- Nivel 1 (read) em: `dashboard`, `painel-cbrio`, `eventos`, `projetos`,
+  `expansao`
+- Nivel 2 em: `nps`, `solicitacoes`, `assistente-ia`
+- Nivel 3 com escopo_proprio em: `perfil`
+- Nivel 0 em: `rh`, `financeiro`, `logistica`, `patrimonio`, `gestao`,
+  `governanca`, `ritual`, `planejamento`, `revisao-estrategica`,
+  `cerebro`, `notificacoes-config`, `permissoes-admin`, `usuarios-admin`
+
+**Diferenca chave vs `assistente-ministerial`**: o assistente tem
+escopo_proprio=true em todos os modulos da jornada (so ve a sua area).
+Supervisor-jornada tem escopo_proprio=false · ve todas as 6 areas
+(kids/ami/bridge/sede/online/cba).
+
+**Areas atribuidas em `usuario_areas`**: cuidados, integracao, kids, ami,
+bridge, online. (CBA acompanhada pelo Pr. Nelio via grupos · sem area
+formal nas 6 oficiais.)
+
+**Apos aplicar a migration**:
+- Marcos: rodar bust de cache em `/admin/permissoes` ou
+  `POST /api/permissoes/cache/bust`
+- Marcelo: fazer logout/login pra renovar JWT
+
 # ⚠️ REGRAS OBRIGATÓRIAS DE SEGURANÇA (não regredir · 2026-05-21)
 
 Esta seção é a lei do projeto após a Auditoria de Segurança 2026-05-21
@@ -679,14 +765,55 @@ com service_role). Drop seguro · sem mudança no fluxo público.
   `area_responsaveis.responsavel_nome`/`projects.leader` pra UUID FK,
   CASCADE → SET NULL em FKs históricas, audit log de leituras de CPF/salário
 
-## Totem Kids · modulo novo (2026-05-21 · branch marcos-totem-kids)
+## Totem Kids · estado 2026-05-25 (sessao encerrada · aguardando teste real)
 
+Marcos: "deixe tudo no contexto para ser testado, quando for a hora te chamo
+novamente". Codigo 100% implementado. Falta hardware (Fire TVs) + setup
+Brother no Windows do totem + culto piloto.
+
+### Estado atual
+- **Banco**: 660 familias + 894 criancas importadas do PC (CSV attendance
+  dez/25→mai/26) + 2637 vinculos kids_responsaveis · 498/892 com responsavel
+  (56%) · 394 sem (vao preencher via modal auto-cadastro no 1o check-in)
+- **App**: 100% funcional · checkin manned, checkout, decisoes, painel ao
+  vivo, sala de decisoes, configuracoes, parear, display sala, display foyer,
+  teste etiqueta
+- **TV das salas**: codigo pronto · falta comprar 6 Fire TV Sticks (~R$ 1800)
+- **Brother**: instrucoes em docs/totem-kids-setup-brother.md · Marcos ainda
+  nao configurou no Windows do totem fisico
+- **Etiqueta DK-1201** paisagem 90×29mm (corrigi de 29×90 retrato)
+- **Migrations aplicadas no Supabase**: 1-5 (ver lista abaixo). Marcos
+  precisa aplicar a #6 (`20260522300000_totem_kids_chamadas_display.sql`)
+  quando voltar pra testar TVs.
+
+### Pendencias quando voltar (ordem sugerida)
+1. Aplicar `20260522300000_totem_kids_chamadas_display.sql` no Supabase
+2. Configurar Brother no Windows do totem (docs/totem-kids-setup-brother.md)
+3. Comprar 6 Fire TV Sticks + cabos HDMI
+4. Setup pareamento de cada Fire TV (1 por sala + 1 foyer):
+   - Admin → /configuracoes → Estacoes → cria "TV Infantil 1" tipo `display`
+     vinculada a sala
+   - Clica ✨ QR · escaneia no Silk Browser do Fire TV
+   - Page `/parear?estacao=X&token=Y` valida + redireciona display-sala
+   - Marca URL como homepage do Silk Browser
+   - Repete pras 5 salas + 1 foyer
+5. PC touch da recepcao · criar estacao tipo `self` + parear · checkout
+   self-service (pai opera sem login)
+6. Teste num culto pequeno (Quarta com Deus) antes do domingo grande
+7. (Opcional) Agendar pg_cron 23h pra `fn_kids_checkout_forcado_pendentes()`
+
+### Pedido original
 Pedido do Eduardo (gestor) repassado pelo Marcos · substituir o **Planning
 Center Check-Ins** por modulo proprio pra ministerio infantil. Diferente do
 totem do voluntariado: crianca **nao** e escalada antes, mae digita o nome no
 totem, voluntario imprime 2 etiquetas (crianca + recibo do responsavel) com
 codigo de seguranca de 4 chars · no checkout, etiqueta da mae bate com etiqueta
 da crianca pra liberar a saida.
+
+Apos primeira implementacao, Marcos pediu **TVs nas salas chamando o pickup**
+(2026-05-22): pai digita codigo na recepcao, sistema dispara chamada pra TV
+da sala, professora ve "F8K3 · MARIA CLARA" gigante + TTS pt-BR "Maria Clara
+sua familia chegou", leva crianca pra recepcao. Painel foyer agregado.
 
 ### Localizacao
 - Menu **Ministerial > Ferramentas > Totem Kids** (vizinho do Totem Membro)

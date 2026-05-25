@@ -26,8 +26,19 @@ async function resolverUsuarioId(idParam) {
   }
 
   // E' UUID · busca o profile pra pegar email + nome
-  const { data: profile } = await supabase.from('profiles')
+  let { data: profile } = await supabase.from('profiles')
     .select('id, email, name').eq('id', idParam).maybeSingle();
+
+  // Fallback · pode ser id de rh_funcionarios (funcionario cadastrado pelo
+  // RH antes do primeiro login · ver GET /colaboradores)
+  if (!profile?.email) {
+    const { data: func } = await supabase.from('rh_funcionarios')
+      .select('id, email, nome').eq('id', idParam).maybeSingle();
+    if (func?.email) {
+      profile = { id: func.id, email: func.email, name: func.nome };
+    }
+  }
+
   if (!profile?.email) return null;
 
   const email = profile.email.toLowerCase().trim();
@@ -110,8 +121,43 @@ router.get('/colaboradores', async (_req, res) => {
         const cargoInfo = cargoByEmail.get((p.email || '').toLowerCase().trim()) || {
           cargo_id: null, cargo_slug: null, cargo_nome: null,
         };
-        return { ...p, ...cargoInfo };
+        return { ...p, ...cargoInfo, origem: 'profile' };
       });
+
+    // 6. Funcionarios ativos sem profile ainda (ex: cadastrados pelo RH
+    //    antes do primeiro login). Aparecem na lista com origem='funcionario'
+    //    pra Marcos atribuir cargo/areas mesmo antes do signup do Supabase.
+    const profileEmails = new Set(
+      (profiles || [])
+        .map(p => (p.email || '').toLowerCase().trim())
+        .filter(Boolean)
+    );
+    const { data: funcionariosRows } = await supabase
+      .from('rh_funcionarios')
+      .select('id, nome, email, cargo, area')
+      .eq('status', 'ativo')
+      .not('email', 'is', null);
+
+    for (const f of funcionariosRows || []) {
+      const emailKey = (f.email || '').toLowerCase().trim();
+      if (!emailKey) continue;
+      if (profileEmails.has(emailKey)) continue; // ja veio via profile
+      const cargoInfo = cargoByEmail.get(emailKey) || {
+        cargo_id: null, cargo_slug: null, cargo_nome: null,
+      };
+      colaboradores.push({
+        id: f.id, // funcionario_id (UUID, mesmo schema de profile.id)
+        name: f.nome,
+        email: f.email,
+        role: 'funcionario',
+        avatar_url: null,
+        ...cargoInfo,
+        origem: 'funcionario',
+      });
+    }
+
+    // Reordena por nome pra ficar previsivel na UI
+    colaboradores.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
 
     res.json(colaboradores);
   } catch (e) {
@@ -128,6 +174,119 @@ router.post('/cache/bust', async (_req, res) => {
     bustPermissionCaches();
     res.json({ success: true, bustedAt: new Date().toISOString() });
   } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// GET /api/permissoes/diagnostico/:email · simula em profundidade a
+// computacao de permissoes pra um usuario, com TODOS os intermediarios
+// expostos. Usado pra debug quando alguem nao consegue acessar um modulo
+// apesar do banco estar correto.
+router.get('/diagnostico/:email', async (req, res) => {
+  try {
+    const email = decodeURIComponent(req.params.email).toLowerCase().trim();
+
+    const { data: profile } = await supabase.from('profiles')
+      .select('id, name, email, role, active, area, kpi_areas')
+      .ilike('email', email)
+      .maybeSingle();
+
+    const { data: funcionario } = await supabase.from('rh_funcionarios')
+      .select('id, nome, email, cargo, area, status')
+      .ilike('email', email)
+      .maybeSingle();
+
+    const { data: usuario } = await supabase.from('usuarios')
+      .select('id, email, nome, ativo, cargo_id, cargos(id, slug, nome, nome_completo, nivel_padrao_leitura, nivel_padrao_escrita)')
+      .ilike('email', email)
+      .maybeSingle();
+
+    const { data: areas } = usuario?.id ? await supabase.from('usuario_areas')
+      .select('areas(nome, setor_id, setores(nome))')
+      .eq('usuario_id', usuario.id) : { data: [] };
+
+    const { data: overrides } = usuario?.id ? await supabase.from('permissoes_modulo')
+      .select('modulo_id, nivel_leitura, nivel_escrita, escopo_proprio, motivo, expira_em, modulos(slug, nome)')
+      .eq('usuario_id', usuario.id) : { data: [] };
+
+    // RAW · igual ao que o middleware le
+    const { data: modulosRaw } = await supabase
+      .from('modulos')
+      .select('id, nome, slug, categoria, rota, ordem')
+      .eq('ativo', true);
+    // Paginacao manual pra contornar o cap PostgREST de 1000 linhas
+    let cargoMatrixRaw = [];
+    {
+      let offset = 0;
+      const pageSize = 1000;
+      while (true) {
+        const { data: page } = await supabase
+          .from('cargo_modulo_permissao')
+          .select('cargo_id, modulo_id, nivel, pode_exportar, pode_aprovar, escopo_proprio')
+          .range(offset, offset + pageSize - 1);
+        if (!page || page.length === 0) break;
+        cargoMatrixRaw = cargoMatrixRaw.concat(page);
+        if (page.length < pageSize) break;
+        offset += pageSize;
+      }
+    }
+
+    const cargoId = usuario?.cargo_id;
+    const cargoIdType = typeof cargoId;
+
+    // Simula resolveEffectivePerms passo a passo
+    const matrixRowsForUser = (cargoMatrixRaw || []).filter(r => r.cargo_id === cargoId);
+    const matrixRowsForUserLoose = (cargoMatrixRaw || []).filter(r => Number(r.cargo_id) === Number(cargoId));
+
+    const sampleMatrixRow = (cargoMatrixRaw || [])[0] || null;
+    const sampleModulo = (modulosRaw || [])[0] || null;
+
+    const defaultsByMod = new Map();
+    for (const r of matrixRowsForUser) {
+      defaultsByMod.set(r.modulo_id, r);
+    }
+
+    const modulosLookup = (modulosRaw || []).map(m => ({
+      slug: m.slug,
+      nome: m.nome,
+      id: m.id,
+      id_type: typeof m.id,
+      tem_matriz: defaultsByMod.has(m.id),
+      nivel_matriz: defaultsByMod.get(m.id)?.nivel ?? null,
+    }));
+
+    // Compara tipos: id de modulos vs modulo_id na matriz
+    const tipoModulosId = sampleModulo ? typeof sampleModulo.id : null;
+    const tipoCmpModuloId = sampleMatrixRow ? typeof sampleMatrixRow.modulo_id : null;
+    const tipoCmpCargoId = sampleMatrixRow ? typeof sampleMatrixRow.cargo_id : null;
+
+    res.json({
+      email_query: email,
+      profile,
+      funcionario,
+      usuario: usuario ? {
+        ...usuario,
+        cargo_id_type: typeof usuario.cargo_id,
+      } : null,
+      areas_list: (areas || []).map(a => a.areas?.nome).filter(Boolean),
+      overrides: overrides || [],
+      cargo_id: cargoId,
+      cargo_id_type: cargoIdType,
+      matrix_stats: {
+        cargoMatrix_total_rows: (cargoMatrixRaw || []).length,
+        rows_for_user_strict: matrixRowsForUser.length,
+        rows_for_user_loose: matrixRowsForUserLoose.length,
+        defaultsByMod_size: defaultsByMod.size,
+      },
+      type_check: {
+        modulos_id: tipoModulosId,
+        cmp_modulo_id: tipoCmpModuloId,
+        cmp_cargo_id: tipoCmpCargoId,
+        sample_modulo_id_value: sampleModulo?.id,
+        sample_cmp_modulo_id_value: sampleMatrixRow?.modulo_id,
+        sample_cmp_cargo_id_value: sampleMatrixRow?.cargo_id,
+      },
+      modulos_resolvidos: modulosLookup.sort((a, b) => (a.slug || '').localeCompare(b.slug || '')),
+    });
+  } catch (e) { res.status(500).json({ error: e.message, stack: e.stack }); }
 });
 
 // GET /api/permissoes/estrutura — setores, áreas, módulos, cargos
@@ -155,15 +314,31 @@ router.get('/estrutura', async (req, res) => {
 // ────────────────────────────────────────────────────────────────────────
 router.get('/matriz', async (_req, res) => {
   try {
-    const [cargos, modulos, celulas] = await Promise.all([
+    const [cargos, modulos] = await Promise.all([
       supabase.from('cargos').select('*').eq('ativo', true).order('ordem'),
       supabase.from('modulos').select('*').eq('ativo', true).order('ordem'),
-      supabase.from('cargo_modulo_permissao').select('*'),
     ]);
+
+    // PostgREST capa em 1000 linhas por response · paginamos via .range()
+    // ate exaurir. Matriz tem ~1073 linhas hoje (29 cargos × 37 modulos).
+    let celulas = [];
+    let offset = 0;
+    const pageSize = 1000;
+    while (true) {
+      const { data, error } = await supabase
+        .from('cargo_modulo_permissao')
+        .select('*')
+        .range(offset, offset + pageSize - 1);
+      if (error) return res.status(400).json({ error: error.message });
+      if (!data || data.length === 0) break;
+      celulas = celulas.concat(data);
+      if (data.length < pageSize) break;
+      offset += pageSize;
+    }
     res.json({
       cargos: cargos.data || [],
       modulos: modulos.data || [],
-      celulas: celulas.data || [],
+      celulas,
     });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
