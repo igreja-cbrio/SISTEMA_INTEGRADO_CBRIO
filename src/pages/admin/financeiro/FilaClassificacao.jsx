@@ -503,10 +503,44 @@ function ModalEditarClassificacao({ item, onClose, planos, centros, onSalvar }) 
   const [centroId, setCentroId] = useState(item.sugestao_centro_custo_id || '');
   const [centavo, setCentavo] = useState('');
   const [obs, setObs] = useState('');
-  // Auto-cadastro como contribuinte avulso · default true se pagador identificado e sem membro
   const temPagador = !!item.pix_detalhe?.pagador_nome;
   const semMembro = !item.sugestao_membro;
   const [criarContrib, setCriarContrib] = useState(temPagador && semMembro);
+
+  // Sugestão automática pelo horário (dia da semana + hora do PIX)
+  const [sugestaoHorario, setSugestaoHorario] = useState(null);
+  const ehCredito = item.lancamento?.tipo_trn === 'CREDIT';
+  useEffect(() => {
+    if (!ehCredito || !item.lancamento?.data_lancamento || !item.lancamento?.hora_lancamento) return;
+    // Default tipo = dizimo (valor maior costuma ser dizimo); usuário pode trocar manualmente
+    const tipo = (Number(item.lancamento.valor) || 0) >= 100 ? 'dizimo' : 'oferta';
+    financeiroV2.sugerirPlanoHorario({
+      data: item.lancamento.data_lancamento,
+      hora: item.lancamento.hora_lancamento,
+      tipo,
+    }).then(s => { if (s) setSugestaoHorario({ ...s, tipo }); }).catch(() => {});
+  }, [item.id]);
+
+  const aplicarSugestao = (tipo) => {
+    const sug = sugestaoHorario;
+    if (!sug) return;
+    if (sug.tipo !== tipo) {
+      financeiroV2.sugerirPlanoHorario({
+        data: item.lancamento.data_lancamento,
+        hora: item.lancamento.hora_lancamento,
+        tipo,
+      }).then(s => {
+        if (s) {
+          setSugestaoHorario({ ...s, tipo });
+          const plano = planos.find(p => p.codigo === s.codigo);
+          if (plano) setPlanoId(plano.id);
+        }
+      });
+    } else {
+      const plano = planos.find(p => p.codigo === sug.codigo);
+      if (plano) setPlanoId(plano.id);
+    }
+  };
 
   return (
     <div style={modalOverlay} onClick={onClose}>
@@ -526,6 +560,39 @@ function ModalEditarClassificacao({ item, onClose, planos, centros, onSalvar }) 
         </div>
 
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12, marginBottom: 16 }}>
+          {ehCredito && sugestaoHorario && (
+            <div style={{
+              padding: 12, borderRadius: 8, background: C.primaryBg,
+              border: `1px solid ${C.primary}40`,
+            }}>
+              <div style={{ fontSize: 10, fontWeight: 700, color: C.primary, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 6 }}>
+                💡 Sugestão automática pelo horário
+              </div>
+              <div style={{ fontSize: 12, color: C.text2, marginBottom: 8 }}>
+                {sugestaoHorario.motivo}
+              </div>
+              <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                <button type="button"
+                  onClick={() => aplicarSugestao('dizimo')}
+                  style={{
+                    padding: '6px 12px', fontSize: 12, fontWeight: 600, borderRadius: 6,
+                    cursor: 'pointer', border: `1px solid ${C.primary}`,
+                    background: C.primary, color: 'white',
+                  }}>
+                  Usar Dízimo · {sugestaoHorario.tipo === 'dizimo' ? sugestaoHorario.nome : 'cálculo...'}
+                </button>
+                <button type="button"
+                  onClick={() => aplicarSugestao('oferta')}
+                  style={{
+                    padding: '6px 12px', fontSize: 12, fontWeight: 600, borderRadius: 6,
+                    cursor: 'pointer', border: `1px solid ${C.primary}`,
+                    background: 'transparent', color: C.primary,
+                  }}>
+                  Usar Oferta · {sugestaoHorario.tipo === 'oferta' ? sugestaoHorario.nome : 'cálculo...'}
+                </button>
+              </div>
+            </div>
+          )}
           <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
             <label style={labelSt}>Conta do plano</label>
             <ComboboxBusca

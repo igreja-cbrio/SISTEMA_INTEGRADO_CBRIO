@@ -748,6 +748,19 @@ router.get('/arrecadacoes', async (req, res) => {
   } catch (e) { res.status(500).json({ error: 'Erro ao listar arrecadacoes: ' + e.message }); }
 });
 
+// Sugestão de plano pelo dia/hora do PIX (detecta culto Quarta/Dom 8:30/11:30/Noite)
+router.get('/sugerir-plano-horario', async (req, res) => {
+  try {
+    const { data, hora, tipo = 'dizimo' } = req.query;
+    if (!data || !hora) return res.status(400).json({ error: 'data e hora obrigatorios' });
+    const { data: rows, error } = await supabase.rpc('fin_sugerir_plano_por_horario', {
+      p_data: data, p_hora: hora, p_tipo: tipo,
+    });
+    if (error) return res.status(400).json({ error: error.message });
+    res.json((rows && rows[0]) || null);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // Drilldown · lista lançamentos de uma categoria de despesa (prefixo 4.01, 4.02, etc)
 router.get('/despesas/detalhe', async (req, res) => {
   try {
