@@ -1509,6 +1509,7 @@ export const kpis = {
     create: (data) => post('/kpis/cultos', data),
     update: (id, data) => put(`/kpis/cultos/${id}`, data),
     remove: (id) => del(`/kpis/cultos/${id}`),
+    voluntarios: (id) => get(`/kpis/cultos/${id}/voluntarios`),
     // Pessoas que tomaram decisao em culto · 1 row por pessoa
     decisoesPessoas: {
       list:   (cultoId) => get(`/kpis/cultos/${cultoId}/decisoes-pessoas`),

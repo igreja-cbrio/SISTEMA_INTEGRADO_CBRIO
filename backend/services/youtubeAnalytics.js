@@ -29,6 +29,8 @@ const ANALYTICS  = 'https://youtubeanalytics.googleapis.com/v2';
 // Canal CBRio fixo · usado quando a conta OAuth NAO possui canal proprio mas
 // tem permissao de Manager via YT Studio Permissions. Override via env
 // YOUTUBE_CHANNEL_ID se um dia precisar.
+// Canal CBRio 'IgrejaCBRio' (UCfjMVz...) onde os videos dos cultos vivem.
+// (Canal 'Rede Social CBrio' UCMJOg5... NAO tem os videos.)
 const CBRIO_CHANNEL_ID = process.env.YOUTUBE_CHANNEL_ID || 'UCfjMVzaYlCS_VE3JuEJj2vQ';
 
 const SCOPES = [
