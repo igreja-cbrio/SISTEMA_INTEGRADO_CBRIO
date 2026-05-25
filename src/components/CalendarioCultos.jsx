@@ -8,7 +8,7 @@ import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { kpis as kpisApi } from '../api';
 
 const cultosApi = kpisApi.cultos;
-import { Calendar, ChevronLeft, ChevronRight, CheckCircle2, AlertCircle, X, Save, Tv, Users, Sparkles, UserPlus, Trash2, Pencil, Search as SearchIcon, Link as LinkIcon, FileText } from 'lucide-react';
+import { Calendar, ChevronLeft, ChevronRight, CheckCircle2, AlertCircle, X, Save, Tv, Users, Sparkles, UserPlus, Trash2, Pencil, Search as SearchIcon, Link as LinkIcon, FileText, HandHelping } from 'lucide-react';
 import { toast } from 'sonner';
 import { formatErro } from '../lib/formatErro';
 
@@ -422,6 +422,8 @@ function ModalCulto({ culto, onClose, onSaved }) {
     decisoes_presenciais: culto.decisoes_presenciais ?? 0,
     decisoes_online:      culto.decisoes_online ?? 0,
     decisoes_kids:        culto.decisoes_kids ?? 0,
+    voluntarios_escalados: culto.voluntarios_escalados ?? '',
+    voluntarios_checkin:   culto.voluntarios_checkin ?? '',
     observacoes:          culto.observacoes ?? '',
   });
 
@@ -434,6 +436,16 @@ function ModalCulto({ culto, onClose, onSaved }) {
     youtube_video_id:     culto.youtube_video_id ?? '',
   });
   const [saving, setSaving] = useState(false);
+
+  // Valores auto coletados de vol_schedules / vol_check_ins
+  const [volAuto, setVolAuto] = useState({ escalados: null, checkin: null });
+  useEffect(() => {
+    let cancelado = false;
+    cultosApi.voluntarios(culto.id)
+      .then(r => { if (!cancelado) setVolAuto({ escalados: r?.escalados_auto ?? 0, checkin: r?.checkin_auto ?? 0 }); })
+      .catch(() => {});
+    return () => { cancelado = true; };
+  }, [culto.id]);
 
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
 
@@ -477,6 +489,11 @@ function ModalCulto({ culto, onClose, onSaved }) {
         decisoes_presenciais: Number(form.decisoes_presenciais) || 0,
         decisoes_online:      hasOnline ? (Number(form.decisoes_online) || 0) : 0,
         decisoes_kids:        hasKids ? (Number(form.decisoes_kids) || 0) : 0,
+        // Voluntariado · null preserva o calculo automatico, valor sobrescreve
+        voluntarios_escalados: form.voluntarios_escalados === '' || form.voluntarios_escalados === null
+          ? null : Math.max(0, Number(form.voluntarios_escalados) || 0),
+        voluntarios_checkin:   form.voluntarios_checkin === '' || form.voluntarios_checkin === null
+          ? null : Math.max(0, Number(form.voluntarios_checkin) || 0),
         observacoes:          (form.observacoes ?? '').trim() || null,
       };
       await cultosApi.update(culto.id, payload);
@@ -601,6 +618,31 @@ function ModalCulto({ culto, onClose, onSaved }) {
               </p>
             </>
           )}
+
+          <SecaoTitulo icone={HandHelping} cor="#10B981" titulo="Voluntariado" />
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 16 }}>
+            <Field label="Escalados">
+              <input
+                type="number" min="0"
+                value={form.voluntarios_escalados}
+                onChange={e => set('voluntarios_escalados', e.target.value)}
+                placeholder={volAuto.escalados != null ? `auto: ${volAuto.escalados}` : 'auto: —'}
+                style={inp}
+              />
+            </Field>
+            <Field label="Check-ins">
+              <input
+                type="number" min="0"
+                value={form.voluntarios_checkin}
+                onChange={e => set('voluntarios_checkin', e.target.value)}
+                placeholder={volAuto.checkin != null ? `auto: ${volAuto.checkin}` : 'auto: —'}
+                style={inp}
+              />
+            </Field>
+          </div>
+          <p style={{ fontSize: 10, color: C.t3, marginTop: -8, marginBottom: 16, fontStyle: 'italic' }}>
+            Coletado automático do módulo Voluntariado (Planning Center). Preencha pra sobrescrever · deixe vazio pra manter o automático.
+          </p>
 
           <SecaoTitulo icone={FileText} cor="#64748B" titulo="Observações" />
           <textarea

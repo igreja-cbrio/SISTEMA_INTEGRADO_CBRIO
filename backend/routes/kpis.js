@@ -93,12 +93,14 @@ router.put('/cultos/:id', authorizeIntegracao, async (req, res) => {
     'decisoes_presenciais', 'decisoes_online', 'decisoes_kids',
     'youtube_video_id', 'online_pico', 'nome',
     'online_ds', 'online_ddus',
+    'voluntarios_escalados', 'voluntarios_checkin',
     'observacoes',
   ];
   const camposNumericos = [
     'presencial_adulto', 'presencial_kids',
     'decisoes_presenciais', 'decisoes_online', 'decisoes_kids',
     'online_pico', 'online_ds', 'online_ddus',
+    'voluntarios_escalados', 'voluntarios_checkin',
   ];
   const update = { updated_at: new Date().toISOString() };
   for (const [k, v] of Object.entries(req.body)) {
@@ -130,6 +132,18 @@ router.delete('/cultos/:id', authorize('admin', 'diretor'), async (req, res) => 
   const { error } = await supabase.from('cultos').delete().eq('id', req.params.id);
   if (error) return res.status(500).json({ error: error.message });
   res.json({ ok: true });
+});
+
+// Conta automatica de voluntarios escalados/checkin · usada no modal pra
+// mostrar valor sugerido. Quando user salva nas colunas manuais, sobrescreve.
+router.get('/cultos/:id/voluntarios', async (req, res) => {
+  const { data, error } = await supabase
+    .from('vw_culto_voluntarios')
+    .select('escalados_manual, checkin_manual, escalados_auto, checkin_auto, escalados, checkin')
+    .eq('culto_id', req.params.id)
+    .single();
+  if (error) return res.status(500).json({ error: error.message });
+  res.json(data || { escalados_auto: 0, checkin_auto: 0, escalados_manual: null, checkin_manual: null });
 });
 
 // ── Decisões com dados das pessoas (cultos_decisoes_pessoas) ──────────────────
