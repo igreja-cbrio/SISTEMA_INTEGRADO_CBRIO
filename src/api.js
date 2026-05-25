@@ -560,6 +560,7 @@ export const financeiroV2 = {
   },
   transacoes: (params) => get('/financeiro-v2/transacoes' + (params ? '?' + new URLSearchParams(params) : '')),
   arrecadacoes: (params) => get('/financeiro-v2/arrecadacoes' + (params ? '?' + new URLSearchParams(params) : '')),
+  despesasDetalhe: (params) => get('/financeiro-v2/despesas/detalhe' + (params ? '?' + new URLSearchParams(params) : '')),
   dashboard: {
     overview: (opts) => {
       // Aceita string (period legado) ou objeto {period, year, month, inicio, fim}

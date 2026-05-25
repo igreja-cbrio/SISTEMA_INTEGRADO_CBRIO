@@ -727,6 +727,19 @@ router.get('/arrecadacoes', async (req, res) => {
   } catch (e) { res.status(500).json({ error: 'Erro ao listar arrecadacoes: ' + e.message }); }
 });
 
+// Drilldown · lista lançamentos de uma categoria de despesa (prefixo 4.01, 4.02, etc)
+router.get('/despesas/detalhe', async (req, res) => {
+  try {
+    const { inicio, fim, prefixo } = req.query;
+    if (!inicio || !fim || !prefixo) return res.status(400).json({ error: 'inicio, fim e prefixo obrigatorios' });
+    const { data, error } = await supabase.rpc('fin_despesas_detalhe', {
+      p_inicio: inicio, p_fim: fim, p_prefixo: prefixo,
+    });
+    if (error) return res.status(400).json({ error: error.message });
+    res.json(data || []);
+  } catch (e) { res.status(500).json({ error: 'Erro: ' + e.message }); }
+});
+
 // ====================================================================
 // DASHBOARD OVERVIEW · agrega tudo do /admin/financeiro home
 // ====================================================================

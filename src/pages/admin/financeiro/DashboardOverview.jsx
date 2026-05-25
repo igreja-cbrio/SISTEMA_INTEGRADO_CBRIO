@@ -51,6 +51,7 @@ export default function DashboardOverview({ onNavigate }) {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [erro, setErro] = useState(null);
+  const [categoriaDetalhe, setCategoriaDetalhe] = useState(null);
 
   const queryKey = modo === 'preset' ? `p:${period}` : modo === 'ano' ? `y:${ano}` : `ym:${ano}-${mes}`;
 
@@ -369,19 +370,22 @@ export default function DashboardOverview({ onNavigate }) {
             ) : (
               <div className="space-y-4">
                 {top_despesas.map((item, i) => (
-                  <motion.div
+                  <motion.button
                     key={item.codigo}
                     initial={{ opacity: 0, x: -20 }}
                     animate={{ opacity: 1, x: 0 }}
                     transition={{ delay: 0.8 + i * 0.1 }}
-                    className="space-y-2"
+                    onClick={() => setCategoriaDetalhe(item)}
+                    className="w-full text-left space-y-2 p-2 -mx-2 rounded hover:bg-muted/40 transition-colors group cursor-pointer"
+                    title={`${item.codigo} · ${item.nome} · clique pra detalhar`}
                   >
                     <div className="flex items-center justify-between text-sm">
-                      <span className="text-foreground truncate" title={`${item.codigo} · ${item.nome}`}>
+                      <span className="text-foreground truncate group-hover:text-primary transition-colors">
                         {item.nome}
                       </span>
-                      <span className="text-muted-foreground tabular-nums shrink-0 ml-2">
+                      <span className="text-muted-foreground tabular-nums shrink-0 ml-2 flex items-center gap-1">
                         {item.percentual.toFixed(0)}%
+                        <ChevronRight className="h-3 w-3 opacity-0 group-hover:opacity-100 transition-opacity" />
                       </span>
                     </div>
                     <div className="h-2 bg-muted rounded-full overflow-hidden">
@@ -395,7 +399,7 @@ export default function DashboardOverview({ onNavigate }) {
                     <div className="text-xs text-muted-foreground tabular-nums">
                       {fmtMoney(item.total)}
                     </div>
-                  </motion.div>
+                  </motion.button>
                 ))}
               </div>
             )}
@@ -525,6 +529,137 @@ export default function DashboardOverview({ onNavigate }) {
           </div>
         </CardContent>
       </Card>
+
+      {categoriaDetalhe && (
+        <ModalDespesaDetalhe
+          categoria={categoriaDetalhe}
+          inicio={data.ranges.inicio}
+          fim={data.ranges.fim}
+          labelPeriodo={labelPeriodo}
+          onClose={() => setCategoriaDetalhe(null)}
+        />
+      )}
+    </div>
+  );
+}
+
+// Modal · drilldown dos lancamentos de uma categoria
+function ModalDespesaDetalhe({ categoria, inicio, fim, labelPeriodo, onClose }) {
+  const [items, setItems] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [erro, setErro] = useState(null);
+
+  useEffect(() => {
+    setLoading(true);
+    financeiroV2.despesasDetalhe({ inicio, fim, prefixo: categoria.codigo })
+      .then(d => setItems(Array.isArray(d) ? d : []))
+      .catch(e => setErro(e?.message || 'Erro ao carregar detalhes'))
+      .finally(() => setLoading(false));
+  }, [categoria.codigo, inicio, fim]);
+
+  // Agrupa por subcategoria (nivel 3 do plano)
+  const grupos = useMemo(() => {
+    if (!items) return [];
+    const map = new Map();
+    for (const t of items) {
+      const k = t.plano_codigo;
+      if (!map.has(k)) map.set(k, { codigo: k, nome: t.plano_nome, total: 0, items: [] });
+      const g = map.get(k);
+      g.total += Number(t.valor);
+      g.items.push(t);
+    }
+    return Array.from(map.values()).sort((a, b) => b.total - a.total);
+  }, [items]);
+
+  const totalGeral = useMemo(() => (items || []).reduce((s, t) => s + Number(t.valor), 0), [items]);
+
+  return (
+    <div
+      onClick={onClose}
+      className="fixed inset-0 z-[1000] bg-black/50 flex items-center justify-center p-4"
+    >
+      <div
+        onClick={e => e.stopPropagation()}
+        className="bg-background rounded-lg shadow-2xl w-full max-w-4xl max-h-[90vh] flex flex-col"
+      >
+        <header className="p-5 border-b border-border flex items-start justify-between gap-3">
+          <div>
+            <div className="flex items-center gap-2 text-xs text-muted-foreground mb-1">
+              <span className="font-mono">{categoria.codigo}</span>
+              <span>· {labelPeriodo}</span>
+            </div>
+            <h2 className="text-xl font-bold">{categoria.nome}</h2>
+            <div className="text-sm text-muted-foreground mt-1">
+              {items?.length || 0} lançamento{items?.length === 1 ? '' : 's'}
+              {totalGeral > 0 && (
+                <> · Total: <span className="font-bold text-foreground tabular-nums">{fmtMoney(totalGeral)}</span></>
+              )}
+            </div>
+          </div>
+          <button onClick={onClose} className="text-muted-foreground hover:text-foreground p-1">×</button>
+        </header>
+
+        <div className="flex-1 overflow-y-auto p-5">
+          {loading ? (
+            <div className="flex items-center justify-center py-12 gap-2 text-muted-foreground text-sm">
+              <div className="h-4 w-4 animate-spin rounded-full border-2 border-muted-foreground/25 border-t-primary" />
+              Carregando lançamentos...
+            </div>
+          ) : erro ? (
+            <div className="text-destructive text-sm">{erro}</div>
+          ) : grupos.length === 0 ? (
+            <div className="text-center py-12 text-sm text-muted-foreground">
+              Sem lançamentos nessa categoria no período
+            </div>
+          ) : (
+            <div className="space-y-4">
+              {grupos.map(g => (
+                <details key={g.codigo} className="border border-border rounded-lg overflow-hidden" open={grupos.length <= 3}>
+                  <summary className="px-4 py-3 cursor-pointer hover:bg-muted/30 flex items-center justify-between text-sm">
+                    <div className="flex items-center gap-2">
+                      <span className="font-mono text-xs text-muted-foreground">{g.codigo}</span>
+                      <span className="font-semibold">{g.nome}</span>
+                      <span className="text-xs text-muted-foreground">({g.items.length})</span>
+                    </div>
+                    <span className="font-bold tabular-nums">{fmtMoney(g.total)}</span>
+                  </summary>
+                  <div className="border-t border-border bg-muted/10">
+                    <table className="w-full text-xs">
+                      <thead>
+                        <tr className="border-b border-border text-muted-foreground uppercase tracking-wider">
+                          <th className="text-left py-2 px-3 font-medium">Data</th>
+                          <th className="text-left py-2 px-3 font-medium">Descrição</th>
+                          <th className="text-left py-2 px-3 font-medium">Centro</th>
+                          <th className="text-left py-2 px-3 font-medium">Conta</th>
+                          <th className="text-right py-2 px-3 font-medium">Valor</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {g.items.slice(0, 100).map(t => (
+                          <tr key={t.id} className="border-b border-border/50 hover:bg-muted/30">
+                            <td className="py-2 px-3 tabular-nums">{new Date(t.data_competencia + 'T12:00').toLocaleDateString('pt-BR')}</td>
+                            <td className="py-2 px-3 max-w-[260px] truncate" title={t.descricao}>{t.descricao}</td>
+                            <td className="py-2 px-3 text-muted-foreground">{t.centro_nome || '—'}</td>
+                            <td className="py-2 px-3 text-muted-foreground">{t.conta_nome || '—'}</td>
+                            <td className="py-2 px-3 text-right font-semibold tabular-nums text-rose-600">
+                              −{fmtMoney(t.valor)}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                    {g.items.length > 100 && (
+                      <div className="px-3 py-2 text-xs text-muted-foreground text-center italic">
+                        Mostrando 100 de {g.items.length}
+                      </div>
+                    )}
+                  </div>
+                </details>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
     </div>
   );
 }
