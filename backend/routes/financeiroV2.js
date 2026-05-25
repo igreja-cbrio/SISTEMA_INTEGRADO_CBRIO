@@ -885,13 +885,13 @@ router.get('/dashboard/overview', async (req, res) => {
         .select('culto_nome, culto_service_type_slug, plano_contas_codigo, valor')
         .gte('data_competencia', dozeMesesAtras)
         .eq('tipo', 'receita')
-        .not('culto_slot_id', 'is', null)
+        .not('culto_service_type_slug', 'is', null)
         .limit(100000),
       supabase.from('vw_fin_transacoes_completa')
         .select('plano_contas_codigo, plano_contas_nome, valor')
         .gte('data_competencia', ranges.inicio).lte('data_competencia', ranges.fim)
         .eq('tipo', 'despesa')
-        .not('plano_contas_id', 'is', null)
+        .not('plano_contas_codigo', 'is', null)
         .limit(100000),
       supabase.from('vw_fin_transacoes_completa')
         .select('id, descricao, valor, tipo, status, data_competencia, plano_contas_nome, culto_nome')

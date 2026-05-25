@@ -142,8 +142,11 @@ router.delete('/categorias/:id', async (req, res) => {
 // ── TRANSAÇÕES ─────────────────────────────────────────────
 router.get('/transacoes', async (req, res) => {
   try {
-    const { conta_id, tipo, status, mes } = req.query;
-    let query = supabase.from('fin_transacoes').select('*, fin_contas(nome), fin_categorias(nome, tipo)').order('data_competencia', { ascending: false });
+    const { conta_id, tipo, status, mes, inicio, fim, busca, limit = 1000 } = req.query;
+    let query = supabase.from('fin_transacoes')
+      .select('*, fin_contas(nome), fin_categorias(nome, tipo)')
+      .order('data_competencia', { ascending: false })
+      .limit(Math.min(Number(limit), 50000));
     if (conta_id) query = query.eq('conta_id', conta_id);
     if (tipo) query = query.eq('tipo', tipo);
     if (status) query = query.eq('status', status);
@@ -152,6 +155,9 @@ router.get('/transacoes', async (req, res) => {
       const lastDay = new Date(Number(y), Number(m), 0).getDate();
       query = query.gte('data_competencia', `${mes}-01`).lte('data_competencia', `${mes}-${String(lastDay).padStart(2, '0')}`);
     }
+    if (inicio) query = query.gte('data_competencia', inicio);
+    if (fim) query = query.lte('data_competencia', fim);
+    if (busca) query = query.ilike('descricao', `%${busca}%`);
     const { data, error } = await query;
     if (error) return res.status(400).json({ error: error.message });
     res.json(data);
