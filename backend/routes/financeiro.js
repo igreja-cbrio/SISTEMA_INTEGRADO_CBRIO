@@ -700,7 +700,7 @@ router.post('/fila-classificacao/aprovar-massa', async (req, res) => {
     const ids = pendentes.map(p => p.id);
     const { error: e2 } = await supabase
       .from('fin_fila_classificacao')
-      .update({ status: 'decidido', decidido_em: new Date().toISOString(), decidido_por: req.user.userId })
+      .update({ status: 'aprovado', decidido_em: new Date().toISOString(), decidido_por: req.user.userId })
       .in('id', ids);
     if (e2) throw e2;
     res.json({ aprovadas: ids.length });
@@ -718,7 +718,7 @@ router.post('/fila-classificacao/:id/decidir', async (req, res) => {
         sugestao_plano_contas_id: plano_contas_id,
         sugestao_centro_custo_id: centro_custo_id || null,
         sugestao_membro_id: membro_id || null,
-        status: 'decidido',
+        status: 'aprovado',
         decidido_em: new Date().toISOString(),
         decidido_por: req.user.userId,
       })
