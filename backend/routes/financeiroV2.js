@@ -807,16 +807,19 @@ router.get('/dashboard/overview', async (req, res) => {
     // 12 meses atras (pra grafico de fluxo de caixa anual)
     const dozeMesesAtras = new Date(hoje.getFullYear(), hoje.getMonth() - 11, 1).toISOString().slice(0, 10);
 
-    // Best-effort · refresca saldo Santander se snapshot do dia ainda nao existe
-    // Best-effort silencioso · nao quebra se Santander nao configurado
+    // Best-effort · refresca saldo Santander se snapshot esta stale (> 5 min)
+    // Garante que dashboard sempre mostra saldo atual quando o user entra.
+    // Best-effort silencioso · nao quebra se Santander nao configurado.
     try {
       const { data: snapHoje } = await supabase
         .from('santander_saldo_snapshot')
         .select('id, capturado_em')
         .eq('data', hojeStr)
         .maybeSingle();
-      if (!snapHoje) {
-        // Sem snapshot do dia · chama contasService pra criar (faz UPSERT)
+      const ultimoMs = snapHoje?.capturado_em ? new Date(snapHoje.capturado_em).getTime() : 0;
+      const staleMs = Date.now() - ultimoMs;
+      // Refresh se nao tem snapshot do dia OU se ultimo > 5 minutos
+      if (!snapHoje || staleMs > 5 * 60 * 1000) {
         const santander = require('../services/santander/httpClient');
         if (santander.isConfigured()) {
           const contasService = require('../services/santander/contasService');
