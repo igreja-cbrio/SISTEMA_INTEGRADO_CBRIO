@@ -931,6 +931,17 @@ export const totemKids = {
     // Tablet confirma pareamento · body: {estacao_id, token}
     parear: (data) => post('/totem-kids/estacoes/parear', data),
   },
+  // Chamadas (TV das salas) · pai digita codigo na recepcao
+  chamadas: {
+    // Body: { codigo, estacao_token? } · token presente = modo self-service (sem login)
+    chamar: (data) => post('/totem-kids/chamadas', data),
+  },
+  // Display da TV consome via polling 2s
+  display: {
+    info: (token) => get(`/totem-kids/display/info?token=${encodeURIComponent(token)}`),
+    chamadasAtivas: (token) => get(`/totem-kids/display/chamadas-ativas?token=${encodeURIComponent(token)}`),
+    foyerResumo: (token) => get(`/totem-kids/display/foyer-resumo?token=${encodeURIComponent(token)}`),
+  },
   etiquetas: {
     log: (data) => post('/totem-kids/etiquetas-log', data),
   },

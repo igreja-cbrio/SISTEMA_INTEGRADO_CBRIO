@@ -44,7 +44,7 @@ export default function TotemKidsAdmin() {
           <Button variant="outline" size="sm" onClick={() => navigate('/ministerial/totem-kids/painel')}>
             <Calendar className="h-4 w-4 mr-1" /> Painel
           </Button>
-          <Button variant="outline" size="sm" onClick={() => window.open('/manuais/totem-kids/', '_blank')}>
+          <Button variant="outline" size="sm" onClick={() => window.open('https://github.com/igreja-cbrio/SISTEMA_INTEGRADO_CBRIO/blob/main/docs/totem-kids-manual.md', '_blank')}>
             <ExternalLink className="h-4 w-4 mr-1" /> Manual (HTML)
           </Button>
         </div>
@@ -471,16 +471,30 @@ function AbaEstacoes() {
                 <Select value={editando.tipo} onValueChange={(v: any) => setEditando({ ...editando, tipo: v })}>
                   <SelectTrigger><SelectValue /></SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="manned">Manned (voluntário opera)</SelectItem>
-                    <SelectItem value="self">Self-service (futuro)</SelectItem>
+                    <SelectItem value="manned">Manned · voluntário opera o totem</SelectItem>
+                    <SelectItem value="self">Self · PC touch (pai opera sem login)</SelectItem>
+                    <SelectItem value="display">Display · TV de uma sala específica</SelectItem>
+                    <SelectItem value="display_foyer">Display foyer · TV agregado de todas as salas</SelectItem>
                     <SelectItem value="roster">Roster · dentro da sala (futuro)</SelectItem>
                   </SelectContent>
                 </Select>
-                <Input placeholder="Modelo da impressora (ex: QL-820NWB)" value={editando.printer_modelo || ''} onChange={ev => setEditando({ ...editando, printer_modelo: ev.target.value })} />
-                <Input placeholder="IP da Brother na rede (informativo · ex: 192.168.10.50)" value={editando.printer_target || ''} onChange={ev => setEditando({ ...editando, printer_target: ev.target.value })} />
-                <p className="text-xs text-muted-foreground">
-                  No MVP, a impressão usa o browser. Configure a Brother como impressora padrão do Windows do totem.
-                </p>
+                {/* Sala vinculada · só pra display/roster */}
+                {(editando.tipo === 'display' || editando.tipo === 'roster') && (
+                  <SeletorSala
+                    salaId={editando.sala_id}
+                    onChange={(id) => setEditando({ ...editando, sala_id: id })}
+                  />
+                )}
+                {/* Impressora · só pra manned/self */}
+                {(editando.tipo === 'manned' || editando.tipo === 'self') && (
+                  <>
+                    <Input placeholder="Modelo da impressora (ex: QL-820NWB)" value={editando.printer_modelo || ''} onChange={ev => setEditando({ ...editando, printer_modelo: ev.target.value })} />
+                    <Input placeholder="IP da Brother na rede (informativo · ex: 192.168.10.50)" value={editando.printer_target || ''} onChange={ev => setEditando({ ...editando, printer_target: ev.target.value })} />
+                    <p className="text-xs text-muted-foreground">
+                      A impressão usa o browser. Configure a Brother como impressora padrão do Windows do totem.
+                    </p>
+                  </>
+                )}
                 <div className="flex items-center justify-between">
                   <label className="text-xs flex items-center gap-2">
                     <input type="checkbox" checked={editando.ativo} onChange={ev => setEditando({ ...editando, ativo: ev.target.checked })} />
@@ -497,6 +511,28 @@ function AbaEstacoes() {
         </Dialog>
       </CardContent>
     </Card>
+  );
+}
+
+// ─── Seletor de sala (usado no modal de estação tipo display/roster) ─────────
+function SeletorSala({ salaId, onChange }: { salaId: string | null; onChange: (id: string | null) => void }) {
+  const [salas, setSalas] = useState<any[]>([]);
+  useEffect(() => { totemKids.salas.list().then(setSalas); }, []);
+  return (
+    <div>
+      <label className="text-xs text-muted-foreground block mb-1">Sala vinculada *</label>
+      <Select value={salaId || ''} onValueChange={(v) => onChange(v || null)}>
+        <SelectTrigger><SelectValue placeholder="Selecione a sala" /></SelectTrigger>
+        <SelectContent>
+          {salas.filter((s: any) => s.ativo).map((s: any) => (
+            <SelectItem key={s.id} value={s.id}>
+              <span className="inline-block h-2 w-2 rounded-full mr-2" style={{ background: s.cor }} />
+              {s.nome}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+    </div>
   );
 }
 

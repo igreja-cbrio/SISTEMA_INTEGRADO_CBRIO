@@ -97,14 +97,32 @@ function normNomeFamilia(s) {
   return String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').trim();
 }
 
+// Gera variações pra match fuzzy:
+//   - nome puro
+//   - + " household"
+//   - - " household" (se tem)
+//   - "familia X" → "X"
+function variantesNome(s) {
+  const base = normNomeFamilia(s);
+  const v = new Set([base]);
+  if (base.endsWith(' household')) v.add(base.slice(0, -10));
+  else v.add(base + ' household');
+  if (base.startsWith('familia ')) v.add(base.slice(8));
+  else if (base.startsWith('família ')) v.add(base.slice(8));
+  return [...v];
+}
+
 async function carregarFamilias() {
   console.log('Carregando mem_familias...');
   const { data, error } = await supabase.from('mem_familias').select('id, nome');
   if (error) throw error;
+  // Indexa o nome do DB em TODAS as suas variantes
   for (const f of data || []) {
-    familiaPorNome.set(normNomeFamilia(f.nome), f.id);
+    for (const v of variantesNome(f.nome)) {
+      if (!familiaPorNome.has(v)) familiaPorNome.set(v, f.id);
+    }
   }
-  console.log(`  ${familiaPorNome.size} familias no banco`);
+  console.log(`  ${data?.length || 0} familias no banco (${familiaPorNome.size} chaves de match)`);
 }
 
 async function carregarCriancasPorFamilia() {
@@ -230,7 +248,12 @@ async function main() {
     const householdName = row['Household Name'];
     if (!householdName?.trim()) { erros++; continue; }
 
-    const familiaId = familiaPorNome.get(normNomeFamilia(householdName));
+    // Tenta cada variante do nome do CSV até achar match
+    let familiaId = null;
+    for (const v of variantesNome(householdName)) {
+      familiaId = familiaPorNome.get(v);
+      if (familiaId) break;
+    }
     if (!familiaId) {
       familiasSemMatch++;
       if (semMatchList.length < 20) semMatchList.push(householdName);

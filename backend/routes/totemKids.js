@@ -21,7 +21,8 @@ const XLSX = require('xlsx');
 const { authenticate, authorizeModule } = require('../middleware/auth');
 const { supabase } = require('../utils/supabase');
 
-router.use(authenticate);
+// authenticate aplicado condicionalmente abaixo · rotas /display/* e
+// /chamadas com estacao_token bypassam pra display sem login
 
 const xlsxUpload = multer({
   storage: multer.memoryStorage(),
@@ -30,6 +31,23 @@ const xlsxUpload = multer({
     const ok = /\.(xlsx|xls|csv)$/i.test(file.originalname);
     cb(ok ? null : new Error('Formato invalido · use .xlsx, .xls ou .csv'), ok);
   },
+});
+
+// Antes do router.use(authenticate) acima · bypass pra rotas publicas
+// (display da TV sem login · estacao_token no body/query autentica)
+router.use((req, res, next) => {
+  // Bypass authenticate pra:
+  //   - GET /display/* (TV consulta com ?token=X)
+  //   - POST /chamadas se vier estacao_token no body (self-service)
+  //   - POST /estacoes/parear (qualquer autenticado · ja era publico via authorizeModule)
+  const isDisplay = req.path.startsWith('/display/');
+  const isChamadaComToken = req.path === '/chamadas' && req.method === 'POST' && req.body?.estacao_token;
+  const isParear = req.path === '/estacoes/parear' && req.method === 'POST';
+  if (isDisplay || isChamadaComToken || isParear) {
+    // Pula authenticate · handlers validam token internamente
+    return next();
+  }
+  return authenticate(req, res, next);
 });
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
@@ -1097,7 +1115,7 @@ router.post('/estacoes/:id/regenerar-token', authorizeModule('kids', 3), async (
 // POST /api/totem-kids/estacoes/parear · tablet confirma pareamento
 // Body: { estacao_id, token }
 // Returns: { id, nome, tipo, printer_modelo } (sem expor o token de volta)
-router.post('/estacoes/parear', authorizeModule('kids', 1), async (req, res) => {
+router.post('/estacoes/parear', async (req, res) => {
   try {
     const { estacao_id, token } = req.body || {};
     if (!estacao_id || !token) return res.status(400).json({ error: 'estacao_id e token obrigatorios' });
@@ -1552,6 +1570,252 @@ router.get('/criancas/modelo-importacao', authorizeModule('kids', 1), async (req
   res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
   res.setHeader('Content-Disposition', 'attachment; filename="modelo-importacao-criancas.xlsx"');
   res.send(buf);
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// CHAMADAS · sistema de display nas TVs das salas
+// ═══════════════════════════════════════════════════════════════════════════
+// Fluxo:
+//   1. Pai digita codigo no PC touch self-service da recepcao
+//   2. POST /api/totem-kids/chamadas { codigo, estacao_token }
+//   3. Backend valida + cria row em kids_chamadas
+//   4. TV da sala (estacao tipo=display) faz polling em /display/sala
+//   5. Renderiza grande + sino + TTS
+//   6. Quando voluntaria confirma checkout, trigger fecha chamada
+//      (atendida_em e preenchido) e TV remove do display
+
+const publicRouter = require('express').Router();
+// Sub-router publico (sem authenticate) · pareamento via token de estacao
+// E montado dentro do main router em rota separada
+
+// Helper: valida token de estacao e retorna { id, nome, tipo, sala_id, sala_nome }
+async function validarEstacaoToken(token, tipoEsperado = null) {
+  if (!token) return null;
+  let q = supabase
+    .from('kids_estacoes')
+    .select('id, nome, tipo, sala_id, ativo, kids_salas:sala_id(id, nome, cor)')
+    .eq('token_pareamento', token)
+    .eq('ativo', true);
+  const { data } = await q.maybeSingle();
+  if (!data) return null;
+  if (tipoEsperado && data.tipo !== tipoEsperado) {
+    // Se for um array de tipos, aceita qualquer um
+    if (Array.isArray(tipoEsperado) && !tipoEsperado.includes(data.tipo)) return null;
+    if (!Array.isArray(tipoEsperado)) return null;
+  }
+  return {
+    id: data.id,
+    nome: data.nome,
+    tipo: data.tipo,
+    sala_id: data.sala_id,
+    sala_nome: data.kids_salas?.nome,
+    sala_cor: data.kids_salas?.cor,
+  };
+}
+
+// POST /api/totem-kids/chamadas
+// Body: { codigo, estacao_token? }
+// Cria chamada · valida codigo · faz upsert (se ja tem ativa, incrementa re_chamadas)
+router.post('/chamadas', async (req, res) => {
+  try {
+    const { codigo, estacao_token } = req.body || {};
+    if (!codigo || String(codigo).trim().length !== 4) {
+      return res.status(400).json({ error: 'codigo de 4 caracteres obrigatorio' });
+    }
+
+    // Se enviou estacao_token, valida (modo self-service · sem login)
+    // Senão, exige auth (modo manned via header Authorization)
+    let estacao = null;
+    let userId = null;
+    if (estacao_token) {
+      estacao = await validarEstacaoToken(estacao_token, ['self', 'manned']);
+      if (!estacao) return res.status(403).json({ error: 'estacao invalida ou nao pareada' });
+    } else {
+      // Exige auth normal · req.user populado pelo authenticate
+      if (!req.user) return res.status(401).json({ error: 'login ou estacao_token necessario' });
+      userId = req.user.userId;
+    }
+
+    const codigoUpper = String(codigo).toUpperCase().trim();
+
+    // Acha checkin ativo
+    const { data: checkin } = await supabase
+      .from('kids_checkins')
+      .select('id, sessao_id, crianca_id, sala_id, codigo_seguranca, responsavel_checkin_nome, responsavel_checkin_telefone, checkout_at, kids_criancas(nome, observacoes_medicas), kids_salas(nome, cor)')
+      .eq('codigo_seguranca', codigoUpper)
+      .is('checkout_at', null)
+      .order('checkin_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (!checkin) {
+      return res.status(404).json({ error: 'Codigo nao encontrado · crianca pode ja ter saido ou codigo errado' });
+    }
+
+    // Upsert · se ja tem chamada ativa, incrementa re_chamadas
+    const { data: existente } = await supabase
+      .from('kids_chamadas')
+      .select('id, re_chamadas')
+      .eq('checkin_id', checkin.id)
+      .is('atendida_em', null)
+      .maybeSingle();
+
+    let chamada;
+    if (existente) {
+      const { data, error } = await supabase
+        .from('kids_chamadas')
+        .update({
+          re_chamadas: existente.re_chamadas + 1,
+          ultima_rechamada_em: new Date().toISOString(),
+        })
+        .eq('id', existente.id)
+        .select('*')
+        .single();
+      if (error) throw error;
+      chamada = data;
+    } else {
+      const { data, error } = await supabase
+        .from('kids_chamadas')
+        .insert({
+          sessao_id: checkin.sessao_id,
+          checkin_id: checkin.id,
+          crianca_id: checkin.crianca_id,
+          sala_id: checkin.sala_id,
+          estacao_origem_id: estacao?.id || null,
+          codigo_seguranca: codigoUpper,
+          responsavel_nome_snapshot: checkin.responsavel_checkin_nome,
+          responsavel_telefone_snapshot: checkin.responsavel_checkin_telefone,
+        })
+        .select('*')
+        .single();
+      if (error) throw error;
+      chamada = data;
+    }
+
+    res.json({
+      chamada,
+      crianca: { id: checkin.crianca_id, nome: checkin.kids_criancas?.nome, observacoes_medicas: checkin.kids_criancas?.observacoes_medicas },
+      sala: { id: checkin.sala_id, nome: checkin.kids_salas?.nome, cor: checkin.kids_salas?.cor },
+      responsavel: { nome: checkin.responsavel_checkin_nome, telefone: checkin.responsavel_checkin_telefone },
+      ja_existia: !!existente,
+    });
+  } catch (e) {
+    console.error('[totemKids/chamadas]', e.message);
+    res.status(500).json({ error: 'Erro ao criar chamada' });
+  }
+});
+
+// GET /api/totem-kids/display/info?token=X
+// Tela display da TV consulta no boot · valida token e retorna sua estacao
+router.get('/display/info', async (req, res) => {
+  try {
+    const token = req.query.token;
+    const estacao = await validarEstacaoToken(token, ['display', 'display_foyer']);
+    if (!estacao) return res.status(403).json({ error: 'token invalido' });
+    res.json(estacao);
+  } catch (e) {
+    res.status(500).json({ error: 'Erro' });
+  }
+});
+
+// GET /api/totem-kids/display/chamadas-ativas?token=X
+// TV chama a cada 2s (polling) · retorna chamadas ativas da sala (ou todas se foyer)
+router.get('/display/chamadas-ativas', async (req, res) => {
+  try {
+    const token = req.query.token;
+    const estacao = await validarEstacaoToken(token, ['display', 'display_foyer']);
+    if (!estacao) return res.status(403).json({ error: 'token invalido' });
+
+    let q = supabase
+      .from('vw_kids_chamadas_ativas')
+      .select('*')
+      .order('chamada_em', { ascending: true });
+    if (estacao.tipo === 'display' && estacao.sala_id) {
+      q = q.eq('sala_id', estacao.sala_id);
+    }
+    const { data, error } = await q;
+    if (error) throw error;
+
+    res.json({
+      estacao_id: estacao.id,
+      estacao_nome: estacao.nome,
+      tipo: estacao.tipo,
+      sala_id: estacao.sala_id,
+      sala_nome: estacao.sala_nome,
+      sala_cor: estacao.sala_cor,
+      chamadas: data || [],
+      server_time: new Date().toISOString(),
+    });
+  } catch (e) {
+    console.error('[totemKids/display/chamadas]', e.message);
+    res.status(500).json({ error: 'Erro ao buscar chamadas' });
+  }
+});
+
+// GET /api/totem-kids/display/foyer-resumo?token=X
+// Painel central · resumo por sala (ocupacao + chamadas atrasadas)
+router.get('/display/foyer-resumo', async (req, res) => {
+  try {
+    const token = req.query.token;
+    const estacao = await validarEstacaoToken(token, ['display_foyer', 'display']);
+    if (!estacao) return res.status(403).json({ error: 'token invalido' });
+
+    // Sessao aberta atual
+    const { data: sessao } = await supabase
+      .from('kids_sessoes')
+      .select('id, culto:cultos(nome, data)')
+      .eq('status', 'aberta')
+      .order('abrir_em', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (!sessao) {
+      return res.json({ sessao: null, salas: [] });
+    }
+
+    // Ocupação por sala
+    const { data: salas } = await supabase
+      .from('kids_salas')
+      .select('id, nome, cor, capacidade, ordem')
+      .eq('ativo', true)
+      .order('ordem');
+
+    // Conta presentes por sala
+    const { data: presentes } = await supabase
+      .from('kids_checkins')
+      .select('sala_id')
+      .eq('sessao_id', sessao.id)
+      .is('checkout_at', null);
+    const presPorSala = {};
+    for (const p of presentes || []) presPorSala[p.sala_id] = (presPorSala[p.sala_id] || 0) + 1;
+
+    // Chamadas ativas
+    const { data: chamadas } = await supabase
+      .from('vw_kids_chamadas_ativas')
+      .select('sala_id, segundos_esperando');
+    const chamPorSala = {};
+    for (const c of chamadas || []) {
+      if (!chamPorSala[c.sala_id]) chamPorSala[c.sala_id] = { total: 0, max_segundos: 0 };
+      chamPorSala[c.sala_id].total++;
+      if (c.segundos_esperando > chamPorSala[c.sala_id].max_segundos) {
+        chamPorSala[c.sala_id].max_segundos = c.segundos_esperando;
+      }
+    }
+
+    res.json({
+      sessao,
+      salas: (salas || []).map(s => ({
+        ...s,
+        presentes: presPorSala[s.id] || 0,
+        chamadas_ativas: chamPorSala[s.id]?.total || 0,
+        max_espera_segundos: chamPorSala[s.id]?.max_segundos || 0,
+      })),
+      server_time: new Date().toISOString(),
+    });
+  } catch (e) {
+    console.error('[totemKids/display/foyer]', e.message);
+    res.status(500).json({ error: 'Erro' });
+  }
 });
 
 module.exports = router;
