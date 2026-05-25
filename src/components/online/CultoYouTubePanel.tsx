@@ -34,7 +34,26 @@ type CultoMetrica = {
   online_views_nao_inscritos: number | null;
   trafico: Trafico[];
   retencao_curva: CurvaPonto[];
+  actual_start_time: string | null;
+  actual_end_time: string | null;
+  video_titulo: string | null;
 };
+
+// UTC -> BRT (America/Sao_Paulo) · 'HH:mm'
+function fmtHoraBRT(isoUtc: string | null): string {
+  if (!isoUtc) return '—';
+  return new Date(isoUtc).toLocaleTimeString('pt-BR', {
+    timeZone: 'America/Sao_Paulo',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+}
+
+// Duracao em min entre 2 ISO
+function duracaoMin(inicioIso: string | null, fimIso: string | null): number | null {
+  if (!inicioIso || !fimIso) return null;
+  return Math.round((new Date(fimIso).getTime() - new Date(inicioIso).getTime()) / 60000);
+}
 
 // Mapa de fontes do YouTube pra labels amigaveis
 const FONTE_LABELS: Record<string, string> = {
@@ -193,8 +212,30 @@ function Stat({ icon, label, value }: { icon: React.ReactNode; label: string; va
 }
 
 function CultoDetalhe({ c }: { c: CultoMetrica }) {
+  const dur = duracaoMin(c.actual_start_time, c.actual_end_time);
   return (
     <div className="border-t border-border p-4 bg-muted/30 space-y-5">
+      {/* Horarios reais da live em BRT */}
+      {(c.actual_start_time || c.actual_end_time) && (
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs px-1">
+          <span className="text-muted-foreground">
+            <span className="text-[10px] uppercase tracking-wide">Início</span>
+            <span className="ml-1.5 font-semibold text-foreground">{fmtHoraBRT(c.actual_start_time)}</span>
+          </span>
+          <span className="text-muted-foreground">
+            <span className="text-[10px] uppercase tracking-wide">Fim</span>
+            <span className="ml-1.5 font-semibold text-foreground">{fmtHoraBRT(c.actual_end_time)}</span>
+          </span>
+          {dur != null && (
+            <span className="text-muted-foreground">
+              <span className="text-[10px] uppercase tracking-wide">Duração</span>
+              <span className="ml-1.5 font-semibold text-foreground">{Math.floor(dur / 60) ? `${Math.floor(dur / 60)}h${String(dur % 60).padStart(2, '0')}` : `${dur}min`}</span>
+            </span>
+          )}
+          <span className="text-[10px] text-muted-foreground/70 italic">horário Brasília</span>
+        </div>
+      )}
+
       {/* Linha 1: numeros detalhados em grid */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs">
         <BoxNum label="Pico ao vivo" value={fmtNum(c.online_pico)} sub="concurrent viewers" />

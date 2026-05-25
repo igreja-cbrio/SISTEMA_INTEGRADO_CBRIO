@@ -283,6 +283,13 @@ export default function Financeiro() {
   const [filtroTipo, setFiltroTipo] = useState('');
   const [filtroStatus, setFiltroStatus] = useState('');
   const [filtroMes, setFiltroMes] = useState('');
+  // Periodo: 'mes' (mes/ano) · 'ano' (ano inteiro) · 'custom' (range com calendario)
+  const [filtroPeriodoModo, setFiltroPeriodoModo] = useState('mes');
+  const [filtroAno, setFiltroAno] = useState(new Date().getFullYear());
+  const [filtroMesNum, setFiltroMesNum] = useState(new Date().getMonth());
+  const [filtroInicio, setFiltroInicio] = useState('');
+  const [filtroFim, setFiltroFim] = useState('');
+  const [filtroBusca, setFiltroBusca] = useState('');
 
   // Filtro contas a pagar
   const [filtroPagarStatus, setFiltroPagarStatus] = useState('');
@@ -319,15 +326,29 @@ export default function Financeiro() {
   const loadTransacoes = useCallback(async () => {
     try {
       setLoading(true);
-      const params = {};
+      const params = { limit: 2000 };
       if (filtroContaId) params.conta_id = filtroContaId;
       if (filtroTipo) params.tipo = filtroTipo;
       if (filtroStatus) params.status = filtroStatus;
-      if (filtroMes) params.mes = filtroMes;
+      if (filtroBusca) params.busca = filtroBusca;
+
+      // Periodo · monta inicio/fim conforme modo
+      if (filtroPeriodoModo === 'mes') {
+        const ini = new Date(filtroAno, filtroMesNum, 1).toISOString().slice(0, 10);
+        const fim = new Date(filtroAno, filtroMesNum + 1, 0).toISOString().slice(0, 10);
+        params.inicio = ini; params.fim = fim;
+      } else if (filtroPeriodoModo === 'ano') {
+        params.inicio = `${filtroAno}-01-01`;
+        params.fim    = `${filtroAno}-12-31`;
+      } else if (filtroPeriodoModo === 'custom') {
+        if (filtroInicio) params.inicio = filtroInicio;
+        if (filtroFim) params.fim = filtroFim;
+      }
+
       setTransacoes(await financeiro.transacoes.list(params));
     } catch (e) { console.error(e); }
     finally { setLoading(false); }
-  }, [filtroContaId, filtroTipo, filtroStatus, filtroMes]);
+  }, [filtroContaId, filtroTipo, filtroStatus, filtroBusca, filtroPeriodoModo, filtroAno, filtroMesNum, filtroInicio, filtroFim]);
 
   const loadContasPagar = useCallback(async () => {
     try {
@@ -491,32 +512,156 @@ export default function Financeiro() {
   // ═══════════════════════════════════════════════════════════
   // TAB: TRANSACOES
   // ═══════════════════════════════════════════════════════════
-  const renderTransacoes = () => (
+  const renderTransacoes = () => {
+    const MES_NOMES = ['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'];
+    const anosDisponiveis = [];
+    for (let y = new Date().getFullYear() + 1; y >= 2022; y--) anosDisponiveis.push(y);
+    const periodoModos = [
+      { v: 'mes', label: 'Mês' },
+      { v: 'ano', label: 'Ano' },
+      { v: 'custom', label: 'Personalizado' },
+    ];
+    const tituloPeriodo = filtroPeriodoModo === 'mes' ? `${MES_NOMES[filtroMesNum]} de ${filtroAno}`
+      : filtroPeriodoModo === 'ano' ? `Ano ${filtroAno}`
+      : (filtroInicio && filtroFim) ? `${filtroInicio.split('-').reverse().join('/')} a ${filtroFim.split('-').reverse().join('/')}`
+      : 'Selecione período';
+    const totalReceitas = transacoes.filter(t => t.tipo === 'receita').reduce((s, t) => s + Number(t.valor || 0), 0);
+    const totalDespesas = transacoes.filter(t => t.tipo === 'despesa').reduce((s, t) => s + Number(t.valor || 0), 0);
+
+    return (
     <>
-      <div style={styles.filterRow}>
-        <select className="flex h-9 w-full rounded-lg border border-input bg-background px-3 py-2 text-sm shadow-sm shadow-black/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" value={filtroContaId} onChange={e => setFiltroContaId(e.target.value)}>
-          <option value="">Todas as contas</option>
-          {contas.map(c => <option key={c.id} value={c.id}>{c.nome}</option>)}
-        </select>
-        <select className="flex h-9 w-full rounded-lg border border-input bg-background px-3 py-2 text-sm shadow-sm shadow-black/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" value={filtroTipo} onChange={e => setFiltroTipo(e.target.value)}>
-          <option value="">Todos os tipos</option>
-          <option value="receita">Receita</option>
-          <option value="despesa">Despesa</option>
-          <option value="transferencia">Transferencia</option>
-        </select>
-        <select className="flex h-9 w-full rounded-lg border border-input bg-background px-3 py-2 text-sm shadow-sm shadow-black/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" value={filtroStatus} onChange={e => setFiltroStatus(e.target.value)}>
-          <option value="">Todos os status</option>
-          <option value="pendente">Pendente</option>
-          <option value="conciliado">Conciliado</option>
-          <option value="cancelado">Cancelado</option>
-        </select>
-        <input className="flex h-9 rounded-lg border border-input bg-background px-3 py-2 text-sm shadow-sm shadow-black/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" style={{ width: 160 }} type="month" value={filtroMes} onChange={e => setFiltroMes(e.target.value)} />
-        {isDiretor && (
-          <Button onClick={() => setModalTransacao({
-            conta_id: '', categoria_id: '', tipo: 'despesa', descricao: '', valor: '', data_competencia: '', data_pagamento: '', status: 'pendente', referencia: '', observacoes: '',
-          })}>
-            + Nova Transacao
-          </Button>
+      {/* Card de filtros · layout limpo */}
+      <div style={{ ...styles.card, marginBottom: 16, padding: 16 }}>
+        <div className="flex items-center justify-between flex-wrap gap-3 mb-3">
+          <div>
+            <div className="text-xs text-muted-foreground uppercase tracking-wider">Período</div>
+            <div className="text-base font-semibold text-foreground">{tituloPeriodo}</div>
+            <div className="text-[11px] text-muted-foreground mt-0.5">{transacoes.length} lançamentos · Receitas R$ {totalReceitas.toLocaleString('pt-BR', { minimumFractionDigits: 2 })} · Despesas R$ {totalDespesas.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</div>
+          </div>
+          {isDiretor && (
+            <Button onClick={() => setModalTransacao({
+              conta_id: '', categoria_id: '', tipo: 'despesa', descricao: '', valor: '', data_competencia: '', data_pagamento: '', status: 'pendente', referencia: '', observacoes: '',
+            })}>
+              + Nova Transação
+            </Button>
+          )}
+        </div>
+
+        {/* Linha 1: período */}
+        <div className="flex items-center gap-2 flex-wrap mb-3">
+          <span className="text-[11px] font-medium text-muted-foreground uppercase tracking-wider w-16">Período</span>
+          <div className="flex items-center gap-0.5 rounded-md bg-muted/40 p-0.5">
+            {periodoModos.map(m => (
+              <button key={m.v} onClick={() => setFiltroPeriodoModo(m.v)}
+                className={`px-3 py-1.5 text-xs rounded transition ${
+                  filtroPeriodoModo === m.v ? 'bg-background shadow-sm font-medium text-foreground' : 'text-muted-foreground hover:text-foreground'
+                }`}>
+                {m.label}
+              </button>
+            ))}
+          </div>
+
+          {filtroPeriodoModo === 'mes' && (
+            <>
+              <select value={filtroMesNum} onChange={e => setFiltroMesNum(Number(e.target.value))}
+                className="h-9 px-3 text-sm rounded-md border border-input bg-background min-w-[140px]">
+                {MES_NOMES.map((n, i) => <option key={i} value={i}>{n}</option>)}
+              </select>
+              <select value={filtroAno} onChange={e => setFiltroAno(Number(e.target.value))}
+                className="h-9 px-3 text-sm rounded-md border border-input bg-background min-w-[90px]">
+                {anosDisponiveis.map(a => <option key={a} value={a}>{a}</option>)}
+              </select>
+            </>
+          )}
+          {filtroPeriodoModo === 'ano' && (
+            <select value={filtroAno} onChange={e => setFiltroAno(Number(e.target.value))}
+              className="h-9 px-3 text-sm rounded-md border border-input bg-background min-w-[100px]">
+              {anosDisponiveis.map(a => <option key={a} value={a}>{a}</option>)}
+            </select>
+          )}
+          {filtroPeriodoModo === 'custom' && (
+            <>
+              <input type="date" value={filtroInicio} onChange={e => setFiltroInicio(e.target.value)}
+                className="h-9 px-3 text-sm rounded-md border border-input bg-background" />
+              <span className="text-xs text-muted-foreground">até</span>
+              <input type="date" value={filtroFim} onChange={e => setFiltroFim(e.target.value)}
+                className="h-9 px-3 text-sm rounded-md border border-input bg-background" />
+            </>
+          )}
+
+          {/* Atalhos rápidos */}
+          <div className="ml-auto flex gap-1">
+            {[
+              { label: '30d', dias: 30 },
+              { label: '90d', dias: 90 },
+              { label: '6m', dias: 180 },
+              { label: '12m', dias: 365 },
+            ].map(q => (
+              <button key={q.label}
+                onClick={() => {
+                  setFiltroPeriodoModo('custom');
+                  const f = new Date(); const i = new Date(); i.setDate(i.getDate() - q.dias);
+                  setFiltroInicio(i.toISOString().slice(0, 10));
+                  setFiltroFim(f.toISOString().slice(0, 10));
+                }}
+                className="h-9 px-2.5 text-[11px] rounded bg-muted/40 hover:bg-muted/60 text-muted-foreground">
+                {q.label}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* Linha 2: filtros */}
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-2 mb-3">
+          <div>
+            <label className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider block mb-1">Conta</label>
+            <select value={filtroContaId} onChange={e => setFiltroContaId(e.target.value)}
+              className="h-9 w-full px-3 text-sm rounded-md border border-input bg-background">
+              <option value="">Todas as contas</option>
+              {contas.map(c => <option key={c.id} value={c.id}>{c.nome}</option>)}
+            </select>
+          </div>
+          <div>
+            <label className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider block mb-1">Tipo</label>
+            <select value={filtroTipo} onChange={e => setFiltroTipo(e.target.value)}
+              className="h-9 w-full px-3 text-sm rounded-md border border-input bg-background">
+              <option value="">Todos os tipos</option>
+              <option value="receita">Receita</option>
+              <option value="despesa">Despesa</option>
+              <option value="transferencia">Transferência</option>
+            </select>
+          </div>
+          <div>
+            <label className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider block mb-1">Status</label>
+            <select value={filtroStatus} onChange={e => setFiltroStatus(e.target.value)}
+              className="h-9 w-full px-3 text-sm rounded-md border border-input bg-background">
+              <option value="">Todos os status</option>
+              <option value="pendente">Pendente</option>
+              <option value="conciliado">Conciliado</option>
+              <option value="cancelado">Cancelado</option>
+            </select>
+          </div>
+          <div>
+            <label className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider block mb-1">Buscar descrição</label>
+            <input type="text" value={filtroBusca} onChange={e => setFiltroBusca(e.target.value)}
+              placeholder="Ex: dízimo, pix, fornecedor..."
+              className="h-9 w-full px-3 text-sm rounded-md border border-input bg-background" />
+          </div>
+        </div>
+
+        {/* Limpar */}
+        {(filtroContaId || filtroTipo || filtroStatus || filtroBusca || filtroPeriodoModo !== 'mes' ||
+          filtroAno !== new Date().getFullYear() || filtroMesNum !== new Date().getMonth()) && (
+          <button onClick={() => {
+            setFiltroContaId(''); setFiltroTipo(''); setFiltroStatus(''); setFiltroBusca('');
+            setFiltroPeriodoModo('mes');
+            setFiltroAno(new Date().getFullYear());
+            setFiltroMesNum(new Date().getMonth());
+            setFiltroInicio(''); setFiltroFim('');
+          }}
+          className="text-[11px] text-muted-foreground hover:text-foreground underline">
+            Limpar filtros
+          </button>
         )}
       </div>
       <div style={styles.card}>
@@ -574,7 +719,8 @@ export default function Financeiro() {
         )}
       </div>
     </>
-  );
+    );
+  };
 
   // ═══════════════════════════════════════════════════════════
   // TAB: CONTAS A PAGAR
