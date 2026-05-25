@@ -499,21 +499,41 @@ router.get('/lancamentos-brutos', async (req, res) => {
 router.get('/fila-classificacao', async (req, res) => {
   try {
     const { status = 'pendente', limit = 100 } = req.query;
-    const { data, error } = await supabase
+    // Fetch separado · evita problema do Supabase resolver FK ambiguo no nested select
+    const { data: fila, error } = await supabase
       .from('fin_fila_classificacao')
-      .select(`
-        *,
-        lancamento:lancamento_bruto_id(*),
-        sugestao_plano:sugestao_plano_contas_id(codigo, nome, tipo),
-        sugestao_centro:sugestao_centro_custo_id(codigo, nome),
-        sugestao_membro:sugestao_membro_id(nome, cpf, status)
-      `)
+      .select('*')
       .eq('status', status)
       .order('created_at', { ascending: false })
       .limit(Number(limit));
     if (error) return res.status(400).json({ error: error.message });
-    res.json(data);
-  } catch (e) { res.status(500).json({ error: 'Erro ao listar fila' }); }
+    if (!fila?.length) return res.json([]);
+
+    // Resolve FKs em batch
+    const brutoIds = [...new Set(fila.map(f => f.lancamento_bruto_id).filter(Boolean))];
+    const planoIds = [...new Set(fila.map(f => f.sugestao_plano_contas_id).filter(Boolean))];
+    const centroIds = [...new Set(fila.map(f => f.sugestao_centro_custo_id).filter(Boolean))];
+    const membroIds = [...new Set(fila.map(f => f.sugestao_membro_id).filter(Boolean))];
+
+    const [brutos, planos, centros, membros] = await Promise.all([
+      brutoIds.length ? supabase.from('fin_lancamentos_brutos').select('*').in('id', brutoIds) : { data: [] },
+      planoIds.length ? supabase.from('fin_plano_contas').select('id, codigo, nome, tipo').in('id', planoIds) : { data: [] },
+      centroIds.length ? supabase.from('fin_centros_custo').select('id, codigo, nome').in('id', centroIds) : { data: [] },
+      membroIds.length ? supabase.from('mem_membros').select('id, nome, cpf, status').in('id', membroIds) : { data: [] },
+    ]);
+    const bMap = new Map((brutos.data || []).map(b => [b.id, b]));
+    const pMap = new Map((planos.data || []).map(p => [p.id, p]));
+    const cMap = new Map((centros.data || []).map(c => [c.id, c]));
+    const mMap = new Map((membros.data || []).map(m => [m.id, m]));
+
+    res.json(fila.map(f => ({
+      ...f,
+      lancamento: bMap.get(f.lancamento_bruto_id) || null,
+      sugestao_plano: pMap.get(f.sugestao_plano_contas_id) || null,
+      sugestao_centro: cMap.get(f.sugestao_centro_custo_id) || null,
+      sugestao_membro: mMap.get(f.sugestao_membro_id) || null,
+    })));
+  } catch (e) { res.status(500).json({ error: 'Erro ao listar fila: ' + e.message }); }
 });
 
 // ====================================================================
@@ -846,21 +866,10 @@ router.get('/dashboard/overview', async (req, res) => {
       recentes,
     ] = await Promise.all([
       supabase.from('fin_contas').select('id, nome, saldo, ativa, banco'),
-      // Transacoes do periodo · com .limit(100000) pra suportar ano inteiro
-      // (default supabase-js eh 1000 e cortava)
-      supabase.from('vw_fin_transacoes_completa').select('tipo, valor, status, plano_contas_codigo')
-        .gte('data_competencia', ranges.inicio).lte('data_competencia', ranges.fim)
-        .neq('status', 'cancelado')
-        .limit(100000),
-      supabase.from('vw_fin_transacoes_completa').select('tipo, valor, plano_contas_codigo')
-        .gte('data_competencia', ranges.inicio_ant).lte('data_competencia', ranges.fim_ant)
-        .neq('status', 'cancelado')
-        .limit(100000),
-      supabase.from('vw_fin_transacoes_completa')
-        .select('tipo, valor, data_competencia, plano_contas_codigo')
-        .gte('data_competencia', dozeMesesAtras)
-        .neq('status', 'cancelado')
-        .limit(100000),
+      // Agregação direto no banco via RPC (evita db-max-rows=1000 do PostgREST)
+      supabase.rpc('fin_dashboard_periodo', { p_inicio: ranges.inicio, p_fim: ranges.fim }),
+      supabase.rpc('fin_dashboard_periodo', { p_inicio: ranges.inicio_ant, p_fim: ranges.fim_ant }),
+      supabase.rpc('fin_dashboard_serie_mensal', { p_desde: dozeMesesAtras }),
       supabase.from('fin_contas_pagar').select('id, valor, status, data_vencimento, descricao')
         .eq('status', 'pendente'),
       supabase.from('fin_reembolsos').select('id, valor, status').eq('status', 'pendente'),
@@ -889,29 +898,18 @@ router.get('/dashboard/overview', async (req, res) => {
     const contasAtivas = (contas.data || []).filter(c => c.ativa);
     const saldoTotal = contasAtivas.reduce((s, c) => s + Number(c.saldo || 0), 0);
 
-    // Filtra transferencias internas (plano 1.x e 2.x) · só receita real = 3.% e despesa = 4.%
-    // Lancamentos sem plano (recem importados) entram pelo tipo declarado
-    const isReceitaReal = (t) => t.tipo === 'receita' && (!t.plano_contas_codigo || String(t.plano_contas_codigo).startsWith('3.'));
-    const isDespesaReal = (t) => t.tipo === 'despesa' && (!t.plano_contas_codigo || String(t.plano_contas_codigo).startsWith('4.'));
+    // RPC retorna agregação ja filtrada por plano 3.%/4.% (sem transferencias internas)
+    const receitaMes    = Number(transPeriodo.data?.[0]?.receita || 0);
+    const despesaMes    = Number(transPeriodo.data?.[0]?.despesa || 0);
+    const receitaMesAnt = Number(transPeriodoAnt.data?.[0]?.receita || 0);
+    const despesaMesAnt = Number(transPeriodoAnt.data?.[0]?.despesa || 0);
 
-    const tMes = transPeriodo.data || [];
-    const receitaMes = tMes.filter(isReceitaReal).reduce((s, t) => s + Number(t.valor), 0);
-    const despesaMes = tMes.filter(isDespesaReal).reduce((s, t) => s + Number(t.valor), 0);
-
-    const tMesAnt = transPeriodoAnt.data || [];
-    const receitaMesAnt = tMesAnt.filter(isReceitaReal).reduce((s, t) => s + Number(t.valor), 0);
-    const despesaMesAnt = tMesAnt.filter(isDespesaReal).reduce((s, t) => s + Number(t.valor), 0);
-
-    // Serie 12 meses · agrupa por YYYY-MM
-    const serieMap = new Map();
-    for (const t of (trans6m.data || [])) {
-      const mes = t.data_competencia.slice(0, 7);
-      if (!serieMap.has(mes)) serieMap.set(mes, { mes, receita: 0, despesa: 0 });
-      const row = serieMap.get(mes);
-      if (isReceitaReal(t)) row.receita += Number(t.valor);
-      else if (isDespesaReal(t)) row.despesa += Number(t.valor);
-    }
-    const serie6m = Array.from(serieMap.values()).sort((a, b) => a.mes.localeCompare(b.mes));
+    // Serie 12 meses ja agregada por YYYY-MM no banco
+    const serie6m = (trans6m.data || []).map(r => ({
+      mes: r.mes,
+      receita: Number(r.receita),
+      despesa: Number(r.despesa),
+    }));
 
     // Receita por culto · agregado dos ultimos 6 meses
     const cultoMap = new Map();
