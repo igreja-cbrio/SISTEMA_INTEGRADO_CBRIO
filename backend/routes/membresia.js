@@ -1328,10 +1328,10 @@ router.post('/totem/apresentacao-bebe', async (req, res) => {
 
     try {
       await notificar({
-        modulo: 'membresia',
+        modulo: 'integracao',
         titulo: 'Apresentacao de bebe agendada',
         mensagem: `${responsavel_nome} agendou apresentacao de ${bebe_nome} para ${proximaStr}.`,
-        link: '/ministerial/membresia',
+        link: '/integracao',
       });
     } catch (e) {
       console.error('[TOTEM] apresentacao-bebe notificar error:', e.message);
