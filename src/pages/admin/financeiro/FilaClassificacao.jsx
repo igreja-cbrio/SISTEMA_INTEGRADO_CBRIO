@@ -29,6 +29,8 @@ export default function FilaClassificacao() {
   const [bulkProcessing, setBulkProcessing] = useState(false);
   const [confiancaMin, setConfiancaMin] = useState(0.8);
   const [selecionados, setSelecionados] = useState(new Set());
+  // Filtro por click nos cards · 'todos' | 'auto' (alta confianca) | 'sem_sugestao' | 'memoria' | 'baixa_confianca'
+  const [filtroCard, setFiltroCard] = useState('todos');
 
   const toggleSel = (id) => {
     setSelecionados(prev => {
@@ -37,9 +39,11 @@ export default function FilaClassificacao() {
       return next;
     });
   };
-  const todosMarcados = fila.length > 0 && selecionados.size === fila.length;
+  // Toggle/marca opera apenas sobre a lista filtrada (filaFiltrada definida mais abaixo)
+  const idsVisiveis = () => filaFiltrada.map(i => i.id);
+  const todosMarcados = filaFiltrada.length > 0 && filaFiltrada.every(i => selecionados.has(i.id));
   const algunsMarcados = selecionados.size > 0 && !todosMarcados;
-  const toggleTodos = () => setSelecionados(todosMarcados ? new Set() : new Set(fila.map(i => i.id)));
+  const toggleTodos = () => setSelecionados(todosMarcados ? new Set() : new Set(idsVisiveis()));
 
   // Confirmação inline via toast.warning + action (sem confirm() nativo)
   const aprovarSelecionados = () => {
@@ -132,8 +136,14 @@ export default function FilaClassificacao() {
   useEffect(() => { load(); }, [load]);
 
   const aprovar = async (item, override = {}) => {
-    await financeiroV2.fila.aprovar(item.id, override);
-    load();
+    try {
+      await financeiroV2.fila.aprovar(item.id, override);
+      toast.success('Lançamento aprovado');
+      load();
+    } catch (e) {
+      console.error('[aprovar] erro:', e);
+      toast.error('Erro ao aprovar: ' + (e?.message || 'desconhecido'));
+    }
   };
 
   const ignorar = async (item) => {
@@ -145,6 +155,18 @@ export default function FilaClassificacao() {
   const pctAuto = stats?.pct_automatico || 0;
   const memoriaTotal = stats?.memoria_total || 0;
   const confiancaMedia = stats?.confianca_media_ult30 ? Math.round(Number(stats.confianca_media_ult30) * 100) : 0;
+
+  // Aplica filtro client-side conforme o card clicado
+  const filaFiltrada = fila.filter(item => {
+    if (filtroCard === 'todos') return true;
+    const origem = item.sugestao_origem || '';
+    const conf = Number(item.sugestao_confianca || 0);
+    if (filtroCard === 'auto') return ['regra', 'memoria', 'memoria_documento', 'memoria_nome', 'centavo', 'ia'].includes(origem) && conf >= 0.7;
+    if (filtroCard === 'sem_sugestao') return origem === 'sem_sugestao' || !item.sugestao_plano_contas_id;
+    if (filtroCard === 'memoria') return ['memoria', 'memoria_documento', 'memoria_nome'].includes(origem);
+    if (filtroCard === 'baixa_confianca') return conf > 0 && conf < 0.7;
+    return true;
+  });
 
   return (
     <div>
@@ -160,36 +182,68 @@ export default function FilaClassificacao() {
         </Button>
       </div>
 
-      {/* Stats inteligentes */}
+      {/* Stats inteligentes · click filtra a lista */}
       {stats && (
         <div style={{
           display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))',
           gap: 12, marginBottom: 16,
         }}>
-          <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 10, padding: 14 }}>
-            <div style={{ fontSize: 10, textTransform: 'uppercase', color: C.text3, letterSpacing: 0.5 }}>Acerto automático · 30d</div>
-            <div style={{ fontSize: 24, fontWeight: 700, color: pctAuto >= 80 ? C.green : pctAuto >= 50 ? C.amber : C.red, marginTop: 4 }}>
-              {pctAuto.toFixed(0)}%
-            </div>
-            <div style={{ fontSize: 10, color: C.text3 }}>
-              {stats.classificadas_auto_ult30 || 0} de {stats.total_ult30 || 0} bateram em regra/memória
-            </div>
-          </div>
-          <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 10, padding: 14 }}>
-            <div style={{ fontSize: 10, textTransform: 'uppercase', color: C.text3, letterSpacing: 0.5 }}>Memória aprendida</div>
-            <div style={{ fontSize: 24, fontWeight: 700, color: C.blue, marginTop: 4 }}>{memoriaTotal}</div>
-            <div style={{ fontSize: 10, color: C.text3 }}>pagadores/recebedores conhecidos</div>
-          </div>
-          <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 10, padding: 14 }}>
-            <div style={{ fontSize: 10, textTransform: 'uppercase', color: C.text3, letterSpacing: 0.5 }}>Confiança média</div>
-            <div style={{ fontSize: 24, fontWeight: 700, color: C.primary, marginTop: 4 }}>{confiancaMedia}%</div>
-            <div style={{ fontSize: 10, color: C.text3 }}>das sugestões dos últimos 30 dias</div>
-          </div>
-          <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 10, padding: 14 }}>
-            <div style={{ fontSize: 10, textTransform: 'uppercase', color: C.text3, letterSpacing: 0.5 }}>Sem sugestão</div>
-            <div style={{ fontSize: 24, fontWeight: 700, color: C.text2, marginTop: 4 }}>{stats.sem_sugestao_ult30 || 0}</div>
-            <div style={{ fontSize: 10, color: C.text3 }}>casos novos · cadastre regra ou decida manual</div>
-          </div>
+          <StatCardClicavel
+            ativo={filtroCard === 'auto'}
+            onClick={() => setFiltroCard(filtroCard === 'auto' ? 'todos' : 'auto')}
+            corAtivo={C.green}
+            label="Acerto automático · 30d"
+            valor={`${pctAuto.toFixed(0)}%`}
+            valorCor={pctAuto >= 80 ? C.green : pctAuto >= 50 ? C.amber : C.red}
+            sub={`${stats.classificadas_auto_ult30 || 0} de ${stats.total_ult30 || 0} · clique pra filtrar`}
+          />
+          <StatCardClicavel
+            ativo={filtroCard === 'memoria'}
+            onClick={() => setFiltroCard(filtroCard === 'memoria' ? 'todos' : 'memoria')}
+            corAtivo={C.blue}
+            label="Memória aprendida"
+            valor={String(memoriaTotal)}
+            valorCor={C.blue}
+            sub="pagadores conhecidos · filtra os que vieram da memória"
+          />
+          <StatCardClicavel
+            ativo={filtroCard === 'baixa_confianca'}
+            onClick={() => setFiltroCard(filtroCard === 'baixa_confianca' ? 'todos' : 'baixa_confianca')}
+            corAtivo={C.primary}
+            label="Confiança média"
+            valor={`${confiancaMedia}%`}
+            valorCor={C.primary}
+            sub="clique pra filtrar sugestões de baixa confiança"
+          />
+          <StatCardClicavel
+            ativo={filtroCard === 'sem_sugestao'}
+            onClick={() => setFiltroCard(filtroCard === 'sem_sugestao' ? 'todos' : 'sem_sugestao')}
+            corAtivo={C.amber}
+            label="Sem sugestão"
+            valor={String(stats.sem_sugestao_ult30 || 0)}
+            valorCor={C.text2}
+            sub="casos novos · clique pra ver só esses"
+          />
+        </div>
+      )}
+
+      {filtroCard !== 'todos' && (
+        <div style={{
+          padding: '8px 14px', marginBottom: 12,
+          background: C.primaryBg, border: `1px solid ${C.primary}40`, borderRadius: 8,
+          display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: 12,
+        }}>
+          <span style={{ color: C.text }}>
+            Mostrando <strong>{filaFiltrada.length}</strong> de {fila.length} ·
+            filtro: <strong>{filtroCard === 'auto' ? 'Auto-classificados (alta confiança)'
+              : filtroCard === 'memoria' ? 'Vieram da memória'
+              : filtroCard === 'baixa_confianca' ? 'Baixa confiança'
+              : 'Sem sugestão'}</strong>
+          </span>
+          <button onClick={() => setFiltroCard('todos')}
+            style={{ background: 'transparent', border: 'none', color: C.primary, cursor: 'pointer', fontSize: 12, fontWeight: 600 }}>
+            Limpar filtro ×
+          </button>
         </div>
       )}
 
@@ -239,9 +293,9 @@ export default function FilaClassificacao() {
               onChange={toggleTodos}
               style={{ width: 16, height: 16, cursor: 'pointer' }}
             />
-            {selecionados.size === 0 ? `Marcar todos (${fila.length})` :
-              todosMarcados ? `Todos selecionados (${fila.length})` :
-              `${selecionados.size} de ${fila.length} selecionado${selecionados.size === 1 ? '' : 's'}`}
+            {selecionados.size === 0 ? `Marcar todos (${filaFiltrada.length})` :
+              todosMarcados ? `Todos selecionados (${filaFiltrada.length})` :
+              `${selecionados.size} de ${filaFiltrada.length} selecionado${selecionados.size === 1 ? '' : 's'}`}
           </label>
           {selecionados.size > 0 && (
             <div style={{ display: 'flex', gap: 6, marginLeft: 'auto' }}>
@@ -260,7 +314,7 @@ export default function FilaClassificacao() {
       )}
 
       <div style={{ display: 'grid', gap: 12 }}>
-        {fila.map(item => (
+        {filaFiltrada.map(item => (
           <CardFila key={item.id}
             item={item}
             planos={planos}
@@ -272,6 +326,16 @@ export default function FilaClassificacao() {
             onIgnorar={() => ignorar(item)}
           />
         ))}
+        {filaFiltrada.length === 0 && fila.length > 0 && (
+          <div style={{ background: C.card, border: `1px solid ${C.border}`, padding: 32, textAlign: 'center', borderRadius: 8, color: C.text3 }}>
+            Nenhum lançamento bate com o filtro atual.
+            <div style={{ marginTop: 8 }}>
+              <button onClick={() => setFiltroCard('todos')} style={{ background: 'transparent', border: 'none', color: C.primary, cursor: 'pointer', textDecoration: 'underline', fontSize: 13 }}>
+                Limpar filtro
+              </button>
+            </div>
+          </div>
+        )}
         {fila.length === 0 && (
           <div style={{ background: C.card, border: `1px solid ${C.border}`, padding: 32, textAlign: 'center', borderRadius: 8, color: C.text3 }}>
             Nenhum lancamento pendente · todos foram classificados ✓
@@ -290,6 +354,33 @@ export default function FilaClassificacao() {
         />
       )}
     </div>
+  );
+}
+
+function StatCardClicavel({ ativo, onClick, corAtivo, label, valor, valorCor, sub }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      style={{
+        background: ativo ? `${corAtivo}18` : C.card,
+        border: `2px solid ${ativo ? corAtivo : C.border}`,
+        borderRadius: 10, padding: 14,
+        cursor: 'pointer', textAlign: 'left',
+        boxShadow: ativo ? `0 0 0 3px ${corAtivo}25` : 'none',
+        transition: 'all 0.15s',
+        width: '100%',
+      }}
+      onMouseEnter={e => { if (!ativo) e.currentTarget.style.borderColor = corAtivo + '60'; }}
+      onMouseLeave={e => { if (!ativo) e.currentTarget.style.borderColor = C.border; }}
+    >
+      <div style={{ fontSize: 10, textTransform: 'uppercase', color: C.text3, letterSpacing: 0.5, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+        {label}
+        {ativo && <span style={{ fontSize: 10, color: corAtivo, fontWeight: 700 }}>● ATIVO</span>}
+      </div>
+      <div style={{ fontSize: 24, fontWeight: 700, color: valorCor, marginTop: 4 }}>{valor}</div>
+      <div style={{ fontSize: 10, color: C.text3 }}>{sub}</div>
+    </button>
   );
 }
 
@@ -329,7 +420,21 @@ function CardFila({ item, selecionado, onToggleSelecionar, onAprovar, onEditar, 
           </span>
         </div>
         <div style={{ fontSize: 13, color: C.text, marginBottom: 4 }}>{lanc.memo}</div>
-        {(lanc.nome_contraparte || lanc.documento_contraparte) && (
+        {item.pix_detalhe?.pagador_nome && (
+          <div style={{ fontSize: 12, color: C.text, fontWeight: 600, marginBottom: 2, display: 'flex', alignItems: 'center', gap: 6 }}>
+            <span style={{ fontSize: 10, padding: '1px 6px', borderRadius: 99, background: C.greenBg, color: C.green, fontWeight: 700 }}>
+              👤 {item.sugestao_membro ? 'MEMBRO' : 'PAGADOR'}
+            </span>
+            <span>{item.pix_detalhe.pagador_nome}</span>
+            {item.pix_detalhe.pagador_documento && (
+              <code style={{ fontSize: 10, color: C.text3 }}>· {item.pix_detalhe.pagador_documento}</code>
+            )}
+            {item.pix_detalhe.banco_origem && (
+              <span style={{ fontSize: 10, color: C.text3 }}>· {item.pix_detalhe.banco_origem}</span>
+            )}
+          </div>
+        )}
+        {!item.pix_detalhe?.pagador_nome && (lanc.nome_contraparte || lanc.documento_contraparte) && (
           <div style={{ fontSize: 11, color: C.text2 }}>
             {lanc.nome_contraparte} {lanc.documento_contraparte && <code>· {lanc.documento_contraparte}</code>}
           </div>
@@ -385,6 +490,10 @@ function ModalEditarClassificacao({ item, onClose, planos, centros, onSalvar }) 
   const [centroId, setCentroId] = useState(item.sugestao_centro_custo_id || '');
   const [centavo, setCentavo] = useState('');
   const [obs, setObs] = useState('');
+  // Auto-cadastro como contribuinte avulso · default true se pagador identificado e sem membro
+  const temPagador = !!item.pix_detalhe?.pagador_nome;
+  const semMembro = !item.sugestao_membro;
+  const [criarContrib, setCriarContrib] = useState(temPagador && semMembro);
 
   return (
     <div style={modalOverlay} onClick={onClose}>
@@ -434,6 +543,35 @@ function ModalEditarClassificacao({ item, onClose, planos, centros, onSalvar }) 
             <label style={labelSt}>Observacoes</label>
             <input value={obs} onChange={e => setObs(e.target.value)} style={inputSt} />
           </div>
+
+          {temPagador && (
+            <div style={{
+              padding: 10, borderRadius: 6,
+              background: criarContrib ? C.greenBg : 'var(--cbrio-bg)',
+              border: `1px solid ${criarContrib ? C.green + '40' : C.border}`,
+            }}>
+              <label style={{ display: 'flex', alignItems: 'flex-start', gap: 8, cursor: 'pointer' }}>
+                <input
+                  type="checkbox"
+                  checked={criarContrib}
+                  onChange={e => setCriarContrib(e.target.checked)}
+                  style={{ width: 16, height: 16, marginTop: 2, cursor: 'pointer' }}
+                />
+                <div>
+                  <div style={{ fontSize: 12, fontWeight: 600, color: C.text }}>
+                    {semMembro
+                      ? `Cadastrar ${item.pix_detalhe.pagador_nome} como contribuinte avulso`
+                      : `Já cadastrado · ${item.sugestao_membro?.nome}`}
+                  </div>
+                  <div style={{ fontSize: 10, color: C.text2, marginTop: 2 }}>
+                    {semMembro
+                      ? 'Cria automaticamente em Membros (status: contribuinte_avulso). Vincula esta e futuras transações deste pagador ao membro criado.'
+                      : 'A transação será vinculada ao membro existente.'}
+                  </div>
+                </div>
+              </label>
+            </div>
+          )}
         </div>
 
         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
@@ -443,6 +581,7 @@ function ModalEditarClassificacao({ item, onClose, planos, centros, onSalvar }) 
             centro_custo_id: centroId || null,
             identificador_centavo: centavo || null,
             observacoes: obs || null,
+            criar_contribuinte: criarContrib,
             origem: 'manual',
           })}>Salvar</Button>
         </div>
