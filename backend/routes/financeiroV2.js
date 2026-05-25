@@ -716,6 +716,17 @@ router.get('/transacoes', async (req, res) => {
   } catch (e) { res.status(500).json({ error: 'Erro ao listar transacoes' }); }
 });
 
+// Lista arrecadacoes (plano 3.01.*) via RPC · contorna db-max-rows do PostgREST
+router.get('/arrecadacoes', async (req, res) => {
+  try {
+    const { inicio, fim } = req.query;
+    if (!inicio || !fim) return res.status(400).json({ error: 'inicio e fim obrigatorios' });
+    const { data, error } = await supabase.rpc('fin_arrecadacoes_listar', { p_inicio: inicio, p_fim: fim });
+    if (error) return res.status(400).json({ error: error.message });
+    res.json(data || []);
+  } catch (e) { res.status(500).json({ error: 'Erro ao listar arrecadacoes: ' + e.message }); }
+});
+
 // ====================================================================
 // DASHBOARD OVERVIEW · agrega tudo do /admin/financeiro home
 // ====================================================================
