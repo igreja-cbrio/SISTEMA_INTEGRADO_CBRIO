@@ -176,68 +176,104 @@ router.post('/cache/bust', async (_req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-// GET /api/permissoes/diagnostico/:email · dump COMPLETO do estado de
-// permissoes pra um usuario. Usado pra debug quando alguem nao consegue
-// acessar um modulo. Admin/diretor ve qualquer um · resto so o proprio.
+// GET /api/permissoes/diagnostico/:email · simula em profundidade a
+// computacao de permissoes pra um usuario, com TODOS os intermediarios
+// expostos. Usado pra debug quando alguem nao consegue acessar um modulo
+// apesar do banco estar correto.
 router.get('/diagnostico/:email', async (req, res) => {
   try {
     const email = decodeURIComponent(req.params.email).toLowerCase().trim();
 
-    // Profile
     const { data: profile } = await supabase.from('profiles')
       .select('id, name, email, role, active, area, kpi_areas')
       .ilike('email', email)
       .maybeSingle();
 
-    // Funcionario
     const { data: funcionario } = await supabase.from('rh_funcionarios')
       .select('id, nome, email, cargo, area, status')
       .ilike('email', email)
       .maybeSingle();
 
-    // Usuarios row
     const { data: usuario } = await supabase.from('usuarios')
-      .select('id, email, nome, ativo, cargo_id, cargos(id, slug, nome, nome_completo)')
+      .select('id, email, nome, ativo, cargo_id, cargos(id, slug, nome, nome_completo, nivel_padrao_leitura, nivel_padrao_escrita)')
       .ilike('email', email)
       .maybeSingle();
 
-    // Areas
     const { data: areas } = usuario?.id ? await supabase.from('usuario_areas')
       .select('areas(nome, setor_id, setores(nome))')
       .eq('usuario_id', usuario.id) : { data: [] };
 
-    // Overrides
     const { data: overrides } = usuario?.id ? await supabase.from('permissoes_modulo')
       .select('modulo_id, nivel_leitura, nivel_escrita, escopo_proprio, motivo, expira_em, modulos(slug, nome)')
       .eq('usuario_id', usuario.id) : { data: [] };
 
-    // Matriz pro cargo
-    const matriz = usuario?.cargo_id ? (await supabase.from('cargo_modulo_permissao')
-      .select('nivel, pode_exportar, pode_aprovar, escopo_proprio, modulos(slug, nome, ativo)')
-      .eq('cargo_id', usuario.cargo_id)).data : [];
+    // RAW · igual ao que o middleware le
+    const { data: modulosRaw } = await supabase
+      .from('modulos')
+      .select('id, nome, slug, categoria, rota, ordem')
+      .eq('ativo', true);
+    const { data: cargoMatrixRaw } = await supabase
+      .from('cargo_modulo_permissao')
+      .select('cargo_id, modulo_id, nivel, pode_exportar, pode_aprovar, escopo_proprio');
+
+    const cargoId = usuario?.cargo_id;
+    const cargoIdType = typeof cargoId;
+
+    // Simula resolveEffectivePerms passo a passo
+    const matrixRowsForUser = (cargoMatrixRaw || []).filter(r => r.cargo_id === cargoId);
+    const matrixRowsForUserLoose = (cargoMatrixRaw || []).filter(r => Number(r.cargo_id) === Number(cargoId));
+
+    const sampleMatrixRow = (cargoMatrixRaw || [])[0] || null;
+    const sampleModulo = (modulosRaw || [])[0] || null;
+
+    const defaultsByMod = new Map();
+    for (const r of matrixRowsForUser) {
+      defaultsByMod.set(r.modulo_id, r);
+    }
+
+    const modulosLookup = (modulosRaw || []).map(m => ({
+      slug: m.slug,
+      nome: m.nome,
+      id: m.id,
+      id_type: typeof m.id,
+      tem_matriz: defaultsByMod.has(m.id),
+      nivel_matriz: defaultsByMod.get(m.id)?.nivel ?? null,
+    }));
+
+    // Compara tipos: id de modulos vs modulo_id na matriz
+    const tipoModulosId = sampleModulo ? typeof sampleModulo.id : null;
+    const tipoCmpModuloId = sampleMatrixRow ? typeof sampleMatrixRow.modulo_id : null;
+    const tipoCmpCargoId = sampleMatrixRow ? typeof sampleMatrixRow.cargo_id : null;
 
     res.json({
       email_query: email,
       profile,
       funcionario,
-      usuario,
-      cargo: usuario?.cargos || null,
-      areas: (areas || []).map(a => ({
-        nome: a.areas?.nome,
-        setor: a.areas?.setores?.nome,
-      })),
+      usuario: usuario ? {
+        ...usuario,
+        cargo_id_type: typeof usuario.cargo_id,
+      } : null,
+      areas_list: (areas || []).map(a => a.areas?.nome).filter(Boolean),
       overrides: overrides || [],
-      matriz_cargo: (matriz || [])
-        .filter(m => m.modulos?.ativo)
-        .map(m => ({
-          slug: m.modulos?.slug,
-          nome: m.modulos?.nome,
-          nivel: m.nivel,
-          escopo_proprio: m.escopo_proprio,
-        }))
-        .sort((a, b) => (a.slug || '').localeCompare(b.slug || '')),
+      cargo_id: cargoId,
+      cargo_id_type: cargoIdType,
+      matrix_stats: {
+        cargoMatrix_total_rows: (cargoMatrixRaw || []).length,
+        rows_for_user_strict: matrixRowsForUser.length,
+        rows_for_user_loose: matrixRowsForUserLoose.length,
+        defaultsByMod_size: defaultsByMod.size,
+      },
+      type_check: {
+        modulos_id: tipoModulosId,
+        cmp_modulo_id: tipoCmpModuloId,
+        cmp_cargo_id: tipoCmpCargoId,
+        sample_modulo_id_value: sampleModulo?.id,
+        sample_cmp_modulo_id_value: sampleMatrixRow?.modulo_id,
+        sample_cmp_cargo_id_value: sampleMatrixRow?.cargo_id,
+      },
+      modulos_resolvidos: modulosLookup.sort((a, b) => (a.slug || '').localeCompare(b.slug || '')),
     });
-  } catch (e) { res.status(500).json({ error: e.message }); }
+  } catch (e) { res.status(500).json({ error: e.message, stack: e.stack }); }
 });
 
 // GET /api/permissoes/estrutura — setores, áreas, módulos, cargos
