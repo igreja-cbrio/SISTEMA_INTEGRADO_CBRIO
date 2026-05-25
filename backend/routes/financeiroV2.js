@@ -515,16 +515,18 @@ router.get('/fila-classificacao', async (req, res) => {
     const centroIds = [...new Set(fila.map(f => f.sugestao_centro_custo_id).filter(Boolean))];
     const membroIds = [...new Set(fila.map(f => f.sugestao_membro_id).filter(Boolean))];
 
-    const [brutos, planos, centros, membros] = await Promise.all([
+    const [brutos, planos, centros, membros, pixDetalhes] = await Promise.all([
       brutoIds.length ? supabase.from('fin_lancamentos_brutos').select('*').in('id', brutoIds) : { data: [] },
       planoIds.length ? supabase.from('fin_plano_contas').select('id, codigo, nome, tipo').in('id', planoIds) : { data: [] },
       centroIds.length ? supabase.from('fin_centros_custo').select('id, codigo, nome').in('id', centroIds) : { data: [] },
       membroIds.length ? supabase.from('mem_membros').select('id, nome, cpf, status').in('id', membroIds) : { data: [] },
+      brutoIds.length ? supabase.from('fin_pix_detalhe').select('lancamento_bruto_id, pagador_nome, pagador_documento, banco_origem').in('lancamento_bruto_id', brutoIds) : { data: [] },
     ]);
     const bMap = new Map((brutos.data || []).map(b => [b.id, b]));
     const pMap = new Map((planos.data || []).map(p => [p.id, p]));
     const cMap = new Map((centros.data || []).map(c => [c.id, c]));
     const mMap = new Map((membros.data || []).map(m => [m.id, m]));
+    const pixMap = new Map((pixDetalhes.data || []).map(p => [p.lancamento_bruto_id, p]));
 
     res.json(fila.map(f => ({
       ...f,
@@ -532,6 +534,7 @@ router.get('/fila-classificacao', async (req, res) => {
       sugestao_plano: pMap.get(f.sugestao_plano_contas_id) || null,
       sugestao_centro: cMap.get(f.sugestao_centro_custo_id) || null,
       sugestao_membro: mMap.get(f.sugestao_membro_id) || null,
+      pix_detalhe: pixMap.get(f.lancamento_bruto_id) || null,
     })));
   } catch (e) { res.status(500).json({ error: 'Erro ao listar fila: ' + e.message }); }
 });
@@ -541,7 +544,7 @@ router.get('/fila-classificacao', async (req, res) => {
 // ====================================================================
 router.post('/classificar/:filaId/aprovar', async (req, res) => {
   try {
-    const { plano_contas_id, centro_custo_id, membro_id, identificador_centavo, observacoes } = req.body;
+    const { plano_contas_id, centro_custo_id, membro_id, identificador_centavo, observacoes, criar_contribuinte } = req.body;
 
     // Busca fila + lancamento bruto
     const { data: fila, error: errFila } = await supabase
@@ -553,7 +556,25 @@ router.post('/classificar/:filaId/aprovar', async (req, res) => {
     const lanc = fila.lancamento;
     const finalPlanoContas = plano_contas_id || fila.sugestao_plano_contas_id;
     const finalCentroCusto = centro_custo_id !== undefined ? centro_custo_id : fila.sugestao_centro_custo_id;
-    const finalMembro = membro_id !== undefined ? membro_id : fila.sugestao_membro_id;
+    let finalMembro = membro_id !== undefined ? membro_id : fila.sugestao_membro_id;
+
+    // Auto-cadastro · se criar_contribuinte=true e não tem membro_id, busca/cria por nome+CPF
+    if (!finalMembro && criar_contribuinte) {
+      const { data: pix } = await supabase
+        .from('fin_pix_detalhe')
+        .select('pagador_nome, pagador_documento')
+        .eq('lancamento_bruto_id', lanc.id)
+        .maybeSingle();
+      const nome = pix?.pagador_nome || lanc.nome_contraparte;
+      const doc = pix?.pagador_documento || lanc.documento_contraparte;
+      if (nome) {
+        const { data: novoMembroId, error: errMembro } = await supabase.rpc(
+          'fin_resolver_ou_criar_contribuinte',
+          { p_nome: nome, p_documento: doc || null }
+        );
+        if (!errMembro && novoMembroId) finalMembro = novoMembroId;
+      }
+    }
 
     if (!finalPlanoContas) return res.status(400).json({ error: 'plano_contas_id obrigatorio' });
 

@@ -132,8 +132,14 @@ export default function FilaClassificacao() {
   useEffect(() => { load(); }, [load]);
 
   const aprovar = async (item, override = {}) => {
-    await financeiroV2.fila.aprovar(item.id, override);
-    load();
+    try {
+      await financeiroV2.fila.aprovar(item.id, override);
+      toast.success('Lançamento aprovado');
+      load();
+    } catch (e) {
+      console.error('[aprovar] erro:', e);
+      toast.error('Erro ao aprovar: ' + (e?.message || 'desconhecido'));
+    }
   };
 
   const ignorar = async (item) => {
@@ -329,7 +335,21 @@ function CardFila({ item, selecionado, onToggleSelecionar, onAprovar, onEditar, 
           </span>
         </div>
         <div style={{ fontSize: 13, color: C.text, marginBottom: 4 }}>{lanc.memo}</div>
-        {(lanc.nome_contraparte || lanc.documento_contraparte) && (
+        {item.pix_detalhe?.pagador_nome && (
+          <div style={{ fontSize: 12, color: C.text, fontWeight: 600, marginBottom: 2, display: 'flex', alignItems: 'center', gap: 6 }}>
+            <span style={{ fontSize: 10, padding: '1px 6px', borderRadius: 99, background: C.greenBg, color: C.green, fontWeight: 700 }}>
+              👤 {item.sugestao_membro ? 'MEMBRO' : 'PAGADOR'}
+            </span>
+            <span>{item.pix_detalhe.pagador_nome}</span>
+            {item.pix_detalhe.pagador_documento && (
+              <code style={{ fontSize: 10, color: C.text3 }}>· {item.pix_detalhe.pagador_documento}</code>
+            )}
+            {item.pix_detalhe.banco_origem && (
+              <span style={{ fontSize: 10, color: C.text3 }}>· {item.pix_detalhe.banco_origem}</span>
+            )}
+          </div>
+        )}
+        {!item.pix_detalhe?.pagador_nome && (lanc.nome_contraparte || lanc.documento_contraparte) && (
           <div style={{ fontSize: 11, color: C.text2 }}>
             {lanc.nome_contraparte} {lanc.documento_contraparte && <code>· {lanc.documento_contraparte}</code>}
           </div>
@@ -385,6 +405,10 @@ function ModalEditarClassificacao({ item, onClose, planos, centros, onSalvar }) 
   const [centroId, setCentroId] = useState(item.sugestao_centro_custo_id || '');
   const [centavo, setCentavo] = useState('');
   const [obs, setObs] = useState('');
+  // Auto-cadastro como contribuinte avulso · default true se pagador identificado e sem membro
+  const temPagador = !!item.pix_detalhe?.pagador_nome;
+  const semMembro = !item.sugestao_membro;
+  const [criarContrib, setCriarContrib] = useState(temPagador && semMembro);
 
   return (
     <div style={modalOverlay} onClick={onClose}>
@@ -434,6 +458,35 @@ function ModalEditarClassificacao({ item, onClose, planos, centros, onSalvar }) 
             <label style={labelSt}>Observacoes</label>
             <input value={obs} onChange={e => setObs(e.target.value)} style={inputSt} />
           </div>
+
+          {temPagador && (
+            <div style={{
+              padding: 10, borderRadius: 6,
+              background: criarContrib ? C.greenBg : 'var(--cbrio-bg)',
+              border: `1px solid ${criarContrib ? C.green + '40' : C.border}`,
+            }}>
+              <label style={{ display: 'flex', alignItems: 'flex-start', gap: 8, cursor: 'pointer' }}>
+                <input
+                  type="checkbox"
+                  checked={criarContrib}
+                  onChange={e => setCriarContrib(e.target.checked)}
+                  style={{ width: 16, height: 16, marginTop: 2, cursor: 'pointer' }}
+                />
+                <div>
+                  <div style={{ fontSize: 12, fontWeight: 600, color: C.text }}>
+                    {semMembro
+                      ? `Cadastrar ${item.pix_detalhe.pagador_nome} como contribuinte avulso`
+                      : `Já cadastrado · ${item.sugestao_membro?.nome}`}
+                  </div>
+                  <div style={{ fontSize: 10, color: C.text2, marginTop: 2 }}>
+                    {semMembro
+                      ? 'Cria automaticamente em Membros (status: contribuinte_avulso). Vincula esta e futuras transações deste pagador ao membro criado.'
+                      : 'A transação será vinculada ao membro existente.'}
+                  </div>
+                </div>
+              </label>
+            </div>
+          )}
         </div>
 
         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
@@ -443,6 +496,7 @@ function ModalEditarClassificacao({ item, onClose, planos, centros, onSalvar }) 
             centro_custo_id: centroId || null,
             identificador_centavo: centavo || null,
             observacoes: obs || null,
+            criar_contribuinte: criarContrib,
             origem: 'manual',
           })}>Salvar</Button>
         </div>
