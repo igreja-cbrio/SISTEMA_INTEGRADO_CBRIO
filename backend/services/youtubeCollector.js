@@ -16,9 +16,9 @@ const { supabase } = require('../utils/supabase');
 
 const YT_BASE = 'https://www.googleapis.com/youtube/v3';
 
-// Canal oficial CBRio 'Rede Social CBrio' · onde os cultos vivem.
+// Canal oficial CBRio 'IgrejaCBRio' (UCfjMVz...) · onde os videos dos cultos vivem.
 // Pode ser sobrescrito via env YOUTUBE_CHANNEL_ID se um dia mudarmos.
-const DEFAULT_CHANNEL_ID = 'UCMJOg5mDnHbKsxeS8MLWkUw';
+const DEFAULT_CHANNEL_ID = 'UCfjMVzaYlCS_VE3JuEJj2vQ';
 
 function getEnv() {
   const apiKey = process.env.YOUTUBE_API_KEY;
