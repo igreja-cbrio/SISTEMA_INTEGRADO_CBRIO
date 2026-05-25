@@ -151,15 +151,27 @@ export default function FilaClassificacao() {
   const memoriaTotal = stats?.memoria_total || 0;
   const confiancaMedia = stats?.confianca_media_ult30 ? Math.round(Number(stats.confianca_media_ult30) * 100) : 0;
 
-  // Aplica filtro client-side conforme o card clicado
+  // Predicados de filtro · também usados pra contar items de cada categoria na fila ATUAL
+  const matchAuto = it => {
+    const o = it.sugestao_origem || ''; const c = Number(it.sugestao_confianca || 0);
+    return ['regra', 'memoria', 'memoria_documento', 'memoria_nome', 'centavo', 'ia'].includes(o) && c >= 0.7;
+  };
+  const matchMemoria = it => ['memoria', 'memoria_documento', 'memoria_nome'].includes(it.sugestao_origem || '');
+  const matchSemSugestao = it => (it.sugestao_origem || '') === 'sem_sugestao' || !it.sugestao_plano_contas_id;
+  const matchBaixaConf = it => { const c = Number(it.sugestao_confianca || 0); return c > 0 && c < 0.7; };
+
+  // Counts locais (na fila visível agora, max 100)
+  const countAuto = fila.filter(matchAuto).length;
+  const countMemoria = fila.filter(matchMemoria).length;
+  const countSemSug = fila.filter(matchSemSugestao).length;
+  const countBaixaConf = fila.filter(matchBaixaConf).length;
+
   const filaFiltrada = fila.filter(item => {
     if (filtroCard === 'todos') return true;
-    const origem = item.sugestao_origem || '';
-    const conf = Number(item.sugestao_confianca || 0);
-    if (filtroCard === 'auto') return ['regra', 'memoria', 'memoria_documento', 'memoria_nome', 'centavo', 'ia'].includes(origem) && conf >= 0.7;
-    if (filtroCard === 'sem_sugestao') return origem === 'sem_sugestao' || !item.sugestao_plano_contas_id;
-    if (filtroCard === 'memoria') return ['memoria', 'memoria_documento', 'memoria_nome'].includes(origem);
-    if (filtroCard === 'baixa_confianca') return conf > 0 && conf < 0.7;
+    if (filtroCard === 'auto') return matchAuto(item);
+    if (filtroCard === 'sem_sugestao') return matchSemSugestao(item);
+    if (filtroCard === 'memoria') return matchMemoria(item);
+    if (filtroCard === 'baixa_confianca') return matchBaixaConf(item);
     return true;
   });
 
@@ -191,39 +203,39 @@ export default function FilaClassificacao() {
         }}>
           <StatCardClicavel
             ativo={filtroCard === 'auto'}
-            onClick={() => setFiltroCard(filtroCard === 'auto' ? 'todos' : 'auto')}
+            onClick={() => countAuto > 0 && setFiltroCard(filtroCard === 'auto' ? 'todos' : 'auto')}
             corAtivo={C.green}
-            label="Acerto automático · 30d"
-            valor={`${pctAuto.toFixed(0)}%`}
-            valorCor={pctAuto >= 80 ? C.green : pctAuto >= 50 ? C.amber : C.red}
-            sub={`${stats.classificadas_auto_ult30 || 0} de ${stats.total_ult30 || 0} · clique pra filtrar`}
+            label="Auto-classificados"
+            valor={`${countAuto}`}
+            valorCor={countAuto > 0 ? C.green : C.text3}
+            sub={`na fila atual · ${pctAuto.toFixed(0)}% nos últimos 30d`}
           />
           <StatCardClicavel
             ativo={filtroCard === 'memoria'}
-            onClick={() => setFiltroCard(filtroCard === 'memoria' ? 'todos' : 'memoria')}
+            onClick={() => countMemoria > 0 && setFiltroCard(filtroCard === 'memoria' ? 'todos' : 'memoria')}
             corAtivo={C.blue}
-            label="Memória aprendida"
-            valor={String(memoriaTotal)}
-            valorCor={C.blue}
-            sub="pagadores conhecidos · filtra os que vieram da memória"
+            label="Vieram da memória"
+            valor={String(countMemoria)}
+            valorCor={countMemoria > 0 ? C.blue : C.text3}
+            sub={`na fila atual · ${memoriaTotal} pagadores aprendidos no total`}
           />
           <StatCardClicavel
             ativo={filtroCard === 'baixa_confianca'}
-            onClick={() => setFiltroCard(filtroCard === 'baixa_confianca' ? 'todos' : 'baixa_confianca')}
+            onClick={() => countBaixaConf > 0 && setFiltroCard(filtroCard === 'baixa_confianca' ? 'todos' : 'baixa_confianca')}
             corAtivo={C.primary}
-            label="Confiança média"
-            valor={`${confiancaMedia}%`}
-            valorCor={C.primary}
-            sub="clique pra filtrar sugestões de baixa confiança"
+            label="Baixa confiança"
+            valor={String(countBaixaConf)}
+            valorCor={countBaixaConf > 0 ? C.amber : C.text3}
+            sub={`< 70% · revisar manualmente`}
           />
           <StatCardClicavel
             ativo={filtroCard === 'sem_sugestao'}
-            onClick={() => setFiltroCard(filtroCard === 'sem_sugestao' ? 'todos' : 'sem_sugestao')}
+            onClick={() => countSemSug > 0 && setFiltroCard(filtroCard === 'sem_sugestao' ? 'todos' : 'sem_sugestao')}
             corAtivo={C.amber}
             label="Sem sugestão"
-            valor={String(stats.sem_sugestao_ult30 || 0)}
-            valorCor={C.text2}
-            sub="casos novos · clique pra ver só esses"
+            valor={String(countSemSug)}
+            valorCor={countSemSug > 0 ? C.text : C.text3}
+            sub="sistema não soube · classifique manual"
           />
         </div>
       )}
