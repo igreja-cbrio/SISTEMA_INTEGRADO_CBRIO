@@ -176,6 +176,70 @@ router.post('/cache/bust', async (_req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// GET /api/permissoes/diagnostico/:email · dump COMPLETO do estado de
+// permissoes pra um usuario. Usado pra debug quando alguem nao consegue
+// acessar um modulo. Admin/diretor ve qualquer um · resto so o proprio.
+router.get('/diagnostico/:email', async (req, res) => {
+  try {
+    const email = decodeURIComponent(req.params.email).toLowerCase().trim();
+
+    // Profile
+    const { data: profile } = await supabase.from('profiles')
+      .select('id, name, email, role, active, area, kpi_areas')
+      .ilike('email', email)
+      .maybeSingle();
+
+    // Funcionario
+    const { data: funcionario } = await supabase.from('rh_funcionarios')
+      .select('id, nome, email, cargo, area, status')
+      .ilike('email', email)
+      .maybeSingle();
+
+    // Usuarios row
+    const { data: usuario } = await supabase.from('usuarios')
+      .select('id, email, nome, ativo, cargo_id, cargos(id, slug, nome, nome_completo)')
+      .ilike('email', email)
+      .maybeSingle();
+
+    // Areas
+    const { data: areas } = usuario?.id ? await supabase.from('usuario_areas')
+      .select('areas(nome, setor_id, setores(nome))')
+      .eq('usuario_id', usuario.id) : { data: [] };
+
+    // Overrides
+    const { data: overrides } = usuario?.id ? await supabase.from('permissoes_modulo')
+      .select('modulo_id, nivel_leitura, nivel_escrita, escopo_proprio, motivo, expira_em, modulos(slug, nome)')
+      .eq('usuario_id', usuario.id) : { data: [] };
+
+    // Matriz pro cargo
+    const matriz = usuario?.cargo_id ? (await supabase.from('cargo_modulo_permissao')
+      .select('nivel, pode_exportar, pode_aprovar, escopo_proprio, modulos(slug, nome, ativo)')
+      .eq('cargo_id', usuario.cargo_id)).data : [];
+
+    res.json({
+      email_query: email,
+      profile,
+      funcionario,
+      usuario,
+      cargo: usuario?.cargos || null,
+      areas: (areas || []).map(a => ({
+        nome: a.areas?.nome,
+        setor: a.areas?.setores?.nome,
+      })),
+      overrides: overrides || [],
+      matriz_cargo: (matriz || [])
+        .filter(m => m.modulos?.ativo)
+        .map(m => ({
+          slug: m.modulos?.slug,
+          nome: m.modulos?.nome,
+          nivel: m.nivel,
+          escopo_proprio: m.escopo_proprio,
+        }))
+        .sort((a, b) => (a.slug || '').localeCompare(b.slug || '')),
+    });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // GET /api/permissoes/estrutura — setores, áreas, módulos, cargos
 router.get('/estrutura', async (req, res) => {
   try {

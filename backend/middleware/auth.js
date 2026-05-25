@@ -55,10 +55,13 @@ const ROUTE_MODULE_MAP = {
   'apresentacoes': ['apresentacoes'],
 };
 
-// Cache de módulos (carrega uma vez e reutiliza)
+// Cache de modulos · TTL CURTISSIMO (30s) pra balancear performance e
+// frescor. Caches longos (era 5min) causam usuario novo perder acesso ate
+// o cache expirar em instancias Vercel que nao receberam o bust.
+const CACHE_TTL = 30 * 1000; // 30 segundos
+
 let modulosCache = null;
 let modulosCacheTime = 0;
-const CACHE_TTL = 5 * 60 * 1000; // 5 minutos
 
 async function getModulos() {
   if (modulosCache && Date.now() - modulosCacheTime < CACHE_TTL) return modulosCache;
@@ -71,18 +74,15 @@ async function getModulos() {
   return modulosCache;
 }
 
-// Cache da matriz cargo×modulo (defaults por cargo)
-let cargoMatrixCache = null;
-let cargoMatrixCacheTime = 0;
-
-async function getCargoMatrix({ forceRefresh = false } = {}) {
-  if (!forceRefresh && cargoMatrixCache && Date.now() - cargoMatrixCacheTime < CACHE_TTL) return cargoMatrixCache;
+// Matriz cargo×modulo · SEM CACHE PERSISTENTE entre requests.
+// A matriz tem ~750-800 linhas · query <50ms · sem impacto perceptivel.
+// Vale a confiabilidade de sempre ter dado fresco · cada cargo novo
+// criado via migration vira efetivo na proxima requisicao.
+async function getCargoMatrix() {
   const { data } = await supabase
     .from('cargo_modulo_permissao')
     .select('cargo_id, modulo_id, nivel, pode_exportar, pode_aprovar, escopo_proprio');
-  cargoMatrixCache = data || [];
-  cargoMatrixCacheTime = Date.now();
-  return cargoMatrixCache;
+  return data || [];
 }
 
 // Mapa: nome de area (normalizado) → slug do modulo que recebe boost de nivel 5.
@@ -281,21 +281,7 @@ async function authenticate(req, res, next) {
       const validOverrides = (overrides || []).filter(o => !o.expira_em || new Date(o.expira_em).getTime() > now);
 
       const modulos = await getModulos();
-      let cargoMatrix = await getCargoMatrix();
-
-      // Safety net · se a matriz em cache nao tem NENHUMA linha pro cargo do
-      // usuario (caso comum quando um cargo foi criado via migration mas o
-      // bust de cache so atingiu uma instancia serverless), forca refetch.
-      // Sem isso, defaultsByMod fica vazio e o usuario perde acesso a tudo
-      // que nao recebe boost por area.
-      if (
-        permUser.cargo_id &&
-        cargoMatrix.length > 0 &&
-        !cargoMatrix.some(r => r.cargo_id === permUser.cargo_id)
-      ) {
-        console.warn(`[AUTH] cargoMatrix sem linhas pro cargo_id=${permUser.cargo_id} (${profile.email}) · forcando refresh`);
-        cargoMatrix = await getCargoMatrix({ forceRefresh: true });
-      }
+      const cargoMatrix = await getCargoMatrix();
 
       // Carregar areas ANTES de resolver perms · boost por area precisa delas
       const { data: userAreas } = await supabase.from('usuario_areas')
@@ -551,12 +537,11 @@ async function getMyPermissions(req, res) {
   });
 }
 
-// Invalida caches de modulos e matriz (chamado pela UI de admin apos editar)
+// Invalida cache de modulos (chamado pela UI de admin apos editar).
+// cargoMatrix nao tem mais cache · sempre fresco.
 function bustPermissionCaches() {
   modulosCache = null;
   modulosCacheTime = 0;
-  cargoMatrixCache = null;
-  cargoMatrixCacheTime = 0;
 }
 
 /**
