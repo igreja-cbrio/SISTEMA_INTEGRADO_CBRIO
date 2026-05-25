@@ -50,16 +50,19 @@ export default function DashboardOverview({ onNavigate }) {
   const [mes, setMes] = useState(hoje.getMonth());
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [erro, setErro] = useState(null);
 
   const queryKey = modo === 'preset' ? `p:${period}` : modo === 'ano' ? `y:${ano}` : `ym:${ano}-${mes}`;
 
   useEffect(() => {
     setLoading(true);
+    setErro(null);
     const opts = modo === 'preset' ? { period }
       : modo === 'ano' ? { year: ano }
       : { year: ano, month: mes };
     financeiroV2.dashboard.overview(opts)
       .then(setData)
+      .catch(e => { console.error('[dashboard] overview erro:', e); setErro(e?.message || 'Erro ao carregar dashboard'); })
       .finally(() => setLoading(false));
   }, [queryKey]); // eslint-disable-line
 
@@ -95,6 +98,17 @@ export default function DashboardOverview({ onNavigate }) {
 
   // Stale-while-revalidate · so bloqueia carregamento INICIAL.
   // Trocas de periodo mantem dados anteriores + spinner sutil.
+  if (erro && !data) {
+    return (
+      <div className="border border-destructive/40 bg-destructive/5 rounded-lg p-6 text-sm">
+        <div className="font-semibold text-destructive mb-2">Erro ao carregar dashboard</div>
+        <div className="text-muted-foreground text-xs font-mono mb-3">{erro}</div>
+        <Button size="sm" variant="outline" onClick={() => { setErro(null); setLoading(true); window.location.reload(); }}>
+          Tentar novamente
+        </Button>
+      </div>
+    );
+  }
   if (!data) {
     return (
       <div className="flex items-center justify-center py-16 gap-2 text-muted-foreground text-sm">
