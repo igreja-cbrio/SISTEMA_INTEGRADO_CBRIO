@@ -75,13 +75,20 @@ async function getModulos() {
 }
 
 // Matriz cargo×modulo · SEM CACHE PERSISTENTE entre requests.
-// A matriz tem ~750-800 linhas · query <50ms · sem impacto perceptivel.
+// A matriz tem ~1000+ linhas (cresce com cargos × modulos) · query <50ms.
 // Vale a confiabilidade de sempre ter dado fresco · cada cargo novo
 // criado via migration vira efetivo na proxima requisicao.
+//
+// IMPORTANTE · Supabase JS limita resultados em 1000 linhas por default.
+// Sem .range() explicito, perdiamos as linhas dos cargos com id mais alto
+// (caso real · supervisor-jornada cargo_id=63 ficou fora do retorno e o
+// Marcelo Soares teve permissoes zeradas em todos os modulos sem boost
+// por area). .range(0, 19999) cobre crescimento ate ~600 cargos × 30 mod.
 async function getCargoMatrix() {
   const { data } = await supabase
     .from('cargo_modulo_permissao')
-    .select('cargo_id, modulo_id, nivel, pode_exportar, pode_aprovar, escopo_proprio');
+    .select('cargo_id, modulo_id, nivel, pode_exportar, pode_aprovar, escopo_proprio')
+    .range(0, 19999);
   return data || [];
 }
 
