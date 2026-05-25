@@ -92,14 +92,18 @@ async function liveMonitor() {
 
 // ---------------------------------------------------------------------------
 // dsCollector · D+1 · views acumuladas dentro do dia D do culto
+// Idempotente · pega cultos dos ULTIMOS 7 DIAS com online_ds NULL ou 0
+// (cobre falhas pontuais do cron, latencia do Analytics, token revogado)
 // ---------------------------------------------------------------------------
 async function dsCollector() {
+  const seteDias = fmtData(dataMaisDias(new Date(), -7));
   const ontem = fmtData(dataMaisDias(new Date(), -1));
   const { data: cultos } = await supabase
     .from('cultos')
     .select('id, data, youtube_video_id, online_ds, online_pico')
-    .eq('data', ontem)
-    .not('youtube_video_id', 'is', null);
+    .gte('data', seteDias).lte('data', ontem)
+    .not('youtube_video_id', 'is', null)
+    .or('online_ds.is.null,online_ds.eq.0');
 
   if (!cultos?.length) return { ok: true, processados: 0, motivo: 'sem_cultos_ontem_com_video' };
 
@@ -213,12 +217,16 @@ async function backfillRange(dataInicio, dataFim) {
 // ddusCollector · D+7 · views totais on-demand acumuladas (D+1 ate D+7)
 // ---------------------------------------------------------------------------
 async function ddusCollector() {
-  const setedias = fmtData(dataMaisDias(new Date(), -7));
+  // Idempotente · pega cultos D+7 ate D+30 com online_ddus NULL ou 0
+  // (cobre falhas pontuais do cron e latencia do Analytics).
+  const trintaDias = fmtData(dataMaisDias(new Date(), -30));
+  const seteDias = fmtData(dataMaisDias(new Date(), -7));
   const { data: cultos } = await supabase
     .from('cultos')
     .select('id, data, youtube_video_id, online_ddus, online_ds')
-    .eq('data', setedias)
-    .not('youtube_video_id', 'is', null);
+    .gte('data', trintaDias).lte('data', seteDias)
+    .not('youtube_video_id', 'is', null)
+    .or('online_ddus.is.null,online_ddus.eq.0');
 
   if (!cultos?.length) return { ok: true, processados: 0, motivo: 'sem_cultos_d7_com_video' };
 
