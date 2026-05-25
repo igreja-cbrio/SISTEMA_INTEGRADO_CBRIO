@@ -407,6 +407,14 @@ router.get('/cultos-metricas', async (req, res) => {
       curvaByVideo[r.video_id].push({ ratio_pct: r.ratio_pct, audience_watch_ratio: Number(r.audience_watch_ratio) });
     }
 
+    // Horarios reais da live (em UTC · frontend converte pra BRT)
+    const { data: videoRows } = await supabase
+      .from('online_videos')
+      .select('video_id, actual_start_time, actual_end_time, titulo')
+      .in('video_id', videoIds);
+    const videoMeta = {};
+    for (const v of (videoRows || [])) videoMeta[v.video_id] = v;
+
     const result = (cultos || []).map(c => ({
       id: c.id,
       data: c.data,
@@ -426,6 +434,9 @@ router.get('/cultos-metricas', async (req, res) => {
       online_views_nao_inscritos: c.online_views_nao_inscritos,
       trafico: traficoByVideo[c.youtube_video_id] || [],
       retencao_curva: curvaByVideo[c.youtube_video_id] || [],
+      actual_start_time: videoMeta[c.youtube_video_id]?.actual_start_time || null,
+      actual_end_time:   videoMeta[c.youtube_video_id]?.actual_end_time   || null,
+      video_titulo:      videoMeta[c.youtube_video_id]?.titulo || null,
     }));
 
     res.json(result);
