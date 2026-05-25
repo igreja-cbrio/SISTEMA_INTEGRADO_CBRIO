@@ -9,6 +9,7 @@ import {
   QrCode, Loader2, CheckCircle2, Maximize, Minimize,
   MapPin, Clock, Star, Map, List, Navigation, Sun, Moon,
   Camera, RotateCcw, Save, X, ChevronRight, Delete, KeyRound,
+  Baby, LogOut,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -19,14 +20,15 @@ import { QRCodeSVG } from 'qrcode.react';
 // ── Menu ──────────────────────────────────────────────────────────────────────
 
 const MENU_OPTIONS = [
-  { id: 'grupos',       label: 'Grupos de Conexão', icon: Users,        color: '#00B39D', desc: 'Encontre seu grupo' },
-  { id: 'membresia',    label: 'Meus Dados',         icon: UserCheck,    color: '#3B82F6', desc: 'Atualizar cadastro' },
-  { id: 'batismo',      label: 'Batismo',             icon: Droplets,     color: '#6366F1', desc: 'Inscrição para batismo' },
-  { id: 'retiro',       label: 'Retiro',              icon: Mountain,     color: '#F59E0B', desc: 'Próximos retiros' },
-  { id: 'contribuicao', label: 'Contribuição',        icon: Heart,        color: '#EF4444', desc: 'Dízimo ou oferta' },
-  { id: 'agendamento',  label: 'Ag. Pastoral',        icon: CalendarDays, color: '#8B5CF6', desc: 'Visita pastoral' },
-  { id: 'next',         label: 'Next',                icon: ArrowRight,   color: '#10B981', desc: 'Jornada de membros' },
-  { id: 'voluntariado', label: 'Voluntariado',        icon: HandHeart,    color: '#F97316', desc: 'Servir na CBRio' },
+  { id: 'grupos',       label: 'Grupos de Conexão',   icon: Users,        color: '#00B39D', desc: 'Encontre seu grupo' },
+  { id: 'membresia',    label: 'Meus Dados',           icon: UserCheck,    color: '#3B82F6', desc: 'Atualizar cadastro' },
+  { id: 'batismo',      label: 'Batismo',              icon: Droplets,     color: '#6366F1', desc: 'Inscrição para batismo' },
+  { id: 'next',         label: 'Next',                 icon: ArrowRight,   color: '#10B981', desc: 'Jornada de membros' },
+  { id: 'apresentacao_bebe', label: 'Apresentar bebê', icon: Baby,         color: '#EC4899', desc: '2º domingo do mês' },
+  { id: 'retiro',       label: 'Retiro',               icon: Mountain,     color: '#F59E0B', desc: 'Próximos retiros' },
+  { id: 'contribuicao', label: 'Contribuição',         icon: Heart,        color: '#EF4444', desc: 'Dízimo ou oferta' },
+  { id: 'agendamento',  label: 'Ag. Pastoral',         icon: CalendarDays, color: '#8B5CF6', desc: 'Visita pastoral' },
+  { id: 'voluntariado', label: 'Voluntariado',         icon: HandHeart,    color: '#F97316', desc: 'Servir na CBRio' },
 ] as const;
 
 type OptionId = (typeof MENU_OPTIONS)[number]['id'];
@@ -425,8 +427,15 @@ export default function TotemMembro() {
         <button onClick={() => { setState('idle'); setMember(null); }} className={`${greetMuted} text-sm hover:opacity-80 flex items-center gap-1 transition-colors`}>
           <ChevronLeft className="h-4 w-4" /> Voltar
         </button>
-        <button onClick={() => setState('exit_confirm')} className="text-transparent hover:text-white/10 text-xs transition-colors select-none">
-          Sair do modo totem
+        <button
+          onClick={() => setState('exit_confirm')}
+          className={`flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg border transition-colors ${
+            isDark
+              ? 'border-white/10 text-white/40 hover:text-white/80 hover:bg-white/5'
+              : 'border-gray-200 text-gray-500 hover:text-gray-800 hover:bg-gray-100'
+          }`}
+        >
+          <LogOut className="h-3.5 w-3.5" /> Sair do totem
         </button>
       </div>
     </div>
@@ -498,8 +507,12 @@ export default function TotemMembro() {
 
       <div className="flex items-center justify-between px-6 py-3">
         <p className="text-white/10 text-xs">CBRio Sistema</p>
-        <button onClick={() => setState('exit_confirm')} className="text-white/5 hover:text-white/20 text-xs transition-colors">
-          Sair do modo totem
+        <button
+          onClick={() => setState('exit_confirm')}
+          className="flex items-center gap-1.5 text-xs text-white/30 hover:text-white/80 px-3 py-1.5 rounded-lg border border-white/10 hover:bg-white/5 transition-colors"
+          title="Requer PIN do totem"
+        >
+          <LogOut className="h-3.5 w-3.5" /> Sair do totem
         </button>
       </div>
     </div>
@@ -730,6 +743,12 @@ function OptionFlow({ optionId, member, isDark, onBack, onDone, onActivity }: {
   }
   if (optionId === 'batismo') {
     return <BatismoFlow opt={opt} member={member} onBack={onBack} onDone={onDone} onActivity={onActivity} />;
+  }
+  if (optionId === 'next') {
+    return <NextFlow opt={opt} member={member} onBack={onBack} onDone={onDone} onActivity={onActivity} />;
+  }
+  if (optionId === 'apresentacao_bebe') {
+    return <ApresentacaoBebeFlow opt={opt} member={member} onBack={onBack} onDone={onDone} onActivity={onActivity} />;
   }
 
   // Demais opções — placeholder até implementação
@@ -1226,7 +1245,7 @@ function GruposFlow({ opt, member, onBack, onDone, onActivity }: {
 
   // ── List / Map screen ────────────────────────────────────────────────────────
   return (
-    <div className="min-h-screen bg-gray-950 text-white flex flex-col" onClick={onActivity}>
+    <div className="h-screen overflow-hidden bg-gray-950 text-white flex flex-col" onClick={onActivity}>
       <OptionHeader opt={opt} member={member} onBack={onBack} />
 
       {/* Filters bar */}
@@ -1271,7 +1290,7 @@ function GruposFlow({ opt, member, onBack, onDone, onActivity }: {
         </div>
       ) : showMap ? (
         /* ── Map view (MapLibre) ── */
-        <div className="flex-1 relative">
+        <div className="flex-1 min-h-0 relative">
           <GruposMapView
             grupos={filtered}
             memberCoords={memberCoords}
@@ -1283,7 +1302,7 @@ function GruposFlow({ opt, member, onBack, onDone, onActivity }: {
         </div>
       ) : (
         /* ── List view ── */
-        <div className="flex-1 overflow-y-auto p-5">
+        <div className="flex-1 min-h-0 overflow-y-auto p-5">
           {filtered.length === 0 ? (
             <div className="text-center py-20 text-white/40">Nenhum grupo encontrado.</div>
           ) : (
@@ -1477,6 +1496,547 @@ function BatismoFlow({ opt, member, onBack, onDone, onActivity }: {
           >
             {saving ? <Loader2 className="h-5 w-5 animate-spin" /> : <Droplets className="h-5 w-5" />}
             {saving ? 'Registrando...' : 'Confirmar inscrição'}
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+function fmtDateBR(isoDate: string): string {
+  if (!isoDate) return '';
+  const [y, m, d] = isoDate.split('-').map(Number);
+  const dt = new Date(y, (m || 1) - 1, d || 1);
+  return dt.toLocaleDateString('pt-BR', {
+    weekday: 'long', day: 'numeric', month: 'long', year: 'numeric',
+  });
+}
+
+function maskCpfInput(v: string): string {
+  const d = v.replace(/\D/g, '').slice(0, 11);
+  if (d.length <= 3) return d;
+  if (d.length <= 6) return `${d.slice(0,3)}.${d.slice(3)}`;
+  if (d.length <= 9) return `${d.slice(0,3)}.${d.slice(3,6)}.${d.slice(6)}`;
+  return `${d.slice(0,3)}.${d.slice(3,6)}.${d.slice(6,9)}-${d.slice(9)}`;
+}
+
+function maskPhoneInput(v: string): string {
+  const d = v.replace(/\D/g, '').slice(0, 11);
+  if (d.length <= 2) return d;
+  if (d.length <= 7) return `(${d.slice(0,2)}) ${d.slice(2)}`;
+  return `(${d.slice(0,2)}) ${d.slice(2,7)}-${d.slice(7)}`;
+}
+
+// ── NEXT Flow ─────────────────────────────────────────────────────────────────
+
+function NextFlow({ opt, member, onBack, onDone, onActivity }: {
+  opt: (typeof MENU_OPTIONS)[number];
+  member: MemberData;
+  onBack: () => void;
+  onDone: () => void;
+  onActivity: () => void;
+}) {
+  const [loading, setLoading] = useState(true);
+  const [inscrito, setInscrito] = useState(false);
+  const [inscricao, setInscricao] = useState<any>(null);
+  const [proximoEvento, setProximoEvento] = useState<any>(null);
+  const [step, setStep] = useState<'check' | 'form' | 'success'>('check');
+  const [form, setForm] = useState({
+    nome: (member.nome || '').split(' ')[0] || '',
+    sobrenome: (member.nome || '').split(' ').slice(1).join(' ') || '',
+    cpf: member.cpf || '',
+    telefone: member.telefone ? maskPhoneInput(member.telefone) : '',
+    email: member.email || '',
+    data_nascimento: '',
+    observacoes: '',
+  });
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    const params: any = {};
+    if (member.id) params.membro_id = member.id;
+    if (member.email) params.email = member.email;
+    if (member.cpf) params.cpf = member.cpf;
+    membresia.totem.next.status(params)
+      .then((r: any) => {
+        setInscrito(!!r.inscrito);
+        setInscricao(r.inscricao);
+        setProximoEvento(r.proximo_evento);
+      })
+      .catch(() => {})
+      .finally(() => setLoading(false));
+  }, [member.id, member.email, member.cpf]);
+
+  const setField = (k: keyof typeof form) => (e: React.ChangeEvent<HTMLInputElement>) => {
+    let v = e.target.value;
+    if (k === 'cpf') v = maskCpfInput(v);
+    if (k === 'telefone') v = maskPhoneInput(v);
+    setForm(f => ({ ...f, [k]: v }));
+    onActivity();
+  };
+
+  const handleSubmit = async () => {
+    if (!form.nome || form.nome.trim().length < 2) { setError('Nome obrigatório'); return; }
+    if (!form.email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email)) { setError('E-mail inválido'); return; }
+    if (form.telefone.replace(/\D/g, '').length < 10) { setError('Telefone inválido'); return; }
+    setSaving(true); setError('');
+    onActivity();
+    try {
+      const payload: any = {
+        membro_id: member.id || null,
+        nome: form.nome.trim(),
+        sobrenome: form.sobrenome.trim() || null,
+        telefone: form.telefone.replace(/\D/g, ''),
+        email: form.email.trim().toLowerCase(),
+        cpf: form.cpf.replace(/\D/g, '') || null,
+        data_nascimento: form.data_nascimento || null,
+        observacoes: form.observacoes || null,
+      };
+      const r = await membresia.totem.next.inscrever(payload);
+      if (r.evento) setProximoEvento(r.evento);
+      setStep('success');
+      setTimeout(onDone, 5000);
+    } catch (e: any) {
+      setError(e?.message || 'Erro ao inscrever. Tente novamente.');
+    }
+    setSaving(false);
+  };
+
+  const inputCls = 'w-full px-4 py-3 rounded-2xl border border-gray-700 bg-gray-800 text-white placeholder:text-gray-500 text-sm outline-none focus:border-[#10B981] focus:ring-1 focus:ring-[#10B981]/30 transition-colors';
+
+  // ── Loading ──
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-gray-950 text-white flex flex-col" onClick={onActivity}>
+        <OptionHeader opt={opt} member={member} onBack={onBack} />
+        <div className="flex-1 flex items-center justify-center">
+          <Loader2 className="h-10 w-10 animate-spin text-[#10B981]" />
+        </div>
+      </div>
+    );
+  }
+
+  // ── Success ──
+  if (step === 'success') {
+    return (
+      <div className="min-h-screen bg-gray-950 text-white flex flex-col items-center justify-center gap-6 p-8">
+        <CheckCircle2 className="h-20 w-20 text-[#00B39D]" />
+        <div className="text-center max-w-md">
+          <h2 className="text-3xl font-bold">Inscrição confirmada!</h2>
+          {proximoEvento?.data && (
+            <p className="text-white/70 mt-3 text-lg">
+              Te esperamos no NEXT em <span className="text-[#10B981] font-semibold">{fmtDateBR(proximoEvento.data)}</span>
+            </p>
+          )}
+          <p className="text-white/50 mt-2 text-sm">Você receberá detalhes por e-mail e WhatsApp.</p>
+        </div>
+      </div>
+    );
+  }
+
+  // ── Já inscrito ──
+  if (step === 'check' && inscrito && inscricao?.evento) {
+    return (
+      <div className="min-h-screen bg-gray-950 text-white flex flex-col" onClick={onActivity}>
+        <OptionHeader opt={opt} member={member} onBack={onBack} />
+        <div className="flex-1 flex items-center justify-center p-8">
+          <div className="w-full max-w-md space-y-6 text-center">
+            <div className="h-20 w-20 rounded-3xl bg-[#10B981]/15 border border-[#10B981]/30 flex items-center justify-center mx-auto">
+              <CheckCircle2 className="h-10 w-10 text-[#10B981]" />
+            </div>
+            <div>
+              <h2 className="text-2xl font-bold">Você já está inscrito!</h2>
+              <p className="text-white/60 mt-2">
+                Sua próxima participação no NEXT é em:
+              </p>
+            </div>
+            <div className="rounded-2xl border border-[#10B981]/30 bg-[#10B981]/10 p-5">
+              <p className="text-3xl font-bold text-[#10B981]">{fmtDateBR(inscricao.evento.data)}</p>
+              {inscricao.evento.titulo && (
+                <p className="text-white/70 text-sm mt-1">{inscricao.evento.titulo}</p>
+              )}
+            </div>
+            <p className="text-white/40 text-xs">Te esperamos lá!</p>
+            <Button onClick={onBack} variant="outline" className="border-white/20 text-white hover:bg-white/10">
+              Voltar ao menu
+            </Button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // ── Nenhum evento agendado ──
+  if (step === 'check' && !proximoEvento) {
+    return (
+      <div className="min-h-screen bg-gray-950 text-white flex flex-col" onClick={onActivity}>
+        <OptionHeader opt={opt} member={member} onBack={onBack} />
+        <div className="flex-1 flex items-center justify-center p-8">
+          <div className="max-w-md text-center space-y-6">
+            <div className="h-20 w-20 rounded-3xl bg-white/10 flex items-center justify-center mx-auto">
+              <CalendarDays className="h-10 w-10 text-white/40" />
+            </div>
+            <div>
+              <h2 className="text-2xl font-bold">Sem datas no momento</h2>
+              <p className="text-white/50 mt-2">
+                Nenhum evento NEXT está agendado agora. Volte em breve!
+              </p>
+            </div>
+            <Button onClick={onBack} variant="outline" className="border-white/20 text-white hover:bg-white/10">
+              Voltar ao menu
+            </Button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // ── Info ──
+  if (step === 'check') {
+    return (
+      <div className="min-h-screen bg-gray-950 text-white flex flex-col" onClick={onActivity}>
+        <OptionHeader opt={opt} member={member} onBack={onBack} />
+        <div className="flex-1 flex items-center justify-center p-8">
+          <div className="max-w-md text-center space-y-6">
+            <div className="h-20 w-20 rounded-3xl bg-[#10B981]/20 flex items-center justify-center mx-auto">
+              <ArrowRight className="h-10 w-10 text-[#10B981]" />
+            </div>
+            <div>
+              <h2 className="text-2xl font-bold">Inscreva-se no NEXT</h2>
+              <p className="text-white/60 mt-2 leading-relaxed">
+                O NEXT é a porta de entrada da CBRio · conheça nossa visão, valores e como dar os próximos passos.
+              </p>
+            </div>
+            {proximoEvento?.data && (
+              <div className="rounded-2xl border border-[#10B981]/30 bg-[#10B981]/10 p-4">
+                <p className="text-white/60 text-xs uppercase tracking-wider">Próximo encontro</p>
+                <p className="text-xl font-bold text-[#10B981] mt-1">{fmtDateBR(proximoEvento.data)}</p>
+              </div>
+            )}
+            <Button
+              onClick={() => setStep('form')}
+              className="w-full bg-[#10B981] hover:bg-[#10B981]/90 text-white py-3 text-base rounded-2xl gap-2"
+            >
+              Quero me inscrever <ChevronRight className="h-5 w-5" />
+            </Button>
+            <button onClick={onBack} className="w-full text-white/30 hover:text-white/60 text-sm transition-colors py-2">
+              Voltar ao menu
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // ── Form ──
+  return (
+    <div className="min-h-screen bg-gray-950 text-white flex flex-col" onClick={onActivity}>
+      <OptionHeader opt={opt} member={member} onBack={() => setStep('check')} />
+      <div className="flex-1 flex items-center justify-center p-6">
+        <div className="w-full max-w-md space-y-4">
+          <div className="text-center mb-2">
+            <h2 className="text-xl font-bold">Confirme seus dados</h2>
+            {proximoEvento?.data && (
+              <p className="text-white/50 text-sm mt-1">NEXT em <span className="text-[#10B981]">{fmtDateBR(proximoEvento.data)}</span></p>
+            )}
+          </div>
+
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs text-white/40 mb-1">Nome *</label>
+              <input value={form.nome} onChange={setField('nome')} className={inputCls} />
+            </div>
+            <div>
+              <label className="block text-xs text-white/40 mb-1">Sobrenome</label>
+              <input value={form.sobrenome} onChange={setField('sobrenome')} className={inputCls} />
+            </div>
+          </div>
+
+          <div>
+            <label className="block text-xs text-white/40 mb-1">E-mail *</label>
+            <input type="email" value={form.email} onChange={setField('email')} className={inputCls} placeholder="email@exemplo.com" />
+          </div>
+
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs text-white/40 mb-1">Telefone *</label>
+              <input value={form.telefone} onChange={setField('telefone')} className={inputCls} placeholder="(21) 9..." inputMode="numeric" />
+            </div>
+            <div>
+              <label className="block text-xs text-white/40 mb-1">CPF</label>
+              <input value={form.cpf} onChange={setField('cpf')} className={inputCls} placeholder="000.000.000-00" inputMode="numeric" />
+            </div>
+          </div>
+
+          <div>
+            <label className="block text-xs text-white/40 mb-1">Data de nascimento</label>
+            <input type="date" value={form.data_nascimento} onChange={setField('data_nascimento')} className={inputCls} />
+          </div>
+
+          {error && <p className="text-red-400 text-sm text-center">{error}</p>}
+
+          <Button
+            onClick={handleSubmit}
+            disabled={saving}
+            className="w-full bg-[#10B981] hover:bg-[#10B981]/90 text-white py-3 text-base rounded-2xl gap-2 mt-2"
+          >
+            {saving ? <Loader2 className="h-5 w-5 animate-spin" /> : <ArrowRight className="h-5 w-5" />}
+            {saving ? 'Inscrevendo...' : 'Confirmar inscrição'}
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Apresentação de Bebês Flow ────────────────────────────────────────────────
+
+function ApresentacaoBebeFlow({ opt, member, onBack, onDone, onActivity }: {
+  opt: (typeof MENU_OPTIONS)[number];
+  member: MemberData;
+  onBack: () => void;
+  onDone: () => void;
+  onActivity: () => void;
+}) {
+  const [loading, setLoading] = useState(true);
+  const [proximaData, setProximaData] = useState<string | null>(null);
+  const [existente, setExistente] = useState<any>(null);
+  const [step, setStep] = useState<'check' | 'form' | 'success'>('check');
+  const [form, setForm] = useState({
+    bebe_nome: '',
+    bebe_data_nascimento: '',
+    bebe_sexo: '',
+    nome_pai: '',
+    nome_mae: '',
+    responsavel_nome: member.nome || '',
+    responsavel_telefone: member.telefone ? maskPhoneInput(member.telefone) : '',
+    responsavel_email: member.email || '',
+    observacoes: '',
+  });
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    const params: any = {};
+    if (member.id) params.membro_id = member.id;
+    membresia.totem.apresentacaoBebe.status(params)
+      .then((r: any) => {
+        setProximaData(r.proxima_data);
+        setExistente(r.apresentacao_existente);
+      })
+      .catch(() => {})
+      .finally(() => setLoading(false));
+  }, [member.id]);
+
+  const setField = (k: keyof typeof form) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
+    let v = e.target.value;
+    if (k === 'responsavel_telefone') v = maskPhoneInput(v);
+    setForm(f => ({ ...f, [k]: v }));
+    onActivity();
+  };
+
+  const handleSubmit = async () => {
+    if (!form.bebe_nome.trim()) { setError('Nome do bebê obrigatório'); return; }
+    if (!form.bebe_data_nascimento) { setError('Data de nascimento do bebê obrigatória'); return; }
+    if (!form.responsavel_nome.trim()) { setError('Nome do responsável obrigatório'); return; }
+    if (form.responsavel_telefone.replace(/\D/g, '').length < 10) { setError('Telefone inválido'); return; }
+    setSaving(true); setError('');
+    onActivity();
+    try {
+      await membresia.totem.apresentacaoBebe.create({
+        responsavel_membro_id: member.id || null,
+        responsavel_nome: form.responsavel_nome.trim(),
+        responsavel_telefone: form.responsavel_telefone.replace(/\D/g, ''),
+        responsavel_email: form.responsavel_email.trim() || null,
+        bebe_nome: form.bebe_nome.trim(),
+        bebe_data_nascimento: form.bebe_data_nascimento,
+        bebe_sexo: form.bebe_sexo || null,
+        nome_pai: form.nome_pai.trim() || null,
+        nome_mae: form.nome_mae.trim() || null,
+        observacoes: form.observacoes.trim() || null,
+      });
+      setStep('success');
+      setTimeout(onDone, 5000);
+    } catch (e: any) {
+      setError(e?.message || 'Erro ao agendar. Tente novamente.');
+    }
+    setSaving(false);
+  };
+
+  const inputCls = 'w-full px-4 py-3 rounded-2xl border border-gray-700 bg-gray-800 text-white placeholder:text-gray-500 text-sm outline-none focus:border-[#EC4899] focus:ring-1 focus:ring-[#EC4899]/30 transition-colors';
+
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-gray-950 text-white flex flex-col" onClick={onActivity}>
+        <OptionHeader opt={opt} member={member} onBack={onBack} />
+        <div className="flex-1 flex items-center justify-center">
+          <Loader2 className="h-10 w-10 animate-spin text-[#EC4899]" />
+        </div>
+      </div>
+    );
+  }
+
+  if (step === 'success') {
+    return (
+      <div className="min-h-screen bg-gray-950 text-white flex flex-col items-center justify-center gap-6 p-8">
+        <CheckCircle2 className="h-20 w-20 text-[#00B39D]" />
+        <div className="text-center max-w-md">
+          <h2 className="text-3xl font-bold">Apresentação agendada!</h2>
+          {proximaData && (
+            <p className="text-white/70 mt-3 text-lg">
+              {fmtDateBR(proximaData).replace(/^(\w)/, c => c.toUpperCase())}
+            </p>
+          )}
+          <p className="text-white/50 mt-2 text-sm">
+            Nossa equipe entrará em contato para confirmar os detalhes da cerimônia.
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  // Já existe apresentação agendada
+  if (step === 'check' && existente) {
+    return (
+      <div className="min-h-screen bg-gray-950 text-white flex flex-col" onClick={onActivity}>
+        <OptionHeader opt={opt} member={member} onBack={onBack} />
+        <div className="flex-1 flex items-center justify-center p-8">
+          <div className="w-full max-w-md space-y-6 text-center">
+            <div className="h-20 w-20 rounded-3xl bg-[#EC4899]/15 border border-[#EC4899]/30 flex items-center justify-center mx-auto">
+              <Baby className="h-10 w-10 text-[#EC4899]" />
+            </div>
+            <div>
+              <h2 className="text-2xl font-bold">Você já agendou!</h2>
+              <p className="text-white/60 mt-2">A apresentação de <span className="text-white">{existente.bebe_nome}</span> está agendada para:</p>
+            </div>
+            <div className="rounded-2xl border border-[#EC4899]/30 bg-[#EC4899]/10 p-5">
+              <p className="text-3xl font-bold text-[#EC4899]">{fmtDateBR(existente.data_apresentacao)}</p>
+              <p className="text-white/60 text-xs mt-2">Domingo • CBRio Sede</p>
+            </div>
+            <Button onClick={onBack} variant="outline" className="border-white/20 text-white hover:bg-white/10">
+              Voltar ao menu
+            </Button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (step === 'check') {
+    return (
+      <div className="min-h-screen bg-gray-950 text-white flex flex-col" onClick={onActivity}>
+        <OptionHeader opt={opt} member={member} onBack={onBack} />
+        <div className="flex-1 flex items-center justify-center p-8">
+          <div className="max-w-md text-center space-y-6">
+            <div className="h-20 w-20 rounded-3xl bg-[#EC4899]/20 flex items-center justify-center mx-auto">
+              <Baby className="h-10 w-10 text-[#EC4899]" />
+            </div>
+            <div>
+              <h2 className="text-2xl font-bold">Apresentação de Bebê</h2>
+              <p className="text-white/60 mt-2 leading-relaxed">
+                Apresente seu bebê à comunidade da CBRio. As cerimônias acontecem sempre no <span className="text-white font-semibold">2º domingo</span> de cada mês.
+              </p>
+            </div>
+            {proximaData && (
+              <div className="rounded-2xl border border-[#EC4899]/30 bg-[#EC4899]/10 p-4">
+                <p className="text-white/60 text-xs uppercase tracking-wider">Próxima cerimônia</p>
+                <p className="text-xl font-bold text-[#EC4899] mt-1">{fmtDateBR(proximaData)}</p>
+              </div>
+            )}
+            <Button
+              onClick={() => setStep('form')}
+              className="w-full bg-[#EC4899] hover:bg-[#EC4899]/90 text-white py-3 text-base rounded-2xl gap-2"
+            >
+              Quero agendar <ChevronRight className="h-5 w-5" />
+            </Button>
+            <button onClick={onBack} className="w-full text-white/30 hover:text-white/60 text-sm transition-colors py-2">
+              Voltar ao menu
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="min-h-screen bg-gray-950 text-white flex flex-col" onClick={onActivity}>
+      <OptionHeader opt={opt} member={member} onBack={() => setStep('check')} />
+      <div className="flex-1 overflow-y-auto p-6">
+        <div className="w-full max-w-md mx-auto space-y-4">
+          <div className="text-center mb-2">
+            <h2 className="text-xl font-bold">Dados da apresentação</h2>
+            {proximaData && (
+              <p className="text-white/50 text-sm mt-1">Cerimônia em <span className="text-[#EC4899]">{fmtDateBR(proximaData)}</span></p>
+            )}
+          </div>
+
+          <p className="text-xs font-semibold uppercase tracking-wider text-white/40">Bebê</p>
+
+          <div>
+            <label className="block text-xs text-white/40 mb-1">Nome do bebê *</label>
+            <input value={form.bebe_nome} onChange={setField('bebe_nome')} className={inputCls} placeholder="Nome completo" />
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs text-white/40 mb-1">Nascimento *</label>
+              <input type="date" value={form.bebe_data_nascimento} onChange={setField('bebe_data_nascimento')} className={inputCls} />
+            </div>
+            <div>
+              <label className="block text-xs text-white/40 mb-1">Sexo</label>
+              <select value={form.bebe_sexo} onChange={setField('bebe_sexo')} className={inputCls}>
+                <option value="">Selecionar</option>
+                <option value="M">Menino</option>
+                <option value="F">Menina</option>
+                <option value="outro">Outro</option>
+              </select>
+            </div>
+          </div>
+
+          <p className="text-xs font-semibold uppercase tracking-wider text-white/40 pt-2">Pais</p>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs text-white/40 mb-1">Nome do pai</label>
+              <input value={form.nome_pai} onChange={setField('nome_pai')} className={inputCls} />
+            </div>
+            <div>
+              <label className="block text-xs text-white/40 mb-1">Nome da mãe</label>
+              <input value={form.nome_mae} onChange={setField('nome_mae')} className={inputCls} />
+            </div>
+          </div>
+
+          <p className="text-xs font-semibold uppercase tracking-wider text-white/40 pt-2">Responsável (contato)</p>
+          <div>
+            <label className="block text-xs text-white/40 mb-1">Nome *</label>
+            <input value={form.responsavel_nome} onChange={setField('responsavel_nome')} className={inputCls} />
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs text-white/40 mb-1">Telefone *</label>
+              <input value={form.responsavel_telefone} onChange={setField('responsavel_telefone')} className={inputCls} placeholder="(21) 9..." inputMode="numeric" />
+            </div>
+            <div>
+              <label className="block text-xs text-white/40 mb-1">E-mail</label>
+              <input type="email" value={form.responsavel_email} onChange={setField('responsavel_email')} className={inputCls} />
+            </div>
+          </div>
+
+          <div>
+            <label className="block text-xs text-white/40 mb-1">Observações</label>
+            <input value={form.observacoes} onChange={setField('observacoes')} className={inputCls} placeholder="Padrinhos, alergias, etc." />
+          </div>
+
+          {error && <p className="text-red-400 text-sm text-center">{error}</p>}
+
+          <Button
+            onClick={handleSubmit}
+            disabled={saving}
+            className="w-full bg-[#EC4899] hover:bg-[#EC4899]/90 text-white py-3 text-base rounded-2xl gap-2 mt-2"
+          >
+            {saving ? <Loader2 className="h-5 w-5 animate-spin" /> : <Baby className="h-5 w-5" />}
+            {saving ? 'Agendando...' : 'Confirmar apresentação'}
           </Button>
         </div>
       </div>

@@ -1039,6 +1039,14 @@ export const membresia = {
     geocodeCep: (cep) => get(`/membresia/geocode-cep?cep=${encodeURIComponent(cep)}`),
     updateMembro: (id, data) => put(`/membresia/totem/membros/${id}`, data),
     uploadFoto: (id, formData) => requestFile(`/membresia/totem/membros/${id}/foto`, formData),
+    next: {
+      status: (params = {}) => get('/membresia/totem/next/status?' + new URLSearchParams(params).toString()),
+      inscrever: (data) => post('/membresia/totem/next/inscrever', data),
+    },
+    apresentacaoBebe: {
+      status: (params = {}) => get('/membresia/totem/apresentacao-bebe/status?' + new URLSearchParams(params).toString()),
+      create: (data) => post('/membresia/totem/apresentacao-bebe', data),
+    },
   },
   contribuicoes: {
     list: (params) => get('/membresia/contribuicoes' + (params ? '?' + new URLSearchParams(params) : '')),

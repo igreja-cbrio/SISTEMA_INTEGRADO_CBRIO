@@ -1048,6 +1048,302 @@ router.put('/totem/membros/:id', async (req, res) => {
   }
 });
 
+// ── Totem · NEXT (inscrição + status) ──
+//
+// Helper · acha o proximo evento NEXT agendado (data >= hoje).
+async function _proximoEventoNext() {
+  const hoje = new Date().toISOString().slice(0, 10);
+  const { data } = await supabase
+    .from('next_eventos')
+    .select('id, data, titulo')
+    .eq('status', 'agendado')
+    .gte('data', hoje)
+    .order('data')
+    .limit(1)
+    .maybeSingle();
+  return data || null;
+}
+
+// GET /api/membresia/totem/next/status?membro_id=X&email=Y&cpf=Z
+// Retorna { inscrito: bool, inscricao?, proximo_evento? }.
+// "inscrito = true" significa que o membro tem inscricao ativa pra um
+// evento futuro (status='agendado' do evento e check_in_at NULL).
+router.get('/totem/next/status', async (req, res) => {
+  try {
+    const { membro_id, email, cpf } = req.query;
+    const hoje = new Date().toISOString().slice(0, 10);
+    const proximo = await _proximoEventoNext();
+
+    // Procura inscricao mais recente do membro/email/cpf cujo evento e futuro
+    let q = supabase
+      .from('next_inscricoes')
+      .select('id, nome, sobrenome, email, cpf, check_in_at, evento:next_eventos(id, data, titulo, status)')
+      .order('created_at', { ascending: false })
+      .limit(1);
+
+    const filtros = [];
+    if (membro_id) filtros.push(`membro_id.eq.${membro_id}`);
+    if (email) filtros.push(`email.eq.${String(email).toLowerCase().trim()}`);
+    if (cpf) filtros.push(`cpf.eq.${String(cpf).replace(/\D/g, '')}`);
+    if (filtros.length === 0) {
+      return res.json({ inscrito: false, proximo_evento: proximo });
+    }
+    q = q.or(filtros.join(','));
+
+    const { data: inscricoes } = await q;
+    const insc = (inscricoes || [])[0] || null;
+
+    // Inscrito ativo · evento futuro agendado e ainda sem check-in
+    const ativo = insc && insc.evento && insc.evento.data >= hoje
+      && insc.evento.status === 'agendado'
+      && !insc.check_in_at;
+
+    return res.json({
+      inscrito: !!ativo,
+      inscricao: ativo ? insc : null,
+      ultima_inscricao: insc,
+      proximo_evento: proximo,
+    });
+  } catch (e) {
+    console.error('[TOTEM] next/status error:', e.message);
+    res.status(500).json({ error: 'Erro ao consultar status do NEXT' });
+  }
+});
+
+// POST /api/membresia/totem/next/inscrever
+// Body: { membro_id?, nome, sobrenome?, cpf?, telefone, email, data_nascimento?, observacoes? }
+// Resolve evento automaticamente (proximo agendado). Idempotente por
+// CPF/email do evento (UNIQUE INDEX existente em next_inscricoes).
+router.post('/totem/next/inscrever', async (req, res) => {
+  try {
+    const {
+      membro_id, nome, sobrenome, cpf, telefone, email,
+      data_nascimento, observacoes,
+    } = req.body || {};
+
+    if (!nome || String(nome).trim().length < 2) {
+      return res.status(400).json({ error: 'Nome obrigatorio' });
+    }
+    if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(email))) {
+      return res.status(400).json({ error: 'Email invalido' });
+    }
+    const cleanTel = String(telefone || '').replace(/\D/g, '');
+    if (!cleanTel || cleanTel.length < 10) {
+      return res.status(400).json({ error: 'Telefone invalido' });
+    }
+    const cleanCpf = cpf ? String(cpf).replace(/\D/g, '') : null;
+    const cleanEmail = String(email).toLowerCase().trim();
+
+    const proximo = await _proximoEventoNext();
+    if (!proximo) {
+      return res.status(400).json({ error: 'Nenhum evento NEXT agendado no momento' });
+    }
+
+    // Snapshot pre-NEXT
+    let jaBatizado = false, jaVoluntario = false;
+    if (membro_id) {
+      const { data: m } = await supabase
+        .from('mem_membros').select('batizado').eq('id', membro_id).maybeSingle();
+      jaBatizado = !!m?.batizado;
+    }
+    if (cleanCpf) {
+      const { count } = await supabase
+        .from('vol_profiles')
+        .select('id', { count: 'exact', head: true })
+        .eq('cpf', cleanCpf)
+        .eq('allocation_status', 'active');
+      if (count && count > 0) jaVoluntario = true;
+    }
+
+    const { data: insc, error: insErr } = await supabase
+      .from('next_inscricoes')
+      .insert({
+        evento_id: proximo.id,
+        nome: String(nome).trim(),
+        sobrenome: sobrenome ? String(sobrenome).trim() : null,
+        cpf: cleanCpf,
+        telefone: cleanTel,
+        email: cleanEmail,
+        data_nascimento: data_nascimento || null,
+        observacoes: observacoes ? String(observacoes).trim().slice(0, 1000) : null,
+        membro_id: membro_id || null,
+        ja_batizado: jaBatizado,
+        ja_voluntario: jaVoluntario,
+        origem: 'manual',
+        registered_by: req.user?.id || null,
+      })
+      .select('id, evento:next_eventos(id, data, titulo)')
+      .single();
+
+    if (insErr) {
+      if (insErr.code === '23505') {
+        // Ja inscrito · retorna evento
+        return res.json({ ok: true, ja_inscrito: true, evento: proximo });
+      }
+      throw insErr;
+    }
+
+    try {
+      await notificar({
+        modulo: 'next',
+        titulo: 'Nova inscricao no NEXT (via totem)',
+        mensagem: `${nome} ${sobrenome || ''} (${cleanEmail}) se inscreveu pelo totem.`,
+        link: '/ministerial/next?tab=inscritos',
+      });
+    } catch (e) {
+      console.error('[TOTEM] next notificar error:', e.message);
+    }
+
+    res.status(201).json({ ok: true, inscricao: insc, evento: insc?.evento || proximo });
+  } catch (e) {
+    console.error('[TOTEM] next/inscrever error:', e.message);
+    res.status(500).json({ error: 'Erro ao inscrever no NEXT: ' + e.message });
+  }
+});
+
+// ── Totem · Apresentacao de Bebes ──
+//
+// Sempre 2 domingo do mes. Helper calcula a proxima data e retorna
+// junto com o culto correspondente (se houver) e a apresentacao
+// existente do membro pra essa data (pra UI mostrar "ja inscrito").
+function _segundoDomingo(year, month0) {
+  const first = new Date(year, month0, 1);
+  const dow = first.getDay(); // 0=Dom
+  const firstSundayDay = dow === 0 ? 1 : 8 - dow;
+  return new Date(year, month0, firstSundayDay + 7);
+}
+function _proximoSegundoDomingo(refDate = new Date()) {
+  const y = refDate.getFullYear();
+  const m = refDate.getMonth();
+  const ref = new Date(y, m, refDate.getDate()); // strip time
+  const candidato = _segundoDomingo(y, m);
+  if (candidato >= ref) return candidato;
+  // Proximo mes
+  const ny = m === 11 ? y + 1 : y;
+  const nm = m === 11 ? 0 : m + 1;
+  return _segundoDomingo(ny, nm);
+}
+function _fmtDate(d) {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+// GET /api/membresia/totem/apresentacao-bebe/status?membro_id=X
+// Retorna { proxima_data, culto?, apresentacao_existente? }
+router.get('/totem/apresentacao-bebe/status', async (req, res) => {
+  try {
+    const { membro_id } = req.query;
+    const proxima = _proximoSegundoDomingo();
+    const proximaStr = _fmtDate(proxima);
+
+    // Cultos do dia (domingo manha) · informativo
+    const { data: cultos } = await supabase
+      .from('cultos')
+      .select('id, data, service_type:vol_service_types(name, recurrence_time)')
+      .eq('data', proximaStr)
+      .limit(5);
+
+    let apresentacao_existente = null;
+    if (membro_id) {
+      const { data } = await supabase
+        .from('apresentacao_bebes')
+        .select('id, bebe_nome, data_apresentacao, status')
+        .eq('responsavel_membro_id', membro_id)
+        .eq('data_apresentacao', proximaStr)
+        .is('deleted_at', null)
+        .maybeSingle();
+      apresentacao_existente = data || null;
+    }
+
+    res.json({
+      proxima_data: proximaStr,
+      cultos: cultos || [],
+      apresentacao_existente,
+    });
+  } catch (e) {
+    console.error('[TOTEM] apresentacao-bebe/status error:', e.message);
+    res.status(500).json({ error: 'Erro ao consultar apresentacao de bebes' });
+  }
+});
+
+// POST /api/membresia/totem/apresentacao-bebe
+// Body: { responsavel_membro_id?, responsavel_nome, responsavel_telefone,
+//         responsavel_email?, bebe_nome, bebe_data_nascimento, bebe_sexo?,
+//         nome_pai?, nome_mae?, observacoes? }
+router.post('/totem/apresentacao-bebe', async (req, res) => {
+  try {
+    const {
+      responsavel_membro_id, responsavel_nome, responsavel_telefone, responsavel_email,
+      bebe_nome, bebe_data_nascimento, bebe_sexo, nome_pai, nome_mae, observacoes,
+    } = req.body || {};
+
+    if (!responsavel_nome || String(responsavel_nome).trim().length < 2) {
+      return res.status(400).json({ error: 'Nome do responsavel obrigatorio' });
+    }
+    const cleanTel = String(responsavel_telefone || '').replace(/\D/g, '');
+    if (cleanTel.length < 10) {
+      return res.status(400).json({ error: 'Telefone do responsavel invalido' });
+    }
+    if (!bebe_nome || String(bebe_nome).trim().length < 1) {
+      return res.status(400).json({ error: 'Nome do bebe obrigatorio' });
+    }
+    if (!bebe_data_nascimento) {
+      return res.status(400).json({ error: 'Data de nascimento do bebe obrigatoria' });
+    }
+
+    const proxima = _proximoSegundoDomingo();
+    const proximaStr = _fmtDate(proxima);
+
+    // Tenta vincular ao culto de domingo de manha (primeiro do dia)
+    let culto_id = null;
+    const { data: cultos } = await supabase
+      .from('cultos')
+      .select('id')
+      .eq('data', proximaStr)
+      .order('id')
+      .limit(1);
+    if (cultos && cultos[0]) culto_id = cultos[0].id;
+
+    const { data, error } = await supabase
+      .from('apresentacao_bebes')
+      .insert({
+        responsavel_membro_id: responsavel_membro_id || null,
+        responsavel_nome: String(responsavel_nome).trim(),
+        responsavel_telefone: cleanTel,
+        responsavel_email: responsavel_email
+          ? String(responsavel_email).toLowerCase().trim() : null,
+        bebe_nome: String(bebe_nome).trim(),
+        bebe_data_nascimento,
+        bebe_sexo: bebe_sexo || null,
+        nome_pai: nome_pai ? String(nome_pai).trim() : null,
+        nome_mae: nome_mae ? String(nome_mae).trim() : null,
+        observacoes: observacoes ? String(observacoes).trim().slice(0, 1000) : null,
+        data_apresentacao: proximaStr,
+        culto_id,
+        registrado_por: req.user?.id || null,
+      })
+      .select()
+      .single();
+
+    if (error) throw error;
+
+    try {
+      await notificar({
+        modulo: 'membresia',
+        titulo: 'Apresentacao de bebe agendada',
+        mensagem: `${responsavel_nome} agendou apresentacao de ${bebe_nome} para ${proximaStr}.`,
+        link: '/ministerial/membresia',
+      });
+    } catch (e) {
+      console.error('[TOTEM] apresentacao-bebe notificar error:', e.message);
+    }
+
+    res.status(201).json({ ok: true, apresentacao: data, data_apresentacao: proximaStr });
+  } catch (e) {
+    console.error('[TOTEM] apresentacao-bebe POST error:', e.message);
+    res.status(500).json({ error: 'Erro ao agendar apresentacao: ' + e.message });
+  }
+});
+
 // POST /api/membresia/totem/membros/:id/foto — upload de foto via totem
 router.post('/totem/membros/:id/foto', uploadMw.single('foto'), async (req, res) => {
   try {
