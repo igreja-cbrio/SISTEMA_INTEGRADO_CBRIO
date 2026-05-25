@@ -26,8 +26,19 @@ async function resolverUsuarioId(idParam) {
   }
 
   // E' UUID · busca o profile pra pegar email + nome
-  const { data: profile } = await supabase.from('profiles')
+  let { data: profile } = await supabase.from('profiles')
     .select('id, email, name').eq('id', idParam).maybeSingle();
+
+  // Fallback · pode ser id de rh_funcionarios (funcionario cadastrado pelo
+  // RH antes do primeiro login · ver GET /colaboradores)
+  if (!profile?.email) {
+    const { data: func } = await supabase.from('rh_funcionarios')
+      .select('id, email, nome').eq('id', idParam).maybeSingle();
+    if (func?.email) {
+      profile = { id: func.id, email: func.email, name: func.nome };
+    }
+  }
+
   if (!profile?.email) return null;
 
   const email = profile.email.toLowerCase().trim();
@@ -110,8 +121,43 @@ router.get('/colaboradores', async (_req, res) => {
         const cargoInfo = cargoByEmail.get((p.email || '').toLowerCase().trim()) || {
           cargo_id: null, cargo_slug: null, cargo_nome: null,
         };
-        return { ...p, ...cargoInfo };
+        return { ...p, ...cargoInfo, origem: 'profile' };
       });
+
+    // 6. Funcionarios ativos sem profile ainda (ex: cadastrados pelo RH
+    //    antes do primeiro login). Aparecem na lista com origem='funcionario'
+    //    pra Marcos atribuir cargo/areas mesmo antes do signup do Supabase.
+    const profileEmails = new Set(
+      (profiles || [])
+        .map(p => (p.email || '').toLowerCase().trim())
+        .filter(Boolean)
+    );
+    const { data: funcionariosRows } = await supabase
+      .from('rh_funcionarios')
+      .select('id, nome, email, cargo, area')
+      .eq('status', 'ativo')
+      .not('email', 'is', null);
+
+    for (const f of funcionariosRows || []) {
+      const emailKey = (f.email || '').toLowerCase().trim();
+      if (!emailKey) continue;
+      if (profileEmails.has(emailKey)) continue; // ja veio via profile
+      const cargoInfo = cargoByEmail.get(emailKey) || {
+        cargo_id: null, cargo_slug: null, cargo_nome: null,
+      };
+      colaboradores.push({
+        id: f.id, // funcionario_id (UUID, mesmo schema de profile.id)
+        name: f.nome,
+        email: f.email,
+        role: 'funcionario',
+        avatar_url: null,
+        ...cargoInfo,
+        origem: 'funcionario',
+      });
+    }
+
+    // Reordena por nome pra ficar previsivel na UI
+    colaboradores.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
 
     res.json(colaboradores);
   } catch (e) {
