@@ -2,6 +2,34 @@
 
 Guia operacional para o Claude Code quando trabalhar neste repositório.
 
+## ⚠️ Supabase JS limita queries em 1000 linhas por default (2026-05-25)
+
+Bug pego em producao · cargo `supervisor-jornada` criado, matriz seedada
+com nivel 3 nos modulos da jornada, mas o Marcelo Soares (atribuido ao
+cargo) ficava com leitura=0 em tudo que nao tinha boost por area.
+
+Causa · `getCargoMatrix()` no `backend/middleware/auth.js` fazia
+`supabase.from('cargo_modulo_permissao').select(...)` sem `.range()`.
+O Supabase JS client v2 retorna **no maximo 1000 linhas por query**
+quando nao especificado. A matriz tinha ~1073 linhas (29 cargos × 37
+modulos) · as linhas dos cargos com `id` mais alto (supervisor-jornada
+cargo_id=63 foi o ultimo criado) cairam fora dos primeiros 1000 e o
+backend nunca conseguia computar `defaultsByMod` pra esses cargos.
+
+**Sempre adicionar `.range(0, 19999)`** (ou paginar) quando a query
+puder retornar > 1000 linhas. Aplicado em:
+- `getCargoMatrix()` em `auth.js`
+- `GET /api/permissoes/matriz` (consumido pela UI admin)
+- `GET /api/permissoes/diagnostico/:email`
+
+Outros candidatos a auditar:
+- exports de `mem_membros`, `mem_voluntarios`, `mem_contribuicoes`, `cultos`
+- qualquer agg em massa que nao use `.range()` ou paginacao
+
+Pra debug similar futuro · `/api/permissoes/diagnostico/:email` mostra
+`matrix_stats.cargoMatrix_total_rows`. Se for exatamente 1000, o
+sintoma de truncamento esta presente.
+
 ## Cargo · supervisor-jornada (Marcelo Soares · 2026-05-25)
 
 Marcelo Soares saiu de `assistente-ministerial` (Assistente Ministerio

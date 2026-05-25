@@ -214,7 +214,8 @@ router.get('/diagnostico/:email', async (req, res) => {
       .eq('ativo', true);
     const { data: cargoMatrixRaw } = await supabase
       .from('cargo_modulo_permissao')
-      .select('cargo_id, modulo_id, nivel, pode_exportar, pode_aprovar, escopo_proprio');
+      .select('cargo_id, modulo_id, nivel, pode_exportar, pode_aprovar, escopo_proprio')
+      .range(0, 19999);
 
     const cargoId = usuario?.cargo_id;
     const cargoIdType = typeof cargoId;
@@ -304,7 +305,9 @@ router.get('/matriz', async (_req, res) => {
     const [cargos, modulos, celulas] = await Promise.all([
       supabase.from('cargos').select('*').eq('ativo', true).order('ordem'),
       supabase.from('modulos').select('*').eq('ativo', true).order('ordem'),
-      supabase.from('cargo_modulo_permissao').select('*'),
+      // .range(0, 19999) · default do Supabase JS eh 1000 linhas · sem isso
+      // a matriz fica truncada e UI admin nao mostra celulas dos cargos novos
+      supabase.from('cargo_modulo_permissao').select('*').range(0, 19999),
     ]);
     res.json({
       cargos: cargos.data || [],
