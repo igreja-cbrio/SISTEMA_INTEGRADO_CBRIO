@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { financeiroV2, financeiro } from '../../../api';
 import { Button } from '../../../components/ui/button';
+import { toast } from 'sonner';
 
 const C = {
   bg: 'var(--cbrio-bg)', card: 'var(--cbrio-card)', primary: '#00B39D', primaryBg: '#00B39D18',
@@ -40,36 +41,55 @@ export default function FilaClassificacao() {
   const algunsMarcados = selecionados.size > 0 && !todosMarcados;
   const toggleTodos = () => setSelecionados(todosMarcados ? new Set() : new Set(fila.map(i => i.id)));
 
-  const aprovarSelecionados = async () => {
+  // Confirmação inline via toast.warning + action (sem confirm() nativo)
+  const aprovarSelecionados = () => {
     if (selecionados.size === 0) return;
-    if (!confirm(`Aprovar ${selecionados.size} item${selecionados.size === 1 ? '' : 's'} selecionado${selecionados.size === 1 ? '' : 's'}?`)) return;
-    setBulkProcessing(true);
-    try {
-      let ok = 0, err = 0;
-      for (const id of selecionados) {
-        try { await financeiroV2.fila.aprovar(id, {}); ok++; }
-        catch { err++; }
-      }
-      alert(`${ok} aprovado${ok === 1 ? '' : 's'}${err ? ` · ${err} com erro` : ''}.`);
-      setSelecionados(new Set());
-      load();
-    } finally { setBulkProcessing(false); }
+    const n = selecionados.size;
+    toast.warning(`Aprovar ${n} item${n === 1 ? '' : 's'} selecionado${n === 1 ? '' : 's'}?`, {
+      action: {
+        label: 'Aprovar',
+        onClick: async () => {
+          setBulkProcessing(true);
+          try {
+            let ok = 0, err = 0;
+            for (const id of selecionados) {
+              try { await financeiroV2.fila.aprovar(id, {}); ok++; }
+              catch { err++; }
+            }
+            if (err > 0) toast.error(`${ok} aprovado${ok === 1 ? '' : 's'} · ${err} com erro`);
+            else toast.success(`${ok} aprovado${ok === 1 ? '' : 's'} com sucesso`);
+            setSelecionados(new Set());
+            load();
+          } finally { setBulkProcessing(false); }
+        },
+      },
+      duration: 8000,
+    });
   };
 
-  const ignorarSelecionados = async () => {
+  const ignorarSelecionados = () => {
     if (selecionados.size === 0) return;
-    if (!confirm(`Ignorar ${selecionados.size} item${selecionados.size === 1 ? '' : 's'}? Não viram transação.`)) return;
-    setBulkProcessing(true);
-    try {
-      let ok = 0, err = 0;
-      for (const id of selecionados) {
-        try { await financeiroV2.fila.ignorar(id); ok++; }
-        catch { err++; }
-      }
-      alert(`${ok} ignorado${ok === 1 ? '' : 's'}${err ? ` · ${err} com erro` : ''}.`);
-      setSelecionados(new Set());
-      load();
-    } finally { setBulkProcessing(false); }
+    const n = selecionados.size;
+    toast.warning(`Ignorar ${n} item${n === 1 ? '' : 's'}? Não viram transação.`, {
+      action: {
+        label: 'Ignorar',
+        onClick: async () => {
+          setBulkProcessing(true);
+          try {
+            let ok = 0, err = 0;
+            for (const id of selecionados) {
+              try { await financeiroV2.fila.ignorar(id); ok++; }
+              catch { err++; }
+            }
+            if (err > 0) toast.error(`${ok} ignorado${ok === 1 ? '' : 's'} · ${err} com erro`);
+            else toast.success(`${ok} ignorado${ok === 1 ? '' : 's'}`);
+            setSelecionados(new Set());
+            load();
+          } finally { setBulkProcessing(false); }
+        },
+      },
+      duration: 8000,
+    });
   };
 
   const load = useCallback(async () => {
@@ -386,25 +406,24 @@ function ModalEditarClassificacao({ item, onClose, planos, centros, onSalvar }) 
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12, marginBottom: 16 }}>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
             <label style={labelSt}>Conta do plano</label>
-            <select value={planoId} onChange={e => setPlanoId(e.target.value)} style={inputSt}>
-              <option value="">Selecione...</option>
-              {planos.map(p => (
-                <option key={p.id} value={p.id} title={`${p.codigo} · ${p.nome}`}>
-                  {p.codigo} · {truncateOpt(p.nome, 60)}
-                </option>
-              ))}
-            </select>
+            <ComboboxBusca
+              items={planos}
+              value={planoId}
+              onChange={setPlanoId}
+              placeholder="Buscar plano de contas (código ou nome)..."
+              emptyLabel="Selecione..."
+            />
           </div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
             <label style={labelSt}>Centro de Custo (opcional)</label>
-            <select value={centroId} onChange={e => setCentroId(e.target.value)} style={inputSt}>
-              <option value="">— Nenhum —</option>
-              {centros.map(c => (
-                <option key={c.id} value={c.id} title={`${c.codigo} · ${c.nome}`}>
-                  {c.codigo} · {truncateOpt(c.nome, 60)}
-                </option>
-              ))}
-            </select>
+            <ComboboxBusca
+              items={centros}
+              value={centroId}
+              onChange={setCentroId}
+              placeholder="Buscar centro de custo..."
+              emptyLabel="— Nenhum —"
+              permiteVazio
+            />
           </div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
             <label style={labelSt}>Centavo identificador (opcional)</label>
@@ -428,6 +447,89 @@ function ModalEditarClassificacao({ item, onClose, planos, centros, onSalvar }) 
           })}>Salvar</Button>
         </div>
       </div>
+    </div>
+  );
+}
+
+// Combobox com busca · digita pra filtrar codigo+nome, click pra selecionar
+function ComboboxBusca({ items, value, onChange, placeholder, emptyLabel, permiteVazio }) {
+  const [busca, setBusca] = useState('');
+  const [aberto, setAberto] = useState(false);
+  const selecionado = items.find(i => i.id === value);
+  const filtrados = busca.trim()
+    ? items.filter(i => {
+        const q = busca.toLowerCase();
+        return (i.codigo || '').toLowerCase().includes(q) || (i.nome || '').toLowerCase().includes(q);
+      }).slice(0, 100)
+    : items.slice(0, 100);
+
+  return (
+    <div style={{ position: 'relative' }}>
+      <input
+        type="text"
+        value={aberto ? busca : (selecionado ? `${selecionado.codigo} · ${selecionado.nome}` : '')}
+        onChange={e => { setBusca(e.target.value); setAberto(true); }}
+        onFocus={e => { setAberto(true); setBusca(''); e.target.select(); }}
+        onBlur={() => setTimeout(() => setAberto(false), 150)}
+        placeholder={placeholder}
+        style={{ ...inputSt, paddingRight: 30 }}
+      />
+      {value && permiteVazio && (
+        <button
+          type="button"
+          onMouseDown={e => { e.preventDefault(); onChange(''); setBusca(''); }}
+          style={{
+            position: 'absolute', right: 8, top: '50%', transform: 'translateY(-50%)',
+            background: 'transparent', border: 'none', color: C.text3, fontSize: 16, cursor: 'pointer', padding: 4,
+          }}
+          title="Limpar"
+        >×</button>
+      )}
+      {aberto && (
+        <div style={{
+          position: 'absolute', top: '100%', left: 0, right: 0, marginTop: 2, zIndex: 100,
+          background: 'var(--cbrio-card)', border: `1px solid ${C.border}`, borderRadius: 6,
+          maxHeight: 280, overflowY: 'auto', boxShadow: '0 4px 16px rgba(0,0,0,0.15)',
+        }}>
+          {permiteVazio && (
+            <button
+              type="button"
+              onMouseDown={e => { e.preventDefault(); onChange(''); setBusca(''); setAberto(false); }}
+              style={{
+                display: 'block', width: '100%', textAlign: 'left', padding: '8px 12px',
+                background: !value ? C.primaryBg : 'transparent', border: 'none',
+                borderBottom: `1px solid ${C.border}`, color: C.text2, fontSize: 12, cursor: 'pointer', fontStyle: 'italic',
+              }}
+            >{emptyLabel}</button>
+          )}
+          {filtrados.length === 0 ? (
+            <div style={{ padding: '12px', color: C.text3, fontSize: 12, textAlign: 'center' }}>
+              Nenhum resultado pra "{busca}"
+            </div>
+          ) : filtrados.map(i => (
+            <button
+              type="button"
+              key={i.id}
+              onMouseDown={e => { e.preventDefault(); onChange(i.id); setBusca(''); setAberto(false); }}
+              style={{
+                display: 'block', width: '100%', textAlign: 'left', padding: '8px 12px',
+                background: i.id === value ? C.primaryBg : 'transparent', border: 'none',
+                borderBottom: `1px solid ${C.border}40`, color: C.text, fontSize: 13, cursor: 'pointer',
+              }}
+              onMouseEnter={e => { if (i.id !== value) e.target.style.background = 'var(--cbrio-bg)'; }}
+              onMouseLeave={e => { if (i.id !== value) e.target.style.background = 'transparent'; }}
+            >
+              <span style={{ fontFamily: 'monospace', color: C.text2, marginRight: 8 }}>{i.codigo}</span>
+              <span>{i.nome}</span>
+            </button>
+          ))}
+          {items.length > 100 && !busca && (
+            <div style={{ padding: '8px 12px', color: C.text3, fontSize: 11, fontStyle: 'italic', textAlign: 'center', borderTop: `1px solid ${C.border}` }}>
+              Mostrando 100 de {items.length} · digite pra buscar
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }
