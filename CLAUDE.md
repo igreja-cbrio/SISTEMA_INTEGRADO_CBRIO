@@ -2,6 +2,44 @@
 
 Guia operacional para o Claude Code quando trabalhar neste repositório.
 
+## Cargo · supervisor-jornada (Marcelo Soares · 2026-05-25)
+
+Marcelo Soares saiu de `assistente-ministerial` (Assistente Ministerio
+Cuidados) e virou **`supervisor-jornada`** · callback de cuidado pastoral
+que VE e PREENCHE dados de jornada em TODOS os ministerios.
+
+**Conceito chave**: ele NAO substitui os lideres. Soma com eles como
+rede de seguranca. Se Mariane (Kids), Arthur (AMI), Lillian (Bridge),
+Renata (Online) ou Alda (Integracao) esquecerem de marcar uma decisao,
+batismo, devocional ou checkin, Marcelo entra, corrige e mantem o NSM
+saudavel.
+
+**Matriz** (migration `20260525160000_supervisor_jornada_marcelo.sql`):
+- Nivel 3 (CRUD) **SEM escopo_proprio** em: `integracao`, `cuidados`,
+  `online`, `kids`, `ami`, `bridge`, `next`, `voluntariado`,
+  `membresia`, `grupos`, `dados-brutos`, `minha-area`
+- Nivel 1 (read) em: `dashboard`, `painel-cbrio`, `eventos`, `projetos`,
+  `expansao`
+- Nivel 2 em: `nps`, `solicitacoes`, `assistente-ia`
+- Nivel 3 com escopo_proprio em: `perfil`
+- Nivel 0 em: `rh`, `financeiro`, `logistica`, `patrimonio`, `gestao`,
+  `governanca`, `ritual`, `planejamento`, `revisao-estrategica`,
+  `cerebro`, `notificacoes-config`, `permissoes-admin`, `usuarios-admin`
+
+**Diferenca chave vs `assistente-ministerial`**: o assistente tem
+escopo_proprio=true em todos os modulos da jornada (so ve a sua area).
+Supervisor-jornada tem escopo_proprio=false · ve todas as 6 areas
+(kids/ami/bridge/sede/online/cba).
+
+**Areas atribuidas em `usuario_areas`**: cuidados, integracao, kids, ami,
+bridge, online. (CBA acompanhada pelo Pr. Nelio via grupos · sem area
+formal nas 6 oficiais.)
+
+**Apos aplicar a migration**:
+- Marcos: rodar bust de cache em `/admin/permissoes` ou
+  `POST /api/permissoes/cache/bust`
+- Marcelo: fazer logout/login pra renovar JWT
+
 # ⚠️ REGRAS OBRIGATÓRIAS DE SEGURANÇA (não regredir · 2026-05-21)
 
 Esta seção é a lei do projeto após a Auditoria de Segurança 2026-05-21
