@@ -42,11 +42,11 @@ export default function Arrecadacoes() {
 
   const reload = () => {
     setLoading(true);
-    financeiroV2.transacoes({ tipo: 'receita', inicio: periodo.inicio, fim: periodo.fim, limit: 10000 })
+    // RPC dedicada · evita limite do PostgREST (db-max-rows=1000) que cortava
+    // arrecadacoes em meses com muitos lancamentos (ex: 927 vs 1905 reais).
+    financeiroV2.arrecadacoes({ inicio: periodo.inicio, fim: periodo.fim })
       .then(data => {
-        const arr = Array.isArray(data) ? data : (data?.items || []);
-        const filtradas = arr.filter(t => (t.plano_contas_codigo || '').startsWith('3.01'));
-        setItems(filtradas);
+        setItems(Array.isArray(data) ? data : []);
       })
       .catch(() => setItems([]))
       .finally(() => setLoading(false));
