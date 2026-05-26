@@ -326,4 +326,227 @@ router.get('/historico-batismos', async (req, res) => {
   }
 });
 
+// ═════════════════════════════════════════════════════════════════════════
+// COLETA MOBILE · submissoes de dados de culto pendentes de aprovacao
+// ═════════════════════════════════════════════════════════════════════════
+
+// GET /coleta/cultos-abertos · lista cultos dos ultimos 14 dias com status por ambiente
+router.get('/coleta/cultos-abertos', async (req, res) => {
+  try {
+    const hoje = new Date().toISOString().slice(0, 10);
+    const limite = new Date(); limite.setDate(limite.getDate() - 14);
+    const desde = limite.toISOString().slice(0, 10);
+
+    const { data: cultos, error: errCultos } = await supabase
+      .from('cultos')
+      .select(`
+        id, data, presencial_adulto, presencial_kids,
+        decisoes_presenciais, decisoes_kids,
+        service_type:vol_service_types(id, name, recurrence_time, has_kids)
+      `)
+      .gte('data', desde)
+      .lte('data', hoje)
+      .order('data', { ascending: false })
+      .limit(40);
+    if (errCultos) return res.status(400).json({ error: errCultos.message });
+
+    const ids = (cultos || []).map(c => c.id);
+    let subsByKey = {};
+    if (ids.length) {
+      const { data: subs, error: errSubs } = await supabase
+        .from('cultos_dados_submissoes')
+        .select('id, culto_id, ambiente, status, presencial, decisoes, submitted_at')
+        .in('culto_id', ids)
+        .in('status', ['pendente', 'aprovado']);
+      if (errSubs) return res.status(400).json({ error: errSubs.message });
+      for (const s of (subs || [])) {
+        subsByKey[`${s.culto_id}:${s.ambiente}`] = s;
+      }
+    }
+
+    const out = (cultos || []).map(c => ({
+      id: c.id,
+      data: c.data,
+      service_type: c.service_type,
+      templo: {
+        submissao: subsByKey[`${c.id}:templo`] || null,
+        ja_em_cultos: (c.presencial_adulto != null && c.presencial_adulto > 0) ||
+                      (c.decisoes_presenciais != null && c.decisoes_presenciais > 0),
+      },
+      kids: {
+        habilitado: !!c.service_type?.has_kids,
+        submissao: subsByKey[`${c.id}:kids`] || null,
+        ja_em_cultos: (c.presencial_kids != null && c.presencial_kids > 0) ||
+                      (c.decisoes_kids != null && c.decisoes_kids > 0),
+      },
+    }));
+
+    res.json(out);
+  } catch (e) {
+    console.error('[INTEGRACAO] coleta/cultos-abertos', e.message);
+    res.status(500).json({ error: 'Erro ao carregar cultos abertos' });
+  }
+});
+
+// POST /coleta · submeter dados de um culto (templo OU kids)
+router.post('/coleta', async (req, res) => {
+  try {
+    const { culto_id, ambiente, presencial, decisoes, observacao } = req.body || {};
+    if (!culto_id) return res.status(400).json({ error: 'culto_id obrigatorio' });
+    if (!['templo', 'kids'].includes(ambiente)) {
+      return res.status(400).json({ error: 'ambiente invalido (templo ou kids)' });
+    }
+    const pres = Number(presencial);
+    const dec = Number(decisoes ?? 0);
+    if (!Number.isFinite(pres) || pres < 0) {
+      return res.status(400).json({ error: 'presencial deve ser numero >= 0' });
+    }
+    if (!Number.isFinite(dec) || dec < 0) {
+      return res.status(400).json({ error: 'decisoes deve ser numero >= 0' });
+    }
+
+    const { data, error } = await supabase
+      .from('cultos_dados_submissoes')
+      .insert({
+        culto_id,
+        ambiente,
+        presencial: Math.round(pres),
+        decisoes: Math.round(dec),
+        observacao: observacao || null,
+        status: 'pendente',
+        submitted_by: req.user?.id || null,
+      })
+      .select()
+      .single();
+    if (error) {
+      // 23505 = unique_violation · ja tem submissao ativa pra esse (culto, ambiente)
+      if (error.code === '23505') {
+        return res.status(409).json({
+          error: 'Ja existe uma submissao pendente ou aprovada deste ambiente neste culto.',
+        });
+      }
+      return res.status(400).json({ error: error.message });
+    }
+    res.status(201).json(data);
+  } catch (e) {
+    console.error('[INTEGRACAO] coleta POST', e.message);
+    res.status(500).json({ error: 'Erro ao registrar submissao' });
+  }
+});
+
+// GET /coleta/minhas · submissoes do proprio usuario (historico pessoal)
+router.get('/coleta/minhas', async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('cultos_dados_submissoes')
+      .select(`
+        id, culto_id, ambiente, presencial, decisoes, observacao,
+        status, submitted_at, approved_at, rejected_reason,
+        culto:cultos(id, data, service_type:vol_service_types(name))
+      `)
+      .eq('submitted_by', req.user.id)
+      .order('submitted_at', { ascending: false })
+      .limit(50);
+    if (error) return res.status(400).json({ error: error.message });
+    res.json(data || []);
+  } catch (e) {
+    console.error('[INTEGRACAO] coleta/minhas', e.message);
+    res.status(500).json({ error: 'Erro ao carregar suas submissoes' });
+  }
+});
+
+// GET /coleta/pendentes · lista submissoes pendentes pro coord aprovar
+router.get('/coleta/pendentes', async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('cultos_dados_submissoes')
+      .select(`
+        id, culto_id, ambiente, presencial, decisoes, observacao,
+        status, submitted_at, rejected_reason,
+        submitted_by, submitter:profiles!cultos_dados_submissoes_submitted_by_fkey(id, name, email, avatar_url),
+        culto:cultos(id, data, presencial_adulto, presencial_kids, decisoes_presenciais, decisoes_kids,
+                     service_type:vol_service_types(name, recurrence_time))
+      `)
+      .eq('status', 'pendente')
+      .order('submitted_at', { ascending: true });
+    if (error) return res.status(400).json({ error: error.message });
+    res.json(data || []);
+  } catch (e) {
+    console.error('[INTEGRACAO] coleta/pendentes', e.message);
+    res.status(500).json({ error: 'Erro ao listar pendentes' });
+  }
+});
+
+// POST /coleta/:id/aprovar · aplica os valores em cultos.* e marca aprovado
+router.post('/coleta/:id/aprovar', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { data: sub, error: errFetch } = await supabase
+      .from('cultos_dados_submissoes')
+      .select('id, culto_id, ambiente, presencial, decisoes, status')
+      .eq('id', id)
+      .single();
+    if (errFetch || !sub) return res.status(404).json({ error: 'Submissao nao encontrada' });
+    if (sub.status !== 'pendente') {
+      return res.status(409).json({ error: `Submissao ja esta ${sub.status}` });
+    }
+
+    const updateCulto = sub.ambiente === 'templo'
+      ? { presencial_adulto: sub.presencial, decisoes_presenciais: sub.decisoes }
+      : { presencial_kids: sub.presencial, decisoes_kids: sub.decisoes };
+
+    const { error: errCulto } = await supabase
+      .from('cultos')
+      .update(updateCulto)
+      .eq('id', sub.culto_id);
+    if (errCulto) return res.status(400).json({ error: 'Erro ao atualizar culto: ' + errCulto.message });
+
+    const { data: updSub, error: errUpd } = await supabase
+      .from('cultos_dados_submissoes')
+      .update({
+        status: 'aprovado',
+        approved_by: req.user?.id || null,
+        approved_at: new Date().toISOString(),
+      })
+      .eq('id', id)
+      .select()
+      .single();
+    if (errUpd) return res.status(400).json({ error: errUpd.message });
+
+    res.json(updSub);
+  } catch (e) {
+    console.error('[INTEGRACAO] coleta aprovar', e.message);
+    res.status(500).json({ error: 'Erro ao aprovar submissao' });
+  }
+});
+
+// POST /coleta/:id/rejeitar · marca rejeitada · libera novo envio do mesmo (culto,ambiente)
+router.post('/coleta/:id/rejeitar', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { motivo } = req.body || {};
+    if (!motivo || String(motivo).trim().length < 3) {
+      return res.status(400).json({ error: 'Informe um motivo (min 3 chars)' });
+    }
+    const { data, error } = await supabase
+      .from('cultos_dados_submissoes')
+      .update({
+        status: 'rejeitado',
+        rejected_reason: String(motivo).trim(),
+        approved_by: req.user?.id || null,
+        approved_at: new Date().toISOString(),
+      })
+      .eq('id', id)
+      .eq('status', 'pendente')
+      .select()
+      .single();
+    if (error) return res.status(400).json({ error: error.message });
+    if (!data) return res.status(404).json({ error: 'Submissao nao encontrada ou ja decidida' });
+    res.json(data);
+  } catch (e) {
+    console.error('[INTEGRACAO] coleta rejeitar', e.message);
+    res.status(500).json({ error: 'Erro ao rejeitar submissao' });
+  }
+});
+
 module.exports = router;
