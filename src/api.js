@@ -391,9 +391,11 @@ export const governanca = {
 
 export const agents = {
   generate: (data) => post('/agents/generate', data),
-  queue: () => get('/agents/queue'),
+  queue: (status) => get('/agents/queue' + (status ? `?status=${status}` : '')),
   approve: (id) => patch(`/agents/queue/${id}/approve`),
-  reject: (id) => patch(`/agents/queue/${id}/reject`),
+  reject: (id, motivo) => patch(`/agents/queue/${id}/reject`, motivo ? { motivo } : undefined),
+  apply: (id) => post(`/agents/queue/${id}/apply`),
+  triggerWorker: (data) => post('/agents/worker/trigger', data || {}),
   log: () => get('/agents/log'),
   run: (data) => post('/agents/run', data),
   runs: (params) => get('/agents/runs' + (params ? '?' + new URLSearchParams(params) : '')),

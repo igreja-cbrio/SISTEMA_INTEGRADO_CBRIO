@@ -1,0 +1,95 @@
+import express, { type Request, type Response, type NextFunction } from "express";
+import { verify } from "./hmac.js";
+import { runFinanceiroExecutor } from "./agents/financeiroExecutor.js";
+import { startScheduler } from "./scheduler.js";
+
+const app = express();
+const PORT = parseInt(process.env.PORT || "8080", 10);
+
+// Captura raw body pra HMAC sem perder pra JSON parser depois
+app.use(
+  express.json({
+    limit: "256kb",
+    verify: (req: any, _res, buf) => {
+      req.rawBody = buf.toString("utf8");
+    },
+  })
+);
+
+// Health check pro Railway
+app.get("/health", (_req: Request, res: Response) => {
+  res.json({
+    ok: true,
+    service: "cbrio-agent-worker",
+    uptime_s: process.uptime(),
+    scheduler: process.env.SCHEDULER_ENABLED === "1",
+    timezone: process.env.TZ || "default",
+  });
+});
+
+// Middleware HMAC pras rotas autenticadas
+function hmacAuth(req: any, res: Response, next: NextFunction) {
+  const sig = req.header("x-agent-signature");
+  if (!verify(req.rawBody || "", sig)) {
+    return res.status(401).json({ error: "HMAC invalido" });
+  }
+  next();
+}
+
+// POST /run/:agentType · dispara agente em background, retorna runId imediatamente
+app.post("/run/:agentType", hmacAuth, async (req: Request, res: Response) => {
+  const { agentType } = req.params;
+  const { triggeredBy, config } = req.body || {};
+
+  if (agentType !== "financeiro_executor") {
+    return res
+      .status(404)
+      .json({ error: `agentType desconhecido: ${agentType}` });
+  }
+
+  // Fire-and-forget · responde 202 imediato
+  res.status(202).json({ accepted: true, agentType });
+
+  setImmediate(async () => {
+    try {
+      const r = await runFinanceiroExecutor({ triggeredBy, config });
+      console.log(
+        `[run] ${agentType} ${r.runId} ${r.status} · ${r.propostas_geradas} propostas · $${r.cost_usd.toFixed(4)}`
+      );
+    } catch (e) {
+      console.error(`[run] ${agentType} excecao:`, (e as Error).message);
+    }
+  });
+});
+
+// Sync endpoint (dev/debug) · roda inline e retorna resultado
+app.post(
+  "/run-sync/:agentType",
+  hmacAuth,
+  async (req: Request, res: Response) => {
+    const { agentType } = req.params;
+    const { triggeredBy, config } = req.body || {};
+
+    if (agentType !== "financeiro_executor") {
+      return res
+        .status(404)
+        .json({ error: `agentType desconhecido: ${agentType}` });
+    }
+    try {
+      const r = await runFinanceiroExecutor({ triggeredBy, config });
+      res.json(r);
+    } catch (e) {
+      res.status(500).json({ error: (e as Error).message });
+    }
+  }
+);
+
+app.use((err: Error, _req: Request, res: Response, _next: NextFunction) => {
+  console.error("[server] erro:", err.message);
+  res.status(500).json({ error: "Erro interno" });
+});
+
+app.listen(PORT, () => {
+  console.log(`[server] cbrio-agent-worker escutando em :${PORT}`);
+  startScheduler();
+});

@@ -4,6 +4,7 @@ import { Button } from '../../components/ui/button';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '../../components/ui/tabs';
 import { Textarea } from '../../components/ui/textarea';
 import ReactMarkdown from 'react-markdown';
+import FilaAprovacao from './FilaAprovacao';
 
 const C = {
   bg: 'var(--cbrio-bg)', card: 'var(--cbrio-card)', primary: '#00B39D', primaryBg: '#00B39D18',
@@ -920,11 +921,16 @@ export default function AssistenteIA() {
       <Tabs defaultValue="chat">
         <TabsList className="mb-4">
           <TabsTrigger value="chat">💬 Chat IA</TabsTrigger>
+          <TabsTrigger value="fila">🤖 Fila de Aprovação</TabsTrigger>
           <TabsTrigger value="auditorias">🔍 Auditorias</TabsTrigger>
         </TabsList>
 
         <TabsContent value="chat">
           <ChatTab />
+        </TabsContent>
+
+        <TabsContent value="fila">
+          <FilaAprovacao />
         </TabsContent>
 
         <TabsContent value="auditorias">

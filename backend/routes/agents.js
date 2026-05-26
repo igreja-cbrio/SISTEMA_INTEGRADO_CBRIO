@@ -471,15 +471,30 @@ router.post('/generate', authorize('admin', 'diretor'), aiLimiter, async (req, r
   }
 });
 
-// GET /api/agents/queue
+// GET /api/agents/queue · lista propostas pra aprovar (default = pending)
 router.get('/queue', authorize('admin', 'diretor'), async (req, res) => {
   try {
-    const r = await db.query('SELECT * FROM agent_queue WHERE status = $1 ORDER BY created_at DESC LIMIT 20', ['pending']);
+    const status = req.query.status || 'pending';
+    const limit = Math.min(parseInt(req.query.limit) || 50, 200);
+    const r = await db.query(
+      `SELECT id, run_id, agent_type, action_type, action_label, description,
+              reasoning, payload, status, reviewed_by, reviewed_at,
+              applied_at, apply_error, created_at
+         FROM agent_queue
+        WHERE status = $1
+        ORDER BY created_at DESC
+        LIMIT $2`,
+      [status, limit]
+    );
     res.json(r.rows);
-  } catch (e) { res.status(500).json({ error: 'Erro' }); }
+  } catch (e) {
+    console.error('[AGENTS] /queue error:', e.message);
+    res.status(500).json({ error: 'Erro ao listar fila' });
+  }
 });
 
-// PATCH /api/agents/queue/:id/approve
+// PATCH /api/agents/queue/:id/approve · so marca aprovada (sem aplicar)
+// Mantido por backward-compat. Pra aplicar, use POST /queue/:id/apply.
 router.patch('/queue/:id/approve', authorize('admin', 'diretor'), async (req, res) => {
   try {
     await db.query(
@@ -493,12 +508,116 @@ router.patch('/queue/:id/approve', authorize('admin', 'diretor'), async (req, re
 // PATCH /api/agents/queue/:id/reject
 router.patch('/queue/:id/reject', authorize('admin', 'diretor'), async (req, res) => {
   try {
+    const motivo = (req.body || {}).motivo || null;
     await db.query(
-      'UPDATE agent_queue SET status=$1, reviewed_by=$2, reviewed_at=NOW() WHERE id=$3',
-      ['rejected', req.user.userId, req.params.id]
+      `UPDATE agent_queue
+          SET status='rejected', reviewed_by=$1, reviewed_at=NOW(),
+              apply_error = COALESCE($2, apply_error)
+        WHERE id=$3`,
+      [req.user.userId, motivo, req.params.id]
     );
     res.json({ success: true });
   } catch (e) { res.status(500).json({ error: 'Erro' }); }
+});
+
+// POST /api/agents/queue/:id/apply · aprova E aplica em UMA chamada
+// Switch por action_type → handler em backend/agents/apply/*.
+const { applyQueueAction } = require('../agents/apply/financeiroApply');
+
+router.post('/queue/:id/apply', authorize('admin', 'diretor'), async (req, res) => {
+  try {
+    if (!isValidUUID(req.params.id)) return res.status(400).json({ error: 'ID invalido' });
+
+    // Carrega proposta
+    const { data: row, error: errRow } = await supabase
+      .from('agent_queue')
+      .select('id, action_type, payload, status, reviewed_by')
+      .eq('id', req.params.id)
+      .single();
+    if (errRow || !row) return res.status(404).json({ error: 'Proposta nao encontrada' });
+    if (row.status !== 'pending') {
+      return res.status(400).json({
+        error: `Proposta ja com status=${row.status} · nao pode aplicar novamente`,
+      });
+    }
+
+    // Marca como aprovada antes de aplicar pra evitar race condition
+    await supabase
+      .from('agent_queue')
+      .update({
+        status: 'approved',
+        reviewed_by: req.user.userId,
+        reviewed_at: new Date().toISOString(),
+      })
+      .eq('id', row.id);
+
+    // Aplica
+    const result = await applyQueueAction({
+      action_type: row.action_type,
+      payload: row.payload,
+      reviewedBy: req.user.userId,
+    });
+
+    if (!result.ok) {
+      await supabase
+        .from('agent_queue')
+        .update({ status: 'failed', apply_error: result.error || 'erro desconhecido' })
+        .eq('id', row.id);
+      return res.status(400).json({ ok: false, error: result.error });
+    }
+
+    await supabase
+      .from('agent_queue')
+      .update({
+        status: 'applied',
+        applied_at: new Date().toISOString(),
+        apply_error: null,
+      })
+      .eq('id', row.id);
+
+    res.json({ ok: true, info: result.info || null });
+  } catch (e) {
+    console.error('[AGENTS] /queue/:id/apply error:', e.message);
+    res.status(500).json({ error: 'Erro ao aplicar acao' });
+  }
+});
+
+// POST /api/agents/worker/trigger · pinga o Railway Worker pra rodar agente
+router.post('/worker/trigger', authorize('admin', 'diretor'), async (req, res) => {
+  try {
+    const workerUrl = process.env.AGENT_WORKER_URL;
+    const secret = process.env.AGENT_WORKER_HMAC_SECRET;
+    if (!workerUrl || !secret) {
+      return res.status(503).json({
+        error: 'Worker nao configurado · setar AGENT_WORKER_URL e AGENT_WORKER_HMAC_SECRET no Vercel',
+      });
+    }
+    const agentType = (req.body || {}).agentType || 'financeiro_executor';
+    const body = JSON.stringify({
+      triggeredBy: req.user.userId,
+      config: { trigger: 'manual', triggered_by_email: req.user.email },
+    });
+    const { sign } = require('../utils/workerHmac');
+    const sig = sign(body);
+
+    const resp = await fetch(`${workerUrl.replace(/\/$/, '')}/run/${agentType}`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Agent-Signature': sig,
+      },
+      body,
+    });
+    if (!resp.ok) {
+      const txt = await resp.text().catch(() => '');
+      return res.status(502).json({ error: `Worker respondeu ${resp.status}: ${txt.slice(0, 200)}` });
+    }
+    const data = await resp.json().catch(() => ({}));
+    res.json({ accepted: true, worker: data });
+  } catch (e) {
+    console.error('[AGENTS] /worker/trigger error:', e.message);
+    res.status(500).json({ error: e.message || 'Erro ao chamar worker' });
+  }
 });
 
 // GET /api/agents/log
