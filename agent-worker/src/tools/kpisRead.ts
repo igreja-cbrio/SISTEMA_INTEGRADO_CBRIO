@@ -11,9 +11,9 @@ function fail(msg: string) {
 
 export const listarKpisStatus = tool(
   "listar_kpis_status",
-  "Lista KPIs taticos (vw_kpi_taticos_status) filtrados por status. Use 'critico'/'atrasado' pra ver problemas, 'no_alvo' pra confirmar conquistas.",
+  "Lista KPIs taticos (vw_kpi_taticos_status) filtrados por status. Status reais do banco: 'vermelho' (critico · abaixo da meta), 'verde' (no alvo), 'pendente' (sem dado coletado).",
   {
-    status: z.enum(["critico", "atrasado", "no_alvo", "sem_dado"]).optional(),
+    status: z.enum(["vermelho", "verde", "pendente"]).optional(),
     area: z.string().optional(),
     is_okr: z.boolean().optional(),
     limit: z.number().int().min(1).max(100).default(50),

@@ -28,7 +28,7 @@ export const listarFilaClassificacao = tool(
     const { data, error } = await supabase
       .from("fin_fila_classificacao")
       .select(
-        "id, lancamento_bruto_id, status, sugestao_origem, sugestao_confianca, sugestao_explicacao, sugestao_plano_contas_id, sugestao_centro_custo_id, identificador_centavo, created_at, fin_lancamentos_brutos!inner(valor, tipo_trn, memo, documento_contraparte, nome_contraparte, banco_origem, data_lancamento)"
+        "id, lancamento_bruto_id, status, sugestao_origem, sugestao_confianca, sugestao_explicacao, sugestao_plano_contas_id, sugestao_centro_custo_id, sugestao_membro_id, created_at, fin_lancamentos_brutos!inner(valor, tipo_trn, memo, documento_contraparte, nome_contraparte, banco_origem, data_lancamento)"
       )
       .eq("status", "pendente")
       .order("created_at", { ascending: true })
@@ -241,7 +241,7 @@ export const listarPadroesClassificacao = tool(
       supabase
         .from("fin_regras_classificacao")
         .select("*")
-        .eq("ativa", true)
+        .eq("ativo", true)
         .limit(100),
       supabase
         .from("fin_identificadores_centavo")
