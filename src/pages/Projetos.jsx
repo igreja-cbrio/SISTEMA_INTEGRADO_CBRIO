@@ -2141,7 +2141,7 @@ export default function Projetos() {
 
       {/* Tabs (hide Detail tab from bar) · lideres ministeriais so veem Lista */}
       {tab !== 4 && !apenasListaProjetos && (
-        <div style={styles.tabs}>
+        <div style={styles.tabs} data-tour="projetos-tabs">
           {TABS.map((t, i) => (
             <button key={t} style={styles.tab(tab === i)} onClick={() => setTab(i)}>{t}</button>
           ))}

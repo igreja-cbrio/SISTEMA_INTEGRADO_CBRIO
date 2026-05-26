@@ -95,7 +95,7 @@ export default function Integracao() {
       </div>
 
       <Tabs value={tab} onValueChange={setTab}>
-        <TabsList className="flex-wrap h-auto">
+        <TabsList className="flex-wrap h-auto" data-tour="integracao-tabs">
           <TabsTrigger value="frequencia">Cultos</TabsTrigger>
           <TabsTrigger value="vis_frequencia">Frequência</TabsTrigger>
           <TabsTrigger value="vis_decisoes">Decisões</TabsTrigger>

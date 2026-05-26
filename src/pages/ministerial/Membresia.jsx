@@ -1045,7 +1045,7 @@ export default function Membresia() {
 
       {/* Page Tabs: Membros × Cadastros pendentes */}
       <Tabs value={pageTab} onValueChange={setPageTab}>
-        <TabsList className="inline-flex h-auto w-auto bg-transparent p-0 gap-1 border-b border-border rounded-none mb-5">
+        <TabsList className="inline-flex h-auto w-auto bg-transparent p-0 gap-1 border-b border-border rounded-none mb-5" data-tour="membresia-tabs">
           {[
             { key: 'membros', label: 'Membros', icon: Users },
             { key: 'jornada', label: 'Jornada (5 valores)', icon: TrendingUp },
