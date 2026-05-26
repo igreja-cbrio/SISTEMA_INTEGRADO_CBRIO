@@ -570,6 +570,12 @@ export const financeiroV2 = {
   arrecadacoes: (params) => get('/financeiro-v2/arrecadacoes' + (params ? '?' + new URLSearchParams(params) : '')),
   despesasDetalhe: (params) => get('/financeiro-v2/despesas/detalhe' + (params ? '?' + new URLSearchParams(params) : '')),
   sugerirPlanoHorario: (params) => get('/financeiro-v2/sugerir-plano-horario' + (params ? '?' + new URLSearchParams(params) : '')),
+  historicoPagador: ({ nome, documento }) => {
+    const qs = new URLSearchParams();
+    if (nome) qs.set('nome', nome);
+    if (documento) qs.set('documento', documento);
+    return get('/financeiro-v2/historico-pagador?' + qs.toString());
+  },
   dashboard: {
     overview: (opts) => {
       // Aceita string (period legado) ou objeto {period, year, month, inicio, fim}

@@ -19,6 +19,24 @@ const ORIGEM_LABELS = {
   manual:  { label: 'Manual', cor: C.text3, bg: '#73737318' },
 };
 
+// Formata YYYY-MM-DD como dd/mm/aaaa SEM bug de timezone
+// (new Date('2026-04-30').toLocaleDateString('pt-BR') vira '29/04/2026' em BRT)
+function fmtDataBR(yyyymmdd) {
+  if (!yyyymmdd) return '';
+  const m = String(yyyymmdd).match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (!m) return yyyymmdd;
+  return `${m[3]}/${m[2]}/${m[1]}`;
+}
+
+const DIAS_SEMANA = ['Domingo','Segunda','Terca','Quarta','Quinta','Sexta','Sabado'];
+function fmtDiaSemanaBR(yyyymmdd) {
+  if (!yyyymmdd) return '';
+  const m = String(yyyymmdd).match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (!m) return '';
+  const dt = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+  return DIAS_SEMANA[dt.getDay()];
+}
+
 export default function FilaClassificacao() {
   const [fila, setFila] = useState([]);
   const [planos, setPlanos] = useState([]);
@@ -425,7 +443,7 @@ function CardFila({ item, selecionado, onToggleSelecionar, onAprovar, onEditar, 
             {ehCredito ? '+' : '-'} R$ {Math.abs(lanc.valor).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
           </span>
           <span style={{ fontSize: 11, color: C.text3 }}>
-            {new Date(lanc.data_lancamento).toLocaleDateString('pt-BR')}
+            {fmtDataBR(lanc.data_lancamento)} ({fmtDiaSemanaBR(lanc.data_lancamento)})
             {lanc.hora_lancamento && <> · {lanc.hora_lancamento.slice(0, 5)}</>}
             {lanc.hora_origem && <span style={{ marginLeft: 4, color: lanc.hora_origem === 'pix_match' ? C.primary : C.text3 }}>
               ({lanc.hora_origem === 'pix_match' ? '✓ matched PIX' : lanc.hora_origem})
@@ -554,10 +572,20 @@ function ModalEditarClassificacao({ item, onClose, planos, centros, onSalvar }) 
           <div style={{ fontSize: 12, color: C.text2, marginTop: 4 }}>
             R$ {Math.abs(item.lancamento.valor).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
             {' · '}
-            {new Date(item.lancamento.data_lancamento).toLocaleDateString('pt-BR')}
+            {fmtDataBR(item.lancamento.data_lancamento)} ({fmtDiaSemanaBR(item.lancamento.data_lancamento)})
             {item.lancamento.hora_lancamento && <> · {item.lancamento.hora_lancamento.slice(0, 5)}</>}
           </div>
         </div>
+
+        {ehCredito && (item.pix_detalhe?.pagador_nome || item.pix_detalhe?.pagador_documento) && (
+          <HistoricoPagadorBlock
+            nome={item.pix_detalhe?.pagador_nome}
+            documento={item.pix_detalhe?.pagador_documento}
+            valorAtual={Number(item.lancamento.valor) || 0}
+            planos={planos}
+            onAplicarPlano={(planoId) => setPlanoId(planoId)}
+          />
+        )}
 
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12, marginBottom: 16 }}>
           {ehCredito && sugestaoHorario && (
@@ -671,6 +699,116 @@ function ModalEditarClassificacao({ item, onClose, planos, centros, onSalvar }) 
 }
 
 // Combobox com busca · digita pra filtrar codigo+nome, click pra selecionar
+function HistoricoPagadorBlock({ nome, documento, valorAtual, planos, onAplicarPlano }) {
+  const [hist, setHist] = useState(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let alive = true;
+    setLoading(true);
+    financeiroV2.historicoPagador({ nome, documento })
+      .then(d => { if (alive) setHist(d); })
+      .catch(() => { if (alive) setHist(null); })
+      .finally(() => { if (alive) setLoading(false); });
+    return () => { alive = false; };
+  }, [nome, documento]);
+
+  if (loading) {
+    return (
+      <div style={{
+        padding: 10, borderRadius: 8, background: 'var(--cbrio-bg)',
+        border: `1px solid ${C.border}`, marginBottom: 12,
+        fontSize: 11, color: C.text3,
+      }}>
+        Carregando historico do pagador...
+      </div>
+    );
+  }
+
+  if (!hist || hist.total === 0) {
+    return (
+      <div style={{
+        padding: 10, borderRadius: 8, background: '#73737310',
+        border: `1px dashed ${C.border}`, marginBottom: 12,
+        fontSize: 12, color: C.text3,
+      }}>
+        <span style={{ fontWeight: 600, color: C.text2 }}>Primeira classificacao deste pagador</span>
+        {' · sem historico anterior'}
+      </div>
+    );
+  }
+
+  const total = hist.total;
+  const totalValor = Number(hist.total_valor || 0);
+  const top = (hist.por_plano || []).slice(0, 4);
+  const dominante = top[0];
+  const dominantePct = dominante ? Math.round((dominante.count / total) * 100) : 0;
+
+  return (
+    <div style={{
+      padding: 12, borderRadius: 8, background: C.blueBg,
+      border: `1px solid ${C.blue}40`, marginBottom: 12,
+    }}>
+      <div style={{ fontSize: 10, fontWeight: 700, color: C.blue, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 8 }}>
+        📊 Padrao deste pagador
+      </div>
+      <div style={{ fontSize: 11, color: C.text2, marginBottom: 8 }}>
+        {total} classificacoes anteriores · R$ {totalValor.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+        {hist.ultimo_uso && (
+          <> · ultima em {fmtDataBR(hist.ultimo_uso)}</>
+        )}
+      </div>
+
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+        {top.map(linha => {
+          const pct = Math.round((linha.count / total) * 100);
+          const plano = planos.find(p => p.codigo === linha.codigo);
+          const ehDominante = dominante && linha.codigo === dominante.codigo && pct >= 60;
+          return (
+            <button
+              key={linha.codigo}
+              type="button"
+              disabled={!plano}
+              onClick={() => plano && onAplicarPlano(plano.id)}
+              style={{
+                display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                padding: '6px 10px', borderRadius: 6,
+                border: `1px solid ${ehDominante ? C.blue : C.border}`,
+                background: ehDominante ? C.card : 'transparent',
+                cursor: plano ? 'pointer' : 'default',
+                textAlign: 'left',
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0, flex: 1 }}>
+                <span style={{ fontSize: 10, fontWeight: 700, color: ehDominante ? C.blue : C.text3, minWidth: 40 }}>
+                  {pct}%
+                </span>
+                <span style={{ fontSize: 12, color: C.text, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  {linha.nome || linha.codigo}
+                </span>
+                {ehDominante && (
+                  <span style={{ fontSize: 9, padding: '1px 5px', borderRadius: 99, background: C.blue, color: 'white', fontWeight: 700 }}>
+                    PADRAO
+                  </span>
+                )}
+              </div>
+              <span style={{ fontSize: 11, color: C.text3, flexShrink: 0, marginLeft: 8 }}>
+                {linha.count}x · R$ {Number(linha.total_valor || 0).toLocaleString('pt-BR', { minimumFractionDigits: 0 })}
+              </span>
+            </button>
+          );
+        })}
+      </div>
+
+      {dominante && dominantePct >= 60 && (
+        <div style={{ fontSize: 10, color: C.text3, marginTop: 8, fontStyle: 'italic' }}>
+          Sugestao: clique no padrao "{dominante.nome || dominante.codigo}" pra aplicar
+        </div>
+      )}
+    </div>
+  );
+}
+
 function ComboboxBusca({ items, value, onChange, placeholder, emptyLabel, permiteVazio }) {
   const [busca, setBusca] = useState('');
   const [aberto, setAberto] = useState(false);
