@@ -12,11 +12,30 @@ const C = {
 };
 
 const ACTION_META = {
+  // Financeiro
   'fin.categorize_transaction': { icon: '🏷️', label: 'Categorizar lançamento', color: C.blue, bg: C.blueBg },
   'fin.mark_payable_paid':      { icon: '💸', label: 'Marcar conta como paga', color: C.green, bg: C.greenBg },
   'fin.reimbursement_decision': { icon: '🧾', label: 'Decidir reembolso',       color: C.amber, bg: C.amberBg },
   'fin.atender_alerta':         { icon: '🔔', label: 'Atender alerta',          color: C.primary, bg: C.primaryBg },
+  // KPIs/OKRs
+  'kpis.alertar_lider':         { icon: '📊', label: 'Alertar líder de KPI',    color: C.purple, bg: C.purpleBg },
 };
+
+// Agentes disponiveis pra disparo manual + descricao
+const AGENTES_DISPONIVEIS = [
+  {
+    agentType: 'financeiro_executor',
+    icon: '🤖',
+    titulo: 'Executor Financeiro',
+    descricao: 'Varre fila de classificação, contas a pagar, reembolsos e alertas · gera propostas pra você aprovar.',
+  },
+  {
+    agentType: 'kpis_watcher',
+    icon: '📊',
+    titulo: 'Watcher de KPIs/OKRs',
+    descricao: 'Monitora saúde dos 150 KPIs táticos e OKRs · gera relatório semanal e propõe alertas pros líderes responsáveis.',
+  },
+];
 
 const fmtDate = (d) =>
   d ? new Date(d).toLocaleString('pt-BR', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }) : '—';
@@ -124,7 +143,7 @@ export default function FilaAprovacao() {
   const [actingId, setActingId] = useState(null);
   const [acting, setActing] = useState(null); // 'apply' | 'reject'
   const [triggerError, setTriggerError] = useState(null);
-  const [triggering, setTriggering] = useState(false);
+  const [triggeringAgent, setTriggeringAgent] = useState(null); // agentType atual
 
   const { data: rows = [], isLoading, refetch } = useQuery({
     queryKey: ['agent-queue', 'pending'],
@@ -150,16 +169,15 @@ export default function FilaAprovacao() {
     },
   });
 
-  const handleTrigger = async () => {
-    setTriggering(true); setTriggerError(null);
+  const handleTrigger = async (agentType) => {
+    setTriggeringAgent(agentType); setTriggerError(null);
     try {
-      await agents.triggerWorker({ agentType: 'financeiro_executor' });
-      // Esperar uns segundos pra worker enfileirar e dar refetch
+      await agents.triggerWorker({ agentType });
       setTimeout(() => refetch(), 5000);
     } catch (e) {
       setTriggerError(e?.message || 'Erro ao disparar worker');
     } finally {
-      setTriggering(false);
+      setTriggeringAgent(null);
     }
   };
 
@@ -172,22 +190,30 @@ export default function FilaAprovacao() {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-      <div style={{
-        background: C.card, border: `1px solid ${C.border}`, borderRadius: 10,
-        padding: 16, display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 12,
-      }}>
-        <div>
-          <div style={{ fontSize: 15, fontWeight: 700, color: C.text }}>
-            🤖 Executor Financeiro
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(360px, 1fr))', gap: 12 }}>
+        {AGENTES_DISPONIVEIS.map((a) => (
+          <div key={a.agentType} style={{
+            background: C.card, border: `1px solid ${C.border}`, borderRadius: 10,
+            padding: 16, display: 'flex', flexDirection: 'column', gap: 10,
+          }}>
+            <div style={{ fontSize: 15, fontWeight: 700, color: C.text }}>
+              {a.icon} {a.titulo}
+            </div>
+            <div style={{ fontSize: 12, color: C.text2, lineHeight: 1.5 }}>
+              {a.descricao}
+            </div>
+            <div style={{ fontSize: 11, color: C.text3 }}>
+              Cron · 9h, 14h, 19h SP
+            </div>
+            <Button
+              onClick={() => handleTrigger(a.agentType)}
+              disabled={triggeringAgent === a.agentType}
+              style={{ background: C.primary, color: '#fff', marginTop: 'auto' }}
+            >
+              {triggeringAgent === a.agentType ? 'Disparando...' : 'Rodar agora'}
+            </Button>
           </div>
-          <div style={{ fontSize: 12, color: C.text2, marginTop: 4 }}>
-            Agente varre fila de classificação, contas a pagar, reembolsos e alertas · gera propostas pra você aprovar.
-            Roda automaticamente 3x/dia (9h, 14h, 19h SP).
-          </div>
-        </div>
-        <Button onClick={handleTrigger} disabled={triggering} style={{ background: C.primary, color: '#fff' }}>
-          {triggering ? 'Disparando...' : 'Rodar agora'}
-        </Button>
+        ))}
       </div>
 
       {triggerError && (

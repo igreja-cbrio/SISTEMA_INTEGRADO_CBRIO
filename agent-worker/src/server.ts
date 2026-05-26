@@ -1,7 +1,13 @@
 import express, { type Request, type Response, type NextFunction } from "express";
 import { verify } from "./hmac.js";
 import { runFinanceiroExecutor } from "./agents/financeiroExecutor.js";
+import { runKpisWatcher } from "./agents/kpisWatcher.js";
 import { startScheduler } from "./scheduler.js";
+
+const AGENT_RUNNERS: Record<string, (opts: any) => Promise<any>> = {
+  financeiro_executor: runFinanceiroExecutor,
+  kpis_watcher: runKpisWatcher,
+};
 
 const app = express();
 const PORT = parseInt(process.env.PORT || "8080", 10);
@@ -41,10 +47,12 @@ app.post("/run/:agentType", hmacAuth, async (req: Request, res: Response) => {
   const { agentType } = req.params;
   const { triggeredBy, config } = req.body || {};
 
-  if (agentType !== "financeiro_executor") {
-    return res
-      .status(404)
-      .json({ error: `agentType desconhecido: ${agentType}` });
+  const runner = AGENT_RUNNERS[agentType];
+  if (!runner) {
+    return res.status(404).json({
+      error: `agentType desconhecido: ${agentType}`,
+      disponiveis: Object.keys(AGENT_RUNNERS),
+    });
   }
 
   // Fire-and-forget · responde 202 imediato
@@ -52,9 +60,9 @@ app.post("/run/:agentType", hmacAuth, async (req: Request, res: Response) => {
 
   setImmediate(async () => {
     try {
-      const r = await runFinanceiroExecutor({ triggeredBy, config });
+      const r = await runner({ triggeredBy, config });
       console.log(
-        `[run] ${agentType} ${r.runId} ${r.status} · ${r.propostas_geradas} propostas · $${r.cost_usd.toFixed(4)}`
+        `[run] ${agentType} ${r.runId} ${r.status} · $${(r.cost_usd || 0).toFixed(4)}`
       );
     } catch (e) {
       console.error(`[run] ${agentType} excecao:`, (e as Error).message);
@@ -70,13 +78,15 @@ app.post(
     const { agentType } = req.params;
     const { triggeredBy, config } = req.body || {};
 
-    if (agentType !== "financeiro_executor") {
-      return res
-        .status(404)
-        .json({ error: `agentType desconhecido: ${agentType}` });
+    const runner = AGENT_RUNNERS[agentType];
+    if (!runner) {
+      return res.status(404).json({
+        error: `agentType desconhecido: ${agentType}`,
+        disponiveis: Object.keys(AGENT_RUNNERS),
+      });
     }
     try {
-      const r = await runFinanceiroExecutor({ triggeredBy, config });
+      const r = await runner({ triggeredBy, config });
       res.json(r);
     } catch (e) {
       res.status(500).json({ error: (e as Error).message });

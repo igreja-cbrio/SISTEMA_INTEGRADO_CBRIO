@@ -522,7 +522,7 @@ router.patch('/queue/:id/reject', authorize('admin', 'diretor'), async (req, res
 
 // POST /api/agents/queue/:id/apply · aprova E aplica em UMA chamada
 // Switch por action_type → handler em backend/agents/apply/*.
-const { applyQueueAction } = require('../agents/apply/financeiroApply');
+const { applyQueueAction } = require('../agents/apply');
 
 router.post('/queue/:id/apply', authorize('admin', 'diretor'), async (req, res) => {
   try {
