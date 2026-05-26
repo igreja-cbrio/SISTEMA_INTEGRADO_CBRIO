@@ -49,6 +49,20 @@ const ACTION_META = {
   'cerebro.alertar_erros':         { icon: '⚠️', label: 'Erros no pipeline',  color: C.red, bg: C.redBg },
   'cerebro.alertar_fila_travada':  { icon: '🚧', label: 'Fila travada',       color: C.amber, bg: C.amberBg },
   'cerebro.alertar_custo':         { icon: '💰', label: 'Custo alto de tokens', color: C.amber, bg: C.amberBg },
+  // NEXT
+  'next.alertar_sem_checkin':       { icon: '🚪', label: 'NEXT: sem check-in',     color: C.amber, bg: C.amberBg },
+  'next.alertar_indicacao_pendente': { icon: '➡️', label: 'NEXT: indicação pendente', color: C.blue, bg: C.blueBg },
+  // Grupos
+  'grupos.alertar_sem_encontro': { icon: '🧩', label: 'Grupo sem encontro', color: C.amber, bg: C.amberBg },
+  'grupos.alertar_sem_lider':    { icon: '🆘', label: 'Grupo sem líder',    color: C.red, bg: C.redBg },
+  // NPS
+  'nps.alertar_baixa_resposta':   { icon: '📊', label: 'NPS: baixa resposta', color: C.amber, bg: C.amberBg },
+  'nps.alertar_analise_pendente': { icon: '🔬', label: 'NPS: análise pendente', color: C.blue, bg: C.blueBg },
+  'nps.alertar_detrator':         { icon: '😞', label: 'NPS: detrator',     color: C.red, bg: C.redBg },
+  // Projetos
+  'proj.alertar_atrasado':    { icon: '⏳', label: 'Projeto atrasado',    color: C.red, bg: C.redBg },
+  'proj.alertar_sem_lider':   { icon: '❓', label: 'Projeto sem líder',   color: C.amber, bg: C.amberBg },
+  'proj.alertar_sem_update':  { icon: '💤', label: 'Projeto sem update',  color: C.amber, bg: C.amberBg },
 };
 
 // Agentes disponiveis pra disparo manual + descricao
@@ -112,6 +126,30 @@ const AGENTES_DISPONIVEIS = [
     icon: '🧠',
     titulo: 'Watcher Cérebro CBRio',
     descricao: 'Monitora saúde do pipeline · erros acumulados, fila travada e custo de tokens crescente.',
+  },
+  {
+    agentType: 'next_watcher',
+    icon: '➡️',
+    titulo: 'Watcher NEXT',
+    descricao: 'Detecta inscritos no NEXT que não compareceram e check-ins sem indicações marcadas.',
+  },
+  {
+    agentType: 'grupos_watcher',
+    icon: '🧩',
+    titulo: 'Watcher Grupos',
+    descricao: 'Vigia grupos sem encontro registrado nos últimos 30d e grupos sem líder atribuído.',
+  },
+  {
+    agentType: 'nps_watcher',
+    icon: '📊',
+    titulo: 'Watcher NPS',
+    descricao: 'Pesquisas com taxa de resposta baixa, vencidas sem análise IA e detratores recentes (score ≤ 6).',
+  },
+  {
+    agentType: 'projetos_watcher',
+    icon: '📁',
+    titulo: 'Watcher Projetos',
+    descricao: 'Projetos atrasados (date_end passou), sem líder e sem atualização ha 30d+.',
   },
 ];
 
