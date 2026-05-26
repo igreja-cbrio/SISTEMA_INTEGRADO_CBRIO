@@ -4,7 +4,7 @@ import { useAuth } from '../../contexts/AuthContext';
 import { useTheme } from '../../contexts/ThemeContext';
 import { notificacoes as notifApi } from '../../api';
 import { supabase } from '../../supabaseClient';
-import SpotifyPlayer from './SpotifyPlayer';
+import ChatIAFloating from './ChatIAFloating';
 import PrimeiroAcessoSenhaModal from '../auth/PrimeiroAcessoSenhaModal';
 import { playNotificationSound } from '../../lib/sounds';
 import { isPushSupported, getCurrentSubscription, subscribePush, unsubscribePush } from '../../lib/pushNotifications';
@@ -479,7 +479,7 @@ export default function AppShell() {
         <Outlet />
       </main>
 
-      <SpotifyPlayer />
+      <ChatIAFloating />
       <PrimeiroAcessoSenhaModal />
     </div>
   );
