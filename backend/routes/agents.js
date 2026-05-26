@@ -476,17 +476,29 @@ router.get('/queue', authorize('admin', 'diretor'), async (req, res) => {
   try {
     const status = req.query.status || 'pending';
     const limit = Math.min(parseInt(req.query.limit) || 50, 200);
-    const r = await db.query(
-      `SELECT id, run_id, agent_type, action_type, action_label, description,
-              reasoning, payload, status, reviewed_by, reviewed_at,
-              applied_at, apply_error, created_at
-         FROM agent_queue
-        WHERE status = $1
-        ORDER BY created_at DESC
-        LIMIT $2`,
-      [status, limit]
-    );
-    res.json(r.rows);
+    try {
+      const r = await db.query(
+        `SELECT id, run_id, agent_type, action_type, action_label, description,
+                reasoning, payload, status, reviewed_by, reviewed_at,
+                applied_at, apply_error, created_at
+           FROM agent_queue
+          WHERE status = $1
+          ORDER BY created_at DESC
+          LIMIT $2`,
+        [status, limit]
+      );
+      return res.json(r.rows);
+    } catch (pgErr) {
+      console.warn('[AGENTS] /queue pg falhou, fallback supabase:', pgErr.message);
+      const { data, error } = await supabase
+        .from('agent_queue')
+        .select('id, run_id, agent_type, action_type, action_label, description, reasoning, payload, status, reviewed_by, reviewed_at, applied_at, apply_error, created_at')
+        .eq('status', status)
+        .order('created_at', { ascending: false })
+        .limit(limit);
+      if (error) throw error;
+      return res.json(data || []);
+    }
   } catch (e) {
     console.error('[AGENTS] /queue error:', e.message);
     res.status(500).json({ error: 'Erro ao listar fila' });
