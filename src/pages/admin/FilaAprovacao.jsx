@@ -41,6 +41,14 @@ const ACTION_META = {
   // Membresia
   'mem.alertar_duplicado':       { icon: '👯', label: 'Duplicado detectado', color: C.purple, bg: C.purpleBg },
   'mem.alertar_cadastro_parado': { icon: '📝', label: 'Cadastro parado',     color: C.amber, bg: C.amberBg },
+  // Patrimônio
+  'pat.alertar_manutencao_longa':     { icon: '🔧', label: 'Manutenção prolongada',   color: C.amber, bg: C.amberBg },
+  'pat.alertar_bem_emprestado':       { icon: '📤', label: 'Bem emprestado sem retorno', color: C.amber, bg: C.amberBg },
+  'pat.alertar_cadastro_incompleto':  { icon: '📋', label: 'Cadastro de bem incompleto', color: C.blue, bg: C.blueBg },
+  // Cérebro
+  'cerebro.alertar_erros':         { icon: '⚠️', label: 'Erros no pipeline',  color: C.red, bg: C.redBg },
+  'cerebro.alertar_fila_travada':  { icon: '🚧', label: 'Fila travada',       color: C.amber, bg: C.amberBg },
+  'cerebro.alertar_custo':         { icon: '💰', label: 'Custo alto de tokens', color: C.amber, bg: C.amberBg },
 };
 
 // Agentes disponiveis pra disparo manual + descricao
@@ -92,6 +100,18 @@ const AGENTES_DISPONIVEIS = [
     icon: '⛪',
     titulo: 'Watcher Membresia',
     descricao: 'Detecta cadastros duplicados (vw_membros_duplicados) e cadastros pendentes parados há 7d+.',
+  },
+  {
+    agentType: 'patrimonio_watcher',
+    icon: '🏷️',
+    titulo: 'Watcher Patrimônio',
+    descricao: 'Bens em manutenção prolongada, emprestados sem retorno e cadastros incompletos de bens valiosos.',
+  },
+  {
+    agentType: 'cerebro_watcher',
+    icon: '🧠',
+    titulo: 'Watcher Cérebro CBRio',
+    descricao: 'Monitora saúde do pipeline · erros acumulados, fila travada e custo de tokens crescente.',
   },
 ];
 

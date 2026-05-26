@@ -7,6 +7,8 @@ import { runEventosWatcher } from "./agents/eventosWatcher.js";
 import { runVoluntariadoWatcher } from "./agents/voluntariadoWatcher.js";
 import { runLogisticaWatcher } from "./agents/logisticaWatcher.js";
 import { runMembresiaWatcher } from "./agents/membresiaWatcher.js";
+import { runPatrimonioWatcher } from "./agents/patrimonioWatcher.js";
+import { runCerebroWatcher } from "./agents/cerebroWatcher.js";
 
 // Cron expressions assumem TZ=America/Sao_Paulo (definido no env do Railway).
 // Todos rodam 3x/dia: 9h, 14h, 19h.
@@ -24,6 +26,8 @@ const SCHEDULED_AGENTS: Array<{
   { type: "voluntariado_watcher", runner: runVoluntariadoWatcher },
   { type: "logistica_watcher", runner: runLogisticaWatcher },
   { type: "membresia_watcher", runner: runMembresiaWatcher },
+  { type: "patrimonio_watcher", runner: runPatrimonioWatcher },
+  { type: "cerebro_watcher", runner: runCerebroWatcher },
 ];
 
 export function startScheduler() {

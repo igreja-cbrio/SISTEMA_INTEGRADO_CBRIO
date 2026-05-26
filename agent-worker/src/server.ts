@@ -8,6 +8,8 @@ import { runEventosWatcher } from "./agents/eventosWatcher.js";
 import { runVoluntariadoWatcher } from "./agents/voluntariadoWatcher.js";
 import { runLogisticaWatcher } from "./agents/logisticaWatcher.js";
 import { runMembresiaWatcher } from "./agents/membresiaWatcher.js";
+import { runPatrimonioWatcher } from "./agents/patrimonioWatcher.js";
+import { runCerebroWatcher } from "./agents/cerebroWatcher.js";
 import { startScheduler } from "./scheduler.js";
 
 const AGENT_RUNNERS: Record<string, (opts: any) => Promise<any>> = {
@@ -19,6 +21,8 @@ const AGENT_RUNNERS: Record<string, (opts: any) => Promise<any>> = {
   voluntariado_watcher: runVoluntariadoWatcher,
   logistica_watcher: runLogisticaWatcher,
   membresia_watcher: runMembresiaWatcher,
+  patrimonio_watcher: runPatrimonioWatcher,
+  cerebro_watcher: runCerebroWatcher,
 };
 
 const app = express();
