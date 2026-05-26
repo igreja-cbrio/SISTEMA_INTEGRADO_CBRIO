@@ -626,7 +626,10 @@ router.post('/classificar/:filaId/aprovar', async (req, res) => {
         pix_detalhe_id: pixDetalheId,
         culto_slot_id,
         hora_real: lanc.hora_lancamento,
-        classificacao_origem: req.body.origem || fila.sugestao_origem || 'manual',
+        classificacao_origem: (() => {
+          const o = req.body.origem || fila.sugestao_origem || 'manual';
+          return o === 'sem_sugestao' ? 'manual' : o;
+        })(),
         classificacao_confianca: req.body.origem === 'manual' ? 1.0 : fila.sugestao_confianca,
         identificador_centavo,
         created_by: req.user.userId,
