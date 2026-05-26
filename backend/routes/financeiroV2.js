@@ -595,6 +595,17 @@ router.post('/classificar/:filaId/aprovar', async (req, res) => {
       culto_slot_id = cultoId || null;
     }
 
+    // Busca pix_detalhe_id linkado a esse lancamento (pra historico do pagador)
+    let pixDetalheId = null;
+    if (tipoTransacao === 'receita') {
+      const { data: pd } = await supabase
+        .from('fin_pix_detalhe')
+        .select('id')
+        .eq('lancamento_bruto_id', lanc.id)
+        .maybeSingle();
+      pixDetalheId = pd?.id || null;
+    }
+
     // Cria transacao final
     const { data: transacao, error: errTrans } = await supabase
       .from('fin_transacoes')
@@ -612,6 +623,7 @@ router.post('/classificar/:filaId/aprovar', async (req, res) => {
         centro_custo_id: finalCentroCusto,
         membro_id: finalMembro,
         lancamento_bruto_id: lanc.id,
+        pix_detalhe_id: pixDetalheId,
         culto_slot_id,
         hora_real: lanc.hora_lancamento,
         classificacao_origem: req.body.origem || fila.sugestao_origem || 'manual',
@@ -746,6 +758,40 @@ router.get('/arrecadacoes', async (req, res) => {
     if (error) return res.status(400).json({ error: error.message });
     res.json(data || []);
   } catch (e) { res.status(500).json({ error: 'Erro ao listar arrecadacoes: ' + e.message }); }
+});
+
+// Historico de classificacao deste pagador (por CPF ou nome)
+// Retorna agregacao por plano de contas pra ajudar o admin a decidir
+router.get('/historico-pagador', async (req, res) => {
+  try {
+    const nome = (req.query.nome || '').trim();
+    const documento = (req.query.documento || '').replace(/\D/g, '');
+    if (!nome && !documento) return res.json({ total: 0, total_valor: 0, por_plano: [], ultimo_uso: null });
+
+    const { data, error } = await supabase.rpc('fin_historico_pagador', {
+      p_documento: documento || null,
+      p_nome: nome || null,
+    });
+    if (error) return res.status(400).json({ error: error.message });
+
+    const rows = Array.isArray(data) ? data : [];
+    const total = rows.reduce((a, r) => a + Number(r.count || 0), 0);
+    const totalValor = rows.reduce((a, r) => a + Number(r.total_valor || 0), 0);
+    const ultimo = rows.reduce((acc, r) => (r.ultimo_uso && (!acc || r.ultimo_uso > acc)) ? r.ultimo_uso : acc, null);
+
+    res.json({
+      total,
+      total_valor: totalValor,
+      ultimo_uso: ultimo,
+      por_plano: rows.map(r => ({
+        codigo: r.codigo,
+        nome: r.nome,
+        count: Number(r.count || 0),
+        total_valor: Number(r.total_valor || 0),
+        ultimo_uso: r.ultimo_uso,
+      })),
+    });
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 // Sugestão de plano pelo dia/hora do PIX (detecta culto Quarta/Dom 8:30/11:30/Noite)
