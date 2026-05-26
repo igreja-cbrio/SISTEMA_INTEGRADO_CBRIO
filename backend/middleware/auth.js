@@ -229,7 +229,7 @@ async function authenticate(req, res, next) {
   if (profile.email) {
     let permUser = null;
     const { data: existing } = await supabase.from('usuarios')
-      .select('id, cargo_id, cargos(nivel_padrao_leitura, nivel_padrao_escrita)')
+      .select('id, cargo_id, cargos(slug, nome, nome_completo, nivel_padrao_leitura, nivel_padrao_escrita)')
       .eq('email', profile.email)
       .eq('ativo', true)
       .maybeSingle();
@@ -266,7 +266,7 @@ async function authenticate(req, res, next) {
 
         const { data: created } = await supabase.from('usuarios')
           .insert(insertPayload)
-          .select('id, cargo_id, cargos(nivel_padrao_leitura, nivel_padrao_escrita)')
+          .select('id, cargo_id, cargos(slug, nome, nome_completo, nivel_padrao_leitura, nivel_padrao_escrita)')
           .single();
 
         if (created) {
@@ -311,6 +311,8 @@ async function authenticate(req, res, next) {
       granular = {
         usuarioId: permUser.id,
         cargoId: permUser.cargo_id,
+        cargoSlug: permUser.cargos?.slug ?? null,
+        cargoNome: permUser.cargos?.nome_completo || permUser.cargos?.nome || null,
         cargoNivelLeitura: permUser.cargos?.nivel_padrao_leitura ?? 1,
         cargoNivelEscrita: permUser.cargos?.nivel_padrao_escrita ?? 1,
         modulePerms,
@@ -537,6 +539,8 @@ async function getMyPermissions(req, res) {
     modulos: modulosMeta,
     granular: req.user.granular ? {
       cargoId: req.user.granular.cargoId,
+      cargoSlug: req.user.granular.cargoSlug || null,
+      cargoNome: req.user.granular.cargoNome || null,
       cargoNivelLeitura: req.user.granular.cargoNivelLeitura,
       cargoNivelEscrita: req.user.granular.cargoNivelEscrita,
       modulePerms: req.user.granular.modulePerms,

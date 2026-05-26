@@ -17,7 +17,8 @@ function mascaraTelefone(v) {
 }
 
 export default function Perfil() {
-  const { profile, role, refreshProfile } = useAuth();
+  const { profile, role, cargoNome, refreshProfile } = useAuth();
+  const cargoLabel = cargoNome || role || 'Membro';
   const [telefone, setTelefone] = useState(profile?.telefone || '');
   const [savingTel, setSavingTel] = useState(false);
   const [uploadingFoto, setUploadingFoto] = useState(false);
@@ -111,7 +112,7 @@ export default function Perfil() {
             <h2 className="text-lg font-semibold text-foreground">{profile?.name || '—'}</h2>
             <p className="text-sm text-muted-foreground">{profile?.email || '—'}</p>
             <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-primary/15 text-primary mt-1 inline-block">
-              {role || 'Membro'}
+              {cargoLabel}
             </span>
             {uploadingFoto ? <p className="text-xs text-muted-foreground mt-1">Enviando foto...</p> : null}
           </div>
@@ -133,7 +134,7 @@ export default function Perfil() {
             </div>
             <div>
               <label className="text-xs font-medium text-muted-foreground">Cargo</label>
-              <p className="text-sm text-foreground mt-1">{role || '—'}</p>
+              <p className="text-sm text-foreground mt-1">{cargoNome || role || '—'}</p>
             </div>
           </div>
 

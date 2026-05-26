@@ -88,6 +88,25 @@ formal nas 6 oficiais.)
   `POST /api/permissoes/cache/bust`
 - Marcelo: fazer logout/login pra renovar JWT
 
+## Cargo no /perfil le do sistema granular (2026-05-26)
+
+`Perfil.jsx` mostrava `profile.role` (legacy: admin/diretor/lider/voluntario/
+membro/assistente) como "Cargo" · isso fez o Marcelo continuar aparecendo
+como "Assistente" mesmo apos a migration `supervisor-jornada` ter trocado
+o `usuarios.cargo_id` corretamente.
+
+Fix:
+- `GET /api/auth/my-permissions` agora expoe `granular.cargoNome` e
+  `granular.cargoSlug` (vem de `cargos.nome_completo`/`nome`/`slug`)
+- `AuthContext` propaga via `cargoNome` e `cargoSlug`
+- `Perfil.jsx` mostra `cargoNome || role || 'Membro'` no badge e no campo
+  Cargo · cai pro role legacy so se o usuario nao estiver no sistema
+  granular (caso raro · membros sem cadastro em `usuarios`)
+
+`profile.role` continua existindo e sendo usado em outros lugares
+(AuthContext.canAccessModule, ROLE_MAP em authorizeCycle etc). Nao
+mexer · esse fix eh so de exibicao.
+
 # ⚠️ REGRAS OBRIGATÓRIAS DE SEGURANÇA (não regredir · 2026-05-21)
 
 Esta seção é a lei do projeto após a Auditoria de Segurança 2026-05-21
