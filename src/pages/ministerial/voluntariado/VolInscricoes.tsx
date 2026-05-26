@@ -134,6 +134,20 @@ export default function VolInscricoes() {
   const total = data?.total || { recebidas: 0, alocadas: 0, taxa: null };
   const porArea = data?.por_area || { kids: { recebidas: 0, alocadas: 0 }, sede: { recebidas: 0, alocadas: 0 } };
 
+  const formUrl = typeof window !== 'undefined'
+    ? `${window.location.origin}/inscricao-voluntariado`
+    : '/inscricao-voluntariado';
+  const [copied, setCopied] = useState(false);
+  const handleCopyLink = async () => {
+    try {
+      await navigator.clipboard.writeText(formUrl);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      // ignore
+    }
+  };
+
   return (
     <div className="space-y-6">
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
@@ -160,6 +174,37 @@ export default function VolInscricoes() {
           </Select>
         </div>
       </div>
+
+      {/* Link do formulario publico · compartilhar por WhatsApp/bio/QR */}
+      <Card className="border-[#00B39D]/30 bg-[#00B39D]/5">
+        <CardContent className="p-4 flex flex-col sm:flex-row sm:items-center gap-3">
+          <div className="flex items-center gap-2 min-w-0 flex-1">
+            <Link2 className="h-4 w-4 text-[#00B39D] shrink-0" />
+            <div className="min-w-0">
+              <p className="text-xs font-semibold uppercase tracking-wide text-[#00B39D]">
+                Link do formulario publico
+              </p>
+              <p className="text-sm font-mono truncate text-foreground">{formUrl}</p>
+            </div>
+          </div>
+          <div className="flex gap-2 shrink-0">
+            <Button
+              size="sm" variant="outline"
+              onClick={handleCopyLink}
+              className="border-[#00B39D]/40 hover:bg-[#00B39D]/10"
+            >
+              {copied ? 'Copiado!' : 'Copiar link'}
+            </Button>
+            <Button
+              size="sm"
+              className="bg-[#00B39D] hover:bg-[#00B39D]/90 text-white"
+              onClick={() => window.open(formUrl, '_blank', 'noopener')}
+            >
+              Abrir
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
 
       {/* 3 cards de resumo */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-3 md:gap-4">

@@ -62,7 +62,7 @@ export default function VolScheduleBuilder() {
             <SelectContent>
               {services.map(svc => (
                 <SelectItem key={svc.id} value={svc.id}>
-                  {svc.name} — {format(new Date(svc.scheduled_at), "EEEE, dd/MM 'as' HH:mm", { locale: ptBR })}
+                  {svc.name} — {format(new Date(svc.scheduled_at), "EEEE, dd/MM", { locale: ptBR })}
                 </SelectItem>
               ))}
             </SelectContent>
@@ -474,7 +474,7 @@ function CopyScheduleDialog({ targetServiceId, services, onClose }: {
             <SelectContent>
               {availableServices.map(svc => (
                 <SelectItem key={svc.id} value={svc.id}>
-                  {svc.name} — {format(new Date(svc.scheduled_at), "dd/MM 'as' HH:mm", { locale: ptBR })}
+                  {svc.name} — {format(new Date(svc.scheduled_at), "EEEE, dd/MM", { locale: ptBR })}
                 </SelectItem>
               ))}
             </SelectContent>
