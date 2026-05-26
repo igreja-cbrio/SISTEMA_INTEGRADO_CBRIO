@@ -99,8 +99,12 @@ const PlanningCenterIcon = () => (
 );
 
 export default function Login() {
-  const { signInWithEmail, signInWithMicrosoft, signInWithGoogle, user } = useAuth();
+  const { signInWithEmail, signInWithMicrosoft, signInWithGoogle, sendPasswordReset, user } = useAuth();
   const navigate = useNavigate();
+  const [esqueciOpen, setEsqueciOpen] = useState(false);
+  const [esqueciEmail, setEsqueciEmail] = useState('');
+  const [esqueciLoading, setEsqueciLoading] = useState(false);
+  const [esqueciMsg, setEsqueciMsg] = useState(null); // { type: 'success'|'error', text: '...' }
   // Pré-preenche email se foi marcado "Lembrar de mim" em login anterior.
   // A sessão Supabase em si já persiste em localStorage automaticamente, então
   // se a sessão ainda for válida, o redirect pra '/' já acontece via useEffect
@@ -171,6 +175,32 @@ export default function Login() {
     if (err) setError(err.message);
   }
 
+  function abrirEsqueci() {
+    setEsqueciEmail(email || '');
+    setEsqueciMsg(null);
+    setEsqueciOpen(true);
+  }
+
+  async function enviarReset(e) {
+    e.preventDefault();
+    if (!esqueciEmail || !esqueciEmail.includes('@')) {
+      setEsqueciMsg({ type: 'error', text: 'Informe um e-mail valido.' });
+      return;
+    }
+    setEsqueciLoading(true);
+    setEsqueciMsg(null);
+    const { error: err } = await sendPasswordReset(esqueciEmail.trim().toLowerCase());
+    setEsqueciLoading(false);
+    if (err) {
+      setEsqueciMsg({ type: 'error', text: err.message || 'Erro ao enviar e-mail.' });
+      return;
+    }
+    setEsqueciMsg({
+      type: 'success',
+      text: 'Pronto! Se este e-mail existir no sistema, voce recebera um link em alguns minutos.',
+    });
+  }
+
   return (
     <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', position: 'relative', overflow: 'hidden', background: '#0a0a0a' }}>
       <LoginShapesBackground />
@@ -238,25 +268,36 @@ export default function Login() {
             }
           />
 
-          <label
-            style={{
-              display: 'flex', alignItems: 'center', gap: 8,
-              fontSize: 13, color: COL.textDim,
-              marginTop: 4, marginBottom: 18, cursor: 'pointer', userSelect: 'none',
-            }}
-          >
-            <input
-              type="checkbox"
-              checked={rememberMe}
-              onChange={(e) => setRememberMe(e.target.checked)}
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: 4, marginBottom: 18, gap: 8, flexWrap: 'wrap' }}>
+            <label
               style={{
-                width: 16, height: 16,
-                accentColor: '#00B39D',
-                cursor: 'pointer',
+                display: 'flex', alignItems: 'center', gap: 8,
+                fontSize: 13, color: COL.textDim,
+                cursor: 'pointer', userSelect: 'none',
               }}
-            />
-            <span>Lembrar de mim neste navegador</span>
-          </label>
+            >
+              <input
+                type="checkbox"
+                checked={rememberMe}
+                onChange={(e) => setRememberMe(e.target.checked)}
+                style={{ width: 16, height: 16, accentColor: '#00B39D', cursor: 'pointer' }}
+              />
+              <span>Lembrar de mim</span>
+            </label>
+            <button
+              type="button"
+              onClick={abrirEsqueci}
+              style={{
+                background: 'none', border: 'none', padding: 0,
+                color: COL.borderFocus, fontSize: 13, cursor: 'pointer',
+                textDecoration: 'none',
+              }}
+              onMouseEnter={(e) => { e.currentTarget.style.textDecoration = 'underline'; }}
+              onMouseLeave={(e) => { e.currentTarget.style.textDecoration = 'none'; }}
+            >
+              Esqueci minha senha
+            </button>
+          </div>
 
           <button
             type="submit"
@@ -301,6 +342,84 @@ export default function Login() {
           />
         </div>
       </div>
+
+      {esqueciOpen && (
+        <div
+          onClick={() => !esqueciLoading && setEsqueciOpen(false)}
+          style={{
+            position: 'fixed', inset: 0, zIndex: 100,
+            background: 'rgba(0,0,0,0.7)', backdropFilter: 'blur(4px)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            padding: 16,
+          }}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              width: '100%', maxWidth: 400,
+              background: '#161616', border: `1px solid ${COL.cardBorder}`,
+              borderRadius: 16, padding: 28,
+            }}
+          >
+            <h2 style={{ fontSize: 18, fontWeight: 700, color: COL.text, margin: 0, marginBottom: 6 }}>
+              Recuperar senha
+            </h2>
+            <p style={{ fontSize: 13, color: COL.textDim, margin: 0, marginBottom: 20 }}>
+              Voce vai receber um link no e-mail pra criar uma nova senha.
+            </p>
+
+            <form onSubmit={enviarReset}>
+              <FloatingInput
+                id="esqueci-email" type="email" icon={<UserIcon />} label="E-mail"
+                value={esqueciEmail} onChange={(e) => setEsqueciEmail(e.target.value)}
+                autoComplete="email"
+              />
+
+              {esqueciMsg && (
+                <div style={{
+                  background: esqueciMsg.type === 'success' ? '#00B39D18' : '#ef444418',
+                  border: `1px solid ${esqueciMsg.type === 'success' ? '#00B39D40' : '#ef444440'}`,
+                  borderRadius: 10, padding: '10px 14px',
+                  marginBottom: 16, fontSize: 13,
+                  color: esqueciMsg.type === 'success' ? '#00B39D' : '#ef4444',
+                }}>
+                  {esqueciMsg.text}
+                </div>
+              )}
+
+              <div style={{ display: 'flex', gap: 10 }}>
+                <button
+                  type="button"
+                  onClick={() => setEsqueciOpen(false)}
+                  disabled={esqueciLoading}
+                  style={{
+                    flex: 1, padding: '11px 16px',
+                    background: 'transparent', color: COL.textMuted,
+                    border: `1px solid ${COL.cardBorder}`, borderRadius: 10,
+                    fontSize: 14, fontWeight: 600, cursor: 'pointer',
+                  }}
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  disabled={esqueciLoading || esqueciMsg?.type === 'success'}
+                  style={{
+                    flex: 1, padding: '11px 16px',
+                    background: COL.borderFocus, color: '#fff',
+                    border: 'none', borderRadius: 10,
+                    fontSize: 14, fontWeight: 600,
+                    cursor: esqueciLoading ? 'wait' : 'pointer',
+                    opacity: esqueciLoading || esqueciMsg?.type === 'success' ? 0.6 : 1,
+                  }}
+                >
+                  {esqueciLoading ? 'Enviando...' : esqueciMsg?.type === 'success' ? 'Enviado' : 'Enviar link'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

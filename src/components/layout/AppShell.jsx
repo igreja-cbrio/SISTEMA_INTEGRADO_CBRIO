@@ -5,6 +5,7 @@ import { useTheme } from '../../contexts/ThemeContext';
 import { notificacoes as notifApi } from '../../api';
 import { supabase } from '../../supabaseClient';
 import SpotifyPlayer from './SpotifyPlayer';
+import PrimeiroAcessoSenhaModal from '../auth/PrimeiroAcessoSenhaModal';
 import { playNotificationSound } from '../../lib/sounds';
 import { isPushSupported, getCurrentSubscription, subscribePush, unsubscribePush } from '../../lib/pushNotifications';
 import MegaMenu from '../ui/mega-menu';
@@ -478,6 +479,7 @@ export default function AppShell() {
       </main>
 
       <SpotifyPlayer />
+      <PrimeiroAcessoSenhaModal />
     </div>
   );
 }
