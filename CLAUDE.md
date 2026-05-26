@@ -88,6 +88,22 @@ formal nas 6 oficiais.)
   `POST /api/permissoes/cache/bust`
 - Marcelo: fazer logout/login pra renovar JWT
 
+## Modal de culto · campos vazios em vez de 0 (2026-05-26)
+
+Schema de `cultos` tem `DEFAULT 0` em presencial_adulto/kids,
+decisoes_presenciais/online/kids. Quando o calendario gera o culto
+recorrente, esses campos vem `0` · `0 ?? ''` retorna `0` e o input
+mostrava "0" (atrapalha digitacao · 0 nao some quando o cursor entra).
+
+Fix em `CalendarioCultos.jsx` (ModalCulto) · helper `exibir(v)` trata
+`0|null|undefined` como vazio. Submit ja faz `Number(x) || 0`, entao
+vazio salva 0 no banco · o estado real nao muda, so a exibicao.
+
+Trade-off conhecido: culto que realmente teve 0 pessoas (raro) aparece
+vazio na reabertura · usuario reabre achando que nao foi preenchido.
+Marcos aceitou o trade-off · vazio na maioria dos casos vale mais que
+o zero literal em casos de borda.
+
 ## Cargo no /perfil le do sistema granular (2026-05-26)
 
 `Perfil.jsx` mostrava `profile.role` (legacy: admin/diretor/lider/voluntario/

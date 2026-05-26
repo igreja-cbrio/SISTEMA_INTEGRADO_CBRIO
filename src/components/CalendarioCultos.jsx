@@ -415,15 +415,18 @@ function ModalCulto({ culto, onClose, onSaved }) {
 
   // Valores iniciais (preservados pra detectar dirty)
   // Marcos pediu pra deixar campos vazios em vez do 0 default · o 0 nao
-  // sai quando o usuario clica pra digitar e atrapalha a UX.
+  // sai quando o usuario clica pra digitar e atrapalha a UX. Como o schema
+  // tem DEFAULT 0 nas colunas numericas, tratamos 0 como "nao preenchido"
+  // pra fins de exibicao · ao salvar, vazio vira 0 de novo (linha ~482).
   // online_pico/ds/ddus/youtube_video_id ficam fora do dirty tracking
   // porque sao read-only (gerenciados pela integracao com YouTube API).
+  const exibir = (v) => (v === 0 || v === null || v === undefined ? '' : String(v));
   const valoresIniciaisRef = useRef({
-    presencial_adulto:    culto.presencial_adulto ?? '',
-    presencial_kids:      culto.presencial_kids ?? '',
-    decisoes_presenciais: culto.decisoes_presenciais ?? '',
-    decisoes_online:      culto.decisoes_online ?? '',
-    decisoes_kids:        culto.decisoes_kids ?? '',
+    presencial_adulto:    exibir(culto.presencial_adulto),
+    presencial_kids:      exibir(culto.presencial_kids),
+    decisoes_presenciais: exibir(culto.decisoes_presenciais),
+    decisoes_online:      exibir(culto.decisoes_online),
+    decisoes_kids:        exibir(culto.decisoes_kids),
     observacoes:          culto.observacoes ?? '',
   });
 
