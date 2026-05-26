@@ -373,4 +373,116 @@ router.post('/register', publicLimiter, async (req, res) => {
   }
 });
 
+// ============================================================================
+// POST /api/public/voluntariado/inscrever-form
+// Formulario publico de inscricao "quero ser voluntario" · grava em
+// vol_inscricoes com status='inscrito' pra entrar no funil de alocacao.
+// Espelha o Google Form descontinuado (mesmos campos · compat com 749 linhas
+// historicas em vol_inscricoes).
+// ============================================================================
+const AREAS_VALIDAS = new Set(['kids', 'sede', 'ami', 'bridge', 'online']);
+
+router.post('/inscrever-form', publicLimiter, async (req, res) => {
+  try {
+    const {
+      nome, sobrenome, email, telefone, cpf, data_nascimento, nome_mae,
+      area, participou_next, dom_predominante, ministerios_interesse,
+      website, // honeypot
+    } = req.body || {};
+
+    if (website) return res.status(200).json({ ok: true }); // bot
+
+    const cleanNome = String(nome || '').trim();
+    const cleanSobrenome = String(sobrenome || '').trim();
+    if (cleanNome.length < 2) return res.status(400).json({ error: 'Nome obrigatorio' });
+    if (cleanSobrenome.length < 1) return res.status(400).json({ error: 'Sobrenome obrigatorio' });
+
+    const cleanEmail = email ? String(email).toLowerCase().trim() : null;
+    if (!cleanEmail || !ehEmailValido(cleanEmail)) {
+      return res.status(400).json({ error: 'Email invalido' });
+    }
+    const cleanTelefone = soDigitos(telefone);
+    if (cleanTelefone.length < 10 || cleanTelefone.length > 11) {
+      return res.status(400).json({ error: 'Telefone invalido' });
+    }
+    const cleanCpf = cpf ? soDigitos(cpf) : null;
+    if (cleanCpf && !cpfValido(cleanCpf)) {
+      return res.status(400).json({ error: 'CPF invalido' });
+    }
+    if (!area || !AREAS_VALIDAS.has(String(area).toLowerCase())) {
+      return res.status(400).json({ error: 'Selecione uma area' });
+    }
+
+    const nomeCompleto = [cleanNome, cleanSobrenome].filter(Boolean).join(' ');
+    const cleanMinisterios = Array.isArray(ministerios_interesse)
+      ? ministerios_interesse.filter(Boolean).join(', ')
+      : (ministerios_interesse ? String(ministerios_interesse).trim() : null);
+
+    // Tenta vincular a mem_membros existente (por CPF · fallback email)
+    let membroId = null;
+    try {
+      if (cleanCpf) {
+        const { data: m } = await supabase
+          .from('mem_membros').select('id').eq('cpf', cleanCpf)
+          .is('deleted_at', null).maybeSingle();
+        membroId = m?.id || null;
+      }
+      if (!membroId && cleanEmail) {
+        const { data: m } = await supabase
+          .from('mem_membros').select('id').ilike('email', cleanEmail)
+          .is('deleted_at', null).maybeSingle();
+        membroId = m?.id || null;
+      }
+    } catch (e) {
+      console.warn('[PublicVol/inscrever-form] match membro:', e.message);
+    }
+
+    const { data: insc, error: insErr } = await supabase
+      .from('vol_inscricoes')
+      .insert({
+        nome: cleanNome,
+        sobrenome: cleanSobrenome,
+        nome_completo: nomeCompleto,
+        cpf: cleanCpf,
+        email: cleanEmail,
+        telefone: cleanTelefone,
+        data_nascimento: data_nascimento || null,
+        nome_mae: nome_mae ? String(nome_mae).trim() : null,
+        data_inscricao: new Date().toISOString(),
+        participou_next: participou_next ? String(participou_next).trim() : null,
+        dom_predominante: dom_predominante ? String(dom_predominante).trim() : null,
+        ministerios_interesse: cleanMinisterios,
+        area: String(area).toLowerCase(),
+        status: 'inscrito',
+        primeiro_contato_em: 'False',
+        membro_id: membroId,
+        origem: 'formulario_publico',
+      })
+      .select('id')
+      .single();
+
+    if (insErr) {
+      console.error('[PublicVol/inscrever-form] insert:', insErr.message);
+      return res.status(500).json({ error: 'Erro ao registrar inscricao' });
+    }
+
+    try {
+      const { notificar } = require('../services/notificar');
+      await notificar({
+        modulo: 'voluntariado',
+        titulo: 'Nova inscricao de voluntario',
+        mensagem: `${nomeCompleto} (${cleanEmail}) se inscreveu para servir na area ${String(area).toUpperCase()}.`,
+        link: '/ministerial/voluntariado/inscricoes',
+      });
+    } catch (e) {
+      console.error('[PublicVol/inscrever-form] notificar:', e.message);
+    }
+
+    return res.json({ ok: true, id: insc.id });
+  } catch (err) {
+    console.error('[PublicVol/inscrever-form] error:', err.message);
+    res.status(500).json({ error: 'Erro ao registrar inscricao' });
+  }
+});
+
 module.exports = router;
