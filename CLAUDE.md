@@ -2,6 +2,140 @@
 
 Guia operacional para o Claude Code quando trabalhar neste repositório.
 
+## Agente Executor Financeiro · Worker Railway (2026-05-26)
+
+Primeiro agente "ativo" do sistema (auditores existentes em
+`backend/agents/*Auditor.js` só RELATAM findings · este AGE via tool use
+com fila de aprovação humana). Roda no Railway porque agentes
+long-running via Claude Agent SDK precisam de processo persistente
+(timeout do Vercel serverless = 10s não cabe).
+
+### Arquitetura
+
+```
+┌──────────────┐  POST /run/financeiro_executor   ┌──────────────────┐
+│   Vercel     │ ───── HMAC-SHA256 ─────────────▶ │ Railway Worker   │
+│  /api/agents │                                   │ (agent-worker/)  │
+│              │ ◀──────────  202 ──────────────── │                  │
+└──────────────┘                                   │ cron 3x/dia      │
+                                                   │ (9h/14h/19h SP)  │
+┌──────────────┐                                   │                  │
+│   Supabase   │ ◀── service_role (bypass RLS) ─── │  Agent SDK loop  │
+│ agent_runs   │     read fin_* tables             │  + MCP tools     │
+│ agent_steps  │     write agent_queue (pending)   │  + SKILL.md      │
+│ agent_queue  │                                   │                  │
+└──────────────┘                                   └──────────────────┘
+       ▲
+       │ humano vê em /assistente-ia > "Fila de Aprovação"
+       │ clica "Aprovar e aplicar" → POST /api/agents/queue/:id/apply
+       │ backend/agents/apply/financeiroApply.js executa
+```
+
+### Tools financeiras (4 propose · 9 read · MCP in-process)
+
+Read-only (`agent-worker/src/tools/financeiroRead.ts`):
+- `listar_padroes_classificacao` · regras + identificadores de centavo
+- `listar_fila_classificacao(limit)` · fin_fila_classificacao pending
+- `listar_contas_pagar_pendentes(dias_para_vencer, limit)` · fin_contas_pagar
+- `listar_alertas_abertos(severidade_minima)` · vw_fin_alertas_abertos
+- `listar_reembolsos_pendentes(limit)` · fin_reembolsos pending
+- `buscar_historico_pagador(nome?, documento?)` · classificações anteriores
+- `buscar_transacao_match(valor, data, janela, fornecedor?)` · match conta×transacao
+- `verificar_mes_fechado(data)` · fin_closing_mensal
+- `verificar_proposta_existente(action_type, entity_id)` · idempotência
+
+Propose (`agent-worker/src/tools/financeiroPropose.ts` · gravam em
+`agent_queue` como `pending`):
+- `propor_categorizar_transacao` → `action_type='fin.categorize_transaction'`
+- `propor_pagar_conta` → `action_type='fin.mark_payable_paid'`
+- `propor_decidir_reembolso` → `action_type='fin.reimbursement_decision'`
+- `propor_atender_alerta` → `action_type='fin.atender_alerta'`
+
+**Zero filesystem/bash.** AllowedTools whitelist explícita. Toda
+mutation passa por `agent_queue` → humano aprova → handler em
+`backend/agents/apply/financeiroApply.js` aplica.
+
+### Tabela `agent_queue` (migration 20260526200000)
+
+Estende a foundation de 20260512100000 com:
+- `action_label text` · título curto pra UI
+- `reasoning text` · explicação do agente (visível pro aprovador)
+- `applied_at timestamptz` · quando a ação foi aplicada
+- `apply_error text` · erro do handler se falhou
+- Status enum estendido com `'applied'` (mantém `'executed'` pra
+  backward-compat com auditores legados)
+
+### Fluxo de aprovação (humano)
+
+1. Agente roda (cron 3x/dia ou /api/agents/worker/trigger manual)
+2. Pra cada item promissor, chama uma `propor_*` tool → linha em
+   `agent_queue` com status=`pending`
+3. Humano abre `/assistente-ia` > aba "Fila de Aprovação" e vê:
+   - `action_label` (título)
+   - `reasoning` (parágrafo destacado)
+   - `payload` (collapsible)
+4. Botão "Aprovar e aplicar" → `POST /api/agents/queue/:id/apply`:
+   - status='approved' (race-safe)
+   - chama `applyQueueAction(action_type, payload, reviewedBy)`
+   - sucesso → status='applied', `applied_at=now()`
+   - erro → status='failed', `apply_error=mensagem`
+5. Botão "Rejeitar" → status='rejected'
+
+### Regras absolutas pro agente (no SKILL.md)
+
+1. **Nunca aplica direto** · só propõe
+2. **Respeita closing mensal** · checa antes via `verificar_mes_fechado`
+3. **Sempre com `reasoning`** · min 20 chars
+4. **Sem invenção** · só com evidência (centavo/regra/histórico)
+5. **Idempotência** · cheque `verificar_proposta_existente` antes
+6. **Max 20 propostas/execução** · prioriza criticos > vencidas > fila antiga
+
+### Variáveis de ambiente novas
+
+No **Vercel**:
+- `AGENT_WORKER_URL` · ex: `https://cbrio-agent-worker.up.railway.app`
+- `AGENT_WORKER_HMAC_SECRET` · gere com `openssl rand -hex 32`
+
+No **Railway** (todas):
+- `ANTHROPIC_API_KEY`
+- `SUPABASE_URL`
+- `SUPABASE_SERVICE_ROLE_KEY`
+- `AGENT_WORKER_HMAC_SECRET` · MESMO valor do Vercel
+- `TZ=America/Sao_Paulo`
+- `SCHEDULER_ENABLED=1`
+- Opcional: `FINANCEIRO_MODEL` (default `claude-sonnet-4-6`), `AGENT_MAX_TURNS` (default 20)
+
+### Deploy do Worker
+
+Ver `agent-worker/README.md` · resumo:
+1. Railway > New Project > Deploy from GitHub repo
+2. **Root Directory: `agent-worker`**
+3. Build: `npm install && npm run build`
+4. Start: `npm start`
+5. Setar envs acima
+6. Gerar domínio público
+7. Copiar URL pra `AGENT_WORKER_URL` no Vercel
+
+### Custo esperado
+
+Sonnet 4.6 · ~15-20 turnos × ~25k tokens input + ~4k output = ~$0.10/execução
+× 3/dia × 30d = **~$10/mês**.
+
+### Plugar novos módulos (futuro)
+
+Estrutura ja preparada · pra adicionar `module_membresia_executor`:
+1. `agent-worker/src/skills/membresia/SKILL.md` · regras
+2. `agent-worker/src/tools/membresiaRead.ts` + `membresiaPropose.ts`
+3. `agent-worker/src/agents/membresiaExecutor.ts` · cópia do financeiro
+4. `agent-worker/src/server.ts` · novo case em `/run/:agentType`
+5. `agent-worker/src/scheduler.ts` · adicionar disparo
+6. `backend/agents/apply/membresiaApply.js` · handlers
+7. `backend/routes/agents.js` · importar e plugar no roteador apply
+
+Action_type sempre `<modulo>.<verbo_obj>`. Frontend automaticamente
+mostra as novas propostas agrupadas se `ACTION_META[action_type]` for
+adicionado em `src/pages/admin/FilaAprovacao.jsx`.
+
 ## ⚠️ PostgREST do Supabase capa em 1000 linhas server-side (2026-05-25)
 
 Bug pego em producao · cargo `supervisor-jornada` (cargo_id=63) criado,
