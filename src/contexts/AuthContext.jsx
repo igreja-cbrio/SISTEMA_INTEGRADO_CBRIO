@@ -188,6 +188,8 @@ export function AuthProvider({ children }) {
 
   const userAreas = permData?.areas || [profile?.area].filter(Boolean);
   const userSetores = permData?.setores || [];
+  const cargoNome = permData?.cargoNome || null;
+  const cargoSlug = permData?.cargoSlug || null;
 
   const isVoluntario = profile?.role === 'voluntario';
   const isMembroOnly = !!profile?.is_membro_only;
@@ -235,6 +237,8 @@ export function AuthProvider({ children }) {
     getAccessLevel,
     userAreas,
     userSetores,
+    cargoNome,
+    cargoSlug,
     signInWithMicrosoft,
     signInWithGoogle,
     signInWithEmail,
@@ -262,6 +266,7 @@ export function useAuth() {
       canProcessos: false, canSolicitacoes: false, canNPS: false,
       canDadosBrutos: false, canPainel: false, canKPIs: false,
       userAreas: [], userSetores: [],
+      cargoNome: null, cargoSlug: null,
       signInWithMicrosoft: async () => ({}),
       signInWithGoogle: async () => ({}),
       signInWithEmail: async () => ({}),
