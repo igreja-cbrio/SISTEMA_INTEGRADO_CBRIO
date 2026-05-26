@@ -8,6 +8,7 @@ import { toast } from 'sonner';
 import { auth } from '../api';
 import { Camera, ShieldCheck, FileText, KeyRound } from 'lucide-react';
 import TrocarSenhaForm from '../components/auth/TrocarSenhaForm';
+import { processarImagemPerfil, isHeic } from '../lib/imageUpload';
 
 function mascaraTelefone(v) {
   const d = (v || '').replace(/\D+/g, '').slice(0, 11);
@@ -23,6 +24,7 @@ export default function Perfil() {
   const [telefone, setTelefone] = useState(profile?.telefone || '');
   const [savingTel, setSavingTel] = useState(false);
   const [uploadingFoto, setUploadingFoto] = useState(false);
+  const [statusFoto, setStatusFoto] = useState('');
   const fileInputRef = useRef(null);
 
   const initials = (profile?.name || '??')
@@ -35,23 +37,33 @@ export default function Perfil() {
   async function handleFotoChange(e) {
     const file = e.target.files?.[0];
     if (!file) return;
-    if (!file.type.startsWith('image/')) {
+    const ehHeic = isHeic(file);
+    if (!file.type.startsWith('image/') && !ehHeic) {
       toast.error('Selecione uma imagem');
       return;
     }
-    if (file.size > 5 * 1024 * 1024) {
-      toast.error('Imagem precisa ter no maximo 5 MB');
+    if (file.size > 25 * 1024 * 1024) {
+      toast.error('Imagem precisa ter no maximo 25 MB');
       return;
     }
     setUploadingFoto(true);
+    setStatusFoto(ehHeic ? 'Convertendo foto do iPhone...' : 'Preparando foto...');
     try {
-      await auth.uploadFoto(file);
+      const pronto = await processarImagemPerfil(file, {
+        onProgress: (etapa) => {
+          if (etapa === 'convertendo') setStatusFoto('Convertendo foto do iPhone...');
+          else if (etapa === 'comprimindo') setStatusFoto('Otimizando foto...');
+        },
+      });
+      setStatusFoto('Enviando foto...');
+      await auth.uploadFoto(pronto);
       await refreshProfile?.();
       toast.success('Foto atualizada');
     } catch (err) {
       toast.error(err.message || 'Erro ao enviar foto');
     } finally {
       setUploadingFoto(false);
+      setStatusFoto('');
       if (fileInputRef.current) fileInputRef.current.value = '';
     }
   }
@@ -104,7 +116,7 @@ export default function Perfil() {
             <input
               ref={fileInputRef}
               type="file"
-              accept="image/*"
+              accept="image/*,.heic,.heif"
               onChange={handleFotoChange}
               className="hidden"
             />
@@ -115,7 +127,7 @@ export default function Perfil() {
             <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-primary/15 text-primary mt-1 inline-block">
               {cargoLabel}
             </span>
-            {uploadingFoto ? <p className="text-xs text-muted-foreground mt-1">Enviando foto...</p> : null}
+            {uploadingFoto ? <p className="text-xs text-muted-foreground mt-1">{statusFoto || 'Enviando foto...'}</p> : null}
           </div>
         </div>
 

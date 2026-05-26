@@ -65,6 +65,7 @@
     "express": "^5.2.1",
     "express-rate-limit": "^8.3.2",
     "framer-motion": "^12.38.0",
+    "heic-to": "^1.5.2",
     "helmet": "^8.1.0",
     "hpp": "^0.2.3",
     "html2canvas": "^1.4.1",
