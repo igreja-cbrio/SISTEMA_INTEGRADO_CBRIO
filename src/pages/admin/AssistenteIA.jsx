@@ -5,6 +5,7 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from '../../components/ui/ta
 import { Textarea } from '../../components/ui/textarea';
 import ReactMarkdown from 'react-markdown';
 import FilaAprovacao from './FilaAprovacao';
+import AgentRunDetailDialog from '../../components/AgentRunDetailDialog';
 
 const C = {
   bg: 'var(--cbrio-bg)', card: 'var(--cbrio-card)', primary: '#00B39D', primaryBg: '#00B39D18',
@@ -736,7 +737,13 @@ function AuditoriasTab() {
         );
       })}
 
-      <div style={{ display: 'grid', gridTemplateColumns: selectedRun ? '1fr 2fr' : '1fr', gap: 16 }}>
+      <AgentRunDetailDialog
+        run={selectedRun}
+        open={!!selectedRun}
+        onClose={() => setSelectedRun(null)}
+      />
+
+      <div style={{ gap: 16 }}>
         <div style={s.card}>
           <div style={s.cardHeader}>
             <div style={s.cardTitle}>Execuções</div>
@@ -775,134 +782,6 @@ function AuditoriasTab() {
           )}
         </div>
 
-        {selectedRun && (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-            {selectedRun.summary && (
-              <div style={{ ...s.card, padding: 20 }}>
-                <div style={{ fontSize: 13, fontWeight: 700, color: C.primary, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 8 }}>Resumo Executivo</div>
-                <div style={{ fontSize: 14, color: C.text, lineHeight: 1.7, whiteSpace: 'pre-wrap' }}>{selectedRun.summary}</div>
-              </div>
-            )}
-
-            {selectedRun.error && (
-              <div style={{ ...s.card, padding: 20, borderLeft: `4px solid ${C.red}` }}>
-                <div style={{ fontSize: 13, fontWeight: 700, color: C.red, marginBottom: 4 }}>Erro</div>
-                <div style={{ fontSize: 13, color: C.text }}>{selectedRun.error}</div>
-              </div>
-            )}
-
-            {selectedRun.findings?.length > 0 && (() => {
-              const bySev = { critico: [], aviso: [], info: [] };
-              selectedRun.findings.forEach(f => {
-                if (bySev[f.severity]) bySev[f.severity].push(f);
-                else bySev.info.push(f);
-              });
-              return (
-                <div style={s.card}>
-                  <div style={s.cardHeader}>
-                    <div style={s.cardTitle}>Findings ({selectedRun.findings.length})</div>
-                    <div style={{ display: 'flex', gap: 6, fontSize: 11 }}>
-                      {bySev.critico.length > 0 && <span style={s.badge('#fff', C.red)}>{bySev.critico.length} crítico</span>}
-                      {bySev.aviso.length > 0 && <span style={s.badge('#000', C.amber)}>{bySev.aviso.length} aviso</span>}
-                      {bySev.info.length > 0 && <span style={s.badge('#fff', C.blue)}>{bySev.info.length} info</span>}
-                    </div>
-                  </div>
-                  <div style={{ maxHeight: 500, overflowY: 'auto' }}>
-                    {['critico', 'aviso', 'info'].map(sevKey => {
-                      const items = bySev[sevKey];
-                      if (!items.length) return null;
-                      const sev = SEV_MAP[sevKey];
-                      return (
-                        <div key={sevKey}>
-                          <div style={{
-                            padding: '8px 20px', fontSize: 10, fontWeight: 700, letterSpacing: 1,
-                            color: sev.bg === C.red ? '#fff' : sev.c, background: sev.bg,
-                            borderTop: `1px solid ${C.border}`, borderBottom: `1px solid ${C.border}`,
-                          }}>{sev.label} · {items.length}</div>
-                          {items.map((f, i) => (
-                            <div key={i} style={{ padding: '14px 20px', borderBottom: `1px solid ${C.border}` }}>
-                              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6, flexWrap: 'wrap' }}>
-                                <span style={{ ...s.badge(C.primary, C.primaryBg), fontSize: 9 }}>{(f.module || '').toUpperCase()}</span>
-                                {f.category && (
-                                  <span style={{ ...s.badge(C.text3, '#73737318'), fontSize: 9 }}>{f.category}</span>
-                                )}
-                                <span style={{ fontSize: 14, fontWeight: 600, color: C.text }}>{f.title}</span>
-                              </div>
-                              <div style={{ fontSize: 13, color: C.text2, lineHeight: 1.5, marginBottom: 6 }}>{f.detail}</div>
-                              {f.suggestion && (
-                                <div style={{ fontSize: 12, color: C.green, fontStyle: 'italic' }}>→ {f.suggestion}</div>
-                              )}
-                              {f.reference && (
-                                <div style={{ fontSize: 11, color: C.blue, marginTop: 4 }}>Ref: {f.reference}</div>
-                              )}
-                            </div>
-                          ))}
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-              );
-            })()}
-
-            {selectedRun.config?.topReferences?.length > 0 && (
-              <div style={s.card}>
-                <div style={s.cardHeader}>
-                  <div style={s.cardTitle}>🎨 Referências de Design</div>
-                </div>
-                <div style={{ padding: 16 }}>
-                  {selectedRun.config.topReferences.map((ref, i) => (
-                    <div key={i} style={{ padding: '10px 0', borderBottom: i < selectedRun.config.topReferences.length - 1 ? `1px solid ${C.border}` : 'none' }}>
-                      <div style={{ fontSize: 13, fontWeight: 600, color: C.primary }}>{ref.name}</div>
-                      {ref.url && <div style={{ fontSize: 11, color: C.blue }}>{ref.url}</div>}
-                      <div style={{ fontSize: 12, color: C.text2, marginTop: 2 }}>{ref.why}</div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {selectedRun.config?.quickWins?.length > 0 && (
-              <div style={{ ...s.card, borderLeft: `4px solid ${C.green}` }}>
-                <div style={s.cardHeader}>
-                  <div style={s.cardTitle}>⚡ Quick Wins</div>
-                </div>
-                <div style={{ padding: 16 }}>
-                  {selectedRun.config.quickWins.map((qw, i) => (
-                    <div key={i} style={{ padding: '6px 0', fontSize: 13, color: C.text, display: 'flex', gap: 8, alignItems: 'flex-start' }}>
-                      <span style={{ color: C.green, fontWeight: 700 }}>→</span>
-                      <span>{qw}</span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {steps.length > 0 && (
-              <div style={s.card}>
-                <div style={s.cardHeader}>
-                  <div style={s.cardTitle}>Steps ({steps.length})</div>
-                </div>
-                {steps.map(step => (
-                  <div key={step.id} style={{ padding: '10px 20px', borderBottom: `1px solid ${C.border}`, fontSize: 12 }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', color: C.text2 }}>
-                      <span>#{step.step_number} · <strong>{step.role}</strong> · {step.model?.split('-').slice(0, 2).join('-')}</span>
-                      <span>{fmtTokens(step.tokens_input + step.tokens_output)} tokens · {step.duration_ms}ms · {fmtCost(step.cost_usd)}</span>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-
-            {selectedRun.status === 'running' && (
-              <div style={{ ...s.card, padding: 20, textAlign: 'center' }}>
-                <div style={{ fontSize: 24, marginBottom: 8 }}>🔄</div>
-                <div style={{ fontSize: 14, color: C.text, fontWeight: 600 }}>Agente em execução...</div>
-                <div style={{ fontSize: 12, color: C.text2, marginTop: 4 }}>A página atualiza automaticamente a cada 5 segundos.</div>
-              </div>
-            )}
-          </div>
-        )}
       </div>
     </>
   );
