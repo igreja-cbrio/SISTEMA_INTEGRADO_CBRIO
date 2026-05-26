@@ -129,8 +129,8 @@ export async function runFinanceiroExecutor(opts: {
 
         // Persist step
         stepNumber++;
-        const textBlock = blocks.find((b: any) => b.type === "text");
-        const toolUseBlocks = blocks.filter((b: any) => b.type === "tool_use");
+        const textBlock = blocks.find((b: any) => b.type === "text") as { text?: string } | undefined;
+        const toolUseBlocks = blocks.filter((b: any) => b.type === "tool_use") as Array<{ name: string; input: unknown; id: string }>;
         for (const tu of toolUseBlocks) {
           if (
             typeof tu.name === "string" &&

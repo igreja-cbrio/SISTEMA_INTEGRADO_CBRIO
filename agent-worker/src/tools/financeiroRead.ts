@@ -132,16 +132,16 @@ export const buscarHistoricoPagador = tool(
     }
     const { data, error } = await query;
     if (error) return fail(error.message);
-    const itens = data || [];
+    const itens = (data || []) as Array<Record<string, unknown>>;
     const planos = itens
       .filter((t) => t.plano_contas_id)
-      .map((t) => t.plano_contas_id);
+      .map((t) => String(t.plano_contas_id));
     const moda =
       planos.length > 0
         ? Object.entries(
-            planos.reduce(
+            planos.reduce<Record<string, number>>(
               (acc, p) => ({ ...acc, [p]: (acc[p] || 0) + 1 }),
-              {} as Record<string, number>
+              {}
             )
           ).sort((a, b) => b[1] - a[1])[0]
         : null;

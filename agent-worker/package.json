@@ -6,7 +6,7 @@
   "description": "Worker de agentes long-running da CBRio · roda no Railway, fora do Vercel serverless",
   "main": "dist/server.js",
   "scripts": {
-    "build": "tsc",
+    "build": "tsc && cp -r src/skills dist/",
     "start": "node dist/server.js",
     "dev": "tsx watch src/server.ts",
     "typecheck": "tsc --noEmit"
