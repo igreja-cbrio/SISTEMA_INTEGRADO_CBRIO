@@ -1,6 +1,8 @@
 import cron from "node-cron";
 import { runFinanceiroExecutor } from "./agents/financeiroExecutor.js";
 import { runKpisWatcher } from "./agents/kpisWatcher.js";
+import { runRhExecutor } from "./agents/rhExecutor.js";
+import { runCuidadosWatcher } from "./agents/cuidadosWatcher.js";
 
 // Cron expressions assumem TZ=America/Sao_Paulo (definido no env do Railway).
 // Todos rodam 3x/dia: 9h, 14h, 19h.
@@ -12,6 +14,8 @@ const SCHEDULED_AGENTS: Array<{
 }> = [
   { type: "financeiro_executor", runner: runFinanceiroExecutor },
   { type: "kpis_watcher", runner: runKpisWatcher },
+  { type: "rh_executor", runner: runRhExecutor },
+  { type: "cuidados_watcher", runner: runCuidadosWatcher },
 ];
 
 export function startScheduler() {
