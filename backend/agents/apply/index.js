@@ -7,11 +7,15 @@
 
 const { applyQueueAction: applyFinanceiroAction } = require('./financeiroApply');
 const { applyKpisAction } = require('./kpisApply');
+const { applyRhAction } = require('./rhApply');
+const { applyCuidadosAction } = require('./cuidadosApply');
 
 // Mapa prefixo -> handler
 const MODULE_HANDLERS = {
   'fin.': applyFinanceiroAction,
   'kpis.': applyKpisAction,
+  'rh.': applyRhAction,
+  'cui.': applyCuidadosAction,
 };
 
 async function applyQueueAction({ action_type, payload, reviewedBy }) {

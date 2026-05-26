@@ -800,8 +800,8 @@ export default function AssistenteIA() {
       <Tabs defaultValue="chat">
         <TabsList className="mb-4">
           <TabsTrigger value="chat">💬 Chat IA</TabsTrigger>
-          <TabsTrigger value="fila">🤖 Fila de Aprovação</TabsTrigger>
-          <TabsTrigger value="auditorias">🔍 Auditorias</TabsTrigger>
+          <TabsTrigger value="fila">🤖 Agentes de Auditoria</TabsTrigger>
+          <TabsTrigger value="auditorias">🔍 Legacy</TabsTrigger>
         </TabsList>
 
         <TabsContent value="chat">

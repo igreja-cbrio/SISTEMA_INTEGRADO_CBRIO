@@ -19,6 +19,14 @@ const ACTION_META = {
   'fin.atender_alerta':         { icon: '🔔', label: 'Atender alerta',          color: C.primary, bg: C.primaryBg },
   // KPIs/OKRs
   'kpis.alertar_lider':         { icon: '📊', label: 'Alertar líder de KPI',    color: C.purple, bg: C.purpleBg },
+  // RH
+  'rh.alertar_documento_vencendo':   { icon: '📄', label: 'Documento vencendo',  color: C.amber, bg: C.amberBg },
+  'rh.alertar_treinamento_pendente': { icon: '🎓', label: 'Treinamento pendente', color: C.blue, bg: C.blueBg },
+  'rh.alertar_ferias_vencendo':      { icon: '🏖️', label: 'Férias a vencer',     color: C.primary, bg: C.primaryBg },
+  // Cuidados/Integração
+  'cui.alertar_jornada180':       { icon: '💜', label: 'Jornada 180 parada',     color: C.purple, bg: C.purpleBg },
+  'cui.alertar_visitante':        { icon: '👋', label: 'Visitante sem follow-up', color: C.amber, bg: C.amberBg },
+  'cui.alertar_acompanhamento':   { icon: '🤝', label: 'Acompanhamento estagnado', color: C.red, bg: C.redBg },
 };
 
 // Agentes disponiveis pra disparo manual + descricao
@@ -33,7 +41,19 @@ const AGENTES_DISPONIVEIS = [
     agentType: 'kpis_watcher',
     icon: '📊',
     titulo: 'Watcher de KPIs/OKRs',
-    descricao: 'Monitora saúde dos 150 KPIs táticos e OKRs · gera relatório semanal e propõe alertas pros líderes responsáveis.',
+    descricao: 'Monitora saúde dos 150 KPIs táticos e OKRs · gera relatório e propõe alertas pros líderes responsáveis.',
+  },
+  {
+    agentType: 'rh_executor',
+    icon: '👥',
+    titulo: 'Executor RH',
+    descricao: 'Detecta documentos vencendo, treinamentos pendentes e férias a vencer · alerta RH e gestor direto.',
+  },
+  {
+    agentType: 'cuidados_watcher',
+    icon: '💜',
+    titulo: 'Watcher Cuidados/Integração',
+    descricao: 'Vigia Jornada 180, visitantes sem follow-up e acompanhamentos estagnados · alerta time pastoral.',
   },
 ];
 
