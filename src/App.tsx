@@ -1,6 +1,7 @@
 import { BrowserRouter, Routes, Route, Navigate, Outlet, useNavigate } from 'react-router-dom';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { ThemeProvider } from './contexts/ThemeContext';
+import { TutorialProvider } from './contexts/TutorialContext';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { lazy, Suspense, Component } from 'react';
 import type { ReactNode, ComponentType } from 'react';
@@ -514,8 +515,10 @@ export default function App() {
         <ThemeProvider>
           <AuthProvider>
             <BrowserRouter>
-              <AppRoutes />
-              <Toaster position="top-right" richColors />
+              <TutorialProvider>
+                <AppRoutes />
+                <Toaster position="top-right" richColors />
+              </TutorialProvider>
             </BrowserRouter>
           </AuthProvider>
         </ThemeProvider>

@@ -343,7 +343,7 @@ export default function AppShell() {
 
           {/* Center: Navigation desktop · escondido no mobile (vai pro Sheet) */}
           {!isVoluntario && (
-            <div className="flex-1 flex justify-center">
+            <div className="flex-1 flex justify-center" data-tour="megamenu">
               <MegaMenu items={filteredNavItems} role={role} />
             </div>
           )}
@@ -357,6 +357,7 @@ export default function AppShell() {
           <div className="flex items-center gap-2">
             {/* Search trigger · mobile so icon, desktop com texto + ⌘K */}
             <button
+              data-tour="search"
               onClick={() => {
                 window.dispatchEvent(new KeyboardEvent('keydown', { key: 'k', metaKey: true }));
               }}
@@ -376,7 +377,7 @@ export default function AppShell() {
             {/* Notifications */}
             <DropdownMenu open={notifOpen} onOpenChange={(v) => { setNotifOpen(v); if (v) loadNotifs(); }}>
               <DropdownMenuTrigger asChild>
-                <button className="relative p-2 rounded-lg hover:bg-accent transition-colors text-muted-foreground">
+                <button data-tour="notifications" className="relative p-2 rounded-lg hover:bg-accent transition-colors text-muted-foreground">
                   <Bell className="h-4 w-4" />
                   {notifCount > 0 && (
                     <span className="absolute -top-0.5 -right-0.5 h-4 min-w-[16px] rounded-full bg-primary text-[9px] font-bold text-primary-foreground flex items-center justify-center cbrio-badge-pulse px-1">
@@ -456,7 +457,7 @@ export default function AppShell() {
             </DropdownMenu>
 
             {/* User menu */}
-            <button onClick={() => navigate('/perfil')} className="flex items-center gap-2 p-1.5 rounded-lg hover:bg-accent transition-colors">
+            <button data-tour="user-menu" onClick={() => navigate('/perfil')} className="flex items-center gap-2 p-1.5 rounded-lg hover:bg-accent transition-colors">
               <Avatar className="h-7 w-7">
                 {profile?.avatar_url ? <AvatarImage src={profile.avatar_url} alt={profile.name || ''} /> : null}
                 <AvatarFallback className="bg-primary/20 text-primary text-xs font-bold">

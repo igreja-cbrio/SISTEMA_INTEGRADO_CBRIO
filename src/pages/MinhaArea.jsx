@@ -366,7 +366,7 @@ export default function MinhaArea() {
           </CardContent>
         </Card>
       ) : (
-        <div className="space-y-3">
+        <div className="space-y-3" data-tour="minha-area-kpis">
           {grupos.map(g => (
             <GrupoSecao
               key={g.key}

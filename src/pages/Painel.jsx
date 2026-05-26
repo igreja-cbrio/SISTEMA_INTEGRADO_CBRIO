@@ -161,14 +161,16 @@ export default function Painel() {
       </div>
 
       {/* NSM CENTRAL · mostra skeleton enquanto carrega · sub-componentes carregam em paralelo */}
-      {loading ? (
-        <SkeletonBlock height={180} style={{ marginBottom: 16 }} />
-      ) : central ? (
-        <NsmCentralCard
-          data={central}
-          onAbrirPessoas={() => navigate('/painel/nsm/pessoas?segmento=central&engajados=false')}
-        />
-      ) : null}
+      <div data-tour="painel-nsm">
+        {loading ? (
+          <SkeletonBlock height={180} style={{ marginBottom: 16 }} />
+        ) : central ? (
+          <NsmCentralCard
+            data={central}
+            onAbrirPessoas={() => navigate('/painel/nsm/pessoas?segmento=central&engajados=false')}
+          />
+        ) : null}
+      </div>
 
       {/* NSM SEGMENTADAS */}
       {loading ? (
@@ -201,7 +203,7 @@ export default function Painel() {
         <CarrosselValores />
       </div>
 
-      <div style={{ marginTop: 24 }}>
+      <div style={{ marginTop: 24 }} data-tour="painel-matriz">
         <MatrizValorArea />
       </div>
 

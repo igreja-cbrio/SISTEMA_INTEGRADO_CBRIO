@@ -1,14 +1,17 @@
 import { useRef, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
+import { useTutorial } from '../contexts/TutorialContext';
 import { Avatar, AvatarFallback, AvatarImage } from '../components/ui/avatar';
 import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
 import { supabase } from '../supabaseClient';
 import { toast } from 'sonner';
 import { auth } from '../api';
-import { Camera, ShieldCheck, FileText, KeyRound } from 'lucide-react';
+import { Camera, ShieldCheck, FileText, KeyRound, GraduationCap, Check, RotateCcw } from 'lucide-react';
 import TrocarSenhaForm from '../components/auth/TrocarSenhaForm';
 import { processarImagemPerfil, isHeic } from '../lib/imageUpload';
+import { getQualifyingTours } from '../data/tutorials';
 
 function mascaraTelefone(v) {
   const d = (v || '').replace(/\D+/g, '').slice(0, 11);
@@ -19,8 +22,12 @@ function mascaraTelefone(v) {
 }
 
 export default function Perfil() {
-  const { profile, role, cargoNome, refreshProfile } = useAuth();
+  const auth_ctx = useAuth();
+  const { profile, role, cargoNome, refreshProfile } = auth_ctx;
   const cargoLabel = cargoNome || role || 'Membro';
+  const navigate = useNavigate();
+  const tutorial = useTutorial();
+  const meusTours = getQualifyingTours(auth_ctx);
   const [telefone, setTelefone] = useState(profile?.telefone || '');
   const [savingTel, setSavingTel] = useState(false);
   const [uploadingFoto, setUploadingFoto] = useState(false);
@@ -175,6 +182,60 @@ export default function Perfil() {
               </Button>
             </div>
           </div>
+        </div>
+      </div>
+
+      {/* Card · tutoriais */}
+      <div className="rounded-xl border border-border bg-card p-6">
+        <div className="flex items-start gap-3 mb-4">
+          <div className="h-9 w-9 rounded-full bg-primary/10 text-primary flex items-center justify-center flex-shrink-0">
+            <GraduationCap className="h-5 w-5" />
+          </div>
+          <div>
+            <h2 className="text-base font-semibold text-foreground">Tutoriais guiados</h2>
+            <p className="text-xs text-muted-foreground mt-0.5">
+              Refaça os tours dos módulos que você usa. Útil pra revisar o que cada botão faz.
+            </p>
+          </div>
+        </div>
+
+        <div className="space-y-2">
+          {meusTours.map((t) => {
+            const completo = tutorial.completedTours.has(t.id);
+            const rota = typeof t.route === 'string' ? t.route : null;
+            return (
+              <div
+                key={t.id}
+                className="flex items-center justify-between gap-3 px-3 py-2 rounded-lg border border-border bg-background"
+              >
+                <div className="flex items-center gap-2 min-w-0">
+                  {completo ? (
+                    <Check className="h-4 w-4 text-primary flex-shrink-0" />
+                  ) : (
+                    <span className="h-2 w-2 rounded-full bg-amber-500 flex-shrink-0" />
+                  )}
+                  <div className="min-w-0">
+                    <p className="text-sm font-medium text-foreground truncate">{t.name}</p>
+                    {rota && (
+                      <p className="text-[11px] text-muted-foreground truncate">{rota}</p>
+                    )}
+                  </div>
+                </div>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={async () => {
+                    await tutorial.restartTour(t.id);
+                    if (rota && rota !== '/perfil') navigate(rota);
+                  }}
+                  className="flex-shrink-0"
+                >
+                  <RotateCcw className="h-3.5 w-3.5 mr-1.5" />
+                  {completo ? 'Refazer' : 'Iniciar'}
+                </Button>
+              </div>
+            );
+          })}
         </div>
       </div>
 

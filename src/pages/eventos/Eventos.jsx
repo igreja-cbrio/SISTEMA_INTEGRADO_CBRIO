@@ -3458,7 +3458,7 @@ export default function Eventos() {
           <div style={styles.subtitle}>Gestão de eventos da igreja</div>
         </div>
         {(tab <= 3) && (
-          <Button onClick={() => setModalEvent({})}>+ Novo Evento</Button>
+          <Button data-tour="eventos-novo" onClick={() => setModalEvent({})}>+ Novo Evento</Button>
         )}
       </div>
 
