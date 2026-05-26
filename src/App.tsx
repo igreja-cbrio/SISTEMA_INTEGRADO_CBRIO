@@ -224,7 +224,6 @@ const VolTotem = lazyWithRetry(() => import('./pages/ministerial/voluntariado/Vo
 const TotemMembro = lazyWithRetry(() => import('./pages/TotemMembro'));
 const VolSelfCheckin = lazyWithRetry(() => import('./pages/ministerial/voluntariado/VolSelfCheckin'));
 const PcCallback = lazyWithRetry(() => import('./pages/auth/PcCallback'));
-const SpotifyCallback = lazyWithRetry(() => import('./pages/auth/SpotifyCallback'));
 const Cuidados = lazyWithRetry(() => import('./pages/ministerial/Cuidados'));
 const DevocionalLogin = lazyWithRetry(() => import('./pages/devocional/DevocionalLogin'));
 const DevocionalHoje = lazyWithRetry(() => import('./pages/devocional/DevocionalHoje'));
@@ -374,7 +373,6 @@ function AppRoutes() {
       <Route path="/motion" element={<Suspense fallback={<Loading />}><Motion /></Suspense>} />
       <Route path="/nps/publica/:token" element={<Suspense fallback={<Loading />}><NpsPublica /></Suspense>} />
       <Route path="/auth/pc-callback" element={<Suspense fallback={<Loading />}><PcCallback /></Suspense>} />
-      <Route path="/spotify/callback" element={<Suspense fallback={<Loading />}><SpotifyCallback /></Suspense>} />
 
       {/* Devocional · pagina publica de login (magic link) + paginas autenticadas
           do membro. Membros logados aqui ficam restritos a essas rotas via
