@@ -6,7 +6,8 @@ import { Input } from '../components/ui/input';
 import { supabase } from '../supabaseClient';
 import { toast } from 'sonner';
 import { auth } from '../api';
-import { Camera, ShieldCheck, FileText } from 'lucide-react';
+import { Camera, ShieldCheck, FileText, KeyRound } from 'lucide-react';
+import TrocarSenhaForm from '../components/auth/TrocarSenhaForm';
 
 function mascaraTelefone(v) {
   const d = (v || '').replace(/\D+/g, '').slice(0, 11);
@@ -162,6 +163,22 @@ export default function Perfil() {
             </div>
           </div>
         </div>
+      </div>
+
+      {/* Card · trocar senha */}
+      <div className="rounded-xl border border-border bg-card p-6">
+        <div className="flex items-start gap-3 mb-4">
+          <div className="h-9 w-9 rounded-full bg-primary/10 text-primary flex items-center justify-center flex-shrink-0">
+            <KeyRound className="h-5 w-5" />
+          </div>
+          <div>
+            <h2 className="text-base font-semibold text-foreground">Alterar senha</h2>
+            <p className="text-xs text-muted-foreground mt-0.5">
+              Informe a senha atual e escolha uma nova de pelo menos 6 caracteres.
+            </p>
+          </div>
+        </div>
+        <TrocarSenhaForm />
       </div>
 
       {/* Card LGPD · direitos do titular */}

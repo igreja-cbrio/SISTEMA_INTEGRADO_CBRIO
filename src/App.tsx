@@ -7,6 +7,7 @@ import type { ReactNode, ComponentType } from 'react';
 import { Toaster } from 'sonner';
 import AppShell from './components/layout/AppShell';
 import Login from './pages/Login';
+import RedefinirSenha from './pages/RedefinirSenha';
 
 const queryClient = new QueryClient({
   defaultOptions: { queries: { retry: 1, refetchOnWindowFocus: false } },
@@ -360,6 +361,7 @@ function AppRoutes() {
   return (
     <Routes>
       <Route path="/login" element={user ? (isMembroOnly ? <Navigate to="/devocional/hoje" replace /> : isVoluntario ? <Navigate to="/voluntariado/checkin" replace /> : <Navigate to="/dashboard" replace />) : <Login />} />
+      <Route path="/redefinir-senha" element={<RedefinirSenha />} />
 
       {/* Rotas publicas */}
       <Route path="/cadastro-membresia" element={<Suspense fallback={<Loading />}><CadastroMembresia /></Suspense>} />

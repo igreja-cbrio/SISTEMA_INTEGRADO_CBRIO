@@ -34,7 +34,7 @@ export function AuthProvider({ children }) {
     if (!supabase) return;
     const { data } = await supabase
       .from('profiles')
-      .select('id, name, email, role, area, kpi_areas, avatar_url, ministerio_id, ministerio_papel, is_diretoria_geral, funcao_diretoria, telefone, membro_id, is_membro_only')
+      .select('id, name, email, role, area, kpi_areas, avatar_url, ministerio_id, ministerio_papel, is_diretoria_geral, funcao_diretoria, telefone, membro_id, is_membro_only, password_changed_at')
       .eq('id', userId)
       .single();
     setProfile(data ?? null);
@@ -129,6 +129,36 @@ export function AuthProvider({ children }) {
     return supabase.auth.signInWithPassword({ email, password });
   }
 
+  async function sendPasswordReset(email) {
+    if (!supabase) return { error: { message: supabaseErroMsg() } };
+    return supabase.auth.resetPasswordForEmail(email, {
+      redirectTo: `${window.location.origin}/redefinir-senha`,
+    });
+  }
+
+  async function updatePasswordWithCurrent(currentPassword, newPassword) {
+    if (!supabase) return { error: { message: supabaseErroMsg() } };
+    const email = user?.email || profile?.email;
+    if (!email) return { error: { message: 'Sessao sem email · refaca login.' } };
+    // Reauth · valida senha atual sem invalidar a sessao
+    const { error: reauthErr } = await supabase.auth.signInWithPassword({ email, password: currentPassword });
+    if (reauthErr) return { error: { message: 'Senha atual incorreta.' } };
+    const { error: updErr } = await supabase.auth.updateUser({ password: newPassword });
+    if (updErr) return { error: updErr };
+    try { await supabase.rpc('app_marcar_senha_trocada'); } catch { /* nao bloqueante */ }
+    await fetchProfile(user.id).catch(() => {});
+    return { error: null };
+  }
+
+  async function updatePasswordOnly(newPassword) {
+    if (!supabase) return { error: { message: supabaseErroMsg() } };
+    const { error } = await supabase.auth.updateUser({ password: newPassword });
+    if (error) return { error };
+    try { await supabase.rpc('app_marcar_senha_trocada'); } catch { /* nao bloqueante */ }
+    if (user?.id) await fetchProfile(user.id).catch(() => {});
+    return { error: null };
+  }
+
   async function signOut() {
     if (DEV_BYPASS_AUTH) return;
     if (supabase) await supabase.auth.signOut();
@@ -208,6 +238,9 @@ export function AuthProvider({ children }) {
     signInWithMicrosoft,
     signInWithGoogle,
     signInWithEmail,
+    sendPasswordReset,
+    updatePasswordWithCurrent,
+    updatePasswordOnly,
     signOut,
     refreshProfile: () => user?.id && fetchProfile(user.id),
   };
@@ -231,7 +264,11 @@ export function useAuth() {
       userAreas: [], userSetores: [],
       signInWithMicrosoft: async () => ({}),
       signInWithGoogle: async () => ({}),
-      signInWithEmail: async () => ({}), signOut: async () => {},
+      signInWithEmail: async () => ({}),
+      sendPasswordReset: async () => ({}),
+      updatePasswordWithCurrent: async () => ({}),
+      updatePasswordOnly: async () => ({}),
+      signOut: async () => {},
     };
   }
   return ctx;
