@@ -10,6 +10,10 @@ import { runLogisticaWatcher } from "./agents/logisticaWatcher.js";
 import { runMembresiaWatcher } from "./agents/membresiaWatcher.js";
 import { runPatrimonioWatcher } from "./agents/patrimonioWatcher.js";
 import { runCerebroWatcher } from "./agents/cerebroWatcher.js";
+import { runNextWatcher } from "./agents/nextWatcher.js";
+import { runGruposWatcher } from "./agents/gruposWatcher.js";
+import { runNpsWatcher } from "./agents/npsWatcher.js";
+import { runProjetosWatcher } from "./agents/projetosWatcher.js";
 import { startScheduler } from "./scheduler.js";
 
 const AGENT_RUNNERS: Record<string, (opts: any) => Promise<any>> = {
@@ -23,6 +27,10 @@ const AGENT_RUNNERS: Record<string, (opts: any) => Promise<any>> = {
   membresia_watcher: runMembresiaWatcher,
   patrimonio_watcher: runPatrimonioWatcher,
   cerebro_watcher: runCerebroWatcher,
+  next_watcher: runNextWatcher,
+  grupos_watcher: runGruposWatcher,
+  nps_watcher: runNpsWatcher,
+  projetos_watcher: runProjetosWatcher,
 };
 
 const app = express();
