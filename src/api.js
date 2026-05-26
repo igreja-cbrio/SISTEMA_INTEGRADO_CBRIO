@@ -186,6 +186,14 @@ export const integracao = {
   dashboard: () => get('/integracao/dashboard'),
   historicoAnual: () => get('/integracao/historico-anual'),
   historicoBatismos: () => get('/integracao/historico-batismos'),
+  coleta: {
+    cultosAbertos: () => get('/integracao/coleta/cultos-abertos'),
+    submeter: (data) => post('/integracao/coleta', data),
+    minhas: () => get('/integracao/coleta/minhas'),
+    pendentes: () => get('/integracao/coleta/pendentes'),
+    aprovar: (id) => post(`/integracao/coleta/${id}/aprovar`),
+    rejeitar: (id, motivo) => post(`/integracao/coleta/${id}/rejeitar`, { motivo }),
+  },
 };
 
 export const dashboardSemanal = {

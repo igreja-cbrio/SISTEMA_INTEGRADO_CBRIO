@@ -1,14 +1,18 @@
 import { useState, useEffect, useCallback, lazy, Suspense } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { integracao as intApi } from '../../api';
+import { useAuth } from '../../contexts/AuthContext';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '../../components/ui/tabs';
 
 const Batismos = lazy(() => import('./Batismos'));
 const VisualizacaoFrequencia = lazy(() => import('./VisualizacaoFrequencia'));
 const VisualizacaoDecisoes   = lazy(() => import('./VisualizacaoDecisoes'));
 const HistoricoCultos        = lazy(() => import('./HistoricoCultos'));
+const ColetaPendentes        = lazy(() => import('./coleta/ColetaPendentes'));
 import CalendarioCultos from '../../components/CalendarioCultos';
 import { StatisticsCard } from '../../components/ui/statistics-card';
-import { Calendar, CheckCircle2, Heart } from 'lucide-react';
+import { Calendar, CheckCircle2, Heart, Smartphone, ClipboardCheck } from 'lucide-react';
+import { Button } from '../../components/ui/button';
 
 const C = { primary: '#00B39D', info: '#3b82f6', warn: '#f59e0b', purple: '#8b5cf6', pink: '#ef476f', gray: '#737373' };
 
@@ -20,31 +24,47 @@ function formatDataCurta(iso: string): string {
 }
 
 export default function Integracao() {
+  const navigate = useNavigate();
+  const { getAccessLevel } = useAuth();
+  const podeAprovar = getAccessLevel(['integracao']) >= 3;
   const [tab, setTab] = useState('frequencia');
   const [dashboard, setDashboard] = useState<any>(null);
   const [loadingDash, setLoadingDash] = useState(true);
+  const [pendentesCount, setPendentesCount] = useState<number>(0);
 
   const reloadDashboard = useCallback(async () => {
     setLoadingDash(true);
     try { setDashboard(await intApi.dashboard()); } catch { /* noop */ } finally { setLoadingDash(false); }
   }, []);
 
+  const reloadPendentes = useCallback(async () => {
+    if (!podeAprovar) return;
+    try {
+      const items = await intApi.coleta.pendentes();
+      setPendentesCount((items || []).length);
+    } catch { /* noop */ }
+  }, [podeAprovar]);
+
   useEffect(() => { reloadDashboard(); }, [reloadDashboard]);
+  useEffect(() => { reloadPendentes(); }, [reloadPendentes]);
 
   // Permitir abrir aba via querystring (?tab=batismos)
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const t = params.get('tab');
-    if (t && ['batismos', 'frequencia', 'vis_frequencia', 'vis_decisoes', 'historico'].includes(t)) setTab(t);
+    if (t && ['batismos', 'frequencia', 'vis_frequencia', 'vis_decisoes', 'historico', 'pendentes'].includes(t)) setTab(t);
   }, []);
 
   return (
     <div className="p-4 md:p-6 space-y-6 max-w-[1400px] mx-auto">
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
           <h1 className="text-2xl font-bold text-foreground">Integração</h1>
           <p className="text-sm text-muted-foreground">Acompanhamento de cultos, decisões e batismos</p>
         </div>
+        <Button onClick={() => navigate('/integracao/coleta')} className="gap-2">
+          <Smartphone className="h-4 w-4" /> Coleta mobile
+        </Button>
       </div>
 
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
@@ -75,12 +95,23 @@ export default function Integracao() {
       </div>
 
       <Tabs value={tab} onValueChange={setTab}>
-        <TabsList>
+        <TabsList className="flex-wrap h-auto">
           <TabsTrigger value="frequencia">Cultos</TabsTrigger>
           <TabsTrigger value="vis_frequencia">Frequência</TabsTrigger>
           <TabsTrigger value="vis_decisoes">Decisões</TabsTrigger>
           <TabsTrigger value="batismos">Batismos</TabsTrigger>
           <TabsTrigger value="historico">Histórico</TabsTrigger>
+          {podeAprovar && (
+            <TabsTrigger value="pendentes" className="gap-1.5">
+              <ClipboardCheck className="h-3.5 w-3.5" />
+              Pendentes
+              {pendentesCount > 0 && (
+                <span className="ml-1 inline-flex items-center justify-center min-w-[20px] h-5 px-1.5 text-[10px] font-semibold rounded-full bg-amber-500 text-white">
+                  {pendentesCount}
+                </span>
+              )}
+            </TabsTrigger>
+          )}
         </TabsList>
 
         <TabsContent value="frequencia" className="mt-4">
@@ -114,6 +145,13 @@ export default function Integracao() {
             <HistoricoCultos />
           </Suspense>
         </TabsContent>
+        {podeAprovar && (
+          <TabsContent value="pendentes" className="mt-4">
+            <Suspense fallback={<div className="flex items-center justify-center py-12 text-sm text-muted-foreground">Carregando…</div>}>
+              <ColetaPendentes />
+            </Suspense>
+          </TabsContent>
+        )}
       </Tabs>
     </div>
   );
