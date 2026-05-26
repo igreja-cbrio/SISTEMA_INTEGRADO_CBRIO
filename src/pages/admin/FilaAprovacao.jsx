@@ -34,6 +34,13 @@ const ACTION_META = {
   // Voluntariado
   'vol.alertar_inativo': { icon: '🌿', label: 'Voluntário inativo',  color: C.purple, bg: C.purpleBg },
   'vol.alertar_pausa':   { icon: '🌤️', label: 'Voluntário em pausa', color: C.blue, bg: C.blueBg },
+  // Logística
+  'log.alertar_sla_resposta': { icon: '⏱️', label: 'SLA estourado',        color: C.red, bg: C.redBg },
+  'log.alertar_urgente':      { icon: '🚨', label: 'Urgente não atendida', color: C.red, bg: C.redBg },
+  'log.alertar_ml_parado':    { icon: '📦', label: 'Rastreio ML parado',   color: C.amber, bg: C.amberBg },
+  // Membresia
+  'mem.alertar_duplicado':       { icon: '👯', label: 'Duplicado detectado', color: C.purple, bg: C.purpleBg },
+  'mem.alertar_cadastro_parado': { icon: '📝', label: 'Cadastro parado',     color: C.amber, bg: C.amberBg },
 };
 
 // Agentes disponiveis pra disparo manual + descricao
@@ -73,6 +80,18 @@ const AGENTES_DISPONIVEIS = [
     icon: '🌿',
     titulo: 'Watcher Voluntariado',
     descricao: 'Detecta voluntários inativos (60d+) e em pausa recente (30-60d) · alerta líder do ministério pra contato pastoral.',
+  },
+  {
+    agentType: 'logistica_watcher',
+    icon: '📦',
+    titulo: 'Watcher Logística',
+    descricao: 'Vigia SLA das solicitações, urgentes não atendidas e rastreios Mercado Livre parados.',
+  },
+  {
+    agentType: 'membresia_watcher',
+    icon: '⛪',
+    titulo: 'Watcher Membresia',
+    descricao: 'Detecta cadastros duplicados (vw_membros_duplicados) e cadastros pendentes parados há 7d+.',
   },
 ];
 

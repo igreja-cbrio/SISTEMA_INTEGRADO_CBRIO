@@ -11,6 +11,8 @@ const { applyRhAction } = require('./rhApply');
 const { applyCuidadosAction } = require('./cuidadosApply');
 const { applyEventosAction } = require('./eventosApply');
 const { applyVoluntariadoAction } = require('./voluntariadoApply');
+const { applyLogisticaAction } = require('./logisticaApply');
+const { applyMembresiaAction } = require('./membresiaApply');
 
 // Mapa prefixo -> handler
 const MODULE_HANDLERS = {
@@ -20,6 +22,8 @@ const MODULE_HANDLERS = {
   'cui.': applyCuidadosAction,
   'eventos.': applyEventosAction,
   'vol.': applyVoluntariadoAction,
+  'log.': applyLogisticaAction,
+  'mem.': applyMembresiaAction,
 };
 
 async function applyQueueAction({ action_type, payload, reviewedBy }) {
