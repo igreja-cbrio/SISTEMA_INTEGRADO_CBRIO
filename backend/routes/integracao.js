@@ -1,6 +1,7 @@
 const router = require('express').Router();
 const { authenticate } = require('../middleware/auth');
 const { supabase } = require('../utils/supabase');
+const { notificar } = require('../services/notificar');
 
 router.use(authenticate);
 
@@ -427,6 +428,36 @@ router.post('/coleta', async (req, res) => {
       }
       return res.status(400).json({ error: error.message });
     }
+
+    // Notificacao · admins/diretores (ou regras customizadas em /admin/notificacoes-regras)
+    (async () => {
+      try {
+        const [{ data: prof }, { data: culto }] = await Promise.all([
+          supabase.from('profiles').select('name, email').eq('id', req.user.id).single(),
+          supabase
+            .from('cultos')
+            .select('data, service_type:vol_service_types(name)')
+            .eq('id', culto_id)
+            .single(),
+        ]);
+        const quem = prof?.name || prof?.email || 'Alguem';
+        const ambienteLabel = ambiente === 'kids' ? 'Kids' : 'Templo';
+        const dataPt = culto?.data ? new Date(culto.data + 'T12:00:00').toLocaleDateString('pt-BR') : '';
+        const cultoLabel = `${culto?.service_type?.name || 'Culto'}${dataPt ? ' · ' + dataPt : ''}`;
+        await notificar({
+          modulo: 'integracao',
+          tipo: 'dados_culto_pendente',
+          titulo: `Dados de culto aguardando aprovacao`,
+          mensagem: `${quem} lancou ${ambienteLabel} do ${cultoLabel} · presencial ${Math.round(pres)} · decisoes ${Math.round(dec)}`,
+          link: '/integracao?tab=pendentes',
+          severidade: 'info',
+          chaveDedup: `dados_culto_sub_${data.id}`,
+        });
+      } catch (e) {
+        console.warn('[INTEGRACAO] notificar coleta:', e.message);
+      }
+    })();
+
     res.status(201).json(data);
   } catch (e) {
     console.error('[INTEGRACAO] coleta POST', e.message);
