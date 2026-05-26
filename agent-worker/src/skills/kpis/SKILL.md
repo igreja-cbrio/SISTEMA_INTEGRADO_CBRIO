@@ -44,15 +44,22 @@ A cada execucao:
 
 ## Padroes de analise
 
-### O que e "critico"
-- `status = 'critico'` em vw_kpi_taticos_status
-- E `ultimo_valor / meta_efetiva < 0.6` (>40% abaixo)
+### Status reais do banco (vw_kpi_taticos_status.status)
+- **`vermelho`** = critico, abaixo da meta · prioridade maxima
+- **`verde`** = no alvo, bateu meta · so confirma conquista
+- **`pendente`** = sem dado coletado · pode ser abandonado OU recem-criado
 
-### O que e "atrasado piorando" (regressao)
-- Status atual = 'atrasado' OR 'critico'
-- E o KPI estava melhor no periodo anterior (precisa olhar historico)
+### O que e "critico" (vermelho)
+- `status = 'vermelho'` em vw_kpi_taticos_status
+- E `ultimo_valor / meta_efetiva < 0.6` (>40% abaixo) na verificacao manual
+- Olhe buscar_kpi_detalhe pra confirmar tendencia
 
-### O que e "abandonado" (sem dado)
+### O que e "regressao" (vermelho que estava melhor antes)
+- Status atual = 'vermelho'
+- E o KPI estava 'verde' ou perto da meta no periodo anterior (use buscar_kpi_detalhe)
+
+### O que e "abandonado" (pendente · sem dado)
+- `status = 'pendente'` E `ultima_data` ausente OU muito antiga
 - `ultima_data < NOW() - 60 days` em periodicidade mensal
 - `ultima_data < NOW() - 30 days` em periodicidade semanal
 - Sinaliza desativacao implicita · vale alertar o lider
