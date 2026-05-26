@@ -504,6 +504,7 @@ function MobileNavSheet({ items }) {
     <Sheet open={open} onOpenChange={setOpen}>
       <SheetTrigger asChild>
         <button
+          data-tour="megamenu"
           className="md:hidden p-2 rounded-lg hover:bg-accent transition-colors text-foreground"
           aria-label="Abrir menu"
         >

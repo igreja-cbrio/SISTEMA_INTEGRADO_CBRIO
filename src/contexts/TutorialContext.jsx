@@ -1,6 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation } from 'react-router-dom';
-import { Joyride, STATUS, EVENTS } from 'react-joyride';
+import { Joyride, STATUS } from 'react-joyride';
 import { supabase } from '../supabaseClient';
 import { useAuth } from './AuthContext';
 import { findTourForRoute, getTourById, TUTORIALS } from '../data/tutorials';
@@ -68,7 +68,6 @@ export function TutorialProvider({ children }) {
   const [completedTours, setCompletedTours] = useState(null); // Set<string> | null (loading)
   const [activeTour, setActiveTour] = useState(null);
   const [runJoyride, setRunJoyride] = useState(false);
-  const [stepIndex, setStepIndex] = useState(0);
   const startTimeoutRef = useRef(null);
 
   // 1) Carregar progresso do usuário
@@ -117,7 +116,6 @@ export function TutorialProvider({ children }) {
     const delay = tour.delay || 800;
     startTimeoutRef.current = setTimeout(() => {
       setActiveTour(tour);
-      setStepIndex(0);
       setRunJoyride(true);
     }, delay);
 
@@ -154,22 +152,32 @@ export function TutorialProvider({ children }) {
   }, [auth.user?.id]);
 
   const handleJoyrideCallback = useCallback((data) => {
-    const { status, type, index, action } = data;
-
-    if (type === EVENTS.STEP_AFTER || type === EVENTS.TARGET_NOT_FOUND) {
-      if (action === 'next') setStepIndex(index + 1);
-      else if (action === 'prev') setStepIndex(Math.max(0, index - 1));
-    }
+    const { status } = data;
 
     if (status === STATUS.FINISHED || status === STATUS.SKIPPED) {
       const tourId = activeTour?.id;
       const finalStatus = status === STATUS.SKIPPED ? 'skipped' : 'completed';
       setRunJoyride(false);
       setActiveTour(null);
-      setStepIndex(0);
       if (tourId) markTourComplete(tourId, finalStatus);
     }
   }, [activeTour, markTourComplete]);
+
+  // ESC fecha o tutorial (marca como skipped)
+  useEffect(() => {
+    if (!runJoyride || !activeTour) return;
+    const handler = (e) => {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        const tourId = activeTour.id;
+        setRunJoyride(false);
+        setActiveTour(null);
+        markTourComplete(tourId, 'skipped');
+      }
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [runJoyride, activeTour, markTourComplete]);
 
   // 4) Re-disparar manualmente (botão "Refazer tutorial")
   // Apenas reseta o progresso · o auto-trigger via rota se encarrega
@@ -199,7 +207,6 @@ export function TutorialProvider({ children }) {
     const tourRoute = typeof tour.route === 'string' ? tour.route : null;
     if (!tourRoute || tourRoute === location.pathname) {
       setActiveTour(tour);
-      setStepIndex(0);
       setRunJoyride(true);
     }
   }, [auth.user?.id, location.pathname]);
@@ -231,12 +238,13 @@ export function TutorialProvider({ children }) {
       {children}
       {activeTour && (
         <Joyride
+          key={activeTour.id}
           steps={activeTour.steps}
-          stepIndex={stepIndex}
           run={runJoyride}
           continuous
           showProgress
           showSkipButton
+          scrollToFirstStep
           disableScrolling={false}
           disableOverlayClose
           locale={JOYRIDE_LOCALE}
