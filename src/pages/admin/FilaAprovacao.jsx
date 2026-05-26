@@ -19,6 +19,36 @@ const ACTION_META = {
   'fin.atender_alerta':         { icon: '🔔', label: 'Atender alerta',          color: C.primary, bg: C.primaryBg },
   // KPIs/OKRs
   'kpis.alertar_lider':         { icon: '📊', label: 'Alertar líder de KPI',    color: C.purple, bg: C.purpleBg },
+  // RH
+  'rh.alertar_documento_vencendo':   { icon: '📄', label: 'Documento vencendo',  color: C.amber, bg: C.amberBg },
+  'rh.alertar_treinamento_pendente': { icon: '🎓', label: 'Treinamento pendente', color: C.blue, bg: C.blueBg },
+  'rh.alertar_ferias_vencendo':      { icon: '🏖️', label: 'Férias a vencer',     color: C.primary, bg: C.primaryBg },
+  // Cuidados/Integração
+  'cui.alertar_jornada180':       { icon: '💜', label: 'Jornada 180 parada',     color: C.purple, bg: C.purpleBg },
+  'cui.alertar_visitante':        { icon: '👋', label: 'Visitante sem follow-up', color: C.amber, bg: C.amberBg },
+  'cui.alertar_acompanhamento':   { icon: '🤝', label: 'Acompanhamento estagnado', color: C.red, bg: C.redBg },
+  // Eventos
+  'eventos.alertar_tarefa_atrasada':       { icon: '⏰', label: 'Tarefa atrasada',     color: C.red, bg: C.redBg },
+  'eventos.alertar_tarefa_sem_responsavel':{ icon: '❓', label: 'Tarefa sem responsável', color: C.amber, bg: C.amberBg },
+  'eventos.alertar_evento_atrasado':       { icon: '📅', label: 'Evento com baixa preparação', color: C.red, bg: C.redBg },
+  // Voluntariado
+  'vol.alertar_inativo': { icon: '🌿', label: 'Voluntário inativo',  color: C.purple, bg: C.purpleBg },
+  'vol.alertar_pausa':   { icon: '🌤️', label: 'Voluntário em pausa', color: C.blue, bg: C.blueBg },
+  // Logística
+  'log.alertar_sla_resposta': { icon: '⏱️', label: 'SLA estourado',        color: C.red, bg: C.redBg },
+  'log.alertar_urgente':      { icon: '🚨', label: 'Urgente não atendida', color: C.red, bg: C.redBg },
+  'log.alertar_ml_parado':    { icon: '📦', label: 'Rastreio ML parado',   color: C.amber, bg: C.amberBg },
+  // Membresia
+  'mem.alertar_duplicado':       { icon: '👯', label: 'Duplicado detectado', color: C.purple, bg: C.purpleBg },
+  'mem.alertar_cadastro_parado': { icon: '📝', label: 'Cadastro parado',     color: C.amber, bg: C.amberBg },
+  // Patrimônio
+  'pat.alertar_manutencao_longa':     { icon: '🔧', label: 'Manutenção prolongada',   color: C.amber, bg: C.amberBg },
+  'pat.alertar_bem_emprestado':       { icon: '📤', label: 'Bem emprestado sem retorno', color: C.amber, bg: C.amberBg },
+  'pat.alertar_cadastro_incompleto':  { icon: '📋', label: 'Cadastro de bem incompleto', color: C.blue, bg: C.blueBg },
+  // Cérebro
+  'cerebro.alertar_erros':         { icon: '⚠️', label: 'Erros no pipeline',  color: C.red, bg: C.redBg },
+  'cerebro.alertar_fila_travada':  { icon: '🚧', label: 'Fila travada',       color: C.amber, bg: C.amberBg },
+  'cerebro.alertar_custo':         { icon: '💰', label: 'Custo alto de tokens', color: C.amber, bg: C.amberBg },
 };
 
 // Agentes disponiveis pra disparo manual + descricao
@@ -33,7 +63,55 @@ const AGENTES_DISPONIVEIS = [
     agentType: 'kpis_watcher',
     icon: '📊',
     titulo: 'Watcher de KPIs/OKRs',
-    descricao: 'Monitora saúde dos 150 KPIs táticos e OKRs · gera relatório semanal e propõe alertas pros líderes responsáveis.',
+    descricao: 'Monitora saúde dos 150 KPIs táticos e OKRs · gera relatório e propõe alertas pros líderes responsáveis.',
+  },
+  {
+    agentType: 'rh_executor',
+    icon: '👥',
+    titulo: 'Executor RH',
+    descricao: 'Detecta documentos vencendo, treinamentos pendentes e férias a vencer · alerta RH e gestor direto.',
+  },
+  {
+    agentType: 'cuidados_watcher',
+    icon: '💜',
+    titulo: 'Watcher Cuidados/Integração',
+    descricao: 'Vigia Jornada 180, visitantes sem follow-up e acompanhamentos estagnados · alerta time pastoral.',
+  },
+  {
+    agentType: 'eventos_watcher',
+    icon: '📅',
+    titulo: 'Watcher Eventos',
+    descricao: 'Monitora eventos próximos, tarefas atrasadas e órfãs · alerta líderes de área e responsável do evento.',
+  },
+  {
+    agentType: 'voluntariado_watcher',
+    icon: '🌿',
+    titulo: 'Watcher Voluntariado',
+    descricao: 'Detecta voluntários inativos (60d+) e em pausa recente (30-60d) · alerta líder do ministério pra contato pastoral.',
+  },
+  {
+    agentType: 'logistica_watcher',
+    icon: '📦',
+    titulo: 'Watcher Logística',
+    descricao: 'Vigia SLA das solicitações, urgentes não atendidas e rastreios Mercado Livre parados.',
+  },
+  {
+    agentType: 'membresia_watcher',
+    icon: '⛪',
+    titulo: 'Watcher Membresia',
+    descricao: 'Detecta cadastros duplicados (vw_membros_duplicados) e cadastros pendentes parados há 7d+.',
+  },
+  {
+    agentType: 'patrimonio_watcher',
+    icon: '🏷️',
+    titulo: 'Watcher Patrimônio',
+    descricao: 'Bens em manutenção prolongada, emprestados sem retorno e cadastros incompletos de bens valiosos.',
+  },
+  {
+    agentType: 'cerebro_watcher',
+    icon: '🧠',
+    titulo: 'Watcher Cérebro CBRio',
+    descricao: 'Monitora saúde do pipeline · erros acumulados, fila travada e custo de tokens crescente.',
   },
 ];
 

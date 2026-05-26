@@ -2,11 +2,27 @@ import express, { type Request, type Response, type NextFunction } from "express
 import { verify } from "./hmac.js";
 import { runFinanceiroExecutor } from "./agents/financeiroExecutor.js";
 import { runKpisWatcher } from "./agents/kpisWatcher.js";
+import { runRhExecutor } from "./agents/rhExecutor.js";
+import { runCuidadosWatcher } from "./agents/cuidadosWatcher.js";
+import { runEventosWatcher } from "./agents/eventosWatcher.js";
+import { runVoluntariadoWatcher } from "./agents/voluntariadoWatcher.js";
+import { runLogisticaWatcher } from "./agents/logisticaWatcher.js";
+import { runMembresiaWatcher } from "./agents/membresiaWatcher.js";
+import { runPatrimonioWatcher } from "./agents/patrimonioWatcher.js";
+import { runCerebroWatcher } from "./agents/cerebroWatcher.js";
 import { startScheduler } from "./scheduler.js";
 
 const AGENT_RUNNERS: Record<string, (opts: any) => Promise<any>> = {
   financeiro_executor: runFinanceiroExecutor,
   kpis_watcher: runKpisWatcher,
+  rh_executor: runRhExecutor,
+  cuidados_watcher: runCuidadosWatcher,
+  eventos_watcher: runEventosWatcher,
+  voluntariado_watcher: runVoluntariadoWatcher,
+  logistica_watcher: runLogisticaWatcher,
+  membresia_watcher: runMembresiaWatcher,
+  patrimonio_watcher: runPatrimonioWatcher,
+  cerebro_watcher: runCerebroWatcher,
 };
 
 const app = express();

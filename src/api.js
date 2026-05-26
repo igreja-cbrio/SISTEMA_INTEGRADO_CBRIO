@@ -1362,6 +1362,15 @@ export const publicVoluntariado = {
   lookupCpf: (cpf) => post('/public/voluntariado/lookup-cpf', { cpf }),
   requestLogin: (cpf, serviceId) => post('/public/voluntariado/request-login', { cpf, serviceId }),
   register: (data) => post('/public/voluntariado/register', data),
+  inscreverForm: (data) => fetch(`${API}/public/voluntariado/inscrever-form`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+  }).then(async r => {
+    const j = await r.json();
+    if (!r.ok) throw new Error(j.error || 'Erro ao enviar inscricao');
+    return j;
+  }),
 };
 
 // ── Voluntariado ──

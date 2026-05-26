@@ -163,6 +163,22 @@ export function TutorialProvider({ children }) {
     }
   }, [activeTour, markTourComplete]);
 
+  // ESC fecha o tutorial (marca como skipped)
+  useEffect(() => {
+    if (!runJoyride || !activeTour) return;
+    const handler = (e) => {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        const tourId = activeTour.id;
+        setRunJoyride(false);
+        setActiveTour(null);
+        markTourComplete(tourId, 'skipped');
+      }
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [runJoyride, activeTour, markTourComplete]);
+
   // 4) Re-disparar manualmente (botão "Refazer tutorial")
   // Apenas reseta o progresso · o auto-trigger via rota se encarrega
   // de iniciar quando o user estiver na página certa.
