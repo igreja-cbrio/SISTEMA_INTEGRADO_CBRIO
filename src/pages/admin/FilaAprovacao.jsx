@@ -27,6 +27,13 @@ const ACTION_META = {
   'cui.alertar_jornada180':       { icon: '💜', label: 'Jornada 180 parada',     color: C.purple, bg: C.purpleBg },
   'cui.alertar_visitante':        { icon: '👋', label: 'Visitante sem follow-up', color: C.amber, bg: C.amberBg },
   'cui.alertar_acompanhamento':   { icon: '🤝', label: 'Acompanhamento estagnado', color: C.red, bg: C.redBg },
+  // Eventos
+  'eventos.alertar_tarefa_atrasada':       { icon: '⏰', label: 'Tarefa atrasada',     color: C.red, bg: C.redBg },
+  'eventos.alertar_tarefa_sem_responsavel':{ icon: '❓', label: 'Tarefa sem responsável', color: C.amber, bg: C.amberBg },
+  'eventos.alertar_evento_atrasado':       { icon: '📅', label: 'Evento com baixa preparação', color: C.red, bg: C.redBg },
+  // Voluntariado
+  'vol.alertar_inativo': { icon: '🌿', label: 'Voluntário inativo',  color: C.purple, bg: C.purpleBg },
+  'vol.alertar_pausa':   { icon: '🌤️', label: 'Voluntário em pausa', color: C.blue, bg: C.blueBg },
 };
 
 // Agentes disponiveis pra disparo manual + descricao
@@ -54,6 +61,18 @@ const AGENTES_DISPONIVEIS = [
     icon: '💜',
     titulo: 'Watcher Cuidados/Integração',
     descricao: 'Vigia Jornada 180, visitantes sem follow-up e acompanhamentos estagnados · alerta time pastoral.',
+  },
+  {
+    agentType: 'eventos_watcher',
+    icon: '📅',
+    titulo: 'Watcher Eventos',
+    descricao: 'Monitora eventos próximos, tarefas atrasadas e órfãs · alerta líderes de área e responsável do evento.',
+  },
+  {
+    agentType: 'voluntariado_watcher',
+    icon: '🌿',
+    titulo: 'Watcher Voluntariado',
+    descricao: 'Detecta voluntários inativos (60d+) e em pausa recente (30-60d) · alerta líder do ministério pra contato pastoral.',
   },
 ];
 
