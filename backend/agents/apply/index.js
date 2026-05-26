@@ -1,0 +1,33 @@
+// Roteador central de handlers de apply.
+// Cada modulo registra seu prefixo (ex: 'fin.', 'kpis.') e seu handler.
+// Pra plugar um modulo novo:
+//   1. Cria backend/agents/apply/<modulo>Apply.js exportando apply<Modulo>Action
+//   2. Adiciona o handler no MODULE_HANDLERS abaixo
+//   3. Pronto · agent_queue rotea automatico pelo prefixo do action_type
+
+const { applyQueueAction: applyFinanceiroAction } = require('./financeiroApply');
+const { applyKpisAction } = require('./kpisApply');
+
+// Mapa prefixo -> handler
+const MODULE_HANDLERS = {
+  'fin.': applyFinanceiroAction,
+  'kpis.': applyKpisAction,
+};
+
+async function applyQueueAction({ action_type, payload, reviewedBy }) {
+  if (!action_type || typeof action_type !== 'string') {
+    return { ok: false, error: 'action_type obrigatorio' };
+  }
+
+  // Acha handler pelo prefixo
+  const entry = Object.entries(MODULE_HANDLERS).find(([prefix]) =>
+    action_type.startsWith(prefix)
+  );
+  if (!entry) {
+    return { ok: false, error: `Nenhum handler registrado pra action_type: ${action_type}` };
+  }
+  const [, handler] = entry;
+  return handler({ action_type, payload, reviewedBy });
+}
+
+module.exports = { applyQueueAction, MODULE_HANDLERS };
