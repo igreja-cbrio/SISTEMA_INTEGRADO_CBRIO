@@ -1283,13 +1283,24 @@ export const cadastroPublico = {
   },
 };
 
-async function requestFile(path, formData) {
+async function requestFile(path, formData, { timeoutMs = 60_000 } = {}) {
   const token = await getToken();
-  const res = await fetch(`${API}${path}`, {
-    method: 'POST',
-    headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}) },
-    body: formData,
-  });
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  let res;
+  try {
+    res = await fetch(`${API}${path}`, {
+      method: 'POST',
+      headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+      body: formData,
+      signal: controller.signal,
+    });
+  } catch (err) {
+    if (err?.name === 'AbortError') throw new Error('Tempo esgotado ao enviar arquivo (60s). Tente novamente.');
+    throw err;
+  } finally {
+    clearTimeout(timer);
+  }
   if (res.status === 401) { if (supabase) await supabase.auth.signOut(); window.location.href = '/login'; throw new Error('Sessão expirada'); }
   if (!res.ok) { const err = await res.json().catch(() => ({})); throw new Error(err.error || `HTTP ${res.status}`); }
   return res.json();
