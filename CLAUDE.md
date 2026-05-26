@@ -93,7 +93,7 @@ Estende a foundation de 20260512100000 com:
 ### Variáveis de ambiente novas
 
 No **Vercel**:
-- `AGENT_WORKER_URL` · ex: `https://cbrio-agent-worker.up.railway.app`
+- `AGENT_WORKER_URL` · `https://sistemaintegradocbrio-production.up.railway.app` (produção · 2026-05-26)
 - `AGENT_WORKER_HMAC_SECRET` · gere com `openssl rand -hex 32`
 
 No **Railway** (todas):
