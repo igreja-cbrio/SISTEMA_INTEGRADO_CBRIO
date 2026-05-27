@@ -325,7 +325,7 @@ export default function InscricaoVoluntariado() {
             alt="CBRio"
             style={{ width: 72, height: 72, marginBottom: 12, display: 'inline-block' }}
           />
-          <h1 style={{ fontSize: 22, fontWeight: 800, color: C.text, margin: 0 }}>
+          <h1 style={{ fontSize: 24, fontWeight: 800, margin: 0, letterSpacing: -0.5, background: 'linear-gradient(90deg, #00B39D, #00d9bd)', WebkitBackgroundClip: 'text', backgroundClip: 'text', color: 'transparent' }}>
             Quero ser voluntario
           </h1>
           <p style={{ fontSize: 13, color: C.text3, marginTop: 6, lineHeight: 1.5 }}>
