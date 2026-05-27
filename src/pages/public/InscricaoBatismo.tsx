@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { batismoPublico } from '../../api';
 import { LoginShapesBackground } from '../../components/ui/shape-landing-hero';
+import { usePublicTheme, PublicThemeToggle } from './publicTheme';
 
 // ── Helpers de mascara ──
 function soDigitos(v: string) { return (v || '').toString().replace(/\D+/g, ''); }
@@ -113,7 +114,7 @@ function SelectField({
       >
         <option value=""></option>
         {options.map(o => (
-          <option key={o.value} value={o.value} style={{ background: '#161616', color: '#e5e5e5' }}>
+          <option key={o.value} value={o.value} style={{ background: C.optionBg, color: C.text }}>
             {o.label}
           </option>
         ))}
@@ -162,6 +163,7 @@ function formatDataLonga(iso: string) {
 }
 
 export default function InscricaoBatismo() {
+  const { C } = usePublicTheme();
   const [proximaData, setProximaData] = useState<string>('');
   const [form, setForm] = useState({
     nome: '', sobrenome: '',
@@ -233,23 +235,24 @@ export default function InscricaoBatismo() {
     <div style={{
       minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center',
       position: 'relative', overflow: 'hidden',
-      padding: '40px 16px', background: '#0a0a0a',
+      padding: '40px 16px', background: C.pageBg,
     }}>
-      <LoginShapesBackground />
+      {C.shapes && <LoginShapesBackground />}
+      <PublicThemeToggle />
 
       <div style={{
         position: 'relative', zIndex: 1, width: '100%', maxWidth: 640,
-        background: 'rgba(22,22,22,0.78)', backdropFilter: 'blur(24px)',
-        border: '1px solid rgba(255,255,255,0.06)', borderRadius: 20,
+        background: C.card, backdropFilter: 'blur(24px)',
+        border: `1px solid ${C.cardBorder}`, borderRadius: 20,
         padding: '40px 36px',
       }}>
         <div style={{ textAlign: 'center', marginBottom: 28 }}>
           <img src="/logo-cbrio-icon.png" alt="CBRio"
             style={{ width: 72, height: 72, marginBottom: 12, display: 'inline-block' }} />
-          <h1 style={{ fontSize: 22, fontWeight: 800, color: '#e5e5e5', margin: 0 }}>
+          <h1 style={{ fontSize: 22, fontWeight: 800, color: C.text, margin: 0 }}>
             Inscricao para batismo
           </h1>
-          <p style={{ fontSize: 13, color: '#a3a3a3', marginTop: 6, lineHeight: 1.5 }}>
+          <p style={{ fontSize: 13, color: C.text3, marginTop: 6, lineHeight: 1.5 }}>
             "Aquele que crer e for batizado sera salvo." — Marcos 16:16
           </p>
           {proximaData && (
@@ -276,14 +279,14 @@ export default function InscricaoBatismo() {
               display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
               fontSize: 28, marginBottom: 16,
             }}>&#10003;</div>
-            <h2 style={{ fontSize: 18, fontWeight: 700, color: '#e5e5e5', margin: 0 }}>
+            <h2 style={{ fontSize: 18, fontWeight: 700, color: C.text, margin: 0 }}>
               Inscricao confirmada!
             </h2>
-            <p style={{ fontSize: 13, color: '#a3a3a3', marginTop: 10, lineHeight: 1.5 }}>
+            <p style={{ fontSize: 13, color: C.text3, marginTop: 10, lineHeight: 1.5 }}>
               Voce esta inscrito(a) para o batismo de <strong>{formatDataLonga(proximaData)}</strong>.
               Em breve nossa equipe de Integracao entrara em contato com mais detalhes.
             </p>
-            <p style={{ fontSize: 12, color: '#737373', marginTop: 16 }}>
+            <p style={{ fontSize: 12, color: C.textDim, marginTop: 16 }}>
               Deus te abencoe nessa nova etapa.
             </p>
           </div>
@@ -396,7 +399,7 @@ export default function InscricaoBatismo() {
               </button>
 
               <p style={{
-                fontSize: 11, color: '#737373', textAlign: 'center', marginTop: 16, lineHeight: 1.5,
+                fontSize: 11, color: C.textDim, textAlign: 'center', marginTop: 16, lineHeight: 1.5,
               }}>
                 Apos escolher o horario do batismo, nao sera possivel altera-lo.
                 A equipe da Integracao entrara em contato em breve.

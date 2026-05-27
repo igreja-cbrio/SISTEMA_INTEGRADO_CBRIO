@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { next as nextApi } from '../../api';
 import { LoginShapesBackground } from '../../components/ui/shape-landing-hero';
+import { usePublicTheme, PublicThemeToggle } from './publicTheme';
 
 // ── Helpers de mascara ──
 function soDigitos(v: string) { return (v || '').toString().replace(/\D+/g, ''); }
@@ -125,7 +126,7 @@ function SelectField({
       >
         <option value=""></option>
         {options.map((o) => (
-          <option key={o.value} value={o.value} style={{ background: '#161616', color: '#e5e5e5' }}>
+          <option key={o.value} value={o.value} style={{ background: C.optionBg, color: C.text }}>
             {o.label}
           </option>
         ))}
@@ -171,6 +172,7 @@ function Row({ children }: { children: React.ReactNode }) {
 type Evento = { id: string; data: string; titulo?: string };
 
 export default function InscricaoNext() {
+  const { C } = usePublicTheme();
   const [eventos, setEventos] = useState<Evento[]>([]);
   const [form, setForm] = useState({
     evento_id: '',
@@ -237,14 +239,15 @@ export default function InscricaoNext() {
     <div style={{
       minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center',
       position: 'relative', overflow: 'hidden',
-      padding: '40px 16px', background: '#0a0a0a',
+      padding: '40px 16px', background: C.pageBg,
     }}>
-      <LoginShapesBackground />
+      {C.shapes && <LoginShapesBackground />}
+      <PublicThemeToggle />
 
       <div style={{
         position: 'relative', zIndex: 1, width: '100%', maxWidth: 640,
-        background: 'rgba(22,22,22,0.78)', backdropFilter: 'blur(24px)',
-        border: '1px solid rgba(255,255,255,0.06)', borderRadius: 20,
+        background: C.card, backdropFilter: 'blur(24px)',
+        border: `1px solid ${C.cardBorder}`, borderRadius: 20,
         padding: '40px 36px',
       }}>
         <div style={{ textAlign: 'center', marginBottom: 28 }}>
@@ -253,8 +256,8 @@ export default function InscricaoNext() {
             alt="CBRio"
             style={{ width: 72, height: 72, marginBottom: 12, display: 'inline-block' }}
           />
-          <h1 style={{ fontSize: 22, fontWeight: 800, color: '#e5e5e5', margin: 0 }}>Inscricao no NEXT</h1>
-          <p style={{ fontSize: 13, color: '#a3a3a3', marginTop: 6, lineHeight: 1.5 }}>
+          <h1 style={{ fontSize: 22, fontWeight: 800, color: C.text, margin: 0 }}>Inscricao no NEXT</h1>
+          <p style={{ fontSize: 13, color: C.text3, marginTop: 6, lineHeight: 1.5 }}>
             O NEXT e a porta de entrada da CBRio — onde voce conhece nossa cultura,
             como funciona cada area e descobre os proximos passos.
           </p>
@@ -271,10 +274,10 @@ export default function InscricaoNext() {
               display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
               fontSize: 28, marginBottom: 16,
             }}>&#10003;</div>
-            <h2 style={{ fontSize: 18, fontWeight: 700, color: '#e5e5e5', margin: 0 }}>
+            <h2 style={{ fontSize: 18, fontWeight: 700, color: C.text, margin: 0 }}>
               Inscricao confirmada!
             </h2>
-            <p style={{ fontSize: 13, color: '#a3a3a3', marginTop: 10, lineHeight: 1.5 }}>
+            <p style={{ fontSize: 13, color: C.text3, marginTop: 10, lineHeight: 1.5 }}>
               Voce esta inscrito(a) no NEXT. Em breve nossa equipe entrara em contato com mais detalhes.
               Nos vemos no domingo!
             </p>
@@ -350,7 +353,7 @@ export default function InscricaoNext() {
               </button>
 
               <p style={{
-                fontSize: 11, color: '#737373', textAlign: 'center', marginTop: 16, lineHeight: 1.5,
+                fontSize: 11, color: C.textDim, textAlign: 'center', marginTop: 16, lineHeight: 1.5,
               }}>
                 Ao se inscrever, voce concorda em receber contato da equipe da CBRio sobre o NEXT.
               </p>
