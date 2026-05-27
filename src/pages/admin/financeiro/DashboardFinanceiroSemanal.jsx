@@ -12,7 +12,7 @@ import { financeiroV2 } from '../../../api';
 import MetaGauge from '../../../components/dashboard-semanal/MetaGauge';
 import {
   ComposedChart, Line, Bar, Area, AreaChart, BarChart, XAxis, YAxis, CartesianGrid,
-  Tooltip, ResponsiveContainer, Legend,
+  Tooltip, ResponsiveContainer, Legend, PieChart, Pie, Cell,
 } from 'recharts';
 
 const C = {
@@ -1153,10 +1153,6 @@ function PieChartLite({ linhas }) {
     value: Number(l.total),
     color: COLORS_PIE[i % COLORS_PIE.length],
   }));
-  // Usa Recharts.PieChart via Pie · simples
-  const PieChart = require('recharts').PieChart;
-  const Pie = require('recharts').Pie;
-  const Cell = require('recharts').Cell;
   return (
     <PieChart>
       <Pie data={data} cx="50%" cy="50%" outerRadius={90} innerRadius={50} dataKey="value" paddingAngle={2}>
