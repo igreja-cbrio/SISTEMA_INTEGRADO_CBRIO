@@ -26,23 +26,36 @@ const DIAS = ['Dom','Seg','Ter','Qua','Qui','Sex','Sáb'];
 function pad(n) { return String(n).padStart(2, '0'); }
 function toISO(d) { return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`; }
 
-// Retorna o domingo da semana de uma data (semana comeca no domingo)
+// Retorna a SEGUNDA da semana de uma data (semana ISO · Seg→Dom)
 function inicioSemana(d) {
   const c = new Date(d.getFullYear(), d.getMonth(), d.getDate());
-  c.setDate(c.getDate() - c.getDay()); // c.getDay()=0 (dom) → fica
+  const dow = c.getDay();            // 0=dom, 1=seg, ... 6=sab
+  const diff = dow === 0 ? -6 : 1 - dow; // recua ate a segunda
+  c.setDate(c.getDate() + diff);
   return c;
 }
 
-function rangeSemana(domingo) {
-  const fim = new Date(domingo);
-  fim.setDate(fim.getDate() + 6);
-  return { inicio: toISO(domingo), fim: toISO(fim) };
+// Numero da semana ISO 8601 (semana com a quinta-feira pertence ao ano)
+function getISOWeek(d) {
+  const date = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
+  const dayNum = (date.getUTCDay() + 6) % 7;     // seg=0..dom=6
+  date.setUTCDate(date.getUTCDate() - dayNum + 3); // quinta desta semana
+  const firstThursday = new Date(Date.UTC(date.getUTCFullYear(), 0, 4));
+  const firstDayNum = (firstThursday.getUTCDay() + 6) % 7;
+  firstThursday.setUTCDate(firstThursday.getUTCDate() - firstDayNum + 3);
+  return 1 + Math.round((date.getTime() - firstThursday.getTime()) / (7 * 864e5));
 }
 
-// Gera array de 7 datas (Dom→Sáb) da semana
-function diasDaSemana(domingo) {
+function rangeSemana(segunda) {
+  const fim = new Date(segunda);
+  fim.setDate(fim.getDate() + 6);
+  return { inicio: toISO(segunda), fim: toISO(fim) };
+}
+
+// Gera array de 7 datas (Seg→Dom) da semana
+function diasDaSemana(segunda) {
   return Array.from({ length: 7 }, (_, i) => {
-    const d = new Date(domingo);
+    const d = new Date(segunda);
     d.setDate(d.getDate() + i);
     return d;
   });
@@ -70,7 +83,13 @@ function formataDataCurta(dataStr) {
 
 export default function CalendarioCultos() {
   const hoje = new Date();
-  const [semanaInicio, setSemanaInicio] = useState(() => inicioSemana(hoje));
+  // Abre na SEMANA ANTERIOR por padrao · o fluxo eh preencher o que ja passou
+  // (a semana corrente ainda tem cultos que nao aconteceram). Setas navegam.
+  const [semanaInicio, setSemanaInicio] = useState(() => {
+    const ini = inicioSemana(hoje);
+    ini.setDate(ini.getDate() - 7);
+    return ini;
+  });
   const [cultos, setCultos] = useState([]);
   const [loading, setLoading] = useState(true);
   const [editando, setEditando] = useState(null);
@@ -125,10 +144,12 @@ export default function CalendarioCultos() {
   }, [cultosFiltrados]);
 
   const ultimoDiaSemana = dias[6];
-  const labelSemana =
+  const numSemana = getISOWeek(semanaInicio);
+  const labelDatas =
     semanaInicio.getMonth() === ultimoDiaSemana.getMonth()
       ? `${semanaInicio.getDate()} – ${ultimoDiaSemana.getDate()} ${MESES[semanaInicio.getMonth()]} ${semanaInicio.getFullYear()}`
       : `${semanaInicio.getDate()} ${MESES_CURTO[semanaInicio.getMonth()]} – ${ultimoDiaSemana.getDate()} ${MESES_CURTO[ultimoDiaSemana.getMonth()]} ${ultimoDiaSemana.getFullYear()}`;
+  const labelSemana = `Semana ${numSemana} · ${labelDatas}`;
 
   return (
     <section style={{ marginBottom: 20 }}>
@@ -235,7 +256,7 @@ function GradeSemanal({ dias, cultos, hoje, onClickCulto }) {
   return (
     <div className="cbrio-calendario-semana-wrap" style={{ overflowX: 'auto', WebkitOverflowScrolling: 'touch', marginLeft: -4, marginRight: -4, paddingLeft: 4, paddingRight: 4 }}>
       <div className="cbrio-calendario-semana-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(7, minmax(96px, 1fr))', gap: 6 }}>
-      {dias.map((d, idx) => {
+      {dias.map((d) => {
         const isoData = toISO(d);
         const cultosDoDia = porDia.get(isoData) || [];
         const ehHoje = mesmoDia(d, hoje);
@@ -249,7 +270,7 @@ function GradeSemanal({ dias, cultos, hoje, onClickCulto }) {
           }}>
             <div style={{ textAlign: 'center', borderBottom: `1px dashed ${C.border}`, paddingBottom: 6 }}>
               <div style={{ fontSize: 9, fontWeight: 700, color: ehHoje ? C.primary : C.t3, textTransform: 'uppercase', letterSpacing: 0.5 }}>
-                {DIAS[idx]}
+                {DIAS[d.getDay()]}
               </div>
               <div style={{ fontSize: 18, fontWeight: 800, color: ehHoje ? C.primary : C.text, lineHeight: 1 }}>
                 {d.getDate()}
