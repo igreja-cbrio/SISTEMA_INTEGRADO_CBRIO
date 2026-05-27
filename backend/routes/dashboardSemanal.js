@@ -309,7 +309,11 @@ router.get('/mensal', async (req, res) => {
     const mesesUsados = meses || [1,2,3,4,5,6,7,8,9,10,11,12];
     const series = mesesUsados.map(m => {
       const row = { mes: m, mes_nome: MES_NOMES[m - 1] };
-      for (const a of anos) row[String(a)] = acc.get(`${m}-${a}`) || 0;
+      // null (não 0) onde não há culto naquele mês/ano · linha de gráfico não cai a 0
+      for (const a of anos) {
+        const key = `${m}-${a}`;
+        row[String(a)] = acc.has(key) ? acc.get(key) : null;
+      }
       return row;
     });
 
@@ -326,27 +330,30 @@ router.get('/mensal', async (req, res) => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// GET /media-movel · serie temporal continua + 2 medias moveis
+// GET /media-movel · média móvel da frequência presencial · comparação ano-a-ano
 //   query:
-//     indicador     · key (default frequencia)
 //     granularidade · 'semana' | 'mes' (default semana)
-//     curta, longa  · janelas das medias moveis (default 4/12 semana · 3/6 mes)
-//     pontos        · quantos periodos finais retornar (default 26 semana · 18 mes)
+//     janela        · nº de períodos da média móvel (default 2 · min 2)
+//     anos          · csv (default últimos 3 anos)
 //     culto         · service_type_id opcional (default todos somados)
-//   resposta: { granularidade, indicador, rotulo, curta, longa,
-//               series: [{ periodo, label, valor, mm_curta, mm_longa }] }
+//   resposta: { granularidade, janela, anos, rotulo,
+//               series: [{ periodo, label, '2024': mm|null, '2025': mm|null, ... }] }
+//   regra: cada ano é uma linha própria; MM calculada dentro do próprio ano;
+//          null onde não há dado (a linha para, não cai a 0).
 // ─────────────────────────────────────────────────────────────────────────────
 router.get('/media-movel', async (req, res) => {
   try {
-    const indicadorKey = req.query.indicador || 'frequencia';
-    const indDef = INDICADORES[indicadorKey];
-    if (!indDef) return res.status(400).json({ error: 'indicador inválido' });
+    // Média móvel é fixa em frequência presencial
+    const indDef = INDICADORES.frequencia;
 
     const granularidade = req.query.granularidade === 'mes' ? 'mes' : 'semana';
     const cultoId = req.query.culto && req.query.culto !== 'todos' ? req.query.culto : null;
-    const curta = Math.max(2, parseInt(req.query.curta, 10) || (granularidade === 'mes' ? 3 : 4));
-    const longa = Math.max(curta + 1, parseInt(req.query.longa, 10) || (granularidade === 'mes' ? 6 : 12));
-    const pontos = Math.max(4, parseInt(req.query.pontos, 10) || (granularidade === 'mes' ? 18 : 26));
+    const janela = Math.max(2, parseInt(req.query.janela, 10) || 2);
+
+    const anoAtual = new Date().getUTCFullYear();
+    const anos = req.query.anos
+      ? String(req.query.anos).split(',').map(Number).filter(Number.isInteger)
+      : [anoAtual - 2, anoAtual - 1, anoAtual];
 
     let q = supabase
       .from('vw_dashboard_semanal')
@@ -356,51 +363,67 @@ router.get('/media-movel', async (req, res) => {
     if (error) throw error;
 
     const MES_CURTO = ['Jan','Fev','Mar','Abr','Mai','Jun','Jul','Ago','Set','Out','Nov','Dez'];
+    const maxPeriodo = granularidade === 'mes' ? 12 : 53;
 
-    // Agrega por periodo (soma os service_types)
-    const acc = new Map(); // chaveOrd -> { ord, label, valor }
+    // valores[ano][periodo] = soma da frequência presencial naquele período/ano
+    const valores = {};
+    for (const a of anos) valores[a] = new Map();
+
     for (const r of (data || [])) {
       const v = Number(r[indDef.coluna]) || 0;
-      let ord, label;
+      let ano, periodo;
       if (granularidade === 'mes') {
-        if (r.ano_calendario == null || r.mes == null) continue;
-        ord = r.ano_calendario * 12 + (r.mes - 1);
-        label = `${MES_CURTO[r.mes - 1]}/${String(r.ano_calendario).slice(2)}`;
+        ano = r.ano_calendario;
+        periodo = r.mes;
       } else {
-        if (r.ano_iso == null || r.semana_iso == null) continue;
-        ord = r.ano_iso * 53 + r.semana_iso;
-        label = `S${r.semana_iso}/${String(r.ano_iso).slice(2)}`;
+        ano = r.ano_iso;
+        periodo = r.semana_iso;
       }
-      const cur = acc.get(ord) || { ord, label, valor: 0 };
-      cur.valor += v;
-      acc.set(ord, cur);
+      if (ano == null || periodo == null) continue;
+      if (!valores[ano]) continue; // ano fora do filtro
+      valores[ano].set(periodo, (valores[ano].get(periodo) || 0) + v);
     }
 
-    // Ordena cronologicamente e calcula as duas medias moveis
-    const ordenada = [...acc.values()].sort((a, b) => a.ord - b.ord);
-    const mm = (arr, i, janela) => {
-      if (i + 1 < janela) return null; // sem janela completa ainda
-      let soma = 0;
-      for (let k = i - janela + 1; k <= i; k++) soma += arr[k].valor;
-      return Math.round(soma / janela);
-    };
-    const completa = ordenada.map((p, i) => ({
-      periodo: p.ord,
-      label: p.label,
-      valor: p.valor,
-      mm_curta: mm(ordenada, i, curta),
-      mm_longa: mm(ordenada, i, longa),
-    }));
+    // Média móvel por ano: média dos últimos `janela` períodos COM dado, até o período i.
+    // Só emite valor se o próprio período i tem dado E há ao menos `janela` períodos
+    // acumulados (janela completa). Caso contrário null → a linha não cai a 0.
+    const mmPorAno = {};
+    let maxPeriodoComDado = 0;
+    for (const a of anos) {
+      const mapa = valores[a];
+      const periodosComDado = [...mapa.keys()].sort((x, y) => x - y);
+      if (periodosComDado.length) {
+        maxPeriodoComDado = Math.max(maxPeriodoComDado, periodosComDado[periodosComDado.length - 1]);
+      }
+      const mm = new Map();
+      for (let idx = 0; idx < periodosComDado.length; idx++) {
+        if (idx + 1 < janela) continue; // janela ainda incompleta
+        let soma = 0;
+        for (let k = idx - janela + 1; k <= idx; k++) soma += mapa.get(periodosComDado[k]);
+        mm.set(periodosComDado[idx], Math.round(soma / janela));
+      }
+      mmPorAno[a] = mm;
+    }
 
-    // Retorna apenas os ultimos N pontos (MM ja calculada com a serie inteira)
-    const series = completa.slice(-pontos);
+    const limite = maxPeriodoComDado || maxPeriodo;
+    const series = [];
+    for (let p = 1; p <= limite; p++) {
+      const row = {
+        periodo: p,
+        label: granularidade === 'mes' ? MES_CURTO[p - 1] : `S${p}`,
+      };
+      for (const a of anos) {
+        const mm = mmPorAno[a];
+        row[String(a)] = mm.has(p) ? mm.get(p) : null;
+      }
+      series.push(row);
+    }
 
     res.json({
       granularidade,
-      indicador: indicadorKey,
+      janela,
+      anos,
       rotulo: indDef.rotulo,
-      curta,
-      longa,
       series,
     });
   } catch (e) {
