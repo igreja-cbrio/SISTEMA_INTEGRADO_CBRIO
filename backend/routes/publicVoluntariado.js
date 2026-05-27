@@ -413,6 +413,16 @@ router.post('/inscrever-form', publicLimiter, async (req, res) => {
       return res.status(400).json({ error: 'Selecione uma area' });
     }
 
+    // Kids/Bridge (menores · LGPD) exigem data de nascimento e nome da mae
+    const areaLower = String(area).toLowerCase();
+    const exigeDadosMenor = areaLower === 'kids' || areaLower === 'bridge';
+    if (exigeDadosMenor && !data_nascimento) {
+      return res.status(400).json({ error: 'Data de nascimento obrigatoria para Kids/Bridge' });
+    }
+    if (exigeDadosMenor && (!nome_mae || String(nome_mae).trim().length < 2)) {
+      return res.status(400).json({ error: 'Nome da mae obrigatorio para Kids/Bridge' });
+    }
+
     const nomeCompleto = [cleanNome, cleanSobrenome].filter(Boolean).join(' ');
     const cleanMinisterios = Array.isArray(ministerios_interesse)
       ? ministerios_interesse.filter(Boolean).join(', ')
