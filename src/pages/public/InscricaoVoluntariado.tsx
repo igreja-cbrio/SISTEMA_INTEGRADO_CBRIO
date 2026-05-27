@@ -80,7 +80,9 @@ function Field({
 }) {
   const [focused, setFocused] = useState(false);
   const C = usePublicPalette();
-  const active = focused || (value !== undefined && value !== null && String(value).length > 0);
+  // type=date sempre exibe placeholder nativo (dd/mm/aaaa) · label flutua
+  // pra nao sobrepor.
+  const active = focused || type === 'date' || (value !== undefined && value !== null && String(value).length > 0);
   const Tag: any = as;
   return (
     <div style={{ position: 'relative', marginBottom: 20 }}>

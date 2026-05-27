@@ -52,7 +52,7 @@ function Field({
   autoComplete?: string; inputMode?: any;
 }) {
   const [focused, setFocused] = useState(false);
-  const active = focused || (value !== undefined && value !== null && String(value).length > 0);
+  const active = focused || type === 'date' || (value !== undefined && value !== null && String(value).length > 0);
   const Tag: any = as;
   return (
     <div style={{ position: 'relative', marginBottom: 20 }}>
