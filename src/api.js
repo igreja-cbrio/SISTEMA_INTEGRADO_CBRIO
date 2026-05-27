@@ -1510,6 +1510,7 @@ export const voluntariado = {
   backfillCpf: () => post('/voluntariado/backfill-cpf'),
   volCpfCoverage: () => get('/voluntariado/vol-cpf-coverage'),
   backfillCpfFromMembro: () => post('/voluntariado/backfill-cpf-from-membro'),
+  volCpfHiddenCheck: () => get('/voluntariado/vol-cpf-hidden-check'),
   // Sync logs
   syncLogs: () => get('/voluntariado/sync-logs'),
   // Volunteers pool (all vol_profiles with team memberships, cached 5 min on client)

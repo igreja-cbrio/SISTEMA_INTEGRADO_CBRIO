@@ -556,4 +556,85 @@ router.post('/backfill-cpf-from-membro', async (req, res) => {
   }
 });
 
+// ══════════════════════════════════════════════════════════════
+// DIAGNOSTICO · CPF "escondido" por mau vinculo (read-only)
+// Cruza o email do voluntario SEM cpf direto com mem_membros que TEM cpf,
+// ignorando o vinculo atual. Se achar, da pra re-linkar e aproveitar.
+// GET /api/voluntariado/vol-cpf-hidden-check
+// ══════════════════════════════════════════════════════════════
+router.get('/vol-cpf-hidden-check', async (req, res) => {
+  try {
+    // 1. Voluntarios sem cpf, com email (paginado)
+    const vols = [];
+    let from = 0;
+    const page = 1000;
+    while (true) {
+      const { data, error } = await supabase
+        .from('vol_profiles')
+        .select('id, email, membresia_id')
+        .is('cpf', null)
+        .not('email', 'is', null)
+        .range(from, from + page - 1);
+      if (error) throw error;
+      if (!data || !data.length) break;
+      vols.push(...data);
+      if (data.length < page) break;
+      from += page;
+    }
+
+    // 2. Mapa email(lower) -> [voluntarios]
+    const emailToVols = new Map();
+    for (const v of vols) {
+      const e = String(v.email || '').toLowerCase().trim();
+      if (!e) continue;
+      if (!emailToVols.has(e)) emailToVols.set(e, []);
+      emailToVols.get(e).push(v);
+    }
+    const emails = [...emailToVols.keys()];
+
+    // 3. Busca membros COM cpf cujo email (lower) casa
+    const matchedVolIds = new Set();
+    let comLinkMasMislinkado = 0; // vol tem membresia_id mas o membro com cpf eh outro
+    let semLink = 0;              // vol nao tem nenhum vinculo
+    const membrosComCpfCasados = new Set();
+
+    for (let i = 0; i < emails.length; i += 200) {
+      const batch = emails.slice(i, i + 200);
+      const { data, error } = await supabase
+        .from('mem_membros')
+        .select('id, email, cpf')
+        .not('cpf', 'is', null)
+        .is('deleted_at', null)
+        .in('email', batch);
+      if (error) throw error;
+      for (const m of (data || [])) {
+        const e = String(m.email || '').toLowerCase().trim();
+        const vs = emailToVols.get(e);
+        if (!vs) continue;
+        membrosComCpfCasados.add(m.id);
+        for (const v of vs) {
+          if (matchedVolIds.has(v.id)) continue;
+          matchedVolIds.add(v.id);
+          if (v.membresia_id && v.membresia_id !== m.id) comLinkMasMislinkado++;
+          else if (!v.membresia_id) semLink++;
+        }
+      }
+    }
+
+    res.json({
+      voluntarios_sem_cpf_com_email: vols.length,
+      voluntarios_que_ganhariam_cpf: matchedVolIds.size,
+      destes_mislinkados: comLinkMasMislinkado, // tem vinculo errado · re-linkar
+      destes_sem_link: semLink,                 // sem vinculo · so linkar
+      membros_com_cpf_casados: membrosComCpfCasados.size,
+      leitura: matchedVolIds.size === 0
+        ? 'Nenhum CPF escondido. O CPF realmente nao existe pra esses voluntarios · partir pra coleta no cadastro (frente 2).'
+        : 'Existe CPF aproveitavel via email · vale um re-link + backfill.',
+    });
+  } catch (e) {
+    console.error('[VOL-CPF-HIDDEN] Error:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 module.exports = router;
