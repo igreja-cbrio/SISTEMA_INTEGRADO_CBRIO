@@ -4,7 +4,7 @@ const { supabase } = require('../utils/supabase');
 const {
   getPCCredentials, fetchWithRetry, fetchAllPlans,
   processServiceType, fetchAllTeamPersons, upsertVolunteerQrCodes, upsertVolunteerProfiles, PC_SERVICES_BASE,
-  fetchAllServiceTypes,
+  fetchAllServiceTypes, backfillVolProfilesCpf,
 } = require('../services/planningCenter');
 
 // Sync do Planning Center e operacoes administrativas pesadas — apenas admin/diretor.
@@ -340,6 +340,23 @@ router.get('/pco-cpf-check', async (req, res) => {
     });
   } catch (e) {
     console.error('[CPF-CHECK] Error:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ══════════════════════════════════════════════════════════════
+// BACKFILL · puxa CPFs do custom field do People (PCO) e grava em
+// vol_profiles.cpf onde estiver vazio (casa por planning_center_id).
+// Nunca sobrescreve. O trigger BEFORE UPDATE OF cpf vincula ao mem_membros.
+// POST /api/voluntariado/backfill-cpf
+// ══════════════════════════════════════════════════════════════
+router.post('/backfill-cpf', async (req, res) => {
+  try {
+    const { basic: credentials } = getPCCredentials();
+    const result = await backfillVolProfilesCpf(supabase, credentials);
+    res.json({ success: true, ...result });
+  } catch (e) {
+    console.error('[CPF-BACKFILL] Error:', e.message);
     res.status(500).json({ error: e.message });
   }
 });

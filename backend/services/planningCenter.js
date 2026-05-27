@@ -605,6 +605,86 @@ async function assignVolunteersToTeams(supabase, memberTeamMap) {
   return result.assigned;
 }
 
+// ── CPF backfill a partir do custom field do People (PCO) ───────────────────
+// O campo CPF vive como custom field no produto People do Planning Center
+// (field_definition). Coletamos field_data desse campo e mapeamos
+// person_id -> cpf normalizado (11 digitos). Como o tipo no PCO e 'number',
+// zeros a esquerda podem ter sido perdidos · padStart corrige.
+const PC_CPF_FIELD_ID = process.env.PLANNING_CENTER_CPF_FIELD_ID || '553633';
+
+function _cpfValido(cpf) {
+  const d = String(cpf || '').replace(/\D+/g, '');
+  if (d.length !== 11 || /^(\d)\1{10}$/.test(d)) return false;
+  const calc = (base, fator) => {
+    let soma = 0;
+    for (let i = 0; i < base.length; i += 1) soma += parseInt(base[i], 10) * (fator - i);
+    const resto = (soma * 10) % 11;
+    return resto === 10 ? 0 : resto;
+  };
+  return calc(d.slice(0, 9), 10) === parseInt(d[9], 10)
+      && calc(d.slice(0, 10), 11) === parseInt(d[10], 10);
+}
+
+// Retorna Map<planning_center_person_id, cpf(11 digitos)> com CPFs validos.
+async function fetchPcoCpfMap(credentials) {
+  const headers = { Authorization: `Basic ${credentials}` };
+  const map = new Map();
+  let offset = 0;
+  const perPage = 100;
+  while (true) {
+    const url = `${PC_PEOPLE_BASE}/field_data?where[field_definition_id]=${PC_CPF_FIELD_ID}&per_page=${perPage}&offset=${offset}`;
+    const r = await fetchWithRetry(url, headers);
+    if (!r.ok) break;
+    const j = await r.json();
+    for (const fd of (j.data || [])) {
+      const personId = fd.relationships?.customizable?.data?.id;
+      const raw = fd.attributes?.value;
+      if (!personId || raw == null) continue;
+      let digits = String(raw).replace(/\D+/g, '');
+      if (!digits) continue;
+      if (digits.length < 11) digits = digits.padStart(11, '0'); // recupera zero a esquerda
+      if (_cpfValido(digits)) map.set(personId, digits);
+    }
+    const total = j.meta?.total_count ?? map.size;
+    offset += perPage;
+    if (offset >= total || !(j.data || []).length) break;
+  }
+  return map;
+}
+
+// Preenche vol_profiles.cpf onde estiver vazio, casando por planning_center_id.
+// NUNCA sobrescreve um CPF ja existente. O trigger BEFORE UPDATE OF cpf cuida
+// de vincular ao mem_membros automaticamente.
+async function backfillVolProfilesCpf(supabase, credentials) {
+  const cpfMap = await fetchPcoCpfMap(credentials);
+  const totalCpfPco = cpfMap.size;
+  if (!totalCpfPco) return { total_cpf_pco: 0, matched: 0, updated: 0, skipped_existing: 0, errors: 0 };
+
+  const pcIds = [...cpfMap.keys()];
+  let matched = 0, updated = 0, skippedExisting = 0, errors = 0;
+
+  for (let i = 0; i < pcIds.length; i += 200) {
+    const batch = pcIds.slice(i, i + 200);
+    const { data: profiles, error } = await supabase
+      .from('vol_profiles')
+      .select('id, planning_center_id, cpf')
+      .in('planning_center_id', batch);
+    if (error) { errors++; continue; }
+
+    for (const p of (profiles || [])) {
+      const cpf = cpfMap.get(p.planning_center_id);
+      if (!cpf) continue;
+      matched++;
+      if (p.cpf) { skippedExisting++; continue; } // nunca sobrescreve
+      const { error: upErr } = await supabase
+        .from('vol_profiles').update({ cpf }).eq('id', p.id);
+      if (upErr) errors++; else updated++;
+    }
+  }
+
+  return { total_cpf_pco: totalCpfPco, matched, updated, skipped_existing: skippedExisting, errors };
+}
+
 module.exports = {
   STATUS_PRIORITY,
   STATUS_MAP,
@@ -623,4 +703,6 @@ module.exports = {
   upsertVolunteerProfiles,
   assignVolunteersToTeams,
   syncTeamMembersFromSchedules,
+  fetchPcoCpfMap,
+  backfillVolProfilesCpf,
 };
