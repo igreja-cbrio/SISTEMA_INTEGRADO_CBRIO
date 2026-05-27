@@ -8,6 +8,8 @@ import type { ReactNode, ComponentType } from 'react';
 import { Toaster } from 'sonner';
 import AppShell from './components/layout/AppShell';
 import Login from './pages/Login';
+import DemoAutoLogin from './pages/DemoAutoLogin';
+import { DEMO_MODE } from './lib/demo';
 import RedefinirSenha from './pages/RedefinirSenha';
 
 const queryClient = new QueryClient({
@@ -351,6 +353,8 @@ function VolunteerShell() {
 function DefaultRedirect() {
   const { user, loading, isVoluntario, isMembroOnly } = useAuth();
   if (loading) return <Loading />;
+  // No ambiente demo, o link publico e a raiz · manda pro auto-login.
+  if (!user && DEMO_MODE) return <Navigate to="/demo" replace />;
   if (!user) return <Navigate to={loginRedirectTarget()} replace />;
   if (isMembroOnly) return <Navigate to="/devocional/hoje" replace />;
   if (isVoluntario) return <Navigate to="/voluntariado/checkin" replace />;
@@ -365,6 +369,9 @@ function AppRoutes() {
     <Routes>
       <Route path="/login" element={user ? (isMembroOnly ? <Navigate to="/devocional/hoje" replace /> : isVoluntario ? <Navigate to="/voluntariado/checkin" replace /> : <Navigate to="/dashboard" replace />) : <Login />} />
       <Route path="/redefinir-senha" element={<RedefinirSenha />} />
+
+      {/* Demonstracao · login automatico com usuario demo (so com VITE_DEMO_MODE) */}
+      <Route path="/demo" element={<DemoAutoLogin />} />
 
       {/* Rotas publicas */}
       <Route path="/cadastro-membresia" element={<Suspense fallback={<Loading />}><CadastroMembresia /></Suspense>} />
