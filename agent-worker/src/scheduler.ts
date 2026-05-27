@@ -15,8 +15,8 @@ import { runNpsWatcher } from "./agents/npsWatcher.js";
 import { runProjetosWatcher } from "./agents/projetosWatcher.js";
 
 // Cron expressions assumem TZ=America/Sao_Paulo (definido no env do Railway).
-// Todos rodam 3x/dia: 9h, 14h, 19h.
-const SCHEDULE = "0 9,14,19 * * *";
+// Por enquanto: 1x/semana · segunda-feira as 06:00 SP.
+const SCHEDULE = "0 6 * * 1";
 
 const SCHEDULED_AGENTS: Array<{
   type: string;
