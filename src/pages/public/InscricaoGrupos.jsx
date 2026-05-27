@@ -13,6 +13,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import { gruposPublic } from '../../api';
 import AnimatedBackground from './AnimatedBackground';
+import { usePublicTheme, PublicThemeToggle, PublicPaletteCtx, usePublicPalette } from './publicTheme';
 import GrupoSelector from '../../components/grupos/GrupoSelector';
 import { CheckCircle2, ArrowLeft, Users } from 'lucide-react';
 
@@ -35,13 +36,7 @@ function mascaraTelefone(v) {
 }
 
 export default function InscricaoGrupos() {
-  // Forca dark theme (consistente com outras paginas publicas)
-  useEffect(() => {
-    const html = document.documentElement;
-    const prev = html.getAttribute('data-theme');
-    html.setAttribute('data-theme', 'dark');
-    return () => { if (prev) html.setAttribute('data-theme', prev); else html.removeAttribute('data-theme'); };
-  }, []);
+  const { C } = usePublicTheme();
 
   const temporadaParam = useMemo(() => {
     try {
@@ -116,32 +111,38 @@ export default function InscricaoGrupos() {
   };
 
   return (
+    <PublicPaletteCtx.Provider value={C}>
     <div style={{
       minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center',
-      position: 'relative', overflow: 'hidden', padding: '40px 16px', background: '#0a0a0a',
+      position: 'relative', overflow: 'hidden', padding: '40px 16px', background: C.pageBg,
     }}>
       <AnimatedBackground />
+      <PublicThemeToggle />
 
       <div style={{ position: 'relative', zIndex: 10, width: '100%', maxWidth: 720 }}>
         <div style={{ textAlign: 'center', marginBottom: 24 }}>
-          <h1 style={{ fontSize: 28, fontWeight: 800, color: '#fff', margin: 0, letterSpacing: -0.5 }}>
+          <h1 style={{
+            fontSize: 28, fontWeight: 800, margin: 0, letterSpacing: -0.5,
+            background: 'linear-gradient(90deg, #00B39D, #00d9bd)',
+            WebkitBackgroundClip: 'text', backgroundClip: 'text', color: 'transparent',
+          }}>
             Entre em um Grupo de Conexão
           </h1>
-          <p style={{ fontSize: 14, color: '#a3a3a3', marginTop: 8 }}>
+          <p style={{ fontSize: 14, color: C.text3, marginTop: 8 }}>
             Encontre um grupo perto de você e seja recebido pelo líder.
           </p>
         </div>
 
         <div style={{
-          background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)',
+          background: C.card, border: `1px solid ${C.cardBorder}`,
           borderRadius: 20, padding: 24, backdropFilter: 'blur(16px)',
         }}>
           {step === 2 ? (
             <div style={{ textAlign: 'center', padding: 24 }}>
               <CheckCircle2 size={56} style={{ color: '#10b981', margin: '0 auto 16px' }} />
-              <h2 style={{ color: '#fff', fontSize: 20, fontWeight: 700, marginBottom: 8 }}>Pedido enviado!</h2>
-              <p style={{ color: '#a3a3a3', fontSize: 14, lineHeight: 1.6 }}>
-                Seu pedido para entrar no grupo <strong style={{ color: '#fff' }}>{grupoEscolhido?.nome}</strong> foi
+              <h2 style={{ color: C.text, fontSize: 20, fontWeight: 700, marginBottom: 8 }}>Pedido enviado!</h2>
+              <p style={{ color: C.text3, fontSize: 14, lineHeight: 1.6 }}>
+                Seu pedido para entrar no grupo <strong style={{ color: C.text }}>{grupoEscolhido?.nome}</strong> foi
                 enviado. O líder vai analisar e você receberá uma confirmação por
                 {form.email ? ' e-mail' : ''}{form.telefone ? ' / WhatsApp' : ''} em breve.
               </p>
@@ -154,7 +155,7 @@ export default function InscricaoGrupos() {
             </div>
           ) : step === 0 ? (
             <div>
-              <h2 style={{ color: '#fff', fontSize: 16, fontWeight: 700, marginBottom: 12, display: 'flex', alignItems: 'center', gap: 8 }}>
+              <h2 style={{ color: C.text, fontSize: 16, fontWeight: 700, marginBottom: 12, display: 'flex', alignItems: 'center', gap: 8 }}>
                 <Users size={18} style={{ color: '#00B39D' }} /> 1. Escolha o grupo
               </h2>
               <GrupoSelector
@@ -188,9 +189,9 @@ export default function InscricaoGrupos() {
               }}>
                 <ArrowLeft size={16} /> Voltar à escolha do grupo
               </button>
-              <h2 style={{ color: '#fff', fontSize: 16, fontWeight: 700, marginBottom: 4 }}>2. Seus dados</h2>
-              <p style={{ color: '#a3a3a3', fontSize: 12, marginBottom: 16 }}>
-                Para o grupo <strong style={{ color: '#fff' }}>{grupoEscolhido?.nome}</strong>
+              <h2 style={{ color: C.text, fontSize: 16, fontWeight: 700, marginBottom: 4 }}>2. Seus dados</h2>
+              <p style={{ color: C.text3, fontSize: 12, marginBottom: 16 }}>
+                Para o grupo <strong style={{ color: C.text }}>{grupoEscolhido?.nome}</strong>
               </p>
 
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 12, marginBottom: 12 }}>
@@ -202,13 +203,13 @@ export default function InscricaoGrupos() {
               </div>
 
               <div style={{ marginBottom: 12 }}>
-                <label style={{ fontSize: 12, color: '#a3a3a3', display: 'block', marginBottom: 4 }}>Mensagem para o líder (opcional)</label>
+                <label style={{ fontSize: 12, color: C.text3, display: 'block', marginBottom: 4 }}>Mensagem para o líder (opcional)</label>
                 <textarea value={form.observacao} onChange={set('observacao')} rows={2} maxLength={400}
                   placeholder="Por exemplo: 'Sou amigo do João e quero participar'..."
                   style={{
                     width: '100%', padding: '8px 10px', borderRadius: 8,
-                    border: '1px solid rgba(255,255,255,0.12)', background: 'rgba(255,255,255,0.04)',
-                    color: '#fff', fontSize: 13, fontFamily: 'inherit', boxSizing: 'border-box',
+                    border: `1px solid ${C.inputBorder}`, background: C.isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.03)',
+                    color: C.text, fontSize: 13, fontFamily: 'inherit', boxSizing: 'border-box',
                   }}
                 />
               </div>
@@ -216,9 +217,9 @@ export default function InscricaoGrupos() {
               {/* honeypot */}
               <input type="text" value={form.website} onChange={set('website')} style={{ position: 'absolute', left: -9999, opacity: 0 }} tabIndex={-1} autoComplete="off" />
 
-              <div style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 10, padding: 12, marginBottom: 12 }}>
-                <p style={{ fontSize: 11, color: '#a3a3a3', lineHeight: 1.5, margin: 0, marginBottom: 8 }}>{TEXTO_CONSENTIMENTO}</p>
-                <label style={{ fontSize: 12, color: '#fff', display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
+              <div style={{ background: C.isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.03)', border: `1px solid ${C.cardBorder}`, borderRadius: 10, padding: 12, marginBottom: 12 }}>
+                <p style={{ fontSize: 11, color: C.text3, lineHeight: 1.5, margin: 0, marginBottom: 8 }}>{TEXTO_CONSENTIMENTO}</p>
+                <label style={{ fontSize: 12, color: C.text, display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
                   <input type="checkbox" checked={aceitaTermos} onChange={e => setAceitaTermos(e.target.checked)} style={{ accentColor: '#00B39D' }} />
                   Li e aceito os termos *
                 </label>
@@ -243,17 +244,19 @@ export default function InscricaoGrupos() {
         </div>
       </div>
     </div>
+    </PublicPaletteCtx.Provider>
   );
 }
 
 function Field({ label, ...rest }) {
+  const C = usePublicPalette();
   return (
     <div>
-      <label style={{ fontSize: 12, color: '#a3a3a3', display: 'block', marginBottom: 4 }}>{label}</label>
+      <label style={{ fontSize: 12, color: C.text3, display: 'block', marginBottom: 4 }}>{label}</label>
       <input {...rest} style={{
         width: '100%', padding: '9px 12px', borderRadius: 8,
-        border: '1px solid rgba(255,255,255,0.12)', background: 'rgba(255,255,255,0.04)',
-        color: '#fff', fontSize: 13, boxSizing: 'border-box',
+        border: `1px solid ${C.inputBorder}`, background: C.isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.03)',
+        color: C.text, fontSize: 13, boxSizing: 'border-box',
       }} />
     </div>
   );

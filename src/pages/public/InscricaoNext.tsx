@@ -256,7 +256,7 @@ export default function InscricaoNext() {
             alt="CBRio"
             style={{ width: 72, height: 72, marginBottom: 12, display: 'inline-block' }}
           />
-          <h1 style={{ fontSize: 22, fontWeight: 800, color: C.text, margin: 0 }}>Inscricao no NEXT</h1>
+          <h1 style={{ fontSize: 24, fontWeight: 800, margin: 0, letterSpacing: -0.5, background: 'linear-gradient(90deg, #00B39D, #00d9bd)', WebkitBackgroundClip: 'text', backgroundClip: 'text', color: 'transparent' }}>Inscricao no NEXT</h1>
           <p style={{ fontSize: 13, color: C.text3, marginTop: 6, lineHeight: 1.5 }}>
             O NEXT e a porta de entrada da CBRio — onde voce conhece nossa cultura,
             como funciona cada area e descobre os proximos passos.
