@@ -9,6 +9,7 @@ import QrScanner from './components/checkin/QrScanner';
 import ManualCheckin from './components/checkin/ManualCheckin';
 import FaceScanner from './components/checkin/FaceScanner';
 import SuccessOverlay from './components/checkin/SuccessOverlay';
+import ContactCaptureDialog from './components/checkin/ContactCaptureDialog';
 import { toast } from 'sonner';
 
 export default function VolCheckin() {
@@ -19,6 +20,11 @@ export default function VolCheckin() {
   const checkIn = useCheckIn();
   const qrLookup = useScheduleByQrCode();
   const [success, setSuccess] = useState<{ name: string; team?: string | null; position?: string | null; unscheduled?: boolean } | null>(null);
+  const [contactCapture, setContactCapture] = useState<{ id: string; name: string } | null>(null);
+
+  const maybeCapture = (resp: any, name: string) => {
+    if (resp?.needs_cpf && resp?.volunteer_id) setContactCapture({ id: resp.volunteer_id, name });
+  };
 
   // Auto-select if only one service today
   if (todayServices.length === 1 && !selectedServiceId) {
@@ -28,8 +34,9 @@ export default function VolCheckin() {
   const handleCheckIn = useCallback(async (scheduleId: string) => {
     const sch = schedules.find(s => s.id === scheduleId);
     try {
-      await checkIn.mutateAsync({ schedule_id: scheduleId, volunteer_id: sch?.volunteer_id || undefined, service_id: selectedServiceId, method: 'manual' });
+      const resp = await checkIn.mutateAsync({ schedule_id: scheduleId, volunteer_id: sch?.volunteer_id || undefined, service_id: selectedServiceId, method: 'manual' });
       setSuccess({ name: sch?.volunteer_name || 'Voluntario', team: sch?.team_name, position: sch?.position_name });
+      maybeCapture(resp, sch?.volunteer_name || 'Voluntario');
       toast.success('Check-in realizado!');
     } catch (err: any) {
       toast.error(err.message || 'Erro no check-in');
@@ -56,11 +63,13 @@ export default function VolCheckin() {
     try {
       const result = await qrLookup.mutateAsync(qrCode);
       if (result.isUnscheduled) {
-        await checkIn.mutateAsync({ volunteer_id: result.profile.id || undefined, service_id: selectedServiceId, method: 'qr_code', is_unscheduled: true });
+        const resp = await checkIn.mutateAsync({ volunteer_id: result.profile.id || undefined, service_id: selectedServiceId, method: 'qr_code', is_unscheduled: true });
         setSuccess({ name: result.volunteerName, unscheduled: true });
+        maybeCapture(resp, result.volunteerName);
       } else if (result.schedule) {
-        await checkIn.mutateAsync({ schedule_id: result.schedule.id, volunteer_id: result.profile.id || undefined, service_id: selectedServiceId, method: 'qr_code' });
+        const resp = await checkIn.mutateAsync({ schedule_id: result.schedule.id, volunteer_id: result.profile.id || undefined, service_id: selectedServiceId, method: 'qr_code' });
         setSuccess({ name: result.volunteerName, team: result.schedule.team_name, position: result.schedule.position_name });
+        maybeCapture(resp, result.volunteerName);
       }
       toast.success('Check-in via QR realizado!');
     } catch (err: any) {
@@ -73,11 +82,13 @@ export default function VolCheckin() {
       // Try to find schedule for this volunteer
       const sch = schedules.find(s => s.volunteer_id === match.volunteer_id && !s.check_in);
       if (sch) {
-        await checkIn.mutateAsync({ schedule_id: sch.id, volunteer_id: match.volunteer_id, service_id: selectedServiceId, method: 'facial' });
+        const resp = await checkIn.mutateAsync({ schedule_id: sch.id, volunteer_id: match.volunteer_id, service_id: selectedServiceId, method: 'facial' });
         setSuccess({ name: match.volunteer_name, team: sch.team_name, position: sch.position_name });
+        maybeCapture(resp, match.volunteer_name);
       } else {
-        await checkIn.mutateAsync({ volunteer_id: match.volunteer_id, service_id: selectedServiceId, method: 'facial', is_unscheduled: true });
+        const resp = await checkIn.mutateAsync({ volunteer_id: match.volunteer_id, service_id: selectedServiceId, method: 'facial', is_unscheduled: true });
         setSuccess({ name: match.volunteer_name, unscheduled: true });
+        maybeCapture(resp, match.volunteer_name);
       }
       toast.success('Check-in facial realizado!');
     } catch (err: any) {
@@ -138,6 +149,14 @@ export default function VolCheckin() {
       )}
 
       {success && <SuccessOverlay volunteerName={success.name} teamName={success.team} positionName={success.position} isUnscheduled={success.unscheduled} onClose={() => setSuccess(null)} />}
+
+      {contactCapture && (
+        <ContactCaptureDialog
+          volunteerId={contactCapture.id}
+          volunteerName={contactCapture.name}
+          onDone={() => setContactCapture(null)}
+        />
+      )}
     </div>
   );
 }

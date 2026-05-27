@@ -1486,6 +1486,7 @@ export const voluntariado = {
     list: (params) => get('/voluntariado/check-ins' + (params ? '?' + new URLSearchParams(params) : '')),
     create: (data) => post('/voluntariado/check-ins', data),
   },
+  updateProfileContact: (id, data) => put(`/voluntariado/profiles/${id}/contact`, data),
   // QR code lookup
   qrLookup: (qr_code) => post('/voluntariado/qr-lookup', { qr_code }),
   // Volunteer QR codes
