@@ -38,6 +38,7 @@ const ROUTE_MODULE_MAP = {
   'ami':          ['ami'],
   'bridge':       ['bridge'],
   'painel-area':  ['kids', 'ami', 'bridge', 'online'],
+  'whatsapp-admin': ['integracao', 'grupos'],
   // estrategicos
   'gestao':       ['gestao'],
   'planejamento': ['planejamento'],
