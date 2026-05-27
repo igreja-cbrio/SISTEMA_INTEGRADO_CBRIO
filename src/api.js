@@ -257,6 +257,18 @@ export const grupos = {
   setObservacao: (grupoId, periodo, observacao) => put(`/grupos/${grupoId}/observacoes/${periodo}`, { observacao }),
 };
 
+export const whatsapp = {
+  // Lideres · vinculo telefone -> profile
+  listLideres: () => get('/whatsapp/lideres'),
+  vincularLider: (data) => post('/whatsapp/lideres', data),
+  atualizarLider: (id, data) => put(`/whatsapp/lideres/${id}`, data),
+  removerLider: (id) => del(`/whatsapp/lideres/${id}`),
+  // Coletas · revisao e aplicacao
+  listColetas: (status) => get('/whatsapp/coletas' + (status ? `?status=${status}` : '')),
+  aplicarColeta: (id) => post(`/whatsapp/coletas/${id}/aplicar`, {}),
+  rejeitarColeta: (id, motivo) => post(`/whatsapp/coletas/${id}/rejeitar`, { motivo }),
+};
+
 export const strategic = {
   categories: () => get('/strategic/categories'),
   list: (params) => get('/strategic' + (params ? '?' + new URLSearchParams(params) : '')),

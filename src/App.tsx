@@ -164,6 +164,7 @@ const NotificacaoRegras = lazyWithRetry(() => import('./pages/admin/NotificacaoR
 const CruzamentosPessoas = lazyWithRetry(() => import('./pages/admin/CruzamentosPessoas'));
 const SolicitacoesResponsaveis = lazyWithRetry(() => import('./pages/admin/SolicitacoesResponsaveis'));
 const PermissoesAdmin = lazyWithRetry(() => import('./pages/admin/Permissoes'));
+const WhatsappAdmin = lazyWithRetry(() => import('./pages/admin/Whatsapp'));
 const Apresentacoes = lazyWithRetry(() => import('./pages/apresentacoes/Apresentacoes'));
 const ApresentacaoDetalhe = lazyWithRetry(() => import('./pages/apresentacoes/ApresentacaoDetalhe'));
 const MeusKpis = lazyWithRetry(() => import('./pages/MeusKpis'));
@@ -484,6 +485,7 @@ function AppRoutes() {
         <Route path="/admin/cruzamentos" element={<Suspense fallback={<Loading />}><CruzamentosPessoas /></Suspense>} />
         <Route path="/admin/solicitacoes-responsaveis" element={<Suspense fallback={<Loading />}><SolicitacoesResponsaveis /></Suspense>} />
         <Route path="/admin/permissoes" element={<Suspense fallback={<Loading />}><PermissoesAdmin /></Suspense>} />
+        <Route path="/admin/whatsapp" element={<ModuleGuard moduleSlug="integracao" nivelMinimo={3}><Suspense fallback={<Loading />}><WhatsappAdmin /></Suspense></ModuleGuard>} />
         <Route path="/admin/apresentacoes" element={<ModuleGuard moduleSlug="apresentacoes"><Suspense fallback={<Loading />}><Apresentacoes /></Suspense></ModuleGuard>} />
         <Route path="/admin/apresentacoes/:id" element={<ModuleGuard moduleSlug="apresentacoes"><Suspense fallback={<Loading />}><ApresentacaoDetalhe /></Suspense></ModuleGuard>} />
         <Route path="/admin/usuarios" element={<Navigate to="/admin/permissoes?aba=usuarios" replace />} />

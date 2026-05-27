@@ -63,7 +63,8 @@ app.use(rateLimit({
 }));
 app.use(hpp());
 app.use(compression());
-app.use(express.json({ limit: '1mb' }));
+// rawBody capturado pra validar HMAC do webhook do WhatsApp (X-Hub-Signature-256)
+app.use(express.json({ limit: '1mb', verify: (req, _res, buf) => { req.rawBody = buf; } }));
 if (process.env.NODE_ENV !== 'production') app.use(morgan('dev'));
 
 // ── Routes ──
@@ -113,6 +114,10 @@ app.use('/api/public/voluntariado', require('./routes/publicVoluntariado'));
 app.use('/api/public/next', require('./routes/publicNext'));
 app.use('/api/public/grupos', require('./routes/publicGrupos'));
 app.use('/api/public/batismo', require('./routes/publicBatismo'));
+// Webhook WhatsApp (publico · sem auth, fora do publicLimiter pra nao
+// perder entregas em rajada). Montado ANTES do admin /api/whatsapp.
+app.use('/api/whatsapp/webhook', require('./routes/publicWhatsapp'));
+app.use('/api/whatsapp', require('./routes/whatsapp'));
 app.use('/api/solicitacoes', require('./routes/solicitacoes'));
 app.use('/api/cerebro', require('./routes/cerebro'));
 app.use('/api/voluntariado', require('./routes/voluntariado'));

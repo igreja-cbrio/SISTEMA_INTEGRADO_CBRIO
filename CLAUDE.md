@@ -2,6 +2,55 @@
 
 Guia operacional para o Claude Code quando trabalhar neste repositório.
 
+## Bot WhatsApp · coleta passiva de dados de líderes (2026-05-27)
+
+Líder manda os números da semana em texto livre no WhatsApp · webhook
+Meta Cloud API → parse com Claude Haiku → cai numa fila pendente que o
+coordenador confirma. **Nada é aplicado automaticamente** (review-before-apply,
+mesmo padrão do mobile `cultos_dados_submissoes`). Cobaias: Grupos + Integração.
+
+### Migration `20260527120000_whatsapp_coleta.sql`
+- `whatsapp_lideres` · vínculo telefone (E.164 sem +) → profile + `escopo[]`
+  (`grupos`/`integracao`) + `grupo_id` opcional. UNIQUE telefone entre ativos.
+- `whatsapp_coletas` · log de mensagens: `whatsapp_message_id UNIQUE`
+  (idempotência), `raw_text`, `parsed jsonb`, `modulo_destino`, `status`
+  (recebido→parseado→aplicado/rejeitado/ignorado).
+- Ambas com `deleted_at` + índice parcial + na whitelist
+  `app_soft_deletable_tables()` + RLS (read integracao/grupos≥1 ou
+  super-admin · write só service_role · todo fluxo passa pelo backend).
+
+### Backend
+- `routes/publicWhatsapp.js` (montado `/api/whatsapp/webhook` · público, ANTES
+  do admin, fora do publicLimiter): GET verificação (hub.verify_token) + POST
+  recebimento (responde 200 imediato, processa async · HMAC opcional via
+  `WHATSAPP_APP_SECRET`, idempotência, identifica líder, parseia, ack).
+- `routes/whatsapp.js` (montado `/api/whatsapp` · auth `authorizeModule('whatsapp-admin',3)`
+  = integracao OU grupos nível 3): CRUD líderes + listar/aplicar/rejeitar coletas.
+  Aplicar coleta de **integração** cria `cultos_dados_submissoes` pendente no
+  culto mais recente (≤7d) · cai na fila `/integracao?tab=pendentes`. **Grupos**
+  só marca aplicado (encontro exige lista nominal de presenças que o WhatsApp
+  não fornece · lançamento manual).
+- `services/whatsappSend.js` · envia texto via Graph API (gratis dentro da
+  janela 24h). `services/whatsappParser.js` · Haiku interpreta texto livre →
+  `{intent, modulo, dados, confianca, resumo}` (nunca lança · fallback seguro).
+- `ROUTE_MODULE_MAP` ganhou `'whatsapp-admin': ['integracao','grupos']`.
+- `server.js` · `express.json` agora captura `req.rawBody` (verify) pro HMAC.
+
+### Frontend
+- `/admin/whatsapp` (`src/pages/admin/Whatsapp.jsx`) · 2 abas: **Coletas**
+  (revisar/aplicar/rejeitar com filtro por status) e **Líderes** (vincular
+  telefone→profile + escopo + grupo · toggle ativo · remover). Menu em
+  Administrativo > Configurações (`module: 'integracao'`). Route guard
+  `moduleSlug="integracao" nivelMinimo={3}`.
+- `api.js` · namespace `whatsapp`.
+
+### Envs necessárias no Vercel (Marcos configura no painel Meta)
+`WHATSAPP_PHONE_NUMBER_ID`, `WHATSAPP_ACCESS_TOKEN` (System User, permanente),
+`WHATSAPP_VERIFY_TOKEN` (inventar · usar no handshake do webhook),
+`WHATSAPP_APP_SECRET` (prod · valida HMAC). URL do webhook =
+`https://[dominio]/api/whatsapp/webhook`. Sem essas envs o backend sobe
+normal · só não envia/recebe (parser e tela funcionam pra teste).
+
 ## Agente Executor Financeiro · Worker Railway (2026-05-26)
 
 Primeiro agente "ativo" do sistema (auditores existentes em

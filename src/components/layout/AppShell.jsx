@@ -55,6 +55,7 @@ const NAV_ITEMS = [
         title: 'Configurações',
         items: [
           { label: 'Permissões', description: 'Matriz cargo × módulo + usuários (cargo, áreas, overrides)', icon: Shield, path: '/admin/permissoes', perm: 'isAdmin' },
+          { label: 'Bot WhatsApp', description: 'Líderes vinculados + coletas de dados pelo WhatsApp', icon: MessageSquare, path: '/admin/whatsapp', module: 'integracao' },
         ],
       },
     ],
