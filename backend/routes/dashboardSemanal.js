@@ -300,8 +300,10 @@ router.get('/mensal', async (req, res) => {
 
     const acc = new Map();
     for (const r of filtered) {
+      const v = Number(r[indDef.coluna]) || 0;
+      if (!v) continue; // 0/null = sem dado · não cria ponto (linha não cai a 0)
       const key = `${r.mes}-${r.ano_calendario}`;
-      acc.set(key, (acc.get(key) || 0) + (Number(r[indDef.coluna]) || 0));
+      acc.set(key, (acc.get(key) || 0) + v);
     }
 
     const MES_NOMES = ['janeiro','fevereiro','março','abril','maio','junho',
@@ -371,6 +373,7 @@ router.get('/media-movel', async (req, res) => {
 
     for (const r of (data || [])) {
       const v = Number(r[indDef.coluna]) || 0;
+      if (!v) continue; // 0/null = sem dado (culto futuro materializado ou não preenchido)
       let ano, periodo;
       if (granularidade === 'mes') {
         ano = r.ano_calendario;
