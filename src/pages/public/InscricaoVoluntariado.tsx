@@ -37,14 +37,6 @@ function cpfValido(v: string) {
 }
 
 // ── Catalogos (espelham os valores reais que ja existem em vol_inscricoes) ──
-const AREAS = [
-  { value: 'sede', label: 'Sede (cultos do domingo · Quarta com Deus)' },
-  { value: 'kids', label: 'Kids (criancas)' },
-  { value: 'ami', label: 'AMI (adolescentes)' },
-  { value: 'bridge', label: 'Bridge (jovens)' },
-  { value: 'online', label: 'Online' },
-];
-
 const DONS = [
   'Encorajamento', 'Hospitalidade', 'Ensino', 'Lideranca', 'Ajuda',
   'Generosidade', 'Misericordia', 'Cura', 'Fe', 'Sabedoria',
@@ -229,8 +221,7 @@ function ChipToggle({ checked, onChange, label }: {
 export default function InscricaoVoluntariado() {
   const [form, setForm] = useState({
     nome: '', sobrenome: '', email: '', telefone: '',
-    cpf: '', data_nascimento: '',
-    area: '',
+    cpf: '', data_nascimento: '', nome_mae: '',
     participou_next: '',
     dom_predominante: '',
     website: '', // honeypot
@@ -240,6 +231,18 @@ export default function InscricaoVoluntariado() {
   const [error, setError] = useState('');
   const [sent, setSent] = useState(false);
 
+  const MAX_MINISTERIOS = 3;
+  // Areas que exigem dados do menor (LGPD): Kids e Bridge
+  const precisaDadosMenor = ministerios.includes('Kids') || ministerios.includes('Bridge');
+  // Deriva a area canonica (vol_inscricoes.area) a partir dos ministerios marcados
+  const deriveArea = (mins: string[]): string => {
+    if (mins.includes('Kids')) return 'kids';
+    if (mins.includes('Bridge')) return 'bridge';
+    if (mins.includes('AMI')) return 'ami';
+    if (mins.includes('Online')) return 'online';
+    return 'sede';
+  };
+
   const set = (k: string) => (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) => {
     let v = e.target.value;
     if (k === 'cpf') v = mascaraCpf(v);
@@ -248,7 +251,15 @@ export default function InscricaoVoluntariado() {
   };
 
   const toggleMinisterio = (m: string) => {
-    setMinisterios(prev => prev.includes(m) ? prev.filter(x => x !== m) : [...prev, m]);
+    setMinisterios(prev => {
+      if (prev.includes(m)) return prev.filter(x => x !== m);
+      if (prev.length >= MAX_MINISTERIOS) {
+        setError(`Voce pode escolher ate ${MAX_MINISTERIOS} areas.`);
+        return prev;
+      }
+      setError('');
+      return [...prev, m];
+    });
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -259,7 +270,9 @@ export default function InscricaoVoluntariado() {
     if (!form.email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email)) return setError('Email invalido');
     if (!form.telefone || soDigitos(form.telefone).length < 10) return setError('Telefone invalido');
     if (form.cpf && !cpfValido(form.cpf)) return setError('CPF invalido');
-    if (!form.area) return setError('Selecione uma area');
+    if (ministerios.length === 0) return setError('Escolha ao menos uma area pra servir');
+    if (precisaDadosMenor && !form.data_nascimento) return setError('Data de nascimento obrigatoria para Kids/Bridge');
+    if (precisaDadosMenor && (!form.nome_mae || form.nome_mae.trim().length < 2)) return setError('Nome da mae obrigatorio para Kids/Bridge');
 
     setLoading(true);
     try {
@@ -270,7 +283,8 @@ export default function InscricaoVoluntariado() {
         telefone: form.telefone,
         cpf: form.cpf || null,
         data_nascimento: form.data_nascimento || null,
-        area: form.area,
+        nome_mae: form.nome_mae || null,
+        area: deriveArea(ministerios),
         participou_next: form.participou_next || null,
         dom_predominante: form.dom_predominante || null,
         ministerios_interesse: ministerios,
@@ -361,17 +375,41 @@ export default function InscricaoVoluntariado() {
                 <Field id="telefone" label="Telefone (WhatsApp)" value={form.telefone} onChange={set('telefone')} required placeholder="(00) 00000-0000" inputMode="tel" autoComplete="tel" />
                 <Field id="cpf" label="CPF (opcional)" value={form.cpf} onChange={set('cpf')} placeholder="000.000.000-00" inputMode="numeric" autoComplete="off" />
               </Row>
-              <Field id="data_nascimento" label="Data de nascimento (opcional)" type="date" value={form.data_nascimento} onChange={set('data_nascimento')} autoComplete="bday" />
+              <Field
+                id="data_nascimento"
+                label={precisaDadosMenor ? 'Data de nascimento' : 'Data de nascimento (opcional)'}
+                type="date"
+                value={form.data_nascimento}
+                onChange={set('data_nascimento')}
+                required={precisaDadosMenor}
+                autoComplete="bday"
+              />
+              {precisaDadosMenor && (
+                <Field
+                  id="nome_mae"
+                  label="Nome da mae"
+                  value={form.nome_mae}
+                  onChange={set('nome_mae')}
+                  required
+                />
+              )}
 
               <SectionTitle>Onde voce quer servir</SectionTitle>
-              <SelectField
-                id="area"
-                label="Em qual area voce gostaria de servir?"
-                value={form.area}
-                onChange={set('area') as any}
-                options={AREAS}
-                required
-              />
+              <p style={{ fontSize: 12, color: '#a3a3a3', marginTop: -6, marginBottom: 14 }}>
+                Marque ate {MAX_MINISTERIOS} areas ({ministerios.length}/{MAX_MINISTERIOS}). Em duvida, marca "Onde for mais necessario".
+                {precisaDadosMenor && ' Kids/Bridge pedem data de nascimento e nome da mae acima.'}
+              </p>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 20 }}>
+                {MINISTERIOS.map(m => {
+                  const checked = ministerios.includes(m);
+                  const atingiuLimite = !checked && ministerios.length >= MAX_MINISTERIOS;
+                  return (
+                    <span key={m} style={{ opacity: atingiuLimite ? 0.4 : 1 }}>
+                      <ChipToggle label={m} checked={checked} onChange={() => toggleMinisterio(m)} />
+                    </span>
+                  );
+                })}
+              </div>
 
               <SectionTitle>Sua historia com a gente</SectionTitle>
               <SelectField
@@ -391,21 +429,6 @@ export default function InscricaoVoluntariado() {
                 onChange={set('dom_predominante') as any}
                 options={DONS.map(d => ({ value: d, label: d }))}
               />
-
-              <SectionTitle>Ministerios de interesse</SectionTitle>
-              <p style={{ fontSize: 12, color: '#a3a3a3', marginTop: -6, marginBottom: 14 }}>
-                Pode marcar quantos quiser. Se tiver duvida, marca "Onde for mais necessario".
-              </p>
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 20 }}>
-                {MINISTERIOS.map(m => (
-                  <ChipToggle
-                    key={m}
-                    label={m}
-                    checked={ministerios.includes(m)}
-                    onChange={() => toggleMinisterio(m)}
-                  />
-                ))}
-              </div>
 
               <button
                 type="submit"
