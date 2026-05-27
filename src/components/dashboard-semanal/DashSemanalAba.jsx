@@ -54,6 +54,16 @@ export default function DashSemanalAba() {
     staleTime: 5 * 60_000,
   });
 
+  // Ranking de semanas do ano filtrado · melhor (top 1) e pior (bottom 1).
+  // Usa o indicador primário (1º selecionado) e respeita o filtro de culto.
+  const indicadorRank = indicadoresSel[0] || null;
+  const { data: ranking } = useQuery({
+    queryKey: ['dash-sem', 'ranking', ano, indicadorRank, culto],
+    queryFn: () => api.ranking({ ano, indicador: indicadorRank, culto }),
+    enabled: !!indicadorRank,
+    staleTime: 60_000,
+  });
+
   // Fetch paralelo · 1 query por indicador selecionado · sempre busca TODOS os
   // cultos (o filtro `culto` é aplicado client-side nos cards/taxa pra manter o
   // chart com todas as barras visíveis · click numa barra alterna o filtro).
@@ -291,6 +301,42 @@ export default function DashSemanalAba() {
             <Loader2 className="h-4 w-4 animate-spin text-muted-foreground ml-2" />
           )}
 
+          {/* Melhor / Pior semana do ano filtrado · pula direto pra ela */}
+          {!isEmpty && (
+            <div className="flex items-end gap-2">
+              <button
+                onClick={() => ranking?.melhor && setSemana(ranking.melhor.semana)}
+                disabled={!ranking?.melhor || modoDdus}
+                title={ranking?.melhor
+                  ? `Melhor semana de ${ranking.rotulo} em ${ano}: ${ranking.melhor.label} · ${ranking.melhor.total.toLocaleString('pt-BR')}`
+                  : `Sem dados de ${ranking?.rotulo || 'indicador'} em ${ano}`}
+                className={`inline-flex items-center gap-1.5 px-3 py-2 text-xs font-medium rounded-lg border transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${
+                  ranking?.melhor && semana === ranking.melhor.semana
+                    ? 'bg-emerald-600 text-white border-emerald-600'
+                    : 'bg-card text-foreground border-border hover:border-emerald-500/50 hover:text-emerald-600'
+                }`}
+              >
+                <TrendingUp className="h-3.5 w-3.5" />
+                Melhor semana
+              </button>
+              <button
+                onClick={() => ranking?.pior && setSemana(ranking.pior.semana)}
+                disabled={!ranking?.pior || modoDdus}
+                title={ranking?.pior
+                  ? `Pior semana de ${ranking.rotulo} em ${ano}: ${ranking.pior.label} · ${ranking.pior.total.toLocaleString('pt-BR')}`
+                  : `Sem dados de ${ranking?.rotulo || 'indicador'} em ${ano}`}
+                className={`inline-flex items-center gap-1.5 px-3 py-2 text-xs font-medium rounded-lg border transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${
+                  ranking?.pior && semana === ranking.pior.semana
+                    ? 'bg-rose-600 text-white border-rose-600'
+                    : 'bg-card text-foreground border-border hover:border-rose-500/50 hover:text-rose-600'
+                }`}
+              >
+                <TrendingDown className="h-3.5 w-3.5" />
+                Pior semana
+              </button>
+            </div>
+          )}
+
           {/* Botao DDUS completo · 1 semana antes da apresentada */}
           <button
             onClick={toggleModoDdus}
@@ -305,6 +351,20 @@ export default function DashSemanalAba() {
             {modoDdus ? 'Sair · DDUS completo' : 'DDUS completo (1 semana antes)'}
           </button>
         </div>
+
+        {/* Dica · melhor e pior semana do ano (por indicador primário) */}
+        {!isEmpty && !modoDdus && ranking?.melhor && (
+          <p className="text-[11px] text-muted-foreground">
+            {ranking.rotulo} em {ano}
+            {culto !== 'todos' && cultoSelInfo ? ` · ${cultoSelInfo.name}` : ''}
+            {' · melhor: '}
+            <span className="font-semibold text-emerald-600">{ranking.melhor.label}</span>
+            {` (${ranking.melhor.total.toLocaleString('pt-BR')})`}
+            {' · pior: '}
+            <span className="font-semibold text-rose-600">{ranking.pior.label}</span>
+            {` (${ranking.pior.total.toLocaleString('pt-BR')})`}
+          </p>
+        )}
 
         {/* Banner explicativo quando modo DDUS esta ativo */}
         {modoDdus && (

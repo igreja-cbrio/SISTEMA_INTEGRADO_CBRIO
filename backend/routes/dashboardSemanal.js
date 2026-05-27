@@ -263,6 +263,83 @@ router.get('/semanal', async (req, res) => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
+// GET /ranking · melhor e pior semana de um ano (top/bottom 1)
+//   query: ano, indicador (default frequencia), culto (uuid opcional)
+//
+// Soma o indicador por semana ISO (mesma regra do /semanal · exclui cultos
+// sem kids quando o indicador é de kids, respeita filtro de culto). Considera
+// só semanas com total > 0 (ignora semanas futuras/sem dado).
+//
+// Resposta: { ano, indicador, rotulo,
+//             melhor: { semana, total, label, inicio, fim } | null,
+//             pior:   { semana, total, label, inicio, fim } | null,
+//             amostra }
+// ─────────────────────────────────────────────────────────────────────────────
+router.get('/ranking', async (req, res) => {
+  try {
+    const ano = parseInt(req.query.ano, 10);
+    const indicadorKey = req.query.indicador || 'frequencia';
+    const cultoId = req.query.culto && req.query.culto !== 'todos' ? req.query.culto : null;
+    if (!ano) return res.status(400).json({ error: 'ano é obrigatório' });
+    const indDef = INDICADORES[indicadorKey];
+    if (!indDef) return res.status(400).json({ error: 'indicador inválido' });
+
+    let q = supabase
+      .from('vw_dashboard_semanal')
+      .select(`service_type_id, semana_iso, ${indDef.coluna}`)
+      .eq('ano_iso', ano);
+    if (cultoId) q = q.eq('service_type_id', cultoId);
+    const { data, error } = await q;
+    if (error) throw error;
+
+    // Indicadores de Kids não se aplicam a cultos sem ministério infantil
+    let excluir = new Set();
+    if (indicadorKey.includes('kids')) {
+      const { data: semKids } = await supabase
+        .from('vol_service_types')
+        .select('id')
+        .eq('has_kids', false);
+      excluir = new Set((semKids || []).map(s => s.id));
+    }
+
+    const porSemana = new Map();
+    for (const r of (data || [])) {
+      if (excluir.has(r.service_type_id)) continue;
+      const v = Number(r[indDef.coluna]) || 0;
+      porSemana.set(r.semana_iso, (porSemana.get(r.semana_iso) || 0) + v);
+    }
+
+    // Só semanas com dado real (total > 0) entram no ranking
+    const semanas = [...porSemana.entries()]
+      .filter(([, total]) => total > 0)
+      .map(([semana, total]) => ({ semana, total }));
+
+    if (!semanas.length) {
+      return res.json({ ano, indicador: indicadorKey, rotulo: indDef.rotulo, melhor: null, pior: null, amostra: 0 });
+    }
+
+    const decorar = ({ semana, total }) => {
+      const { inicio, fim } = isoWeekRange(ano, semana);
+      return {
+        semana,
+        total,
+        label: `Sem ${semana} · ${fmtDateBr(inicio)} a ${fmtDateBr(fim)}`,
+        inicio: inicio.toISOString().slice(0, 10),
+        fim: fim.toISOString().slice(0, 10),
+      };
+    };
+
+    const melhor = decorar(semanas.reduce((a, b) => (b.total > a.total ? b : a)));
+    const pior = decorar(semanas.reduce((a, b) => (b.total < a.total ? b : a)));
+
+    res.json({ ano, indicador: indicadorKey, rotulo: indDef.rotulo, melhor, pior, amostra: semanas.length });
+  } catch (e) {
+    console.error('[DASH-SEM] ranking', e.message);
+    res.status(500).json({ error: 'Erro ao calcular ranking de semanas' });
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
 // GET /mensal · comparativo ano-a-ano por mês
 //   query: anos (csv, default 3 anos), indicador, culto, meses (csv opcional)
 //
