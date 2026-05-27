@@ -243,4 +243,105 @@ router.get('/diagnostics', async (req, res) => {
   }
 });
 
+// ══════════════════════════════════════════════════════════════
+// DIAGNOSTICO · existe CPF no Planning Center?
+// Verifica se ha campo custom de CPF no People do PCO e mede a cobertura
+// (quantas pessoas tem o campo preenchido). Usado pra decidir se da pra
+// migrar voluntarios do PCO pro nosso sistema linkando por CPF.
+// GET /api/voluntariado/pco-cpf-check
+// ══════════════════════════════════════════════════════════════
+const PC_PEOPLE_BASE = 'https://api.planningcenteronline.com/people/v2';
+const CPF_REGEX = /cpf|documento|national|nacional|rg\b|identidade/i;
+
+router.get('/pco-cpf-check', async (req, res) => {
+  try {
+    const { basic: credentials } = getPCCredentials();
+    const headers = { Authorization: `Basic ${credentials}` };
+
+    // 1. Total de pessoas no People (pra calcular % de cobertura)
+    let totalPeople = null;
+    try {
+      const peopleRes = await fetchWithRetry(`${PC_PEOPLE_BASE}/people?per_page=1`, headers);
+      if (peopleRes.ok) {
+        const j = await peopleRes.json();
+        totalPeople = j.meta?.total_count ?? null;
+      }
+    } catch (e) {
+      console.warn('[CPF-CHECK] people count:', e.message);
+    }
+
+    // 2. Lista TODAS as field definitions (custom fields) do People
+    const fieldDefs = [];
+    let offset = 0;
+    const perPage = 100;
+    while (true) {
+      const url = `${PC_PEOPLE_BASE}/field_definitions?per_page=${perPage}&offset=${offset}`;
+      const r = await fetchWithRetry(url, headers);
+      if (!r.ok) {
+        return res.status(r.status).json({
+          error: `Planning Center respondeu ${r.status} ao listar field_definitions. ` +
+            `Provavelmente o token nao tem escopo do produto People (so Services).`,
+        });
+      }
+      const j = await r.json();
+      for (const fd of (j.data || [])) {
+        fieldDefs.push({
+          id: fd.id,
+          name: fd.attributes?.name || '',
+          slug: fd.attributes?.slug || null,
+          data_type: fd.attributes?.data_type || null,
+        });
+      }
+      const total = j.meta?.total_count ?? fieldDefs.length;
+      offset += perPage;
+      if (offset >= total || !(j.data || []).length) break;
+    }
+
+    // 3. Identifica candidatos a CPF pelo nome
+    const candidatos = fieldDefs.filter(fd => CPF_REGEX.test(fd.name));
+
+    // 4. Pra cada candidato, mede quantas pessoas tem o campo preenchido
+    const cobertura = [];
+    for (const c of candidatos) {
+      let filled = null;
+      try {
+        const fdr = await fetchWithRetry(
+          `${PC_PEOPLE_BASE}/field_data?where[field_definition_id]=${c.id}&per_page=1`,
+          headers
+        );
+        if (fdr.ok) {
+          const j = await fdr.json();
+          filled = j.meta?.total_count ?? null;
+        }
+      } catch (e) {
+        console.warn('[CPF-CHECK] field_data:', e.message);
+      }
+      cobertura.push({
+        field: c.name,
+        field_id: c.id,
+        data_type: c.data_type,
+        pessoas_com_valor: filled,
+        cobertura_pct: (filled != null && totalPeople)
+          ? Math.round((filled / totalPeople) * 1000) / 10
+          : null,
+      });
+    }
+
+    res.json({
+      total_pessoas_pco: totalPeople,
+      total_custom_fields: fieldDefs.length,
+      tem_campo_cpf: candidatos.length > 0,
+      candidatos_cpf: cobertura,
+      // Lista geral pra inspecao manual caso o regex nao tenha pego
+      todos_custom_fields: fieldDefs.map(f => f.name),
+      conclusao: candidatos.length === 0
+        ? 'Nenhum custom field parecido com CPF no Planning Center. Migrar por email.'
+        : 'Existe(m) campo(s) candidato(s) a CPF · ver cobertura pra decidir.',
+    });
+  } catch (e) {
+    console.error('[CPF-CHECK] Error:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 module.exports = router;
