@@ -108,10 +108,10 @@ function Field({
           display: 'block', width: '100%',
           padding: as === 'textarea' ? '14px 0 8px' : '10px 0',
           fontSize: 14,
-          color: 'var(--cbrio-text)',
+          color: '#e5e5e5',
           background: 'transparent',
           border: 'none',
-          borderBottom: `2px solid ${focused ? '#00B39D' : 'var(--cbrio-border)'}`,
+          borderBottom: `2px solid ${focused ? '#00B39D' : 'rgba(255,255,255,0.18)'}`,
           outline: 'none',
           transition: 'border-color 0.3s',
           boxSizing: 'border-box',
@@ -123,7 +123,7 @@ function Field({
         position: 'absolute', left: 0,
         top: active ? -14 : 10,
         fontSize: active ? 11 : 14,
-        color: focused ? '#00B39D' : 'var(--cbrio-text3)',
+        color: focused ? '#00B39D' : '#a3a3a3',
         transition: 'all 0.2s', pointerEvents: 'none',
       }}>
         {label}{required && <span style={{ color: '#ef4444' }}> *</span>}
@@ -153,8 +153,8 @@ function SelectField({
         required={required}
         style={{
           display: 'block', width: '100%', padding: '10px 0', fontSize: 14,
-          color: 'var(--cbrio-text)', background: 'transparent', border: 'none',
-          borderBottom: `2px solid ${focused ? '#00B39D' : 'var(--cbrio-border)'}`,
+          color: '#e5e5e5', background: 'transparent', border: 'none',
+          borderBottom: `2px solid ${focused ? '#00B39D' : 'rgba(255,255,255,0.18)'}`,
           outline: 'none', transition: 'border-color 0.3s',
           appearance: 'none', WebkitAppearance: 'none',
           boxSizing: 'border-box', cursor: 'pointer',
@@ -171,14 +171,14 @@ function SelectField({
         position: 'absolute', left: 0,
         top: active ? -14 : 10,
         fontSize: active ? 11 : 14,
-        color: focused ? '#00B39D' : 'var(--cbrio-text3)',
+        color: focused ? '#00B39D' : '#a3a3a3',
         transition: 'all 0.2s', pointerEvents: 'none',
       }}>
         {label}{required && <span style={{ color: '#ef4444' }}> *</span>}
       </label>
       <span style={{
         position: 'absolute', right: 4, bottom: 12,
-        pointerEvents: 'none', color: 'var(--cbrio-text3)', fontSize: 12,
+        pointerEvents: 'none', color: '#a3a3a3', fontSize: 12,
       }}>▾</span>
     </div>
   );
@@ -190,7 +190,7 @@ function SectionTitle({ children }: { children: React.ReactNode }) {
       fontSize: 11, fontWeight: 700, textTransform: 'uppercase',
       letterSpacing: 1.2, color: '#00B39D',
       margin: '8px 0 14px', paddingBottom: 6,
-      borderBottom: '1px solid var(--cbrio-border)',
+      borderBottom: '1px solid rgba(255,255,255,0.18)',
     }}>
       {children}
     </h2>
@@ -215,8 +215,8 @@ function ChipToggle({ checked, onChange, label }: {
       style={{
         padding: '8px 12px', fontSize: 12, fontWeight: 600,
         background: checked ? '#00B39D' : 'transparent',
-        color: checked ? '#fff' : 'var(--cbrio-text2)',
-        border: `1px solid ${checked ? '#00B39D' : 'var(--cbrio-border)'}`,
+        color: checked ? '#fff' : '#d4d4d4',
+        border: `1px solid ${checked ? '#00B39D' : 'rgba(255,255,255,0.18)'}`,
         borderRadius: 999, cursor: 'pointer',
         transition: 'all 0.15s',
       }}
