@@ -1,20 +1,24 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
-import { LoginShapesBackground } from '../components/ui/shape-landing-hero';
+import AnimatedBackground from './public/AnimatedBackground';
+import { PublicThemeToggle } from './public/publicTheme';
+import { useTheme } from '../contexts/ThemeContext';
 
 // Paleta fixa do login · pagina sempre dark independente do tema do usuario,
 // senao a fonte fica invisivel em quem ta no tema claro.
-const COL = {
-  text: '#f5f5f5',
-  textMuted: '#a3a3a3',
-  textDim: '#737373',
-  border: 'rgba(255,255,255,0.18)',
-  borderFocus: '#00B39D',
-  cardBg: 'rgba(22,22,22,0.78)',
-  cardBorder: 'rgba(255,255,255,0.08)',
-  oauthBg: 'rgba(255,255,255,0.04)',
-  oauthHover: 'rgba(255,255,255,0.08)',
+const mkCOL = (isDark) => isDark ? {
+  text: '#f5f5f5', textMuted: '#a3a3a3', textDim: '#737373',
+  border: 'rgba(255,255,255,0.18)', borderFocus: '#00B39D',
+  cardBg: 'rgba(22,22,22,0.78)', cardBorder: 'rgba(255,255,255,0.08)',
+  oauthBg: 'rgba(255,255,255,0.04)', oauthHover: 'rgba(255,255,255,0.08)',
+  pageBg: '#0a0a0a',
+} : {
+  text: '#171717', textMuted: '#525252', textDim: '#737373',
+  border: 'rgba(0,0,0,0.18)', borderFocus: '#00B39D',
+  cardBg: 'rgba(255,255,255,0.92)', cardBorder: 'rgba(0,0,0,0.08)',
+  oauthBg: 'rgba(0,0,0,0.03)', oauthHover: 'rgba(0,0,0,0.07)',
+  pageBg: '#eef2f1',
 };
 
 function FloatingInput({ id, type, icon, label, value, onChange, rightAction, autoComplete }) {
@@ -99,6 +103,8 @@ const PlanningCenterIcon = () => (
 );
 
 export default function Login() {
+  const { isDark } = useTheme();
+  const COL = mkCOL(isDark);
   const { signInWithEmail, signInWithMicrosoft, signInWithGoogle, sendPasswordReset, user } = useAuth();
   const navigate = useNavigate();
   const [esqueciOpen, setEsqueciOpen] = useState(false);
@@ -202,8 +208,9 @@ export default function Login() {
   }
 
   return (
-    <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', position: 'relative', overflow: 'hidden', background: '#0a0a0a' }}>
-      <LoginShapesBackground />
+    <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', position: 'relative', overflow: 'hidden', background: COL.pageBg }}>
+      <AnimatedBackground />
+      <PublicThemeToggle />
 
       {/* Autofill do Chrome usa cor amarela no background · forca o fundo a ficar transparente */}
       <style>{`
@@ -225,7 +232,7 @@ export default function Login() {
       }}>
         <div style={{ textAlign: 'center', marginBottom: 32 }}>
           <img src="/logo-cbrio-icon.png" alt="CBRio" style={{ width: 72, height: 72, marginBottom: 12, display: 'inline-block' }} />
-          <h1 style={{ fontSize: 22, fontWeight: 800, color: COL.text, margin: 0 }}>CBRio ERP</h1>
+          <h1 style={{ fontSize: 24, fontWeight: 800, letterSpacing: -0.5, margin: 0, background: 'linear-gradient(90deg, #00B39D, #00d9bd)', WebkitBackgroundClip: 'text', backgroundClip: 'text', color: 'transparent' }}>CBRio ERP</h1>
           <p style={{ fontSize: 13, color: COL.textDim, marginTop: 4 }}>Sistema de gestão interna</p>
         </div>
 
