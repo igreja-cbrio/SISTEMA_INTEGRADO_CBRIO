@@ -333,7 +333,7 @@ UPDATE public.cultos c
    SET presencial_kids = d.valor,
        updated_at      = now()
   FROM dados d
-  JOIN public.vol_service_types st ON st.name = d.service_name
+  JOIN public.vol_service_types st ON lower(st.name) = lower(d.service_name)
  WHERE c.service_type_id = st.id
    AND c.data            = d.data::date
    AND c.presencial_kids IS DISTINCT FROM d.valor;
