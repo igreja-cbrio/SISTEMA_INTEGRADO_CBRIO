@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { publicVoluntariado } from '../../api';
-import { LoginShapesBackground } from '../../components/ui/shape-landing-hero';
+import AnimatedBackground from './AnimatedBackground';
+import { usePublicTheme, PublicThemeToggle, PublicPaletteCtx, usePublicPalette } from './publicTheme';
 
 // ── Helpers ──
 function soDigitos(v: string) { return (v || '').toString().replace(/\D+/g, ''); }
@@ -78,6 +79,7 @@ function Field({
   maxLength?: number; autoComplete?: string; inputMode?: any;
 }) {
   const [focused, setFocused] = useState(false);
+  const C = usePublicPalette();
   const active = focused || (value !== undefined && value !== null && String(value).length > 0);
   const Tag: any = as;
   return (
@@ -100,10 +102,10 @@ function Field({
           display: 'block', width: '100%',
           padding: as === 'textarea' ? '14px 0 8px' : '10px 0',
           fontSize: 14,
-          color: '#e5e5e5',
+          color: C.text,
           background: 'transparent',
           border: 'none',
-          borderBottom: `2px solid ${focused ? '#00B39D' : 'rgba(255,255,255,0.18)'}`,
+          borderBottom: `2px solid ${focused ? '#00B39D' : C.inputBorder}`,
           outline: 'none',
           transition: 'border-color 0.3s',
           boxSizing: 'border-box',
@@ -115,7 +117,7 @@ function Field({
         position: 'absolute', left: 0,
         top: active ? -14 : 10,
         fontSize: active ? 11 : 14,
-        color: focused ? '#00B39D' : '#a3a3a3',
+        color: focused ? '#00B39D' : C.text3,
         transition: 'all 0.2s', pointerEvents: 'none',
       }}>
         {label}{required && <span style={{ color: '#ef4444' }}> *</span>}
@@ -132,6 +134,7 @@ function SelectField({
   options: { value: string; label: string }[]; required?: boolean;
 }) {
   const [focused, setFocused] = useState(false);
+  const C = usePublicPalette();
   const active = focused || (value !== undefined && value !== null && String(value).length > 0);
   return (
     <div style={{ position: 'relative', marginBottom: 20 }}>
@@ -145,8 +148,8 @@ function SelectField({
         required={required}
         style={{
           display: 'block', width: '100%', padding: '10px 0', fontSize: 14,
-          color: '#e5e5e5', background: 'transparent', border: 'none',
-          borderBottom: `2px solid ${focused ? '#00B39D' : 'rgba(255,255,255,0.18)'}`,
+          color: C.text, background: 'transparent', border: 'none',
+          borderBottom: `2px solid ${focused ? '#00B39D' : C.inputBorder}`,
           outline: 'none', transition: 'border-color 0.3s',
           appearance: 'none', WebkitAppearance: 'none',
           boxSizing: 'border-box', cursor: 'pointer',
@@ -154,7 +157,7 @@ function SelectField({
       >
         <option value=""></option>
         {options.map((o) => (
-          <option key={o.value} value={o.value} style={{ background: '#161616', color: '#e5e5e5' }}>
+          <option key={o.value} value={o.value} style={{ background: C.optionBg, color: C.text }}>
             {o.label}
           </option>
         ))}
@@ -163,26 +166,27 @@ function SelectField({
         position: 'absolute', left: 0,
         top: active ? -14 : 10,
         fontSize: active ? 11 : 14,
-        color: focused ? '#00B39D' : '#a3a3a3',
+        color: focused ? '#00B39D' : C.text3,
         transition: 'all 0.2s', pointerEvents: 'none',
       }}>
         {label}{required && <span style={{ color: '#ef4444' }}> *</span>}
       </label>
       <span style={{
         position: 'absolute', right: 4, bottom: 12,
-        pointerEvents: 'none', color: '#a3a3a3', fontSize: 12,
+        pointerEvents: 'none', color: C.text3, fontSize: 12,
       }}>▾</span>
     </div>
   );
 }
 
 function SectionTitle({ children }: { children: React.ReactNode }) {
+  const C = usePublicPalette();
   return (
     <h2 style={{
       fontSize: 11, fontWeight: 700, textTransform: 'uppercase',
       letterSpacing: 1.2, color: '#00B39D',
       margin: '8px 0 14px', paddingBottom: 6,
-      borderBottom: '1px solid rgba(255,255,255,0.18)',
+      borderBottom: `1px solid ${C.inputBorder}`,
     }}>
       {children}
     </h2>
@@ -200,6 +204,7 @@ function Row({ children }: { children: React.ReactNode }) {
 function ChipToggle({ checked, onChange, label }: {
   checked: boolean; onChange: () => void; label: string;
 }) {
+  const C = usePublicPalette();
   return (
     <button
       type="button"
@@ -207,8 +212,8 @@ function ChipToggle({ checked, onChange, label }: {
       style={{
         padding: '8px 12px', fontSize: 12, fontWeight: 600,
         background: checked ? '#00B39D' : 'transparent',
-        color: checked ? '#fff' : '#d4d4d4',
-        border: `1px solid ${checked ? '#00B39D' : 'rgba(255,255,255,0.18)'}`,
+        color: checked ? '#fff' : C.text2,
+        border: `1px solid ${checked ? '#00B39D' : C.inputBorder}`,
         borderRadius: 999, cursor: 'pointer',
         transition: 'all 0.15s',
       }}
@@ -230,6 +235,7 @@ export default function InscricaoVoluntariado() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [sent, setSent] = useState(false);
+  const { C } = usePublicTheme();
 
   const MAX_MINISTERIOS = 3;
   // Areas que exigem dados do menor (LGPD): Kids e Bridge
@@ -298,17 +304,19 @@ export default function InscricaoVoluntariado() {
   };
 
   return (
+    <PublicPaletteCtx.Provider value={C}>
     <div style={{
       minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center',
       position: 'relative', overflow: 'hidden',
-      padding: '40px 16px', background: '#0a0a0a',
+      padding: '40px 16px', background: C.pageBg,
     }}>
-      <LoginShapesBackground />
+      <AnimatedBackground />
+      <PublicThemeToggle />
 
       <div style={{
         position: 'relative', zIndex: 1, width: '100%', maxWidth: 640,
-        background: 'rgba(22,22,22,0.78)', backdropFilter: 'blur(24px)',
-        border: '1px solid rgba(255,255,255,0.06)', borderRadius: 20,
+        background: C.card, backdropFilter: 'blur(24px)',
+        border: `1px solid ${C.cardBorder}`, borderRadius: 20,
         padding: '40px 36px',
       }}>
         <div style={{ textAlign: 'center', marginBottom: 28 }}>
@@ -317,10 +325,10 @@ export default function InscricaoVoluntariado() {
             alt="CBRio"
             style={{ width: 72, height: 72, marginBottom: 12, display: 'inline-block' }}
           />
-          <h1 style={{ fontSize: 22, fontWeight: 800, color: '#e5e5e5', margin: 0 }}>
+          <h1 style={{ fontSize: 22, fontWeight: 800, color: C.text, margin: 0 }}>
             Quero ser voluntario
           </h1>
-          <p style={{ fontSize: 13, color: '#a3a3a3', marginTop: 6, lineHeight: 1.5 }}>
+          <p style={{ fontSize: 13, color: C.text3, marginTop: 6, lineHeight: 1.5 }}>
             Sirva com a gente · cada dom encontra um lugar. Conte um pouco sobre voce
             e nossa equipe entra em contato pra te conectar com a area certa.
           </p>
@@ -337,10 +345,10 @@ export default function InscricaoVoluntariado() {
               display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
               fontSize: 28, marginBottom: 16,
             }}>&#10003;</div>
-            <h2 style={{ fontSize: 18, fontWeight: 700, color: '#e5e5e5', margin: 0 }}>
+            <h2 style={{ fontSize: 18, fontWeight: 700, color: C.text, margin: 0 }}>
               Inscricao recebida!
             </h2>
-            <p style={{ fontSize: 13, color: '#a3a3a3', marginTop: 10, lineHeight: 1.5 }}>
+            <p style={{ fontSize: 13, color: C.text3, marginTop: 10, lineHeight: 1.5 }}>
               Recebemos sua inscricao. Em ate 7 dias nossa equipe entra em contato
               pelo WhatsApp ou email pra falar dos proximos passos. Obrigado por
               querer servir com a gente!
@@ -395,7 +403,7 @@ export default function InscricaoVoluntariado() {
               )}
 
               <SectionTitle>Onde voce quer servir</SectionTitle>
-              <p style={{ fontSize: 12, color: '#a3a3a3', marginTop: -6, marginBottom: 14 }}>
+              <p style={{ fontSize: 12, color: C.text3, marginTop: -6, marginBottom: 14 }}>
                 Marque ate {MAX_MINISTERIOS} areas ({ministerios.length}/{MAX_MINISTERIOS}). Em duvida, marca "Onde for mais necessario".
                 {precisaDadosMenor && ' Kids/Bridge pedem data de nascimento e nome da mae acima.'}
               </p>
@@ -445,7 +453,7 @@ export default function InscricaoVoluntariado() {
               </button>
 
               <p style={{
-                fontSize: 11, color: '#737373', textAlign: 'center', marginTop: 16, lineHeight: 1.5,
+                fontSize: 11, color: C.textDim, textAlign: 'center', marginTop: 16, lineHeight: 1.5,
               }}>
                 Ao se inscrever, voce concorda em receber contato da equipe da CBRio sobre
                 voluntariado e oportunidades de servir.
@@ -455,5 +463,6 @@ export default function InscricaoVoluntariado() {
         )}
       </div>
     </div>
+    </PublicPaletteCtx.Provider>
   );
 }
