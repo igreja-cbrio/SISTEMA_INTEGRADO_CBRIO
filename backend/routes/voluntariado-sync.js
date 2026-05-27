@@ -71,6 +71,86 @@ router.post('/sync', async (req, res) => {
 });
 
 // ══════════════════════════════════════════════════════════════
+// DIAGNOSTICO — por que schedules_synced = 0?
+// Replica o caminho de escalas do sync pra UM dia (default hoje) e
+// retorna o status cru da API do PCO + contagem de team_members por
+// plano. Read-only · nao grava nada. Igual padrao do pco-cpf-check.
+// ══════════════════════════════════════════════════════════════
+router.get('/pco-schedule-debug', async (req, res) => {
+  try {
+    const alvo = req.query.data || new Date().toISOString().slice(0, 10); // yyyy-MM-dd
+    const { basic: credentials } = getPCCredentials();
+    const serviceTypes = await fetchAllServiceTypes(credentials);
+    if (!serviceTypes.length) {
+      return res.status(400).json({ error: 'Sem service types · token PCO sem escopo Services?' });
+    }
+
+    const headers = { Authorization: `Basic ${credentials}` };
+    const resultado = [];
+
+    for (const st of serviceTypes) {
+      const plans = await fetchAllPlans(PC_SERVICES_BASE, st.id, credentials);
+      const planosDoDia = (plans || []).filter((p) => {
+        const d = (p.attributes?.sort_date || '').slice(0, 10);
+        return d === alvo;
+      });
+      if (!planosDoDia.length) continue;
+
+      for (const plan of planosDoDia) {
+        const url = `${PC_SERVICES_BASE}/service_types/${st.id}/plans/${plan.id}/team_members?per_page=10&include=person`;
+        let httpStatus = null, memberCount = null, sample = null, bodySample = null;
+        try {
+          const r = await fetchWithRetry(url, headers);
+          httpStatus = r.status;
+          if (r.ok) {
+            const d = await r.json();
+            memberCount = (d.data || []).length;
+            const m = d.data?.[0];
+            if (m) {
+              sample = {
+                name: m.attributes?.name || null,
+                status: m.attributes?.status || null,
+                team_position: m.attributes?.team_position_name || null,
+                tem_person_rel: !!m.relationships?.person?.data?.id,
+                tem_person_include: (d.included || []).some((i) => i.type === 'Person'),
+              };
+            }
+          } else {
+            bodySample = (await r.text().catch(() => '')).slice(0, 300);
+          }
+        } catch (e) {
+          bodySample = e.message;
+        }
+
+        resultado.push({
+          service_type: st.attributes?.name,
+          service_type_id: st.id,
+          plan_id: plan.id,
+          plan_date: plan.attributes?.sort_date,
+          plan_title: plan.attributes?.title,
+          team_members_http_status: httpStatus,
+          team_members_count: memberCount,
+          sample_member: sample,
+          error_body: bodySample,
+        });
+      }
+    }
+
+    res.json({
+      data_alvo: alvo,
+      total_planos_no_dia: resultado.length,
+      diagnostico: resultado,
+      leitura: resultado.length === 0
+        ? 'Nenhum plano do PCO nessa data · confira se a escala foi montada no Planning Center pra esse dia/tipo de culto.'
+        : 'Se team_members_count=0 com http 200 → escala vazia no PCO. Se http 403/401 → escopo do token. Se count>0 → bug no processamento (upsert).',
+    });
+  } catch (e) {
+    console.error('[VOL SYNC] pco-schedule-debug:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ══════════════════════════════════════════════════════════════
 // SYNC — HISTORICAL (date range)
 // ══════════════════════════════════════════════════════════════
 router.post('/sync-historical', async (req, res) => {
