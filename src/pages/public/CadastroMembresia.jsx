@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import { cadastroPublico } from '../../api';
 import { useHomeScreenMeta } from '@/hooks/useHomeScreenMeta';
-import { LoginShapesBackground } from '../../components/ui/shape-landing-hero';
+import AnimatedBackground from './AnimatedBackground';
 import { usePublicTheme, PublicThemeToggle } from './publicTheme';
 import { MultistepFormShell } from '../../components/ui/multistep-form';
 import MemberWalletPass from '../../components/membresia/MemberWalletPass';
@@ -539,7 +539,7 @@ export default function CadastroMembresia() {
       position: 'relative', overflow: 'hidden',
       padding: '40px 16px', background: C.pageBg,
     }}>
-      {C.shapes && <LoginShapesBackground />}
+      <AnimatedBackground />
       <PublicThemeToggle />
 
       <div style={{

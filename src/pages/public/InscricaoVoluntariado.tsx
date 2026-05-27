@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { publicVoluntariado } from '../../api';
-import { LoginShapesBackground } from '../../components/ui/shape-landing-hero';
+import AnimatedBackground from './AnimatedBackground';
 import { usePublicTheme, PublicThemeToggle, PublicPaletteCtx, usePublicPalette } from './publicTheme';
 
 // ── Helpers ──
@@ -310,7 +310,7 @@ export default function InscricaoVoluntariado() {
       position: 'relative', overflow: 'hidden',
       padding: '40px 16px', background: C.pageBg,
     }}>
-      {C.shapes && <LoginShapesBackground />}
+      <AnimatedBackground />
       <PublicThemeToggle />
 
       <div style={{

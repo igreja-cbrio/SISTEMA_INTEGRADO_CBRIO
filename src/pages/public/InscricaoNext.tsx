@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { next as nextApi } from '../../api';
-import { LoginShapesBackground } from '../../components/ui/shape-landing-hero';
+import AnimatedBackground from './AnimatedBackground';
 import { usePublicTheme, PublicThemeToggle } from './publicTheme';
 
 // ── Helpers de mascara ──
@@ -241,7 +241,7 @@ export default function InscricaoNext() {
       position: 'relative', overflow: 'hidden',
       padding: '40px 16px', background: C.pageBg,
     }}>
-      {C.shapes && <LoginShapesBackground />}
+      <AnimatedBackground />
       <PublicThemeToggle />
 
       <div style={{

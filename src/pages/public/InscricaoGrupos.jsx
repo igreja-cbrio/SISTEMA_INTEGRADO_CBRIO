@@ -12,7 +12,7 @@
 
 import { useState, useEffect, useMemo } from 'react';
 import { gruposPublic } from '../../api';
-import { LoginShapesBackground } from '../../components/ui/shape-landing-hero';
+import AnimatedBackground from './AnimatedBackground';
 import GrupoSelector from '../../components/grupos/GrupoSelector';
 import { CheckCircle2, ArrowLeft, Users } from 'lucide-react';
 
@@ -120,7 +120,7 @@ export default function InscricaoGrupos() {
       minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center',
       position: 'relative', overflow: 'hidden', padding: '40px 16px', background: '#0a0a0a',
     }}>
-      <LoginShapesBackground />
+      <AnimatedBackground />
 
       <div style={{ position: 'relative', zIndex: 10, width: '100%', maxWidth: 720 }}>
         <div style={{ textAlign: 'center', marginBottom: 24 }}>
