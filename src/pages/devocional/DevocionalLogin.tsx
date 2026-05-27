@@ -7,6 +7,8 @@ import { Label } from '../../components/ui/label';
 import { Card } from '../../components/ui/card';
 import { BookOpen, Loader2, Mail } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
+import AnimatedBackground from '../public/AnimatedBackground';
+import { PublicThemeToggle } from '../public/publicTheme';
 
 export default function DevocionalLogin() {
   const navigate = useNavigate();
@@ -45,13 +47,15 @@ export default function DevocionalLogin() {
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center p-4" style={{ background: 'var(--cbrio-bg)' }}>
-      <Card className="w-full max-w-md p-6 space-y-5">
+    <div className="min-h-screen flex items-center justify-center p-4 relative overflow-hidden" style={{ background: 'var(--cbrio-bg)' }}>
+      <AnimatedBackground />
+      <PublicThemeToggle />
+      <Card className="w-full max-w-md p-6 space-y-5 relative z-10">
         <div className="text-center">
           <div className="inline-flex p-3 rounded-full bg-primary/10 mb-3">
             <BookOpen className="h-7 w-7 text-primary" />
           </div>
-          <h1 className="text-xl font-bold">Devocional CBRio</h1>
+          <h1 className="text-xl font-bold" style={{ background: 'linear-gradient(90deg, #00B39D, #00d9bd)', WebkitBackgroundClip: 'text', backgroundClip: 'text', color: 'transparent' }}>Devocional CBRio</h1>
           <p className="text-sm text-muted-foreground mt-1">Acesse com seu email cadastrado pra ler o devocional do dia</p>
         </div>
 
