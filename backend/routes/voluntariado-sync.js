@@ -441,4 +441,119 @@ router.post('/backfill-cpf', async (req, res) => {
   }
 });
 
+// ══════════════════════════════════════════════════════════════
+// Helpers de unificacao vol_profiles <-> mem_membros (frente 1)
+// ══════════════════════════════════════════════════════════════
+// Pagina vol_profiles sem cpf que ja tem membresia_id (link feito pelo
+// trigger trg_vol_profiles_link_membro). vol_profiles tem ~centenas de
+// linhas · paginacao defensiva contra o cap de 1000 do PostgREST.
+async function _fetchVolSemCpfComLink() {
+  const rows = [];
+  let from = 0;
+  const page = 1000;
+  while (true) {
+    const { data, error } = await supabase
+      .from('vol_profiles')
+      .select('id, membresia_id')
+      .is('cpf', null)
+      .not('membresia_id', 'is', null)
+      .range(from, from + page - 1);
+    if (error) throw error;
+    if (!data || !data.length) break;
+    rows.push(...data);
+    if (data.length < page) break;
+    from += page;
+  }
+  return rows;
+}
+
+// Mapa membro_id -> cpf (normalizado 11 digitos) so dos membros que tem cpf.
+async function _fetchCpfPorMembro(memIds) {
+  const map = new Map();
+  for (let i = 0; i < memIds.length; i += 300) {
+    const batch = memIds.slice(i, i + 300);
+    const { data, error } = await supabase
+      .from('mem_membros')
+      .select('id, cpf')
+      .in('id', batch)
+      .not('cpf', 'is', null);
+    if (error) throw error;
+    for (const m of (data || [])) {
+      const digits = String(m.cpf || '').replace(/\D+/g, '');
+      if (digits.length === 11) map.set(m.id, digits);
+    }
+  }
+  return map;
+}
+
+// ══════════════════════════════════════════════════════════════
+// DIAGNOSTICO · cobertura de CPF dos voluntarios (read-only)
+// GET /api/voluntariado/vol-cpf-coverage
+// ══════════════════════════════════════════════════════════════
+router.get('/vol-cpf-coverage', async (req, res) => {
+  try {
+    const headCount = (q) => q.select('id', { count: 'exact', head: true });
+    const [tot, comCpf, comMembro] = await Promise.all([
+      headCount(supabase.from('vol_profiles')),
+      headCount(supabase.from('vol_profiles')).not('cpf', 'is', null),
+      headCount(supabase.from('vol_profiles')).not('membresia_id', 'is', null),
+    ]);
+    const total = tot.count || 0;
+    const com_cpf = comCpf.count || 0;
+    const com_membro = comMembro.count || 0;
+
+    const semCpfComLink = await _fetchVolSemCpfComLink();
+    const memIds = [...new Set(semCpfComLink.map(v => v.membresia_id))];
+    const cpfPorMembro = await _fetchCpfPorMembro(memIds);
+    const backfillavel = semCpfComLink.filter(v => cpfPorMembro.has(v.membresia_id)).length;
+
+    res.json({
+      total_voluntarios: total,
+      com_cpf,
+      sem_cpf: total - com_cpf,
+      com_membro_vinculado: com_membro,
+      sem_membro_vinculado: total - com_membro,
+      backfill_possivel_agora: backfillavel,
+      explicacao: 'backfill_possivel_agora = voluntarios sem CPF cujo membro vinculado JA tem CPF. Rode POST /backfill-cpf-from-membro pra aplicar.',
+    });
+  } catch (e) {
+    console.error('[VOL-CPF-COVERAGE] Error:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ══════════════════════════════════════════════════════════════
+// ACAO · copia CPF do mem_membros vinculado pro vol_profiles onde faltar
+// POST /api/voluntariado/backfill-cpf-from-membro
+// Seguro: nunca sobrescreve CPF existente. O trigger nao re-linka porque
+// membresia_id ja esta preenchido.
+// ══════════════════════════════════════════════════════════════
+router.post('/backfill-cpf-from-membro', async (req, res) => {
+  try {
+    const semCpfComLink = await _fetchVolSemCpfComLink();
+    const memIds = [...new Set(semCpfComLink.map(v => v.membresia_id))];
+    const cpfPorMembro = await _fetchCpfPorMembro(memIds);
+
+    let updated = 0;
+    let errors = 0;
+    for (const v of semCpfComLink) {
+      const cpf = cpfPorMembro.get(v.membresia_id);
+      if (!cpf) continue;
+      const { error } = await supabase.from('vol_profiles').update({ cpf }).eq('id', v.id);
+      if (error) errors++; else updated++;
+    }
+
+    res.json({
+      success: true,
+      candidatos: semCpfComLink.length,
+      membros_com_cpf: cpfPorMembro.size,
+      updated,
+      errors,
+    });
+  } catch (e) {
+    console.error('[VOL-CPF-FROM-MEMBRO] Error:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 module.exports = router;
