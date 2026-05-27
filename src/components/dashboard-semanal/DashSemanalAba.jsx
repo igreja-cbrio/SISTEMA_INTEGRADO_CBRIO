@@ -7,7 +7,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '.
 import { Loader2, TrendingUp, TrendingDown, Users, GitCompare, Check, Calendar as CalIcon, Tv } from 'lucide-react';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend, LabelList, Cell,
-  ComposedChart, Line,
+  ComposedChart,
 } from 'recharts';
 import { INDICADORES } from '../../pages/DashboardSemanal';
 import KpiCard from './KpiCard';
@@ -469,16 +469,6 @@ export default function DashSemanalAba() {
                         domain={[0, 'auto']}
                       />
                     )}
-                    {/* Eixo invisivel da linha de variacao · permite valores
-                        negativos sem afetar o eixo das barras laranja */}
-                    {isSingle && (
-                      <YAxis
-                        yAxisId="var"
-                        orientation="right"
-                        hide
-                        domain={['dataMin - 10', 'dataMax + 10']}
-                      />
-                    )}
                     <Tooltip
                       cursor={{ fill: 'rgba(0,179,157,0.06)' }}
                       contentStyle={{ borderRadius: 8, fontSize: 12 }}
@@ -497,6 +487,7 @@ export default function DashSemanalAba() {
                           yAxisId="left"
                           dataKey="valor_absoluto"
                           name="Valor Absoluto"
+                          fill={C.primary}
                           radius={[6, 6, 0, 0]}
                           animationDuration={900}
                           style={{ cursor: 'pointer' }}
@@ -514,6 +505,7 @@ export default function DashSemanalAba() {
                           yAxisId="left"
                           dataKey="media"
                           name="Média Histórica"
+                          fill={C.media}
                           radius={[6, 6, 0, 0]}
                           animationDuration={1100}
                           style={{ cursor: 'pointer' }}
@@ -532,6 +524,7 @@ export default function DashSemanalAba() {
                             yAxisId="right"
                             dataKey="taxa"
                             name="Taxa de ocupação"
+                            fill={C.taxa}
                             radius={[6, 6, 0, 0]}
                             animationDuration={1300}
                             onClick={onClickBarra}
@@ -552,31 +545,6 @@ export default function DashSemanalAba() {
                             />
                           </Bar>
                         )}
-                        {/* Linha de variacao % por culto · eixo invisivel proprio
-                            (var) pra nao afetar a escala das barras laranjas */}
-                        <Line
-                          yAxisId="var"
-                          type="monotone"
-                          dataKey="variacao"
-                          name="Variação por culto"
-                          stroke="#8b5cf6"
-                          strokeWidth={2.5}
-                          dot={{ r: 4, fill: '#8b5cf6', strokeWidth: 0 }}
-                          activeDot={{ r: 6 }}
-                          animationDuration={1500}
-                          connectNulls
-                        >
-                          <LabelList
-                            dataKey="variacao"
-                            position="top"
-                            formatter={v => {
-                              if (v == null) return '';
-                              const s = v > 0 ? '+' : '';
-                              return `${s}${v}%`;
-                            }}
-                            style={{ fontSize: 10, fontWeight: 700, fill: '#8b5cf6' }}
-                          />
-                        </Line>
                       </>
                     ) : (
                       datasets.map((d, idx) => (
