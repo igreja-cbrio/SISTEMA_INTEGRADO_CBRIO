@@ -947,8 +947,68 @@ router.post('/check-ins', async (req, res) => {
         .update({ confirmation_status: 'confirmed' }).eq('id', schedule_id).eq('confirmation_status', 'pending');
     }
 
-    res.json({ ...data, isUnscheduled: !!resolvedUnscheduled });
+    // Sinaliza ao operador se o voluntario ainda nao tem CPF cadastrado, pra
+    // oferecer a captura logo apos o check-in (frente 2 da unificacao).
+    let needsCpf = false;
+    let resolvedVolunteerId = volunteer_id || null;
+    if (!resolvedVolunteerId && schedule_id) {
+      const { data: sch } = await supabase.from('vol_schedules')
+        .select('volunteer_id').eq('id', schedule_id).maybeSingle();
+      resolvedVolunteerId = sch?.volunteer_id || null;
+    }
+    if (resolvedVolunteerId) {
+      const { data: vp } = await supabase.from('vol_profiles')
+        .select('cpf').eq('id', resolvedVolunteerId).maybeSingle();
+      needsCpf = !!vp && !vp.cpf;
+    }
+
+    res.json({ ...data, isUnscheduled: !!resolvedUnscheduled, volunteer_id: resolvedVolunteerId, needs_cpf: needsCpf });
   } catch (e) { res.status(500).json({ error: 'Erro ao registrar check-in' }); }
+});
+
+// Atualiza dados de contato de UM vol_profile (operador do check-in preenche
+// o CPF/telefone/email do voluntario que acabou de chegar). Update parcial:
+// so grava o que vier, nunca apaga valor existente. O trigger BEFORE UPDATE
+// OF cpf vincula ao mem_membros automaticamente.
+router.put('/profiles/:id/contact', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { cpf, phone, email } = req.body || {};
+
+    const { data: prof, error: fetchErr } = await supabase.from('vol_profiles')
+      .select('id, cpf, phone, email').eq('id', id).maybeSingle();
+    if (fetchErr) return res.status(400).json({ error: fetchErr.message });
+    if (!prof) return res.status(404).json({ error: 'Voluntario nao encontrado' });
+
+    const update = {};
+
+    if (cpf != null && String(cpf).trim() !== '') {
+      const cleanCpf = String(cpf).replace(/\D/g, '');
+      if (cleanCpf.length !== 11) return res.status(400).json({ error: 'CPF invalido' });
+      update.cpf = cleanCpf;
+    }
+    if (phone != null && String(phone).trim() !== '') {
+      update.phone = String(phone).replace(/\D/g, '');
+    }
+    if (email != null && String(email).trim() !== '') {
+      const e = String(email).toLowerCase().trim();
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e)) return res.status(400).json({ error: 'Email invalido' });
+      update.email = e;
+    }
+
+    if (!Object.keys(update).length) {
+      return res.status(400).json({ error: 'Nada para atualizar' });
+    }
+
+    const { data: updated, error } = await supabase.from('vol_profiles')
+      .update(update).eq('id', id).select('id, full_name, cpf, phone, email, membresia_id').single();
+    if (error) return res.status(400).json({ error: error.message });
+
+    res.json({ success: true, profile: updated });
+  } catch (e) {
+    console.error('[Vol] update contact error:', e.message);
+    res.status(500).json({ error: 'Erro ao atualizar contato' });
+  }
 });
 
 // Historico de check-ins do voluntario logado (self-service)
