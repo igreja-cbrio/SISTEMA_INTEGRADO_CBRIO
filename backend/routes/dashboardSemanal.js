@@ -200,18 +200,30 @@ router.get('/semanal', async (req, res) => {
       };
     });
 
-    items.sort((a, b) => {
+    // Indicadores de Kids nao se aplicam a cultos sem ministerio infantil
+    // (AMI, Bridge · has_kids=false). Remove pra nao poluir o grafico com zeros.
+    let itemsVisiveis = items;
+    if (indicadorKey.includes('kids')) {
+      const { data: semKids } = await supabase
+        .from('vol_service_types')
+        .select('id')
+        .eq('has_kids', false);
+      const excluir = new Set((semKids || []).map(s => s.id));
+      itemsVisiveis = items.filter(it => !excluir.has(it.service_type_id));
+    }
+
+    itemsVisiveis.sort((a, b) => {
       const da = a.recurrence_day ?? 99;
       const db = b.recurrence_day ?? 99;
       if (da !== db) return da - db;
       return (a.recurrence_time || '').localeCompare(b.recurrence_time || '');
     });
 
-    const total = items.reduce((s, i) => s + i.valor_absoluto, 0);
-    const sumMedias = items.reduce((s, i) => s + i.media, 0);
-    const mediaGeral = items.length ? Math.round(sumMedias / items.length) : 0;
+    const total = itemsVisiveis.reduce((s, i) => s + i.valor_absoluto, 0);
+    const sumMedias = itemsVisiveis.reduce((s, i) => s + i.media, 0);
+    const mediaGeral = itemsVisiveis.length ? Math.round(sumMedias / itemsVisiveis.length) : 0;
     const variacao_pct = mediaGeral > 0 ? Math.round(((total - mediaGeral) / mediaGeral) * 100) : 0;
-    const totalPresencial = items.reduce((s, i) => s + (i.total_presencial || 0), 0);
+    const totalPresencial = itemsVisiveis.reduce((s, i) => s + (i.total_presencial || 0), 0);
     const taxa_ocupacao_geral = indDef.usa_ocupacao
       ? Math.round((total / CAPACIDADE_TEMPLO) * 1000) / 10
       : Math.round((totalPresencial / CAPACIDADE_TEMPLO) * 1000) / 10;
