@@ -91,6 +91,7 @@ export default function VolInscricoes() {
   const [search, setSearch] = useState<string>('');
   const [searchInput, setSearchInput] = useState<string>('');
   const [page, setPage] = useState(0);
+  const [copied, setCopied] = useState(false);
   const pageSize = 50;
 
   const { data, isLoading } = useQuery<InscricoesSummary>({
@@ -137,7 +138,6 @@ export default function VolInscricoes() {
   const formUrl = typeof window !== 'undefined'
     ? `${window.location.origin}/inscricao-voluntariado`
     : '/inscricao-voluntariado';
-  const [copied, setCopied] = useState(false);
   const handleCopyLink = async () => {
     try {
       await navigator.clipboard.writeText(formUrl);
