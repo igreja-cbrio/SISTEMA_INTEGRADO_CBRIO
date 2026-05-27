@@ -47,7 +47,7 @@ export default function AnimatedBackground() {
       {logos.map(l => (
         <motion.img
           key={l.id}
-          src="/logo-cbrio.svg"
+          src="/logo-cbrio-icon.png"
           alt=""
           className="absolute select-none"
           style={{

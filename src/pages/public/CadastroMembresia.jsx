@@ -71,7 +71,7 @@ function cpfValido(v) {
 // ── Input reutilizável com label flutuante ──
 function Field({ id, label, type = 'text', value, onChange, required, placeholder, as = 'input', rows, maxLength, autoComplete, inputMode }) {
   const [focused, setFocused] = useState(false);
-  const active = focused || (value !== undefined && value !== null && String(value).length > 0);
+  const active = focused || type === 'date' || (value !== undefined && value !== null && String(value).length > 0);
   const Tag = as;
 
   return (
