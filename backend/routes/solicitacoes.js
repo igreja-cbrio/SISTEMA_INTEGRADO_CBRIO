@@ -109,29 +109,17 @@ router.get('/', async (req, res) => {
     } else if (['admin', 'diretor'].includes(role)) {
       // Admin/diretor sees all — no filter
     } else {
-      // Areas onde o user eh responsavel cadastrado em area_solicitacoes_responsaveis
+      // Fila "Para Atender": SO quem eh responsavel cadastrado em
+      // area_solicitacoes_responsaveis ve as solicitacoes da sua area.
+      // Colaborador comum (sem area responsavel) ve apenas as proprias —
+      // acesso generico a um modulo NAO da direito de ver a fila dos outros.
       const { data: respRows } = await supabase
         .from('area_solicitacoes_responsaveis')
         .select('area')
         .eq('profile_id', userId);
       const responsavelAreas = new Set((respRows || []).map(r => r.area));
 
-      const modulePerms = granular?.modulePerms || {};
-      const allowedCategories = new Set();
-
-      for (const [permKey, modulo] of Object.entries(PERM_TO_MODULO)) {
-        if (modulePerms[permKey] && modulePerms[permKey].leitura >= 2) {
-          const cats = MODULO_CATEGORIAS[modulo] || [];
-          cats.forEach(c => allowedCategories.add(c));
-        }
-      }
-
-      // Monta filtro OR · sempre ve as proprias + categorias permitidas via
-      // permissoes + areas onde eh responsavel cadastrado
       const orParts = [`solicitante_id.eq.${encodeURIComponent(userId)}`];
-      if (allowedCategories.size > 0) {
-        orParts.push(`categoria.in.(${[...allowedCategories].join(',')})`);
-      }
       if (responsavelAreas.size > 0) {
         orParts.push(`area_responsavel.in.(${[...responsavelAreas].join(',')})`);
       }
@@ -158,6 +146,30 @@ router.get('/', async (req, res) => {
   } catch (e) {
     console.error('[SOLICITACOES] list error:', e.message);
     res.status(500).json({ error: 'Erro ao listar solicitações' });
+  }
+});
+
+// ── MEU PAPEL ───────────────────────────────────────────────
+// Define se o usuario ve a fila "Para Atender": admin/diretor OU
+// responsavel cadastrado de alguma area (area_solicitacoes_responsaveis).
+// Colaborador comum recebe atende=false → so "Minhas Solicitacoes".
+router.get('/meu-papel', async (req, res) => {
+  try {
+    const userId = req.user.userId;
+    const role = req.user.role;
+    if (['admin', 'diretor'].includes(role)) {
+      return res.json({ atende: true, admin: true, areas: [] });
+    }
+    const { data, error } = await supabase
+      .from('area_solicitacoes_responsaveis')
+      .select('area')
+      .eq('profile_id', userId);
+    if (error) throw error;
+    const areas = (data || []).map(r => r.area);
+    res.json({ atende: areas.length > 0, admin: false, areas });
+  } catch (e) {
+    console.error('[SOLICITACOES] meu-papel error:', e.message);
+    res.status(500).json({ error: 'Erro ao resolver papel' });
   }
 });
 

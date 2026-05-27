@@ -1001,6 +1001,7 @@ export const solicitacoes = {
   list:           (params) => get('/solicitacoes' + (params ? '?' + new URLSearchParams(params) : '')),
   create:         (data) => post('/solicitacoes', data),
   update:         (id, data) => patch(`/solicitacoes/${id}`, data),
+  meuPapel:       () => get('/solicitacoes/meu-papel'),
   slaDefs:        () => get('/solicitacoes/sla-defs'),
   reservasEspaco: (params) => get('/solicitacoes/reservas-espaco' + (params ? '?' + new URLSearchParams(params) : '')),
   alcadas:        () => get('/solicitacoes/alcadas'),

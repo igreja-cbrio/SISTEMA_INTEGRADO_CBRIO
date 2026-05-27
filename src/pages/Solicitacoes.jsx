@@ -27,14 +27,61 @@ const CATEGORIAS = [
   { value: 'outro',          label: 'Outro',               color: 'bg-muted text-muted-foreground',                         areaResp: null },
 ];
 
-const AREAS_CLIENTE = [
-  { value: 'kids',   label: 'CBKids' },
-  { value: 'ami',    label: 'AMI' },
-  { value: 'bridge', label: 'Bridge' },
-  { value: 'sede',   label: 'Sede' },
-  { value: 'online', label: 'Online' },
-  { value: 'cba',    label: 'CBA' },
+// Areas do solicitante em 2 niveis: macro -> sub
+const AREAS_MACRO = [
+  { value: 'ministerial', label: 'Ministerial', subs: [
+    { value: 'integracao', label: 'Integração' },
+    { value: 'cuidados', label: 'Cuidados' },
+    { value: 'grupos', label: 'Grupos' },
+    { value: 'voluntariado', label: 'Voluntariado' },
+    { value: 'next', label: 'NEXT' },
+    { value: 'kids', label: 'Kids' },
+    { value: 'ami', label: 'AMI' },
+    { value: 'cba', label: 'CBA' },
+  ] },
+  { value: 'criativo', label: 'Criativo', subs: [
+    { value: 'marketing', label: 'Marketing' },
+    { value: 'online', label: 'Online' },
+    { value: 'producao', label: 'Produção' },
+  ] },
+  { value: 'gestao', label: 'Gestão', subs: [
+    { value: 'rh', label: 'RH' },
+    { value: 'financeiro', label: 'Financeiro' },
+    { value: 'logistica', label: 'Logística' },
+    { value: 'patrimonio', label: 'Patrimônio' },
+    { value: 'ti', label: 'TI' },
+    { value: 'compras', label: 'Compras' },
+    { value: 'cozinha', label: 'Cozinha' },
+    { value: 'limpeza', label: 'Limpeza' },
+    { value: 'manutencao', label: 'Manutenção' },
+  ] },
 ];
+
+// Lookups derivados
+const SUB_TO_MACRO = {};
+const SUB_LABEL = {};
+AREAS_MACRO.forEach(m => m.subs.forEach(s => { SUB_TO_MACRO[s.value] = m.value; SUB_LABEL[s.value] = s.label; }));
+const subsDaMacro = (macro) => (AREAS_MACRO.find(m => m.value === macro)?.subs) || [];
+
+// Pre-selecao da area do solicitante pelo cargo (slug). Usuario pode trocar.
+const CARGO_TO_SUBAREA = {
+  'coordenador-voluntarios': 'voluntariado',
+  'coordenador-kids':        'kids',
+  'coordenador-ami':         'ami',
+  'coordenador-bridge':      'ami',
+  'coordenador-marketing':   'marketing',
+  'assistente-marketing':    'marketing',
+  'coordenador-online':      'online',
+  'lider-producao':          'producao',
+  'assistente-producao':     'producao',
+  'coordenador-financeiro':  'financeiro',
+  'assistente-financeiro':   'financeiro',
+  'diretor-rh':              'rh',
+  'lider-logistica':         'logistica',
+  'assistente-logistica':    'logistica',
+  'lider-operacoes':         'logistica',
+  'assistente-operacoes':    'logistica',
+};
 
 const URGENCIAS = [
   { value: 'baixa', label: 'Baixa', color: 'bg-muted text-muted-foreground' },
@@ -70,7 +117,7 @@ function getStatusMeta(status) {
 }
 
 export default function Solicitacoes() {
-  const { profile, isAdmin, canAccessModule } = useAuth();
+  const { profile, isAdmin, cargoSlug } = useAuth();
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
@@ -81,19 +128,32 @@ export default function Solicitacoes() {
   const [dragOver, setDragOver] = useState(false);
   const fileInputRef = useRef(null);
 
-  // Determine if user is a "responsável" (can see Kanban)
-  const isResponsavel = isAdmin || canAccessModule(['DP', 'Pessoas', 'Financeiro', 'Logística', 'Patrimônio', 'Membresia', 'TI']);
+  // Quem ve a fila "Para Atender": admin/diretor OU responsavel cadastrado de
+  // alguma area (area_solicitacoes_responsaveis). Fonte de verdade no backend
+  // via /meu-papel · colaborador comum so ve "Minhas Solicitacoes".
+  const [atendeAreas, setAtendeAreas] = useState(false);
+  const isResponsavel = isAdmin || atendeAreas;
 
   // View atual · 'minhas' (lista das proprias) | 'atender' (kanban da equipe).
-  // Colaborador sem permissao de area NAO ve aba "atender" (so existe o que e dele).
-  // Responsavel comeca em 'atender' (visao operacional padrao), mas pode trocar pra 'minhas'.
-  const [view, setView] = useState(isResponsavel ? 'atender' : 'minhas');
+  const [view, setView] = useState('minhas');
+  const [viewTouched, setViewTouched] = useState(false);
+
+  useEffect(() => {
+    let alive = true;
+    api.meuPapel?.().then(r => { if (alive) setAtendeAreas(!!r?.atende); }).catch(() => {});
+    return () => { alive = false; };
+  }, []);
+
+  // Responsavel/admin comeca na visao operacional (atender) se ainda nao trocou de aba.
+  useEffect(() => {
+    if (!viewTouched && (isAdmin || atendeAreas)) setView('atender');
+  }, [isAdmin, atendeAreas, viewTouched]);
 
   // Form state
   const FORM_INITIAL = {
     titulo: '', descricao: '', justificativa: '',
     categoria: '', urgencia: 'normal', valor_estimado: '',
-    area_cliente: '',
+    area_macro: '', area_cliente: '',
     eh_urgente: false, justificativa_urgencia: '',
     data_necessaria: '',
     espaco_solicitado: '', data_uso: '', horario_inicio: '', horario_fim: '', qtde_pessoas: '',
@@ -108,14 +168,19 @@ export default function Solicitacoes() {
     api.slaDefs?.().then(setSlaDefs).catch(() => setSlaDefs([]));
   }, []);
 
-  // Pre-preenche area_cliente baseado em profile.kpi_areas
+  // Pre-preenche a area do solicitante pelo CARGO (slug). Fallback: kpi_areas.
+  // Usuario pode trocar livremente depois.
   useEffect(() => {
-    const minhasAreas = profile?.kpi_areas || [];
-    const primeira = AREAS_CLIENTE.find(a => minhasAreas.includes(a.value));
-    if (primeira && !form.area_cliente) {
-      setForm(f => ({ ...f, area_cliente: primeira.value }));
+    if (form.area_cliente) return;
+    let sub = CARGO_TO_SUBAREA[cargoSlug] || null;
+    if (!sub) {
+      const minhasAreas = profile?.kpi_areas || [];
+      sub = minhasAreas.find(a => SUB_TO_MACRO[a]) || null;
     }
-  }, [profile?.kpi_areas]);
+    if (sub) {
+      setForm(f => ({ ...f, area_macro: SUB_TO_MACRO[sub], area_cliente: sub }));
+    }
+  }, [cargoSlug, profile?.kpi_areas]);
 
   async function load() {
     try {
@@ -330,15 +395,29 @@ export default function Solicitacoes() {
                     </Select>
                   </div>
                   <div className="space-y-2">
-                    <Label>Área (cliente) *</Label>
-                    <Select value={form.area_cliente} onValueChange={v => setForm(f => ({ ...f, area_cliente: v }))}>
-                      <SelectTrigger><SelectValue placeholder="Quem pede" /></SelectTrigger>
+                    <Label>Área *</Label>
+                    <Select
+                      value={form.area_macro}
+                      onValueChange={v => setForm(f => ({ ...f, area_macro: v, area_cliente: '' }))}
+                    >
+                      <SelectTrigger><SelectValue placeholder="Ministerial / Criativo / Gestão" /></SelectTrigger>
                       <SelectContent>
-                        {AREAS_CLIENTE.map(a => <SelectItem key={a.value} value={a.value}>{a.label}</SelectItem>)}
+                        {AREAS_MACRO.map(m => <SelectItem key={m.value} value={m.value}>{m.label}</SelectItem>)}
                       </SelectContent>
                     </Select>
                   </div>
                 </div>
+                {form.area_macro && (
+                  <div className="space-y-2">
+                    <Label>Sub-área *</Label>
+                    <Select value={form.area_cliente} onValueChange={v => setForm(f => ({ ...f, area_cliente: v }))}>
+                      <SelectTrigger><SelectValue placeholder="Selecione a sub-área" /></SelectTrigger>
+                      <SelectContent>
+                        {subsDaMacro(form.area_macro).map(s => <SelectItem key={s.value} value={s.value}>{s.label}</SelectItem>)}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                )}
                 <div className="space-y-2">
                   <Label>Título *</Label>
                   <Input value={form.titulo} onChange={e => setForm(f => ({ ...f, titulo: e.target.value }))} />
@@ -568,7 +647,7 @@ export default function Solicitacoes() {
         <div className="flex items-center gap-1 border-b border-border">
           <button
             type="button"
-            onClick={() => setView('atender')}
+            onClick={() => { setViewTouched(true); setView('atender'); }}
             className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
               view === 'atender'
                 ? 'border-primary text-primary'
@@ -579,7 +658,7 @@ export default function Solicitacoes() {
           </button>
           <button
             type="button"
-            onClick={() => setView('minhas')}
+            onClick={() => { setViewTouched(true); setView('minhas'); }}
             className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
               view === 'minhas'
                 ? 'border-primary text-primary'
