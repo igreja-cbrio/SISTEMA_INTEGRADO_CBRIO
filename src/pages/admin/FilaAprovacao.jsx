@@ -319,7 +319,7 @@ export default function FilaAprovacao() {
               {a.descricao}
             </div>
             <div style={{ fontSize: 11, color: C.text3 }}>
-              Cron · 9h, 14h, 19h SP
+              Cron · segunda 06:00 SP
             </div>
             <Button
               onClick={() => handleTrigger(a.agentType)}
