@@ -2,6 +2,38 @@
 
 Guia operacional para o Claude Code quando trabalhar neste repositório.
 
+## Bot WhatsApp · agente IA conversacional + institucional (2026-05-27, 2ª PR)
+
+Evolução do bot passivo: agora tem **2 personas** (Claude Haiku nas duas).
+Migration `20260527150000_whatsapp_agente_ia.sql`.
+
+**Persona 1 · líder/assistente cadastrado → coleta CONVERSACIONAL (multi-turno):**
+- Entende texto livre, mescla com o que já coletou, **pergunta o que faltou**
+  (campos obrigatórios: grupos=presentes+decisões, integração=presencial+decisões),
+  tira dúvida de como reportar. Quando completa → status `parseado` (fila).
+- Estado da conversa fica numa coleta `status='aguardando_info'` por **30 min**
+  (`JANELA_CONVERSA_MIN`). Mensagem seguinte do mesmo telefone continua a sessão.
+- Novo status `aguardando_info` no CHECK de `whatsapp_coletas`.
+
+**Persona 2 · número desconhecido → assistente INSTITUCIONAL:**
+- Responde sobre a igreja (missão/visão/valores/horários/endereço) usando SÓ o
+  conteúdo cadastrado · NÃO coleta dado · coleta logada como `status='ignorado'`,
+  `modulo_destino='institucional'`.
+
+**Config editável** (`whatsapp_config`, singleton id=1): `ia_ativa` (toggle
+liga/desliga o bot sem mexer no webhook) + `institucional jsonb`
+(missao, visao, valores[], horarios, endereco, sobre, instrucoes_extra).
+Horários já vêm seedados; resto a equipe preenche em `/admin/whatsapp` aba
+Configuração. RLS read integracao/grupos≥1; write service_role.
+
+`whatsapp_lideres` ganhou coluna `papel` (lider/assistente/coordenador · display).
+
+**Backend**: `services/whatsappParser.js` reescrito · `parseConversa()` (merge +
+faltando + resposta natural) e `responderInstitucional()`. `routes/whatsapp.js`
+ganhou GET/PUT `/config` + `papel` no vínculo. Webhook (`publicWhatsapp.js`)
+roteia known→conversa, unknown→institucional, com dedup por message_id e
+lookup de sessão aberta (`lider_id + status=aguardando_info + created_at>now-30min`).
+
 ## Bot WhatsApp · coleta passiva de dados de líderes (2026-05-27)
 
 Líder manda os números da semana em texto livre no WhatsApp · webhook

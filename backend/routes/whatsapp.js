@@ -22,7 +22,7 @@ router.get('/lideres', podeGerir, async (req, res) => {
     const { data, error } = await supabase
       .from('whatsapp_lideres')
       .select(`
-        id, telefone, nome_exibicao, escopo, grupo_id, ativo, created_at,
+        id, telefone, nome_exibicao, escopo, grupo_id, papel, ativo, created_at,
         profile:profiles!whatsapp_lideres_profile_id_fkey(id, name, email, avatar_url),
         grupo:mem_grupos(id, nome)
       `)
@@ -36,10 +36,10 @@ router.get('/lideres', podeGerir, async (req, res) => {
   }
 });
 
-// POST /api/whatsapp/lideres · { profile_id, telefone, escopo[], grupo_id? }
+// POST /api/whatsapp/lideres · { profile_id, telefone, escopo[], grupo_id?, papel? }
 router.post('/lideres', podeGerir, async (req, res) => {
   try {
-    const { profile_id, telefone, escopo, grupo_id } = req.body || {};
+    const { profile_id, telefone, escopo, grupo_id, papel } = req.body || {};
     const tel = normalizarTelefone(telefone);
     if (!tel || tel.length < 12 || tel.length > 13) {
       return res.status(400).json({ error: 'Telefone invalido. Use DDI+DDD+numero (ex: 5521999998888).' });
@@ -67,6 +67,7 @@ router.post('/lideres', podeGerir, async (req, res) => {
         nome_exibicao,
         escopo: escopoValido,
         grupo_id: grupo_id || null,
+        papel: papel || null,
         ativo: true,
         created_by: req.user?.userId || null,
       })
@@ -91,6 +92,7 @@ router.put('/lideres/:id', podeGerir, async (req, res) => {
       patch.escopo = req.body.escopo.filter(s => ['grupos', 'integracao'].includes(s));
     }
     if ('grupo_id' in (req.body || {})) patch.grupo_id = req.body.grupo_id || null;
+    if ('papel' in (req.body || {})) patch.papel = req.body.papel || null;
     if (typeof req.body?.ativo === 'boolean') patch.ativo = req.body.ativo;
     if (Object.keys(patch).length === 0) return res.status(400).json({ error: 'Nada para atualizar' });
 
@@ -229,6 +231,41 @@ router.post('/coletas/:id/rejeitar', podeGerir, async (req, res) => {
   } catch (e) {
     console.error('[whatsapp] coletas rejeitar', e.message);
     res.status(500).json({ error: 'Erro ao rejeitar coleta' });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════
+// CONFIG · conteudo institucional + toggle da IA (linha unica id=1)
+// ═══════════════════════════════════════════════════════════════════
+
+// GET /api/whatsapp/config
+router.get('/config', podeGerir, async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('whatsapp_config').select('ia_ativa, institucional, updated_at').eq('id', 1).maybeSingle();
+    if (error) return res.status(400).json({ error: error.message });
+    res.json(data || { ia_ativa: true, institucional: {} });
+  } catch (e) {
+    console.error('[whatsapp] config get', e.message);
+    res.status(500).json({ error: 'Erro ao carregar config' });
+  }
+});
+
+// PUT /api/whatsapp/config · { ia_ativa?, institucional? }
+router.put('/config', podeGerir, async (req, res) => {
+  try {
+    const patch = { updated_at: new Date().toISOString(), updated_by: req.user?.userId || null };
+    if (typeof req.body?.ia_ativa === 'boolean') patch.ia_ativa = req.body.ia_ativa;
+    if (req.body?.institucional && typeof req.body.institucional === 'object') {
+      patch.institucional = req.body.institucional;
+    }
+    const { error } = await supabase
+      .from('whatsapp_config').update(patch).eq('id', 1);
+    if (error) return res.status(400).json({ error: error.message });
+    res.json({ ok: true });
+  } catch (e) {
+    console.error('[whatsapp] config put', e.message);
+    res.status(500).json({ error: 'Erro ao salvar config' });
   }
 });
 

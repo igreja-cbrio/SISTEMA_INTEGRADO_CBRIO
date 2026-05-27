@@ -267,6 +267,9 @@ export const whatsapp = {
   listColetas: (status) => get('/whatsapp/coletas' + (status ? `?status=${status}` : '')),
   aplicarColeta: (id) => post(`/whatsapp/coletas/${id}/aplicar`, {}),
   rejeitarColeta: (id, motivo) => post(`/whatsapp/coletas/${id}/rejeitar`, { motivo }),
+  // Config institucional + toggle IA
+  getConfig: () => get('/whatsapp/config'),
+  saveConfig: (data) => put('/whatsapp/config', data),
 };
 
 export const strategic = {
