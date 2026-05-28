@@ -214,6 +214,28 @@ function KpiDetalhe({ id, resumo }) {
     staleTime: 60_000,
   });
 
+  // HOOKS · todas antes de qualquer early return (regra dos hooks · React #310).
+  // O default do tipo de chart depende de resumo.tipo_calculo (prop estavel,
+  // nao precisa de data). Como o componente esta keyed por id no pai, o
+  // useState reseta ao trocar de KPI.
+  const tipoCalculo = resumo?.tipo_calculo;
+  const ehDelta = tipoCalculo === 'delta_pct' || tipoCalculo === 'delta_abs';
+  const [tipoChart, setTipoChart] = useState(ehDelta ? 'barra' : 'linha');
+
+  // Serie pro grafico · usa data?.historico de forma segura (data pode ainda
+  // estar carregando). Corta zeros/null no FIM (semanas nao fechadas) · mesmo
+  // padrao do /media-movel e /mensal pra linha parar no ultimo ponto real.
+  const serie = useMemo(() => {
+    const historico = data?.historico || [];
+    const arr = historico.map(h => ({
+      periodo: h.periodo_referencia,
+      valor: h.valor_realizado != null ? Number(h.valor_realizado) : null,
+    }));
+    let fim = arr.length;
+    while (fim > 0 && (arr[fim - 1].valor == null || arr[fim - 1].valor === 0)) fim--;
+    return arr.slice(0, fim);
+  }, [data]);
+
   if (isLoading) {
     return (
       <Card>
@@ -233,31 +255,10 @@ function KpiDetalhe({ id, resumo }) {
     );
   }
 
-  const { kpi, historico = [], checkpoints = [], lider, trajetoria_atual } = data;
+  const { kpi, checkpoints = [], lider, trajetoria_atual, historico = [] } = data;
   const status = trajetoria_atual?.status_trajetoria || resumo?.status;
   const meta = resumo?.meta_periodo ?? resumo?.meta_efetiva ?? kpi.meta_valor;
   const valores = Array.isArray(kpi.valores) ? kpi.valores : [];
-
-  // Serie pro grafico · historico ja vem em ordem cronologica crescente.
-  // Corta zeros/null no FIM (semanas que ainda nao fecharam, registros
-  // auto-gerados sem dado · mesmo padrao do /media-movel e /mensal pra
-  // linha "parar" no ultimo ponto com dado real em vez de cair a 0).
-  const serie = useMemo(() => {
-    const arr = historico.map(h => ({
-      periodo: h.periodo_referencia,
-      valor: h.valor_realizado != null ? Number(h.valor_realizado) : null,
-    }));
-    let fim = arr.length;
-    while (fim > 0 && (arr[fim - 1].valor == null || arr[fim - 1].valor === 0)) fim--;
-    return arr.slice(0, fim);
-  }, [historico]);
-
-  // KPI do tipo delta (crescimento/variacao) · barra com positivo/negativo
-  // em verde/vermelho fica muito mais legivel que linha proxima de zero.
-  // Default automatico, mas usuario pode trocar pelo toggle no header.
-  const tipoCalculo = resumo?.tipo_calculo;
-  const ehDelta = tipoCalculo === 'delta_pct' || tipoCalculo === 'delta_abs';
-  const [tipoChart, setTipoChart] = useState(ehDelta ? 'barra' : 'linha');
 
   const corBarra = (v) => {
     if (!ehDelta) return COR_LINHA;
