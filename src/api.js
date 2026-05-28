@@ -1015,6 +1015,14 @@ export const marketing = {
   membros:      () => get('/marketing/membros'),
   recorrentes:  () => get('/marketing/compromissos-recorrentes'),
 
+  // Capacidade + estimativa (Spec 005)
+  capacidade:   (semana) => get('/marketing/capacidade' + (semana ? '?semana=' + encodeURIComponent(semana) : '')),
+  estimar:      (tipo, dataAlvo) => {
+    const params = new URLSearchParams({ tipo });
+    if (dataAlvo) params.set('data_alvo', dataAlvo);
+    return get('/marketing/estimar?' + params.toString());
+  },
+
   // CRUD cards
   cards:        (params) => get('/marketing/cards' + (params ? '?' + new URLSearchParams(params) : '')),
   card:         (id) => get(`/marketing/cards/${id}`),
