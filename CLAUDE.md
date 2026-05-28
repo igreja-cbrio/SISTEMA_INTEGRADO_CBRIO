@@ -2,6 +2,59 @@
 
 Guia operacional para o Claude Code quando trabalhar neste repositório.
 
+## Marketing · Spec 018 · Fila de prioridade + nav unificada (2026-05-28)
+
+Resolve 2 problemas pós-piloto:
+- Botões de navegação inconsistentes entre as 4 telas
+- Capacidade alocada baseada no prazo escondia ociosidade · cards com prazo distante não entravam na semana atual mesmo com equipe livre
+
+### Item A · `MarketingNav` componente compartilhado
+
+Header padronizado nas **5 telas** (Kanban · Fila · Calendário · Analytics · Admin). Destaca a atual (variant `default`) e mostra link pras outras. Admin só aparece pra coordenador (nível ≥5). Substitui os botões hardcoded espalhados.
+
+### Item B · Fila de prioridade global (`/marketing/fila`)
+
+Nova página com lista ordenada por `ordem_fila`:
+- Cards em `em_producao` ficam no topo · não draggable (já sendo feitos)
+- Cards em `fila` abaixo · drag-and-drop (HTML5 nativo · mesmo padrão do Kanban)
+- Filtro: todos · sem atribuição · por membro
+- Realtime via Supabase channel
+
+**Decisões fechadas:**
+1. Fila **global** com filtro por membro (não tabs por pessoa)
+2. Cards sem atribuição entram na fila (Pedro distribui)
+3. Reordenar afeta só `ordem_fila` · prazo intacto · UI sinaliza desencontro (`prazo em 4d · fora da prioridade` ou `prazo em 6m · adiantando`)
+4. Só coord (nível 5) reordena · produtor vê só leitura
+5. Calendário **continua mostrando capacidade baseada na fila** (já refletido no item C)
+6. Solicitante vê posição (`Fila #3 de 12`) no `MarketingCardBlock`
+7. `MKT-DEM-CAP` mantém
+
+### Item C · Capacidade via fila (migration)
+
+`fn_marketing_calcular_capacidade_semana` v2:
+- Antes: somava `esforco_max_h` dos cards com `prazo_confirmado` na semana
+- Agora: usa **fila do membro** com `ROW_NUMBER` ordenando `em_producao` primeiro → `ordem_fila` ASC. Inclui cards até o **acumulado anterior** estourar a capacidade (último card cabe parcialmente · próximo já não entra na semana mesmo se houver folga marginal)
+
+Resultado: Pedro reordena a fila → calendário reflete imediatamente quem está ocupado com o que esta semana, sem depender do prazo.
+
+### Endpoints novos
+
+- `GET /api/marketing/fila` · lista cards fila + em_producao ordenados (nível ≥1, com filtro opcional `?atribuido_a=`)
+- `PATCH /api/marketing/fila/reordenar` · array `{ ordens: [{ id, ordem }, ...] }` (só coord ≥5)
+- `GET /api/marketing/fila/posicao/:cardId` · retorna `{ posicao, total, estado }` (solicitante do card OU membro Marketing OU admin)
+
+### Frontend
+
+- `api.js` ganha `marketing.fila.{list, reordenar, posicao}`
+- `MarketingFila.jsx` · nova página
+- `MarketingCardBlock` em Solicitacoes mostra badge "Fila #N de M" quando posicao retorna
+- 5 botões cross-link em todas as telas via `MarketingNav`
+
+### Migration `20260528280000_marketing_capacidade_via_fila.sql`
+
+- `CREATE OR REPLACE FUNCTION fn_marketing_calcular_capacidade_semana` (v2 · lógica de fila)
+- Backfill defensivo · normaliza `ordem_fila` pra inteiros sequenciais (em_producao primeiro · depois fila por ordem antiga)
+
 ## Marketing · Spec 017 · Refator etiquetas tipo · 16 entregas concretas (2026-05-28)
 
 Marcos identificou que os 8 tipos guarda-chuva (Artes · Impressos · Mockup · etc) misturavam conceitos: "Artes" não é entrega, é produto base; "Impressos" = arte + impressão; esforço variava demais (post 30min vs banner 16h).

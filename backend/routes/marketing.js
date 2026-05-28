@@ -620,6 +620,110 @@ router.patch('/cards/:id/sugerir-revisao', async (req, res) => {
   }
 });
 
+// ─── Fila de prioridade (Spec 018b) ─────────────────────────────────────────
+
+// Lista cards em fila + em_producao ordenados por ordem_fila.
+// Solicitante pode chamar tambem · backend retorna so cards onde ele eh
+// solicitante (ownership) + cards sem solicitacao_id se nivel >=1.
+router.get('/fila', authorizeModule('marketing', 1), async (req, res) => {
+  try {
+    const { atribuido_a } = req.query;
+    let q = supabase
+      .from('marketing_kanban_cards')
+      .select('*')
+      .in('estado', ['fila', 'em_producao'])
+      .is('deleted_at', null)
+      .order('estado', { ascending: false }) // em_producao primeiro · "fila" depois (alfabetico inverso bate)
+      .order('ordem_fila', { ascending: true });
+
+    if (atribuido_a) q = q.eq('atribuido_a', atribuido_a);
+    const { data, error } = await q;
+    if (error) throw error;
+
+    const enriched = await enrichCards(data || []);
+    res.json(enriched);
+  } catch (e) {
+    console.error('[MARKETING] fila list:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Reordena a fila · array de { id, ordem } pra atualizar em batch · so coord (>=5).
+router.patch('/fila/reordenar', authorizeModule('marketing', 5), async (req, res) => {
+  try {
+    const { ordens } = req.body || {};
+    if (!Array.isArray(ordens) || ordens.length === 0) {
+      return res.status(400).json({ error: 'ordens deve ser array de { id, ordem }' });
+    }
+
+    // Validacao + update em batch · uma query por card · ok pra ~50 cards
+    const results = [];
+    for (const item of ordens) {
+      if (!item.id || typeof item.ordem !== 'number') continue;
+      const { error } = await supabase
+        .from('marketing_kanban_cards')
+        .update({ ordem_fila: item.ordem })
+        .eq('id', item.id)
+        .is('deleted_at', null);
+      if (error) results.push({ id: item.id, error: error.message });
+    }
+
+    if (results.length > 0) {
+      return res.status(207).json({ ok: false, falhas: results });
+    }
+    res.json({ ok: true, total: ordens.length });
+  } catch (e) {
+    console.error('[MARKETING] fila reordenar:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Posicao da fila pra solicitante · so retorna se o card pertence a uma
+// solicitacao do user (transparencia sem expor outros cards).
+router.get('/fila/posicao/:cardId', async (req, res) => {
+  try {
+    const { data: card } = await supabase
+      .from('marketing_kanban_cards')
+      .select('id, ordem_fila, estado, solicitacao_id, solicitacoes:solicitacao_id(solicitante_id)')
+      .eq('id', req.params.cardId)
+      .is('deleted_at', null)
+      .maybeSingle();
+    if (!card) return res.status(404).json({ error: 'Card nao encontrado' });
+
+    const isOwner = card.solicitacoes?.solicitante_id === req.user.userId;
+    const isMktMember = (req.user.granular?.modulePerms?.marketing?.leitura || 0) >= 1;
+    if (!isOwner && !isMktMember && !['admin', 'diretor'].includes(req.user.role)) {
+      return res.status(403).json({ error: 'Sem permissao' });
+    }
+
+    if (!['fila', 'em_producao'].includes(card.estado)) {
+      return res.json({ posicao: null, total: 0, estado: card.estado });
+    }
+
+    const { count: total } = await supabase
+      .from('marketing_kanban_cards')
+      .select('id', { count: 'exact', head: true })
+      .in('estado', ['fila', 'em_producao'])
+      .is('deleted_at', null);
+
+    const { count: na_frente } = await supabase
+      .from('marketing_kanban_cards')
+      .select('id', { count: 'exact', head: true })
+      .in('estado', ['fila', 'em_producao'])
+      .is('deleted_at', null)
+      .lt('ordem_fila', card.ordem_fila);
+
+    res.json({
+      posicao: (na_frente || 0) + 1,
+      total: total || 0,
+      estado: card.estado,
+    });
+  } catch (e) {
+    console.error('[MARKETING] fila posicao:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // ─── Entregaveis (Spec 006 · SharePoint upload) ─────────────────────────────
 
 router.get('/cards/:id/entregaveis', authorizeModule('marketing', 1), async (req, res) => {
