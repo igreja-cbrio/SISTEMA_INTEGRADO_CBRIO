@@ -149,7 +149,7 @@ router.get('/', async (req, res) => {
     const destinoIds = [...new Set((data || []).map(d => d.marketing_destino_id).filter(Boolean))];
     let tipoMap = {}, destinoMap = {};
     if (tipoIds.length) {
-      const { data: t } = await supabase.from('marketing_etiquetas_tipo').select('id, slug, nome, cor, habilidade_padrao, esforco_medio_h').in('id', tipoIds);
+      const { data: t } = await supabase.from('marketing_etiquetas_tipo').select('id, slug, nome, cor, habilidade_padrao, esforco_max_h').in('id', tipoIds);
       tipoMap = Object.fromEntries((t || []).map(x => [x.id, x]));
     }
     if (destinoIds.length) {

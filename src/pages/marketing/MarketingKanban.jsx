@@ -314,6 +314,24 @@ function KanbanCard({ item, draggable, onClick }) {
     return null;
   }, [item.prazo_confirmado, item.estado]);
 
+  // Spec 016 · alerta SLA individual · card em em_producao por tempo > esforco_max × 1.5
+  const slaIndividual = useMemo(() => {
+    if (item.estado !== 'em_producao') return null;
+    const max = item.etiqueta_tipo?.esforco_max_h;
+    if (!max || max <= 0) return null;
+    const horasEstado = (Date.now() - new Date(item.estado_atualizado_em).getTime()) / 3600000;
+    if (horasEstado > max * 1.5) {
+      return {
+        label: `${Math.round(horasEstado)}h · ${(horasEstado / max).toFixed(1)}× SLA`,
+        cor: 'bg-rose-500/15 text-rose-700 dark:text-rose-400',
+      };
+    }
+    if (horasEstado > max) {
+      return { label: `${Math.round(horasEstado)}h · acima do SLA`, cor: 'bg-amber-500/15 text-amber-700 dark:text-amber-400' };
+    }
+    return null;
+  }, [item.estado, item.estado_atualizado_em, item.etiqueta_tipo?.esforco_max_h]);
+
   return (
     <Card
       className={`p-3 cursor-pointer hover:shadow-md transition-shadow border-l-4 ${
@@ -372,8 +390,9 @@ function KanbanCard({ item, draggable, onClick }) {
           {item.atribuido?.profile?.name || 'Não atribuído'}
         </span>
         <div className="flex items-center gap-1">
-          {atraso && <Badge className={`text-[10px] px-1.5 py-0.5 ${atraso.cor}`}>⏱ {atraso.label}</Badge>}
-          {item.prazo_confirmado && !atraso && (
+          {slaIndividual && <Badge className={`text-[10px] px-1.5 py-0.5 ${slaIndividual.cor}`}>⏱ {slaIndividual.label}</Badge>}
+          {!slaIndividual && atraso && <Badge className={`text-[10px] px-1.5 py-0.5 ${atraso.cor}`}>⏱ {atraso.label}</Badge>}
+          {item.prazo_confirmado && !atraso && !slaIndividual && (
             <span className="text-[10px] text-muted-foreground flex items-center gap-0.5">
               <Calendar className="h-3 w-3" />
               {fmtData(item.prazo_confirmado)}
