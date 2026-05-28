@@ -132,19 +132,7 @@ const NAV_ITEMS = [
           { label: 'Kids', description: 'Indicadores do ministério infantil', icon: Baby, path: '/kids', module: 'kids' },
           { label: 'AMI', description: 'Indicadores do culto AMI', icon: GraduationCap, path: '/ami', module: 'ami' },
           { label: 'Bridge', description: 'Indicadores do culto Bridge', icon: ArrowRightLeft, path: '/bridge', module: 'bridge' },
-        ],
-      },
-    ],
-  },
-  {
-    id: 6,
-    label: 'Criativo',
-    roles: ['admin', 'diretor'],
-    subMenus: [
-      {
-        title: 'Áreas',
-        items: [
-          { label: 'Marketing', description: 'Projetos e solicitações', icon: Megaphone, path: '/criativo/marketing' },
+          { label: 'Marketing', description: 'Kanban de demandas criativas · capacidade · analytics', icon: Megaphone, path: '/marketing', module: 'marketing' },
         ],
       },
     ],
