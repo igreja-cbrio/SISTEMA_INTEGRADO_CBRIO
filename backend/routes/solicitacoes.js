@@ -134,8 +134,10 @@ router.get('/', async (req, res) => {
     const { data, error } = await q;
     if (error) throw error;
 
-    // Resolve profile names for solicitante/responsavel
-    const profileIds = [...new Set((data || []).flatMap(d => [d.solicitante_id, d.responsavel_id].filter(Boolean)))];
+    // Resolve profile names for solicitante/responsavel/diretor_origem
+    const profileIds = [...new Set((data || []).flatMap(d => [
+      d.solicitante_id, d.responsavel_id, d.aprovacao_origem_diretor_id,
+    ].filter(Boolean)))];
     let profileMap = {};
     if (profileIds.length) {
       const { data: profiles } = await supabase.from('profiles').select('id,name,email').in('id', profileIds);
@@ -145,6 +147,7 @@ router.get('/', async (req, res) => {
       ...d,
       solicitante: profileMap[d.solicitante_id] || null,
       responsavel: profileMap[d.responsavel_id] || null,
+      aprovacao_origem_diretor: profileMap[d.aprovacao_origem_diretor_id] || null,
     }));
 
     res.json(enriched);

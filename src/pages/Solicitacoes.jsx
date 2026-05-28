@@ -823,11 +823,16 @@ export default function Solicitacoes() {
               const precisaAvaliar = item.status === 'concluido'
                 && item.solicitante_id === profile?.id
                 && item.nps_nota == null;
+              const aguardandoOrigem = item.status === 'aguardando_aprovacao_origem'
+                && item.aprovacao_origem_status === 'pendente';
+              const diretorNome = item.aprovacao_origem_diretor?.name;
+              const foiRejeitada = item.status === 'rejeitado' && item.aprovacao_origem_status === 'rejeitada';
               return (
                 <Card
                   key={item.id}
                   className={`p-4 cursor-pointer hover:shadow-md transition-shadow ${
-                    precisaAvaliar ? 'border-l-4 border-l-amber-500 bg-amber-500/5' : ''
+                    precisaAvaliar ? 'border-l-4 border-l-amber-500 bg-amber-500/5' :
+                    aguardandoOrigem ? 'border-l-4 border-l-violet-500 bg-violet-500/5' : ''
                   }`}
                   onClick={() => setDetailItem(item)}
                 >
@@ -852,7 +857,17 @@ export default function Solicitacoes() {
                       <span className="text-xs text-muted-foreground">{date}</span>
                     </div>
                   </div>
-                  {item.descricao && (
+                  {aguardandoOrigem && (
+                    <p className="text-xs text-violet-700 dark:text-violet-400 mt-2">
+                      ⏳ Aguardando aprovação de <span className="font-medium">{diretorNome || 'diretor de origem'}</span>{item.eh_urgente ? ' · urgente' : ''}
+                    </p>
+                  )}
+                  {foiRejeitada && item.aprovacao_origem_motivo && (
+                    <p className="text-xs text-red-700 dark:text-red-400 mt-2">
+                      <span className="font-medium">Rejeitada:</span> {item.aprovacao_origem_motivo}
+                    </p>
+                  )}
+                  {item.descricao && !aguardandoOrigem && !foiRejeitada && (
                     <p className="text-xs text-muted-foreground mt-2 line-clamp-1">{item.descricao}</p>
                   )}
                 </Card>
