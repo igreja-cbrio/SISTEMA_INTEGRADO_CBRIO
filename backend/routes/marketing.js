@@ -670,6 +670,77 @@ router.patch('/cards/:id/sugerir-revisao', async (req, res) => {
   }
 });
 
+// ─── Ciclo Criativo · agrupado Evento → Fase (Spec 024) ───────────────────
+router.get('/ciclo-criativo', authorizeModule('marketing', 1), async (req, res) => {
+  try {
+    // Cards origem=evento com cycle_phase_task_id · agrupados
+    const { data: cards, error } = await supabase
+      .from('marketing_kanban_cards')
+      .select('*')
+      .eq('origem', 'evento')
+      .not('cycle_phase_task_id', 'is', null)
+      .is('deleted_at', null);
+    if (error) throw error;
+
+    const enriched = await enrichCards(cards || []);
+
+    // Re-agrupa por evento + fase
+    const grupos = {};
+    for (const c of enriched) {
+      const ct = c.cycle_phase_task;
+      if (!ct) continue;
+      const key = `${ct.event_id}::${ct.fase || 'sem_fase'}`;
+      if (!grupos[key]) {
+        grupos[key] = {
+          event_id: ct.event_id,
+          event_name: ct.event_name,
+          fase: ct.fase,
+          tarefas: [],
+        };
+      }
+      grupos[key].tarefas.push(c);
+    }
+
+    // Ordena por evento e fase (numero da fase eh prefixo)
+    const lista = Object.values(grupos).sort((a, b) => {
+      if (a.event_name !== b.event_name) return (a.event_name || '').localeCompare(b.event_name || '');
+      return (a.fase || '').localeCompare(b.fase || '');
+    });
+
+    res.json(lista);
+  } catch (e) {
+    console.error('[MARKETING] ciclo-criativo:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Batch · aplica mesmo etiqueta_tipo_id + atribuido_a pra varios cards
+router.patch('/ciclo-criativo/batch', authorizeModule('marketing', 5), async (req, res) => {
+  try {
+    const { card_ids, etiqueta_tipo_id, atribuido_a } = req.body || {};
+    if (!Array.isArray(card_ids) || card_ids.length === 0) {
+      return res.status(400).json({ error: 'card_ids deve ser array com >=1 id' });
+    }
+    const update = {};
+    if (etiqueta_tipo_id !== undefined) update.etiqueta_tipo_id = etiqueta_tipo_id || null;
+    if (atribuido_a !== undefined) update.atribuido_a = atribuido_a || null;
+    if (!Object.keys(update).length) return res.status(400).json({ error: 'envie etiqueta_tipo_id ou atribuido_a' });
+
+    const { error, count } = await supabase
+      .from('marketing_kanban_cards')
+      .update(update)
+      .in('id', card_ids)
+      .is('deleted_at', null)
+      .select('id', { count: 'exact', head: true });
+    if (error) throw error;
+
+    res.json({ ok: true, atualizados: count || card_ids.length });
+  } catch (e) {
+    console.error('[MARKETING] ciclo-criativo batch:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // ─── Fila de prioridade (Spec 018b) ─────────────────────────────────────────
 
 // Lista cards em fila + em_producao ordenados por ordem_fila.
