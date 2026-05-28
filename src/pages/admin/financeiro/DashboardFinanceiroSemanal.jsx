@@ -3,7 +3,7 @@ import { motion, AnimatePresence, useSpring, useTransform, animate } from 'frame
 import {
   ChevronLeft, ChevronRight, TrendingUp, TrendingDown, Users, Banknote,
   Sparkles, ArrowUp, ArrowDown, Minus, Award, Calendar,
-  BarChart3, Activity, Target, FileText, Loader2,
+  BarChart3, Activity, Target, FileText, Loader2, Filter, X, MousePointer2,
 } from 'lucide-react';
 import { Card, CardContent } from '../../../components/ui/card';
 import { Button } from '../../../components/ui/button';
@@ -109,10 +109,11 @@ function CountUp({ value, format = fmtMoney, duration = 1.2 }) {
 const SLIDES = [
   { key: 'resumo',       label: 'Resumo',         icon: Sparkles,   desc: 'KPIs · cultos · top contribuintes' },
   { key: 'por_culto',    label: 'Por Culto',      icon: Calendar,   desc: 'Quarta · domingo · outros · acumulada' },
-  { key: 'tendencias',   label: 'Tendências',     icon: TrendingUp, desc: 'Histórico semanal e mensal' },
+  { key: 'tendencias',   label: 'Tendências',     icon: TrendingUp, desc: 'Últimos 3 meses · histórico mensal' },
   { key: 'comparativos', label: 'Comparativos',   icon: BarChart3,  desc: 'YTD · YoY · decêndio' },
-  { key: 'performance',  label: 'Performance',    icon: Activity,   desc: 'Frequência × receita · melhores' },
-  { key: 'controle',     label: 'Saídas & Metas', icon: Target,     desc: 'Despesas detalhadas · metas' },
+  { key: 'performance',  label: 'Performance',    icon: Activity,   desc: 'Freq × Arrecadação semanal · cards interativos' },
+  { key: 'controle',     label: 'Saídas',         icon: Target,     desc: 'Despesas detalhadas por categoria' },
+  { key: 'metas',        label: 'Metas',          icon: Award,      desc: 'Metas financeiras com filtros ano/mês/semana' },
 ];
 
 export default function DashboardSemanal() {
@@ -265,10 +266,12 @@ export default function DashboardSemanal() {
           {slide === 5 && (
             <Slide5Controle
               saidas={saidas}
+            />
+          )}
+          {slide === 6 && (
+            <Slide6Metas
               metas={metas}
               onMetasChange={reloadMetas}
-              completo={completo}
-              receitaSemana={kpis.receita}
             />
           )}
         </motion.div>
@@ -492,39 +495,54 @@ function Slide1PorCulto({ buckets, melhorSemana }) {
 }
 
 function Slide2Tendencias({ historico, completo }) {
+  // Últimos 3 meses (~13 semanas qua-ter) · suporta dados ausentes
+  const ultimas13 = useMemo(() => {
+    if (!Array.isArray(historico)) return [];
+    return historico.slice(-13);
+  }, [historico]);
+
+  const temDados = ultimas13.some(d => Number(d.receita || 0) > 0 || Number(d.presencial || 0) > 0);
+
   return (
     <>
-      {/* Tendência 12 semanas */}
+      {/* Tendência últimos 3 meses (~13 semanas) */}
       <Card>
         <CardContent className="pt-6">
-          <h3 className="text-base font-semibold mb-1">Tendência das últimas 12 semanas</h3>
+          <h3 className="text-base font-semibold mb-1">Tendência dos últimos 3 meses</h3>
           <p className="text-xs text-muted-foreground mb-4">
-            Receita (barras verdes) · presença (linha azul) · ticket médio (linha roxa pontilhada)
+            Receita (barras verdes) · presença (linha azul) · ticket médio (linha roxa pontilhada) ·
+            13 semanas qua-ter
           </p>
-          <div style={{ width: '100%', height: 320 }}>
-            <ResponsiveContainer>
-              <ComposedChart data={historico}>
-                <defs>
-                  <linearGradient id="gradReceita" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="0%" stopColor={C.green} stopOpacity={0.9} />
-                    <stop offset="100%" stopColor={C.green} stopOpacity={0.4} />
-                  </linearGradient>
-                </defs>
-                <CartesianGrid strokeDasharray="3 3" opacity={0.2} />
-                <XAxis dataKey="semana_label" tick={{ fontSize: 10 }} />
-                <YAxis yAxisId="left" tick={{ fontSize: 10 }} tickFormatter={(v) => fmtCompact(v).replace('R$ ', '')} />
-                <YAxis yAxisId="right" orientation="right" tick={{ fontSize: 10 }} />
-                <Tooltip
-                  formatter={(v, n) => n === 'Presença' ? [fmtInt(v), n] : [fmtMoney(v), n]}
-                  contentStyle={{ borderRadius: 8, fontSize: 12 }}
-                />
-                <Legend wrapperStyle={{ fontSize: 11 }} />
-                <Bar yAxisId="left" dataKey="receita" name="Receita" fill="url(#gradReceita)" radius={[4, 4, 0, 0]} />
-                <Line yAxisId="right" type="monotone" dataKey="presencial" name="Presença" stroke={C.blue} strokeWidth={2.5} dot={{ r: 3 }} />
-                <Line yAxisId="left" type="monotone" dataKey="ticket" name="Ticket médio" stroke={C.purple} strokeWidth={2} strokeDasharray="5 5" dot={false} />
-              </ComposedChart>
-            </ResponsiveContainer>
-          </div>
+          {!temDados ? (
+            <div className="py-12 text-center text-sm text-muted-foreground">
+              Sem dados nos últimos 3 meses · importe lançamentos pra ver a tendência
+            </div>
+          ) : (
+            <div style={{ width: '100%', height: 320 }}>
+              <ResponsiveContainer>
+                <ComposedChart data={ultimas13}>
+                  <defs>
+                    <linearGradient id="gradReceita" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor={C.green} stopOpacity={0.9} />
+                      <stop offset="100%" stopColor={C.green} stopOpacity={0.4} />
+                    </linearGradient>
+                  </defs>
+                  <CartesianGrid strokeDasharray="3 3" opacity={0.2} />
+                  <XAxis dataKey="semana_label" tick={{ fontSize: 10 }} />
+                  <YAxis yAxisId="left" tick={{ fontSize: 10 }} tickFormatter={(v) => fmtCompact(v).replace('R$ ', '')} />
+                  <YAxis yAxisId="right" orientation="right" tick={{ fontSize: 10 }} />
+                  <Tooltip
+                    formatter={(v, n) => n === 'Presença' ? [fmtInt(v), n] : [fmtMoney(v), n]}
+                    contentStyle={{ borderRadius: 8, fontSize: 12 }}
+                  />
+                  <Legend wrapperStyle={{ fontSize: 11 }} />
+                  <Bar yAxisId="left" dataKey="receita" name="Receita" fill="url(#gradReceita)" radius={[4, 4, 0, 0]} animationDuration={1200} />
+                  <Line yAxisId="right" type="monotone" dataKey="presencial" name="Presença" stroke={C.blue} strokeWidth={2.5} dot={{ r: 3 }} animationDuration={1400} />
+                  <Line yAxisId="left" type="monotone" dataKey="ticket" name="Ticket médio" stroke={C.purple} strokeWidth={2} strokeDasharray="5 5" dot={false} animationDuration={1600} />
+                </ComposedChart>
+              </ResponsiveContainer>
+            </div>
+          )}
         </CardContent>
       </Card>
 
@@ -557,29 +575,27 @@ function Slide3Comparativos({ completo }) {
 function Slide4Performance({ completo, melhorSemana }) {
   return (
     <>
+      <FreqVsArrecadacaoSemanal />
       {completo && <FreqVsReceitaChart dados={completo.freq_vs_receita} />}
       {melhorSemana && (melhorSemana.melhor_do_mes || melhorSemana.melhor_do_ano) && (
         <MelhorSemanaCards melhor={melhorSemana} />
-      )}
-      {!completo && !melhorSemana && (
-        <div className="text-sm text-muted-foreground text-center py-10">Sem dados de performance ainda</div>
       )}
     </>
   );
 }
 
-function Slide5Controle({ saidas, metas, onMetasChange, completo, receitaSemana }) {
+function Slide5Controle({ saidas }) {
   return (
     <>
-      {saidas && <SaidasDetalhadas saidas={saidas} />}
-      <MetasFinanceiras
-        metas={metas}
-        onChange={onMetasChange}
-        completo={completo}
-        receitaSemana={receitaSemana}
-      />
+      {saidas
+        ? <SaidasDetalhadas saidas={saidas} />
+        : <div className="text-sm text-muted-foreground text-center py-10">Sem dados de despesas ainda</div>}
     </>
   );
+}
+
+function Slide6Metas({ metas, onMetasChange }) {
+  return <MetasFinanceirasComFiltros metas={metas} onMetasChange={onMetasChange} />;
 }
 
 // ============================================================
@@ -604,10 +620,18 @@ function calcularAtualMeta(meta, ctx) {
 }
 
 function labelPeriodoMeta(tipo) {
-  if (tipo === 'receita_anual')      return 'no ano';
-  if (tipo === 'saldo_minimo')       return 'resultado YTD';
-  if (tipo?.includes('mensal'))      return 'no mês';
+  if (tipo?.includes('anual'))   return 'no ano';
+  if (tipo === 'saldo_minimo')   return 'resultado YTD';
+  if (tipo?.includes('semanal')) return 'na semana';
+  if (tipo?.includes('mensal'))  return 'no mês';
   return '';
+}
+
+function periodicidadeDoTipo(tipo) {
+  if (!tipo) return 'mensal';
+  if (tipo.includes('semanal')) return 'semanal';
+  if (tipo.includes('anual'))   return 'anual';
+  return 'mensal';
 }
 
 // ============================================================
@@ -1200,9 +1224,12 @@ function SaidasList({ linhas, labelKey, extraKey }) {
 }
 
 const TIPO_META_LABEL = {
+  receita_semanal: 'Receita semanal',
   receita_mensal: 'Receita mensal',
   receita_anual: 'Receita anual',
+  despesa_max_semanal: 'Teto despesa semanal',
   despesa_max_mensal: 'Teto despesa mensal',
+  despesa_max_anual: 'Teto despesa anual',
   saldo_minimo: 'Saldo mínimo',
   pct_categoria: '% por categoria',
   meta_centro_custo: 'Meta centro de custo',
@@ -1411,9 +1438,12 @@ function MetaForm({ inicial, onCancel, onSave }) {
     id: inicial.id,
   });
   const tipos = [
+    { v: 'receita_semanal', l: 'Receita semanal' },
     { v: 'receita_mensal', l: 'Receita mensal' },
     { v: 'receita_anual', l: 'Receita anual' },
+    { v: 'despesa_max_semanal', l: 'Teto despesa semanal' },
     { v: 'despesa_max_mensal', l: 'Teto despesa mensal' },
+    { v: 'despesa_max_anual', l: 'Teto despesa anual' },
     { v: 'saldo_minimo', l: 'Saldo mínimo' },
     { v: 'pct_categoria', l: '% por categoria' },
     { v: 'meta_centro_custo', l: 'Meta centro de custo' },
@@ -1505,10 +1535,619 @@ function MetaForm({ inicial, onCancel, onSave }) {
       </div>
       <div className="flex justify-end gap-2 mt-4">
         <Button size="sm" variant="outline" onClick={onCancel}>Cancelar</Button>
-        <Button size="sm" onClick={() => onSave({ ...form, valor: Number(form.valor) })}>
+        <Button size="sm" onClick={() => onSave({ ...form, valor: Number(form.valor), periodicidade: periodicidadeDoTipo(form.tipo) })}>
           {form.id ? 'Salvar' : 'Criar meta'}
         </Button>
       </div>
+    </motion.div>
+  );
+}
+
+// ============================================================
+// NOVO · Freq × Arrecadação SEMANAL com click-to-select cards
+// ============================================================
+function FreqVsArrecadacaoSemanal() {
+  const [dados, setDados] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [selectedIdx, setSelectedIdx] = useState(null);
+  const [semanasJanela, setSemanasJanela] = useState(20);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    financeiroV2.freqArrecadacaoSemanal(semanasJanela)
+      .then((r) => {
+        if (cancelled) return;
+        setDados(r);
+        // Seleciona última por padrão
+        const arr = r?.semanas || [];
+        setSelectedIdx(arr.length > 0 ? arr.length - 1 : null);
+      })
+      .catch((e) => console.warn('[FreqArrec] erro:', e?.message))
+      .finally(() => !cancelled && setLoading(false));
+    return () => { cancelled = true; };
+  }, [semanasJanela]);
+
+  const semanas = dados?.semanas || [];
+  const formatado = useMemo(() => semanas.map((s, i) => ({
+    idx: i,
+    label: s.semana_label || s.semana_inicio?.slice(5) || `S${i}`,
+    semana_inicio: s.semana_inicio,
+    Receita: Number(s.receita || 0),
+    Presença: Number(s.presencial || 0),
+    'Ticket médio': Number(s.ticket_medio_presencial || 0),
+    Decisões: Number(s.decisoes || 0),
+    receita: Number(s.receita || 0),
+    presencial: Number(s.presencial || 0),
+    online: Number(s.online || 0),
+    ticket: Number(s.ticket_medio_presencial || 0),
+    decisoes: Number(s.decisoes || 0),
+    qtd_cultos: Number(s.qtd_cultos || 0),
+    resultado: Number(s.resultado || 0),
+    despesa: Number(s.despesa || 0),
+  })), [semanas]);
+
+  const sel = selectedIdx !== null ? formatado[selectedIdx] : null;
+  const semAnterior = selectedIdx !== null && selectedIdx > 0 ? formatado[selectedIdx - 1] : null;
+
+  const dRec = sel && semAnterior && semAnterior.receita > 0
+    ? ((sel.receita - semAnterior.receita) / semAnterior.receita) * 100
+    : null;
+  const dFreq = sel && semAnterior && semAnterior.presencial > 0
+    ? ((sel.presencial - semAnterior.presencial) / semAnterior.presencial) * 100
+    : null;
+  const dTicket = sel && semAnterior && semAnterior.ticket > 0
+    ? ((sel.ticket - semAnterior.ticket) / semAnterior.ticket) * 100
+    : null;
+
+  const onBarClick = (data) => {
+    if (data && data.activePayload?.[0]) {
+      const payload = data.activePayload[0].payload;
+      if (typeof payload.idx === 'number') setSelectedIdx(payload.idx);
+    }
+  };
+
+  const temDados = semanas.some(s => Number(s.receita || 0) > 0 || Number(s.presencial || 0) > 0);
+
+  return (
+    <Card className="overflow-hidden">
+      <CardContent className="pt-6">
+        <div className="flex items-start justify-between gap-3 flex-wrap mb-1">
+          <div>
+            <h3 className="text-base font-semibold flex items-center gap-2">
+              Frequência × Arrecadação semanal
+              <Badge variant="outline" className="text-[10px] font-normal">
+                <MousePointer2 className="h-2.5 w-2.5 mr-1" />
+                clique numa semana
+              </Badge>
+            </h3>
+            <p className="text-xs text-muted-foreground">
+              Semanas qua-ter · empréstimos excluídos · cards abaixo refletem a semana selecionada
+            </p>
+          </div>
+          <div className="flex gap-1">
+            {[12, 20, 52].map(n => (
+              <button
+                key={n}
+                onClick={() => setSemanasJanela(n)}
+                className={`px-2.5 py-1 text-[11px] rounded-md font-medium transition ${
+                  semanasJanela === n
+                    ? 'bg-primary text-primary-foreground'
+                    : 'bg-muted text-muted-foreground hover:bg-muted/80'
+                }`}
+              >
+                {n}sem
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {loading ? (
+          <div className="py-16 flex justify-center"><Loader2 className="h-6 w-6 animate-spin text-primary" /></div>
+        ) : !temDados ? (
+          <div className="py-16 text-center text-sm text-muted-foreground">
+            Sem dados semanais · importe lançamentos pra ver
+          </div>
+        ) : (
+          <>
+            <div style={{ width: '100%', height: 360 }} className="mt-3">
+              <ResponsiveContainer>
+                <ComposedChart data={formatado} onClick={onBarClick} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
+                  <defs>
+                    <linearGradient id="gradReceitaSem" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor={C.primary} stopOpacity={0.95} />
+                      <stop offset="100%" stopColor={C.primary} stopOpacity={0.45} />
+                    </linearGradient>
+                    <linearGradient id="gradReceitaSel" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor={C.amber} stopOpacity={1} />
+                      <stop offset="100%" stopColor={C.amber} stopOpacity={0.55} />
+                    </linearGradient>
+                  </defs>
+                  <CartesianGrid strokeDasharray="3 3" opacity={0.18} />
+                  <XAxis dataKey="label" tick={{ fontSize: 10 }} angle={-22} textAnchor="end" height={50} interval="preserveStartEnd" />
+                  <YAxis yAxisId="left" tick={{ fontSize: 10 }} tickFormatter={(v) => fmtCompact(v).replace('R$ ', '')} />
+                  <YAxis yAxisId="right" orientation="right" tick={{ fontSize: 10 }} tickFormatter={(v) => fmtInt(v)} />
+                  <Tooltip
+                    cursor={{ fill: 'rgba(0,179,157,0.08)' }}
+                    contentStyle={{ borderRadius: 10, fontSize: 12, border: '1px solid var(--cbrio-border)' }}
+                    formatter={(v, n) => {
+                      if (n === 'Presença' || n === 'Decisões') return [fmtInt(v), n];
+                      return [fmtMoney(v), n];
+                    }}
+                  />
+                  <Legend wrapperStyle={{ fontSize: 11 }} iconSize={10} />
+                  <Bar
+                    yAxisId="left"
+                    dataKey="Receita"
+                    radius={[6, 6, 0, 0]}
+                    animationDuration={1400}
+                    cursor="pointer"
+                  >
+                    {formatado.map((entry, i) => (
+                      <Cell
+                        key={i}
+                        fill={i === selectedIdx ? 'url(#gradReceitaSel)' : 'url(#gradReceitaSem)'}
+                        stroke={i === selectedIdx ? C.amber : 'transparent'}
+                        strokeWidth={i === selectedIdx ? 2 : 0}
+                      />
+                    ))}
+                  </Bar>
+                  <Line
+                    yAxisId="right"
+                    type="monotone"
+                    dataKey="Presença"
+                    stroke={C.blue}
+                    strokeWidth={2.5}
+                    dot={{ r: 3 }}
+                    activeDot={{ r: 6, stroke: C.blue, strokeWidth: 2, fill: '#fff' }}
+                    animationDuration={1700}
+                  />
+                  <Line
+                    yAxisId="left"
+                    type="monotone"
+                    dataKey="Ticket médio"
+                    stroke={C.purple}
+                    strokeDasharray="5 5"
+                    strokeWidth={2}
+                    dot={false}
+                    animationDuration={2000}
+                  />
+                </ComposedChart>
+              </ResponsiveContainer>
+            </div>
+
+            {/* CARDS interativos · refletem a semana selecionada */}
+            <AnimatePresence mode="wait">
+              {sel && (
+                <motion.div
+                  key={`sel-${sel.idx}`}
+                  initial={{ opacity: 0, y: 16 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -8 }}
+                  transition={{ duration: 0.4, ease: 'easeOut' }}
+                  className="mt-5 pt-4 border-t border-border"
+                >
+                  <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
+                    <div className="text-xs text-muted-foreground">
+                      Semana selecionada
+                    </div>
+                    <div className="text-sm font-semibold flex items-center gap-2">
+                      <span className="px-2 py-0.5 rounded bg-amber-100 dark:bg-amber-500/20 text-amber-700 dark:text-amber-300 tabular-nums">
+                        {sel.label}
+                      </span>
+                      <span className="text-muted-foreground text-xs tabular-nums">
+                        {sel.semana_inicio}
+                      </span>
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                    <SemanaCard
+                      label="Arrecadação"
+                      icon={Banknote}
+                      accent={C.green}
+                      valor={fmtMoney(sel.receita)}
+                      delta={dRec}
+                      sub={`vs anterior · ${sel.qtd_cultos} culto(s)`}
+                      anim={`r-${sel.idx}`}
+                    />
+                    <SemanaCard
+                      label="Presença total"
+                      icon={Users}
+                      accent={C.blue}
+                      valor={`${fmtInt(sel.presencial + sel.online)}`}
+                      delta={dFreq}
+                      sub={`${fmtInt(sel.presencial)} presencial · ${fmtInt(sel.online)} online`}
+                      anim={`p-${sel.idx}`}
+                    />
+                    <SemanaCard
+                      label="Ticket médio"
+                      icon={Sparkles}
+                      accent={C.purple}
+                      valor={fmtMoney(sel.ticket)}
+                      delta={dTicket}
+                      sub="R$ por presencial"
+                      anim={`t-${sel.idx}`}
+                    />
+                    <SemanaCard
+                      label="Decisões"
+                      icon={Award}
+                      accent={C.pink}
+                      valor={fmtInt(sel.decisoes)}
+                      delta={null}
+                      sub="presencial + online + kids"
+                      anim={`d-${sel.idx}`}
+                    />
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
+          </>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+function SemanaCard({ label, icon: Icon, accent, valor, delta, sub, anim }) {
+  let DeltaIcon = Minus, deltaColor = 'text-muted-foreground';
+  if (delta !== null && delta !== undefined && Number.isFinite(delta)) {
+    if (Math.abs(delta) < 1) { DeltaIcon = Minus; deltaColor = 'text-muted-foreground'; }
+    else if (delta > 0) { DeltaIcon = ArrowUp; deltaColor = 'text-emerald-600'; }
+    else { DeltaIcon = ArrowDown; deltaColor = 'text-rose-600'; }
+  }
+  return (
+    <motion.div
+      key={anim}
+      initial={{ opacity: 0, scale: 0.92, y: 12 }}
+      animate={{ opacity: 1, scale: 1, y: 0 }}
+      transition={{ duration: 0.45, ease: 'easeOut' }}
+      className="relative overflow-hidden rounded-xl border border-border bg-card p-3"
+    >
+      <div className="absolute top-0 left-0 right-0 h-1" style={{ background: accent }} />
+      <div className="flex items-center justify-between mb-2">
+        <span className="text-[10px] uppercase tracking-wider text-muted-foreground font-medium">{label}</span>
+        <div
+          className="h-7 w-7 rounded-lg flex items-center justify-center"
+          style={{ background: `${accent}1f`, color: accent }}
+        >
+          <Icon className="h-3.5 w-3.5" />
+        </div>
+      </div>
+      <div className="text-xl md:text-2xl font-bold tabular-nums leading-tight" style={{ color: accent }}>
+        {valor}
+      </div>
+      <div className="flex items-center justify-between mt-1">
+        {delta !== null && delta !== undefined && Number.isFinite(delta) ? (
+          <div className={`text-[11px] font-semibold flex items-center ${deltaColor} tabular-nums`}>
+            <DeltaIcon className="h-3 w-3 mr-0.5" />
+            {Math.abs(delta).toFixed(1)}%
+          </div>
+        ) : <div />}
+        <div className="text-[10px] text-muted-foreground truncate">{sub}</div>
+      </div>
+    </motion.div>
+  );
+}
+
+// ============================================================
+// NOVO · Metas Financeiras com filtros (Ano / Mês / Semana / Por meta)
+// ============================================================
+function MetasFinanceirasComFiltros({ metas: metasIniciais, onMetasChange }) {
+  const [metas, setMetas] = useState(metasIniciais || []);
+  const [editing, setEditing] = useState(null);
+  const [showForm, setShowForm] = useState(false);
+  const [progresso, setProgresso] = useState({});
+  const [loadingProg, setLoadingProg] = useState(false);
+
+  // Filtros globais (afetam todas as metas que tiverem "global")
+  const hoje = new Date();
+  const anoAtual = hoje.getFullYear();
+  const semanasOpcoes = useMemo(() => gerarSemanasQuaTer(52), []);
+
+  const [filtroAno, setFiltroAno] = useState(anoAtual);
+  const [filtroMes, setFiltroMes] = useState(''); // '' = todos / 1-12
+  const [filtroSemana, setFiltroSemana] = useState(''); // '' = nenhuma / YYYY-MM-DD da quarta
+  const [perMetaPeriod, setPerMetaPeriod] = useState({}); // metaId -> 'auto' | 'semana' | 'mes' | 'ano'
+  const [filtroTipo, setFiltroTipo] = useState('todos'); // 'todos' | 'receita' | 'despesa' | 'saldo'
+
+  useEffect(() => { setMetas(metasIniciais || []); }, [metasIniciais]);
+
+  // Carrega progresso por meta · usa filtro global como default
+  useEffect(() => {
+    let cancelled = false;
+    setLoadingProg(true);
+    const params = {};
+    if (filtroSemana) params.semana_inicio = filtroSemana;
+    else if (filtroAno && filtroMes) { params.ano = filtroAno; params.mes = filtroMes; }
+    else if (filtroAno) params.ano = filtroAno;
+
+    financeiroV2.metas.progresso(params)
+      .then(r => {
+        if (cancelled) return;
+        const map = {};
+        (r?.metas || []).forEach(m => { map[m.meta_id] = m; });
+        setProgresso(map);
+      })
+      .catch(e => console.warn('[Metas progresso]:', e?.message))
+      .finally(() => !cancelled && setLoadingProg(false));
+    return () => { cancelled = true; };
+  }, [filtroAno, filtroMes, filtroSemana, metas]);
+
+  const salvar = async (payload) => {
+    try {
+      if (payload.id) await financeiroV2.metas.update(payload.id, payload);
+      else await financeiroV2.metas.create(payload);
+      setEditing(null);
+      setShowForm(false);
+      onMetasChange?.();
+    } catch (e) { alert(`Erro: ${e.message}`); }
+  };
+
+  const remover = async (id) => {
+    if (!confirm('Remover esta meta?')) return;
+    await financeiroV2.metas.remove(id);
+    onMetasChange?.();
+  };
+
+  const metasFiltradas = useMemo(() => {
+    return metas.filter(m => {
+      if (filtroTipo === 'todos') return true;
+      if (filtroTipo === 'receita') return m.tipo?.startsWith('receita_');
+      if (filtroTipo === 'despesa') return m.tipo?.startsWith('despesa_');
+      if (filtroTipo === 'saldo') return m.tipo === 'saldo_minimo';
+      return true;
+    });
+  }, [metas, filtroTipo]);
+
+  // Resumo geral
+  const totalNoAlvo = metasFiltradas.filter(m => {
+    const p = progresso[m.id];
+    if (!p) return false;
+    const isInverso = m.tipo?.startsWith('despesa_');
+    return isInverso ? p.pct <= 100 : p.pct >= 100;
+  }).length;
+  const totalAtras = metasFiltradas.length - totalNoAlvo;
+
+  return (
+    <>
+      <Card>
+        <CardContent className="pt-6">
+          <div className="flex items-center justify-between mb-4 flex-wrap gap-3">
+            <div>
+              <h3 className="text-base font-semibold flex items-center gap-2">
+                <Award className="h-4 w-4 text-amber-500" />
+                Metas Financeiras
+              </h3>
+              <p className="text-xs text-muted-foreground">
+                {metasFiltradas.length} meta(s) · {totalNoAlvo} no alvo · {totalAtras} fora do alvo
+                {loadingProg && <Loader2 className="inline h-3 w-3 ml-2 animate-spin" />}
+              </p>
+            </div>
+            <Button size="sm" onClick={() => { setEditing(null); setShowForm(true); }}>
+              + Nova meta
+            </Button>
+          </div>
+
+          {/* FILTROS */}
+          <div className="bg-muted/40 rounded-xl p-3 mb-4 grid grid-cols-1 md:grid-cols-5 gap-2">
+            <div>
+              <label className="text-[10px] uppercase tracking-wider text-muted-foreground font-medium block mb-1">Ano</label>
+              <select
+                value={filtroAno}
+                onChange={(e) => { setFiltroAno(Number(e.target.value)); setFiltroSemana(''); }}
+                className="w-full px-2 py-1.5 text-sm rounded-md border border-border bg-background"
+              >
+                {[anoAtual, anoAtual - 1, anoAtual - 2, anoAtual - 3, anoAtual - 4].map(a => (
+                  <option key={a} value={a}>{a}</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="text-[10px] uppercase tracking-wider text-muted-foreground font-medium block mb-1">Mês</label>
+              <select
+                value={filtroMes}
+                onChange={(e) => { setFiltroMes(e.target.value); setFiltroSemana(''); }}
+                className="w-full px-2 py-1.5 text-sm rounded-md border border-border bg-background"
+              >
+                <option value="">Todos</option>
+                {['Jan','Fev','Mar','Abr','Mai','Jun','Jul','Ago','Set','Out','Nov','Dez'].map((m,i)=>(
+                  <option key={i+1} value={i+1}>{m}</option>
+                ))}
+              </select>
+            </div>
+            <div className="md:col-span-2">
+              <label className="text-[10px] uppercase tracking-wider text-muted-foreground font-medium block mb-1">Semana (qua-ter)</label>
+              <select
+                value={filtroSemana}
+                onChange={(e) => setFiltroSemana(e.target.value)}
+                className="w-full px-2 py-1.5 text-sm rounded-md border border-border bg-background"
+              >
+                <option value="">Usar ano/mês acima</option>
+                {semanasOpcoes
+                  .filter(s => s.ano === filtroAno || filtroAno === anoAtual)
+                  .slice(0, 30)
+                  .map(s => (
+                    <option key={s.ref} value={s.ref}>{s.labelCurto} · {s.label.replace(' (atual)', '')}</option>
+                  ))}
+              </select>
+            </div>
+            <div>
+              <label className="text-[10px] uppercase tracking-wider text-muted-foreground font-medium block mb-1">Tipo</label>
+              <select
+                value={filtroTipo}
+                onChange={(e) => setFiltroTipo(e.target.value)}
+                className="w-full px-2 py-1.5 text-sm rounded-md border border-border bg-background"
+              >
+                <option value="todos">Todos</option>
+                <option value="receita">Receita</option>
+                <option value="despesa">Despesa</option>
+                <option value="saldo">Saldo</option>
+              </select>
+            </div>
+          </div>
+
+          {(filtroAno !== anoAtual || filtroMes || filtroSemana || filtroTipo !== 'todos') && (
+            <div className="flex items-center gap-2 mb-3 text-[11px]">
+              <Filter className="h-3 w-3 text-muted-foreground" />
+              <span className="text-muted-foreground">Filtros ativos</span>
+              <button
+                onClick={() => { setFiltroAno(anoAtual); setFiltroMes(''); setFiltroSemana(''); setFiltroTipo('todos'); }}
+                className="px-2 py-0.5 rounded bg-muted hover:bg-muted/80 text-foreground flex items-center gap-1"
+              >
+                <X className="h-3 w-3" /> Limpar
+              </button>
+            </div>
+          )}
+
+          {metasFiltradas.length === 0 ? (
+            <div className="py-12 text-center">
+              <Target className="h-12 w-12 mx-auto text-muted-foreground mb-3" />
+              <p className="text-sm text-muted-foreground">Nenhuma meta nesta visão</p>
+              <Button size="sm" className="mt-3" onClick={() => { setEditing(null); setShowForm(true); }}>
+                + Criar nova meta
+              </Button>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+              {metasFiltradas.map((m, i) => (
+                <MetaCardFiltrado
+                  key={m.id}
+                  meta={m}
+                  idx={i}
+                  prog={progresso[m.id]}
+                  periodOverride={perMetaPeriod[m.id]}
+                  onPeriodChange={(p) => setPerMetaPeriod(prev => ({ ...prev, [m.id]: p }))}
+                  onEdit={() => { setEditing(m); setShowForm(true); }}
+                  onDelete={() => remover(m.id)}
+                />
+              ))}
+            </div>
+          )}
+
+          {showForm && (
+            <MetaForm
+              inicial={editing || {}}
+              onCancel={() => { setEditing(null); setShowForm(false); }}
+              onSave={salvar}
+            />
+          )}
+        </CardContent>
+      </Card>
+    </>
+  );
+}
+
+function MetaCardFiltrado({ meta, idx, prog, periodOverride, onPeriodChange, onEdit, onDelete }) {
+  const atual = Number(prog?.valor_atual || 0);
+  const valorMeta = Number(meta.valor) || 1;
+  const isInverso = meta.tipo?.startsWith('despesa_');
+  const pct = Math.min(200, Math.round((atual / valorMeta) * 100));
+  const cor = isInverso
+    ? (pct <= 80 ? C.green : pct <= 100 ? C.amber : C.red)
+    : (pct >= 100 ? C.green : pct >= 70 ? C.amber : C.red);
+
+  const tipoLabel = TIPO_META_LABEL[meta.tipo] || meta.tipo;
+  const periodicidade = meta.periodicidade || periodicidadeDoTipo(meta.tipo);
+  const tipoGrafico = meta.tipo_grafico || 'gauge';
+  const semDado = !prog;
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 14 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.4, delay: idx * 0.04, ease: 'easeOut' }}
+    >
+      <Card className={`relative overflow-hidden ${!meta.ativa ? 'opacity-60' : ''}`}>
+        <div className="absolute top-0 left-0 right-0 h-1" style={{ background: cor }} />
+        <CardContent className="pt-5 pb-4">
+          <div className="flex items-start justify-between gap-2 mb-3">
+            <div className="min-w-0 flex-1">
+              <div className="flex flex-wrap gap-1 mb-1">
+                <Badge variant="outline" className="text-[10px]">{tipoLabel}</Badge>
+                <Badge variant="outline" className="text-[10px] capitalize" style={{ borderColor: cor, color: cor }}>
+                  {periodicidade}
+                </Badge>
+              </div>
+              <h4 className="text-sm font-semibold leading-tight truncate" title={meta.descricao || tipoLabel}>
+                {meta.descricao || tipoLabel}
+              </h4>
+              {(meta.plano || meta.centro) && (
+                <div className="text-[10px] text-muted-foreground mt-1 truncate">
+                  {meta.plano && `${meta.plano.codigo} ${meta.plano.nome}`}
+                  {meta.centro && ` · ${meta.centro.codigo} ${meta.centro.nome}`}
+                </div>
+              )}
+            </div>
+            <div className="flex gap-0.5 shrink-0">
+              <button onClick={onEdit} className="p-1.5 rounded hover:bg-muted text-muted-foreground hover:text-foreground transition" title="Editar">
+                <FileText className="h-3.5 w-3.5" />
+              </button>
+              <button onClick={onDelete} className="p-1.5 rounded hover:bg-red-500/10 text-muted-foreground hover:text-red-500 transition" title="Remover">
+                <X className="h-3.5 w-3.5" />
+              </button>
+            </div>
+          </div>
+
+          {semDado ? (
+            <div className="py-8 text-center text-xs text-muted-foreground">
+              {prog === undefined ? 'Calculando...' : 'Sem dado no período'}
+            </div>
+          ) : tipoGrafico === 'gauge' ? (
+            <div className="-mt-2">
+              <MetaGauge
+                atual={atual}
+                meta={valorMeta}
+                anim={`${meta.id}-${atual}-${prog?.periodo_inicio || 'x'}`}
+                size={200}
+                label={`${pct}% ${isInverso ? 'consumido' : 'atingido'}`}
+                showLabels={false}
+              />
+              <div className="text-center text-[11px] text-muted-foreground -mt-2">
+                <span className="tabular-nums font-medium" style={{ color: cor }}>{fmtCompact(atual)}</span>
+                <span className="mx-1">de</span>
+                <span className="tabular-nums">{fmtCompact(valorMeta)}</span>
+              </div>
+            </div>
+          ) : (
+            <div className="space-y-2">
+              <div className="flex items-baseline justify-between">
+                <motion.div
+                  key={`val-${meta.id}-${atual}`}
+                  initial={{ scale: 0.85, opacity: 0 }}
+                  animate={{ scale: 1, opacity: 1 }}
+                  transition={{ duration: 0.4 }}
+                  className="text-2xl font-bold tabular-nums"
+                  style={{ color: cor }}
+                >
+                  <CountUp value={atual} format={fmtCompact} />
+                </motion.div>
+                <div className="text-xs text-muted-foreground tabular-nums">
+                  / {fmtCompact(valorMeta)}
+                </div>
+              </div>
+              <div className="h-3 rounded-full bg-muted overflow-hidden">
+                <motion.div
+                  key={`bar-${meta.id}-${pct}`}
+                  className="h-full rounded-full"
+                  style={{ background: cor }}
+                  initial={{ width: 0 }}
+                  animate={{ width: `${Math.min(100, pct)}%` }}
+                  transition={{ duration: 1.0, ease: 'easeOut' }}
+                />
+              </div>
+              <div className="flex items-baseline justify-between text-[11px]">
+                <span className="font-semibold tabular-nums" style={{ color: cor }}>{pct}%</span>
+              </div>
+            </div>
+          )}
+
+          {prog?.periodo_inicio && prog?.periodo_fim && (
+            <div className="mt-3 pt-2 border-t border-border/50 text-[10px] text-muted-foreground text-center tabular-nums">
+              {prog.periodo_inicio.slice(5)} → {prog.periodo_fim.slice(5)}
+            </div>
+          )}
+        </CardContent>
+      </Card>
     </motion.div>
   );
 }
