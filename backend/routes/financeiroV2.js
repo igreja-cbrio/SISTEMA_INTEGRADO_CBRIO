@@ -1487,8 +1487,9 @@ router.get('/dashboard/semana-completa', async (req, res) => {
         .eq('semana_inicio', range.inicio)
         .order('total_doado', { ascending: false }).limit(10),
       // Quebra por categoria (plano de contas nivel 3)
+      // Inclui data_competencia + classe_movimento pra bucketing por DOW (Power BI)
       supabase.from('vw_fin_transacoes_completa')
-        .select('plano_contas_codigo, plano_contas_nome, plano_contas_natureza, valor, culto_nome, culto_service_type_slug')
+        .select('plano_contas_codigo, plano_contas_nome, plano_contas_natureza, valor, culto_nome, culto_service_type_slug, data_competencia, classe_movimento')
         .gte('data_competencia', range.inicio).lte('data_competencia', range.fim)
         .eq('tipo', 'receita').neq('status', 'cancelado'),
     ]);
@@ -1511,14 +1512,21 @@ router.get('/dashboard/semana-completa', async (req, res) => {
       return nome?.split('·')[0]?.trim() || 'Outros';
     };
 
+    // Bucket por DOW da data_competencia (regra Power BI · 2026-05-28):
+    //   Sun=0 Mon=1 Tue=2 Wed=3 Thu=4 Fri=5 Sat=6
+    //   w=4 (Quinta) → "Quarta com Deus" (quinta lança quarta)
+    //   w=1 (Segunda) → "Final de Semana" (segunda lança sex+sab+dom)
+    //   else → "Durante a Semana"
+    // Empréstimo / transferência / estorno NÃO entram em arrecadação por culto.
     for (const t of categorias.data || []) {
+      if (['emprestimo','transferencia','estorno'].includes(t.classe_movimento)) continue;
       const cat = labelCategoria(t.plano_contas_codigo, t.plano_contas_nome, t.plano_contas_natureza);
       const v = Number(t.valor);
-      const slug = (t.culto_service_type_slug || '').toLowerCase();
-      // Bucket por culto
+      const data = t.data_competencia ? new Date(t.data_competencia + 'T12:00:00Z') : null;
+      const dow = data ? data.getUTCDay() : -1; // 0=Sun..6=Sat
       let key;
-      if (slug.includes('quarta')) key = 'quarta';
-      else if (slug.startsWith('domingo') || slug === 'sede') key = 'domingo';
+      if (dow === 4) key = 'quarta';
+      else if (dow === 1) key = 'domingo';
       else key = 'outros';
       buckets[key].categorias[cat] = (buckets[key].categorias[cat] || 0) + v;
       buckets[key].total += v;
@@ -1823,6 +1831,97 @@ router.post('/sync-saldo-bancos', async (req, res) => {
     res.json({ ok: true, atualizados: data });
   } catch (e) {
     console.error('[FIN-V2] sync-saldo-bancos:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ====================================================================
+// FREQUÊNCIA × ARRECADAÇÃO SEMANAL (qua-ter) · 2026-05-28
+// Empréstimos NÃO entram em arrecadação (regra CLAUDE.md)
+// Default: últimas 20 semanas
+// ====================================================================
+router.get('/freq-arrecadacao-semanal', async (req, res) => {
+  try {
+    const semanas = Math.min(Number(req.query.semanas || 20), 104);
+    const hoje = new Date();
+    // Volta N+2 semanas pra ter cushion
+    const inicio = new Date(hoje.getTime() - (semanas + 2) * 7 * 86400000)
+      .toISOString().slice(0, 10);
+
+    const { data, error } = await supabase
+      .from('vw_fin_freq_vs_arrecadacao_semanal')
+      .select('*')
+      .gte('semana_inicio', inicio)
+      .order('semana_inicio', { ascending: true });
+
+    if (error) return res.status(400).json({ error: error.message });
+
+    const limpas = (data || []).slice(-semanas).map(r => ({
+      semana_inicio: r.semana_inicio,
+      semana_fim: r.semana_fim,
+      semana_label: r.semana_label,
+      ano: r.ano,
+      receita: Number(r.receita || 0),
+      despesa: Number(r.despesa || 0),
+      resultado: Number(r.resultado || 0),
+      presencial: Number(r.presencial || 0),
+      online: Number(r.online || 0),
+      total_freq: Number(r.total_freq || 0),
+      decisoes: Number(r.decisoes || 0),
+      qtd_cultos: Number(r.qtd_cultos || 0),
+      ticket_medio_presencial: Number(r.ticket_medio_presencial || 0),
+    }));
+
+    res.json({ semanas: limpas });
+  } catch (e) {
+    console.error('[FIN-V2] freq-arrecadacao-semanal:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ====================================================================
+// METAS · progresso de cada meta no período · 2026-05-28
+// Filtros: ano, mes (1-12), semana_inicio (YYYY-MM-DD)
+// Se nada passado, cada meta usa sua própria periodicidade no período atual.
+// ====================================================================
+router.get('/metas-progresso', async (req, res) => {
+  try {
+    const { ano, mes, semana_inicio } = req.query;
+    let p_inicio = null;
+    let p_fim = null;
+
+    if (semana_inicio) {
+      const { data: sem } = await supabase.rpc('fin_semana_qua_ter', { p_data: semana_inicio });
+      const r = (sem || [])[0];
+      if (r) { p_inicio = r.inicio; p_fim = r.fim; }
+    } else if (ano && mes) {
+      const a = Number(ano);
+      const m = Number(mes);
+      p_inicio = `${a}-${String(m).padStart(2, '0')}-01`;
+      const last = new Date(a, m, 0).getDate();
+      p_fim = `${a}-${String(m).padStart(2, '0')}-${String(last).padStart(2, '0')}`;
+    } else if (ano) {
+      p_inicio = `${ano}-01-01`;
+      p_fim = `${ano}-12-31`;
+    }
+
+    const { data, error } = await supabase.rpc('fin_metas_progresso', {
+      p_inicio,
+      p_fim,
+    });
+    if (error) return res.status(400).json({ error: error.message });
+
+    res.json({
+      filtro: { ano: ano || null, mes: mes || null, semana_inicio: semana_inicio || null, periodo_inicio: p_inicio, periodo_fim: p_fim },
+      metas: (data || []).map(m => ({
+        ...m,
+        valor_meta: Number(m.valor_meta || 0),
+        valor_atual: Number(m.valor_atual || 0),
+        pct: Number(m.pct || 0),
+      })),
+    });
+  } catch (e) {
+    console.error('[FIN-V2] metas-progresso:', e);
     res.status(500).json({ error: e.message });
   }
 });

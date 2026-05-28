@@ -626,7 +626,9 @@ export const financeiroV2 = {
     create: (data) => post('/financeiro-v2/metas', data),
     update: (id, data) => put(`/financeiro-v2/metas/${id}`, data),
     remove: (id) => del(`/financeiro-v2/metas/${id}`),
+    progresso: (params) => get('/financeiro-v2/metas-progresso' + (params ? '?' + new URLSearchParams(params) : '')),
   },
+  freqArrecadacaoSemanal: (semanas = 20) => get(`/financeiro-v2/freq-arrecadacao-semanal?semanas=${semanas}`),
   syncSaldoBancos: () => post('/financeiro-v2/sync-saldo-bancos', {}),
   backfill: (data) => post('/financeiro-v2/backfill/transacoes', data || {}),
   recorrencias: {
