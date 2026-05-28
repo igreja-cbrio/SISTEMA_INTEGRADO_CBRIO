@@ -2,6 +2,56 @@
 
 Guia operacional para o Claude Code quando trabalhar neste repositório.
 
+## Marketing · Spec 002 · Schema base do Marketing (2026-05-28)
+
+7 tabelas novas + triggers + RLS + indices + whitelist soft-delete. Migration
+`20260528140000_marketing_schema.sql`.
+
+**Tabelas:**
+
+| Tabela | Propósito | Volume/ano |
+|---|---|---|
+| `marketing_membros` | Equipe + habilidade (1 por membro · UNIQUE profile_id + habilidade) | ~10 |
+| `marketing_etiquetas_tipo` | Catálogo 8 valores · `esforco_medio_h` editável (calibra via cycle time) | 8 |
+| `marketing_etiquetas_destino` | Catálogo 5 valores | 5 |
+| `marketing_kanban_cards` | 3 origens (solicitacao/evento/interna) + estado + ordem_fila bigserial | ~520 |
+| `marketing_entregaveis` | Arquivos SharePoint (Spec 006 popula) | ~520 |
+| `marketing_capacidade_override` | Férias/picos/atípicos por semana | ~50 |
+| `marketing_compromissos_recorrentes` | Slots fixos (Aline dom · Allan qua · Lorena diário) | 3-10 |
+
+**Decisões arquiteturais:**
+- `evento_task_id` referencia **`event_tasks`** (não "kanban_tasks" como doc original sugeria · confirmado via information_schema).
+- CHECK constraint forte em `marketing_kanban_cards`: a FK correta depende do `origem` (solicitacao_id NOT NULL apenas se origem='solicitacao' etc).
+- `ordem_fila bigserial` · revisão (D-14) atualiza pro fim da fila via trigger `fn_marketing_cards_estado_ts`.
+- UNIQUE parcial em `solicitacao_id` e `evento_task_id` (`deleted_at IS NULL`) garante **1 card por origem** (idempotência pros triggers de sync na Spec 004).
+- Soft-delete em 5 tabelas (etiquetas catálogo não · usar `ativo` boolean).
+- Audit log em `marketing_kanban_cards` (estado, atribuido_a, prazo_confirmado, tem_revisao, raia_rapida, deleted_at).
+
+**RLS por tabela:**
+
+| Tabela | SELECT | INSERT/UPDATE | DELETE |
+|---|---|---|---|
+| `marketing_membros` | nível≥1 OU super-admin | nível≥5 OU super-admin | super-admin |
+| `marketing_etiquetas_tipo` | todos auth (catálogo) | nível≥5 OU super-admin | super-admin |
+| `marketing_etiquetas_destino` | todos auth | nível≥5 OU super-admin | super-admin |
+| `marketing_kanban_cards` | nível≥3 OR card.solicitacao_id pertence ao auth.uid() | INSERT nível≥5 + origem='interna' / UPDATE nível≥5 OU produtor do card | super-admin |
+| `marketing_entregaveis` | nível≥3 OR via solicitacoes do auth.uid() | nível≥3 + enviado_por=auth.uid() | super-admin |
+| `marketing_capacidade_override` | nível≥1 | nível≥5 | super-admin |
+| `marketing_compromissos_recorrentes` | nível≥1 | nível≥5 | super-admin |
+
+Todas têm `service_role FOR ALL USING(true)` (backend bypassa RLS).
+
+**Trigger `fn_marketing_cards_estado_ts`:**
+- BEFORE UPDATE
+- Atualiza `estado_atualizado_em` quando muda estado (cycle time)
+- Preenche `entregue_em` na transição para `concluido`
+- Atualiza `ordem_fila` pro fim quando `tem_revisao` vira true (D-14)
+- Atualiza `updated_at`
+
+**Pendência (resolve na Spec 003):** seeds da equipe + módulo `marketing` em
+`public.modulos` + boost `AREA_MODULO_BOOST['marketing']` em
+`backend/middleware/auth.js`. Schema sozinho não dá acesso a ninguém.
+
 ## Marketing · Spec 001 · Aprovação hierárquica no Solicitações (TRANSVERSAL · 2026-05-28)
 
 Primeira spec do módulo Marketing · **mudança transversal** no backbone de
