@@ -28,7 +28,7 @@ function fmtRelativeTime(iso) {
   return `${d}d atras`;
 }
 
-export default function ColetaPendentes() {
+export default function ColetaPendentes({ onChange }) {
   const [pendentes, setPendentes] = useState([]);
   const [loading, setLoading] = useState(true);
   const [rejeitando, setRejeitando] = useState(null); // { id, motivo }
@@ -54,6 +54,7 @@ export default function ColetaPendentes() {
       await intApi.coleta.aprovar(sub.id);
       toast.success('Submissao aprovada · dados aplicados ao culto');
       setPendentes(prev => prev.filter(p => p.id !== sub.id));
+      onChange?.();
     } catch (e) {
       toast.error(e.message || 'Erro ao aprovar');
     } finally {
@@ -73,6 +74,7 @@ export default function ColetaPendentes() {
       toast.success('Submissao rejeitada · responsavel pode reenviar');
       setPendentes(prev => prev.filter(p => p.id !== rejeitando.id));
       setRejeitando(null);
+      onChange?.();
     } catch (e) {
       toast.error(e.message || 'Erro ao rejeitar');
     } finally {
