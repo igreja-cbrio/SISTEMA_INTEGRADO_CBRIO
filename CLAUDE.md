@@ -2,6 +2,26 @@
 
 Guia operacional para o Claude Code quando trabalhar neste repositório.
 
+## Marketing · Spec 023 · Pedro como membro + atribuição default órfãos (2026-05-28)
+
+Marcos: "coloque também Pedro Paiva como uma das pessoas nesse calendário e coloque todas as tarefas sem dono para ele · ele vai conseguir ver o que precisa ser entregue e que não tem dono."
+
+**Discussão sobre horas dos cards de ciclo criativo** (Marcos perguntou se valia botar no Eventos):
+- **Decisão:** manter no Marketing. Pedro classifica `etiqueta_tipo_id` ao atribuir → esforço vem da etiqueta (Spec 005+017 já fazem). Outros módulos não consomem · centralizar no Eventos é overhead sem benefício hoje.
+
+**Migration `20260528380000_marketing_pedro_membro_orfaos.sql`:**
+- CHECK constraint `marketing_membros.habilidade` ganha `'coordenador'` (Pedro não se encaixa nas 5 habilidades técnicas)
+- Mesma adição em `marketing_etiquetas_tipo.habilidade_padrao` (consistência · etiqueta pode sugerir coordenador)
+- `INSERT marketing_membros` · Pedro Paiva · `coordenador` · 40h · idempotent via ON CONFLICT
+- `UPDATE marketing_kanban_cards SET atribuido_a = pedro_membro_id WHERE atribuido_a IS NULL AND estado IN ('fila','em_producao','aguardando_solicitante')` · 105 cards do ciclo + qualquer outro órfão recebem Pedro como atribuído
+
+**Por que não estoura a capacidade do Pedro:**
+- Spec 018 fez `fn_marketing_calcular_capacidade_semana` somar cards via ROW_NUMBER ordenando por `ordem_fila` · só os primeiros cabem na capacidade · resto fica invisível no calendário (mas listado na Fila)
+- Pedro reordena ou reatribui conforme distribui · o que sobra na fila dele aguarda
+
+**Frontend (`MarketingAdmin.jsx`):**
+- Constante `HABILIDADES` ganha `'coordenador'` no topo
+
 ## Marketing · Spec 022 · Ciclo criativo de Eventos aparece no Kanban (2026-05-28)
 
 Marcos: "as demandas de ciclo criativo que ficam no módulo de eventos devem ser listadas aqui também, por fases · pode ficar com o Pedro a responsabilidade de delegar · preenchimento continua no módulo de eventos, só um clique que abre lá."

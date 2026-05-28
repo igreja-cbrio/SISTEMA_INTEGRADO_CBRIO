@@ -17,7 +17,7 @@ import { supabase } from '../../supabaseClient';
 import MarketingNav from './MarketingNav';
 
 const DIAS_LABEL = ['Domingo', 'Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta', 'Sábado'];
-const HABILIDADES = ['videomaker', 'fotografo', 'designer', 'social_media', 'social_media_assistente'];
+const HABILIDADES = ['coordenador', 'videomaker', 'fotografo', 'designer', 'social_media', 'social_media_assistente'];
 
 export default function MarketingAdmin() {
   const navigate = useNavigate();
