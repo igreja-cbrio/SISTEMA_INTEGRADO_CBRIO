@@ -7,7 +7,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '.
 import { Badge } from '../ui/badge';
 import { Loader2, Search, TrendingUp, TrendingDown, Target, User } from 'lucide-react';
 import {
-  LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine, Legend,
+  LineChart, Line, BarChart, Bar, Cell, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine, Legend,
 } from 'recharts';
 
 // Mesma paleta dos outros graficos do dashboard
@@ -195,7 +195,7 @@ export default function DashKpisAba() {
 
       {/* Detalhe do KPI selecionado */}
       <div className="col-span-12 lg:col-span-8">
-        {kpiSel ? <KpiDetalhe id={kpiSel} resumo={kpis.find(k => k.id === kpiSel)} /> : (
+        {kpiSel ? <KpiDetalhe key={kpiSel} id={kpiSel} resumo={kpis.find(k => k.id === kpiSel)} /> : (
           <Card>
             <CardContent className="py-16 text-center text-sm text-muted-foreground">
               Selecione um KPI à esquerda pra ver o gráfico e os detalhes.
@@ -251,6 +251,19 @@ function KpiDetalhe({ id, resumo }) {
     while (fim > 0 && (arr[fim - 1].valor == null || arr[fim - 1].valor === 0)) fim--;
     return arr.slice(0, fim);
   }, [historico]);
+
+  // KPI do tipo delta (crescimento/variacao) · barra com positivo/negativo
+  // em verde/vermelho fica muito mais legivel que linha proxima de zero.
+  // Default automatico, mas usuario pode trocar pelo toggle no header.
+  const tipoCalculo = resumo?.tipo_calculo;
+  const ehDelta = tipoCalculo === 'delta_pct' || tipoCalculo === 'delta_abs';
+  const [tipoChart, setTipoChart] = useState(ehDelta ? 'barra' : 'linha');
+
+  const corBarra = (v) => {
+    if (!ehDelta) return COR_LINHA;
+    if (v == null) return '#94a3b8';
+    return v >= 0 ? '#10b981' : '#ef4444';
+  };
 
   // Delta vs periodo anterior (mesmo na serie)
   const ultimo = serie[serie.length - 1];
@@ -351,12 +364,26 @@ function KpiDetalhe({ id, resumo }) {
         </div>
       )}
 
-      {/* Grafico de linha · historico */}
+      {/* Grafico · historico · linha (default) ou barra (delta) */}
       <Card>
-        <CardHeader className="pb-2">
+        <CardHeader className="pb-2 flex flex-row items-center justify-between gap-3 space-y-0">
           <CardTitle className="text-sm font-medium">
             Histórico {kpi.periodicidade ? `(${kpi.periodicidade})` : ''} · últimos {serie.length} registros
           </CardTitle>
+          <div className="inline-flex rounded-lg border p-0.5">
+            {['linha', 'barra'].map(t => (
+              <button
+                key={t}
+                onClick={() => setTipoChart(t)}
+                className={`px-2.5 py-0.5 text-[11px] font-medium rounded capitalize transition-colors ${
+                  tipoChart === t ? 'bg-[#00B39D] text-white' : 'text-muted-foreground hover:text-foreground'
+                }`}
+                title={ehDelta && t === 'barra' ? 'Sugerido pra KPIs de variação (positivo/negativo em verde/vermelho)' : undefined}
+              >
+                {t}
+              </button>
+            ))}
+          </div>
         </CardHeader>
         <CardContent>
           {serie.length === 0 ? (
@@ -366,6 +393,31 @@ function KpiDetalhe({ id, resumo }) {
           ) : (
             <div className="h-[320px]">
               <ResponsiveContainer width="100%" height="100%">
+                {tipoChart === 'barra' ? (
+                  <BarChart data={serie} margin={{ top: 16, right: 20, left: 0, bottom: 8 }}>
+                    <CartesianGrid strokeDasharray="3 3" opacity={0.25} />
+                    <XAxis dataKey="periodo" tick={{ fontSize: 11 }} interval="preserveStartEnd" minTickGap={20} />
+                    <YAxis tick={{ fontSize: 11 }} allowDecimals={false} />
+                    <Tooltip
+                      cursor={{ fill: 'rgba(0,179,157,0.06)' }}
+                      contentStyle={{ borderRadius: 8, fontSize: 12 }}
+                      formatter={v => (v == null ? '—' : Number(v).toLocaleString('pt-BR'))}
+                    />
+                    <Legend wrapperStyle={{ fontSize: 12, paddingTop: 8 }} />
+                    {meta != null && !ehDelta && (
+                      <ReferenceLine y={Number(meta)} stroke={COR_META} strokeDasharray="4 4" strokeWidth={1.5}
+                        label={{ value: 'Meta', position: 'right', fontSize: 10, fill: COR_META }} />
+                    )}
+                    {ehDelta && (
+                      <ReferenceLine y={0} stroke="#94a3b8" strokeWidth={1} />
+                    )}
+                    <Bar dataKey="valor" name={kpi.indicador} radius={[4, 4, 0, 0]}>
+                      {serie.map((d, i) => (
+                        <Cell key={i} fill={corBarra(d.valor)} />
+                      ))}
+                    </Bar>
+                  </BarChart>
+                ) : (
                 <LineChart data={serie} margin={{ top: 16, right: 20, left: 0, bottom: 8 }}>
                   <CartesianGrid strokeDasharray="3 3" opacity={0.25} />
                   <XAxis dataKey="periodo" tick={{ fontSize: 11 }} interval="preserveStartEnd" minTickGap={20} />
@@ -375,9 +427,12 @@ function KpiDetalhe({ id, resumo }) {
                     formatter={v => (v == null ? '—' : Number(v).toLocaleString('pt-BR'))}
                   />
                   <Legend wrapperStyle={{ fontSize: 12, paddingTop: 8 }} />
-                  {meta != null && (
+                  {meta != null && !ehDelta && (
                     <ReferenceLine y={Number(meta)} stroke={COR_META} strokeDasharray="4 4" strokeWidth={1.5}
                       label={{ value: 'Meta', position: 'right', fontSize: 10, fill: COR_META }} />
+                  )}
+                  {ehDelta && (
+                    <ReferenceLine y={0} stroke="#94a3b8" strokeWidth={1} />
                   )}
                   <Line
                     type="monotone"
@@ -390,6 +445,7 @@ function KpiDetalhe({ id, resumo }) {
                     connectNulls={false}
                   />
                 </LineChart>
+                )}
               </ResponsiveContainer>
             </div>
           )}
