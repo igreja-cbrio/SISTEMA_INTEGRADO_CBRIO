@@ -2,6 +2,44 @@
 
 Guia operacional para o Claude Code quando trabalhar neste repositório.
 
+## Marketing · Spec 017 · Refator etiquetas tipo · 16 entregas concretas (2026-05-28)
+
+Marcos identificou que os 8 tipos guarda-chuva (Artes · Impressos · Mockup · etc) misturavam conceitos: "Artes" não é entrega, é produto base; "Impressos" = arte + impressão; esforço variava demais (post 30min vs banner 16h).
+
+**Mudança:** substituídos os 8 tipos por 16 **entregas concretas**, agrupadas em 5 canais via cor:
+
+| Canal | Cor | Entregas |
+|---|---|---|
+| Redes sociais | rosa (#EC4899/#F472B6) | Post · Carrossel · Story · Reels |
+| Audiovisual | azul (#0EA5E9/#0284C7/#38BDF8/#7DD3FC) | Vídeo curto · Aftermovie · Motion · Foto evento · Foto retrato |
+| Impressos | âmbar (#F59E0B/#FBBF24) | Cartaz/Folder · Banner/Lona · Adesivo |
+| Eventos físicos | roxo (#A855F7) | Mockup · Telão LED |
+| Marca | verde (#10B981/#059669) | Logo · Identidade visual completa |
+
+**SLAs preliminares** (Pedro/Marcos refina via `/marketing/admin`):
+
+| Entrega | esforco_max_h |
+|---|---|
+| Story | 1 |
+| Post · Adesivo | 2 |
+| Foto retrato | 3 |
+| Carrossel · Reels · Vídeo curto · Cartaz/Folder · Mockup · Telão LED | 4 |
+| Banner/Lona · Foto evento · Motion | 6 |
+| Aftermovie · Logo | 16 |
+| Identidade visual completa | 40 |
+
+**Migration `20260528260000_marketing_etiquetas_refator.sql`:**
+- `UPDATE ativo=false` nos 8 tipos antigos (preserva FK · 1 card existente continua referenciando · UI não mostra mais)
+- `INSERT` (ou UPDATE via ON CONFLICT) dos 16 tipos novos com SLAs sugeridos
+- Antigos vão pro fim da ordenação (cosmético)
+- Coluna `nome` ganha COMMENT explicativo do refator
+
+**Frontend/Backend · sem mudança de código.** Lista de tipos vem dinâmica do banco via `/api/marketing/etiquetas` (filtra `ativo=true`). Cores aplicadas inline a partir de `etiqueta_tipo.cor`. Estimativa preliminar (Spec 010) usa `esforco_max_h` (Spec 016) que já existe.
+
+**Eixo "destino"** (interno/externo/institucional/eventos_séries/campanhas) **intocado** — foco da Spec 017 foi só no eixo tipo.
+
+**Tipos antigos** (`ativo=false`): redes_sociais · artes · pecas_fisicas · mockup (slug antigo) · videos · fotos · impressos · identidade_marca. O slug `mockup` é reusado pelo tipo novo (CONFLICT DO UPDATE atualiza ele) · os outros 7 ficam dormentes.
+
 ## Marketing · Spec 016 · Bugfix 3 telas + esforco_max (proposta A · 2026-05-28)
 
 Após o piloto começar, Marcos identificou 3 telas com crash + propôs trocar
