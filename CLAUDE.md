@@ -2,6 +2,39 @@
 
 Guia operacional para o Claude Code quando trabalhar neste repositório.
 
+## Marketing · Spec 021 · Cleanup legacy + Aline + Notificações (2026-05-28)
+
+Pós-auditoria · 3 ações Marcos:
+1. **Remover legacy do módulo** · 7 etiquetas inativas (hard-delete) + 5 KPIs MKT-ONL-* (soft-delete) + migrar 1 card antigo
+2. **Cadastrar Aline** sem e-mail · aparece pro Pedro (admin/calendário) e em RH com informações pendentes
+3. **Configurar notificações** pro Pedro Paiva + Marcos
+
+**Migration `20260528340000_marketing_cleanup_aline_notif.sql`:**
+
+| Ação | Detalhe |
+|---|---|
+| Migra card "Impressos campanha de serviço" pro tipo `banner_lona` (6h) · era `artes` legacy (10h) | UPDATE marketing_kanban_cards |
+| Hard-delete 7 tipos legacy (redes_sociais, artes, pecas_fisicas, videos, fotos, impressos, identidade_marca) · FK `ON DELETE SET NULL` em cards garante segurança | DELETE FROM marketing_etiquetas_tipo |
+| Soft-delete 5 KPIs MKT-ONL-* sem fonte_auto (preserva audit) | UPDATE kpi_indicadores_taticos |
+| Profile fantasma Aline · `role='assistente'` · `area='Criativo'` · email placeholder único | INSERT INTO profiles |
+| `rh_funcionarios` Aline · email NULL · cargo "Fotografa de domingo (cobertura cultos)" · tipo_contrato `PJ` · observações listam o que tá pendente | INSERT |
+| `marketing_membros` Aline · habilidade `fotografo` · `horas_semanais=6` | INSERT |
+| Recorrente domingo 08:30 6h "Cobertura cultos domingo (08:30 · 10:00 · 11:30 · 19:00)" vinculado a Aline | INSERT compromisso + junction |
+| Notificação · Pedro Paiva + Marcos recebem do módulo `marketing` | INSERT notificacao_regras |
+
+**Padrão "profile fantasma" pra Aline:**
+- Não existe em `auth.users` · não loga nunca
+- Email placeholder `aline.pendente@cbrio.org` (sem `UNIQUE` em profiles.email · idempotente via WHERE NOT EXISTS)
+- Aparece como pessoa normal no calendário (linha `Aline (fotografa domingo)` · habilidade `fotografo` · 6/6 alocadas via recorrente domingo)
+- RH tem entrada com `nome`/`cargo` preenchidos · resto pendente
+- Quando ganhar email/CPF, atualizar via UI normal de RH
+
+**Pós-migração esperado:**
+- Cauã passa de `10/40` pra `6/40` aloc (card "Impressos campanha de serviço" agora aponta pra banner_lona 6h)
+- Aline `6/6` aloc todo domingo
+- Etiquetas tipo · 16 ativas (sem inativas)
+- KPIs MKT-* · 4 (PRAZO/LEAD/THROUGHPUT/DEM-CAP) · sem MKT-ONL-* legacy
+
 ## Marketing · Spec 020 · Recorrentes N:M (vários participantes) (2026-05-28)
 
 Marcos: "queria que voce pudesse adicionar tarefas recorrentes que podem mais de uma pessoa · reunião de todo marketing · reunião específica com designer e redes sociais."
