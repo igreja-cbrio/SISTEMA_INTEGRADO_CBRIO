@@ -298,7 +298,7 @@ function AbaEtiquetas() {
       <div>
         <h3 className="text-sm font-semibold mb-2 text-foreground">Tipos (8)</h3>
         <p className="text-xs text-muted-foreground mb-3">
-          `esforco_medio_h` calibra a estimativa preliminar (Spec 005). NULL = "tipo não calibrado".
+          `esforco_max_h` = tempo MÁXIMO acordado (SLA interno). Usado pra estimar prazo pessimista + detectar atraso individual no card (acima de 1.5× = badge vermelho). NULL = tipo sem SLA.
         </p>
         <div className="space-y-2">
           {tipos.map(t => <TipoRow key={t.id} t={t} onSave={salvarTipo} />)}
@@ -315,12 +315,12 @@ function AbaEtiquetas() {
 }
 
 function TipoRow({ t, onSave }) {
-  const [esforco, setEsforco] = useState(t.esforco_medio_h ?? '');
+  const [esforco, setEsforco] = useState(t.esforco_max_h ?? '');
   const [hab, setHab] = useState(t.habilidade_padrao || '');
   const [cor, setCor] = useState(t.cor || '');
   const [ativo, setAtivo] = useState(t.ativo);
   const dirty =
-    String(esforco) !== String(t.esforco_medio_h ?? '') ||
+    String(esforco) !== String(t.esforco_max_h ?? '') ||
     hab !== (t.habilidade_padrao || '') ||
     cor !== (t.cor || '') ||
     ativo !== t.ativo;
@@ -331,15 +331,15 @@ function TipoRow({ t, onSave }) {
         <span className="w-3 h-3 rounded-full shrink-0" style={{ backgroundColor: cor || '#888' }} />
         <p className="font-medium text-sm">{t.nome}</p>
       </div>
-      <Select value={hab} onValueChange={setHab}>
+      <Select value={hab || '__none__'} onValueChange={v => setHab(v === '__none__' ? '' : v)}>
         <SelectTrigger className="w-[180px] h-8"><SelectValue placeholder="Habilidade padrão" /></SelectTrigger>
         <SelectContent>
-          <SelectItem value="">(sem)</SelectItem>
+          <SelectItem value="__none__">(sem)</SelectItem>
           {HABILIDADES.map(h => <SelectItem key={h} value={h}>{h}</SelectItem>)}
         </SelectContent>
       </Select>
       <div className="flex items-center gap-2">
-        <Label className="text-xs whitespace-nowrap">Esforço (h)</Label>
+        <Label className="text-xs whitespace-nowrap">Máx (h)</Label>
         <Input type="number" step="0.5" value={esforco}
           onChange={e => setEsforco(e.target.value)} placeholder="—" className="w-20 h-8" />
       </div>
@@ -350,7 +350,7 @@ function TipoRow({ t, onSave }) {
       </label>
       <Button size="sm" disabled={!dirty}
         onClick={() => onSave(t.id, {
-          esforco_medio_h: esforco === '' ? null : parseFloat(esforco),
+          esforco_max_h: esforco === '' ? null : parseFloat(esforco),
           habilidade_padrao: hab || null,
           cor: cor || null,
           ativo,

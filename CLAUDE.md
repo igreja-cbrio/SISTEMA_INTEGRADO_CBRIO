@@ -2,6 +2,42 @@
 
 Guia operacional para o Claude Code quando trabalhar neste repositório.
 
+## Marketing · Spec 016 · Bugfix 3 telas + esforco_max (proposta A · 2026-05-28)
+
+Após o piloto começar, Marcos identificou 3 telas com crash + propôs trocar
+o conceito de `esforco_medio_h` (média histórica) por `esforco_max_h` (SLA acordado).
+
+**Bugs corrigidos:**
+
+1. **Calendário** (`/marketing/calendario`) crashava porque as funções SQL da Spec 005 (`fn_marketing_segunda_da_semana`, `fn_marketing_calcular_capacidade_semana`, `fn_marketing_estimar_prazo`) NÃO foram aplicadas em prod — a primeira aplicação da Spec 005 falhou em transação por causa do `tipo_kpi='tatico'`, e o fix subsequente só re-aplicou KPIs+trigger. Recriadas nesta migration.
+
+2. **Analytics** (`/marketing/analytics`) endpoint `/analytics/kpis` retornava 500 porque o backend selecionava colunas erradas de `kpi_valores_calculados`. Schema real: `kpi_id`, `periodo_referencia`, `valor_calculado`, `detalhes` (jsonb), `calculado_em` · não `periodo`, `valor`, `observacao`, `updated_at`. Backend agora normaliza pra shape estável.
+
+3. **Admin > Etiquetas** crashava porque o componente `TipoRow` tinha `<SelectItem value="">` (rejeitado pelo Radix Select). Trocado por sentinela `__none__` convertida pra string vazia no `setHab`.
+
+**Mudança conceitual `esforco_max_h` (proposta A):**
+
+- Renomeada coluna `marketing_etiquetas_tipo.esforco_medio_h` → `esforco_max_h`
+- Significado: tempo MÁXIMO acordado (SLA interno) · "story precisa ficar pronto em 3h"
+- Usado pra 3 coisas:
+  1. **Estimativa preliminar pessimista** · `fn_marketing_estimar_prazo` agora usa o `_max`
+  2. **Capacidade alocada conservadora** · soma os `_max` dos cards (não lota fácil)
+  3. **Badge SLA individual no card do Kanban** (novo):
+     - `(now − estado_atualizado_em) > esforco_max × 1.5` → badge vermelho `"12h · 2.0× SLA"`
+     - `> esforco_max` mas ≤ 1.5× → badge âmbar `"acima do SLA"`
+     - Aparece quando `estado='em_producao'` · prioriza sobre badge de prazo final
+
+**Migration `20260528240000_marketing_bugfix_e_esforco_max.sql`:**
+- Recria 3 funções SQL faltantes (idempotent · CREATE OR REPLACE)
+- `ALTER TABLE marketing_etiquetas_tipo RENAME COLUMN esforco_medio_h TO esforco_max_h`
+- Funções já usam o nome novo internamente
+
+**Backend (`routes/marketing.js`, `routes/solicitacoes.js`, `services/kpiAutoCollector.js`):** refs de `esforco_medio_h` → `esforco_max_h`.
+
+**Frontend:**
+- `MarketingAdmin` aba Etiquetas · label "Máx (h)" + descrição explicativa
+- `MarketingKanban` · novo `slaIndividual` no `KanbanCard` que prioriza sobre `atraso` quando `estado='em_producao'`
+
 ## Marketing · Spec 015 · Testes E2E + Cutover (2026-05-28) · FIM DA FASE 9
 
 Conclui as 15 specs do módulo Marketing. Próxima fase é piloto interno + abertura

@@ -759,12 +759,12 @@ const COLLECTORS = {
     // (independe de periodo · usa snapshot atual pra sinalizar fila acumulada)
     const { data: cards } = await supabase
       .from('marketing_kanban_cards')
-      .select('etiqueta_tipo_id, estado, deleted_at, marketing_etiquetas_tipo(esforco_medio_h)')
+      .select('etiqueta_tipo_id, estado, deleted_at, marketing_etiquetas_tipo(esforco_max_h)')
       .in('estado', ['fila', 'em_producao'])
       .is('deleted_at', null);
 
     const esforcoFila = (cards || []).reduce((acc, c) => {
-      const h = c.marketing_etiquetas_tipo?.esforco_medio_h;
+      const h = c.marketing_etiquetas_tipo?.esforco_max_h;
       return acc + (h != null ? Number(h) : 0);
     }, 0);
 
