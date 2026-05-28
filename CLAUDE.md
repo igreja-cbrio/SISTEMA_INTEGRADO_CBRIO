@@ -2,6 +2,32 @@
 
 Guia operacional para o Claude Code quando trabalhar neste repositório.
 
+## Marketing · Spec 008 · Frontend Calendário /marketing/calendario (2026-05-28)
+
+Visualização semanal de capacidade da equipe · grid 7 dias × N membros consumindo
+`GET /api/marketing/capacidade` (Spec 005).
+
+**Página nova: `src/pages/marketing/MarketingCalendario.jsx`**
+- Rota: `/marketing/calendario` · `moduleSlug=marketing nivelMinimo=1`
+- Grid: 1 linha por membro × 7 colunas (Seg-Dom · ISO week)
+- Linha do membro mostra: nome · habilidade · `horas_alocadas / horas_disponiveis · %` (vermelho se sobrecarga)
+- Célula do dia mostra:
+  - Compromissos recorrentes (Aline dom/Allan qua/Lorena seg-sáb) com ícone de repetição · cor cinza
+  - Cards com prazo (confirmado OU preliminar) naquele dia · cor da etiqueta tipo · selo ⚡ se urgente
+  - Vazio: cinza claro
+- Navegação ±semana + botão "Hoje"
+- Legenda visual no header (Recorrente · Urgente · Atrasado)
+- Variantes:
+  - **Coordenador (Pedro · admin)** vê todos os membros
+  - **Colaborador (nível 3 via boost)** vê só a própria linha (filtro client-side por `profile_id`)
+- Click num card abre Drawer com resumo · link "Abrir no Kanban" pra editar
+
+**Header do Kanban (`MarketingKanban.jsx`):** ganhou botão "Calendário" pra alternar entre as 2 views.
+
+**Realtime: não** (calendário é snapshot semanal · não precisa channel · usuário aperta "Atualizar" navegando).
+
+**Layout responsivo:** overflow-x-auto · grid mínimo 700px · mobile faz scroll horizontal preservando legibilidade. Mesmo padrão do calendário de cultos em `/integracao`.
+
 ## Marketing · Spec 007 · Frontend Kanban /marketing (2026-05-28)
 
 Primeira tela do módulo · Kanban completo com 4 colunas, filtros, drawer de detalhe e upload SharePoint integrado.

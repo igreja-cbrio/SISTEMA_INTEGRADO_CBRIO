@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo, useCallback } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
 import { marketing as api } from '../../api';
 import { supabase } from '../../supabaseClient';
@@ -14,7 +15,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from 
 import { ScrollArea } from '../../components/ui/scroll-area';
 import {
   Megaphone, Plus, Filter, Clock, Loader2, CheckCircle2, AlertCircle,
-  Zap, RefreshCw, ArrowRight, Calendar, User2, FileText, Upload, Trash2, X,
+  Zap, RefreshCw, ArrowRight, Calendar, CalendarDays, User2, FileText, Upload, Trash2, X,
 } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -44,6 +45,7 @@ function fmtData(iso) {
 }
 
 export default function MarketingKanban() {
+  const navigate = useNavigate();
   const { profile, isAdmin, modulePerms } = useAuth();
   const lvl = useMemo(() => {
     const m = modulePerms?.marketing || modulePerms?.Marketing;
@@ -145,6 +147,9 @@ export default function MarketingKanban() {
           </p>
         </div>
         <div className="flex items-center gap-2 shrink-0">
+          <Button variant="outline" size="sm" onClick={() => navigate('/marketing/calendario')} className="gap-1.5">
+            <CalendarDays className="h-4 w-4" /> Calendário
+          </Button>
           {isCoordenador && (
             <Dialog open={novaOpen} onOpenChange={setNovaOpen}>
               <DialogTrigger asChild>
