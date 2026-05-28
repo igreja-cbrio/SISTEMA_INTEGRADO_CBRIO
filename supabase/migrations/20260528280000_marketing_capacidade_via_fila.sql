@@ -35,6 +35,7 @@ LANGUAGE plpgsql STABLE
 SECURITY DEFINER
 SET search_path = public, pg_temp
 AS $$
+#variable_conflict use_column
 DECLARE
   v_seg date;
   v_dom date;
