@@ -433,6 +433,20 @@ function OAuthStatusCardInner() {
               <>Conecte o canal CBRio com OAuth pra automatizar pico online, DS e DDUS via YouTube Analytics API.</>
             )}
           </p>
+          {conectado && (status?.last_check_at || status?.last_error) && (
+            <div className="mt-1.5 text-[11px] leading-snug">
+              {status?.last_check_at && (
+                <span className="text-muted-foreground">
+                  Ultima verificacao: {new Date(status.last_check_at).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}
+                </span>
+              )}
+              {status?.last_error && (
+                <span className="ml-2 text-amber-700 dark:text-amber-400">
+                  · {status.last_error}
+                </span>
+              )}
+            </div>
+          )}
         </div>
         <div className="flex flex-wrap gap-2">
           {conectado ? (
