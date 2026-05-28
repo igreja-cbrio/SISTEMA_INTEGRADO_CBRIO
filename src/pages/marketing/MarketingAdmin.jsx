@@ -202,16 +202,23 @@ function MembroRow({ membro, onSave, onRemove }) {
 }
 
 function NovoMembroForm({ profiles, onSuccess }) {
-  const [form, setForm] = useState({ profile_id: '', habilidade: '', horas_semanais: 30, observacao: '' });
+  const [tipo, setTipo] = useState('com_login'); // com_login | sem_login
+  const [form, setForm] = useState({ profile_id: '', nome_display: '', habilidade: '', horas_semanais: 30, observacao: '' });
   const [submitting, setSubmitting] = useState(false);
   async function submit() {
-    if (!form.profile_id || !form.habilidade) { toast.error('Profile + habilidade obrigatórios'); return; }
+    if (!form.habilidade) { toast.error('Habilidade obrigatória'); return; }
+    if (tipo === 'com_login' && !form.profile_id) { toast.error('Selecione a pessoa'); return; }
+    if (tipo === 'sem_login' && !form.nome_display.trim()) { toast.error('Nome obrigatório'); return; }
     setSubmitting(true);
     try {
-      await api.admin.membros.create({
-        ...form,
+      const payload = {
+        habilidade: form.habilidade,
         horas_semanais: parseFloat(form.horas_semanais),
-      });
+        observacao: form.observacao,
+        profile_id: tipo === 'com_login' ? form.profile_id : null,
+        nome_display: tipo === 'sem_login' ? form.nome_display.trim() : null,
+      };
+      await api.admin.membros.create(payload);
       toast.success('Criado');
       onSuccess();
     } catch (e) { toast.error(e.message); }
@@ -219,15 +226,38 @@ function NovoMembroForm({ profiles, onSuccess }) {
   }
   return (
     <div className="space-y-3">
-      <div className="space-y-2">
-        <Label>Pessoa (Criativo) *</Label>
-        <Select value={form.profile_id} onValueChange={v => setForm(f => ({ ...f, profile_id: v }))}>
-          <SelectTrigger><SelectValue placeholder="Selecione" /></SelectTrigger>
-          <SelectContent>
-            {profiles.map(p => <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>)}
-          </SelectContent>
-        </Select>
+      <div className="flex gap-2 text-xs">
+        <button
+          onClick={() => setTipo('com_login')}
+          className={`flex-1 px-3 py-2 rounded border transition-colors ${tipo === 'com_login' ? 'bg-primary text-primary-foreground border-primary' : 'border-border'}`}
+        >Tem login no sistema</button>
+        <button
+          onClick={() => setTipo('sem_login')}
+          className={`flex-1 px-3 py-2 rounded border transition-colors ${tipo === 'sem_login' ? 'bg-primary text-primary-foreground border-primary' : 'border-border'}`}
+        >Sem login (PJ · ocasional)</button>
       </div>
+
+      {tipo === 'com_login' ? (
+        <div className="space-y-2">
+          <Label>Pessoa (Criativo) *</Label>
+          <Select value={form.profile_id} onValueChange={v => setForm(f => ({ ...f, profile_id: v }))}>
+            <SelectTrigger><SelectValue placeholder="Selecione" /></SelectTrigger>
+            <SelectContent>
+              {profiles.map(p => <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>)}
+            </SelectContent>
+          </Select>
+        </div>
+      ) : (
+        <div className="space-y-2">
+          <Label>Nome de exibição *</Label>
+          <Input
+            value={form.nome_display}
+            onChange={e => setForm(f => ({ ...f, nome_display: e.target.value }))}
+            placeholder="Ex: Aline (fotógrafa domingo)"
+          />
+          <p className="text-xs text-muted-foreground">Pessoa que não acessa o sistema · só aparece no calendário/admin como referência. Informações de RH cadastradas separadamente.</p>
+        </div>
+      )}
       <div className="space-y-2">
         <Label>Habilidade *</Label>
         <Select value={form.habilidade} onValueChange={v => setForm(f => ({ ...f, habilidade: v }))}>

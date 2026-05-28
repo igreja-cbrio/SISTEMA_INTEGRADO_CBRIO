@@ -2,6 +2,85 @@
 
 Guia operacional para o Claude Code quando trabalhar neste repositório.
 
+## Marketing · Spec 022 · Ciclo criativo de Eventos aparece no Kanban (2026-05-28)
+
+Marcos: "as demandas de ciclo criativo que ficam no módulo de eventos devem ser listadas aqui também, por fases · pode ficar com o Pedro a responsabilidade de delegar · preenchimento continua no módulo de eventos, só um clique que abre lá."
+
+**Problema descoberto:** o trigger Spec 004 escutava `event_tasks` (tabela simples · 2 rows) mas o ciclo criativo real usa `cycle_phase_tasks` (689 rows · 105 com `area='marketing'`). Por isso 0 cards estavam materializando do ciclo.
+
+**Mudança estrutural:**
+- `marketing_kanban_cards` ganha coluna `cycle_phase_task_id uuid` (FK SET NULL)
+- UNIQUE parcial garante 1 card por cycle_phase_task
+- CHECK constraint atualizada · `origem='evento'` aceita `evento_task_id` OU `cycle_phase_task_id`
+- Trigger novo `fn_marketing_cards_cycle_phase_sync` em `cycle_phase_tasks`:
+  - AFTER INSERT/UPDATE OF area, status, titulo, descricao, prazo
+  - `area=marketing` + status=`pendente`/`em-andamento`/`concluida` → card com estado correspondente
+  - `area` mudou DE marketing → soft-delete do card (evita órfão)
+  - Atualizações no ciclo refletem no card automaticamente
+
+**Mapeamento status → estado:**
+| cycle_phase_tasks.status | marketing_kanban_cards.estado |
+|---|---|
+| `pendente` | `fila` |
+| `em-andamento` | `em_producao` |
+| `concluida` | `concluido` (+ `entregue_em` preenchido) |
+
+**Backfill (na migration):** 105 cards · 101 fila + 4 concluído.
+
+**Backend (`routes/marketing.js`):**
+- `enrichCards` resolve `cycle_phase_task_id` → objeto com:
+  - `event_name` (do evento pai)
+  - `fase` formatada `"3. Brainstorming e Conceito"`
+  - `is_critical`, `prioridade`
+  - `link` `/eventos/:event_id`
+
+**Frontend:**
+- `MarketingKanban` · drawer mostra bloco roxo "Origem · Ciclo criativo" com botão **"Abrir no Eventos"** (target=_blank)
+- Card mini ganha badge roxo da fase + nome do evento ao lado
+- `MarketingFila` · linha mostra "Fase · Evento" no segundo plano
+
+**Filosofia da integração:**
+- **Atribuição é local do Marketing** · Pedro define `atribuido_a` no card · NÃO toca `cycle_phase_tasks.responsavel_id`
+- **Estado/conclusão é local do Eventos** · trigger sincroniza pro card · UI Marketing mostra mas não edita
+- **Card é "espelho com atribuição local"** · vantagem dupla (visibilidade Marketing + autoridade Eventos)
+
+**Capacidade:** os 105 cards entram no cálculo de `fn_marketing_calcular_capacidade_semana` se tiverem `atribuido_a` preenchido. Como nenhum tem ainda (Pedro distribui), eles ficam invisíveis no calendário até Pedro atribuir.
+
+**Migration `20260528360000_marketing_cycle_phase_tasks.sql` aplicável depois da Spec 021.**
+
+## Marketing · Spec 021 · Cleanup legacy + Aline + Notificações (2026-05-28)
+
+Pós-auditoria · 3 ações Marcos:
+1. **Remover legacy do módulo** · 7 etiquetas inativas (hard-delete) + 5 KPIs MKT-ONL-* (soft-delete) + migrar 1 card antigo
+2. **Cadastrar Aline** sem e-mail · aparece pro Pedro (admin/calendário) e em RH com informações pendentes
+3. **Configurar notificações** pro Pedro Paiva + Marcos
+
+**Migration `20260528340000_marketing_cleanup_aline_notif.sql`:**
+
+| Ação | Detalhe |
+|---|---|
+| Migra card "Impressos campanha de serviço" pro tipo `banner_lona` (6h) · era `artes` legacy (10h) | UPDATE marketing_kanban_cards |
+| Hard-delete 7 tipos legacy (redes_sociais, artes, pecas_fisicas, videos, fotos, impressos, identidade_marca) · FK `ON DELETE SET NULL` em cards garante segurança | DELETE FROM marketing_etiquetas_tipo |
+| Soft-delete 5 KPIs MKT-ONL-* sem fonte_auto (preserva audit) | UPDATE kpi_indicadores_taticos |
+| Profile fantasma Aline · `role='assistente'` · `area='Criativo'` · email placeholder único | INSERT INTO profiles |
+| `rh_funcionarios` Aline · email NULL · cargo "Fotografa de domingo (cobertura cultos)" · tipo_contrato `PJ` · observações listam o que tá pendente | INSERT |
+| `marketing_membros` Aline · habilidade `fotografo` · `horas_semanais=6` | INSERT |
+| Recorrente domingo 08:30 6h "Cobertura cultos domingo (08:30 · 10:00 · 11:30 · 19:00)" vinculado a Aline | INSERT compromisso + junction |
+| Notificação · Pedro Paiva + Marcos recebem do módulo `marketing` | INSERT notificacao_regras |
+
+**Padrão "profile fantasma" pra Aline:**
+- Não existe em `auth.users` · não loga nunca
+- Email placeholder `aline.pendente@cbrio.org` (sem `UNIQUE` em profiles.email · idempotente via WHERE NOT EXISTS)
+- Aparece como pessoa normal no calendário (linha `Aline (fotografa domingo)` · habilidade `fotografo` · 6/6 alocadas via recorrente domingo)
+- RH tem entrada com `nome`/`cargo` preenchidos · resto pendente
+- Quando ganhar email/CPF, atualizar via UI normal de RH
+
+**Pós-migração esperado:**
+- Cauã passa de `10/40` pra `6/40` aloc (card "Impressos campanha de serviço" agora aponta pra banner_lona 6h)
+- Aline `6/6` aloc todo domingo
+- Etiquetas tipo · 16 ativas (sem inativas)
+- KPIs MKT-* · 4 (PRAZO/LEAD/THROUGHPUT/DEM-CAP) · sem MKT-ONL-* legacy
+
 ## Marketing · Spec 020 · Recorrentes N:M (vários participantes) (2026-05-28)
 
 Marcos: "queria que voce pudesse adicionar tarefas recorrentes que podem mais de uma pessoa · reunião de todo marketing · reunião específica com designer e redes sociais."

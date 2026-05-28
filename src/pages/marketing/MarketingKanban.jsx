@@ -354,7 +354,7 @@ function KanbanCard({ item, draggable, onClick }) {
 
       <p className="text-sm font-medium text-foreground line-clamp-2 mb-2">{item.titulo}</p>
 
-      {(item.etiqueta_tipo || item.etiqueta_destino) && (
+      {(item.etiqueta_tipo || item.etiqueta_destino || item.cycle_phase_task) && (
         <div className="flex flex-wrap gap-1 mb-2">
           {item.etiqueta_tipo && (
             <Badge
@@ -371,6 +371,16 @@ function KanbanCard({ item, draggable, onClick }) {
             >
               {item.etiqueta_destino.nome}
             </Badge>
+          )}
+          {item.cycle_phase_task?.fase && (
+            <Badge className="text-[10px] px-1.5 py-0.5 bg-purple-500/15 text-purple-700 dark:text-purple-400">
+              {item.cycle_phase_task.fase}
+            </Badge>
+          )}
+          {item.cycle_phase_task?.event_name && (
+            <span className="text-[10px] text-muted-foreground self-center truncate max-w-[120px]">
+              · {item.cycle_phase_task.event_name}
+            </span>
           )}
         </div>
       )}
@@ -492,6 +502,31 @@ function CardDrawer({ card, onClose, onUpdated, tipos, destinos, membros, isCoor
                   Solicitante: {card.solicitacao.solicitante?.name || '—'}
                   {card.solicitacao.eh_urgente && ' · urgência marcada'}
                 </p>
+              </div>
+            )}
+
+            {/* Ciclo criativo · evento + fase + link Abrir no Eventos */}
+            {card.cycle_phase_task && (
+              <div className="rounded-lg bg-purple-500/10 border border-purple-500/30 p-3 text-sm">
+                <p className="text-xs text-muted-foreground mb-1">Origem · Ciclo criativo</p>
+                <p className="font-medium">{card.cycle_phase_task.event_name || '(evento)'}</p>
+                <p className="text-xs text-muted-foreground mt-1">
+                  Fase: {card.cycle_phase_task.fase || '—'}
+                  {card.cycle_phase_task.is_critical && ' · ⚠️ crítica'}
+                </p>
+                {card.cycle_phase_task.link && (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    asChild
+                    className="mt-2 gap-1.5 text-xs"
+                  >
+                    <a href={card.cycle_phase_task.link} target="_blank" rel="noreferrer">
+                      <ArrowRight className="h-3 w-3" />
+                      Abrir no Eventos
+                    </a>
+                  </Button>
+                )}
               </div>
             )}
 
