@@ -9,6 +9,7 @@ import { Toaster } from 'sonner';
 import AppShell from './components/layout/AppShell';
 import Login from './pages/Login';
 import RedefinirSenha from './pages/RedefinirSenha';
+import { CbrioLoader } from './components/ui/cbrio-loader';
 
 const queryClient = new QueryClient({
   defaultOptions: { queries: { retry: 1, refetchOnWindowFocus: false } },
@@ -250,10 +251,7 @@ const PlaceholderPage = ({ title }) => (
 
 const Loading = () => (
   <div className="flex items-center justify-center min-h-[60vh]">
-    <div className="flex flex-col items-center gap-3">
-      <div className="h-6 w-6 animate-spin rounded-full border-2 border-muted-foreground/30 border-t-primary" />
-      <p className="text-sm text-muted-foreground">Carregando...</p>
-    </div>
+    <CbrioLoader />
   </div>
 );
 

@@ -148,7 +148,7 @@ export default function Integracao() {
         {podeAprovar && (
           <TabsContent value="pendentes" className="mt-4">
             <Suspense fallback={<div className="flex items-center justify-center py-12 text-sm text-muted-foreground">Carregando…</div>}>
-              <ColetaPendentes />
+              <ColetaPendentes onChange={reloadPendentes} />
             </Suspense>
           </TabsContent>
         )}
