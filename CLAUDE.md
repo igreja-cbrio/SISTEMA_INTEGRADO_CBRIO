@@ -2,6 +2,87 @@
 
 Guia operacional para o Claude Code quando trabalhar neste repositório.
 
+## Marketing · Spec 001 · Aprovação hierárquica no Solicitações (TRANSVERSAL · 2026-05-28)
+
+Primeira spec do módulo Marketing · **mudança transversal** no backbone de
+Solicitações que afeta TODAS as áreas (cozinha, manutenção, financeiro, etc),
+não só Marketing.
+
+**O que mudou:**
+- Toda nova solicitação **passa primeiro pelo diretor de origem** do setor do
+  solicitante antes de cair na fila da área responsável.
+- 3 setores oficiais (Marcos 2026-05-28):
+
+  | Setor | Diretor |
+  |---|---|
+  | Gestão | Eduardo Gnisci |
+  | Criativo | Pedro Menezes |
+  | Ministerial | Arthur Serpa |
+
+- `profile.area` mapeada pra setor via `fn_normalizar_setor()` (normaliza
+  acento + Voluntariado → Ministerial).
+- **Dispensam aprovação** (passa direto pra pendente):
+  - Diretores de setor (Eduardo, Pedro Menezes, Arthur)
+  - Diretoria geral (`is_diretoria_geral=true` · Pedrão, Juninho, etc)
+  - Service role + caller sem `auth.uid()`
+- **Fallback super-admins** (Marcos + Matheus) quando diretor não está
+  mapeado · solicitação é dispensada e fica como "pre-resolvida".
+- **Membros não-funcionários** (sem `rh_funcionarios` ativo) **não criam**
+  solicitação · trigger `BEFORE INSERT` lança 42501. Backend retorna 403
+  com mensagem clara.
+- **Rejeitada é imutável** (Marcos 2026-05-28: "não, não pode reabrir").
+  Solicitante cria nova com ajustes.
+
+**Schema · 8 colunas novas em `solicitacoes`:**
+`aprovacao_origem_diretor_id`, `aprovacao_origem_status` (pendente/aprovada/
+rejeitada/dispensada), `aprovacao_origem_em`, `aprovacao_origem_motivo`,
+`urgencia_decisao` (nao_aplicavel/pendente/aceita/recusada), `urgencia_decidida_por`,
+`urgencia_motivo_recusa`, `urgencia_decidida_em`.
+
+**Novo status no kanban:** `aguardando_aprovacao_origem` · vem antes de `pendente`.
+
+**Tabela `setor_diretor`:**
+- PK `setor` (text) · `diretor_id` UUID FK profiles · `diretor_nome` snapshot.
+- Apenas super-admin altera (RLS).
+
+**Backend (`backend/routes/solicitacoes.js`):**
+- `GET /api/solicitacoes?aba=aprovar` filtra a fila do diretor (`aprovacao_origem_diretor_id = me` AND status=pendente).
+- `PATCH /api/solicitacoes/:id/aprovar-origem` · diretor aprova → status='pendente'.
+- `PATCH /api/solicitacoes/:id/rejeitar-origem` · motivo obrigatório · status='rejeitado' imutável.
+- `GET /api/solicitacoes/meu-papel` agora retorna `eh_diretor_origem`, `setor_origem`, `pendentes_origem` (contador).
+- `isAdminFallback()` helper · super-admin pode aprovar/rejeitar como fallback.
+- Trigger lança 42501 pra não-funcionário · backend traduz pra HTTP 403.
+
+**Frontend (`src/pages/Solicitacoes.jsx`):**
+- Nova aba "Aprovar" com badge contador · visível só pra diretor de origem.
+- Componente `AprovacaoOrigemCard` · botões inline Aprovar/Rejeitar com modal de motivo.
+- View `aprovar` é default pro diretor com fila pendente > 0.
+- Status `aguardando_aprovacao_origem` mostrado em violeta no badge.
+- `api.js` ganhou `solicitacoes.aprovarOrigem(id)` e `solicitacoes.rejeitarOrigem(id, motivo)`.
+
+**Notificações novas (`notificacaoGenerator.js`):**
+- Imediata · `solicitacao_aprovacao_origem` quando solicitação cai no diretor.
+- Imediata · aprovada → solicitante + responsáveis da área alvo.
+- Imediata · rejeitada → solicitante com motivo.
+- Cron diário · `solicitacao_aprovacao_origem_lembrete` pra solicitações
+  paradas >24h aguardando diretor (1/dia por solicitação).
+
+**Audit log:** trigger `trg_audit_solicitacoes` agora captura mudanças em
+`aprovacao_origem_*`, `urgencia_*`, `status`, `deleted_at`, `nps_nota`.
+
+**Migration `20260528120000_solicitacoes_aprovacao_hierarquica.sql`:**
+- Idempotente · `IF NOT EXISTS`, `ON CONFLICT DO UPDATE`, `DROP IF EXISTS`.
+- Backfill: solicitações pré-existentes ficam `dispensada` com motivo "Pre-migration · backward compat".
+- Seta `is_diretoria_geral=true` em Eduardo e Pedro Menezes.
+
+**O que NÃO mudou:**
+- Fluxo pós-aprovação (pendente → em_atendimento → concluído → avaliado) idêntico.
+- Aprovação financeira por alçada continua funcionando como segunda etapa.
+- Solicitações abertas antes da migration seguem o fluxo antigo (status `aguardando_aprovacao_origem` não retroage).
+
+**Pendência da Spec 001:** Aline (fotógrafa) ainda não tem profile/email
+cadastrado · será resolvido na Spec 003 ou via admin Marketing (Spec 009).
+
 ## Bot WhatsApp · coleta passiva de dados de líderes (2026-05-27)
 
 Líder manda os números da semana em texto livre no WhatsApp · webhook

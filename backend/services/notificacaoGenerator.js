@@ -812,6 +812,31 @@ async function gerarNotificacoesSolicitacoes() {
     });
   }
 
+  // Aprovacao hierarquica · lembrete pro diretor de origem com fila parada
+  // ≥24h (Spec 001). Antes da escalacao automatica (Fase 11), o ping diario
+  // chama atencao da fila travada · 1 lembrete por solicitacao por dia.
+  const { data: aguardandoOrigem } = await supabase
+    .from('solicitacoes')
+    .select('id, titulo, aprovacao_origem_diretor_id, created_at')
+    .eq('aprovacao_origem_status', 'pendente')
+    .not('aprovacao_origem_diretor_id', 'is', null)
+    .lte('created_at', ha24h)
+    .is('deleted_at', null);
+
+  const hojeKey = agora.toISOString().slice(0, 10);
+  for (const s of aguardandoOrigem || []) {
+    count += await notificar({
+      modulo: 'administrativo',
+      tipo: 'solicitacao_aprovacao_origem_lembrete',
+      titulo: `Aguardando sua aprovação: ${s.titulo}`,
+      mensagem: 'Solicitação do seu setor parada há mais de 24h aguardando sua decisão.',
+      link: '/solicitacoes?aba=aprovar',
+      severidade: 'alta',
+      chaveDedup: `solic_aprov_origem_lembrete_${s.id}_${hojeKey}`,
+      targetIds: [s.aprovacao_origem_diretor_id],
+    });
+  }
+
   return count;
 }
 

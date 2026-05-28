@@ -95,7 +95,7 @@ router.get('/', async (req, res) => {
     const role = req.user.role;
     const granular = req.user.granular;
 
-    const { categoria, status, mine } = req.query;
+    const { categoria, status, mine, aba } = req.query;
     let q = supabase
       .from('solicitacoes')
       .select('*')
@@ -104,7 +104,12 @@ router.get('/', async (req, res) => {
     if (categoria) q = q.eq('categoria', categoria);
     if (status) q = q.eq('status', status);
 
-    if (mine === 'true') {
+    if (aba === 'aprovar') {
+      // Aba do diretor de origem · so o que o user precisa aprovar.
+      q = q.eq('aprovacao_origem_diretor_id', userId)
+           .eq('aprovacao_origem_status', 'pendente')
+           .is('deleted_at', null);
+    } else if (mine === 'true') {
       q = q.eq('solicitante_id', userId);
     } else if (['admin', 'diretor'].includes(role)) {
       // Admin/diretor sees all — no filter
@@ -129,8 +134,10 @@ router.get('/', async (req, res) => {
     const { data, error } = await q;
     if (error) throw error;
 
-    // Resolve profile names for solicitante/responsavel
-    const profileIds = [...new Set((data || []).flatMap(d => [d.solicitante_id, d.responsavel_id].filter(Boolean)))];
+    // Resolve profile names for solicitante/responsavel/diretor_origem
+    const profileIds = [...new Set((data || []).flatMap(d => [
+      d.solicitante_id, d.responsavel_id, d.aprovacao_origem_diretor_id,
+    ].filter(Boolean)))];
     let profileMap = {};
     if (profileIds.length) {
       const { data: profiles } = await supabase.from('profiles').select('id,name,email').in('id', profileIds);
@@ -140,6 +147,7 @@ router.get('/', async (req, res) => {
       ...d,
       solicitante: profileMap[d.solicitante_id] || null,
       responsavel: profileMap[d.responsavel_id] || null,
+      aprovacao_origem_diretor: profileMap[d.aprovacao_origem_diretor_id] || null,
     }));
 
     res.json(enriched);
@@ -157,8 +165,35 @@ router.get('/meu-papel', async (req, res) => {
   try {
     const userId = req.user.userId;
     const role = req.user.role;
+
+    // Aprovador de origem? Cargo de diretor de setor cadastrado em setor_diretor.
+    const { data: setorRow } = await supabase
+      .from('setor_diretor')
+      .select('setor, diretor_nome')
+      .eq('diretor_id', userId)
+      .maybeSingle();
+
+    // Contador de pendentes na fila do diretor de origem
+    let pendentesOrigem = 0;
+    if (setorRow) {
+      const { count } = await supabase
+        .from('solicitacoes')
+        .select('id', { count: 'exact', head: true })
+        .eq('aprovacao_origem_diretor_id', userId)
+        .eq('aprovacao_origem_status', 'pendente')
+        .is('deleted_at', null);
+      pendentesOrigem = count || 0;
+    }
+
     if (['admin', 'diretor'].includes(role)) {
-      return res.json({ atende: true, admin: true, areas: [] });
+      return res.json({
+        atende: true,
+        admin: true,
+        areas: [],
+        eh_diretor_origem: !!setorRow,
+        setor_origem: setorRow?.setor || null,
+        pendentes_origem: pendentesOrigem,
+      });
     }
     const { data, error } = await supabase
       .from('area_solicitacoes_responsaveis')
@@ -166,7 +201,14 @@ router.get('/meu-papel', async (req, res) => {
       .eq('profile_id', userId);
     if (error) throw error;
     const areas = (data || []).map(r => r.area);
-    res.json({ atende: areas.length > 0, admin: false, areas });
+    res.json({
+      atende: areas.length > 0,
+      admin: false,
+      areas,
+      eh_diretor_origem: !!setorRow,
+      setor_origem: setorRow?.setor || null,
+      pendentes_origem: pendentesOrigem,
+    });
   } catch (e) {
     console.error('[SOLICITACOES] meu-papel error:', e.message);
     res.status(500).json({ error: 'Erro ao resolver papel' });
@@ -271,10 +313,195 @@ router.post('/', async (req, res) => {
       extraTargetIds: responsaveisDaArea,
     }).catch(err => console.error('[SOLICITACOES] notify error:', err.message));
 
+    // Aprovacao hierarquica · se trigger marcou aguardando_aprovacao_origem,
+    // notifica o diretor de origem em vez do responsavel da area alvo.
+    if (data.status === 'aguardando_aprovacao_origem' && data.aprovacao_origem_diretor_id) {
+      notificar({
+        modulo: 'administrativo',
+        tipo: 'solicitacao_aprovacao_origem',
+        titulo: `Aprovar solicitacao: ${titulo}`,
+        mensagem: `${userName || 'Funcionario'} pediu uma solicitacao que precisa da sua aprovacao antes de seguir para ${finalAreaResp || 'area alvo'}.`,
+        link: '/solicitacoes?aba=aprovar',
+        severidade: 'info',
+        chaveDedup: `solicitacao_aprovacao_origem_${data.id}`,
+        targetIds: [data.aprovacao_origem_diretor_id],
+      }).catch(err => console.error('[SOLICITACOES] notify diretor:', err.message));
+    }
+
     res.status(201).json(data);
   } catch (e) {
     console.error('[SOLICITACOES] create error:', e.message);
+    // Erro do trigger fn_solicitacoes_roteamento_aprovacao · membro nao-funcionario
+    if (e.code === '42501' || /apenas funcionarios podem criar solicitacoes/i.test(e.message || '')) {
+      return res.status(403).json({
+        error: 'Apenas funcionarios com vinculo ativo em RH podem criar solicitacoes.',
+      });
+    }
     res.status(500).json({ error: e.message || 'Erro ao criar solicitação' });
+  }
+});
+
+// ── APROVACAO HIERARQUICA DE ORIGEM ─────────────────────────
+// Diretor de origem aprova a solicitacao. Apos aprovacao, ela vai pra
+// fila normal da area alvo (status='pendente').
+async function isAdminFallback(req) {
+  // Marcos + Matheus + outros super-admins · permitem aprovar/rejeitar quando
+  // diretor de origem nao esta cadastrado ou esta de ferias (fallback).
+  if (['admin'].includes(req.user.role)) return true;
+  const { data } = await supabase
+    .from('app_super_admins')
+    .select('email')
+    .ilike('email', req.user.email)
+    .eq('ativo', true)
+    .maybeSingle();
+  return !!data;
+}
+
+router.patch('/:id/aprovar-origem', async (req, res) => {
+  try {
+    const userId = req.user.userId;
+    const userName = req.user.name;
+    const isSuperAdmin = await isAdminFallback(req);
+
+    const { data: atual, error: getErr } = await supabase
+      .from('solicitacoes')
+      .select('*')
+      .eq('id', req.params.id)
+      .is('deleted_at', null)
+      .maybeSingle();
+    if (getErr) throw getErr;
+    if (!atual) return res.status(404).json({ error: 'Solicitação não encontrada.' });
+
+    if (atual.aprovacao_origem_status !== 'pendente') {
+      return res.status(400).json({ error: 'Solicitação não está pendente de aprovação.' });
+    }
+
+    // Quem pode aprovar: o diretor de origem cadastrado, OU super-admin (fallback
+    // quando diretor_id nao foi resolvido, OU intervencao manual).
+    const isDiretorAlvo = atual.aprovacao_origem_diretor_id === userId;
+    if (!isDiretorAlvo && !isSuperAdmin) {
+      return res.status(403).json({ error: 'Apenas o diretor de origem pode aprovar esta solicitação.' });
+    }
+
+    const novoResponsavelId = atual.responsavel_id;
+    const update = {
+      aprovacao_origem_status: 'aprovada',
+      aprovacao_origem_em: new Date().toISOString(),
+      status: 'pendente',
+    };
+    // Se super-admin esta aprovando como fallback, registra quem foi
+    if (!isDiretorAlvo && isSuperAdmin) {
+      update.aprovacao_origem_diretor_id = userId;
+      update.aprovacao_origem_motivo = '[Fallback super-admin]';
+    }
+
+    const { data, error } = await supabase
+      .from('solicitacoes')
+      .update(update)
+      .eq('id', req.params.id)
+      .select('*')
+      .single();
+    if (error) throw error;
+
+    // Notifica solicitante + responsavel da area alvo
+    const modulo = CATEGORIA_MODULO[data.categoria] || 'administrativo';
+    notificar({
+      modulo,
+      tipo: 'solicitacao_status',
+      titulo: `Aprovada: ${data.titulo}`,
+      mensagem: `${userName || 'Diretor'} aprovou sua solicitacao. Foi para a fila ${data.area_responsavel || 'da area alvo'}.`,
+      link: '/solicitacoes',
+      severidade: 'info',
+      chaveDedup: `solicitacao_aprovada_origem_${data.id}`,
+      targetIds: [data.solicitante_id].filter(Boolean),
+    }).catch(err => console.error('[SOLICITACOES] notify aprovar:', err.message));
+
+    if (data.area_responsavel) {
+      resolverDestinatarios(modulo).then(managers => {
+        const filtered = managers.filter(id => id !== data.solicitante_id);
+        if (filtered.length) {
+          notificar({
+            modulo,
+            tipo: 'solicitacao',
+            titulo: `Nova na fila: ${data.titulo}`,
+            mensagem: `Solicitação aprovada pelo diretor · pronta para atendimento.`,
+            link: '/solicitacoes',
+            severidade: 'info',
+            chaveDedup: `solicitacao_pos_aprovacao_${data.id}`,
+            targetIds: filtered,
+          }).catch(err => console.error('[SOLICITACOES] notify responsaveis:', err.message));
+        }
+      }).catch(err => console.error('[SOLICITACOES] resolve managers:', err.message));
+    }
+
+    res.json(data);
+  } catch (e) {
+    console.error('[SOLICITACOES] aprovar-origem:', e.message);
+    res.status(500).json({ error: e.message || 'Erro ao aprovar solicitação' });
+  }
+});
+
+// Diretor de origem rejeita · motivo obrigatorio · status fica imutavel
+// (Marcos 2026-05-28 · "solicitacao rejeitada nao reabre · cria nova").
+router.patch('/:id/rejeitar-origem', async (req, res) => {
+  try {
+    const userId = req.user.userId;
+    const userName = req.user.name;
+    const isSuperAdmin = await isAdminFallback(req);
+    const { motivo } = req.body || {};
+    if (!motivo || !motivo.trim()) {
+      return res.status(400).json({ error: 'Motivo da rejeição é obrigatório.' });
+    }
+
+    const { data: atual } = await supabase
+      .from('solicitacoes')
+      .select('*')
+      .eq('id', req.params.id)
+      .is('deleted_at', null)
+      .maybeSingle();
+    if (!atual) return res.status(404).json({ error: 'Solicitação não encontrada.' });
+    if (atual.aprovacao_origem_status !== 'pendente') {
+      return res.status(400).json({ error: 'Solicitação não está pendente de aprovação.' });
+    }
+    const isDiretorAlvo = atual.aprovacao_origem_diretor_id === userId;
+    if (!isDiretorAlvo && !isSuperAdmin) {
+      return res.status(403).json({ error: 'Apenas o diretor de origem pode rejeitar esta solicitação.' });
+    }
+
+    const update = {
+      aprovacao_origem_status: 'rejeitada',
+      aprovacao_origem_em: new Date().toISOString(),
+      aprovacao_origem_motivo: motivo.trim(),
+      status: 'rejeitado',
+    };
+    if (!isDiretorAlvo && isSuperAdmin) {
+      update.aprovacao_origem_diretor_id = userId;
+    }
+
+    const { data, error } = await supabase
+      .from('solicitacoes')
+      .update(update)
+      .eq('id', req.params.id)
+      .select('*')
+      .single();
+    if (error) throw error;
+
+    const modulo = CATEGORIA_MODULO[data.categoria] || 'administrativo';
+    notificar({
+      modulo,
+      tipo: 'solicitacao_status',
+      titulo: `Rejeitada: ${data.titulo}`,
+      mensagem: `${userName || 'Diretor'} rejeitou: ${motivo.trim()}`,
+      link: '/solicitacoes',
+      severidade: 'alta',
+      chaveDedup: `solicitacao_rejeitada_origem_${data.id}`,
+      targetIds: [data.solicitante_id].filter(Boolean),
+    }).catch(err => console.error('[SOLICITACOES] notify rejeitar:', err.message));
+
+    res.json(data);
+  } catch (e) {
+    console.error('[SOLICITACOES] rejeitar-origem:', e.message);
+    res.status(500).json({ error: e.message || 'Erro ao rejeitar solicitação' });
   }
 });
 

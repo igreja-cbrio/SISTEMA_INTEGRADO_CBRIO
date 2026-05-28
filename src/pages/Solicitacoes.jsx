@@ -99,6 +99,7 @@ const KANBAN_COLUMNS = [
 ];
 
 const STATUS_LABELS = {
+  aguardando_aprovacao_origem: { label: 'Aguardando aprovação', color: 'bg-violet-500/15 text-violet-700 dark:text-violet-400' },
   pendente: { label: 'Pendente', color: 'bg-amber-500/15 text-amber-700 dark:text-amber-400' },
   em_analise: { label: 'Em Análise', color: 'bg-blue-500/15 text-blue-700 dark:text-blue-400' },
   aprovado: { label: 'Aprovado', color: 'bg-green-500/15 text-green-700 dark:text-green-400' },
@@ -131,23 +132,45 @@ export default function Solicitacoes() {
   // Quem ve a fila "Para Atender": admin/diretor OU responsavel cadastrado de
   // alguma area (area_solicitacoes_responsaveis). Fonte de verdade no backend
   // via /meu-papel · colaborador comum so ve "Minhas Solicitacoes".
-  const [atendeAreas, setAtendeAreas] = useState(false);
+  // papel.eh_diretor_origem · habilita aba "Aprovar" (diretor de setor da Spec 001).
+  const [papel, setPapel] = useState({ atende: false, admin: false, eh_diretor_origem: false, pendentes_origem: 0 });
+  const atendeAreas = papel.atende;
+  const ehDiretorOrigem = papel.eh_diretor_origem;
+  const pendentesOrigem = papel.pendentes_origem || 0;
   const isResponsavel = isAdmin || atendeAreas;
 
-  // View atual · 'minhas' (lista das proprias) | 'atender' (kanban da equipe).
+  // View atual · 'minhas' (lista das proprias) | 'atender' (kanban da equipe) | 'aprovar' (diretor de origem).
   const [view, setView] = useState('minhas');
   const [viewTouched, setViewTouched] = useState(false);
 
+  async function refreshPapel() {
+    try {
+      const r = await api.meuPapel?.();
+      if (r) setPapel(r);
+    } catch (_) {}
+  }
+
   useEffect(() => {
     let alive = true;
-    api.meuPapel?.().then(r => { if (alive) setAtendeAreas(!!r?.atende); }).catch(() => {});
+    (async () => {
+      try {
+        const r = await api.meuPapel?.();
+        if (alive && r) setPapel(r);
+      } catch (_) {}
+    })();
     return () => { alive = false; };
   }, []);
 
   // Responsavel/admin comeca na visao operacional (atender) se ainda nao trocou de aba.
+  // Se for diretor de origem com fila pendente, comeca em 'aprovar'.
   useEffect(() => {
-    if (!viewTouched && (isAdmin || atendeAreas)) setView('atender');
-  }, [isAdmin, atendeAreas, viewTouched]);
+    if (viewTouched) return;
+    if (ehDiretorOrigem && pendentesOrigem > 0) {
+      setView('aprovar');
+    } else if (isAdmin || atendeAreas) {
+      setView('atender');
+    }
+  }, [isAdmin, atendeAreas, ehDiretorOrigem, pendentesOrigem, viewTouched]);
 
   // Form state
   const FORM_INITIAL = {
@@ -186,13 +209,38 @@ export default function Solicitacoes() {
     try {
       // view='minhas' sempre filtra pelo solicitante atual · view='atender'
       // delega o filtro pro backend (responsavel ve da area dele, admin ve tudo).
-      const params = view === 'minhas' ? { mine: 'true' } : {};
+      // view='aprovar' · diretor de origem ve so o que precisa decidir.
+      let params = {};
+      if (view === 'minhas') params = { mine: 'true' };
+      else if (view === 'aprovar') params = { aba: 'aprovar' };
       const data = await api.list(params);
       setItems(data);
     } catch (e) {
       toast.error(e.message);
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function handleAprovarOrigem(id) {
+    try {
+      await api.aprovarOrigem(id);
+      toast.success('Solicitação aprovada.');
+      await refreshPapel();
+      load();
+    } catch (e) {
+      toast.error(e.message || 'Erro ao aprovar.');
+    }
+  }
+
+  async function handleRejeitarOrigem(id, motivo) {
+    try {
+      await api.rejeitarOrigem(id, motivo);
+      toast.success('Solicitação rejeitada.');
+      await refreshPapel();
+      load();
+    } catch (e) {
+      toast.error(e.message || 'Erro ao rejeitar.');
     }
   }
 
@@ -641,21 +689,40 @@ export default function Solicitacoes() {
         </div>
       </div>
 
-      {/* Tabs · Minhas Solicitacoes vs Para Atender · so quem e responsavel
-          ve a aba "Para Atender". Colaborador comum so tem "Minhas". */}
-      {isResponsavel && (
+      {/* Tabs · Aprovar (diretor de origem) · Para Atender (responsavel) · Minhas (todos). */}
+      {(isResponsavel || ehDiretorOrigem) && (
         <div className="flex items-center gap-1 border-b border-border">
-          <button
-            type="button"
-            onClick={() => { setViewTouched(true); setView('atender'); }}
-            className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
-              view === 'atender'
-                ? 'border-primary text-primary'
-                : 'border-transparent text-muted-foreground hover:text-foreground'
-            }`}
-          >
-            Para Atender
-          </button>
+          {ehDiretorOrigem && (
+            <button
+              type="button"
+              onClick={() => { setViewTouched(true); setView('aprovar'); }}
+              className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors flex items-center gap-2 ${
+                view === 'aprovar'
+                  ? 'border-primary text-primary'
+                  : 'border-transparent text-muted-foreground hover:text-foreground'
+              }`}
+            >
+              Aprovar
+              {pendentesOrigem > 0 && (
+                <Badge className="text-[10px] bg-violet-500/15 text-violet-700 dark:text-violet-400 px-1.5">
+                  {pendentesOrigem}
+                </Badge>
+              )}
+            </button>
+          )}
+          {isResponsavel && (
+            <button
+              type="button"
+              onClick={() => { setViewTouched(true); setView('atender'); }}
+              className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
+                view === 'atender'
+                  ? 'border-primary text-primary'
+                  : 'border-transparent text-muted-foreground hover:text-foreground'
+              }`}
+            >
+              Para Atender
+            </button>
+          )}
           <button
             type="button"
             onClick={() => { setViewTouched(true); setView('minhas'); }}
@@ -670,10 +737,31 @@ export default function Solicitacoes() {
         </div>
       )}
 
-      {/* Content: Kanban so na view 'atender' (responsavel) · Lista nas demais */}
+      {/* Content: Kanban so na view 'atender' · Lista de aprovacao em 'aprovar' · Lista simples nas demais. */}
       {loading ? (
         <div className="flex items-center justify-center min-h-[40vh]">
           <div className="h-6 w-6 animate-spin rounded-full border-2 border-muted-foreground/30 border-t-primary" />
+        </div>
+      ) : view === 'aprovar' ? (
+        /* ── Aba Aprovar · diretor de origem ── */
+        <div className="space-y-3">
+          {filtered.length === 0 ? (
+            <Card className="p-8 text-center">
+              <CheckCircle2 className="h-10 w-10 text-emerald-500 mx-auto mb-3" />
+              <p className="text-muted-foreground">Sem solicitações aguardando aprovação.</p>
+              <p className="text-sm text-muted-foreground mt-1">Quando alguém do seu setor solicitar algo, aparecerá aqui.</p>
+            </Card>
+          ) : (
+            filtered.map(item => (
+              <AprovacaoOrigemCard
+                key={item.id}
+                item={item}
+                onApprove={handleAprovarOrigem}
+                onReject={handleRejeitarOrigem}
+                onClick={() => setDetailItem(item)}
+              />
+            ))
+          )}
         </div>
       ) : view === 'atender' ? (
         /* ── Kanban Board (managers/admins) ── */
@@ -735,11 +823,16 @@ export default function Solicitacoes() {
               const precisaAvaliar = item.status === 'concluido'
                 && item.solicitante_id === profile?.id
                 && item.nps_nota == null;
+              const aguardandoOrigem = item.status === 'aguardando_aprovacao_origem'
+                && item.aprovacao_origem_status === 'pendente';
+              const diretorNome = item.aprovacao_origem_diretor?.name;
+              const foiRejeitada = item.status === 'rejeitado' && item.aprovacao_origem_status === 'rejeitada';
               return (
                 <Card
                   key={item.id}
                   className={`p-4 cursor-pointer hover:shadow-md transition-shadow ${
-                    precisaAvaliar ? 'border-l-4 border-l-amber-500 bg-amber-500/5' : ''
+                    precisaAvaliar ? 'border-l-4 border-l-amber-500 bg-amber-500/5' :
+                    aguardandoOrigem ? 'border-l-4 border-l-violet-500 bg-violet-500/5' : ''
                   }`}
                   onClick={() => setDetailItem(item)}
                 >
@@ -764,7 +857,17 @@ export default function Solicitacoes() {
                       <span className="text-xs text-muted-foreground">{date}</span>
                     </div>
                   </div>
-                  {item.descricao && (
+                  {aguardandoOrigem && (
+                    <p className="text-xs text-violet-700 dark:text-violet-400 mt-2">
+                      ⏳ Aguardando aprovação de <span className="font-medium">{diretorNome || 'diretor de origem'}</span>{item.eh_urgente ? ' · urgente' : ''}
+                    </p>
+                  )}
+                  {foiRejeitada && item.aprovacao_origem_motivo && (
+                    <p className="text-xs text-red-700 dark:text-red-400 mt-2">
+                      <span className="font-medium">Rejeitada:</span> {item.aprovacao_origem_motivo}
+                    </p>
+                  )}
+                  {item.descricao && !aguardandoOrigem && !foiRejeitada && (
                     <p className="text-xs text-muted-foreground mt-2 line-clamp-1">{item.descricao}</p>
                   )}
                 </Card>
@@ -809,6 +912,106 @@ function getSlaBadge(item) {
     return { label: `${Math.round(horas)}h`, color: 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-400' };
   }
   return null;
+}
+
+function AprovacaoOrigemCard({ item, onApprove, onReject, onClick }) {
+  const [confirmReject, setConfirmReject] = useState(false);
+  const [motivo, setMotivo] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+  const cat = getCatMeta(item.categoria);
+  const urg = getUrgMeta(item.urgencia);
+  const solicitanteNome = item.solicitante?.name || item.solicitante_nome || 'Solicitante';
+  const date = new Date(item.created_at).toLocaleDateString('pt-BR');
+  const horas = Math.round((Date.now() - new Date(item.created_at).getTime()) / 3600000);
+  const aguardandoHa = horas < 24 ? `${horas}h` : `${Math.floor(horas / 24)}d ${horas % 24}h`;
+
+  async function confirmarRejeicao() {
+    if (motivo.trim().length < 5) {
+      toast.error('Motivo precisa ter pelo menos 5 caracteres');
+      return;
+    }
+    setSubmitting(true);
+    try {
+      await onReject(item.id, motivo.trim());
+      setConfirmReject(false);
+      setMotivo('');
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <Card
+      className="p-4 cursor-pointer hover:shadow-md transition-shadow border-l-4 border-l-violet-500"
+      onClick={onClick}
+    >
+      <div className="flex items-start justify-between gap-3 mb-3">
+        <div className="flex flex-wrap items-center gap-2">
+          <Badge className={`text-xs ${cat.color}`}>{cat.label}</Badge>
+          <Badge className={`text-xs ${urg.color}`}>{urg.label}</Badge>
+          {item.eh_urgente && (
+            <Badge className="text-xs bg-red-500/15 text-red-700 dark:text-red-400">Urgente</Badge>
+          )}
+          <span className="text-xs text-muted-foreground">aguardando {aguardandoHa}</span>
+        </div>
+        <span className="text-xs text-muted-foreground whitespace-nowrap">{date}</span>
+      </div>
+      <p className="text-sm font-semibold text-foreground mb-1">{item.titulo}</p>
+      <p className="text-xs text-muted-foreground mb-2">por {solicitanteNome}</p>
+      {item.descricao && (
+        <p className="text-sm text-muted-foreground line-clamp-2 mb-2">{item.descricao}</p>
+      )}
+      {item.justificativa && (
+        <p className="text-xs text-muted-foreground mb-2"><span className="font-medium">Justificativa:</span> {item.justificativa}</p>
+      )}
+      {item.eh_urgente && item.justificativa_urgencia && (
+        <p className="text-xs text-red-700 dark:text-red-400 mb-2"><span className="font-medium">Urgência:</span> {item.justificativa_urgencia}</p>
+      )}
+
+      {!confirmReject ? (
+        <div className="flex gap-2 mt-3 pt-3 border-t border-border" onClick={e => e.stopPropagation()}>
+          <Button
+            size="sm"
+            onClick={() => onApprove(item.id)}
+            className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white"
+          >
+            <CheckCircle2 className="h-4 w-4 mr-1" /> Aprovar
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => setConfirmReject(true)}
+            className="flex-1 text-red-600 hover:bg-red-50 dark:hover:bg-red-950/30"
+          >
+            <XCircle className="h-4 w-4 mr-1" /> Rejeitar
+          </Button>
+        </div>
+      ) : (
+        <div className="mt-3 pt-3 border-t border-border space-y-2" onClick={e => e.stopPropagation()}>
+          <Label className="text-xs">Motivo da rejeição *</Label>
+          <Textarea
+            value={motivo}
+            onChange={e => setMotivo(e.target.value)}
+            rows={2}
+            placeholder="Solicitação rejeitada não reabre · solicitante terá que criar nova."
+          />
+          <div className="flex gap-2">
+            <Button size="sm" variant="outline" onClick={() => { setConfirmReject(false); setMotivo(''); }}>
+              Cancelar
+            </Button>
+            <Button
+              size="sm"
+              onClick={confirmarRejeicao}
+              disabled={motivo.trim().length < 5 || submitting}
+              className="bg-red-600 hover:bg-red-700 text-white"
+            >
+              {submitting ? 'Rejeitando...' : 'Confirmar rejeição'}
+            </Button>
+          </div>
+        </div>
+      )}
+    </Card>
+  );
 }
 
 function SolicitacaoCard({ item, isAdmin, onStatusChange, onClick, draggable }) {
