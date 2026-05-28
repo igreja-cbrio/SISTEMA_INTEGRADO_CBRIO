@@ -1882,6 +1882,108 @@ router.get('/freq-arrecadacao-semanal', async (req, res) => {
 });
 
 // ====================================================================
+// ARRECADAÇÃO MENSAL POR ANO · 2026-05-28
+// Retorna os 12 meses (Jan-Dez) do ano + acumulado · filtra empréstimo
+// ====================================================================
+router.get('/arrecadacao-anual', async (req, res) => {
+  try {
+    const ano = Number(req.query.ano) || new Date().getFullYear();
+
+    const { data, error } = await supabase
+      .from('vw_fin_arrecadacao_mensal')
+      .select('mes, receita, despesa, resultado, qtd')
+      .eq('ano', ano)
+      .order('mes', { ascending: true });
+
+    if (error) return res.status(400).json({ error: error.message });
+
+    // Garante 12 meses (preenche faltantes com zero)
+    const porMes = {};
+    (data || []).forEach(r => { porMes[r.mes] = r; });
+    const meses = [];
+    let acumulado = 0;
+    for (let m = 1; m <= 12; m++) {
+      const key = `${ano}-${String(m).padStart(2, '0')}`;
+      const linha = porMes[key];
+      const receita = Number(linha?.receita || 0);
+      acumulado += receita;
+      meses.push({
+        mes: key,
+        mes_num: m,
+        mes_label: ['Jan','Fev','Mar','Abr','Mai','Jun','Jul','Ago','Set','Out','Nov','Dez'][m - 1],
+        receita,
+        despesa: Number(linha?.despesa || 0),
+        resultado: Number(linha?.resultado || 0),
+        acumulado,
+        qtd: Number(linha?.qtd || 0),
+      });
+    }
+
+    res.json({ ano, meses, total: acumulado });
+  } catch (e) {
+    console.error('[FIN-V2] arrecadacao-anual:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ====================================================================
+// DRILLDOWN · transações de uma categoria no período · 2026-05-28
+// ====================================================================
+router.get('/categoria-transacoes', async (req, res) => {
+  try {
+    const { categoria, inicio, fim } = req.query;
+    if (!inicio || !fim) return res.status(400).json({ error: 'inicio e fim obrigatorios' });
+
+    // Mapeia categoria do UI (label do labelCategoria do backend) → prefixos do plano de contas
+    const PREFIXOS = {
+      'dizimos': ['3.01.01'],
+      'ofertas regulares': ['3.01.02'],
+      'campanha 2025': ['3.02.01'],
+      'eventos': ['3.02.02'],
+      'outras ofertas': ['3.02.03'],
+      'financeiras': ['3.02.06'],
+    };
+    const catNorm = String(categoria || '').toLowerCase().normalize('NFD').replace(/[^\w\s]/g, '').trim();
+    const prefixos = PREFIXOS[catNorm] || null;
+
+    let q = supabase
+      .from('vw_fin_transacoes_completa')
+      .select('id, data_competencia, descricao, valor, plano_contas_codigo, plano_contas_nome, plano_contas_natureza, membro_nome, referencia, conta_id, classe_movimento')
+      .eq('tipo', 'receita')
+      .neq('status', 'cancelado')
+      .in('classe_movimento', ['ordinaria', 'extraordinaria'])
+      .gte('data_competencia', inicio)
+      .lte('data_competencia', fim)
+      .order('data_competencia', { ascending: false })
+      .order('valor', { ascending: false });
+
+    if (prefixos) {
+      const ors = prefixos.map(p => `plano_contas_codigo.like.${p}.%`).join(',');
+      q = q.or(ors);
+    } else if (catNorm.includes('ministerial') || catNorm.includes('campanhas e outros') || catNorm.includes('extraordin')) {
+      q = q.eq('plano_contas_natureza', 'extraordinaria');
+    }
+
+    const { data, error } = await q.limit(2000);
+    if (error) return res.status(400).json({ error: error.message });
+
+    const total = (data || []).reduce((s, r) => s + Number(r.valor || 0), 0);
+    res.json({
+      categoria, inicio, fim,
+      total,
+      qtd: (data || []).length,
+      transacoes: (data || []).map(r => ({
+        ...r,
+        valor: Number(r.valor || 0),
+      })),
+    });
+  } catch (e) {
+    console.error('[FIN-V2] categoria-transacoes:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ====================================================================
 // METAS · progresso de cada meta no período · 2026-05-28
 // Filtros: ano, mes (1-12), semana_inicio (YYYY-MM-DD)
 // Se nada passado, cada meta usa sua própria periodicidade no período atual.

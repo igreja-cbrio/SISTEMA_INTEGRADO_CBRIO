@@ -629,6 +629,9 @@ export const financeiroV2 = {
     progresso: (params) => get('/financeiro-v2/metas-progresso' + (params ? '?' + new URLSearchParams(params) : '')),
   },
   freqArrecadacaoSemanal: (semanas = 20) => get(`/financeiro-v2/freq-arrecadacao-semanal?semanas=${semanas}`),
+  arrecadacaoAnual: (ano) => get(`/financeiro-v2/arrecadacao-anual${ano ? `?ano=${ano}` : ''}`),
+  categoriaTransacoes: ({ categoria, inicio, fim }) =>
+    get(`/financeiro-v2/categoria-transacoes?categoria=${encodeURIComponent(categoria)}&inicio=${inicio}&fim=${fim}`),
   syncSaldoBancos: () => post('/financeiro-v2/sync-saldo-bancos', {}),
   backfill: (data) => post('/financeiro-v2/backfill/transacoes', data || {}),
   recorrencias: {
