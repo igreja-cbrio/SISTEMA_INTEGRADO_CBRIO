@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
 import { useAuth } from '../contexts/AuthContext';
-import { solicitacoes as api } from '../api';
+import { solicitacoes as api, marketing as marketingApi } from '../api';
 import { playSuccessSound } from '../lib/sounds';
 import { Badge } from '../components/ui/badge';
 import { Button } from '../components/ui/button';
@@ -182,14 +182,47 @@ export default function Solicitacoes() {
     espaco_solicitado: '', data_uso: '', horario_inicio: '', horario_fim: '', qtde_pessoas: '',
     motivo_reembolso: '', data_compra: '',
     forma_pagamento: '', chave_pix: '', banco: '', agencia: '', conta: '', documento_file: null,
+    // Marketing · Spec 010
+    marketing_tipo_id: '', marketing_destino_id: '',
   };
   const [form, setForm] = useState(FORM_INITIAL);
   const [slaDefs, setSlaDefs] = useState([]);
+  // Marketing · Spec 010 · etiquetas + estimativa preliminar
+  const [marketingTipos, setMarketingTipos] = useState([]);
+  const [marketingDestinos, setMarketingDestinos] = useState([]);
+  const [estimativa, setEstimativa] = useState(null);
+  const [estimativaLoading, setEstimativaLoading] = useState(false);
 
   // Carrega SLAs pra mostrar prazo expected no form
   useEffect(() => {
     api.slaDefs?.().then(setSlaDefs).catch(() => setSlaDefs([]));
   }, []);
+
+  // Carrega etiquetas Marketing quando categoria=marketing for selecionada
+  useEffect(() => {
+    if (form.categoria !== 'marketing') return;
+    if (marketingTipos.length > 0) return;
+    marketingApi.etiquetas?.().then(r => {
+      setMarketingTipos(r.tipos || []);
+      setMarketingDestinos(r.destinos || []);
+    }).catch(() => {});
+  }, [form.categoria, marketingTipos.length]);
+
+  // Debounced estimativa preliminar quando tipo+data mudam
+  useEffect(() => {
+    if (form.categoria !== 'marketing' || !form.marketing_tipo_id) {
+      setEstimativa(null);
+      return;
+    }
+    setEstimativaLoading(true);
+    const handle = setTimeout(() => {
+      marketingApi.estimar?.(form.marketing_tipo_id, form.data_necessaria || null)
+        .then(setEstimativa)
+        .catch(() => setEstimativa(null))
+        .finally(() => setEstimativaLoading(false));
+    }, 350);
+    return () => clearTimeout(handle);
+  }, [form.categoria, form.marketing_tipo_id, form.data_necessaria]);
 
   // Pre-preenche a area do solicitante pelo CARGO (slug). Fallback: kpi_areas.
   // Usuario pode trocar livremente depois.
@@ -309,6 +342,8 @@ export default function Solicitacoes() {
       if (!payload.espaco_solicitado) delete payload.espaco_solicitado;
       if (!payload.data_compra) delete payload.data_compra;
       if (!payload.motivo_reembolso) delete payload.motivo_reembolso;
+      if (!payload.marketing_tipo_id) delete payload.marketing_tipo_id;
+      if (!payload.marketing_destino_id) delete payload.marketing_destino_id;
 
       // Upload do comprovante para Supabase Storage (bucket: solicitacoes)
       if (form.documento_file && supabase) {
@@ -549,6 +584,73 @@ export default function Solicitacoes() {
                     <p className="text-xs text-muted-foreground">
                       Se preencher, alertaremos caso o SLA padrão não bata.
                     </p>
+                  </div>
+                )}
+
+                {/* Marketing · etiquetas + estimativa preliminar (Spec 010) */}
+                {form.categoria === 'marketing' && (
+                  <div className="space-y-3 rounded-lg border border-pink-500/30 bg-pink-500/5 p-3">
+                    <p className="text-sm font-semibold text-pink-700 dark:text-pink-400">
+                      Detalhes da demanda (Marketing)
+                    </p>
+                    <div className="grid grid-cols-2 gap-3">
+                      <div className="space-y-2">
+                        <Label className="text-xs">Tipo de entregável</Label>
+                        <Select
+                          value={form.marketing_tipo_id}
+                          onValueChange={v => setForm(f => ({ ...f, marketing_tipo_id: v }))}
+                        >
+                          <SelectTrigger><SelectValue placeholder="(opcional · Pedro define)" /></SelectTrigger>
+                          <SelectContent>
+                            {marketingTipos.map(t => <SelectItem key={t.id} value={t.id}>{t.nome}</SelectItem>)}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <div className="space-y-2">
+                        <Label className="text-xs">Destino</Label>
+                        <Select
+                          value={form.marketing_destino_id}
+                          onValueChange={v => setForm(f => ({ ...f, marketing_destino_id: v }))}
+                        >
+                          <SelectTrigger><SelectValue placeholder="(opcional · Pedro define)" /></SelectTrigger>
+                          <SelectContent>
+                            {marketingDestinos.map(d => <SelectItem key={d.id} value={d.id}>{d.nome}</SelectItem>)}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    </div>
+
+                    {/* Habilidade sugerida */}
+                    {(() => {
+                      const tipo = marketingTipos.find(t => t.id === form.marketing_tipo_id);
+                      if (!tipo?.habilidade_padrao) return null;
+                      return (
+                        <p className="text-xs text-muted-foreground">
+                          Habilidade sugerida: <span className="font-medium">{tipo.habilidade_padrao}</span>
+                        </p>
+                      );
+                    })()}
+
+                    {/* Estimativa preliminar */}
+                    {form.marketing_tipo_id && (
+                      <div className="rounded-md bg-card border border-border px-3 py-2 text-xs">
+                        {estimativaLoading ? (
+                          <span className="text-muted-foreground">Calculando estimativa...</span>
+                        ) : estimativa ? (
+                          <div className="space-y-1">
+                            <div className="font-medium text-foreground">
+                              Estimativa preliminar: {estimativa.data_sugerida ? new Date(estimativa.data_sugerida).toLocaleDateString('pt-BR') : '—'}
+                              {estimativa.dias_uteis ? ` (${estimativa.dias_uteis} dias úteis)` : ''}
+                            </div>
+                            {estimativa.observacao && (
+                              <div className="text-muted-foreground">{estimativa.observacao}</div>
+                            )}
+                          </div>
+                        ) : (
+                          <span className="text-muted-foreground">Selecione tipo pra ver estimativa</span>
+                        )}
+                      </div>
+                    )}
                   </div>
                 )}
 

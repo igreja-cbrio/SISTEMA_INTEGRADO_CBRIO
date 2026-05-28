@@ -2,6 +2,34 @@
 
 Guia operacional para o Claude Code quando trabalhar neste repositório.
 
+## Marketing · Spec 010 · Bloco Marketing em /solicitacoes/nova (2026-05-28)
+
+Estende form de criação de Solicitações com bloco específico para Marketing.
+
+**Migration `20260528220000_solicitacoes_marketing_etiquetas.sql`:**
+- 2 colunas em `solicitacoes`: `marketing_tipo_id` (FK marketing_etiquetas_tipo) + `marketing_destino_id` (FK marketing_etiquetas_destino) · ambas NULL aceito
+- Atualiza `fn_marketing_cards_solicitacao_sync` (Spec 004) para propagar etiquetas pro card automaticamente
+- Quando card é materializado · trigger chama `fn_marketing_estimar_prazo` e preenche `prazo_preliminar` no card
+- Backfill: cards já criados pegam etiquetas da solicitação correspondente se estavam vazias
+
+**Backend (`routes/solicitacoes.js`):** POST aceita os 2 campos novos quando `categoria='marketing'`.
+
+**Frontend (`pages/Solicitacoes.jsx`):**
+- Bloco rosa "Detalhes da demanda (Marketing)" aparece quando `categoria='marketing'`
+- Selects de tipo (8) + destino (5) · ambos opcionais (Pedro pode definir depois)
+- Texto "Habilidade sugerida: X" baseado em `tipo.habilidade_padrao`
+- **Estimativa preliminar** (debounce 350ms) chama `GET /api/marketing/estimar?tipo=X&data_alvo=Y`:
+  - Mostra "Estimativa preliminar: DD/MM/YYYY (N dias úteis)"
+  - Mostra observação do backend (cobrindo "tipo não calibrado" ou "equipe sem capacidade")
+- Etiquetas carregadas lazy (só quando categoria='marketing' selecionada)
+
+**Fluxo end-to-end:**
+1. Pr. Wesley cria solicitação categoria=marketing
+2. Pré-seleciona Tipo='Artes' Destino='Eventos e Séries'
+3. Vê estimativa preliminar antes de enviar
+4. Após aprovação do Pedro Menezes (Spec 001), trigger cria card com etiquetas + prazo preliminar já preenchidos
+5. Pedro Paiva ajusta no Kanban se necessário
+
 ## Marketing · Spec 009 · Admin /marketing/admin (2026-05-28)
 
 CRUD admin pra Pedro/Marcos editarem o módulo sem precisar de migration.

@@ -227,7 +227,9 @@ router.post('/', async (req, res) => {
             data_necessaria, espaco_solicitado, data_uso, horario_inicio, horario_fim, qtde_pessoas,
             // Reembolso
             motivo_reembolso, data_compra,
-            forma_pagamento, chave_pix, banco, agencia, conta, documento_url } = req.body;
+            forma_pagamento, chave_pix, banco, agencia, conta, documento_url,
+            // Marketing · Spec 010 (etiquetas pre-preenchidas)
+            marketing_tipo_id, marketing_destino_id } = req.body;
     if (!titulo || !categoria) return res.status(400).json({ error: 'Título e categoria são obrigatórios' });
     if (!ALLOWED_CATEGORIES.includes(categoria)) {
       return res.status(400).json({ error: `Categoria inválida: "${categoria}". Permitidas: ${ALLOWED_CATEGORIES.join(', ')}` });
@@ -274,6 +276,11 @@ router.post('/', async (req, res) => {
           agencia: agencia || null,
           conta: conta || null,
           documento_url: documento_url || null,
+        }),
+        // Marketing · etiquetas pre-preenchidas (Spec 010)
+        ...(categoria === 'marketing' && {
+          marketing_tipo_id: marketing_tipo_id || null,
+          marketing_destino_id: marketing_destino_id || null,
         }),
       })
       .select('*')
