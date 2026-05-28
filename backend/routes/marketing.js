@@ -20,9 +20,16 @@
 // ============================================================================
 
 const router = require('express').Router();
+const multer = require('multer');
 const { authenticate, authorizeModule } = require('../middleware/auth');
 const { supabase } = require('../utils/supabase');
 const { notificar } = require('../services/notificar');
+const spMarketing = require('../services/sharepointMarketing');
+
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: spMarketing.MAX_BYTES },
+});
 
 router.use(authenticate);
 
@@ -517,6 +524,142 @@ router.patch('/cards/:id/sugerir-revisao', async (req, res) => {
     res.json(enriched[0]);
   } catch (e) {
     console.error('[MARKETING] sugerir-revisao:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ─── Entregaveis (Spec 006 · SharePoint upload) ─────────────────────────────
+
+router.get('/cards/:id/entregaveis', authorizeModule('marketing', 1), async (req, res) => {
+  try {
+    // RLS bloqueia solicitante de ver entregaveis de cards alheios.
+    // Pra solicitante: backend confere ownership via card.solicitacao_id.
+    const lvl = levelOf(req);
+    if (lvl < 3 && !['admin', 'diretor'].includes(req.user.role)) {
+      const { data: card } = await supabase
+        .from('marketing_kanban_cards')
+        .select('id, solicitacao_id')
+        .eq('id', req.params.id)
+        .is('deleted_at', null)
+        .maybeSingle();
+      if (!card) return res.status(404).json({ error: 'Card nao encontrado' });
+      if (card.solicitacao_id) {
+        const { data: sol } = await supabase
+          .from('solicitacoes')
+          .select('solicitante_id')
+          .eq('id', card.solicitacao_id)
+          .maybeSingle();
+        if (sol?.solicitante_id !== req.user.userId) {
+          return res.status(403).json({ error: 'Sem permissao' });
+        }
+      } else {
+        return res.status(403).json({ error: 'Sem permissao' });
+      }
+    }
+
+    const entregaveis = await spMarketing.listarEntregaveis(req.params.id);
+    res.json(entregaveis);
+  } catch (e) {
+    console.error('[MARKETING] entregaveis list:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+router.post('/cards/:id/entregaveis',
+  authorizeModule('marketing', 3),
+  upload.single('arquivo'),
+  async (req, res) => {
+    try {
+      if (!req.file) return res.status(400).json({ error: 'Arquivo (campo "arquivo") obrigatorio · multipart/form-data' });
+
+      const result = await spMarketing.uploadEntregavel({
+        cardId: req.params.id,
+        userId: req.user.userId,
+        file: req.file,
+      });
+
+      // Notifica solicitante quando arquivo final eh anexado (card no estado correto)
+      try {
+        const { data: card } = await supabase
+          .from('marketing_kanban_cards')
+          .select('estado, solicitacao_id, titulo')
+          .eq('id', req.params.id)
+          .maybeSingle();
+        if (card?.solicitacao_id && card.estado === 'concluido') {
+          const { data: sol } = await supabase
+            .from('solicitacoes')
+            .select('solicitante_id, titulo')
+            .eq('id', card.solicitacao_id)
+            .maybeSingle();
+          if (sol?.solicitante_id) {
+            notificar({
+              modulo: 'marketing',
+              tipo: 'marketing_entregavel_anexado',
+              titulo: `Arquivo final: ${sol.titulo}`,
+              mensagem: `${req.file.originalname} anexado ao seu pedido · disponivel pra download.`,
+              link: '/solicitacoes',
+              severidade: 'info',
+              chaveDedup: `marketing_entregavel_${result.id}`,
+              targetIds: [sol.solicitante_id],
+            }).catch(err => console.error('[MARKETING] notify entregavel:', err.message));
+          }
+        }
+      } catch (notifyErr) {
+        console.error('[MARKETING] notify entregavel block:', notifyErr.message);
+      }
+
+      res.status(201).json(result);
+    } catch (e) {
+      console.error('[MARKETING] entregaveis upload:', e.message);
+      const status = /excede|invalido|nao encontrado/i.test(e.message || '') ? 400 : 500;
+      res.status(status).json({ error: e.message });
+    }
+  }
+);
+
+router.get('/entregaveis/:id/download', authorizeModule('marketing', 1), async (req, res) => {
+  try {
+    // Pra solicitante: confere ownership via card.solicitacao_id
+    const lvl = levelOf(req);
+    if (lvl < 3 && !['admin', 'diretor'].includes(req.user.role)) {
+      const { data: ent } = await supabase
+        .from('marketing_entregaveis')
+        .select('card_id')
+        .eq('id', req.params.id)
+        .is('deleted_at', null)
+        .maybeSingle();
+      if (!ent) return res.status(404).json({ error: 'Entregavel nao encontrado' });
+      const { data: card } = await supabase
+        .from('marketing_kanban_cards')
+        .select('solicitacao_id')
+        .eq('id', ent.card_id)
+        .maybeSingle();
+      if (!card?.solicitacao_id) return res.status(403).json({ error: 'Sem permissao' });
+      const { data: sol } = await supabase
+        .from('solicitacoes')
+        .select('solicitante_id')
+        .eq('id', card.solicitacao_id)
+        .maybeSingle();
+      if (sol?.solicitante_id !== req.user.userId) {
+        return res.status(403).json({ error: 'Sem permissao' });
+      }
+    }
+
+    const info = await spMarketing.getDownloadUrl(req.params.id);
+    // Redireciona pra URL do Graph (TTL ~1h) · evita expor token / segredos
+    res.redirect(302, info.url);
+  } catch (e) {
+    console.error('[MARKETING] entregavel download:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+router.delete('/entregaveis/:id', authorizeModule('marketing', 5), async (req, res) => {
+  try {
+    await spMarketing.removerEntregavel(req.params.id, req.user.userId);
+    res.json({ ok: true });
+  } catch (e) {
+    console.error('[MARKETING] entregavel delete:', e.message);
     res.status(500).json({ error: e.message });
   }
 });

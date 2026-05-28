@@ -1033,6 +1033,18 @@ export const marketing = {
   // Acoes especificas
   sugerirRevisao:  (id, motivo) => patch(`/marketing/cards/${id}/sugerir-revisao`, { motivo }),
   decidirUrgencia: (id, decisao, motivoRecusa) => patch(`/marketing/cards/${id}/decidir-urgencia`, { decisao, motivo_recusa: motivoRecusa }),
+
+  // Entregaveis (Spec 006 · SharePoint)
+  entregaveis: {
+    list:     (cardId) => get(`/marketing/cards/${cardId}/entregaveis`),
+    upload:   (cardId, file) => {
+      const fd = new FormData();
+      fd.append('arquivo', file);
+      return requestFile(`/marketing/cards/${cardId}/entregaveis`, fd, { timeoutMs: 120_000 });
+    },
+    download: (entregavelId) => `${API}/marketing/entregaveis/${entregavelId}/download`,
+    remove:   (entregavelId) => del(`/marketing/entregaveis/${entregavelId}`),
+  },
 };
 
 export const solicitacoes = {

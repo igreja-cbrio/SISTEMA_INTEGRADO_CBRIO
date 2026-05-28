@@ -2,6 +2,40 @@
 
 Guia operacional para o Claude Code quando trabalhar neste repositório.
 
+## Marketing · Spec 006 · Upload SharePoint via Microsoft Graph (2026-05-28)
+
+Spec 006 fecha o backend do módulo (Fase B Core). Entregáveis (arquivos finais
+dos cards) vão pra biblioteca **Criativo** do CBRio Hub via Microsoft Graph,
+reusando o pipeline do Cérebro/storageService.
+
+**Serviço novo · `backend/services/sharepointMarketing.js`:**
+- `uploadEntregavel({ cardId, userId, file })` · sobe pra `Criativo / Marketing / YYYY / YYYY-MM / <card-prefix>_<timestamp>_<nome>` + grava em `marketing_entregaveis`
+- `listarEntregaveis(cardId)` · select do banco
+- `getDownloadUrl(entregavelId)` · Graph retorna `@microsoft.graph.downloadUrl` com TTL ~1h
+- `removerEntregavel(entregavelId, userId)` · soft-delete via UPDATE
+- Retry exponencial (3 tentativas · 500ms / 1s / 2s) no upload
+- Limite: 50 MB por arquivo
+- Path sanitizado: tira acentos, troca espaços por `_`, max 120 chars
+
+**Endpoints adicionados em `backend/routes/marketing.js`:**
+
+| Endpoint | Nível min | Função |
+|---|---|---|
+| `GET /api/marketing/cards/:id/entregaveis` | 1 (com check de ownership do solicitante) | Lista arquivos do card |
+| `POST /api/marketing/cards/:id/entregaveis` | 3 | Upload multipart (campo `arquivo`) |
+| `GET /api/marketing/entregaveis/:id/download` | 1 (com ownership) | Redirect 302 pra signed URL do Graph |
+| `DELETE /api/marketing/entregaveis/:id` | 5 | Soft delete |
+
+**Ownership do solicitante:** RLS já bloqueia `marketing_entregaveis` pra quem não é da equipe Marketing, mas o backend duplica o check pra UX. Solicitante vê e baixa entregáveis dos próprios cards (`card.solicitacao_id` → `solicitacoes.solicitante_id = auth.uid()`).
+
+**Frontend (`src/api.js`):** `marketing.entregaveis.list(cardId)`, `marketing.entregaveis.upload(cardId, file)`, `marketing.entregaveis.download(id)` (retorna URL pra `<a href>`), `marketing.entregaveis.remove(id)`.
+
+**Notificação automática:** quando arquivo é anexado a um card já em `estado=concluido`, o solicitante recebe ping "Arquivo final pronto · disponível pra download".
+
+**Reuso de infra · sem novas envs:** consome `MICROSOFT_TENANT_ID`, `MICROSOFT_CLIENT_ID`, `MICROSOFT_CLIENT_SECRET`, `SHAREPOINT_SITE_ID` (mesmos do Cérebro). Bibliote `Criativo` no CBRio Hub já existe e está mapeada em `MODULE_LIBRARY_MAP`.
+
+**Fallback:** se SharePoint não estiver configurado, upload falha com erro claro (não usa Supabase Storage como fallback aqui · arquivo de marketing precisa estar no SharePoint pra equipe acessar).
+
 ## Marketing · Spec 005 · Estimativa + capacidade + 4 KPIs (2026-05-28)
 
 Conclui a Fase B Core (parte backend) · agora o módulo tem inteligência operacional
