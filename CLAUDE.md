@@ -63,6 +63,17 @@ não é fila da área ainda). `STATUS_LABELS` ganhou os 4 status que faltavam, e
 card mostra um badge com o status real quando a coluna agrupa vários (`mostrarStatus`).
 Drag-and-drop continua setando `col.key` (status canônico). Frontend puro · sem migration.
 
+## Dados · Pr. Juninho nome + Pr. Pedrão (2026-05-28)
+
+Migration `20260528510000_juninho_nome_exibicao.sql`: corrige o nome de exibição
+`juninho` → `Juninho` na conta oficial (`juninho@cbrio.com.br` · Marcos confirmou),
+sincronizando os text-mirrors legados (`projects.leader`/`responsible` · 2+2 linhas +
+`usuarios.nome`) pra não desencontrar do filtro `escopo_proprio` de `/projetos` (mesmo
+padrão da renomeação "Alda → Lorena"). A conta `juninho.lit@cbrio.org` (Pedro L. B.
+Litwinczuk Júnior) **fica como está** · possível duplicata a tratar depois. **Pr. Pedrão
+não tem conta** no sistema → nada a marcar em `is_diretoria_geral` (quando criarem,
+marcar Pastor Senior).
+
 ## Marketing · Spec 024 · Tela /marketing/ciclo-criativo (2026-05-28)
 
 Marcos: "ao colocar o horário no marketing, coloque alguma visualização para Pedro ir por fase do ciclo criativo colocando o horário e o dono de cada etapa do ciclo criativo, então isso vai pro calendário dessa pessoa."
