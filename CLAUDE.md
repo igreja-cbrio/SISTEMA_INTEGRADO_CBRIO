@@ -2,6 +2,49 @@
 
 Guia operacional para o Claude Code quando trabalhar neste repositório.
 
+## Marketing · Spec 015 · Testes E2E + Cutover (2026-05-28) · FIM DA FASE 9
+
+Conclui as 15 specs do módulo Marketing. Próxima fase é piloto interno + abertura
+pra igreja (ver `docs/modulo-marketing/15-cutover-plan.md`).
+
+**Suite Playwright (`e2e/tests/marketing.spec.ts`):**
+- `/marketing` carrega Kanban com 4 colunas
+- `/marketing/calendario` carrega com botão "Hoje"
+- `/marketing/analytics` carrega com 4 cards de KPI
+- Navegação header entre Kanban → Calendário → Analytics → Kanban
+
+Rodar: `npm run test:e2e -- marketing.spec.ts`. Requer `E2E_TEST_EMAIL` + `E2E_TEST_PASSWORD` (recomendado Pedro Paiva · nível 5).
+
+**Smoke manual obrigatório antes do go-live** (checklist completo em `15-cutover-plan.md` §2):
+- Permissões: Pedro/equipe vê tudo · produtor edita só estado do próprio · diretores read-only · sem-área não vê menu
+- Fluxo end-to-end: solicitação → aprovação Arthur → atribuição Pedro → trabalho Cauã → preview → aprovação solicitante → NPS → KPI atualizado
+- Casos especiais: diretor cria (dispensa) · membro sem RH (403) · evento gera card · task interna · rejeição imutável
+- Calendário + Analytics · variantes coordenador vs colaborador
+- **Smoke transversal**: solicitação cozinha + manutenção ainda funcionam (Spec 001 mexeu no backbone)
+
+**Plano de cutover (`15-cutover-plan.md` §3):**
+- T-7 dias: comunicação geral + Cérebro CBRio
+- T-3 dias: treinamento Pedro+equipe (15min) + diretores (5min cada)
+- T-0: soft launch · piloto interno 2 semanas só com Marketing usando
+- T+14: abertura oficial pra igreja
+
+**Pendências deferred (Fase 11):**
+- Aline cadastrada (Pedro/Marcos via admin)
+- Escalação automática >24h pra super-admin
+- Modo pico fev/mai (D-08)
+- Forecasting automático (D-08)
+- Auto-calibragem de `esforco_medio_h`
+
+**Critérios de "pronto pra abrir pra igreja"** (`15-cutover-plan.md` §5):
+- [x] 15 specs implementadas e mergeadas
+- [x] Migrations aplicadas em produção
+- [x] Smoke automatizado
+- [ ] Smoke manual completo
+- [ ] Piloto 2 semanas sem incidentes
+- [ ] `esforco_medio_h` calibrado
+- [ ] Pedro Paiva usa sem suporte
+- [ ] 3 diretores aprovaram ≥1 solicitação cada
+
 ## Marketing · Spec 014 · Notificações (10 eventos) (2026-05-28)
 
 Spec 014 finaliza o sistema de notificações do módulo. Maioria já implementada nas specs anteriores · esta iteração fecha as 2 que faltavam + registra `marketing` no admin de regras.
