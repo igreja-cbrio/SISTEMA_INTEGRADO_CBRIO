@@ -2,6 +2,43 @@
 
 Guia operacional para o Claude Code quando trabalhar neste repositório.
 
+## Marketing · Spec 014 · Notificações (10 eventos) (2026-05-28)
+
+Spec 014 finaliza o sistema de notificações do módulo. Maioria já implementada nas specs anteriores · esta iteração fecha as 2 que faltavam + registra `marketing` no admin de regras.
+
+**Eventos implementados (10):**
+
+| # | Evento | Quem implementou | Trigger |
+|---|---|---|---|
+| 1 | Solicitação aguardando aprovação → diretor | Spec 001 | POST `/solicitacoes` |
+| 2 | Aprovada pelo diretor → solicitante + responsável | Spec 001 | PATCH `/aprovar-origem` |
+| 3 | Rejeitada pelo diretor → solicitante | Spec 001 | PATCH `/rejeitar-origem` |
+| 4 | Aguardando aprovação há 24h → diretor (cron) | Spec 001 | `gerarNotificacoesSolicitacoes` |
+| 5 | Card atribuído → produtor | Spec 004 | POST `/cards` + PATCH atribuir |
+| 6 | **Prazo confirmado** → solicitante | **Spec 014** | PATCH `/cards/:id` (prazo_confirmado mudou) |
+| 7 | Urgência aceita/recusada → solicitante | Spec 004 | PATCH `/decidir-urgencia` |
+| 8 | Preview pronto (aguardando_solicitante) → solicitante | Spec 004 | PATCH `/cards/:id` (estado mudou) |
+| 9 | Concluído → solicitante (pede NPS) | Spec 004 + Spec 012 | PATCH `/cards/:id` (estado=concluido) ou `/aprovar-entrega` |
+| 10 | **Aguardando solicitante há 24h → solicitante** (cron) | **Spec 014** | `gerarNotificacoesMarketing` |
+
+**Plus (não estavam na lista original mas valem):**
+- Revisão sugerida → produtor (Spec 004)
+- Aprovação hierárquica há 24h → diretor (Spec 001)
+- Arquivo final anexado → solicitante (Spec 006)
+- Entrega aprovada pelo solicitante → produtor (Spec 012)
+
+**Backend novo (`routes/marketing.js`):**
+- PATCH `/cards/:id` detecta `prazo_confirmado` mudando · dispara notificação se valor novo é não-nulo
+
+**Backend novo (`services/notificacaoGenerator.js`):**
+- `gerarNotificacoesMarketing()` busca cards `aguardando_solicitante` há ≥24h
+- Notifica solicitante (1x/dia/card via chaveDedup com data)
+- Registrado em `gerarTodasNotificacoes`
+
+**Frontend (`pages/admin/NotificacaoRegras.jsx`):** array `MODULOS` ganha entrada `marketing` (rosa) com descrição dos eventos · admin pode configurar quem recebe cada categoria de notificação.
+
+**Spec autônoma · sem migration.**
+
 ## Marketing · Spec 013 · Analytics /marketing/analytics (2026-05-28)
 
 Dashboard de KPIs do módulo + bloco gargalo de aprovação dos diretores.

@@ -25,6 +25,7 @@ const MODULOS = [
   { id: 'batismos', label: 'Batismos', desc: 'Novas inscrições para batismo via formulário público', color: '#06b6d4' },
   { id: 'processos', label: 'Processos', desc: 'Novos processos, OKRs e acompanhamento de indicadores', color: '#00B39D' },
   { id: 'nps', label: 'NPS', desc: 'Novas pesquisas de satisfação, lembretes e análises', color: '#06b6d4' },
+  { id: 'marketing', label: 'Marketing', desc: 'Cards atribuídos, prazo confirmado, preview pronto, entrega aprovada, revisão sugerida, gargalo de aprovação', color: '#ec4899' },
 ];
 
 export default function NotificacaoRegras() {

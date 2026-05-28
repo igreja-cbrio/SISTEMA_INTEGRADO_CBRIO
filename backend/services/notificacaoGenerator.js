@@ -20,6 +20,7 @@ async function gerarTodasNotificacoes() {
     total += await gerarNotificacoesGrupos();
     total += await gerarNotificacoesRitual();
     total += await gerarNotificacoesSolicitacoes();
+    total += await gerarNotificacoesMarketing();
     console.log(`[Notificações] ${total} notificação(ões) gerada(s).`);
   } catch (e) {
     console.error('[Notificações] Erro:', e.message);
@@ -834,6 +835,54 @@ async function gerarNotificacoesSolicitacoes() {
       severidade: 'alta',
       chaveDedup: `solic_aprov_origem_lembrete_${s.id}_${hojeKey}`,
       targetIds: [s.aprovacao_origem_diretor_id],
+    });
+  }
+
+  return count;
+}
+
+// ═══════════════════════════════════════════════════════════
+// MARKETING · cards aguardando solicitante ha >=24h (Spec 014)
+// Cron diario · lembra solicitante a aprovar/sugerir revisao.
+// ═══════════════════════════════════════════════════════════
+async function gerarNotificacoesMarketing() {
+  let count = 0;
+  const agora = new Date();
+  const ha24h = new Date(agora.getTime() - 24 * 3600 * 1000).toISOString();
+  const hojeKey = agora.toISOString().slice(0, 10);
+
+  const { data: cards, error } = await supabase
+    .from('marketing_kanban_cards')
+    .select('id, titulo, solicitacao_id, estado, estado_atualizado_em')
+    .eq('estado', 'aguardando_solicitante')
+    .is('deleted_at', null)
+    .lte('estado_atualizado_em', ha24h);
+
+  if (error) {
+    if (!String(error.message || '').includes('does not exist')) {
+      console.warn('[Marketing notify] erro:', error.message);
+    }
+    return 0;
+  }
+
+  for (const c of cards || []) {
+    if (!c.solicitacao_id) continue;
+    const { data: sol } = await supabase
+      .from('solicitacoes')
+      .select('solicitante_id, titulo')
+      .eq('id', c.solicitacao_id)
+      .maybeSingle();
+    if (!sol?.solicitante_id) continue;
+
+    count += await notificar({
+      modulo: 'marketing',
+      tipo: 'marketing_aguardando_solicitante_lembrete',
+      titulo: `Aguardando sua revisão: ${sol.titulo}`,
+      mensagem: 'Preview Marketing parado há mais de 24h aguardando sua aprovação ou sugestão de revisão.',
+      link: '/solicitacoes',
+      severidade: 'alta',
+      chaveDedup: `marketing_aguardando_lembrete_${c.id}_${hojeKey}`,
+      targetIds: [sol.solicitante_id],
     });
   }
 
