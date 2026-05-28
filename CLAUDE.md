@@ -42,6 +42,27 @@ precisou de mudança (já oferecia tudo). **Não enforçado ainda:** "só funcio
 (D-04) — o trigger só checava isso com `auth.uid()` presente; deixado como follow-up pra não
 gerar 403 surpresa em quem está sem vínculo `rh_funcionarios` no piloto.
 
+## Solicitações · Kanban não esconde mais status do backbone (2026-05-28)
+
+O board "Para Atender" (`src/pages/Solicitacoes.jsx`) só tinha 5 colunas casando 1:1
+com 5 status (`pendente/em_analise/aprovado/rejeitado/concluido`), mas o
+`solicitacoes_status_check` tem **10** status. Itens em `aguardando_aprovacao_financeira`,
+`em_atendimento`, `aguardando_entrega` e `avaliado` não caíam em coluna nenhuma e
+**sumiam do board** (ex: reembolso aprovado pelo financeiro vira `em_atendimento`).
+
+Fix: cada `KANBAN_COLUMNS` ganhou um array `match` que agrupa os status reais
+(o filtro usa `col.match.includes(status)`):
+- Pendente ← `pendente`, `aguardando_aprovacao_financeira`
+- Em Análise ← `em_analise`
+- Em Andamento ← `aprovado`, `em_atendimento`, `aguardando_entrega`
+- Concluído ← `concluido`, `avaliado`
+- Rejeitado ← `rejeitado`
+
+`aguardando_aprovacao_origem` fica **de fora de propósito** (vive na aba "Aprovar",
+não é fila da área ainda). `STATUS_LABELS` ganhou os 4 status que faltavam, e o
+card mostra um badge com o status real quando a coluna agrupa vários (`mostrarStatus`).
+Drag-and-drop continua setando `col.key` (status canônico). Frontend puro · sem migration.
+
 ## Marketing · Spec 024 · Tela /marketing/ciclo-criativo (2026-05-28)
 
 Marcos: "ao colocar o horário no marketing, coloque alguma visualização para Pedro ir por fase do ciclo criativo colocando o horário e o dono de cada etapa do ciclo criativo, então isso vai pro calendário dessa pessoa."
