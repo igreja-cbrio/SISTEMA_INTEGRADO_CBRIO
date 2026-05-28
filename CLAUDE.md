@@ -2,6 +2,37 @@
 
 Guia operacional para o Claude Code quando trabalhar neste repositório.
 
+## Marketing · Spec 012 · Revisão (1x) + Aguardando + NPS (2026-05-28)
+
+Solicitante revisa preview, aprova entrega ou pede revisão direto na aba
+Minhas de `/solicitacoes`.
+
+**Endpoint novo · `PATCH /api/marketing/cards/:id/aprovar-entrega`:**
+- Permissão: solicitante do card (via `card.solicitacao.solicitante_id`) OU admin Marketing
+- Estado precisa estar em `aguardando_solicitante` ou `em_producao`
+- Move card pra `concluido` · notifica produtor · marca `solicitacao.status='concluido'` (acionando NPS via fluxo existente)
+
+**Backend (`routes/solicitacoes.js` GET /):**
+- Enriquece solicitações com `marketing_card` (id, estado, tem_revisao, prazo, atribuido, entregue_em) quando `area_responsavel='marketing'`
+
+**Frontend (`Solicitacoes.jsx`):**
+- Novo componente `MarketingCardBlock` dentro do DetailDialog (só aparece se `item.categoria='marketing'` e user é solicitante)
+- Mostra:
+  - Status do card (Na fila / Em produção / Aguardando sua revisão / Concluído)
+  - Selo "Já teve revisão (1x)" quando aplicável
+  - Lista de entregáveis (preview/download via signed URL do Graph)
+- Botões aparecem só quando `estado='aguardando_solicitante'`:
+  - **Aprovar entrega** → muda pra concluído + dispara NPS
+  - **Sugerir revisão (1x)** → modal de motivo · só aparece se `!card.tem_revisao` · após uso some
+- `api.js` ganha `marketing.aprovarEntrega(id)`
+
+**Integração com NPS existente:**
+- Quando solicitante aprova entrega · backend marca solicitação como `concluido`
+- O `NpsBlock` (já existia no Solicitacoes.jsx) detecta `status='concluido' + nps_nota IS NULL` e mostra o form de avaliação
+- KPIs `ADM-C-*-Q` alimentados automaticamente (trigger SQL existente)
+
+**Spec autônoma · sem migration.**
+
 ## Marketing · Spec 011 · Aba Aprovar enriquecida com Marketing (2026-05-28)
 
 Spec 011 já estava implementada na Spec 001 (aba "Aprovar", badge contador, lista,

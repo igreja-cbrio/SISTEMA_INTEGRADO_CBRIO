@@ -157,6 +157,20 @@ router.get('/', async (req, res) => {
       destinoMap = Object.fromEntries((d || []).map(x => [x.id, x]));
     }
 
+    // Spec 012 · enriquece com card Marketing associado (estado, revisao, atribuido)
+    const solicMktIds = (data || [])
+      .filter(d => d.area_responsavel === 'marketing')
+      .map(d => d.id);
+    let cardMap = {};
+    if (solicMktIds.length) {
+      const { data: cards } = await supabase
+        .from('marketing_kanban_cards')
+        .select('id, solicitacao_id, estado, tem_revisao, prazo_confirmado, prazo_preliminar, atribuido_a, entregue_em')
+        .in('solicitacao_id', solicMktIds)
+        .is('deleted_at', null);
+      cardMap = Object.fromEntries((cards || []).map(c => [c.solicitacao_id, c]));
+    }
+
     const enriched = (data || []).map(d => ({
       ...d,
       solicitante: profileMap[d.solicitante_id] || null,
@@ -164,6 +178,7 @@ router.get('/', async (req, res) => {
       aprovacao_origem_diretor: profileMap[d.aprovacao_origem_diretor_id] || null,
       marketing_tipo: tipoMap[d.marketing_tipo_id] || null,
       marketing_destino: destinoMap[d.marketing_destino_id] || null,
+      marketing_card: cardMap[d.id] || null,
     }));
 
     res.json(enriched);

@@ -449,6 +449,74 @@ router.patch('/cards/:id', authorizeModule('marketing', 3), async (req, res) => 
   }
 });
 
+// Solicitante aprova entrega · card vira concluido (Spec 012)
+// Endpoint dedicado pq solicitante nao tem permissao geral de UPDATE no card.
+router.patch('/cards/:id/aprovar-entrega', async (req, res) => {
+  try {
+    const { data: card } = await supabase
+      .from('marketing_kanban_cards')
+      .select('*, solicitacao:solicitacoes(id, solicitante_id, titulo)')
+      .eq('id', req.params.id)
+      .is('deleted_at', null)
+      .maybeSingle();
+    if (!card) return res.status(404).json({ error: 'Card nao encontrado' });
+
+    // Permissoes: solicitante do card OU admin/coord
+    const isSolicitante = card.solicitacao?.solicitante_id === req.user.userId;
+    const isAdminMkt = isAdminLike(req);
+    if (!isSolicitante && !isAdminMkt) {
+      return res.status(403).json({ error: 'Apenas o solicitante (ou admin) pode aprovar a entrega.' });
+    }
+    if (!['aguardando_solicitante', 'em_producao'].includes(card.estado)) {
+      return res.status(400).json({ error: 'Card nao esta em estado aguardando_solicitante' });
+    }
+
+    const { data: novo, error } = await supabase
+      .from('marketing_kanban_cards')
+      .update({ estado: 'concluido' })
+      .eq('id', req.params.id)
+      .select('*')
+      .single();
+    if (error) throw error;
+
+    // Notifica produtor + concluir solicitacao automaticamente
+    if (card.atribuido_a) {
+      const { data: membro } = await supabase
+        .from('marketing_membros')
+        .select('profile_id')
+        .eq('id', card.atribuido_a)
+        .maybeSingle();
+      if (membro?.profile_id) {
+        notificar({
+          modulo: 'marketing',
+          tipo: 'marketing_entrega_aprovada',
+          titulo: `Entrega aprovada: ${card.titulo}`,
+          mensagem: 'Solicitante aprovou · card concluido. Avalia pelo NPS agora.',
+          link: '/marketing',
+          severidade: 'info',
+          chaveDedup: `marketing_entrega_aprovada_${card.id}`,
+          targetIds: [membro.profile_id],
+        }).catch(err => console.error('[MARKETING] notify entrega aprovada:', err.message));
+      }
+    }
+
+    // Marca solicitacao como concluida pra acionar NPS (status=concluido dispara
+    // o fluxo padrao + notificacao de avaliacao em routes/solicitacoes patch)
+    if (card.solicitacao_id) {
+      await supabase
+        .from('solicitacoes')
+        .update({ status: 'concluido', concluido_em: new Date().toISOString() })
+        .eq('id', card.solicitacao_id)
+        .neq('status', 'concluido');
+    }
+
+    res.json(novo);
+  } catch (e) {
+    console.error('[MARKETING] aprovar-entrega:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // Sugerir revisao · 1x apenas (D-14) · trigger SQL atualiza ordem_fila pro fim.
 // Solicitante chama esse endpoint via UI de Solicitacoes (Spec 012),
 // mas tambem permitimos coordenador/produtor disparar (caso volte feedback offline).
