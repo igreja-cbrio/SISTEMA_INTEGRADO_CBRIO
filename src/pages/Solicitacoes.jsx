@@ -1647,6 +1647,7 @@ function DetailDialog({ item, onClose, isAdmin, currentUserId, onStatusChange, o
 // ═══════════════════════════════════════════════════════════════════════
 function MarketingCardBlock({ card, onChanged }) {
   const [entregaveis, setEntregaveis] = useState([]);
+  const [posicao, setPosicao] = useState(null);
   const [loading, setLoading] = useState(true);
   const [revisaoOpen, setRevisaoOpen] = useState(false);
   const [motivo, setMotivo] = useState('');
@@ -1655,10 +1656,13 @@ function MarketingCardBlock({ card, onChanged }) {
   useEffect(() => {
     if (!card?.id) return;
     setLoading(true);
-    marketingApi.entregaveis.list(card.id)
-      .then(setEntregaveis)
-      .catch(() => setEntregaveis([]))
-      .finally(() => setLoading(false));
+    Promise.all([
+      marketingApi.entregaveis.list(card.id).catch(() => []),
+      marketingApi.fila.posicao(card.id).catch(() => null),
+    ]).then(([ent, pos]) => {
+      setEntregaveis(ent || []);
+      setPosicao(pos);
+    }).finally(() => setLoading(false));
   }, [card?.id]);
 
   async function aprovar() {
@@ -1723,6 +1727,11 @@ function MarketingCardBlock({ card, onChanged }) {
           <span className="text-muted-foreground">
             Prazo: {new Date(card.prazo_confirmado).toLocaleDateString('pt-BR')}
           </span>
+        )}
+        {posicao && posicao.posicao != null && (
+          <Badge className="bg-primary/10 text-primary">
+            Fila #{posicao.posicao} de {posicao.total}
+          </Badge>
         )}
       </div>
 

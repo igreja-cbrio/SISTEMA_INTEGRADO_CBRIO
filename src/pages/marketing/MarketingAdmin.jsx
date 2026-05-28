@@ -14,6 +14,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from 
 import { Megaphone, Kanban, CalendarDays, Plus, Trash2, Settings, Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { supabase } from '../../supabaseClient';
+import MarketingNav from './MarketingNav';
 
 const DIAS_LABEL = ['Domingo', 'Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta', 'Sábado'];
 const HABILIDADES = ['videomaker', 'fotografo', 'designer', 'social_media', 'social_media_assistente'];
@@ -46,14 +47,7 @@ export default function MarketingAdmin() {
             Equipe · etiquetas · recorrentes · overrides de capacidade
           </p>
         </div>
-        <div className="flex gap-2">
-          <Button variant="outline" size="sm" onClick={() => navigate('/marketing')} className="gap-1.5">
-            <Kanban className="h-4 w-4" /> Kanban
-          </Button>
-          <Button variant="outline" size="sm" onClick={() => navigate('/marketing/calendario')} className="gap-1.5">
-            <CalendarDays className="h-4 w-4" /> Calendário
-          </Button>
-        </div>
+        <MarketingNav />
       </div>
 
       <Tabs defaultValue="membros" className="w-full">

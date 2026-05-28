@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
 import { marketing as api } from '../../api';
+import MarketingNav from './MarketingNav';
 import { supabase } from '../../supabaseClient';
 import { Badge } from '../../components/ui/badge';
 import { Button } from '../../components/ui/button';
@@ -146,18 +147,8 @@ export default function MarketingKanban() {
             Kanban de demandas criativas · 3 origens (solicitação · evento · interna)
           </p>
         </div>
-        <div className="flex items-center gap-2 shrink-0">
-          <Button variant="outline" size="sm" onClick={() => navigate('/marketing/calendario')} className="gap-1.5">
-            <CalendarDays className="h-4 w-4" /> Calendário
-          </Button>
-          <Button variant="outline" size="sm" onClick={() => navigate('/marketing/analytics')} className="gap-1.5">
-            <BarChart3 className="h-4 w-4" /> Analytics
-          </Button>
-          {isCoordenador && (
-            <Button variant="outline" size="sm" onClick={() => navigate('/marketing/admin')} className="gap-1.5">
-              <Settings className="h-4 w-4" /> Admin
-            </Button>
-          )}
+        <div className="flex items-center gap-2 shrink-0 flex-wrap">
+          <MarketingNav />
           {isCoordenador && (
             <Dialog open={novaOpen} onOpenChange={setNovaOpen}>
               <DialogTrigger asChild>

@@ -1053,6 +1053,13 @@ export const marketing = {
     aprovacoesOrigem:  (dias = 90) => get(`/marketing/analytics/aprovacoes-origem?dias=${dias}`),
   },
 
+  // Fila de prioridade (Spec 018b)
+  fila: {
+    list:      (params) => get('/marketing/fila' + (params ? '?' + new URLSearchParams(params) : '')),
+    reordenar: (ordens) => patch('/marketing/fila/reordenar', { ordens }),
+    posicao:   (cardId) => get(`/marketing/fila/posicao/${cardId}`),
+  },
+
   // Admin (Spec 009 · nivel 5)
   admin: {
     membros: {

@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
 import { marketing as api } from '../../api';
+import MarketingNav from './MarketingNav';
 import { Badge } from '../../components/ui/badge';
 import { Button } from '../../components/ui/button';
 import { Card } from '../../components/ui/card';
@@ -146,9 +147,9 @@ export default function MarketingCalendario() {
             Calendário de capacidade · {isCoordenador ? 'visão coordenador' : 'sua semana'}
           </p>
         </div>
-        <Button variant="outline" size="sm" onClick={() => navigate('/marketing')} className="gap-1.5 self-start">
-          <Kanban className="h-4 w-4" /> Kanban
-        </Button>
+        <div className="shrink-0">
+          <MarketingNav />
+        </div>
       </div>
 
       {/* Navegacao da semana */}
