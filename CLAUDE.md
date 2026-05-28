@@ -2,6 +2,40 @@
 
 Guia operacional para o Claude Code quando trabalhar neste repositório.
 
+## Marketing · Spec 020 · Recorrentes N:M (vários participantes) (2026-05-28)
+
+Marcos: "queria que voce pudesse adicionar tarefas recorrentes que podem mais de uma pessoa · reunião de todo marketing · reunião específica com designer e redes sociais."
+
+**Mudança estrutural · `marketing_compromissos_recorrentes` deixa de ser 1:1 e vira N:M:**
+- Coluna `membro_id` **removida** da tabela principal
+- Nova tabela junction `marketing_recorrentes_participantes` (`compromisso_id`, `membro_id` · PK composta)
+- Cada participante recebe `duracao_h` na alocação (reunião 1h com 5 → cada um +1h, não 0.2h cada)
+
+**Migration `20260528320000_marketing_recorrentes_nm.sql`:**
+- `CREATE TABLE marketing_recorrentes_participantes` + RLS pattern do módulo
+- Migra os 7 recorrentes existentes (1 participante cada) via `INSERT FROM`
+- `ALTER TABLE ... DROP COLUMN membro_id` da tabela principal
+- `CREATE OR REPLACE` da `fn_marketing_calcular_capacidade_semana` v4 · CTE `rec` faz JOIN com a junction
+
+**Backend (`routes/marketing.js`):**
+- `GET /compromissos-recorrentes` e `GET /admin/recorrentes` retornam `participantes_ids: uuid[]`
+- `POST /admin/recorrentes` exige `participantes_ids` array (≥1 obrigatório) · INSERT compromisso + INSERT junction · rollback (soft-delete) se junction falhar
+- `PATCH /admin/recorrentes/:id` aceita `participantes_ids` opcional · DELETE+INSERT na junction quando enviado
+
+**Frontend admin (`MarketingAdmin.jsx` aba Recorrentes):**
+- Linha mostra: dia · hora · duração · descrição · **chips de participantes** (1ª palavra do nome)
+- Form ganha bloco de **multi-select com checkboxes** (todos visíveis em scroll) + atalhos "Todos" / "Limpar"
+- Contador `Participantes * (3/5)` no label
+
+**Frontend calendário (`MarketingCalendario.jsx`):**
+- `recPorMembroDia` agora **expande** cada recorrente em N entradas (1 por participante)
+- Reunião de todo Marketing aparece em todas as 5 linhas no mesmo dia/horário
+- Sheet do membro mostra todos os recorrentes onde ele participa
+
+**Compatibilidade:**
+- Os 7 recorrentes existentes (Allan qua · Lorena seg-sáb) migram com 1 participante cada · UI mostra normalmente
+- Capacidade calculada continua correta (cada participante soma `duracao_h`)
+
 ## Marketing · Spec 019 · Recorrentes como alocadas + sheet do membro (2026-05-28)
 
 Pós-piloto · 2 ajustes apontados pelo Marcos:

@@ -122,15 +122,18 @@ export default function MarketingCalendario() {
   }, [cards]);
 
   // Mapa membro_id -> { dia_idx: [recorrentes] }
+  // Spec 020 · recorrente N:M · expandimos 1 recorrente em N entradas (1 por participante)
   const recPorMembroDia = useMemo(() => {
     const mapa = {};
     recorrentes.forEach(r => {
-      // r.dia_semana: 0=dom, 1=seg, ..., 6=sab
-      // diaIdx: 0=seg, ..., 6=dom
+      // r.dia_semana: 0=dom, 1=seg, ..., 6=sab · diaIdx: 0=seg, ..., 6=dom
       const diaIdx = r.dia_semana === 0 ? 6 : r.dia_semana - 1;
-      if (!mapa[r.membro_id]) mapa[r.membro_id] = {};
-      if (!mapa[r.membro_id][diaIdx]) mapa[r.membro_id][diaIdx] = [];
-      mapa[r.membro_id][diaIdx].push(r);
+      const participantes = Array.isArray(r.participantes_ids) ? r.participantes_ids : [];
+      participantes.forEach(mid => {
+        if (!mapa[mid]) mapa[mid] = {};
+        if (!mapa[mid][diaIdx]) mapa[mid][diaIdx] = [];
+        mapa[mid][diaIdx].push(r);
+      });
     });
     return mapa;
   }, [recorrentes]);

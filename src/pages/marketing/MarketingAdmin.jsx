@@ -417,20 +417,30 @@ function AbaRecorrentes() {
       </div>
       {loading ? <Loader2 className="h-5 w-5 animate-spin mx-auto my-8 text-muted-foreground" /> : (
         <div className="space-y-2">
-          {lista.map(r => (
-            <Card key={r.id} className="p-3 flex flex-wrap items-center gap-3">
-              <div className="min-w-[140px]">
-                <p className="font-medium text-sm">{membroMap[r.membro_id]?.profile?.name || '(membro)'}</p>
-                <p className="text-xs text-muted-foreground">{membroMap[r.membro_id]?.habilidade}</p>
-              </div>
-              <Badge variant="secondary">{DIAS_LABEL[r.dia_semana]}</Badge>
-              <span className="text-sm font-mono">{r.hora_inicio?.slice(0, 5)} · {r.duracao_h}h</span>
-              <span className="text-sm text-muted-foreground flex-1 min-w-[200px]">{r.descricao}</span>
-              <Button size="icon" variant="outline" onClick={() => remover(r.id)} className="text-red-600">
-                <Trash2 className="h-4 w-4" />
-              </Button>
-            </Card>
-          ))}
+          {lista.map(r => {
+            const parts = (r.participantes_ids || []).map(id => membroMap[id]).filter(Boolean);
+            return (
+              <Card key={r.id} className="p-3 flex flex-wrap items-center gap-3">
+                <Badge variant="secondary">{DIAS_LABEL[r.dia_semana]}</Badge>
+                <span className="text-sm font-mono">{r.hora_inicio?.slice(0, 5)} · {r.duracao_h}h</span>
+                <span className="text-sm text-foreground flex-1 min-w-[200px]">{r.descricao}</span>
+                <div className="flex flex-wrap gap-1 items-center">
+                  {parts.length === 0 ? (
+                    <span className="text-xs text-muted-foreground italic">sem participantes</span>
+                  ) : (
+                    parts.map(p => (
+                      <Badge key={p.id} variant="outline" className="text-[10px]">
+                        {p.profile?.name?.split(' ')[0] || '?'}
+                      </Badge>
+                    ))
+                  )}
+                </div>
+                <Button size="icon" variant="outline" onClick={() => remover(r.id)} className="text-red-600">
+                  <Trash2 className="h-4 w-4" />
+                </Button>
+              </Card>
+            );
+          })}
         </div>
       )}
     </div>
@@ -438,32 +448,70 @@ function AbaRecorrentes() {
 }
 
 function NovoRecorrenteForm({ membros, onSuccess }) {
-  const [form, setForm] = useState({ membro_id: '', dia_semana: '1', hora_inicio: '09:00', duracao_h: 3, descricao: '' });
+  const [form, setForm] = useState({ participantes_ids: [], dia_semana: '1', hora_inicio: '09:00', duracao_h: 3, descricao: '' });
   const [submitting, setSubmitting] = useState(false);
+
+  function toggleMembro(id) {
+    setForm(f => ({
+      ...f,
+      participantes_ids: f.participantes_ids.includes(id)
+        ? f.participantes_ids.filter(x => x !== id)
+        : [...f.participantes_ids, id],
+    }));
+  }
+
+  function selecionarTodos() {
+    setForm(f => ({ ...f, participantes_ids: membros.map(m => m.id) }));
+  }
+  function limparTodos() {
+    setForm(f => ({ ...f, participantes_ids: [] }));
+  }
+
   async function submit() {
-    if (!form.membro_id || !form.descricao) { toast.error('Membro e descrição obrigatórios'); return; }
+    if (form.participantes_ids.length === 0) { toast.error('Selecione pelo menos 1 participante'); return; }
+    if (!form.descricao) { toast.error('Descrição obrigatória'); return; }
     setSubmitting(true);
     try {
       await api.admin.recorrentes.create({
-        ...form,
+        participantes_ids: form.participantes_ids,
         dia_semana: parseInt(form.dia_semana),
+        hora_inicio: form.hora_inicio,
         duracao_h: parseFloat(form.duracao_h),
+        descricao: form.descricao,
       });
       toast.success('Criado');
       onSuccess();
     } catch (e) { toast.error(e.message); }
     finally { setSubmitting(false); }
   }
+
   return (
     <div className="space-y-3">
       <div className="space-y-2">
-        <Label>Membro *</Label>
-        <Select value={form.membro_id} onValueChange={v => setForm(f => ({ ...f, membro_id: v }))}>
-          <SelectTrigger><SelectValue placeholder="Selecione" /></SelectTrigger>
-          <SelectContent>
-            {membros.map(m => <SelectItem key={m.id} value={m.id}>{m.profile?.name} · {m.habilidade}</SelectItem>)}
-          </SelectContent>
-        </Select>
+        <div className="flex items-center justify-between">
+          <Label>Participantes * ({form.participantes_ids.length}/{membros.length})</Label>
+          <div className="flex gap-1">
+            <Button type="button" size="sm" variant="ghost" onClick={selecionarTodos} className="h-6 text-[10px]">Todos</Button>
+            <Button type="button" size="sm" variant="ghost" onClick={limparTodos} className="h-6 text-[10px]">Limpar</Button>
+          </div>
+        </div>
+        <div className="grid grid-cols-1 gap-1 max-h-48 overflow-y-auto border border-border rounded p-2">
+          {membros.map(m => {
+            const sel = form.participantes_ids.includes(m.id);
+            return (
+              <label key={m.id} className={`flex items-center gap-2 px-2 py-1 rounded text-sm cursor-pointer transition-colors ${sel ? 'bg-primary/10' : 'hover:bg-muted/50'}`}>
+                <input
+                  type="checkbox"
+                  checked={sel}
+                  onChange={() => toggleMembro(m.id)}
+                  className="h-4 w-4 cursor-pointer"
+                />
+                <span className="flex-1">{m.profile?.name || '(sem nome)'}</span>
+                <span className="text-xs text-muted-foreground">{m.habilidade}</span>
+              </label>
+            );
+          })}
+        </div>
       </div>
       <div className="grid grid-cols-3 gap-3">
         <div className="space-y-2">
