@@ -142,6 +142,52 @@ router.get('/membros', authorizeModule('marketing', 1), async (req, res) => {
   }
 });
 
+// ─── Capacidade + estimativa (Spec 005) ─────────────────────────────────────
+
+router.get('/capacidade', authorizeModule('marketing', 1), async (req, res) => {
+  try {
+    const semana = req.query.semana || new Date().toISOString().slice(0, 10);
+    const { data, error } = await supabase
+      .rpc('fn_marketing_calcular_capacidade_semana', { p_data_ref: semana });
+    if (error) throw error;
+
+    // Enriquece com profile.name
+    const profileIds = [...new Set((data || []).map(r => r.profile_id).filter(Boolean))];
+    let profileMap = {};
+    if (profileIds.length) {
+      const { data: profs } = await supabase.from('profiles').select('id, name, email, avatar_url').in('id', profileIds);
+      profileMap = Object.fromEntries((profs || []).map(p => [p.id, p]));
+    }
+
+    const enriched = (data || []).map(r => ({
+      ...r,
+      profile: profileMap[r.profile_id] || null,
+    }));
+    res.json(enriched);
+  } catch (e) {
+    console.error('[MARKETING] capacidade:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+router.get('/estimar', authorizeModule('marketing', 1), async (req, res) => {
+  try {
+    const { tipo, data_alvo } = req.query;
+    if (!tipo) return res.status(400).json({ error: 'Param tipo (UUID da etiqueta) obrigatorio' });
+
+    const { data, error } = await supabase
+      .rpc('fn_marketing_estimar_prazo', {
+        p_tipo_id: tipo,
+        p_data_alvo: data_alvo || null,
+      });
+    if (error) throw error;
+    res.json(data);
+  } catch (e) {
+    console.error('[MARKETING] estimar:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 router.get('/compromissos-recorrentes', authorizeModule('marketing', 1), async (req, res) => {
   try {
     const { data, error } = await supabase

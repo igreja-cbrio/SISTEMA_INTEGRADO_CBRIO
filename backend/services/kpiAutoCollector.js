@@ -700,6 +700,89 @@ const COLLECTORS = {
     const pct = Math.round((dentro5 / total) * 100);
     return { valor: pct, observacao: `${dentro5} de ${total} visitantes contactados em <=5 dias` };
   },
+
+  // ── Marketing (Spec 005 · 2026-05-28) ────────────────────────────────────
+  // KPIs MKT-PRAZO, MKT-LEAD, MKT-THROUGHPUT, MKT-DEM-CAP
+  // valores={} · ficam em /minha-area + /marketing/analytics, fora da mandala.
+
+  'marketing.prazo_no_alvo': async ({ inicio, fim }) => {
+    // % cards entregues no prazo (entregue_em <= prazo_confirmado)
+    const { data } = await supabase
+      .from('marketing_kanban_cards')
+      .select('id, entregue_em, prazo_confirmado')
+      .eq('estado', 'concluido')
+      .is('deleted_at', null)
+      .not('entregue_em', 'is', null)
+      .gte('entregue_em', inicio).lt('entregue_em', fim);
+
+    const total = (data || []).length;
+    if (!total) return { valor: null, observacao: 'Sem cards entregues no periodo' };
+    const noPrazo = (data || []).filter(c =>
+      !c.prazo_confirmado || new Date(c.entregue_em) <= new Date(c.prazo_confirmado)
+    ).length;
+    const pct = Math.round((noPrazo / total) * 100);
+    return { valor: pct, observacao: `${noPrazo} de ${total} cards entregues no prazo` };
+  },
+
+  'marketing.lead_time_medio': async ({ inicio, fim }) => {
+    const { data } = await supabase
+      .from('marketing_kanban_cards')
+      .select('created_at, entregue_em')
+      .eq('estado', 'concluido')
+      .is('deleted_at', null)
+      .not('entregue_em', 'is', null)
+      .gte('entregue_em', inicio).lt('entregue_em', fim);
+
+    const total = (data || []).length;
+    if (!total) return { valor: null, observacao: 'Sem cards entregues no periodo' };
+    const somaDias = (data || []).reduce((acc, c) => {
+      const dias = (new Date(c.entregue_em) - new Date(c.created_at)) / 86400000;
+      return acc + dias;
+    }, 0);
+    const media = Math.round((somaDias / total) * 10) / 10;
+    return { valor: media, observacao: `${total} cards · media de ${media} dias do pedido a entrega` };
+  },
+
+  'marketing.throughput': async ({ inicio, fim }) => {
+    const { count } = await supabase
+      .from('marketing_kanban_cards')
+      .select('id', { count: 'exact', head: true })
+      .eq('estado', 'concluido')
+      .is('deleted_at', null)
+      .not('entregue_em', 'is', null)
+      .gte('entregue_em', inicio).lt('entregue_em', fim);
+    return { valor: count || 0, observacao: `${count || 0} cards entregues na semana` };
+  },
+
+  'marketing.razao_demanda_capacidade': async () => {
+    // Razao snapshot · esforco da fila atual / capacidade livre da semana
+    // (independe de periodo · usa snapshot atual pra sinalizar fila acumulada)
+    const { data: cards } = await supabase
+      .from('marketing_kanban_cards')
+      .select('etiqueta_tipo_id, estado, deleted_at, marketing_etiquetas_tipo(esforco_medio_h)')
+      .in('estado', ['fila', 'em_producao'])
+      .is('deleted_at', null);
+
+    const esforcoFila = (cards || []).reduce((acc, c) => {
+      const h = c.marketing_etiquetas_tipo?.esforco_medio_h;
+      return acc + (h != null ? Number(h) : 0);
+    }, 0);
+
+    // Capacidade livre da semana corrente · soma horas_livres da view fn_marketing_calcular_capacidade_semana
+    const hoje = new Date().toISOString().slice(0, 10);
+    const { data: cap } = await supabase
+      .rpc('fn_marketing_calcular_capacidade_semana', { p_data_ref: hoje });
+
+    const capacidadeLivre = (cap || []).reduce((acc, r) => acc + Math.max(0, Number(r.horas_livres) || 0), 0);
+    if (capacidadeLivre <= 0) {
+      return {
+        valor: esforcoFila > 0 ? 999 : 0,
+        observacao: esforcoFila > 0 ? 'Equipe lotada (capacidade<=0)' : 'Sem demanda nem capacidade',
+      };
+    }
+    const razao = Math.round((esforcoFila / capacidadeLivre) * 100);
+    return { valor: razao, observacao: `Fila: ${esforcoFila}h · Capacidade livre: ${capacidadeLivre}h` };
+  },
 };
 
 // ── Coletor master ──────────────────────────────────────────────────────────

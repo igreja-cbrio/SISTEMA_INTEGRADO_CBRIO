@@ -2,6 +2,45 @@
 
 Guia operacional para o Claude Code quando trabalhar neste repositório.
 
+## Marketing · Spec 005 · Estimativa + capacidade + 4 KPIs (2026-05-28)
+
+Conclui a Fase B Core (parte backend) · agora o módulo tem inteligência operacional
+em cima do schema das specs 002-004.
+
+**Migration `20260528200000_marketing_kpis_capacidade.sql`:**
+- Helper `fn_marketing_segunda_da_semana(date)` · ISODOW → 1-7
+- `fn_marketing_calcular_capacidade_semana(p_data_ref)` → 1 linha por membro:
+  - `horas_base`, `horas_recorrentes`, `horas_override`, `horas_disponiveis`, `horas_alocadas`, `horas_livres`
+  - Lógica: `disponiveis = COALESCE(override, base - recorrentes)` · `livres = disponiveis - alocadas`
+- `fn_marketing_estimar_prazo(p_tipo_id, p_data_alvo)` → JSONB com `data_sugerida`, `dias_uteis`, `esforco_h`, `capacidade_dia`, `observacao`
+  - Heurística MVP: `dias = ceil(esforço / (capacidade_diária × 0.6))` · `data_sugerida = max(hoje + dias + 1, data_alvo)`
+  - Fator 60% reserva capacidade pra recorrentes + cards de evento
+  - Sem `esforco_medio_h` → retorna estimativa cruzada com "tipo não calibrado · Pedro confirma depois"
+- 4 KPIs novos (`valores='{}'::text[]` · não entram na mandala):
+
+| ID | Indicador | Periodicidade | Meta | Fonte auto |
+|---|---|---|---|---|
+| `MKT-PRAZO` | % de demandas no prazo | semanal | ≥85% | `marketing.prazo_no_alvo` |
+| `MKT-LEAD` | Lead time médio (dias) | semanal | ≤7 | `marketing.lead_time_medio` |
+| `MKT-THROUGHPUT` | Cards entregues/semana | semanal | ≥5 | `marketing.throughput` |
+| `MKT-DEM-CAP` | Razão demanda/capacidade (%) | semanal | ≤100 | `marketing.razao_demanda_capacidade` |
+
+- Trigger `tg_marketing_cards_recalc_kpis_{ins,upd,del}` (AFTER STATEMENT) chama `kpi_recalcular_para_data(CURRENT_DATE)` quando cards mudam · pattern de dados_brutos.
+
+**Coletores adicionados em `backend/services/kpiAutoCollector.js`:**
+- `marketing.prazo_no_alvo` · % `entregue_em <= prazo_confirmado` sobre total entregue na semana
+- `marketing.lead_time_medio` · avg `entregue_em - created_at` em dias
+- `marketing.throughput` · count cards entregues na semana
+- `marketing.razao_demanda_capacidade` · SNAPSHOT atual (não depende do período · soma esforço fila ÷ capacidade livre da semana corrente)
+
+**Endpoints novos em `backend/routes/marketing.js`:**
+- `GET /api/marketing/capacidade?semana=YYYY-MM-DD` · capacidade por membro (enriquecida com profile.name)
+- `GET /api/marketing/estimar?tipo=<uuid>&data_alvo=YYYY-MM-DD` · estimativa preliminar via RPC
+
+**Frontend (`src/api.js`):** namespace `marketing` ganhou `capacidade(semana)` e `estimar(tipo, dataAlvo)`.
+
+**Calibragem:** `esforco_medio_h` das etiquetas começa NULL (Spec 002). Pedro/Marcos preenche via UI admin (Spec 009) baseado em cycle time real após algumas semanas no ar.
+
 ## Marketing · Spec 004 · Backend CRUD cards + sync triggers (2026-05-28)
 
 Backend completo do Kanban + 2 triggers SQL que materializam cards
