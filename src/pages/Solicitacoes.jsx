@@ -90,21 +90,29 @@ const URGENCIAS = [
   { value: 'critica', label: 'Crítica', color: 'bg-red-500/15 text-red-700 dark:text-red-400' },
 ];
 
+// Cada coluna agrupa os status reais via `match` (o backbone tem 10 status mas o
+// board operacional usa 5 colunas). Sem isso, itens em aguardando_aprovacao_financeira/
+// em_atendimento/aguardando_entrega/avaliado nao caiam em coluna nenhuma e sumiam do board.
+// aguardando_aprovacao_origem fica de fora de proposito (vive na aba "Aprovar").
 const KANBAN_COLUMNS = [
-  { key: 'pendente', label: 'Pendente', icon: Clock, color: 'border-t-amber-500' },
-  { key: 'em_analise', label: 'Em Análise', icon: SearchIcon, color: 'border-t-blue-500' },
-  { key: 'aprovado', label: 'Aprovado', icon: CheckCircle2, color: 'border-t-green-500' },
-  { key: 'rejeitado', label: 'Rejeitado', icon: XCircle, color: 'border-t-red-500' },
-  { key: 'concluido', label: 'Concluído', icon: CheckCircle2, color: 'border-t-emerald-600' },
+  { key: 'pendente',       label: 'Pendente',     icon: Clock,        color: 'border-t-amber-500',   match: ['pendente', 'aguardando_aprovacao_financeira'] },
+  { key: 'em_analise',     label: 'Em Análise',   icon: SearchIcon,   color: 'border-t-blue-500',    match: ['em_analise'] },
+  { key: 'em_atendimento', label: 'Em Andamento', icon: CheckCircle2, color: 'border-t-green-500',   match: ['aprovado', 'em_atendimento', 'aguardando_entrega'] },
+  { key: 'concluido',      label: 'Concluído',    icon: CheckCircle2, color: 'border-t-emerald-600', match: ['concluido', 'avaliado'] },
+  { key: 'rejeitado',      label: 'Rejeitado',    icon: XCircle,      color: 'border-t-red-500',     match: ['rejeitado'] },
 ];
 
 const STATUS_LABELS = {
   aguardando_aprovacao_origem: { label: 'Aguardando aprovação', color: 'bg-violet-500/15 text-violet-700 dark:text-violet-400' },
   pendente: { label: 'Pendente', color: 'bg-amber-500/15 text-amber-700 dark:text-amber-400' },
+  aguardando_aprovacao_financeira: { label: 'Aprov. financeira', color: 'bg-orange-500/15 text-orange-700 dark:text-orange-400' },
   em_analise: { label: 'Em Análise', color: 'bg-blue-500/15 text-blue-700 dark:text-blue-400' },
   aprovado: { label: 'Aprovado', color: 'bg-green-500/15 text-green-700 dark:text-green-400' },
+  em_atendimento: { label: 'Em atendimento', color: 'bg-green-500/15 text-green-700 dark:text-green-400' },
+  aguardando_entrega: { label: 'Aguardando entrega', color: 'bg-teal-500/15 text-teal-700 dark:text-teal-400' },
   rejeitado: { label: 'Rejeitado', color: 'bg-red-500/15 text-red-700 dark:text-red-400' },
   concluido: { label: 'Concluído', color: 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-400' },
+  avaliado: { label: 'Avaliado', color: 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-400' },
 };
 
 function getCatMeta(cat) {
@@ -318,7 +326,7 @@ export default function Solicitacoes() {
   const columns = useMemo(() => {
     return KANBAN_COLUMNS.map(col => ({
       ...col,
-      items: filtered.filter(i => i.status === col.key),
+      items: filtered.filter(i => (col.match || [col.key]).includes(i.status)),
     }));
   }, [filtered]);
 
@@ -1153,7 +1161,11 @@ function SolicitacaoCard({ item, isAdmin, onStatusChange, onClick, draggable }) 
   const solicitante = item.solicitante?.name || 'Desconhecido';
   const date = new Date(item.created_at).toLocaleDateString('pt-BR', { day: '2-digit', month: 'short' });
   const sla = getSlaBadge(item);
+  const st = getStatusMeta(item.status);
   const aguardandoFin = item.status === 'aguardando_aprovacao_financeira';
+  // Status real visivel quando a coluna agrupa varios (ex: "Em Andamento" tem
+  // aprovado/em_atendimento/aguardando_entrega). Os headliners obvios nao repetem.
+  const mostrarStatus = !['pendente', 'em_analise', 'concluido', 'rejeitado', 'aguardando_aprovacao_financeira'].includes(item.status);
 
   return (
     <Card
@@ -1171,6 +1183,7 @@ function SolicitacaoCard({ item, isAdmin, onStatusChange, onClick, draggable }) 
       <div className="flex items-center justify-between gap-1.5 flex-wrap">
         <span className="text-[11px] text-muted-foreground truncate max-w-[120px]">{solicitante}</span>
         <div className="flex items-center gap-1">
+          {mostrarStatus && <Badge className={`text-[10px] px-1.5 py-0.5 ${st.color}`}>{st.label}</Badge>}
           {sla && <Badge className={`text-[10px] px-1.5 py-0.5 ${sla.color}`}>⏱ {sla.label}</Badge>}
           <Badge className={`text-[10px] px-1.5 py-0.5 ${urg.color}`}>{urg.label}</Badge>
         </div>
