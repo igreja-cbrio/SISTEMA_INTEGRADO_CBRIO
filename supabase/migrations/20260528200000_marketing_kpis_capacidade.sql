@@ -209,28 +209,28 @@ INSERT INTO public.kpi_indicadores_taticos (
 ) VALUES
   ('MKT-PRAZO', '% de demandas entregues no prazo',
    'marketing', 'semanal', '%', 'marketing.prazo_no_alvo',
-   '{}'::text[], 'marketing', 'tatico', true,
+   '{}'::text[], 'marketing', 'operacional', true,
    '>=85% das demandas entregues no prazo confirmado', 85,
    'Cards entregues no prazo / Cards entregues (semanal)',
    'Cards com entregue_em <= prazo_confirmado dividido pelo total de entregues na semana.'),
 
   ('MKT-LEAD', 'Lead time medio',
    'marketing', 'semanal', 'dias', 'marketing.lead_time_medio',
-   '{}'::text[], 'marketing', 'tatico', true,
+   '{}'::text[], 'marketing', 'operacional', true,
    '<=7 dias do pedido a entrega', 7,
    'avg(entregue_em - created_at) em dias',
    'Tempo medio entre criacao do card e entrega. Calibra expectativa de prazo.'),
 
   ('MKT-THROUGHPUT', 'Throughput semanal',
    'marketing', 'semanal', 'cards', 'marketing.throughput',
-   '{}'::text[], 'marketing', 'tatico', true,
+   '{}'::text[], 'marketing', 'operacional', true,
    '>=5 cards entregues por semana', 5,
    'count(cards entregues) na semana',
    'Quantidade de cards finalizados na semana. Detecta gargalos quando cai.'),
 
   ('MKT-DEM-CAP', 'Razao demanda / capacidade',
    'marketing', 'semanal', '%', 'marketing.razao_demanda_capacidade',
-   '{}'::text[], 'marketing', 'tatico', true,
+   '{}'::text[], 'marketing', 'operacional', true,
    '<=100% (sem fila acumulada)', 100,
    'esforco fila / capacidade disponivel (semanal)',
    'Soma de esforco_medio_h dos cards em fila+em_producao dividida pela capacidade livre da equipe. >100% sinaliza fila crescendo.')
