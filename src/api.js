@@ -201,6 +201,7 @@ export const dashboardSemanal = {
   semanasDisponiveis: (ano) => get(`/dashboard-semanal/semanas-disponiveis?ano=${ano}`),
   semanal: (params) => get('/dashboard-semanal/semanal?' + new URLSearchParams(params)),
   ranking: (params) => get('/dashboard-semanal/ranking?' + new URLSearchParams(params)),
+  yoy: (params) => get('/dashboard-semanal/yoy?' + new URLSearchParams(params)),
   mensal: (params) => get('/dashboard-semanal/mensal?' + new URLSearchParams(params)),
   mediaMovel: (params) => get('/dashboard-semanal/media-movel?' + new URLSearchParams(params)),
   metasList: () => get('/dashboard-semanal/metas'),

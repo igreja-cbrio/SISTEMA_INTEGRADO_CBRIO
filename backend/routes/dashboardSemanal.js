@@ -349,6 +349,83 @@ router.get('/ranking', async (req, res) => {
 //     series: [{ mes: 1, mes_nome: 'janeiro', '2024': X, '2025': Y, '2026': Z }, ...]
 //   }
 // ─────────────────────────────────────────────────────────────────────────────
+
+// ─────────────────────────────────────────────────────────────────────────────
+// GET /yoy · total da mesma semana ISO em varios anos (year-over-year)
+//   query: semana, indicador, culto, anos (csv, default 3 anos)
+//
+// Soma o indicador por semana ISO (mesma regra do /semanal: exclui cultos
+// sem kids quando indicador eh de kids · respeita filtro de culto). Permite
+// comparar S20-2024 vs S20-2025 vs S20-2026 etc.
+//
+// Resposta:
+//   {
+//     semana, indicador, rotulo, anos,
+//     resultados: [{ ano, total, tem_dado }]
+//   }
+// ─────────────────────────────────────────────────────────────────────────────
+router.get('/yoy', async (req, res) => {
+  try {
+    const semana = parseInt(req.query.semana, 10);
+    if (!semana) return res.status(400).json({ error: 'semana é obrigatório' });
+    const indicadorKey = req.query.indicador || 'frequencia';
+    const cultoId = req.query.culto && req.query.culto !== 'todos' ? req.query.culto : null;
+    const indDef = INDICADORES[indicadorKey];
+    if (!indDef) return res.status(400).json({ error: 'indicador inválido' });
+
+    const anoAtual = new Date().getUTCFullYear();
+    const anos = req.query.anos
+      ? String(req.query.anos).split(',').map(Number).filter(Number.isInteger)
+      : [anoAtual - 2, anoAtual - 1, anoAtual];
+
+    let q = supabase
+      .from('vw_dashboard_semanal')
+      .select(`service_type_id, ano_iso, ${indDef.coluna}`)
+      .in('ano_iso', anos)
+      .eq('semana_iso', semana);
+    if (cultoId) q = q.eq('service_type_id', cultoId);
+    const { data, error } = await q;
+    if (error) throw error;
+
+    // Indicadores de Kids · exclui cultos sem kids
+    let excluir = new Set();
+    if (indicadorKey.includes('kids')) {
+      const { data: semKids } = await supabase
+        .from('vol_service_types')
+        .select('id')
+        .eq('has_kids', false);
+      excluir = new Set((semKids || []).map(s => s.id));
+    }
+
+    const porAno = new Map(); // ano -> { total, linhas }
+    for (const r of (data || [])) {
+      if (excluir.has(r.service_type_id)) continue;
+      const v = Number(r[indDef.coluna]) || 0;
+      const acc = porAno.get(r.ano_iso) || { total: 0, linhas: 0 };
+      acc.total += v;
+      acc.linhas += 1;
+      porAno.set(r.ano_iso, acc);
+    }
+
+    const resultados = anos.map(ano => {
+      const acc = porAno.get(ano);
+      // tem_dado = ao menos 1 linha de culto naquela (ano, semana). Permite
+      // distinguir "semana 53 nao existe naquele ano" de "semana existe mas
+      // valor 0" (ex: aceitacoes zeradas).
+      return {
+        ano,
+        total: acc?.total || 0,
+        tem_dado: !!acc?.linhas,
+      };
+    });
+
+    res.json({ semana, indicador: indicadorKey, rotulo: indDef.rotulo, anos, resultados });
+  } catch (e) {
+    console.error('[DASH-SEM] yoy', e.message);
+    res.status(500).json({ error: 'Erro ao calcular comparativo YoY' });
+  }
+});
+
 router.get('/mensal', async (req, res) => {
   try {
     const indicadorKey = req.query.indicador || 'aceitacoes';
