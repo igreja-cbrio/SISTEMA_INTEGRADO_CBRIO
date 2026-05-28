@@ -238,11 +238,19 @@ function KpiDetalhe({ id, resumo }) {
   const meta = resumo?.meta_periodo ?? resumo?.meta_efetiva ?? kpi.meta_valor;
   const valores = Array.isArray(kpi.valores) ? kpi.valores : [];
 
-  // Serie pro grafico · historico ja vem em ordem cronologica crescente
-  const serie = historico.map(h => ({
-    periodo: h.periodo_referencia,
-    valor: h.valor_realizado != null ? Number(h.valor_realizado) : null,
-  }));
+  // Serie pro grafico · historico ja vem em ordem cronologica crescente.
+  // Corta zeros/null no FIM (semanas que ainda nao fecharam, registros
+  // auto-gerados sem dado · mesmo padrao do /media-movel e /mensal pra
+  // linha "parar" no ultimo ponto com dado real em vez de cair a 0).
+  const serie = useMemo(() => {
+    const arr = historico.map(h => ({
+      periodo: h.periodo_referencia,
+      valor: h.valor_realizado != null ? Number(h.valor_realizado) : null,
+    }));
+    let fim = arr.length;
+    while (fim > 0 && (arr[fim - 1].valor == null || arr[fim - 1].valor === 0)) fim--;
+    return arr.slice(0, fim);
+  }, [historico]);
 
   // Delta vs periodo anterior (mesmo na serie)
   const ultimo = serie[serie.length - 1];
