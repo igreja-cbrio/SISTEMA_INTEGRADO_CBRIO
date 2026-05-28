@@ -56,7 +56,7 @@ BEGIN
   -- Pre-resolve etiqueta_tipo · se a categoria for 'marketing', tipo padrao = artes
   -- (a UI Spec 010 ajusta o tipo no momento do POST · aqui eh fallback)
   INSERT INTO public.marketing_kanban_cards (
-    origem, solicitacao_id, titulo, descricao, raia_rapida, criado_por, estado, ordem_fila
+    origem, solicitacao_id, titulo, descricao, raia_rapida, criado_por, estado
   ) VALUES (
     'solicitacao',
     NEW.id,
@@ -64,8 +64,7 @@ BEGIN
     NEW.descricao,
     COALESCE(NEW.urgencia_decisao = 'aceita', false),
     NEW.solicitante_id,
-    'fila',
-    DEFAULT
+    'fila'
   )
   ON CONFLICT DO NOTHING;
 
@@ -99,7 +98,7 @@ BEGIN
   END IF;
 
   INSERT INTO public.marketing_kanban_cards (
-    origem, evento_task_id, titulo, descricao, prazo_preliminar, estado, criado_por, ordem_fila
+    origem, evento_task_id, titulo, descricao, prazo_preliminar, estado, criado_por
   ) VALUES (
     'evento',
     NEW.id,
@@ -107,8 +106,7 @@ BEGIN
     NEW.description,
     CASE WHEN NEW.deadline IS NOT NULL THEN NEW.deadline::timestamptz ELSE NULL END,
     'fila',
-    NEW.created_by,
-    DEFAULT
+    NEW.created_by
   )
   ON CONFLICT DO NOTHING;
 
@@ -131,11 +129,11 @@ CREATE TRIGGER tg_marketing_cards_evento_sync
 -- aparecer no Kanban. ON CONFLICT DO NOTHING evita duplicacao caso ja exista.
 
 INSERT INTO public.marketing_kanban_cards (
-  origem, solicitacao_id, titulo, descricao, raia_rapida, criado_por, estado, ordem_fila
+  origem, solicitacao_id, titulo, descricao, raia_rapida, criado_por, estado
 )
 SELECT 'solicitacao', s.id, s.titulo, s.descricao,
        COALESCE(s.urgencia_decisao = 'aceita', false),
-       s.solicitante_id, 'fila', DEFAULT
+       s.solicitante_id, 'fila'
   FROM public.solicitacoes s
  WHERE s.area_responsavel = 'marketing'
    AND s.status = 'pendente'
@@ -144,11 +142,11 @@ ON CONFLICT DO NOTHING;
 
 -- event_tasks ja existentes da area marketing
 INSERT INTO public.marketing_kanban_cards (
-  origem, evento_task_id, titulo, descricao, prazo_preliminar, estado, criado_por, ordem_fila
+  origem, evento_task_id, titulo, descricao, prazo_preliminar, estado, criado_por
 )
 SELECT 'evento', t.id, t.name, t.description,
        CASE WHEN t.deadline IS NOT NULL THEN t.deadline::timestamptz ELSE NULL END,
-       'fila', t.created_by, DEFAULT
+       'fila', t.created_by
   FROM public.event_tasks t
  WHERE LOWER(COALESCE(t.area, '')) = 'marketing'
 ON CONFLICT DO NOTHING;
