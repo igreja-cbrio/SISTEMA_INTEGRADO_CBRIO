@@ -71,7 +71,7 @@ async function enrichCards(cards) {
   const [tipos, destinos, membros, solics] = await Promise.all([
     tipoIds.length    ? supabase.from('marketing_etiquetas_tipo').select('id, slug, nome, cor, habilidade_padrao, esforco_max_h').in('id', tipoIds) : Promise.resolve({ data: [] }),
     destinoIds.length ? supabase.from('marketing_etiquetas_destino').select('id, slug, nome, cor').in('id', destinoIds) : Promise.resolve({ data: [] }),
-    membroIds.length  ? supabase.from('marketing_membros').select('id, profile_id, habilidade').in('id', membroIds) : Promise.resolve({ data: [] }),
+    membroIds.length  ? supabase.from('marketing_membros').select('id, profile_id, habilidade, nome_display').in('id', membroIds) : Promise.resolve({ data: [] }),
     solicIds.length   ? supabase.from('solicitacoes').select('id, titulo, solicitante_id, eh_urgente, urgencia_decisao').in('id', solicIds) : Promise.resolve({ data: [] }),
   ]);
 
@@ -95,10 +95,13 @@ async function enrichCards(cards) {
     ...c,
     etiqueta_tipo: tipoMap[c.etiqueta_tipo_id] || null,
     etiqueta_destino: destinoMap[c.etiqueta_destino_id] || null,
-    atribuido: c.atribuido_a ? {
-      ...membroMap[c.atribuido_a],
-      profile: profileMap[membroMap[c.atribuido_a]?.profile_id] || null,
-    } : null,
+    atribuido: c.atribuido_a ? (() => {
+      const m = membroMap[c.atribuido_a];
+      if (!m) return null;
+      const prof = profileMap[m.profile_id] || null;
+      // Fallback nome: profile.name → nome_display → null
+      return { ...m, profile: prof || (m.nome_display ? { id: null, name: m.nome_display, email: null } : null) };
+    })() : null,
     solicitacao: c.solicitacao_id ? {
       ...solicMap[c.solicitacao_id],
       solicitante: profileMap[solicMap[c.solicitacao_id]?.solicitante_id] || null,
@@ -141,7 +144,8 @@ router.get('/membros', authorizeModule('marketing', 1), async (req, res) => {
     }
     res.json((data || []).map(m => ({
       ...m,
-      profile: profileMap[m.profile_id] || null,
+      profile: profileMap[m.profile_id]
+        || (m.nome_display ? { id: null, name: m.nome_display, email: null, avatar_url: null } : null),
     })));
   } catch (e) {
     console.error('[MARKETING] membros:', e.message);
@@ -158,18 +162,27 @@ router.get('/capacidade', authorizeModule('marketing', 1), async (req, res) => {
       .rpc('fn_marketing_calcular_capacidade_semana', { p_data_ref: semana });
     if (error) throw error;
 
-    // Enriquece com profile.name
+    // Enriquece com profile.name + nome_display (membros sem login)
     const profileIds = [...new Set((data || []).map(r => r.profile_id).filter(Boolean))];
-    let profileMap = {};
+    const membroIds  = [...new Set((data || []).map(r => r.membro_id).filter(Boolean))];
+    let profileMap = {}, membroMap = {};
     if (profileIds.length) {
       const { data: profs } = await supabase.from('profiles').select('id, name, email, avatar_url').in('id', profileIds);
       profileMap = Object.fromEntries((profs || []).map(p => [p.id, p]));
     }
+    if (membroIds.length) {
+      const { data: ms } = await supabase.from('marketing_membros').select('id, nome_display').in('id', membroIds);
+      membroMap = Object.fromEntries((ms || []).map(m => [m.id, m]));
+    }
 
-    const enriched = (data || []).map(r => ({
-      ...r,
-      profile: profileMap[r.profile_id] || null,
-    }));
+    const enriched = (data || []).map(r => {
+      const prof = profileMap[r.profile_id] || null;
+      const nd = membroMap[r.membro_id]?.nome_display;
+      return {
+        ...r,
+        profile: prof || (nd ? { id: null, name: nd, email: null, avatar_url: null } : null),
+      };
+    });
     res.json(enriched);
   } catch (e) {
     console.error('[MARKETING] capacidade:', e.message);
@@ -1082,18 +1095,27 @@ router.get('/admin/membros', authorizeModule('marketing', 5), async (req, res) =
       const { data: profs } = await supabase.from('profiles').select('id, name, email').in('id', profileIds);
       profileMap = Object.fromEntries((profs || []).map(p => [p.id, p]));
     }
-    res.json((data || []).map(m => ({ ...m, profile: profileMap[m.profile_id] || null })));
+    res.json((data || []).map(m => ({
+      ...m,
+      profile: profileMap[m.profile_id]
+        || (m.nome_display ? { id: null, name: m.nome_display, email: null } : null),
+    })));
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 router.post('/admin/membros', authorizeModule('marketing', 5), async (req, res) => {
   try {
-    const { profile_id, habilidade, horas_semanais, observacao } = req.body || {};
-    if (!profile_id || !habilidade) return res.status(400).json({ error: 'profile_id e habilidade obrigatorios' });
+    const { profile_id, habilidade, horas_semanais, observacao, nome_display } = req.body || {};
+    if (!habilidade) return res.status(400).json({ error: 'habilidade obrigatoria' });
+    if (!profile_id && !nome_display) {
+      return res.status(400).json({ error: 'profile_id OU nome_display obrigatorio (use nome_display pra pessoas sem login)' });
+    }
     const { data, error } = await supabase
       .from('marketing_membros')
       .insert({
-        profile_id, habilidade,
+        profile_id: profile_id || null,
+        nome_display: nome_display || null,
+        habilidade,
         horas_semanais: horas_semanais ?? 30,
         observacao: observacao || null,
         ativo: true,
@@ -1113,10 +1135,11 @@ router.post('/admin/membros', authorizeModule('marketing', 5), async (req, res) 
 router.patch('/admin/membros/:id', authorizeModule('marketing', 5), async (req, res) => {
   try {
     const update = {};
-    const { habilidade, horas_semanais, observacao, ativo } = req.body || {};
+    const { habilidade, horas_semanais, observacao, ativo, nome_display } = req.body || {};
     if (habilidade !== undefined) update.habilidade = habilidade;
     if (horas_semanais !== undefined) update.horas_semanais = horas_semanais;
     if (observacao !== undefined) update.observacao = observacao;
+    if (nome_display !== undefined) update.nome_display = nome_display || null;
     if (ativo !== undefined) update.ativo = !!ativo;
     update.updated_at = new Date().toISOString();
     const { data, error } = await supabase
