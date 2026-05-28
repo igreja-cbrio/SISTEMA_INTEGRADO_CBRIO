@@ -195,6 +195,7 @@ const TotemKidsDisplayFoyer = lazyWithRetry(() => import('./pages/ministerial/to
 const MarketingKanban = lazyWithRetry(() => import('./pages/marketing/MarketingKanban'));
 const MarketingCalendario = lazyWithRetry(() => import('./pages/marketing/MarketingCalendario'));
 const MarketingAdmin = lazyWithRetry(() => import('./pages/marketing/MarketingAdmin'));
+const MarketingAnalytics = lazyWithRetry(() => import('./pages/marketing/MarketingAnalytics'));
 const TotemKidsAdmin = lazyWithRetry(() => import('./pages/admin/totemKids/TotemKidsAdmin'));
 const AssistenteIA = lazyWithRetry(() => import('./pages/admin/AssistenteIA'));
 const EventDetail = lazyWithRetry(() => import('./pages/eventos/EventDetail'));
@@ -468,6 +469,7 @@ function AppRoutes() {
         <Route path="/marketing" element={<ModuleGuard moduleSlug="marketing" nivelMinimo={1}><Suspense fallback={<Loading />}><MarketingKanban /></Suspense></ModuleGuard>} />
         <Route path="/marketing/calendario" element={<ModuleGuard moduleSlug="marketing" nivelMinimo={1}><Suspense fallback={<Loading />}><MarketingCalendario /></Suspense></ModuleGuard>} />
         <Route path="/marketing/admin" element={<ModuleGuard moduleSlug="marketing" nivelMinimo={5}><Suspense fallback={<Loading />}><MarketingAdmin /></Suspense></ModuleGuard>} />
+        <Route path="/marketing/analytics" element={<ModuleGuard moduleSlug="marketing" nivelMinimo={1}><Suspense fallback={<Loading />}><MarketingAnalytics /></Suspense></ModuleGuard>} />
         {/* Redirects das rotas antigas pra nao quebrar bookmarks */}
         <Route path="/ministerial/online" element={<Navigate to="/online" replace />} />
         <Route path="/ministerial/kids" element={<Navigate to="/kids" replace />} />

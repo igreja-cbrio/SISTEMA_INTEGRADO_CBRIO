@@ -819,6 +819,95 @@ router.patch('/cards/:id/decidir-urgencia', authorizeModule('marketing', 5), asy
 });
 
 // ═══════════════════════════════════════════════════════════════════════
+// ANALYTICS (Spec 013 · nivel 1)
+// ═══════════════════════════════════════════════════════════════════════
+
+router.get('/analytics/kpis', authorizeModule('marketing', 1), async (req, res) => {
+  try {
+    // Serie temporal dos 4 KPIs MKT-* nas ultimas N semanas (default 12)
+    const semanas = Math.min(52, parseInt(req.query.semanas) || 12);
+    const desde = new Date();
+    desde.setDate(desde.getDate() - semanas * 7);
+
+    const { data, error } = await supabase
+      .from('kpi_valores_calculados')
+      .select('kpi_id, periodo, valor, observacao, updated_at')
+      .in('kpi_id', ['MKT-PRAZO', 'MKT-LEAD', 'MKT-THROUGHPUT', 'MKT-DEM-CAP'])
+      .gte('updated_at', desde.toISOString())
+      .order('periodo', { ascending: true });
+    if (error) throw error;
+
+    const byKpi = { 'MKT-PRAZO': [], 'MKT-LEAD': [], 'MKT-THROUGHPUT': [], 'MKT-DEM-CAP': [] };
+    (data || []).forEach(r => {
+      if (byKpi[r.kpi_id]) byKpi[r.kpi_id].push(r);
+    });
+
+    // Ultimo valor (snapshot atual)
+    const snapshot = {};
+    Object.entries(byKpi).forEach(([id, arr]) => {
+      const last = arr[arr.length - 1];
+      snapshot[id] = last ? { valor: last.valor, periodo: last.periodo, observacao: last.observacao } : null;
+    });
+
+    res.json({ snapshot, serie: byKpi });
+  } catch (e) {
+    console.error('[MARKETING] analytics kpis:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+router.get('/analytics/aprovacoes-origem', authorizeModule('marketing', 1), async (req, res) => {
+  try {
+    // Tempo medio que cada diretor leva pra aprovar solicitacao da area marketing
+    // janela default 90d
+    const dias = Math.min(365, parseInt(req.query.dias) || 90);
+    const desde = new Date();
+    desde.setDate(desde.getDate() - dias);
+
+    const { data, error } = await supabase
+      .from('solicitacoes')
+      .select('aprovacao_origem_diretor_id, aprovacao_origem_em, aprovacao_origem_status, created_at')
+      .eq('area_responsavel', 'marketing')
+      .gte('created_at', desde.toISOString())
+      .not('aprovacao_origem_diretor_id', 'is', null)
+      .in('aprovacao_origem_status', ['aprovada', 'rejeitada']);
+    if (error) throw error;
+
+    const agg = new Map();
+    (data || []).forEach(s => {
+      if (!s.aprovacao_origem_em) return;
+      const id = s.aprovacao_origem_diretor_id;
+      const horas = (new Date(s.aprovacao_origem_em).getTime() - new Date(s.created_at).getTime()) / 3600000;
+      if (!agg.has(id)) agg.set(id, { diretor_id: id, total: 0, soma_horas: 0, rejeitadas: 0 });
+      const a = agg.get(id);
+      a.total++;
+      a.soma_horas += horas;
+      if (s.aprovacao_origem_status === 'rejeitada') a.rejeitadas++;
+    });
+
+    const lista = [...agg.values()].map(a => ({
+      diretor_id: a.diretor_id,
+      total: a.total,
+      tempo_medio_h: Math.round((a.soma_horas / a.total) * 10) / 10,
+      rejeitadas: a.rejeitadas,
+      gargalo: (a.soma_horas / a.total) > 24,  // >24h flag
+    })).sort((a, b) => b.tempo_medio_h - a.tempo_medio_h);
+
+    // Enriquecer com profile.name
+    if (lista.length > 0) {
+      const ids = lista.map(x => x.diretor_id);
+      const { data: profs } = await supabase.from('profiles').select('id, name').in('id', ids);
+      const byId = Object.fromEntries((profs || []).map(p => [p.id, p]));
+      lista.forEach(x => { x.diretor_nome = byId[x.diretor_id]?.name || 'Diretor'; });
+    }
+    res.json(lista);
+  } catch (e) {
+    console.error('[MARKETING] aprovacoes-origem:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════
 // ADMIN · CRUD das 4 entidades (Spec 009 · so nivel 5)
 // ═══════════════════════════════════════════════════════════════════════
 

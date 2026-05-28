@@ -2,6 +2,30 @@
 
 Guia operacional para o Claude Code quando trabalhar neste repositório.
 
+## Marketing · Spec 013 · Analytics /marketing/analytics (2026-05-28)
+
+Dashboard de KPIs do módulo + bloco gargalo de aprovação dos diretores.
+
+**Endpoints novos em `backend/routes/marketing.js`:**
+- `GET /analytics/kpis?semanas=N` (nível 1) · retorna `{ snapshot, serie }` com os 4 KPIs MKT-* (last value + série temporal)
+- `GET /analytics/aprovacoes-origem?dias=N` (nível 1) · tempo médio que cada diretor leva pra aprovar solicitações da área Marketing (gargalo se > 24h)
+
+**Página nova: `src/pages/marketing/MarketingAnalytics.jsx`**
+- Rota: `/marketing/analytics` · `moduleSlug=marketing nivelMinimo=1`
+- 4 cards de snapshot · MKT-PRAZO · MKT-LEAD · MKT-THROUGHPUT · MKT-DEM-CAP
+  - Badge "fora da meta" quando o valor está pior que meta
+  - Ícone temático + cor por KPI
+  - Observação do coletor abaixo
+- Gráfico de linha temporal (recharts · LineChart) das 4 séries · seletor 4/8/12/24/52 semanas
+- Bloco "Tempo médio de aprovação por diretor de origem" · lista os 3 diretores com tempo médio em horas · badge "gargalo" quando > 24h
+- Header com botões Kanban/Calendário/(Admin)
+
+**Header do Kanban:** botão "Analytics" adicionado pro todo mundo (nível 1+) — substitui necessidade do solicitante navegar manualmente.
+
+**api.js:** namespace `marketing.analytics.{kpis,aprovacoesOrigem}`.
+
+**Spec autônoma · sem migration.**
+
 ## Marketing · Spec 012 · Revisão (1x) + Aguardando + NPS (2026-05-28)
 
 Solicitante revisa preview, aprova entrega ou pede revisão direto na aba
