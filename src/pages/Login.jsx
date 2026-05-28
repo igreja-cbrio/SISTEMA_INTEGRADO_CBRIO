@@ -22,6 +22,8 @@ const mkCOL = (isDark) => isDark ? {
 };
 
 function FloatingInput({ id, type, icon, label, value, onChange, rightAction, autoComplete }) {
+  const { isDark } = useTheme();
+  const COL = mkCOL(isDark);
   const [focused, setFocused] = useState(false);
   const active = focused || (value && value.length > 0);
 
@@ -432,6 +434,8 @@ export default function Login() {
 }
 
 function OAuthButton({ icon, label, onClick }) {
+  const { isDark } = useTheme();
+  const COL = mkCOL(isDark);
   const [hover, setHover] = useState(false);
   return (
     <button

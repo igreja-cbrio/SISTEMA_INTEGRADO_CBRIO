@@ -158,6 +158,7 @@ class ErrorBoundary extends Component<{ children: ReactNode }, { hasError: boole
 }
 
 const Dashboard = lazyWithRetry(() => import('./pages/Dashboard'));
+const DesignPreview = lazyWithRetry(() => import('./pages/DesignPreview'));
 const Perfil = lazyWithRetry(() => import('./pages/Perfil'));
 const NotFound = lazyWithRetry(() => import('./pages/NotFound'));
 const Solicitacoes = lazyWithRetry(() => import('./pages/Solicitacoes'));
@@ -387,6 +388,9 @@ function AppRoutes() {
       <Route path="/devocional" element={<Suspense fallback={<Loading />}><DevocionalLogin /></Suspense>} />
       <Route path="/devocional/hoje" element={<ProtectedRoute><Suspense fallback={<Loading />}><DevocionalHoje /></Suspense></ProtectedRoute>} />
       <Route path="/devocional/historico" element={<ProtectedRoute><Suspense fallback={<Loading />}><DevocionalHistorico /></Suspense></ProtectedRoute>} />
+
+      {/* Preview de design (estilo Rondesignlab) · fullscreen isolado · não-produção */}
+      <Route path="/design-preview" element={<ProtectedRoute><Suspense fallback={<Loading />}><DesignPreview /></Suspense></ProtectedRoute>} />
 
       {/* Totem — fullscreen, sem shell nenhum */}
       <Route path="/voluntariado/totem" element={<ProtectedRoute><Suspense fallback={<Loading />}><VolTotem /></Suspense></ProtectedRoute>} />
