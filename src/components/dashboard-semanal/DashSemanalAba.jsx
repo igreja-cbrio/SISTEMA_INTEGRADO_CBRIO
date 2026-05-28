@@ -64,6 +64,46 @@ export default function DashSemanalAba() {
     staleTime: 60_000,
   });
 
+  // Comparativo YoY · mesma semana ISO no ano atual + 2 anos anteriores.
+  // Respeita indicador primário + filtro de culto. Distingue "semana não
+  // existe naquele ano" (W53) de "semana existe com valor 0".
+  const anosComparados = useMemo(() => [ano - 2, ano - 1, ano], [ano]);
+  const { data: yoy } = useQuery({
+    queryKey: ['dash-sem', 'yoy', semana, indicadorRank, culto, anosComparados.join(',')],
+    queryFn: () => api.yoy({ semana, indicador: indicadorRank, culto, anos: anosComparados.join(',') }),
+    enabled: !!indicadorRank && !!semana,
+    staleTime: 60_000,
+  });
+
+  // Cards comparativos · 1 por ano · valor + Δ% vs ano anterior comparado
+  // que tem dado na mesma semana.
+  const cardsYoy = useMemo(() => {
+    if (!yoy?.resultados?.length) return [];
+    const linhas = yoy.resultados; // ordem dos anos da query
+    return linhas.map((r, idx) => {
+      let deltaPct = null;
+      let baseAno = null;
+      if (r.tem_dado) {
+        for (let j = idx - 1; j >= 0; j--) {
+          const prev = linhas[j];
+          if (prev.tem_dado && prev.total !== 0) {
+            deltaPct = ((r.total - prev.total) / prev.total) * 100;
+            baseAno = prev.ano;
+            break;
+          }
+        }
+      }
+      return {
+        ano: r.ano,
+        valor: r.tem_dado ? r.total : null,
+        deltaPct,
+        baseAno,
+        cor: PALETA_MULTI[idx % PALETA_MULTI.length],
+        atual: r.ano === ano,
+      };
+    });
+  }, [yoy, ano]);
+
   // Fetch paralelo · 1 query por indicador selecionado · sempre busca TODOS os
   // cultos (o filtro `culto` é aplicado client-side nos cards/taxa pra manter o
   // chart com todas as barras visíveis · click numa barra alterna o filtro).
@@ -641,6 +681,63 @@ export default function DashSemanalAba() {
             )}
           </CardContent>
         </Card>
+        )}
+
+        {/* Comparativo entre anos · mesma semana ISO em anos anteriores */}
+        {!isEmpty && yoy?.resultados?.length > 0 && (
+          <Card>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm font-medium">
+                Comparativo entre anos · Semana {semana}
+                {culto !== 'todos' && cultoSelInfo ? ` · ${cultoSelInfo.name}` : ''}
+                <span className="text-muted-foreground font-normal"> · {yoy.rotulo}</span>
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className={`grid gap-3 ${
+                cardsYoy.length <= 2 ? 'grid-cols-2'
+                : cardsYoy.length === 3 ? 'grid-cols-3'
+                : 'grid-cols-2 md:grid-cols-4'
+              }`}>
+                {cardsYoy.map(c => (
+                  <div
+                    key={c.ano}
+                    className={`rounded-lg border bg-card p-3 ${
+                      c.atual ? 'border-[#00B39D]/60 ring-1 ring-[#00B39D]/30' : 'border-border'
+                    }`}
+                  >
+                    <div className="flex items-center gap-1.5 mb-1">
+                      <span className="h-2.5 w-2.5 rounded-full" style={{ background: c.cor }} />
+                      <span className="text-xs font-medium text-muted-foreground">
+                        S{semana}/{c.ano}{c.atual ? ' · atual' : ''}
+                      </span>
+                    </div>
+                    <div className="text-2xl font-bold tabular-nums">
+                      {c.valor != null ? Number(c.valor).toLocaleString('pt-BR') : '—'}
+                    </div>
+                    {c.deltaPct != null ? (
+                      <div className={`mt-1 inline-flex items-center gap-1 text-xs font-medium ${
+                        c.deltaPct >= 0 ? 'text-emerald-600' : 'text-rose-600'
+                      }`}>
+                        {c.deltaPct >= 0 ? <TrendingUp className="h-3.5 w-3.5" /> : <TrendingDown className="h-3.5 w-3.5" />}
+                        {c.deltaPct >= 0 ? '+' : ''}{c.deltaPct.toFixed(1)}%
+                        <span className="text-muted-foreground font-normal">vs {c.baseAno}</span>
+                      </div>
+                    ) : (
+                      <div className="mt-1 text-xs text-muted-foreground">
+                        {c.valor != null ? 'base' : 'sem dado'}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+              <p className="text-[11px] text-muted-foreground mt-3">
+                Total da mesma semana ISO em cada ano (respeita o filtro de culto e exclui
+                cultos sem Kids quando o indicador é de kids). A variação % compara cada ano
+                com o anterior que tem dado na mesma semana.
+              </p>
+            </CardContent>
+          </Card>
         )}
 
         {/* Meta · só aparece em modo single */}
