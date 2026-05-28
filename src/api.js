@@ -214,6 +214,15 @@ export const dashboardSemanal = {
   indicadoresCustomList: (status) => get('/dashboard-semanal/indicadores-custom' + (status ? `?status=${status}` : '')),
   indicadorCustomPatch: (id, data) => patch(`/dashboard-semanal/indicadores-custom/${id}`, data),
   indicadorCustomRemove: (id) => del(`/dashboard-semanal/indicadores-custom/${id}`),
+  // Lista KPIs taticos com status (reuso da view do modulo painel) pra aba
+  // "KPIs" do dashboard. Filtros opcionais: area, periodicidade, status, kpi.
+  kpisTaticos: (params = {}) => {
+    const qs = new URLSearchParams(params).toString();
+    return get('/kpis/v2/taticos' + (qs ? '?' + qs : ''));
+  },
+  // Detalhe do KPI · indicador + historico + checkpoints + lider · usa endpoint
+  // do painel pra nao duplicar logica.
+  kpiDetalhe: (id) => get(`/painel/kpi/${encodeURIComponent(id)}`),
 };
 
 export const grupos = {
