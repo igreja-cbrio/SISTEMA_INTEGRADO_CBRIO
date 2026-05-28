@@ -2,6 +2,50 @@
 
 Guia operacional para o Claude Code quando trabalhar neste repositório.
 
+## Marketing · Spec 003 · Seed inicial (2026-05-28)
+
+Spec 003 conclui a Fase A (Fundação). Após esta migration o módulo `/marketing`
+aparece no menu pra equipe e o Pedro Paiva ganha nível 5 automático via boost.
+
+**Migration `20260528160000_marketing_seed_inicial.sql`:**
+- INSERT módulo `marketing` em `public.modulos` (rota `/marketing`, categoria ministerial, ordem 390)
+- Seed matriz `cargo_modulo_permissao`:
+  - `dev` · 5 + exportar + aprovar
+  - `coordenador-marketing` (Pedro Paiva) · 3 base + boost via área Marketing → 5
+  - `assistente-marketing` (Allan/Cauã/Letícia/Lorena Pariz) · 3 + escopo_proprio + boost → 5
+  - `diretor-criativo` (Pedro Menezes) · 1 read
+  - `diretor-ministerial` (Arthur) · 1 read
+  - `diretor-administrativo` (Eduardo) · 1 read
+  - `coordenador-estrategia`, `pastor-senior`, `pastor-presidente` · 1 read
+  - Demais cargos · 0
+- Estende `current_user_module_level()` SQL: adiciona `'marketing'` na lista de boost por área
+- Seed `marketing_membros` (4 confirmados via pre-flight):
+  - Allan Santana (videomaker · 40h/sem)
+  - Cauã Pedreti (designer · 40h/sem · sem recorrente fixo)
+  - Letícia Baldner (social_media_assistente · 30h/sem · sem recorrente)
+  - Lorena Pariz (social_media · 40h/sem)
+- Seed `marketing_compromissos_recorrentes`:
+  - Allan · quarta 14:00 · 4h (preliminar · refinar)
+  - Lorena Pariz · seg-sáb 09:00 · 3h/dia
+- Aline (fotógrafa) · **PENDENTE** · sem profile/email · Pedro/Marcos cadastra via UI admin (Spec 009)
+
+**Backend `middleware/auth.js`:**
+- `ROUTE_MODULE_MAP['marketing']` = `['marketing']`
+- `ROUTE_MODULE_MAP['marketing-admin']` = `['marketing']`
+- `AREA_MODULO_BOOST['marketing']` = `'marketing'`
+
+**Após aplicar a migration:**
+1. Rodar bust de cache: `POST /api/permissoes/cache/bust` ou botão em `/admin/permissoes`
+2. Pedro Paiva + os 4 assistentes precisam fazer logout/login pra renovar JWT (novo módulo no perms cache)
+3. Item de menu "Marketing" começa a aparecer pra equipe
+
+**Fluxo de permissão pós-migration:**
+- Pedro Paiva (`coordenador-marketing` + área `Marketing`) → nível 5 (admin do módulo via boost)
+- Allan/Cauã/Letícia/Lorena Pariz (`assistente-marketing` + área `Marketing`) → nível 5 via boost (mesmo padrão de Kids/AMI/Bridge/Online)
+- Arthur Serpa / Eduardo / Pedro Menezes → nível 1 (read · analytics)
+- Pastores seniores → nível 1 (read)
+- Solicitante comum → 0 (não acessa o módulo · acompanha via `/solicitacoes` na aba "Minhas")
+
 ## Marketing · Spec 002 · Schema base do Marketing (2026-05-28)
 
 7 tabelas novas + triggers + RLS + indices + whitelist soft-delete. Migration
