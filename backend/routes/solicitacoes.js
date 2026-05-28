@@ -271,6 +271,20 @@ router.post('/', async (req, res) => {
     const finalAreaResp = area_responsavel || mapa.area;
     const finalSub = subcategoria || mapa.subcategoria;
 
+    // Aprovacao hierarquica de origem (Spec 001) · resolvida AQUI porque o insert
+    // roda via service_role (auth.uid()=NULL) e, nesse caso, o trigger so dispensa.
+    // Gravamos aprovacao_origem_* + status no insert · o trigger continua de rede
+    // de seguranca (so age quando ninguem setou aprovacao_origem_status).
+    let rota = null;
+    try {
+      const { data: r, error: rErr } = await supabase
+        .rpc('fn_solicitacoes_rotear_origem', { p_solicitante_id: userId });
+      if (rErr) throw rErr;
+      rota = r;
+    } catch (rerr) {
+      console.error('[SOLICITACOES] roteamento de origem falhou (fallback trigger):', rerr.message);
+    }
+
     const { data, error } = await supabase
       .from('solicitacoes')
       .insert({
@@ -285,6 +299,15 @@ router.post('/', async (req, res) => {
         // Campos novos · trigger calcula SLA e precisa_aprovacao_financeira
         area_cliente: area_cliente || null,
         area_responsavel: finalAreaResp,
+        // Roteamento hierarquico resolvido acima · status='aguardando_aprovacao_origem'
+        // (vai pro diretor) ou 'pendente' (dispensada). SLA trigger refina compras/reembolso.
+        ...(rota && {
+          aprovacao_origem_diretor_id: rota.diretor_id || null,
+          aprovacao_origem_status: rota.aprovacao_status,
+          aprovacao_origem_motivo: rota.motivo || null,
+          aprovacao_origem_em: rota.aprovacao_status === 'dispensada' ? new Date().toISOString() : null,
+          status: rota.status,
+        }),
         subcategoria: finalSub,
         eh_urgente: !!eh_urgente,
         justificativa_urgencia: justificativa_urgencia || null,
@@ -425,7 +448,12 @@ router.patch('/:id/aprovar-origem', async (req, res) => {
     const update = {
       aprovacao_origem_status: 'aprovada',
       aprovacao_origem_em: new Date().toISOString(),
-      status: 'pendente',
+      // Apos a aprovacao de origem, segue pro proximo portao: aprovacao financeira
+      // (se exigida e ainda nao feita · ex: compras/reembolso/alcada) ou direto pra
+      // fila da area alvo (pendente). Sem isso, compras roteadas pulavam o financeiro.
+      status: (atual.precisa_aprovacao_financeira && !atual.aprovado_financeiro_em)
+        ? 'aguardando_aprovacao_financeira'
+        : 'pendente',
     };
     // Se super-admin esta aprovando como fallback, registra quem foi
     if (!isDiretorAlvo && isSuperAdmin) {
@@ -920,6 +948,8 @@ router.get('/pendentes-financeiro', async (req, res) => {
       .is('aprovado_financeiro_em', null)
       .neq('status', 'cancelado')
       .neq('status', 'rejeitado')
+      // Ainda aguardando o diretor de origem · so cai no financeiro depois (Spec 001)
+      .neq('status', 'aguardando_aprovacao_origem')
       .is('deleted_at', null)
       .order('eh_urgente', { ascending: false })
       .order('created_at', { ascending: true });

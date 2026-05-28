@@ -2,6 +2,46 @@
 
 Guia operacional para o Claude Code quando trabalhar neste repositório.
 
+## Solicitações · fix da ENTRADA do fluxo (validação E2E Marketing · 2026-05-28)
+
+Validação ponta a ponta do fluxo de Solicitações de Marketing revelou que o módulo
+foi marcado como "concluído" mas **nunca tinha rodado em prod** (0 solicitações
+marketing, 0 cards `origem='solicitacao'`) — e quebrava no primeiro clique. 3 bugs
+latentes na entrada, todos corrigidos na migration `20260528500000_solicitacoes_fix_entrada.sql`:
+
+- **BUG A · `solicitacoes_categoria_check` rejeitava `marketing`/`reserva_espaco`/`licenca`.**
+  O form e o backend (`ALLOWED_CATEGORIES`) oferecem, mas a CHECK só tinha
+  `{ti,compras,reembolso,espaco,infraestrutura,ferias,outro}`. INSERT estourava → 500.
+  Fix: CHECK ampliada pra incluir as 3 (mantém `espaco` legado).
+
+- **BUG C · `area_cliente` era enum `area_kpi` (só 6 áreas de culto).** O form de
+  "Sub-área" manda 21 valores (integracao, cuidados, grupos, rh, financeiro, marketing…);
+  qualquer um fora de `{kids,ami,bridge,sede,online,cba}` → `invalid input value for enum`.
+  Fix: `area_cliente` vira **`text`** em `solicitacoes` E `area_alcadas` (o enum `area_kpi`
+  só era usado nesses 2 lugares · não toca KPI/NSM). Views `vw_solicitacoes_sla` e
+  `vw_reserva_espacos` dropadas e recriadas idênticas (a 1ª alimenta KPIs ADM em `painel.js`).
+
+- **BUG B · aprovação hierárquica (Spec 001) contornada inteira.** O backend insere via
+  **service_role** (`auth.uid()=NULL`), então o trigger `fn_solicitacoes_roteamento_aprovacao`
+  caía no branch de bypass e marcava TUDO como `dispensada` — a aba "Aprovar" do diretor
+  nunca recebia nada (afeta todas as áreas, não só marketing). Fix: função nova
+  **`fn_solicitacoes_rotear_origem(uuid)`** (espelha as regras de dispensa sem depender de
+  `auth.uid()`); o backend (`routes/solicitacoes.js` POST `/`) chama via RPC e grava
+  `aprovacao_origem_diretor_id/status/motivo` + `status` no insert. O **trigger continua de
+  rede de segurança** (só dispensa quando ninguém setou `aprovacao_origem_status`).
+
+**Interação com aprovação financeira (transversal):** como agora compras/reembolso também
+passam pela aprovação de origem antes, o `PATCH /:id/aprovar-origem` decide o próximo status:
+`aguardando_aprovacao_financeira` se `precisa_aprovacao_financeira AND aprovado_financeiro_em IS NULL`,
+senão `pendente`. E `GET /pendentes-financeiro` exclui `status='aguardando_aprovacao_origem'`
+(não mostra no financeiro antes do diretor aprovar).
+
+**Validação:** migration + função + cadeia (routed→Arthur → aprovação → card materializa)
+testadas em transação revertida (`ROLLBACK`) contra prod · zero persistência. Frontend não
+precisou de mudança (já oferecia tudo). **Não enforçado ainda:** "só funcionários criam"
+(D-04) — o trigger só checava isso com `auth.uid()` presente; deixado como follow-up pra não
+gerar 403 surpresa em quem está sem vínculo `rh_funcionarios` no piloto.
+
 ## Marketing · Spec 024 · Tela /marketing/ciclo-criativo (2026-05-28)
 
 Marcos: "ao colocar o horário no marketing, coloque alguma visualização para Pedro ir por fase do ciclo criativo colocando o horário e o dono de cada etapa do ciclo criativo, então isso vai pro calendário dessa pessoa."
