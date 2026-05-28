@@ -212,10 +212,15 @@ async function findActiveBroadcast(channelId) {
   const { token } = await getValidAccessToken(channelId);
   const url = `${DATA_API}/liveBroadcasts?part=id,snippet,status&broadcastStatus=active&broadcastType=all`;
   const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
-  if (!res.ok) return null;
+  if (!res.ok) {
+    // NAO engolir · propaga pra quem chama registrar o motivo (ex: 403 quando
+    // a conta OAuth nao eh dona do canal e liveBroadcasts.list fica indisponivel).
+    const t = await res.text();
+    throw new Error(`liveBroadcasts.list falhou: ${res.status} ${t.slice(0, 200)}`);
+  }
   const data = await res.json();
   const item = (data.items || [])[0];
-  if (!item) return null;
+  if (!item) return null; // sem live ativa de verdade
   return {
     broadcast_id: item.id,
     video_id: item.id, // o ID do broadcast eh o video_id

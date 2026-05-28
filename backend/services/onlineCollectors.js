@@ -56,38 +56,66 @@ async function findCultoAtual() {
 }
 
 // ---------------------------------------------------------------------------
+// registrarDiagToken · grava observabilidade no token ativo (revoked_at NULL).
+// last_check_at = quando o monitor rodou de fato · last_error = motivo do skip
+// /erro (ou null em sucesso). Nunca quebra o coletor se a escrita falhar.
+// ---------------------------------------------------------------------------
+async function registrarDiagToken(patch) {
+  try {
+    await supabase.from('online_oauth_tokens')
+      .update({ ...patch, updated_at: new Date().toISOString() })
+      .is('revoked_at', null);
+  } catch { /* diagnostico nao pode derrubar a coleta */ }
+}
+
+// ---------------------------------------------------------------------------
 // liveMonitor · ativado a cada 5 min · so age se ha culto na janela
 // ---------------------------------------------------------------------------
 async function liveMonitor() {
   const culto = await findCultoAtual();
   if (!culto) return { skipped: true, reason: 'fora_de_janela' };
 
-  // Se ainda nao tem video_id, descobre via live ativa
-  let videoId = culto.youtube_video_id;
-  if (!videoId) {
-    const broadcast = await yt.findActiveBroadcast().catch(() => null);
-    if (!broadcast) return { skipped: true, reason: 'sem_live_ativa', culto_id: culto.id };
-    videoId = broadcast.video_id;
-    await supabase.from('cultos')
-      .update({ youtube_video_id: videoId })
-      .eq('id', culto.id);
-  }
+  const agora = new Date().toISOString();
+  try {
+    // Se ainda nao tem video_id, descobre via live ativa
+    let videoId = culto.youtube_video_id;
+    if (!videoId) {
+      const broadcast = await yt.findActiveBroadcast(); // throw em erro HTTP real
+      if (!broadcast) {
+        await registrarDiagToken({ last_check_at: agora, last_error: 'sem_live_ativa' });
+        return { skipped: true, reason: 'sem_live_ativa', culto_id: culto.id };
+      }
+      videoId = broadcast.video_id;
+      await supabase.from('cultos')
+        .update({ youtube_video_id: videoId })
+        .eq('id', culto.id);
+    }
 
-  // Pega concurrent viewers
-  const viewers = await yt.fetchLiveConcurrentViewers(null, videoId).catch(() => null);
-  if (viewers === null) {
-    return { skipped: true, reason: 'live_encerrada_ou_sem_dado', culto_id: culto.id, video_id: videoId };
-  }
+    // Pega concurrent viewers
+    const viewers = await yt.fetchLiveConcurrentViewers(null, videoId);
+    if (viewers === null) {
+      await registrarDiagToken({ last_check_at: agora, last_error: 'live_encerrada_ou_sem_dado' });
+      return { skipped: true, reason: 'live_encerrada_ou_sem_dado', culto_id: culto.id, video_id: videoId };
+    }
 
-  // Atualiza online_pico se eh maior que o registrado
-  const picoAtual = culto.online_pico || 0;
-  if (viewers > picoAtual) {
-    await supabase.from('cultos')
-      .update({ online_pico: viewers })
-      .eq('id', culto.id);
-    return { ok: true, culto_id: culto.id, video_id: videoId, viewers, pico_anterior: picoAtual, atualizou: true };
+    // Atualiza online_pico se eh maior que o registrado
+    const picoAtual = culto.online_pico || 0;
+    if (viewers > picoAtual) {
+      await supabase.from('cultos')
+        .update({ online_pico: viewers })
+        .eq('id', culto.id);
+      await registrarDiagToken({ last_check_at: agora, last_error: null });
+      return { ok: true, culto_id: culto.id, video_id: videoId, viewers, pico_anterior: picoAtual, atualizou: true };
+    }
+    await registrarDiagToken({ last_check_at: agora, last_error: null });
+    return { ok: true, culto_id: culto.id, video_id: videoId, viewers, pico_atual: picoAtual, atualizou: false };
+  } catch (e) {
+    // Antes esse erro era engolido (.catch(() => null)) e o pico se perdia em
+    // silencio. Agora persiste o motivo real pra debug em /online (status OAuth).
+    const msg = (e?.message || String(e)).slice(0, 250);
+    await registrarDiagToken({ last_check_at: agora, last_error: `live_monitor: ${msg}` });
+    return { skipped: true, reason: 'erro', culto_id: culto.id, error: msg };
   }
-  return { ok: true, culto_id: culto.id, video_id: videoId, viewers, pico_atual: picoAtual, atualizou: false };
 }
 
 // ---------------------------------------------------------------------------
@@ -119,6 +147,7 @@ async function dsCollector() {
         }
       } catch (e) {
         resultados.push({ culto_id: c.id, pico_error: e.message });
+        await registrarDiagToken({ last_error: `pico_backfill(ds): ${(e.message || '').slice(0, 200)}` });
       }
     }
 
@@ -178,7 +207,10 @@ async function backfillRange(dataInicio, dataFim) {
           await supabase.from('cultos').update({ online_pico: live.peak }).eq('id', c.id);
           itemResult.pico = live.peak;
         }
-      } catch (e) { itemResult.pico_error = e.message.slice(0, 100); }
+      } catch (e) {
+        itemResult.pico_error = e.message.slice(0, 100);
+        await registrarDiagToken({ last_error: `pico_backfill(range): ${(e.message || '').slice(0, 200)}` });
+      }
     }
 
     // DS (views no dia D)
@@ -585,7 +617,10 @@ async function catchUpMetricas({ limit = 5 } = {}) {
           await supabase.from('cultos').update({ online_pico: live.peak }).eq('id', c.id);
           out.pico++;
         }
-      } catch (e) { out.erros.push({ culto: c.id, metrica: 'pico', msg: e.message }); }
+      } catch (e) {
+        out.erros.push({ culto: c.id, metrica: 'pico', msg: e.message });
+        await registrarDiagToken({ last_error: `pico_backfill(catchup): ${(e.message || '').slice(0, 200)}` });
+      }
     }
 
     // 2a. DS · views dia D
