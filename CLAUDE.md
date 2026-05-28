@@ -2,6 +2,38 @@
 
 Guia operacional para o Claude Code quando trabalhar neste repositório.
 
+## Marketing · Spec 019 · Recorrentes como alocadas + sheet do membro (2026-05-28)
+
+Pós-piloto · 2 ajustes apontados pelo Marcos:
+
+**Fix · capacidade escondia recorrentes:**
+- Antes: Lorena aparecia `0/22` (0 cards / 22h após subtrair 18h de recorrentes)
+- Agora: Lorena aparece `18/40` (18h já alocadas com recorrentes / 40h base · 22h livre)
+- Lógica nova em `fn_marketing_calcular_capacidade_semana` v3:
+  - `horas_disponiveis = horas_base` (ou `override` se houver) · NÃO subtrai recorrentes
+  - `horas_alocadas = horas_recorrentes + horas_cards`
+  - `horas_livres = disponiveis − alocadas`
+- Cards na fila continuam usando "capacidade pra cards" interna (`base − recorrentes`) pra decidir quantos cabem na semana · só o **display** mudou pra transparência
+
+**Sheet de detalhe do membro (clique no nome):**
+- No `/marketing/calendario`, nome do membro agora é um `<button>` clicável
+- Abre `Sheet` lateral com:
+  - Barra de progresso de capacidade (cor: verde · âmbar >90% · vermelho sobrecarga)
+  - 3 stats em grid: horas Recorrentes / horas Cards / horas Livre
+  - Aviso se override está ativo
+  - Lista de compromissos recorrentes da semana
+  - Lista de cards atribuídos · clicáveis (abre o sheet do card original)
+- Cor primária no nome + hover underline indicam clicabilidade
+
+**Migration `20260528300000_marketing_recorrentes_como_alocadas.sql`:**
+- `CREATE OR REPLACE` da função · só mudança no SELECT final (disponiveis + alocadas)
+- Não recria CTEs nem trigger · zero impacto em outras consultas
+
+**Frontend:**
+- `MembroLinha` recebe `onClickMembro` · wrapper vira `<button>`
+- Display ganha texto secundário "(Xh recorr.)" quando há recorrentes
+- Novo componente `MembroDetalhe` dentro do `Sheet`
+
 ## Marketing · Spec 018 · Fila de prioridade + nav unificada (2026-05-28)
 
 Resolve 2 problemas pós-piloto:

@@ -58,6 +58,7 @@ export default function MarketingCalendario() {
   const [recorrentes, setRecorrentes] = useState([]);
   const [loading, setLoading]         = useState(true);
   const [detalheCard, setDetalheCard] = useState(null);
+  const [detalheMembro, setDetalheMembro] = useState(null);
 
   // Visão colaborador: filtra capacidade pelo próprio profile_id quando não-coord
   const minhaCapacidade = useMemo(() => {
@@ -208,6 +209,11 @@ export default function MarketingCalendario() {
                 cardsPorDia={cardsPorMembroDia[c.membro_id] || {}}
                 recPorDia={recPorMembroDia[c.membro_id] || {}}
                 onClickCard={setDetalheCard}
+                onClickMembro={() => setDetalheMembro({
+                  capacidade: c,
+                  cards: Object.values(cardsPorMembroDia[c.membro_id] || {}).flat(),
+                  recorrentes: Object.values(recPorMembroDia[c.membro_id] || {}).flat(),
+                })}
               />
             ))}
           </div>
@@ -251,6 +257,133 @@ export default function MarketingCalendario() {
           )}
         </SheetContent>
       </Sheet>
+
+      {/* Sheet detalhe do membro · clique no nome */}
+      <Sheet open={!!detalheMembro} onOpenChange={(o) => { if (!o) setDetalheMembro(null); }}>
+        <SheetContent className="w-full sm:max-w-lg overflow-y-auto">
+          <SheetHeader>
+            <SheetTitle className="flex items-center gap-2">
+              <Megaphone className="h-5 w-5 text-primary" />
+              {detalheMembro?.capacidade.profile?.name || 'Membro'}
+            </SheetTitle>
+          </SheetHeader>
+          {detalheMembro && (
+            <MembroDetalhe
+              capacidade={detalheMembro.capacidade}
+              cards={detalheMembro.cards}
+              recorrentes={detalheMembro.recorrentes}
+              onClickCard={(c) => { setDetalheMembro(null); setDetalheCard(c); }}
+            />
+          )}
+        </SheetContent>
+      </Sheet>
+    </div>
+  );
+}
+
+function MembroDetalhe({ capacidade, cards, recorrentes, onClickCard }) {
+  const c = capacidade;
+  const sobrecarga = c.horas_livres < 0;
+  const utilizacao = c.horas_disponiveis > 0
+    ? Math.min(100, Math.round((c.horas_alocadas / c.horas_disponiveis) * 100))
+    : 0;
+
+  return (
+    <div className="mt-4 space-y-4 text-sm pb-8">
+      <p className="text-xs text-muted-foreground">{c.habilidade}</p>
+
+      {/* Stats */}
+      <Card className="p-3 space-y-2">
+        <div className="flex items-center justify-between">
+          <span className="text-muted-foreground text-xs">Capacidade</span>
+          <span className="font-bold">
+            {Number(c.horas_alocadas).toFixed(1)}/{Number(c.horas_disponiveis).toFixed(1)}h
+          </span>
+        </div>
+        <div className="h-2 rounded-full bg-muted overflow-hidden">
+          <div
+            className={`h-full ${sobrecarga ? 'bg-rose-500' : utilizacao > 90 ? 'bg-amber-500' : 'bg-primary'}`}
+            style={{ width: `${Math.min(utilizacao, 100)}%` }}
+          />
+        </div>
+        <div className="grid grid-cols-3 gap-2 text-xs text-muted-foreground pt-1">
+          <div>
+            <div className="text-foreground font-medium">{Number(c.horas_recorrentes).toFixed(1)}h</div>
+            <div>Recorrentes</div>
+          </div>
+          <div>
+            <div className="text-foreground font-medium">{(Number(c.horas_alocadas) - Number(c.horas_recorrentes)).toFixed(1)}h</div>
+            <div>Cards</div>
+          </div>
+          <div>
+            <div className={`font-medium ${sobrecarga ? 'text-rose-600' : 'text-emerald-600'}`}>
+              {Number(c.horas_livres).toFixed(1)}h
+            </div>
+            <div>Livre</div>
+          </div>
+        </div>
+        {c.horas_override != null && (
+          <p className="text-[11px] text-amber-600">⚠️ Capacidade ajustada via override ({Number(c.horas_override).toFixed(1)}h disponíveis)</p>
+        )}
+      </Card>
+
+      {/* Recorrentes */}
+      <div>
+        <p className="text-xs font-semibold text-foreground mb-2 flex items-center gap-1.5">
+          <Repeat className="h-3.5 w-3.5" /> Recorrentes ({recorrentes.length})
+        </p>
+        {recorrentes.length === 0 ? (
+          <p className="text-xs text-muted-foreground italic">Sem compromissos recorrentes</p>
+        ) : (
+          <ul className="space-y-1">
+            {recorrentes.map(r => (
+              <li key={r.id} className="text-xs bg-muted/30 rounded px-2 py-1.5 flex items-center justify-between gap-2">
+                <span className="truncate">{r.descricao}</span>
+                <span className="text-muted-foreground shrink-0">{r.duracao_h}h</span>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+
+      {/* Cards da semana */}
+      <div>
+        <p className="text-xs font-semibold text-foreground mb-2 flex items-center gap-1.5">
+          <Megaphone className="h-3.5 w-3.5" /> Cards atribuídos esta semana ({cards.length})
+        </p>
+        {cards.length === 0 ? (
+          <p className="text-xs text-muted-foreground italic">Sem cards atribuídos pra esta semana</p>
+        ) : (
+          <ul className="space-y-1">
+            {cards.map(card => (
+              <li key={card.id}>
+                <button
+                  onClick={() => onClickCard(card)}
+                  className="w-full text-left text-xs bg-card hover:bg-accent border border-border rounded px-2 py-1.5 transition-colors"
+                >
+                  <div className="flex items-center justify-between gap-2 mb-1">
+                    <span className="font-medium truncate flex-1">{card.titulo}</span>
+                    {card.raia_rapida && (
+                      <Badge className="text-[9px] bg-rose-500/15 text-rose-700 dark:text-rose-400">⚡</Badge>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-2 text-[10px] text-muted-foreground">
+                    {card.etiqueta_tipo && (
+                      <span style={card.etiqueta_tipo.cor ? { color: card.etiqueta_tipo.cor } : undefined}>
+                        {card.etiqueta_tipo.nome}{card.etiqueta_tipo.esforco_max_h ? ` · ${card.etiqueta_tipo.esforco_max_h}h` : ''}
+                      </span>
+                    )}
+                    {card.prazo_confirmado && (
+                      <span>· {new Date(card.prazo_confirmado).toLocaleDateString('pt-BR')}</span>
+                    )}
+                    <span>· {card.estado}</span>
+                  </div>
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
     </div>
   );
 }
@@ -258,7 +391,7 @@ export default function MarketingCalendario() {
 // ═══════════════════════════════════════════════════════════════════════
 // Linha do membro · 1 célula por dia
 // ═══════════════════════════════════════════════════════════════════════
-function MembroLinha({ capacidade, cardsPorDia, recPorDia, onClickCard }) {
+function MembroLinha({ capacidade, cardsPorDia, recPorDia, onClickCard, onClickMembro }) {
   const c = capacidade;
   const sobrecarga = c.horas_livres < 0;
   const utilizacao = c.horas_disponiveis > 0
@@ -267,14 +400,20 @@ function MembroLinha({ capacidade, cardsPorDia, recPorDia, onClickCard }) {
 
   return (
     <>
-      {/* Nome do membro · sticky-left */}
-      <div className="p-2 border-b border-border bg-card">
-        <p className="text-sm font-medium truncate">{c.profile?.name || '(sem nome)'}</p>
+      {/* Nome do membro · clicavel · sticky-left */}
+      <button
+        onClick={onClickMembro}
+        className="p-2 border-b border-border bg-card text-left hover:bg-accent/50 transition-colors cursor-pointer"
+      >
+        <p className="text-sm font-medium truncate text-primary hover:underline">{c.profile?.name || '(sem nome)'}</p>
         <p className="text-xs text-muted-foreground">{c.habilidade}</p>
         <p className={`text-[10px] mt-1 ${sobrecarga ? 'text-rose-600 font-medium' : 'text-muted-foreground'}`}>
           {Number(c.horas_alocadas).toFixed(1)}/{Number(c.horas_disponiveis).toFixed(1)}h · {utilizacao}%
+          {Number(c.horas_recorrentes) > 0 && (
+            <span className="ml-1 text-muted-foreground">({Number(c.horas_recorrentes).toFixed(1)}h recorr.)</span>
+          )}
         </p>
-      </div>
+      </button>
 
       {/* 7 células · uma por dia */}
       {[0, 1, 2, 3, 4, 5, 6].map(diaIdx => (
