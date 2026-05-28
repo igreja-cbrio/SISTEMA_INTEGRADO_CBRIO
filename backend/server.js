@@ -119,6 +119,7 @@ app.use('/api/public/batismo', require('./routes/publicBatismo'));
 app.use('/api/whatsapp/webhook', require('./routes/publicWhatsapp'));
 app.use('/api/whatsapp', require('./routes/whatsapp'));
 app.use('/api/solicitacoes', require('./routes/solicitacoes'));
+app.use('/api/marketing', require('./routes/marketing'));
 app.use('/api/cerebro', require('./routes/cerebro'));
 app.use('/api/voluntariado', require('./routes/voluntariado'));
 app.use('/api/voluntariado', require('./routes/voluntariado-sync'));

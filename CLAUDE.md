@@ -2,6 +2,56 @@
 
 Guia operacional para o Claude Code quando trabalhar neste repositório.
 
+## Marketing · Spec 004 · Backend CRUD cards + sync triggers (2026-05-28)
+
+Backend completo do Kanban + 2 triggers SQL que materializam cards
+automaticamente a partir de Solicitações e do ciclo criativo de Eventos.
+
+**Migration `20260528180000_marketing_cards_sync_triggers.sql`:**
+- `fn_marketing_cards_solicitacao_sync` · AFTER INSERT/UPDATE em `solicitacoes`
+  - Dispara quando `area_responsavel='marketing'` E status muda pra `pendente`
+  - Cria card com `origem='solicitacao'` · idempotente via UNIQUE parcial
+  - `raia_rapida=true` se `urgencia_decisao='aceita'` (Pedro decide depois no card)
+- `fn_marketing_cards_evento_sync` · AFTER INSERT em `event_tasks`
+  - Dispara quando `area ILIKE 'marketing'`
+  - Cria card com `origem='evento'`, `prazo_preliminar = event_task.deadline`
+- Backfill defensivo · solicitações em `pendente` + event_tasks de marketing pré-existentes ganham card no momento da migration
+
+**Backend `backend/routes/marketing.js` (novo · montado em `/api/marketing`):**
+
+| Endpoint | Nível mínimo | Função |
+|---|---|---|
+| `GET /etiquetas` | 1 | Catálogo tipos + destinos (ativos) |
+| `GET /membros` | 1 | Equipe Marketing ativa (com profile.name) |
+| `GET /compromissos-recorrentes` | 1 | Slots fixos |
+| `GET /cards` | 1 | Lista (filtros: estado · origem · etiqueta · atribuido_a · raia_rapida) |
+| `GET /cards/:id` | 1 | Detalhe + entregáveis |
+| `POST /cards` | 5 | Task interna (origem='interna') |
+| `PATCH /cards/:id` | 3 | Atualizar (produtor edita só `estado` do próprio · admin edita tudo) |
+| `PATCH /cards/:id/sugerir-revisao` | qualquer | Solicitante OU produtor OU admin · 1x (D-14) |
+| `PATCH /cards/:id/decidir-urgencia` | 5 | Pedro aceita/recusa raia rápida com motivo |
+| `DELETE /cards/:id` | 5 | Soft delete via `app_soft_delete` |
+
+**Notificações disparadas pelo backend:**
+- Card atribuído → produtor
+- Card → `aguardando_solicitante` → solicitante (preview pronto)
+- Card → `concluido` → solicitante (pedir NPS)
+- Revisão sugerida → produtor (com motivo)
+- Urgência aceita/recusada → solicitante
+
+**Decisões de permissão:**
+- Produtor (`assistente-marketing` + área Marketing · nível 5 via boost) pode editar **apenas `estado`** dos próprios cards. RLS bloqueia outros campos pelo CHECK do middleware.
+- Coordenador (Pedro Paiva · nível 5 via boost) edita tudo.
+- POST `/cards` exige nível 5 (Pedro abre tasks internas)
+- RLS no SQL **também** bloqueia produtor editando outros cards · backend só duplica check pra mensagem clara.
+
+**Frontend (`src/api.js`):** namespace `marketing` com `etiquetas`, `membros`, `recorrentes`, `cards`, `card`, `criarCard`, `atualizarCard`, `removerCard`, `sugerirRevisao`, `decidirUrgencia`.
+
+**Notas operacionais:**
+- Solicitações criadas ANTES da migration ficam invisíveis ao Kanban a menos que estejam em `pendente` (backfill cobre).
+- Card `solicitacao_id IS NOT NULL` reflete a solicitação no Solicitações · update do card NÃO mexe na solicitação (status sincronizado só na conclusão final, na Spec 012).
+- Se solicitação for soft-deletada, FK fica com SET NULL (não quebra o card).
+
 ## Marketing · Spec 003 · Seed inicial (2026-05-28)
 
 Spec 003 conclui a Fase A (Fundação). Após esta migration o módulo `/marketing`

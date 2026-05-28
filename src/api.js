@@ -1009,6 +1009,24 @@ export const permissoes = {
   removerOverride: (id, moduloId) => del(`/permissoes/usuario/${id}/modulo/${moduloId}`),
 };
 
+export const marketing = {
+  // Catalogos
+  etiquetas:    () => get('/marketing/etiquetas'),
+  membros:      () => get('/marketing/membros'),
+  recorrentes:  () => get('/marketing/compromissos-recorrentes'),
+
+  // CRUD cards
+  cards:        (params) => get('/marketing/cards' + (params ? '?' + new URLSearchParams(params) : '')),
+  card:         (id) => get(`/marketing/cards/${id}`),
+  criarCard:    (data) => post('/marketing/cards', data),
+  atualizarCard:(id, data) => patch(`/marketing/cards/${id}`, data),
+  removerCard:  (id) => del(`/marketing/cards/${id}`),
+
+  // Acoes especificas
+  sugerirRevisao:  (id, motivo) => patch(`/marketing/cards/${id}/sugerir-revisao`, { motivo }),
+  decidirUrgencia: (id, decisao, motivoRecusa) => patch(`/marketing/cards/${id}/decidir-urgencia`, { decisao, motivo_recusa: motivoRecusa }),
+};
+
 export const solicitacoes = {
   list:           (params) => get('/solicitacoes' + (params ? '?' + new URLSearchParams(params) : '')),
   create:         (data) => post('/solicitacoes', data),
