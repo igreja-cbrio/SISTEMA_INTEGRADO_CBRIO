@@ -1045,6 +1045,38 @@ export const marketing = {
     download: (entregavelId) => `${API}/marketing/entregaveis/${entregavelId}/download`,
     remove:   (entregavelId) => del(`/marketing/entregaveis/${entregavelId}`),
   },
+
+  // Admin (Spec 009 · nivel 5)
+  admin: {
+    membros: {
+      list:   () => get('/marketing/admin/membros'),
+      create: (data) => post('/marketing/admin/membros', data),
+      update: (id, data) => patch(`/marketing/admin/membros/${id}`, data),
+      remove: (id) => del(`/marketing/admin/membros/${id}`),
+    },
+    etiquetasTipo: {
+      list:   () => get('/marketing/admin/etiquetas/tipo'),
+      create: (data) => post('/marketing/admin/etiquetas/tipo', data),
+      update: (id, data) => patch(`/marketing/admin/etiquetas/tipo/${id}`, data),
+    },
+    etiquetasDestino: {
+      list:   () => get('/marketing/admin/etiquetas/destino'),
+      create: (data) => post('/marketing/admin/etiquetas/destino', data),
+      update: (id, data) => patch(`/marketing/admin/etiquetas/destino/${id}`, data),
+    },
+    recorrentes: {
+      list:   () => get('/marketing/admin/recorrentes'),
+      create: (data) => post('/marketing/admin/recorrentes', data),
+      update: (id, data) => patch(`/marketing/admin/recorrentes/${id}`, data),
+      remove: (id) => del(`/marketing/admin/recorrentes/${id}`),
+    },
+    overrides: {
+      list:   (params) => get('/marketing/admin/overrides' + (params ? '?' + new URLSearchParams(params) : '')),
+      create: (data) => post('/marketing/admin/overrides', data),
+      update: (id, data) => patch(`/marketing/admin/overrides/${id}`, data),
+      remove: (id) => del(`/marketing/admin/overrides/${id}`),
+    },
+  },
 };
 
 export const solicitacoes = {

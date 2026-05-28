@@ -2,6 +2,39 @@
 
 Guia operacional para o Claude Code quando trabalhar neste repositório.
 
+## Marketing · Spec 009 · Admin /marketing/admin (2026-05-28)
+
+CRUD admin pra Pedro/Marcos editarem o módulo sem precisar de migration.
+
+**Página nova: `src/pages/marketing/MarketingAdmin.jsx`** com 4 abas:
+
+| Aba | CRUD |
+|---|---|
+| **Membros** | listar · editar inline (horas/observação/ativo) · adicionar via Dialog · soft-delete |
+| **Etiquetas** | tipos (8) + destinos (5) · editar inline (esforço · habilidade · cor · ativo) · novos via futura iteração |
+| **Recorrentes** | listar · adicionar · remover (soft-delete) |
+| **Overrides** | listar · adicionar (membro · semana · horas · motivo) · remover · UNIQUE(membro, semana) |
+
+**Endpoints novos em `backend/routes/marketing.js` (todos exigem nível 5):**
+- `GET/POST/PATCH/DELETE /admin/membros[/:id]`
+- `GET/POST/PATCH /admin/etiquetas/tipo[/:id]`
+- `GET/POST/PATCH /admin/etiquetas/destino[/:id]`
+- `GET/POST/PATCH/DELETE /admin/recorrentes[/:id]`
+- `GET/POST/PATCH/DELETE /admin/overrides[/:id]`
+
+**Rotas:**
+- `/marketing/admin` · `moduleSlug=marketing nivelMinimo=5`
+
+**Header do Kanban:** botão "Admin" (só pra coordenador) ao lado de Calendário.
+
+**Calibragem do `esforco_medio_h`:** começa NULL nas 8 etiquetas (Spec 002). Aba Etiquetas permite Pedro/Marcos preencher após algumas semanas de cycle time real. NULL → estimativa volta "tipo não calibrado".
+
+**Novo membro:** dropdown filtra `profiles.area ILIKE 'criativo'` (Aline pendente vai aparecer aqui quando o profile dela existir).
+
+**API client (`src/api.js`):** `marketing.admin.{membros,etiquetasTipo,etiquetasDestino,recorrentes,overrides}.{list,create,update,remove}`.
+
+**Spec autônoma · sem migration.**
+
 ## Marketing · Spec 008 · Frontend Calendário /marketing/calendario (2026-05-28)
 
 Visualização semanal de capacidade da equipe · grid 7 dias × N membros consumindo
