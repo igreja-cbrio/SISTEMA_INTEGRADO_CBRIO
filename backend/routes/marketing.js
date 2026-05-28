@@ -419,6 +419,30 @@ router.patch('/cards/:id', authorizeModule('marketing', 3), async (req, res) => 
       }
     }
 
+    // Notificacao · prazo confirmado (Pedro definiu prazo) · solicitante avisado
+    if (update.prazo_confirmado !== undefined
+        && update.prazo_confirmado !== atual.prazo_confirmado
+        && data.solicitacao_id) {
+      const { data: sol } = await supabase
+        .from('solicitacoes')
+        .select('solicitante_id, titulo')
+        .eq('id', data.solicitacao_id)
+        .maybeSingle();
+      if (sol?.solicitante_id && data.prazo_confirmado) {
+        const prazoStr = new Date(data.prazo_confirmado).toLocaleDateString('pt-BR');
+        notificar({
+          modulo: 'marketing',
+          tipo: 'marketing_prazo_confirmado',
+          titulo: `Prazo confirmado: ${sol.titulo}`,
+          mensagem: `Marketing definiu prazo de entrega: ${prazoStr}.`,
+          link: '/solicitacoes',
+          severidade: 'info',
+          chaveDedup: `marketing_prazo_confirmado_${data.id}_${data.prazo_confirmado}`,
+          targetIds: [sol.solicitante_id],
+        }).catch(err => console.error('[MARKETING] notify prazo:', err.message));
+      }
+    }
+
     // Notificacao · aguardando solicitante (preview pro solicitante revisar)
     if (update.estado === 'aguardando_solicitante' && atual.estado !== 'aguardando_solicitante'
         && data.solicitacao_id) {
