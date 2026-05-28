@@ -143,11 +143,27 @@ router.get('/', async (req, res) => {
       const { data: profiles } = await supabase.from('profiles').select('id,name,email').in('id', profileIds);
       if (profiles) profileMap = Object.fromEntries(profiles.map(p => [p.id, p]));
     }
+
+    // Enrich Marketing etiquetas (Spec 010 · usado no Drawer de aprovacao Spec 011)
+    const tipoIds    = [...new Set((data || []).map(d => d.marketing_tipo_id).filter(Boolean))];
+    const destinoIds = [...new Set((data || []).map(d => d.marketing_destino_id).filter(Boolean))];
+    let tipoMap = {}, destinoMap = {};
+    if (tipoIds.length) {
+      const { data: t } = await supabase.from('marketing_etiquetas_tipo').select('id, slug, nome, cor, habilidade_padrao, esforco_medio_h').in('id', tipoIds);
+      tipoMap = Object.fromEntries((t || []).map(x => [x.id, x]));
+    }
+    if (destinoIds.length) {
+      const { data: d } = await supabase.from('marketing_etiquetas_destino').select('id, slug, nome, cor').in('id', destinoIds);
+      destinoMap = Object.fromEntries((d || []).map(x => [x.id, x]));
+    }
+
     const enriched = (data || []).map(d => ({
       ...d,
       solicitante: profileMap[d.solicitante_id] || null,
       responsavel: profileMap[d.responsavel_id] || null,
       aprovacao_origem_diretor: profileMap[d.aprovacao_origem_diretor_id] || null,
+      marketing_tipo: tipoMap[d.marketing_tipo_id] || null,
+      marketing_destino: destinoMap[d.marketing_destino_id] || null,
     }));
 
     res.json(enriched);

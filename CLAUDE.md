@@ -2,6 +2,23 @@
 
 Guia operacional para o Claude Code quando trabalhar neste repositório.
 
+## Marketing · Spec 011 · Aba Aprovar enriquecida com Marketing (2026-05-28)
+
+Spec 011 já estava implementada na Spec 001 (aba "Aprovar", badge contador, lista,
+botões Aprovar/Rejeitar com modal de motivo). Esta iteração agrega visibilidade do
+contexto Marketing pro diretor decidir com mais informação.
+
+**Backend (`routes/solicitacoes.js` GET /):**
+- Resposta enriquecida com `marketing_tipo` e `marketing_destino` (objetos com nome/cor/habilidade_padrao/esforco_medio_h)
+- Faz JOIN só quando há `marketing_tipo_id` ou `marketing_destino_id` no resultset
+
+**Frontend (`Solicitacoes.jsx` AprovacaoOrigemCard):**
+- Mostra área alvo (`area_responsavel`) e data necessária no subtitle do card
+- Badge das etiquetas Marketing (tipo+destino) quando `categoria='marketing'`, coloridas pelo cor do banco
+- Texto "sugere {habilidade}" derivado de `tipo.habilidade_padrao`
+
+**Spec autônoma · sem migration.**
+
 ## Marketing · Spec 010 · Bloco Marketing em /solicitacoes/nova (2026-05-28)
 
 Estende form de criação de Solicitações com bloco específico para Marketing.

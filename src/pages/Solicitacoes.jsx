@@ -1059,7 +1059,11 @@ function AprovacaoOrigemCard({ item, onApprove, onReject, onClick }) {
         <span className="text-xs text-muted-foreground whitespace-nowrap">{date}</span>
       </div>
       <p className="text-sm font-semibold text-foreground mb-1">{item.titulo}</p>
-      <p className="text-xs text-muted-foreground mb-2">por {solicitanteNome}</p>
+      <p className="text-xs text-muted-foreground mb-2">
+        por {solicitanteNome}
+        {item.area_responsavel && <> · vai pra <span className="font-medium">{item.area_responsavel}</span></>}
+        {item.data_necessaria && <> · precisa até {new Date(item.data_necessaria).toLocaleDateString('pt-BR')}</>}
+      </p>
       {item.descricao && (
         <p className="text-sm text-muted-foreground line-clamp-2 mb-2">{item.descricao}</p>
       )}
@@ -1068,6 +1072,33 @@ function AprovacaoOrigemCard({ item, onApprove, onReject, onClick }) {
       )}
       {item.eh_urgente && item.justificativa_urgencia && (
         <p className="text-xs text-red-700 dark:text-red-400 mb-2"><span className="font-medium">Urgência:</span> {item.justificativa_urgencia}</p>
+      )}
+
+      {/* Etiquetas Marketing (Spec 010) · so quando categoria=marketing */}
+      {item.categoria === 'marketing' && (item.marketing_tipo || item.marketing_destino) && (
+        <div className="flex flex-wrap gap-1 mb-2">
+          {item.marketing_tipo && (
+            <Badge
+              className="text-[10px] px-1.5 py-0.5"
+              style={item.marketing_tipo.cor ? { backgroundColor: `${item.marketing_tipo.cor}25`, color: item.marketing_tipo.cor } : undefined}
+            >
+              {item.marketing_tipo.nome}
+            </Badge>
+          )}
+          {item.marketing_destino && (
+            <Badge
+              className="text-[10px] px-1.5 py-0.5"
+              style={item.marketing_destino.cor ? { backgroundColor: `${item.marketing_destino.cor}25`, color: item.marketing_destino.cor } : undefined}
+            >
+              {item.marketing_destino.nome}
+            </Badge>
+          )}
+          {item.marketing_tipo?.habilidade_padrao && (
+            <span className="text-[10px] text-muted-foreground self-center">
+              · sugere {item.marketing_tipo.habilidade_padrao}
+            </span>
+          )}
+        </div>
       )}
 
       {!confirmReject ? (
