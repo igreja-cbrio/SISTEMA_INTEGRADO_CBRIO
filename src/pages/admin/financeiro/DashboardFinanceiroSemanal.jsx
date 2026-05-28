@@ -495,63 +495,11 @@ function Slide1PorCulto({ buckets, melhorSemana }) {
 }
 
 function Slide2Tendencias({ historico, completo }) {
-  // Últimos 3 meses (~13 semanas qua-ter) · suporta dados ausentes
-  const ultimas13 = useMemo(() => {
-    if (!Array.isArray(historico)) return [];
-    return historico.slice(-13);
-  }, [historico]);
-
-  const temDados = ultimas13.some(d => Number(d.receita || 0) > 0 || Number(d.presencial || 0) > 0);
-
   return (
     <>
-      {/* Tendência últimos 3 meses (~13 semanas) */}
-      <Card>
-        <CardContent className="pt-6">
-          <h3 className="text-base font-semibold mb-1">Tendência dos últimos 3 meses</h3>
-          <p className="text-xs text-muted-foreground mb-4">
-            Receita (barras verdes) · presença (linha azul) · ticket médio (linha roxa pontilhada) ·
-            13 semanas qua-ter
-          </p>
-          {!temDados ? (
-            <div className="py-12 text-center text-sm text-muted-foreground">
-              Sem dados nos últimos 3 meses · importe lançamentos pra ver a tendência
-            </div>
-          ) : (
-            <div style={{ width: '100%', height: 320 }}>
-              <ResponsiveContainer>
-                <ComposedChart data={ultimas13}>
-                  <defs>
-                    <linearGradient id="gradReceita" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="0%" stopColor={C.green} stopOpacity={0.9} />
-                      <stop offset="100%" stopColor={C.green} stopOpacity={0.4} />
-                    </linearGradient>
-                  </defs>
-                  <CartesianGrid strokeDasharray="3 3" opacity={0.2} />
-                  <XAxis dataKey="semana_label" tick={{ fontSize: 10 }} />
-                  <YAxis yAxisId="left" tick={{ fontSize: 10 }} tickFormatter={(v) => fmtCompact(v).replace('R$ ', '')} />
-                  <YAxis yAxisId="right" orientation="right" tick={{ fontSize: 10 }} />
-                  <Tooltip
-                    formatter={(v, n) => n === 'Presença' ? [fmtInt(v), n] : [fmtMoney(v), n]}
-                    contentStyle={{ borderRadius: 8, fontSize: 12 }}
-                  />
-                  <Legend wrapperStyle={{ fontSize: 11 }} />
-                  <Bar yAxisId="left" dataKey="receita" name="Receita" fill="url(#gradReceita)" radius={[4, 4, 0, 0]} animationDuration={1200} />
-                  <Line yAxisId="right" type="monotone" dataKey="presencial" name="Presença" stroke={C.blue} strokeWidth={2.5} dot={{ r: 3 }} animationDuration={1400} />
-                  <Line yAxisId="left" type="monotone" dataKey="ticket" name="Ticket médio" stroke={C.purple} strokeWidth={2} strokeDasharray="5 5" dot={false} animationDuration={1600} />
-                </ComposedChart>
-              </ResponsiveContainer>
-            </div>
-          )}
-        </CardContent>
-      </Card>
-
-      {/* PR A · Mensal + Semanal */}
+      <ArrecadacaoAnualChart />
       {completo && (
-        <>
-          <ArrecadacaoMensalChart dados={completo.mensal} />
-          <ArrecadacaoSemanalChart dados={completo.semanal} anoAtual={completo.ano_atual} />
-        </>
+        <ArrecadacaoSemanalChart dados={completo.semanal} anoAtual={completo.ano_atual} />
       )}
     </>
   );
@@ -576,7 +524,7 @@ function Slide4Performance({ completo, melhorSemana }) {
   return (
     <>
       <FreqVsArrecadacaoSemanal />
-      {completo && <FreqVsReceitaChart dados={completo.freq_vs_receita} />}
+      <ReceitaVsSaidaMensal />
       {melhorSemana && (melhorSemana.melhor_do_mes || melhorSemana.melhor_do_ano) && (
         <MelhorSemanaCards melhor={melhorSemana} />
       )}
@@ -732,37 +680,106 @@ function ArrecadacaoMensalChart({ dados }) {
 }
 
 function ArrecadacaoSemanalChart({ dados, anoAtual }) {
-  const filtrado = dados
+  const filtrado = useMemo(() => (dados || [])
     .filter(d => d.ano === anoAtual)
-    .map(d => ({
+    .map((d, i) => ({
+      idx: i,
       label: d.semana_label,
-      Receita: d.receita,
-    }));
+      semana_inicio: d.semana_inicio,
+      Receita: Number(d.receita || 0),
+      despesa: Number(d.despesa || 0),
+      resultado: Number(d.resultado || 0),
+      qtd: Number(d.qtd || 0),
+    })), [dados, anoAtual]);
+
+  const [selectedIdx, setSelectedIdx] = useState(filtrado.length > 0 ? filtrado.length - 1 : null);
+  useEffect(() => { setSelectedIdx(filtrado.length > 0 ? filtrado.length - 1 : null); }, [filtrado.length]);
+
+  const sel = selectedIdx !== null ? filtrado[selectedIdx] : null;
+  const ant = selectedIdx !== null && selectedIdx > 0 ? filtrado[selectedIdx - 1] : null;
+  const dRec = sel && ant && ant.Receita > 0 ? ((sel.Receita - ant.Receita) / ant.Receita) * 100 : null;
+
+  const onBarClick = (e) => {
+    if (e?.activePayload?.[0]?.payload && typeof e.activePayload[0].payload.idx === 'number') {
+      setSelectedIdx(e.activePayload[0].payload.idx);
+    }
+  };
+
   return (
     <Card>
       <CardContent className="pt-6">
-        <h3 className="text-base font-semibold mb-1">Arrecadação Semanal · {anoAtual}</h3>
-        <p className="text-xs text-muted-foreground mb-4">{filtrado.length} semanas qua-ter</p>
+        <div className="flex items-start justify-between flex-wrap gap-2 mb-1">
+          <div>
+            <h3 className="text-base font-semibold flex items-center gap-2">
+              Arrecadação Semanal · {anoAtual}
+              <Badge variant="outline" className="text-[10px] font-normal">
+                <MousePointer2 className="h-2.5 w-2.5 mr-1" />
+                clique numa semana
+              </Badge>
+            </h3>
+            <p className="text-xs text-muted-foreground">{filtrado.length} semanas qua-ter · empréstimos excluídos</p>
+          </div>
+        </div>
         <div style={{ width: '100%', height: 280 }}>
           <ResponsiveContainer>
-            <BarChart data={filtrado}>
+            <BarChart data={filtrado} onClick={onBarClick}>
               <defs>
                 <linearGradient id="gradSemanal" x1="0" y1="0" x2="0" y2="1">
                   <stop offset="0%" stopColor={COL.primary} stopOpacity={0.95} />
                   <stop offset="100%" stopColor={COL.primary} stopOpacity={0.5} />
+                </linearGradient>
+                <linearGradient id="gradSemanalSel" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stopColor={COL.amber} stopOpacity={1} />
+                  <stop offset="100%" stopColor={COL.amber} stopOpacity={0.55} />
                 </linearGradient>
               </defs>
               <CartesianGrid strokeDasharray="3 3" opacity={0.2} />
               <XAxis dataKey="label" tick={{ fontSize: 9 }} interval={Math.floor(filtrado.length / 12)} />
               <YAxis tick={{ fontSize: 10 }} tickFormatter={(v) => fmtKbrl(v)} />
               <Tooltip
+                cursor={{ fill: 'rgba(0,179,157,0.08)' }}
                 formatter={(v) => fmtMoney(v)}
                 contentStyle={{ borderRadius: 8, fontSize: 12 }}
               />
-              <Bar dataKey="Receita" fill="url(#gradSemanal)" radius={[3, 3, 0, 0]} animationDuration={1200} />
+              <Bar dataKey="Receita" radius={[3, 3, 0, 0]} animationDuration={1200} cursor="pointer">
+                {filtrado.map((entry, i) => (
+                  <Cell
+                    key={i}
+                    fill={i === selectedIdx ? 'url(#gradSemanalSel)' : 'url(#gradSemanal)'}
+                    stroke={i === selectedIdx ? COL.amber : 'transparent'}
+                    strokeWidth={i === selectedIdx ? 2 : 0}
+                  />
+                ))}
+              </Bar>
             </BarChart>
           </ResponsiveContainer>
         </div>
+
+        <AnimatePresence mode="wait">
+          {sel && (
+            <motion.div
+              key={`semsel-${sel.idx}`}
+              initial={{ opacity: 0, y: 12 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -8 }}
+              transition={{ duration: 0.35, ease: 'easeOut' }}
+              className="mt-4 pt-4 border-t border-border"
+            >
+              <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
+                <span className="text-xs text-muted-foreground">Semana selecionada</span>
+                <span className="text-sm font-semibold px-2 py-0.5 rounded bg-amber-100 dark:bg-amber-500/20 text-amber-700 dark:text-amber-300">
+                  {sel.label}
+                </span>
+              </div>
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                <SemanaCard label="Arrecadação" icon={Banknote} accent={C.green} valor={fmtMoney(sel.Receita)} delta={dRec} sub="vs semana anterior" anim={`r-${sel.idx}`} />
+                <SemanaCard label="Despesa" icon={TrendingDown} accent={C.red} valor={fmtMoney(sel.despesa)} delta={null} sub="na semana" anim={`d-${sel.idx}`} />
+                <SemanaCard label="Resultado" icon={Activity} accent={sel.resultado >= 0 ? C.green : C.red} valor={fmtMoney(sel.resultado)} delta={null} sub="receita − despesa" anim={`res-${sel.idx}`} />
+                <SemanaCard label="Lançamentos" icon={FileText} accent={C.blue} valor={fmtInt(sel.qtd)} delta={null} sub="na semana" anim={`q-${sel.idx}`} />
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
       </CardContent>
     </Card>
   );
@@ -2149,5 +2166,289 @@ function MetaCardFiltrado({ meta, idx, prog, periodOverride, onPeriodChange, onE
         </CardContent>
       </Card>
     </motion.div>
+  );
+}
+
+// ============================================================
+// NOVO · Arrecadação anual (Tendências) · filtro de ano + click → cards
+// ============================================================
+function ArrecadacaoAnualChart() {
+  const anoAtual = new Date().getFullYear();
+  const [ano, setAno] = useState(anoAtual);
+  const [dados, setDados] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [selectedIdx, setSelectedIdx] = useState(null);
+
+  const anos = [2022, 2023, 2024, 2025, 2026, 2027].filter(a => a <= anoAtual + 1);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    financeiroV2.arrecadacaoAnual(ano)
+      .then((r) => {
+        if (cancelled) return;
+        setDados(r);
+        const meses = r?.meses || [];
+        const ultimo = meses.reduceRight((acc, m, i) => acc !== null ? acc : (m.receita > 0 ? i : null), null);
+        setSelectedIdx(ultimo);
+      })
+      .catch((e) => console.warn('[ArrecAnual]:', e?.message))
+      .finally(() => !cancelled && setLoading(false));
+    return () => { cancelled = true; };
+  }, [ano]);
+
+  const meses = dados?.meses || [];
+  const total = dados?.total || 0;
+  const sel = selectedIdx !== null ? meses[selectedIdx] : null;
+  const ant = selectedIdx !== null && selectedIdx > 0 ? meses[selectedIdx - 1] : null;
+  const dRec = sel && ant && ant.receita > 0 ? ((sel.receita - ant.receita) / ant.receita) * 100 : null;
+
+  const onBarClick = (e) => {
+    if (e?.activePayload?.[0]?.payload) {
+      const p = e.activePayload[0].payload;
+      if (typeof p.idx === 'number') setSelectedIdx(p.idx);
+    }
+  };
+
+  const formatado = meses.map((m, i) => ({
+    idx: i,
+    label: m.mes_label,
+    Receita: m.receita,
+    Acumulado: m.acumulado,
+    qtd: m.qtd,
+  }));
+
+  return (
+    <Card>
+      <CardContent className="pt-6">
+        <div className="flex items-start justify-between flex-wrap gap-3 mb-3">
+          <div>
+            <h3 className="text-base font-semibold flex items-center gap-2">
+              Arrecadação Anual · {ano}
+              <Badge variant="outline" className="text-[10px] font-normal">
+                <MousePointer2 className="h-2.5 w-2.5 mr-1" />
+                clique num mês
+              </Badge>
+            </h3>
+            <p className="text-xs text-muted-foreground">
+              Total no ano: <strong>{fmtMoney(total)}</strong> · barras mensais + acumulado · empréstimos excluídos
+            </p>
+          </div>
+          <div className="flex gap-1 flex-wrap">
+            {anos.map(a => (
+              <button
+                key={a}
+                onClick={() => setAno(a)}
+                className={`px-2.5 py-1 text-[11px] rounded-md font-medium transition ${
+                  ano === a ? 'bg-primary text-primary-foreground' : 'bg-muted text-muted-foreground hover:bg-muted/80'
+                }`}
+              >
+                {a}
+              </button>
+            ))}
+          </div>
+        </div>
+        {loading ? (
+          <div className="py-16 flex justify-center"><Loader2 className="h-6 w-6 animate-spin text-primary" /></div>
+        ) : total === 0 ? (
+          <div className="py-12 text-center text-sm text-muted-foreground">Sem dados de {ano} · selecione outro ano</div>
+        ) : (
+          <>
+            <div style={{ width: '100%', height: 320 }}>
+              <ResponsiveContainer>
+                <ComposedChart data={formatado} onClick={onBarClick} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
+                  <defs>
+                    <linearGradient id="gradArrecAnual" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor={C.primary} stopOpacity={0.9} />
+                      <stop offset="100%" stopColor={C.primary} stopOpacity={0.4} />
+                    </linearGradient>
+                    <linearGradient id="gradArrecAnualSel" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor={C.amber} stopOpacity={1} />
+                      <stop offset="100%" stopColor={C.amber} stopOpacity={0.55} />
+                    </linearGradient>
+                  </defs>
+                  <CartesianGrid strokeDasharray="3 3" opacity={0.2} />
+                  <XAxis dataKey="label" tick={{ fontSize: 11 }} />
+                  <YAxis yAxisId="left" tick={{ fontSize: 10 }} tickFormatter={(v) => fmtCompact(v).replace('R$ ', '')} />
+                  <YAxis yAxisId="right" orientation="right" tick={{ fontSize: 10 }} tickFormatter={(v) => fmtCompact(v).replace('R$ ', '')} />
+                  <Tooltip cursor={{ fill: 'rgba(0,179,157,0.08)' }} formatter={(v) => fmtMoney(v)} contentStyle={{ borderRadius: 10, fontSize: 12, border: '1px solid var(--cbrio-border)' }} />
+                  <Legend wrapperStyle={{ fontSize: 11 }} iconSize={10} />
+                  <Bar yAxisId="left" dataKey="Receita" radius={[6, 6, 0, 0]} animationDuration={1200} cursor="pointer">
+                    {formatado.map((entry, i) => (
+                      <Cell key={i} fill={i === selectedIdx ? 'url(#gradArrecAnualSel)' : 'url(#gradArrecAnual)'} stroke={i === selectedIdx ? C.amber : 'transparent'} strokeWidth={i === selectedIdx ? 2 : 0} />
+                    ))}
+                  </Bar>
+                  <Line yAxisId="right" type="monotone" dataKey="Acumulado" stroke={C.purple} strokeWidth={2.5} dot={{ r: 3 }} animationDuration={1500} />
+                </ComposedChart>
+              </ResponsiveContainer>
+            </div>
+            <AnimatePresence mode="wait">
+              {sel && (
+                <motion.div
+                  key={`anosel-${sel.idx}`}
+                  initial={{ opacity: 0, y: 12 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -8 }}
+                  transition={{ duration: 0.4 }}
+                  className="mt-4 pt-4 border-t border-border"
+                >
+                  <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
+                    <span className="text-xs text-muted-foreground">Mês selecionado</span>
+                    <span className="text-sm font-semibold px-2 py-0.5 rounded bg-amber-100 dark:bg-amber-500/20 text-amber-700 dark:text-amber-300">
+                      {sel.label}/{String(ano).slice(2)}
+                    </span>
+                  </div>
+                  <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+                    <SemanaCard label="Arrecadação do mês" icon={Banknote} accent={C.green} valor={fmtMoney(sel.Receita)} delta={dRec} sub="vs mês anterior" anim={`r-${sel.idx}`} />
+                    <SemanaCard label="Acumulado no ano" icon={TrendingUp} accent={C.purple} valor={fmtMoney(sel.Acumulado)} delta={null} sub={`até ${sel.label}`} anim={`a-${sel.idx}`} />
+                    <SemanaCard label="Lançamentos" icon={FileText} accent={C.blue} valor={fmtInt(sel.qtd)} delta={null} sub="no mês" anim={`q-${sel.idx}`} />
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
+          </>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+// ============================================================
+// NOVO · Receita vs Saída mensal (barras lado a lado · Performance)
+// ============================================================
+function ReceitaVsSaidaMensal() {
+  const anoAtual = new Date().getFullYear();
+  const [ano, setAno] = useState(anoAtual);
+  const [dados, setDados] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [selectedIdx, setSelectedIdx] = useState(null);
+
+  const anos = [2022, 2023, 2024, 2025, 2026, 2027].filter(a => a <= anoAtual + 1);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    financeiroV2.arrecadacaoAnual(ano)
+      .then((r) => {
+        if (cancelled) return;
+        setDados(r);
+        const meses = r?.meses || [];
+        const ultimo = meses.reduceRight((acc, m, i) => acc !== null ? acc : ((m.receita > 0 || m.despesa > 0) ? i : null), null);
+        setSelectedIdx(ultimo);
+      })
+      .catch((e) => console.warn('[RecVsSai]:', e?.message))
+      .finally(() => !cancelled && setLoading(false));
+    return () => { cancelled = true; };
+  }, [ano]);
+
+  const meses = dados?.meses || [];
+  const sel = selectedIdx !== null ? meses[selectedIdx] : null;
+
+  const onBarClick = (e) => {
+    if (e?.activePayload?.[0]?.payload) {
+      const p = e.activePayload[0].payload;
+      if (typeof p.idx === 'number') setSelectedIdx(p.idx);
+    }
+  };
+
+  const formatado = meses.map((m, i) => ({
+    idx: i, label: m.mes_label,
+    Receita: m.receita, Despesa: m.despesa, Resultado: m.resultado,
+  }));
+
+  const totalReceita = meses.reduce((s, m) => s + m.receita, 0);
+  const totalDespesa = meses.reduce((s, m) => s + m.despesa, 0);
+  const resultadoAno = totalReceita - totalDespesa;
+
+  return (
+    <Card>
+      <CardContent className="pt-6">
+        <div className="flex items-start justify-between flex-wrap gap-3 mb-3">
+          <div>
+            <h3 className="text-base font-semibold flex items-center gap-2">
+              Receita × Saída mensal · {ano}
+              <Badge variant="outline" className="text-[10px] font-normal">
+                <MousePointer2 className="h-2.5 w-2.5 mr-1" />
+                clique num mês
+              </Badge>
+            </h3>
+            <p className="text-xs text-muted-foreground">
+              Resultado do ano: <strong className={resultadoAno >= 0 ? 'text-emerald-600' : 'text-rose-600'}>{fmtMoney(resultadoAno)}</strong>
+              · empréstimos e transferências excluídos
+            </p>
+          </div>
+          <div className="flex gap-1 flex-wrap">
+            {anos.map(a => (
+              <button key={a} onClick={() => setAno(a)} className={`px-2.5 py-1 text-[11px] rounded-md font-medium transition ${ano === a ? 'bg-primary text-primary-foreground' : 'bg-muted text-muted-foreground hover:bg-muted/80'}`}>
+                {a}
+              </button>
+            ))}
+          </div>
+        </div>
+        {loading ? (
+          <div className="py-16 flex justify-center"><Loader2 className="h-6 w-6 animate-spin text-primary" /></div>
+        ) : meses.every(m => m.receita === 0 && m.despesa === 0) ? (
+          <div className="py-12 text-center text-sm text-muted-foreground">Sem dados de {ano}</div>
+        ) : (
+          <>
+            <div style={{ width: '100%', height: 340 }}>
+              <ResponsiveContainer>
+                <BarChart data={formatado} onClick={onBarClick} barGap={4} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
+                  <defs>
+                    <linearGradient id="gradMesReceita" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor={C.green} stopOpacity={0.95} />
+                      <stop offset="100%" stopColor={C.green} stopOpacity={0.5} />
+                    </linearGradient>
+                    <linearGradient id="gradMesDespesa" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor={C.red} stopOpacity={0.95} />
+                      <stop offset="100%" stopColor={C.red} stopOpacity={0.5} />
+                    </linearGradient>
+                  </defs>
+                  <CartesianGrid strokeDasharray="3 3" opacity={0.2} />
+                  <XAxis dataKey="label" tick={{ fontSize: 11 }} />
+                  <YAxis tick={{ fontSize: 10 }} tickFormatter={(v) => fmtCompact(v).replace('R$ ', '')} />
+                  <Tooltip cursor={{ fill: 'rgba(0,179,157,0.06)' }} formatter={(v) => fmtMoney(v)} contentStyle={{ borderRadius: 10, fontSize: 12, border: '1px solid var(--cbrio-border)' }} />
+                  <Legend wrapperStyle={{ fontSize: 11 }} iconSize={10} />
+                  <Bar dataKey="Receita" radius={[6, 6, 0, 0]} animationDuration={1200} cursor="pointer">
+                    {formatado.map((entry, i) => (
+                      <Cell key={i} fill="url(#gradMesReceita)" stroke={i === selectedIdx ? C.amber : 'transparent'} strokeWidth={i === selectedIdx ? 2 : 0} />
+                    ))}
+                  </Bar>
+                  <Bar dataKey="Despesa" radius={[6, 6, 0, 0]} animationDuration={1400} cursor="pointer">
+                    {formatado.map((entry, i) => (
+                      <Cell key={i} fill="url(#gradMesDespesa)" stroke={i === selectedIdx ? C.amber : 'transparent'} strokeWidth={i === selectedIdx ? 2 : 0} />
+                    ))}
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+            <AnimatePresence mode="wait">
+              {sel && (
+                <motion.div
+                  key={`rvs-${sel.idx}`}
+                  initial={{ opacity: 0, y: 12 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -8 }}
+                  transition={{ duration: 0.4 }}
+                  className="mt-4 pt-4 border-t border-border"
+                >
+                  <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
+                    <span className="text-xs text-muted-foreground">Mês selecionado</span>
+                    <span className="text-sm font-semibold px-2 py-0.5 rounded bg-amber-100 dark:bg-amber-500/20 text-amber-700 dark:text-amber-300">
+                      {sel.mes_label}/{String(ano).slice(2)}
+                    </span>
+                  </div>
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                    <SemanaCard label="Arrecadação" icon={Banknote} accent={C.green} valor={fmtMoney(sel.receita)} delta={null} sub="no mês" anim={`r-${sel.idx}`} />
+                    <SemanaCard label="Saídas" icon={TrendingDown} accent={C.red} valor={fmtMoney(sel.despesa)} delta={null} sub="no mês" anim={`d-${sel.idx}`} />
+                    <SemanaCard label="Resultado" icon={Activity} accent={sel.resultado >= 0 ? C.green : C.red} valor={fmtMoney(sel.resultado)} delta={null} sub="receita − despesa" anim={`res-${sel.idx}`} />
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
+          </>
+        )}
+      </CardContent>
+    </Card>
   );
 }
