@@ -1844,6 +1844,7 @@ router.get('/freq-arrecadacao-semanal', async (req, res) => {
   try {
     const semanas = Math.min(Number(req.query.semanas || 20), 104);
     const hoje = new Date();
+    const hojeISO = hoje.toISOString().slice(0, 10);
     // Volta N+2 semanas pra ter cushion
     const inicio = new Date(hoje.getTime() - (semanas + 2) * 7 * 86400000)
       .toISOString().slice(0, 10);
@@ -1852,6 +1853,7 @@ router.get('/freq-arrecadacao-semanal', async (req, res) => {
       .from('vw_fin_freq_vs_arrecadacao_semanal')
       .select('*')
       .gte('semana_inicio', inicio)
+      .lte('semana_inicio', hojeISO) // ⚠️ corta semanas futuras (cultos agendados sem dados)
       .order('semana_inicio', { ascending: true });
 
     if (error) return res.status(400).json({ error: error.message });
