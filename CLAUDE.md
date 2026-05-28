@@ -51,6 +51,31 @@ mesmo padrão do mobile `cultos_dados_submissoes`). Cobaias: Grupos + Integraç�
 `https://[dominio]/api/whatsapp/webhook`. Sem essas envs o backend sobe
 normal · só não envia/recebe (parser e tela funcionam pra teste).
 
+## ⚠️ Regra contábil · empréstimos NÃO são receita ordinária (2026-05-28)
+
+Decisão do Marcos: em qualquer cálculo, agregação, KPI ou visualização de
+**receita** da igreja, **empréstimos NÃO entram como receita ordinária**.
+
+- Empréstimo é **entrada de caixa** (cashflow financiamento), não receita.
+- Receita ordinária = dízimos, ofertas, contribuições, eventos pagos,
+  campanhas, vendas. Origem operacional/ministerial.
+- Receita extraordinária ≠ empréstimo. Doação grande extraordinária pode
+  entrar como extraordinária; empréstimo segue como movimentação financeira
+  separada (passivo a pagar).
+
+Onde aplicar a regra:
+- Dashboards/KPIs financeiros (DRE, "Receita total", "Receita do mês")
+- Categorizações automáticas (`fin_padroes_classificacao`, agente
+  executor financeiro)
+- Relatórios de governança e dízimo/oferta
+- Qualquer agregação `SUM(valor)` sobre lançamentos com tipo de
+  receita: filtrar/excluir categoria de empréstimo
+
+Quando criar nova view ou query de receita, garantir que a categoria
+empréstimo (e tipos correlatos como "captação", "financiamento", "mútuo")
+fique fora do total. Se houver dúvida sobre uma categoria nova, **perguntar
+antes** de incluí-la em "receita".
+
 ## Agente Executor Financeiro · Worker Railway (2026-05-26)
 
 Primeiro agente "ativo" do sistema (auditores existentes em
