@@ -205,7 +205,26 @@ router.get('/compromissos-recorrentes', authorizeModule('marketing', 1), async (
       .order('dia_semana')
       .order('hora_inicio');
     if (error) throw error;
-    res.json(data || []);
+
+    // Junction · 1 row por participante · agrupa em array
+    const ids = (data || []).map(r => r.id);
+    let partMap = {};
+    if (ids.length) {
+      const { data: parts } = await supabase
+        .from('marketing_recorrentes_participantes')
+        .select('compromisso_id, membro_id')
+        .in('compromisso_id', ids);
+      partMap = (parts || []).reduce((acc, p) => {
+        if (!acc[p.compromisso_id]) acc[p.compromisso_id] = [];
+        acc[p.compromisso_id].push(p.membro_id);
+        return acc;
+      }, {});
+    }
+    const enriched = (data || []).map(r => ({
+      ...r,
+      participantes_ids: partMap[r.id] || [],
+    }));
+    res.json(enriched);
   } catch (e) {
     console.error('[MARKETING] recorrentes:', e.message);
     res.status(500).json({ error: e.message });
@@ -1221,43 +1240,98 @@ router.get('/admin/recorrentes', authorizeModule('marketing', 5), async (req, re
       .from('marketing_compromissos_recorrentes')
       .select('*')
       .is('deleted_at', null)
-      .order('membro_id').order('dia_semana').order('hora_inicio');
+      .order('dia_semana').order('hora_inicio');
     if (error) throw error;
-    res.json(data || []);
+
+    const ids = (data || []).map(r => r.id);
+    let partMap = {};
+    if (ids.length) {
+      const { data: parts } = await supabase
+        .from('marketing_recorrentes_participantes')
+        .select('compromisso_id, membro_id')
+        .in('compromisso_id', ids);
+      partMap = (parts || []).reduce((acc, p) => {
+        if (!acc[p.compromisso_id]) acc[p.compromisso_id] = [];
+        acc[p.compromisso_id].push(p.membro_id);
+        return acc;
+      }, {});
+    }
+    res.json((data || []).map(r => ({ ...r, participantes_ids: partMap[r.id] || [] })));
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 router.post('/admin/recorrentes', authorizeModule('marketing', 5), async (req, res) => {
   try {
-    const { membro_id, dia_semana, hora_inicio, duracao_h, descricao } = req.body || {};
-    if (!membro_id || dia_semana == null || !hora_inicio || !duracao_h || !descricao) {
-      return res.status(400).json({ error: 'membro_id, dia_semana, hora_inicio, duracao_h, descricao obrigatorios' });
+    const { participantes_ids, dia_semana, hora_inicio, duracao_h, descricao } = req.body || {};
+    if (!Array.isArray(participantes_ids) || participantes_ids.length === 0 ||
+        dia_semana == null || !hora_inicio || !duracao_h || !descricao) {
+      return res.status(400).json({ error: 'participantes_ids (array, >=1), dia_semana, hora_inicio, duracao_h, descricao obrigatorios' });
     }
     const { data, error } = await supabase
       .from('marketing_compromissos_recorrentes')
-      .insert({ membro_id, dia_semana, hora_inicio, duracao_h, descricao, ativo: true })
+      .insert({ dia_semana, hora_inicio, duracao_h, descricao, ativo: true })
       .select('*').single();
     if (error) throw error;
-    res.status(201).json(data);
+
+    // Insere participantes
+    const rows = participantes_ids.map(membro_id => ({ compromisso_id: data.id, membro_id }));
+    const { error: partErr } = await supabase
+      .from('marketing_recorrentes_participantes')
+      .insert(rows);
+    if (partErr) {
+      // Rollback · soft delete o compromisso recem criado
+      await supabase.from('marketing_compromissos_recorrentes')
+        .update({ deleted_at: new Date().toISOString() })
+        .eq('id', data.id);
+      throw partErr;
+    }
+
+    res.status(201).json({ ...data, participantes_ids });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 router.patch('/admin/recorrentes/:id', authorizeModule('marketing', 5), async (req, res) => {
   try {
     const update = {};
-    const { dia_semana, hora_inicio, duracao_h, descricao, ativo } = req.body || {};
+    const { participantes_ids, dia_semana, hora_inicio, duracao_h, descricao, ativo } = req.body || {};
     if (dia_semana !== undefined) update.dia_semana = dia_semana;
     if (hora_inicio !== undefined) update.hora_inicio = hora_inicio;
     if (duracao_h !== undefined) update.duracao_h = duracao_h;
     if (descricao !== undefined) update.descricao = descricao;
     if (ativo !== undefined) update.ativo = !!ativo;
-    const { data, error } = await supabase
+
+    if (Object.keys(update).length > 0) {
+      const { error } = await supabase
+        .from('marketing_compromissos_recorrentes')
+        .update(update)
+        .eq('id', req.params.id);
+      if (error) throw error;
+    }
+
+    // Substitui participantes se enviado · DELETE + INSERT em batch
+    if (Array.isArray(participantes_ids)) {
+      if (participantes_ids.length === 0) {
+        return res.status(400).json({ error: 'participantes_ids nao pode ser array vazio · use DELETE no compromisso pra remover' });
+      }
+      const { error: delErr } = await supabase
+        .from('marketing_recorrentes_participantes')
+        .delete()
+        .eq('compromisso_id', req.params.id);
+      if (delErr) throw delErr;
+      const rows = participantes_ids.map(membro_id => ({ compromisso_id: req.params.id, membro_id }));
+      const { error: insErr } = await supabase
+        .from('marketing_recorrentes_participantes')
+        .insert(rows);
+      if (insErr) throw insErr;
+    }
+
+    const { data: novo } = await supabase
       .from('marketing_compromissos_recorrentes')
-      .update(update)
-      .eq('id', req.params.id)
-      .select('*').single();
-    if (error) throw error;
-    res.json(data);
+      .select('*').eq('id', req.params.id).single();
+    const { data: parts } = await supabase
+      .from('marketing_recorrentes_participantes')
+      .select('membro_id').eq('compromisso_id', req.params.id);
+    res.json({ ...novo, participantes_ids: (parts || []).map(p => p.membro_id) });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
