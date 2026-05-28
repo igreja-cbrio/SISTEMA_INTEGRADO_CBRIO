@@ -1047,6 +1047,12 @@ export const marketing = {
     remove:   (entregavelId) => del(`/marketing/entregaveis/${entregavelId}`),
   },
 
+  // Analytics (Spec 013)
+  analytics: {
+    kpis:              (semanas = 12) => get(`/marketing/analytics/kpis?semanas=${semanas}`),
+    aprovacoesOrigem:  (dias = 90) => get(`/marketing/analytics/aprovacoes-origem?dias=${dias}`),
+  },
+
   // Admin (Spec 009 · nivel 5)
   admin: {
     membros: {
