@@ -67,18 +67,23 @@ async function enrichCards(cards) {
   const destinoIds  = [...new Set(cards.map(c => c.etiqueta_destino_id).filter(Boolean))];
   const membroIds   = [...new Set(cards.map(c => c.atribuido_a).filter(Boolean))];
   const solicIds    = [...new Set(cards.map(c => c.solicitacao_id).filter(Boolean))];
+  const cycleTaskIds= [...new Set(cards.map(c => c.cycle_phase_task_id).filter(Boolean))];
 
-  const [tipos, destinos, membros, solics] = await Promise.all([
+  const [tipos, destinos, membros, solics, cycleTasks] = await Promise.all([
     tipoIds.length    ? supabase.from('marketing_etiquetas_tipo').select('id, slug, nome, cor, habilidade_padrao, esforco_max_h').in('id', tipoIds) : Promise.resolve({ data: [] }),
     destinoIds.length ? supabase.from('marketing_etiquetas_destino').select('id, slug, nome, cor').in('id', destinoIds) : Promise.resolve({ data: [] }),
     membroIds.length  ? supabase.from('marketing_membros').select('id, profile_id, habilidade, nome_display').in('id', membroIds) : Promise.resolve({ data: [] }),
     solicIds.length   ? supabase.from('solicitacoes').select('id, titulo, solicitante_id, eh_urgente, urgencia_decisao').in('id', solicIds) : Promise.resolve({ data: [] }),
+    cycleTaskIds.length ? supabase.from('cycle_phase_tasks')
+      .select('id, event_id, event_phase_id, is_critical, prioridade, events:event_id(id, name), event_cycle_phases:event_phase_id(nome_fase, numero_fase)')
+      .in('id', cycleTaskIds) : Promise.resolve({ data: [] }),
   ]);
 
   const tipoMap     = Object.fromEntries((tipos.data    || []).map(t => [t.id, t]));
   const destinoMap  = Object.fromEntries((destinos.data || []).map(d => [d.id, d]));
   const membroMap   = Object.fromEntries((membros.data  || []).map(m => [m.id, m]));
   const solicMap    = Object.fromEntries((solics.data   || []).map(s => [s.id, s]));
+  const cycleMap    = Object.fromEntries((cycleTasks.data || []).map(t => [t.id, t]));
 
   // Resolve profile names dos membros + solicitantes em 1 query
   const profileIds = [
@@ -106,6 +111,19 @@ async function enrichCards(cards) {
       ...solicMap[c.solicitacao_id],
       solicitante: profileMap[solicMap[c.solicitacao_id]?.solicitante_id] || null,
     } : null,
+    cycle_phase_task: c.cycle_phase_task_id ? (() => {
+      const t = cycleMap[c.cycle_phase_task_id];
+      if (!t) return null;
+      return {
+        id: t.id,
+        event_id: t.event_id,
+        event_name: t.events?.name || null,
+        fase: t.event_cycle_phases ? `${t.event_cycle_phases.numero_fase}. ${t.event_cycle_phases.nome_fase}` : null,
+        is_critical: t.is_critical,
+        prioridade: t.prioridade,
+        link: t.event_id ? `/eventos/${t.event_id}` : null,
+      };
+    })() : null,
   }));
 }
 

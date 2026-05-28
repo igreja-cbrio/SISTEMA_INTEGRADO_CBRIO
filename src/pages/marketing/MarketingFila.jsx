@@ -265,6 +265,11 @@ function FilaRow({ card, index, isCoord, isDragOver, onDragStart, onDragOver, on
               {card.etiqueta_tipo.esforco_max_h ? ` · ${card.etiqueta_tipo.esforco_max_h}h` : ''}
             </Badge>
           )}
+          {card.cycle_phase_task?.fase && (
+            <Badge className="text-[10px] px-1.5 py-0.5 bg-purple-500/15 text-purple-700 dark:text-purple-400">
+              {card.cycle_phase_task.fase} · {card.cycle_phase_task.event_name}
+            </Badge>
+          )}
           <span className="flex items-center gap-1">
             <User2 className="h-3 w-3" />
             {card.atribuido?.profile?.name || '(sem atribuição)'}

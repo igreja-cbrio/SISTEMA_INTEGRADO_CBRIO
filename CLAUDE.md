@@ -2,6 +2,52 @@
 
 Guia operacional para o Claude Code quando trabalhar neste repositório.
 
+## Marketing · Spec 022 · Ciclo criativo de Eventos aparece no Kanban (2026-05-28)
+
+Marcos: "as demandas de ciclo criativo que ficam no módulo de eventos devem ser listadas aqui também, por fases · pode ficar com o Pedro a responsabilidade de delegar · preenchimento continua no módulo de eventos, só um clique que abre lá."
+
+**Problema descoberto:** o trigger Spec 004 escutava `event_tasks` (tabela simples · 2 rows) mas o ciclo criativo real usa `cycle_phase_tasks` (689 rows · 105 com `area='marketing'`). Por isso 0 cards estavam materializando do ciclo.
+
+**Mudança estrutural:**
+- `marketing_kanban_cards` ganha coluna `cycle_phase_task_id uuid` (FK SET NULL)
+- UNIQUE parcial garante 1 card por cycle_phase_task
+- CHECK constraint atualizada · `origem='evento'` aceita `evento_task_id` OU `cycle_phase_task_id`
+- Trigger novo `fn_marketing_cards_cycle_phase_sync` em `cycle_phase_tasks`:
+  - AFTER INSERT/UPDATE OF area, status, titulo, descricao, prazo
+  - `area=marketing` + status=`pendente`/`em-andamento`/`concluida` → card com estado correspondente
+  - `area` mudou DE marketing → soft-delete do card (evita órfão)
+  - Atualizações no ciclo refletem no card automaticamente
+
+**Mapeamento status → estado:**
+| cycle_phase_tasks.status | marketing_kanban_cards.estado |
+|---|---|
+| `pendente` | `fila` |
+| `em-andamento` | `em_producao` |
+| `concluida` | `concluido` (+ `entregue_em` preenchido) |
+
+**Backfill (na migration):** 105 cards · 101 fila + 4 concluído.
+
+**Backend (`routes/marketing.js`):**
+- `enrichCards` resolve `cycle_phase_task_id` → objeto com:
+  - `event_name` (do evento pai)
+  - `fase` formatada `"3. Brainstorming e Conceito"`
+  - `is_critical`, `prioridade`
+  - `link` `/eventos/:event_id`
+
+**Frontend:**
+- `MarketingKanban` · drawer mostra bloco roxo "Origem · Ciclo criativo" com botão **"Abrir no Eventos"** (target=_blank)
+- Card mini ganha badge roxo da fase + nome do evento ao lado
+- `MarketingFila` · linha mostra "Fase · Evento" no segundo plano
+
+**Filosofia da integração:**
+- **Atribuição é local do Marketing** · Pedro define `atribuido_a` no card · NÃO toca `cycle_phase_tasks.responsavel_id`
+- **Estado/conclusão é local do Eventos** · trigger sincroniza pro card · UI Marketing mostra mas não edita
+- **Card é "espelho com atribuição local"** · vantagem dupla (visibilidade Marketing + autoridade Eventos)
+
+**Capacidade:** os 105 cards entram no cálculo de `fn_marketing_calcular_capacidade_semana` se tiverem `atribuido_a` preenchido. Como nenhum tem ainda (Pedro distribui), eles ficam invisíveis no calendário até Pedro atribuir.
+
+**Migration `20260528360000_marketing_cycle_phase_tasks.sql` aplicável depois da Spec 021.**
+
 ## Marketing · Spec 021 · Cleanup legacy + Aline + Notificações (2026-05-28)
 
 Pós-auditoria · 3 ações Marcos:
