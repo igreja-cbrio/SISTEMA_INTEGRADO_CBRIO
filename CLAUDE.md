@@ -2,6 +2,43 @@
 
 Guia operacional para o Claude Code quando trabalhar neste repositório.
 
+## Marketing · Spec 007 · Frontend Kanban /marketing (2026-05-28)
+
+Primeira tela do módulo · Kanban completo com 4 colunas, filtros, drawer de detalhe e upload SharePoint integrado.
+
+**Página nova: `src/pages/marketing/MarketingKanban.jsx`**
+- 4 colunas: Fila · Em produção · Aguardando solicitante · Concluído
+- Filtros (top): origem · tipo · destino · membro atribuído
+- Drag-and-drop (Pedro Paiva + admins) entre estados · realtime via Supabase channel
+- Card mostra: badge origem · etiqueta tipo+destino (com cor do banco) · atribuído · prazo · selos urgência/revisão · atraso em horas/dias
+- Drawer lateral (Sheet) de detalhe + edição com:
+  - Bloco "Origem · Solicitação" quando aplicável (mostra solicitante)
+  - Form de edição (título · descrição · tipo · destino · atribuído · prazo · estado · raia rápida)
+  - **Entregáveis** com upload (Spec 006 integrado) · link direto pra download Graph
+  - Botão "Salvar" · "Cancelar" · "Excluir" (só admin · nível 5)
+- Botão "+ Nova task interna" (só admin · nível 5) abre Dialog com form (origem='interna')
+- Borda do card colorida:
+  - Vermelha = urgente (`raia_rapida`)
+  - Âmbar = revisão (`tem_revisao`)
+  - Primary teal = padrão
+
+**Rotas (`src/App.tsx`):**
+- `/marketing` · `ModuleGuard moduleSlug="marketing" nivelMinimo=1` (read pra diretoria · 3+ pra equipe via boost)
+
+**Menu (`AppShell.jsx`):**
+- Item "Marketing" adicionado em Ministerial > Áreas (junto com Online/Kids/AMI/Bridge)
+- `module: 'marketing'` · aparece pra quem tem leitura ≥ 1
+- Item antigo `/criativo/marketing` removido (rota não existia)
+
+**Comportamento `produtor vs coordenador`:**
+- Coordenador (nível 5 via boost de área) · edita tudo · drag-and-drop · cria task interna · exclui
+- Produtor (nível 3 via boost · todos os assistentes-marketing) · vê tudo · só pode trocar **estado** dos próprios cards (RLS no SQL + check no backend duplicam · UI já bloqueia campos no Drawer)
+- Solicitante (nível 0 no módulo) · não acessa o Kanban · vê só preview do próprio card pelo módulo Solicitações (Spec 012)
+
+**Realtime:** Supabase channel em `marketing_kanban_cards` recarrega lista quando qualquer card muda (debounced 500ms).
+
+**Mobile responsivo:** colunas viram 1 (xs), 2 (md), 4 (xl). Drawer vira full-width no mobile.
+
 ## Marketing · Spec 006 · Upload SharePoint via Microsoft Graph (2026-05-28)
 
 Spec 006 fecha o backend do módulo (Fase B Core). Entregáveis (arquivos finais
