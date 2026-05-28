@@ -750,4 +750,300 @@ router.patch('/cards/:id/decidir-urgencia', authorizeModule('marketing', 5), asy
   }
 });
 
+// ═══════════════════════════════════════════════════════════════════════
+// ADMIN · CRUD das 4 entidades (Spec 009 · so nivel 5)
+// ═══════════════════════════════════════════════════════════════════════
+
+// ─── Membros ────────────────────────────────────────────────────────────────
+
+router.get('/admin/membros', authorizeModule('marketing', 5), async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('marketing_membros')
+      .select('*')
+      .is('deleted_at', null)
+      .order('habilidade');
+    if (error) throw error;
+    const profileIds = [...new Set((data || []).map(m => m.profile_id).filter(Boolean))];
+    let profileMap = {};
+    if (profileIds.length) {
+      const { data: profs } = await supabase.from('profiles').select('id, name, email').in('id', profileIds);
+      profileMap = Object.fromEntries((profs || []).map(p => [p.id, p]));
+    }
+    res.json((data || []).map(m => ({ ...m, profile: profileMap[m.profile_id] || null })));
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+router.post('/admin/membros', authorizeModule('marketing', 5), async (req, res) => {
+  try {
+    const { profile_id, habilidade, horas_semanais, observacao } = req.body || {};
+    if (!profile_id || !habilidade) return res.status(400).json({ error: 'profile_id e habilidade obrigatorios' });
+    const { data, error } = await supabase
+      .from('marketing_membros')
+      .insert({
+        profile_id, habilidade,
+        horas_semanais: horas_semanais ?? 30,
+        observacao: observacao || null,
+        ativo: true,
+      })
+      .select('*')
+      .single();
+    if (error) throw error;
+    res.status(201).json(data);
+  } catch (e) {
+    if (/duplicate key/i.test(e.message)) {
+      return res.status(409).json({ error: 'Este profile ja tem essa habilidade · use PATCH pra editar.' });
+    }
+    res.status(500).json({ error: e.message });
+  }
+});
+
+router.patch('/admin/membros/:id', authorizeModule('marketing', 5), async (req, res) => {
+  try {
+    const update = {};
+    const { habilidade, horas_semanais, observacao, ativo } = req.body || {};
+    if (habilidade !== undefined) update.habilidade = habilidade;
+    if (horas_semanais !== undefined) update.horas_semanais = horas_semanais;
+    if (observacao !== undefined) update.observacao = observacao;
+    if (ativo !== undefined) update.ativo = !!ativo;
+    update.updated_at = new Date().toISOString();
+    const { data, error } = await supabase
+      .from('marketing_membros')
+      .update(update)
+      .eq('id', req.params.id)
+      .select('*')
+      .single();
+    if (error) throw error;
+    res.json(data);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+router.delete('/admin/membros/:id', authorizeModule('marketing', 5), async (req, res) => {
+  try {
+    const { error } = await supabase.rpc('app_soft_delete', {
+      p_table_name: 'marketing_membros',
+      p_row_id: req.params.id,
+      p_deleted_by: req.user.userId,
+    });
+    if (error) throw error;
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ─── Etiquetas tipo ─────────────────────────────────────────────────────────
+
+router.get('/admin/etiquetas/tipo', authorizeModule('marketing', 5), async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('marketing_etiquetas_tipo')
+      .select('*')
+      .order('ordem');
+    if (error) throw error;
+    res.json(data || []);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+router.post('/admin/etiquetas/tipo', authorizeModule('marketing', 5), async (req, res) => {
+  try {
+    const { slug, nome, habilidade_padrao, esforco_medio_h, cor, ordem } = req.body || {};
+    if (!slug || !nome) return res.status(400).json({ error: 'slug e nome obrigatorios' });
+    const { data, error } = await supabase
+      .from('marketing_etiquetas_tipo')
+      .insert({ slug, nome, habilidade_padrao, esforco_medio_h, cor, ordem: ordem ?? 100, ativo: true })
+      .select('*').single();
+    if (error) throw error;
+    res.status(201).json(data);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+router.patch('/admin/etiquetas/tipo/:id', authorizeModule('marketing', 5), async (req, res) => {
+  try {
+    const update = {};
+    const { nome, habilidade_padrao, esforco_medio_h, cor, ordem, ativo } = req.body || {};
+    if (nome !== undefined) update.nome = nome;
+    if (habilidade_padrao !== undefined) update.habilidade_padrao = habilidade_padrao;
+    if (esforco_medio_h !== undefined) update.esforco_medio_h = esforco_medio_h;
+    if (cor !== undefined) update.cor = cor;
+    if (ordem !== undefined) update.ordem = ordem;
+    if (ativo !== undefined) update.ativo = !!ativo;
+    const { data, error } = await supabase
+      .from('marketing_etiquetas_tipo')
+      .update(update)
+      .eq('id', req.params.id)
+      .select('*').single();
+    if (error) throw error;
+    res.json(data);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ─── Etiquetas destino ──────────────────────────────────────────────────────
+
+router.get('/admin/etiquetas/destino', authorizeModule('marketing', 5), async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('marketing_etiquetas_destino')
+      .select('*')
+      .order('ordem');
+    if (error) throw error;
+    res.json(data || []);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+router.post('/admin/etiquetas/destino', authorizeModule('marketing', 5), async (req, res) => {
+  try {
+    const { slug, nome, cor, ordem } = req.body || {};
+    if (!slug || !nome) return res.status(400).json({ error: 'slug e nome obrigatorios' });
+    const { data, error } = await supabase
+      .from('marketing_etiquetas_destino')
+      .insert({ slug, nome, cor, ordem: ordem ?? 100, ativo: true })
+      .select('*').single();
+    if (error) throw error;
+    res.status(201).json(data);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+router.patch('/admin/etiquetas/destino/:id', authorizeModule('marketing', 5), async (req, res) => {
+  try {
+    const update = {};
+    const { nome, cor, ordem, ativo } = req.body || {};
+    if (nome !== undefined) update.nome = nome;
+    if (cor !== undefined) update.cor = cor;
+    if (ordem !== undefined) update.ordem = ordem;
+    if (ativo !== undefined) update.ativo = !!ativo;
+    const { data, error } = await supabase
+      .from('marketing_etiquetas_destino')
+      .update(update)
+      .eq('id', req.params.id)
+      .select('*').single();
+    if (error) throw error;
+    res.json(data);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ─── Recorrentes ────────────────────────────────────────────────────────────
+
+router.get('/admin/recorrentes', authorizeModule('marketing', 5), async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('marketing_compromissos_recorrentes')
+      .select('*')
+      .is('deleted_at', null)
+      .order('membro_id').order('dia_semana').order('hora_inicio');
+    if (error) throw error;
+    res.json(data || []);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+router.post('/admin/recorrentes', authorizeModule('marketing', 5), async (req, res) => {
+  try {
+    const { membro_id, dia_semana, hora_inicio, duracao_h, descricao } = req.body || {};
+    if (!membro_id || dia_semana == null || !hora_inicio || !duracao_h || !descricao) {
+      return res.status(400).json({ error: 'membro_id, dia_semana, hora_inicio, duracao_h, descricao obrigatorios' });
+    }
+    const { data, error } = await supabase
+      .from('marketing_compromissos_recorrentes')
+      .insert({ membro_id, dia_semana, hora_inicio, duracao_h, descricao, ativo: true })
+      .select('*').single();
+    if (error) throw error;
+    res.status(201).json(data);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+router.patch('/admin/recorrentes/:id', authorizeModule('marketing', 5), async (req, res) => {
+  try {
+    const update = {};
+    const { dia_semana, hora_inicio, duracao_h, descricao, ativo } = req.body || {};
+    if (dia_semana !== undefined) update.dia_semana = dia_semana;
+    if (hora_inicio !== undefined) update.hora_inicio = hora_inicio;
+    if (duracao_h !== undefined) update.duracao_h = duracao_h;
+    if (descricao !== undefined) update.descricao = descricao;
+    if (ativo !== undefined) update.ativo = !!ativo;
+    const { data, error } = await supabase
+      .from('marketing_compromissos_recorrentes')
+      .update(update)
+      .eq('id', req.params.id)
+      .select('*').single();
+    if (error) throw error;
+    res.json(data);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+router.delete('/admin/recorrentes/:id', authorizeModule('marketing', 5), async (req, res) => {
+  try {
+    const { error } = await supabase.rpc('app_soft_delete', {
+      p_table_name: 'marketing_compromissos_recorrentes',
+      p_row_id: req.params.id,
+      p_deleted_by: req.user.userId,
+    });
+    if (error) throw error;
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ─── Overrides de capacidade (ferias / picos) ───────────────────────────────
+
+router.get('/admin/overrides', authorizeModule('marketing', 5), async (req, res) => {
+  try {
+    const { desde, ate } = req.query;
+    let q = supabase
+      .from('marketing_capacidade_override')
+      .select('*')
+      .is('deleted_at', null)
+      .order('semana_inicio', { ascending: false });
+    if (desde) q = q.gte('semana_inicio', desde);
+    if (ate)   q = q.lte('semana_inicio', ate);
+    const { data, error } = await q;
+    if (error) throw error;
+    res.json(data || []);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+router.post('/admin/overrides', authorizeModule('marketing', 5), async (req, res) => {
+  try {
+    const { membro_id, semana_inicio, horas_disponiveis, motivo } = req.body || {};
+    if (!membro_id || !semana_inicio || horas_disponiveis == null) {
+      return res.status(400).json({ error: 'membro_id, semana_inicio, horas_disponiveis obrigatorios' });
+    }
+    const { data, error } = await supabase
+      .from('marketing_capacidade_override')
+      .insert({ membro_id, semana_inicio, horas_disponiveis, motivo: motivo || null, created_by: req.user.userId })
+      .select('*').single();
+    if (error) throw error;
+    res.status(201).json(data);
+  } catch (e) {
+    if (/duplicate key/i.test(e.message)) {
+      return res.status(409).json({ error: 'Ja existe override pra esse membro nessa semana · use PATCH' });
+    }
+    res.status(500).json({ error: e.message });
+  }
+});
+
+router.patch('/admin/overrides/:id', authorizeModule('marketing', 5), async (req, res) => {
+  try {
+    const update = {};
+    const { horas_disponiveis, motivo } = req.body || {};
+    if (horas_disponiveis !== undefined) update.horas_disponiveis = horas_disponiveis;
+    if (motivo !== undefined) update.motivo = motivo;
+    const { data, error } = await supabase
+      .from('marketing_capacidade_override')
+      .update(update)
+      .eq('id', req.params.id)
+      .select('*').single();
+    if (error) throw error;
+    res.json(data);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+router.delete('/admin/overrides/:id', authorizeModule('marketing', 5), async (req, res) => {
+  try {
+    const { error } = await supabase.rpc('app_soft_delete', {
+      p_table_name: 'marketing_capacidade_override',
+      p_row_id: req.params.id,
+      p_deleted_by: req.user.userId,
+    });
+    if (error) throw error;
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 module.exports = router;

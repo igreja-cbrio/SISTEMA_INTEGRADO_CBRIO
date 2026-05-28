@@ -15,7 +15,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from 
 import { ScrollArea } from '../../components/ui/scroll-area';
 import {
   Megaphone, Plus, Filter, Clock, Loader2, CheckCircle2, AlertCircle,
-  Zap, RefreshCw, ArrowRight, Calendar, CalendarDays, User2, FileText, Upload, Trash2, X,
+  Zap, RefreshCw, ArrowRight, Calendar, CalendarDays, Settings, User2, FileText, Upload, Trash2, X,
 } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -150,6 +150,11 @@ export default function MarketingKanban() {
           <Button variant="outline" size="sm" onClick={() => navigate('/marketing/calendario')} className="gap-1.5">
             <CalendarDays className="h-4 w-4" /> Calendário
           </Button>
+          {isCoordenador && (
+            <Button variant="outline" size="sm" onClick={() => navigate('/marketing/admin')} className="gap-1.5">
+              <Settings className="h-4 w-4" /> Admin
+            </Button>
+          )}
           {isCoordenador && (
             <Dialog open={novaOpen} onOpenChange={setNovaOpen}>
               <DialogTrigger asChild>

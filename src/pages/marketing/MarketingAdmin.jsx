@@ -1,0 +1,624 @@
+import { useState, useEffect, useCallback } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { useAuth } from '../../contexts/AuthContext';
+import { marketing as api } from '../../api';
+import { Badge } from '../../components/ui/badge';
+import { Button } from '../../components/ui/button';
+import { Card } from '../../components/ui/card';
+import { Input } from '../../components/ui/input';
+import { Label } from '../../components/ui/label';
+import { Textarea } from '../../components/ui/textarea';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../components/ui/select';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '../../components/ui/tabs';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '../../components/ui/dialog';
+import { Megaphone, Kanban, CalendarDays, Plus, Trash2, Settings, Loader2 } from 'lucide-react';
+import { toast } from 'sonner';
+import { supabase } from '../../supabaseClient';
+
+const DIAS_LABEL = ['Domingo', 'Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta', 'Sábado'];
+const HABILIDADES = ['videomaker', 'fotografo', 'designer', 'social_media', 'social_media_assistente'];
+
+export default function MarketingAdmin() {
+  const navigate = useNavigate();
+  const { isAdmin, modulePerms } = useAuth();
+  const lvl = (modulePerms?.marketing?.leitura || 0);
+  const podeAdmin = isAdmin || (modulePerms?.marketing?.escrita || 0) >= 5;
+
+  if (!podeAdmin) {
+    return (
+      <div className="p-6">
+        <Card className="p-6 text-center max-w-md mx-auto">
+          <p className="text-muted-foreground">Acesso restrito · só admin do módulo.</p>
+        </Card>
+      </div>
+    );
+  }
+
+  return (
+    <div className="p-4 md:p-6 space-y-4 md:space-y-6">
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+        <div>
+          <h1 className="text-2xl font-bold text-foreground flex items-center gap-2">
+            <Settings className="h-6 w-6 text-primary" />
+            Marketing · Admin
+          </h1>
+          <p className="text-sm text-muted-foreground mt-1">
+            Equipe · etiquetas · recorrentes · overrides de capacidade
+          </p>
+        </div>
+        <div className="flex gap-2">
+          <Button variant="outline" size="sm" onClick={() => navigate('/marketing')} className="gap-1.5">
+            <Kanban className="h-4 w-4" /> Kanban
+          </Button>
+          <Button variant="outline" size="sm" onClick={() => navigate('/marketing/calendario')} className="gap-1.5">
+            <CalendarDays className="h-4 w-4" /> Calendário
+          </Button>
+        </div>
+      </div>
+
+      <Tabs defaultValue="membros" className="w-full">
+        <TabsList className="grid w-full grid-cols-2 md:grid-cols-4">
+          <TabsTrigger value="membros">Membros</TabsTrigger>
+          <TabsTrigger value="etiquetas">Etiquetas</TabsTrigger>
+          <TabsTrigger value="recorrentes">Recorrentes</TabsTrigger>
+          <TabsTrigger value="overrides">Overrides</TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="membros" className="mt-4"><AbaMembros /></TabsContent>
+        <TabsContent value="etiquetas" className="mt-4"><AbaEtiquetas /></TabsContent>
+        <TabsContent value="recorrentes" className="mt-4"><AbaRecorrentes /></TabsContent>
+        <TabsContent value="overrides" className="mt-4"><AbaOverrides /></TabsContent>
+      </Tabs>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// Membros
+// ═══════════════════════════════════════════════════════════════════════
+function AbaMembros() {
+  const [lista, setLista] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [novoOpen, setNovoOpen] = useState(false);
+  const [profilesCriativo, setProfilesCriativo] = useState([]);
+
+  const carregar = useCallback(async () => {
+    setLoading(true);
+    try {
+      const data = await api.admin.membros.list();
+      setLista(data);
+    } catch (e) { toast.error(e.message); }
+    finally { setLoading(false); }
+  }, []);
+
+  useEffect(() => { carregar(); }, [carregar]);
+
+  // Lista de profiles candidatos · area=Criativo (Aline futura entra aqui também)
+  useEffect(() => {
+    if (!supabase) return;
+    supabase.from('profiles')
+      .select('id, name, email, area')
+      .ilike('area', 'criativo')
+      .order('name')
+      .then(({ data }) => setProfilesCriativo(data || []))
+      .catch(() => {});
+  }, []);
+
+  async function salvarLinha(id, payload) {
+    try {
+      await api.admin.membros.update(id, payload);
+      toast.success('Salvo');
+      carregar();
+    } catch (e) { toast.error(e.message); }
+  }
+
+  async function remover(id) {
+    if (!confirm('Remover este membro? (soft-delete · reversível)')) return;
+    try {
+      await api.admin.membros.remove(id);
+      toast.success('Removido');
+      carregar();
+    } catch (e) { toast.error(e.message); }
+  }
+
+  return (
+    <div className="space-y-3">
+      <div className="flex justify-between">
+        <p className="text-sm text-muted-foreground">{lista.length} membros · admin edita inline</p>
+        <Dialog open={novoOpen} onOpenChange={setNovoOpen}>
+          <DialogTrigger asChild>
+            <Button size="sm" className="gap-1.5"><Plus className="h-4 w-4" /> Novo membro</Button>
+          </DialogTrigger>
+          <DialogContent>
+            <DialogHeader><DialogTitle>Novo membro Marketing</DialogTitle></DialogHeader>
+            <NovoMembroForm
+              profiles={profilesCriativo}
+              onSuccess={() => { setNovoOpen(false); carregar(); }}
+            />
+          </DialogContent>
+        </Dialog>
+      </div>
+
+      {loading ? <Loader2 className="h-5 w-5 animate-spin mx-auto my-8 text-muted-foreground" /> : (
+        <div className="space-y-2">
+          {lista.map(m => (
+            <MembroRow key={m.id} membro={m} onSave={salvarLinha} onRemove={remover} />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function MembroRow({ membro, onSave, onRemove }) {
+  const [horas, setHoras] = useState(membro.horas_semanais);
+  const [obs, setObs] = useState(membro.observacao || '');
+  const [ativo, setAtivo] = useState(membro.ativo);
+  const [dirty, setDirty] = useState(false);
+
+  useEffect(() => {
+    setDirty(
+      Number(horas) !== Number(membro.horas_semanais) ||
+      (obs || '') !== (membro.observacao || '') ||
+      ativo !== membro.ativo
+    );
+  }, [horas, obs, ativo, membro]);
+
+  return (
+    <Card className="p-3 flex flex-col md:flex-row md:items-center gap-3">
+      <div className="flex-1 min-w-0">
+        <p className="font-medium text-sm">{membro.profile?.name || '(sem nome)'}</p>
+        <p className="text-xs text-muted-foreground">{membro.profile?.email}</p>
+      </div>
+      <Badge variant="secondary" className="self-start md:self-auto">{membro.habilidade}</Badge>
+      <div className="flex items-center gap-2">
+        <Label className="text-xs">Horas/sem</Label>
+        <Input
+          type="number"
+          step="0.5"
+          value={horas}
+          onChange={e => setHoras(e.target.value)}
+          className="w-20 h-8"
+        />
+      </div>
+      <Input
+        value={obs}
+        onChange={e => setObs(e.target.value)}
+        placeholder="Observação"
+        className="flex-1 h-8 text-sm"
+      />
+      <label className="flex items-center gap-1.5 text-xs cursor-pointer">
+        <input type="checkbox" checked={ativo} onChange={e => setAtivo(e.target.checked)} />
+        Ativo
+      </label>
+      <div className="flex gap-1">
+        <Button
+          size="sm"
+          onClick={() => onSave(membro.id, { horas_semanais: parseFloat(horas), observacao: obs, ativo })}
+          disabled={!dirty}
+        >
+          Salvar
+        </Button>
+        <Button size="icon" variant="outline" onClick={() => onRemove(membro.id)} className="text-red-600">
+          <Trash2 className="h-4 w-4" />
+        </Button>
+      </div>
+    </Card>
+  );
+}
+
+function NovoMembroForm({ profiles, onSuccess }) {
+  const [form, setForm] = useState({ profile_id: '', habilidade: '', horas_semanais: 30, observacao: '' });
+  const [submitting, setSubmitting] = useState(false);
+  async function submit() {
+    if (!form.profile_id || !form.habilidade) { toast.error('Profile + habilidade obrigatórios'); return; }
+    setSubmitting(true);
+    try {
+      await api.admin.membros.create({
+        ...form,
+        horas_semanais: parseFloat(form.horas_semanais),
+      });
+      toast.success('Criado');
+      onSuccess();
+    } catch (e) { toast.error(e.message); }
+    finally { setSubmitting(false); }
+  }
+  return (
+    <div className="space-y-3">
+      <div className="space-y-2">
+        <Label>Pessoa (Criativo) *</Label>
+        <Select value={form.profile_id} onValueChange={v => setForm(f => ({ ...f, profile_id: v }))}>
+          <SelectTrigger><SelectValue placeholder="Selecione" /></SelectTrigger>
+          <SelectContent>
+            {profiles.map(p => <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>)}
+          </SelectContent>
+        </Select>
+      </div>
+      <div className="space-y-2">
+        <Label>Habilidade *</Label>
+        <Select value={form.habilidade} onValueChange={v => setForm(f => ({ ...f, habilidade: v }))}>
+          <SelectTrigger><SelectValue placeholder="Selecione" /></SelectTrigger>
+          <SelectContent>
+            {HABILIDADES.map(h => <SelectItem key={h} value={h}>{h}</SelectItem>)}
+          </SelectContent>
+        </Select>
+      </div>
+      <div className="grid grid-cols-2 gap-3">
+        <div className="space-y-2">
+          <Label>Horas/semana</Label>
+          <Input type="number" step="0.5" value={form.horas_semanais}
+            onChange={e => setForm(f => ({ ...f, horas_semanais: e.target.value }))} />
+        </div>
+      </div>
+      <div className="space-y-2">
+        <Label>Observação</Label>
+        <Textarea rows={2} value={form.observacao}
+          onChange={e => setForm(f => ({ ...f, observacao: e.target.value }))} />
+      </div>
+      <div className="flex justify-end">
+        <Button onClick={submit} disabled={submitting}>{submitting ? 'Criando...' : 'Criar'}</Button>
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// Etiquetas (tipo + destino)
+// ═══════════════════════════════════════════════════════════════════════
+function AbaEtiquetas() {
+  const [tipos, setTipos] = useState([]);
+  const [destinos, setDestinos] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  const carregar = useCallback(async () => {
+    setLoading(true);
+    try {
+      const [t, d] = await Promise.all([api.admin.etiquetasTipo.list(), api.admin.etiquetasDestino.list()]);
+      setTipos(t);
+      setDestinos(d);
+    } catch (e) { toast.error(e.message); }
+    finally { setLoading(false); }
+  }, []);
+
+  useEffect(() => { carregar(); }, [carregar]);
+
+  async function salvarTipo(id, payload) {
+    try { await api.admin.etiquetasTipo.update(id, payload); toast.success('Salvo'); carregar(); }
+    catch (e) { toast.error(e.message); }
+  }
+  async function salvarDestino(id, payload) {
+    try { await api.admin.etiquetasDestino.update(id, payload); toast.success('Salvo'); carregar(); }
+    catch (e) { toast.error(e.message); }
+  }
+
+  if (loading) return <Loader2 className="h-5 w-5 animate-spin mx-auto my-8 text-muted-foreground" />;
+
+  return (
+    <div className="space-y-6">
+      <div>
+        <h3 className="text-sm font-semibold mb-2 text-foreground">Tipos (8)</h3>
+        <p className="text-xs text-muted-foreground mb-3">
+          `esforco_medio_h` calibra a estimativa preliminar (Spec 005). NULL = "tipo não calibrado".
+        </p>
+        <div className="space-y-2">
+          {tipos.map(t => <TipoRow key={t.id} t={t} onSave={salvarTipo} />)}
+        </div>
+      </div>
+      <div>
+        <h3 className="text-sm font-semibold mb-2 text-foreground">Destinos (5)</h3>
+        <div className="space-y-2">
+          {destinos.map(d => <DestinoRow key={d.id} d={d} onSave={salvarDestino} />)}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function TipoRow({ t, onSave }) {
+  const [esforco, setEsforco] = useState(t.esforco_medio_h ?? '');
+  const [hab, setHab] = useState(t.habilidade_padrao || '');
+  const [cor, setCor] = useState(t.cor || '');
+  const [ativo, setAtivo] = useState(t.ativo);
+  const dirty =
+    String(esforco) !== String(t.esforco_medio_h ?? '') ||
+    hab !== (t.habilidade_padrao || '') ||
+    cor !== (t.cor || '') ||
+    ativo !== t.ativo;
+
+  return (
+    <Card className="p-3 flex flex-col md:flex-row md:items-center gap-3">
+      <div className="flex items-center gap-2 min-w-[200px]">
+        <span className="w-3 h-3 rounded-full shrink-0" style={{ backgroundColor: cor || '#888' }} />
+        <p className="font-medium text-sm">{t.nome}</p>
+      </div>
+      <Select value={hab} onValueChange={setHab}>
+        <SelectTrigger className="w-[180px] h-8"><SelectValue placeholder="Habilidade padrão" /></SelectTrigger>
+        <SelectContent>
+          <SelectItem value="">(sem)</SelectItem>
+          {HABILIDADES.map(h => <SelectItem key={h} value={h}>{h}</SelectItem>)}
+        </SelectContent>
+      </Select>
+      <div className="flex items-center gap-2">
+        <Label className="text-xs whitespace-nowrap">Esforço (h)</Label>
+        <Input type="number" step="0.5" value={esforco}
+          onChange={e => setEsforco(e.target.value)} placeholder="—" className="w-20 h-8" />
+      </div>
+      <Input value={cor} onChange={e => setCor(e.target.value)} placeholder="#HEX" className="w-24 h-8" />
+      <label className="flex items-center gap-1.5 text-xs cursor-pointer">
+        <input type="checkbox" checked={ativo} onChange={e => setAtivo(e.target.checked)} />
+        Ativo
+      </label>
+      <Button size="sm" disabled={!dirty}
+        onClick={() => onSave(t.id, {
+          esforco_medio_h: esforco === '' ? null : parseFloat(esforco),
+          habilidade_padrao: hab || null,
+          cor: cor || null,
+          ativo,
+        })}>Salvar</Button>
+    </Card>
+  );
+}
+
+function DestinoRow({ d, onSave }) {
+  const [cor, setCor] = useState(d.cor || '');
+  const [ativo, setAtivo] = useState(d.ativo);
+  const dirty = cor !== (d.cor || '') || ativo !== d.ativo;
+  return (
+    <Card className="p-3 flex flex-col md:flex-row md:items-center gap-3">
+      <div className="flex items-center gap-2 min-w-[200px]">
+        <span className="w-3 h-3 rounded-full shrink-0" style={{ backgroundColor: cor || '#888' }} />
+        <p className="font-medium text-sm">{d.nome}</p>
+      </div>
+      <Input value={cor} onChange={e => setCor(e.target.value)} placeholder="#HEX" className="w-24 h-8" />
+      <label className="flex items-center gap-1.5 text-xs cursor-pointer">
+        <input type="checkbox" checked={ativo} onChange={e => setAtivo(e.target.checked)} />
+        Ativo
+      </label>
+      <Button size="sm" disabled={!dirty}
+        onClick={() => onSave(d.id, { cor: cor || null, ativo })}>Salvar</Button>
+    </Card>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// Recorrentes
+// ═══════════════════════════════════════════════════════════════════════
+function AbaRecorrentes() {
+  const [lista, setLista] = useState([]);
+  const [membros, setMembros] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [novoOpen, setNovoOpen] = useState(false);
+
+  const carregar = useCallback(async () => {
+    setLoading(true);
+    try {
+      const [r, m] = await Promise.all([api.admin.recorrentes.list(), api.membros()]);
+      setLista(r);
+      setMembros(m);
+    } catch (e) { toast.error(e.message); }
+    finally { setLoading(false); }
+  }, []);
+
+  useEffect(() => { carregar(); }, [carregar]);
+
+  const membroMap = Object.fromEntries(membros.map(m => [m.id, m]));
+
+  async function remover(id) {
+    if (!confirm('Remover este recorrente?')) return;
+    try { await api.admin.recorrentes.remove(id); toast.success('Removido'); carregar(); }
+    catch (e) { toast.error(e.message); }
+  }
+
+  return (
+    <div className="space-y-3">
+      <div className="flex justify-between">
+        <p className="text-sm text-muted-foreground">{lista.length} recorrentes · slots fixos da equipe</p>
+        <Dialog open={novoOpen} onOpenChange={setNovoOpen}>
+          <DialogTrigger asChild><Button size="sm" className="gap-1.5"><Plus className="h-4 w-4" /> Novo</Button></DialogTrigger>
+          <DialogContent>
+            <DialogHeader><DialogTitle>Novo compromisso recorrente</DialogTitle></DialogHeader>
+            <NovoRecorrenteForm membros={membros} onSuccess={() => { setNovoOpen(false); carregar(); }} />
+          </DialogContent>
+        </Dialog>
+      </div>
+      {loading ? <Loader2 className="h-5 w-5 animate-spin mx-auto my-8 text-muted-foreground" /> : (
+        <div className="space-y-2">
+          {lista.map(r => (
+            <Card key={r.id} className="p-3 flex flex-wrap items-center gap-3">
+              <div className="min-w-[140px]">
+                <p className="font-medium text-sm">{membroMap[r.membro_id]?.profile?.name || '(membro)'}</p>
+                <p className="text-xs text-muted-foreground">{membroMap[r.membro_id]?.habilidade}</p>
+              </div>
+              <Badge variant="secondary">{DIAS_LABEL[r.dia_semana]}</Badge>
+              <span className="text-sm font-mono">{r.hora_inicio?.slice(0, 5)} · {r.duracao_h}h</span>
+              <span className="text-sm text-muted-foreground flex-1 min-w-[200px]">{r.descricao}</span>
+              <Button size="icon" variant="outline" onClick={() => remover(r.id)} className="text-red-600">
+                <Trash2 className="h-4 w-4" />
+              </Button>
+            </Card>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function NovoRecorrenteForm({ membros, onSuccess }) {
+  const [form, setForm] = useState({ membro_id: '', dia_semana: '1', hora_inicio: '09:00', duracao_h: 3, descricao: '' });
+  const [submitting, setSubmitting] = useState(false);
+  async function submit() {
+    if (!form.membro_id || !form.descricao) { toast.error('Membro e descrição obrigatórios'); return; }
+    setSubmitting(true);
+    try {
+      await api.admin.recorrentes.create({
+        ...form,
+        dia_semana: parseInt(form.dia_semana),
+        duracao_h: parseFloat(form.duracao_h),
+      });
+      toast.success('Criado');
+      onSuccess();
+    } catch (e) { toast.error(e.message); }
+    finally { setSubmitting(false); }
+  }
+  return (
+    <div className="space-y-3">
+      <div className="space-y-2">
+        <Label>Membro *</Label>
+        <Select value={form.membro_id} onValueChange={v => setForm(f => ({ ...f, membro_id: v }))}>
+          <SelectTrigger><SelectValue placeholder="Selecione" /></SelectTrigger>
+          <SelectContent>
+            {membros.map(m => <SelectItem key={m.id} value={m.id}>{m.profile?.name} · {m.habilidade}</SelectItem>)}
+          </SelectContent>
+        </Select>
+      </div>
+      <div className="grid grid-cols-3 gap-3">
+        <div className="space-y-2">
+          <Label>Dia *</Label>
+          <Select value={form.dia_semana} onValueChange={v => setForm(f => ({ ...f, dia_semana: v }))}>
+            <SelectTrigger><SelectValue /></SelectTrigger>
+            <SelectContent>
+              {DIAS_LABEL.map((l, i) => <SelectItem key={i} value={String(i)}>{l}</SelectItem>)}
+            </SelectContent>
+          </Select>
+        </div>
+        <div className="space-y-2">
+          <Label>Hora</Label>
+          <Input type="time" value={form.hora_inicio}
+            onChange={e => setForm(f => ({ ...f, hora_inicio: e.target.value }))} />
+        </div>
+        <div className="space-y-2">
+          <Label>Duração (h)</Label>
+          <Input type="number" step="0.5" value={form.duracao_h}
+            onChange={e => setForm(f => ({ ...f, duracao_h: e.target.value }))} />
+        </div>
+      </div>
+      <div className="space-y-2">
+        <Label>Descrição *</Label>
+        <Input value={form.descricao} onChange={e => setForm(f => ({ ...f, descricao: e.target.value }))} />
+      </div>
+      <div className="flex justify-end">
+        <Button onClick={submit} disabled={submitting}>{submitting ? 'Criando...' : 'Criar'}</Button>
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// Overrides
+// ═══════════════════════════════════════════════════════════════════════
+function AbaOverrides() {
+  const [lista, setLista] = useState([]);
+  const [membros, setMembros] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [novoOpen, setNovoOpen] = useState(false);
+
+  const carregar = useCallback(async () => {
+    setLoading(true);
+    try {
+      const [o, m] = await Promise.all([api.admin.overrides.list(), api.membros()]);
+      setLista(o);
+      setMembros(m);
+    } catch (e) { toast.error(e.message); }
+    finally { setLoading(false); }
+  }, []);
+
+  useEffect(() => { carregar(); }, [carregar]);
+
+  const membroMap = Object.fromEntries(membros.map(m => [m.id, m]));
+
+  async function remover(id) {
+    if (!confirm('Remover este override?')) return;
+    try { await api.admin.overrides.remove(id); toast.success('Removido'); carregar(); }
+    catch (e) { toast.error(e.message); }
+  }
+
+  return (
+    <div className="space-y-3">
+      <div className="flex justify-between items-start gap-3 flex-wrap">
+        <div>
+          <p className="text-sm text-muted-foreground">{lista.length} overrides</p>
+          <p className="text-xs text-muted-foreground">Override substitui horas_disponiveis (férias = 0 · pico = horas extras)</p>
+        </div>
+        <Dialog open={novoOpen} onOpenChange={setNovoOpen}>
+          <DialogTrigger asChild><Button size="sm" className="gap-1.5"><Plus className="h-4 w-4" /> Novo</Button></DialogTrigger>
+          <DialogContent>
+            <DialogHeader><DialogTitle>Novo override de capacidade</DialogTitle></DialogHeader>
+            <NovoOverrideForm membros={membros} onSuccess={() => { setNovoOpen(false); carregar(); }} />
+          </DialogContent>
+        </Dialog>
+      </div>
+      {loading ? <Loader2 className="h-5 w-5 animate-spin mx-auto my-8 text-muted-foreground" /> : (
+        <div className="space-y-2">
+          {lista.map(o => (
+            <Card key={o.id} className="p-3 flex flex-wrap items-center gap-3">
+              <p className="font-medium text-sm min-w-[140px]">{membroMap[o.membro_id]?.profile?.name || '(membro)'}</p>
+              <Badge variant="secondary">{o.semana_inicio}</Badge>
+              <span className="text-sm font-mono">{o.horas_disponiveis}h disponíveis</span>
+              <span className="text-sm text-muted-foreground flex-1 min-w-[200px]">{o.motivo || '—'}</span>
+              <Button size="icon" variant="outline" onClick={() => remover(o.id)} className="text-red-600">
+                <Trash2 className="h-4 w-4" />
+              </Button>
+            </Card>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function NovoOverrideForm({ membros, onSuccess }) {
+  function proximaSegunda() {
+    const d = new Date();
+    const day = d.getDay() || 7;
+    d.setDate(d.getDate() - day + 1 + 7);
+    return d.toISOString().slice(0, 10);
+  }
+  const [form, setForm] = useState({ membro_id: '', semana_inicio: proximaSegunda(), horas_disponiveis: 0, motivo: '' });
+  const [submitting, setSubmitting] = useState(false);
+  async function submit() {
+    if (!form.membro_id || !form.semana_inicio) { toast.error('Membro e semana obrigatórios'); return; }
+    setSubmitting(true);
+    try {
+      await api.admin.overrides.create({
+        ...form,
+        horas_disponiveis: parseFloat(form.horas_disponiveis),
+      });
+      toast.success('Criado');
+      onSuccess();
+    } catch (e) { toast.error(e.message); }
+    finally { setSubmitting(false); }
+  }
+  return (
+    <div className="space-y-3">
+      <div className="space-y-2">
+        <Label>Membro *</Label>
+        <Select value={form.membro_id} onValueChange={v => setForm(f => ({ ...f, membro_id: v }))}>
+          <SelectTrigger><SelectValue placeholder="Selecione" /></SelectTrigger>
+          <SelectContent>
+            {membros.map(m => <SelectItem key={m.id} value={m.id}>{m.profile?.name} · {m.habilidade}</SelectItem>)}
+          </SelectContent>
+        </Select>
+      </div>
+      <div className="grid grid-cols-2 gap-3">
+        <div className="space-y-2">
+          <Label>Semana (segunda) *</Label>
+          <Input type="date" value={form.semana_inicio}
+            onChange={e => setForm(f => ({ ...f, semana_inicio: e.target.value }))} />
+        </div>
+        <div className="space-y-2">
+          <Label>Horas disponíveis *</Label>
+          <Input type="number" step="0.5" value={form.horas_disponiveis}
+            onChange={e => setForm(f => ({ ...f, horas_disponiveis: e.target.value }))} />
+        </div>
+      </div>
+      <div className="space-y-2">
+        <Label>Motivo</Label>
+        <Input value={form.motivo} onChange={e => setForm(f => ({ ...f, motivo: e.target.value }))}
+          placeholder="Férias · feriado · pico AMI" />
+      </div>
+      <div className="flex justify-end">
+        <Button onClick={submit} disabled={submitting}>{submitting ? 'Criando...' : 'Criar'}</Button>
+      </div>
+    </div>
+  );
+}
