@@ -1598,6 +1598,16 @@ function DetailDialog({ item, onClose, isAdmin, currentUserId, onStatusChange, o
             </div>
           )}
 
+          {/* Marketing · bloco do card (Spec 012) · preview · aprovar entrega · sugerir revisao */}
+          {item.categoria === 'marketing'
+            && item.marketing_card
+            && item.solicitante_id === currentUserId && (
+              <MarketingCardBlock
+                card={item.marketing_card}
+                onChanged={() => onItemRefresh?.()}
+              />
+          )}
+
           {/* NPS pos-conclusao · so pro solicitante apos status concluido */}
           {item.status === 'concluido'
             && currentUserId
@@ -1629,6 +1639,161 @@ function DetailDialog({ item, onClose, isAdmin, currentUserId, onStatusChange, o
         </div>
       </DialogContent>
     </Dialog>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// MarketingCardBlock · solicitante revisa preview, aprova entrega ou pede revisao (Spec 012)
+// ═══════════════════════════════════════════════════════════════════════
+function MarketingCardBlock({ card, onChanged }) {
+  const [entregaveis, setEntregaveis] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [revisaoOpen, setRevisaoOpen] = useState(false);
+  const [motivo, setMotivo] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+
+  useEffect(() => {
+    if (!card?.id) return;
+    setLoading(true);
+    marketingApi.entregaveis.list(card.id)
+      .then(setEntregaveis)
+      .catch(() => setEntregaveis([]))
+      .finally(() => setLoading(false));
+  }, [card?.id]);
+
+  async function aprovar() {
+    setSubmitting(true);
+    try {
+      await marketingApi.aprovarEntrega(card.id);
+      toast.success('Entrega aprovada · agora avalie pelo NPS');
+      onChanged?.();
+    } catch (e) {
+      toast.error(e.message || 'Erro ao aprovar entrega');
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  async function sugerirRevisao() {
+    if (motivo.trim().length < 5) { toast.error('Motivo precisa ter pelo menos 5 caracteres'); return; }
+    setSubmitting(true);
+    try {
+      await marketingApi.sugerirRevisao(card.id, motivo.trim());
+      toast.success('Revisão enviada · card volta pro fim da fila');
+      setRevisaoOpen(false);
+      setMotivo('');
+      onChanged?.();
+    } catch (e) {
+      toast.error(e.message || 'Erro ao sugerir revisão');
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  if (!card) return null;
+
+  const podeRevisar = card.estado === 'aguardando_solicitante' && !card.tem_revisao;
+  const podeAprovar = card.estado === 'aguardando_solicitante';
+
+  return (
+    <div className="space-y-3 pt-3 border-t border-border">
+      <p className="text-sm font-semibold text-foreground flex items-center gap-2">
+        <FileText className="h-4 w-4 text-pink-500" />
+        Sua demanda Marketing
+      </p>
+
+      {/* Status do card */}
+      <div className="flex flex-wrap items-center gap-2 text-xs">
+        <span className="text-muted-foreground">Status:</span>
+        <Badge className={
+          card.estado === 'concluido' ? 'bg-emerald-500/15 text-emerald-700' :
+          card.estado === 'aguardando_solicitante' ? 'bg-violet-500/15 text-violet-700' :
+          card.estado === 'em_producao' ? 'bg-blue-500/15 text-blue-700' :
+          'bg-amber-500/15 text-amber-700'
+        }>
+          {card.estado === 'fila' ? 'Na fila' :
+           card.estado === 'em_producao' ? 'Em produção' :
+           card.estado === 'aguardando_solicitante' ? 'Aguardando sua revisão' :
+           'Concluído'}
+        </Badge>
+        {card.tem_revisao && (
+          <Badge className="bg-amber-500/15 text-amber-700">⟳ Já teve revisão (1x)</Badge>
+        )}
+        {card.prazo_confirmado && (
+          <span className="text-muted-foreground">
+            Prazo: {new Date(card.prazo_confirmado).toLocaleDateString('pt-BR')}
+          </span>
+        )}
+      </div>
+
+      {/* Entregáveis · preview/download */}
+      {loading ? (
+        <p className="text-xs text-muted-foreground">Carregando arquivos...</p>
+      ) : entregaveis.length > 0 ? (
+        <div className="space-y-1">
+          <p className="text-xs font-medium text-foreground">Arquivos ({entregaveis.length})</p>
+          {entregaveis.map(e => (
+            <a
+              key={e.id}
+              href={marketingApi.entregaveis.download(e.id)}
+              target="_blank"
+              rel="noreferrer"
+              className="flex items-center gap-2 text-xs bg-muted/30 rounded px-2 py-1.5 hover:bg-muted/50 transition-colors"
+            >
+              <FileText className="h-3.5 w-3.5 text-primary shrink-0" />
+              <span className="truncate flex-1">{e.nome_arquivo}</span>
+              {e.tamanho_bytes && <span className="text-muted-foreground text-[10px]">{Math.round(e.tamanho_bytes/1024)}KB</span>}
+            </a>
+          ))}
+        </div>
+      ) : card.estado === 'aguardando_solicitante' ? (
+        <p className="text-xs text-muted-foreground italic">Equipe finalizou · preview ainda não anexado.</p>
+      ) : null}
+
+      {/* Botoes de acao · so quando aguardando solicitante */}
+      {podeAprovar && !revisaoOpen && (
+        <div className="flex gap-2 pt-2">
+          <Button
+            size="sm"
+            onClick={aprovar}
+            disabled={submitting}
+            className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white"
+          >
+            <CheckCircle2 className="h-4 w-4 mr-1" /> Aprovar entrega
+          </Button>
+          {podeRevisar && (
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => setRevisaoOpen(true)}
+              className="flex-1 text-amber-600 hover:bg-amber-50 dark:hover:bg-amber-950/30"
+            >
+              ⟳ Sugerir revisão (1x)
+            </Button>
+          )}
+        </div>
+      )}
+
+      {revisaoOpen && (
+        <div className="space-y-2 p-3 bg-amber-500/10 border border-amber-500/30 rounded">
+          <Label className="text-xs">Motivo da revisão *</Label>
+          <Textarea
+            value={motivo}
+            onChange={e => setMotivo(e.target.value)}
+            rows={2}
+            placeholder="Atenção · só 1 revisão. Card volta pro fim da fila."
+          />
+          <div className="flex gap-2">
+            <Button size="sm" variant="outline" onClick={() => { setRevisaoOpen(false); setMotivo(''); }}>
+              Cancelar
+            </Button>
+            <Button size="sm" onClick={sugerirRevisao} disabled={motivo.trim().length < 5 || submitting}>
+              {submitting ? 'Enviando...' : 'Confirmar revisão'}
+            </Button>
+          </div>
+        </div>
+      )}
+    </div>
   );
 }
 

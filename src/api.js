@@ -1032,6 +1032,7 @@ export const marketing = {
 
   // Acoes especificas
   sugerirRevisao:  (id, motivo) => patch(`/marketing/cards/${id}/sugerir-revisao`, { motivo }),
+  aprovarEntrega:  (id) => patch(`/marketing/cards/${id}/aprovar-entrega`, {}),
   decidirUrgencia: (id, decisao, motivoRecusa) => patch(`/marketing/cards/${id}/decidir-urgencia`, { decisao, motivo_recusa: motivoRecusa }),
 
   // Entregaveis (Spec 006 · SharePoint)
