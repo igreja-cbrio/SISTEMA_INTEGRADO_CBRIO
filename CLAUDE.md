@@ -2,6 +2,49 @@
 
 Guia operacional para o Claude Code quando trabalhar neste repositório.
 
+## Marketing · Spec 024 · Tela /marketing/ciclo-criativo (2026-05-28)
+
+Marcos: "ao colocar o horário no marketing, coloque alguma visualização para Pedro ir por fase do ciclo criativo colocando o horário e o dono de cada etapa do ciclo criativo, então isso vai pro calendário dessa pessoa."
+
+**Migration `20260528400000_marketing_atribuir_orfaos_completos.sql`:**
+- Atribui os 4 cards concluídos sem dono pro Pedro (Spec 023 filtrou só ativos)
+- Zera os órfãos do módulo
+
+**Endpoints novos (`routes/marketing.js`):**
+- `GET /api/marketing/ciclo-criativo` (nível 1) · cards origem='evento' agrupados por evento → fase
+- `PATCH /api/marketing/ciclo-criativo/batch` (nível 5) · aplica `etiqueta_tipo_id` e/ou `atribuido_a` pra array de `card_ids`
+
+**Página nova `src/pages/marketing/MarketingCicloCriativo.jsx`:**
+- Rota `/marketing/ciclo-criativo` · `nivelMinimo=5` (só coord)
+- Layout accordion:
+  - Card por evento (collapsible · default expandido)
+  - Bloco roxo por fase (nome + numero + contador de tarefas)
+  - Linha por tarefa com:
+    - Título + descrição
+    - Select inline **etiqueta tipo** (mostra esforço · ex: "Banner / Lona · 6h")
+    - Select inline **dono** (membros · com habilidade)
+    - Link "Abrir no Eventos" pra tarefa específica
+- Botões batch por fase:
+  - "Aplicar etiqueta X pra toda a fase"
+  - "Atribuir membro Y pra toda a fase"
+  - Mostra confirmação com count antes de aplicar
+- Tarefas concluídas aparecem opaca · selects desabilitados (read-only)
+- Salvamento inline · sem botão "salvar" · PATCH dispara on change
+
+**`api.js`:** `marketing.ciclo.list()` + `marketing.ciclo.batch(cardIds, payload)`
+
+**`MarketingNav.jsx`:** item "Ciclo" entre Calendário e Analytics (só pra coord)
+
+**Fluxo operacional pro Pedro:**
+1. Cycle phase task criada no /eventos com area=marketing → trigger cria card
+2. Pedro abre `/marketing/ciclo-criativo`
+3. Vê evento "Retiro AMI 2026" → fase "Brainstorming" → 5 tarefas
+4. Aplica batch: "Atribuir Lorena pra todas" + "Etiqueta Story · 1h" (se cabível)
+5. Refina caso a caso por linha
+6. Cards atribuídos com etiqueta entram no calendário do membro automaticamente (Spec 005 + 020)
+
+**Edição preserva separação:** atribuição/etiqueta no Marketing NÃO toca `cycle_phase_tasks.responsavel_id` ou `cycle_phase_tasks.area`. Conteúdo da tarefa continua sendo editado no /eventos.
+
 ## Marketing · Spec 023 · Pedro como membro + atribuição default órfãos (2026-05-28)
 
 Marcos: "coloque também Pedro Paiva como uma das pessoas nesse calendário e coloque todas as tarefas sem dono para ele · ele vai conseguir ver o que precisa ser entregue e que não tem dono."
