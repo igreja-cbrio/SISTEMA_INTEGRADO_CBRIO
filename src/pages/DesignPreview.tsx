@@ -1,547 +1,573 @@
-import { useState } from 'react';
 import {
-  LayoutDashboard, Users, Heart, HandHelping, CalendarDays, BarChart3,
-  Settings, Search, Bell, Plus, ArrowUpRight, ArrowDownRight, MoreHorizontal,
-  Sun, Moon, ChevronRight, Sparkles, TrendingUp, Church,
+  LayoutDashboard, BarChart3, CalendarDays, Users, Heart, HandHelping,
+  Search, Bell, ArrowUpRight, ArrowDownRight, Plus, Sparkles, Church,
+  TrendingUp, ChevronRight, Flame, Wallet, Activity,
 } from 'lucide-react';
 
 /**
  * DesignPreview · /design-preview
  *
- * Showcase ISOLADO (não toca nenhuma tela de produção) que adapta a
- * linguagem visual do Rondesignlab pro CBRio: cantos suaves, respiro
- * generoso, tipografia bold com tracking apertado, sombras macias,
- * pílulas e chips pastéis — mantendo o acento teal #00B39D da marca.
+ * Refação "dark premium fintech · ousado" do estilo Rondesignlab adaptada
+ * ao CBRio: fundo escuro profundo com glows, grid BENTO (cards de tamanhos
+ * diferentes), números gigantes, gauge e gráficos com brilho neon teal,
+ * formas decorativas de fundo. Acento da marca teal #00B39D preservado,
+ * potencializado com um neon (#1FE6C8) só pros brilhos.
  *
- * Toggle Claro / Dark pra comparar as duas variantes lado a lado.
- * Todo o CSS é escopado em `.rdl` pra não vazar pro resto do app.
+ * Showcase ISOLADO — não toca nenhuma tela de produção. CSS escopado em `.rdf`.
  */
 export default function DesignPreview() {
-  const [dark, setDark] = useState(false);
-
   return (
-    <div className={`rdl ${dark ? 'rdl-dark' : 'rdl-light'}`}>
+    <div className="rdf">
       <style>{CSS}</style>
 
-      {/* Barra de contexto do preview (não faz parte do design proposto) */}
-      <div className="rdl-banner">
-        <div className="rdl-banner-left">
-          <Sparkles size={15} />
-          <span><b>Preview de design</b> · estilo Rondesignlab adaptado ao CBRio · ainda não está em produção</span>
-        </div>
-        <button className="rdl-toggle" onClick={() => setDark((d) => !d)}>
-          {dark ? <Sun size={14} /> : <Moon size={14} />}
-          {dark ? 'Ver versão clara' : 'Ver versão dark'}
-        </button>
+      <RdfDefs />
+
+      {/* glows decorativos de fundo */}
+      <div className="rdf-bg">
+        <span className="rdf-blob rdf-blob-1" />
+        <span className="rdf-blob rdf-blob-2" />
+        <span className="rdf-grid" />
       </div>
 
-      <div className="rdl-app">
-        {/* ── Sidebar flutuante ── */}
-        <aside className="rdl-sidebar">
-          <div className="rdl-brand">
-            <span className="rdl-brand-mark"><Church size={18} /></span>
-            <span className="rdl-brand-name">CBRio</span>
-          </div>
+      <div className="rdf-banner">
+        <Sparkles size={14} />
+        <span><b>Preview de design</b> · dark premium · estilo Rondesignlab adaptado ao CBRio · não está em produção</span>
+      </div>
 
-          <nav className="rdl-nav">
-            <span className="rdl-nav-label">Geral</span>
+      <div className="rdf-app">
+        {/* ── Sidebar ── */}
+        <aside className="rdf-sidebar">
+          <div className="rdf-brand">
+            <span className="rdf-brand-mark"><Church size={17} /></span>
+            <span className="rdf-brand-name">CBRio</span>
+          </div>
+          <nav className="rdf-nav">
             <NavItem icon={LayoutDashboard} label="Painel" active />
             <NavItem icon={BarChart3} label="Minha área" />
             <NavItem icon={CalendarDays} label="Cultos" badge="4" />
-            <span className="rdl-nav-label">Ministerial</span>
             <NavItem icon={Users} label="Membresia" />
             <NavItem icon={Heart} label="Cuidados" />
             <NavItem icon={HandHelping} label="Voluntariado" />
           </nav>
-
-          <div className="rdl-upsell">
-            <p className="rdl-upsell-title">Ritual mensal</p>
-            <p className="rdl-upsell-sub">3 reuniões aguardando a diretoria esta semana.</p>
-            <button className="rdl-btn rdl-btn-light rdl-btn-sm">Abrir ritual</button>
+          <div className="rdf-streak">
+            <Flame size={16} />
+            <div>
+              <b>12 semanas</b>
+              <span>de dados completos</span>
+            </div>
           </div>
         </aside>
 
         {/* ── Conteúdo ── */}
-        <main className="rdl-main">
+        <main className="rdf-main">
           {/* Topbar */}
-          <header className="rdl-topbar">
+          <header className="rdf-topbar">
             <div>
-              <p className="rdl-eyebrow">Quarta-feira · 28 de maio</p>
-              <h1 className="rdl-h1">Bom te ver, Marcos 👋</h1>
+              <p className="rdf-eyebrow">Quinta · 28 maio · 18h</p>
+              <h1 className="rdf-h1">Boa noite, Marcos</h1>
             </div>
-            <div className="rdl-topbar-actions">
-              <div className="rdl-search">
-                <Search size={15} />
-                <input placeholder="Buscar pessoas, cultos, KPIs…" />
-                <kbd>⌘K</kbd>
-              </div>
-              <button className="rdl-icon-btn"><Bell size={17} /><i className="rdl-dot" /></button>
-              <div className="rdl-avatar rdl-avatar-me">MP</div>
+            <div className="rdf-actions">
+              <div className="rdf-search"><Search size={15} /><input placeholder="Buscar…" /><kbd>⌘K</kbd></div>
+              <button className="rdf-iconbtn"><Bell size={17} /><i /></button>
+              <div className="rdf-avatar">MP</div>
             </div>
           </header>
 
-          {/* Stat cards */}
-          <section className="rdl-stats">
-            <Stat label="Frequência total" value="1.667" delta="+13,6%" up spark={[8,10,9,12,11,14,16,15]} />
-            <Stat label="Novas decisões" value="42" delta="+8 vs. semana" up spark={[3,5,4,6,5,7,6,9]} />
-            <Stat label="NSM engajados" value="78%" delta="meta 85%" up={false} tone="warn" spark={[60,64,62,68,70,72,75,78]} />
-            <Stat label="Dízimos do mês" value="R$ 312k" delta="-4,1%" up={false} spark={[40,38,42,39,37,36,35,33]} />
+          {/* Bento grid */}
+          <section className="rdf-bento">
+            {/* HERO · saúde institucional */}
+            <div className="rdf-card rdf-hero">
+              <div className="rdf-hero-top">
+                <span className="rdf-pill"><Activity size={13} /> Saúde da CBRio</span>
+                <span className="rdf-trend up"><ArrowUpRight size={13} /> +6 pts</span>
+              </div>
+              <Gauge value={86} />
+              <div className="rdf-hero-foot">
+                <div><b>78%</b><span>NSM engajado</span></div>
+                <div><b>1.667</b><span>frequência</span></div>
+                <div><b>42</b><span>decisões</span></div>
+              </div>
+            </div>
+
+            {/* Dízimos · número gigante */}
+            <div className="rdf-card rdf-money">
+              <span className="rdf-pill ghost"><Wallet size={13} /> Dízimos · mês</span>
+              <p className="rdf-bignum">R$ 312<small>k</small></p>
+              <div className="rdf-money-foot">
+                <span className="rdf-trend down"><ArrowDownRight size={12} /> 4,1%</span>
+                <span className="rdf-muted">vs. abril</span>
+              </div>
+              <Bars data={[60, 75, 52, 80, 68, 90, 72]} />
+            </div>
+
+            {/* mini stats */}
+            <MiniStat label="Frequência" value="1.667" delta="+13,6%" up spark={[8,11,9,13,12,15,17]} />
+            <MiniStat label="Decisões" value="42" delta="+8" up spark={[3,5,4,6,5,8,7]} />
+            <MiniStat label="Voluntários" value="284" delta="-2,3%" up={false} spark={[20,19,21,18,17,18,16]} />
+
+            {/* Chart grande */}
+            <div className="rdf-card rdf-chart-card">
+              <div className="rdf-card-head">
+                <div>
+                  <h3 className="rdf-ctitle">Movimento dos cultos</h3>
+                  <p className="rdf-csub">Frequência &amp; decisões · 8 semanas</p>
+                </div>
+                <div className="rdf-seg">
+                  <button>Sem</button><button className="active">Mês</button><button>Ano</button>
+                </div>
+              </div>
+              <GlowArea />
+              <div className="rdf-legend">
+                <span><i className="g-teal" /> Frequência</span>
+                <span><i className="g-violet" /> Decisões</span>
+              </div>
+            </div>
+
+            {/* NSM radial */}
+            <div className="rdf-card rdf-nsm">
+              <div className="rdf-card-head">
+                <h3 className="rdf-ctitle">NSM da semana</h3>
+                <TrendingUp size={15} />
+              </div>
+              <Ring value={78} />
+              <p className="rdf-nsm-cap">novos convertidos engajados em ≥1 valor</p>
+              <button className="rdf-btn primary block"><Plus size={14} /> Registrar engajamento</button>
+            </div>
+
+            {/* Solicitações */}
+            <div className="rdf-card rdf-list">
+              <div className="rdf-card-head">
+                <h3 className="rdf-ctitle">Solicitações recentes</h3>
+                <button className="rdf-link">Ver todas <ChevronRight size={13} /></button>
+              </div>
+              {ROWS.map((r) => (
+                <div className="rdf-row" key={r.titulo}>
+                  <span className={`rdf-tag t-${r.cor}`}>{r.area}</span>
+                  <div className="rdf-row-info">
+                    <p className="rdf-row-title">{r.titulo}</p>
+                    <p className="rdf-row-sub">{r.por}</p>
+                  </div>
+                  <span className={`rdf-status s-${r.st}`}>{r.statusLabel}</span>
+                </div>
+              ))}
+            </div>
+
+            {/* Próximos cultos */}
+            <div className="rdf-card rdf-events">
+              <div className="rdf-card-head"><h3 className="rdf-ctitle">Próximos cultos</h3></div>
+              {EVENTS.map((e) => (
+                <div className="rdf-event" key={e.nome}>
+                  <div className="rdf-edate"><b>{e.dia}</b><span>{e.mes}</span></div>
+                  <div className="rdf-einfo"><p>{e.nome}</p><span>{e.hora}</span></div>
+                  <div className="rdf-team">{e.team.map((t, i) => <span key={i}>{t}</span>)}</div>
+                </div>
+              ))}
+            </div>
           </section>
 
-          {/* Grid principal */}
-          <section className="rdl-grid">
-            {/* Coluna esquerda */}
-            <div className="rdl-col">
-              <div className="rdl-card">
-                <div className="rdl-card-head">
-                  <div>
-                    <h3 className="rdl-card-title">Frequência &amp; decisões</h3>
-                    <p className="rdl-card-sub">Últimas 8 semanas · todos os cultos</p>
-                  </div>
-                  <div className="rdl-seg">
-                    <button>Semana</button>
-                    <button className="active">Mês</button>
-                    <button>Ano</button>
-                  </div>
-                </div>
-                <AreaChart />
-                <div className="rdl-legend">
-                  <span><i style={{ background: 'var(--accent)' }} /> Frequência</span>
-                  <span><i style={{ background: 'var(--violet)' }} /> Decisões</span>
-                </div>
-              </div>
-
-              <div className="rdl-card">
-                <div className="rdl-card-head">
-                  <div>
-                    <h3 className="rdl-card-title">Solicitações recentes</h3>
-                    <p className="rdl-card-sub">Fila administrativa</p>
-                  </div>
-                  <button className="rdl-link">Ver todas <ChevronRight size={14} /></button>
-                </div>
-                <div className="rdl-table">
-                  {ROWS.map((r) => (
-                    <div className="rdl-row" key={r.titulo}>
-                      <div className="rdl-row-main">
-                        <span className={`rdl-tag rdl-tag-${r.cor}`}>{r.area}</span>
-                        <div>
-                          <p className="rdl-row-title">{r.titulo}</p>
-                          <p className="rdl-row-sub">{r.por}</p>
-                        </div>
-                      </div>
-                      <span className={`rdl-status rdl-status-${r.st}`}>{r.statusLabel}</span>
-                      <MoreHorizontal size={16} className="rdl-row-more" />
-                    </div>
-                  ))}
-                </div>
+          {/* Referência */}
+          <section className="rdf-card rdf-ref">
+            <div className="rdf-card-head">
+              <div>
+                <h3 className="rdf-ctitle">Sistema de design</h3>
+                <p className="rdf-csub">Tipografia · paleta · componentes</p>
               </div>
             </div>
-
-            {/* Coluna direita */}
-            <div className="rdl-col rdl-col-side">
-              <div className="rdl-card rdl-card-accent">
-                <div className="rdl-card-head">
-                  <h3 className="rdl-card-title">NSM da semana</h3>
-                  <TrendingUp size={16} />
-                </div>
-                <Donut value={78} />
-                <p className="rdl-donut-cap">novos convertidos engajados em ≥1 valor</p>
-                <button className="rdl-btn rdl-btn-primary rdl-btn-block">
-                  <Plus size={15} /> Registrar engajamento
-                </button>
+            <div className="rdf-ref-grid">
+              <div>
+                <p className="rdf-reflabel">Tipografia · Inter</p>
+                <p className="rdf-t-display">Display 56 / 800</p>
+                <p className="rdf-t-h">Título 20 / 700</p>
+                <p className="rdf-t-body">Corpo 14 / 400 — respiro confortável, neutro frio.</p>
+                <p className="rdf-t-cap">CAPTION 11 / 700 · TRACKING +0.1EM</p>
               </div>
-
-              <div className="rdl-card">
-                <div className="rdl-card-head">
-                  <h3 className="rdl-card-title">Próximos cultos</h3>
-                </div>
-                <div className="rdl-events">
-                  {EVENTS.map((e) => (
-                    <div className="rdl-event" key={e.nome}>
-                      <div className="rdl-event-date"><b>{e.dia}</b><span>{e.mes}</span></div>
-                      <div className="rdl-event-info">
-                        <p className="rdl-event-name">{e.nome}</p>
-                        <p className="rdl-event-time">{e.hora}</p>
-                      </div>
-                      <div className="rdl-avatars">
-                        {e.team.map((t, i) => <span key={i} className="rdl-avatar rdl-avatar-xs">{t}</span>)}
-                      </div>
-                    </div>
-                  ))}
+              <div>
+                <p className="rdf-reflabel">Paleta</p>
+                <div className="rdf-sw">
+                  <Sw name="Teal (marca)" hex="#00B39D" />
+                  <Sw name="Teal neon" hex="#1FE6C8" />
+                  <Sw name="Fundo" hex="#070809" border />
+                  <Sw name="Superfície" hex="#15181C" border />
+                  <Sw name="Tinta" hex="#F2F5F7" />
+                  <Sw name="Violeta" hex="#8B5CF6" />
+                  <Sw name="Âmbar" hex="#F5A524" />
+                  <Sw name="Rosa" hex="#F31260" />
                 </div>
               </div>
-            </div>
-          </section>
-
-          {/* ── Referência de estilo ── */}
-          <section className="rdl-card rdl-ref">
-            <div className="rdl-card-head">
               <div>
-                <h3 className="rdl-card-title">Referência do sistema de design</h3>
-                <p className="rdl-card-sub">Tipografia, paleta e componentes propostos</p>
-              </div>
-            </div>
-
-            <div className="rdl-ref-grid">
-              <div>
-                <p className="rdl-ref-label">Tipografia · Inter</p>
-                <p className="rdl-type-display">Display 32 / 800</p>
-                <p className="rdl-type-h">Título 20 / 700</p>
-                <p className="rdl-type-body">Corpo 14 / 400 — leitura confortável com bastante respiro entre as linhas.</p>
-                <p className="rdl-type-cap">CAPTION 11 / 600 · TRACKING +0.08EM</p>
-              </div>
-
-              <div>
-                <p className="rdl-ref-label">Paleta</p>
-                <div className="rdl-swatches">
-                  <Swatch name="Teal (marca)" hex="#00B39D" />
-                  <Swatch name="Tinta" hex={dark ? '#ECEFF1' : '#11181C'} />
-                  <Swatch name="Superfície" hex={dark ? '#171A1D' : '#FFFFFF'} border />
-                  <Swatch name="Fundo" hex={dark ? '#0E1113' : '#F5F6F8'} border />
-                  <Swatch name="Menta" hex="#16A34A" />
-                  <Swatch name="Âmbar" hex="#D97706" />
-                  <Swatch name="Rosa" hex="#E11D48" />
-                  <Swatch name="Violeta" hex="#7C3AED" />
-                </div>
-              </div>
-
-              <div>
-                <p className="rdl-ref-label">Componentes</p>
-                <div className="rdl-comp">
-                  <button className="rdl-btn rdl-btn-primary">Botão primário</button>
-                  <button className="rdl-btn rdl-btn-light">Secundário</button>
-                  <div className="rdl-chips">
-                    <span className="rdl-tag rdl-tag-mint">Concluído</span>
-                    <span className="rdl-tag rdl-tag-amber">Pendente</span>
-                    <span className="rdl-tag rdl-tag-rose">Atrasado</span>
-                    <span className="rdl-tag rdl-tag-violet">Marketing</span>
+                <p className="rdf-reflabel">Componentes</p>
+                <div className="rdf-comp">
+                  <button className="rdf-btn primary">Primário</button>
+                  <button className="rdf-btn ghost">Secundário</button>
+                  <div className="rdf-chips">
+                    <span className="rdf-tag t-mint">Concluído</span>
+                    <span className="rdf-tag t-amber">Pendente</span>
+                    <span className="rdf-tag t-rose">Atrasado</span>
+                    <span className="rdf-tag t-violet">Marketing</span>
                   </div>
-                  <div className="rdl-input">
-                    <input placeholder="Campo de texto" />
-                  </div>
+                  <input className="rdf-input" placeholder="Campo de texto" />
                 </div>
               </div>
             </div>
           </section>
 
-          <footer className="rdl-footer">
-            Radius 20px · sombras macias · pílulas · acento teal #00B39D mantido · escala 4/8/12/16/24/32
-          </footer>
+          <footer className="rdf-footer">Bento · glows · neon teal #1FE6C8 sobre marca #00B39D · números display · raio 22-26px</footer>
         </main>
       </div>
     </div>
   );
 }
 
-/* ─────────────────────────── Subcomponentes ─────────────────────────── */
+/* ───────── Subcomponentes ───────── */
 
-function NavItem({ icon: Icon, label, active, badge }: { icon: any; label: string; active?: boolean; badge?: string }) {
+/** Todos os gradientes + filtro de glow num único bloco oculto, referenciados por id. */
+function RdfDefs() {
   return (
-    <button className={`rdl-nav-item ${active ? 'active' : ''}`}>
-      <Icon size={17} />
-      <span>{label}</span>
-      {badge && <i className="rdl-nav-badge">{badge}</i>}
-    </button>
-  );
-}
-
-function Stat({ label, value, delta, up, tone, spark }: { label: string; value: string; delta: string; up?: boolean; tone?: string; spark: number[] }) {
-  const max = Math.max(...spark), min = Math.min(...spark);
-  const pts = spark.map((v, i) => {
-    const x = (i / (spark.length - 1)) * 100;
-    const y = 28 - ((v - min) / (max - min || 1)) * 24 - 2;
-    return `${x},${y}`;
-  }).join(' ');
-  return (
-    <div className="rdl-stat">
-      <p className="rdl-stat-label">{label}</p>
-      <div className="rdl-stat-row">
-        <span className="rdl-stat-value">{value}</span>
-        <svg className="rdl-spark" viewBox="0 0 100 28" preserveAspectRatio="none">
-          <polyline points={pts} fill="none" stroke="var(--accent)" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
-        </svg>
-      </div>
-      <span className={`rdl-delta ${tone === 'warn' ? 'warn' : up ? 'up' : 'down'}`}>
-        {tone === 'warn' ? null : up ? <ArrowUpRight size={13} /> : <ArrowDownRight size={13} />}
-        {delta}
-      </span>
-    </div>
-  );
-}
-
-function AreaChart() {
-  const a = [42, 55, 48, 70, 62, 84, 90, 86];
-  const b = [12, 18, 14, 22, 19, 28, 24, 31];
-  const W = 560, H = 180, P = 8;
-  const max = 100;
-  const line = (arr: number[]) => arr.map((v, i) => {
-    const x = P + (i / (arr.length - 1)) * (W - P * 2);
-    const y = H - P - (v / max) * (H - P * 2);
-    return `${x},${y}`;
-  });
-  const areaPath = `M${line(a)[0]} L${line(a).join(' L')} L${W - P},${H - P} L${P},${H - P} Z`;
-  return (
-    <svg className="rdl-chart" viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none">
+    <svg width="0" height="0" style={{ position: 'absolute' }} aria-hidden>
       <defs>
-        <linearGradient id="rdlFill" x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0%" stopColor="var(--accent)" stopOpacity="0.22" />
-          <stop offset="100%" stopColor="var(--accent)" stopOpacity="0" />
+        <linearGradient id="rdfStroke" x1="0" y1="0" x2="1" y2="0">
+          <stop offset="0%" stopColor="#00B39D" /><stop offset="100%" stopColor="#1FE6C8" />
         </linearGradient>
+        <linearGradient id="rdfGauge" x1="0" y1="0" x2="1" y2="0">
+          <stop offset="0%" stopColor="#0d8f7f" /><stop offset="60%" stopColor="#00B39D" /><stop offset="100%" stopColor="#1FE6C8" />
+        </linearGradient>
+        <linearGradient id="rdfRing" x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0%" stopColor="#00B39D" /><stop offset="100%" stopColor="#1FE6C8" />
+        </linearGradient>
+        <linearGradient id="rdfFill" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stopColor="#00B39D" stopOpacity="0.35" /><stop offset="100%" stopColor="#00B39D" stopOpacity="0" />
+        </linearGradient>
+        <linearGradient id="rdfLine" x1="0" y1="0" x2="1" y2="0">
+          <stop offset="0%" stopColor="#00B39D" /><stop offset="100%" stopColor="#1FE6C8" />
+        </linearGradient>
+        <filter id="rdfGlow" x="-50%" y="-50%" width="200%" height="200%">
+          <feGaussianBlur stdDeviation="6" result="b" /><feMerge><feMergeNode in="b" /><feMergeNode in="SourceGraphic" /></feMerge>
+        </filter>
       </defs>
-      {[0.25, 0.5, 0.75].map((g) => (
-        <line key={g} x1={P} x2={W - P} y1={H * g} y2={H * g} stroke="var(--border)" strokeDasharray="3 5" />
-      ))}
-      <path d={areaPath} fill="url(#rdlFill)" />
-      <polyline points={line(a).join(' ')} fill="none" stroke="var(--accent)" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" />
-      <polyline points={line(b).join(' ')} fill="none" stroke="var(--violet)" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" />
     </svg>
   );
 }
 
-function Donut({ value }: { value: number }) {
-  const r = 52, c = 2 * Math.PI * r;
+function NavItem({ icon: Icon, label, active, badge }: { icon: any; label: string; active?: boolean; badge?: string }) {
   return (
-    <div className="rdl-donut">
-      <svg viewBox="0 0 140 140">
-        <circle cx="70" cy="70" r={r} fill="none" stroke="var(--track)" strokeWidth="14" />
-        <circle
-          cx="70" cy="70" r={r} fill="none" stroke="var(--accent)" strokeWidth="14" strokeLinecap="round"
-          strokeDasharray={c} strokeDashoffset={c - (value / 100) * c} transform="rotate(-90 70 70)"
-        />
-      </svg>
-      <div className="rdl-donut-center">
-        <b>{value}%</b>
+    <button className={`rdf-navitem ${active ? 'active' : ''}`}>
+      <Icon size={17} /><span>{label}</span>
+      {badge && <i className="rdf-navbadge">{badge}</i>}
+    </button>
+  );
+}
+
+function MiniStat({ label, value, delta, up, spark }: { label: string; value: string; delta: string; up?: boolean; spark: number[] }) {
+  const max = Math.max(...spark), min = Math.min(...spark);
+  const pts = spark.map((v, i) => `${(i / (spark.length - 1)) * 100},${26 - ((v - min) / (max - min || 1)) * 22 - 2}`).join(' ');
+  return (
+    <div className="rdf-card rdf-mini">
+      <p className="rdf-mini-label">{label}</p>
+      <p className="rdf-mini-value">{value}</p>
+      <div className="rdf-mini-foot">
+        <span className={`rdf-trend ${up ? 'up' : 'down'}`}>{up ? <ArrowUpRight size={11} /> : <ArrowDownRight size={11} />}{delta}</span>
+        <svg className="rdf-mini-spark" viewBox="0 0 100 26" preserveAspectRatio="none">
+          <polyline points={pts} fill="none" stroke="url(#rdfStroke)" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
       </div>
     </div>
   );
 }
 
-function Swatch({ name, hex, border }: { name: string; hex: string; border?: boolean }) {
+function Gauge({ value }: { value: number }) {
+  const R = 92, C = Math.PI * R; // semicircle
+  const off = C - (value / 100) * C;
   return (
-    <div className="rdl-swatch">
-      <span className="rdl-swatch-chip" style={{ background: hex, border: border ? '1px solid var(--border)' : 'none' }} />
-      <span className="rdl-swatch-name">{name}</span>
-      <span className="rdl-swatch-hex">{hex}</span>
+    <div className="rdf-gauge">
+      <svg viewBox="0 0 220 130">
+        <path d="M18 118 A92 92 0 0 1 202 118" fill="none" stroke="rgba(255,255,255,.07)" strokeWidth="14" strokeLinecap="round" />
+        <path d="M18 118 A92 92 0 0 1 202 118" fill="none" stroke="url(#rdfGauge)" strokeWidth="14" strokeLinecap="round"
+          strokeDasharray={C} strokeDashoffset={off} filter="url(#rdfGlow)" />
+      </svg>
+      <div className="rdf-gauge-center">
+        <span className="rdf-gauge-num">{value}</span>
+        <span className="rdf-gauge-lbl">de 100 · saudável</span>
+      </div>
     </div>
   );
 }
 
-/* ─────────────────────────── Dados mock ─────────────────────────── */
+function Ring({ value }: { value: number }) {
+  const r = 50, c = 2 * Math.PI * r;
+  return (
+    <div className="rdf-ring">
+      <svg viewBox="0 0 130 130">
+        <circle cx="65" cy="65" r={r} fill="none" stroke="rgba(255,255,255,.07)" strokeWidth="12" />
+        <circle cx="65" cy="65" r={r} fill="none" stroke="url(#rdfRing)" strokeWidth="12" strokeLinecap="round"
+          strokeDasharray={c} strokeDashoffset={c - (value / 100) * c} transform="rotate(-90 65 65)" filter="url(#rdfGlow)" />
+      </svg>
+      <div className="rdf-ring-center"><b>{value}%</b></div>
+    </div>
+  );
+}
 
+function Bars({ data }: { data: number[] }) {
+  const max = Math.max(...data);
+  return (
+    <div className="rdf-bars">
+      {data.map((v, i) => (
+        <span key={i} className="rdf-bar" style={{ height: `${(v / max) * 100}%`, opacity: i === data.length - 1 ? 1 : 0.45 }} />
+      ))}
+    </div>
+  );
+}
+
+function GlowArea() {
+  const a = [42, 58, 48, 72, 64, 86, 90, 96];
+  const b = [12, 18, 14, 24, 20, 30, 26, 34];
+  const W = 600, H = 200, P = 6, max = 110;
+  const line = (arr: number[]) => arr.map((v, i) => `${P + (i / (arr.length - 1)) * (W - P * 2)},${H - P - (v / max) * (H - P * 2)}`);
+  const area = `M${line(a)[0]} L${line(a).join(' L')} L${W - P},${H - P} L${P},${H - P} Z`;
+  return (
+    <svg className="rdf-chart" viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none">
+      {[0.25, 0.5, 0.75].map((g) => <line key={g} x1={P} x2={W - P} y1={H * g} y2={H * g} stroke="rgba(255,255,255,.05)" />)}
+      <path d={area} fill="url(#rdfFill)" />
+      <polyline points={line(a).join(' ')} fill="none" stroke="url(#rdfLine)" strokeWidth="3.5" strokeLinecap="round" strokeLinejoin="round" filter="url(#rdfGlow)" />
+      <polyline points={line(b).join(' ')} fill="none" stroke="#8B5CF6" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" strokeOpacity="0.85" />
+    </svg>
+  );
+}
+
+function Sw({ name, hex, border }: { name: string; hex: string; border?: boolean }) {
+  return (
+    <div className="rdf-swatch">
+      <span className="rdf-swchip" style={{ background: hex, border: border ? '1px solid rgba(255,255,255,.12)' : 'none' }} />
+      <span className="rdf-swname">{name}</span><span className="rdf-swhex">{hex}</span>
+    </div>
+  );
+}
+
+/* ───────── Dados mock ───────── */
 const ROWS = [
-  { area: 'Cozinha', cor: 'amber', titulo: 'Café para reunião de líderes', por: 'Pedro Paiva · há 2h', st: 'pend', statusLabel: 'Pendente' },
-  { area: 'TI', cor: 'violet', titulo: 'Acesso ao painel de KPIs', por: 'Lorena Andrade · há 5h', st: 'prog', statusLabel: 'Em atendimento' },
-  { area: 'Manutenção', cor: 'rose', titulo: 'Ar-condicionado do auditório', por: 'Amaury · ontem', st: 'late', statusLabel: 'Atrasado' },
-  { area: 'Reserva', cor: 'mint', titulo: 'Sala 3 · ensaio de louvor', por: 'Renata Martins · ontem', st: 'done', statusLabel: 'Concluído' },
+  { area: 'Cozinha', cor: 'amber', titulo: 'Café · reunião de líderes', por: 'Pedro Paiva · 2h', st: 'pend', statusLabel: 'Pendente' },
+  { area: 'TI', cor: 'violet', titulo: 'Acesso ao painel de KPIs', por: 'Lorena · 5h', st: 'prog', statusLabel: 'Em atend.' },
+  { area: 'Manut.', cor: 'rose', titulo: 'Ar-condicionado do auditório', por: 'Amaury · ontem', st: 'late', statusLabel: 'Atrasado' },
+  { area: 'Reserva', cor: 'mint', titulo: 'Sala 3 · ensaio de louvor', por: 'Renata · ontem', st: 'done', statusLabel: 'Concluído' },
 ];
-
 const EVENTS = [
-  { dia: '28', mes: 'MAI', nome: 'Quarta com Deus', hora: '20:00 · Auditório', team: ['JS', 'PF', 'AL'] },
+  { dia: '28', mes: 'MAI', nome: 'Quarta com Deus', hora: '20:00 · Auditório', team: ['JS', 'PF'] },
   { dia: '31', mes: 'MAI', nome: 'Bridge', hora: '17:00 · Salão', team: ['LX', 'AC'] },
-  { dia: '01', mes: 'JUN', nome: 'Culto Domingo 10h', hora: '10:00 · Sede', team: ['MG', 'PP', 'YT'] },
+  { dia: '01', mes: 'JUN', nome: 'Domingo 10h', hora: '10:00 · Sede', team: ['MG', 'PP', 'YT'] },
 ];
 
-/* ─────────────────────────── Estilos escopados ─────────────────────────── */
-
+/* ───────── Estilos escopados (.rdf) ───────── */
 const CSS = `
-.rdl { --accent:#00B39D; --violet:#7C3AED; font-family:'Inter',-apple-system,sans-serif; min-height:100vh; }
-.rdl-light {
-  --bg:#F5F6F8; --surface:#FFFFFF; --surface-2:#FBFBFC; --text:#11181C; --text-2:#5B6670;
-  --text-3:#97A0A8; --border:#ECEEF1; --accent-soft:rgba(0,179,157,.10); --track:#EFF1F4;
-  --shadow:0 1px 2px rgba(16,24,40,.04), 0 10px 28px -16px rgba(16,24,40,.18);
-  --shadow-sm:0 1px 2px rgba(16,24,40,.05);
+.rdf {
+  --bg:#070809; --bg2:#0B0D10;
+  --surface:rgba(255,255,255,.035); --surface-2:rgba(255,255,255,.06);
+  --border:rgba(255,255,255,.08); --border-2:rgba(255,255,255,.14);
+  --text:#F2F5F7; --text-2:#98A2AB; --text-3:#5A646C;
+  --teal:#00B39D; --neon:#1FE6C8; --violet:#8B5CF6;
+  font-family:'Inter',-apple-system,sans-serif; min-height:100vh; position:relative;
+  background:var(--bg); color:var(--text); overflow-x:hidden;
 }
-.rdl-dark {
-  --bg:#0E1113; --surface:#171A1D; --surface-2:#1C2024; --text:#ECEFF1; --text-2:#9AA4AD;
-  --text-3:#6B757D; --border:#262B30; --accent-soft:rgba(0,179,157,.16); --track:#262B30;
-  --shadow:0 1px 2px rgba(0,0,0,.4), 0 14px 32px -18px rgba(0,0,0,.7);
-  --shadow-sm:0 1px 2px rgba(0,0,0,.4);
-}
-.rdl { background:var(--bg); color:var(--text); }
-.rdl * { box-sizing:border-box; }
+.rdf * { box-sizing:border-box; }
 
-/* Banner */
-.rdl-banner { display:flex; align-items:center; justify-content:space-between; gap:12px;
-  padding:10px 20px; background:var(--surface); border-bottom:1px solid var(--border); flex-wrap:wrap; }
-.rdl-banner-left { display:flex; align-items:center; gap:8px; font-size:13px; color:var(--text-2); }
-.rdl-banner-left b { color:var(--text); }
-.rdl-banner-left svg { color:var(--accent); }
-.rdl-toggle { display:flex; align-items:center; gap:6px; padding:7px 14px; border-radius:999px;
-  border:1px solid var(--border); background:var(--surface-2); color:var(--text); font-size:12.5px;
-  font-weight:600; cursor:pointer; transition:all .15s; }
-.rdl-toggle:hover { border-color:var(--accent); color:var(--accent); }
+/* fundo decorativo */
+.rdf-bg { position:fixed; inset:0; z-index:0; pointer-events:none; overflow:hidden; }
+.rdf-blob { position:absolute; border-radius:50%; filter:blur(120px); opacity:.5; }
+.rdf-blob-1 { width:520px; height:520px; top:-180px; left:-120px;
+  background:radial-gradient(circle,rgba(0,179,157,.45),transparent 70%); }
+.rdf-blob-2 { width:480px; height:480px; bottom:-200px; right:-120px;
+  background:radial-gradient(circle,rgba(139,92,246,.30),transparent 70%); opacity:.4; }
+.rdf-grid { position:absolute; inset:0;
+  background-image:linear-gradient(rgba(255,255,255,.025) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,.025) 1px,transparent 1px);
+  background-size:46px 46px; mask-image:radial-gradient(ellipse 80% 60% at 50% 0%,#000,transparent 75%); }
 
-/* App shell */
-.rdl-app { display:grid; grid-template-columns:248px 1fr; gap:20px; padding:20px; max-width:1400px; margin:0 auto; }
+.rdf-banner { position:relative; z-index:2; display:flex; align-items:center; gap:8px;
+  padding:9px 20px; font-size:12.5px; color:var(--text-2);
+  background:rgba(0,179,157,.07); border-bottom:1px solid var(--border); }
+.rdf-banner b { color:var(--text); } .rdf-banner svg { color:var(--neon); }
 
-/* Sidebar */
-.rdl-sidebar { background:var(--surface); border:1px solid var(--border); border-radius:24px;
-  padding:22px 16px; box-shadow:var(--shadow); display:flex; flex-direction:column; gap:22px;
-  height:fit-content; position:sticky; top:20px; }
-.rdl-brand { display:flex; align-items:center; gap:10px; padding:0 6px; }
-.rdl-brand-mark { width:34px; height:34px; border-radius:11px; background:var(--accent);
-  color:#fff; display:grid; place-items:center; }
-.rdl-brand-name { font-size:18px; font-weight:800; letter-spacing:-.02em; }
-.rdl-nav { display:flex; flex-direction:column; gap:3px; }
-.rdl-nav-label { font-size:10.5px; font-weight:700; letter-spacing:.08em; text-transform:uppercase;
-  color:var(--text-3); padding:12px 10px 5px; }
-.rdl-nav-item { display:flex; align-items:center; gap:11px; padding:10px 12px; border-radius:13px;
-  border:none; background:transparent; color:var(--text-2); font-size:14px; font-weight:600;
-  cursor:pointer; transition:all .15s; text-align:left; width:100%; }
-.rdl-nav-item:hover { background:var(--surface-2); color:var(--text); }
-.rdl-nav-item.active { background:var(--accent); color:#fff; box-shadow:0 6px 16px -6px var(--accent); }
-.rdl-nav-badge { margin-left:auto; font-size:11px; font-weight:700; font-style:normal;
-  background:rgba(255,255,255,.25); padding:1px 8px; border-radius:999px; }
-.rdl-nav-item:not(.active) .rdl-nav-badge { background:var(--accent-soft); color:var(--accent); }
-.rdl-upsell { background:linear-gradient(160deg,var(--accent),#0d8f7f); border-radius:18px;
-  padding:16px; color:#fff; }
-.rdl-upsell-title { font-size:14px; font-weight:700; margin:0 0 4px; }
-.rdl-upsell-sub { font-size:12px; opacity:.9; margin:0 0 12px; line-height:1.4; }
+.rdf-app { position:relative; z-index:1; display:grid; grid-template-columns:240px 1fr; gap:22px;
+  padding:22px; max-width:1460px; margin:0 auto; }
 
-/* Main */
-.rdl-main { display:flex; flex-direction:column; gap:20px; min-width:0; }
-.rdl-topbar { display:flex; align-items:center; justify-content:space-between; gap:16px; flex-wrap:wrap; }
-.rdl-eyebrow { font-size:12px; font-weight:600; color:var(--text-3); margin:0 0 2px; }
-.rdl-h1 { font-size:28px; font-weight:800; letter-spacing:-.025em; margin:0; }
-.rdl-topbar-actions { display:flex; align-items:center; gap:10px; }
-.rdl-search { display:flex; align-items:center; gap:8px; background:var(--surface); border:1px solid var(--border);
-  border-radius:999px; padding:9px 14px; box-shadow:var(--shadow-sm); color:var(--text-3); }
-.rdl-search input { border:none; background:transparent; outline:none; font-size:13.5px; color:var(--text);
-  width:200px; font-family:inherit; }
-.rdl-search kbd { font-size:10px; font-weight:600; background:var(--surface-2); border:1px solid var(--border);
-  border-radius:6px; padding:2px 6px; color:var(--text-3); }
-.rdl-icon-btn { position:relative; width:42px; height:42px; border-radius:13px; border:1px solid var(--border);
-  background:var(--surface); color:var(--text-2); display:grid; place-items:center; cursor:pointer;
-  box-shadow:var(--shadow-sm); transition:all .15s; }
-.rdl-icon-btn:hover { color:var(--accent); border-color:var(--accent); }
-.rdl-dot { position:absolute; top:9px; right:10px; width:7px; height:7px; border-radius:50%;
-  background:var(--accent); border:2px solid var(--surface); }
-.rdl-avatar { border-radius:50%; background:var(--accent-soft); color:var(--accent); font-weight:700;
-  display:grid; place-items:center; font-size:13px; }
-.rdl-avatar-me { width:42px; height:42px; }
-.rdl-avatar-xs { width:26px; height:26px; font-size:10px; border:2px solid var(--surface); margin-left:-8px; }
-.rdl-avatars { display:flex; }
+/* sidebar */
+.rdf-sidebar { position:sticky; top:22px; height:fit-content; display:flex; flex-direction:column; gap:24px;
+  background:var(--surface); border:1px solid var(--border); border-radius:24px; padding:22px 15px;
+  backdrop-filter:blur(12px); }
+.rdf-brand { display:flex; align-items:center; gap:10px; padding:0 6px; }
+.rdf-brand-mark { width:34px; height:34px; border-radius:11px; display:grid; place-items:center; color:#04130f;
+  background:linear-gradient(135deg,var(--neon),var(--teal)); box-shadow:0 0 22px -4px var(--teal); }
+.rdf-brand-name { font-size:18px; font-weight:800; letter-spacing:-.02em; }
+.rdf-nav { display:flex; flex-direction:column; gap:4px; }
+.rdf-navitem { display:flex; align-items:center; gap:12px; width:100%; text-align:left; cursor:pointer;
+  padding:11px 13px; border-radius:13px; border:1px solid transparent; background:transparent;
+  color:var(--text-2); font-size:14px; font-weight:600; font-family:inherit; transition:all .15s; }
+.rdf-navitem:hover { background:var(--surface-2); color:var(--text); }
+.rdf-navitem.active { color:var(--text); border-color:var(--border-2);
+  background:linear-gradient(135deg,rgba(0,179,157,.22),rgba(31,230,200,.05));
+  box-shadow:inset 0 0 0 1px rgba(31,230,200,.18), 0 8px 24px -12px var(--teal); }
+.rdf-navitem.active svg { color:var(--neon); }
+.rdf-navbadge { margin-left:auto; font-style:normal; font-size:11px; font-weight:700; padding:1px 8px;
+  border-radius:999px; background:rgba(31,230,200,.16); color:var(--neon); }
+.rdf-streak { display:flex; align-items:center; gap:11px; padding:13px;
+  border:1px solid var(--border); border-radius:16px; background:var(--surface); }
+.rdf-streak svg { color:#F5A524; flex-shrink:0; }
+.rdf-streak b { display:block; font-size:14px; } .rdf-streak span { font-size:11.5px; color:var(--text-3); }
 
-/* Stats */
-.rdl-stats { display:grid; grid-template-columns:repeat(4,1fr); gap:16px; }
-.rdl-stat { background:var(--surface); border:1px solid var(--border); border-radius:20px; padding:18px;
-  box-shadow:var(--shadow-sm); transition:transform .18s, box-shadow .18s; }
-.rdl-stat:hover { transform:translateY(-3px); box-shadow:var(--shadow); }
-.rdl-stat-label { font-size:12.5px; font-weight:600; color:var(--text-3); margin:0 0 10px; }
-.rdl-stat-row { display:flex; align-items:center; justify-content:space-between; gap:8px; }
-.rdl-stat-value { font-size:26px; font-weight:800; letter-spacing:-.03em; }
-.rdl-spark { width:64px; height:28px; }
-.rdl-delta { display:inline-flex; align-items:center; gap:2px; font-size:12px; font-weight:700;
-  margin-top:10px; padding:3px 9px; border-radius:999px; }
-.rdl-delta.up { color:#16A34A; background:rgba(22,163,74,.10); }
-.rdl-delta.down { color:#E11D48; background:rgba(225,29,72,.10); }
-.rdl-delta.warn { color:#D97706; background:rgba(217,119,6,.12); }
+/* main */
+.rdf-main { display:flex; flex-direction:column; gap:22px; min-width:0; }
+.rdf-topbar { display:flex; align-items:center; justify-content:space-between; gap:16px; flex-wrap:wrap; }
+.rdf-eyebrow { font-size:12px; font-weight:600; color:var(--text-3); margin:0 0 3px; letter-spacing:.02em; }
+.rdf-h1 { font-size:30px; font-weight:800; letter-spacing:-.03em; margin:0;
+  background:linear-gradient(120deg,#fff 30%,var(--neon)); -webkit-background-clip:text; background-clip:text; -webkit-text-fill-color:transparent; }
+.rdf-actions { display:flex; align-items:center; gap:10px; }
+.rdf-search { display:flex; align-items:center; gap:8px; padding:9px 13px; border-radius:999px;
+  background:var(--surface); border:1px solid var(--border); color:var(--text-3); }
+.rdf-search input { border:none; background:transparent; outline:none; color:var(--text); font-size:13.5px; width:140px; font-family:inherit; }
+.rdf-search kbd { font-size:10px; font-weight:600; padding:2px 6px; border-radius:6px; background:var(--surface-2); border:1px solid var(--border); color:var(--text-3); }
+.rdf-iconbtn { position:relative; width:42px; height:42px; border-radius:13px; display:grid; place-items:center; cursor:pointer;
+  background:var(--surface); border:1px solid var(--border); color:var(--text-2); transition:all .15s; }
+.rdf-iconbtn:hover { color:var(--neon); border-color:var(--border-2); }
+.rdf-iconbtn i { position:absolute; top:9px; right:10px; width:7px; height:7px; border-radius:50%; background:var(--neon); box-shadow:0 0 8px var(--neon); }
+.rdf-avatar { width:42px; height:42px; border-radius:13px; display:grid; place-items:center; font-size:13px; font-weight:700; color:#04130f;
+  background:linear-gradient(135deg,var(--neon),var(--teal)); }
 
-/* Grid */
-.rdl-grid { display:grid; grid-template-columns:1.7fr 1fr; gap:20px; align-items:start; }
-.rdl-col { display:flex; flex-direction:column; gap:20px; min-width:0; }
+/* bento */
+.rdf-bento { display:grid; grid-template-columns:repeat(4,1fr); gap:18px; grid-auto-flow:dense; }
+.rdf-card { background:var(--surface); border:1px solid var(--border); border-radius:22px; padding:20px;
+  backdrop-filter:blur(12px); position:relative; overflow:hidden; }
+.rdf-card::before { content:''; position:absolute; top:0; left:24px; right:24px; height:1px;
+  background:linear-gradient(90deg,transparent,rgba(255,255,255,.12),transparent); }
+.rdf-card-head { display:flex; align-items:flex-start; justify-content:space-between; gap:10px; margin-bottom:14px; }
+.rdf-card-head svg { color:var(--neon); }
+.rdf-ctitle { font-size:15px; font-weight:700; letter-spacing:-.01em; margin:0; }
+.rdf-csub { font-size:12px; color:var(--text-3); margin:3px 0 0; }
+.rdf-link { display:inline-flex; align-items:center; gap:2px; border:none; background:none; cursor:pointer; font-family:inherit;
+  color:var(--neon); font-size:12.5px; font-weight:600; }
+.rdf-pill { display:inline-flex; align-items:center; gap:6px; font-size:12px; font-weight:600; padding:5px 11px; border-radius:999px;
+  background:rgba(31,230,200,.12); color:var(--neon); border:1px solid rgba(31,230,200,.22); }
+.rdf-pill.ghost { background:var(--surface-2); color:var(--text-2); border-color:var(--border); }
+.rdf-trend { display:inline-flex; align-items:center; gap:2px; font-size:12px; font-weight:700; padding:3px 9px; border-radius:999px; }
+.rdf-trend.up { color:#34D399; background:rgba(52,211,153,.12); }
+.rdf-trend.down { color:#FB7185; background:rgba(251,113,133,.12); }
+.rdf-muted { color:var(--text-3); font-size:12px; }
 
-/* Card */
-.rdl-card { background:var(--surface); border:1px solid var(--border); border-radius:24px; padding:22px;
-  box-shadow:var(--shadow-sm); }
-.rdl-card-head { display:flex; align-items:flex-start; justify-content:space-between; gap:12px; margin-bottom:16px; }
-.rdl-card-title { font-size:16px; font-weight:700; letter-spacing:-.015em; margin:0; }
-.rdl-card-sub { font-size:12.5px; color:var(--text-3); margin:3px 0 0; }
-.rdl-card-accent .rdl-card-head svg { color:var(--accent); }
-.rdl-link { display:inline-flex; align-items:center; gap:2px; border:none; background:transparent;
-  color:var(--accent); font-size:13px; font-weight:600; cursor:pointer; font-family:inherit; }
-.rdl-seg { display:flex; background:var(--surface-2); border:1px solid var(--border); border-radius:999px; padding:3px; }
-.rdl-seg button { border:none; background:transparent; padding:5px 13px; border-radius:999px; font-size:12.5px;
-  font-weight:600; color:var(--text-3); cursor:pointer; font-family:inherit; }
-.rdl-seg button.active { background:var(--surface); color:var(--text); box-shadow:var(--shadow-sm); }
+/* HERO */
+.rdf-hero { grid-column:span 2; grid-row:span 2; display:flex; flex-direction:column;
+  background:radial-gradient(120% 100% at 0% 0%,rgba(0,179,157,.20),transparent 55%), var(--surface);
+  border-color:rgba(31,230,200,.18); box-shadow:0 24px 60px -30px rgba(0,179,157,.6); }
+.rdf-hero-top { display:flex; align-items:center; justify-content:space-between; }
+.rdf-gauge { position:relative; flex:1; display:grid; place-items:center; margin:6px 0; }
+.rdf-gauge svg { width:100%; max-width:300px; height:auto; }
+.rdf-gauge-center { position:absolute; bottom:6px; left:0; right:0; text-align:center; }
+.rdf-gauge-num { display:block; font-size:60px; font-weight:800; letter-spacing:-.04em; line-height:1;
+  background:linear-gradient(120deg,#fff,var(--neon)); -webkit-background-clip:text; background-clip:text; -webkit-text-fill-color:transparent; }
+.rdf-gauge-lbl { font-size:12px; color:var(--text-3); }
+.rdf-hero-foot { display:grid; grid-template-columns:repeat(3,1fr); gap:10px; padding-top:14px; border-top:1px solid var(--border); }
+.rdf-hero-foot div { text-align:center; } .rdf-hero-foot b { display:block; font-size:20px; font-weight:800; letter-spacing:-.02em; }
+.rdf-hero-foot span { font-size:11px; color:var(--text-3); }
 
-/* Chart */
-.rdl-chart { width:100%; height:180px; display:block; }
-.rdl-legend { display:flex; gap:18px; margin-top:14px; font-size:12.5px; color:var(--text-2); font-weight:600; }
-.rdl-legend span { display:inline-flex; align-items:center; gap:6px; }
-.rdl-legend i { width:10px; height:10px; border-radius:3px; }
+/* MONEY */
+.rdf-money { grid-column:span 2; display:flex; flex-direction:column; gap:10px; }
+.rdf-bignum { font-size:52px; font-weight:800; letter-spacing:-.04em; margin:6px 0 0; line-height:1; }
+.rdf-bignum small { font-size:28px; color:var(--text-3); font-weight:700; }
+.rdf-money-foot { display:flex; align-items:center; gap:8px; }
+.rdf-bars { display:flex; align-items:flex-end; gap:7px; height:54px; margin-top:auto; padding-top:8px; }
+.rdf-bar { flex:1; border-radius:6px 6px 3px 3px; background:linear-gradient(180deg,var(--neon),var(--teal)); min-height:6px; }
 
-/* Table */
-.rdl-table { display:flex; flex-direction:column; }
-.rdl-row { display:flex; align-items:center; gap:12px; padding:12px 8px; border-radius:14px; transition:background .15s; }
-.rdl-row:hover { background:var(--surface-2); }
-.rdl-row-main { display:flex; align-items:center; gap:12px; flex:1; min-width:0; }
-.rdl-row-title { font-size:13.5px; font-weight:600; margin:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-.rdl-row-sub { font-size:11.5px; color:var(--text-3); margin:2px 0 0; }
-.rdl-row-more { color:var(--text-3); cursor:pointer; flex-shrink:0; }
-.rdl-tag { font-size:11px; font-weight:700; padding:4px 10px; border-radius:999px; white-space:nowrap; }
-.rdl-tag-mint { color:#16A34A; background:rgba(22,163,74,.12); }
-.rdl-tag-amber { color:#D97706; background:rgba(217,119,6,.13); }
-.rdl-tag-rose { color:#E11D48; background:rgba(225,29,72,.11); }
-.rdl-tag-violet { color:#7C3AED; background:rgba(124,58,237,.12); }
-.rdl-status { font-size:11.5px; font-weight:600; padding:4px 11px; border-radius:999px; white-space:nowrap; flex-shrink:0; }
-.rdl-status-done { color:#16A34A; background:rgba(22,163,74,.10); }
-.rdl-status-prog { color:var(--accent); background:var(--accent-soft); }
-.rdl-status-pend { color:var(--text-2); background:var(--surface-2); border:1px solid var(--border); }
-.rdl-status-late { color:#E11D48; background:rgba(225,29,72,.10); }
+/* MINI */
+.rdf-mini { display:flex; flex-direction:column; gap:7px; }
+.rdf-mini-label { font-size:12.5px; color:var(--text-3); font-weight:600; margin:0; }
+.rdf-mini-value { font-size:28px; font-weight:800; letter-spacing:-.03em; margin:0; }
+.rdf-mini-foot { display:flex; align-items:center; justify-content:space-between; gap:8px; margin-top:auto; }
+.rdf-mini-spark { width:62px; height:26px; }
 
-/* Side */
-.rdl-col-side .rdl-card-accent { background:linear-gradient(165deg,var(--surface),var(--surface-2)); }
-.rdl-donut { position:relative; width:140px; margin:6px auto 0; }
-.rdl-donut svg { width:140px; height:140px; }
-.rdl-donut-center { position:absolute; inset:0; display:grid; place-items:center; }
-.rdl-donut-center b { font-size:30px; font-weight:800; letter-spacing:-.03em; }
-.rdl-donut-cap { text-align:center; font-size:12px; color:var(--text-3); margin:8px 0 16px; line-height:1.4; }
-.rdl-events { display:flex; flex-direction:column; gap:6px; }
-.rdl-event { display:flex; align-items:center; gap:12px; padding:9px; border-radius:14px; transition:background .15s; }
-.rdl-event:hover { background:var(--surface-2); }
-.rdl-event-date { width:44px; height:44px; border-radius:13px; background:var(--accent-soft); color:var(--accent);
-  display:flex; flex-direction:column; align-items:center; justify-content:center; flex-shrink:0; }
-.rdl-event-date b { font-size:15px; font-weight:800; line-height:1; }
-.rdl-event-date span { font-size:9px; font-weight:700; letter-spacing:.05em; margin-top:2px; }
-.rdl-event-info { flex:1; min-width:0; }
-.rdl-event-name { font-size:13.5px; font-weight:600; margin:0; }
-.rdl-event-time { font-size:11.5px; color:var(--text-3); margin:2px 0 0; }
+/* CHART */
+.rdf-chart-card { grid-column:span 2; }
+.rdf-chart { width:100%; height:200px; display:block; }
+.rdf-legend { display:flex; gap:18px; margin-top:12px; font-size:12.5px; color:var(--text-2); font-weight:600; }
+.rdf-legend span { display:inline-flex; align-items:center; gap:6px; }
+.rdf-legend i { width:10px; height:10px; border-radius:3px; }
+.rdf-legend .g-teal { background:linear-gradient(90deg,var(--teal),var(--neon)); }
+.rdf-legend .g-violet { background:var(--violet); }
 
-/* Buttons */
-.rdl-btn { display:inline-flex; align-items:center; justify-content:center; gap:7px; border-radius:999px;
-  font-size:13.5px; font-weight:600; cursor:pointer; padding:11px 18px; border:1px solid transparent;
-  font-family:inherit; transition:all .15s; }
-.rdl-btn-sm { padding:8px 14px; font-size:12.5px; }
-.rdl-btn-block { width:100%; }
-.rdl-btn-primary { background:var(--accent); color:#fff; box-shadow:0 8px 18px -8px var(--accent); }
-.rdl-btn-primary:hover { filter:brightness(1.05); transform:translateY(-1px); }
-.rdl-btn-light { background:rgba(255,255,255,.18); color:#fff; border-color:rgba(255,255,255,.3); }
-.rdl-comp .rdl-btn-light { background:var(--surface-2); color:var(--text); border-color:var(--border); }
-.rdl-btn-light:hover { filter:brightness(1.05); }
+/* NSM */
+.rdf-nsm { grid-column:span 2; display:flex; flex-direction:column; align-items:center; }
+.rdf-ring { position:relative; width:130px; margin:4px auto; }
+.rdf-ring svg { width:130px; height:130px; }
+.rdf-ring-center { position:absolute; inset:0; display:grid; place-items:center; }
+.rdf-ring-center b { font-size:28px; font-weight:800; letter-spacing:-.03em; }
+.rdf-nsm-cap { text-align:center; font-size:12px; color:var(--text-3); margin:8px 0 14px; line-height:1.4; }
 
-/* Reference */
-.rdl-ref-grid { display:grid; grid-template-columns:1fr 1fr 1fr; gap:28px; }
-.rdl-ref-label { font-size:10.5px; font-weight:700; letter-spacing:.08em; text-transform:uppercase;
-  color:var(--text-3); margin:0 0 14px; }
-.rdl-type-display { font-size:30px; font-weight:800; letter-spacing:-.03em; margin:0 0 8px; }
-.rdl-type-h { font-size:20px; font-weight:700; letter-spacing:-.02em; margin:0 0 8px; }
-.rdl-type-body { font-size:14px; color:var(--text-2); margin:0 0 8px; line-height:1.6; }
-.rdl-type-cap { font-size:11px; font-weight:600; letter-spacing:.08em; color:var(--text-3); margin:0; }
-.rdl-swatches { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
-.rdl-swatch { display:flex; align-items:center; gap:8px; }
-.rdl-swatch-chip { width:26px; height:26px; border-radius:9px; flex-shrink:0; }
-.rdl-swatch-name { font-size:12px; font-weight:600; }
-.rdl-swatch-hex { font-size:10.5px; color:var(--text-3); margin-left:auto; }
-.rdl-comp { display:flex; flex-direction:column; gap:12px; align-items:flex-start; }
-.rdl-chips { display:flex; flex-wrap:wrap; gap:7px; }
-.rdl-input { width:100%; }
-.rdl-input input { width:100%; padding:10px 14px; border-radius:13px; border:1px solid var(--border);
-  background:var(--surface-2); color:var(--text); font-size:13.5px; outline:none; font-family:inherit; }
-.rdl-input input:focus { border-color:var(--accent); box-shadow:0 0 0 3px var(--accent-soft); }
+/* LIST */
+.rdf-list { grid-column:span 2; }
+.rdf-row { display:flex; align-items:center; gap:11px; padding:11px 8px; border-radius:13px; transition:background .15s; }
+.rdf-row:hover { background:var(--surface-2); }
+.rdf-row-info { flex:1; min-width:0; }
+.rdf-row-title { font-size:13.5px; font-weight:600; margin:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.rdf-row-sub { font-size:11.5px; color:var(--text-3); margin:2px 0 0; }
+.rdf-tag { font-size:11px; font-weight:700; padding:4px 10px; border-radius:999px; white-space:nowrap; }
+.rdf-tag.t-mint { color:#34D399; background:rgba(52,211,153,.14); }
+.rdf-tag.t-amber { color:#F5A524; background:rgba(245,165,36,.14); }
+.rdf-tag.t-rose { color:#FB7185; background:rgba(251,113,133,.14); }
+.rdf-tag.t-violet { color:#A78BFA; background:rgba(139,92,246,.16); }
+.rdf-status { font-size:11px; font-weight:600; padding:4px 10px; border-radius:999px; white-space:nowrap; }
+.rdf-status.s-done { color:#34D399; background:rgba(52,211,153,.12); }
+.rdf-status.s-prog { color:var(--neon); background:rgba(31,230,200,.12); }
+.rdf-status.s-pend { color:var(--text-2); background:var(--surface-2); }
+.rdf-status.s-late { color:#FB7185; background:rgba(251,113,133,.12); }
 
-.rdl-footer { text-align:center; font-size:11.5px; color:var(--text-3); padding:6px 0 12px; }
+/* EVENTS */
+.rdf-events { grid-column:span 2; }
+.rdf-event { display:flex; align-items:center; gap:12px; padding:9px; border-radius:13px; transition:background .15s; }
+.rdf-event:hover { background:var(--surface-2); }
+.rdf-edate { width:46px; height:46px; border-radius:13px; flex-shrink:0; display:flex; flex-direction:column; align-items:center; justify-content:center;
+  background:rgba(31,230,200,.1); border:1px solid rgba(31,230,200,.18); color:var(--neon); }
+.rdf-edate b { font-size:16px; font-weight:800; line-height:1; } .rdf-edate span { font-size:9px; font-weight:700; letter-spacing:.05em; margin-top:2px; }
+.rdf-einfo { flex:1; min-width:0; } .rdf-einfo p { font-size:13.5px; font-weight:600; margin:0; } .rdf-einfo span { font-size:11.5px; color:var(--text-3); }
+.rdf-team { display:flex; }
+.rdf-team span { width:26px; height:26px; border-radius:50%; margin-left:-8px; display:grid; place-items:center; font-size:10px; font-weight:700;
+  background:var(--surface-2); border:2px solid #0d0f12; color:var(--text-2); }
 
-/* Responsivo */
-@media (max-width:1080px) {
-  .rdl-app { grid-template-columns:1fr; }
-  .rdl-sidebar { position:static; }
-  .rdl-grid { grid-template-columns:1fr; }
-  .rdl-stats { grid-template-columns:repeat(2,1fr); }
-  .rdl-ref-grid { grid-template-columns:1fr; gap:24px; }
+/* buttons */
+.rdf-btn { display:inline-flex; align-items:center; justify-content:center; gap:7px; cursor:pointer; font-family:inherit;
+  font-size:13.5px; font-weight:600; padding:11px 18px; border-radius:999px; border:1px solid transparent; transition:all .15s; }
+.rdf-btn.block { width:100%; }
+.rdf-btn.primary { color:#04130f; background:linear-gradient(135deg,var(--neon),var(--teal)); box-shadow:0 10px 26px -10px var(--teal); }
+.rdf-btn.primary:hover { filter:brightness(1.08); transform:translateY(-1px); }
+.rdf-btn.ghost { background:var(--surface-2); color:var(--text); border-color:var(--border); }
+.rdf-btn.ghost:hover { border-color:var(--border-2); }
+
+/* reference */
+.rdf-ref { grid-column:auto; }
+.rdf-ref-grid { display:grid; grid-template-columns:1fr 1fr 1fr; gap:28px; }
+.rdf-reflabel { font-size:10.5px; font-weight:700; letter-spacing:.1em; text-transform:uppercase; color:var(--text-3); margin:0 0 14px; }
+.rdf-t-display { font-size:40px; font-weight:800; letter-spacing:-.04em; margin:0 0 8px;
+  background:linear-gradient(120deg,#fff,var(--neon)); -webkit-background-clip:text; background-clip:text; -webkit-text-fill-color:transparent; }
+.rdf-t-h { font-size:20px; font-weight:700; letter-spacing:-.02em; margin:0 0 8px; }
+.rdf-t-body { font-size:14px; color:var(--text-2); margin:0 0 8px; line-height:1.6; }
+.rdf-t-cap { font-size:11px; font-weight:700; letter-spacing:.1em; color:var(--text-3); margin:0; }
+.rdf-sw { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+.rdf-swatch { display:flex; align-items:center; gap:8px; }
+.rdf-swchip { width:26px; height:26px; border-radius:9px; flex-shrink:0; }
+.rdf-swname { font-size:12px; font-weight:600; } .rdf-swhex { font-size:10.5px; color:var(--text-3); margin-left:auto; }
+.rdf-comp { display:flex; flex-direction:column; gap:12px; align-items:flex-start; }
+.rdf-chips { display:flex; flex-wrap:wrap; gap:7px; }
+.rdf-input { width:100%; padding:10px 14px; border-radius:13px; border:1px solid var(--border); background:var(--surface-2);
+  color:var(--text); font-size:13.5px; outline:none; font-family:inherit; }
+.rdf-input:focus { border-color:var(--neon); box-shadow:0 0 0 3px rgba(31,230,200,.12); }
+
+.rdf-footer { text-align:center; font-size:11.5px; color:var(--text-3); padding:4px 0 14px; }
+
+/* responsivo */
+@media (max-width:1100px) {
+  .rdf-app { grid-template-columns:1fr; }
+  .rdf-sidebar { position:static; }
+  .rdf-bento { grid-template-columns:repeat(2,1fr); }
+  .rdf-hero, .rdf-money, .rdf-chart-card, .rdf-nsm, .rdf-list, .rdf-events { grid-column:span 2; }
+  .rdf-hero { grid-row:auto; }
+  .rdf-ref-grid { grid-template-columns:1fr; gap:24px; }
 }
 @media (max-width:560px) {
-  .rdl-stats { grid-template-columns:1fr; }
-  .rdl-search input { width:120px; }
+  .rdf-bento { grid-template-columns:1fr; }
+  .rdf-hero, .rdf-money, .rdf-chart-card, .rdf-nsm, .rdf-list, .rdf-events { grid-column:span 1; }
+  .rdf-search input { width:90px; }
 }
 `;
