@@ -814,6 +814,13 @@ router.get('/cultura', async (req, res) => {
       // RPC: count(distinct volunteer_id) direto no banco — evita trafegar milhares de linhas
       supabase.rpc('kpi_servir_comunidade', { _since: noventaDiasStr }),
       supabase.from('cultura_mensal').select('*').eq('mes', inicioStr).maybeSingle(),
+      // Generosidade · fallback do fin_transacoes (importado do balanço) quando cultura_mensal vazia
+      supabase.from('vw_fin_transacoes_completa')
+        .select('plano_contas_codigo, referencia, valor')
+        .gte('data_competencia', inicioStr).lte('data_competencia', fimInclusivoStr)
+        .eq('tipo', 'receita').neq('status', 'cancelado')
+        .in('classe_movimento', ['ordinaria', 'extraordinaria'])
+        .or('plano_contas_codigo.like.3.01.01.%,plano_contas_codigo.like.3.01.02.%'),
     ]);
 
     const pick = (i) => (settled[i].status === 'fulfilled' ? settled[i].value : { data: null, error: settled[i].reason });
@@ -822,6 +829,7 @@ router.get('/cultura', async (req, res) => {
     const penseRes = pick(2);
     const servirRes = pick(3);
     const culturaMensalRes = pick(4);
+    const finGenRes = pick(5);
 
     const cultos = cultosRes.data || [];
     const presencialTotal = cultos.reduce((s, c) => s + (c.presencial_adulto || 0) + (c.presencial_kids || 0), 0);
@@ -837,9 +845,37 @@ router.get('/cultura', async (req, res) => {
     const servirComunidade = servirRes.error ? null : (typeof servirRes.data === 'number' ? servirRes.data : (servirRes.data ?? null));
 
     const cm = culturaMensalRes.data;
+
+    // Fallback de generosidade · conta contribuintes ÚNICOS por nome (referencia)
+    // em fin_transacoes quando cultura_mensal não tem dado preenchido manualmente
+    let finDizimistas = null, finOfertantes = null;
+    let finValorDizimo = 0, finValorOferta = 0;
+    if (!finGenRes.error && Array.isArray(finGenRes.data)) {
+      const dizSet = new Set(), ofSet = new Set();
+      finGenRes.data.forEach(r => {
+        const ref = (r.referencia || '').trim().toLowerCase();
+        if (!ref) return;
+        const cod = r.plano_contas_codigo || '';
+        if (cod.startsWith('3.01.01')) {
+          dizSet.add(ref);
+          finValorDizimo += Number(r.valor || 0);
+        } else if (cod.startsWith('3.01.02')) {
+          ofSet.add(ref);
+          finValorOferta += Number(r.valor || 0);
+        }
+      });
+      finDizimistas = dizSet.size;
+      finOfertantes = ofSet.size;
+    }
+
     const generosidade = {
-      dizimistas: cm?.qtd_dizimistas ?? null,
-      ofertantes: cm?.qtd_ofertantes ?? null,
+      // Prioriza valor manual (cultura_mensal) · fallback pra fin_transacoes
+      dizimistas: cm?.qtd_dizimistas ?? finDizimistas ?? null,
+      ofertantes: cm?.qtd_ofertantes ?? finOfertantes ?? null,
+      valor_dizimo: finValorDizimo,
+      valor_oferta: finValorOferta,
+      valor_total: finValorDizimo + finValorOferta,
+      fonte: cm?.qtd_dizimistas != null || cm?.qtd_ofertantes != null ? 'manual' : 'fin_transacoes',
     };
 
     // Valores manuais de cultura_mensal tem prioridade sobre o agregado de
