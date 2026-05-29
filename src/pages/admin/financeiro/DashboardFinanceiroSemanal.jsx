@@ -39,6 +39,35 @@ const fmtInt = (v) => Number(v || 0).toLocaleString('pt-BR');
 const DIAS = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
 
 // ============================================================
+// FILTROS GLOBAIS · persistidos em localStorage
+// ============================================================
+const LS_FILTROS = 'fin_dashboard_filtros_v1';
+
+function lerFiltrosGlobais() {
+  try {
+    const raw = localStorage.getItem(LS_FILTROS);
+    return raw ? JSON.parse(raw) : {};
+  } catch { return {}; }
+}
+
+function salvarFiltrosGlobais(f) {
+  try {
+    localStorage.setItem(LS_FILTROS, JSON.stringify(f || {}));
+    window.dispatchEvent(new CustomEvent('fin-filtros-changed', { detail: f }));
+  } catch {}
+}
+
+function useFiltrosGlobais() {
+  const [filtros, setFiltros] = useState(() => lerFiltrosGlobais());
+  useEffect(() => {
+    const handler = (e) => setFiltros(e.detail || {});
+    window.addEventListener('fin-filtros-changed', handler);
+    return () => window.removeEventListener('fin-filtros-changed', handler);
+  }, []);
+  return [filtros, (f) => { salvarFiltrosGlobais(f); setFiltros(f); }];
+}
+
+// ============================================================
 // SEMANAS QUA-TER · gera lista das ultimas N semanas
 // Numeracao: 1 = primeira semana qua-ter cuja quarta-feira cai em
 // ou apos 01/01 do ano. Pode dar W53 em anos com 53 semanas qua-ter.
@@ -222,6 +251,7 @@ export default function DashboardSemanal() {
 
         {/* SlideNav · botões de navegação entre slides */}
         <SlideNav current={slide} onChange={setSlide} />
+        <FiltrosFinanceiroBar />
       </div>
 
       {/* CONTENT · slides animados com AnimatePresence */}
@@ -244,6 +274,7 @@ export default function DashboardSemanal() {
             <Slide1PorCulto
               buckets={buckets}
               melhorSemana={melhorSemana}
+              semana={semana}
             />
           )}
           {slide === 2 && (
@@ -475,15 +506,15 @@ function Slide0Resumo({ kpis, cultos, top_contribuintes, historico }) {
   );
 }
 
-function Slide1PorCulto({ buckets, melhorSemana }) {
+function Slide1PorCulto({ buckets, melhorSemana, semana }) {
   return (
     <>
       {/* 4 Buckets estilo Power BI */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        <BucketCard custom={0} bucket={buckets.quarta} color={C.blue} />
-        <BucketCard custom={1} bucket={buckets.domingo} color={C.primary} />
-        <BucketCard custom={2} bucket={buckets.outros} color={C.amber} />
-        <BucketCard custom={3} bucket={buckets.acumulada} color={C.purple} isAcumulado />
+        <BucketCard custom={0} bucket={buckets.quarta} color={C.blue} semana={semana} />
+        <BucketCard custom={1} bucket={buckets.domingo} color={C.primary} semana={semana} />
+        <BucketCard custom={2} bucket={buckets.outros} color={C.amber} semana={semana} />
+        <BucketCard custom={3} bucket={buckets.acumulada} color={C.purple} isAcumulado semana={semana} />
       </div>
 
       {/* Melhor semana */}
@@ -1000,7 +1031,8 @@ function KpiBig({ custom, icon: Icon, accent, label, valor, format = fmtMoney, d
   );
 }
 
-function BucketCard({ custom, bucket, color, isAcumulado }) {
+function BucketCard({ custom, bucket, color, isAcumulado, semana }) {
+  const [drilldown, setDrilldown] = useState(null); // { categoria, color }
   if (!bucket) return null;
 
   return (
@@ -1017,8 +1049,11 @@ function BucketCard({ custom, bucket, color, isAcumulado }) {
           <div className="flex items-center justify-between mb-3">
             <div>
               <h4 className="text-base font-bold" style={{ color }}>{bucket.nome}</h4>
-              <div className="text-[10px] text-muted-foreground uppercase tracking-wider">
+              <div className="text-[10px] text-muted-foreground uppercase tracking-wider flex items-center gap-1">
                 {isAcumulado ? 'Soma da semana' : 'Categorias'}
+                {bucket.categorias.length > 0 && (
+                  <span className="text-[9px] opacity-60">· clique pra detalhar</span>
+                )}
               </div>
             </div>
             <div className="text-xl font-bold tabular-nums">
@@ -1032,12 +1067,13 @@ function BucketCard({ custom, bucket, color, isAcumulado }) {
           ) : (
             <div className="space-y-2 mt-2">
               {bucket.categorias.map((c, i) => (
-                <motion.div
+                <motion.button
                   key={c.categoria}
                   initial={{ opacity: 0, x: -10 }}
                   animate={{ opacity: 1, x: 0 }}
                   transition={{ delay: 0.4 + custom * 0.08 + i * 0.04 }}
-                  className="space-y-1"
+                  onClick={() => setDrilldown({ categoria: c.categoria, color, valor: c.valor })}
+                  className="w-full text-left space-y-1 rounded-md p-1 -mx-1 hover:bg-muted/60 transition cursor-pointer focus:outline-none focus:ring-2 focus:ring-primary/30"
                 >
                   <div className="flex items-center justify-between text-xs">
                     <span className="font-medium truncate">{c.categoria}</span>
@@ -1055,12 +1091,28 @@ function BucketCard({ custom, bucket, color, isAcumulado }) {
                       transition={{ delay: 0.5 + custom * 0.08 + i * 0.04, duration: 0.7 }}
                     />
                   </div>
-                </motion.div>
+                </motion.button>
               ))}
             </div>
           )}
         </CardContent>
       </Card>
+
+      {drilldown && semana && (
+        <TransacoesDrilldownDialog
+          open={!!drilldown}
+          onClose={() => setDrilldown(null)}
+          titulo={drilldown.categoria}
+          subtitulo={`Receitas · ${bucket.nome} · ${semana.inicio} a ${semana.fim}`}
+          color={drilldown.color}
+          totalEsperado={drilldown.valor}
+          fetcher={() => financeiroV2.categoriaTransacoes({
+            categoria: drilldown.categoria,
+            inicio: semana.inicio,
+            fim: semana.fim,
+          })}
+        />
+      )}
     </motion.div>
   );
 }
@@ -1134,61 +1186,192 @@ function DestaqueCard({ titulo, semana, gradient, bgClass }) {
 
 function SaidasDetalhadas({ saidas }) {
   const [view, setView] = useState('categoria');
+  const [drilldown, setDrilldown] = useState(null);
   const dados = saidas[view];
 
+  // Período baseado em saidas.mes (YYYY-MM)
+  const periodo = useMemo(() => {
+    const mes = saidas.mes || new Date().toISOString().slice(0, 7);
+    const [ano, m] = mes.split('-').map(Number);
+    const last = new Date(ano, m, 0).getDate();
+    return {
+      label: mes,
+      inicio: `${mes}-01`,
+      fim: `${mes}-${String(last).padStart(2, '0')}`,
+    };
+  }, [saidas.mes]);
+
+  const COLORS_VIEW = {
+    categoria: ['#ef4444', '#f97316', '#f59e0b', '#eab308', '#84cc16', '#10b981', '#06b6d4', '#3b82f6', '#8b5cf6', '#ec4899', '#f43f5e', '#a855f7'],
+    plano: ['#3b82f6', '#06b6d4', '#10b981', '#84cc16', '#eab308', '#f59e0b'],
+    centro: ['#8b5cf6', '#ec4899', '#f43f5e', '#a855f7'],
+  };
+  const palette = COLORS_VIEW[view];
+
+  const onClickLinha = (linha) => {
+    const params = {
+      inicio: periodo.inicio,
+      fim: periodo.fim,
+    };
+    let titulo = '';
+    if (view === 'categoria') {
+      params.categoria_codigo = linha.categoria_codigo;
+      titulo = linha.categoria_nome;
+    } else if (view === 'plano') {
+      params.plano_codigo = linha.plano_codigo;
+      titulo = `${linha.plano_codigo} · ${linha.plano_nome}`;
+    } else {
+      params.centro_codigo = linha.centro_codigo;
+      titulo = `${linha.centro_codigo} · ${linha.centro_nome}`;
+    }
+    setDrilldown({ titulo, params, valor: Number(linha.total) });
+  };
+
   return (
-    <Card>
+    <Card className="relative overflow-hidden">
+      <div className="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-rose-500 via-amber-500 to-emerald-500" />
       <CardContent className="pt-6">
-        <div className="flex items-start justify-between mb-3 flex-wrap gap-2">
+        <div className="flex items-start justify-between mb-4 flex-wrap gap-3">
           <div>
-            <h3 className="text-base font-semibold">Saídas detalhadas · {saidas.mes}</h3>
+            <h3 className="text-base font-semibold flex items-center gap-2">
+              <TrendingDown className="h-4 w-4 text-rose-500" />
+              Saídas detalhadas · {saidas.mes}
+            </h3>
             <p className="text-xs text-muted-foreground">
-              Total: <strong>{fmtMoney(dados.total)}</strong>
+              Total: <strong className="text-rose-600 dark:text-rose-400">{fmtMoney(dados?.total || 0)}</strong>
+              {dados?.linhas?.length > 0 && (
+                <span className="ml-2 opacity-70">· clique numa linha pra ver lançamentos</span>
+              )}
             </p>
           </div>
-          <div className="flex gap-1">
+          <div className="flex gap-1 bg-muted/40 p-1 rounded-lg">
             {[
               { key: 'categoria', label: 'Por categoria' },
               { key: 'plano', label: 'Por plano' },
               { key: 'centro', label: 'Por centro' },
             ].map(t => (
-              <Button
+              <button
                 key={t.key}
-                size="sm"
-                variant={view === t.key ? 'default' : 'outline'}
                 onClick={() => setView(t.key)}
+                className={`px-3 py-1.5 text-xs font-medium rounded-md transition ${
+                  view === t.key
+                    ? 'bg-primary text-primary-foreground shadow-sm'
+                    : 'text-muted-foreground hover:text-foreground'
+                }`}
               >
                 {t.label}
-              </Button>
+              </button>
             ))}
           </div>
         </div>
 
-        {dados.linhas.length === 0 ? (
-          <div className="py-8 text-center text-sm text-muted-foreground">
+        {!dados?.linhas?.length ? (
+          <div className="py-12 text-center text-sm text-muted-foreground">
             Sem despesas classificadas no mês
           </div>
         ) : view === 'categoria' ? (
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {/* Donut + lista */}
-            <div style={{ width: '100%', height: 260 }}>
+          <div className="grid grid-cols-1 lg:grid-cols-5 gap-6">
+            <div className="lg:col-span-2" style={{ width: '100%', height: 280 }}>
               <ResponsiveContainer>
-                <PieChartLite linhas={dados.linhas} />
+                <PieChartLite linhas={dados.linhas} colors={palette} />
               </ResponsiveContainer>
             </div>
-            <SaidasList linhas={dados.linhas} labelKey="categoria_nome" />
+            <div className="lg:col-span-3">
+              <SaidasListModerna
+                linhas={dados.linhas}
+                labelKey="categoria_nome"
+                extraKey="categoria_codigo"
+                colors={palette}
+                onClick={onClickLinha}
+              />
+            </div>
           </div>
         ) : (
-          <SaidasList linhas={dados.linhas} labelKey={view === 'plano' ? 'plano_nome' : 'centro_nome'} extraKey={view === 'plano' ? 'plano_codigo' : 'centro_codigo'} />
+          <SaidasListModerna
+            linhas={dados.linhas}
+            labelKey={view === 'plano' ? 'plano_nome' : 'centro_nome'}
+            extraKey={view === 'plano' ? 'plano_codigo' : 'centro_codigo'}
+            colors={palette}
+            onClick={onClickLinha}
+          />
         )}
       </CardContent>
+
+      {drilldown && (
+        <TransacoesDrilldownDialog
+          open={!!drilldown}
+          onClose={() => setDrilldown(null)}
+          titulo={drilldown.titulo}
+          subtitulo={`Despesas · ${periodo.inicio} a ${periodo.fim}`}
+          color={C.red}
+          totalEsperado={drilldown.valor}
+          fetcher={() => financeiroV2.despesaTransacoes(drilldown.params)}
+        />
+      )}
     </Card>
   );
 }
 
+// ============================================================
+// SaidasListModerna · linhas com barras coloridas + click + animação
+// ============================================================
+function SaidasListModerna({ linhas, labelKey, extraKey, colors, onClick }) {
+  const max = Math.max(...linhas.map(l => Number(l.total)), 1);
+  const total = linhas.reduce((s, l) => s + Number(l.total), 0);
+  return (
+    <div className="space-y-1.5">
+      {linhas.slice(0, 15).map((l, i) => {
+        const cor = colors[i % colors.length];
+        const valor = Number(l.total);
+        const pct = (valor / total) * 100;
+        const barPct = (valor / max) * 100;
+        return (
+          <motion.button
+            key={i}
+            type="button"
+            initial={{ opacity: 0, x: -10 }}
+            animate={{ opacity: 1, x: 0 }}
+            transition={{ delay: i * 0.03 }}
+            onClick={() => onClick?.(l)}
+            className="w-full text-left rounded-lg p-2.5 hover:bg-muted/60 transition cursor-pointer focus:outline-none focus:ring-2 focus:ring-primary/30 group"
+          >
+            <div className="flex items-baseline justify-between gap-3 mb-1.5">
+              <div className="flex items-center gap-2 min-w-0">
+                <span className="h-2.5 w-2.5 rounded-full shrink-0" style={{ background: cor }} />
+                <span className="text-sm font-medium truncate group-hover:text-foreground">{l[labelKey] || '(sem nome)'}</span>
+                {extraKey && l[extraKey] && (
+                  <span className="text-[10px] text-muted-foreground tabular-nums shrink-0 font-mono">{l[extraKey]}</span>
+                )}
+              </div>
+              <div className="flex items-center gap-3 tabular-nums shrink-0">
+                <span className="text-[11px] text-muted-foreground w-12 text-right">{pct.toFixed(1)}%</span>
+                <span className="text-sm font-semibold" style={{ color: cor }}>{fmtMoney(valor)}</span>
+              </div>
+            </div>
+            <div className="h-1.5 bg-muted rounded-full overflow-hidden">
+              <motion.div
+                className="h-full rounded-full"
+                style={{ background: cor }}
+                initial={{ width: 0 }}
+                animate={{ width: `${barPct}%` }}
+                transition={{ duration: 0.7, delay: i * 0.03 }}
+              />
+            </div>
+          </motion.button>
+        );
+      })}
+      {linhas.length > 15 && (
+        <div className="text-[10px] text-muted-foreground text-center pt-2">
+          + {linhas.length - 15} categorias menores agrupadas
+        </div>
+      )}
+    </div>
+  );
+}
+
 // Componente leve · pie chart com cores rotativas
-function PieChartLite({ linhas }) {
-  const COLORS_PIE = ['#00B39D', '#3b82f6', '#f59e0b', '#8b5cf6', '#ec4899', '#10b981', '#ef4444', '#06b6d4'];
+function PieChartLite({ linhas, colors }) {
+  const COLORS_PIE = colors || ['#00B39D', '#3b82f6', '#f59e0b', '#8b5cf6', '#ec4899', '#10b981', '#ef4444', '#06b6d4'];
   const data = linhas.slice(0, 8).map((l, i) => ({
     name: l.categoria_nome || l.plano_nome || l.centro_nome,
     value: Number(l.total),
@@ -1196,10 +1379,10 @@ function PieChartLite({ linhas }) {
   }));
   return (
     <PieChart>
-      <Pie data={data} cx="50%" cy="50%" outerRadius={90} innerRadius={50} dataKey="value" paddingAngle={2}>
+      <Pie data={data} cx="50%" cy="50%" outerRadius={95} innerRadius={55} dataKey="value" paddingAngle={3} animationDuration={1200}>
         {data.map((d, i) => <Cell key={i} fill={d.color} />)}
       </Pie>
-      <Tooltip formatter={(v) => fmtMoney(v)} contentStyle={{ borderRadius: 8, fontSize: 12 }} />
+      <Tooltip formatter={(v) => fmtMoney(v)} contentStyle={{ borderRadius: 10, fontSize: 12, border: '1px solid var(--cbrio-border)' }} />
     </PieChart>
   );
 }
@@ -2178,13 +2361,20 @@ function ArrecadacaoAnualChart() {
   const [dados, setDados] = useState(null);
   const [loading, setLoading] = useState(true);
   const [selectedIdx, setSelectedIdx] = useState(null);
+  const [filtrosVersion, setFiltrosVersion] = useState(0);
 
   const anos = [2022, 2023, 2024, 2025, 2026, 2027].filter(a => a <= anoAtual + 1);
 
   useEffect(() => {
+    const h = () => setFiltrosVersion(v => v + 1);
+    window.addEventListener('fin-filtros-changed', h);
+    return () => window.removeEventListener('fin-filtros-changed', h);
+  }, []);
+
+  useEffect(() => {
     let cancelled = false;
     setLoading(true);
-    financeiroV2.arrecadacaoAnual(ano)
+    financeiroV2.arrecadacaoAnual(ano, lerFiltrosGlobais())
       .then((r) => {
         if (cancelled) return;
         setDados(r);
@@ -2195,7 +2385,7 @@ function ArrecadacaoAnualChart() {
       .catch((e) => console.warn('[ArrecAnual]:', e?.message))
       .finally(() => !cancelled && setLoading(false));
     return () => { cancelled = true; };
-  }, [ano]);
+  }, [ano, filtrosVersion]);
 
   const meses = dados?.meses || [];
   const total = dados?.total || 0;
@@ -2322,13 +2512,20 @@ function ReceitaVsSaidaMensal() {
   const [dados, setDados] = useState(null);
   const [loading, setLoading] = useState(true);
   const [selectedIdx, setSelectedIdx] = useState(null);
+  const [filtrosVersion, setFiltrosVersion] = useState(0);
 
   const anos = [2022, 2023, 2024, 2025, 2026, 2027].filter(a => a <= anoAtual + 1);
 
   useEffect(() => {
+    const h = () => setFiltrosVersion(v => v + 1);
+    window.addEventListener('fin-filtros-changed', h);
+    return () => window.removeEventListener('fin-filtros-changed', h);
+  }, []);
+
+  useEffect(() => {
     let cancelled = false;
     setLoading(true);
-    financeiroV2.arrecadacaoAnual(ano)
+    financeiroV2.arrecadacaoAnual(ano, lerFiltrosGlobais())
       .then((r) => {
         if (cancelled) return;
         setDados(r);
@@ -2339,7 +2536,7 @@ function ReceitaVsSaidaMensal() {
       .catch((e) => console.warn('[RecVsSai]:', e?.message))
       .finally(() => !cancelled && setLoading(false));
     return () => { cancelled = true; };
-  }, [ano]);
+  }, [ano, filtrosVersion]);
 
   const meses = dados?.meses || [];
   const sel = selectedIdx !== null ? meses[selectedIdx] : null;
@@ -2450,5 +2647,316 @@ function ReceitaVsSaidaMensal() {
         )}
       </CardContent>
     </Card>
+  );
+}
+
+// ============================================================
+// TransacoesDrilldownDialog · modal compartilhado (categoria/despesa)
+// ============================================================
+function TransacoesDrilldownDialog({ open, onClose, titulo, subtitulo, color = C.primary, totalEsperado, fetcher }) {
+  const [dados, setDados] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [busca, setBusca] = useState('');
+
+  useEffect(() => {
+    if (!open) return;
+    let cancelled = false;
+    setLoading(true);
+    setBusca('');
+    fetcher()
+      .then(r => { if (!cancelled) setDados(r); })
+      .catch(e => console.warn('[Drilldown]:', e?.message))
+      .finally(() => !cancelled && setLoading(false));
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
+
+  if (!open) return null;
+
+  const transacoes = (dados?.transacoes || []).filter(t => {
+    if (!busca) return true;
+    const q = busca.toLowerCase();
+    return (
+      String(t.referencia || '').toLowerCase().includes(q) ||
+      String(t.descricao || '').toLowerCase().includes(q) ||
+      String(t.plano_contas_nome || '').toLowerCase().includes(q)
+    );
+  });
+
+  const total = dados?.total || 0;
+
+  return (
+    <AnimatePresence>
+      {open && (
+        <motion.div
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          className="fixed inset-0 z-[1000] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4"
+          onClick={onClose}
+        >
+          <motion.div
+            initial={{ scale: 0.95, opacity: 0 }}
+            animate={{ scale: 1, opacity: 1 }}
+            exit={{ scale: 0.95, opacity: 0 }}
+            transition={{ duration: 0.22, ease: 'easeOut' }}
+            onClick={(e) => e.stopPropagation()}
+            className="w-full max-w-4xl max-h-[88vh] bg-card rounded-2xl shadow-2xl overflow-hidden border border-border flex flex-col"
+          >
+            <div className="relative px-6 py-4 border-b border-border" style={{ background: `linear-gradient(135deg, ${color}15, transparent)` }}>
+              <div className="absolute top-0 left-0 right-0 h-1" style={{ background: color }} />
+              <div className="flex items-start justify-between gap-4">
+                <div className="min-w-0">
+                  <h3 className="text-lg font-bold truncate" style={{ color }}>{titulo}</h3>
+                  <p className="text-xs text-muted-foreground mt-0.5">{subtitulo}</p>
+                </div>
+                <button
+                  onClick={onClose}
+                  className="p-1.5 rounded-lg hover:bg-muted text-muted-foreground hover:text-foreground transition shrink-0"
+                  aria-label="Fechar"
+                >
+                  <X className="h-5 w-5" />
+                </button>
+              </div>
+              <div className="grid grid-cols-3 gap-4 mt-4">
+                <div>
+                  <div className="text-[10px] uppercase tracking-wider text-muted-foreground">Total</div>
+                  <div className="text-xl font-bold tabular-nums" style={{ color }}>{fmtMoney(total)}</div>
+                </div>
+                <div>
+                  <div className="text-[10px] uppercase tracking-wider text-muted-foreground">Lançamentos</div>
+                  <div className="text-xl font-bold tabular-nums">{fmtInt(dados?.qtd || 0)}</div>
+                </div>
+                <div>
+                  <div className="text-[10px] uppercase tracking-wider text-muted-foreground">Média</div>
+                  <div className="text-xl font-bold tabular-nums">
+                    {fmtMoney(dados?.qtd ? total / dados.qtd : 0)}
+                  </div>
+                </div>
+              </div>
+              {totalEsperado != null && Math.abs(total - totalEsperado) > 0.5 && !loading && (
+                <div className="mt-2 text-[10px] text-amber-600 dark:text-amber-400">
+                  Total esperado: {fmtMoney(totalEsperado)} · diff {fmtMoney(total - totalEsperado)}
+                </div>
+              )}
+            </div>
+
+            <div className="px-6 py-3 border-b border-border bg-muted/30">
+              <input
+                type="text"
+                placeholder="Filtrar por nome, descrição, plano de contas..."
+                value={busca}
+                onChange={(e) => setBusca(e.target.value)}
+                className="w-full px-3 py-2 text-sm bg-background border border-border rounded-md focus:outline-none focus:ring-2 focus:ring-primary/30"
+              />
+            </div>
+
+            <div className="flex-1 overflow-y-auto px-6 py-4">
+              {loading ? (
+                <div className="py-20 flex justify-center">
+                  <Loader2 className="h-7 w-7 animate-spin text-primary" />
+                </div>
+              ) : transacoes.length === 0 ? (
+                <div className="py-12 text-center text-sm text-muted-foreground">
+                  {busca ? 'Nenhum lançamento bate com a busca' : 'Sem lançamentos neste período'}
+                </div>
+              ) : (
+                <div className="space-y-1">
+                  {transacoes.slice(0, 200).map((t, i) => (
+                    <motion.div
+                      key={t.id || i}
+                      initial={{ opacity: 0, y: 4 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      transition={{ delay: Math.min(i * 0.01, 0.5) }}
+                      className="flex items-center justify-between gap-3 px-3 py-2 rounded-lg hover:bg-muted/50 transition border border-transparent hover:border-border"
+                    >
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="text-sm font-medium truncate">
+                            {t.referencia || t.descricao || '(sem nome)'}
+                          </span>
+                          {t.plano_contas_codigo && (
+                            <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-muted text-muted-foreground tabular-nums">
+                              {t.plano_contas_codigo}
+                            </span>
+                          )}
+                        </div>
+                        <div className="text-[11px] text-muted-foreground truncate">
+                          {t.data_competencia} · {t.plano_contas_nome || t.descricao || '—'}
+                          {t.centro_custo_nome && ` · ${t.centro_custo_nome}`}
+                        </div>
+                      </div>
+                      <div className="text-sm font-semibold tabular-nums shrink-0" style={{ color }}>
+                        {fmtMoney(t.valor)}
+                      </div>
+                    </motion.div>
+                  ))}
+                  {transacoes.length > 200 && (
+                    <div className="text-[10px] text-muted-foreground text-center pt-3">
+                      Mostrando 200 de {fmtInt(transacoes.length)} · refine a busca pra ver mais
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          </motion.div>
+        </motion.div>
+      )}
+    </AnimatePresence>
+  );
+}
+
+// ============================================================
+// FiltrosFinanceiroBar · filtros globais (Centro Custo + Plano Contas)
+// Persistidos em localStorage · disparam evento global pra reload
+// ============================================================
+function FiltrosFinanceiroBar() {
+  const [filtros, setFiltros] = useFiltrosGlobais();
+  const [opcoes, setOpcoes] = useState({ planos: [], centros: [] });
+  const [open, setOpen] = useState(false);
+  const [buscaCentro, setBuscaCentro] = useState('');
+  const [buscaPlano, setBuscaPlano] = useState('');
+
+  useEffect(() => {
+    financeiroV2.filtrosDisponiveis()
+      .then(setOpcoes)
+      .catch(() => {});
+  }, []);
+
+  const ativos = (filtros.centro_custo_id ? 1 : 0) + (filtros.plano_contas_id ? 1 : 0);
+  const centroSel = opcoes.centros.find(c => c.id === filtros.centro_custo_id);
+  const planoSel = opcoes.planos.find(p => p.id === filtros.plano_contas_id);
+
+  const setCentro = (id) => setFiltros({ ...filtros, centro_custo_id: id || null });
+  const setPlano = (id) => setFiltros({ ...filtros, plano_contas_id: id || null });
+  const limpar = () => setFiltros({});
+
+  const planosFiltrados = buscaPlano
+    ? opcoes.planos.filter(p =>
+        `${p.codigo} ${p.nome}`.toLowerCase().includes(buscaPlano.toLowerCase()))
+    : opcoes.planos.slice(0, 50);
+  const centrosFiltrados = buscaCentro
+    ? opcoes.centros.filter(c =>
+        `${c.codigo} ${c.nome}`.toLowerCase().includes(buscaCentro.toLowerCase()))
+    : opcoes.centros.slice(0, 50);
+
+  return (
+    <div className="mt-2">
+      <button
+        onClick={() => setOpen(o => !o)}
+        className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg border border-border text-xs hover:bg-muted transition"
+      >
+        <Filter className="h-3.5 w-3.5" />
+        <span className="font-medium">Filtros globais</span>
+        {ativos > 0 && (
+          <span className="px-1.5 py-0.5 rounded bg-primary text-primary-foreground text-[10px] font-bold tabular-nums">
+            {ativos}
+          </span>
+        )}
+        {ativos === 0 && <span className="text-muted-foreground">· nenhum</span>}
+      </button>
+
+      {(ativos > 0 || open) && (
+        <motion.div
+          initial={{ opacity: 0, y: -4 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="inline-flex items-center gap-2 ml-2 text-[11px]"
+        >
+          {centroSel && (
+            <span className="px-2 py-1 rounded-md bg-purple-100 dark:bg-purple-500/20 text-purple-700 dark:text-purple-300 inline-flex items-center gap-1">
+              <span className="font-mono">{centroSel.codigo}</span>
+              <span className="truncate max-w-[180px]">{centroSel.nome}</span>
+              <button onClick={() => setCentro(null)} className="hover:opacity-70"><X className="h-3 w-3" /></button>
+            </span>
+          )}
+          {planoSel && (
+            <span className="px-2 py-1 rounded-md bg-blue-100 dark:bg-blue-500/20 text-blue-700 dark:text-blue-300 inline-flex items-center gap-1">
+              <span className="font-mono">{planoSel.codigo}</span>
+              <span className="truncate max-w-[180px]">{planoSel.nome}</span>
+              <button onClick={() => setPlano(null)} className="hover:opacity-70"><X className="h-3 w-3" /></button>
+            </span>
+          )}
+          {ativos > 0 && (
+            <button onClick={limpar} className="text-muted-foreground hover:text-foreground">
+              limpar tudo
+            </button>
+          )}
+        </motion.div>
+      )}
+
+      <AnimatePresence>
+        {open && (
+          <motion.div
+            initial={{ opacity: 0, height: 0 }}
+            animate={{ opacity: 1, height: 'auto' }}
+            exit={{ opacity: 0, height: 0 }}
+            className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-3 overflow-hidden"
+          >
+            <Card>
+              <CardContent className="p-3">
+                <div className="text-[10px] uppercase tracking-wider text-muted-foreground font-medium mb-2">
+                  Centro de Custo
+                </div>
+                <input
+                  type="text"
+                  placeholder="Buscar centro..."
+                  value={buscaCentro}
+                  onChange={(e) => setBuscaCentro(e.target.value)}
+                  className="w-full px-2 py-1 text-xs bg-background border border-border rounded-md mb-2"
+                />
+                <div className="max-h-48 overflow-y-auto space-y-0.5">
+                  {centrosFiltrados.map(c => (
+                    <button
+                      key={c.id}
+                      onClick={() => { setCentro(c.id); setOpen(false); setBuscaCentro(''); }}
+                      className={`w-full text-left px-2 py-1 text-xs rounded hover:bg-muted transition ${
+                        filtros.centro_custo_id === c.id ? 'bg-primary/15 text-primary font-semibold' : ''
+                      }`}
+                    >
+                      <span className="font-mono mr-2 text-muted-foreground">{c.codigo}</span>
+                      {c.nome}
+                    </button>
+                  ))}
+                  {centrosFiltrados.length === 0 && (
+                    <div className="text-[11px] text-muted-foreground py-2 text-center">Nada encontrado</div>
+                  )}
+                </div>
+              </CardContent>
+            </Card>
+            <Card>
+              <CardContent className="p-3">
+                <div className="text-[10px] uppercase tracking-wider text-muted-foreground font-medium mb-2">
+                  Plano de Contas
+                </div>
+                <input
+                  type="text"
+                  placeholder="Buscar plano..."
+                  value={buscaPlano}
+                  onChange={(e) => setBuscaPlano(e.target.value)}
+                  className="w-full px-2 py-1 text-xs bg-background border border-border rounded-md mb-2"
+                />
+                <div className="max-h-48 overflow-y-auto space-y-0.5">
+                  {planosFiltrados.map(p => (
+                    <button
+                      key={p.id}
+                      onClick={() => { setPlano(p.id); setOpen(false); setBuscaPlano(''); }}
+                      className={`w-full text-left px-2 py-1 text-xs rounded hover:bg-muted transition ${
+                        filtros.plano_contas_id === p.id ? 'bg-primary/15 text-primary font-semibold' : ''
+                      }`}
+                    >
+                      <span className="font-mono mr-2 text-muted-foreground">{p.codigo}</span>
+                      {p.nome}
+                    </button>
+                  ))}
+                  {planosFiltrados.length === 0 && (
+                    <div className="text-[11px] text-muted-foreground py-2 text-center">Nada encontrado</div>
+                  )}
+                </div>
+              </CardContent>
+            </Card>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
   );
 }
