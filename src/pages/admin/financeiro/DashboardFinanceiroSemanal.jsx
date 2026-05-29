@@ -1184,22 +1184,46 @@ function DestaqueCard({ titulo, semana, gradient, bgClass }) {
   );
 }
 
-function SaidasDetalhadas({ saidas }) {
+function SaidasDetalhadas({ saidas: saidasInicial }) {
+  const hoje = new Date();
+  const anoAtual = hoje.getFullYear();
+  const anos = [2022, 2023, 2024, 2025, 2026, 2027].filter(a => a <= anoAtual + 1);
+  const MESES = ['Jan','Fev','Mar','Abr','Mai','Jun','Jul','Ago','Set','Out','Nov','Dez'];
+
+  // Estado do filtro · inicializa no mês do saidasInicial (ou mês atual)
+  const mesInicial = saidasInicial?.mes || hoje.toISOString().slice(0, 7);
+  const [ano, setAno] = useState(Number(mesInicial.split('-')[0]));
+  const [mes, setMes] = useState(Number(mesInicial.split('-')[1]));
   const [view, setView] = useState('categoria');
   const [drilldown, setDrilldown] = useState(null);
-  const dados = saidas[view];
+  const [saidas, setSaidas] = useState(saidasInicial);
+  const [loading, setLoading] = useState(false);
 
-  // Período baseado em saidas.mes (YYYY-MM)
+  const mesLabel = `${ano}-${String(mes).padStart(2, '0')}`;
+
+  // Refetch quando ano/mes muda · usa o saidasInicial se bater com o mês inicial
+  useEffect(() => {
+    if (saidasInicial?.mes === mesLabel) { setSaidas(saidasInicial); return; }
+    let cancelled = false;
+    setLoading(true);
+    financeiroV2.dashboard.saidasDetalhadas?.(mesLabel)
+      .then(r => { if (!cancelled) setSaidas(r); })
+      .catch(e => console.warn('[Saidas]:', e?.message))
+      .finally(() => !cancelled && setLoading(false));
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mesLabel]);
+
+  const dados = saidas?.[view];
+
   const periodo = useMemo(() => {
-    const mes = saidas.mes || new Date().toISOString().slice(0, 7);
-    const [ano, m] = mes.split('-').map(Number);
-    const last = new Date(ano, m, 0).getDate();
+    const last = new Date(ano, mes, 0).getDate();
     return {
-      label: mes,
-      inicio: `${mes}-01`,
-      fim: `${mes}-${String(last).padStart(2, '0')}`,
+      label: mesLabel,
+      inicio: `${mesLabel}-01`,
+      fim: `${mesLabel}-${String(last).padStart(2, '0')}`,
     };
-  }, [saidas.mes]);
+  }, [ano, mes, mesLabel]);
 
   const COLORS_VIEW = {
     categoria: ['#ef4444', '#f97316', '#f59e0b', '#eab308', '#84cc16', '#10b981', '#06b6d4', '#3b82f6', '#8b5cf6', '#ec4899', '#f43f5e', '#a855f7'],
@@ -1209,10 +1233,7 @@ function SaidasDetalhadas({ saidas }) {
   const palette = COLORS_VIEW[view];
 
   const onClickLinha = (linha) => {
-    const params = {
-      inicio: periodo.inicio,
-      fim: periodo.fim,
-    };
+    const params = { inicio: periodo.inicio, fim: periodo.fim };
     let titulo = '';
     if (view === 'categoria') {
       params.categoria_codigo = linha.categoria_codigo;
@@ -1235,7 +1256,8 @@ function SaidasDetalhadas({ saidas }) {
           <div>
             <h3 className="text-base font-semibold flex items-center gap-2">
               <TrendingDown className="h-4 w-4 text-rose-500" />
-              Saídas detalhadas · {saidas.mes}
+              Saídas detalhadas · {MESES[mes - 1]}/{ano}
+              {loading && <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />}
             </h3>
             <p className="text-xs text-muted-foreground">
               Total: <strong className="text-rose-600 dark:text-rose-400">{fmtMoney(dados?.total || 0)}</strong>
@@ -1244,39 +1266,59 @@ function SaidasDetalhadas({ saidas }) {
               )}
             </p>
           </div>
-          <div className="flex gap-1 bg-muted/40 p-1 rounded-lg">
-            {[
-              { key: 'categoria', label: 'Por categoria' },
-              { key: 'plano', label: 'Por plano' },
-              { key: 'centro', label: 'Por centro' },
-            ].map(t => (
-              <button
-                key={t.key}
-                onClick={() => setView(t.key)}
-                className={`px-3 py-1.5 text-xs font-medium rounded-md transition ${
-                  view === t.key
-                    ? 'bg-primary text-primary-foreground shadow-sm'
-                    : 'text-muted-foreground hover:text-foreground'
-                }`}
+          <div className="flex flex-col items-end gap-2">
+            {/* Filtro mês + ano */}
+            <div className="flex gap-1.5">
+              <select
+                value={mes}
+                onChange={(e) => setMes(Number(e.target.value))}
+                className="px-2 py-1.5 text-xs rounded-md border border-border bg-background"
               >
-                {t.label}
-              </button>
-            ))}
+                {MESES.map((m, i) => <option key={i + 1} value={i + 1}>{m}</option>)}
+              </select>
+              <select
+                value={ano}
+                onChange={(e) => setAno(Number(e.target.value))}
+                className="px-2 py-1.5 text-xs rounded-md border border-border bg-background tabular-nums"
+              >
+                {anos.map(a => <option key={a} value={a}>{a}</option>)}
+              </select>
+            </div>
+            {/* Toggle de visão */}
+            <div className="flex gap-1 bg-muted/40 p-1 rounded-lg">
+              {[
+                { key: 'categoria', label: 'Por categoria' },
+                { key: 'plano', label: 'Por plano' },
+                { key: 'centro', label: 'Por centro' },
+              ].map(t => (
+                <button
+                  key={t.key}
+                  onClick={() => setView(t.key)}
+                  className={`px-3 py-1.5 text-xs font-medium rounded-md transition ${
+                    view === t.key
+                      ? 'bg-primary text-primary-foreground shadow-sm'
+                      : 'text-muted-foreground hover:text-foreground'
+                  }`}
+                >
+                  {t.label}
+                </button>
+              ))}
+            </div>
           </div>
         </div>
 
         {!dados?.linhas?.length ? (
           <div className="py-12 text-center text-sm text-muted-foreground">
-            Sem despesas classificadas no mês
+            {loading ? 'Carregando...' : 'Sem despesas classificadas neste mês'}
           </div>
         ) : view === 'categoria' ? (
-          <div className="grid grid-cols-1 lg:grid-cols-5 gap-6">
-            <div className="lg:col-span-2" style={{ width: '100%', height: 280 }}>
-              <ResponsiveContainer>
+          <div className="flex flex-col lg:flex-row gap-6">
+            <div className="shrink-0 w-full lg:w-[300px] h-[300px]">
+              <ResponsiveContainer width="100%" height="100%">
                 <PieChartLite linhas={dados.linhas} colors={palette} />
               </ResponsiveContainer>
             </div>
-            <div className="lg:col-span-3">
+            <div className="flex-1 min-w-0">
               <SaidasListModerna
                 linhas={dados.linhas}
                 labelKey="categoria_nome"
