@@ -642,6 +642,8 @@ export const financeiroV2 = {
   despesaTransacoes: (params) =>
     get('/financeiro-v2/despesa-transacoes?' + new URLSearchParams(params).toString()),
   filtrosDisponiveis: () => get('/financeiro-v2/filtros-disponiveis'),
+  saudeFinanceira: (ano) => get(`/financeiro-v2/saude-financeira${ano ? `?ano=${ano}` : ''}`),
+  dizimoOferta: (ano) => get(`/financeiro-v2/dizimo-oferta${ano ? `?ano=${ano}` : ''}`),
   syncSaldoBancos: () => post('/financeiro-v2/sync-saldo-bancos', {}),
   backfill: (data) => post('/financeiro-v2/backfill/transacoes', data || {}),
   recorrencias: {

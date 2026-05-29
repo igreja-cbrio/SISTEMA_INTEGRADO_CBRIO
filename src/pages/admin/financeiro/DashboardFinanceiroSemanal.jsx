@@ -137,10 +137,12 @@ function CountUp({ value, format = fmtMoney, duration = 1.2 }) {
 // ============================================================
 const SLIDES = [
   { key: 'resumo',       label: 'Resumo',         icon: Sparkles,   desc: 'KPIs · cultos · top contribuintes' },
+  { key: 'saude',        label: 'Saúde',          icon: Activity,   desc: 'Resultado · folha · concentração de doadores' },
   { key: 'por_culto',    label: 'Por Culto',      icon: Calendar,   desc: 'Quarta · domingo · outros · acumulada' },
-  { key: 'tendencias',   label: 'Tendências',     icon: TrendingUp, desc: 'Últimos 3 meses · histórico mensal' },
+  { key: 'tendencias',   label: 'Tendências',     icon: TrendingUp, desc: 'Arrecadação anual · histórico mensal' },
   { key: 'comparativos', label: 'Comparativos',   icon: BarChart3,  desc: 'YTD · YoY · decêndio' },
   { key: 'performance',  label: 'Performance',    icon: Activity,   desc: 'Freq × Arrecadação semanal · cards interativos' },
+  { key: 'dizimo_oferta',label: 'Dízimo×Oferta',  icon: TrendingUp, desc: 'Proporção dízimo/oferta mês a mês' },
   { key: 'controle',     label: 'Saídas',         icon: Target,     desc: 'Despesas detalhadas por categoria' },
   { key: 'metas',        label: 'Metas',          icon: Award,      desc: 'Metas financeiras com filtros ano/mês/semana' },
 ];
@@ -264,42 +266,44 @@ export default function DashboardSemanal() {
           transition={{ duration: 0.25, ease: 'easeOut' }}
           className="space-y-6"
         >
-          {slide === 0 && (
+          {SLIDES[slide].key === 'resumo' && (
             <Slide0Resumo
               kpis={kpis} cultos={cultos} top_contribuintes={top_contribuintes}
               historico={historico}
             />
           )}
-          {slide === 1 && (
+          {SLIDES[slide].key === 'saude' && <SlideSaudeFinanceira />}
+          {SLIDES[slide].key === 'por_culto' && (
             <Slide1PorCulto
               buckets={buckets}
               melhorSemana={melhorSemana}
               semana={semana}
             />
           )}
-          {slide === 2 && (
+          {SLIDES[slide].key === 'tendencias' && (
             <Slide2Tendencias
               historico={historico}
               completo={completo}
             />
           )}
-          {slide === 3 && (
+          {SLIDES[slide].key === 'comparativos' && (
             <Slide3Comparativos
               completo={completo}
             />
           )}
-          {slide === 4 && (
+          {SLIDES[slide].key === 'performance' && (
             <Slide4Performance
               completo={completo}
               melhorSemana={melhorSemana}
             />
           )}
-          {slide === 5 && (
+          {SLIDES[slide].key === 'dizimo_oferta' && <SlideDizimoOferta />}
+          {SLIDES[slide].key === 'controle' && (
             <Slide5Controle
               saidas={saidas}
             />
           )}
-          {slide === 6 && (
+          {SLIDES[slide].key === 'metas' && (
             <Slide6Metas
               metas={metas}
               onMetasChange={reloadMetas}
@@ -3000,5 +3004,252 @@ function FiltrosFinanceiroBar() {
         )}
       </AnimatePresence>
     </div>
+  );
+}
+
+// ============================================================
+// SlideSaudeFinanceira · resultado + folha + concentração doadores
+// ============================================================
+function SlideSaudeFinanceira() {
+  const anoAtual = new Date().getFullYear();
+  const [ano, setAno] = useState(anoAtual);
+  const [dados, setDados] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const anos = [2022, 2023, 2024, 2025, 2026, 2027].filter(a => a <= anoAtual + 1);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    financeiroV2.saudeFinanceira(ano)
+      .then(r => { if (!cancelled) setDados(r); })
+      .catch(e => console.warn('[Saude]:', e?.message))
+      .finally(() => !cancelled && setLoading(false));
+    return () => { cancelled = true; };
+  }, [ano]);
+
+  if (loading && !dados) {
+    return <div className="py-20 flex justify-center"><Loader2 className="h-7 w-7 animate-spin text-primary" /></div>;
+  }
+  if (!dados) return <div className="py-12 text-center text-sm text-muted-foreground">Sem dados</div>;
+
+  const resMes = Number(dados.resultado_mes || 0);
+  const resYtd = Number(dados.resultado_ytd || 0);
+  const res12m = Number(dados.resultado_12m || 0);
+  const pctFolha = Number(dados.pct_folha || 0);
+  const top20 = Number(dados.concentracao_top20pct_pct || 0);
+  const top10 = Number(dados.concentracao_top10_pct || 0);
+  const mesesVermelho = Number(dados.meses_vermelho || 0);
+  const mesesDado = Number(dados.meses_com_dado || 0);
+
+  // Folha · faixa de saúde (verde ≤45 · âmbar ≤55 · vermelho >55)
+  const folhaCor = pctFolha <= 45 ? C.green : pctFolha <= 55 ? C.amber : C.red;
+  const folhaLabel = pctFolha <= 45 ? 'saudável' : pctFolha <= 55 ? 'atenção' : 'crítico';
+  // Concentração · verde <60 · âmbar <80 · vermelho ≥80
+  const concCor = top20 < 60 ? C.green : top20 < 80 ? C.amber : C.red;
+  const concLabel = top20 < 60 ? 'base diluída' : top20 < 80 ? 'concentração média' : 'concentração alta';
+
+  return (
+    <>
+      <Card className="relative overflow-hidden">
+        <div className="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-emerald-500 via-amber-500 to-rose-500" />
+        <CardContent className="pt-6">
+          <div className="flex items-start justify-between flex-wrap gap-3 mb-4">
+            <div>
+              <h3 className="text-base font-semibold flex items-center gap-2">
+                <Activity className="h-4 w-4 text-primary" />
+                Saúde Financeira · {ano}
+              </h3>
+              <p className="text-xs text-muted-foreground">
+                Resultado operacional · comprometimento com folha · risco de concentração ·
+                empréstimos e transferências excluídos
+              </p>
+            </div>
+            <div className="flex gap-1 flex-wrap">
+              {anos.map(a => (
+                <button key={a} onClick={() => setAno(a)}
+                  className={`px-2.5 py-1 text-[11px] rounded-md font-medium transition ${ano === a ? 'bg-primary text-primary-foreground' : 'bg-muted text-muted-foreground hover:bg-muted/80'}`}>
+                  {a}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Linha 1 · resultados */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-4">
+            <SaudeResultadoCard label="Resultado do mês" valor={resMes} sub={dados.mes_atual} />
+            <SaudeResultadoCard label="Resultado no ano (YTD)" valor={resYtd} sub={`receita − despesa · ${ano}`} destaque />
+            <SaudeResultadoCard label="Resultado 12 meses" valor={res12m} sub={`${mesesVermelho} de ${mesesDado} meses no vermelho`} />
+          </div>
+
+          {/* Linha 2 · folha + concentração */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            {/* Folha */}
+            <div className="rounded-xl border border-border p-4 relative overflow-hidden">
+              <div className="absolute top-0 left-0 right-0 h-1" style={{ background: folhaCor }} />
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-xs uppercase tracking-wider text-muted-foreground font-medium">Comprometimento com folha (RH)</span>
+                <Users className="h-4 w-4" style={{ color: folhaCor }} />
+              </div>
+              <div className="flex items-baseline gap-2">
+                <span className="text-3xl font-bold tabular-nums" style={{ color: folhaCor }}>{pctFolha.toFixed(1)}%</span>
+                <span className="text-xs font-medium px-2 py-0.5 rounded-full" style={{ background: `${folhaCor}1f`, color: folhaCor }}>{folhaLabel}</span>
+              </div>
+              <div className="h-2 bg-muted rounded-full overflow-hidden mt-3">
+                <motion.div className="h-full rounded-full" style={{ background: folhaCor }}
+                  initial={{ width: 0 }} animate={{ width: `${Math.min(100, pctFolha)}%` }} transition={{ duration: 1 }} />
+              </div>
+              <div className="text-[11px] text-muted-foreground mt-2 tabular-nums">
+                {fmtMoney(dados.folha_ytd)} de {fmtMoney(dados.receita_ytd)} · benchmark saudável ≤ 45%
+              </div>
+            </div>
+
+            {/* Concentração de doadores */}
+            <div className="rounded-xl border border-border p-4 relative overflow-hidden">
+              <div className="absolute top-0 left-0 right-0 h-1" style={{ background: concCor }} />
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-xs uppercase tracking-wider text-muted-foreground font-medium">Concentração de doadores</span>
+                <Award className="h-4 w-4" style={{ color: concCor }} />
+              </div>
+              <div className="flex items-baseline gap-2">
+                <span className="text-3xl font-bold tabular-nums" style={{ color: concCor }}>{top20.toFixed(0)}%</span>
+                <span className="text-xs text-muted-foreground">da arrecadação vem dos top 20% doadores</span>
+              </div>
+              <div className="h-2 bg-muted rounded-full overflow-hidden mt-3">
+                <motion.div className="h-full rounded-full" style={{ background: concCor }}
+                  initial={{ width: 0 }} animate={{ width: `${Math.min(100, top20)}%` }} transition={{ duration: 1 }} />
+              </div>
+              <div className="text-[11px] text-muted-foreground mt-2 tabular-nums">
+                {fmtInt(dados.doadores_qtd)} doadores · top 10 pessoas = {top10.toFixed(1)}% · <span style={{ color: concCor }}>{concLabel}</span>
+              </div>
+            </div>
+          </div>
+
+          {resYtd < 0 && (
+            <div className="mt-4 flex items-start gap-2 p-3 rounded-lg bg-rose-50 dark:bg-rose-500/10 border border-rose-200 dark:border-rose-500/30">
+              <TrendingDown className="h-4 w-4 text-rose-500 shrink-0 mt-0.5" />
+              <div className="text-xs text-rose-700 dark:text-rose-300">
+                <strong>Atenção:</strong> a igreja está operando com déficit de {fmtMoney(Math.abs(resYtd))} no ano —
+                gastando mais do que arrecada (excluindo empréstimos). Recomenda-se revisar despesas ou reforçar arrecadação.
+              </div>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+    </>
+  );
+}
+
+function SaudeResultadoCard({ label, valor, sub, destaque }) {
+  const positivo = valor >= 0;
+  const cor = positivo ? C.green : C.red;
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.4 }}
+      className={`rounded-xl border p-4 relative overflow-hidden ${destaque ? 'border-primary/40 bg-primary/5' : 'border-border'}`}
+    >
+      <div className="absolute top-0 left-0 right-0 h-1" style={{ background: cor }} />
+      <div className="text-[10px] uppercase tracking-wider text-muted-foreground font-medium mb-1">{label}</div>
+      <div className="text-2xl font-bold tabular-nums flex items-center gap-1" style={{ color: cor }}>
+        {positivo ? <ArrowUp className="h-4 w-4" /> : <ArrowDown className="h-4 w-4" />}
+        {fmtMoney(Math.abs(valor))}
+      </div>
+      <div className="text-[11px] text-muted-foreground mt-1">{positivo ? 'superávit' : 'déficit'} · {sub}</div>
+    </motion.div>
+  );
+}
+
+// ============================================================
+// SlideDizimoOferta · proporção dízimo/oferta mês a mês
+// ============================================================
+function SlideDizimoOferta() {
+  const anoAtual = new Date().getFullYear();
+  const [ano, setAno] = useState(anoAtual);
+  const [dados, setDados] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const anos = [2022, 2023, 2024, 2025, 2026, 2027].filter(a => a <= anoAtual + 1);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    financeiroV2.dizimoOferta(ano)
+      .then(r => { if (!cancelled) setDados(r); })
+      .catch(e => console.warn('[DizOf]:', e?.message))
+      .finally(() => !cancelled && setLoading(false));
+    return () => { cancelled = true; };
+  }, [ano]);
+
+  const meses = dados?.meses || [];
+  const MESES = ['Jan','Fev','Mar','Abr','Mai','Jun','Jul','Ago','Set','Out','Nov','Dez'];
+  const formatado = meses.map(m => ({
+    label: MESES[(m.mes_num || 1) - 1],
+    Dízimo: Number(m.dizimo || 0),
+    Oferta: Number(m.oferta || 0),
+    pct: Number(m.pct_dizimo || 0),
+  }));
+
+  const totalDiz = meses.reduce((s, m) => s + Number(m.dizimo || 0), 0);
+  const totalOf = meses.reduce((s, m) => s + Number(m.oferta || 0), 0);
+  const pctDizGeral = (totalDiz + totalOf) > 0 ? (totalDiz / (totalDiz + totalOf)) * 100 : 0;
+
+  return (
+    <Card className="relative overflow-hidden">
+      <div className="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-teal-500 to-sky-500" />
+      <CardContent className="pt-6">
+        <div className="flex items-start justify-between flex-wrap gap-3 mb-3">
+          <div>
+            <h3 className="text-base font-semibold flex items-center gap-2">
+              <TrendingUp className="h-4 w-4 text-primary" />
+              Dízimo × Oferta · {ano}
+            </h3>
+            <p className="text-xs text-muted-foreground">
+              Proporção da base de contribuição · dízimo é recorrente, oferta é eventual ·
+              ano: <strong>{pctDizGeral.toFixed(0)}% dízimo</strong> / {(100 - pctDizGeral).toFixed(0)}% oferta
+            </p>
+          </div>
+          <div className="flex gap-1 flex-wrap">
+            {anos.map(a => (
+              <button key={a} onClick={() => setAno(a)}
+                className={`px-2.5 py-1 text-[11px] rounded-md font-medium transition ${ano === a ? 'bg-primary text-primary-foreground' : 'bg-muted text-muted-foreground hover:bg-muted/80'}`}>
+                {a}
+              </button>
+            ))}
+          </div>
+        </div>
+        {loading && !dados ? (
+          <div className="py-16 flex justify-center"><Loader2 className="h-6 w-6 animate-spin text-primary" /></div>
+        ) : formatado.length === 0 ? (
+          <div className="py-12 text-center text-sm text-muted-foreground">Sem dados de {ano}</div>
+        ) : (
+          <div style={{ width: '100%', height: 340 }}>
+            <ResponsiveContainer>
+              <ComposedChart data={formatado} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
+                <defs>
+                  <linearGradient id="gradDiz" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stopColor={C.primary} stopOpacity={0.95} />
+                    <stop offset="100%" stopColor={C.primary} stopOpacity={0.55} />
+                  </linearGradient>
+                  <linearGradient id="gradOf" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stopColor={C.blue} stopOpacity={0.95} />
+                    <stop offset="100%" stopColor={C.blue} stopOpacity={0.55} />
+                  </linearGradient>
+                </defs>
+                <CartesianGrid strokeDasharray="3 3" opacity={0.2} />
+                <XAxis dataKey="label" tick={{ fontSize: 11 }} />
+                <YAxis yAxisId="left" tick={{ fontSize: 10 }} tickFormatter={(v) => fmtCompact(v).replace('R$ ', '')} />
+                <YAxis yAxisId="right" orientation="right" domain={[0, 100]} tick={{ fontSize: 10 }} tickFormatter={(v) => `${v}%`} />
+                <Tooltip
+                  formatter={(v, n) => n === '% dízimo' ? [`${Number(v).toFixed(1)}%`, n] : [fmtMoney(v), n]}
+                  contentStyle={{ borderRadius: 10, fontSize: 12, border: '1px solid var(--cbrio-border)' }}
+                />
+                <Legend wrapperStyle={{ fontSize: 11 }} iconSize={10} />
+                <Bar yAxisId="left" dataKey="Dízimo" stackId="a" fill="url(#gradDiz)" radius={[0, 0, 0, 0]} animationDuration={1200} />
+                <Bar yAxisId="left" dataKey="Oferta" stackId="a" fill="url(#gradOf)" radius={[6, 6, 0, 0]} animationDuration={1300} />
+                <Line yAxisId="right" type="monotone" dataKey="pct" name="% dízimo" stroke={C.purple} strokeWidth={2.5} dot={{ r: 3 }} animationDuration={1600} />
+              </ComposedChart>
+            </ResponsiveContainer>
+          </div>
+        )}
+      </CardContent>
+    </Card>
   );
 }
