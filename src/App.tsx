@@ -229,6 +229,9 @@ const GruposGeocode = lazyWithRetry(() => import('./pages/admin/GruposGeocode'))
 const TemporadasGrupos = lazyWithRetry(() => import('./pages/admin/TemporadasGrupos'));
 const WalletPage = lazyWithRetry(() => import('./pages/public/WalletPage'));
 const Motion = lazyWithRetry(() => import('./pages/public/Motion'));
+// /novosite · prévia interna do redesign do site público (cbrio.com.br).
+// Pública, standalone, fora de qualquer menu. Conteúdo entra depois.
+const NovoSite = lazyWithRetry(() => import('./pages/public/NovoSite'));
 const Voluntariado = lazyWithRetry(() => import('./pages/ministerial/voluntariado'));
 const VolTotem = lazyWithRetry(() => import('./pages/ministerial/voluntariado/VolTotem'));
 const TotemMembro = lazyWithRetry(() => import('./pages/TotemMembro'));
@@ -380,6 +383,8 @@ function AppRoutes() {
       <Route path="/inscricao-voluntariado" element={<Suspense fallback={<Loading />}><InscricaoVoluntariado /></Suspense>} />
       <Route path="/wallet" element={<Suspense fallback={<Loading />}><WalletPage /></Suspense>} />
       <Route path="/motion" element={<Suspense fallback={<Loading />}><Motion /></Suspense>} />
+      {/* Prévia interna do novo site (redesign cbrio.com.br) · não-listada */}
+      <Route path="/novosite" element={<Suspense fallback={<Loading />}><NovoSite /></Suspense>} />
       <Route path="/nps/publica/:token" element={<Suspense fallback={<Loading />}><NpsPublica /></Suspense>} />
       <Route path="/auth/pc-callback" element={<Suspense fallback={<Loading />}><PcCallback /></Suspense>} />
 
