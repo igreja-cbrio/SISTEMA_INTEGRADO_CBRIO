@@ -1888,16 +1888,49 @@ router.get('/freq-arrecadacao-semanal', async (req, res) => {
 router.get('/arrecadacao-anual', async (req, res) => {
   try {
     const ano = Number(req.query.ano) || new Date().getFullYear();
+    const centroId = req.query.centro_custo_id || null;
+    const planoId = req.query.plano_contas_id || null;
 
-    const { data, error } = await supabase
-      .from('vw_fin_arrecadacao_mensal')
-      .select('mes, receita, despesa, resultado, qtd')
-      .eq('ano', ano)
-      .order('mes', { ascending: true });
+    const inicio = `${ano}-01-01`;
+    const fim = `${ano}-12-31`;
 
-    if (error) return res.status(400).json({ error: error.message });
+    // Se há filtros, query direta em fin_transacoes
+    // Senão usa vw_fin_arrecadacao_mensal (já agrega + filtra empréstimos)
+    let data, error;
+    if (centroId || planoId) {
+      let q = supabase
+        .from('fin_transacoes')
+        .select('data_competencia, tipo, valor, classe_movimento')
+        .gte('data_competencia', inicio)
+        .lte('data_competencia', fim)
+        .neq('status', 'cancelado')
+        .in('classe_movimento', ['ordinaria', 'extraordinaria']);
+      if (centroId) q = q.eq('centro_custo_id', centroId);
+      if (planoId) q = q.eq('plano_contas_id', planoId);
+      const res2 = await q.limit(50000);
+      if (res2.error) return res.status(400).json({ error: res2.error.message });
+      // Agrega em JS por mês
+      const aggMap = {};
+      (res2.data || []).forEach(r => {
+        const k = (r.data_competencia || '').slice(0, 7);
+        if (!aggMap[k]) aggMap[k] = { mes: k, receita: 0, despesa: 0, qtd: 0 };
+        const v = Number(r.valor || 0);
+        if (r.tipo === 'receita') aggMap[k].receita += v;
+        else if (r.tipo === 'despesa') aggMap[k].despesa += v;
+        aggMap[k].qtd += 1;
+      });
+      data = Object.values(aggMap);
+      Object.values(aggMap).forEach(r => { r.resultado = r.receita - r.despesa; });
+    } else {
+      const res2 = await supabase
+        .from('vw_fin_arrecadacao_mensal')
+        .select('mes, receita, despesa, resultado, qtd')
+        .eq('ano', ano)
+        .order('mes', { ascending: true });
+      if (res2.error) return res.status(400).json({ error: res2.error.message });
+      data = res2.data;
+    }
 
-    // Garante 12 meses (preenche faltantes com zero)
     const porMes = {};
     (data || []).forEach(r => { porMes[r.mes] = r; });
     const meses = [];
@@ -1919,7 +1952,7 @@ router.get('/arrecadacao-anual', async (req, res) => {
       });
     }
 
-    res.json({ ano, meses, total: acumulado });
+    res.json({ ano, meses, total: acumulado, filtros: { centro_custo_id: centroId, plano_contas_id: planoId } });
   } catch (e) {
     console.error('[FIN-V2] arrecadacao-anual:', e);
     res.status(500).json({ error: e.message });
@@ -1979,6 +2012,69 @@ router.get('/categoria-transacoes', async (req, res) => {
     });
   } catch (e) {
     console.error('[FIN-V2] categoria-transacoes:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ====================================================================
+// DRILLDOWN · despesas detalhadas · 2026-05-28
+// ====================================================================
+router.get('/despesa-transacoes', async (req, res) => {
+  try {
+    const { categoria_codigo, plano_codigo, centro_codigo, inicio, fim } = req.query;
+    if (!inicio || !fim) return res.status(400).json({ error: 'inicio e fim obrigatorios' });
+
+    let q = supabase
+      .from('vw_fin_transacoes_completa')
+      .select('id, data_competencia, descricao, valor, plano_contas_codigo, plano_contas_nome, centro_custo_codigo, centro_custo_nome, referencia, classe_movimento')
+      .eq('tipo', 'despesa')
+      .neq('status', 'cancelado')
+      .in('classe_movimento', ['ordinaria', 'extraordinaria'])
+      .gte('data_competencia', inicio)
+      .lte('data_competencia', fim)
+      .order('data_competencia', { ascending: false })
+      .order('valor', { ascending: false });
+
+    if (categoria_codigo) q = q.like('plano_contas_codigo', `${categoria_codigo}.%`);
+    if (plano_codigo) q = q.eq('plano_contas_codigo', plano_codigo);
+    if (centro_codigo) q = q.eq('centro_custo_codigo', centro_codigo);
+
+    const { data, error } = await q.limit(2000);
+    if (error) return res.status(400).json({ error: error.message });
+
+    const total = (data || []).reduce((s, r) => s + Number(r.valor || 0), 0);
+    res.json({
+      categoria_codigo, plano_codigo, centro_codigo, inicio, fim,
+      total,
+      qtd: (data || []).length,
+      transacoes: (data || []).map(r => ({ ...r, valor: Number(r.valor || 0) })),
+    });
+  } catch (e) {
+    console.error('[FIN-V2] despesa-transacoes:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ====================================================================
+// PLANO DE CONTAS + CENTROS · listagem leve pra filtros globais
+// ====================================================================
+router.get('/filtros-disponiveis', async (req, res) => {
+  try {
+    const [planos, centros] = await Promise.all([
+      supabase.from('fin_plano_contas')
+        .select('id, codigo, nome, tipo, classe')
+        .eq('ativo', true)
+        .order('codigo'),
+      supabase.from('fin_centros_custo')
+        .select('id, codigo, nome, campus')
+        .eq('ativo', true)
+        .order('codigo'),
+    ]);
+    res.json({
+      planos: planos.data || [],
+      centros: centros.data || [],
+    });
+  } catch (e) {
     res.status(500).json({ error: e.message });
   }
 });

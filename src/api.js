@@ -629,9 +629,19 @@ export const financeiroV2 = {
     progresso: (params) => get('/financeiro-v2/metas-progresso' + (params ? '?' + new URLSearchParams(params) : '')),
   },
   freqArrecadacaoSemanal: (semanas = 20) => get(`/financeiro-v2/freq-arrecadacao-semanal?semanas=${semanas}`),
-  arrecadacaoAnual: (ano) => get(`/financeiro-v2/arrecadacao-anual${ano ? `?ano=${ano}` : ''}`),
+  arrecadacaoAnual: (ano, filtros = {}) => {
+    const params = new URLSearchParams();
+    if (ano) params.set('ano', ano);
+    if (filtros.centro_custo_id) params.set('centro_custo_id', filtros.centro_custo_id);
+    if (filtros.plano_contas_id) params.set('plano_contas_id', filtros.plano_contas_id);
+    const qs = params.toString();
+    return get(`/financeiro-v2/arrecadacao-anual${qs ? `?${qs}` : ''}`);
+  },
   categoriaTransacoes: ({ categoria, inicio, fim }) =>
     get(`/financeiro-v2/categoria-transacoes?categoria=${encodeURIComponent(categoria)}&inicio=${inicio}&fim=${fim}`),
+  despesaTransacoes: (params) =>
+    get('/financeiro-v2/despesa-transacoes?' + new URLSearchParams(params).toString()),
+  filtrosDisponiveis: () => get('/financeiro-v2/filtros-disponiveis'),
   syncSaldoBancos: () => post('/financeiro-v2/sync-saldo-bancos', {}),
   backfill: (data) => post('/financeiro-v2/backfill/transacoes', data || {}),
   recorrencias: {
