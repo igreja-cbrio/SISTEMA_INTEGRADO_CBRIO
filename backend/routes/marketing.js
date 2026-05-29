@@ -1526,4 +1526,121 @@ router.delete('/admin/overrides/:id', authorizeModule('marketing', 5), async (re
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// ─── Padroes por fase do ciclo criativo (2026-05-29) ────────────────────────
+// (categoria do evento × nome da fase) -> etiqueta + dono automaticos no
+// nascimento do card de evento. CRUD + catalogos + backfill manual.
+
+router.get('/admin/ciclo-padroes', authorizeModule('marketing', 5), async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('marketing_ciclo_padroes')
+      .select('*')
+      .order('nome_fase');
+    if (error) throw error;
+    res.json(data || []);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Catalogo de categorias de evento (pro select da UI)
+router.get('/admin/ciclo-padroes/categorias', authorizeModule('marketing', 5), async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('event_categories')
+      .select('id, name, active, sort_order')
+      .eq('active', true)
+      .order('sort_order', { ascending: true })
+      .order('name', { ascending: true });
+    if (error) throw error;
+    res.json(data || []);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Fases do catalogo de uma categoria (cycle_phase_templates · fonte dos nomes
+// que casam com event_cycle_phases.nome_fase). Distinct por nome.
+router.get('/admin/ciclo-padroes/fases', authorizeModule('marketing', 5), async (req, res) => {
+  try {
+    const { category_id } = req.query;
+    if (!category_id) return res.status(400).json({ error: 'category_id obrigatorio' });
+    const { data, error } = await supabase
+      .from('cycle_phase_templates')
+      .select('numero, nome, area')
+      .eq('category_id', category_id)
+      .order('numero', { ascending: true });
+    if (error) throw error;
+    const seen = new Set();
+    const fases = [];
+    for (const t of (data || [])) {
+      if (t.nome && !seen.has(t.nome)) { seen.add(t.nome); fases.push({ numero: t.numero, nome: t.nome, area: t.area }); }
+    }
+    res.json(fases);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Backfill manual · aplica padroes aos cards de evento ativos sem dono/etiqueta
+router.post('/admin/ciclo-padroes/aplicar', authorizeModule('marketing', 5), async (req, res) => {
+  try {
+    const { category_id } = req.body || {};
+    const { data, error } = await supabase.rpc('fn_marketing_aplicar_padroes_ciclo', {
+      p_category_id: category_id || null,
+    });
+    if (error) throw error;
+    res.json({ ok: true, atualizados: data ?? 0 });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+router.post('/admin/ciclo-padroes', authorizeModule('marketing', 5), async (req, res) => {
+  try {
+    const { category_id, nome_fase, etiqueta_tipo_id, atribuido_a } = req.body || {};
+    if (!category_id || !nome_fase) return res.status(400).json({ error: 'category_id e nome_fase obrigatorios' });
+    if (!etiqueta_tipo_id && !atribuido_a) return res.status(400).json({ error: 'informe ao menos etiqueta ou dono' });
+    const { data, error } = await supabase
+      .from('marketing_ciclo_padroes')
+      .insert({
+        category_id,
+        nome_fase,
+        etiqueta_tipo_id: etiqueta_tipo_id || null,
+        atribuido_a: atribuido_a || null,
+        ativo: true,
+      })
+      .select('*').single();
+    if (error) throw error;
+    res.status(201).json(data);
+  } catch (e) {
+    if (/duplicate key/i.test(e.message)) {
+      return res.status(409).json({ error: 'Ja existe padrao pra essa categoria + fase · edite o existente.' });
+    }
+    res.status(500).json({ error: e.message });
+  }
+});
+
+router.patch('/admin/ciclo-padroes/:id', authorizeModule('marketing', 5), async (req, res) => {
+  try {
+    const update = {};
+    const { nome_fase, etiqueta_tipo_id, atribuido_a, ativo } = req.body || {};
+    if (nome_fase !== undefined) update.nome_fase = nome_fase;
+    if (etiqueta_tipo_id !== undefined) update.etiqueta_tipo_id = etiqueta_tipo_id || null;
+    if (atribuido_a !== undefined) update.atribuido_a = atribuido_a || null;
+    if (ativo !== undefined) update.ativo = !!ativo;
+    update.updated_at = new Date().toISOString();
+    const { data, error } = await supabase
+      .from('marketing_ciclo_padroes')
+      .update(update)
+      .eq('id', req.params.id)
+      .select('*').single();
+    if (error) throw error;
+    res.json(data);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+router.delete('/admin/ciclo-padroes/:id', authorizeModule('marketing', 5), async (req, res) => {
+  try {
+    const { error } = await supabase
+      .from('marketing_ciclo_padroes')
+      .delete()
+      .eq('id', req.params.id);
+    if (error) throw error;
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 module.exports = router;

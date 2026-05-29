@@ -44,24 +44,26 @@ export default function MarketingAdmin() {
             Marketing · Admin
           </h1>
           <p className="text-sm text-muted-foreground mt-1">
-            Equipe · etiquetas · recorrentes · overrides de capacidade
+            Equipe · etiquetas · recorrentes · overrides · padrões por fase
           </p>
         </div>
         <MarketingNav />
       </div>
 
       <Tabs defaultValue="membros" className="w-full">
-        <TabsList className="grid w-full grid-cols-2 md:grid-cols-4">
+        <TabsList className="grid w-full grid-cols-2 md:grid-cols-5">
           <TabsTrigger value="membros">Membros</TabsTrigger>
           <TabsTrigger value="etiquetas">Etiquetas</TabsTrigger>
           <TabsTrigger value="recorrentes">Recorrentes</TabsTrigger>
           <TabsTrigger value="overrides">Overrides</TabsTrigger>
+          <TabsTrigger value="padroes">Padrões</TabsTrigger>
         </TabsList>
 
         <TabsContent value="membros" className="mt-4"><AbaMembros /></TabsContent>
         <TabsContent value="etiquetas" className="mt-4"><AbaEtiquetas /></TabsContent>
         <TabsContent value="recorrentes" className="mt-4"><AbaRecorrentes /></TabsContent>
         <TabsContent value="overrides" className="mt-4"><AbaOverrides /></TabsContent>
+        <TabsContent value="padroes" className="mt-4"><AbaPadroes /></TabsContent>
       </Tabs>
     </div>
   );
@@ -688,6 +690,233 @@ function NovoOverrideForm({ membros, onSuccess }) {
         <Input value={form.motivo} onChange={e => setForm(f => ({ ...f, motivo: e.target.value }))}
           placeholder="Férias · feriado · pico AMI" />
       </div>
+      <div className="flex justify-end">
+        <Button onClick={submit} disabled={submitting}>{submitting ? 'Criando...' : 'Criar'}</Button>
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// Padrões por fase (categoria do evento × fase → etiqueta + dono automáticos)
+// ═══════════════════════════════════════════════════════════════════════
+function AbaPadroes() {
+  const [lista, setLista] = useState([]);
+  const [categorias, setCategorias] = useState([]);
+  const [tipos, setTipos] = useState([]);
+  const [membros, setMembros] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [novoOpen, setNovoOpen] = useState(false);
+  const [aplicando, setAplicando] = useState(false);
+
+  const carregar = useCallback(async () => {
+    setLoading(true);
+    try {
+      const [p, c, t, m] = await Promise.all([
+        api.admin.cicloPadroes.list(),
+        api.admin.cicloPadroes.categorias(),
+        api.admin.etiquetasTipo.list(),
+        api.membros(),
+      ]);
+      setLista(p);
+      setCategorias(c);
+      setTipos((t || []).filter(x => x.ativo));
+      setMembros(m);
+    } catch (e) { toast.error(e.message); }
+    finally { setLoading(false); }
+  }, []);
+  useEffect(() => { carregar(); }, [carregar]);
+
+  async function salvar(id, payload) {
+    try { await api.admin.cicloPadroes.update(id, payload); carregar(); }
+    catch (e) { toast.error(e.message); }
+  }
+  async function remover(id) {
+    if (!confirm('Remover este padrão?')) return;
+    try { await api.admin.cicloPadroes.remove(id); toast.success('Removido'); carregar(); }
+    catch (e) { toast.error(e.message); }
+  }
+  async function aplicar() {
+    if (!confirm('Aplicar os padrões aos cards de evento ativos que estão sem etiqueta e/ou sem dono?\nNão sobrescreve o que já foi classificado.')) return;
+    setAplicando(true);
+    try {
+      const r = await api.admin.cicloPadroes.aplicar();
+      toast.success(`${r?.atualizados || 0} card(s) atualizado(s)`);
+    } catch (e) { toast.error(e.message); }
+    finally { setAplicando(false); }
+  }
+
+  const catMap = Object.fromEntries(categorias.map(c => [c.id, c.name]));
+  const grupos = {};
+  for (const p of lista) {
+    const nome = p.categoria?.name || catMap[p.category_id] || '(categoria)';
+    (grupos[nome] = grupos[nome] || []).push(p);
+  }
+
+  return (
+    <div className="space-y-3">
+      <div className="flex justify-between items-start gap-3 flex-wrap">
+        <div>
+          <p className="text-sm text-muted-foreground">{lista.length} padrões · {categorias.length} categorias</p>
+          <p className="text-xs text-muted-foreground">
+            Por (categoria do evento × fase) · aplica etiqueta + esforço + dono quando nasce o card. Pedro refina no card.
+          </p>
+        </div>
+        <div className="flex gap-2">
+          <Button size="sm" variant="outline" onClick={aplicar} disabled={aplicando || !lista.length}>
+            {aplicando ? 'Aplicando...' : 'Aplicar a cards ativos'}
+          </Button>
+          <Dialog open={novoOpen} onOpenChange={setNovoOpen}>
+            <DialogTrigger asChild><Button size="sm" className="gap-1.5"><Plus className="h-4 w-4" /> Novo padrão</Button></DialogTrigger>
+            <DialogContent>
+              <DialogHeader><DialogTitle>Novo padrão por fase</DialogTitle></DialogHeader>
+              <NovoPadraoForm categorias={categorias} tipos={tipos} membros={membros}
+                onSuccess={() => { setNovoOpen(false); carregar(); }} />
+            </DialogContent>
+          </Dialog>
+        </div>
+      </div>
+      {loading ? <Loader2 className="h-5 w-5 animate-spin mx-auto my-8 text-muted-foreground" /> : (
+        lista.length === 0 ? (
+          <Card className="p-6 text-center text-sm text-muted-foreground">
+            Nenhum padrão ainda. Crie o primeiro · ex: (Série × Briefing) → etiqueta "Briefing" + Cauã.
+          </Card>
+        ) : (
+          <div className="space-y-4">
+            {Object.entries(grupos).map(([cat, itens]) => (
+              <div key={cat} className="space-y-2">
+                <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">{cat}</p>
+                {itens.map(p => (
+                  <PadraoRow key={p.id} padrao={p} tipos={tipos} membros={membros} onSave={salvar} onRemove={remover} />
+                ))}
+              </div>
+            ))}
+          </div>
+        )
+      )}
+    </div>
+  );
+}
+
+function PadraoRow({ padrao, tipos, membros, onSave, onRemove }) {
+  return (
+    <Card className="p-3 flex flex-wrap items-center gap-3">
+      <Badge variant="secondary" className="min-w-[120px] justify-center">{padrao.nome_fase}</Badge>
+
+      <Select value={padrao.etiqueta_tipo_id || '__none__'}
+        onValueChange={v => onSave(padrao.id, { etiqueta_tipo_id: v === '__none__' ? null : v })}>
+        <SelectTrigger className="w-[200px] h-8 text-xs"><SelectValue placeholder="Etiqueta..." /></SelectTrigger>
+        <SelectContent>
+          <SelectItem value="__none__">(sem etiqueta)</SelectItem>
+          {tipos.map(t => <SelectItem key={t.id} value={t.id}>{t.nome}{t.esforco_max_h ? ` · ${t.esforco_max_h}h` : ''}</SelectItem>)}
+        </SelectContent>
+      </Select>
+
+      <Select value={padrao.atribuido_a || '__none__'}
+        onValueChange={v => onSave(padrao.id, { atribuido_a: v === '__none__' ? null : v })}>
+        <SelectTrigger className="w-[180px] h-8 text-xs"><SelectValue placeholder="Dono..." /></SelectTrigger>
+        <SelectContent>
+          <SelectItem value="__none__">(sem dono)</SelectItem>
+          {membros.map(m => <SelectItem key={m.id} value={m.id}>{(m.profile?.name || m.nome_display || '—')} · {m.habilidade}</SelectItem>)}
+        </SelectContent>
+      </Select>
+
+      <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
+        <input type="checkbox" checked={padrao.ativo} onChange={e => onSave(padrao.id, { ativo: e.target.checked })} />
+        Ativo
+      </label>
+
+      <Button size="icon" variant="outline" onClick={() => onRemove(padrao.id)} className="text-red-600 ml-auto">
+        <Trash2 className="h-4 w-4" />
+      </Button>
+    </Card>
+  );
+}
+
+function NovoPadraoForm({ categorias, tipos, membros, onSuccess }) {
+  const [form, setForm] = useState({ category_id: '', nome_fase: '', etiqueta_tipo_id: '', atribuido_a: '' });
+  const [fases, setFases] = useState([]);
+  const [loadingFases, setLoadingFases] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+
+  async function escolherCategoria(catId) {
+    setForm(f => ({ ...f, category_id: catId, nome_fase: '' }));
+    setFases([]);
+    if (!catId) return;
+    setLoadingFases(true);
+    try { setFases(await api.admin.cicloPadroes.fases(catId)); }
+    catch (e) { toast.error(e.message); }
+    finally { setLoadingFases(false); }
+  }
+
+  async function submit() {
+    if (!form.category_id || !form.nome_fase) { toast.error('Categoria e fase obrigatórias'); return; }
+    if (!form.etiqueta_tipo_id && !form.atribuido_a) { toast.error('Informe ao menos etiqueta ou dono'); return; }
+    setSubmitting(true);
+    try {
+      await api.admin.cicloPadroes.create({
+        category_id: form.category_id,
+        nome_fase: form.nome_fase,
+        etiqueta_tipo_id: form.etiqueta_tipo_id || null,
+        atribuido_a: form.atribuido_a || null,
+      });
+      toast.success('Criado');
+      onSuccess();
+    } catch (e) { toast.error(e.message); }
+    finally { setSubmitting(false); }
+  }
+
+  return (
+    <div className="space-y-3">
+      <div className="space-y-2">
+        <Label>Categoria do evento *</Label>
+        <Select value={form.category_id} onValueChange={escolherCategoria}>
+          <SelectTrigger><SelectValue placeholder="Selecione" /></SelectTrigger>
+          <SelectContent>
+            {categorias.map(c => <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>)}
+          </SelectContent>
+        </Select>
+      </div>
+      <div className="space-y-2">
+        <Label>Fase *</Label>
+        <Select value={form.nome_fase} onValueChange={v => setForm(f => ({ ...f, nome_fase: v }))}
+          disabled={!form.category_id || loadingFases}>
+          <SelectTrigger>
+            <SelectValue placeholder={loadingFases ? 'Carregando...' : (form.category_id ? 'Selecione a fase' : 'Escolha a categoria antes')} />
+          </SelectTrigger>
+          <SelectContent>
+            {fases.map(f => <SelectItem key={f.nome} value={f.nome}>{f.numero ? `${f.numero}. ` : ''}{f.nome}</SelectItem>)}
+          </SelectContent>
+        </Select>
+        {form.category_id && !loadingFases && fases.length === 0 && (
+          <p className="text-xs text-amber-600">Sem fases no catálogo dessa categoria · confira os templates do ciclo criativo.</p>
+        )}
+      </div>
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+        <div className="space-y-2">
+          <Label>Etiqueta (entregável)</Label>
+          <Select value={form.etiqueta_tipo_id || '__none__'}
+            onValueChange={v => setForm(f => ({ ...f, etiqueta_tipo_id: v === '__none__' ? '' : v }))}>
+            <SelectTrigger><SelectValue placeholder="Opcional" /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="__none__">(sem etiqueta)</SelectItem>
+              {tipos.map(t => <SelectItem key={t.id} value={t.id}>{t.nome}{t.esforco_max_h ? ` · ${t.esforco_max_h}h` : ''}</SelectItem>)}
+            </SelectContent>
+          </Select>
+        </div>
+        <div className="space-y-2">
+          <Label>Dono padrão</Label>
+          <Select value={form.atribuido_a || '__none__'}
+            onValueChange={v => setForm(f => ({ ...f, atribuido_a: v === '__none__' ? '' : v }))}>
+            <SelectTrigger><SelectValue placeholder="Opcional" /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="__none__">(sem dono)</SelectItem>
+              {membros.map(m => <SelectItem key={m.id} value={m.id}>{(m.profile?.name || m.nome_display || '—')} · {m.habilidade}</SelectItem>)}
+            </SelectContent>
+          </Select>
+        </div>
+      </div>
+      <p className="text-xs text-muted-foreground">Informe ao menos um (etiqueta ou dono). O esforço vem da etiqueta.</p>
       <div className="flex justify-end">
         <Button onClick={submit} disabled={submitting}>{submitting ? 'Criando...' : 'Criar'}</Button>
       </div>

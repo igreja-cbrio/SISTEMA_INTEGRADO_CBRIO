@@ -1132,6 +1132,16 @@ export const marketing = {
       update: (id, data) => patch(`/marketing/admin/overrides/${id}`, data),
       remove: (id) => del(`/marketing/admin/overrides/${id}`),
     },
+    // Padroes por fase do ciclo criativo (2026-05-29)
+    cicloPadroes: {
+      list:       () => get('/marketing/admin/ciclo-padroes'),
+      categorias: () => get('/marketing/admin/ciclo-padroes/categorias'),
+      fases:      (categoryId) => get('/marketing/admin/ciclo-padroes/fases?category_id=' + encodeURIComponent(categoryId)),
+      create:     (data) => post('/marketing/admin/ciclo-padroes', data),
+      update:     (id, data) => patch(`/marketing/admin/ciclo-padroes/${id}`, data),
+      remove:     (id) => del(`/marketing/admin/ciclo-padroes/${id}`),
+      aplicar:    (categoryId) => post('/marketing/admin/ciclo-padroes/aplicar', categoryId ? { category_id: categoryId } : {}),
+    },
   },
 };
 
