@@ -113,6 +113,22 @@ informa uma "data necessária" maior. Rótulo no form: "dias úteis" → "dias".
 Inputs e limitações inalterados (usa `esforco_max_h` + capacidade da equipe inteira ÷5
 × 0,6 · ainda não é per-habilidade, não conta o tempo de aprovação do diretor).
 
+### Atribuição padrão por grupo (2026-05-29)
+
+Migration `20260529040000_marketing_atribuicao_padrao_grupo.sql`: card de solicitação
+**já nasce atribuído** ao responsável do grupo. Tabela `marketing_grupo_padrao`
+(`grupo` PK → `membro_id`), seed por habilidade:
+- `artes` → Cauã (designer) · `rede_social` → Lorena (social_media) · `video_foto` → Allan (videomaker)
+
+Allan pega vídeos **e fotos** (Aline não tem login). `fn_marketing_cards_solicitacao_sync`
+recriada: olha o `grupo` do `etiqueta_tipo_id` → busca o padrão → grava `atribuido_a` no
+INSERT. **Pedro troca no card** quando quiser ("Atribuído a" · já existia · backend PATCH
+`/cards` aceita). Sem tela pra editar os defaults (decisão "só seed" · ajustar via SQL se
+mudar). Cards de evento/interna sem tipo não recebem default (Pedro aloca). ⚠️ Migration
+sem dependência de código novo, mas aplicar antes do merge pra manter git↔prod em sincronia.
+Obs: card auto-atribuído (criado pelo trigger) não dispara a notificação "card atribuído"
+do backend — só quando o Pedro (re)atribui via API. Notificar no auto-assign fica de follow-up.
+
 ## Marketing · Spec 024 · Tela /marketing/ciclo-criativo (2026-05-28)
 
 Marcos: "ao colocar o horário no marketing, coloque alguma visualização para Pedro ir por fase do ciclo criativo colocando o horário e o dono de cada etapa do ciclo criativo, então isso vai pro calendário dessa pessoa."
