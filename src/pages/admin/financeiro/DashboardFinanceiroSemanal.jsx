@@ -294,10 +294,7 @@ export default function DashboardSemanal() {
             />
           )}
           {SLIDES[slide].key === 'tendencias' && (
-            <Slide2Tendencias
-              historico={historico}
-              completo={completo}
-            />
+            <Slide2Tendencias />
           )}
           {SLIDES[slide].key === 'comparativos' && (
             <Slide3Comparativos
@@ -567,13 +564,11 @@ function Slide1PorCulto({ buckets, melhorSemana, semana }) {
   );
 }
 
-function Slide2Tendencias({ historico, completo }) {
+function Slide2Tendencias() {
   return (
     <>
       <ArrecadacaoAnualChart />
-      {completo && (
-        <ArrecadacaoSemanalChart dados={completo.semanal} anoAtual={completo.ano_atual} />
-      )}
+      <SazonalidadeMensalChart />
     </>
   );
 }
@@ -752,31 +747,41 @@ function ArrecadacaoMensalChart({ dados }) {
   );
 }
 
-function ArrecadacaoSemanalChart({ dados, anoAtual }) {
-  const filtrado = useMemo(() => (dados || [])
-    .filter(d => d.ano === anoAtual)
-    .map((d, i) => ({
-      idx: i,
-      label: d.semana_label,
-      semana_inicio: d.semana_inicio,
-      Receita: Number(d.receita || 0),
-      despesa: Number(d.despesa || 0),
-      resultado: Number(d.resultado || 0),
-      qtd: Number(d.qtd || 0),
-    })), [dados, anoAtual]);
+function SazonalidadeMensalChart() {
+  const [dados, setDados] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [erro, setErro] = useState(null);
 
-  const [selectedIdx, setSelectedIdx] = useState(filtrado.length > 0 ? filtrado.length - 1 : null);
-  useEffect(() => { setSelectedIdx(filtrado.length > 0 ? filtrado.length - 1 : null); }, [filtrado.length]);
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    financeiroV2.sazonalidadeMensal()
+      .then(r => { if (!cancelled) { setDados(r); setErro(null); } })
+      .catch(e => { if (!cancelled) setErro(e?.message || 'Erro ao carregar sazonalidade'); })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, []);
 
-  const sel = selectedIdx !== null ? filtrado[selectedIdx] : null;
-  const ant = selectedIdx !== null && selectedIdx > 0 ? filtrado[selectedIdx - 1] : null;
-  const dRec = sel && ant && ant.Receita > 0 ? ((sel.Receita - ant.Receita) / ant.Receita) * 100 : null;
+  const anos = dados?.anos || [];
+  const meses = dados?.meses || [];
+  const anoAtual = new Date().getFullYear();
+  const anoCorrenteStr = String(anoAtual);
+  const mesCorrente = new Date().getMonth() + 1;
 
-  const onBarClick = (e) => {
-    if (e?.activePayload?.[0]?.payload && typeof e.activePayload[0].payload.idx === 'number') {
-      setSelectedIdx(e.activePayload[0].payload.idx);
-    }
+  const corPorAno = (ano, idx) => {
+    if (String(ano) === anoCorrenteStr) return COL.primary;
+    const paleta = [COL.purple, COL.amber, COL.blue, COL.red, COL.green];
+    return paleta[idx % paleta.length];
   };
+
+  const totaisPorAno = useMemo(() => {
+    const out = {};
+    anos.forEach(a => {
+      const key = String(a);
+      out[key] = meses.reduce((s, m) => s + Number(m[key] || 0), 0);
+    });
+    return out;
+  }, [anos, meses]);
 
   return (
     <Card>
@@ -784,75 +789,94 @@ function ArrecadacaoSemanalChart({ dados, anoAtual }) {
         <div className="flex items-start justify-between flex-wrap gap-2 mb-1">
           <div>
             <h3 className="text-base font-semibold flex items-center gap-2">
-              Arrecadação Semanal · {anoAtual}
+              Sazonalidade Mensal
               <Badge variant="outline" className="text-[10px] font-normal">
-                <MousePointer2 className="h-2.5 w-2.5 mr-1" />
-                clique numa semana
+                <BarChart3 className="h-2.5 w-2.5 mr-1" />
+                mesmo mês ao longo dos anos
               </Badge>
             </h3>
-            <p className="text-xs text-muted-foreground">{filtrado.length} semanas qua-ter · empréstimos excluídos</p>
+            <p className="text-xs text-muted-foreground">
+              Mostra padrões de meses fortes e fracos · empréstimos excluídos
+            </p>
           </div>
         </div>
-        <div style={{ width: '100%', height: 280 }}>
-          <ResponsiveContainer>
-            <BarChart data={filtrado} onClick={onBarClick}>
-              <defs>
-                <linearGradient id="gradSemanal" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0%" stopColor={COL.primary} stopOpacity={0.95} />
-                  <stop offset="100%" stopColor={COL.primary} stopOpacity={0.5} />
-                </linearGradient>
-                <linearGradient id="gradSemanalSel" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0%" stopColor={COL.amber} stopOpacity={1} />
-                  <stop offset="100%" stopColor={COL.amber} stopOpacity={0.55} />
-                </linearGradient>
-              </defs>
-              <CartesianGrid strokeDasharray="3 3" opacity={0.2} />
-              <XAxis dataKey="label" tick={{ fontSize: 9 }} interval={Math.floor(filtrado.length / 12)} />
-              <YAxis tick={{ fontSize: 10 }} tickFormatter={(v) => fmtKbrl(v)} />
-              <Tooltip
-                cursor={{ fill: 'rgba(0,179,157,0.08)' }}
-                formatter={(v) => fmtMoney(v)}
-                contentStyle={{ borderRadius: 8, fontSize: 12 }}
-              />
-              <Bar dataKey="Receita" radius={[3, 3, 0, 0]} animationDuration={1200} cursor="pointer">
-                {filtrado.map((entry, i) => (
-                  <Cell
-                    key={i}
-                    fill={i === selectedIdx ? 'url(#gradSemanalSel)' : 'url(#gradSemanal)'}
-                    stroke={i === selectedIdx ? COL.amber : 'transparent'}
-                    strokeWidth={i === selectedIdx ? 2 : 0}
-                  />
-                ))}
-              </Bar>
-            </BarChart>
-          </ResponsiveContainer>
-        </div>
 
-        <AnimatePresence mode="wait">
-          {sel && (
-            <motion.div
-              key={`semsel-${sel.idx}`}
-              initial={{ opacity: 0, y: 12 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -8 }}
-              transition={{ duration: 0.35, ease: 'easeOut' }}
-              className="mt-4 pt-4 border-t border-border"
-            >
-              <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
-                <span className="text-xs text-muted-foreground">Semana selecionada</span>
-                <span className="text-sm font-semibold px-2 py-0.5 rounded bg-amber-100 dark:bg-amber-500/20 text-amber-700 dark:text-amber-300">
-                  {sel.label}
-                </span>
-              </div>
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                <SemanaCard label="Arrecadação" icon={Banknote} accent={C.green} valor={fmtMoney(sel.Receita)} delta={dRec} sub="vs semana anterior" anim={`r-${sel.idx}`} />
-                <SemanaCard label="Despesa" icon={TrendingDown} accent={C.red} valor={fmtMoney(sel.despesa)} delta={null} sub="na semana" anim={`d-${sel.idx}`} />
-                <SemanaCard label="Resultado" icon={Activity} accent={sel.resultado >= 0 ? C.green : C.red} valor={fmtMoney(sel.resultado)} delta={null} sub="receita − despesa" anim={`res-${sel.idx}`} />
-                <SemanaCard label="Lançamentos" icon={FileText} accent={C.blue} valor={fmtInt(sel.qtd)} delta={null} sub="na semana" anim={`q-${sel.idx}`} />
-              </div>
-            </motion.div>
-          )}
-        </AnimatePresence>
+        {loading && (
+          <div className="flex items-center justify-center py-12 text-muted-foreground text-sm">
+            <Loader2 className="h-4 w-4 mr-2 animate-spin" /> Carregando sazonalidade…
+          </div>
+        )}
+        {erro && !loading && (
+          <div className="text-sm text-red-500 py-6 text-center">{erro}</div>
+        )}
+
+        {!loading && !erro && meses.length > 0 && (
+          <>
+            <div style={{ width: '100%', height: 300 }}>
+              <ResponsiveContainer>
+                <BarChart data={meses} barGap={2} barCategoryGap="18%">
+                  <CartesianGrid strokeDasharray="3 3" opacity={0.2} />
+                  <XAxis dataKey="mes_label" tick={{ fontSize: 11 }} />
+                  <YAxis tick={{ fontSize: 10 }} tickFormatter={(v) => fmtKbrl(v)} />
+                  <Tooltip
+                    cursor={{ fill: 'rgba(0,179,157,0.06)' }}
+                    formatter={(v) => fmtMoney(v)}
+                    contentStyle={{ borderRadius: 8, fontSize: 12 }}
+                  />
+                  <Legend wrapperStyle={{ fontSize: 11 }} />
+                  {anos.map((ano, idx) => (
+                    <Bar
+                      key={ano}
+                      dataKey={String(ano)}
+                      name={String(ano)}
+                      fill={corPorAno(ano, idx)}
+                      radius={[3, 3, 0, 0]}
+                      animationDuration={1200}
+                    >
+                      {String(ano) === anoCorrenteStr && meses.map((m, i) => (
+                        <Cell
+                          key={`c-${i}`}
+                          fill={corPorAno(ano, idx)}
+                          fillOpacity={m.mes_num > mesCorrente ? 0.25 : 1}
+                        />
+                      ))}
+                    </Bar>
+                  ))}
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+
+            <div className="mt-4 pt-4 border-t border-border grid grid-cols-2 md:grid-cols-4 gap-3">
+              {anos.map((ano, idx) => {
+                const total = totaisPorAno[String(ano)] || 0;
+                const anoAnt = anos[idx - 1];
+                const totalAnt = anoAnt ? (totaisPorAno[String(anoAnt)] || 0) : 0;
+                const delta = anoAnt && totalAnt > 0 ? ((total - totalAnt) / totalAnt) * 100 : null;
+                const ehAtual = String(ano) === anoCorrenteStr;
+                return (
+                  <div
+                    key={ano}
+                    className="rounded-lg border p-3"
+                    style={{ borderLeft: `3px solid ${corPorAno(ano, idx)}` }}
+                  >
+                    <div className="text-[11px] text-muted-foreground uppercase tracking-wide flex items-center gap-1">
+                      {ano}
+                      {ehAtual && <span className="text-[9px] px-1.5 py-0.5 rounded bg-primary/10 text-primary">em curso</span>}
+                    </div>
+                    <div className="text-base font-semibold tabular-nums" style={{ color: corPorAno(ano, idx) }}>
+                      {fmtCompact(total)}
+                    </div>
+                    {delta !== null && (
+                      <div className={`text-[11px] mt-0.5 ${delta >= 0 ? 'text-emerald-600' : 'text-red-500'}`}>
+                        {fmtPct(delta)} vs {anoAnt}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </>
+        )}
       </CardContent>
     </Card>
   );

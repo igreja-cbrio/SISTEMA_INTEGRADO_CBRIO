@@ -637,6 +637,10 @@ export const financeiroV2 = {
     const qs = params.toString();
     return get(`/financeiro-v2/arrecadacao-anual${qs ? `?${qs}` : ''}`);
   },
+  sazonalidadeMensal: (anos) => {
+    const qs = Array.isArray(anos) && anos.length ? `?anos=${anos.join(',')}` : '';
+    return get(`/financeiro-v2/sazonalidade-mensal${qs}`);
+  },
   categoriaTransacoes: ({ categoria, inicio, fim }) =>
     get(`/financeiro-v2/categoria-transacoes?categoria=${encodeURIComponent(categoria)}&inicio=${inicio}&fim=${fim}`),
   despesaTransacoes: (params) =>

@@ -1960,6 +1960,42 @@ router.get('/arrecadacao-anual', async (req, res) => {
 });
 
 // ====================================================================
+// SAZONALIDADE MENSAL · compara o mesmo mês em vários anos
+// Retorna [{ mes_num, mes_label, "2024": valor, "2025": valor, "2026": valor }]
+// ====================================================================
+router.get('/sazonalidade-mensal', async (req, res) => {
+  try {
+    const anosParam = req.query.anos;
+    const anoBase = new Date().getFullYear();
+    const anos = anosParam
+      ? String(anosParam).split(',').map(n => Number(n)).filter(n => Number.isInteger(n))
+      : [anoBase - 2, anoBase - 1, anoBase];
+
+    const { data, error } = await supabase
+      .from('vw_fin_arrecadacao_mensal')
+      .select('ano, mes_num, receita')
+      .in('ano', anos);
+    if (error) return res.status(400).json({ error: error.message });
+
+    const LABELS = ['Jan','Fev','Mar','Abr','Mai','Jun','Jul','Ago','Set','Out','Nov','Dez'];
+    const meses = LABELS.map((label, i) => {
+      const linha = { mes_num: i + 1, mes_label: label };
+      anos.forEach(a => { linha[String(a)] = 0; });
+      return linha;
+    });
+    (data || []).forEach(r => {
+      const idx = Number(r.mes_num) - 1;
+      if (idx >= 0 && idx < 12) meses[idx][String(r.ano)] = Number(r.receita || 0);
+    });
+
+    res.json({ anos, meses });
+  } catch (e) {
+    console.error('[FIN-V2] sazonalidade-mensal:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ====================================================================
 // DRILLDOWN · transações de uma categoria no período · 2026-05-28
 // ====================================================================
 router.get('/categoria-transacoes', async (req, res) => {
