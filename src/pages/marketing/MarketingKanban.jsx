@@ -566,7 +566,7 @@ function CardDrawer({ card, onClose, onUpdated, tipos, destinos, membros, isCoor
                   </Select>
                 </div>
                 <div className="space-y-2">
-                  <Label>Destino</Label>
+                  <Label>Etiqueta interna</Label>
                   <Select
                     value={edit.etiqueta_destino_id || ''}
                     onValueChange={v => setEdit(s => ({ ...s, etiqueta_destino_id: v || null }))}
@@ -752,7 +752,7 @@ function NovaTaskForm({ tipos, destinos, membros, onSuccess }) {
           </Select>
         </div>
         <div className="space-y-2">
-          <Label>Destino (opcional)</Label>
+          <Label>Etiqueta interna (opcional)</Label>
           <Select value={form.etiqueta_destino_id} onValueChange={v => setForm(f => ({ ...f, etiqueta_destino_id: v }))}>
             <SelectTrigger><SelectValue placeholder="(sem)" /></SelectTrigger>
             <SelectContent>

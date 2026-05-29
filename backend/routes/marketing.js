@@ -1269,11 +1269,11 @@ router.get('/admin/etiquetas/tipo', authorizeModule('marketing', 5), async (req,
 
 router.post('/admin/etiquetas/tipo', authorizeModule('marketing', 5), async (req, res) => {
   try {
-    const { slug, nome, habilidade_padrao, esforco_max_h, cor, ordem } = req.body || {};
+    const { slug, nome, habilidade_padrao, esforco_max_h, cor, ordem, grupo } = req.body || {};
     if (!slug || !nome) return res.status(400).json({ error: 'slug e nome obrigatorios' });
     const { data, error } = await supabase
       .from('marketing_etiquetas_tipo')
-      .insert({ slug, nome, habilidade_padrao, esforco_max_h, cor, ordem: ordem ?? 100, ativo: true })
+      .insert({ slug, nome, habilidade_padrao, esforco_max_h, cor, ordem: ordem ?? 100, grupo: grupo || null, ativo: true })
       .select('*').single();
     if (error) throw error;
     res.status(201).json(data);
@@ -1283,13 +1283,14 @@ router.post('/admin/etiquetas/tipo', authorizeModule('marketing', 5), async (req
 router.patch('/admin/etiquetas/tipo/:id', authorizeModule('marketing', 5), async (req, res) => {
   try {
     const update = {};
-    const { nome, habilidade_padrao, esforco_max_h, cor, ordem, ativo } = req.body || {};
+    const { nome, habilidade_padrao, esforco_max_h, cor, ordem, ativo, grupo } = req.body || {};
     if (nome !== undefined) update.nome = nome;
     if (habilidade_padrao !== undefined) update.habilidade_padrao = habilidade_padrao;
     if (esforco_max_h !== undefined) update.esforco_max_h = esforco_max_h;
     if (cor !== undefined) update.cor = cor;
     if (ordem !== undefined) update.ordem = ordem;
     if (ativo !== undefined) update.ativo = !!ativo;
+    if (grupo !== undefined) update.grupo = grupo || null;
     const { data, error } = await supabase
       .from('marketing_etiquetas_tipo')
       .update(update)
