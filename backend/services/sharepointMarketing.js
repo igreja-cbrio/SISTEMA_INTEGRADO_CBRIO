@@ -20,11 +20,12 @@ const RETRY_BASE_MS = 500;
 
 async function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
-function buildSubfolder(card) {
+function buildSubfolder(card, tipo) {
   const d = new Date();
   const ano = d.getUTCFullYear();
   const mes = String(d.getUTCMonth() + 1).padStart(2, '0');
-  return `Marketing/${ano}/${ano}-${mes}`;
+  const base = tipo === 'referencia' ? 'Marketing/Referencias' : 'Marketing';
+  return `${base}/${ano}/${ano}-${mes}`;
 }
 
 function sanitizeFileName(fileName) {
@@ -55,7 +56,8 @@ async function withRetry(fn) {
  * @param {Object} args.file - objeto multer (originalname, mimetype, size, buffer)
  * @returns {Promise<Object>} linha de marketing_entregaveis criada
  */
-async function uploadEntregavel({ cardId, userId, file }) {
+async function uploadEntregavel({ cardId, userId, file, tipo }) {
+  const tipoFinal = tipo === 'referencia' ? 'referencia' : 'entregavel';
   if (!storage.SHAREPOINT_CONFIGURED) {
     throw new Error('SharePoint nao configurado · entregaveis precisam de Microsoft Graph (configure MICROSOFT_TENANT_ID / CLIENT_ID / CLIENT_SECRET / SHAREPOINT_SITE_ID).');
   }
@@ -73,7 +75,7 @@ async function uploadEntregavel({ cardId, userId, file }) {
   if (cardErr) throw cardErr;
   if (!card) throw new Error('Card nao encontrado ou ja excluido');
 
-  const subFolder = buildSubfolder(card);
+  const subFolder = buildSubfolder(card, tipoFinal);
   const safeName = `${cardId.slice(0, 8)}_${Date.now()}_${sanitizeFileName(file.originalname)}`;
 
   // Upload com retry exponencial
@@ -92,6 +94,7 @@ async function uploadEntregavel({ cardId, userId, file }) {
       tipo_mime: file.mimetype || null,
       tamanho_bytes: file.size,
       enviado_por: userId,
+      tipo: tipoFinal,
     })
     .select('*')
     .single();

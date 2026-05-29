@@ -1074,13 +1074,22 @@ export const marketing = {
   // Entregaveis (Spec 006 · SharePoint)
   entregaveis: {
     list:     (cardId) => get(`/marketing/cards/${cardId}/entregaveis`),
-    upload:   (cardId, file) => {
+    upload:   (cardId, file, tipo) => {
       const fd = new FormData();
       fd.append('arquivo', file);
+      if (tipo) fd.append('tipo', tipo);
       return requestFile(`/marketing/cards/${cardId}/entregaveis`, fd, { timeoutMs: 120_000 });
     },
     download: (entregavelId) => `${API}/marketing/entregaveis/${entregavelId}/download`,
     remove:   (entregavelId) => del(`/marketing/entregaveis/${entregavelId}`),
+  },
+
+  // Checklist do card (sub-itens · 2026-05-29)
+  checklist: {
+    list:   (cardId) => get(`/marketing/cards/${cardId}/checklist`),
+    create: (cardId, data) => post(`/marketing/cards/${cardId}/checklist`, data),
+    update: (itemId, data) => patch(`/marketing/checklist/${itemId}`, data),
+    remove: (itemId) => del(`/marketing/checklist/${itemId}`),
   },
 
   // Analytics (Spec 013)

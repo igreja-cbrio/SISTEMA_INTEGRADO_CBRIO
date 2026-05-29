@@ -192,6 +192,37 @@ o card de evento nasce.
 manual cobre o resto · Pedro ajusta no card); padrões só por UI (sem seed · Pedro
 preenche). ⚠️ Aplicar a migration antes do merge.
 
+### Checklists no card + anexos de referência (2026-05-29)
+
+Inspirado no Trello do Pedro (board "Institucional" · épico com checklists + anexos de
+referência). Quick win pra aproximar o card do fluxo deles antes da demo.
+
+**Migration `20260529080000_marketing_card_checklist_referencias.sql`:**
+- Tabela `marketing_card_checklist` (`card_id` FK CASCADE, `grupo` text nullable = "frente",
+  `texto`, `feito`, `ordem` bigserial) + RLS (select authenticated · service_role all).
+  Sem `deleted_at` · DELETE direto (item trivial, não-PII).
+- Coluna `tipo` em `marketing_entregaveis`: `'entregavel'` (default) | `'referencia'` · CHECK.
+  Distingue input (briefing/inspiração) de output (arquivo final).
+
+**Backend (`routes/marketing.js` + `services/sharepointMarketing.js`):**
+- `GET /cards/:id/checklist` (nível 1) · `POST /cards/:id/checklist` (nível 3) ·
+  `PATCH /checklist/:itemId` (nível 3) · `DELETE /checklist/:itemId` (nível 3).
+- `POST /cards/:id/entregaveis` aceita campo `tipo` (multipart). `uploadEntregavel({...,tipo})`
+  grava a coluna e usa subpasta `Marketing/Referencias/AAAA/AAAA-MM` quando referência.
+  A notificação "arquivo final" só dispara quando `tipo != 'referencia'`.
+
+**Frontend (`MarketingKanban.jsx` · CardDrawer):**
+- Bloco **Checklist**: itens agrupados por frente (`grupo`), barra de % (feitos/total),
+  marcar/adicionar/remover inline. Enter adiciona e mantém a frente (vários itens seguidos).
+- Bloco **Referências** (input): upload `tipo=referencia` · lista com download.
+- Bloco **Entregáveis** (output): passa a filtrar `tipo != 'referencia'`.
+- Gate por `isCoordenador` (nível 5 · cobre toda a equipe via boost de área) · diretoria (nível 1) read-only.
+- `api.js`: `marketing.checklist.{list,create,update,remove}` + `entregaveis.upload(cardId, file, tipo)`.
+
+**Decisões:** checklist é 1 nível com `grupo` text (não 2 tabelas) · cobre o caso do Trello e é
+bem mais simples. Referência reusa toda a infra SharePoint (Graph) só com a coluna `tipo`.
+⚠️ Aplicar a migration antes do merge.
+
 ## Marketing · Spec 024 · Tela /marketing/ciclo-criativo (2026-05-28)
 
 Marcos: "ao colocar o horário no marketing, coloque alguma visualização para Pedro ir por fase do ciclo criativo colocando o horário e o dono de cada etapa do ciclo criativo, então isso vai pro calendário dessa pessoa."
