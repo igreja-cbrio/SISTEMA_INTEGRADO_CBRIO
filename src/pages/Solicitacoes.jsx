@@ -27,6 +27,16 @@ const CATEGORIAS = [
   { value: 'outro',          label: 'Outro',               color: 'bg-muted text-muted-foreground',                         areaResp: null },
 ];
 
+// Marketing · baldes macro do intake em cascata (grupo de marketing_etiquetas_tipo).
+// Solicitante escolhe o balde (menu 1) e depois o entregavel filtrado (menu 2).
+// O "destino" saiu do form · virou etiqueta interna que o Pedro classifica no card.
+const MKT_GRUPO_LABELS = {
+  rede_social: 'Rede Social',
+  video_foto: 'Vídeos e Fotos',
+  artes: 'Artes',
+};
+const MKT_GRUPO_ORDER = ['rede_social', 'video_foto', 'artes'];
+
 // Areas do solicitante em 2 niveis: macro -> sub
 const AREAS_MACRO = [
   { value: 'ministerial', label: 'Ministerial', subs: [
@@ -190,14 +200,13 @@ export default function Solicitacoes() {
     espaco_solicitado: '', data_uso: '', horario_inicio: '', horario_fim: '', qtde_pessoas: '',
     motivo_reembolso: '', data_compra: '',
     forma_pagamento: '', chave_pix: '', banco: '', agencia: '', conta: '', documento_file: null,
-    // Marketing · Spec 010
-    marketing_tipo_id: '', marketing_destino_id: '',
+    // Marketing · cascata grupo->tipo (destino virou etiqueta interna do Pedro)
+    marketing_grupo: '', marketing_tipo_id: '',
   };
   const [form, setForm] = useState(FORM_INITIAL);
   const [slaDefs, setSlaDefs] = useState([]);
   // Marketing · Spec 010 · etiquetas + estimativa preliminar
   const [marketingTipos, setMarketingTipos] = useState([]);
-  const [marketingDestinos, setMarketingDestinos] = useState([]);
   const [estimativa, setEstimativa] = useState(null);
   const [estimativaLoading, setEstimativaLoading] = useState(false);
 
@@ -212,9 +221,16 @@ export default function Solicitacoes() {
     if (marketingTipos.length > 0) return;
     marketingApi.etiquetas?.().then(r => {
       setMarketingTipos(r.tipos || []);
-      setMarketingDestinos(r.destinos || []);
     }).catch(() => {});
   }, [form.categoria, marketingTipos.length]);
+
+  // Baldes presentes (menu 1 da cascata) · ordem conhecida primeiro, extras ao fim
+  const marketingGrupos = useMemo(() => {
+    const present = new Set(marketingTipos.map(t => t.grupo).filter(Boolean));
+    const known = MKT_GRUPO_ORDER.filter(g => present.has(g)).map(slug => ({ slug, label: MKT_GRUPO_LABELS[slug] || slug }));
+    const extras = [...present].filter(g => !MKT_GRUPO_ORDER.includes(g)).map(slug => ({ slug, label: slug }));
+    return [...known, ...extras];
+  }, [marketingTipos]);
 
   // Debounced estimativa preliminar quando tipo+data mudam
   useEffect(() => {
@@ -351,7 +367,7 @@ export default function Solicitacoes() {
       if (!payload.data_compra) delete payload.data_compra;
       if (!payload.motivo_reembolso) delete payload.motivo_reembolso;
       if (!payload.marketing_tipo_id) delete payload.marketing_tipo_id;
-      if (!payload.marketing_destino_id) delete payload.marketing_destino_id;
+      delete payload.marketing_grupo; // UI-only · destino agora e' etiqueta interna do Pedro
 
       // Upload do comprovante para Supabase Storage (bucket: solicitacoes)
       if (form.documento_file && supabase) {
@@ -422,6 +438,8 @@ export default function Solicitacoes() {
   const reservaEspacoValid = !isReservaEspaco || (form.espaco_solicitado.trim() && form.data_uso);
   const urgenciaValid = !form.eh_urgente || form.justificativa_urgencia.trim().length >= 5;
   const areaClienteValid = !!form.area_cliente;
+  // Marketing · solicitante escolhe os 2 menus (grupo -> tipo) antes de enviar
+  const marketingValid = form.categoria !== 'marketing' || !!form.marketing_tipo_id;
 
   return (
     <div className="p-6 space-y-6">
@@ -603,26 +621,27 @@ export default function Solicitacoes() {
                     </p>
                     <div className="grid grid-cols-2 gap-3">
                       <div className="space-y-2">
-                        <Label className="text-xs">Tipo de entregável</Label>
+                        <Label className="text-xs">O que você precisa? *</Label>
                         <Select
-                          value={form.marketing_tipo_id}
-                          onValueChange={v => setForm(f => ({ ...f, marketing_tipo_id: v }))}
+                          value={form.marketing_grupo}
+                          onValueChange={v => setForm(f => ({ ...f, marketing_grupo: v, marketing_tipo_id: '' }))}
                         >
-                          <SelectTrigger><SelectValue placeholder="(opcional · Pedro define)" /></SelectTrigger>
+                          <SelectTrigger><SelectValue placeholder="Selecione..." /></SelectTrigger>
                           <SelectContent>
-                            {marketingTipos.map(t => <SelectItem key={t.id} value={t.id}>{t.nome}</SelectItem>)}
+                            {marketingGrupos.map(g => <SelectItem key={g.slug} value={g.slug}>{g.label}</SelectItem>)}
                           </SelectContent>
                         </Select>
                       </div>
                       <div className="space-y-2">
-                        <Label className="text-xs">Destino</Label>
+                        <Label className="text-xs">Tipo *</Label>
                         <Select
-                          value={form.marketing_destino_id}
-                          onValueChange={v => setForm(f => ({ ...f, marketing_destino_id: v }))}
+                          value={form.marketing_tipo_id}
+                          onValueChange={v => setForm(f => ({ ...f, marketing_tipo_id: v }))}
+                          disabled={!form.marketing_grupo}
                         >
-                          <SelectTrigger><SelectValue placeholder="(opcional · Pedro define)" /></SelectTrigger>
+                          <SelectTrigger><SelectValue placeholder={form.marketing_grupo ? 'Selecione...' : 'Escolha o grupo'} /></SelectTrigger>
                           <SelectContent>
-                            {marketingDestinos.map(d => <SelectItem key={d.id} value={d.id}>{d.nome}</SelectItem>)}
+                            {marketingTipos.filter(t => t.grupo === form.marketing_grupo).map(t => <SelectItem key={t.id} value={t.id}>{t.nome}</SelectItem>)}
                           </SelectContent>
                         </Select>
                       </div>
@@ -789,7 +808,7 @@ export default function Solicitacoes() {
 
                 <div className="flex justify-end gap-2 pt-2">
                   <Button type="button" variant="outline" onClick={() => setDialogOpen(false)}>Cancelar</Button>
-                  <Button onClick={handleCreate} disabled={!form.titulo || !form.categoria || !areaClienteValid || !reembolsoValid || !reservaEspacoValid || !urgenciaValid || submitting}>
+                  <Button onClick={handleCreate} disabled={!form.titulo || !form.categoria || !areaClienteValid || !reembolsoValid || !reservaEspacoValid || !urgenciaValid || !marketingValid || submitting}>
                     {submitting ? 'Criando...' : 'Criar Solicitação'}
                   </Button>
                 </div>

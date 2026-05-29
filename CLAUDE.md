@@ -74,6 +74,34 @@ Litwinczuk Júnior) **fica como está** · possível duplicata a tratar depois. 
 não tem conta** no sistema → nada a marcar em `is_diretoria_geral` (quando criarem,
 marcar Pastor Senior).
 
+## Marketing · intake em cascata (grupo → entregável) + destino interno (2026-05-28)
+
+Marcos: o solicitante encarava 16 tipos soltos + escolhia destino · simplificado pra
+**2 menus em cascata**, e o destino saiu da mão dele.
+
+**Migration `20260528520000_marketing_etiquetas_grupo.sql`:** `marketing_etiquetas_tipo`
+ganhou coluna `grupo` + seed dos 16:
+- `rede_social` → Post · Carrossel · Story · Reels
+- `video_foto` → Vídeo curto · Aftermovie · Motion · Foto evento · Foto retrato
+- `artes` → Cartaz/Folder · Banner/Lona · Adesivo · Mockup · Telão LED · Logo · Identidade visual
+
+**Form `/solicitacoes` (`Solicitacoes.jsx`, categoria=marketing):** menu1 = grupo
+(`MKT_GRUPO_LABELS`/`MKT_GRUPO_ORDER` · derivado de `marketingGrupos`) → menu2 = entregáveis
+filtrados por grupo (`marketingTipos.filter(t => t.grupo === form.marketing_grupo)`). Tipo
+virou **obrigatório** (`marketingValid`). **Destino removido** do form (`marketing_grupo` é
+UI-only · deletado do payload). Estimativa + habilidade sugerida mantidas.
+
+**Destino → etiqueta interna do Pedro:** `solicitacoes.marketing_destino_id` fica null no
+intake. O Pedro classifica no card do Kanban (label "Destino" → **"Etiqueta interna"** em
+`MarketingKanban.jsx` · CardDrawer + NovaTaskForm). `marketing_etiquetas_destino` intocado.
+
+**Backend:** `GET /etiquetas` usa `select('*')` → já retorna `grupo` (sem mudança).
+`POST/PATCH /admin/etiquetas/tipo` passaram a aceitar `grupo` (re-map sem migration). UI do
+admin pra editar grupo fica pra depois (hoje não há "add tipo novo" pelo admin · Spec 009).
+
+⚠️ **Aplicar a migration ANTES do deploy** — senão `GET /etiquetas` não traz `grupo`,
+`marketingGrupos` fica vazio e o menu 1 não mostra opção nenhuma.
+
 ## Marketing · Spec 024 · Tela /marketing/ciclo-criativo (2026-05-28)
 
 Marcos: "ao colocar o horário no marketing, coloque alguma visualização para Pedro ir por fase do ciclo criativo colocando o horário e o dono de cada etapa do ciclo criativo, então isso vai pro calendário dessa pessoa."
