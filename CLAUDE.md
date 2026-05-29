@@ -129,6 +129,46 @@ sem dependência de código novo, mas aplicar antes do merge pra manter git↔pr
 Obs: card auto-atribuído (criado pelo trigger) não dispara a notificação "card atribuído"
 do backend — só quando o Pedro (re)atribui via API. Notificar no auto-assign fica de follow-up.
 
+### Padrões por fase do ciclo criativo (2026-05-29)
+
+Marcos+Pedro: ~80% dos cards de ciclo criativo seguem o mesmo padrão por
+(categoria do evento × fase). Em vez do Pedro classificar tarefa por tarefa,
+um padrão reutilizável aplica **etiqueta + esforço + dono automáticos** quando
+o card de evento nasce.
+
+**Migration `20260529060000_marketing_ciclo_padroes.sql`:**
+- Tabela `marketing_ciclo_padroes` (`category_id` FK event_categories, `nome_fase`,
+  `etiqueta_tipo_id`, `atribuido_a`, `ativo` · UNIQUE(category_id, nome_fase)).
+- Chave = `(events.category_id × event_cycle_phases.nome_fase)`. O
+  `cycle_phase_tasks` já carrega `event_id` + `event_phase_id` (ver `enrichCards`).
+- `fn_marketing_cards_cycle_phase_sync` recriada (Spec 022): no **nascimento** do
+  card resolve o par (categoria × fase) e preenche `etiqueta_tipo_id` + `atribuido_a`.
+  **Só no INSERT** · UPDATE de card existente NÃO toca etiqueta/dono (respeita a
+  classificação manual do Pedro). Sem match → nasce vazio como antes.
+- `fn_marketing_aplicar_padroes_ciclo(category_id)` · backfill manual · aplica os
+  padrões aos cards de evento ativos (fila/em_producao) **só nos campos NULL**
+  (COALESCE · nunca sobrescreve). Retorna nro de cards afetados.
+- Esforço vem de graça pela etiqueta (`esforco_max_h` · Spec 016).
+
+**Backend (`routes/marketing.js`, nível 5):**
+- `GET/POST/PATCH/DELETE /admin/ciclo-padroes` · CRUD (DELETE é hard · config sem PII)
+- `GET /admin/ciclo-padroes/categorias` · event_categories ativas (select da UI)
+- `GET /admin/ciclo-padroes/fases?category_id=X` · nomes de fase do catálogo
+  (`cycle_phase_templates` da categoria · distinct por nome · fonte que casa com
+  `event_cycle_phases.nome_fase`)
+- `POST /admin/ciclo-padroes/aplicar` · chama a RPC de backfill
+
+**Frontend:**
+- Nova aba **"Padrões"** em `/marketing/admin` (5ª aba). Lista agrupada por
+  categoria · select inline de etiqueta/dono · toggle ativo · remover.
+- Form: categoria → fase (carrega fases da categoria) → etiqueta + dono (≥1).
+- Botão **"Aplicar a cards ativos"** roda o backfill com confirmação + toast do count.
+- `api.js`: `marketing.admin.cicloPadroes.{list,categorias,fases,create,update,remove,aplicar}`.
+
+**Decisões:** chave (categoria × fase) sem granularidade por entregável (o refino
+manual cobre o resto · Pedro ajusta no card); padrões só por UI (sem seed · Pedro
+preenche). ⚠️ Aplicar a migration antes do merge.
+
 ## Marketing · Spec 024 · Tela /marketing/ciclo-criativo (2026-05-28)
 
 Marcos: "ao colocar o horário no marketing, coloque alguma visualização para Pedro ir por fase do ciclo criativo colocando o horário e o dono de cada etapa do ciclo criativo, então isso vai pro calendário dessa pessoa."
