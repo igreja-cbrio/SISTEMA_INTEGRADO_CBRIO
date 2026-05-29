@@ -2256,12 +2256,13 @@ function MetasFinanceirasComFiltros({ metas: metasIniciais, onMetasChange }) {
   const [filtroAno, setFiltroAno] = useState(anoAtual);
   const [filtroMes, setFiltroMes] = useState(''); // '' = todos / 1-12
   const [filtroSemana, setFiltroSemana] = useState(''); // '' = nenhuma / YYYY-MM-DD da quarta
-  const [perMetaPeriod, setPerMetaPeriod] = useState({}); // metaId -> 'auto' | 'semana' | 'mes' | 'ano'
+  // metaId -> { ano?, mes?, semana_inicio? } · override individual por meta
+  const [perMetaPeriod, setPerMetaPeriod] = useState({});
   const [filtroTipo, setFiltroTipo] = useState('todos'); // 'todos' | 'receita' | 'despesa' | 'saldo'
 
   useEffect(() => { setMetas(metasIniciais || []); }, [metasIniciais]);
 
-  // Carrega progresso por meta · usa filtro global como default
+  // Carrega progresso por meta · usa filtro global como default · só pra metas SEM override
   useEffect(() => {
     let cancelled = false;
     setLoadingProg(true);
@@ -2273,14 +2274,58 @@ function MetasFinanceirasComFiltros({ metas: metasIniciais, onMetasChange }) {
     financeiroV2.metas.progresso(params)
       .then(r => {
         if (cancelled) return;
-        const map = {};
-        (r?.metas || []).forEach(m => { map[m.meta_id] = m; });
-        setProgresso(map);
+        setProgresso(prev => {
+          const next = { ...prev };
+          (r?.metas || []).forEach(m => {
+            // Só atualiza se NÃO tem override individual (per-meta vence)
+            if (!perMetaPeriod[m.meta_id]) next[m.meta_id] = m;
+          });
+          return next;
+        });
       })
       .catch(e => console.warn('[Metas progresso]:', e?.message))
       .finally(() => !cancelled && setLoadingProg(false));
     return () => { cancelled = true; };
+    // perMetaPeriod fora das deps de propósito · só recarrega no filtro global
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [filtroAno, filtroMes, filtroSemana, metas]);
+
+  // Refetch individual quando uma meta muda seu período
+  const handlePeriodChange = async (metaId, period) => {
+    setPerMetaPeriod(prev => {
+      const next = { ...prev };
+      if (period === null) delete next[metaId];
+      else next[metaId] = period;
+      return next;
+    });
+
+    if (period === null) {
+      // Volta ao default · recarrega via global
+      const params = { meta_id: metaId };
+      if (filtroSemana) params.semana_inicio = filtroSemana;
+      else if (filtroAno && filtroMes) { params.ano = filtroAno; params.mes = filtroMes; }
+      else if (filtroAno) params.ano = filtroAno;
+      try {
+        const r = await financeiroV2.metas.progresso(params);
+        const item = (r?.metas || []).find(m => m.meta_id === metaId);
+        if (item) setProgresso(prev => ({ ...prev, [metaId]: item }));
+      } catch (e) { /* ignore */ }
+      return;
+    }
+
+    const params = { meta_id: metaId };
+    if (period.semana_inicio) params.semana_inicio = period.semana_inicio;
+    else if (period.ano && period.mes) { params.ano = period.ano; params.mes = period.mes; }
+    else if (period.ano) params.ano = period.ano;
+
+    try {
+      const r = await financeiroV2.metas.progresso(params);
+      const item = (r?.metas || []).find(m => m.meta_id === metaId);
+      if (item) setProgresso(prev => ({ ...prev, [metaId]: item }));
+    } catch (e) {
+      console.warn('[Meta period change]:', e?.message);
+    }
+  };
 
   const salvar = async (payload) => {
     try {
@@ -2425,7 +2470,9 @@ function MetasFinanceirasComFiltros({ metas: metasIniciais, onMetasChange }) {
                   idx={i}
                   prog={progresso[m.id]}
                   periodOverride={perMetaPeriod[m.id]}
-                  onPeriodChange={(p) => setPerMetaPeriod(prev => ({ ...prev, [m.id]: p }))}
+                  semanasOpcoes={semanasOpcoes}
+                  anoAtual={anoAtual}
+                  onPeriodChange={(p) => handlePeriodChange(m.id, p)}
                   onEdit={() => { setEditing(m); setShowForm(true); }}
                   onDelete={() => remover(m.id)}
                 />
@@ -2446,7 +2493,92 @@ function MetasFinanceirasComFiltros({ metas: metasIniciais, onMetasChange }) {
   );
 }
 
-function MetaCardFiltrado({ meta, idx, prog, periodOverride, onPeriodChange, onEdit, onDelete }) {
+// Seletor contextual de período por meta · varia conforme periodicidade
+function MetaPeriodoSeletor({ meta, periodicidade, periodOverride, semanasOpcoes, anoAtual, prog, cor, onPeriodChange }) {
+  const MESES_LBL = ['Jan','Fev','Mar','Abr','Mai','Jun','Jul','Ago','Set','Out','Nov','Dez'];
+  const temOverride = !!periodOverride;
+
+  // Valor mostrado no select · derivado do override OU do que o backend calculou
+  let valorAtual = '';
+  if (periodicidade === 'semanal') {
+    valorAtual = periodOverride?.semana_inicio || prog?.periodo_inicio || '';
+  } else if (periodicidade === 'mensal') {
+    if (periodOverride?.ano && periodOverride?.mes) {
+      valorAtual = `${periodOverride.ano}-${String(periodOverride.mes).padStart(2, '0')}`;
+    } else if (prog?.periodo_inicio) {
+      valorAtual = prog.periodo_inicio.slice(0, 7);
+    }
+  } else if (periodicidade === 'anual') {
+    valorAtual = String(periodOverride?.ano || prog?.periodo_inicio?.slice(0, 4) || anoAtual);
+  }
+
+  const handle = (v) => {
+    if (!v) return onPeriodChange(null);
+    if (periodicidade === 'semanal') {
+      onPeriodChange({ semana_inicio: v });
+    } else if (periodicidade === 'mensal') {
+      const [a, m] = v.split('-');
+      onPeriodChange({ ano: Number(a), mes: Number(m) });
+    } else if (periodicidade === 'anual') {
+      onPeriodChange({ ano: Number(v) });
+    }
+  };
+
+  // Gera opções de meses (12 últimos)
+  const mesesOpcoes = [];
+  const hoje = new Date();
+  for (let i = 0; i < 12; i++) {
+    const d = new Date(hoje.getFullYear(), hoje.getMonth() - i, 1);
+    const a = d.getFullYear();
+    const m = d.getMonth() + 1;
+    mesesOpcoes.push({
+      value: `${a}-${String(m).padStart(2, '0')}`,
+      label: `${MESES_LBL[m - 1]}/${String(a).slice(2)}${i === 0 ? ' (atual)' : ''}`,
+    });
+  }
+
+  const anosOpcoes = [anoAtual, anoAtual - 1, anoAtual - 2, anoAtual - 3];
+
+  return (
+    <div className="mb-3 -mt-1">
+      <div className="flex items-center gap-1.5">
+        <select
+          value={valorAtual}
+          onChange={(e) => handle(e.target.value)}
+          className="flex-1 px-2 py-1 text-[11px] rounded-md border border-border bg-background hover:border-primary/40 transition"
+          style={temOverride ? { borderColor: cor, color: cor } : {}}
+        >
+          {periodicidade === 'semanal' && (
+            <>
+              {semanasOpcoes.slice(0, 16).map(s => (
+                <option key={s.ref} value={s.ref}>
+                  {s.label}
+                </option>
+              ))}
+            </>
+          )}
+          {periodicidade === 'mensal' && (
+            mesesOpcoes.map(o => <option key={o.value} value={o.value}>{o.label}</option>)
+          )}
+          {periodicidade === 'anual' && (
+            anosOpcoes.map(a => <option key={a} value={a}>{a}{a === anoAtual ? ' (atual)' : ''}</option>)
+          )}
+        </select>
+        {temOverride && (
+          <button
+            onClick={() => onPeriodChange(null)}
+            className="px-1.5 py-1 text-[10px] rounded-md border border-border hover:bg-muted text-muted-foreground transition shrink-0"
+            title="Voltar ao período natural"
+          >
+            <X className="h-3 w-3" />
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function MetaCardFiltrado({ meta, idx, prog, periodOverride, semanasOpcoes, anoAtual, onPeriodChange, onEdit, onDelete }) {
   const atual = Number(prog?.valor_atual || 0);
   const valorMeta = Number(meta.valor) || 1;
   const isInverso = meta.tipo?.startsWith('despesa_');
@@ -2459,6 +2591,7 @@ function MetaCardFiltrado({ meta, idx, prog, periodOverride, onPeriodChange, onE
   const periodicidade = meta.periodicidade || periodicidadeDoTipo(meta.tipo);
   const tipoGrafico = meta.tipo_grafico || 'gauge';
   const semDado = !prog;
+  const temOverride = !!periodOverride;
 
   return (
     <motion.div
@@ -2496,6 +2629,18 @@ function MetaCardFiltrado({ meta, idx, prog, periodOverride, onPeriodChange, onE
               </button>
             </div>
           </div>
+
+          {/* Seletor de período · contextual por periodicidade */}
+          <MetaPeriodoSeletor
+            meta={meta}
+            periodicidade={periodicidade}
+            periodOverride={periodOverride}
+            semanasOpcoes={semanasOpcoes}
+            anoAtual={anoAtual}
+            prog={prog}
+            cor={cor}
+            onPeriodChange={onPeriodChange}
+          />
 
           {semDado ? (
             <div className="py-8 text-center text-xs text-muted-foreground">

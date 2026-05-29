@@ -2207,7 +2207,7 @@ router.get('/dizimo-oferta', async (req, res) => {
 // ====================================================================
 router.get('/metas-progresso', async (req, res) => {
   try {
-    const { ano, mes, semana_inicio } = req.query;
+    const { ano, mes, semana_inicio, meta_id } = req.query;
     let p_inicio = null;
     let p_fim = null;
 
@@ -2226,14 +2226,14 @@ router.get('/metas-progresso', async (req, res) => {
       p_fim = `${ano}-12-31`;
     }
 
-    const { data, error } = await supabase.rpc('fin_metas_progresso', {
-      p_inicio,
-      p_fim,
-    });
+    const rpcArgs = { p_inicio, p_fim };
+    if (meta_id) rpcArgs.p_meta_id = meta_id;
+
+    const { data, error } = await supabase.rpc('fin_metas_progresso', rpcArgs);
     if (error) return res.status(400).json({ error: error.message });
 
     res.json({
-      filtro: { ano: ano || null, mes: mes || null, semana_inicio: semana_inicio || null, periodo_inicio: p_inicio, periodo_fim: p_fim },
+      filtro: { ano: ano || null, mes: mes || null, semana_inicio: semana_inicio || null, meta_id: meta_id || null, periodo_inicio: p_inicio, periodo_fim: p_fim },
       metas: (data || []).map(m => ({
         ...m,
         valor_meta: Number(m.valor_meta || 0),
