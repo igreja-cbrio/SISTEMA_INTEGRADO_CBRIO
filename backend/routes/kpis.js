@@ -814,13 +814,8 @@ router.get('/cultura', async (req, res) => {
       // RPC: count(distinct volunteer_id) direto no banco — evita trafegar milhares de linhas
       supabase.rpc('kpi_servir_comunidade', { _since: noventaDiasStr }),
       supabase.from('cultura_mensal').select('*').eq('mes', inicioStr).maybeSingle(),
-      // Generosidade · fallback do fin_transacoes (importado do balanço) quando cultura_mensal vazia
-      supabase.from('vw_fin_transacoes_completa')
-        .select('plano_contas_codigo, referencia, valor')
-        .gte('data_competencia', inicioStr).lte('data_competencia', fimInclusivoStr)
-        .eq('tipo', 'receita').neq('status', 'cancelado')
-        .in('classe_movimento', ['ordinaria', 'extraordinaria'])
-        .or('plano_contas_codigo.like.3.01.01.%,plano_contas_codigo.like.3.01.02.%'),
+      // Generosidade · fallback do fin_transacoes via RPC (escapa do cap de 1000 do PostgREST)
+      supabase.rpc('fin_generosidade_mes', { p_mes: inicioStr }),
     ]);
 
     const pick = (i) => (settled[i].status === 'fulfilled' ? settled[i].value : { data: null, error: settled[i].reason });
@@ -846,32 +841,20 @@ router.get('/cultura', async (req, res) => {
 
     const cm = culturaMensalRes.data;
 
-    // Fallback de generosidade · conta contribuintes ÚNICOS por nome (referencia)
-    // em fin_transacoes quando cultura_mensal não tem dado preenchido manualmente
-    let finDizimistas = null, finOfertantes = null;
-    let finValorDizimo = 0, finValorOferta = 0;
-    if (!finGenRes.error && Array.isArray(finGenRes.data)) {
-      const dizSet = new Set(), ofSet = new Set();
-      finGenRes.data.forEach(r => {
-        const ref = (r.referencia || '').trim().toLowerCase();
-        if (!ref) return;
-        const cod = r.plano_contas_codigo || '';
-        if (cod.startsWith('3.01.01')) {
-          dizSet.add(ref);
-          finValorDizimo += Number(r.valor || 0);
-        } else if (cod.startsWith('3.01.02')) {
-          ofSet.add(ref);
-          finValorOferta += Number(r.valor || 0);
-        }
-      });
-      finDizimistas = dizSet.size;
-      finOfertantes = ofSet.size;
-    }
+    // Fallback de generosidade · RPC fin_generosidade_mes retorna agregado JSONB
+    // (escapa do cap de 1000 do PostgREST quando fin_transacoes > 1000 linhas no mês)
+    const finGen = finGenRes.error || !finGenRes.data ? null : finGenRes.data;
+    const finDizimistas = finGen ? Number(finGen.dizimistas || 0) : null;
+    const finOfertantes = finGen ? Number(finGen.ofertantes || 0) : null;
+    const finValorDizimo = finGen ? Number(finGen.valor_dizimo || 0) : 0;
+    const finValorOferta = finGen ? Number(finGen.valor_oferta || 0) : 0;
+    const finDoadoresUnicos = finGen ? Number(finGen.doadores_unicos || 0) : null;
 
     const generosidade = {
       // Prioriza valor manual (cultura_mensal) · fallback pra fin_transacoes
       dizimistas: cm?.qtd_dizimistas ?? finDizimistas ?? null,
       ofertantes: cm?.qtd_ofertantes ?? finOfertantes ?? null,
+      doadores_unicos: finDoadoresUnicos,
       valor_dizimo: finValorDizimo,
       valor_oferta: finValorOferta,
       valor_total: finValorDizimo + finValorOferta,
