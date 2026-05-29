@@ -2475,7 +2475,7 @@ function ArrecadacaoAnualChart() {
             <AnimatePresence mode="wait">
               {sel && (
                 <motion.div
-                  key={`anosel-${sel.idx}`}
+                  key={`anosel-${selectedIdx}`}
                   initial={{ opacity: 0, y: 12 }}
                   animate={{ opacity: 1, y: 0 }}
                   exit={{ opacity: 0, y: -8 }}
@@ -2485,13 +2485,13 @@ function ArrecadacaoAnualChart() {
                   <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
                     <span className="text-xs text-muted-foreground">Mês selecionado</span>
                     <span className="text-sm font-semibold px-2 py-0.5 rounded bg-amber-100 dark:bg-amber-500/20 text-amber-700 dark:text-amber-300">
-                      {sel.label}/{String(ano).slice(2)}
+                      {sel.mes_label}/{String(ano).slice(2)}
                     </span>
                   </div>
                   <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
-                    <SemanaCard label="Arrecadação do mês" icon={Banknote} accent={C.green} valor={fmtMoney(sel.Receita)} delta={dRec} sub="vs mês anterior" anim={`r-${sel.idx}`} />
-                    <SemanaCard label="Acumulado no ano" icon={TrendingUp} accent={C.purple} valor={fmtMoney(sel.Acumulado)} delta={null} sub={`até ${sel.label}`} anim={`a-${sel.idx}`} />
-                    <SemanaCard label="Lançamentos" icon={FileText} accent={C.blue} valor={fmtInt(sel.qtd)} delta={null} sub="no mês" anim={`q-${sel.idx}`} />
+                    <SemanaCard label="Arrecadação do mês" icon={Banknote} accent={C.green} valor={fmtMoney(sel.receita)} delta={dRec} sub="vs mês anterior" anim={`r-${selectedIdx}`} />
+                    <SemanaCard label="Acumulado no ano" icon={TrendingUp} accent={C.purple} valor={fmtMoney(sel.acumulado)} delta={null} sub={`até ${sel.mes_label}`} anim={`a-${selectedIdx}`} />
+                    <SemanaCard label="Lançamentos" icon={FileText} accent={C.blue} valor={fmtInt(sel.qtd)} delta={null} sub="no mês" anim={`q-${selectedIdx}`} />
                   </div>
                 </motion.div>
               )}
@@ -2622,7 +2622,7 @@ function ReceitaVsSaidaMensal() {
             <AnimatePresence mode="wait">
               {sel && (
                 <motion.div
-                  key={`rvs-${sel.idx}`}
+                  key={`rvs-${selectedIdx}`}
                   initial={{ opacity: 0, y: 12 }}
                   animate={{ opacity: 1, y: 0 }}
                   exit={{ opacity: 0, y: -8 }}
@@ -2636,9 +2636,9 @@ function ReceitaVsSaidaMensal() {
                     </span>
                   </div>
                   <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                    <SemanaCard label="Arrecadação" icon={Banknote} accent={C.green} valor={fmtMoney(sel.receita)} delta={null} sub="no mês" anim={`r-${sel.idx}`} />
-                    <SemanaCard label="Saídas" icon={TrendingDown} accent={C.red} valor={fmtMoney(sel.despesa)} delta={null} sub="no mês" anim={`d-${sel.idx}`} />
-                    <SemanaCard label="Resultado" icon={Activity} accent={sel.resultado >= 0 ? C.green : C.red} valor={fmtMoney(sel.resultado)} delta={null} sub="receita − despesa" anim={`res-${sel.idx}`} />
+                    <SemanaCard label="Arrecadação" icon={Banknote} accent={C.green} valor={fmtMoney(sel.receita)} delta={null} sub="no mês" anim={`r-${selectedIdx}`} />
+                    <SemanaCard label="Saídas" icon={TrendingDown} accent={C.red} valor={fmtMoney(sel.despesa)} delta={null} sub="no mês" anim={`d-${selectedIdx}`} />
+                    <SemanaCard label="Resultado" icon={Activity} accent={sel.resultado >= 0 ? C.green : C.red} valor={fmtMoney(sel.resultado)} delta={null} sub="receita − despesa" anim={`res-${selectedIdx}`} />
                   </div>
                 </motion.div>
               )}
