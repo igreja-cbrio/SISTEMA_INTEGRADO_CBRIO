@@ -568,7 +568,7 @@ function Slide2Tendencias() {
   return (
     <>
       <ArrecadacaoAnualChart />
-      <SazonalidadeMensalChart />
+      <SazonalidadeSemanalChart />
     </>
   );
 }
@@ -747,26 +747,36 @@ function ArrecadacaoMensalChart({ dados }) {
   );
 }
 
-function SazonalidadeMensalChart() {
+function SazonalidadeSemanalChart() {
   const [dados, setDados] = useState(null);
   const [loading, setLoading] = useState(true);
   const [erro, setErro] = useState(null);
+  const [semanaSel, setSemanaSel] = useState(null);
 
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
-    financeiroV2.sazonalidadeMensal()
-      .then(r => { if (!cancelled) { setDados(r); setErro(null); } })
+    financeiroV2.sazonalidadeSemanal()
+      .then(r => {
+        if (!cancelled) {
+          setDados(r);
+          setErro(null);
+          // Selecionar a última semana do ano corrente que tem dado
+          const anoAtual = new Date().getFullYear();
+          const corrente = String(anoAtual);
+          const ultimaComDado = [...(r.semanas || [])].reverse().find(s => Number(s[corrente]) > 0);
+          if (ultimaComDado) setSemanaSel(ultimaComDado.num_semana);
+        }
+      })
       .catch(e => { if (!cancelled) setErro(e?.message || 'Erro ao carregar sazonalidade'); })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
   }, []);
 
   const anos = dados?.anos || [];
-  const meses = dados?.meses || [];
+  const semanas = dados?.semanas || [];
   const anoAtual = new Date().getFullYear();
   const anoCorrenteStr = String(anoAtual);
-  const mesCorrente = new Date().getMonth() + 1;
 
   const corPorAno = (ano, idx) => {
     if (String(ano) === anoCorrenteStr) return COL.primary;
@@ -774,29 +784,45 @@ function SazonalidadeMensalChart() {
     return paleta[idx % paleta.length];
   };
 
+  const semanaCorrente = useMemo(() => {
+    const tmp = new Date();
+    const date = new Date(Date.UTC(tmp.getFullYear(), tmp.getMonth(), tmp.getDate()));
+    const dayNum = date.getUTCDay() || 7;
+    date.setUTCDate(date.getUTCDate() + 4 - dayNum);
+    const yearStart = new Date(Date.UTC(date.getUTCFullYear(), 0, 1));
+    return Math.ceil((((date - yearStart) / 86400000) + 1) / 7);
+  }, []);
+
   const totaisPorAno = useMemo(() => {
     const out = {};
     anos.forEach(a => {
       const key = String(a);
-      out[key] = meses.reduce((s, m) => s + Number(m[key] || 0), 0);
+      out[key] = semanas.reduce((s, m) => s + Number(m[key] || 0), 0);
     });
     return out;
-  }, [anos, meses]);
+  }, [anos, semanas]);
+
+  const onClickBar = (e) => {
+    const payload = e?.activePayload?.[0]?.payload;
+    if (payload?.num_semana) setSemanaSel(payload.num_semana);
+  };
+
+  const slotSel = semanaSel ? semanas.find(s => s.num_semana === semanaSel) : null;
 
   return (
     <Card>
       <CardContent className="pt-6">
-        <div className="flex items-start justify-between flex-wrap gap-2 mb-1">
+        <div className="flex items-start justify-between flex-wrap gap-2 mb-3">
           <div>
             <h3 className="text-base font-semibold flex items-center gap-2">
-              Sazonalidade Mensal
+              Sazonalidade Semanal
               <Badge variant="outline" className="text-[10px] font-normal">
-                <BarChart3 className="h-2.5 w-2.5 mr-1" />
-                mesmo mês ao longo dos anos
+                <MousePointer2 className="h-2.5 w-2.5 mr-1" />
+                clique numa semana
               </Badge>
             </h3>
             <p className="text-xs text-muted-foreground">
-              Mostra padrões de meses fortes e fracos · empréstimos excluídos
+              Compara a mesma semana ISO ao longo dos anos · empréstimos excluídos
             </p>
           </div>
         </div>
@@ -810,17 +836,23 @@ function SazonalidadeMensalChart() {
           <div className="text-sm text-red-500 py-6 text-center">{erro}</div>
         )}
 
-        {!loading && !erro && meses.length > 0 && (
+        {!loading && !erro && semanas.length > 0 && (
           <>
-            <div style={{ width: '100%', height: 300 }}>
+            <div style={{ width: '100%', height: 280 }}>
               <ResponsiveContainer>
-                <BarChart data={meses} barGap={2} barCategoryGap="18%">
+                <BarChart data={semanas} onClick={onClickBar} barGap={1} barCategoryGap="16%">
                   <CartesianGrid strokeDasharray="3 3" opacity={0.2} />
-                  <XAxis dataKey="mes_label" tick={{ fontSize: 11 }} />
+                  <XAxis
+                    dataKey="num_semana"
+                    tick={{ fontSize: 9 }}
+                    interval={3}
+                    tickFormatter={(v) => `S${v}`}
+                  />
                   <YAxis tick={{ fontSize: 10 }} tickFormatter={(v) => fmtKbrl(v)} />
                   <Tooltip
-                    cursor={{ fill: 'rgba(0,179,157,0.06)' }}
-                    formatter={(v) => fmtMoney(v)}
+                    cursor={{ fill: 'rgba(0,179,157,0.08)' }}
+                    formatter={(v, name) => [fmtMoney(v), name]}
+                    labelFormatter={(label) => `Semana ${label}`}
                     contentStyle={{ borderRadius: 8, fontSize: 12 }}
                   />
                   <Legend wrapperStyle={{ fontSize: 11 }} />
@@ -831,50 +863,118 @@ function SazonalidadeMensalChart() {
                       name={String(ano)}
                       fill={corPorAno(ano, idx)}
                       radius={[3, 3, 0, 0]}
-                      animationDuration={1200}
+                      cursor="pointer"
+                      animationDuration={1000}
                     >
-                      {String(ano) === anoCorrenteStr && meses.map((m, i) => (
-                        <Cell
-                          key={`c-${i}`}
-                          fill={corPorAno(ano, idx)}
-                          fillOpacity={m.mes_num > mesCorrente ? 0.25 : 1}
-                        />
-                      ))}
+                      {semanas.map((s, i) => {
+                        const ehSel = s.num_semana === semanaSel;
+                        const ehAtual = String(ano) === anoCorrenteStr;
+                        const dim = ehAtual && s.num_semana > semanaCorrente;
+                        return (
+                          <Cell
+                            key={`c-${ano}-${i}`}
+                            fill={corPorAno(ano, idx)}
+                            fillOpacity={dim ? 0.18 : 1}
+                            stroke={ehSel ? COL.amber : 'transparent'}
+                            strokeWidth={ehSel ? 2 : 0}
+                          />
+                        );
+                      })}
                     </Bar>
                   ))}
                 </BarChart>
               </ResponsiveContainer>
             </div>
 
-            <div className="mt-4 pt-4 border-t border-border grid grid-cols-2 md:grid-cols-4 gap-3">
-              {anos.map((ano, idx) => {
-                const total = totaisPorAno[String(ano)] || 0;
-                const anoAnt = anos[idx - 1];
-                const totalAnt = anoAnt ? (totaisPorAno[String(anoAnt)] || 0) : 0;
-                const delta = anoAnt && totalAnt > 0 ? ((total - totalAnt) / totalAnt) * 100 : null;
-                const ehAtual = String(ano) === anoCorrenteStr;
-                return (
-                  <div
-                    key={ano}
-                    className="rounded-lg border p-3"
-                    style={{ borderLeft: `3px solid ${corPorAno(ano, idx)}` }}
-                  >
-                    <div className="text-[11px] text-muted-foreground uppercase tracking-wide flex items-center gap-1">
-                      {ano}
-                      {ehAtual && <span className="text-[9px] px-1.5 py-0.5 rounded bg-primary/10 text-primary">em curso</span>}
-                    </div>
-                    <div className="text-base font-semibold tabular-nums" style={{ color: corPorAno(ano, idx) }}>
-                      {fmtCompact(total)}
-                    </div>
-                    {delta !== null && (
-                      <div className={`text-[11px] mt-0.5 ${delta >= 0 ? 'text-emerald-600' : 'text-red-500'}`}>
-                        {fmtPct(delta)} vs {anoAnt}
+            {/* Cards do ano completo */}
+            <div className="mt-4 pt-4 border-t border-border">
+              <div className="text-[11px] uppercase tracking-wide text-muted-foreground mb-2 font-medium">
+                Acumulado anual
+              </div>
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+                {anos.map((ano, idx) => {
+                  const total = totaisPorAno[String(ano)] || 0;
+                  const anoAnt = anos[idx - 1];
+                  const totalAnt = anoAnt ? (totaisPorAno[String(anoAnt)] || 0) : 0;
+                  const delta = anoAnt && totalAnt > 0 ? ((total - totalAnt) / totalAnt) * 100 : null;
+                  const ehAtual = String(ano) === anoCorrenteStr;
+                  return (
+                    <div
+                      key={ano}
+                      className="rounded-lg border p-2.5"
+                      style={{ borderLeft: `3px solid ${corPorAno(ano, idx)}` }}
+                    >
+                      <div className="text-[10px] text-muted-foreground uppercase tracking-wide flex items-center gap-1">
+                        {ano}
+                        {ehAtual && <span className="text-[9px] px-1 rounded bg-primary/10 text-primary">em curso</span>}
                       </div>
-                    )}
-                  </div>
-                );
-              })}
+                      <div className="text-sm font-semibold tabular-nums" style={{ color: corPorAno(ano, idx) }}>
+                        {fmtCompact(total)}
+                      </div>
+                      {delta !== null && (
+                        <div className={`text-[10px] mt-0.5 ${delta >= 0 ? 'text-emerald-600' : 'text-red-500'}`}>
+                          {fmtPct(delta)} vs {anoAnt}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
             </div>
+
+            {/* Cards da semana selecionada · responsivos ao clique */}
+            <AnimatePresence mode="wait">
+              {slotSel && (
+                <motion.div
+                  key={`sem-${semanaSel}`}
+                  initial={{ opacity: 0, y: 8 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -4 }}
+                  transition={{ duration: 0.25 }}
+                  className="mt-4 pt-4 border-t border-border"
+                >
+                  <div className="flex items-center justify-between mb-2 flex-wrap gap-2">
+                    <div className="text-[11px] uppercase tracking-wide text-muted-foreground font-medium">
+                      Semana selecionada
+                    </div>
+                    <span className="text-xs font-semibold px-2 py-0.5 rounded bg-amber-100 dark:bg-amber-500/20 text-amber-700 dark:text-amber-300">
+                      Semana {slotSel.num_semana}
+                    </span>
+                  </div>
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
+                    {anos.map((ano, idx) => {
+                      const valor = Number(slotSel[String(ano)] || 0);
+                      const label = slotSel[`${ano}_label`];
+                      const anoAnt = anos[idx - 1];
+                      const valorAnt = anoAnt ? Number(slotSel[String(anoAnt)] || 0) : 0;
+                      const delta = anoAnt && valorAnt > 0 ? ((valor - valorAnt) / valorAnt) * 100 : null;
+                      const ehAtual = String(ano) === anoCorrenteStr;
+                      const ehFuturo = ehAtual && slotSel.num_semana > semanaCorrente;
+                      return (
+                        <div
+                          key={ano}
+                          className="rounded-lg border p-3"
+                          style={{ borderLeft: `3px solid ${corPorAno(ano, idx)}` }}
+                        >
+                          <div className="text-[10px] uppercase tracking-wide text-muted-foreground flex items-center justify-between">
+                            <span>{ano}</span>
+                            {label && <span className="text-[9px] normal-case tracking-normal">{label}</span>}
+                          </div>
+                          <div className="text-lg font-bold tabular-nums mt-0.5" style={{ color: corPorAno(ano, idx) }}>
+                            {ehFuturo ? <span className="text-muted-foreground text-sm">— aguardando</span> : fmtMoney(valor)}
+                          </div>
+                          {delta !== null && !ehFuturo && (
+                            <div className={`text-[11px] ${delta >= 0 ? 'text-emerald-600' : 'text-red-500'}`}>
+                              {fmtPct(delta)} vs {anoAnt}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
           </>
         )}
       </CardContent>
