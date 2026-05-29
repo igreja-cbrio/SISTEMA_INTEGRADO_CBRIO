@@ -10,6 +10,7 @@ import { Button } from '../../../components/ui/button';
 import { Badge } from '../../../components/ui/badge';
 import { financeiroV2 } from '../../../api';
 import MetaGauge from '../../../components/dashboard-semanal/MetaGauge';
+import DoadoresListDialog from '../../../components/financeiro/DoadoresListDialog';
 import {
   ComposedChart, Line, Bar, Area, AreaChart, BarChart, XAxis, YAxis, CartesianGrid,
   Tooltip, ResponsiveContainer, Legend, PieChart, Pie, Cell,
@@ -3177,6 +3178,7 @@ function SlideSaudeFinanceira() {
   const [ano, setAno] = useState(anoAtual);
   const [dados, setDados] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [showDoadores, setShowDoadores] = useState(false);
   const anos = [2022, 2023, 2024, 2025, 2026, 2027].filter(a => a <= anoAtual + 1);
 
   useEffect(() => {
@@ -3265,8 +3267,12 @@ function SlideSaudeFinanceira() {
               </div>
             </div>
 
-            {/* Concentração de doadores */}
-            <div className="rounded-xl border border-border p-4 relative overflow-hidden">
+            {/* Concentração de doadores · clicável → abre lista completa */}
+            <button
+              type="button"
+              onClick={() => setShowDoadores(true)}
+              className="rounded-xl border border-border p-4 relative overflow-hidden text-left transition hover:border-primary/50 hover:shadow-md group"
+            >
               <div className="absolute top-0 left-0 right-0 h-1" style={{ background: concCor }} />
               <div className="flex items-center justify-between mb-2">
                 <span className="text-xs uppercase tracking-wider text-muted-foreground font-medium">Concentração de doadores</span>
@@ -3280,11 +3286,14 @@ function SlideSaudeFinanceira() {
                 <motion.div className="h-full rounded-full" style={{ background: concCor }}
                   initial={{ width: 0 }} animate={{ width: `${Math.min(100, top20)}%` }} transition={{ duration: 1 }} />
               </div>
-              <div className="text-[11px] text-muted-foreground mt-2 tabular-nums">
-                {fmtInt(dados.doadores_qtd)} doadores · top 10 pessoas = {top10.toFixed(1)}% · <span style={{ color: concCor }}>{concLabel}</span>
+              <div className="text-[11px] text-muted-foreground mt-2 tabular-nums flex items-center justify-between gap-2">
+                <span>{fmtInt(dados.doadores_qtd)} doadores · top 10 pessoas = {top10.toFixed(1)}% · <span style={{ color: concCor }}>{concLabel}</span></span>
+                <span className="text-[10px] text-primary opacity-0 group-hover:opacity-100 transition">ver lista →</span>
               </div>
-            </div>
+            </button>
           </div>
+
+          <DoadoresListDialog open={showDoadores} onClose={() => setShowDoadores(false)} ano={ano} />
 
           {resYtd < 0 && (
             <div className="mt-4 flex items-start gap-2 p-3 rounded-lg bg-rose-50 dark:bg-rose-500/10 border border-rose-200 dark:border-rose-500/30">

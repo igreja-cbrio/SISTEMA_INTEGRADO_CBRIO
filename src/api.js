@@ -647,6 +647,21 @@ export const financeiroV2 = {
     get('/financeiro-v2/despesa-transacoes?' + new URLSearchParams(params).toString()),
   filtrosDisponiveis: () => get('/financeiro-v2/filtros-disponiveis'),
   saudeFinanceira: (ano) => get(`/financeiro-v2/saude-financeira${ano ? `?ano=${ano}` : ''}`),
+  doadores: ({ ano, limit, offset } = {}) => {
+    const p = new URLSearchParams();
+    if (ano) p.set('ano', ano);
+    if (limit) p.set('limit', limit);
+    if (offset != null) p.set('offset', offset);
+    const qs = p.toString();
+    return get(`/financeiro-v2/doadores${qs ? `?${qs}` : ''}`);
+  },
+  doadorTransacoes: ({ nome, ano, limit } = {}) => {
+    const p = new URLSearchParams();
+    if (nome) p.set('nome', nome);
+    if (ano) p.set('ano', ano);
+    if (limit) p.set('limit', limit);
+    return get(`/financeiro-v2/doador/transacoes?${p.toString()}`);
+  },
   dizimoOferta: (ano) => get(`/financeiro-v2/dizimo-oferta${ano ? `?ano=${ano}` : ''}`),
   syncSaldoBancos: () => post('/financeiro-v2/sync-saldo-bancos', {}),
   backfill: (data) => post('/financeiro-v2/backfill/transacoes', data || {}),

@@ -2150,6 +2150,41 @@ router.get('/saude-financeira', async (req, res) => {
   }
 });
 
+// Lista paginada de doadores do ano · alimenta drilldown do card "Concentração de doadores"
+router.get('/doadores', async (req, res) => {
+  try {
+    const ano = Number(req.query.ano) || new Date().getFullYear();
+    const limit = Math.min(Number(req.query.limit) || 100, 500);
+    const offset = Math.max(Number(req.query.offset) || 0, 0);
+    const { data, error } = await supabase.rpc('fn_fin_doadores_lista', {
+      p_ano: ano, p_limit: limit, p_offset: offset,
+    });
+    if (error) return res.status(400).json({ error: error.message });
+    res.json(data || { items: [], total_geral: 0, qtd_total: 0 });
+  } catch (e) {
+    console.error('[FIN-V2] doadores:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Lançamentos individuais de um doador (usado quando não está vinculado a mem_membros)
+router.get('/doador/transacoes', async (req, res) => {
+  try {
+    const nome = String(req.query.nome || '').trim();
+    if (!nome) return res.status(400).json({ error: 'parametro nome obrigatorio' });
+    const ano = Number(req.query.ano) || new Date().getFullYear();
+    const limit = Math.min(Number(req.query.limit) || 50, 200);
+    const { data, error } = await supabase.rpc('fn_fin_transacoes_por_referencia', {
+      p_nome: nome, p_ano: ano, p_limit: limit,
+    });
+    if (error) return res.status(400).json({ error: error.message });
+    res.json(data || { items: [], total: 0, qtd: 0 });
+  } catch (e) {
+    console.error('[FIN-V2] doador transacoes:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // ====================================================================
 // DÍZIMO VS OFERTA mensal · 2026-05-29
 // ====================================================================
