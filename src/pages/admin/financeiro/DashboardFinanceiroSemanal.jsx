@@ -135,16 +135,29 @@ function CountUp({ value, format = fmtMoney, duration = 1.2 }) {
 // ============================================================
 // MAIN
 // ============================================================
+// ============================================================
+// SLIDES · sequência narrativa pra apresentação de quarta
+// ─────────────────────────────────────────────────────────────
+// BLOCO 1 · MINISTERIAL — "como foi nossa semana?"
+//   Resumo · Por Culto · Performance (freq × arrec)
+// BLOCO 2 · ANO · FINANCEIRO ESTRATÉGICO — "como vamos no ano?"
+//   Tendências · Saúde · Comparativos · Dízimo × Oferta
+// BLOCO 3 · DESPESA + FUTURO — "pra onde vai o dinheiro?"
+//   Saídas · Metas
+// ============================================================
 const SLIDES = [
-  { key: 'resumo',       label: 'Resumo',         icon: Sparkles,   desc: 'KPIs · cultos · top contribuintes' },
+  // Bloco 1 · semana ministerial
+  { key: 'resumo',       label: 'Resumo',         icon: Sparkles,   desc: 'Foto da semana · receita · presença · ticket · decisões' },
+  { key: 'por_culto',    label: 'Por Culto',      icon: Calendar,   desc: 'Quarta · final de semana · durante a semana · acumulada' },
+  { key: 'performance',  label: 'Performance',    icon: Activity,   desc: 'Frequência × arrecadação semanal' },
+  // Bloco 2 · ano · saúde financeira
+  { key: 'tendencias',   label: 'Tendências',     icon: TrendingUp, desc: 'Arrecadação anual + acumulado mês a mês' },
   { key: 'saude',        label: 'Saúde',          icon: Activity,   desc: 'Resultado · folha · concentração de doadores' },
-  { key: 'por_culto',    label: 'Por Culto',      icon: Calendar,   desc: 'Quarta · domingo · outros · acumulada' },
-  { key: 'tendencias',   label: 'Tendências',     icon: TrendingUp, desc: 'Arrecadação anual · histórico mensal' },
   { key: 'comparativos', label: 'Comparativos',   icon: BarChart3,  desc: 'YTD · YoY · decêndio' },
-  { key: 'performance',  label: 'Performance',    icon: Activity,   desc: 'Freq × Arrecadação semanal · cards interativos' },
-  { key: 'dizimo_oferta',label: 'Dízimo×Oferta',  icon: TrendingUp, desc: 'Proporção dízimo/oferta mês a mês' },
-  { key: 'controle',     label: 'Saídas',         icon: Target,     desc: 'Despesas detalhadas por categoria' },
-  { key: 'metas',        label: 'Metas',          icon: Award,      desc: 'Metas financeiras com filtros ano/mês/semana' },
+  { key: 'dizimo_oferta',label: 'Dízimo×Oferta',  icon: TrendingUp, desc: 'Proporção da base de contribuição' },
+  // Bloco 3 · despesa + futuro
+  { key: 'controle',     label: 'Saídas',         icon: Target,     desc: 'Despesas detalhadas · drilldown' },
+  { key: 'metas',        label: 'Metas',          icon: Award,      desc: 'Alvos financeiros com filtros' },
 ];
 
 export default function DashboardSemanal() {
@@ -312,9 +325,18 @@ export default function DashboardSemanal() {
         </motion.div>
       </AnimatePresence>
 
-      {/* Footer · atalhos */}
-      <div className="text-center text-[10px] text-muted-foreground">
-        Use ← → no teclado pra navegar entre slides · {slide + 1} de {SLIDES.length}
+      {/* Footer · atalhos + bloco narrativo atual */}
+      <div className="text-center text-[10px] text-muted-foreground flex items-center justify-center gap-2 flex-wrap">
+        {(() => {
+          const bloco = SLIDE_BLOCO[SLIDES[slide].key] || {};
+          return bloco.label ? (
+            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full"
+              style={{ background: `${bloco.color}1f`, color: bloco.color }}>
+              Bloco {bloco.id} · {bloco.label}
+            </span>
+          ) : null;
+        })()}
+        <span>Use ← → no teclado · {slide + 1} de {SLIDES.length}</span>
       </div>
     </div>
   );
@@ -323,35 +345,51 @@ export default function DashboardSemanal() {
 // ============================================================
 // SLIDE NAVIGATION · botões em pílula sticky
 // ============================================================
+// Mapeia cada slide pro bloco narrativo da apresentação
+const SLIDE_BLOCO = {
+  resumo: { id: 1, label: 'Ministerial', color: '#00B39D' },
+  por_culto: { id: 1, label: 'Ministerial', color: '#00B39D' },
+  performance: { id: 1, label: 'Ministerial', color: '#00B39D' },
+  tendencias: { id: 2, label: 'Ano', color: '#8b5cf6' },
+  saude: { id: 2, label: 'Ano', color: '#8b5cf6' },
+  comparativos: { id: 2, label: 'Ano', color: '#8b5cf6' },
+  dizimo_oferta: { id: 2, label: 'Ano', color: '#8b5cf6' },
+  controle: { id: 3, label: 'Despesa & Metas', color: '#f59e0b' },
+  metas: { id: 3, label: 'Despesa & Metas', color: '#f59e0b' },
+};
+
 function SlideNav({ current, onChange }) {
   return (
     <div className="flex items-center gap-2 mt-3 overflow-x-auto pb-1">
       {SLIDES.map((s, i) => {
         const active = i === current;
         const Icon = s.icon;
+        const bloco = SLIDE_BLOCO[s.key] || { id: 0, label: '', color: '#888' };
+        const blocoAnterior = i > 0 ? SLIDE_BLOCO[SLIDES[i - 1].key]?.id : null;
+        const showSep = blocoAnterior != null && blocoAnterior !== bloco.id;
         return (
-          <motion.button
-            key={s.key}
-            onClick={() => onChange(i)}
-            whileHover={{ y: -1 }}
-            whileTap={{ scale: 0.97 }}
-            className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium transition-all shrink-0 ${
-              active
-                ? 'bg-primary text-primary-foreground shadow-sm'
-                : 'bg-card border border-border hover:border-primary/50 text-foreground'
-            }`}
-            title={s.desc}
-          >
-            <Icon className="h-3.5 w-3.5" />
-            <span>{s.label}</span>
-            {active && (
-              <motion.span
-                layoutId="slide-active-indicator"
-                className="absolute inset-0 rounded-lg pointer-events-none"
-                style={{ background: 'transparent' }}
-              />
+          <span key={s.key} className="contents">
+            {showSep && (
+              <div className="flex flex-col items-center shrink-0 px-0.5">
+                <span className="h-6 w-px bg-border" />
+              </div>
             )}
-          </motion.button>
+            <motion.button
+              onClick={() => onChange(i)}
+              whileHover={{ y: -1 }}
+              whileTap={{ scale: 0.97 }}
+              className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium transition-all shrink-0 relative ${
+                active
+                  ? 'text-primary-foreground shadow-sm'
+                  : 'bg-card border border-border hover:border-primary/50 text-foreground'
+              }`}
+              style={active ? { background: bloco.color } : { borderLeftWidth: '3px', borderLeftColor: bloco.color }}
+              title={`${bloco.label} · ${s.desc}`}
+            >
+              <Icon className="h-3.5 w-3.5" />
+              <span>{s.label}</span>
+            </motion.button>
+          </span>
         );
       })}
     </div>
