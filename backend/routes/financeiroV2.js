@@ -1960,10 +1960,10 @@ router.get('/arrecadacao-anual', async (req, res) => {
 });
 
 // ====================================================================
-// SAZONALIDADE MENSAL · compara o mesmo mês em vários anos
-// Retorna [{ mes_num, mes_label, "2024": valor, "2025": valor, "2026": valor }]
+// SAZONALIDADE SEMANAL · compara a mesma semana ISO em vários anos
+// Retorna 52 semanas × N anos · cada slot tem valor + datas reais
 // ====================================================================
-router.get('/sazonalidade-mensal', async (req, res) => {
+router.get('/sazonalidade-semanal', async (req, res) => {
   try {
     const anosParam = req.query.anos;
     const anoBase = new Date().getFullYear();
@@ -1972,25 +1972,45 @@ router.get('/sazonalidade-mensal', async (req, res) => {
       : [anoBase - 2, anoBase - 1, anoBase];
 
     const { data, error } = await supabase
-      .from('vw_fin_arrecadacao_mensal')
-      .select('ano, mes_num, receita')
+      .from('vw_fin_arrecadacao_semanal')
+      .select('ano, semana_inicio, semana_fim, semana_label, receita')
       .in('ano', anos);
     if (error) return res.status(400).json({ error: error.message });
 
-    const LABELS = ['Jan','Fev','Mar','Abr','Mai','Jun','Jul','Ago','Set','Out','Nov','Dez'];
-    const meses = LABELS.map((label, i) => {
-      const linha = { mes_num: i + 1, mes_label: label };
-      anos.forEach(a => { linha[String(a)] = 0; });
-      return linha;
-    });
+    const isoWeekOf = (d) => {
+      const date = new Date(d + 'T12:00:00Z');
+      const tmp = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
+      const dayNum = tmp.getUTCDay() || 7;
+      tmp.setUTCDate(tmp.getUTCDate() + 4 - dayNum);
+      const yearStart = new Date(Date.UTC(tmp.getUTCFullYear(), 0, 1));
+      return Math.ceil((((tmp - yearStart) / 86400000) + 1) / 7);
+    };
+
+    const semanas = [];
+    for (let w = 1; w <= 52; w++) {
+      const linha = { num_semana: w, label: `S${w}` };
+      anos.forEach(a => {
+        linha[String(a)] = 0;
+        linha[`${a}_label`] = null;
+        linha[`${a}_inicio`] = null;
+        linha[`${a}_fim`] = null;
+      });
+      semanas.push(linha);
+    }
+
     (data || []).forEach(r => {
-      const idx = Number(r.mes_num) - 1;
-      if (idx >= 0 && idx < 12) meses[idx][String(r.ano)] = Number(r.receita || 0);
+      const w = isoWeekOf(r.semana_inicio);
+      if (w < 1 || w > 52) return;
+      const slot = semanas[w - 1];
+      slot[String(r.ano)] = Number(r.receita || 0);
+      slot[`${r.ano}_label`] = r.semana_label;
+      slot[`${r.ano}_inicio`] = r.semana_inicio;
+      slot[`${r.ano}_fim`] = r.semana_fim;
     });
 
-    res.json({ anos, meses });
+    res.json({ anos, semanas });
   } catch (e) {
-    console.error('[FIN-V2] sazonalidade-mensal:', e);
+    console.error('[FIN-V2] sazonalidade-semanal:', e);
     res.status(500).json({ error: e.message });
   }
 });
@@ -2126,6 +2146,41 @@ router.get('/saude-financeira', async (req, res) => {
     res.json(data || {});
   } catch (e) {
     console.error('[FIN-V2] saude-financeira:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Lista paginada de doadores do ano · alimenta drilldown do card "Concentração de doadores"
+router.get('/doadores', async (req, res) => {
+  try {
+    const ano = Number(req.query.ano) || new Date().getFullYear();
+    const limit = Math.min(Number(req.query.limit) || 100, 500);
+    const offset = Math.max(Number(req.query.offset) || 0, 0);
+    const { data, error } = await supabase.rpc('fn_fin_doadores_lista', {
+      p_ano: ano, p_limit: limit, p_offset: offset,
+    });
+    if (error) return res.status(400).json({ error: error.message });
+    res.json(data || { items: [], total_geral: 0, qtd_total: 0 });
+  } catch (e) {
+    console.error('[FIN-V2] doadores:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Lançamentos individuais de um doador (usado quando não está vinculado a mem_membros)
+router.get('/doador/transacoes', async (req, res) => {
+  try {
+    const nome = String(req.query.nome || '').trim();
+    if (!nome) return res.status(400).json({ error: 'parametro nome obrigatorio' });
+    const ano = Number(req.query.ano) || new Date().getFullYear();
+    const limit = Math.min(Number(req.query.limit) || 50, 200);
+    const { data, error } = await supabase.rpc('fn_fin_transacoes_por_referencia', {
+      p_nome: nome, p_ano: ano, p_limit: limit,
+    });
+    if (error) return res.status(400).json({ error: error.message });
+    res.json(data || { items: [], total: 0, qtd: 0 });
+  } catch (e) {
+    console.error('[FIN-V2] doador transacoes:', e);
     res.status(500).json({ error: e.message });
   }
 });
