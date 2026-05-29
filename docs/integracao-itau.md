@@ -51,6 +51,9 @@ o frontend não vê nenhuma destas (regra de segurança do projeto).
 | `ITAU_CNPJ_TITULAR` | depois | CNPJ titular da conta |
 | `ITAU_BASE_URL` | opcional | Override do host de API (default `https://api.itau.com.br`) |
 | `ITAU_TOKEN_URL` | opcional | Override do endpoint OAuth (default `https://sts.itau.com.br/api/oauth/token`) |
+| `ITAU_PIX_COB_ENABLED` | PIX | `true` pra ligar a emissão de QR Code de cobrança |
+| `ITAU_PIX_COB_CHAVE` | PIX | Chave PIX recebedora (default = CNPJ titular) |
+| `ITAU_PIX_COB_BASE_PATH` | opcional | Força o path da API PIX (default tenta `/pix_recebimentos/v2`) |
 
 ### Como gerar o base64 do certificado e da chave
 
@@ -81,6 +84,14 @@ base64 -i certificado.crt | tr -d '\n'
   - `GET /api/itau/health` — checa config e tenta o handshake OAuth (mostra
     `missing_env` quando faltar credencial).
   - `GET /api/itau/log` — últimas 100 chamadas (financeiro ≥ 3).
+- **PIX Cobrança (QR Code)** — `backend/services/itau/pixCobrancaService.js` +
+  endpoints em `/api/itau/pix-cob` (padrão BACEN `PUT /cob/{txid}`):
+  - `GET /api/itau/pix-cob/health` — toggle + chave + paths testados.
+  - `POST /api/itau/pix-cob` — cria cobrança + salva em `itau_pix_cob`.
+  - `GET /api/itau/pix-cob` / `GET /api/itau/pix-cob/:txid` — lista / detalhe (+ refresh).
+  - `PATCH /api/itau/pix-cob/:txid/cancelar` — remove a cobrança.
+  - **Desligado por padrão** (`ITAU_PIX_COB_ENABLED`) — não afeta nada até ativar.
+  - Migration `20260529070000_itau_pix_cob.sql` (tabela `itau_pix_cob`).
 - Migration `20260529060000_itau_integracao.sql` — `itau_oauth_tokens` +
   `itau_sync_log` (com RLS).
 - Permissão: `ROUTE_MODULE_MAP['itau'] = ['financeiro']` (reusa o módulo
