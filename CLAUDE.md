@@ -102,6 +102,17 @@ admin pra editar grupo fica pra depois (hoje não há "add tipo novo" pelo admin
 ⚠️ **Aplicar a migration ANTES do deploy** — senão `GET /etiquetas` não traz `grupo`,
 `marketingGrupos` fica vazio e o menu 1 não mostra opção nenhuma.
 
+### Estimativa preliminar · piso de 7 dias (2026-05-29)
+
+Migration `20260529030000_marketing_estimar_piso_7dias.sql` recria
+`fn_marketing_estimar_prazo` com **piso de 7 dias** (Marcos): se a carga horária
+permite fazer em menos, mostra 7 (tempo mínimo viável pra equipe pensar+executar);
+se a carga exige mais, vale o maior. `dias_uteis` passou a ser **dias corridos até a
+data sugerida** (`data_sugerida - hoje`), pra bater com a data quando o solicitante
+informa uma "data necessária" maior. Rótulo no form: "dias úteis" → "dias".
+Inputs e limitações inalterados (usa `esforco_max_h` + capacidade da equipe inteira ÷5
+× 0,6 · ainda não é per-habilidade, não conta o tempo de aprovação do diretor).
+
 ## Marketing · Spec 024 · Tela /marketing/ciclo-criativo (2026-05-28)
 
 Marcos: "ao colocar o horário no marketing, coloque alguma visualização para Pedro ir por fase do ciclo criativo colocando o horário e o dono de cada etapa do ciclo criativo, então isso vai pro calendário dessa pessoa."

@@ -667,7 +667,7 @@ export default function Solicitacoes() {
                           <div className="space-y-1">
                             <div className="font-medium text-foreground">
                               Estimativa preliminar: {estimativa.data_sugerida ? new Date(estimativa.data_sugerida).toLocaleDateString('pt-BR') : '—'}
-                              {estimativa.dias_uteis ? ` (${estimativa.dias_uteis} dias úteis)` : ''}
+                              {estimativa.dias_uteis ? ` (${estimativa.dias_uteis} dias)` : ''}
                             </div>
                             {estimativa.observacao && (
                               <div className="text-muted-foreground">{estimativa.observacao}</div>
