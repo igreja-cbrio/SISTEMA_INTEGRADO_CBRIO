@@ -2080,6 +2080,36 @@ router.get('/filtros-disponiveis', async (req, res) => {
 });
 
 // ====================================================================
+// SAÚDE FINANCEIRA · resultado + folha + concentração doadores · 2026-05-29
+// ====================================================================
+router.get('/saude-financeira', async (req, res) => {
+  try {
+    const ano = Number(req.query.ano) || new Date().getFullYear();
+    const { data, error } = await supabase.rpc('fin_saude_financeira', { p_ano: ano });
+    if (error) return res.status(400).json({ error: error.message });
+    res.json(data || {});
+  } catch (e) {
+    console.error('[FIN-V2] saude-financeira:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ====================================================================
+// DÍZIMO VS OFERTA mensal · 2026-05-29
+// ====================================================================
+router.get('/dizimo-oferta', async (req, res) => {
+  try {
+    const ano = Number(req.query.ano) || new Date().getFullYear();
+    const { data, error } = await supabase.rpc('fin_dizimo_oferta_mensal', { p_ano: ano });
+    if (error) return res.status(400).json({ error: error.message });
+    res.json({ ano, meses: data || [] });
+  } catch (e) {
+    console.error('[FIN-V2] dizimo-oferta:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ====================================================================
 // METAS · progresso de cada meta no período · 2026-05-28
 // Filtros: ano, mes (1-12), semana_inicio (YYYY-MM-DD)
 // Se nada passado, cada meta usa sua própria periodicidade no período atual.
