@@ -2,6 +2,29 @@
 
 Guia operacional para o Claude Code quando trabalhar neste repositório.
 
+## /novosite · prévia interna do redesign do site público (2026-05-29)
+
+Marcos pediu um ambiente isolado pra testar o novo layout do site público
+(cbrio.com.br) sem afetar o ERP. Criado o endpoint **`/novosite`** como página
+PÚBLICA standalone, **não-listada** (nenhum link em menu/navbar · só acessível
+digitando a URL). Por enquanto é só placeholder · a landing de teste entra
+depois (Marcos vai passar o contexto).
+
+- **Página**: `src/pages/public/NovoSite.tsx` · canvas em branco que isola o
+  tema do ERP (container raiz define fundo/fonte/cor próprios) e tem um
+  `<main data-slot="landing">` marcado pra receber as seções da landing. Segue
+  o padrão das outras públicas (`Motion.jsx`).
+- **Rota**: registrada em `src/App.tsx` na seção "Rotas publicas" (FORA do
+  `AppShell` e do `ProtectedRoute` · sem login). Lazy via `lazyWithRetry`.
+- **Não indexável**: a página injeta `<meta name="robots" content="noindex,
+  nofollow">` enquanto montada + `public/robots.txt` ganhou `Disallow: /novosite`
+  em todos os user-agents (vive no domínio real · não pode vazar em busca).
+- **Pra preencher**: trocar o conteúdo do `<main data-slot="landing">`; assets
+  estáticos vão em `/public` (sugestão `/public/novosite/`). Dá pra quebrar em
+  sub-componentes em `src/pages/public/novosite/`.
+- Sem backend/migration · é rota de frontend (Vercel reescreve não-`/api`
+  pra `index.html`).
+
 ## Solicitações · fix da ENTRADA do fluxo (validação E2E Marketing · 2026-05-28)
 
 Validação ponta a ponta do fluxo de Solicitações de Marketing revelou que o módulo
