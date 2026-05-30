@@ -175,9 +175,12 @@ function TriagemSheet({ campanha, tipos, membros, onClose, onChanged }) {
         let d = new Date(data_inicio + 'T00:00:00');
         const end = new Date(data_fim + 'T00:00:00');
         while (d <= end) {
-          const atual = dias[d.toISOString().slice(0, 10)]?.ocupados || 0;
-          if (atual + (pode_paralelo ? 1 : slots) > slots) cheios++;
-          total++;
+          const dow = d.getDay();
+          if (dow !== 0 && dow !== 6) {
+            const atual = dias[d.toISOString().slice(0, 10)]?.ocupados || 0;
+            if (atual + (pode_paralelo ? 1 : slots) > slots) cheios++;
+            total++;
+          }
           d = new Date(d.getTime() + 86400000);
         }
         setCapInfo(cheios > 0

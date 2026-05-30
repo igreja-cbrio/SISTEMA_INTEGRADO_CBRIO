@@ -77,7 +77,8 @@ Primeira parte do planner — a régua de **3/dia** já vale na triagem; o calen
 - **Backend** `GET /marketing/capacidade-dia?membro_id&inicio&fim` → ocupação de slots por dia do membro, a partir dos intervalos `data_inicio→data_fim` dos cards ativos (paralela conta 1/dia · foco enche o dia). `slots_dia` vem de `marketing_membros` (default 3).
 - **Triagem** (`MarketingTriagem.jsx`): ao definir dono + início + fim do entregável, simula a agenda do dono e avisa **"sobrecarrega em N/total dia(s)"** (âmbar) ou **"cabe (≤ slots/dia)"** (verde). Não bloqueia — o Pedro decide.
 - `api.capacidadeDia(membroId, inicio, fim)`.
-- **Pendente Fase 4b (planner visual):** calendário arrastável por pessoa/mês, barras contínuas multi-dia, "levar tudo", auto-rascunho, flag de recorrente; fim de semana (Aline domingo) refina aqui. **Fase 5 (limpeza):** remover `MKT_PUBLICO_OPCOES`/`URGENCIAS` ociosos no intake.
+- **Dias úteis (2026-05-30):** capacidade, aviso da triagem e `duracao_dias` contam **só seg–sex** (fim de semana não consome slot · `getDay()` ≠ 0/6). ⚠️ exceção da Aline (fotógrafa só domingo) fica pra Fase 4b.
+- **Pendente Fase 4b (planner visual):** calendário arrastável por pessoa/mês, barras contínuas multi-dia, "levar tudo", auto-rascunho, flag de recorrente; tratamento de fim de semana p/ Aline (domingo) refina aqui. **Fase 5 (limpeza):** remover `MKT_PUBLICO_OPCOES`/`URGENCIAS` ociosos no intake.
 
 ## /novosite · prévia da home do novo site público (2026-05-30)
 

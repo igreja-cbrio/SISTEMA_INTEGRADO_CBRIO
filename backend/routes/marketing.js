@@ -1839,11 +1839,20 @@ router.post('/campanhas/:id/cards', authorizeModule('marketing', 5), async (req,
     const { data: camp } = await supabase
       .from('marketing_campanhas').select('id, status').eq('id', req.params.id).is('deleted_at', null).maybeSingle();
     if (!camp) return res.status(404).json({ error: 'Campanha nao encontrada' });
-    // duracao em dias derivada de inicio/fim (inclusivo)
+    // duracao em DIAS UTEIS derivada de inicio/fim (inclusivo · pula sab/dom)
     let dur = null;
     if (data_inicio && data_fim) {
-      const d1 = new Date(data_inicio), d2 = new Date(data_fim);
-      if (!isNaN(d1) && !isNaN(d2)) dur = Math.max(1, Math.round((d2 - d1) / 86400000) + 1);
+      let d = new Date(data_inicio + 'T00:00:00');
+      const fim = new Date(data_fim + 'T00:00:00');
+      if (!isNaN(d) && !isNaN(fim) && fim >= d) {
+        let n = 0;
+        while (d <= fim) {
+          const dow = d.getDay();
+          if (dow !== 0 && dow !== 6) n++;
+          d = new Date(d.getTime() + 86400000);
+        }
+        dur = Math.max(1, n);
+      }
     }
     const { data, error } = await supabase
       .from('marketing_kanban_cards')
@@ -1902,7 +1911,8 @@ router.get('/capacidade-dia', authorizeModule('marketing', 1), async (req, res) 
       let d = new Date(c.data_inicio + 'T00:00:00');
       const end = new Date(c.data_fim + 'T00:00:00');
       while (d <= end) {
-        if (d >= lo && d <= hi) {
+        const dow = d.getDay();
+        if (d >= lo && d <= hi && dow !== 0 && dow !== 6) {
           const k = d.toISOString().slice(0, 10);
           if (!dias[k]) dias[k] = { ocupados: 0, cards: [] };
           dias[k].ocupados += c.pode_paralelo ? 1 : slots_dia;
