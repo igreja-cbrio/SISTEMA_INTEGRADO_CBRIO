@@ -2,28 +2,42 @@
 
 Guia operacional para o Claude Code quando trabalhar neste repositório.
 
-## /novosite · prévia interna do redesign do site público (2026-05-29)
+## /novosite · prévia da home do novo site público (2026-05-30)
 
-Marcos pediu um ambiente isolado pra testar o novo layout do site público
-(cbrio.com.br) sem afetar o ERP. Criado o endpoint **`/novosite`** como página
-PÚBLICA standalone, **não-listada** (nenhum link em menu/navbar · só acessível
-digitando a URL). Por enquanto é só placeholder · a landing de teste entra
-depois (Marcos vai passar o contexto).
+Ambiente isolado pra testar o redesign do site público **cbrio.com.br** dentro
+do ERP, sem afetar nada. Endpoint **`/novosite`** · página PÚBLICA standalone
+(FORA do AppShell e do ProtectedRoute · sem login), **não-listada** (nenhum link
+em menu · só via URL direta) e **noindex** (meta `noindex,nofollow` + `Disallow:
+/novosite` no `robots.txt` · vive no domínio real). É um TESTE de layout.
 
-- **Página**: `src/pages/public/NovoSite.tsx` · canvas em branco que isola o
-  tema do ERP (container raiz define fundo/fonte/cor próprios) e tem um
-  `<main data-slot="landing">` marcado pra receber as seções da landing. Segue
-  o padrão das outras públicas (`Motion.jsx`).
-- **Rota**: registrada em `src/App.tsx` na seção "Rotas publicas" (FORA do
-  `AppShell` e do `ProtectedRoute` · sem login). Lazy via `lazyWithRetry`.
-- **Não indexável**: a página injeta `<meta name="robots" content="noindex,
-  nofollow">` enquanto montada + `public/robots.txt` ganhou `Disallow: /novosite`
-  em todos os user-agents (vive no domínio real · não pode vazar em busca).
-- **Pra preencher**: trocar o conteúdo do `<main data-slot="landing">`; assets
-  estáticos vão em `/public` (sugestão `/public/novosite/`). Dá pra quebrar em
-  sub-componentes em `src/pages/public/novosite/`.
-- Sem backend/migration · é rota de frontend (Vercel reescreve não-`/api`
-  pra `index.html`).
+**Origem do design:** handoff de marca em `~/Downloads/site cbrio` (brief +
+copy PT-BR + tokens.css + assets SVG + PDF "When Culture Changes Everything"),
+originalmente pensado pra Astro · adaptado num único componente React.
+
+- **Página**: `src/pages/public/NovoSite.tsx` · home completa, autocontida.
+  Tokens da marca como CSS vars escopadas em `.ns` (petróleo #00839D, areia
+  #EDE0D4, etc), fonte Urbanist, ondas SVG inline (assinatura visual), marquee
+  de valores, reveals no scroll (IntersectionObserver), header sticky
+  transparente→sólido + drawer mobile. Copy real; **missão no hero**
+  ("Empoderados por Deus para alcançar pessoas pra Jesus" · Mt 28:19). Seções:
+  Hero · Boas-vindas+marquee · Comece aqui/visita · Jornada (4 cards) · Valores ·
+  Online · História+stats 2021→2025 · Galeria · CTA · Footer.
+  **CTAs são visuais (sem href/redirect)** e a nav faz scroll interno — decisão
+  do Marcos ("é teste, sem funcionalidades/redirects").
+- **Vídeo de hero** (estilo mosaic.org / eaglebrookchurch.com): aftermovie da
+  igreja (adoração + batismo) como fundo. Source 4K/951MB (`telao_1920_1080.mp4`)
+  transcodado p/ loop web 1080p · 28s · sem áudio → `public/novosite/hero.webm`
+  (VP9 ~5MB) + `hero.mp4` (H.264 ~6.4MB). Poster = foto `hero.webp`, fade-in ao
+  tocar, e **só carrega em ≥768px sem prefers-reduced-motion** (mobile/a11y ficam
+  só na foto · economia de dados). Transcode via ffmpeg do pacote python
+  `imageio_ffmpeg` (não há ffmpeg no PATH).
+- **Fotos**: 10 fotos reais da igreja otimizadas em WebP
+  (`public/novosite/*.webp` · ~840 KB no total) + SVGs de marca em
+  `public/novosite/brand/`.
+- **Rota** em `src/App.tsx` (seção "Rotas publicas", lazy). Sem backend/migration ·
+  rota de frontend (Vercel reescreve não-`/api` pra `index.html`).
+- **Pendente** (placeholders pra confirmar): endereço, redes sociais, telefone,
+  e-mail de contato; e se os números 2021→2025 vão públicos.
 
 ## Solicitações · fix da ENTRADA do fluxo (validação E2E Marketing · 2026-05-28)
 
