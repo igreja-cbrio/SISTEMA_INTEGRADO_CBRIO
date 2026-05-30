@@ -243,8 +243,12 @@ router.get('/capacidade', authorizeModule('marketing', 1), async (req, res) => {
   }
 });
 
+// @deprecated (redesenho 2026-05-30): o intake por dor nao escolhe mais o tipo,
+// entao a estimativa preliminar saiu do form. Endpoint + fn_marketing_estimar_prazo
+// ficam por ora (sem uso no front); aposentar de vez apos a triagem validada.
 router.get('/estimar', authorizeModule('marketing', 1), async (req, res) => {
   try {
+    console.warn('[MARKETING] GET /estimar · endpoint DEPRECATED (redesenho 2026-05-30)');
     const { tipo, data_alvo } = req.query;
     if (!tipo) return res.status(400).json({ error: 'Param tipo (UUID da etiqueta) obrigatorio' });
 

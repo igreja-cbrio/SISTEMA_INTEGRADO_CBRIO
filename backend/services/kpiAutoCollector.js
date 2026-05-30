@@ -706,10 +706,11 @@ const COLLECTORS = {
   // valores={} · ficam em /minha-area + /marketing/analytics, fora da mandala.
 
   'marketing.prazo_no_alvo': async ({ inicio, fim }) => {
-    // % cards entregues no prazo (entregue_em <= prazo_confirmado)
+    // % cards entregues no prazo (entregue_em <= prazo-alvo).
+    // prazo-alvo = prazo_producao do entregavel (redesenho) ou prazo_confirmado (legado).
     const { data } = await supabase
       .from('marketing_kanban_cards')
-      .select('id, entregue_em, prazo_confirmado')
+      .select('id, entregue_em, prazo_producao, prazo_confirmado')
       .eq('estado', 'concluido')
       .is('deleted_at', null)
       .not('entregue_em', 'is', null)
@@ -717,9 +718,10 @@ const COLLECTORS = {
 
     const total = (data || []).length;
     if (!total) return { valor: null, observacao: 'Sem cards entregues no periodo' };
-    const noPrazo = (data || []).filter(c =>
-      !c.prazo_confirmado || new Date(c.entregue_em) <= new Date(c.prazo_confirmado)
-    ).length;
+    const noPrazo = (data || []).filter(c => {
+      const alvo = c.prazo_producao || c.prazo_confirmado;
+      return !alvo || new Date(c.entregue_em) <= new Date(alvo);
+    }).length;
     const pct = Math.round((noPrazo / total) * 100);
     return { valor: pct, observacao: `${noPrazo} de ${total} cards entregues no prazo` };
   },
@@ -755,33 +757,44 @@ const COLLECTORS = {
   },
 
   'marketing.razao_demanda_capacidade': async () => {
-    // Razao snapshot · esforco da fila atual / capacidade livre da semana
-    // (independe de periodo · usa snapshot atual pra sinalizar fila acumulada)
+    // SLOTS (redesenho · NAO horas): demanda = slot-dias uteis ocupados na semana
+    // corrente pelos entregaveis ativos; capacidade = soma(slots_dia) dos membros
+    // ativos x 5 dias uteis. Snapshot da semana atual.
+    const hoje = new Date();
+    const seg = new Date(hoje);
+    seg.setDate(hoje.getDate() - ((hoje.getDay() + 6) % 7)); // segunda desta semana
+    seg.setHours(0, 0, 0, 0);
+    const sex = new Date(seg); sex.setDate(seg.getDate() + 4);
+    const ymd = d => d.toISOString().slice(0, 10);
+    const segStr = ymd(seg), sexStr = ymd(sex);
+
+    const { data: membros } = await supabase
+      .from('marketing_membros').select('slots_dia').eq('ativo', true).is('deleted_at', null);
+    const capacidade = (membros || []).reduce((a, m) => a + (Number(m.slots_dia) || 3), 0) * 5;
+
     const { data: cards } = await supabase
       .from('marketing_kanban_cards')
-      .select('etiqueta_tipo_id, estado, deleted_at, marketing_etiquetas_tipo(esforco_max_h)')
-      .in('estado', ['fila', 'em_producao'])
-      .is('deleted_at', null);
+      .select('data_inicio, data_fim')
+      .neq('estado', 'concluido').is('deleted_at', null)
+      .not('data_inicio', 'is', null).not('data_fim', 'is', null)
+      .lte('data_inicio', sexStr).gte('data_fim', segStr);
 
-    const esforcoFila = (cards || []).reduce((acc, c) => {
-      const h = c.marketing_etiquetas_tipo?.esforco_max_h;
-      return acc + (h != null ? Number(h) : 0);
-    }, 0);
-
-    // Capacidade livre da semana corrente · soma horas_livres da view fn_marketing_calcular_capacidade_semana
-    const hoje = new Date().toISOString().slice(0, 10);
-    const { data: cap } = await supabase
-      .rpc('fn_marketing_calcular_capacidade_semana', { p_data_ref: hoje });
-
-    const capacidadeLivre = (cap || []).reduce((acc, r) => acc + Math.max(0, Number(r.horas_livres) || 0), 0);
-    if (capacidadeLivre <= 0) {
-      return {
-        valor: esforcoFila > 0 ? 999 : 0,
-        observacao: esforcoFila > 0 ? 'Equipe lotada (capacidade<=0)' : 'Sem demanda nem capacidade',
-      };
+    let demanda = 0;
+    for (const c of (cards || [])) {
+      let d = new Date(c.data_inicio + 'T00:00:00');
+      const fimC = new Date(c.data_fim + 'T00:00:00');
+      while (d <= fimC) {
+        const wd = d.getDay();
+        if (wd !== 0 && wd !== 6 && d >= seg && d <= sex) demanda += 1; // 1 slot por dia util
+        d = new Date(d.getTime() + 86400000);
+      }
     }
-    const razao = Math.round((esforcoFila / capacidadeLivre) * 100);
-    return { valor: razao, observacao: `Fila: ${esforcoFila}h · Capacidade livre: ${capacidadeLivre}h` };
+
+    if (capacidade <= 0) {
+      return { valor: demanda > 0 ? 999 : 0, observacao: demanda > 0 ? 'Sem capacidade cadastrada' : 'Sem demanda nem capacidade' };
+    }
+    const razao = Math.round((demanda / capacidade) * 100);
+    return { valor: razao, observacao: `Semana: ${demanda} slot-dia / ${capacidade} disponiveis` };
   },
 };
 
