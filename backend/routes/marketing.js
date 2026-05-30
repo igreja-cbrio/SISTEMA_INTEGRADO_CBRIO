@@ -889,20 +889,22 @@ router.post('/cards/:id/entregaveis',
     try {
       if (!req.file) return res.status(400).json({ error: 'Arquivo (campo "arquivo") obrigatorio · multipart/form-data' });
 
+      const tipo = req.body?.tipo === 'referencia' ? 'referencia' : 'entregavel';
       const result = await spMarketing.uploadEntregavel({
         cardId: req.params.id,
         userId: req.user.userId,
         file: req.file,
+        tipo,
       });
 
-      // Notifica solicitante quando arquivo final eh anexado (card no estado correto)
+      // Notifica solicitante quando arquivo FINAL eh anexado (nao referencia · card no estado correto)
       try {
         const { data: card } = await supabase
           .from('marketing_kanban_cards')
           .select('estado, solicitacao_id, titulo')
           .eq('id', req.params.id)
           .maybeSingle();
-        if (card?.solicitacao_id && card.estado === 'concluido') {
+        if (tipo !== 'referencia' && card?.solicitacao_id && card.estado === 'concluido') {
           const { data: sol } = await supabase
             .from('solicitacoes')
             .select('solicitante_id, titulo')
@@ -1521,6 +1523,62 @@ router.delete('/admin/overrides/:id', authorizeModule('marketing', 5), async (re
       p_row_id: req.params.id,
       p_deleted_by: req.user.userId,
     });
+    if (error) throw error;
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ─── Checklist do card (sub-itens · estilo Trello · 2026-05-29) ─────────────
+router.get('/cards/:id/checklist', authorizeModule('marketing', 1), async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('marketing_card_checklist')
+      .select('*')
+      .eq('card_id', req.params.id)
+      .order('ordem', { ascending: true });
+    if (error) throw error;
+    res.json(data || []);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+router.post('/cards/:id/checklist', authorizeModule('marketing', 3), async (req, res) => {
+  try {
+    const { texto, grupo } = req.body || {};
+    if (!texto || !texto.trim()) return res.status(400).json({ error: 'texto obrigatorio' });
+    const { data, error } = await supabase
+      .from('marketing_card_checklist')
+      .insert({ card_id: req.params.id, texto: texto.trim(), grupo: (grupo && grupo.trim()) || null })
+      .select('*').single();
+    if (error) throw error;
+    res.status(201).json(data);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+router.patch('/checklist/:itemId', authorizeModule('marketing', 3), async (req, res) => {
+  try {
+    const update = {};
+    const { texto, feito, grupo, ordem } = req.body || {};
+    if (texto !== undefined) update.texto = texto;
+    if (feito !== undefined) update.feito = !!feito;
+    if (grupo !== undefined) update.grupo = (grupo && grupo.trim()) || null;
+    if (ordem !== undefined) update.ordem = ordem;
+    update.updated_at = new Date().toISOString();
+    const { data, error } = await supabase
+      .from('marketing_card_checklist')
+      .update(update)
+      .eq('id', req.params.itemId)
+      .select('*').single();
+    if (error) throw error;
+    res.json(data);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+router.delete('/checklist/:itemId', authorizeModule('marketing', 3), async (req, res) => {
+  try {
+    const { error } = await supabase
+      .from('marketing_card_checklist')
+      .delete()
+      .eq('id', req.params.itemId);
     if (error) throw error;
     res.json({ ok: true });
   } catch (e) { res.status(500).json({ error: e.message }); }

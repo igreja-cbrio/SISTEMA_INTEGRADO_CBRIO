@@ -16,7 +16,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from 
 import { ScrollArea } from '../../components/ui/scroll-area';
 import {
   Megaphone, Plus, Filter, Clock, Loader2, CheckCircle2, AlertCircle,
-  Zap, RefreshCw, ArrowRight, Calendar, CalendarDays, Settings, BarChart3, User2, FileText, Upload, Trash2, X,
+  Zap, RefreshCw, ArrowRight, Calendar, CalendarDays, Settings, BarChart3, User2, FileText, Upload, Trash2, X, ListChecks, Paperclip,
 } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -413,6 +413,9 @@ function CardDrawer({ card, onClose, onUpdated, tipos, destinos, membros, isCoor
   const [edit, setEdit] = useState({});
   const [entregaveis, setEntregaveis] = useState([]);
   const [uploading, setUploading] = useState(false);
+  const [uploadingRef, setUploadingRef] = useState(false);
+  const [checklist, setChecklist] = useState([]);
+  const [novoItem, setNovoItem] = useState({ texto: '', grupo: '' });
 
   useEffect(() => {
     if (!card) return;
@@ -426,8 +429,9 @@ function CardDrawer({ card, onClose, onUpdated, tipos, destinos, membros, isCoor
       raia_rapida: !!card.raia_rapida,
       estado: card.estado,
     });
-    // Carrega entregaveis
+    // Carrega entregaveis + checklist
     api.entregaveis.list(card.id).then(setEntregaveis).catch(() => setEntregaveis([]));
+    api.checklist.list(card.id).then(setChecklist).catch(() => setChecklist([]));
   }, [card]);
 
   async function salvar() {
@@ -458,20 +462,53 @@ function CardDrawer({ card, onClose, onUpdated, tipos, destinos, membros, isCoor
     }
   }
 
-  async function uploadArquivo(file) {
+  async function uploadArquivo(file, tipo) {
     if (!card || !file) return;
-    setUploading(true);
+    const setBusy = tipo === 'referencia' ? setUploadingRef : setUploading;
+    setBusy(true);
     try {
-      await api.entregaveis.upload(card.id, file);
-      toast.success('Arquivo enviado');
+      await api.entregaveis.upload(card.id, file, tipo);
+      toast.success(tipo === 'referencia' ? 'Referência enviada' : 'Arquivo enviado');
       const lista = await api.entregaveis.list(card.id);
       setEntregaveis(lista);
     } catch (e) {
       toast.error(e.message || 'Erro ao enviar arquivo');
     } finally {
-      setUploading(false);
+      setBusy(false);
     }
   }
+
+  async function addChecklistItem() {
+    const texto = novoItem.texto.trim();
+    if (!card || !texto) return;
+    try {
+      await api.checklist.create(card.id, { texto, grupo: novoItem.grupo.trim() || null });
+      setNovoItem(s => ({ texto: '', grupo: s.grupo }));
+      setChecklist(await api.checklist.list(card.id));
+    } catch (e) { toast.error(e.message || 'Erro ao adicionar'); }
+  }
+
+  async function toggleChecklistItem(item) {
+    try {
+      await api.checklist.update(item.id, { feito: !item.feito });
+      setChecklist(cl => cl.map(i => (i.id === item.id ? { ...i, feito: !i.feito } : i)));
+    } catch (e) { toast.error(e.message || 'Erro ao atualizar'); }
+  }
+
+  async function removeChecklistItem(id) {
+    try {
+      await api.checklist.remove(id);
+      setChecklist(cl => cl.filter(i => i.id !== id));
+    } catch (e) { toast.error(e.message || 'Erro ao remover'); }
+  }
+
+  const entregaveisFinais = entregaveis.filter(e => e.tipo !== 'referencia');
+  const referencias = entregaveis.filter(e => e.tipo === 'referencia');
+  const checklistFeitos = checklist.filter(i => i.feito).length;
+  const checklistPct = checklist.length ? Math.round((checklistFeitos / checklist.length) * 100) : 0;
+  const gruposChecklist = Object.entries(
+    checklist.reduce((acc, i) => { const g = i.grupo || ''; (acc[g] = acc[g] || []).push(i); return acc; }, {})
+  );
 
   return (
     <Sheet open={open} onOpenChange={(o) => { if (!o) onClose(); }}>
@@ -633,11 +670,119 @@ function CardDrawer({ card, onClose, onUpdated, tipos, destinos, membros, isCoor
               )}
             </div>
 
-            {/* Entregáveis */}
+            {/* Checklist (sub-itens · estilo Trello) */}
+            <div className="border-t border-border pt-4">
+              <Label className="text-sm flex items-center gap-1.5 mb-2">
+                <ListChecks className="h-4 w-4" /> Checklist
+                {checklist.length > 0 && (
+                  <span className="text-xs text-muted-foreground font-normal">· {checklistFeitos}/{checklist.length}</span>
+                )}
+              </Label>
+              {checklist.length > 0 && (
+                <div className="h-1.5 bg-muted rounded-full mb-3 overflow-hidden">
+                  <div className="h-full bg-primary transition-all" style={{ width: `${checklistPct}%` }} />
+                </div>
+              )}
+              {checklist.length === 0 ? (
+                <p className="text-xs text-muted-foreground">Sem itens · use frentes (ex: ID e Estratégia, Enxoval) pra agrupar.</p>
+              ) : (
+                <div className="space-y-3">
+                  {gruposChecklist.map(([grupo, itens]) => (
+                    <div key={grupo || '_sem'} className="space-y-1">
+                      {grupo && <p className="text-xs font-semibold text-muted-foreground">{grupo}</p>}
+                      {itens.map(item => (
+                        <div key={item.id} className="flex items-center gap-2 text-sm group/item">
+                          <input
+                            type="checkbox"
+                            checked={item.feito}
+                            disabled={!isCoordenador}
+                            onChange={() => toggleChecklistItem(item)}
+                            className="h-4 w-4 shrink-0"
+                          />
+                          <span className={`flex-1 ${item.feito ? 'line-through text-muted-foreground' : ''}`}>{item.texto}</span>
+                          {isCoordenador && (
+                            <button
+                              type="button"
+                              onClick={() => removeChecklistItem(item.id)}
+                              className="opacity-0 group-hover/item:opacity-100 text-red-600 shrink-0"
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </button>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  ))}
+                </div>
+              )}
+              {isCoordenador && (
+                <div className="flex gap-1.5 mt-2">
+                  <Input
+                    value={novoItem.grupo}
+                    onChange={e => setNovoItem(s => ({ ...s, grupo: e.target.value }))}
+                    placeholder="Frente"
+                    className="h-8 text-xs w-28"
+                  />
+                  <Input
+                    value={novoItem.texto}
+                    onChange={e => setNovoItem(s => ({ ...s, texto: e.target.value }))}
+                    onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); addChecklistItem(); } }}
+                    placeholder="Novo item..."
+                    className="h-8 text-xs flex-1"
+                  />
+                  <Button size="sm" variant="outline" onClick={addChecklistItem} disabled={!novoItem.texto.trim()}>
+                    <Plus className="h-4 w-4" />
+                  </Button>
+                </div>
+              )}
+            </div>
+
+            {/* Referências (input · briefing/inspiração) */}
             <div className="border-t border-border pt-4">
               <div className="flex items-center justify-between mb-2">
                 <Label className="text-sm flex items-center gap-1.5">
-                  <FileText className="h-4 w-4" /> Entregáveis ({entregaveis.length})
+                  <Paperclip className="h-4 w-4" /> Referências ({referencias.length})
+                </Label>
+                {isCoordenador && (
+                  <label className="cursor-pointer">
+                    <input
+                      type="file"
+                      className="hidden"
+                      onChange={e => e.target.files?.[0] && uploadArquivo(e.target.files[0], 'referencia')}
+                      disabled={uploadingRef}
+                    />
+                    <Button asChild size="sm" variant="outline" className="gap-1.5" disabled={uploadingRef}>
+                      <span>
+                        {uploadingRef ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
+                        Anexar
+                      </span>
+                    </Button>
+                  </label>
+                )}
+              </div>
+              {referencias.length === 0 ? (
+                <p className="text-xs text-muted-foreground py-1">Briefing, inspiração, material de apoio.</p>
+              ) : (
+                <ul className="space-y-1">
+                  {referencias.map(e => (
+                    <li key={e.id} className="flex items-center justify-between gap-2 text-xs bg-muted/30 rounded px-2 py-1.5">
+                      <a href={api.entregaveis.download(e.id)} target="_blank" rel="noreferrer" className="truncate flex-1 hover:underline">
+                        {e.nome_arquivo}
+                      </a>
+                      <span className="text-muted-foreground shrink-0">
+                        {e.tamanho_bytes ? `${Math.round(e.tamanho_bytes / 1024)} KB` : ''}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+
+            {/* Entregáveis (output · arquivo final) */}
+            <div className="border-t border-border pt-4">
+              <div className="flex items-center justify-between mb-2">
+                <Label className="text-sm flex items-center gap-1.5">
+                  <FileText className="h-4 w-4" /> Entregáveis ({entregaveisFinais.length})
                 </Label>
                 {isCoordenador && (
                   <label className="cursor-pointer">
@@ -656,11 +801,11 @@ function CardDrawer({ card, onClose, onUpdated, tipos, destinos, membros, isCoor
                   </label>
                 )}
               </div>
-              {entregaveis.length === 0 ? (
+              {entregaveisFinais.length === 0 ? (
                 <p className="text-xs text-muted-foreground py-3">Sem arquivos anexados</p>
               ) : (
                 <ul className="space-y-1">
-                  {entregaveis.map(e => (
+                  {entregaveisFinais.map(e => (
                     <li key={e.id} className="flex items-center justify-between gap-2 text-xs bg-muted/30 rounded px-2 py-1.5">
                       <a
                         href={api.entregaveis.download(e.id)}
