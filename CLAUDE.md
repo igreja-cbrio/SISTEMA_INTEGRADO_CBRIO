@@ -2,6 +2,36 @@
 
 Guia operacional para o Claude Code quando trabalhar neste repositório.
 
+## Marketing · REDESENHO em fases (2026-05-30) · EM ANDAMENTO
+
+Após feedback profundo do Pedro, o módulo Marketing está sendo redesenhado de
+"balcão que decide sozinho" → "mesa de comando do Pedro" (sistema assiste, não
+decide). Plano em **6 fases, cada uma 1 PR**. Resumo:
+
+- **Fluxo-alvo:** solicitante pede por **DOR** (não "faça X") → diretor aprova (Spec 001
+  segue valendo) → cai na **Triagem** do Pedro → ele decide a solução (pode ≠ pedido),
+  cria a **campanha com N cards** (dono + duração-dias + paralela/foco) + os 2 prazos →
+  **planner por slots/dia** → produção → revisão (buffer) → entrega.
+- **2 prazos:** entrega ao solicitante (na campanha · conservador: simples 3-4 sem ·
+  complexa 5-8 sem · Pedro escolhe) × produção interna (no card · deadline do designer).
+- **Capacidade vira SLOTS/DIA por pessoa** (não horas) · planner arrastável (barras
+  contínuas, máx 3/dia) · recorrentes só contam se `eh_demanda_calendario`.
+- **Revisa o que está em prod:** intake cascata (#797), estimativa+piso-7d (#803),
+  auto-assign (#806) e padrões por fase (#808) viram **sugestão/triagem**; órfãos no
+  Pedro (Spec 023) saem; Pedro fica **fora dos slots** (é gestor).
+
+### Fase 0 · Fundação de dados (`20260530140000_marketing_redesenho_f0_fundacao.sql`)
+**ADITIVA · não muda comportamento** (as Fases 1-5 ligam os usos):
+- Tabela `marketing_campanhas` (origem solicitacao|evento|interna · solicitacao_id · event_id ·
+  titulo · dor_descricao · publico_alvo · complexidade · prazo_entrega · status · RLS).
+- `marketing_kanban_cards` += `campanha_id`, `prazo_producao`, `duracao_dias`, `pode_paralelo`.
+- `marketing_membros` += `slots_dia` (default 3 · configurável por pessoa).
+- `marketing_compromissos_recorrentes` += `eh_demanda_calendario`.
+- CHECK de `estado` aceita os novos (triagem/backlog/pesquisa/producao/revisao/concluido)
+  **E** os legados (fila/em_producao/aguardando_solicitante · removidos na Fase 3 após remap).
+- Soft-delete de campanhas: incluir na whitelist `app_soft_deletable_tables()` na Fase 2
+  (quando o delete de campanha existir · evita reescrever a lista grande às cegas agora).
+
 ## /novosite · prévia da home do novo site público (2026-05-30)
 
 Ambiente isolado pra testar o redesign do site público **cbrio.com.br** dentro
