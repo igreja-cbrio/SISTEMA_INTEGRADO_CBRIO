@@ -482,12 +482,12 @@ function AppRoutes() {
         <Route path="/bridge" element={<ModuleGuard moduleSlug="bridge"><Suspense fallback={<Loading />}><PainelBridge /></Suspense></ModuleGuard>} />
         {/* Marketing · Kanban (Spec 007) + Calendario (Spec 008) */}
         <Route path="/marketing" element={<ModuleGuard moduleSlug="marketing" nivelMinimo={1}><Suspense fallback={<Loading />}><MarketingKanban /></Suspense></ModuleGuard>} />
-        <Route path="/marketing/calendario" element={<ModuleGuard moduleSlug="marketing" nivelMinimo={1}><Suspense fallback={<Loading />}><MarketingCalendario /></Suspense></ModuleGuard>} />
+        <Route path="/marketing/calendario" element={<Navigate to="/marketing" replace />} />
         <Route path="/marketing/planner" element={<ModuleGuard moduleSlug="marketing" nivelMinimo={1}><Suspense fallback={<Loading />}><MarketingPlanner /></Suspense></ModuleGuard>} />
         <Route path="/marketing/admin" element={<ModuleGuard moduleSlug="marketing" nivelMinimo={5}><Suspense fallback={<Loading />}><MarketingAdmin /></Suspense></ModuleGuard>} />
         <Route path="/marketing/analytics" element={<ModuleGuard moduleSlug="marketing" nivelMinimo={1}><Suspense fallback={<Loading />}><MarketingAnalytics /></Suspense></ModuleGuard>} />
         <Route path="/marketing/fila" element={<Navigate to="/marketing" replace />} />
-        <Route path="/marketing/ciclo-criativo" element={<ModuleGuard moduleSlug="marketing" nivelMinimo={5}><Suspense fallback={<Loading />}><MarketingCicloCriativo /></Suspense></ModuleGuard>} />
+        <Route path="/marketing/ciclo-criativo" element={<Navigate to="/marketing" replace />} />
         <Route path="/marketing/triagem" element={<Navigate to="/marketing" replace />} />
         {/* Redirects das rotas antigas pra nao quebrar bookmarks */}
         <Route path="/ministerial/online" element={<Navigate to="/online" replace />} />

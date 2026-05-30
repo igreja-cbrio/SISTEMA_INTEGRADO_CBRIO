@@ -4,6 +4,7 @@ import { useAuth } from '../../contexts/AuthContext';
 import { marketing as api } from '../../api';
 import MarketingNav from './MarketingNav';
 import MarketingTriagemSheet from './MarketingTriagemSheet';
+import MarketingEpicos from './MarketingEpicos';
 import { supabase } from '../../supabaseClient';
 import { Badge } from '../../components/ui/badge';
 import { Button } from '../../components/ui/button';
@@ -82,6 +83,7 @@ export default function MarketingKanban() {
   // Triagem embutida (consolidação F-B): campanhas-dor caem na 1ª coluna
   const [campanhasTriagem, setCampanhasTriagem] = useState([]);
   const [triagemSel, setTriagemSel] = useState(null);
+  const [visao, setVisao] = useState('quadro'); // 'quadro' (colunas) | 'epicos' (por campanha/evento)
 
   const carregar = useCallback(async () => {
     try {
@@ -166,6 +168,10 @@ export default function MarketingKanban() {
           </p>
         </div>
         <div className="flex items-center gap-2 shrink-0 flex-wrap">
+          <div className="flex rounded-lg border border-border overflow-hidden">
+            <button onClick={() => setVisao('quadro')} className={`px-3 py-1.5 text-xs font-medium transition-colors ${visao === 'quadro' ? 'bg-primary text-primary-foreground' : 'bg-card hover:bg-accent'}`}>Quadro</button>
+            <button onClick={() => setVisao('epicos')} className={`px-3 py-1.5 text-xs font-medium transition-colors ${visao === 'epicos' ? 'bg-primary text-primary-foreground' : 'bg-card hover:bg-accent'}`}>Épicos</button>
+          </div>
           <MarketingNav />
           {isCoordenador && (
             <Dialog open={novaOpen} onOpenChange={setNovaOpen}>
@@ -188,6 +194,9 @@ export default function MarketingKanban() {
         </div>
       </div>
 
+      {visao === 'epicos' && <MarketingEpicos isCoord={isCoordenador} />}
+
+      {visao === 'quadro' && (<>
       {/* Filtros */}
       <div className="flex flex-wrap items-center gap-2 p-3 bg-muted/30 rounded-lg border border-border">
         <Filter className="h-4 w-4 text-muted-foreground" />
@@ -264,6 +273,7 @@ export default function MarketingKanban() {
           ))}
         </div>
       )}
+      </>)}
 
       <CardDrawer
         card={detail}
