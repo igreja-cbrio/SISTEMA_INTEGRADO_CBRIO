@@ -90,7 +90,13 @@ Reduzir o módulo a **Kanban · Planner · Analytics · Admin**. As outras abas 
 ### F-A · régua de 6 colunas no Kanban (2026-05-30 · SEM migration)
 - `MarketingKanban.jsx`: 4 colunas → **6** (Triagem→Backlog→Pesquisa→Produção→Revisão→Concluído), em **scroll horizontal** (estilo Trello). Constante `ESTADOS` ganhou `aceita: []` agrupando o canônico novo + o legado (backlog←fila, producao←em_producao, revisao←aguardando_solicitante) — **sem migration**; o drop grava o canônico novo (CHECK da F0 já aceita os 6).
 - Cards ordenados na coluna por **urgente → `ordem_fila`** (absorve a visão da Fila). Card mostra o **prazo de produção** (`prazo_producao`/`data_fim`, fallback no legado); SLA individual passou a contar `producao` também.
-- **Pendente F-A:** reordenar arrastando na vertical (reprioritizar) + 2º prazo (entrega da campanha) no card — entram com a integração de campanha (F-B/F-C). Coluna **Triagem fica vazia** até F-B (campanhas ainda na aba Triagem).
+### F-B/C/D/E · consolidação completa (2026-05-30 · SEM migration · 1 PR)
+- **F-B · triagem no card:** a coluna Triagem lista as **campanhas** (`status='triagem'`); clicar abre o `MarketingTriagemSheet` (extraído de MarketingTriagem, reusável) — complexidade, 2 prazos, criar entregáveis c/ aviso de 3/dia. Nav perde **Triagem** e **Fila**; rotas redirecionam pro Kanban.
+- **F-C · épico:** toggle **Quadro | Épicos** no Kanban → `MarketingEpicos.jsx`: campanhas e eventos como épicos expansíveis, cada um com subdemandas (cards reais) + **barra de progresso**; eventos mantêm **batch** (etiqueta/dono por fase) + link Eventos (absorve o **Ciclo**). Nav perde **Ciclo**.
+- **F-D:** **Calendário descontinuado** (Planner é o sucessor, slots não horas); nav perde Calendário; rota redireciona.
+- **F-E:** deletados os 4 órfãos (`MarketingTriagem/Fila/Calendario/CicloCriativo.jsx`) + lazy imports; **busca por título** no Kanban.
+- **✅ NAV FINAL: Kanban · Planner · Analytics · Admin** (+ toggle Quadro/Épicos dentro do Kanban). Telas órfãs = 0.
+- **Pendente (próxima frente · NÃO bloqueia o teste):** acabamento do card (avatares, progresso de checklist no próprio card, badges de desencontro de prazo), reordenar-arrastando na vertical, 2º prazo (entrega da campanha) no card; **KPIs** MKT-PRAZO/DEM-CAP + aposentar `fn_marketing_estimar_prazo` + limpar `MKT_PUBLICO_OPCOES`/`URGENCIAS` no intake.
 
 ## /novosite · prévia da home do novo site público (2026-05-30)
 

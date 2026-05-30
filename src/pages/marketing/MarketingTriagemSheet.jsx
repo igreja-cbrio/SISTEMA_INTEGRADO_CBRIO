@@ -1,5 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
-import { useAuth } from '../../contexts/AuthContext';
+import { useState, useEffect } from 'react';
 import { marketing as api } from '../../api';
 import { Badge } from '../../components/ui/badge';
 import { Button } from '../../components/ui/button';
@@ -8,109 +7,27 @@ import { Input } from '../../components/ui/input';
 import { Label } from '../../components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../components/ui/select';
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '../../components/ui/sheet';
-import { Inbox, Plus, Loader2, ArrowRight, User2, Zap, CalendarClock } from 'lucide-react';
+import { Loader2, Plus, User2, Zap, CalendarClock } from 'lucide-react';
 import { toast } from 'sonner';
-import MarketingNav from './MarketingNav';
 
-const COMPLEXIDADE = [
+// Sheet de triagem de uma campanha (a "dor"): definir complexidade, prazo de
+// entrega ao solicitante e criar os entregáveis (cards) com dono/datas + aviso
+// de capacidade. Extraído de MarketingTriagem p/ ser reusado dentro do Kanban
+// (coluna Triagem) na consolidação do módulo (F-B).
+export const COMPLEXIDADE = [
   { value: 'simples',  label: 'Simples · 3–4 semanas' },
   { value: 'media',    label: 'Média · ~1 mês' },
   { value: 'complexa', label: 'Complexa · 5–8 semanas' },
 ];
 
-function fmtData(iso) {
+export function fmtData(iso) {
   if (!iso) return null;
   const d = new Date(iso);
   if (isNaN(d)) return null;
   return d.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: '2-digit' });
 }
 
-// Triagem (Redesenho Fase 2): demandas-dor aguardando o Pedro definir a solução
-// e criar os entregáveis. A "dor" é a campanha; os entregáveis são cards.
-export default function MarketingTriagem() {
-  const { isAdmin, modulePerms } = useAuth();
-  const lvl = Math.max(modulePerms?.marketing?.leitura || 0, modulePerms?.marketing?.escrita || 0);
-  const podeTriar = isAdmin || lvl >= 5;
-
-  const [campanhas, setCampanhas] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [tipos, setTipos] = useState([]);
-  const [membros, setMembros] = useState([]);
-  const [sel, setSel] = useState(null);
-
-  const carregar = useCallback(async () => {
-    setLoading(true);
-    try {
-      const [c, e, m] = await Promise.all([
-        api.campanhas.list('triagem'),
-        api.etiquetas(),
-        api.membros(),
-      ]);
-      setCampanhas(c || []);
-      setTipos((e?.tipos || []).filter(t => t.ativo !== false));
-      setMembros(m || []);
-    } catch (err) { toast.error(err.message || 'Erro ao carregar triagem'); }
-    finally { setLoading(false); }
-  }, []);
-  useEffect(() => { carregar(); }, [carregar]);
-
-  if (!podeTriar) {
-    return (
-      <div className="p-6">
-        <Card className="p-6 text-center max-w-md mx-auto">
-          <p className="text-muted-foreground">Acesso restrito · só a coordenação do Marketing tria as demandas.</p>
-        </Card>
-      </div>
-    );
-  }
-
-  return (
-    <div className="p-4 md:p-6 space-y-4 md:space-y-6">
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-        <div>
-          <h1 className="text-2xl font-bold text-foreground flex items-center gap-2">
-            <Inbox className="h-6 w-6 text-primary" /> Triagem
-          </h1>
-          <p className="text-sm text-muted-foreground mt-1">
-            Demandas (dores) aguardando você definir a solução e os entregáveis.
-          </p>
-        </div>
-        <MarketingNav />
-      </div>
-
-      {loading ? (
-        <Loader2 className="h-6 w-6 animate-spin mx-auto my-12 text-muted-foreground" />
-      ) : campanhas.length === 0 ? (
-        <Card className="p-8 text-center text-sm text-muted-foreground">
-          Nenhuma demanda na triagem. Quando alguém abrir uma solicitação de Marketing (e o diretor aprovar), ela cai aqui.
-        </Card>
-      ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
-          {campanhas.map(c => (
-            <Card key={c.id} className={`p-4 space-y-2 cursor-pointer hover:border-primary/50 transition-colors ${c.eh_urgente ? 'border-l-4 border-l-red-500' : ''}`} onClick={() => setSel(c)}>
-              <div className="flex items-start justify-between gap-2">
-                <p className="font-semibold text-sm">{c.titulo}</p>
-                {c.eh_urgente && <Badge className="shrink-0 bg-red-500/15 text-red-700 dark:text-red-400 gap-1"><Zap className="h-3 w-3" />Urgente</Badge>}
-              </div>
-              {c.dor_descricao && <p className="text-xs text-muted-foreground line-clamp-3">{c.dor_descricao}</p>}
-              <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground pt-1">
-                {c.solicitante_nome && <span className="flex items-center gap-1"><User2 className="h-3 w-3" />{c.solicitante_nome}</span>}
-                {fmtData(c.data_pedida) && <span className="flex items-center gap-1"><CalendarClock className="h-3 w-3" />pediu p/ {fmtData(c.data_pedida)}</span>}
-              </div>
-              <Button size="sm" variant="ghost" className="w-full justify-between mt-1" onClick={(ev) => { ev.stopPropagation(); setSel(c); }}>
-                Triar <ArrowRight className="h-4 w-4" />
-              </Button>
-            </Card>
-          ))}
-        </div>
-      )}
-
-      <TriagemSheet campanha={sel} tipos={tipos} membros={membros} onClose={() => setSel(null)} onChanged={carregar} />
-    </div>
-  );
-}
-
-function TriagemSheet({ campanha, tipos, membros, onClose, onChanged }) {
+export default function MarketingTriagemSheet({ campanha, tipos, membros, onClose, onChanged }) {
   const open = !!campanha;
   const [detalhe, setDetalhe] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -161,7 +78,7 @@ function TriagemSheet({ campanha, tipos, membros, onClose, onChanged }) {
     finally { setSalvando(false); }
   }
 
-  // Aviso de capacidade: simula o novo entregável na agenda do dono (máx slots/dia · Fase 4)
+  // Aviso de capacidade: simula o novo entregável na agenda do dono (máx slots/dia · só dias úteis)
   useEffect(() => {
     const { atribuido_a, data_inicio, data_fim, pode_paralelo } = novo;
     if (!atribuido_a || !data_inicio || !data_fim || data_fim < data_inicio) { setCapInfo(null); return; }
@@ -320,8 +237,7 @@ function TriagemSheet({ campanha, tipos, membros, onClose, onChanged }) {
             </div>
 
             <p className="text-xs text-muted-foreground">
-              Ao adicionar o 1º entregável, a campanha sai da triagem e os cards entram na fila de produção.
-              O alinhamento com a carga da equipe e o limite de 3/semana vêm no planner (próxima fase).
+              Ao adicionar o 1º entregável, a campanha sai da triagem e os cards entram no Backlog de produção.
             </p>
           </div>
         )}
