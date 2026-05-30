@@ -70,8 +70,14 @@ abre a Triagem, define a solução e cria os **entregáveis** (cards de produç�
 - **Migration**: `marketing_kanban_cards` += `data_inicio`, `data_fim` (datas de produção do entregável).
 - **Triagem** (`MarketingTriagem.jsx`): mostra **a data que o cliente pediu** + **urgência**; cada entregável tem **início+fim** (duração derivada) e mostra o **dono**; **entrega interna** = max(data_fim); o prazo de entrega tem "seguir a data pedida" e, se o Pedro mudar, **o solicitante é notificado** (`PATCH /campanhas` dispara `marketing_prazo_ajustado`).
 - **Backend**: `GET /campanhas` e `/campanhas/:id` retornam `data_pedida` + `eh_urgente` (da solicitação) e o `dono_nome` de cada entregável; `POST /campanhas/:id/cards` aceita `data_inicio`/`data_fim`.
-- **Pendente p/ Fase 4 (planner):** alinhar os entregáveis com a carga da equipe + regra de **3/semana** (capacidade visual). **Fase 5 (limpeza):** remover `MKT_PUBLICO_OPCOES`/`URGENCIAS` ociosos no intake.
 - ⚠️ Aplicar a migration antes do merge.
+
+### Fase 4 · fundação da capacidade (slots/dia · 2026-05-30 · SEM migration)
+Primeira parte do planner — a régua de **3/dia** já vale na triagem; o calendário arrastável (visual) vem na Fase 4b.
+- **Backend** `GET /marketing/capacidade-dia?membro_id&inicio&fim` → ocupação de slots por dia do membro, a partir dos intervalos `data_inicio→data_fim` dos cards ativos (paralela conta 1/dia · foco enche o dia). `slots_dia` vem de `marketing_membros` (default 3).
+- **Triagem** (`MarketingTriagem.jsx`): ao definir dono + início + fim do entregável, simula a agenda do dono e avisa **"sobrecarrega em N/total dia(s)"** (âmbar) ou **"cabe (≤ slots/dia)"** (verde). Não bloqueia — o Pedro decide.
+- `api.capacidadeDia(membroId, inicio, fim)`.
+- **Pendente Fase 4b (planner visual):** calendário arrastável por pessoa/mês, barras contínuas multi-dia, "levar tudo", auto-rascunho, flag de recorrente; fim de semana (Aline domingo) refina aqui. **Fase 5 (limpeza):** remover `MKT_PUBLICO_OPCOES`/`URGENCIAS` ociosos no intake.
 
 ## /novosite · prévia da home do novo site público (2026-05-30)
 
