@@ -16,8 +16,8 @@ import { NS_CSS } from './novosite/styles';
 
 const VALORES = [
   { n: '01', nome: 'Seguir a Jesus', ref: 'Efésios 2:8' },
-  { n: '02', nome: 'Investir tempo com Deus', ref: 'João 15:5' },
-  { n: '03', nome: 'Conectar-se com pessoas', ref: 'Hebreus 10:24-25' },
+  { n: '02', nome: 'Conectar-se com pessoas', ref: 'Hebreus 10:24-25' },
+  { n: '03', nome: 'Investir tempo com Deus', ref: 'João 15:5' },
   { n: '04', nome: 'Servir em comunidade', ref: 'Gálatas 5:13-14' },
   { n: '05', nome: 'Viver generosamente', ref: '2 Coríntios 9:7' },
 ];
@@ -50,7 +50,7 @@ const GALERIA = [
   { src: 'g-palavra.webp', alt: 'Mensagem da Palavra no culto' },
 ];
 
-const MARQUEE = ['Seguir a Jesus', 'Investir tempo com Deus', 'Conectar-se com pessoas', 'Servir em comunidade', 'Viver generosamente'];
+const MARQUEE = ['Seguir a Jesus', 'Conectar-se com pessoas', 'Investir tempo com Deus', 'Servir em comunidade', 'Viver generosamente'];
 
 function JornadaCard({ item }: { item: typeof JORNADA[number] }) {
   const go = useGo();
