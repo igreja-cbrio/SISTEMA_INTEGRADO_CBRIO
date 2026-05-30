@@ -635,6 +635,7 @@ const CSS = `
 .ns-cta{ overflow:hidden; isolation:isolate; text-align:center; }
 .ns-cta-watermark{ position:absolute; left:50%; top:50%; transform:translate(-50%,-50%); width:60vw; max-width:560px; color:#fff; opacity:.06; z-index:0; }
 .ns-cta .ns-container{ position:relative; z-index:1; }
+.ns-cta .ns-hero-actions{ justify-content:center; }
 
 /* footer */
 .ns-footer{ background:var(--cb-ink); color:rgba(255,255,255,.78); padding-block:clamp(3rem,6vw,5rem) 2rem; }

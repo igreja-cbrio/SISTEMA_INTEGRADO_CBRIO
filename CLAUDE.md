@@ -46,6 +46,8 @@ originalmente pensado pra Astro · adaptado num único componente React.
   `.ns-header .ns-nav-link` e `.ns-header .ns-logo` forçam branco + scrim escuro
   no topo (`.ns-header::before`, some ao rolar). Mais respiro no hero
   (título→"Mt 28:19") e na visita (legenda→horários). ⚠️ Não regredir o menu branco.
+  Botões do CTA final centralizados (`.ns-cta .ns-hero-actions{justify-content:center}` ·
+  `.ns-center-x` só dá margin auto, que não centraliza itens flex).
 
 ## Solicitações · fix da ENTRADA do fluxo (validação E2E Marketing · 2026-05-28)
 
