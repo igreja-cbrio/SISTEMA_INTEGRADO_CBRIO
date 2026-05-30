@@ -84,6 +84,14 @@ Primeira parte do planner — a régua de **3/dia** já vale na triagem; o calen
 - **Backend:** `GET /marketing/planner?inicio&fim` (membros + barras); `PATCH /cards/:id` agora aceita `data_inicio`/`data_fim`/`pode_paralelo` (admin) e recalcula `duracao_dias`. Helper `diasUteisInclusive` (DRY, POST + PATCH). `api.planner`.
 - **Pendente (incrementos 4b):** "levar tudo" (mover campanha inteira), auto-rascunho na triagem, flag recorrente "é demanda de calendário", exceção da Aline (domingo). **Fase 5 (limpeza):** remover `MKT_PUBLICO_OPCOES`/`URGENCIAS` ociosos no intake.
 
+## Marketing · CONSOLIDAÇÃO em 4 abas (2026-05-30 · aprovada) — "Kanban melhor que o Trello"
+Reduzir o módulo a **Kanban · Planner · Analytics · Admin**. As outras abas somem e renascem no Kanban: **Triagem**→1ª coluna · **Fila**→ordenação dentro da coluna · **Ciclo Criativo**→ÉPICO de evento · **Calendário**→descontinuado (Planner é o sucessor). Decisões (Marcos): épico = agrupa **cards reais** (subdemanda = card com dono/data/fase, entra no Planner; épico é a visão por fase com %), **NÃO** checklist-style · **tudo é campanha** (1 peça = campanha de 1 entregável). Faseamento: **F-A** 6 colunas → **F-B** triagem no card (remove aba Triagem+Fila) → **F-C** épico (remove Ciclo) → **F-D** limpeza (remove Calendário; recorrentes/detalhe→Planner) → **F-E** acabamento + KPIs.
+
+### F-A · régua de 6 colunas no Kanban (2026-05-30 · SEM migration)
+- `MarketingKanban.jsx`: 4 colunas → **6** (Triagem→Backlog→Pesquisa→Produção→Revisão→Concluído), em **scroll horizontal** (estilo Trello). Constante `ESTADOS` ganhou `aceita: []` agrupando o canônico novo + o legado (backlog←fila, producao←em_producao, revisao←aguardando_solicitante) — **sem migration**; o drop grava o canônico novo (CHECK da F0 já aceita os 6).
+- Cards ordenados na coluna por **urgente → `ordem_fila`** (absorve a visão da Fila). Card mostra o **prazo de produção** (`prazo_producao`/`data_fim`, fallback no legado); SLA individual passou a contar `producao` também.
+- **Pendente F-A:** reordenar arrastando na vertical (reprioritizar) + 2º prazo (entrega da campanha) no card — entram com a integração de campanha (F-B/F-C). Coluna **Triagem fica vazia** até F-B (campanhas ainda na aba Triagem).
+
 ## /novosite · prévia da home do novo site público (2026-05-30)
 
 Ambiente isolado pra testar o redesign do site público **cbrio.com.br** dentro
