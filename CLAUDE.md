@@ -36,8 +36,7 @@ originalmente pensado pra Astro · adaptado num único componente React.
   `public/novosite/brand/`.
 - **Rota** em `src/App.tsx` (seção "Rotas publicas", lazy). Sem backend/migration ·
   rota de frontend (Vercel reescreve não-`/api` pra `index.html`).
-- **Pendente** (placeholders pra confirmar): endereço, redes sociais, telefone,
-  e-mail de contato; e se os números 2021→2025 vão públicos.
+- **Pendente:** só o link de inscrição do **Next** (Marcos confirma depois · hoje fica "Em breve" sem link).
 - **Ajustes pós-prints (2026-05-30):** galeria virou layout **bento** (1 destaque
   2x2 + apoio · `.ns-gallery-bento`/`.ns-g-feat`); **Jornada com 6 cards** (incluídos
   *Investir tempo com Deus* + *Next*, sem link ainda); **menu sobre o vídeo
@@ -48,6 +47,21 @@ originalmente pensado pra Astro · adaptado num único componente React.
   (título→"Mt 28:19") e na visita (legenda→horários). ⚠️ Não regredir o menu branco.
   Botões do CTA final centralizados (`.ns-cta .ns-hero-actions{justify-content:center}` ·
   `.ns-center-x` só dá margin auto, que não centraliza itens flex).
+- **Links ligados + página Quem Somos (2026-05-30):** todos os CTAs/rodapé têm destino.
+  Refator: chrome/estilos extraídos p/ `src/pages/public/novosite/shared.tsx` (SVGs,
+  `LINKS`, `NAV`, `SiteHeader`, `SiteFooter`, `Action`, `useChrome`, `useGo`,
+  `useHashScroll`) + `novosite/styles.ts` (`NS_CSS`) — usados pela home e por
+  **`/novosite/quem-somos`** (página nova · rota em `App.tsx` · história/missão/stats
+  da copy "When Culture", fotos atuais). Destinos: membro/grupos/batismo/voluntariado →
+  `cbrio.org/...`; assistir/online + footer Assista → `cbrio.tv`; Instagram →
+  `instagram.com/igrejacbrio/`; YouTube → `cbrio.tv`; **contato = CBZap**
+  `wa.me/5521997567770`; "Como chegar" → Google Maps (busca "CBRio"); endereço
+  Av. das Américas 7907 · Open Mall (subsolo). "Comece aqui"/"Quarta com Deus" →
+  scroll `#visita`. Agenda ganhou **sábado: Bridge 17h (teens) · AMI 20h (jovens)**.
+  Nav cross-page via `useGo` (âncora rola na página atual; senão navega p/
+  `/novosite#secao` e `useHashScroll` rola no destino). ⚠️ Botões agora são `<a>` →
+  regras `.ns-btn.ns-btn-*` usam **dupla classe** p/ a cor vencer o reset `.ns a`
+  (mesma armadilha do menu · não regredir).
 
 ## Solicitações · fix da ENTRADA do fluxo (validação E2E Marketing · 2026-05-28)
 
