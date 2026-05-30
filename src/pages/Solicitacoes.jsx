@@ -27,18 +27,6 @@ const CATEGORIAS = [
   { value: 'outro',          label: 'Outro',               color: 'bg-muted text-muted-foreground',                         areaResp: null },
 ];
 
-// Marketing · intake por DOR (Redesenho 2026-05-30): o solicitante NAO escolhe
-// mais o entregavel · descreve a dor + o publico. O Pedro tria e define a peca.
-const MKT_PUBLICO_OPCOES = [
-  { value: 'voluntarios', label: 'Voluntários' },
-  { value: 'membros',     label: 'Membros' },
-  { value: 'visitantes',  label: 'Visitantes / novos' },
-  { value: 'lideranca',   label: 'Liderança' },
-  { value: 'comunidade',  label: 'Comunidade externa' },
-  { value: 'igreja_toda', label: 'Igreja toda' },
-  { value: 'outro',       label: 'Outro' },
-];
-
 // Areas do solicitante em 2 niveis: macro -> sub
 const AREAS_MACRO = [
   { value: 'ministerial', label: 'Ministerial', subs: [
