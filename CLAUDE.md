@@ -100,6 +100,9 @@ Reduzir o módulo a **Kanban · Planner · Analytics · Admin**. As outras abas 
 - Card: **avatar** (inicial do dono), **mini-barra de progresso** do checklist, **2º prazo** (entrega da campanha) — `enrichCards` agora traz `checklist {feitos,total}` + `campanha {prazo_entrega}`. Realtime do Kanban também escuta `marketing_campanhas` (coluna Triagem auto-atualiza). `MKT_PUBLICO_OPCOES` removido do intake (`URGENCIAS` fica, ainda usado).
 - **Resta (sessão dedicada, com qualidade):** (1) **reordenar-arrastando vertical** no Kanban (drag HTML5 · NÃO-crítico, ordenação urgente→ordem_fila já cobre). (2) **KPIs** — infra pronta (MKT-PRAZO/LEAD/THROUGHPUT/DEM-CAP em `kpi_indicadores_taticos`, `/analytics/kpis` ↔ `kpi_valores_calculados`, recalc por trigger `tg_marketing_cards_recalc_kpis`); **falta** a coluna `entregue_em` (migration + setá-la no trigger `fn_marketing_cards_estado_ts` ao virar concluído + backfill) + os coletores em `backend/services/kpiAutoCollector.js`. ⚠️ decisão do Marcos: **DEM-CAP em slots ou horas?** (coletor atual usa horas). `fn_marketing_estimar_prazo` = **deprecar, não dropar** (ainda usada em /solicitacoes via `/marketing/estimar`).
 
+### UI Trello-like no Kanban (2026-05-30 · pedido do Marcos · sem migration)
+Repaginação visual da aba (mantém toda a lógica): **listas com fundo cinza** (`bg-muted/50`, `rounded-xl`) + **bolinha de cor** por coluna (`ESTADOS.dot`); **cards estilo Trello** = `<div>` branco arredondado com sombra, **etiquetas em barras coloridas no topo** (componente `Etiqueta`, cor de `etiqueta_tipo`/`destino`/fase), **faixa de prioridade** no topo (urgente rosa / revisão âmbar), badges de meta (prazo · checklist · SLA · 🚩 entrega) e **avatar redondo** (inicial). `CampanhaCard` no mesmo estilo. Objetivo: o Pedro sentir o board do Trello dele.
+
 ## /novosite · prévia da home do novo site público (2026-05-30)
 
 Ambiente isolado pra testar o redesign do site público **cbrio.com.br** dentro
