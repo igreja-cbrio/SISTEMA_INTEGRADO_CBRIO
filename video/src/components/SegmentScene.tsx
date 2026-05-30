@@ -1,6 +1,6 @@
-import { AbsoluteFill, interpolate, useCurrentFrame } from "remotion";
+import { AbsoluteFill, interpolate, spring, useCurrentFrame, useVideoConfig } from "remotion";
 import { COLORS, FONT } from "../theme";
-import { CameraVideo, type CamKey } from "./CameraVideo";
+import { FramedScreen, type CamKey } from "./CameraVideo";
 
 export type Segment = {
   key: string;
@@ -17,7 +17,12 @@ const FPS = 30;
 
 export const SegmentScene: React.FC<{ seg: Segment }> = ({ seg }) => {
   const frame = useCurrentFrame();
+  const { fps } = useVideoConfig();
   const durF = Math.round(seg.dur * FPS);
+
+  // entrada suave da moldura
+  const enter = spring({ frame, fps, config: { damping: 20 } });
+  const screenScale = interpolate(enter, [0, 1], [0.97, 1]);
 
   // legenda entra e sai
   const capIn = interpolate(frame, [6, 22], [0, 1], {
@@ -33,18 +38,26 @@ export const SegmentScene: React.FC<{ seg: Segment }> = ({ seg }) => {
 
   return (
     <AbsoluteFill>
-      <CameraVideo
-        src={seg.src}
-        trimBeforeFrames={Math.round(seg.srcStart * FPS)}
-        cam={seg.cam}
-      />
+      <AbsoluteFill
+        style={{
+          justifyContent: "center",
+          alignItems: "center",
+          transform: `scale(${screenScale})`,
+        }}
+      >
+        <FramedScreen
+          src={seg.src}
+          trimBeforeFrames={Math.round(seg.srcStart * FPS)}
+          cam={seg.cam}
+        />
+      </AbsoluteFill>
 
-      {/* vinheta cinematográfica */}
+      {/* vinheta cinematográfica suave */}
       <AbsoluteFill
         style={{
           pointerEvents: "none",
           background:
-            "radial-gradient(ellipse at 50% 45%, rgba(0,0,0,0) 52%, rgba(4,18,16,0.55) 100%)",
+            "radial-gradient(ellipse at 50% 45%, rgba(0,0,0,0) 62%, rgba(4,18,16,0.4) 100%)",
         }}
       />
 

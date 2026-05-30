@@ -7,7 +7,7 @@ import {
   useVideoConfig,
 } from "remotion";
 import { Background } from "./components/Background";
-import { LogoReveal } from "./components/LogoReveal";
+import { LogoMark } from "./components/LogoMark";
 import { OutroScene } from "./components/OutroScene";
 import { SceneFade } from "./components/SceneFade";
 import { SegmentScene, type Segment } from "./components/SegmentScene";
@@ -19,81 +19,97 @@ export const TOUR_OUTRO_F = 80;
 const REC = "footage/recording.mp4";
 
 // Trechos escolhidos da gravação (sem as partes de loading/transição).
+// cam: hx/hy = ponto de destaque (0..1 na TELA recortada · ~onde o cursor age),
+// hz = zoom de destaque (1 = tela inteira · sobe pouco pra não cortar).
 export const TOUR_SEGMENTS: Omit<Segment, "index">[] = [
   {
     key: "dashboard",
     src: REC,
     srcStart: 8,
-    dur: 6,
-    kicker: "01 / 06",
+    dur: 4,
+    kicker: "01 / 07",
     label: "Painel · Cultura CBRio",
     cam: [
-      { f: 0, fx: 0.5, fy: 0.45, z: 1.5 },
-      { f: 180, fx: 0.5, fy: 0.6, z: 1.95 },
+      { f: 0, hx: 0.52, hy: 0.5, hz: 1.0 },
+      { f: 55, hx: 0.52, hy: 0.6, hz: 1.0 },
+      { f: 120, hx: 0.52, hy: 0.66, hz: 1.26 },
     ],
   },
   {
     key: "semanal",
     src: REC,
-    srcStart: 18,
-    dur: 7,
-    kicker: "02 / 06",
+    srcStart: 17,
+    dur: 4.5,
+    kicker: "02 / 07",
     label: "Dashboard semanal · frequência & arrecadação",
     cam: [
-      { f: 0, fx: 0.5, fy: 0.5, z: 1.5 },
-      { f: 110, fx: 0.5, fy: 0.5, z: 1.85 },
-      { f: 210, fx: 0.5, fy: 0.62, z: 1.9 },
+      { f: 0, hx: 0.52, hy: 0.45, hz: 1.0 },
+      { f: 70, hx: 0.5, hy: 0.5, hz: 1.18 },
+      { f: 135, hx: 0.5, hy: 0.82, hz: 1.28 },
     ],
   },
   {
     key: "online",
     src: REC,
     srcStart: 60,
-    dur: 7,
-    kicker: "03 / 06",
+    dur: 6,
+    kicker: "03 / 07",
     label: "Online · performance por culto",
     cam: [
-      { f: 0, fx: 0.45, fy: 0.45, z: 1.5 },
-      { f: 210, fx: 0.4, fy: 0.62, z: 1.95 },
+      { f: 0, hx: 0.46, hy: 0.45, hz: 1.0 },
+      { f: 180, hx: 0.42, hy: 0.58, hz: 1.26 },
     ],
   },
   {
     key: "financeiro",
     src: REC,
     srcStart: 72,
-    dur: 8,
-    kicker: "04 / 06",
+    dur: 6,
+    kicker: "04 / 07",
     label: "Financeiro · visão do mês",
     cam: [
-      { f: 0, fx: 0.5, fy: 0.42, z: 1.5 },
-      { f: 120, fx: 0.5, fy: 0.52, z: 1.8 },
-      { f: 240, fx: 0.4, fy: 0.62, z: 1.92 },
+      { f: 0, hx: 0.5, hy: 0.4, hz: 1.0 },
+      { f: 90, hx: 0.4, hy: 0.52, hz: 1.26 },
+      { f: 180, hx: 0.29, hy: 0.78, hz: 1.28 },
     ],
   },
   {
     key: "rh",
     src: REC,
     srcStart: 88,
-    dur: 7,
-    kicker: "05 / 06",
+    dur: 4,
+    kicker: "05 / 07",
     label: "RH · diretório de colaboradores",
     cam: [
-      { f: 0, fx: 0.5, fy: 0.42, z: 1.5 },
-      { f: 90, fx: 0.57, fy: 0.42, z: 1.85 },
-      { f: 210, fx: 0.4, fy: 0.6, z: 1.85 },
+      { f: 0, hx: 0.5, hy: 0.42, hz: 1.0 },
+      { f: 70, hx: 0.62, hy: 0.31, hz: 1.26 },
+      { f: 120, hx: 0.4, hy: 0.55, hz: 1.24 },
+    ],
+  },
+  {
+    key: "integracao",
+    src: REC,
+    srcStart: 94,
+    dur: 6,
+    kicker: "06 / 07",
+    label: "Integração · cultos & decisões",
+    cam: [
+      { f: 0, hx: 0.52, hy: 0.4, hz: 1.0 },
+      { f: 80, hx: 0.52, hy: 0.22, hz: 1.22 },
+      { f: 180, hx: 0.54, hy: 0.62, hz: 1.28 },
     ],
   },
   {
     key: "membresia",
     src: REC,
-    srcStart: 118,
+    srcStart: 120,
     dur: 9,
-    kicker: "06 / 06",
+    kicker: "07 / 07",
     label: "Membresia · 1.000 membros",
     cam: [
-      { f: 0, fx: 0.5, fy: 0.39, z: 1.6 },
-      { f: 140, fx: 0.42, fy: 0.46, z: 1.9 },
-      { f: 270, fx: 0.34, fy: 0.56, z: 2.1 },
+      { f: 0, hx: 0.52, hy: 0.32, hz: 1.0 },
+      { f: 130, hx: 0.42, hy: 0.4, hz: 1.2 },
+      { f: 270, hx: 0.34, hy: 0.55, hz: 1.3 },
     ],
   },
 ];
@@ -109,8 +125,8 @@ const Intro: React.FC = () => {
   const s = spring({ frame, fps, config: { damping: 16 } });
   const y = interpolate(s, [0, 1], [30, 0]);
   return (
-    <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 22 }}>
-      <LogoReveal size={150} />
+    <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 30 }}>
+      <LogoMark size={210} />
       <div
         style={{
           fontFamily: FONT,

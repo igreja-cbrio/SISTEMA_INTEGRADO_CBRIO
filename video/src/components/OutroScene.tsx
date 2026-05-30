@@ -5,7 +5,7 @@ import {
   useVideoConfig,
 } from "remotion";
 import { COLORS, FONT } from "../theme";
-import { LogoReveal } from "./LogoReveal";
+import { LogoMark } from "./LogoMark";
 
 export const OutroScene: React.FC<{ site: string }> = ({ site }) => {
   const frame = useCurrentFrame();
@@ -32,7 +32,7 @@ export const OutroScene: React.FC<{ site: string }> = ({ site }) => {
         transform: `scale(${scale})`,
       }}
     >
-      <LogoReveal size={180} />
+      <LogoMark size={180} />
       <div
         style={{
           fontFamily: FONT,
