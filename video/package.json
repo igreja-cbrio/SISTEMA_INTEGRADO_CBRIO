@@ -9,6 +9,7 @@
     "preview": "remotion studio",
     "render": "remotion render CbrioIntro out/video.mp4",
     "render:telas": "remotion render ScreensShowcase out/telas-do-sistema.mp4",
+    "render:tour": "remotion render ScreenTour out/tour-cbrio.mp4",
     "still": "remotion still CbrioIntro out/poster.png",
     "still:telas": "remotion still ScreensShowcase out/telas.png --frame=120",
     "upgrade": "remotion upgrade"

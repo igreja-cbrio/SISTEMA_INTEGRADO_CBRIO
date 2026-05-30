@@ -1,6 +1,7 @@
 import { Composition } from "remotion";
 import { CbrioIntro } from "./CbrioIntro";
 import { ScreensShowcase, showcaseDuration } from "./ScreensShowcase";
+import { ScreenTour, tourDuration } from "./ScreenTour";
 import type { Screen } from "./components/ScreenScene";
 import manifest from "./screens-manifest.json";
 
@@ -42,6 +43,17 @@ export const RemotionRoot: React.FC = () => {
           screens: SCREENS,
           site: "cbrio.com.br",
         }}
+      />
+
+      {/* Tour animado em cima da gravação de tela (zoom nos cliques) */}
+      <Composition
+        id="ScreenTour"
+        component={ScreenTour}
+        durationInFrames={tourDuration()}
+        fps={FPS}
+        width={WIDTH}
+        height={HEIGHT}
+        defaultProps={{ site: "cbrio.com.br" }}
       />
     </>
   );

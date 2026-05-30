@@ -94,6 +94,30 @@ cd video && npm run render:telas
 - **Ritmo**: `INTRO_FRAMES`, `PER_SCREEN_FRAMES`, `OUTRO_FRAMES` em
   `src/ScreensShowcase.tsx`.
 
+## Vídeo "ScreenTour" (gravação de tela com câmera animada)
+
+Composição **`ScreenTour`**: pega uma **gravação de tela** real e aplica uma
+câmera animada (zoom/pan nos cliques), cortando as barras pretas da captura,
+com intro, legendas por seção, vinheta e barra de progresso.
+
+```bash
+# 1. coloque a gravação aqui (não versionada):
+#    video/public/footage/recording.mp4
+# 2. renderize:
+npm run render:tour      # gera out/tour-cbrio.mp4
+```
+
+- **Trechos / tempos / textos / zooms**: tudo em `src/ScreenTour.tsx`
+  (`TOUR_SEGMENTS`). Cada segmento tem `srcStart` (segundo na gravação),
+  `dur`, `label` e `cam` (keyframes de câmera: `fx`,`fy` = ponto de foco
+  normalizado 0..1 no quadro 1920x1080, `z` = zoom).
+- A câmera é **limitada** (`WINDOW` em `src/components/CameraVideo.tsx`) pra
+  nunca revelar a barra preta da gravação. Se sua captura tiver a janela em
+  outra posição, ajuste `WINDOW`.
+
+> A gravação (`public/footage/*.mp4`) fica fora do git por ser pesada —
+> coloque a sua no caminho acima antes de renderizar.
+
 ## Renderizar em outro formato
 
 ```bash
