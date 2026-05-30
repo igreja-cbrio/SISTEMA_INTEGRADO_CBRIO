@@ -194,13 +194,9 @@ const TotemKidsParear = lazyWithRetry(() => import('./pages/ministerial/totemKid
 const TotemKidsDisplaySala = lazyWithRetry(() => import('./pages/ministerial/totemKids/TotemKidsDisplaySala'));
 const TotemKidsDisplayFoyer = lazyWithRetry(() => import('./pages/ministerial/totemKids/TotemKidsDisplayFoyer'));
 const MarketingKanban = lazyWithRetry(() => import('./pages/marketing/MarketingKanban'));
-const MarketingCalendario = lazyWithRetry(() => import('./pages/marketing/MarketingCalendario'));
 const MarketingPlanner = lazyWithRetry(() => import('./pages/marketing/MarketingPlanner'));
 const MarketingAdmin = lazyWithRetry(() => import('./pages/marketing/MarketingAdmin'));
 const MarketingAnalytics = lazyWithRetry(() => import('./pages/marketing/MarketingAnalytics'));
-const MarketingFila = lazyWithRetry(() => import('./pages/marketing/MarketingFila'));
-const MarketingCicloCriativo = lazyWithRetry(() => import('./pages/marketing/MarketingCicloCriativo'));
-const MarketingTriagem = lazyWithRetry(() => import('./pages/marketing/MarketingTriagem'));
 const TotemKidsAdmin = lazyWithRetry(() => import('./pages/admin/totemKids/TotemKidsAdmin'));
 const AssistenteIA = lazyWithRetry(() => import('./pages/admin/AssistenteIA'));
 const EventDetail = lazyWithRetry(() => import('./pages/eventos/EventDetail'));

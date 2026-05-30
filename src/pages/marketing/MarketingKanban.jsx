@@ -73,6 +73,7 @@ export default function MarketingKanban() {
   const [fTipo, setFTipo]           = useState('todas');
   const [fDestino, setFDestino]     = useState('todos');
   const [fMembro, setFMembro]       = useState('todos');
+  const [busca, setBusca]           = useState('');
 
   // Detalhe (Drawer)
   const [detail, setDetail]         = useState(null);
@@ -128,9 +129,10 @@ export default function MarketingKanban() {
       if (fTipo    !== 'todas'  && c.etiqueta_tipo_id !== fTipo) return false;
       if (fDestino !== 'todos'  && c.etiqueta_destino_id !== fDestino) return false;
       if (fMembro  !== 'todos'  && c.atribuido_a !== fMembro) return false;
+      if (busca && !(c.titulo || '').toLowerCase().includes(busca.toLowerCase())) return false;
       return true;
     });
-  }, [cards, fOrigem, fTipo, fDestino, fMembro]);
+  }, [cards, fOrigem, fTipo, fDestino, fMembro, busca]);
 
   const colunas = useMemo(() => {
     return ESTADOS.map(e => ({
@@ -239,7 +241,8 @@ export default function MarketingKanban() {
           </SelectContent>
         </Select>
 
-        <Button variant="outline" size="sm" onClick={carregar} className="ml-auto gap-1.5">
+        <Input value={busca} onChange={e => setBusca(e.target.value)} placeholder="Buscar título…" className="h-9 w-[160px] text-sm ml-auto" />
+        <Button variant="outline" size="sm" onClick={carregar} className="gap-1.5">
           <RefreshCw className="h-4 w-4" /> Atualizar
         </Button>
       </div>
