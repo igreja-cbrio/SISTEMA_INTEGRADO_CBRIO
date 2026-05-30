@@ -1124,6 +1124,9 @@ export const marketing = {
   capacidadeDia: (membroId, inicio, fim) =>
     get(`/marketing/capacidade-dia?membro_id=${encodeURIComponent(membroId)}&inicio=${inicio}&fim=${fim}`),
 
+  // Planner (Fase 4b) · membros (raias) + entregaveis (barras) no periodo
+  planner: (inicio, fim) => get(`/marketing/planner?inicio=${inicio}&fim=${fim}`),
+
   // Admin (Spec 009 · nivel 5)
   admin: {
     membros: {

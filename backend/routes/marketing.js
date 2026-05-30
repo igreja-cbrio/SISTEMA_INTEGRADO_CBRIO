@@ -59,6 +59,21 @@ async function meuMembroId(req) {
   return (data || []).map(m => m.id);
 }
 
+// Dias uteis (seg-sex) inclusive entre duas datas YYYY-MM-DD · null se invalido.
+function diasUteisInclusive(inicioStr, fimStr) {
+  if (!inicioStr || !fimStr) return null;
+  let d = new Date(String(inicioStr).slice(0, 10) + 'T00:00:00');
+  const fim = new Date(String(fimStr).slice(0, 10) + 'T00:00:00');
+  if (isNaN(d) || isNaN(fim) || fim < d) return null;
+  let n = 0;
+  while (d <= fim) {
+    const dow = d.getDay();
+    if (dow !== 0 && dow !== 6) n++;
+    d = new Date(d.getTime() + 86400000);
+  }
+  return Math.max(1, n);
+}
+
 async function enrichCards(cards) {
   if (!cards?.length) return cards || [];
 
@@ -399,7 +414,7 @@ router.patch('/cards/:id', authorizeModule('marketing', 3), async (req, res) => 
     if (admin) {
       const { titulo, descricao, etiqueta_tipo_id, etiqueta_destino_id,
               atribuido_a, prazo_preliminar, prazo_confirmado, estado,
-              raia_rapida, motivo_revisao } = req.body || {};
+              raia_rapida, motivo_revisao, data_inicio, data_fim, pode_paralelo } = req.body || {};
       if (titulo !== undefined) update.titulo = titulo;
       if (descricao !== undefined) update.descricao = descricao;
       if (etiqueta_tipo_id !== undefined) update.etiqueta_tipo_id = etiqueta_tipo_id;
@@ -410,6 +425,16 @@ router.patch('/cards/:id', authorizeModule('marketing', 3), async (req, res) => 
       if (estado !== undefined) update.estado = estado;
       if (raia_rapida !== undefined) update.raia_rapida = !!raia_rapida;
       if (motivo_revisao !== undefined) update.motivo_revisao = motivo_revisao;
+      // Planner (Fase 4b): arrastar/realocar a barra altera as datas do entregavel
+      if (data_inicio !== undefined) update.data_inicio = data_inicio;
+      if (data_fim !== undefined) update.data_fim = data_fim;
+      if (pode_paralelo !== undefined) update.pode_paralelo = !!pode_paralelo;
+      if (data_inicio !== undefined || data_fim !== undefined) {
+        const dd = diasUteisInclusive(
+          data_inicio !== undefined ? data_inicio : atual.data_inicio,
+          data_fim !== undefined ? data_fim : atual.data_fim);
+        if (dd) update.duracao_dias = dd;
+      }
     } else {
       // Produtor pode mover estado · proibido pular pra "concluido"
       // direto sem passar por aguardando_solicitante (definicao do fluxo).
@@ -1840,20 +1865,7 @@ router.post('/campanhas/:id/cards', authorizeModule('marketing', 5), async (req,
       .from('marketing_campanhas').select('id, status').eq('id', req.params.id).is('deleted_at', null).maybeSingle();
     if (!camp) return res.status(404).json({ error: 'Campanha nao encontrada' });
     // duracao em DIAS UTEIS derivada de inicio/fim (inclusivo · pula sab/dom)
-    let dur = null;
-    if (data_inicio && data_fim) {
-      let d = new Date(data_inicio + 'T00:00:00');
-      const fim = new Date(data_fim + 'T00:00:00');
-      if (!isNaN(d) && !isNaN(fim) && fim >= d) {
-        let n = 0;
-        while (d <= fim) {
-          const dow = d.getDay();
-          if (dow !== 0 && dow !== 6) n++;
-          d = new Date(d.getTime() + 86400000);
-        }
-        dur = Math.max(1, n);
-      }
-    }
+    const dur = diasUteisInclusive(data_inicio, data_fim);
     const { data, error } = await supabase
       .from('marketing_kanban_cards')
       .insert({
@@ -1922,6 +1934,50 @@ router.get('/capacidade-dia', authorizeModule('marketing', 1), async (req, res) 
       }
     }
     res.json({ slots_dia, dias });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ─── Planner (Fase 4b · 2026-05-30) ─────────────────────────────────────────
+// Membros (raias) + entregaveis com intervalo (barras) que cruzam [inicio, fim].
+// O front desenha as barras por dia util e permite arrastar (PATCH /cards/:id).
+router.get('/planner', authorizeModule('marketing', 1), async (req, res) => {
+  try {
+    const { inicio, fim } = req.query;
+    if (!inicio || !fim) return res.status(400).json({ error: 'inicio e fim obrigatorios' });
+    const { data: membrosRaw } = await supabase
+      .from('marketing_membros')
+      .select('id, profile_id, habilidade, nome_display, slots_dia')
+      .eq('ativo', true).is('deleted_at', null);
+    const profIds = [...new Set((membrosRaw || []).map(m => m.profile_id).filter(Boolean))];
+    let profMap = {};
+    if (profIds.length) {
+      const { data: profs } = await supabase.from('profiles').select('id, name').in('id', profIds);
+      profMap = Object.fromEntries((profs || []).map(p => [p.id, p.name]));
+    }
+    const membros = (membrosRaw || []).map(m => ({
+      id: m.id, slots_dia: m.slots_dia || 3, habilidade: m.habilidade,
+      nome: profMap[m.profile_id] || m.nome_display || '(sem nome)',
+    }));
+    const { data: cardsRaw, error } = await supabase
+      .from('marketing_kanban_cards')
+      .select('id, titulo, atribuido_a, data_inicio, data_fim, pode_paralelo, estado, campanha_id, etiqueta_tipo_id')
+      .is('deleted_at', null).neq('estado', 'concluido')
+      .not('data_inicio', 'is', null).not('data_fim', 'is', null).not('atribuido_a', 'is', null)
+      .lte('data_inicio', fim).gte('data_fim', inicio);
+    if (error) throw error;
+    const tipoIds = [...new Set((cardsRaw || []).map(c => c.etiqueta_tipo_id).filter(Boolean))];
+    let corMap = {};
+    if (tipoIds.length) {
+      const { data: tipos } = await supabase.from('marketing_etiquetas_tipo').select('id, cor').in('id', tipoIds);
+      corMap = Object.fromEntries((tipos || []).map(t => [t.id, t.cor]));
+    }
+    const cards = (cardsRaw || []).map(c => ({
+      id: c.id, titulo: c.titulo, atribuido_a: c.atribuido_a,
+      data_inicio: c.data_inicio, data_fim: c.data_fim,
+      pode_paralelo: c.pode_paralelo, estado: c.estado, campanha_id: c.campanha_id,
+      cor: corMap[c.etiqueta_tipo_id] || null,
+    }));
+    res.json({ membros, cards });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
