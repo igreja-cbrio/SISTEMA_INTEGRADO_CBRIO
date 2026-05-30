@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
 import { marketing as api } from '../../api';
 import MarketingNav from './MarketingNav';
+import MarketingTriagemSheet from './MarketingTriagemSheet';
 import { supabase } from '../../supabaseClient';
 import { Badge } from '../../components/ui/badge';
 import { Button } from '../../components/ui/button';
@@ -78,17 +79,23 @@ export default function MarketingKanban() {
   // Dialog nova task interna
   const [novaOpen, setNovaOpen]     = useState(false);
 
+  // Triagem embutida (consolidação F-B): campanhas-dor caem na 1ª coluna
+  const [campanhasTriagem, setCampanhasTriagem] = useState([]);
+  const [triagemSel, setTriagemSel] = useState(null);
+
   const carregar = useCallback(async () => {
     try {
-      const [c, e, m] = await Promise.all([
+      const [c, e, m, camp] = await Promise.all([
         api.cards(),
         api.etiquetas(),
         api.membros(),
+        api.campanhas.list('triagem').catch(() => []),
       ]);
       setCards(Array.isArray(c) ? c : []);
       setTipos(e.tipos || []);
       setDestinos(e.destinos || []);
       setMembros(m || []);
+      setCampanhasTriagem(Array.isArray(camp) ? camp : []);
     } catch (err) {
       toast.error(err.message || 'Erro ao carregar Kanban');
     } finally {
@@ -236,14 +243,24 @@ export default function MarketingKanban() {
       ) : (
         <div className="flex gap-4 overflow-x-auto pb-2">
           {colunas.map(col => (
-            <KanbanColumn
-              key={col.key}
-              col={col}
-              isCoordenador={isCoordenador}
-              currentProfileId={profile?.id}
-              onClickCard={(c) => setDetail(c)}
-              onMudarEstado={mudarEstado}
-            />
+            col.key === 'triagem' ? (
+              <TriagemColumn
+                key="triagem"
+                col={col}
+                campanhas={campanhasTriagem}
+                isCoordenador={isCoordenador}
+                onClickCampanha={(c) => setTriagemSel(c)}
+              />
+            ) : (
+              <KanbanColumn
+                key={col.key}
+                col={col}
+                isCoordenador={isCoordenador}
+                currentProfileId={profile?.id}
+                onClickCard={(c) => setDetail(c)}
+                onMudarEstado={mudarEstado}
+              />
+            )
           ))}
         </div>
       )}
@@ -256,6 +273,14 @@ export default function MarketingKanban() {
         destinos={destinos}
         membros={membros}
         isCoordenador={isCoordenador}
+      />
+
+      <MarketingTriagemSheet
+        campanha={triagemSel}
+        tipos={tipos}
+        membros={membros}
+        onClose={() => setTriagemSel(null)}
+        onChanged={() => { carregar(); }}
       />
     </div>
   );
@@ -301,6 +326,64 @@ function KanbanColumn({ col, isCoordenador, currentProfileId, onClickCard, onMud
         </div>
       </ScrollArea>
     </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// Coluna Triagem · campanhas-dor aguardando o Pedro definir a solução
+// ═══════════════════════════════════════════════════════════════════════
+function TriagemColumn({ col, campanhas, isCoordenador, onClickCampanha }) {
+  return (
+    <div className="flex flex-col rounded-lg shrink-0 w-[290px]">
+      <div className={`flex items-center gap-2 pb-3 mb-3 border-b-2 ${col.color.replace('border-t-', 'border-b-')}`}>
+        <col.icon className="h-4 w-4 text-muted-foreground" />
+        <span className="text-sm font-semibold text-foreground">{col.label}</span>
+        <Badge variant="secondary" className="ml-auto text-xs">{campanhas.length}</Badge>
+      </div>
+      <ScrollArea className="flex-1 max-h-[calc(100vh-340px)] md:max-h-[calc(100vh-300px)]">
+        <div className="space-y-3 pr-1 min-h-[60px]">
+          {campanhas.length === 0 && (
+            <p className="text-xs text-muted-foreground text-center py-8">
+              {isCoordenador ? 'Nada pra triar' : 'Sem demandas'}
+            </p>
+          )}
+          {campanhas.map(c => (
+            <CampanhaCard key={c.id} campanha={c} clicavel={isCoordenador} onClick={() => isCoordenador && onClickCampanha(c)} />
+          ))}
+        </div>
+      </ScrollArea>
+    </div>
+  );
+}
+
+function CampanhaCard({ campanha: c, onClick, clicavel }) {
+  return (
+    <Card
+      className={`p-3 border-l-4 transition-shadow ${c.eh_urgente ? 'border-l-rose-500 bg-rose-500/5' : 'border-l-pink-500'} ${clicavel ? 'cursor-pointer hover:shadow-md' : ''}`}
+      onClick={onClick}
+    >
+      <div className="flex items-start justify-between gap-2 mb-1">
+        <Badge className="text-[10px] px-1.5 py-0.5 bg-pink-500/15 text-pink-700 dark:text-pink-400">Campanha</Badge>
+        {c.eh_urgente && (
+          <Badge className="text-[10px] px-1.5 py-0.5 bg-rose-500/15 text-rose-700 dark:text-rose-400 gap-0.5">
+            <Zap className="h-3 w-3" /> Urgente
+          </Badge>
+        )}
+      </div>
+      <p className="text-sm font-medium text-foreground line-clamp-2 mb-2">{c.titulo}</p>
+      {c.dor_descricao && <p className="text-[11px] text-muted-foreground line-clamp-2 mb-2">{c.dor_descricao}</p>}
+      <div className="flex items-center justify-between gap-2 text-[10px] text-muted-foreground">
+        <span className="truncate flex items-center gap-1"><User2 className="h-3 w-3" />{c.solicitante_nome || '—'}</span>
+        {c.data_pedida && (
+          <span className="flex items-center gap-0.5 shrink-0"><Calendar className="h-3 w-3" />{fmtData(c.data_pedida)}</span>
+        )}
+      </div>
+      {clicavel && (
+        <div className="mt-2 text-[11px] text-primary flex items-center gap-1 font-medium">
+          Triar <ArrowRight className="h-3 w-3" />
+        </div>
+      )}
+    </Card>
   );
 }
 

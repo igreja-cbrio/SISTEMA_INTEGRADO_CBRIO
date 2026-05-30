@@ -486,9 +486,9 @@ function AppRoutes() {
         <Route path="/marketing/planner" element={<ModuleGuard moduleSlug="marketing" nivelMinimo={1}><Suspense fallback={<Loading />}><MarketingPlanner /></Suspense></ModuleGuard>} />
         <Route path="/marketing/admin" element={<ModuleGuard moduleSlug="marketing" nivelMinimo={5}><Suspense fallback={<Loading />}><MarketingAdmin /></Suspense></ModuleGuard>} />
         <Route path="/marketing/analytics" element={<ModuleGuard moduleSlug="marketing" nivelMinimo={1}><Suspense fallback={<Loading />}><MarketingAnalytics /></Suspense></ModuleGuard>} />
-        <Route path="/marketing/fila" element={<ModuleGuard moduleSlug="marketing" nivelMinimo={1}><Suspense fallback={<Loading />}><MarketingFila /></Suspense></ModuleGuard>} />
+        <Route path="/marketing/fila" element={<Navigate to="/marketing" replace />} />
         <Route path="/marketing/ciclo-criativo" element={<ModuleGuard moduleSlug="marketing" nivelMinimo={5}><Suspense fallback={<Loading />}><MarketingCicloCriativo /></Suspense></ModuleGuard>} />
-        <Route path="/marketing/triagem" element={<ModuleGuard moduleSlug="marketing" nivelMinimo={5}><Suspense fallback={<Loading />}><MarketingTriagem /></Suspense></ModuleGuard>} />
+        <Route path="/marketing/triagem" element={<Navigate to="/marketing" replace />} />
         {/* Redirects das rotas antigas pra nao quebrar bookmarks */}
         <Route path="/ministerial/online" element={<Navigate to="/online" replace />} />
         <Route path="/ministerial/kids" element={<Navigate to="/kids" replace />} />
