@@ -1120,6 +1120,10 @@ export const marketing = {
     criarCard: (id, data) => post(`/marketing/campanhas/${id}/cards`, data),
   },
 
+  // Capacidade por dia (Fase 4 · fundacao) · ocupacao de slots do membro no periodo
+  capacidadeDia: (membroId, inicio, fim) =>
+    get(`/marketing/capacidade-dia?membro_id=${encodeURIComponent(membroId)}&inicio=${inicio}&fim=${fim}`),
+
   // Admin (Spec 009 · nivel 5)
   admin: {
     membros: {

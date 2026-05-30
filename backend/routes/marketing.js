@@ -1874,4 +1874,45 @@ router.post('/campanhas/:id/cards', authorizeModule('marketing', 5), async (req,
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// ─── Capacidade por dia (Fase 4 · fundacao · 2026-05-30) ────────────────────
+// Ocupacao de slots de um membro por dia, a partir dos intervalos data_inicio→
+// data_fim dos cards ativos. Usado na triagem pra avisar sobrecarga (>slots_dia).
+// Paralela conta 1 slot/dia · foco (nao paralela) enche o dia.
+router.get('/capacidade-dia', authorizeModule('marketing', 1), async (req, res) => {
+  try {
+    const { membro_id, inicio, fim } = req.query;
+    if (!membro_id || !inicio || !fim) return res.status(400).json({ error: 'membro_id, inicio e fim obrigatorios' });
+    const { data: membro } = await supabase
+      .from('marketing_membros').select('id, slots_dia').eq('id', membro_id).maybeSingle();
+    const slots_dia = membro?.slots_dia || 3;
+    const { data: cards, error } = await supabase
+      .from('marketing_kanban_cards')
+      .select('id, titulo, data_inicio, data_fim, pode_paralelo')
+      .eq('atribuido_a', membro_id)
+      .is('deleted_at', null)
+      .neq('estado', 'concluido')
+      .not('data_inicio', 'is', null)
+      .not('data_fim', 'is', null)
+      .lte('data_inicio', fim)
+      .gte('data_fim', inicio);
+    if (error) throw error;
+    const lo = new Date(inicio + 'T00:00:00'), hi = new Date(fim + 'T00:00:00');
+    const dias = {};
+    for (const c of (cards || [])) {
+      let d = new Date(c.data_inicio + 'T00:00:00');
+      const end = new Date(c.data_fim + 'T00:00:00');
+      while (d <= end) {
+        if (d >= lo && d <= hi) {
+          const k = d.toISOString().slice(0, 10);
+          if (!dias[k]) dias[k] = { ocupados: 0, cards: [] };
+          dias[k].ocupados += c.pode_paralelo ? 1 : slots_dia;
+          dias[k].cards.push(c.titulo);
+        }
+        d = new Date(d.getTime() + 86400000);
+      }
+    }
+    res.json({ slots_dia, dias });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 module.exports = router;

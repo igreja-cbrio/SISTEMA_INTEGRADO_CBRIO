@@ -117,6 +117,7 @@ function TriagemSheet({ campanha, tipos, membros, onClose, onChanged }) {
   const [meta, setMeta] = useState({ complexidade: '', prazo_entrega: '' });
   const [novo, setNovo] = useState({ titulo: '', etiqueta_tipo_id: '', atribuido_a: '', data_inicio: '', data_fim: '', pode_paralelo: true });
   const [salvando, setSalvando] = useState(false);
+  const [capInfo, setCapInfo] = useState(null);
 
   useEffect(() => {
     if (!campanha) { setDetalhe(null); return; }
@@ -159,6 +160,33 @@ function TriagemSheet({ campanha, tipos, membros, onClose, onChanged }) {
     } catch (e) { toast.error(e.message); }
     finally { setSalvando(false); }
   }
+
+  // Aviso de capacidade: simula o novo entregável na agenda do dono (máx slots/dia · Fase 4)
+  useEffect(() => {
+    const { atribuido_a, data_inicio, data_fim, pode_paralelo } = novo;
+    if (!atribuido_a || !data_inicio || !data_fim || data_fim < data_inicio) { setCapInfo(null); return; }
+    let cancel = false;
+    const h = setTimeout(() => {
+      api.capacidadeDia(atribuido_a, data_inicio, data_fim).then(r => {
+        if (cancel) return;
+        const slots = r?.slots_dia || 3;
+        const dias = r?.dias || {};
+        let cheios = 0, total = 0;
+        let d = new Date(data_inicio + 'T00:00:00');
+        const end = new Date(data_fim + 'T00:00:00');
+        while (d <= end) {
+          const atual = dias[d.toISOString().slice(0, 10)]?.ocupados || 0;
+          if (atual + (pode_paralelo ? 1 : slots) > slots) cheios++;
+          total++;
+          d = new Date(d.getTime() + 86400000);
+        }
+        setCapInfo(cheios > 0
+          ? { cheio: true, msg: `Sobrecarrega o dono em ${cheios}/${total} dia(s) (máx ${slots}/dia). Veja outra data, outro dono, ou marque foco.` }
+          : { cheio: false, msg: `Cabe na agenda do dono (≤ ${slots}/dia).` });
+      }).catch(() => { if (!cancel) setCapInfo(null); });
+    }, 350);
+    return () => { cancel = true; clearTimeout(h); };
+  }, [novo]);
 
   const dataPedida = detalhe?.data_pedida ? detalhe.data_pedida.slice(0, 10) : '';
   // Entrega interna = maior data_fim entre os entregáveis (trabalho em paralelo)
@@ -277,6 +305,11 @@ function TriagemSheet({ campanha, tipos, membros, onClose, onChanged }) {
                   <input type="checkbox" checked={novo.pode_paralelo} onChange={e => setNovo(n => ({ ...n, pode_paralelo: e.target.checked }))} />
                   Pode trabalhar em paralelo (1 slot/dia · não-urgente)
                 </label>
+                {capInfo && (
+                  <p className={`text-xs ${capInfo.cheio ? 'text-amber-600' : 'text-emerald-600'}`}>
+                    {capInfo.cheio ? '⚠️ ' : '✓ '}{capInfo.msg}
+                  </p>
+                )}
                 <Button size="sm" onClick={addEntregavel} disabled={salvando || !novo.titulo.trim()} className="w-full gap-1.5">
                   <Plus className="h-4 w-4" /> Adicionar entregável
                 </Button>
