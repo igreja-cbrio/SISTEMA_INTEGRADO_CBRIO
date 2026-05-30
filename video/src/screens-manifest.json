@@ -1,0 +1,13 @@
+{
+  "_comment": "Gerado/atualizado por scripts/capture-screens.mjs. 'captured:false' => placeholder no video. Rode a captura local e os PNGs entram em public/screens/.",
+  "screens": [
+    { "key": "painel", "label": "Painel CBRio", "sub": "NSM, mandalas e matriz Valor x Área", "path": "/painel", "captured": false },
+    { "key": "minha-area", "label": "Minha Área", "sub": "KPIs do líder agrupados por valor", "path": "/minha-area", "captured": false },
+    { "key": "marketing", "label": "Marketing", "sub": "Kanban de demandas criativas", "path": "/marketing", "captured": false },
+    { "key": "marketing-calendario", "label": "Capacidade do time", "sub": "Calendário semanal do Marketing", "path": "/marketing/calendario", "captured": false },
+    { "key": "eventos", "label": "Eventos", "sub": "Ciclo criativo e score por área", "path": "/eventos", "captured": false },
+    { "key": "integracao", "label": "Integração", "sub": "Cultos, decisões e batismos", "path": "/integracao", "captured": false },
+    { "key": "solicitacoes", "label": "Solicitações", "sub": "Fluxo administrativo com SLA", "path": "/solicitacoes", "captured": false },
+    { "key": "projetos", "label": "Projetos", "sub": "PMO · lista, kanban e gantt", "path": "/projetos", "captured": false }
+  ]
+}

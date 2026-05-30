@@ -48,6 +48,52 @@ video/
 - **Cores**: `src/theme.ts`.
 - **Resolução / FPS**: `WIDTH`, `HEIGHT`, `FPS` em `src/Root.tsx`.
 
+## Vídeo "Por dentro do CBRio" (tour pelas telas reais)
+
+Composição **`ScreensShowcase`**: intro → uma cena por tela do sistema (com
+moldura de navegador + Ken Burns + legenda) → chamada final. As telas vêm
+de screenshots **reais** capturados da app.
+
+```bash
+npm run render:telas   # gera out/telas-do-sistema.mp4
+```
+
+Sem screenshots, ele renderiza com **placeholders** (esqueleto da UI) —
+serve pra ver o ritmo antes de ter as imagens.
+
+### Como capturar as telas reais
+
+A captura roda **a partir da raiz do repositório** (usa o Playwright do
+projeto) e precisa de acesso à app + credenciais de teste. Por isso é feita
+**localmente** (este ambiente em nuvem não alcança a app):
+
+```bash
+# na RAIZ do repo (não dentro de video/)
+npm install                       # se ainda não instalou as deps do root
+
+# contra produção/preview:
+E2E_BASE_URL=https://cbrio.org \
+E2E_TEST_EMAIL=qa@cbrio.com.br \
+E2E_TEST_PASSWORD=sua-senha \
+  npm run capture:screens
+
+# ou contra a app local (suba antes: npm run dev):
+E2E_TEST_EMAIL=... E2E_TEST_PASSWORD=... npm run capture:screens
+```
+
+Isso salva `video/public/screens/<key>.png` e marca `captured:true` em
+`video/src/screens-manifest.json`. Depois:
+
+```bash
+cd video && npm run render:telas
+```
+
+- **Quais telas entram** / em que ordem: edite `ROUTES` em
+  `scripts/capture-screens.mjs` (raiz). O `key` vira o nome do PNG e o
+  texto da legenda sai de `label` / `sub`.
+- **Ritmo**: `INTRO_FRAMES`, `PER_SCREEN_FRAMES`, `OUTRO_FRAMES` em
+  `src/ScreensShowcase.tsx`.
+
 ## Renderizar em outro formato
 
 ```bash
