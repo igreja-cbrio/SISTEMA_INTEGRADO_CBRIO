@@ -27,15 +27,17 @@ const CATEGORIAS = [
   { value: 'outro',          label: 'Outro',               color: 'bg-muted text-muted-foreground',                         areaResp: null },
 ];
 
-// Marketing · baldes macro do intake em cascata (grupo de marketing_etiquetas_tipo).
-// Solicitante escolhe o balde (menu 1) e depois o entregavel filtrado (menu 2).
-// O "destino" saiu do form · virou etiqueta interna que o Pedro classifica no card.
-const MKT_GRUPO_LABELS = {
-  rede_social: 'Rede Social',
-  video_foto: 'Vídeos e Fotos',
-  artes: 'Artes',
-};
-const MKT_GRUPO_ORDER = ['rede_social', 'video_foto', 'artes'];
+// Marketing · intake por DOR (Redesenho 2026-05-30): o solicitante NAO escolhe
+// mais o entregavel · descreve a dor + o publico. O Pedro tria e define a peca.
+const MKT_PUBLICO_OPCOES = [
+  { value: 'voluntarios', label: 'Voluntários' },
+  { value: 'membros',     label: 'Membros' },
+  { value: 'visitantes',  label: 'Visitantes / novos' },
+  { value: 'lideranca',   label: 'Liderança' },
+  { value: 'comunidade',  label: 'Comunidade externa' },
+  { value: 'igreja_toda', label: 'Igreja toda' },
+  { value: 'outro',       label: 'Outro' },
+];
 
 // Areas do solicitante em 2 niveis: macro -> sub
 const AREAS_MACRO = [
@@ -200,53 +202,19 @@ export default function Solicitacoes() {
     espaco_solicitado: '', data_uso: '', horario_inicio: '', horario_fim: '', qtde_pessoas: '',
     motivo_reembolso: '', data_compra: '',
     forma_pagamento: '', chave_pix: '', banco: '', agencia: '', conta: '', documento_file: null,
-    // Marketing · cascata grupo->tipo (destino virou etiqueta interna do Pedro)
-    marketing_grupo: '', marketing_tipo_id: '',
+    // Marketing · intake por DOR (Pedro tria e define o entregavel depois)
+    mkt_publico_alvo: '', mkt_ideia_inicial: '',
   };
   const [form, setForm] = useState(FORM_INITIAL);
   const [slaDefs, setSlaDefs] = useState([]);
-  // Marketing · Spec 010 · etiquetas + estimativa preliminar
-  const [marketingTipos, setMarketingTipos] = useState([]);
-  const [estimativa, setEstimativa] = useState(null);
-  const [estimativaLoading, setEstimativaLoading] = useState(false);
-
   // Carrega SLAs pra mostrar prazo expected no form
   useEffect(() => {
     api.slaDefs?.().then(setSlaDefs).catch(() => setSlaDefs([]));
   }, []);
 
-  // Carrega etiquetas Marketing quando categoria=marketing for selecionada
-  useEffect(() => {
-    if (form.categoria !== 'marketing') return;
-    if (marketingTipos.length > 0) return;
-    marketingApi.etiquetas?.().then(r => {
-      setMarketingTipos(r.tipos || []);
-    }).catch(() => {});
-  }, [form.categoria, marketingTipos.length]);
-
-  // Baldes presentes (menu 1 da cascata) · ordem conhecida primeiro, extras ao fim
-  const marketingGrupos = useMemo(() => {
-    const present = new Set(marketingTipos.map(t => t.grupo).filter(Boolean));
-    const known = MKT_GRUPO_ORDER.filter(g => present.has(g)).map(slug => ({ slug, label: MKT_GRUPO_LABELS[slug] || slug }));
-    const extras = [...present].filter(g => !MKT_GRUPO_ORDER.includes(g)).map(slug => ({ slug, label: slug }));
-    return [...known, ...extras];
-  }, [marketingTipos]);
-
-  // Debounced estimativa preliminar quando tipo+data mudam
-  useEffect(() => {
-    if (form.categoria !== 'marketing' || !form.marketing_tipo_id) {
-      setEstimativa(null);
-      return;
-    }
-    setEstimativaLoading(true);
-    const handle = setTimeout(() => {
-      marketingApi.estimar?.(form.marketing_tipo_id, form.data_necessaria || null)
-        .then(setEstimativa)
-        .catch(() => setEstimativa(null))
-        .finally(() => setEstimativaLoading(false));
-    }, 350);
-    return () => clearTimeout(handle);
-  }, [form.categoria, form.marketing_tipo_id, form.data_necessaria]);
+  // Marketing · intake por DOR (Redesenho 2026-05-30): o solicitante descreve o
+  // problema/objetivo + publico; o Pedro tria e define o entregavel depois.
+  // (sairam daqui: cascata grupo->tipo, carga de etiquetas e estimativa no form)
 
   // Pre-preenche a area do solicitante pelo CARGO (slug). Fallback: kpi_areas.
   // Usuario pode trocar livremente depois.
@@ -366,8 +334,9 @@ export default function Solicitacoes() {
       if (!payload.espaco_solicitado) delete payload.espaco_solicitado;
       if (!payload.data_compra) delete payload.data_compra;
       if (!payload.motivo_reembolso) delete payload.motivo_reembolso;
-      if (!payload.marketing_tipo_id) delete payload.marketing_tipo_id;
-      delete payload.marketing_grupo; // UI-only · destino agora e' etiqueta interna do Pedro
+      // Marketing por dor · publico + ideia opcional (Pedro tria e define o entregavel)
+      if (!payload.mkt_publico_alvo) delete payload.mkt_publico_alvo;
+      if (!payload.mkt_ideia_inicial) delete payload.mkt_ideia_inicial;
 
       // Upload do comprovante para Supabase Storage (bucket: solicitacoes)
       if (form.documento_file && supabase) {
@@ -438,8 +407,8 @@ export default function Solicitacoes() {
   const reservaEspacoValid = !isReservaEspaco || (form.espaco_solicitado.trim() && form.data_uso);
   const urgenciaValid = !form.eh_urgente || form.justificativa_urgencia.trim().length >= 5;
   const areaClienteValid = !!form.area_cliente;
-  // Marketing · solicitante escolhe os 2 menus (grupo -> tipo) antes de enviar
-  const marketingValid = form.categoria !== 'marketing' || !!form.marketing_tipo_id;
+  // Marketing · intake por dor · publico-alvo obrigatorio (Pedro define o entregavel na triagem)
+  const marketingValid = form.categoria !== 'marketing' || !!form.mkt_publico_alvo;
 
   return (
     <div className="p-6 space-y-6">
@@ -613,71 +582,40 @@ export default function Solicitacoes() {
                   </div>
                 )}
 
-                {/* Marketing · etiquetas + estimativa preliminar (Spec 010) */}
+                {/* Marketing · intake por DOR (Redesenho 2026-05-30 · Pedro tria depois) */}
                 {form.categoria === 'marketing' && (
                   <div className="space-y-3 rounded-lg border border-pink-500/30 bg-pink-500/5 p-3">
                     <p className="text-sm font-semibold text-pink-700 dark:text-pink-400">
                       Detalhes da demanda (Marketing)
                     </p>
-                    <div className="grid grid-cols-2 gap-3">
-                      <div className="space-y-2">
-                        <Label className="text-xs">O que você precisa? *</Label>
-                        <Select
-                          value={form.marketing_grupo}
-                          onValueChange={v => setForm(f => ({ ...f, marketing_grupo: v, marketing_tipo_id: '' }))}
-                        >
-                          <SelectTrigger><SelectValue placeholder="Selecione..." /></SelectTrigger>
-                          <SelectContent>
-                            {marketingGrupos.map(g => <SelectItem key={g.slug} value={g.slug}>{g.label}</SelectItem>)}
-                          </SelectContent>
-                        </Select>
-                      </div>
-                      <div className="space-y-2">
-                        <Label className="text-xs">Tipo *</Label>
-                        <Select
-                          value={form.marketing_tipo_id}
-                          onValueChange={v => setForm(f => ({ ...f, marketing_tipo_id: v }))}
-                          disabled={!form.marketing_grupo}
-                        >
-                          <SelectTrigger><SelectValue placeholder={form.marketing_grupo ? 'Selecione...' : 'Escolha o grupo'} /></SelectTrigger>
-                          <SelectContent>
-                            {marketingTipos.filter(t => t.grupo === form.marketing_grupo).map(t => <SelectItem key={t.id} value={t.id}>{t.nome}</SelectItem>)}
-                          </SelectContent>
-                        </Select>
-                      </div>
+                    <p className="text-xs text-muted-foreground">
+                      No título e na descrição acima, conte a <strong>necessidade/dor</strong> — o problema, não a peça.
+                      A equipe de Marketing define o melhor formato pra resolver.
+                    </p>
+                    <div className="space-y-2">
+                      <Label className="text-xs">Quem você quer atingir? *</Label>
+                      <Select
+                        value={form.mkt_publico_alvo}
+                        onValueChange={v => setForm(f => ({ ...f, mkt_publico_alvo: v }))}
+                      >
+                        <SelectTrigger><SelectValue placeholder="Selecione o público..." /></SelectTrigger>
+                        <SelectContent>
+                          {MKT_PUBLICO_OPCOES.map(o => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}
+                        </SelectContent>
+                      </Select>
                     </div>
-
-                    {/* Habilidade sugerida */}
-                    {(() => {
-                      const tipo = marketingTipos.find(t => t.id === form.marketing_tipo_id);
-                      if (!tipo?.habilidade_padrao) return null;
-                      return (
-                        <p className="text-xs text-muted-foreground">
-                          Habilidade sugerida: <span className="font-medium">{tipo.habilidade_padrao}</span>
-                        </p>
-                      );
-                    })()}
-
-                    {/* Estimativa preliminar */}
-                    {form.marketing_tipo_id && (
-                      <div className="rounded-md bg-card border border-border px-3 py-2 text-xs">
-                        {estimativaLoading ? (
-                          <span className="text-muted-foreground">Calculando estimativa...</span>
-                        ) : estimativa ? (
-                          <div className="space-y-1">
-                            <div className="font-medium text-foreground">
-                              Estimativa preliminar: {estimativa.data_sugerida ? new Date(estimativa.data_sugerida).toLocaleDateString('pt-BR') : '—'}
-                              {estimativa.dias_uteis ? ` (${estimativa.dias_uteis} dias)` : ''}
-                            </div>
-                            {estimativa.observacao && (
-                              <div className="text-muted-foreground">{estimativa.observacao}</div>
-                            )}
-                          </div>
-                        ) : (
-                          <span className="text-muted-foreground">Selecione tipo pra ver estimativa</span>
-                        )}
-                      </div>
-                    )}
+                    <div className="space-y-2">
+                      <Label className="text-xs">Tem algo em mente? (opcional)</Label>
+                      <Textarea
+                        rows={2}
+                        value={form.mkt_ideia_inicial}
+                        onChange={e => setForm(f => ({ ...f, mkt_ideia_inicial: e.target.value }))}
+                        placeholder="Referências, links ou ideias — mas a equipe decide o formato."
+                      />
+                    </div>
+                    <p className="text-xs text-muted-foreground">
+                      A equipe vai avaliar e te devolver o formato e o prazo. Demandas de marketing levam de 3 a 8 semanas conforme a complexidade.
+                    </p>
                   </div>
                 )}
 

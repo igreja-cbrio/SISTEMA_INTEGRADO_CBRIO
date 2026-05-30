@@ -259,8 +259,9 @@ router.post('/', async (req, res) => {
             // Reembolso
             motivo_reembolso, data_compra,
             forma_pagamento, chave_pix, banco, agencia, conta, documento_url,
-            // Marketing · Spec 010 (etiquetas pre-preenchidas)
-            marketing_tipo_id, marketing_destino_id } = req.body;
+            // Marketing · Spec 010 (etiquetas) + intake por DOR (Redesenho 2026-05-30)
+            marketing_tipo_id, marketing_destino_id,
+            mkt_publico_alvo, mkt_ideia_inicial } = req.body;
     if (!titulo || !categoria) return res.status(400).json({ error: 'Título e categoria são obrigatórios' });
     if (!ALLOWED_CATEGORIES.includes(categoria)) {
       return res.status(400).json({ error: `Categoria inválida: "${categoria}". Permitidas: ${ALLOWED_CATEGORIES.join(', ')}` });
@@ -331,10 +332,13 @@ router.post('/', async (req, res) => {
           conta: conta || null,
           documento_url: documento_url || null,
         }),
-        // Marketing · etiquetas pre-preenchidas (Spec 010)
+        // Marketing · intake por DOR (Redesenho 2026-05-30) · publico + ideia opcional.
+        // marketing_tipo_id/destino_id ficam null no intake (Pedro classifica na triagem).
         ...(categoria === 'marketing' && {
           marketing_tipo_id: marketing_tipo_id || null,
           marketing_destino_id: marketing_destino_id || null,
+          mkt_publico_alvo: mkt_publico_alvo || null,
+          mkt_ideia_inicial: mkt_ideia_inicial || null,
         }),
       })
       .select('*')

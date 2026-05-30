@@ -32,6 +32,20 @@ decide). Plano em **6 fases, cada uma 1 PR**. Resumo:
 - Soft-delete de campanhas: incluir na whitelist `app_soft_deletable_tables()` na Fase 2
   (quando o delete de campanha existir · evita reescrever a lista grande às cegas agora).
 
+### Fase 1 · Intake por dor (`20260530150000_solicitacoes_marketing_dor.sql`)
+O form de `/solicitacoes` (categoria=marketing) deixa de pedir grupo→entregável e passa a
+pedir a **dor**: título + descrição (a dor) + **público-alvo** (select) + "tem algo em mente?"
+(opcional). A estimativa de prazo saiu do form (o Pedro define na triagem · Fase 2).
+- Migration: `solicitacoes` += `mkt_publico_alvo`, `mkt_ideia_inicial` (ADITIVO).
+- Backend (`routes/solicitacoes.js` POST): aceita os 2 campos; `marketing_tipo_id`/`destino`
+  ficam null no intake (Pedro classifica depois).
+- Frontend (`Solicitacoes.jsx`): bloco "Detalhes da demanda (Marketing)" reescrito (público +
+  ideia + aviso de 3–8 sem); removidos cascata grupo→tipo, carga de etiquetas, habilidade
+  sugerida e estimativa. `MKT_GRUPO_*` → `MKT_PUBLICO_OPCOES`. `marketingValid` = público preenchido.
+- Efeito colateral de graça: sem `marketing_tipo_id` no intake, o auto-assign (#806) e a
+  estimativa/piso-7d (#803) já não disparam pra solicitações novas (só agiam com tipo). A
+  Fase 2 formaliza (trigger cria campanha em Triagem).
+
 ## /novosite · prévia da home do novo site público (2026-05-30)
 
 Ambiente isolado pra testar o redesign do site público **cbrio.com.br** dentro
