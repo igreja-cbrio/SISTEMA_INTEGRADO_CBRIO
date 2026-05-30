@@ -78,7 +78,11 @@ Primeira parte do planner — a régua de **3/dia** já vale na triagem; o calen
 - **Triagem** (`MarketingTriagem.jsx`): ao definir dono + início + fim do entregável, simula a agenda do dono e avisa **"sobrecarrega em N/total dia(s)"** (âmbar) ou **"cabe (≤ slots/dia)"** (verde). Não bloqueia — o Pedro decide.
 - `api.capacidadeDia(membroId, inicio, fim)`.
 - **Dias úteis (2026-05-30):** capacidade, aviso da triagem e `duracao_dias` contam **só seg–sex** (fim de semana não consome slot · `getDay()` ≠ 0/6). ⚠️ exceção da Aline (fotógrafa só domingo) fica pra Fase 4b.
-- **Pendente Fase 4b (planner visual):** calendário arrastável por pessoa/mês, barras contínuas multi-dia, "levar tudo", auto-rascunho, flag de recorrente; tratamento de fim de semana p/ Aline (domingo) refina aqui. **Fase 5 (limpeza):** remover `MKT_PUBLICO_OPCOES`/`URGENCIAS` ociosos no intake.
+### Fase 4b · planner visual arrastável (`/marketing/planner` · 2026-05-30 · SEM migration)
+- **`MarketingPlanner.jsx`**: Gantt **mensal de dias úteis** (seg–sex), uma **raia por pessoa**, **barras contínuas** por entregável (`data_inicio→data_fim`) empilhadas em lanes. Navegação de mês + filtro por pessoa. Dias em excesso (> `slots_dia`) ficam **vermelhos**; 🎯 = foco (não paralela). Item no nav só p/ coord.
+- **Drag (HTML5 nativo, sem lib):** arrastar a barra pra outro dia/pessoa → recalcula `data_fim` mantendo a **duração em dias úteis** → `PATCH /cards/:id` (otimista). Coluna do drop = `clientX` relativo à raia.
+- **Backend:** `GET /marketing/planner?inicio&fim` (membros + barras); `PATCH /cards/:id` agora aceita `data_inicio`/`data_fim`/`pode_paralelo` (admin) e recalcula `duracao_dias`. Helper `diasUteisInclusive` (DRY, POST + PATCH). `api.planner`.
+- **Pendente (incrementos 4b):** "levar tudo" (mover campanha inteira), auto-rascunho na triagem, flag recorrente "é demanda de calendário", exceção da Aline (domingo). **Fase 5 (limpeza):** remover `MKT_PUBLICO_OPCOES`/`URGENCIAS` ociosos no intake.
 
 ## /novosite · prévia da home do novo site público (2026-05-30)
 

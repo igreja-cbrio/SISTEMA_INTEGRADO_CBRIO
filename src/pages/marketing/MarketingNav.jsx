@@ -1,7 +1,7 @@
 import { useNavigate, useLocation } from 'react-router-dom';
 import { Button } from '../../components/ui/button';
 import { useAuth } from '../../contexts/AuthContext';
-import { Kanban, ListOrdered, CalendarDays, BarChart3, Settings, GitBranch, Inbox } from 'lucide-react';
+import { Kanban, ListOrdered, CalendarDays, CalendarRange, BarChart3, Settings, GitBranch, Inbox } from 'lucide-react';
 
 // Header compartilhado das 5 telas Marketing · destaca a atual
 // e sempre mostra link pra todas as outras (Admin so pra coordenador).
@@ -16,6 +16,7 @@ export default function MarketingNav() {
   const items = [
     { path: '/marketing',                  label: 'Kanban',     icon: Kanban },
     ...(isCoord ? [{ path: '/marketing/triagem', label: 'Triagem', icon: Inbox }] : []),
+    ...(isCoord ? [{ path: '/marketing/planner', label: 'Planner', icon: CalendarRange }] : []),
     { path: '/marketing/fila',             label: 'Fila',       icon: ListOrdered },
     { path: '/marketing/calendario',       label: 'Calendário', icon: CalendarDays },
     ...(isCoord ? [{ path: '/marketing/ciclo-criativo', label: 'Ciclo', icon: GitBranch }] : []),
