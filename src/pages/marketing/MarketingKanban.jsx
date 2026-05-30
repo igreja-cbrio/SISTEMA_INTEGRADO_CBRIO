@@ -17,14 +17,20 @@ import { ScrollArea } from '../../components/ui/scroll-area';
 import {
   Megaphone, Plus, Filter, Clock, Loader2, CheckCircle2, AlertCircle,
   Zap, RefreshCw, ArrowRight, Calendar, CalendarDays, Settings, BarChart3, User2, FileText, Upload, Trash2, X, ListChecks, Paperclip,
+  Inbox, Search, Eye,
 } from 'lucide-react';
 import { toast } from 'sonner';
 
+// Régua de 6 colunas (redesenho · igual ao Trello deles + Triagem/Revisão).
+// `aceita` agrupa o valor canônico novo + o legado equivalente, então os cards
+// antigos caem na coluna certa sem migration; o drop grava sempre o canônico.
 const ESTADOS = [
-  { key: 'fila',                   label: 'Fila',                    icon: Clock,         color: 'border-t-amber-500'    },
-  { key: 'em_producao',            label: 'Em produção',             icon: Loader2,       color: 'border-t-blue-500'     },
-  { key: 'aguardando_solicitante', label: 'Aguardando solicitante',  icon: AlertCircle,   color: 'border-t-violet-500'   },
-  { key: 'concluido',              label: 'Concluído',               icon: CheckCircle2,  color: 'border-t-emerald-600'  },
+  { key: 'triagem',   label: 'Triagem',   icon: Inbox,        color: 'border-t-pink-500',    aceita: ['triagem'] },
+  { key: 'backlog',   label: 'Backlog',   icon: Clock,        color: 'border-t-amber-500',   aceita: ['backlog', 'fila'] },
+  { key: 'pesquisa',  label: 'Pesquisa',  icon: Search,       color: 'border-t-cyan-500',    aceita: ['pesquisa'] },
+  { key: 'producao',  label: 'Produção',  icon: Loader2,      color: 'border-t-blue-500',    aceita: ['producao', 'em_producao'] },
+  { key: 'revisao',   label: 'Revisão',   icon: Eye,          color: 'border-t-violet-500',  aceita: ['revisao', 'aguardando_solicitante'] },
+  { key: 'concluido', label: 'Concluído', icon: CheckCircle2, color: 'border-t-emerald-600', aceita: ['concluido'] },
 ];
 
 const ORIGEM_LABEL = {
@@ -120,7 +126,12 @@ export default function MarketingKanban() {
   const colunas = useMemo(() => {
     return ESTADOS.map(e => ({
       ...e,
-      items: filtrados.filter(c => c.estado === e.key),
+      // urgente no topo, depois a ordem da fila (absorve a antiga aba Fila)
+      items: filtrados
+        .filter(c => e.aceita.includes(c.estado))
+        .sort((a, b) =>
+          (b.raia_rapida ? 1 : 0) - (a.raia_rapida ? 1 : 0) ||
+          (a.ordem_fila ?? 9999) - (b.ordem_fila ?? 9999)),
     }));
   }, [filtrados]);
 
@@ -223,7 +234,7 @@ export default function MarketingKanban() {
           <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
         </div>
       ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
+        <div className="flex gap-4 overflow-x-auto pb-2">
           {colunas.map(col => (
             <KanbanColumn
               key={col.key}
@@ -258,7 +269,7 @@ function KanbanColumn({ col, isCoordenador, currentProfileId, onClickCard, onMud
 
   return (
     <div
-      className={`flex flex-col rounded-lg transition-colors ${dragOver ? 'bg-accent/50 ring-2 ring-primary/30' : ''}`}
+      className={`flex flex-col rounded-lg transition-colors shrink-0 w-[290px] ${dragOver ? 'bg-accent/50 ring-2 ring-primary/30' : ''}`}
       onDragOver={e => { if (!isCoordenador) return; e.preventDefault(); setDragOver(true); }}
       onDragLeave={() => setDragOver(false)}
       onDrop={e => {
@@ -297,17 +308,19 @@ function KanbanColumn({ col, isCoordenador, currentProfileId, onClickCard, onMud
 // Card
 // ═══════════════════════════════════════════════════════════════════════
 function KanbanCard({ item, draggable, onClick }) {
+  // prazo de produção do entregável (data_fim/prazo_producao) ou o prazo legado
+  const prazoCard = item.prazo_producao || item.prazo_confirmado;
   const atraso = useMemo(() => {
-    if (!item.prazo_confirmado || item.estado === 'concluido') return null;
-    const horas = (new Date(item.prazo_confirmado).getTime() - Date.now()) / 3600000;
+    if (!prazoCard || item.estado === 'concluido') return null;
+    const horas = (new Date(prazoCard).getTime() - Date.now()) / 3600000;
     if (horas < 0) return { label: `${Math.abs(Math.round(horas / 24))}d atrasado`, cor: 'bg-rose-500/15 text-rose-700 dark:text-rose-400' };
     if (horas < 48) return { label: `${Math.round(horas)}h`, cor: 'bg-amber-500/15 text-amber-700 dark:text-amber-400' };
     return null;
-  }, [item.prazo_confirmado, item.estado]);
+  }, [prazoCard, item.estado]);
 
   // Spec 016 · alerta SLA individual · card em em_producao por tempo > esforco_max × 1.5
   const slaIndividual = useMemo(() => {
-    if (item.estado !== 'em_producao') return null;
+    if (!['em_producao', 'producao'].includes(item.estado)) return null;
     const max = item.etiqueta_tipo?.esforco_max_h;
     if (!max || max <= 0) return null;
     const horasEstado = (Date.now() - new Date(item.estado_atualizado_em).getTime()) / 3600000;
@@ -393,10 +406,10 @@ function KanbanCard({ item, draggable, onClick }) {
         <div className="flex items-center gap-1">
           {slaIndividual && <Badge className={`text-[10px] px-1.5 py-0.5 ${slaIndividual.cor}`}>⏱ {slaIndividual.label}</Badge>}
           {!slaIndividual && atraso && <Badge className={`text-[10px] px-1.5 py-0.5 ${atraso.cor}`}>⏱ {atraso.label}</Badge>}
-          {item.prazo_confirmado && !atraso && !slaIndividual && (
+          {prazoCard && !atraso && !slaIndividual && (
             <span className="text-[10px] text-muted-foreground flex items-center gap-0.5">
               <Calendar className="h-3 w-3" />
-              {fmtData(item.prazo_confirmado)}
+              {fmtData(prazoCard)}
             </span>
           )}
         </div>
