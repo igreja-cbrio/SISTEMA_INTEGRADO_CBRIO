@@ -119,6 +119,7 @@ export default function MarketingKanban() {
     const ch = supabase
       .channel(`marketing-cards:${profile.id}`)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'marketing_kanban_cards' }, sched)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'marketing_campanhas' }, sched)
       .subscribe();
     return () => { clearTimeout(timeout); supabase.removeChannel(ch); };
   }, [profile?.id, carregar]);
@@ -494,10 +495,31 @@ function KanbanCard({ item, draggable, onClick }) {
         </div>
       )}
 
+      {(item.checklist?.total > 0 || item.campanha?.prazo_entrega) && (
+        <div className="flex items-center justify-between gap-2 mb-2 text-[10px] text-muted-foreground">
+          {item.checklist?.total > 0 ? (
+            <span className="flex items-center gap-1">
+              <ListChecks className="h-3 w-3" />
+              <span className="h-1 w-10 rounded-full bg-muted overflow-hidden inline-block align-middle">
+                <span className="block h-full bg-primary" style={{ width: `${Math.round((item.checklist.feitos / item.checklist.total) * 100)}%` }} />
+              </span>
+              {item.checklist.feitos}/{item.checklist.total}
+            </span>
+          ) : <span />}
+          {item.campanha?.prazo_entrega && (
+            <span title="Entrega ao solicitante">entrega {fmtData(item.campanha.prazo_entrega)}</span>
+          )}
+        </div>
+      )}
+
       <div className="flex items-center justify-between gap-2 flex-wrap">
-        <span className="text-[11px] text-muted-foreground truncate max-w-[140px] flex items-center gap-1">
-          <User2 className="h-3 w-3" />
-          {item.atribuido?.profile?.name || 'Não atribuído'}
+        <span className="text-[11px] text-muted-foreground truncate max-w-[140px] flex items-center gap-1.5">
+          {item.atribuido?.profile?.name ? (
+            <span className="h-5 w-5 shrink-0 rounded-full bg-primary/15 text-primary text-[9px] font-semibold flex items-center justify-center" title={item.atribuido.profile.name}>
+              {item.atribuido.profile.name.trim().charAt(0).toUpperCase()}
+            </span>
+          ) : <User2 className="h-3 w-3" />}
+          <span className="truncate">{item.atribuido?.profile?.name || 'Não atribuído'}</span>
         </span>
         <div className="flex items-center gap-1">
           {slaIndividual && <Badge className={`text-[10px] px-1.5 py-0.5 ${slaIndividual.cor}`}>⏱ {slaIndividual.label}</Badge>}
