@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import {
   UserPlus, Users, Droplet, HandHeart, ArrowRight, ArrowUpRight,
-  Play, MapPin, Clock, Menu, X, Instagram, Youtube,
+  Play, MapPin, Clock, Menu, X, Instagram, Youtube, BookOpen, DoorOpen,
 } from 'lucide-react';
 
 /**
@@ -75,6 +75,8 @@ const JORNADA = [
   { Icon: Users, titulo: 'Grupos', texto: 'Conecte-se com pessoas e viva amizades de verdade. Sempre tem um grupo certo pra você.', cta: 'Participe de um grupo' },
   { Icon: Droplet, titulo: 'Batismo', texto: 'Declare ao mundo o seu amor por Jesus num mergulho inesquecível.', cta: 'Quero ser batizado' },
   { Icon: HandHeart, titulo: 'Voluntariado', texto: 'Servindo, você cresce em fé e amadurece na sua jornada. Deixe Deus agir.', cta: 'Servir como voluntário' },
+  { Icon: BookOpen, titulo: 'Investir tempo com Deus', texto: 'No Quarta com Deus, toda quarta às 20h, estudamos a Bíblia e oramos uns pelos outros.', cta: 'Quarta com Deus' },
+  { Icon: DoorOpen, titulo: 'Next', texto: 'A porta de entrada pra você conhecer nossa cultura e descobrir como se envolver na CBRio.', cta: 'Em breve' },
 ];
 
 const STATS = [
@@ -86,13 +88,15 @@ const STATS = [
   { de: '1.116', para: '8.365', label: 'Oração e devocionais' },
 ];
 
+// Galeria em bento: o 1º item é o destaque (2x2). As fotos verticais usam
+// `pos` (object-position) pra o recorte manter o rosto/as mãos.
 const GALERIA = [
-  { src: 'g-kids.webp', alt: 'Criança no ministério infantil', tall: false },
-  { src: 'g-comunidade.webp', alt: 'Comunidade reunida no culto', tall: true },
-  { src: 'g-oracao.webp', alt: 'Mulher em oração durante o culto', tall: false },
-  { src: 'g-ceia.webp', alt: 'Dia de Ceia na CBRio', tall: false },
-  { src: 'g-adoracao.webp', alt: 'Momento de adoração com mãos erguidas', tall: true },
-  { src: 'g-palavra.webp', alt: 'Mensagem da Palavra no culto', tall: false },
+  { src: 'g-oracao.webp', alt: 'Mulher em oração durante o culto' },
+  { src: 'g-kids.webp', alt: 'Criança no ministério infantil' },
+  { src: 'g-ceia.webp', alt: 'Dia de Ceia na CBRio' },
+  { src: 'g-comunidade.webp', alt: 'Comunidade reunida no culto', pos: 'center 28%' },
+  { src: 'g-adoracao.webp', alt: 'Momento de adoração com mãos erguidas', pos: 'center 22%' },
+  { src: 'g-palavra.webp', alt: 'Mensagem da Palavra no culto' },
 ];
 
 const MARQUEE = ['Seguir a Jesus', 'Investir tempo com Deus', 'Conectar-se com pessoas', 'Servir em comunidade', 'Viver generosamente'];
@@ -318,10 +322,6 @@ export default function NovoSite() {
               </article>
             ))}
           </div>
-          <p className="ns-jornada-note ns-reveal">
-            <strong>Investir tempo com Deus:</strong> Quarta com Deus, toda quarta às 20h.
-            <span className="ns-chip">Next · em breve</span>
-          </p>
         </div>
         <Wave color="var(--cb-offwhite)" />
       </section>
@@ -398,10 +398,10 @@ export default function NovoSite() {
             <p className="ns-eyebrow ns-petrol-accent">Vida em comunidade</p>
             <h2 className="ns-h2 ns-petrol-accent">A vida acontece <b>juntos.</b></h2>
           </div>
-          <div className="ns-gallery-grid">
-            {GALERIA.map((g) => (
-              <figure key={g.src} className={`ns-gallery-item ns-reveal${g.tall ? ' tall' : ''}`}>
-                <img src={`/novosite/${g.src}`} alt={g.alt} loading="lazy" />
+          <div className="ns-gallery-bento">
+            {GALERIA.map((g, i) => (
+              <figure key={g.src} className={`ns-g-item ns-reveal${i === 0 ? ' ns-g-feat' : ''}`}>
+                <img src={`/novosite/${g.src}`} alt={g.alt} loading="lazy" style={g.pos ? { objectPosition: g.pos } : undefined} />
               </figure>
             ))}
           </div>
@@ -518,12 +518,15 @@ const CSS = `
 /* header */
 .ns-header{ position:fixed; top:0; left:0; right:0; z-index:50; transition:background var(--dur), box-shadow var(--dur), padding var(--dur); padding-block:.55rem; }
 .ns-header.scrolled{ background:var(--cb-petrol); box-shadow:0 6px 24px rgba(0,0,0,.16); }
+/* scrim no topo: garante o menu branco legível sobre o vídeo ao abrir; some ao rolar */
+.ns-header::before{ content:''; position:absolute; top:0; left:0; right:0; height:170px; z-index:-1; pointer-events:none; background:linear-gradient(180deg, rgba(8,28,36,.62) 0%, rgba(8,28,36,.3) 45%, rgba(8,28,36,0) 100%); transition:opacity var(--dur) var(--ease); }
+.ns-header.scrolled::before{ opacity:0; }
 .ns-header-in{ display:flex; align-items:center; gap:1.5rem; }
-.ns-logo{ display:inline-flex; align-items:center; gap:.55rem; color:#fff; }
+.ns-header .ns-logo{ display:inline-flex; align-items:center; gap:.55rem; color:#fff; }
 .ns-logo-heart{ width:34px; height:31px; }
 .ns-logo-word{ width:84px; height:31px; }
 .ns-nav{ display:flex; gap:1.6rem; margin-left:auto; }
-.ns-nav-link{ color:#fff; font-weight:600; font-size:.96rem; opacity:.92; position:relative; padding-block:.2rem; }
+.ns-header .ns-nav-link{ color:#fff; font-weight:600; font-size:.96rem; opacity:.92; position:relative; padding-block:.2rem; }
 .ns-nav-link::after{ content:''; position:absolute; left:0; bottom:-2px; width:0; height:2px; background:var(--cb-turquoise-light); transition:width var(--dur-fast) var(--ease); }
 .ns-nav-link:hover{ opacity:1; } .ns-nav-link:hover::after{ width:100%; }
 .ns-header-cta{ margin-left:.2rem; }
@@ -551,7 +554,7 @@ const CSS = `
 .ns-hero-title{ font-size:clamp(2.3rem,6.2vw,5rem); line-height:1.02; letter-spacing:-.02em; text-wrap:balance; }
 .ns-hero-light{ font-weight:300; }
 .ns-hero-black{ font-weight:900; }
-.ns-hero-ref{ margin-top:.9rem; font-weight:600; letter-spacing:.16em; text-transform:uppercase; font-size:.8rem; color:var(--cb-turquoise-light); }
+.ns-hero-ref{ margin-top:1.7rem; font-weight:600; letter-spacing:.16em; text-transform:uppercase; font-size:.8rem; color:var(--cb-turquoise-light); }
 .ns-hero-sub{ margin-top:1.4rem; font-size:clamp(1.05rem,1.6vw,1.3rem); max-width:48ch; color:rgba(255,255,255,.9); line-height:1.6; }
 .ns-hero-actions{ display:flex; flex-wrap:wrap; gap:.9rem; margin-top:2rem; }
 
@@ -574,7 +577,7 @@ const CSS = `
 /* visita */
 .ns-visita-grid{ display:grid; grid-template-columns:1.05fr .95fr; gap:clamp(2rem,5vw,4.5rem); align-items:center; }
 .ns-visita .ns-h2{ margin-top:.2rem; }
-.ns-info{ display:flex; flex-direction:column; gap:1rem; margin-top:1.8rem; }
+.ns-info{ display:flex; flex-direction:column; gap:1rem; margin-top:2.7rem; }
 .ns-info li{ display:flex; gap:.9rem; align-items:flex-start; }
 .ns-info li svg{ color:var(--cb-turquoise); flex:0 0 auto; margin-top:2px; }
 .ns-info strong{ display:block; color:var(--cb-petrol); font-weight:800; }
@@ -583,7 +586,7 @@ const CSS = `
 
 /* jornada cards */
 .ns-jornada{ color:#fff; }
-.ns-cards{ display:grid; grid-template-columns:repeat(4,1fr); gap:1.2rem; }
+.ns-cards{ display:grid; grid-template-columns:repeat(3,1fr); gap:1.2rem; }
 .ns-card{ background:#fff; border-radius:var(--radius-card); padding:1.7rem 1.5rem; display:flex; flex-direction:column; align-items:flex-start; box-shadow:var(--shadow-soft); transition:transform var(--dur-fast) var(--ease); }
 .ns-card:hover{ transform:translateY(-6px); }
 .ns-card-icon{ display:inline-flex; align-items:center; justify-content:center; width:52px; height:52px; border-radius:14px; background:var(--cb-turquoise-light); color:var(--cb-petrol); margin-bottom:1.1rem; }
@@ -622,11 +625,11 @@ const CSS = `
 
 /* galeria */
 .ns-galeria .ns-section-head{ margin-inline:auto; }
-.ns-gallery-grid{ display:grid; grid-template-columns:repeat(4,1fr); grid-auto-rows:200px; gap:1rem; }
-.ns-gallery-item{ overflow:hidden; border-radius:var(--radius-img); }
-.ns-gallery-item.tall{ grid-row:span 2; }
-.ns-gallery-item img{ width:100%; height:100%; object-fit:cover; transition:transform .6s var(--ease); }
-.ns-gallery-item:hover img{ transform:scale(1.06); }
+.ns-gallery-bento{ display:grid; grid-template-columns:repeat(3,1fr); grid-auto-rows:clamp(132px,15.5vw,212px); gap:clamp(.6rem,1.1vw,1rem); }
+.ns-g-item{ overflow:hidden; border-radius:var(--radius-img); }
+.ns-g-feat{ grid-column:span 2; grid-row:span 2; }
+.ns-g-item img{ width:100%; height:100%; object-fit:cover; transition:transform .7s var(--ease); }
+.ns-g-item:hover img{ transform:scale(1.05); }
 
 /* cta final */
 .ns-cta{ overflow:hidden; isolation:isolate; text-align:center; }
@@ -662,7 +665,8 @@ const CSS = `
   .ns-burger{ display:inline-flex; margin-left:auto; }
   .ns-visita-grid, .ns-historia-grid{ grid-template-columns:1fr; }
   .ns-visita-photo{ order:-1; }
-  .ns-gallery-grid{ grid-template-columns:repeat(2,1fr); grid-auto-rows:160px; }
+  .ns-gallery-bento{ grid-template-columns:repeat(2,1fr); grid-auto-rows:clamp(120px,30vw,168px); }
+  .ns-g-feat{ grid-column:span 2; grid-row:span 1; }
   .ns-valor{ grid-template-columns:auto 1fr; }
   .ns-valor-ref{ grid-column:2; text-align:left; margin-top:.2rem; }
   .ns-footer-grid{ grid-template-columns:1fr 1fr; }

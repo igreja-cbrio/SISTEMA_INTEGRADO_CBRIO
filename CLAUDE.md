@@ -20,8 +20,8 @@ originalmente pensado pra Astro · adaptado num único componente React.
   de valores, reveals no scroll (IntersectionObserver), header sticky
   transparente→sólido + drawer mobile. Copy real; **missão no hero**
   ("Empoderados por Deus para alcançar pessoas pra Jesus" · Mt 28:19). Seções:
-  Hero · Boas-vindas+marquee · Comece aqui/visita · Jornada (4 cards) · Valores ·
-  Online · História+stats 2021→2025 · Galeria · CTA · Footer.
+  Hero · Boas-vindas+marquee · Comece aqui/visita · Jornada (6 cards) · Valores ·
+  Online · História+stats 2021→2025 · Galeria (bento) · CTA · Footer.
   **CTAs são visuais (sem href/redirect)** e a nav faz scroll interno — decisão
   do Marcos ("é teste, sem funcionalidades/redirects").
 - **Vídeo de hero** (estilo mosaic.org / eaglebrookchurch.com): aftermovie da
@@ -38,6 +38,14 @@ originalmente pensado pra Astro · adaptado num único componente React.
   rota de frontend (Vercel reescreve não-`/api` pra `index.html`).
 - **Pendente** (placeholders pra confirmar): endereço, redes sociais, telefone,
   e-mail de contato; e se os números 2021→2025 vão públicos.
+- **Ajustes pós-prints (2026-05-30):** galeria virou layout **bento** (1 destaque
+  2x2 + apoio · `.ns-gallery-bento`/`.ns-g-feat`); **Jornada com 6 cards** (incluídos
+  *Investir tempo com Deus* + *Next*, sem link ainda); **menu sobre o vídeo
+  corrigido** — o reset `.ns a{color:inherit}` (especificidade 0,1,1) vencia
+  `.ns-nav-link`/`.ns-logo` (0,1,0) e deixava o menu escuro/invisível; agora
+  `.ns-header .ns-nav-link` e `.ns-header .ns-logo` forçam branco + scrim escuro
+  no topo (`.ns-header::before`, some ao rolar). Mais respiro no hero
+  (título→"Mt 28:19") e na visita (legenda→horários). ⚠️ Não regredir o menu branco.
 
 ## Solicitações · fix da ENTRADA do fluxo (validação E2E Marketing · 2026-05-28)
 
