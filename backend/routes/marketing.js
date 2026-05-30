@@ -111,6 +111,24 @@ async function enrichCards(cards) {
     profileMap = Object.fromEntries((profs || []).map(p => [p.id, p]));
   }
 
+  // Acabamento do card: resumo de checklist (feitos/total) + prazo de entrega da campanha
+  const cardIds = cards.map(c => c.id);
+  const campanhaIds = [...new Set(cards.map(c => c.campanha_id).filter(Boolean))];
+  const checklistMap = {};
+  let campanhaMap = {};
+  if (cardIds.length) {
+    const { data: cl } = await supabase.from('marketing_card_checklist').select('card_id, feito').in('card_id', cardIds);
+    for (const it of (cl || [])) {
+      if (!checklistMap[it.card_id]) checklistMap[it.card_id] = { total: 0, feitos: 0 };
+      checklistMap[it.card_id].total++;
+      if (it.feito) checklistMap[it.card_id].feitos++;
+    }
+  }
+  if (campanhaIds.length) {
+    const { data: camps } = await supabase.from('marketing_campanhas').select('id, prazo_entrega, titulo').in('id', campanhaIds);
+    campanhaMap = Object.fromEntries((camps || []).map(k => [k.id, k]));
+  }
+
   return cards.map(c => ({
     ...c,
     etiqueta_tipo: tipoMap[c.etiqueta_tipo_id] || null,
@@ -139,6 +157,8 @@ async function enrichCards(cards) {
         link: t.event_id ? `/eventos/${t.event_id}` : null,
       };
     })() : null,
+    checklist: checklistMap[c.id] || null,
+    campanha: c.campanha_id ? (campanhaMap[c.campanha_id] || null) : null,
   }));
 }
 
