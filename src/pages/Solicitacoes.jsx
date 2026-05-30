@@ -202,8 +202,7 @@ export default function Solicitacoes() {
     espaco_solicitado: '', data_uso: '', horario_inicio: '', horario_fim: '', qtde_pessoas: '',
     motivo_reembolso: '', data_compra: '',
     forma_pagamento: '', chave_pix: '', banco: '', agencia: '', conta: '', documento_file: null,
-    // Marketing · intake por DOR (Pedro tria e define o entregavel depois)
-    mkt_publico_alvo: '', mkt_ideia_inicial: '',
+    // Marketing · intake por DOR · Pedro define entregavel/publico/prazo na triagem
   };
   const [form, setForm] = useState(FORM_INITIAL);
   const [slaDefs, setSlaDefs] = useState([]);
@@ -334,9 +333,7 @@ export default function Solicitacoes() {
       if (!payload.espaco_solicitado) delete payload.espaco_solicitado;
       if (!payload.data_compra) delete payload.data_compra;
       if (!payload.motivo_reembolso) delete payload.motivo_reembolso;
-      // Marketing por dor · publico + ideia opcional (Pedro tria e define o entregavel)
-      if (!payload.mkt_publico_alvo) delete payload.mkt_publico_alvo;
-      if (!payload.mkt_ideia_inicial) delete payload.mkt_ideia_inicial;
+      // Marketing por dor · so titulo+descricao no intake (Pedro define o resto na triagem)
 
       // Upload do comprovante para Supabase Storage (bucket: solicitacoes)
       if (form.documento_file && supabase) {
@@ -408,7 +405,7 @@ export default function Solicitacoes() {
   const urgenciaValid = !form.eh_urgente || form.justificativa_urgencia.trim().length >= 5;
   const areaClienteValid = !!form.area_cliente;
   // Marketing · intake por dor · publico-alvo obrigatorio (Pedro define o entregavel na triagem)
-  const marketingValid = form.categoria !== 'marketing' || !!form.mkt_publico_alvo;
+  const marketingValid = true; // Marketing por dor · titulo+descricao gerais ja bastam
 
   return (
     <div className="p-6 space-y-6">
@@ -582,47 +579,24 @@ export default function Solicitacoes() {
                   </div>
                 )}
 
-                {/* Marketing · intake por DOR (Redesenho 2026-05-30 · Pedro tria depois) */}
+                {/* Marketing · intake por DOR (Redesenho 2026-05-30 · só o aviso · Pedro tria) */}
                 {form.categoria === 'marketing' && (
-                  <div className="space-y-3 rounded-lg border border-pink-500/30 bg-pink-500/5 p-3">
-                    <p className="text-sm font-semibold text-pink-700 dark:text-pink-400">
-                      Detalhes da demanda (Marketing)
+                  <div className="rounded-lg border border-pink-500/30 bg-pink-500/5 p-3">
+                    <p className="text-sm font-semibold text-pink-700 dark:text-pink-400 mb-1">
+                      Demanda de Marketing
                     </p>
                     <p className="text-xs text-muted-foreground">
-                      No título e na descrição acima, conte a <strong>necessidade/dor</strong> — o problema, não a peça.
-                      A equipe de Marketing define o melhor formato pra resolver.
-                    </p>
-                    <div className="space-y-2">
-                      <Label className="text-xs">Quem você quer atingir? *</Label>
-                      <Select
-                        value={form.mkt_publico_alvo}
-                        onValueChange={v => setForm(f => ({ ...f, mkt_publico_alvo: v }))}
-                      >
-                        <SelectTrigger><SelectValue placeholder="Selecione o público..." /></SelectTrigger>
-                        <SelectContent>
-                          {MKT_PUBLICO_OPCOES.map(o => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}
-                        </SelectContent>
-                      </Select>
-                    </div>
-                    <div className="space-y-2">
-                      <Label className="text-xs">Tem algo em mente? (opcional)</Label>
-                      <Textarea
-                        rows={2}
-                        value={form.mkt_ideia_inicial}
-                        onChange={e => setForm(f => ({ ...f, mkt_ideia_inicial: e.target.value }))}
-                        placeholder="Referências, links ou ideias — mas a equipe decide o formato."
-                      />
-                    </div>
-                    <p className="text-xs text-muted-foreground">
-                      A equipe vai avaliar e te devolver o formato e o prazo. Demandas de marketing levam de 3 a 8 semanas conforme a complexidade.
+                      Conte a <strong>necessidade/dor</strong> no título e na descrição acima — o problema, não a peça.
+                      A equipe vai avaliar e te devolver o formato e o prazo. Demandas de marketing levam de
+                      3 a 8 semanas conforme a complexidade.
                     </p>
                   </div>
                 )}
 
-                {/* SLA esperado em tempo real */}
+                {/* SLA esperado em tempo real (oculto p/ marketing · usa o aviso de 3-8 sem) */}
                 {(() => {
                   const cat = CATEGORIAS.find(c => c.value === form.categoria);
-                  if (!cat?.areaResp) return null;
+                  if (!cat?.areaResp || form.categoria === 'marketing') return null;
                   const sla = slaDefs.find(s => s.area_responsavel === cat.areaResp && s.eh_urgente === !!form.eh_urgente);
                   if (!sla) return null;
                   return (
@@ -634,15 +608,6 @@ export default function Solicitacoes() {
                 })()}
 
                 <div className="grid grid-cols-2 gap-4">
-                  <div className="space-y-2">
-                    <Label>Urgência (sentimento)</Label>
-                    <Select value={form.urgencia} onValueChange={v => setForm(f => ({ ...f, urgencia: v }))}>
-                      <SelectTrigger><SelectValue /></SelectTrigger>
-                      <SelectContent>
-                        {URGENCIAS.map(u => <SelectItem key={u.value} value={u.value}>{u.label}</SelectItem>)}
-                      </SelectContent>
-                    </Select>
-                  </div>
                   {showValueField && (
                     <div className="space-y-2">
                       <Label>Valor estimado (R$)</Label>

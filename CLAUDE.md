@@ -65,6 +65,14 @@ abre a Triagem, define a solução e cria os **entregáveis** (cards de produç�
   solicitante ainda acompanha via card (Fase 3 liga via-campanha); régua de 6 colunas (Fase 3).
 - ⚠️ Aplicar a migration antes do merge.
 
+### Fase 2 · ajustes pós-teste (2026-05-30 · `20260530170000_marketing_entregavel_datas.sql`)
+- **Intake** (`Solicitacoes.jsx`): bloco Marketing = só o aviso de 3–8 sem (removidos público-alvo e "tem algo em mente"); SLA azul oculto p/ marketing; removido o select "Urgência (sentimento)" (redundante c/ `eh_urgente`). `marketingValid` sempre true.
+- **Migration**: `marketing_kanban_cards` += `data_inicio`, `data_fim` (datas de produção do entregável).
+- **Triagem** (`MarketingTriagem.jsx`): mostra **a data que o cliente pediu** + **urgência**; cada entregável tem **início+fim** (duração derivada) e mostra o **dono**; **entrega interna** = max(data_fim); o prazo de entrega tem "seguir a data pedida" e, se o Pedro mudar, **o solicitante é notificado** (`PATCH /campanhas` dispara `marketing_prazo_ajustado`).
+- **Backend**: `GET /campanhas` e `/campanhas/:id` retornam `data_pedida` + `eh_urgente` (da solicitação) e o `dono_nome` de cada entregável; `POST /campanhas/:id/cards` aceita `data_inicio`/`data_fim`.
+- **Pendente p/ Fase 4 (planner):** alinhar os entregáveis com a carga da equipe + regra de **3/semana** (capacidade visual). **Fase 5 (limpeza):** remover `MKT_PUBLICO_OPCOES`/`URGENCIAS` ociosos no intake.
+- ⚠️ Aplicar a migration antes do merge.
+
 ## /novosite · prévia da home do novo site público (2026-05-30)
 
 Ambiente isolado pra testar o redesign do site público **cbrio.com.br** dentro

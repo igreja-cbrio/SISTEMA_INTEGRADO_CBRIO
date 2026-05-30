@@ -1719,6 +1719,13 @@ router.get('/campanhas', authorizeModule('marketing', 1), async (req, res) => {
       const { data: profs } = await supabase.from('profiles').select('id, name').in('id', solIds);
       profMap = Object.fromEntries((profs || []).map(p => [p.id, p.name]));
     }
+    // Solicitacao de origem: data que o cliente pediu + urgencia (pra triagem mostrar)
+    const reqIds = [...new Set(lista.map(c => c.solicitacao_id).filter(Boolean))];
+    let solMap = {};
+    if (reqIds.length) {
+      const { data: sols } = await supabase.from('solicitacoes').select('id, data_necessaria, eh_urgente').in('id', reqIds);
+      solMap = Object.fromEntries((sols || []).map(s => [s.id, s]));
+    }
     const ids = lista.map(c => c.id);
     const countMap = {};
     if (ids.length) {
@@ -1727,7 +1734,13 @@ router.get('/campanhas', authorizeModule('marketing', 1), async (req, res) => {
         .in('campanha_id', ids).is('deleted_at', null);
       for (const c of (cards || [])) countMap[c.campanha_id] = (countMap[c.campanha_id] || 0) + 1;
     }
-    res.json(lista.map(c => ({ ...c, solicitante_nome: profMap[c.solicitante_id] || null, total_cards: countMap[c.id] || 0 })));
+    res.json(lista.map(c => ({
+      ...c,
+      solicitante_nome: profMap[c.solicitante_id] || null,
+      total_cards: countMap[c.id] || 0,
+      data_pedida: solMap[c.solicitacao_id]?.data_necessaria || null,
+      eh_urgente: solMap[c.solicitacao_id]?.eh_urgente || false,
+    })));
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -1737,11 +1750,33 @@ router.get('/campanhas/:id', authorizeModule('marketing', 1), async (req, res) =
       .from('marketing_campanhas').select('*').eq('id', req.params.id).is('deleted_at', null).maybeSingle();
     if (error) throw error;
     if (!camp) return res.status(404).json({ error: 'Campanha nao encontrada' });
+    // O que o cliente pediu (data + urgencia)
+    let data_pedida = null, eh_urgente = false;
+    if (camp.solicitacao_id) {
+      const { data: sol } = await supabase.from('solicitacoes')
+        .select('data_necessaria, eh_urgente').eq('id', camp.solicitacao_id).maybeSingle();
+      data_pedida = sol?.data_necessaria || null;
+      eh_urgente = sol?.eh_urgente || false;
+    }
     const { data: cards } = await supabase
       .from('marketing_kanban_cards').select('*')
-      .eq('campanha_id', camp.id).is('deleted_at', null).order('created_at');
+      .eq('campanha_id', camp.id).is('deleted_at', null).order('data_inicio', { ascending: true, nullsFirst: false });
     const enriched = await enrichCards(cards || []);
-    res.json({ ...camp, cards: enriched });
+    // Nome do dono de cada entregavel
+    const memIds = [...new Set(enriched.map(c => c.atribuido_a).filter(Boolean))];
+    let memMap = {};
+    if (memIds.length) {
+      const { data: mems } = await supabase.from('marketing_membros').select('id, profile_id, nome_display').in('id', memIds);
+      const pIds = [...new Set((mems || []).map(m => m.profile_id).filter(Boolean))];
+      let pMap = {};
+      if (pIds.length) {
+        const { data: profs } = await supabase.from('profiles').select('id, name').in('id', pIds);
+        pMap = Object.fromEntries((profs || []).map(p => [p.id, p.name]));
+      }
+      memMap = Object.fromEntries((mems || []).map(m => [m.id, pMap[m.profile_id] || m.nome_display || null]));
+    }
+    const cardsComDono = enriched.map(c => ({ ...c, dono_nome: memMap[c.atribuido_a] || null }));
+    res.json({ ...camp, cards: cardsComDono, data_pedida, eh_urgente });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -1759,6 +1794,29 @@ router.patch('/campanhas/:id', authorizeModule('marketing', 5), async (req, res)
     const { data, error } = await supabase
       .from('marketing_campanhas').update(update).eq('id', req.params.id).select('*').single();
     if (error) throw error;
+    // Se o Pedro definiu/mudou o prazo de entrega e ele difere da data que o cliente
+    // pediu, avisa o solicitante (o Pedro vai conversar e dar a 1a devolutiva).
+    if (prazo_entrega !== undefined && data?.solicitacao_id && data?.solicitante_id) {
+      try {
+        const { data: sol } = await supabase.from('solicitacoes')
+          .select('data_necessaria, titulo').eq('id', data.solicitacao_id).maybeSingle();
+        const pedida = sol?.data_necessaria ? new Date(sol.data_necessaria).toISOString().slice(0, 10) : null;
+        const nova = data.prazo_entrega ? new Date(data.prazo_entrega).toISOString().slice(0, 10) : null;
+        if (nova && pedida && nova !== pedida) {
+          const fmt = (d) => d.split('-').reverse().join('/');
+          notificar({
+            modulo: 'marketing',
+            tipo: 'marketing_prazo_ajustado',
+            titulo: `Prazo ajustado: ${sol?.titulo || data.titulo}`,
+            mensagem: `A equipe de Marketing ajustou a entrega de ${fmt(pedida)} para ${fmt(nova)}. O Pedro vai falar com você sobre isso.`,
+            link: '/solicitacoes',
+            severidade: 'info',
+            chaveDedup: `mkt_prazo_${data.id}_${nova}`,
+            targetIds: [data.solicitante_id],
+          }).catch(err => console.error('[MARKETING] notify prazo ajustado:', err.message));
+        }
+      } catch (nerr) { console.error('[MARKETING] prazo ajustado block:', nerr.message); }
+    }
     res.json(data);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -1776,11 +1834,17 @@ router.delete('/campanhas/:id', authorizeModule('marketing', 5), async (req, res
 // Card nasce origem='interna' + campanha_id · estado 'fila' (Fase 3 remapeia p/ backlog).
 router.post('/campanhas/:id/cards', authorizeModule('marketing', 5), async (req, res) => {
   try {
-    const { titulo, descricao, etiqueta_tipo_id, atribuido_a, duracao_dias, pode_paralelo, prazo_producao } = req.body || {};
+    const { titulo, descricao, etiqueta_tipo_id, atribuido_a, pode_paralelo, data_inicio, data_fim } = req.body || {};
     if (!titulo || !titulo.trim()) return res.status(400).json({ error: 'titulo do entregavel obrigatorio' });
     const { data: camp } = await supabase
       .from('marketing_campanhas').select('id, status').eq('id', req.params.id).is('deleted_at', null).maybeSingle();
     if (!camp) return res.status(404).json({ error: 'Campanha nao encontrada' });
+    // duracao em dias derivada de inicio/fim (inclusivo)
+    let dur = null;
+    if (data_inicio && data_fim) {
+      const d1 = new Date(data_inicio), d2 = new Date(data_fim);
+      if (!isNaN(d1) && !isNaN(d2)) dur = Math.max(1, Math.round((d2 - d1) / 86400000) + 1);
+    }
     const { data, error } = await supabase
       .from('marketing_kanban_cards')
       .insert({
@@ -1790,9 +1854,11 @@ router.post('/campanhas/:id/cards', authorizeModule('marketing', 5), async (req,
         descricao: descricao || null,
         etiqueta_tipo_id: etiqueta_tipo_id || null,
         atribuido_a: atribuido_a || null,
-        duracao_dias: duracao_dias || null,
+        data_inicio: data_inicio || null,
+        data_fim: data_fim || null,
+        duracao_dias: dur,
         pode_paralelo: pode_paralelo === undefined ? true : !!pode_paralelo,
-        prazo_producao: prazo_producao || null,
+        prazo_producao: data_fim ? new Date(data_fim + 'T18:00:00').toISOString() : null,
         estado: 'fila',
         criado_por: req.user.userId,
       })
