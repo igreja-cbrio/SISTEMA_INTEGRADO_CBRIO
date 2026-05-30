@@ -1701,4 +1701,111 @@ router.delete('/admin/ciclo-padroes/:id', authorizeModule('marketing', 5), async
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// ─── Campanhas + Triagem (Redesenho Fase 2 · 2026-05-30) ────────────────────
+// A solicitacao-dor vira campanha em triagem (trigger) · o Pedro tria e
+// materializa os entregaveis (cards de producao vinculados via campanha_id).
+
+router.get('/campanhas', authorizeModule('marketing', 1), async (req, res) => {
+  try {
+    const { status } = req.query;
+    let q = supabase.from('marketing_campanhas').select('*').is('deleted_at', null);
+    if (status) q = q.eq('status', status);
+    const { data: camps, error } = await q.order('created_at', { ascending: false });
+    if (error) throw error;
+    const lista = camps || [];
+    const solIds = [...new Set(lista.map(c => c.solicitante_id).filter(Boolean))];
+    let profMap = {};
+    if (solIds.length) {
+      const { data: profs } = await supabase.from('profiles').select('id, name').in('id', solIds);
+      profMap = Object.fromEntries((profs || []).map(p => [p.id, p.name]));
+    }
+    const ids = lista.map(c => c.id);
+    const countMap = {};
+    if (ids.length) {
+      const { data: cards } = await supabase
+        .from('marketing_kanban_cards').select('campanha_id')
+        .in('campanha_id', ids).is('deleted_at', null);
+      for (const c of (cards || [])) countMap[c.campanha_id] = (countMap[c.campanha_id] || 0) + 1;
+    }
+    res.json(lista.map(c => ({ ...c, solicitante_nome: profMap[c.solicitante_id] || null, total_cards: countMap[c.id] || 0 })));
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+router.get('/campanhas/:id', authorizeModule('marketing', 1), async (req, res) => {
+  try {
+    const { data: camp, error } = await supabase
+      .from('marketing_campanhas').select('*').eq('id', req.params.id).is('deleted_at', null).maybeSingle();
+    if (error) throw error;
+    if (!camp) return res.status(404).json({ error: 'Campanha nao encontrada' });
+    const { data: cards } = await supabase
+      .from('marketing_kanban_cards').select('*')
+      .eq('campanha_id', camp.id).is('deleted_at', null).order('created_at');
+    const enriched = await enrichCards(cards || []);
+    res.json({ ...camp, cards: enriched });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+router.patch('/campanhas/:id', authorizeModule('marketing', 5), async (req, res) => {
+  try {
+    const update = {};
+    const { titulo, dor_descricao, publico_alvo, complexidade, prazo_entrega, status } = req.body || {};
+    if (titulo !== undefined) update.titulo = titulo;
+    if (dor_descricao !== undefined) update.dor_descricao = dor_descricao;
+    if (publico_alvo !== undefined) update.publico_alvo = publico_alvo;
+    if (complexidade !== undefined) update.complexidade = complexidade || null;
+    if (prazo_entrega !== undefined) update.prazo_entrega = prazo_entrega || null;
+    if (status !== undefined) update.status = status;
+    update.updated_at = new Date().toISOString();
+    const { data, error } = await supabase
+      .from('marketing_campanhas').update(update).eq('id', req.params.id).select('*').single();
+    if (error) throw error;
+    res.json(data);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+router.delete('/campanhas/:id', authorizeModule('marketing', 5), async (req, res) => {
+  try {
+    const { error } = await supabase
+      .from('marketing_campanhas').update({ deleted_at: new Date().toISOString() }).eq('id', req.params.id);
+    if (error) throw error;
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Materializa um entregavel (card de producao) a partir da campanha · nivel 5.
+// Card nasce origem='interna' + campanha_id · estado 'fila' (Fase 3 remapeia p/ backlog).
+router.post('/campanhas/:id/cards', authorizeModule('marketing', 5), async (req, res) => {
+  try {
+    const { titulo, descricao, etiqueta_tipo_id, atribuido_a, duracao_dias, pode_paralelo, prazo_producao } = req.body || {};
+    if (!titulo || !titulo.trim()) return res.status(400).json({ error: 'titulo do entregavel obrigatorio' });
+    const { data: camp } = await supabase
+      .from('marketing_campanhas').select('id, status').eq('id', req.params.id).is('deleted_at', null).maybeSingle();
+    if (!camp) return res.status(404).json({ error: 'Campanha nao encontrada' });
+    const { data, error } = await supabase
+      .from('marketing_kanban_cards')
+      .insert({
+        origem: 'interna',
+        campanha_id: req.params.id,
+        titulo: titulo.trim(),
+        descricao: descricao || null,
+        etiqueta_tipo_id: etiqueta_tipo_id || null,
+        atribuido_a: atribuido_a || null,
+        duracao_dias: duracao_dias || null,
+        pode_paralelo: pode_paralelo === undefined ? true : !!pode_paralelo,
+        prazo_producao: prazo_producao || null,
+        estado: 'fila',
+        criado_por: req.user.userId,
+      })
+      .select('*').single();
+    if (error) throw error;
+    // Campanha sai da triagem ao ganhar o 1o entregavel
+    if (camp.status === 'triagem') {
+      await supabase.from('marketing_campanhas')
+        .update({ status: 'ativa', updated_at: new Date().toISOString() })
+        .eq('id', req.params.id);
+    }
+    res.status(201).json(data);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 module.exports = router;
