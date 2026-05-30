@@ -96,7 +96,9 @@ Reduzir o módulo a **Kanban · Planner · Analytics · Admin**. As outras abas 
 - **F-D:** **Calendário descontinuado** (Planner é o sucessor, slots não horas); nav perde Calendário; rota redireciona.
 - **F-E:** deletados os 4 órfãos (`MarketingTriagem/Fila/Calendario/CicloCriativo.jsx`) + lazy imports; **busca por título** no Kanban.
 - **✅ NAV FINAL: Kanban · Planner · Analytics · Admin** (+ toggle Quadro/Épicos dentro do Kanban). Telas órfãs = 0.
-- **Pendente (próxima frente · NÃO bloqueia o teste):** acabamento do card (avatares, progresso de checklist no próprio card, badges de desencontro de prazo), reordenar-arrastando na vertical, 2º prazo (entrega da campanha) no card; **KPIs** MKT-PRAZO/DEM-CAP + aposentar `fn_marketing_estimar_prazo` + limpar `MKT_PUBLICO_OPCOES`/`URGENCIAS` no intake.
+### Acabamento do card + limpeza · NO AR (PR #828 · 2026-05-30)
+- Card: **avatar** (inicial do dono), **mini-barra de progresso** do checklist, **2º prazo** (entrega da campanha) — `enrichCards` agora traz `checklist {feitos,total}` + `campanha {prazo_entrega}`. Realtime do Kanban também escuta `marketing_campanhas` (coluna Triagem auto-atualiza). `MKT_PUBLICO_OPCOES` removido do intake (`URGENCIAS` fica, ainda usado).
+- **Resta (sessão dedicada, com qualidade):** (1) **reordenar-arrastando vertical** no Kanban (drag HTML5 · NÃO-crítico, ordenação urgente→ordem_fila já cobre). (2) **KPIs** — infra pronta (MKT-PRAZO/LEAD/THROUGHPUT/DEM-CAP em `kpi_indicadores_taticos`, `/analytics/kpis` ↔ `kpi_valores_calculados`, recalc por trigger `tg_marketing_cards_recalc_kpis`); **falta** a coluna `entregue_em` (migration + setá-la no trigger `fn_marketing_cards_estado_ts` ao virar concluído + backfill) + os coletores em `backend/services/kpiAutoCollector.js`. ⚠️ decisão do Marcos: **DEM-CAP em slots ou horas?** (coletor atual usa horas). `fn_marketing_estimar_prazo` = **deprecar, não dropar** (ainda usada em /solicitacoes via `/marketing/estimar`).
 
 ## /novosite · prévia da home do novo site público (2026-05-30)
 
