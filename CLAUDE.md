@@ -46,6 +46,25 @@ pedir a **dor**: título + descrição (a dor) + **público-alvo** (select) + "t
   estimativa/piso-7d (#803) já não disparam pra solicitações novas (só agiam com tipo). A
   Fase 2 formaliza (trigger cria campanha em Triagem).
 
+### Fase 2 · Triagem + Campanha (`20260530160000_marketing_redesenho_f2_triagem.sql`)
+A solicitação-dor aprovada vira uma **campanha em triagem** (não mais card direto). O Pedro
+abre a Triagem, define a solução e cria os **entregáveis** (cards de produção).
+- Migration: `fn_marketing_cards_solicitacao_sync` recriada → INSERT em `marketing_campanhas`
+  (status='triagem') em vez de `marketing_kanban_cards`. Aposenta auto-assign (#806) e
+  estimativa/piso-7d (#803). 1 campanha por solicitação (idempotente).
+- Backend (`routes/marketing.js`): `GET /campanhas` (filtro status · +solicitante +total_cards),
+  `GET /campanhas/:id` (com cards), `PATCH`/`DELETE` (soft via deleted_at), `POST /campanhas/:id/cards`
+  (materializa: card origem='interna' + `campanha_id`, estado 'fila'; campanha vira 'ativa').
+- Frontend: tela nova **`/marketing/triagem`** (`MarketingTriagem.jsx`, nível 5) — lista campanhas
+  em triagem; ao abrir, mostra a dor + complexidade/prazo de entrega + cria entregáveis (etiqueta,
+  dono, duração-dias, paralela/foco). Item "Triagem" no `MarketingNav` (só coord). `api.js`:
+  `marketing.campanhas.{list,get,update,remove,criarCard}`.
+- **Card materializado** nasce origem='interna' + `campanha_id` (o CHECK aceita; evita o UNIQUE
+  de `solicitacao_id`) em estado 'fila' (visível na coluna Fila atual; Fase 3 remapeia p/ backlog).
+- **Pendente p/ sub-fases:** eventos/ciclo criativo ainda nascem card direto (não triados); o
+  solicitante ainda acompanha via card (Fase 3 liga via-campanha); régua de 6 colunas (Fase 3).
+- ⚠️ Aplicar a migration antes do merge.
+
 ## /novosite · prévia da home do novo site público (2026-05-30)
 
 Ambiente isolado pra testar o redesign do site público **cbrio.com.br** dentro

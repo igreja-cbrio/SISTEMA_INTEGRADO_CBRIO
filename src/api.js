@@ -1111,6 +1111,15 @@ export const marketing = {
     batch: (cardIds, payload) => patch('/marketing/ciclo-criativo/batch', { card_ids: cardIds, ...payload }),
   },
 
+  // Campanhas + Triagem (Redesenho Fase 2 · 2026-05-30)
+  campanhas: {
+    list:      (status) => get('/marketing/campanhas' + (status ? '?status=' + encodeURIComponent(status) : '')),
+    get:       (id) => get(`/marketing/campanhas/${id}`),
+    update:    (id, data) => patch(`/marketing/campanhas/${id}`, data),
+    remove:    (id) => del(`/marketing/campanhas/${id}`),
+    criarCard: (id, data) => post(`/marketing/campanhas/${id}/cards`, data),
+  },
+
   // Admin (Spec 009 · nivel 5)
   admin: {
     membros: {
