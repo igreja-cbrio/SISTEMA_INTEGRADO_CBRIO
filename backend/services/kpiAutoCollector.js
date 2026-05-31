@@ -769,7 +769,7 @@ const COLLECTORS = {
     const segStr = ymd(seg), sexStr = ymd(sex);
 
     const { data: membros } = await supabase
-      .from('marketing_membros').select('slots_dia').eq('ativo', true).is('deleted_at', null);
+      .from('marketing_membros').select('slots_dia').eq('ativo', true).neq('habilidade', 'coordenador').is('deleted_at', null);
     const capacidade = (membros || []).reduce((a, m) => a + (Number(m.slots_dia) || 3), 0) * 5;
 
     const { data: cards } = await supabase

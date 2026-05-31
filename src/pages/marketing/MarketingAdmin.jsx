@@ -147,18 +147,18 @@ function AbaMembros() {
 }
 
 function MembroRow({ membro, onSave, onRemove }) {
-  const [horas, setHoras] = useState(membro.horas_semanais);
+  const [slots, setSlots] = useState(membro.slots_dia ?? 3);
   const [obs, setObs] = useState(membro.observacao || '');
   const [ativo, setAtivo] = useState(membro.ativo);
   const [dirty, setDirty] = useState(false);
 
   useEffect(() => {
     setDirty(
-      Number(horas) !== Number(membro.horas_semanais) ||
+      Number(slots) !== Number(membro.slots_dia ?? 3) ||
       (obs || '') !== (membro.observacao || '') ||
       ativo !== membro.ativo
     );
-  }, [horas, obs, ativo, membro]);
+  }, [slots, obs, ativo, membro]);
 
   return (
     <Card className="p-3 flex flex-col md:flex-row md:items-center gap-3">
@@ -168,13 +168,14 @@ function MembroRow({ membro, onSave, onRemove }) {
       </div>
       <Badge variant="secondary" className="self-start md:self-auto">{membro.habilidade}</Badge>
       <div className="flex items-center gap-2">
-        <Label className="text-xs">Horas/sem</Label>
+        <Label className="text-xs">Slots/dia</Label>
         <Input
           type="number"
-          step="0.5"
-          value={horas}
-          onChange={e => setHoras(e.target.value)}
-          className="w-20 h-8"
+          step="1"
+          min="1"
+          value={slots}
+          onChange={e => setSlots(e.target.value)}
+          className="w-16 h-8"
         />
       </div>
       <Input
@@ -190,7 +191,7 @@ function MembroRow({ membro, onSave, onRemove }) {
       <div className="flex gap-1">
         <Button
           size="sm"
-          onClick={() => onSave(membro.id, { horas_semanais: parseFloat(horas), observacao: obs, ativo })}
+          onClick={() => onSave(membro.id, { slots_dia: parseInt(slots, 10) || 3, observacao: obs, ativo })}
           disabled={!dirty}
         >
           Salvar
@@ -205,7 +206,7 @@ function MembroRow({ membro, onSave, onRemove }) {
 
 function NovoMembroForm({ profiles, onSuccess }) {
   const [tipo, setTipo] = useState('com_login'); // com_login | sem_login
-  const [form, setForm] = useState({ profile_id: '', nome_display: '', habilidade: '', horas_semanais: 30, observacao: '' });
+  const [form, setForm] = useState({ profile_id: '', nome_display: '', habilidade: '', slots_dia: 3, observacao: '' });
   const [submitting, setSubmitting] = useState(false);
   async function submit() {
     if (!form.habilidade) { toast.error('Habilidade obrigatória'); return; }
@@ -215,7 +216,7 @@ function NovoMembroForm({ profiles, onSuccess }) {
     try {
       const payload = {
         habilidade: form.habilidade,
-        horas_semanais: parseFloat(form.horas_semanais),
+        slots_dia: parseInt(form.slots_dia, 10) || 3,
         observacao: form.observacao,
         profile_id: tipo === 'com_login' ? form.profile_id : null,
         nome_display: tipo === 'sem_login' ? form.nome_display.trim() : null,
@@ -271,9 +272,9 @@ function NovoMembroForm({ profiles, onSuccess }) {
       </div>
       <div className="grid grid-cols-2 gap-3">
         <div className="space-y-2">
-          <Label>Horas/semana</Label>
-          <Input type="number" step="0.5" value={form.horas_semanais}
-            onChange={e => setForm(f => ({ ...f, horas_semanais: e.target.value }))} />
+          <Label>Slots/dia</Label>
+          <Input type="number" step="1" min="1" value={form.slots_dia}
+            onChange={e => setForm(f => ({ ...f, slots_dia: e.target.value }))} />
         </div>
       </div>
       <div className="space-y-2">
