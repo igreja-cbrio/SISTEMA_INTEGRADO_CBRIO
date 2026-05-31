@@ -1521,14 +1521,13 @@ function DetailDialog({ item, onClose, isAdmin, currentUserId, onStatusChange, o
             </div>
           )}
 
-          {/* Marketing · bloco do card (Spec 012) · preview · aprovar entrega · sugerir revisao */}
-          {item.categoria === 'marketing'
-            && item.marketing_card
-            && item.solicitante_id === currentUserId && (
-              <MarketingCardBlock
-                card={item.marketing_card}
-                onChanged={() => onItemRefresh?.()}
-              />
+          {/* Marketing · acompanhamento pelo solicitante (redesenho = campanha · legado = card) */}
+          {item.categoria === 'marketing' && item.solicitante_id === currentUserId && (
+            item.marketing_campanha
+              ? <MarketingCampanhaBlock campanha={item.marketing_campanha} />
+              : item.marketing_card
+                ? <MarketingCardBlock card={item.marketing_card} onChanged={() => onItemRefresh?.()} />
+                : null
           )}
 
           {/* NPS pos-conclusao · so pro solicitante apos status concluido */}
@@ -1566,7 +1565,63 @@ function DetailDialog({ item, onClose, isAdmin, currentUserId, onStatusChange, o
 }
 
 // ═══════════════════════════════════════════════════════════════════════
-// MarketingCardBlock · solicitante revisa preview, aprova entrega ou pede revisao (Spec 012)
+// MarketingCampanhaBlock · acompanhamento da campanha pelo solicitante (redesenho 2026-05-31)
+// 1 dor = 1 campanha com N entregaveis · mostra status + prazo + progresso + entregaveis.
+// ═══════════════════════════════════════════════════════════════════════
+const EST_ENTREGAVEL_LABEL = {
+  triagem: 'Em triagem', backlog: 'Na fila', fila: 'Na fila', pesquisa: 'Pesquisa',
+  producao: 'Em produção', em_producao: 'Em produção', revisao: 'Em revisão',
+  aguardando_solicitante: 'Em revisão', concluido: 'Concluído',
+};
+function MarketingCampanhaBlock({ campanha }) {
+  const ents = campanha.entregaveis || [];
+  const feitos = ents.filter(e => e.estado === 'concluido').length;
+  const pct = ents.length ? Math.round((feitos / ents.length) * 100) : 0;
+  const tudoPronto = ents.length > 0 && feitos === ents.length;
+  const fmt = (iso) => iso ? new Date(iso).toLocaleDateString('pt-BR') : null;
+  const emTriagem = campanha.status === 'triagem';
+
+  return (
+    <div className="space-y-3 pt-3 border-t border-border">
+      <p className="text-sm font-semibold text-foreground flex items-center gap-2">
+        <FileText className="h-4 w-4 text-pink-500" /> Sua demanda Marketing
+      </p>
+      <div className="flex flex-wrap items-center gap-2 text-xs">
+        <Badge className={emTriagem ? 'bg-pink-500/15 text-pink-700' : tudoPronto ? 'bg-emerald-500/15 text-emerald-700' : 'bg-blue-500/15 text-blue-700'}>
+          {emTriagem ? 'Em triagem · a equipe vai avaliar e planejar' : tudoPronto ? 'Tudo pronto' : 'Em produção'}
+        </Badge>
+        {fmt(campanha.prazo_entrega) && (
+          <span className="text-muted-foreground">Entrega prevista: {fmt(campanha.prazo_entrega)}</span>
+        )}
+      </div>
+
+      {ents.length > 0 ? (
+        <div className="space-y-1.5">
+          <div className="flex items-center gap-2">
+            <div className="h-1.5 flex-1 rounded-full bg-muted overflow-hidden">
+              <div className={`h-full ${pct === 100 ? 'bg-emerald-500' : 'bg-primary'}`} style={{ width: `${pct}%` }} />
+            </div>
+            <span className="text-[11px] text-muted-foreground shrink-0">{feitos}/{ents.length} prontos</span>
+          </div>
+          {ents.map(e => (
+            <div key={e.id} className="flex items-center justify-between gap-2 text-xs bg-muted/30 rounded px-2 py-1.5">
+              <span className="truncate flex-1 flex items-center gap-1.5">
+                {e.estado === 'concluido' && <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600 shrink-0" />}
+                {e.titulo}
+              </span>
+              <span className="text-muted-foreground shrink-0">{EST_ENTREGAVEL_LABEL[e.estado] || e.estado}</span>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <p className="text-xs text-muted-foreground italic">A equipe ainda vai definir os entregáveis desta demanda.</p>
+      )}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// MarketingCardBlock · solicitante revisa preview, aprova entrega ou pede revisao (Spec 012 · LEGADO)
 // ═══════════════════════════════════════════════════════════════════════
 function MarketingCardBlock({ card, onChanged }) {
   const [entregaveis, setEntregaveis] = useState([]);

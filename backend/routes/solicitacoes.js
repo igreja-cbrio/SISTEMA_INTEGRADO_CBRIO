@@ -157,11 +157,12 @@ router.get('/', async (req, res) => {
       destinoMap = Object.fromEntries((d || []).map(x => [x.id, x]));
     }
 
-    // Spec 012 · enriquece com card Marketing associado (estado, revisao, atribuido)
+    // Spec 012 · card Marketing LEGADO (cards antigos com solicitacao_id direto)
     const solicMktIds = (data || [])
       .filter(d => d.area_responsavel === 'marketing')
       .map(d => d.id);
     let cardMap = {};
+    let campanhaMap = {};
     if (solicMktIds.length) {
       const { data: cards } = await supabase
         .from('marketing_kanban_cards')
@@ -169,6 +170,40 @@ router.get('/', async (req, res) => {
         .in('solicitacao_id', solicMktIds)
         .is('deleted_at', null);
       cardMap = Object.fromEntries((cards || []).map(c => [c.solicitacao_id, c]));
+
+      // Redesenho 2026 · o solicitante acompanha a CAMPANHA (1 dor = 1 campanha com
+      // N entregaveis · os cards triados tem campanha_id, NAO solicitacao_id).
+      const { data: camps } = await supabase
+        .from('marketing_campanhas')
+        .select('id, solicitacao_id, status, titulo, prazo_entrega')
+        .in('solicitacao_id', solicMktIds)
+        .is('deleted_at', null);
+      const campIds = (camps || []).map(c => c.id);
+      const entregMap = {};
+      if (campIds.length) {
+        const { data: ents } = await supabase
+          .from('marketing_kanban_cards')
+          .select('id, campanha_id, titulo, estado, atribuido_a, data_fim')
+          .in('campanha_id', campIds)
+          .is('deleted_at', null);
+        const membroIds = [...new Set((ents || []).map(e => e.atribuido_a).filter(Boolean))];
+        let donoMap = {};
+        if (membroIds.length) {
+          const { data: ms } = await supabase.from('marketing_membros').select('id, profile_id, nome_display').in('id', membroIds);
+          const pids = [...new Set((ms || []).map(m => m.profile_id).filter(Boolean))];
+          let pmap = {};
+          if (pids.length) {
+            const { data: ps } = await supabase.from('profiles').select('id, name').in('id', pids);
+            pmap = Object.fromEntries((ps || []).map(p => [p.id, p.name]));
+          }
+          donoMap = Object.fromEntries((ms || []).map(m => [m.id, pmap[m.profile_id] || m.nome_display || null]));
+        }
+        for (const e of (ents || [])) {
+          if (!entregMap[e.campanha_id]) entregMap[e.campanha_id] = [];
+          entregMap[e.campanha_id].push({ id: e.id, titulo: e.titulo, estado: e.estado, dono_nome: donoMap[e.atribuido_a] || null, data_fim: e.data_fim });
+        }
+      }
+      campanhaMap = Object.fromEntries((camps || []).map(c => [c.solicitacao_id, { ...c, entregaveis: entregMap[c.id] || [] }]));
     }
 
     const enriched = (data || []).map(d => ({
@@ -179,6 +214,7 @@ router.get('/', async (req, res) => {
       marketing_tipo: tipoMap[d.marketing_tipo_id] || null,
       marketing_destino: destinoMap[d.marketing_destino_id] || null,
       marketing_card: cardMap[d.id] || null,
+      marketing_campanha: campanhaMap[d.id] || null,
     }));
 
     res.json(enriched);

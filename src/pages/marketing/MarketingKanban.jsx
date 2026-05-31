@@ -129,7 +129,8 @@ export default function MarketingKanban() {
       if (fOrigem  !== 'todas'  && c.origem !== fOrigem) return false;
       if (fTipo    !== 'todas'  && c.etiqueta_tipo_id !== fTipo) return false;
       if (fDestino !== 'todos'  && c.etiqueta_destino_id !== fDestino) return false;
-      if (fMembro  !== 'todos'  && c.atribuido_a !== fMembro) return false;
+      if (fMembro === 'ninguem') { if (c.atribuido_a != null) return false; }
+      else if (fMembro !== 'todos' && c.atribuido_a !== fMembro) return false;
       if (busca && !(c.titulo || '').toLowerCase().includes(busca.toLowerCase())) return false;
       return true;
     });
@@ -756,7 +757,7 @@ function CardDrawer({ card, onClose, onUpdated, tipos, destinos, membros, isCoor
               <div className="space-y-2">
                 <Label>Estado</Label>
                 <Select
-                  value={edit.estado || 'fila'}
+                  value={({ fila: 'backlog', em_producao: 'producao', aguardando_solicitante: 'revisao' })[edit.estado] || edit.estado || 'backlog'}
                   onValueChange={v => setEdit(s => ({ ...s, estado: v }))}
                 >
                   <SelectTrigger><SelectValue /></SelectTrigger>
