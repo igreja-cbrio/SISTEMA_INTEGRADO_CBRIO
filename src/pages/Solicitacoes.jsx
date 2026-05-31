@@ -1524,7 +1524,7 @@ function DetailDialog({ item, onClose, isAdmin, currentUserId, onStatusChange, o
           {/* Marketing · acompanhamento pelo solicitante (redesenho = campanha · legado = card) */}
           {item.categoria === 'marketing' && item.solicitante_id === currentUserId && (
             item.marketing_campanha
-              ? <MarketingCampanhaBlock campanha={item.marketing_campanha} />
+              ? <MarketingCampanhaBlock campanha={item.marketing_campanha} onChanged={() => onItemRefresh?.()} />
               : item.marketing_card
                 ? <MarketingCardBlock card={item.marketing_card} onChanged={() => onItemRefresh?.()} />
                 : null
@@ -1573,13 +1573,42 @@ const EST_ENTREGAVEL_LABEL = {
   producao: 'Em produção', em_producao: 'Em produção', revisao: 'Em revisão',
   aguardando_solicitante: 'Em revisão', concluido: 'Concluído',
 };
-function MarketingCampanhaBlock({ campanha }) {
+function MarketingCampanhaBlock({ campanha, onChanged }) {
   const ents = campanha.entregaveis || [];
   const feitos = ents.filter(e => e.estado === 'concluido').length;
   const pct = ents.length ? Math.round((feitos / ents.length) * 100) : 0;
   const tudoPronto = ents.length > 0 && feitos === ents.length;
+  const jaRevisou = ents.some(e => e.tem_revisao);
   const fmt = (iso) => iso ? new Date(iso).toLocaleDateString('pt-BR') : null;
   const emTriagem = campanha.status === 'triagem';
+  const concluida = campanha.status === 'concluida';
+  // Aprovação é da DEMANDA COMPLETA: só aparece quando TODOS os entregáveis estão prontos.
+  const podeAprovar = tudoPronto && campanha.status === 'ativa';
+
+  const [revisaoOpen, setRevisaoOpen] = useState(false);
+  const [motivo, setMotivo] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+
+  async function aprovar() {
+    setSubmitting(true);
+    try {
+      await marketingApi.campanhas.aprovar(campanha.id);
+      toast.success('Demanda aprovada · obrigado! Agora avalie pelo NPS.');
+      onChanged?.();
+    } catch (e) { toast.error(e.message || 'Erro ao aprovar'); }
+    finally { setSubmitting(false); }
+  }
+  async function revisar() {
+    if (motivo.trim().length < 5) { toast.error('Conte o que precisa ajustar (mín. 5 caracteres)'); return; }
+    setSubmitting(true);
+    try {
+      await marketingApi.campanhas.revisar(campanha.id, motivo.trim());
+      toast.success('Pedido de revisão enviado · a equipe vai ajustar.');
+      setRevisaoOpen(false); setMotivo('');
+      onChanged?.();
+    } catch (e) { toast.error(e.message || 'Erro ao pedir revisão'); }
+    finally { setSubmitting(false); }
+  }
 
   return (
     <div className="space-y-3 pt-3 border-t border-border">
@@ -1587,8 +1616,14 @@ function MarketingCampanhaBlock({ campanha }) {
         <FileText className="h-4 w-4 text-pink-500" /> Sua demanda Marketing
       </p>
       <div className="flex flex-wrap items-center gap-2 text-xs">
-        <Badge className={emTriagem ? 'bg-pink-500/15 text-pink-700' : tudoPronto ? 'bg-emerald-500/15 text-emerald-700' : 'bg-blue-500/15 text-blue-700'}>
-          {emTriagem ? 'Em triagem · a equipe vai avaliar e planejar' : tudoPronto ? 'Tudo pronto' : 'Em produção'}
+        <Badge className={
+          concluida ? 'bg-emerald-500/15 text-emerald-700' :
+          emTriagem ? 'bg-pink-500/15 text-pink-700' :
+          tudoPronto ? 'bg-emerald-500/15 text-emerald-700' : 'bg-blue-500/15 text-blue-700'
+        }>
+          {concluida ? 'Concluída · aprovada' :
+           emTriagem ? 'Em triagem · a equipe vai avaliar e planejar' :
+           tudoPronto ? 'Tudo pronto · aguardando sua aprovação' : 'Em produção'}
         </Badge>
         {fmt(campanha.prazo_entrega) && (
           <span className="text-muted-foreground">Entrega prevista: {fmt(campanha.prazo_entrega)}</span>
@@ -1615,6 +1650,30 @@ function MarketingCampanhaBlock({ campanha }) {
         </div>
       ) : (
         <p className="text-xs text-muted-foreground italic">A equipe ainda vai definir os entregáveis desta demanda.</p>
+      )}
+
+      {/* Aprovação da DEMANDA COMPLETA · só quando tudo pronto */}
+      {podeAprovar && !revisaoOpen && (
+        <div className="flex gap-2 pt-1">
+          <Button size="sm" onClick={aprovar} disabled={submitting} className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white">
+            <CheckCircle2 className="h-4 w-4 mr-1" /> Aprovar entrega
+          </Button>
+          {!jaRevisou && (
+            <Button size="sm" variant="outline" onClick={() => setRevisaoOpen(true)} className="flex-1 text-amber-600 hover:bg-amber-50 dark:hover:bg-amber-950/30">
+              ⟳ Pedir revisão (1x)
+            </Button>
+          )}
+        </div>
+      )}
+      {revisaoOpen && (
+        <div className="space-y-2 p-3 bg-amber-500/10 border border-amber-500/30 rounded">
+          <Label className="text-xs">O que precisa ajustar? *</Label>
+          <Textarea value={motivo} onChange={e => setMotivo(e.target.value)} rows={2} placeholder="Atenção · só 1 revisão. A equipe vai refazer o que você apontar." />
+          <div className="flex gap-2 justify-end">
+            <Button size="sm" variant="outline" onClick={() => { setRevisaoOpen(false); setMotivo(''); }}>Cancelar</Button>
+            <Button size="sm" onClick={revisar} disabled={submitting}>Enviar revisão</Button>
+          </div>
+        </div>
       )}
     </div>
   );

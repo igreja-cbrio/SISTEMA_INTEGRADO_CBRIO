@@ -183,7 +183,7 @@ router.get('/', async (req, res) => {
       if (campIds.length) {
         const { data: ents } = await supabase
           .from('marketing_kanban_cards')
-          .select('id, campanha_id, titulo, estado, atribuido_a, data_fim')
+          .select('id, campanha_id, titulo, estado, atribuido_a, data_fim, tem_revisao')
           .in('campanha_id', campIds)
           .is('deleted_at', null);
         const membroIds = [...new Set((ents || []).map(e => e.atribuido_a).filter(Boolean))];
@@ -200,7 +200,7 @@ router.get('/', async (req, res) => {
         }
         for (const e of (ents || [])) {
           if (!entregMap[e.campanha_id]) entregMap[e.campanha_id] = [];
-          entregMap[e.campanha_id].push({ id: e.id, titulo: e.titulo, estado: e.estado, dono_nome: donoMap[e.atribuido_a] || null, data_fim: e.data_fim });
+          entregMap[e.campanha_id].push({ id: e.id, titulo: e.titulo, estado: e.estado, dono_nome: donoMap[e.atribuido_a] || null, data_fim: e.data_fim, tem_revisao: e.tem_revisao });
         }
       }
       campanhaMap = Object.fromEntries((camps || []).map(c => [c.solicitacao_id, { ...c, entregaveis: entregMap[c.id] || [] }]));

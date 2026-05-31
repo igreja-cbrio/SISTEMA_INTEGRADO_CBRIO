@@ -110,7 +110,8 @@ Varredura completa do módulo (2 auditorias + benchmark). Consertado:
 - **Materialização da triagem grava `estado:'backlog'`** (não mais `'fila'`) em `POST /campanhas/:id/cards`.
 - Bugfix do filtro **"Não atribuído"** no Kanban (escondia tudo) + Select de estado no drawer normaliza legados (`fila→backlog`…) em vez de cair em `'fila'`.
 - **Falso alarme da auditoria:** "arrastar card pra Triagem some o card" NÃO procede — a coluna Triagem usa `TriagemColumn`, sem `onDrop`.
-- **Ainda pendente (não-crítico):** aprovar/revisar pelo solicitante no modelo de campanha (decisão: por campanha ou por entregável?); Pedro aparece como raia no Planner; Admin edita horas, não `slots_dia`; código morto a limpar (`/capacidade`, `/estimar`, `/fila`, `decidir-urgencia`, `marketing_grupo_padrao`); `sugerir-revisao`/`aprovar-entrega` ainda em estados legados; Analytics fica vazio até juntar histórico.
+- **Aprovação da DEMANDA COMPLETA (2026-05-31):** decisão do Marcos = aprovar a campanha inteira (NÃO por entregável). `POST /campanhas/:id/aprovar` (exige todos os entregáveis `concluido` → campanha `concluida` + solicitação `concluido` p/ NPS) e `POST /campanhas/:id/revisar` (1x · reabre os concluídos pra `revisao` + `tem_revisao`/`motivo_revisao` no card + notifica os donos · SEM migration). `MarketingCampanhaBlock` mostra **Aprovar entrega / Pedir revisão** só quando "tudo pronto" (status `ativa` + todos concluídos). `api.campanhas.aprovar/revisar`.
+- **Ainda pendente (não-crítico):** Pedro aparece como raia no Planner; Admin edita horas, não `slots_dia`; código morto (`/capacidade`, `/estimar`, `/fila`, `decidir-urgencia`, `marketing_grupo_padrao`); `sugerir-revisao`/`aprovar-entrega` de CARD (legado) ainda em estados legados; Analytics vazio até juntar histórico.
 
 ## /novosite · prévia da home do novo site público (2026-05-30)
 
