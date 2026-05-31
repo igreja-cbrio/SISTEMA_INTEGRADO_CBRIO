@@ -104,6 +104,14 @@ Reduzir o módulo a **Kanban · Planner · Analytics · Admin**. As outras abas 
 ### UI Trello-like no Kanban (2026-05-30 · pedido do Marcos · sem migration)
 Repaginação visual da aba (mantém toda a lógica): **listas com fundo cinza** (`bg-muted/50`, `rounded-xl`) + **bolinha de cor** por coluna (`ESTADOS.dot`); **cards estilo Trello** = `<div>` branco arredondado com sombra, **etiquetas em barras coloridas no topo** (componente `Etiqueta`, cor de `etiqueta_tipo`/`destino`/fase), **faixa de prioridade** no topo (urgente rosa / revisão âmbar), badges de meta (prazo · checklist · SLA · 🚩 entrega) e **avatar redondo** (inicial). `CampanhaCard` no mesmo estilo. Objetivo: o Pedro sentir o board do Trello dele.
 
+### Consertos de fluxo · pós-auditoria (2026-05-31 · sem migration)
+Varredura completa do módulo (2 auditorias + benchmark). Consertado:
+- **🔴 Solicitante↔campanha RELIGADO** (furo crítico): os cards triados têm `campanha_id` mas não `solicitacao_id`, e o solicitante buscava por `solicitacao_id` → tinha perdido o acompanhamento. `solicitacoes.js` (GET list) agora traz `marketing_campanha` = campanha (por `solicitacao_id`) + entregáveis (por `campanha_id`, com dono/estado). Novo `MarketingCampanhaBlock` em `Solicitacoes.jsx` mostra status + prazo + barra de progresso + lista de entregáveis. O `MarketingCardBlock` legado fica de fallback p/ cards antigos com `solicitacao_id`.
+- **Materialização da triagem grava `estado:'backlog'`** (não mais `'fila'`) em `POST /campanhas/:id/cards`.
+- Bugfix do filtro **"Não atribuído"** no Kanban (escondia tudo) + Select de estado no drawer normaliza legados (`fila→backlog`…) em vez de cair em `'fila'`.
+- **Falso alarme da auditoria:** "arrastar card pra Triagem some o card" NÃO procede — a coluna Triagem usa `TriagemColumn`, sem `onDrop`.
+- **Ainda pendente (não-crítico):** aprovar/revisar pelo solicitante no modelo de campanha (decisão: por campanha ou por entregável?); Pedro aparece como raia no Planner; Admin edita horas, não `slots_dia`; código morto a limpar (`/capacidade`, `/estimar`, `/fila`, `decidir-urgencia`, `marketing_grupo_padrao`); `sugerir-revisao`/`aprovar-entrega` ainda em estados legados; Analytics fica vazio até juntar histórico.
+
 ## /novosite · prévia da home do novo site público (2026-05-30)
 
 Ambiente isolado pra testar o redesign do site público **cbrio.com.br** dentro

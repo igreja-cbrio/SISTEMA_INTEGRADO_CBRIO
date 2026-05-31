@@ -1904,7 +1904,7 @@ router.post('/campanhas/:id/cards', authorizeModule('marketing', 5), async (req,
         duracao_dias: dur,
         pode_paralelo: pode_paralelo === undefined ? true : !!pode_paralelo,
         prazo_producao: data_fim ? new Date(data_fim + 'T18:00:00').toISOString() : null,
-        estado: 'fila',
+        estado: 'backlog', // régua nova · entregável triado entra direto no Backlog
         criado_por: req.user.userId,
       })
       .select('*').single();
