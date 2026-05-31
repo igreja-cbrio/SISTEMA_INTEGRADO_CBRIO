@@ -1051,14 +1051,6 @@ export const marketing = {
   membros:      () => get('/marketing/membros'),
   recorrentes:  () => get('/marketing/compromissos-recorrentes'),
 
-  // Capacidade + estimativa (Spec 005)
-  capacidade:   (semana) => get('/marketing/capacidade' + (semana ? '?semana=' + encodeURIComponent(semana) : '')),
-  estimar:      (tipo, dataAlvo) => {
-    const params = new URLSearchParams({ tipo });
-    if (dataAlvo) params.set('data_alvo', dataAlvo);
-    return get('/marketing/estimar?' + params.toString());
-  },
-
   // CRUD cards
   cards:        (params) => get('/marketing/cards' + (params ? '?' + new URLSearchParams(params) : '')),
   card:         (id) => get(`/marketing/cards/${id}`),
@@ -1069,7 +1061,6 @@ export const marketing = {
   // Acoes especificas
   sugerirRevisao:  (id, motivo) => patch(`/marketing/cards/${id}/sugerir-revisao`, { motivo }),
   aprovarEntrega:  (id) => patch(`/marketing/cards/${id}/aprovar-entrega`, {}),
-  decidirUrgencia: (id, decisao, motivoRecusa) => patch(`/marketing/cards/${id}/decidir-urgencia`, { decisao, motivo_recusa: motivoRecusa }),
 
   // Entregaveis (Spec 006 · SharePoint)
   entregaveis: {
@@ -1098,10 +1089,8 @@ export const marketing = {
     aprovacoesOrigem:  (dias = 90) => get(`/marketing/analytics/aprovacoes-origem?dias=${dias}`),
   },
 
-  // Fila de prioridade (Spec 018b)
+  // Fila · só a posição do card (mostrada ao solicitante · o resto virou ordenação no Kanban)
   fila: {
-    list:      (params) => get('/marketing/fila' + (params ? '?' + new URLSearchParams(params) : '')),
-    reordenar: (ordens) => patch('/marketing/fila/reordenar', { ordens }),
     posicao:   (cardId) => get(`/marketing/fila/posicao/${cardId}`),
   },
 

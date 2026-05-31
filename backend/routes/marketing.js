@@ -1245,7 +1245,7 @@ router.get('/admin/membros', authorizeModule('marketing', 5), async (req, res) =
 
 router.post('/admin/membros', authorizeModule('marketing', 5), async (req, res) => {
   try {
-    const { profile_id, habilidade, horas_semanais, observacao, nome_display } = req.body || {};
+    const { profile_id, habilidade, horas_semanais, slots_dia, observacao, nome_display } = req.body || {};
     if (!habilidade) return res.status(400).json({ error: 'habilidade obrigatoria' });
     if (!profile_id && !nome_display) {
       return res.status(400).json({ error: 'profile_id OU nome_display obrigatorio (use nome_display pra pessoas sem login)' });
@@ -1257,6 +1257,7 @@ router.post('/admin/membros', authorizeModule('marketing', 5), async (req, res) 
         nome_display: nome_display || null,
         habilidade,
         horas_semanais: horas_semanais ?? 30,
+        slots_dia: slots_dia ?? 3,
         observacao: observacao || null,
         ativo: true,
       })
@@ -1275,9 +1276,10 @@ router.post('/admin/membros', authorizeModule('marketing', 5), async (req, res) 
 router.patch('/admin/membros/:id', authorizeModule('marketing', 5), async (req, res) => {
   try {
     const update = {};
-    const { habilidade, horas_semanais, observacao, ativo, nome_display } = req.body || {};
+    const { habilidade, horas_semanais, slots_dia, observacao, ativo, nome_display } = req.body || {};
     if (habilidade !== undefined) update.habilidade = habilidade;
     if (horas_semanais !== undefined) update.horas_semanais = horas_semanais;
+    if (slots_dia !== undefined) update.slots_dia = slots_dia;
     if (observacao !== undefined) update.observacao = observacao;
     if (nome_display !== undefined) update.nome_display = nome_display || null;
     if (ativo !== undefined) update.ativo = !!ativo;
@@ -2073,7 +2075,7 @@ router.get('/planner', authorizeModule('marketing', 1), async (req, res) => {
     const { data: membrosRaw } = await supabase
       .from('marketing_membros')
       .select('id, profile_id, habilidade, nome_display, slots_dia')
-      .eq('ativo', true).is('deleted_at', null);
+      .eq('ativo', true).neq('habilidade', 'coordenador').is('deleted_at', null); // coordenador (Pedro) fora dos slots
     const profIds = [...new Set((membrosRaw || []).map(m => m.profile_id).filter(Boolean))];
     let profMap = {};
     if (profIds.length) {
