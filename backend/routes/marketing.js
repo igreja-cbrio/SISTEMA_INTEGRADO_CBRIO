@@ -206,64 +206,10 @@ router.get('/membros', authorizeModule('marketing', 1), async (req, res) => {
   }
 });
 
-// ─── Capacidade + estimativa (Spec 005) ─────────────────────────────────────
-
-router.get('/capacidade', authorizeModule('marketing', 1), async (req, res) => {
-  try {
-    const semana = req.query.semana || new Date().toISOString().slice(0, 10);
-    const { data, error } = await supabase
-      .rpc('fn_marketing_calcular_capacidade_semana', { p_data_ref: semana });
-    if (error) throw error;
-
-    // Enriquece com profile.name + nome_display (membros sem login)
-    const profileIds = [...new Set((data || []).map(r => r.profile_id).filter(Boolean))];
-    const membroIds  = [...new Set((data || []).map(r => r.membro_id).filter(Boolean))];
-    let profileMap = {}, membroMap = {};
-    if (profileIds.length) {
-      const { data: profs } = await supabase.from('profiles').select('id, name, email, avatar_url').in('id', profileIds);
-      profileMap = Object.fromEntries((profs || []).map(p => [p.id, p]));
-    }
-    if (membroIds.length) {
-      const { data: ms } = await supabase.from('marketing_membros').select('id, nome_display').in('id', membroIds);
-      membroMap = Object.fromEntries((ms || []).map(m => [m.id, m]));
-    }
-
-    const enriched = (data || []).map(r => {
-      const prof = profileMap[r.profile_id] || null;
-      const nd = membroMap[r.membro_id]?.nome_display;
-      return {
-        ...r,
-        profile: prof || (nd ? { id: null, name: nd, email: null, avatar_url: null } : null),
-      };
-    });
-    res.json(enriched);
-  } catch (e) {
-    console.error('[MARKETING] capacidade:', e.message);
-    res.status(500).json({ error: e.message });
-  }
-});
-
-// @deprecated (redesenho 2026-05-30): o intake por dor nao escolhe mais o tipo,
-// entao a estimativa preliminar saiu do form. Endpoint + fn_marketing_estimar_prazo
-// ficam por ora (sem uso no front); aposentar de vez apos a triagem validada.
-router.get('/estimar', authorizeModule('marketing', 1), async (req, res) => {
-  try {
-    console.warn('[MARKETING] GET /estimar · endpoint DEPRECATED (redesenho 2026-05-30)');
-    const { tipo, data_alvo } = req.query;
-    if (!tipo) return res.status(400).json({ error: 'Param tipo (UUID da etiqueta) obrigatorio' });
-
-    const { data, error } = await supabase
-      .rpc('fn_marketing_estimar_prazo', {
-        p_tipo_id: tipo,
-        p_data_alvo: data_alvo || null,
-      });
-    if (error) throw error;
-    res.json(data);
-  } catch (e) {
-    console.error('[MARKETING] estimar:', e.message);
-    res.status(500).json({ error: e.message });
-  }
-});
+// ─── (removidos · redesenho 2026-05-31) ─────────────────────────────────────
+// GET /capacidade e GET /estimar usavam o modelo de HORAS (fn_marketing_calcular_
+// capacidade_semana / fn_marketing_estimar_prazo), aposentado pelos slots/planner.
+// Sem chamador no front · as funções SQL são dropadas na migration de limpeza.
 
 router.get('/compromissos-recorrentes', authorizeModule('marketing', 1), async (req, res) => {
   try {
@@ -792,61 +738,9 @@ router.patch('/ciclo-criativo/batch', authorizeModule('marketing', 5), async (re
 
 // ─── Fila de prioridade (Spec 018b) ─────────────────────────────────────────
 
-// Lista cards em fila + em_producao ordenados por ordem_fila.
-// Solicitante pode chamar tambem · backend retorna so cards onde ele eh
-// solicitante (ownership) + cards sem solicitacao_id se nivel >=1.
-router.get('/fila', authorizeModule('marketing', 1), async (req, res) => {
-  try {
-    const { atribuido_a } = req.query;
-    let q = supabase
-      .from('marketing_kanban_cards')
-      .select('*')
-      .in('estado', ['fila', 'em_producao'])
-      .is('deleted_at', null)
-      .order('estado', { ascending: false }) // em_producao primeiro · "fila" depois (alfabetico inverso bate)
-      .order('ordem_fila', { ascending: true });
-
-    if (atribuido_a) q = q.eq('atribuido_a', atribuido_a);
-    const { data, error } = await q;
-    if (error) throw error;
-
-    const enriched = await enrichCards(data || []);
-    res.json(enriched);
-  } catch (e) {
-    console.error('[MARKETING] fila list:', e.message);
-    res.status(500).json({ error: e.message });
-  }
-});
-
-// Reordena a fila · array de { id, ordem } pra atualizar em batch · so coord (>=5).
-router.patch('/fila/reordenar', authorizeModule('marketing', 5), async (req, res) => {
-  try {
-    const { ordens } = req.body || {};
-    if (!Array.isArray(ordens) || ordens.length === 0) {
-      return res.status(400).json({ error: 'ordens deve ser array de { id, ordem }' });
-    }
-
-    // Validacao + update em batch · uma query por card · ok pra ~50 cards
-    const results = [];
-    for (const item of ordens) {
-      if (!item.id || typeof item.ordem !== 'number') continue;
-      const { error } = await supabase
-        .from('marketing_kanban_cards')
-        .update({ ordem_fila: item.ordem })
-        .eq('id', item.id)
-        .is('deleted_at', null);
-      if (error) results.push({ id: item.id, error: error.message });
-    }
-
-    if (results.length > 0) {
-      return res.status(207).json({ ok: false, falhas: results });
-    }
-    res.json({ ok: true, total: ordens.length });
-  } catch (e) {
-    console.error('[MARKETING] fila reordenar:', e.message);
-    res.status(500).json({ error: e.message });
-  }
-});
+// (removidos · redesenho 2026-05-31) GET /fila e PATCH /fila/reordenar: a fila
+// virou ordenação dentro das colunas do Kanban (urgente→ordem_fila). Só o
+// /fila/posicao (abaixo · mostrado ao solicitante) sobrevive.
 
 // Posicao da fila pra solicitante · so retorna se o card pertence a uma
 // solicitacao do user (transparencia sem expor outros cards).
