@@ -1919,6 +1919,108 @@ router.post('/campanhas/:id/cards', authorizeModule('marketing', 5), async (req,
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// Solicitante aprova a CAMPANHA inteira (demanda completa · decisão Marcos 2026-05-31).
+// Endpoint dedicado (o solicitante não tem UPDATE geral). Exige TODOS os entregáveis concluídos.
+router.post('/campanhas/:id/aprovar', async (req, res) => {
+  try {
+    const { data: camp } = await supabase
+      .from('marketing_campanhas')
+      .select('id, titulo, status, solicitante_id, solicitacao_id')
+      .eq('id', req.params.id).is('deleted_at', null).maybeSingle();
+    if (!camp) return res.status(404).json({ error: 'Campanha nao encontrada' });
+    if (camp.solicitante_id !== req.user.userId && !isAdminLike(req)) {
+      return res.status(403).json({ error: 'Apenas o solicitante (ou coordenacao) pode aprovar a entrega.' });
+    }
+    if (camp.status === 'concluida') return res.status(400).json({ error: 'Campanha ja concluida' });
+
+    const { data: cards } = await supabase
+      .from('marketing_kanban_cards')
+      .select('id, estado, atribuido_a').eq('campanha_id', camp.id).is('deleted_at', null);
+    const ativos = cards || [];
+    if (!ativos.length) return res.status(400).json({ error: 'Campanha ainda nao tem entregaveis' });
+    const pendentes = ativos.filter(c => c.estado !== 'concluido').length;
+    if (pendentes > 0) return res.status(400).json({ error: `Ainda ha ${pendentes} entregavel(is) nao concluido(s)` });
+
+    await supabase.from('marketing_campanhas')
+      .update({ status: 'concluida', updated_at: new Date().toISOString() }).eq('id', camp.id);
+    if (camp.solicitacao_id) {
+      await supabase.from('solicitacoes')
+        .update({ status: 'concluido', concluido_em: new Date().toISOString() })
+        .eq('id', camp.solicitacao_id).neq('status', 'concluido');
+    }
+    const donoIds = [...new Set(ativos.map(c => c.atribuido_a).filter(Boolean))];
+    if (donoIds.length) {
+      const { data: ms } = await supabase.from('marketing_membros').select('profile_id').in('id', donoIds);
+      const pids = [...new Set((ms || []).map(m => m.profile_id).filter(Boolean))];
+      if (pids.length) {
+        notificar({
+          modulo: 'marketing', tipo: 'marketing_campanha_aprovada',
+          titulo: `Demanda aprovada: ${camp.titulo}`,
+          mensagem: 'O solicitante aprovou a entrega completa · campanha concluida.',
+          link: '/marketing', severidade: 'info',
+          chaveDedup: `marketing_campanha_aprovada_${camp.id}`, targetIds: pids,
+        }).catch(err => console.error('[MARKETING] notify campanha aprovada:', err.message));
+      }
+    }
+    res.json({ ok: true, status: 'concluida' });
+  } catch (e) {
+    console.error('[MARKETING] aprovar campanha:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Solicitante pede revisao da CAMPANHA (1x) · reabre os entregaveis concluidos pra
+// 'revisao' (sem migration · a campanha volta a "em producao" e o botao de aprovar
+// some ate o Pedro refazer). Notifica os donos com o motivo.
+router.post('/campanhas/:id/revisar', async (req, res) => {
+  try {
+    const { motivo } = req.body || {};
+    if (!motivo || motivo.trim().length < 5) {
+      return res.status(400).json({ error: 'Motivo da revisao obrigatorio (>= 5 chars)' });
+    }
+    const { data: camp } = await supabase
+      .from('marketing_campanhas')
+      .select('id, titulo, solicitante_id')
+      .eq('id', req.params.id).is('deleted_at', null).maybeSingle();
+    if (!camp) return res.status(404).json({ error: 'Campanha nao encontrada' });
+    if (camp.solicitante_id !== req.user.userId && !isAdminLike(req)) {
+      return res.status(403).json({ error: 'Apenas o solicitante (ou coordenacao) pode pedir revisao.' });
+    }
+    const { data: cards } = await supabase
+      .from('marketing_kanban_cards')
+      .select('id, estado, tem_revisao, atribuido_a').eq('campanha_id', camp.id).is('deleted_at', null);
+    const ativos = cards || [];
+    if (ativos.some(c => c.tem_revisao)) {
+      return res.status(400).json({ error: 'Esta demanda ja teve uma revisao (1 maximo)' });
+    }
+    const concluidos = ativos.filter(c => c.estado === 'concluido');
+    if (!concluidos.length) return res.status(400).json({ error: 'Nada concluido para revisar ainda' });
+
+    for (const c of concluidos) {
+      await supabase.from('marketing_kanban_cards')
+        .update({ estado: 'revisao', tem_revisao: true, motivo_revisao: motivo.trim() }).eq('id', c.id);
+    }
+    const donoIds = [...new Set(concluidos.map(c => c.atribuido_a).filter(Boolean))];
+    if (donoIds.length) {
+      const { data: ms } = await supabase.from('marketing_membros').select('profile_id').in('id', donoIds);
+      const pids = [...new Set((ms || []).map(m => m.profile_id).filter(Boolean))];
+      if (pids.length) {
+        notificar({
+          modulo: 'marketing', tipo: 'marketing_campanha_revisao',
+          titulo: `Revisao pedida: ${camp.titulo}`,
+          mensagem: `O solicitante pediu ajustes: "${motivo.trim().slice(0, 140)}"`,
+          link: '/marketing', severidade: 'info',
+          chaveDedup: `marketing_campanha_revisao_${camp.id}`, targetIds: pids,
+        }).catch(err => console.error('[MARKETING] notify campanha revisao:', err.message));
+      }
+    }
+    res.json({ ok: true, reabertos: concluidos.length });
+  } catch (e) {
+    console.error('[MARKETING] revisar campanha:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // ─── Capacidade por dia (Fase 4 · fundacao · 2026-05-30) ────────────────────
 // Ocupacao de slots de um membro por dia, a partir dos intervalos data_inicio→
 // data_fim dos cards ativos. Usado na triagem pra avisar sobrecarga (>slots_dia).

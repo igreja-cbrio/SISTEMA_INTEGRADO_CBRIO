@@ -1118,6 +1118,8 @@ export const marketing = {
     update:    (id, data) => patch(`/marketing/campanhas/${id}`, data),
     remove:    (id) => del(`/marketing/campanhas/${id}`),
     criarCard: (id, data) => post(`/marketing/campanhas/${id}/cards`, data),
+    aprovar:   (id) => post(`/marketing/campanhas/${id}/aprovar`, {}),
+    revisar:   (id, motivo) => post(`/marketing/campanhas/${id}/revisar`, { motivo }),
   },
 
   // Capacidade por dia (Fase 4 · fundacao) · ocupacao de slots do membro no periodo
