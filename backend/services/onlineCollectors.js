@@ -98,6 +98,9 @@ async function liveMonitor() {
       return { skipped: true, reason: 'live_encerrada_ou_sem_dado', culto_id: culto.id, video_id: videoId };
     }
 
+    // Detecta gatilhos de decisao no chat ao vivo (CONSULTIVO · nao mexe no KPI)
+    await coletarChatDecisoes(culto.id).catch(() => {});
+
     // Atualiza online_pico se eh maior que o registrado
     const picoAtual = culto.online_pico || 0;
     if (viewers > picoAtual) {
@@ -116,6 +119,38 @@ async function liveMonitor() {
     await registrarDiagToken({ last_check_at: agora, last_error: `live_monitor: ${msg}` });
     return { skipped: true, reason: 'erro', culto_id: culto.id, error: msg };
   }
+}
+
+// ---------------------------------------------------------------------------
+// coletarChatDecisoes · CONSULTIVO · conta mensagens-gatilho no chat ao vivo
+// e acumula em cultos.online_decisoes_chat. Pagina incrementalmente via
+// online_chat_page_token (so conta mensagens novas a cada poll). Best-effort:
+// nunca quebra o liveMonitor (chamado com .catch). NAO entra no KPI · so dica.
+// ---------------------------------------------------------------------------
+const CHAT_GATILHOS = /(aceito jesus|eu aceito|aceito a jesus|entrego minha vida|quero aceitar|decido por jesus|recebo jesus|jesus (e|é) o senhor)/i;
+
+async function coletarChatDecisoes(cultoId) {
+  const broadcast = await yt.findActiveBroadcast();
+  if (!broadcast?.live_chat_id) return { skipped: true, reason: 'sem_live_chat_id' };
+
+  const { data: c } = await supabase
+    .from('cultos')
+    .select('online_decisoes_chat, online_chat_page_token')
+    .eq('id', cultoId)
+    .maybeSingle();
+
+  const { mensagens, nextPageToken } = await yt.fetchLiveChatMessages(
+    null, broadcast.live_chat_id, c?.online_chat_page_token || undefined
+  );
+
+  const novos = (mensagens || []).filter((m) => CHAT_GATILHOS.test(m)).length;
+  const total = (c?.online_decisoes_chat || 0) + novos;
+
+  await supabase.from('cultos')
+    .update({ online_decisoes_chat: total, online_chat_page_token: nextPageToken })
+    .eq('id', cultoId);
+
+  return { ok: true, novos, total };
 }
 
 // ---------------------------------------------------------------------------
@@ -758,12 +793,13 @@ async function verificarColetaOnline() {
   // 2. Cultos online ja encerrados (anteontem/ontem) e suas metricas
   const { data: cultos } = await supabase
     .from('cultos')
-    .select('id, data, youtube_video_id, online_pico, online_ds, vol_service_types(name, has_online)')
+    .select('id, data, youtube_video_id, online_pico, online_ds, decisoes_online, online_decisoes_chat, vol_service_types(name, has_online)')
     .in('data', [anteontemStr, ontemStr])
     .lt('data', hojeStr)
     .order('data', { ascending: false });
 
   const problemas = [];
+  const decisoesPendentes = [];
   let verificados = 0;
   for (const c of (cultos || [])) {
     const st = c.vol_service_types;
@@ -776,13 +812,22 @@ async function verificarColetaOnline() {
     if (faltando.length) {
       problemas.push({ id: c.id, nome: st.name || 'Culto', data: c.data, faltando });
     }
+    // Decisoes online nunca confirmadas (NULL · nem form nem manual tocaram).
+    // Pode ser 0 legitimo · o lembrete so pede confirmacao da Integracao.
+    if (c.decisoes_online === null || c.decisoes_online === undefined) {
+      decisoesPendentes.push({
+        id: c.id, nome: st.name || 'Culto', data: c.data,
+        chat_detectou: c.online_decisoes_chat || 0,
+      });
+    }
   }
 
   return {
-    ok: token.conectado && problemas.length === 0,
+    ok: token.conectado && problemas.length === 0 && decisoesPendentes.length === 0,
     data_referencia: ontemStr,
     token,
     problemas,
+    decisoesPendentes,
     verificados,
   };
 }
@@ -791,5 +836,5 @@ module.exports = {
   liveMonitor, dsCollector, ddusCollector, subsCollector,
   traficoCollector, retencaoCurvaCollector, subStatusCollector,
   backfillCultoVideoIds, catchUpMetricas, backfillRange,
-  verificarColetaOnline,
+  verificarColetaOnline, findCultoAtual,
 };

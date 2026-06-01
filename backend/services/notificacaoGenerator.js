@@ -939,6 +939,23 @@ async function gerarNotificacoesOnline() {
         chaveDedup: `online_culto_sem_metricas_${c.id}_${hojeKey}`,
       });
     }
+
+    // 4. Lembrete · decisoes online nunca confirmadas (form/manual nao tocaram).
+    //    Roteia pra integracao (quem lanca decisoes) · severidade baixa.
+    for (const c of r.decisoesPendentes || []) {
+      const dica = c.chat_detectou > 0
+        ? ` O chat ao vivo detectou ~${c.chat_detectou} possivel(is) decisao(oes) · confirme o numero real.`
+        : '';
+      count += await notificar({
+        modulo: 'integracao',
+        tipo: 'online_decisoes_a_confirmar',
+        titulo: `Confirme as decisoes online: ${c.nome} (${c.data})`,
+        mensagem: `O culto online de ${c.data} ainda nao teve as decisoes/conversoes online confirmadas.${dica} Lance em /integracao (aba Cultos), mesmo que tenha sido zero.`,
+        link: '/integracao',
+        severidade: 'baixa',
+        chaveDedup: `online_decisoes_a_confirmar_${c.id}_${hojeKey}`,
+      });
+    }
   } catch (e) {
     if (!String(e.message || '').includes('does not exist')) {
       console.warn('[Online notify] Erro:', e.message);

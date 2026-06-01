@@ -226,7 +226,27 @@ async function findActiveBroadcast(channelId) {
     video_id: item.id, // o ID do broadcast eh o video_id
     title: item.snippet?.title,
     started_at: item.snippet?.actualStartTime || item.snippet?.scheduledStartTime,
+    live_chat_id: item.snippet?.liveChatId || null,
   };
+}
+
+// Lista mensagens do chat ao vivo (Data API · liveChat/messages). Aceita
+// pageToken pra paginar incrementalmente (so mensagens novas). Retorna o texto
+// de cada mensagem + o nextPageToken pra a proxima chamada.
+async function fetchLiveChatMessages(channelId, liveChatId, pageToken) {
+  const { token } = await getValidAccessToken(channelId);
+  let url = `${DATA_API}/liveChat/messages?part=snippet&liveChatId=${encodeURIComponent(liveChatId)}&maxResults=200`;
+  if (pageToken) url += `&pageToken=${encodeURIComponent(pageToken)}`;
+  const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+  if (!res.ok) {
+    const t = await res.text();
+    throw new Error(`liveChat.messages falhou: ${res.status} ${t.slice(0, 200)}`);
+  }
+  const data = await res.json();
+  const mensagens = (data.items || []).map(
+    (it) => it.snippet?.displayMessage || it.snippet?.textMessageDetails?.messageText || ''
+  );
+  return { mensagens, nextPageToken: data.nextPageToken || null };
 }
 
 // concurrentViewers via Data API videos.list (liveStreamingDetails)
@@ -480,6 +500,7 @@ module.exports = {
   getValidAccessToken,
   disconnect,
   findActiveBroadcast,
+  fetchLiveChatMessages,
   fetchLiveConcurrentViewers,
   fetchLivePeakConcurrentViewers,
   fetchVideoViews,
