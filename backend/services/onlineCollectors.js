@@ -724,8 +724,72 @@ async function catchUpMetricas({ limit = 5 } = {}) {
   return { ok: true, processados: cultos.length, remaining, ...out };
 }
 
+// ---------------------------------------------------------------------------
+// verificarColetaOnline · BLINDAGEM · confere se os cultos online ja encerrados
+// dos ultimos 2 dias receberam as metricas automaticas (video_id, pico, DS) e a
+// saude do token OAuth. NAO dispara notificacao (quem decide alertar e o
+// notificacaoGenerator) · so retorna um relatorio estruturado dos problemas.
+//
+// Por que 2 dias: pega "ontem" (alvo principal) + "anteontem" como rede de
+// seguranca, caso o verificador tenha falhado uma vez. Cultos do dia atual sao
+// ignorados (ainda podem estar no ar / DS so vem em D+1).
+// ---------------------------------------------------------------------------
+async function verificarColetaOnline() {
+  const hojeStr = fmtData(new Date());
+  const ontemStr = fmtData(dataMaisDias(new Date(), -1));
+  const anteontemStr = fmtData(dataMaisDias(new Date(), -2));
+
+  // 1. Saude do token OAuth (ponto unico de falha de toda a coleta YouTube)
+  const { data: tokenRow } = await supabase
+    .from('online_oauth_tokens')
+    .select('channel_id, refresh_token, revoked_at, last_error, last_check_at, expires_at')
+    .is('revoked_at', null)
+    .maybeSingle();
+
+  let token;
+  if (!tokenRow || !tokenRow.refresh_token) {
+    token = { conectado: false, degradado: false, motivo: 'desconectado' };
+  } else if (tokenRow.last_error) {
+    token = { conectado: true, degradado: true, motivo: 'erro_recente', last_error: tokenRow.last_error };
+  } else {
+    token = { conectado: true, degradado: false, motivo: 'ok' };
+  }
+
+  // 2. Cultos online ja encerrados (anteontem/ontem) e suas metricas
+  const { data: cultos } = await supabase
+    .from('cultos')
+    .select('id, data, youtube_video_id, online_pico, online_ds, vol_service_types(name, has_online)')
+    .in('data', [anteontemStr, ontemStr])
+    .lt('data', hojeStr)
+    .order('data', { ascending: false });
+
+  const problemas = [];
+  let verificados = 0;
+  for (const c of (cultos || [])) {
+    const st = c.vol_service_types;
+    if (!st?.has_online) continue;
+    verificados++;
+    const faltando = [];
+    if (!c.youtube_video_id) faltando.push('video_id (live nao detectada)');
+    if (!c.online_pico || c.online_pico === 0) faltando.push('pico de audiencia');
+    if (!c.online_ds || c.online_ds === 0) faltando.push('views D+1 (DS)');
+    if (faltando.length) {
+      problemas.push({ id: c.id, nome: st.name || 'Culto', data: c.data, faltando });
+    }
+  }
+
+  return {
+    ok: token.conectado && problemas.length === 0,
+    data_referencia: ontemStr,
+    token,
+    problemas,
+    verificados,
+  };
+}
+
 module.exports = {
   liveMonitor, dsCollector, ddusCollector, subsCollector,
   traficoCollector, retencaoCurvaCollector, subStatusCollector,
   backfillCultoVideoIds, catchUpMetricas, backfillRange,
+  verificarColetaOnline,
 };

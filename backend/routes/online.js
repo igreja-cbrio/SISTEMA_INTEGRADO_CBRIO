@@ -68,6 +68,24 @@ router.get('/cron/catch-up', autorizaCron, async (req, res) => {
   } catch (e) { console.error('[catch-up]', e.message); res.status(500).json({ error: e.message }); }
 });
 
+// Blindagem · roda DEPOIS dos demais coletores do dia. Self-heal: tenta um
+// catch-up antes de verificar; se ainda faltar metrica (ou o token caiu),
+// dispara notificacao via gerarNotificacoesOnline.
+router.get('/cron/verificar', autorizaCron, async (_req, res) => {
+  try {
+    let selfHeal = null;
+    try { selfHeal = await collectors.catchUpMetricas({ limit: 10 }); }
+    catch (e) { selfHeal = { erro: e.message }; }
+    const relatorio = await collectors.verificarColetaOnline();
+    const { gerarNotificacoesOnline } = require('../services/notificacaoGenerator');
+    const notificacoes = await gerarNotificacoesOnline();
+    res.json({ ok: true, selfHeal, relatorio, notificacoes });
+  } catch (e) {
+    console.error('[online/cron/verificar]', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // ── OAuth callback eh publico (Google redireciona, sem nosso JWT) ──
 // State carrega: userId + nonce assinado com CRON_SECRET pra anti-CSRF
 function signState(payload) {
