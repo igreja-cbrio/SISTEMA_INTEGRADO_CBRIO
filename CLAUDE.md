@@ -175,6 +175,59 @@ originalmente pensado pra Astro · adaptado num único componente React.
   regras `.ns-btn.ns-btn-*` usam **dupla classe** p/ a cor vencer o reset `.ns a`
   (mesma armadilha do menu · não regredir).
 
+## Solicitações · 5 fluxos da administração · +Pagamentos +Serviços (2026-06-01)
+
+Marcos: a administração recebe **5 fluxos distintos com donos diferentes**
+(Reembolso, Reserva de Espaço, Compras, Pagamentos, Serviços), mas só 3 existiam.
+**Compras** era flat (só `valor_estimado`) e **Pagamentos/Serviços não existiam** —
+caíam no "Outro" (`area_responsavel=NULL` · sem dono, sem SLA, sem aprovação
+financeira automática · sumiam do radar e poluíam os KPIs adm). Decisão: adicionar
+os 2 fluxos + enriquecer Compras, com **form guiado por intenção + revelação
+progressiva** (cada fluxo só mostra os próprios campos · não fica mais pesado).
+
+**Migration `20260601120000_solicitacoes_pagamentos_servicos.sql`** (aditiva · idempotente):
+- CHECK de `categoria` aceita `'pagamento'` e `'servico'`.
+- Gatilho `tg_solicitacoes_calcula_sla` · lista de "sempre exige Yago" passa a ser
+  `compras/reembolso/pagamento/servico` (preserva a interação com a aprovação de
+  origem da Spec 001 · o portão financeiro só entra DEPOIS do diretor de origem).
+- Colunas novas (compartilhadas · reuso máximo): `favorecido_nome`,
+  `favorecido_documento`, `itens`, `link_referencia`, `recorrente`, `recorrencia`.
+  Reusa `documento_url`/`forma_pagamento`/`chave_pix`/`banco`/`agencia`/`conta`/
+  `valor_estimado` e **`data_necessaria` como vencimento** do pagamento.
+- Seed SLA: `financeiro/pagamento` (48/120 · urgente 24/48) e
+  `logistica_compras/servico` (72/336 · urgente 24/72). Obs: `financeiro` **não tem
+  subcategoria `default`** → pagamento PRECISA de linha própria (senão cai no
+  fallback 24/48 hardcoded da `calcular_sla_deadlines`).
+
+**Roteamento (backend `routes/solicitacoes.js`):**
+- `pagamento` → `financeiro` (subcat `pagamento`) · módulo notif `financeiro`.
+- `servico` → `logistica_compras` (subcat `servico`) · módulo notif `logistica` ·
+  **dono = Amaury/Compras** (decisão do Marcos · logística já negocia fornecedor).
+- `aprovar-financeiro` pós-Yago: `compras/servico` → `logistica_compras` (status
+  `pendente`, Amaury compra/contrata) · `reembolso/pagamento` → `financeiro` (status
+  `em_atendimento`, financeiro paga). `acaoMsg` por categoria na notificação.
+- `ALLOWED_CATEGORIES`, `CATEGORIA_MODULO`, `CATEGORIA_TO_AREA_RESP`,
+  `MODULO_CATEGORIAS` atualizados. POST aceita os campos novos por fluxo.
+
+**Frontend (`src/pages/Solicitacoes.jsx`):**
+- 2 categorias novas + `CATEGORIA_HINT` (dica curta por categoria · reduz erro de
+  classificação · "já gastou do bolso? use Reembolso").
+- Blocos por fluxo: Compras (itens+qtd, link, fornecedor), Serviço (o quê,
+  fornecedor, proposta, recorrência), Pagamento (favorecido, boleto/NF, vencimento,
+  forma boleto/PIX/transf, recorrência). `data_necessaria` vira "Vencimento *" no
+  pagamento. Validações `comprasValid`/`servicoValid`/`pagamentoValid`.
+- `DocDropzone` extraído (componente reusável · reembolso/pagamento/serviço) ·
+  removidos `dragOver`/`fileInputRef` do nível da página. `RecorrenteToggle` novo.
+- Preview "Prazo esperado" passou a casar **subcategoria** (CATEGORIAS ganhou `sub`)
+  → corrige também o reembolso, que mostrava o SLA de outra subcat.
+- Detalhe renderiza os campos novos por categoria.
+
+**Os 2 portões valem pros novos:** diretor de origem (Spec 001) → Yago (financeiro).
+**Decisões mantidas:** compras/pagamento/serviço **sempre** passam pelo Yago (sem
+bypass por valor · decisão de 22/05). **Follow-up não feito:** expor as subcategorias
+de RH que o backbone já tem (`vaga_nova/treinamento/documentacao/duvida` · hoje o form
+só mostra Férias/Licença). ⚠️ Aplicar a migration antes do merge.
+
 ## Solicitações · fix da ENTRADA do fluxo (validação E2E Marketing · 2026-05-28)
 
 Validação ponta a ponta do fluxo de Solicitações de Marketing revelou que o módulo
