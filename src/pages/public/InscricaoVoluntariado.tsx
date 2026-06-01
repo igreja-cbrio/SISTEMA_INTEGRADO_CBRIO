@@ -39,11 +39,11 @@ function cpfValido(v: string) {
 
 // ── Catalogos (espelham os valores reais que ja existem em vol_inscricoes) ──
 const DONS = [
-  'Encorajamento', 'Hospitalidade', 'Ensino', 'Lideranca', 'Ajuda',
-  'Generosidade', 'Misericordia', 'Cura', 'Fe', 'Sabedoria',
-  'Conhecimento', 'Profecia', 'Discernimento', 'Servico',
-  'Administracao', 'Pastoreio', 'Evangelismo', 'Criatividade Artistica',
-  'Nao sei ainda',
+  'Encorajamento', 'Hospitalidade', 'Ensino', 'Liderança', 'Ajuda',
+  'Generosidade', 'Misericórdia', 'Cura', 'Fé', 'Sabedoria',
+  'Conhecimento', 'Profecia', 'Discernimento', 'Serviço',
+  'Administração', 'Pastoreio', 'Evangelismo', 'Criatividade Artística',
+  'Não sei ainda',
 ];
 
 const MINISTERIOS = [
@@ -51,21 +51,18 @@ const MINISTERIOS = [
   'AMI',
   'Bridge',
   'Online',
-  'Recepcao - Integracao',
-  'Estacionamento - Integracao',
+  'Recepção - Integração',
+  'Estacionamento - Integração',
+  'Intercessão - Integração',
   'Check-in do voluntariado',
   'Cozinha do voluntariado',
-  'Capelania - Cuidados',
-  'Aconselhamento - Cuidados',
-  'Producao',
+  'Cuidados',
+  'Produção',
   'Marketing - Fotografia',
-  'Marketing - Video',
-  'Logistica',
+  'Marketing - Vídeo',
   'Next',
   'Grupos',
-  'Generosidade',
-  'Oracao',
-  'Onde for mais necessario',
+  'Onde for mais necessário',
 ];
 
 // ── Componentes de UI (estilo identico ao InscricaoNext) ──
@@ -262,7 +259,7 @@ export default function InscricaoVoluntariado() {
     setMinisterios(prev => {
       if (prev.includes(m)) return prev.filter(x => x !== m);
       if (prev.length >= MAX_MINISTERIOS) {
-        setError(`Voce pode escolher ate ${MAX_MINISTERIOS} areas.`);
+        setError(`Você pode escolher até ${MAX_MINISTERIOS} áreas.`);
         return prev;
       }
       setError('');
@@ -275,13 +272,13 @@ export default function InscricaoVoluntariado() {
     setError('');
     if (!form.nome || form.nome.trim().length < 2) return setError('Informe seu nome');
     if (!form.sobrenome || form.sobrenome.trim().length < 1) return setError('Informe seu sobrenome');
-    if (!form.email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email)) return setError('Email invalido');
-    if (!form.telefone || soDigitos(form.telefone).length < 10) return setError('Telefone invalido');
+    if (!form.email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email)) return setError('E-mail inválido');
+    if (!form.telefone || soDigitos(form.telefone).length < 10) return setError('Telefone inválido');
     if (!form.cpf) return setError('Informe seu CPF');
-    if (!cpfValido(form.cpf)) return setError('CPF invalido');
+    if (!cpfValido(form.cpf)) return setError('CPF inválido');
     if (!form.data_nascimento) return setError('Informe sua data de nascimento');
-    if (ministerios.length === 0) return setError('Escolha ao menos uma area pra servir');
-    if (precisaDadosMenor && (!form.nome_mae || form.nome_mae.trim().length < 2)) return setError('Nome da mae obrigatorio para Kids/Bridge');
+    if (ministerios.length === 0) return setError('Escolha ao menos uma área pra servir');
+    if (precisaDadosMenor && (!form.nome_mae || form.nome_mae.trim().length < 2)) return setError('Nome da mãe obrigatório para Kids/Bridge');
 
     setLoading(true);
     try {
@@ -301,7 +298,7 @@ export default function InscricaoVoluntariado() {
       });
       setSent(true);
     } catch (err: any) {
-      setError(err?.message || 'Erro ao enviar inscricao');
+      setError(err?.message || 'Erro ao enviar inscrição');
     }
     setLoading(false);
   };
@@ -329,11 +326,11 @@ export default function InscricaoVoluntariado() {
             style={{ width: 72, height: 72, marginBottom: 12, display: 'inline-block' }}
           />
           <h1 style={{ fontSize: 24, fontWeight: 800, margin: 0, letterSpacing: -0.5, background: 'linear-gradient(90deg, #00B39D, #00d9bd)', WebkitBackgroundClip: 'text', backgroundClip: 'text', color: 'transparent' }}>
-            Quero ser voluntario
+            Quero ser voluntário
           </h1>
           <p style={{ fontSize: 13, color: C.text3, marginTop: 6, lineHeight: 1.5 }}>
-            Sirva com a gente · cada dom encontra um lugar. Conte um pouco sobre voce
-            e nossa equipe entra em contato pra te conectar com a area certa.
+            Sirva com a gente · cada dom encontra um lugar. Conte um pouco sobre você
+            e nossa equipe entra em contato pra te conectar com a área certa.
           </p>
         </div>
 
@@ -349,11 +346,11 @@ export default function InscricaoVoluntariado() {
               fontSize: 28, marginBottom: 16,
             }}>&#10003;</div>
             <h2 style={{ fontSize: 18, fontWeight: 700, color: C.text, margin: 0 }}>
-              Inscricao recebida!
+              Inscrição recebida!
             </h2>
             <p style={{ fontSize: 13, color: C.text3, marginTop: 10, lineHeight: 1.5 }}>
-              Recebemos sua inscricao. Em ate 7 dias nossa equipe entra em contato
-              pelo WhatsApp ou email pra falar dos proximos passos. Obrigado por
+              Recebemos sua inscrição. Em até 7 dias nossa equipe entra em contato
+              pelo WhatsApp ou e-mail pra falar dos próximos passos. Obrigado por
               querer servir com a gente!
             </p>
           </div>
@@ -381,7 +378,7 @@ export default function InscricaoVoluntariado() {
                 <Field id="nome" label="Nome" value={form.nome} onChange={set('nome')} required autoComplete="given-name" />
                 <Field id="sobrenome" label="Sobrenome" value={form.sobrenome} onChange={set('sobrenome')} required autoComplete="family-name" />
               </Row>
-              <Field id="email" label="Email" type="email" value={form.email} onChange={set('email')} required autoComplete="email" inputMode="email" />
+              <Field id="email" label="E-mail" type="email" value={form.email} onChange={set('email')} required autoComplete="email" inputMode="email" />
               <Row>
                 <Field id="telefone" label="Telefone (WhatsApp)" value={form.telefone} onChange={set('telefone')} required placeholder="(00) 00000-0000" inputMode="tel" autoComplete="tel" />
                 <Field id="cpf" label="CPF" value={form.cpf} onChange={set('cpf')} required placeholder="000.000.000-00" inputMode="numeric" autoComplete="off" />
@@ -396,9 +393,9 @@ export default function InscricaoVoluntariado() {
                 autoComplete="bday"
               />
 
-              <SectionTitle>Onde voce quer servir</SectionTitle>
+              <SectionTitle>Onde você quer servir</SectionTitle>
               <p style={{ fontSize: 12, color: C.text3, marginTop: -6, marginBottom: 14 }}>
-                Marque ate {MAX_MINISTERIOS} areas ({ministerios.length}/{MAX_MINISTERIOS}). Em duvida, marca "Onde for mais necessario".
+                Marque até {MAX_MINISTERIOS} áreas ({ministerios.length}/{MAX_MINISTERIOS}). Em dúvida, marque "Onde for mais necessário".
               </p>
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 20 }}>
                 {MINISTERIOS.map(m => {
@@ -431,22 +428,22 @@ export default function InscricaoVoluntariado() {
               {precisaDadosMenor && (
                 <Field
                   id="nome_mae"
-                  label="Nome da mae"
+                  label="Nome da mãe"
                   value={form.nome_mae}
                   onChange={set('nome_mae')}
                   required
                 />
               )}
 
-              <SectionTitle>Sua historia com a gente</SectionTitle>
+              <SectionTitle>Sua história com a gente</SectionTitle>
               <SelectField
                 id="participou_next"
-                label="Voce ja participou do NEXT?"
+                label="Você já participou do NEXT?"
                 value={form.participou_next}
                 onChange={set('participou_next') as any}
                 options={[
-                  { value: 'Sim', label: 'Sim, ja participei' },
-                  { value: 'Nao', label: 'Ainda nao' },
+                  { value: 'Sim', label: 'Sim, já participei' },
+                  { value: 'Nao', label: 'Ainda não' },
                 ]}
               />
               <SelectField
@@ -468,13 +465,13 @@ export default function InscricaoVoluntariado() {
                   marginTop: 12, transition: 'background 0.2s',
                 }}
               >
-                {loading ? 'Enviando...' : 'Confirmar inscricao'}
+                {loading ? 'Enviando...' : 'Confirmar inscrição'}
               </button>
 
               <p style={{
                 fontSize: 11, color: C.textDim, textAlign: 'center', marginTop: 16, lineHeight: 1.5,
               }}>
-                Ao se inscrever, voce concorda em receber contato da equipe da CBRio sobre
+                Ao se inscrever, você concorda em receber contato da equipe da CBRio sobre
                 voluntariado e oportunidades de servir.
               </p>
             </form>
