@@ -341,39 +341,47 @@ async function ddusCollector() {
     .not('youtube_video_id', 'is', null)
     .or('online_ddus.is.null,online_ddus.eq.0');
 
-  if (!cultos?.length) return { ok: true, processados: 0, motivo: 'sem_cultos_d7_com_video' };
+  if (!cultos?.length) return { ok: true, processados: 0, coletados: 0, motivo: 'sem_cultos_d7_com_video' };
 
   const resultados = [];
+  let coletados = 0;
   for (const c of cultos) {
     if (c.online_ddus && c.online_ddus > 0) {
       resultados.push({ culto_id: c.id, skipped: true, reason: 'ja_preenchido' });
       continue;
     }
+    // DDUS depende do DS (snapshot da manha seguinte) · ele e o ponto de partida
+    // da subtracao. Sem DS nao da pra isolar o on-demand · pula e sinaliza.
+    if (c.online_ds == null) {
+      resultados.push({ culto_id: c.id, skipped: true, reason: 'ds_ausente' });
+      continue;
+    }
     try {
-      // DDUS = views D+1 ate D+7 (on-demand, exclui dia da live)
-      const inicio = fmtData(dataMaisDias(new Date(c.data + 'T00:00:00'), 1));
-      const fim    = fmtData(dataMaisDias(new Date(c.data + 'T00:00:00'), 7));
-      const stats = await yt.fetchVideoViews(null, c.youtube_video_id, inicio, fim);
-      await supabase.from('cultos')
-        .update({
-          online_ddus: stats.views,
-          online_watch_minutes_ddus: Math.round(stats.watch_minutes || 0) || null,
-          online_retencao_pct_ddus: stats.avg_view_percentage ? Number(stats.avg_view_percentage.toFixed(2)) : null,
-        })
-        .eq('id', c.id);
-      resultados.push({
-        culto_id: c.id,
-        video_id: c.youtube_video_id,
-        online_ddus: stats.views,
-        watch_min: stats.watch_minutes,
-        retencao_pct: stats.avg_view_percentage,
-        periodo: `${inicio}..${fim}`,
-      });
+      // DDUS = on-demand acumulado na semana seguinte = total de views AGORA
+      // (>= D+7, via statistics.viewCount da Data API) MENOS o DS (manha
+      // seguinte). Mesma fonte do DS · sem o atraso de 1-2 dias da Analytics.
+      const stats = await yt.fetchVideoStatistics(null, c.youtube_video_id);
+      const totalAgora = stats?.viewCount ?? 0;
+      const ddus = Math.max(0, totalAgora - (c.online_ds || 0));
+      const update = { online_ddus: ddus };
+      // watch time / retencao da janela D+1..D+7 seguem da Analytics (best-effort)
+      try {
+        const inicio = fmtData(dataMaisDias(new Date(c.data + 'T00:00:00'), 1));
+        const fim    = fmtData(dataMaisDias(new Date(c.data + 'T00:00:00'), 7));
+        const a = await yt.fetchVideoViews(null, c.youtube_video_id, inicio, fim);
+        update.online_watch_minutes_ddus = Math.round(a.watch_minutes || 0) || null;
+        update.online_retencao_pct_ddus = a.avg_view_percentage ? Number(a.avg_view_percentage.toFixed(2)) : null;
+      } catch (e) {
+        resultados.push({ culto_id: c.id, analytics_pendente: e.message.slice(0, 80) });
+      }
+      await supabase.from('cultos').update(update).eq('id', c.id);
+      coletados++;
+      resultados.push({ culto_id: c.id, video_id: c.youtube_video_id, online_ddus: ddus, total_agora: totalAgora, ds: c.online_ds });
     } catch (e) {
       resultados.push({ culto_id: c.id, error: e.message });
     }
   }
-  return { ok: true, processados: cultos.length, resultados };
+  return { ok: true, processados: cultos.length, coletados, resultados };
 }
 
 // ---------------------------------------------------------------------------

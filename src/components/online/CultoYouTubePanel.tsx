@@ -240,7 +240,7 @@ function CultoDetalhe({ c }: { c: CultoMetrica }) {
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs">
         <BoxNum label="Pico ao vivo" value={fmtNum(c.online_pico)} sub="concurrent viewers" />
         <BoxNum label="DS · views" value={fmtNum(c.online_ds)} sub="acumulado · manhã seguinte" />
-        <BoxNum label="DDUS · views" value={fmtNum(c.online_ddus)} sub="on-demand · D+1→D+7" />
+        <BoxNum label="DDUS · views" value={fmtNum(c.online_ddus)} sub="on-demand · D+7 − DS" />
         <BoxNum label="Subs ganhos" value={fmtNum(c.online_subs_ganhos)} sub={c.online_subs_perdidos ? `${c.online_subs_perdidos} perdidos` : ''} />
       </div>
 

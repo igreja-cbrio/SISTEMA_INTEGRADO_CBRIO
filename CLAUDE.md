@@ -3909,7 +3909,11 @@ preenchidas pela **Alda Lorena** (responsavel da Integracao) em
   manuais `/coletar/ds` e `/coletar/ddus` rodam `backfillCultoVideoIds` antes,
   pra vincular o video ao culto (o coletor so age em culto ja vinculado).
 - **ddus-collect** · cron `30 10 * * *` · pra cultos de 7 dias atras,
-  grava `online_ddus` (views D+1 ate D+7, on-demand).
+  grava `online_ddus` = **on-demand acumulado na semana** = `statistics.viewCount`
+  AGORA (>= D+7) **menos o DS** (snapshot da manha seguinte). Mesma fonte do DS
+  (Data API · sem o atraso da Analytics). So calcula se `online_ds` existe (o DS
+  e o ponto de partida da subtracao · sem ele pula com `ds_ausente`). watch time
+  / retencao do DDUS seguem da Analytics como best-effort.
 
 Override manual continua funcionando · coletor so atualiza se valor `null`
 ou `0` (DS/DDUS), ou se for `pico > online_pico atual`.
