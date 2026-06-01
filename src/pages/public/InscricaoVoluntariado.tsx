@@ -395,20 +395,10 @@ export default function InscricaoVoluntariado() {
                 required
                 autoComplete="bday"
               />
-              {precisaDadosMenor && (
-                <Field
-                  id="nome_mae"
-                  label="Nome da mae"
-                  value={form.nome_mae}
-                  onChange={set('nome_mae')}
-                  required
-                />
-              )}
 
               <SectionTitle>Onde voce quer servir</SectionTitle>
               <p style={{ fontSize: 12, color: C.text3, marginTop: -6, marginBottom: 14 }}>
                 Marque ate {MAX_MINISTERIOS} areas ({ministerios.length}/{MAX_MINISTERIOS}). Em duvida, marca "Onde for mais necessario".
-                {precisaDadosMenor && ' Kids/Bridge pedem data de nascimento e nome da mae acima.'}
               </p>
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 20 }}>
                 {MINISTERIOS.map(m => {
@@ -421,6 +411,32 @@ export default function InscricaoVoluntariado() {
                   );
                 })}
               </div>
+
+              {ministerios.includes('Kids') && (
+                <div style={{
+                  background: '#00B39D14', border: '1px solid #00B39D40',
+                  borderRadius: 12, padding: '14px 16px', marginBottom: 16,
+                }}>
+                  <div style={{ fontSize: 13, fontWeight: 700, color: C.text, marginBottom: 6 }}>
+                    Para servir no CBKids, precisamos de algumas informações específicas
+                  </div>
+                  <p style={{ fontSize: 12.5, color: C.text3, lineHeight: 1.55, margin: 0 }}>
+                    Prezamos pelo bem-estar e segurança das nossas crianças, e para garantir que estamos
+                    proporcionando um ambiente seguro e confiável, realizamos a verificação de antecedentes
+                    criminais de todos os envolvidos. Assim, reforçamos nosso compromisso com a proteção e o
+                    cuidado contínuo de nossos pequenos.
+                  </p>
+                </div>
+              )}
+              {precisaDadosMenor && (
+                <Field
+                  id="nome_mae"
+                  label="Nome da mae"
+                  value={form.nome_mae}
+                  onChange={set('nome_mae')}
+                  required
+                />
+              )}
 
               <SectionTitle>Sua historia com a gente</SectionTitle>
               <SelectField
