@@ -56,33 +56,8 @@ async function main() {
   // ════════════════════════════════════════════════════════════
   console.log('\n[2] FUNÇÕES SQL');
 
-  // capacidade
-  try {
-    const cap = await rpc('fn_marketing_calcular_capacidade_semana', { p_data_ref: new Date().toISOString().slice(0,10) });
-    ok(`fn_marketing_calcular_capacidade_semana · ${cap.length} membros`);
-    if (cap.length === 0) warn('  sem membros ativos · esperado 4 (Allan/Cauã/Letícia/Lorena)');
-    else log('Capacidade da semana', cap.map(c => ({
-      membro: c.profile_id?.slice(0,8),
-      hab: c.habilidade,
-      base: c.horas_base,
-      rec: c.horas_recorrentes,
-      ovr: c.horas_override,
-      disp: c.horas_disponiveis,
-      aloc: c.horas_alocadas,
-      livre: c.horas_livres,
-    })));
-  } catch (e) { fail(`fn_marketing_calcular_capacidade_semana: ${e.message}`); }
-
-  // estimar prazo · pega um tipo qualquer
-  const { data: tipoAlgum } = await supabase.from('marketing_etiquetas_tipo')
-    .select('id, slug, esforco_max_h').eq('ativo', true).limit(1).maybeSingle();
-  if (tipoAlgum) {
-    try {
-      const est = await rpc('fn_marketing_estimar_prazo', { p_tipo_id: tipoAlgum.id });
-      ok(`fn_marketing_estimar_prazo (${tipoAlgum.slug}) · ${est.dias_uteis || '?'} dias úteis`);
-      log('Estimativa exemplo', est);
-    } catch (e) { fail(`fn_marketing_estimar_prazo: ${e.message}`); }
-  }
+  // (fn_marketing_calcular_capacidade_semana e fn_marketing_estimar_prazo foram
+  //  DROPADAS no redesenho · capacidade virou slots/planner · sem teste aqui)
 
   // sync triggers · checa se existem
   const triggers = await supabase.rpc('app_soft_deletable_tables').then(r => r.data || [], () => null);
