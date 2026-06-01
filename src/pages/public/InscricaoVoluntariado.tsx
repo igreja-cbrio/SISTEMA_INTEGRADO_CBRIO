@@ -277,9 +277,10 @@ export default function InscricaoVoluntariado() {
     if (!form.sobrenome || form.sobrenome.trim().length < 1) return setError('Informe seu sobrenome');
     if (!form.email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email)) return setError('Email invalido');
     if (!form.telefone || soDigitos(form.telefone).length < 10) return setError('Telefone invalido');
-    if (form.cpf && !cpfValido(form.cpf)) return setError('CPF invalido');
+    if (!form.cpf) return setError('Informe seu CPF');
+    if (!cpfValido(form.cpf)) return setError('CPF invalido');
+    if (!form.data_nascimento) return setError('Informe sua data de nascimento');
     if (ministerios.length === 0) return setError('Escolha ao menos uma area pra servir');
-    if (precisaDadosMenor && !form.data_nascimento) return setError('Data de nascimento obrigatoria para Kids/Bridge');
     if (precisaDadosMenor && (!form.nome_mae || form.nome_mae.trim().length < 2)) return setError('Nome da mae obrigatorio para Kids/Bridge');
 
     setLoading(true);
@@ -383,15 +384,15 @@ export default function InscricaoVoluntariado() {
               <Field id="email" label="Email" type="email" value={form.email} onChange={set('email')} required autoComplete="email" inputMode="email" />
               <Row>
                 <Field id="telefone" label="Telefone (WhatsApp)" value={form.telefone} onChange={set('telefone')} required placeholder="(00) 00000-0000" inputMode="tel" autoComplete="tel" />
-                <Field id="cpf" label="CPF (opcional)" value={form.cpf} onChange={set('cpf')} placeholder="000.000.000-00" inputMode="numeric" autoComplete="off" />
+                <Field id="cpf" label="CPF" value={form.cpf} onChange={set('cpf')} required placeholder="000.000.000-00" inputMode="numeric" autoComplete="off" />
               </Row>
               <Field
                 id="data_nascimento"
-                label={precisaDadosMenor ? 'Data de nascimento' : 'Data de nascimento (opcional)'}
+                label="Data de nascimento"
                 type="date"
                 value={form.data_nascimento}
                 onChange={set('data_nascimento')}
-                required={precisaDadosMenor}
+                required
                 autoComplete="bday"
               />
               {precisaDadosMenor && (
