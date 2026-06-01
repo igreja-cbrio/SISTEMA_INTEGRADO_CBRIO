@@ -3901,7 +3901,13 @@ preenchidas pela **Alda Lorena** (responsavel da Integracao) em
   Pra evento atipico fora de janela, usar botao "Coletar pico agora"
   da UI em `/online`.
 - **ds-collect** · cron `0 10 * * *` · pra cultos de ontem com video_id,
-  grava `online_ds` via `youtubeAnalytics.reports.query` (views no dia D).
+  grava `online_ds` = **total acumulado de views do video** no momento da coleta
+  (snapshot da manha seguinte ao culto) via `videos.list?part=statistics`
+  (`fetchVideoStatistics` · Data API · quase tempo real, SEM o atraso de 1-2d da
+  Analytics que deixava o DS de ontem zerado). watch time / retencao do DS
+  seguem vindo da Analytics como best-effort (podem atrasar). Os endpoints
+  manuais `/coletar/ds` e `/coletar/ddus` rodam `backfillCultoVideoIds` antes,
+  pra vincular o video ao culto (o coletor so age em culto ja vinculado).
 - **ddus-collect** · cron `30 10 * * *` · pra cultos de 7 dias atras,
   grava `online_ddus` (views D+1 ate D+7, on-demand).
 

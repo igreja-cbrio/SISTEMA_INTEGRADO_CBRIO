@@ -382,6 +382,7 @@ function OAuthStatusCardInner() {
     onSuccess: () => { toast.success('Canal desconectado.'); refetch(); },
   });
 
+  const queryClient = useQueryClient();
   const coletarLive = useMutation({
     mutationFn: () => online.coletar.live(),
     onSuccess: (r: any) => toast.success(r?.atualizou ? `Pico atualizado: ${r.viewers}` : (r?.reason || 'Coleta executada')),
@@ -389,12 +390,34 @@ function OAuthStatusCardInner() {
   });
   const coletarDs = useMutation({
     mutationFn: () => online.coletar.ds(),
-    onSuccess: (r: any) => toast.success(`DS · ${r?.processados || 0} cultos processados`),
+    onSuccess: (r: any) => {
+      const linkados = r?.backfill?.linkados || 0;
+      const sufixo = linkados ? ` (+${linkados} vídeo vinculado)` : '';
+      if (r?.coletados > 0) {
+        toast.success(`DS atualizado · ${r.coletados} culto(s)${sufixo}`);
+      } else if (r?.motivo === 'sem_cultos_com_video_vinculado') {
+        toast.message('Nenhum culto recente com vídeo vinculado. Clique "Sincronizar agora" ou "Recoletar tudo" primeiro.');
+      } else {
+        toast.message(`DS · nada novo para coletar${sufixo}.`);
+      }
+      queryClient.invalidateQueries({ queryKey: ['online', 'cultos-metricas'] });
+    },
     onError: (e: any) => toast.error(e?.message || 'Erro na coleta'),
   });
   const coletarDdus = useMutation({
     mutationFn: () => online.coletar.ddus(),
-    onSuccess: (r: any) => toast.success(`DDUS · ${r?.processados || 0} cultos processados`),
+    onSuccess: (r: any) => {
+      const linkados = r?.backfill?.linkados || 0;
+      const sufixo = linkados ? ` (+${linkados} vídeo vinculado)` : '';
+      if (r?.processados > 0) {
+        toast.success(`DDUS · ${r.processados} culto(s)${sufixo}`);
+      } else if (r?.motivo === 'sem_cultos_d7_com_video') {
+        toast.message('Nenhum culto de ~7 dias atrás com vídeo vinculado.');
+      } else {
+        toast.message(`DDUS · nada novo para coletar${sufixo}.`);
+      }
+      queryClient.invalidateQueries({ queryKey: ['online', 'cultos-metricas'] });
+    },
     onError: (e: any) => toast.error(e?.message || 'Erro na coleta'),
   });
 
@@ -488,8 +511,6 @@ export default function Online() {
     queryKey: ['online', 'dashboard'],
     queryFn: () => online.dashboard(),
   });
-
-  const queryClient = useQueryClient();
 
   const syncMutation = useMutation({
     mutationFn: () => online.sync(),

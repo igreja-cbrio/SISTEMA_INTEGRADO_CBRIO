@@ -199,10 +199,20 @@ router.post('/coletar/live', authorize('admin', 'diretor'), async (_req, res) =>
   try { res.json(await collectors.liveMonitor()); } catch (e) { res.status(500).json({ error: e.message }); }
 });
 router.post('/coletar/ds', authorize('admin', 'diretor'), async (_req, res) => {
-  try { res.json(await collectors.dsCollector()); } catch (e) { res.status(500).json({ error: e.message }); }
+  try {
+    // Vincula o video aos cultos pendentes ANTES de coletar (o DS so age em culto
+    // ja vinculado · sem isso o botao volta 0 quando o video nao foi linkado ainda).
+    const backfill = await collectors.backfillCultoVideoIds().catch((e) => ({ erro: e.message }));
+    const ds = await collectors.dsCollector();
+    res.json({ ...ds, backfill });
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 router.post('/coletar/ddus', authorize('admin', 'diretor'), async (_req, res) => {
-  try { res.json(await collectors.ddusCollector()); } catch (e) { res.status(500).json({ error: e.message }); }
+  try {
+    const backfill = await collectors.backfillCultoVideoIds().catch((e) => ({ erro: e.message }));
+    const ddus = await collectors.ddusCollector();
+    res.json({ ...ddus, backfill });
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 router.post('/coletar/subs', authorize('admin', 'diretor'), async (_req, res) => {
   try { res.json(await collectors.subsCollector()); } catch (e) { res.status(500).json({ error: e.message }); }
