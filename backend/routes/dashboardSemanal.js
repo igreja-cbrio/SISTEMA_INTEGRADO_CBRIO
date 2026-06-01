@@ -212,9 +212,12 @@ router.get('/semanal', async (req, res) => {
       itemsVisiveis = items.filter(it => !excluir.has(it.service_type_id));
     }
 
+    // Ordem logica dos cultos: Quarta -> Bridge/AMI (sab) -> Domingos.
+    // Semana comecando na segunda (Seg=0..Dom=6).
+    const ordemSeg = (d) => (d === null || d === undefined ? 99 : ((Number(d) + 6) % 7));
     itemsVisiveis.sort((a, b) => {
-      const da = a.recurrence_day ?? 99;
-      const db = b.recurrence_day ?? 99;
+      const da = ordemSeg(a.recurrence_day);
+      const db = ordemSeg(b.recurrence_day);
       if (da !== db) return da - db;
       return (a.recurrence_time || '').localeCompare(b.recurrence_time || '');
     });

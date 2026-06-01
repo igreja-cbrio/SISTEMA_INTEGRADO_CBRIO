@@ -174,8 +174,9 @@ export default function DashSemanalAba() {
           media: i.media,
           taxa: i.taxa_ocupacao,
           variacao,
+          _order: ordemCulto(i.recurrence_day, i.recurrence_time),
         };
-      });
+      }).sort((a, b) => a._order - b._order);
     }
     // Multi · merge por nome do culto
     const mapPorNome = new Map();
@@ -185,7 +186,7 @@ export default function DashSemanalAba() {
         const row = mapPorNome.get(k) || {
           nome: k,
           service_type_id: i.service_type_id,
-          _order: i.recurrence_day * 100 + parseInt((i.recurrence_time || '0').slice(0, 2), 10),
+          _order: ordemCulto(i.recurrence_day, i.recurrence_time),
         };
         row[d.indicador] = i.valor_absoluto;
         mapPorNome.set(k, row);
@@ -758,12 +759,18 @@ export default function DashSemanalAba() {
 
 function shortLabel(nome, day, time) {
   if (!nome) return '—';
-  if (/domingo/i.test(nome)) {
-    const h = (time || '').slice(0, 2);
-    return `D${h}`;
-  }
+  const hhmm = (time || '').slice(0, 5);
+  if (/domingo/i.test(nome)) return hhmm ? `Dom ${hhmm}` : nome;
   if (/quarta/i.test(nome)) return 'Quarta';
   return nome;
+}
+
+// Ordem logica dos cultos: Quarta -> Bridge/AMI (sabado) -> Domingos (por horario).
+// Semana comecando na segunda (Seg=0..Dom=6) + minutos do dia desempata.
+function ordemCulto(day, time) {
+  const d = day === null || day === undefined ? 99 : ((Number(day) + 6) % 7);
+  const [h, m] = String(time || '0:0').split(':').map(Number);
+  return d * 10000 + (h || 0) * 100 + (m || 0);
 }
 
 function formatBr(iso) {
