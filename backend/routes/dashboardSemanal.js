@@ -247,7 +247,7 @@ router.get('/semanal', async (req, res) => {
       indicador: indicadorKey,
       rotulo: indDef.rotulo,
       capacidade_templo: CAPACIDADE_TEMPLO,
-      items,
+      items: itemsVisiveis,
       resumo: {
         total,
         media_geral: mediaGeral,
