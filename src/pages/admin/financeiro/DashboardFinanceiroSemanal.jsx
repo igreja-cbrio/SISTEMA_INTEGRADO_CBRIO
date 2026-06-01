@@ -2282,10 +2282,14 @@ function MetasFinanceirasComFiltros({ metas: metasIniciais, onMetasChange }) {
   useEffect(() => {
     let cancelled = false;
     setLoadingProg(true);
+    // Sem mês/semana selecionados, NÃO força o ano inteiro · cada meta usa seu
+    // período natural (semanal=esta semana · mensal=este mês · anual=este ano).
+    // Evita agregar o ano todo numa meta semanal/mensal e evita o range anual
+    // que deixava os gauges presos em "Calculando..." no carregamento inicial.
     const params = {};
     if (filtroSemana) params.semana_inicio = filtroSemana;
-    else if (filtroAno && filtroMes) { params.ano = filtroAno; params.mes = filtroMes; }
-    else if (filtroAno) params.ano = filtroAno;
+    else if (filtroMes) { params.ano = filtroAno; params.mes = filtroMes; }
+    else if (filtroAno !== anoAtual) params.ano = filtroAno;
 
     financeiroV2.metas.progresso(params)
       .then(r => {
@@ -2316,11 +2320,11 @@ function MetasFinanceirasComFiltros({ metas: metasIniciais, onMetasChange }) {
     });
 
     if (period === null) {
-      // Volta ao default · recarrega via global
+      // Volta ao default · recarrega via global (mesmo critério do load inicial)
       const params = { meta_id: metaId };
       if (filtroSemana) params.semana_inicio = filtroSemana;
-      else if (filtroAno && filtroMes) { params.ano = filtroAno; params.mes = filtroMes; }
-      else if (filtroAno) params.ano = filtroAno;
+      else if (filtroMes) { params.ano = filtroAno; params.mes = filtroMes; }
+      else if (filtroAno !== anoAtual) params.ano = filtroAno;
       try {
         const r = await financeiroV2.metas.progresso(params);
         const item = (r?.metas || []).find(m => m.meta_id === metaId);
