@@ -409,22 +409,28 @@ export default function InscricaoVoluntariado() {
                 })}
               </div>
 
-              {ministerios.includes('Kids') && (
-                <div style={{
+              {[
+                ministerios.includes('Kids') && {
+                  titulo: 'Para servir no CBKids, precisamos de algumas informações específicas',
+                  corpo: 'Prezamos pelo bem-estar e segurança das nossas crianças, e para garantir que estamos proporcionando um ambiente seguro e confiável, realizamos a verificação de antecedentes criminais de todos os envolvidos. Assim, reforçamos nosso compromisso com a proteção e o cuidado contínuo de nossos pequenos.',
+                },
+                ministerios.includes('Bridge') && {
+                  titulo: 'Para servir no Bridge, precisamos de algumas informações específicas',
+                  corpo: 'Prezamos pelo bem-estar e segurança dos nossos adolescentes, e para garantir que estamos proporcionando um ambiente seguro e confiável, realizamos a verificação de antecedentes criminais de todos os envolvidos. Assim, reforçamos nosso compromisso com a proteção e o cuidado contínuo dos nossos jovens.',
+                },
+              ].filter(Boolean).map((aviso: any, i) => (
+                <div key={i} style={{
                   background: '#00B39D14', border: '1px solid #00B39D40',
                   borderRadius: 12, padding: '14px 16px', marginBottom: 16,
                 }}>
                   <div style={{ fontSize: 13, fontWeight: 700, color: C.text, marginBottom: 6 }}>
-                    Para servir no CBKids, precisamos de algumas informações específicas
+                    {aviso.titulo}
                   </div>
                   <p style={{ fontSize: 12.5, color: C.text3, lineHeight: 1.55, margin: 0 }}>
-                    Prezamos pelo bem-estar e segurança das nossas crianças, e para garantir que estamos
-                    proporcionando um ambiente seguro e confiável, realizamos a verificação de antecedentes
-                    criminais de todos os envolvidos. Assim, reforçamos nosso compromisso com a proteção e o
-                    cuidado contínuo de nossos pequenos.
+                    {aviso.corpo}
                   </p>
                 </div>
-              )}
+              ))}
               {precisaDadosMenor && (
                 <Field
                   id="nome_mae"
