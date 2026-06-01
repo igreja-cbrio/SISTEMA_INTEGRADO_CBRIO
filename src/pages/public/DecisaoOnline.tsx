@@ -12,6 +12,7 @@ type Culto = { id: string; data: string; nome: string };
 export default function DecisaoOnline() {
   const [carregando, setCarregando] = useState(true);
   const [ativo, setAtivo] = useState(false);
+  const [aoVivo, setAoVivo] = useState(false);
   const [culto, setCulto] = useState<Culto | null>(null);
   const [nome, setNome] = useState('');
   const [telefone, setTelefone] = useState('');
@@ -23,8 +24,9 @@ export default function DecisaoOnline() {
     document.title = 'Eu aceito Jesus · CBRio';
     decisaoOnline
       .ativo()
-      .then((r: { ativo: boolean; culto: Culto | null }) => {
+      .then((r: { ativo: boolean; aoVivo?: boolean; culto: Culto | null }) => {
         setAtivo(!!r.ativo);
+        setAoVivo(!!r.aoVivo);
         setCulto(r.culto || null);
       })
       .catch(() => setAtivo(false))
@@ -152,7 +154,7 @@ export default function DecisaoOnline() {
 
         {culto && ativo && (
           <p style={{ fontSize: 13, color: '#888', margin: '0 0 4px' }}>
-            Ao vivo agora · {culto.nome}
+            {aoVivo ? `Ao vivo agora · ${culto.nome}` : `Culto de hoje · ${culto.nome}`}
           </p>
         )}
 
