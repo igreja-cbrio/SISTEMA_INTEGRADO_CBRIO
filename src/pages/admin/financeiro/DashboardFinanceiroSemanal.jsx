@@ -69,38 +69,42 @@ function useFiltrosGlobais() {
 }
 
 // ============================================================
-// SEMANAS QUA-TER · gera lista das ultimas N semanas
-// Numeracao: 1 = primeira semana qua-ter cuja quarta-feira cai em
-// ou apos 01/01 do ano. Pode dar W53 em anos com 53 semanas qua-ter.
+// SEMANAS ISO seg-dom · UNIFICADAS com a aba de cultos (2026-06-01)
+// Antes era qua-ter (corte na terca pelo lag D+1 do extrato). Como a oferta
+// de culto ja e lancada com a data do culto, mudamos pra segunda->domingo pra
+// "Semana 21" bater com os cultos. O backend (fin_semana_qua_ter, nome mantido)
+// tambem foi reescrito pra ISO seg-dom.
 // ============================================================
-function numeroSemanaQuaTer(quarta) {
-  const ano = quarta.getFullYear();
-  const jan1 = new Date(ano, 0, 1);
-  const dowJan1 = jan1.getDay(); // 0=Dom ... 3=Qua
-  const diasAteQuarta = (3 - dowJan1 + 7) % 7;
-  const primeiraQuarta = new Date(ano, 0, 1 + diasAteQuarta);
-  const dias = Math.round((quarta - primeiraQuarta) / 86400000);
-  return Math.floor(dias / 7) + 1;
+function segundaDaSemana(date) {
+  const d = new Date(date);
+  d.setHours(0, 0, 0, 0);
+  const offset = (d.getDay() + 6) % 7; // Seg=0 ... Dom=6
+  d.setDate(d.getDate() - offset);
+  return d;
 }
 
-function gerarSemanasQuaTer(qtd = 26) {
-  const hoje = new Date();
-  const dow = hoje.getDay(); // 0=Dom ... 3=Qua ... 6=Sab
-  // dias para voltar ate a quarta da semana atual qua-ter
-  // qua=0, qui=1, sex=2, sab=3, dom=4, seg=5, ter=6
-  const diasParaQuarta = (dow + 4) % 7;
-  const quartaAtual = new Date(hoje);
-  quartaAtual.setHours(0, 0, 0, 0);
-  quartaAtual.setDate(hoje.getDate() - diasParaQuarta);
+// Numero da semana ISO (mesmo criterio do to_char(IW) do Postgres e da aba cultos)
+function numeroSemanaIso(date) {
+  const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
+  const dayNum = (d.getUTCDay() + 6) % 7; // Seg=0
+  d.setUTCDate(d.getUTCDate() - dayNum + 3); // quinta da semana define o ano ISO
+  const primeiraQuinta = new Date(Date.UTC(d.getUTCFullYear(), 0, 4));
+  const fdNum = (primeiraQuinta.getUTCDay() + 6) % 7;
+  primeiraQuinta.setUTCDate(primeiraQuinta.getUTCDate() - fdNum + 3);
+  return 1 + Math.round((d - primeiraQuinta) / (7 * 86400000));
+}
+
+function gerarSemanasIso(qtd = 26) {
+  const segAtual = segundaDaSemana(new Date());
 
   const out = [];
   for (let i = 0; i < qtd; i++) {
-    const inicio = new Date(quartaAtual);
-    inicio.setDate(quartaAtual.getDate() - i * 7);
+    const inicio = new Date(segAtual);
+    inicio.setDate(segAtual.getDate() - i * 7);
     const fim = new Date(inicio);
     fim.setDate(inicio.getDate() + 6);
     const fmt = (d) => `${String(d.getDate()).padStart(2, '0')}/${String(d.getMonth() + 1).padStart(2, '0')}`;
-    const num = numeroSemanaQuaTer(inicio);
+    const num = numeroSemanaIso(inicio);
     const numStr = String(num).padStart(2, '0');
     out.push({
       ref: inicio.toISOString().slice(0, 10),
@@ -168,7 +172,7 @@ export default function DashboardSemanal() {
   const [saidas, setSaidas] = useState(null);
   const [metas, setMetas] = useState([]);
   const [loading, setLoading] = useState(true);
-  const semanas = useMemo(() => gerarSemanasQuaTer(26), []);
+  const semanas = useMemo(() => gerarSemanasIso(26), []);
   const [refData, setRefData] = useState(semanas[0].ref);
   const [slide, setSlide] = useState(0);
 
@@ -238,7 +242,7 @@ export default function DashboardSemanal() {
 
             <div className="flex flex-col items-center flex-1 min-w-[240px]">
               <div className="text-[10px] text-muted-foreground uppercase tracking-wider mb-1 flex items-center gap-1">
-                Semana qua-ter
+                Semana (seg–dom)
                 {loading && <Loader2 className="h-3 w-3 animate-spin text-primary" />}
               </div>
               <select
@@ -1043,7 +1047,7 @@ function YoYSemanalChart({ dados, anoAtual, anoAnterior }) {
       <CardContent className="pt-6">
         <h3 className="text-base font-semibold mb-1">Comparativo Ano a Ano · Semanal</h3>
         <p className="text-xs text-muted-foreground mb-4">
-          Mesma semana qua-ter de {anoAtual} vs {anoAnterior}
+          Mesma semana (seg–dom) de {anoAtual} vs {anoAnterior}
         </p>
         <div style={{ width: '100%', height: 280 }}>
           <ResponsiveContainer>
@@ -2031,7 +2035,7 @@ function FreqVsArrecadacaoSemanal() {
               </Badge>
             </h3>
             <p className="text-xs text-muted-foreground">
-              Semanas qua-ter · empréstimos excluídos · cards abaixo refletem a semana selecionada
+              Semanas seg–dom · empréstimos excluídos · cards abaixo refletem a semana selecionada
             </p>
           </div>
           <div className="flex gap-1">
@@ -2251,7 +2255,7 @@ function MetasFinanceirasComFiltros({ metas: metasIniciais, onMetasChange }) {
   // Filtros globais (afetam todas as metas que tiverem "global")
   const hoje = new Date();
   const anoAtual = hoje.getFullYear();
-  const semanasOpcoes = useMemo(() => gerarSemanasQuaTer(52), []);
+  const semanasOpcoes = useMemo(() => gerarSemanasIso(52), []);
 
   const [filtroAno, setFiltroAno] = useState(anoAtual);
   const [filtroMes, setFiltroMes] = useState(''); // '' = todos / 1-12
@@ -2410,7 +2414,7 @@ function MetasFinanceirasComFiltros({ metas: metasIniciais, onMetasChange }) {
               </select>
             </div>
             <div className="md:col-span-2">
-              <label className="text-[10px] uppercase tracking-wider text-muted-foreground font-medium block mb-1">Semana (qua-ter)</label>
+              <label className="text-[10px] uppercase tracking-wider text-muted-foreground font-medium block mb-1">Semana (seg–dom)</label>
               <select
                 value={filtroSemana}
                 onChange={(e) => setFiltroSemana(e.target.value)}
