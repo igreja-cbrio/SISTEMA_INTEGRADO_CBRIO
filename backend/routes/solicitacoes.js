@@ -294,7 +294,7 @@ router.post('/', async (req, res) => {
 
     const { titulo, descricao, justificativa, categoria, urgencia, valor_estimado, area_solicitante,
             // Fase A backbone
-            area_cliente, area_responsavel, subcategoria, eh_urgente, justificativa_urgencia,
+            area_responsavel, subcategoria, eh_urgente, justificativa_urgencia,
             data_necessaria, espaco_solicitado, data_uso, horario_inicio, horario_fim, qtde_pessoas,
             // Reembolso
             motivo_reembolso, data_compra,
@@ -314,6 +314,19 @@ router.post('/', async (req, res) => {
     const mapa = CATEGORIA_TO_AREA_RESP[categoria] || { area: null, subcategoria: 'default' };
     const finalAreaResp = area_responsavel || mapa.area;
     const finalSub = subcategoria || mapa.subcategoria;
+
+    // Area do SOLICITANTE (dimensao de KPI) · NAO vem mais de seletor no form
+    // (2026-06-01). Deriva de quem preenche · ignora qualquer area_cliente do body.
+    // Prioriza kpi_areas (slug que o resto dos KPIs usa) > 1a area granular de
+    // usuario_areas (nome normalizado pra slug) > setor do profile.
+    const _stripAcentos = (s) => String(s || '').normalize('NFD')
+      .split('').filter(c => { const code = c.charCodeAt(0); return code < 0x0300 || code > 0x036f; }).join('');
+    const _slugArea = (s) => _stripAcentos(s).toLowerCase().trim();
+    const areaClienteResolvida =
+      (Array.isArray(req.user.kpi_areas) && req.user.kpi_areas[0])
+      || (req.user.granular?.areas?.[0] ? _slugArea(req.user.granular.areas[0]) : null)
+      || (req.user.area ? _slugArea(req.user.area) : null)
+      || null;
 
     // Aprovacao hierarquica de origem (Spec 001) · resolvida AQUI porque o insert
     // roda via service_role (auth.uid()=NULL) e, nesse caso, o trigger so dispensa.
@@ -340,8 +353,9 @@ router.post('/', async (req, res) => {
         valor_estimado,
         solicitante_id: userId,
         area_solicitante,
-        // Campos novos · trigger calcula SLA e precisa_aprovacao_financeira
-        area_cliente: area_cliente || null,
+        // Campos novos · trigger calcula SLA e precisa_aprovacao_financeira.
+        // area_cliente vem da AREA do solicitante (KPIs), nao mais de seletor.
+        area_cliente: areaClienteResolvida,
         area_responsavel: finalAreaResp,
         // Roteamento hierarquico resolvido acima · status='aguardando_aprovacao_origem'
         // (vai pro diretor) ou 'pendente' (dispensada). SLA trigger refina compras/reembolso.
