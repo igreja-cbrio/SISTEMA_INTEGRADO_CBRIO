@@ -148,7 +148,10 @@ originalmente pensado pra Astro · adaptado num único componente React.
   `public/novosite/brand/`.
 - **Rota** em `src/App.tsx` (seção "Rotas publicas", lazy). Sem backend/migration ·
   rota de frontend (Vercel reescreve não-`/api` pra `index.html`).
-- **Pendente:** só o link de inscrição do **Next** (Marcos confirma depois · hoje fica "Em breve" sem link).
+- **Link do Next LIGADO (2026-06-01):** `LINKS.next = https://www.cbrio.org/next/inscrever`
+  em `novosite/shared.tsx`; o card "Next" da Jornada virou link (`href: LINKS.next`,
+  cta "Inscreva-se no Next", sem mais `soon`). Rota `/next/inscrever` existe em
+  `App.tsx` → `InscricaoNext`. Pendências de conteúdo do /novosite agora: zero.
 - **Ajustes pós-prints (2026-05-30):** galeria virou layout **bento** (1 destaque
   2x2 + apoio · `.ns-gallery-bento`/`.ns-g-feat`); **Jornada com 6 cards** (incluídos
   *Investir tempo com Deus* + *Next*, sem link ainda); **menu sobre o vídeo
