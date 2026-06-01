@@ -36,13 +36,15 @@ router.use((req, res, next) => {
   next();
 });
 
-const ALLOWED_CATEGORIES = ['ti', 'compras', 'reembolso', 'reserva_espaco', 'espaco', 'infraestrutura', 'ferias', 'licenca', 'marketing', 'outro'];
+const ALLOWED_CATEGORIES = ['ti', 'compras', 'reembolso', 'reserva_espaco', 'espaco', 'infraestrutura', 'ferias', 'licenca', 'marketing', 'pagamento', 'servico', 'outro'];
 
 // Map categoria → notification module
 const CATEGORIA_MODULO = {
   ti: 'ti',
   compras: 'logistica',
+  servico: 'logistica',     // contratacao de fornecedor · logistica negocia (Amaury)
   reembolso: 'financeiro',
+  pagamento: 'financeiro',  // pagar boleto/NF de fornecedor · contas a pagar (Yago)
   reserva_espaco: 'administrativo',
   espaco: 'administrativo', // legado
   infraestrutura: 'administrativo',
@@ -56,7 +58,9 @@ const CATEGORIA_MODULO = {
 const CATEGORIA_TO_AREA_RESP = {
   ti:              { area: 'ti',                subcategoria: 'default' },
   compras:         { area: 'logistica_compras', subcategoria: 'default' },
+  servico:         { area: 'logistica_compras', subcategoria: 'servico' },
   reembolso:       { area: 'financeiro',        subcategoria: 'reembolso' },
+  pagamento:       { area: 'financeiro',        subcategoria: 'pagamento' },
   reserva_espaco:  { area: 'reserva_espaco',    subcategoria: 'default' },
   espaco:          { area: 'reserva_espaco',    subcategoria: 'default' },
   infraestrutura:  { area: 'manutencao',        subcategoria: 'default' },
@@ -69,8 +73,8 @@ const CATEGORIA_TO_AREA_RESP = {
 // Map módulo → categorias (for granular permission filtering)
 const MODULO_CATEGORIAS = {
   ti: ['ti'],
-  logistica: ['compras'],
-  financeiro: ['reembolso'],
+  logistica: ['compras', 'servico'],
+  financeiro: ['reembolso', 'pagamento'],
   administrativo: ['espaco', 'reserva_espaco', 'infraestrutura', 'outro'],
   rh: ['ferias', 'licenca'],
   marketing: ['marketing'],
@@ -259,6 +263,9 @@ router.post('/', async (req, res) => {
             // Reembolso
             motivo_reembolso, data_compra,
             forma_pagamento, chave_pix, banco, agencia, conta, documento_url,
+            // Compras / Pagamentos / Servicos (campos estruturados compartilhados)
+            itens, link_referencia, favorecido_nome, favorecido_documento,
+            recorrente, recorrencia,
             // Marketing · Spec 010 (etiquetas pre-preenchidas)
             marketing_tipo_id, marketing_destino_id } = req.body;
     if (!titulo || !categoria) return res.status(400).json({ error: 'Título e categoria são obrigatórios' });
@@ -330,6 +337,36 @@ router.post('/', async (req, res) => {
           agencia: agencia || null,
           conta: conta || null,
           documento_url: documento_url || null,
+        }),
+        // Compras · itens + link de referencia + fornecedor sugerido
+        ...(categoria === 'compras' && {
+          itens: itens || null,
+          link_referencia: link_referencia || null,
+          favorecido_nome: favorecido_nome || null,
+        }),
+        // Pagamento · favorecido + documento (boleto/NF) + forma + recorrencia.
+        // data_necessaria carrega o vencimento (reusa a coluna · ver frontend).
+        ...(categoria === 'pagamento' && {
+          favorecido_nome: favorecido_nome || null,
+          favorecido_documento: favorecido_documento || null,
+          forma_pagamento: forma_pagamento || null,
+          chave_pix: chave_pix || null,
+          banco: banco || null,
+          agencia: agencia || null,
+          conta: conta || null,
+          documento_url: documento_url || null,
+          recorrente: !!recorrente,
+          recorrencia: recorrencia || null,
+        }),
+        // Servico · o que (itens) + fornecedor sugerido + proposta + recorrencia
+        ...(categoria === 'servico' && {
+          itens: itens || null,
+          favorecido_nome: favorecido_nome || null,
+          favorecido_documento: favorecido_documento || null,
+          link_referencia: link_referencia || null,
+          documento_url: documento_url || null,
+          recorrente: !!recorrente,
+          recorrencia: recorrencia || null,
         }),
         // Marketing · etiquetas pre-preenchidas (Spec 010)
         ...(categoria === 'marketing' && {
@@ -991,9 +1028,15 @@ router.post('/:id/aprovar-financeiro', async (req, res) => {
       return res.status(400).json({ error: 'Já foi aprovada' });
     }
 
-    const mapaCat = { compras: 'logistica_compras', reembolso: 'financeiro' };
+    // Pra onde vai depois do OK do Yago:
+    //   compras/servico  -> logistica_compras (Amaury compra/contrata) · status pendente
+    //   reembolso/pagto  -> financeiro (paga) · status em_atendimento
+    const mapaCat = {
+      compras: 'logistica_compras', servico: 'logistica_compras',
+      reembolso: 'financeiro',      pagamento: 'financeiro',
+    };
     const novaAreaResp = mapaCat[atual.categoria] || atual.area_responsavel;
-    const novoStatus = atual.categoria === 'reembolso' ? 'em_atendimento' : 'pendente';
+    const novoStatus = ['reembolso', 'pagamento'].includes(atual.categoria) ? 'em_atendimento' : 'pendente';
 
     const updates = {
       aprovado_financeiro_em: new Date().toISOString(),
@@ -1011,11 +1054,17 @@ router.post('/:id/aprovar-financeiro', async (req, res) => {
       .from('solicitacoes').update(updates).eq('id', req.params.id).select('*').single();
     if (error) throw error;
 
+    const acaoMsg = {
+      compras:   'enviado pra logística comprar',
+      servico:   'enviado pra logística contratar o serviço',
+      reembolso: 'pode efetuar o reembolso',
+      pagamento: 'pode efetuar o pagamento',
+    }[atual.categoria] || 'liberado pra atendimento';
     notificar({
-      modulo: atual.categoria === 'compras' ? 'logistica' : 'financeiro',
+      modulo: CATEGORIA_MODULO[atual.categoria] || 'financeiro',
       tipo: 'solicitacao_status',
       titulo: `Solicitação aprovada: ${atual.titulo}`,
-      mensagem: `Yago aprovou financeiramente · ${atual.categoria === 'compras' ? 'enviado pra logística comprar' : 'pode efetuar o reembolso'}`,
+      mensagem: `Yago aprovou financeiramente · ${acaoMsg}`,
       link: '/solicitacoes',
       severidade: 'info',
       chaveDedup: `solicitacao_aprovada_fin_${data.id}`,
