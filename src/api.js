@@ -134,6 +134,20 @@ export const expansion = {
   getDependencies: (id) => get(`/expansion/milestones/${id}/dependencies`),
 };
 
+// Decisao online · formulario publico "Eu aceito Jesus" (sem auth)
+export const decisaoOnline = {
+  ativo: () => fetch(`${API}/public/decisao-online/ativo`).then(r => r.json()),
+  registrar: (data) => fetch(`${API}/public/decisao-online`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+  }).then(async r => {
+    const j = await r.json();
+    if (!r.ok) throw new Error(j.message || j.error || 'Erro');
+    return j;
+  }),
+};
+
 export const next = {
   // Public (sem auth) — para o formulario
   publicEventos: () => fetch(`${API}/public/next/eventos`).then(r => r.json()),

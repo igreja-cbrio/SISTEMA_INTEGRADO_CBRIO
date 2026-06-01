@@ -246,6 +246,7 @@ const Next = lazyWithRetry(() => import('./pages/ministerial/Next'));
 // Jornada virou aba dentro de Membresia (componente MembersJornadaPanel).
 // Mantido aqui apenas pra retrocompat de URL — redirect via Navigate.
 const InscricaoNext = lazyWithRetry(() => import('./pages/public/InscricaoNext'));
+const DecisaoOnline = lazyWithRetry(() => import('./pages/public/DecisaoOnline'));
 const InscricaoVoluntariado = lazyWithRetry(() => import('./pages/public/InscricaoVoluntariado'));
 // /admin/cultura, /kpis, /kpis/guia, /painel-kpis foram substituidos pelo /painel
 // (Fase 2 do sistema OKR/NSM 2026). Redirects abaixo preservam URLs antigas.
@@ -380,6 +381,7 @@ function AppRoutes() {
       <Route path="/next" element={<Suspense fallback={<Loading />}><InscricaoNext /></Suspense>} />
       <Route path="/next/inscrever" element={<Suspense fallback={<Loading />}><InscricaoNext /></Suspense>} />
       <Route path="/inscricao-voluntariado" element={<Suspense fallback={<Loading />}><InscricaoVoluntariado /></Suspense>} />
+      <Route path="/decisao" element={<Suspense fallback={<Loading />}><DecisaoOnline /></Suspense>} />
       <Route path="/wallet" element={<Suspense fallback={<Loading />}><WalletPage /></Suspense>} />
       <Route path="/motion" element={<Suspense fallback={<Loading />}><Motion /></Suspense>} />
       {/* Prévia interna do novo site (redesign cbrio.com.br) · não-listada */}
