@@ -210,9 +210,10 @@ async function dsCollector() {
     .not('youtube_video_id', 'is', null)
     .or('online_ds.is.null,online_ds.eq.0');
 
-  if (!cultos?.length) return { ok: true, processados: 0, motivo: 'sem_cultos_ontem_com_video' };
+  if (!cultos?.length) return { ok: true, processados: 0, coletados: 0, motivo: 'sem_cultos_com_video_vinculado' };
 
   const resultados = [];
+  let coletados = 0;
   for (const c of cultos) {
     // Pico ao vivo · recovery post-live via Analytics peakConcurrentViewers.
     // Roda mesmo se DS ja esta preenchido (idempotente · so age se online_pico vazio).
@@ -235,27 +236,28 @@ async function dsCollector() {
       continue;
     }
     try {
-      // DS = views NO dia D (do culto, nao do D+1) ate fim daquele dia
-      const stats = await yt.fetchVideoViews(null, c.youtube_video_id, c.data, c.data);
-      await supabase.from('cultos')
-        .update({
-          online_ds: stats.views,
-          online_watch_minutes_ds: Math.round(stats.watch_minutes || 0) || null,
-          online_retencao_pct_ds: stats.avg_view_percentage ? Number(stats.avg_view_percentage.toFixed(2)) : null,
-        })
-        .eq('id', c.id);
-      resultados.push({
-        culto_id: c.id,
-        video_id: c.youtube_video_id,
-        online_ds: stats.views,
-        watch_min: stats.watch_minutes,
-        retencao_pct: stats.avg_view_percentage,
-      });
+      // DS = total ACUMULADO de views do video ate o momento da coleta (manha
+      // seguinte ao culto). Vem do statistics.viewCount da Data API · quase em
+      // tempo real, SEM o atraso de 1-2 dias da Analytics (que deixava o DS de
+      // ontem zerado). watch time / retencao seguem da Analytics (best-effort:
+      // se ainda nao processou, o numero de views ja foi gravado mesmo assim).
+      const stats = await yt.fetchVideoStatistics(null, c.youtube_video_id);
+      const update = { online_ds: stats?.viewCount ?? 0 };
+      try {
+        const a = await yt.fetchVideoViews(null, c.youtube_video_id, c.data, c.data);
+        update.online_watch_minutes_ds = Math.round(a.watch_minutes || 0) || null;
+        update.online_retencao_pct_ds = a.avg_view_percentage ? Number(a.avg_view_percentage.toFixed(2)) : null;
+      } catch (e) {
+        resultados.push({ culto_id: c.id, analytics_pendente: e.message.slice(0, 80) });
+      }
+      await supabase.from('cultos').update(update).eq('id', c.id);
+      coletados++;
+      resultados.push({ culto_id: c.id, video_id: c.youtube_video_id, online_ds: update.online_ds });
     } catch (e) {
       resultados.push({ culto_id: c.id, error: e.message });
     }
   }
-  return { ok: true, processados: cultos.length, resultados };
+  return { ok: true, processados: cultos.length, coletados, resultados };
 }
 
 // ---------------------------------------------------------------------------
