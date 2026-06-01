@@ -13,8 +13,27 @@ const yt = require('./youtubeAnalytics');
 const JANELA_LIVE_MIN_ANTES = 30;  // monitora 30 min antes do horario marcado
 const JANELA_LIVE_MIN_DEPOIS = 240; // ate 4h depois (cultos longos)
 
+// peakConcurrentViewers (Analytics) so fica disponivel ~2-3 dias DEPOIS da live.
+// Antes disso o Google responde 500 ("An internal error has occurred") porque a
+// metrica ainda nao processou · nao adianta tentar e nao e erro de verdade.
+// O live-monitor ja captura o pico em tempo real durante a transmissao · este
+// caminho via Analytics e so um recovery best-effort pra quando o monitor falhou.
+const PICO_ANALYTICS_DELAY_DIAS = 3;
+
+// Fallback do formulario de decisao · fora da janela ao vivo, ainda anexa a
+// decisao ao ultimo culto online que ja comecou ate este limite (minutos apos
+// o inicio). Cobre quem so preenche o form DEPOIS que o culto acaba, sem
+// atribuir a dias/cultos errados. 720min = 12h (ex: culto 19h aceita ate 07h).
+const FALLBACK_GRACE_MIN = 720;
+
 function fmtData(d) {
   return d.toISOString().slice(0, 10);
+}
+
+// dias inteiros decorridos desde a data (YYYY-MM-DD) do culto ate hoje
+function diasDesdeData(dataStr) {
+  const dt = new Date(dataStr + 'T00:00:00');
+  return Math.floor((Date.now() - dt.getTime()) / 86400000);
 }
 
 function dataMaisDias(base, dias) {
@@ -26,7 +45,11 @@ function dataMaisDias(base, dias) {
 // ---------------------------------------------------------------------------
 // findCultoAtual · descobre qual slot de culto deveria estar ativo agora
 // ---------------------------------------------------------------------------
-async function findCultoAtual() {
+// opts.fallbackUltimoDoDia · quando true (usado pelo formulario de decisao),
+// se nenhuma janela estiver aberta, anexa ao ultimo culto online que ja comecou
+// dentro do grace pos-live (FALLBACK_GRACE_MIN) em vez de retornar null. O
+// liveMonitor chama SEM o fallback (so age durante a transmissao de verdade).
+async function findCultoAtual({ fallbackUltimoDoDia = false } = {}) {
   const now = new Date();
   const hojeStr = fmtData(now);
   // Pega cultos de hoje e ontem (caso o de ontem ainda esteja no ar tarde da noite)
@@ -40,6 +63,8 @@ async function findCultoAtual() {
 
   if (!cultos?.length) return null;
 
+  // Anota cada culto online com horario de inicio e minutos decorridos.
+  const comHorario = [];
   for (const c of cultos) {
     const st = c.vol_service_types;
     if (!st?.has_online) continue;
@@ -47,11 +72,28 @@ async function findCultoAtual() {
     if (isNaN(h)) continue;
     const horario = new Date(c.data + 'T00:00:00');
     horario.setHours(h, m || 0, 0, 0);
-    const minutosDoInicio = (now - horario) / 60000;
-    if (minutosDoInicio >= -JANELA_LIVE_MIN_ANTES && minutosDoInicio <= JANELA_LIVE_MIN_DEPOIS) {
-      return c;
-    }
+    comHorario.push({ culto: c, horario, minutosDoInicio: (now - horario) / 60000 });
   }
+  if (!comHorario.length) return null;
+
+  // 1) Janela aberta · entre os cultos cuja janela [-30min, +4h] esta aberta agora,
+  //    escolhe o de horario de inicio MAIS RECENTE. Resolve a sobreposicao de
+  //    domingo: se o 11:30 ja comecou enquanto a janela do 10:00 ainda esta
+  //    tecnicamente aberta, a decisao/coleta vai pro 11:30 (o culto "atual").
+  const naJanela = comHorario
+    .filter((x) => x.minutosDoInicio >= -JANELA_LIVE_MIN_ANTES && x.minutosDoInicio <= JANELA_LIVE_MIN_DEPOIS)
+    .sort((a, b) => b.horario - a.horario);
+  if (naJanela.length) return naJanela[0].culto;
+
+  // 2) Fallback opt-in · fora da janela, anexa ao ultimo culto que ja comecou
+  //    dentro do grace pos-live (nao descarta decisao de quem preenche atrasado).
+  if (fallbackUltimoDoDia) {
+    const posLive = comHorario
+      .filter((x) => x.minutosDoInicio > JANELA_LIVE_MIN_DEPOIS && x.minutosDoInicio <= FALLBACK_GRACE_MIN)
+      .sort((a, b) => b.horario - a.horario);
+    if (posLive.length) return posLive[0].culto;
+  }
+
   return null;
 }
 
@@ -174,7 +216,10 @@ async function dsCollector() {
   for (const c of cultos) {
     // Pico ao vivo · recovery post-live via Analytics peakConcurrentViewers.
     // Roda mesmo se DS ja esta preenchido (idempotente · so age se online_pico vazio).
-    if (!c.online_pico) {
+    // So tenta depois que o Analytics processa (~3 dias) · antes disso o Google
+    // 500a e nao e erro real. Falha aqui NAO vai pro last_error (nao pinta o
+    // banner de vermelho) · o pico tem o live-monitor como fonte primaria.
+    if (!c.online_pico && diasDesdeData(c.data) >= PICO_ANALYTICS_DELAY_DIAS) {
       try {
         const live = await yt.fetchLivePeakConcurrentViewers(null, c.youtube_video_id, c.data, c.data);
         if (live.peak) {
@@ -182,7 +227,6 @@ async function dsCollector() {
         }
       } catch (e) {
         resultados.push({ culto_id: c.id, pico_error: e.message });
-        await registrarDiagToken({ last_error: `pico_backfill(ds): ${(e.message || '').slice(0, 200)}` });
       }
     }
 
@@ -234,8 +278,9 @@ async function backfillRange(dataInicio, dataFim) {
     const diasDesde = Math.floor((hoje - dt) / 86400000);
     const itemResult = { culto_id: c.id, data: c.data, video_id: c.youtube_video_id };
 
-    // Pico recovery via Analytics peakConcurrentViewers
-    if (!c.online_pico) {
+    // Pico recovery via Analytics peakConcurrentViewers · so depois do delay de
+    // processamento (~3 dias) · falha aqui nao vai pro last_error (ver dsCollector).
+    if (!c.online_pico && diasDesde >= PICO_ANALYTICS_DELAY_DIAS) {
       try {
         const live = await yt.fetchLivePeakConcurrentViewers(null, c.youtube_video_id, c.data, c.data);
         if (live?.peak) {
@@ -244,7 +289,6 @@ async function backfillRange(dataInicio, dataFim) {
         }
       } catch (e) {
         itemResult.pico_error = e.message.slice(0, 100);
-        await registrarDiagToken({ last_error: `pico_backfill(range): ${(e.message || '').slice(0, 200)}` });
       }
     }
 
@@ -644,8 +688,10 @@ async function catchUpMetricas({ limit = 5 } = {}) {
     const fimDplus7    = fmtData(dataMaisDias(new Date(c.data + 'T00:00:00'), 7));
 
     // 2a-pico. Pico ao vivo · recovery post-live via peakConcurrentViewers.
-    // Analytics tem este metric com delay de 1-2 dias · idempotente (so age se vazio).
-    if (!c.online_pico || c.online_pico === 0) {
+    // So tenta depois que o Analytics processa (~3 dias · antes disso o Google
+    // 500a). Idempotente (so age se vazio) e a falha NAO pinta o banner de
+    // vermelho · live-monitor e a fonte primaria do pico.
+    if ((!c.online_pico || c.online_pico === 0) && diasDesdeData(c.data) >= PICO_ANALYTICS_DELAY_DIAS) {
       try {
         const live = await yt.fetchLivePeakConcurrentViewers(null, c.youtube_video_id, c.data, c.data);
         if (live.peak) {
@@ -654,7 +700,6 @@ async function catchUpMetricas({ limit = 5 } = {}) {
         }
       } catch (e) {
         out.erros.push({ culto: c.id, metrica: 'pico', msg: e.message });
-        await registrarDiagToken({ last_error: `pico_backfill(catchup): ${(e.message || '').slice(0, 200)}` });
       }
     }
 

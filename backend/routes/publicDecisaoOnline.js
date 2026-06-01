@@ -31,21 +31,25 @@ function soDigitos(s) {
   return String(s || '').replace(/\D/g, '');
 }
 
-// Resolve o culto online em curso agora. Reusa findCultoAtual (janela
-// [-30min, +4h] do horario, has_online=true). Retorna null se nenhum.
-async function resolverCultoOnline() {
-  const culto = await findCultoAtual();
+// Resolve o culto online relacionado agora. Reusa findCultoAtual (janela
+// [-30min, +4h] do horario, has_online=true). Com comFallback=true ainda anexa
+// ao ultimo culto online do dia no grace pos-live (quem preenche atrasado).
+// Retorna null se nenhum.
+async function resolverCultoOnline({ comFallback = false } = {}) {
+  const culto = await findCultoAtual({ fallbackUltimoDoDia: comFallback });
   if (!culto) return null;
   const st = culto.vol_service_types;
   if (!st?.has_online) return null;
   return { id: culto.id, data: culto.data, nome: st.name || 'Culto' };
 }
 
-// GET /ativo · o frontend pergunta se ha culto ao vivo pra mostrar o form
+// GET /ativo · o frontend pergunta se deve mostrar o form. aoVivo = janela real
+// (label "Ao vivo agora"); ativo = janela OU fallback pos-live (form utilizavel).
 router.get('/ativo', async (_req, res) => {
   try {
-    const culto = await resolverCultoOnline();
-    res.json({ ativo: !!culto, culto });
+    const aoVivoCulto = await resolverCultoOnline();
+    const culto = aoVivoCulto || await resolverCultoOnline({ comFallback: true });
+    res.json({ ativo: !!culto, aoVivo: !!aoVivoCulto, culto });
   } catch (e) {
     console.error('[public/decisao-online/ativo]', e.message);
     res.json({ ativo: false, culto: null });
@@ -66,7 +70,9 @@ router.post('/', async (req, res) => {
       return res.status(400).json({ error: 'Telefone invalido · use DDD + numero.' });
     }
 
-    const culto = await resolverCultoOnline();
+    // comFallback · aceita tambem quem preenche logo apos o culto (grace pos-live),
+    // anexando ao ultimo culto online do dia em vez de descartar a decisao.
+    const culto = await resolverCultoOnline({ comFallback: true });
     if (!culto) {
       return res.status(409).json({
         error: 'sem_culto_ao_vivo',
