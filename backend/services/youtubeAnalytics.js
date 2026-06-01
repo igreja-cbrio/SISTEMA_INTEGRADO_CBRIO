@@ -262,6 +262,29 @@ async function fetchLiveConcurrentViewers(channelId, videoId) {
   return viewers ? parseInt(viewers, 10) : null;
 }
 
+// Estatisticas lifetime do video via Data API (videos.list?part=statistics).
+// viewCount = total ACUMULADO de views ate o momento da chamada · quase em tempo
+// real, SEM o atraso de 1-2 dias da Analytics. Usado pelo DS (snapshot da manha
+// seguinte ao culto). Retorna null se o video nao existe.
+async function fetchVideoStatistics(channelId, videoId) {
+  const { token } = await getValidAccessToken(channelId);
+  const url = `${DATA_API}/videos?part=statistics&id=${videoId}`;
+  const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+  if (!res.ok) {
+    const t = await res.text();
+    throw new Error(`videos.statistics falhou: ${res.status} ${t.slice(0, 200)}`);
+  }
+  const data = await res.json();
+  const item = (data.items || [])[0];
+  if (!item) return null;
+  const s = item.statistics || {};
+  return {
+    viewCount: s.viewCount != null ? parseInt(s.viewCount, 10) : null,
+    likeCount: s.likeCount != null ? parseInt(s.likeCount, 10) : null,
+    commentCount: s.commentCount != null ? parseInt(s.commentCount, 10) : null,
+  };
+}
+
 // Analytics: views por video em uma janela de data
 // startDate/endDate em formato YYYY-MM-DD (timezone do canal aplicado pelo YT)
 async function fetchVideoViews(channelId, videoId, startDate, endDate) {
@@ -502,6 +525,7 @@ module.exports = {
   findActiveBroadcast,
   fetchLiveChatMessages,
   fetchLiveConcurrentViewers,
+  fetchVideoStatistics,
   fetchLivePeakConcurrentViewers,
   fetchVideoViews,
   fetchVideoSubsChange,
