@@ -16,85 +16,30 @@ import { supabase } from '../supabaseClient';
 import { toast } from 'sonner';
 
 const CATEGORIAS = [
-  { value: 'ti',             label: 'TI',                  color: 'bg-blue-500/15 text-blue-700 dark:text-blue-400',       areaResp: 'ti' },
   { value: 'compras',        label: 'Compras',             color: 'bg-orange-500/15 text-orange-700 dark:text-orange-400', areaResp: 'logistica_compras' },
-  { value: 'servico',        label: 'Serviço',             color: 'bg-indigo-500/15 text-indigo-700 dark:text-indigo-400', areaResp: 'logistica_compras', sub: 'servico' },
-  { value: 'reembolso',      label: 'Reembolso',           color: 'bg-green-500/15 text-green-700 dark:text-green-400',    areaResp: 'financeiro', sub: 'reembolso' },
+  { value: 'infraestrutura', label: 'Serviços',            color: 'bg-indigo-500/15 text-indigo-700 dark:text-indigo-400', areaResp: 'manutencao' },
   { value: 'pagamento',      label: 'Pagamento',           color: 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-400', areaResp: 'financeiro', sub: 'pagamento' },
+  { value: 'reembolso',      label: 'Reembolso',           color: 'bg-green-500/15 text-green-700 dark:text-green-400',    areaResp: 'financeiro', sub: 'reembolso' },
   { value: 'reserva_espaco', label: 'Reserva de Espaço',   color: 'bg-purple-500/15 text-purple-700 dark:text-purple-400', areaResp: 'reserva_espaco' },
-  { value: 'infraestrutura', label: 'Infraestrutura',      color: 'bg-yellow-500/15 text-yellow-700 dark:text-yellow-400', areaResp: 'manutencao' },
+  { value: 'ti',             label: 'TI',                  color: 'bg-blue-500/15 text-blue-700 dark:text-blue-400',       areaResp: 'ti' },
   { value: 'marketing',      label: 'Marketing',           color: 'bg-pink-500/15 text-pink-700 dark:text-pink-400',       areaResp: 'marketing' },
   { value: 'ferias',         label: 'Férias',              color: 'bg-cyan-500/15 text-cyan-700 dark:text-cyan-400',       areaResp: 'rh', sub: 'ferias' },
   { value: 'licenca',        label: 'Licença',             color: 'bg-teal-500/15 text-teal-700 dark:text-teal-400',       areaResp: 'rh', sub: 'licenca' },
-  { value: 'outro',          label: 'Outro',               color: 'bg-muted text-muted-foreground',                         areaResp: null },
 ];
 
-// Dica curta por categoria · ajuda o solicitante a escolher o fluxo certo
+// Dica curta por tipo · ajuda o solicitante a escolher o fluxo certo
 // (intencao em linguagem simples · evita confundir Compra/Serviço/Pagamento/Reembolso).
 const CATEGORIA_HINT = {
   compras:        'Comprar um produto/material. A logística cota e compra.',
-  servico:        'Contratar alguém pra fazer algo (fotógrafo, buffet, transporte, manutenção externa).',
-  pagamento:      'Pagar um boleto/nota de um fornecedor externo. Já gastou do próprio bolso? Use Reembolso.',
+  infraestrutura: 'Pedir um reparo/serviço à manutenção da igreja (goteira, ar-condicionado, elétrica, marcenaria...). Precisa contratar e pagar alguém de fora? Use Pagamento.',
+  pagamento:      'Pagar um fornecedor externo (boleto, nota fiscal) ou contratar/pagar um serviço de fora (gráfica, buffet, transporte...). Já gastou do próprio bolso? Use Reembolso.',
   reembolso:      'Você já pagou do próprio bolso e quer o dinheiro de volta.',
   reserva_espaco: 'Reservar um espaço/sala na agenda da igreja.',
-  infraestrutura: 'Reparo ou manutenção na estrutura da igreja.',
 };
 
 // Areas do solicitante em 2 niveis: macro -> sub
-const AREAS_MACRO = [
-  { value: 'ministerial', label: 'Ministerial', subs: [
-    { value: 'integracao', label: 'Integração' },
-    { value: 'cuidados', label: 'Cuidados' },
-    { value: 'grupos', label: 'Grupos' },
-    { value: 'voluntariado', label: 'Voluntariado' },
-    { value: 'next', label: 'NEXT' },
-    { value: 'kids', label: 'Kids' },
-    { value: 'ami', label: 'AMI' },
-    { value: 'cba', label: 'CBA' },
-  ] },
-  { value: 'criativo', label: 'Criativo', subs: [
-    { value: 'marketing', label: 'Marketing' },
-    { value: 'online', label: 'Online' },
-    { value: 'producao', label: 'Produção' },
-  ] },
-  { value: 'gestao', label: 'Gestão', subs: [
-    { value: 'rh', label: 'RH' },
-    { value: 'financeiro', label: 'Financeiro' },
-    { value: 'logistica', label: 'Logística' },
-    { value: 'patrimonio', label: 'Patrimônio' },
-    { value: 'ti', label: 'TI' },
-    { value: 'compras', label: 'Compras' },
-    { value: 'cozinha', label: 'Cozinha' },
-    { value: 'limpeza', label: 'Limpeza' },
-    { value: 'manutencao', label: 'Manutenção' },
-  ] },
-];
-
-// Lookups derivados
-const SUB_TO_MACRO = {};
-const SUB_LABEL = {};
-AREAS_MACRO.forEach(m => m.subs.forEach(s => { SUB_TO_MACRO[s.value] = m.value; SUB_LABEL[s.value] = s.label; }));
-const subsDaMacro = (macro) => (AREAS_MACRO.find(m => m.value === macro)?.subs) || [];
-
-// Pre-selecao da area do solicitante pelo cargo (slug). Usuario pode trocar.
-const CARGO_TO_SUBAREA = {
-  'coordenador-voluntarios': 'voluntariado',
-  'coordenador-kids':        'kids',
-  'coordenador-ami':         'ami',
-  'coordenador-bridge':      'ami',
-  'coordenador-marketing':   'marketing',
-  'assistente-marketing':    'marketing',
-  'coordenador-online':      'online',
-  'lider-producao':          'producao',
-  'assistente-producao':     'producao',
-  'coordenador-financeiro':  'financeiro',
-  'assistente-financeiro':   'financeiro',
-  'diretor-rh':              'rh',
-  'lider-logistica':         'logistica',
-  'assistente-logistica':    'logistica',
-  'lider-operacoes':         'logistica',
-  'assistente-operacoes':    'logistica',
-};
+// Area do solicitante NAO e' mais escolhida no form (2026-06-01) · o backend
+// deriva de quem preenche (usuario_areas/kpi_areas) e grava em area_cliente p/ KPI.
 
 const URGENCIAS = [
   { value: 'baixa', label: 'Baixa', color: 'bg-muted text-muted-foreground' },
@@ -207,7 +152,7 @@ function RecorrenteToggle({ form, setForm }) {
 }
 
 export default function Solicitacoes() {
-  const { profile, isAdmin, cargoSlug } = useAuth();
+  const { profile, isAdmin } = useAuth();
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
@@ -263,7 +208,6 @@ export default function Solicitacoes() {
   const FORM_INITIAL = {
     titulo: '', descricao: '', justificativa: '',
     categoria: '', urgencia: 'normal', valor_estimado: '',
-    area_macro: '', area_cliente: '',
     eh_urgente: false, justificativa_urgencia: '',
     data_necessaria: '',
     espaco_solicitado: '', data_uso: '', horario_inicio: '', horario_fim: '', qtde_pessoas: '',
@@ -284,20 +228,8 @@ export default function Solicitacoes() {
   // Marketing · intake por DOR (Redesenho 2026-05-30): o solicitante descreve o
   // problema/objetivo + publico; o Pedro tria e define o entregavel depois.
   // (sairam daqui: cascata grupo->tipo, carga de etiquetas e estimativa no form)
-
-  // Pre-preenche a area do solicitante pelo CARGO (slug). Fallback: kpi_areas.
-  // Usuario pode trocar livremente depois.
-  useEffect(() => {
-    if (form.area_cliente) return;
-    let sub = CARGO_TO_SUBAREA[cargoSlug] || null;
-    if (!sub) {
-      const minhasAreas = profile?.kpi_areas || [];
-      sub = minhasAreas.find(a => SUB_TO_MACRO[a]) || null;
-    }
-    if (sub) {
-      setForm(f => ({ ...f, area_macro: SUB_TO_MACRO[sub], area_cliente: sub }));
-    }
-  }, [cargoSlug, profile?.kpi_areas]);
+  // Area do solicitante · NAO ha mais seletor (2026-06-01). O backend deriva a
+  // area de quem preenche (usuario_areas/kpi_areas) e grava em area_cliente p/ KPI.
 
   async function load() {
     try {
@@ -465,27 +397,27 @@ export default function Solicitacoes() {
     }
   }
 
-  const showValueField = ['compras', 'reembolso', 'pagamento', 'servico'].includes(form.categoria);
+  const showValueField = ['compras', 'reembolso', 'pagamento'].includes(form.categoria);
   const isReembolso = form.categoria === 'reembolso';
   const isReservaEspaco = form.categoria === 'reserva_espaco';
   const isCompras = form.categoria === 'compras';
   const isPagamento = form.categoria === 'pagamento';
-  const isServico = form.categoria === 'servico';
   // Reembolso e Pagamento compartilham os campos de destino do dinheiro (PIX/banco)
   const dadosBancariosValid = (forma) => (
     !!forma &&
     (forma !== 'pix' || form.chave_pix.trim()) &&
     (forma !== 'transferencia_bancaria' || (form.banco.trim() && form.agencia.trim() && form.conta.trim()))
   );
+  // Reembolso · valor EXATO da nota + data da compra + destino do dinheiro.
+  // (o "motivo" saiu · a "Justificativa do pedido" geral ja cobre o porquê)
   const reembolsoValid = !isReembolso || (
-    form.motivo_reembolso.trim().length >= 5 &&
+    !!form.valor_estimado &&
     form.data_compra &&
     dadosBancariosValid(form.forma_pagamento)
   );
   const reservaEspacoValid = !isReservaEspaco || (form.espaco_solicitado.trim() && form.data_uso);
-  // Compras / Serviço · descricao do que se precisa (itens) é o campo-chave
+  // Compras · descricao do que se precisa (itens) é o campo-chave
   const comprasValid = !isCompras || form.itens.trim().length >= 3;
-  const servicoValid = !isServico || form.itens.trim().length >= 3;
   // Pagamento · favorecido + vencimento (data_necessaria) + forma/destino do dinheiro.
   // Boleto não exige PIX/banco (o documento carrega a linha de pagamento).
   const pagamentoValid = !isPagamento || (
@@ -495,9 +427,6 @@ export default function Solicitacoes() {
     (form.forma_pagamento === 'boleto' || dadosBancariosValid(form.forma_pagamento))
   );
   const urgenciaValid = !form.eh_urgente || form.justificativa_urgencia.trim().length >= 5;
-  const areaClienteValid = !!form.area_cliente;
-  // Marketing · intake por dor · publico-alvo obrigatorio (Pedro define o entregavel na triagem)
-  const marketingValid = true; // Marketing por dor · titulo+descricao gerais ja bastam
 
   return (
     <div className="p-6 space-y-6">
@@ -551,55 +480,35 @@ export default function Solicitacoes() {
                 <DialogTitle>Nova Solicitação</DialogTitle>
               </DialogHeader>
               <div className="space-y-4 mt-2">
-                <div className="grid grid-cols-2 gap-3">
-                  <div className="space-y-2">
-                    <Label>Categoria *</Label>
-                    <Select value={form.categoria} onValueChange={v => setForm(f => ({ ...f, categoria: v }))}>
-                      <SelectTrigger><SelectValue placeholder="Selecione..." /></SelectTrigger>
-                      <SelectContent>
-                        {CATEGORIAS.map(c => <SelectItem key={c.value} value={c.value}>{c.label}</SelectItem>)}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <div className="space-y-2">
-                    <Label>Área *</Label>
-                    <Select
-                      value={form.area_macro}
-                      onValueChange={v => setForm(f => ({ ...f, area_macro: v, area_cliente: '' }))}
-                    >
-                      <SelectTrigger><SelectValue placeholder="Ministerial / Criativo / Gestão" /></SelectTrigger>
-                      <SelectContent>
-                        {AREAS_MACRO.map(m => <SelectItem key={m.value} value={m.value}>{m.label}</SelectItem>)}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                </div>
-                {CATEGORIA_HINT[form.categoria] && (
-                  <p className="text-xs text-muted-foreground -mt-1">
-                    {CATEGORIA_HINT[form.categoria]}
-                  </p>
-                )}
-                {form.area_macro && (
-                  <div className="space-y-2">
-                    <Label>Sub-área *</Label>
-                    <Select value={form.area_cliente} onValueChange={v => setForm(f => ({ ...f, area_cliente: v }))}>
-                      <SelectTrigger><SelectValue placeholder="Selecione a sub-área" /></SelectTrigger>
-                      <SelectContent>
-                        {subsDaMacro(form.area_macro).map(s => <SelectItem key={s.value} value={s.value}>{s.label}</SelectItem>)}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                )}
                 <div className="space-y-2">
-                  <Label>Título *</Label>
-                  <Input value={form.titulo} onChange={e => setForm(f => ({ ...f, titulo: e.target.value }))} />
+                  <Label>Qual tipo de solicitação? *</Label>
+                  <Select value={form.categoria} onValueChange={v => setForm(f => ({ ...f, categoria: v }))}>
+                    <SelectTrigger><SelectValue placeholder="Selecione..." /></SelectTrigger>
+                    <SelectContent>
+                      {CATEGORIAS.map(c => <SelectItem key={c.value} value={c.value}>{c.label}</SelectItem>)}
+                    </SelectContent>
+                  </Select>
+                  {CATEGORIA_HINT[form.categoria] && (
+                    <p className="text-xs text-muted-foreground">
+                      {CATEGORIA_HINT[form.categoria]}
+                    </p>
+                  )}
                 </div>
                 <div className="space-y-2">
-                  <Label>Descrição</Label>
-                  <Textarea value={form.descricao} onChange={e => setForm(f => ({ ...f, descricao: e.target.value }))} rows={3} />
+                  <Label>Título da solicitação *</Label>
+                  <Input value={form.titulo} onChange={e => setForm(f => ({ ...f, titulo: e.target.value }))} placeholder="Resuma em uma frase" />
                 </div>
                 <div className="space-y-2">
-                  <Label>Justificativa</Label>
+                  <Label>{isReservaEspaco ? 'Descrição da necessidade (qual evento / finalidade)' : 'Descrição da necessidade'}</Label>
+                  <Textarea
+                    value={form.descricao}
+                    onChange={e => setForm(f => ({ ...f, descricao: e.target.value }))}
+                    rows={3}
+                    placeholder={isReservaEspaco ? 'Qual evento/atividade vai acontecer e o que precisa no espaço' : undefined}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label>Justificativa do pedido</Label>
                   <Textarea value={form.justificativa} onChange={e => setForm(f => ({ ...f, justificativa: e.target.value }))} rows={2} />
                 </div>
 
@@ -662,6 +571,15 @@ export default function Solicitacoes() {
                       <Label className="text-xs">Qtde de pessoas (estimada)</Label>
                       <Input type="number" value={form.qtde_pessoas} onChange={e => setForm(f => ({ ...f, qtde_pessoas: e.target.value }))} placeholder="0" />
                     </div>
+                    <div className="space-y-2">
+                      <Label className="text-xs">Material ou arrumação específica (opcional)</Label>
+                      <Textarea
+                        value={form.itens}
+                        onChange={e => setForm(f => ({ ...f, itens: e.target.value }))}
+                        rows={2}
+                        placeholder="Ex: 50 cadeiras em U · som + microfone · projetor · mesa de apoio"
+                      />
+                    </div>
                   </div>
                 )}
 
@@ -694,48 +612,6 @@ export default function Solicitacoes() {
                         placeholder="Se já sabe de onde comprar"
                       />
                     </div>
-                  </div>
-                )}
-
-                {/* Servico · o que + fornecedor + proposta + recorrencia */}
-                {isServico && (
-                  <div className="space-y-3 rounded-lg border border-indigo-500/30 bg-indigo-500/5 p-3">
-                    <p className="text-sm font-semibold text-indigo-700 dark:text-indigo-400">Detalhes do serviço</p>
-                    <div className="space-y-2">
-                      <Label className="text-xs">Que serviço você precisa? *</Label>
-                      <Textarea
-                        value={form.itens}
-                        onChange={e => setForm(f => ({ ...f, itens: e.target.value }))}
-                        rows={2}
-                        placeholder="Ex: Fotógrafo pro retiro · Buffet pra 200 pessoas · Van (ida e volta)"
-                      />
-                    </div>
-                    <div className="grid grid-cols-2 gap-3">
-                      <div className="space-y-2">
-                        <Label className="text-xs">Fornecedor sugerido (opcional)</Label>
-                        <Input
-                          value={form.favorecido_nome}
-                          onChange={e => setForm(f => ({ ...f, favorecido_nome: e.target.value }))}
-                          placeholder="Se já tem alguém em mente"
-                        />
-                      </div>
-                      <div className="space-y-2">
-                        <Label className="text-xs">CNPJ/CPF (opcional)</Label>
-                        <Input
-                          value={form.favorecido_documento}
-                          onChange={e => setForm(f => ({ ...f, favorecido_documento: e.target.value }))}
-                        />
-                      </div>
-                    </div>
-                    <div className="space-y-2">
-                      <Label className="text-xs">Proposta / orçamento (opcional)</Label>
-                      <DocDropzone
-                        file={form.documento_file}
-                        onFile={f => setForm(prev => ({ ...prev, documento_file: f }))}
-                        onClear={() => setForm(prev => ({ ...prev, documento_file: null }))}
-                      />
-                    </div>
-                    <RecorrenteToggle form={form} setForm={setForm} />
                   </div>
                 )}
 
@@ -856,22 +732,14 @@ export default function Solicitacoes() {
                 <div className="grid grid-cols-2 gap-4">
                   {showValueField && (
                     <div className="space-y-2">
-                      <Label>Valor estimado (R$)</Label>
-                      <Input type="number" step="0.01" value={form.valor_estimado} onChange={e => setForm(f => ({ ...f, valor_estimado: e.target.value }))} />
+                      <Label>{isReembolso ? 'Valor (exato da nota) *' : 'Valor estimado (R$)'}</Label>
+                      <Input type="number" step="0.01" value={form.valor_estimado} onChange={e => setForm(f => ({ ...f, valor_estimado: e.target.value }))}
+                        placeholder={isReembolso ? 'Igual ao da nota fiscal' : undefined} />
                     </div>
                   )}
                 </div>
                 {isReembolso && (
                   <>
-                    <div className="space-y-2">
-                      <Label>Motivo do reembolso *</Label>
-                      <Textarea
-                        value={form.motivo_reembolso}
-                        onChange={e => setForm(f => ({ ...f, motivo_reembolso: e.target.value }))}
-                        placeholder="Ex: 'Compra de material gráfico pra Conferência X · não havia tempo de pedir cotação'"
-                        rows={2}
-                      />
-                    </div>
                     <div className="space-y-2">
                       <Label>Data da compra *</Label>
                       <Input type="date" max={new Date().toISOString().slice(0, 10)}
@@ -930,7 +798,7 @@ export default function Solicitacoes() {
 
                 <div className="flex justify-end gap-2 pt-2">
                   <Button type="button" variant="outline" onClick={() => setDialogOpen(false)}>Cancelar</Button>
-                  <Button onClick={handleCreate} disabled={!form.titulo || !form.categoria || !areaClienteValid || !reembolsoValid || !reservaEspacoValid || !comprasValid || !servicoValid || !pagamentoValid || !urgenciaValid || !marketingValid || submitting}>
+                  <Button onClick={handleCreate} disabled={!form.titulo || !form.categoria || !reembolsoValid || !reservaEspacoValid || !comprasValid || !pagamentoValid || !urgenciaValid || submitting}>
                     {submitting ? 'Criando...' : 'Criar Solicitação'}
                   </Button>
                 </div>
@@ -1757,23 +1625,17 @@ function DetailDialog({ item, onClose, isAdmin, currentUserId, onStatusChange, o
             </div>
           )}
 
-          {/* Detalhes do servico */}
-          {item.categoria === 'servico' && (item.itens || item.favorecido_nome || item.recorrente || item.documento_url) && (
+          {/* Detalhes da reserva · espaco/data/horario + material (itens) */}
+          {item.categoria === 'reserva_espaco' && (item.espaco_solicitado || item.data_uso || item.itens) && (
             <div className="space-y-2 pt-3 border-t border-border">
-              <p className="text-sm font-semibold text-foreground">Detalhes do serviço</p>
+              <p className="text-sm font-semibold text-foreground">Detalhes da reserva</p>
+              <div className="grid grid-cols-2 gap-4 text-sm">
+                {item.espaco_solicitado && (<div><span className="text-muted-foreground">Espaço</span><p className="font-medium">{item.espaco_solicitado}</p></div>)}
+                {item.data_uso && (<div><span className="text-muted-foreground">Data</span><p className="font-medium">{new Date(item.data_uso + 'T00:00:00').toLocaleDateString('pt-BR')}{item.horario_inicio ? ` · ${item.horario_inicio}${item.horario_fim ? `–${item.horario_fim}` : ''}` : ''}</p></div>)}
+                {item.qtde_pessoas != null && (<div><span className="text-muted-foreground">Pessoas</span><p className="font-medium">{item.qtde_pessoas}</p></div>)}
+              </div>
               {item.itens && (
-                <div><span className="text-xs text-muted-foreground">Serviço</span><p className="text-sm whitespace-pre-wrap">{item.itens}</p></div>
-              )}
-              {item.favorecido_nome && (
-                <div><span className="text-xs text-muted-foreground">Fornecedor sugerido</span><p className="text-sm">{item.favorecido_nome}{item.favorecido_documento ? ` · ${item.favorecido_documento}` : ''}</p></div>
-              )}
-              {item.recorrente && (
-                <Badge className="bg-indigo-500/15 text-indigo-700 dark:text-indigo-400">⟳ Recorrente{item.recorrencia ? ` · ${item.recorrencia}` : ''}</Badge>
-              )}
-              {item.documento_url && (
-                <a href={item.documento_url} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-2 text-sm text-primary hover:underline">
-                  <FileText className="h-4 w-4" /> Ver proposta / orçamento
-                </a>
+                <div><span className="text-xs text-muted-foreground">Material / arrumação</span><p className="text-sm whitespace-pre-wrap">{item.itens}</p></div>
               )}
             </div>
           )}

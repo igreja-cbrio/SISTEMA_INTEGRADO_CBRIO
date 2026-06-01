@@ -228,6 +228,42 @@ bypass por valor · decisão de 22/05). **Follow-up não feito:** expor as subca
 de RH que o backbone já tem (`vaga_nova/treinamento/documentacao/duvida` · hoje o form
 só mostra Férias/Licença). ⚠️ Aplicar a migration antes do merge.
 
+### Ajustes pós-avaliação do Marcos (2026-06-01 · sem migration)
+
+Depois de avaliar em prod, o Marcos refinou o significado dos fluxos. **Tudo
+frontend + backend, sem migration** (reúso da coluna `itens`):
+
+- **"Serviços" agora é MANUTENÇÃO INTERNA** (goteira, ar, elétrica → equipe da
+  igreja). Virou rótulo da categoria `infraestrutura` (→ `manutencao`, **NÃO** passa
+  pelo Yago). A categoria `servico` (contratação externa → logistica_compras + Yago)
+  **saiu do form** · contratar/pagar gente de fora agora é **Pagamento**. Os slugs
+  `servico`/`outro` continuam na CHECK do banco (linhas históricas), só não são mais
+  oferecidos. O SLA `logistica_compras/servico` fica dormente.
+- **"Outro" removido** do form (tirava o pretexto de furar o fluxo).
+- **Reembolso:** campo passa a ser **"Valor (exato da nota)"** obrigatório (era
+  "valor estimado"). **"Motivo do reembolso" removido** — era redundante com a
+  "Justificativa do pedido" (auditoria de redundância pedida pelo Marcos · os blocos
+  extras devem **complementar**, não repetir os campos gerais).
+- **Reserva de Espaço:** a Descrição vira "qual evento/finalidade" + campo novo
+  **"Material ou arrumação específica"** (gravado em `itens`). Detalhe da reserva
+  agora renderiza espaço/data/horário/pessoas + material.
+- **Seletor de área REMOVIDO do form.** O backend deriva `area_cliente` de quem
+  preenche — `kpi_areas[0]` (slug) → 1ª área de `usuario_areas` (nome normalizado p/
+  slug via `_slugArea`) → `profile.area`. Ignora qualquer `area_cliente` do body.
+  Crucial pros KPIs ADM ficarem corretos sem depender do solicitante escolher certo.
+- **Labels:** "Categoria" → **"Qual tipo de solicitação?"**, "Título" → **"Título da
+  solicitação"**, "Descrição" → **"Descrição da necessidade"**, "Justificativa" →
+  **"Justificativa do pedido"**.
+- **`DocDropzone`/`RecorrenteToggle`** seguem reusáveis (reembolso/pagamento). Limpei
+  os órfãos do seletor (`AREAS_MACRO`, `SUB_TO_MACRO`, `CARGO_TO_SUBAREA`, `cargoSlug`).
+- **Amaury** cadastrado em `area_solicitacoes_responsaveis` nas 4 áreas de logística
+  (`logistica_compras` = Compras · `manutencao` = Serviços · `reserva_espaco` ·
+  `logistica_estoque`) · via SQL no painel (limpeza/cozinha ficam com a Jéssica).
+
+**Mapa final de roteamento:** Compras→Amaury(logística)+Yago · Serviços(manutenção
+interna)→Amaury(manutenção, sem Yago) · Pagamento→Yago(financeiro) · Reembolso→Yago ·
+Reserva→Amaury(reserva_espaco) · TI→TI · Marketing→Pedro · Férias/Licença→RH.
+
 ## Solicitações · fix da ENTRADA do fluxo (validação E2E Marketing · 2026-05-28)
 
 Validação ponta a ponta do fluxo de Solicitações de Marketing revelou que o módulo
