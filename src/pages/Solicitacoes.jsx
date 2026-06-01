@@ -40,16 +40,6 @@ const CATEGORIA_HINT = {
   infraestrutura: 'Reparo ou manutenção na estrutura da igreja.',
 };
 
-// Marketing · baldes macro do intake em cascata (grupo de marketing_etiquetas_tipo).
-// Solicitante escolhe o balde (menu 1) e depois o entregavel filtrado (menu 2).
-// O "destino" saiu do form · virou etiqueta interna que o Pedro classifica no card.
-const MKT_GRUPO_LABELS = {
-  rede_social: 'Rede Social',
-  video_foto: 'Vídeos e Fotos',
-  artes: 'Artes',
-};
-const MKT_GRUPO_ORDER = ['rede_social', 'video_foto', 'artes'];
-
 // Areas do solicitante em 2 niveis: macro -> sub
 const AREAS_MACRO = [
   { value: 'ministerial', label: 'Ministerial', subs: [
@@ -282,53 +272,18 @@ export default function Solicitacoes() {
     // Compras / Pagamentos / Serviços (campos estruturados compartilhados)
     itens: '', link_referencia: '', favorecido_nome: '', favorecido_documento: '',
     recorrente: false, recorrencia: '',
-    // Marketing · cascata grupo->tipo (destino virou etiqueta interna do Pedro)
-    marketing_grupo: '', marketing_tipo_id: '',
+    // Marketing · intake por DOR · Pedro define entregavel/publico/prazo na triagem
   };
   const [form, setForm] = useState(FORM_INITIAL);
   const [slaDefs, setSlaDefs] = useState([]);
-  // Marketing · Spec 010 · etiquetas + estimativa preliminar
-  const [marketingTipos, setMarketingTipos] = useState([]);
-  const [estimativa, setEstimativa] = useState(null);
-  const [estimativaLoading, setEstimativaLoading] = useState(false);
-
   // Carrega SLAs pra mostrar prazo expected no form
   useEffect(() => {
     api.slaDefs?.().then(setSlaDefs).catch(() => setSlaDefs([]));
   }, []);
 
-  // Carrega etiquetas Marketing quando categoria=marketing for selecionada
-  useEffect(() => {
-    if (form.categoria !== 'marketing') return;
-    if (marketingTipos.length > 0) return;
-    marketingApi.etiquetas?.().then(r => {
-      setMarketingTipos(r.tipos || []);
-    }).catch(() => {});
-  }, [form.categoria, marketingTipos.length]);
-
-  // Baldes presentes (menu 1 da cascata) · ordem conhecida primeiro, extras ao fim
-  const marketingGrupos = useMemo(() => {
-    const present = new Set(marketingTipos.map(t => t.grupo).filter(Boolean));
-    const known = MKT_GRUPO_ORDER.filter(g => present.has(g)).map(slug => ({ slug, label: MKT_GRUPO_LABELS[slug] || slug }));
-    const extras = [...present].filter(g => !MKT_GRUPO_ORDER.includes(g)).map(slug => ({ slug, label: slug }));
-    return [...known, ...extras];
-  }, [marketingTipos]);
-
-  // Debounced estimativa preliminar quando tipo+data mudam
-  useEffect(() => {
-    if (form.categoria !== 'marketing' || !form.marketing_tipo_id) {
-      setEstimativa(null);
-      return;
-    }
-    setEstimativaLoading(true);
-    const handle = setTimeout(() => {
-      marketingApi.estimar?.(form.marketing_tipo_id, form.data_necessaria || null)
-        .then(setEstimativa)
-        .catch(() => setEstimativa(null))
-        .finally(() => setEstimativaLoading(false));
-    }, 350);
-    return () => clearTimeout(handle);
-  }, [form.categoria, form.marketing_tipo_id, form.data_necessaria]);
+  // Marketing · intake por DOR (Redesenho 2026-05-30): o solicitante descreve o
+  // problema/objetivo + publico; o Pedro tria e define o entregavel depois.
+  // (sairam daqui: cascata grupo->tipo, carga de etiquetas e estimativa no form)
 
   // Pre-preenche a area do solicitante pelo CARGO (slug). Fallback: kpi_areas.
   // Usuario pode trocar livremente depois.
@@ -453,8 +408,7 @@ export default function Solicitacoes() {
       if (!payload.favorecido_nome) delete payload.favorecido_nome;
       if (!payload.favorecido_documento) delete payload.favorecido_documento;
       if (!payload.recorrencia) delete payload.recorrencia;
-      if (!payload.marketing_tipo_id) delete payload.marketing_tipo_id;
-      delete payload.marketing_grupo; // UI-only · destino agora e' etiqueta interna do Pedro
+      // Marketing por dor · so titulo+descricao no intake (Pedro define o resto na triagem)
 
       // Upload do comprovante para Supabase Storage (bucket: solicitacoes)
       if (form.documento_file && supabase) {
@@ -542,8 +496,8 @@ export default function Solicitacoes() {
   );
   const urgenciaValid = !form.eh_urgente || form.justificativa_urgencia.trim().length >= 5;
   const areaClienteValid = !!form.area_cliente;
-  // Marketing · solicitante escolhe os 2 menus (grupo -> tipo) antes de enviar
-  const marketingValid = form.categoria !== 'marketing' || !!form.marketing_tipo_id;
+  // Marketing · intake por dor · publico-alvo obrigatorio (Pedro define o entregavel na triagem)
+  const marketingValid = true; // Marketing por dor · titulo+descricao gerais ja bastam
 
   return (
     <div className="p-6 space-y-6">
@@ -866,78 +820,24 @@ export default function Solicitacoes() {
                   </div>
                 )}
 
-                {/* Marketing · etiquetas + estimativa preliminar (Spec 010) */}
+                {/* Marketing · intake por DOR (Redesenho 2026-05-30 · só o aviso · Pedro tria) */}
                 {form.categoria === 'marketing' && (
-                  <div className="space-y-3 rounded-lg border border-pink-500/30 bg-pink-500/5 p-3">
-                    <p className="text-sm font-semibold text-pink-700 dark:text-pink-400">
-                      Detalhes da demanda (Marketing)
+                  <div className="rounded-lg border border-pink-500/30 bg-pink-500/5 p-3">
+                    <p className="text-sm font-semibold text-pink-700 dark:text-pink-400 mb-1">
+                      Demanda de Marketing
                     </p>
-                    <div className="grid grid-cols-2 gap-3">
-                      <div className="space-y-2">
-                        <Label className="text-xs">O que você precisa? *</Label>
-                        <Select
-                          value={form.marketing_grupo}
-                          onValueChange={v => setForm(f => ({ ...f, marketing_grupo: v, marketing_tipo_id: '' }))}
-                        >
-                          <SelectTrigger><SelectValue placeholder="Selecione..." /></SelectTrigger>
-                          <SelectContent>
-                            {marketingGrupos.map(g => <SelectItem key={g.slug} value={g.slug}>{g.label}</SelectItem>)}
-                          </SelectContent>
-                        </Select>
-                      </div>
-                      <div className="space-y-2">
-                        <Label className="text-xs">Tipo *</Label>
-                        <Select
-                          value={form.marketing_tipo_id}
-                          onValueChange={v => setForm(f => ({ ...f, marketing_tipo_id: v }))}
-                          disabled={!form.marketing_grupo}
-                        >
-                          <SelectTrigger><SelectValue placeholder={form.marketing_grupo ? 'Selecione...' : 'Escolha o grupo'} /></SelectTrigger>
-                          <SelectContent>
-                            {marketingTipos.filter(t => t.grupo === form.marketing_grupo).map(t => <SelectItem key={t.id} value={t.id}>{t.nome}</SelectItem>)}
-                          </SelectContent>
-                        </Select>
-                      </div>
-                    </div>
-
-                    {/* Habilidade sugerida */}
-                    {(() => {
-                      const tipo = marketingTipos.find(t => t.id === form.marketing_tipo_id);
-                      if (!tipo?.habilidade_padrao) return null;
-                      return (
-                        <p className="text-xs text-muted-foreground">
-                          Habilidade sugerida: <span className="font-medium">{tipo.habilidade_padrao}</span>
-                        </p>
-                      );
-                    })()}
-
-                    {/* Estimativa preliminar */}
-                    {form.marketing_tipo_id && (
-                      <div className="rounded-md bg-card border border-border px-3 py-2 text-xs">
-                        {estimativaLoading ? (
-                          <span className="text-muted-foreground">Calculando estimativa...</span>
-                        ) : estimativa ? (
-                          <div className="space-y-1">
-                            <div className="font-medium text-foreground">
-                              Estimativa preliminar: {estimativa.data_sugerida ? new Date(estimativa.data_sugerida).toLocaleDateString('pt-BR') : '—'}
-                              {estimativa.dias_uteis ? ` (${estimativa.dias_uteis} dias)` : ''}
-                            </div>
-                            {estimativa.observacao && (
-                              <div className="text-muted-foreground">{estimativa.observacao}</div>
-                            )}
-                          </div>
-                        ) : (
-                          <span className="text-muted-foreground">Selecione tipo pra ver estimativa</span>
-                        )}
-                      </div>
-                    )}
+                    <p className="text-xs text-muted-foreground">
+                      Conte a <strong>necessidade/dor</strong> no título e na descrição acima — o problema, não a peça.
+                      A equipe vai avaliar e te devolver o formato e o prazo. Demandas de marketing levam de
+                      3 a 8 semanas conforme a complexidade.
+                    </p>
                   </div>
                 )}
 
-                {/* SLA esperado em tempo real */}
+                {/* SLA esperado em tempo real (oculto p/ marketing · usa o aviso de 3-8 sem) */}
                 {(() => {
                   const cat = CATEGORIAS.find(c => c.value === form.categoria);
-                  if (!cat?.areaResp) return null;
+                  if (!cat?.areaResp || form.categoria === 'marketing') return null;
                   const urg = !!form.eh_urgente;
                   const sub = cat.sub || 'default';
                   // Prefere a subcategoria exata · cai pra 'default' · cai pra area
@@ -954,15 +854,6 @@ export default function Solicitacoes() {
                 })()}
 
                 <div className="grid grid-cols-2 gap-4">
-                  <div className="space-y-2">
-                    <Label>Urgência (sentimento)</Label>
-                    <Select value={form.urgencia} onValueChange={v => setForm(f => ({ ...f, urgencia: v }))}>
-                      <SelectTrigger><SelectValue /></SelectTrigger>
-                      <SelectContent>
-                        {URGENCIAS.map(u => <SelectItem key={u.value} value={u.value}>{u.label}</SelectItem>)}
-                      </SelectContent>
-                    </Select>
-                  </div>
                   {showValueField && (
                     <div className="space-y-2">
                       <Label>Valor estimado (R$)</Label>
@@ -1927,14 +1818,13 @@ function DetailDialog({ item, onClose, isAdmin, currentUserId, onStatusChange, o
             </div>
           )}
 
-          {/* Marketing · bloco do card (Spec 012) · preview · aprovar entrega · sugerir revisao */}
-          {item.categoria === 'marketing'
-            && item.marketing_card
-            && item.solicitante_id === currentUserId && (
-              <MarketingCardBlock
-                card={item.marketing_card}
-                onChanged={() => onItemRefresh?.()}
-              />
+          {/* Marketing · acompanhamento pelo solicitante (redesenho = campanha · legado = card) */}
+          {item.categoria === 'marketing' && item.solicitante_id === currentUserId && (
+            item.marketing_campanha
+              ? <MarketingCampanhaBlock campanha={item.marketing_campanha} onChanged={() => onItemRefresh?.()} />
+              : item.marketing_card
+                ? <MarketingCardBlock card={item.marketing_card} onChanged={() => onItemRefresh?.()} />
+                : null
           )}
 
           {/* NPS pos-conclusao · so pro solicitante apos status concluido */}
@@ -1972,7 +1862,122 @@ function DetailDialog({ item, onClose, isAdmin, currentUserId, onStatusChange, o
 }
 
 // ═══════════════════════════════════════════════════════════════════════
-// MarketingCardBlock · solicitante revisa preview, aprova entrega ou pede revisao (Spec 012)
+// MarketingCampanhaBlock · acompanhamento da campanha pelo solicitante (redesenho 2026-05-31)
+// 1 dor = 1 campanha com N entregaveis · mostra status + prazo + progresso + entregaveis.
+// ═══════════════════════════════════════════════════════════════════════
+const EST_ENTREGAVEL_LABEL = {
+  triagem: 'Em triagem', backlog: 'Na fila', fila: 'Na fila', pesquisa: 'Pesquisa',
+  producao: 'Em produção', em_producao: 'Em produção', revisao: 'Em revisão',
+  aguardando_solicitante: 'Em revisão', concluido: 'Concluído',
+};
+function MarketingCampanhaBlock({ campanha, onChanged }) {
+  const ents = campanha.entregaveis || [];
+  const feitos = ents.filter(e => e.estado === 'concluido').length;
+  const pct = ents.length ? Math.round((feitos / ents.length) * 100) : 0;
+  const tudoPronto = ents.length > 0 && feitos === ents.length;
+  const jaRevisou = ents.some(e => e.tem_revisao);
+  const fmt = (iso) => iso ? new Date(iso).toLocaleDateString('pt-BR') : null;
+  const emTriagem = campanha.status === 'triagem';
+  const concluida = campanha.status === 'concluida';
+  // Aprovação é da DEMANDA COMPLETA: só aparece quando TODOS os entregáveis estão prontos.
+  const podeAprovar = tudoPronto && campanha.status === 'ativa';
+
+  const [revisaoOpen, setRevisaoOpen] = useState(false);
+  const [motivo, setMotivo] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+
+  async function aprovar() {
+    setSubmitting(true);
+    try {
+      await marketingApi.campanhas.aprovar(campanha.id);
+      toast.success('Demanda aprovada · obrigado! Agora avalie pelo NPS.');
+      onChanged?.();
+    } catch (e) { toast.error(e.message || 'Erro ao aprovar'); }
+    finally { setSubmitting(false); }
+  }
+  async function revisar() {
+    if (motivo.trim().length < 5) { toast.error('Conte o que precisa ajustar (mín. 5 caracteres)'); return; }
+    setSubmitting(true);
+    try {
+      await marketingApi.campanhas.revisar(campanha.id, motivo.trim());
+      toast.success('Pedido de revisão enviado · a equipe vai ajustar.');
+      setRevisaoOpen(false); setMotivo('');
+      onChanged?.();
+    } catch (e) { toast.error(e.message || 'Erro ao pedir revisão'); }
+    finally { setSubmitting(false); }
+  }
+
+  return (
+    <div className="space-y-3 pt-3 border-t border-border">
+      <p className="text-sm font-semibold text-foreground flex items-center gap-2">
+        <FileText className="h-4 w-4 text-pink-500" /> Sua demanda Marketing
+      </p>
+      <div className="flex flex-wrap items-center gap-2 text-xs">
+        <Badge className={
+          concluida ? 'bg-emerald-500/15 text-emerald-700' :
+          emTriagem ? 'bg-pink-500/15 text-pink-700' :
+          tudoPronto ? 'bg-emerald-500/15 text-emerald-700' : 'bg-blue-500/15 text-blue-700'
+        }>
+          {concluida ? 'Concluída · aprovada' :
+           emTriagem ? 'Em triagem · a equipe vai avaliar e planejar' :
+           tudoPronto ? 'Tudo pronto · aguardando sua aprovação' : 'Em produção'}
+        </Badge>
+        {fmt(campanha.prazo_entrega) && (
+          <span className="text-muted-foreground">Entrega prevista: {fmt(campanha.prazo_entrega)}</span>
+        )}
+      </div>
+
+      {ents.length > 0 ? (
+        <div className="space-y-1.5">
+          <div className="flex items-center gap-2">
+            <div className="h-1.5 flex-1 rounded-full bg-muted overflow-hidden">
+              <div className={`h-full ${pct === 100 ? 'bg-emerald-500' : 'bg-primary'}`} style={{ width: `${pct}%` }} />
+            </div>
+            <span className="text-[11px] text-muted-foreground shrink-0">{feitos}/{ents.length} prontos</span>
+          </div>
+          {ents.map(e => (
+            <div key={e.id} className="flex items-center justify-between gap-2 text-xs bg-muted/30 rounded px-2 py-1.5">
+              <span className="truncate flex-1 flex items-center gap-1.5">
+                {e.estado === 'concluido' && <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600 shrink-0" />}
+                {e.titulo}
+              </span>
+              <span className="text-muted-foreground shrink-0">{EST_ENTREGAVEL_LABEL[e.estado] || e.estado}</span>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <p className="text-xs text-muted-foreground italic">A equipe ainda vai definir os entregáveis desta demanda.</p>
+      )}
+
+      {/* Aprovação da DEMANDA COMPLETA · só quando tudo pronto */}
+      {podeAprovar && !revisaoOpen && (
+        <div className="flex gap-2 pt-1">
+          <Button size="sm" onClick={aprovar} disabled={submitting} className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white">
+            <CheckCircle2 className="h-4 w-4 mr-1" /> Aprovar entrega
+          </Button>
+          {!jaRevisou && (
+            <Button size="sm" variant="outline" onClick={() => setRevisaoOpen(true)} className="flex-1 text-amber-600 hover:bg-amber-50 dark:hover:bg-amber-950/30">
+              ⟳ Pedir revisão (1x)
+            </Button>
+          )}
+        </div>
+      )}
+      {revisaoOpen && (
+        <div className="space-y-2 p-3 bg-amber-500/10 border border-amber-500/30 rounded">
+          <Label className="text-xs">O que precisa ajustar? *</Label>
+          <Textarea value={motivo} onChange={e => setMotivo(e.target.value)} rows={2} placeholder="Atenção · só 1 revisão. A equipe vai refazer o que você apontar." />
+          <div className="flex gap-2 justify-end">
+            <Button size="sm" variant="outline" onClick={() => { setRevisaoOpen(false); setMotivo(''); }}>Cancelar</Button>
+            <Button size="sm" onClick={revisar} disabled={submitting}>Enviar revisão</Button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// MarketingCardBlock · solicitante revisa preview, aprova entrega ou pede revisao (Spec 012 · LEGADO)
 // ═══════════════════════════════════════════════════════════════════════
 function MarketingCardBlock({ card, onChanged }) {
   const [entregaveis, setEntregaveis] = useState([]);

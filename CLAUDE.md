@@ -32,6 +32,88 @@ decide). Plano em **6 fases, cada uma 1 PR**. Resumo:
 - Soft-delete de campanhas: incluir na whitelist `app_soft_deletable_tables()` na Fase 2
   (quando o delete de campanha existir · evita reescrever a lista grande às cegas agora).
 
+### Fase 1 · Intake por dor (`20260530150000_solicitacoes_marketing_dor.sql`)
+O form de `/solicitacoes` (categoria=marketing) deixa de pedir grupo→entregável e passa a
+pedir a **dor**: título + descrição (a dor) + **público-alvo** (select) + "tem algo em mente?"
+(opcional). A estimativa de prazo saiu do form (o Pedro define na triagem · Fase 2).
+- Migration: `solicitacoes` += `mkt_publico_alvo`, `mkt_ideia_inicial` (ADITIVO).
+- Backend (`routes/solicitacoes.js` POST): aceita os 2 campos; `marketing_tipo_id`/`destino`
+  ficam null no intake (Pedro classifica depois).
+- Frontend (`Solicitacoes.jsx`): bloco "Detalhes da demanda (Marketing)" reescrito (público +
+  ideia + aviso de 3–8 sem); removidos cascata grupo→tipo, carga de etiquetas, habilidade
+  sugerida e estimativa. `MKT_GRUPO_*` → `MKT_PUBLICO_OPCOES`. `marketingValid` = público preenchido.
+- Efeito colateral de graça: sem `marketing_tipo_id` no intake, o auto-assign (#806) e a
+  estimativa/piso-7d (#803) já não disparam pra solicitações novas (só agiam com tipo). A
+  Fase 2 formaliza (trigger cria campanha em Triagem).
+
+### Fase 2 · Triagem + Campanha (`20260530160000_marketing_redesenho_f2_triagem.sql`)
+A solicitação-dor aprovada vira uma **campanha em triagem** (não mais card direto). O Pedro
+abre a Triagem, define a solução e cria os **entregáveis** (cards de produção).
+- Migration: `fn_marketing_cards_solicitacao_sync` recriada → INSERT em `marketing_campanhas`
+  (status='triagem') em vez de `marketing_kanban_cards`. Aposenta auto-assign (#806) e
+  estimativa/piso-7d (#803). 1 campanha por solicitação (idempotente).
+- Backend (`routes/marketing.js`): `GET /campanhas` (filtro status · +solicitante +total_cards),
+  `GET /campanhas/:id` (com cards), `PATCH`/`DELETE` (soft via deleted_at), `POST /campanhas/:id/cards`
+  (materializa: card origem='interna' + `campanha_id`, estado 'fila'; campanha vira 'ativa').
+- Frontend: tela nova **`/marketing/triagem`** (`MarketingTriagem.jsx`, nível 5) — lista campanhas
+  em triagem; ao abrir, mostra a dor + complexidade/prazo de entrega + cria entregáveis (etiqueta,
+  dono, duração-dias, paralela/foco). Item "Triagem" no `MarketingNav` (só coord). `api.js`:
+  `marketing.campanhas.{list,get,update,remove,criarCard}`.
+- **Card materializado** nasce origem='interna' + `campanha_id` (o CHECK aceita; evita o UNIQUE
+  de `solicitacao_id`) em estado 'fila' (visível na coluna Fila atual; Fase 3 remapeia p/ backlog).
+- **Pendente p/ sub-fases:** eventos/ciclo criativo ainda nascem card direto (não triados); o
+  solicitante ainda acompanha via card (Fase 3 liga via-campanha); régua de 6 colunas (Fase 3).
+- ⚠️ Aplicar a migration antes do merge.
+
+### Fase 2 · ajustes pós-teste (2026-05-30 · `20260530170000_marketing_entregavel_datas.sql`)
+- **Intake** (`Solicitacoes.jsx`): bloco Marketing = só o aviso de 3–8 sem (removidos público-alvo e "tem algo em mente"); SLA azul oculto p/ marketing; removido o select "Urgência (sentimento)" (redundante c/ `eh_urgente`). `marketingValid` sempre true.
+- **Migration**: `marketing_kanban_cards` += `data_inicio`, `data_fim` (datas de produção do entregável).
+- **Triagem** (`MarketingTriagem.jsx`): mostra **a data que o cliente pediu** + **urgência**; cada entregável tem **início+fim** (duração derivada) e mostra o **dono**; **entrega interna** = max(data_fim); o prazo de entrega tem "seguir a data pedida" e, se o Pedro mudar, **o solicitante é notificado** (`PATCH /campanhas` dispara `marketing_prazo_ajustado`).
+- **Backend**: `GET /campanhas` e `/campanhas/:id` retornam `data_pedida` + `eh_urgente` (da solicitação) e o `dono_nome` de cada entregável; `POST /campanhas/:id/cards` aceita `data_inicio`/`data_fim`.
+- ⚠️ Aplicar a migration antes do merge.
+
+### Fase 4 · fundação da capacidade (slots/dia · 2026-05-30 · SEM migration)
+Primeira parte do planner — a régua de **3/dia** já vale na triagem; o calendário arrastável (visual) vem na Fase 4b.
+- **Backend** `GET /marketing/capacidade-dia?membro_id&inicio&fim` → ocupação de slots por dia do membro, a partir dos intervalos `data_inicio→data_fim` dos cards ativos (paralela conta 1/dia · foco enche o dia). `slots_dia` vem de `marketing_membros` (default 3).
+- **Triagem** (`MarketingTriagem.jsx`): ao definir dono + início + fim do entregável, simula a agenda do dono e avisa **"sobrecarrega em N/total dia(s)"** (âmbar) ou **"cabe (≤ slots/dia)"** (verde). Não bloqueia — o Pedro decide.
+- `api.capacidadeDia(membroId, inicio, fim)`.
+- **Dias úteis (2026-05-30):** capacidade, aviso da triagem e `duracao_dias` contam **só seg–sex** (fim de semana não consome slot · `getDay()` ≠ 0/6). ⚠️ exceção da Aline (fotógrafa só domingo) fica pra Fase 4b.
+### Fase 4b · planner visual arrastável (`/marketing/planner` · 2026-05-30 · SEM migration)
+- **`MarketingPlanner.jsx`**: Gantt **mensal de dias úteis** (seg–sex), uma **raia por pessoa**, **barras contínuas** por entregável (`data_inicio→data_fim`) empilhadas em lanes. Navegação de mês + filtro por pessoa. Dias em excesso (> `slots_dia`) ficam **vermelhos**; 🎯 = foco (não paralela). Item no nav só p/ coord.
+- **Drag (HTML5 nativo, sem lib):** arrastar a barra pra outro dia/pessoa → recalcula `data_fim` mantendo a **duração em dias úteis** → `PATCH /cards/:id` (otimista). Coluna do drop = `clientX` relativo à raia.
+- **Backend:** `GET /marketing/planner?inicio&fim` (membros + barras); `PATCH /cards/:id` agora aceita `data_inicio`/`data_fim`/`pode_paralelo` (admin) e recalcula `duracao_dias`. Helper `diasUteisInclusive` (DRY, POST + PATCH). `api.planner`.
+- **Pendente (incrementos 4b):** "levar tudo" (mover campanha inteira), auto-rascunho na triagem, flag recorrente "é demanda de calendário", exceção da Aline (domingo). **Fase 5 (limpeza):** remover `MKT_PUBLICO_OPCOES`/`URGENCIAS` ociosos no intake.
+
+## Marketing · CONSOLIDAÇÃO em 4 abas (2026-05-30 · aprovada) — "Kanban melhor que o Trello"
+Reduzir o módulo a **Kanban · Planner · Analytics · Admin**. As outras abas somem e renascem no Kanban: **Triagem**→1ª coluna · **Fila**→ordenação dentro da coluna · **Ciclo Criativo**→ÉPICO de evento · **Calendário**→descontinuado (Planner é o sucessor). Decisões (Marcos): épico = agrupa **cards reais** (subdemanda = card com dono/data/fase, entra no Planner; épico é a visão por fase com %), **NÃO** checklist-style · **tudo é campanha** (1 peça = campanha de 1 entregável). Faseamento: **F-A** 6 colunas → **F-B** triagem no card (remove aba Triagem+Fila) → **F-C** épico (remove Ciclo) → **F-D** limpeza (remove Calendário; recorrentes/detalhe→Planner) → **F-E** acabamento + KPIs.
+
+### F-A · régua de 6 colunas no Kanban (2026-05-30 · SEM migration)
+- `MarketingKanban.jsx`: 4 colunas → **6** (Triagem→Backlog→Pesquisa→Produção→Revisão→Concluído), em **scroll horizontal** (estilo Trello). Constante `ESTADOS` ganhou `aceita: []` agrupando o canônico novo + o legado (backlog←fila, producao←em_producao, revisao←aguardando_solicitante) — **sem migration**; o drop grava o canônico novo (CHECK da F0 já aceita os 6).
+- Cards ordenados na coluna por **urgente → `ordem_fila`** (absorve a visão da Fila). Card mostra o **prazo de produção** (`prazo_producao`/`data_fim`, fallback no legado); SLA individual passou a contar `producao` também.
+### F-B/C/D/E · consolidação completa (2026-05-30 · SEM migration · 1 PR)
+- **F-B · triagem no card:** a coluna Triagem lista as **campanhas** (`status='triagem'`); clicar abre o `MarketingTriagemSheet` (extraído de MarketingTriagem, reusável) — complexidade, 2 prazos, criar entregáveis c/ aviso de 3/dia. Nav perde **Triagem** e **Fila**; rotas redirecionam pro Kanban.
+- **F-C · épico:** toggle **Quadro | Épicos** no Kanban → `MarketingEpicos.jsx`: campanhas e eventos como épicos expansíveis, cada um com subdemandas (cards reais) + **barra de progresso**; eventos mantêm **batch** (etiqueta/dono por fase) + link Eventos (absorve o **Ciclo**). Nav perde **Ciclo**.
+- **F-D:** **Calendário descontinuado** (Planner é o sucessor, slots não horas); nav perde Calendário; rota redireciona.
+- **F-E:** deletados os 4 órfãos (`MarketingTriagem/Fila/Calendario/CicloCriativo.jsx`) + lazy imports; **busca por título** no Kanban.
+- **✅ NAV FINAL: Kanban · Planner · Analytics · Admin** (+ toggle Quadro/Épicos dentro do Kanban). Telas órfãs = 0.
+### Acabamento do card + limpeza · NO AR (PR #828 · 2026-05-30)
+- Card: **avatar** (inicial do dono), **mini-barra de progresso** do checklist, **2º prazo** (entrega da campanha) — `enrichCards` agora traz `checklist {feitos,total}` + `campanha {prazo_entrega}`. Realtime do Kanban também escuta `marketing_campanhas` (coluna Triagem auto-atualiza). `MKT_PUBLICO_OPCOES` removido do intake (`URGENCIAS` fica, ainda usado).
+- **Fase 5 · KPIs NO AR (sem migration):** `entregue_em` + trigger `fn_marketing_cards_estado_ts` JÁ existiam (não precisou migration). Coletores em `kpiAutoCollector.js` ajustados ao redesenho: **MKT-PRAZO** passa a usar `prazo_producao || prazo_confirmado`; **MKT-DEM-CAP reescrito em SLOTS** (slot-dias úteis ocupados na semana ÷ Σ`slots_dia`×5 · não horas), corrigindo os estados legados que tinham ficado órfãos pós-régua. MKT-LEAD/THROUGHPUT já ok. `/estimar` + `fn_marketing_estimar_prazo` marcados **@deprecated** (intake por dor não usa mais; não dropados — aposentar após validar a triagem). Os KPIs populam com ~1 semana de histórico real.
+- **Resta só:** **reordenar-arrastando vertical** no Kanban (drag HTML5 · NÃO-crítico; urgente→`ordem_fila` já cobre a prioridade).
+
+### UI Trello-like no Kanban (2026-05-30 · pedido do Marcos · sem migration)
+Repaginação visual da aba (mantém toda a lógica): **listas com fundo cinza** (`bg-muted/50`, `rounded-xl`) + **bolinha de cor** por coluna (`ESTADOS.dot`); **cards estilo Trello** = `<div>` branco arredondado com sombra, **etiquetas em barras coloridas no topo** (componente `Etiqueta`, cor de `etiqueta_tipo`/`destino`/fase), **faixa de prioridade** no topo (urgente rosa / revisão âmbar), badges de meta (prazo · checklist · SLA · 🚩 entrega) e **avatar redondo** (inicial). `CampanhaCard` no mesmo estilo. Objetivo: o Pedro sentir o board do Trello dele.
+
+### Consertos de fluxo · pós-auditoria (2026-05-31 · sem migration)
+Varredura completa do módulo (2 auditorias + benchmark). Consertado:
+- **🔴 Solicitante↔campanha RELIGADO** (furo crítico): os cards triados têm `campanha_id` mas não `solicitacao_id`, e o solicitante buscava por `solicitacao_id` → tinha perdido o acompanhamento. `solicitacoes.js` (GET list) agora traz `marketing_campanha` = campanha (por `solicitacao_id`) + entregáveis (por `campanha_id`, com dono/estado). Novo `MarketingCampanhaBlock` em `Solicitacoes.jsx` mostra status + prazo + barra de progresso + lista de entregáveis. O `MarketingCardBlock` legado fica de fallback p/ cards antigos com `solicitacao_id`.
+- **Materialização da triagem grava `estado:'backlog'`** (não mais `'fila'`) em `POST /campanhas/:id/cards`.
+- Bugfix do filtro **"Não atribuído"** no Kanban (escondia tudo) + Select de estado no drawer normaliza legados (`fila→backlog`…) em vez de cair em `'fila'`.
+- **Falso alarme da auditoria:** "arrastar card pra Triagem some o card" NÃO procede — a coluna Triagem usa `TriagemColumn`, sem `onDrop`.
+- **Aprovação da DEMANDA COMPLETA (2026-05-31):** decisão do Marcos = aprovar a campanha inteira (NÃO por entregável). `POST /campanhas/:id/aprovar` (exige todos os entregáveis `concluido` → campanha `concluida` + solicitação `concluido` p/ NPS) e `POST /campanhas/:id/revisar` (1x · reabre os concluídos pra `revisao` + `tem_revisao`/`motivo_revisao` no card + notifica os donos · SEM migration). `MarketingCampanhaBlock` mostra **Aprovar entrega / Pedir revisão** só quando "tudo pronto" (status `ativa` + todos concluídos). `api.campanhas.aprovar/revisar`.
+- **Limpeza pós-auditoria (2026-05-31):** ✅ Pedro (`habilidade='coordenador'`) **fora das raias** do Planner e do cálculo DEM-CAP (`.neq('habilidade','coordenador')`); ✅ **Admin edita `slots_dia`** no membro (não mais horas) — POST/PATCH `/admin/membros` aceitam `slots_dia`; ✅ api.js limpo dos mortos (`capacidade`, `estimar`, `fila.list/reordenar`, `decidirUrgencia` · `fila.posicao` fica). ✅ **DROP** dos mortos (migration `20260531120000`: `fn_marketing_calcular_capacidade_semana`, `fn_marketing_estimar_prazo`, tabela `marketing_grupo_padrao`) + endpoints backend `/capacidade`, `/estimar`, `/fila`, `/fila/reordenar` removidos · `decidir-urgencia` fica inerte (sem chamador). ⚠️ aplicar a migration antes do merge.
+- **Resta (menor):** `sugerir-revisao`/`aprovar-entrega` de CARD (legado) em estados antigos — só afetam o fluxo pré-redesenho; Analytics vazio até juntar histórico.
+
 ## /novosite · prévia da home do novo site público (2026-05-30)
 
 Ambiente isolado pra testar o redesign do site público **cbrio.com.br** dentro
@@ -3872,7 +3954,13 @@ preenchidas pela **Alda Lorena** (responsavel da Integracao) em
   Pra evento atipico fora de janela, usar botao "Coletar pico agora"
   da UI em `/online`.
 - **ds-collect** · cron `0 10 * * *` · pra cultos de ontem com video_id,
-  grava `online_ds` via `youtubeAnalytics.reports.query` (views no dia D).
+  grava `online_ds` = **total acumulado de views do video** no momento da coleta
+  (snapshot da manha seguinte ao culto) via `videos.list?part=statistics`
+  (`fetchVideoStatistics` · Data API · quase tempo real, SEM o atraso de 1-2d da
+  Analytics que deixava o DS de ontem zerado). watch time / retencao do DS
+  seguem vindo da Analytics como best-effort (podem atrasar). Os endpoints
+  manuais `/coletar/ds` e `/coletar/ddus` rodam `backfillCultoVideoIds` antes,
+  pra vincular o video ao culto (o coletor so age em culto ja vinculado).
 - **ddus-collect** · cron `30 10 * * *` · pra cultos de 7 dias atras,
   grava `online_ddus` (views D+1 ate D+7, on-demand).
 

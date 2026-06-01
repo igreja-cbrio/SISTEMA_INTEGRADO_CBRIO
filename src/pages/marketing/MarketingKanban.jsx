@@ -3,6 +3,8 @@ import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
 import { marketing as api } from '../../api';
 import MarketingNav from './MarketingNav';
+import MarketingTriagemSheet from './MarketingTriagemSheet';
+import MarketingEpicos from './MarketingEpicos';
 import { supabase } from '../../supabaseClient';
 import { Badge } from '../../components/ui/badge';
 import { Button } from '../../components/ui/button';
@@ -17,14 +19,20 @@ import { ScrollArea } from '../../components/ui/scroll-area';
 import {
   Megaphone, Plus, Filter, Clock, Loader2, CheckCircle2, AlertCircle,
   Zap, RefreshCw, ArrowRight, Calendar, CalendarDays, Settings, BarChart3, User2, FileText, Upload, Trash2, X, ListChecks, Paperclip,
+  Inbox, Search, Eye,
 } from 'lucide-react';
 import { toast } from 'sonner';
 
+// Régua de 6 colunas (redesenho · igual ao Trello deles + Triagem/Revisão).
+// `aceita` agrupa o valor canônico novo + o legado equivalente, então os cards
+// antigos caem na coluna certa sem migration; o drop grava sempre o canônico.
 const ESTADOS = [
-  { key: 'fila',                   label: 'Fila',                    icon: Clock,         color: 'border-t-amber-500'    },
-  { key: 'em_producao',            label: 'Em produção',             icon: Loader2,       color: 'border-t-blue-500'     },
-  { key: 'aguardando_solicitante', label: 'Aguardando solicitante',  icon: AlertCircle,   color: 'border-t-violet-500'   },
-  { key: 'concluido',              label: 'Concluído',               icon: CheckCircle2,  color: 'border-t-emerald-600'  },
+  { key: 'triagem',   label: 'Triagem',   icon: Inbox,        dot: 'bg-pink-500',    aceita: ['triagem'] },
+  { key: 'backlog',   label: 'Backlog',   icon: Clock,        dot: 'bg-amber-500',   aceita: ['backlog', 'fila'] },
+  { key: 'pesquisa',  label: 'Pesquisa',  icon: Search,       dot: 'bg-cyan-500',    aceita: ['pesquisa'] },
+  { key: 'producao',  label: 'Produção',  icon: Loader2,      dot: 'bg-blue-500',    aceita: ['producao', 'em_producao'] },
+  { key: 'revisao',   label: 'Revisão',   icon: Eye,          dot: 'bg-violet-500',  aceita: ['revisao', 'aguardando_solicitante'] },
+  { key: 'concluido', label: 'Concluído', icon: CheckCircle2, dot: 'bg-emerald-600', aceita: ['concluido'] },
 ];
 
 const ORIGEM_LABEL = {
@@ -65,6 +73,7 @@ export default function MarketingKanban() {
   const [fTipo, setFTipo]           = useState('todas');
   const [fDestino, setFDestino]     = useState('todos');
   const [fMembro, setFMembro]       = useState('todos');
+  const [busca, setBusca]           = useState('');
 
   // Detalhe (Drawer)
   const [detail, setDetail]         = useState(null);
@@ -72,17 +81,24 @@ export default function MarketingKanban() {
   // Dialog nova task interna
   const [novaOpen, setNovaOpen]     = useState(false);
 
+  // Triagem embutida (consolidação F-B): campanhas-dor caem na 1ª coluna
+  const [campanhasTriagem, setCampanhasTriagem] = useState([]);
+  const [triagemSel, setTriagemSel] = useState(null);
+  const [visao, setVisao] = useState('quadro'); // 'quadro' (colunas) | 'epicos' (por campanha/evento)
+
   const carregar = useCallback(async () => {
     try {
-      const [c, e, m] = await Promise.all([
+      const [c, e, m, camp] = await Promise.all([
         api.cards(),
         api.etiquetas(),
         api.membros(),
+        api.campanhas.list('triagem').catch(() => []),
       ]);
       setCards(Array.isArray(c) ? c : []);
       setTipos(e.tipos || []);
       setDestinos(e.destinos || []);
       setMembros(m || []);
+      setCampanhasTriagem(Array.isArray(camp) ? camp : []);
     } catch (err) {
       toast.error(err.message || 'Erro ao carregar Kanban');
     } finally {
@@ -103,6 +119,7 @@ export default function MarketingKanban() {
     const ch = supabase
       .channel(`marketing-cards:${profile.id}`)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'marketing_kanban_cards' }, sched)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'marketing_campanhas' }, sched)
       .subscribe();
     return () => { clearTimeout(timeout); supabase.removeChannel(ch); };
   }, [profile?.id, carregar]);
@@ -112,15 +129,22 @@ export default function MarketingKanban() {
       if (fOrigem  !== 'todas'  && c.origem !== fOrigem) return false;
       if (fTipo    !== 'todas'  && c.etiqueta_tipo_id !== fTipo) return false;
       if (fDestino !== 'todos'  && c.etiqueta_destino_id !== fDestino) return false;
-      if (fMembro  !== 'todos'  && c.atribuido_a !== fMembro) return false;
+      if (fMembro === 'ninguem') { if (c.atribuido_a != null) return false; }
+      else if (fMembro !== 'todos' && c.atribuido_a !== fMembro) return false;
+      if (busca && !(c.titulo || '').toLowerCase().includes(busca.toLowerCase())) return false;
       return true;
     });
-  }, [cards, fOrigem, fTipo, fDestino, fMembro]);
+  }, [cards, fOrigem, fTipo, fDestino, fMembro, busca]);
 
   const colunas = useMemo(() => {
     return ESTADOS.map(e => ({
       ...e,
-      items: filtrados.filter(c => c.estado === e.key),
+      // urgente no topo, depois a ordem da fila (absorve a antiga aba Fila)
+      items: filtrados
+        .filter(c => e.aceita.includes(c.estado))
+        .sort((a, b) =>
+          (b.raia_rapida ? 1 : 0) - (a.raia_rapida ? 1 : 0) ||
+          (a.ordem_fila ?? 9999) - (b.ordem_fila ?? 9999)),
     }));
   }, [filtrados]);
 
@@ -148,6 +172,10 @@ export default function MarketingKanban() {
           </p>
         </div>
         <div className="flex items-center gap-2 shrink-0 flex-wrap">
+          <div className="flex rounded-lg border border-border overflow-hidden">
+            <button onClick={() => setVisao('quadro')} className={`px-3 py-1.5 text-xs font-medium transition-colors ${visao === 'quadro' ? 'bg-primary text-primary-foreground' : 'bg-card hover:bg-accent'}`}>Quadro</button>
+            <button onClick={() => setVisao('epicos')} className={`px-3 py-1.5 text-xs font-medium transition-colors ${visao === 'epicos' ? 'bg-primary text-primary-foreground' : 'bg-card hover:bg-accent'}`}>Épicos</button>
+          </div>
           <MarketingNav />
           {isCoordenador && (
             <Dialog open={novaOpen} onOpenChange={setNovaOpen}>
@@ -170,6 +198,9 @@ export default function MarketingKanban() {
         </div>
       </div>
 
+      {visao === 'epicos' && <MarketingEpicos isCoord={isCoordenador} />}
+
+      {visao === 'quadro' && (<>
       {/* Filtros */}
       <div className="flex flex-wrap items-center gap-2 p-3 bg-muted/30 rounded-lg border border-border">
         <Filter className="h-4 w-4 text-muted-foreground" />
@@ -212,7 +243,8 @@ export default function MarketingKanban() {
           </SelectContent>
         </Select>
 
-        <Button variant="outline" size="sm" onClick={carregar} className="ml-auto gap-1.5">
+        <Input value={busca} onChange={e => setBusca(e.target.value)} placeholder="Buscar título…" className="h-9 w-[160px] text-sm ml-auto" />
+        <Button variant="outline" size="sm" onClick={carregar} className="gap-1.5">
           <RefreshCw className="h-4 w-4" /> Atualizar
         </Button>
       </div>
@@ -223,19 +255,30 @@ export default function MarketingKanban() {
           <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
         </div>
       ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
+        <div className="flex gap-4 overflow-x-auto pb-2">
           {colunas.map(col => (
-            <KanbanColumn
-              key={col.key}
-              col={col}
-              isCoordenador={isCoordenador}
-              currentProfileId={profile?.id}
-              onClickCard={(c) => setDetail(c)}
-              onMudarEstado={mudarEstado}
-            />
+            col.key === 'triagem' ? (
+              <TriagemColumn
+                key="triagem"
+                col={col}
+                campanhas={campanhasTriagem}
+                isCoordenador={isCoordenador}
+                onClickCampanha={(c) => setTriagemSel(c)}
+              />
+            ) : (
+              <KanbanColumn
+                key={col.key}
+                col={col}
+                isCoordenador={isCoordenador}
+                currentProfileId={profile?.id}
+                onClickCard={(c) => setDetail(c)}
+                onMudarEstado={mudarEstado}
+              />
+            )
           ))}
         </div>
       )}
+      </>)}
 
       <CardDrawer
         card={detail}
@@ -245,6 +288,14 @@ export default function MarketingKanban() {
         destinos={destinos}
         membros={membros}
         isCoordenador={isCoordenador}
+      />
+
+      <MarketingTriagemSheet
+        campanha={triagemSel}
+        tipos={tipos}
+        membros={membros}
+        onClose={() => setTriagemSel(null)}
+        onChanged={() => { carregar(); }}
       />
     </div>
   );
@@ -258,7 +309,7 @@ function KanbanColumn({ col, isCoordenador, currentProfileId, onClickCard, onMud
 
   return (
     <div
-      className={`flex flex-col rounded-lg transition-colors ${dragOver ? 'bg-accent/50 ring-2 ring-primary/30' : ''}`}
+      className={`flex flex-col rounded-xl shrink-0 w-[280px] bg-muted/50 dark:bg-muted/20 transition-shadow ${dragOver ? 'ring-2 ring-primary/40' : ''}`}
       onDragOver={e => { if (!isCoordenador) return; e.preventDefault(); setDragOver(true); }}
       onDragLeave={() => setDragOver(false)}
       onDrop={e => {
@@ -269,15 +320,15 @@ function KanbanColumn({ col, isCoordenador, currentProfileId, onClickCard, onMud
         if (id) onMudarEstado(id, col.key);
       }}
     >
-      <div className={`flex items-center gap-2 pb-3 mb-3 border-b-2 ${col.color.replace('border-t-', 'border-b-')}`}>
-        <col.icon className="h-4 w-4 text-muted-foreground" />
+      <div className="flex items-center gap-2 px-3 py-2.5">
+        <span className={`h-2.5 w-2.5 rounded-full ${col.dot}`} />
         <span className="text-sm font-semibold text-foreground">{col.label}</span>
-        <Badge variant="secondary" className="ml-auto text-xs">{col.items.length}</Badge>
+        <Badge variant="secondary" className="ml-auto text-xs rounded-full px-2">{col.items.length}</Badge>
       </div>
-      <ScrollArea className="flex-1 max-h-[calc(100vh-340px)] md:max-h-[calc(100vh-300px)]">
-        <div className="space-y-3 pr-1 min-h-[60px]">
+      <ScrollArea className="flex-1 max-h-[calc(100vh-330px)] md:max-h-[calc(100vh-290px)]">
+        <div className="px-2 pb-2 space-y-2 min-h-[40px]">
           {col.items.length === 0 && (
-            <p className="text-xs text-muted-foreground text-center py-8">Sem cards</p>
+            <p className="text-xs text-muted-foreground/60 text-center py-6">—</p>
           )}
           {col.items.map(item => (
             <KanbanCard
@@ -294,20 +345,100 @@ function KanbanColumn({ col, isCoordenador, currentProfileId, onClickCard, onMud
 }
 
 // ═══════════════════════════════════════════════════════════════════════
-// Card
+// Coluna Triagem · campanhas-dor aguardando o Pedro definir a solução
+// ═══════════════════════════════════════════════════════════════════════
+function TriagemColumn({ col, campanhas, isCoordenador, onClickCampanha }) {
+  return (
+    <div className="flex flex-col rounded-xl shrink-0 w-[280px] bg-muted/50 dark:bg-muted/20">
+      <div className="flex items-center gap-2 px-3 py-2.5">
+        <span className={`h-2.5 w-2.5 rounded-full ${col.dot}`} />
+        <span className="text-sm font-semibold text-foreground">{col.label}</span>
+        <Badge variant="secondary" className="ml-auto text-xs rounded-full px-2">{campanhas.length}</Badge>
+      </div>
+      <ScrollArea className="flex-1 max-h-[calc(100vh-330px)] md:max-h-[calc(100vh-290px)]">
+        <div className="px-2 pb-2 space-y-2 min-h-[40px]">
+          {campanhas.length === 0 && (
+            <p className="text-xs text-muted-foreground/60 text-center py-6">
+              {isCoordenador ? 'Nada pra triar' : '—'}
+            </p>
+          )}
+          {campanhas.map(c => (
+            <CampanhaCard key={c.id} campanha={c} clicavel={isCoordenador} onClick={() => isCoordenador && onClickCampanha(c)} />
+          ))}
+        </div>
+      </ScrollArea>
+    </div>
+  );
+}
+
+function CampanhaCard({ campanha: c, onClick, clicavel }) {
+  return (
+    <div
+      className={`bg-card rounded-lg border border-border/60 shadow-sm overflow-hidden transition-all ${clicavel ? 'cursor-pointer hover:shadow-md hover:border-border' : ''}`}
+      onClick={onClick}
+    >
+      <div className={`h-1.5 ${c.eh_urgente ? 'bg-rose-500' : 'bg-pink-500'}`} />
+      <div className="p-2.5 space-y-1.5">
+        <div className="flex items-center gap-1.5">
+          <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-pink-500/15 text-pink-700 dark:text-pink-400">Campanha</span>
+          {c.eh_urgente && (
+            <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-rose-500/15 text-rose-700 dark:text-rose-400 flex items-center gap-0.5">
+              <Zap className="h-3 w-3" /> Urgente
+            </span>
+          )}
+        </div>
+        <p className="text-sm font-medium text-foreground leading-snug line-clamp-2">{c.titulo}</p>
+        {c.dor_descricao && <p className="text-[11px] text-muted-foreground line-clamp-2">{c.dor_descricao}</p>}
+        <div className="flex items-center justify-between gap-2 pt-0.5 text-[10px] text-muted-foreground">
+          <span className="flex items-center gap-1.5 truncate">
+            <span className="h-5 w-5 shrink-0 rounded-full bg-pink-500/15 text-pink-600 dark:text-pink-400 text-[9px] font-semibold flex items-center justify-center">
+              {(c.solicitante_nome || '?').trim().charAt(0).toUpperCase()}
+            </span>
+            <span className="truncate">{c.solicitante_nome || '—'}</span>
+          </span>
+          {c.data_pedida && <span className="flex items-center gap-0.5 shrink-0"><Calendar className="h-3 w-3" />{fmtData(c.data_pedida)}</span>}
+        </div>
+        {clicavel && (
+          <div className="text-[11px] text-primary flex items-center gap-1 font-medium pt-0.5">
+            Triar <ArrowRight className="h-3 w-3" />
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// Etiqueta colorida no topo do card (estilo Trello label)
+function Etiqueta({ cor, nome }) {
+  const c = cor || '#64748b';
+  return (
+    <span
+      className="text-[10px] font-medium px-1.5 py-0.5 rounded leading-tight max-w-[130px] truncate"
+      style={{ backgroundColor: `${c}22`, color: c }}
+      title={nome}
+    >
+      {nome}
+    </span>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// Card · estilo Trello (etiquetas em barras coloridas no topo + avatar)
 // ═══════════════════════════════════════════════════════════════════════
 function KanbanCard({ item, draggable, onClick }) {
+  // prazo de produção do entregável (data_fim/prazo_producao) ou o prazo legado
+  const prazoCard = item.prazo_producao || item.prazo_confirmado;
   const atraso = useMemo(() => {
-    if (!item.prazo_confirmado || item.estado === 'concluido') return null;
-    const horas = (new Date(item.prazo_confirmado).getTime() - Date.now()) / 3600000;
+    if (!prazoCard || item.estado === 'concluido') return null;
+    const horas = (new Date(prazoCard).getTime() - Date.now()) / 3600000;
     if (horas < 0) return { label: `${Math.abs(Math.round(horas / 24))}d atrasado`, cor: 'bg-rose-500/15 text-rose-700 dark:text-rose-400' };
     if (horas < 48) return { label: `${Math.round(horas)}h`, cor: 'bg-amber-500/15 text-amber-700 dark:text-amber-400' };
     return null;
-  }, [item.prazo_confirmado, item.estado]);
+  }, [prazoCard, item.estado]);
 
   // Spec 016 · alerta SLA individual · card em em_producao por tempo > esforco_max × 1.5
   const slaIndividual = useMemo(() => {
-    if (item.estado !== 'em_producao') return null;
+    if (!['em_producao', 'producao'].includes(item.estado)) return null;
     const max = item.etiqueta_tipo?.esforco_max_h;
     if (!max || max <= 0) return null;
     const horasEstado = (Date.now() - new Date(item.estado_atualizado_em).getTime()) / 3600000;
@@ -324,84 +455,63 @@ function KanbanCard({ item, draggable, onClick }) {
   }, [item.estado, item.estado_atualizado_em, item.etiqueta_tipo?.esforco_max_h]);
 
   return (
-    <Card
-      className={`p-3 cursor-pointer hover:shadow-md transition-shadow border-l-4 ${
-        item.raia_rapida ? 'border-l-rose-500 bg-rose-500/5'
-        : item.tem_revisao ? 'border-l-amber-500'
-        : 'border-l-primary'
-      } ${draggable ? 'active:opacity-60' : ''}`}
+    <div
+      className={`bg-card rounded-lg border border-border/60 shadow-sm hover:shadow-md hover:border-border transition-all overflow-hidden cursor-pointer ${draggable ? 'active:opacity-70' : ''}`}
       onClick={onClick}
       draggable={draggable}
       onDragStart={e => { e.dataTransfer.setData('text/plain', item.id); e.dataTransfer.effectAllowed = 'move'; }}
     >
-      <div className="flex items-start justify-between gap-2 mb-2">
-        <Badge className={`text-[10px] px-1.5 py-0.5 ${ORIGEM_COR[item.origem]}`}>
-          {ORIGEM_LABEL[item.origem]}
-        </Badge>
-        <div className="flex items-center gap-1">
-          {item.raia_rapida && (
-            <Badge className="text-[10px] px-1.5 py-0.5 bg-rose-500/15 text-rose-700 dark:text-rose-400 gap-0.5">
-              <Zap className="h-3 w-3" /> Urgente
-            </Badge>
+      {/* faixa de prioridade no topo (urgente / revisão) — estilo Trello */}
+      {item.raia_rapida ? <div className="h-1.5 bg-rose-500" /> : item.tem_revisao ? <div className="h-1.5 bg-amber-500" /> : null}
+
+      <div className="p-2.5 space-y-1.5">
+        {/* Etiquetas em barras coloridas */}
+        {(item.etiqueta_tipo || item.etiqueta_destino || item.cycle_phase_task?.fase) && (
+          <div className="flex flex-wrap gap-1">
+            {item.etiqueta_tipo && <Etiqueta cor={item.etiqueta_tipo.cor} nome={item.etiqueta_tipo.nome} />}
+            {item.etiqueta_destino && <Etiqueta cor={item.etiqueta_destino.cor} nome={item.etiqueta_destino.nome} />}
+            {item.cycle_phase_task?.fase && <Etiqueta cor="#a855f7" nome={item.cycle_phase_task.fase} />}
+          </div>
+        )}
+
+        <p className="text-sm font-medium text-foreground leading-snug line-clamp-2">{item.titulo}</p>
+
+        {item.cycle_phase_task?.event_name && (
+          <p className="text-[10px] text-muted-foreground truncate">{item.cycle_phase_task.event_name}</p>
+        )}
+
+        {/* Badges de meta */}
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[10px]">
+          {item.raia_rapida && <span className="flex items-center gap-0.5 font-medium text-rose-600 dark:text-rose-400"><Zap className="h-3 w-3" />Urgente</span>}
+          {item.tem_revisao && <span className="flex items-center gap-0.5 font-medium text-amber-600 dark:text-amber-400">⟳ Revisão</span>}
+          {slaIndividual && <span className={`px-1.5 py-0.5 rounded ${slaIndividual.cor}`}>⏱ {slaIndividual.label}</span>}
+          {!slaIndividual && atraso && <span className={`px-1.5 py-0.5 rounded ${atraso.cor}`}>⏱ {atraso.label}</span>}
+          {prazoCard && !atraso && !slaIndividual && (
+            <span className="flex items-center gap-0.5 text-muted-foreground"><Calendar className="h-3 w-3" />{fmtData(prazoCard)}</span>
           )}
-          {item.tem_revisao && (
-            <Badge className="text-[10px] px-1.5 py-0.5 bg-amber-500/15 text-amber-700 dark:text-amber-400">
-              ⟳ Revisão
-            </Badge>
+          {item.checklist?.total > 0 && (
+            <span className={`flex items-center gap-0.5 ${item.checklist.feitos === item.checklist.total ? 'text-emerald-600 dark:text-emerald-400' : 'text-muted-foreground'}`}>
+              <ListChecks className="h-3 w-3" />{item.checklist.feitos}/{item.checklist.total}
+            </span>
+          )}
+          {item.campanha?.prazo_entrega && (
+            <span className="flex items-center gap-0.5 text-muted-foreground" title="Entrega ao solicitante">🚩 {fmtData(item.campanha.prazo_entrega)}</span>
+          )}
+        </div>
+
+        {/* Footer: origem + avatar */}
+        <div className="flex items-center justify-between gap-2 pt-0.5">
+          <span className={`text-[9px] font-medium px-1.5 py-0.5 rounded ${ORIGEM_COR[item.origem]}`}>{ORIGEM_LABEL[item.origem]}</span>
+          {item.atribuido?.profile?.name ? (
+            <span className="h-6 w-6 shrink-0 rounded-full bg-primary/15 text-primary text-[10px] font-semibold flex items-center justify-center" title={item.atribuido.profile.name}>
+              {item.atribuido.profile.name.trim().charAt(0).toUpperCase()}
+            </span>
+          ) : (
+            <span className="h-6 w-6 shrink-0 rounded-full bg-muted text-muted-foreground flex items-center justify-center" title="Não atribuído"><User2 className="h-3 w-3" /></span>
           )}
         </div>
       </div>
-
-      <p className="text-sm font-medium text-foreground line-clamp-2 mb-2">{item.titulo}</p>
-
-      {(item.etiqueta_tipo || item.etiqueta_destino || item.cycle_phase_task) && (
-        <div className="flex flex-wrap gap-1 mb-2">
-          {item.etiqueta_tipo && (
-            <Badge
-              className="text-[10px] px-1.5 py-0.5"
-              style={item.etiqueta_tipo.cor ? { backgroundColor: `${item.etiqueta_tipo.cor}25`, color: item.etiqueta_tipo.cor } : undefined}
-            >
-              {item.etiqueta_tipo.nome}
-            </Badge>
-          )}
-          {item.etiqueta_destino && (
-            <Badge
-              className="text-[10px] px-1.5 py-0.5"
-              style={item.etiqueta_destino.cor ? { backgroundColor: `${item.etiqueta_destino.cor}25`, color: item.etiqueta_destino.cor } : undefined}
-            >
-              {item.etiqueta_destino.nome}
-            </Badge>
-          )}
-          {item.cycle_phase_task?.fase && (
-            <Badge className="text-[10px] px-1.5 py-0.5 bg-purple-500/15 text-purple-700 dark:text-purple-400">
-              {item.cycle_phase_task.fase}
-            </Badge>
-          )}
-          {item.cycle_phase_task?.event_name && (
-            <span className="text-[10px] text-muted-foreground self-center truncate max-w-[120px]">
-              · {item.cycle_phase_task.event_name}
-            </span>
-          )}
-        </div>
-      )}
-
-      <div className="flex items-center justify-between gap-2 flex-wrap">
-        <span className="text-[11px] text-muted-foreground truncate max-w-[140px] flex items-center gap-1">
-          <User2 className="h-3 w-3" />
-          {item.atribuido?.profile?.name || 'Não atribuído'}
-        </span>
-        <div className="flex items-center gap-1">
-          {slaIndividual && <Badge className={`text-[10px] px-1.5 py-0.5 ${slaIndividual.cor}`}>⏱ {slaIndividual.label}</Badge>}
-          {!slaIndividual && atraso && <Badge className={`text-[10px] px-1.5 py-0.5 ${atraso.cor}`}>⏱ {atraso.label}</Badge>}
-          {item.prazo_confirmado && !atraso && !slaIndividual && (
-            <span className="text-[10px] text-muted-foreground flex items-center gap-0.5">
-              <Calendar className="h-3 w-3" />
-              {fmtData(item.prazo_confirmado)}
-            </span>
-          )}
-        </div>
-      </div>
-    </Card>
+    </div>
   );
 }
 
@@ -647,7 +757,7 @@ function CardDrawer({ card, onClose, onUpdated, tipos, destinos, membros, isCoor
               <div className="space-y-2">
                 <Label>Estado</Label>
                 <Select
-                  value={edit.estado || 'fila'}
+                  value={({ fila: 'backlog', em_producao: 'producao', aguardando_solicitante: 'revisao' })[edit.estado] || edit.estado || 'backlog'}
                   onValueChange={v => setEdit(s => ({ ...s, estado: v }))}
                 >
                   <SelectTrigger><SelectValue /></SelectTrigger>

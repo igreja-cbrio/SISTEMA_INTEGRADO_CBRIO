@@ -194,11 +194,9 @@ const TotemKidsParear = lazyWithRetry(() => import('./pages/ministerial/totemKid
 const TotemKidsDisplaySala = lazyWithRetry(() => import('./pages/ministerial/totemKids/TotemKidsDisplaySala'));
 const TotemKidsDisplayFoyer = lazyWithRetry(() => import('./pages/ministerial/totemKids/TotemKidsDisplayFoyer'));
 const MarketingKanban = lazyWithRetry(() => import('./pages/marketing/MarketingKanban'));
-const MarketingCalendario = lazyWithRetry(() => import('./pages/marketing/MarketingCalendario'));
+const MarketingPlanner = lazyWithRetry(() => import('./pages/marketing/MarketingPlanner'));
 const MarketingAdmin = lazyWithRetry(() => import('./pages/marketing/MarketingAdmin'));
 const MarketingAnalytics = lazyWithRetry(() => import('./pages/marketing/MarketingAnalytics'));
-const MarketingFila = lazyWithRetry(() => import('./pages/marketing/MarketingFila'));
-const MarketingCicloCriativo = lazyWithRetry(() => import('./pages/marketing/MarketingCicloCriativo'));
 const TotemKidsAdmin = lazyWithRetry(() => import('./pages/admin/totemKids/TotemKidsAdmin'));
 const AssistenteIA = lazyWithRetry(() => import('./pages/admin/AssistenteIA'));
 const EventDetail = lazyWithRetry(() => import('./pages/eventos/EventDetail'));
@@ -248,6 +246,7 @@ const Next = lazyWithRetry(() => import('./pages/ministerial/Next'));
 // Jornada virou aba dentro de Membresia (componente MembersJornadaPanel).
 // Mantido aqui apenas pra retrocompat de URL — redirect via Navigate.
 const InscricaoNext = lazyWithRetry(() => import('./pages/public/InscricaoNext'));
+const DecisaoOnline = lazyWithRetry(() => import('./pages/public/DecisaoOnline'));
 const InscricaoVoluntariado = lazyWithRetry(() => import('./pages/public/InscricaoVoluntariado'));
 // /admin/cultura, /kpis, /kpis/guia, /painel-kpis foram substituidos pelo /painel
 // (Fase 2 do sistema OKR/NSM 2026). Redirects abaixo preservam URLs antigas.
@@ -382,6 +381,7 @@ function AppRoutes() {
       <Route path="/next" element={<Suspense fallback={<Loading />}><InscricaoNext /></Suspense>} />
       <Route path="/next/inscrever" element={<Suspense fallback={<Loading />}><InscricaoNext /></Suspense>} />
       <Route path="/inscricao-voluntariado" element={<Suspense fallback={<Loading />}><InscricaoVoluntariado /></Suspense>} />
+      <Route path="/decisao" element={<Suspense fallback={<Loading />}><DecisaoOnline /></Suspense>} />
       <Route path="/wallet" element={<Suspense fallback={<Loading />}><WalletPage /></Suspense>} />
       <Route path="/motion" element={<Suspense fallback={<Loading />}><Motion /></Suspense>} />
       {/* Prévia interna do novo site (redesign cbrio.com.br) · não-listada */}
@@ -480,11 +480,13 @@ function AppRoutes() {
         <Route path="/bridge" element={<ModuleGuard moduleSlug="bridge"><Suspense fallback={<Loading />}><PainelBridge /></Suspense></ModuleGuard>} />
         {/* Marketing · Kanban (Spec 007) + Calendario (Spec 008) */}
         <Route path="/marketing" element={<ModuleGuard moduleSlug="marketing" nivelMinimo={1}><Suspense fallback={<Loading />}><MarketingKanban /></Suspense></ModuleGuard>} />
-        <Route path="/marketing/calendario" element={<ModuleGuard moduleSlug="marketing" nivelMinimo={1}><Suspense fallback={<Loading />}><MarketingCalendario /></Suspense></ModuleGuard>} />
+        <Route path="/marketing/calendario" element={<Navigate to="/marketing" replace />} />
+        <Route path="/marketing/planner" element={<ModuleGuard moduleSlug="marketing" nivelMinimo={1}><Suspense fallback={<Loading />}><MarketingPlanner /></Suspense></ModuleGuard>} />
         <Route path="/marketing/admin" element={<ModuleGuard moduleSlug="marketing" nivelMinimo={5}><Suspense fallback={<Loading />}><MarketingAdmin /></Suspense></ModuleGuard>} />
         <Route path="/marketing/analytics" element={<ModuleGuard moduleSlug="marketing" nivelMinimo={1}><Suspense fallback={<Loading />}><MarketingAnalytics /></Suspense></ModuleGuard>} />
-        <Route path="/marketing/fila" element={<ModuleGuard moduleSlug="marketing" nivelMinimo={1}><Suspense fallback={<Loading />}><MarketingFila /></Suspense></ModuleGuard>} />
-        <Route path="/marketing/ciclo-criativo" element={<ModuleGuard moduleSlug="marketing" nivelMinimo={5}><Suspense fallback={<Loading />}><MarketingCicloCriativo /></Suspense></ModuleGuard>} />
+        <Route path="/marketing/fila" element={<Navigate to="/marketing" replace />} />
+        <Route path="/marketing/ciclo-criativo" element={<Navigate to="/marketing" replace />} />
+        <Route path="/marketing/triagem" element={<Navigate to="/marketing" replace />} />
         {/* Redirects das rotas antigas pra nao quebrar bookmarks */}
         <Route path="/ministerial/online" element={<Navigate to="/online" replace />} />
         <Route path="/ministerial/kids" element={<Navigate to="/kids" replace />} />

@@ -114,6 +114,7 @@ app.use('/api/public/voluntariado', require('./routes/publicVoluntariado'));
 app.use('/api/public/next', require('./routes/publicNext'));
 app.use('/api/public/grupos', require('./routes/publicGrupos'));
 app.use('/api/public/batismo', require('./routes/publicBatismo'));
+app.use('/api/public/decisao-online', require('./routes/publicDecisaoOnline'));
 // Webhook WhatsApp (publico · sem auth, fora do publicLimiter pra nao
 // perder entregas em rajada). Montado ANTES do admin /api/whatsapp.
 app.use('/api/whatsapp/webhook', require('./routes/publicWhatsapp'));

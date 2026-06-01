@@ -70,6 +70,10 @@
       "schedule": "0 13 * * *"
     },
     {
+      "path": "/api/online/cron/verificar",
+      "schedule": "0 14 * * *"
+    },
+    {
       "path": "/api/devocional-planos/cron/enviar-diario",
       "schedule": "0 9 * * *"
     },

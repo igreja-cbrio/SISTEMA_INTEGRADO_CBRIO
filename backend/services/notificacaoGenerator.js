@@ -21,6 +21,7 @@ async function gerarTodasNotificacoes() {
     total += await gerarNotificacoesRitual();
     total += await gerarNotificacoesSolicitacoes();
     total += await gerarNotificacoesMarketing();
+    total += await gerarNotificacoesOnline();
     console.log(`[Notificações] ${total} notificação(ões) gerada(s).`);
   } catch (e) {
     console.error('[Notificações] Erro:', e.message);
@@ -886,6 +887,80 @@ async function gerarNotificacoesMarketing() {
     });
   }
 
+  return count;
+}
+
+// ═══════════════════════════════════════════════════════════
+// ONLINE · BLINDAGEM da coleta automatica do YouTube
+// Alerta quando: (a) o token OAuth caiu/esta com erro · (b) um culto online
+// ja encerrado nao recebeu as metricas automaticas (pico/DS/video_id).
+// Fonte do diagnostico: collectors.verificarColetaOnline().
+// ═══════════════════════════════════════════════════════════
+async function gerarNotificacoesOnline() {
+  let count = 0;
+  const hojeKey = new Date().toISOString().slice(0, 10);
+  try {
+    const { verificarColetaOnline } = require('./onlineCollectors');
+    const r = await verificarColetaOnline();
+
+    // 1. Token OAuth caiu por completo · falha critica (toda a coleta para)
+    if (!r.token.conectado) {
+      count += await notificar({
+        modulo: 'online',
+        tipo: 'online_oauth_desconectado',
+        titulo: 'YouTube desconectado · coleta online parada',
+        mensagem: 'O canal do YouTube nao esta conectado (sem token OAuth valido). Pico, views e demais metricas dos cultos online NAO estao sendo coletadas. Reconecte em /online > Conectar canal.',
+        link: '/online',
+        severidade: 'alta',
+        chaveDedup: `online_oauth_desconectado_${hojeKey}`,
+      });
+    } else if (r.token.degradado) {
+      // 2. Token conectado mas com erro recente · degradado
+      count += await notificar({
+        modulo: 'online',
+        tipo: 'online_oauth_erro',
+        titulo: 'Coleta online com erro recente',
+        mensagem: `A ultima coleta do YouTube reportou erro: ${String(r.token.last_error || '').slice(0, 180)}. Verifique a conexao em /online.`,
+        link: '/online',
+        severidade: 'media',
+        chaveDedup: `online_oauth_erro_${hojeKey}`,
+      });
+    }
+
+    // 3. Cultos online encerrados sem metricas automaticas
+    for (const c of r.problemas || []) {
+      count += await notificar({
+        modulo: 'online',
+        tipo: 'online_culto_sem_metricas',
+        titulo: `Culto online sem dados: ${c.nome} (${c.data})`,
+        mensagem: `A coleta automatica nao preencheu: ${c.faltando.join(', ')}. Pode ser falha do token OAuth, live nao detectada ou latencia do YouTube. Verifique em /online.`,
+        link: '/online',
+        severidade: 'media',
+        chaveDedup: `online_culto_sem_metricas_${c.id}_${hojeKey}`,
+      });
+    }
+
+    // 4. Lembrete · decisoes online nunca confirmadas (form/manual nao tocaram).
+    //    Roteia pra integracao (quem lanca decisoes) · severidade baixa.
+    for (const c of r.decisoesPendentes || []) {
+      const dica = c.chat_detectou > 0
+        ? ` O chat ao vivo detectou ~${c.chat_detectou} possivel(is) decisao(oes) · confirme o numero real.`
+        : '';
+      count += await notificar({
+        modulo: 'integracao',
+        tipo: 'online_decisoes_a_confirmar',
+        titulo: `Confirme as decisoes online: ${c.nome} (${c.data})`,
+        mensagem: `O culto online de ${c.data} ainda nao teve as decisoes/conversoes online confirmadas.${dica} Lance em /integracao (aba Cultos), mesmo que tenha sido zero.`,
+        link: '/integracao',
+        severidade: 'baixa',
+        chaveDedup: `online_decisoes_a_confirmar_${c.id}_${hojeKey}`,
+      });
+    }
+  } catch (e) {
+    if (!String(e.message || '').includes('does not exist')) {
+      console.warn('[Online notify] Erro:', e.message);
+    }
+  }
   return count;
 }
 

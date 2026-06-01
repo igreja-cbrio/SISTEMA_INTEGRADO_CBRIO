@@ -226,7 +226,27 @@ async function findActiveBroadcast(channelId) {
     video_id: item.id, // o ID do broadcast eh o video_id
     title: item.snippet?.title,
     started_at: item.snippet?.actualStartTime || item.snippet?.scheduledStartTime,
+    live_chat_id: item.snippet?.liveChatId || null,
   };
+}
+
+// Lista mensagens do chat ao vivo (Data API · liveChat/messages). Aceita
+// pageToken pra paginar incrementalmente (so mensagens novas). Retorna o texto
+// de cada mensagem + o nextPageToken pra a proxima chamada.
+async function fetchLiveChatMessages(channelId, liveChatId, pageToken) {
+  const { token } = await getValidAccessToken(channelId);
+  let url = `${DATA_API}/liveChat/messages?part=snippet&liveChatId=${encodeURIComponent(liveChatId)}&maxResults=200`;
+  if (pageToken) url += `&pageToken=${encodeURIComponent(pageToken)}`;
+  const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+  if (!res.ok) {
+    const t = await res.text();
+    throw new Error(`liveChat.messages falhou: ${res.status} ${t.slice(0, 200)}`);
+  }
+  const data = await res.json();
+  const mensagens = (data.items || []).map(
+    (it) => it.snippet?.displayMessage || it.snippet?.textMessageDetails?.messageText || ''
+  );
+  return { mensagens, nextPageToken: data.nextPageToken || null };
 }
 
 // concurrentViewers via Data API videos.list (liveStreamingDetails)
@@ -240,6 +260,29 @@ async function fetchLiveConcurrentViewers(channelId, videoId) {
   if (!item) return null;
   const viewers = item.liveStreamingDetails?.concurrentViewers;
   return viewers ? parseInt(viewers, 10) : null;
+}
+
+// Estatisticas lifetime do video via Data API (videos.list?part=statistics).
+// viewCount = total ACUMULADO de views ate o momento da chamada · quase em tempo
+// real, SEM o atraso de 1-2 dias da Analytics. Usado pelo DS (snapshot da manha
+// seguinte ao culto). Retorna null se o video nao existe.
+async function fetchVideoStatistics(channelId, videoId) {
+  const { token } = await getValidAccessToken(channelId);
+  const url = `${DATA_API}/videos?part=statistics&id=${videoId}`;
+  const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+  if (!res.ok) {
+    const t = await res.text();
+    throw new Error(`videos.statistics falhou: ${res.status} ${t.slice(0, 200)}`);
+  }
+  const data = await res.json();
+  const item = (data.items || [])[0];
+  if (!item) return null;
+  const s = item.statistics || {};
+  return {
+    viewCount: s.viewCount != null ? parseInt(s.viewCount, 10) : null,
+    likeCount: s.likeCount != null ? parseInt(s.likeCount, 10) : null,
+    commentCount: s.commentCount != null ? parseInt(s.commentCount, 10) : null,
+  };
 }
 
 // Analytics: views por video em uma janela de data
@@ -480,7 +523,9 @@ module.exports = {
   getValidAccessToken,
   disconnect,
   findActiveBroadcast,
+  fetchLiveChatMessages,
   fetchLiveConcurrentViewers,
+  fetchVideoStatistics,
   fetchLivePeakConcurrentViewers,
   fetchVideoViews,
   fetchVideoSubsChange,

@@ -134,6 +134,20 @@ export const expansion = {
   getDependencies: (id) => get(`/expansion/milestones/${id}/dependencies`),
 };
 
+// Decisao online · formulario publico "Eu aceito Jesus" (sem auth)
+export const decisaoOnline = {
+  ativo: () => fetch(`${API}/public/decisao-online/ativo`).then(r => r.json()),
+  registrar: (data) => fetch(`${API}/public/decisao-online`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+  }).then(async r => {
+    const j = await r.json();
+    if (!r.ok) throw new Error(j.message || j.error || 'Erro');
+    return j;
+  }),
+};
+
 export const next = {
   // Public (sem auth) — para o formulario
   publicEventos: () => fetch(`${API}/public/next/eventos`).then(r => r.json()),
@@ -1051,14 +1065,6 @@ export const marketing = {
   membros:      () => get('/marketing/membros'),
   recorrentes:  () => get('/marketing/compromissos-recorrentes'),
 
-  // Capacidade + estimativa (Spec 005)
-  capacidade:   (semana) => get('/marketing/capacidade' + (semana ? '?semana=' + encodeURIComponent(semana) : '')),
-  estimar:      (tipo, dataAlvo) => {
-    const params = new URLSearchParams({ tipo });
-    if (dataAlvo) params.set('data_alvo', dataAlvo);
-    return get('/marketing/estimar?' + params.toString());
-  },
-
   // CRUD cards
   cards:        (params) => get('/marketing/cards' + (params ? '?' + new URLSearchParams(params) : '')),
   card:         (id) => get(`/marketing/cards/${id}`),
@@ -1069,7 +1075,6 @@ export const marketing = {
   // Acoes especificas
   sugerirRevisao:  (id, motivo) => patch(`/marketing/cards/${id}/sugerir-revisao`, { motivo }),
   aprovarEntrega:  (id) => patch(`/marketing/cards/${id}/aprovar-entrega`, {}),
-  decidirUrgencia: (id, decisao, motivoRecusa) => patch(`/marketing/cards/${id}/decidir-urgencia`, { decisao, motivo_recusa: motivoRecusa }),
 
   // Entregaveis (Spec 006 · SharePoint)
   entregaveis: {
@@ -1098,10 +1103,8 @@ export const marketing = {
     aprovacoesOrigem:  (dias = 90) => get(`/marketing/analytics/aprovacoes-origem?dias=${dias}`),
   },
 
-  // Fila de prioridade (Spec 018b)
+  // Fila · só a posição do card (mostrada ao solicitante · o resto virou ordenação no Kanban)
   fila: {
-    list:      (params) => get('/marketing/fila' + (params ? '?' + new URLSearchParams(params) : '')),
-    reordenar: (ordens) => patch('/marketing/fila/reordenar', { ordens }),
     posicao:   (cardId) => get(`/marketing/fila/posicao/${cardId}`),
   },
 
@@ -1110,6 +1113,24 @@ export const marketing = {
     list:  () => get('/marketing/ciclo-criativo'),
     batch: (cardIds, payload) => patch('/marketing/ciclo-criativo/batch', { card_ids: cardIds, ...payload }),
   },
+
+  // Campanhas + Triagem (Redesenho Fase 2 · 2026-05-30)
+  campanhas: {
+    list:      (status) => get('/marketing/campanhas' + (status ? '?status=' + encodeURIComponent(status) : '')),
+    get:       (id) => get(`/marketing/campanhas/${id}`),
+    update:    (id, data) => patch(`/marketing/campanhas/${id}`, data),
+    remove:    (id) => del(`/marketing/campanhas/${id}`),
+    criarCard: (id, data) => post(`/marketing/campanhas/${id}/cards`, data),
+    aprovar:   (id) => post(`/marketing/campanhas/${id}/aprovar`, {}),
+    revisar:   (id, motivo) => post(`/marketing/campanhas/${id}/revisar`, { motivo }),
+  },
+
+  // Capacidade por dia (Fase 4 · fundacao) · ocupacao de slots do membro no periodo
+  capacidadeDia: (membroId, inicio, fim) =>
+    get(`/marketing/capacidade-dia?membro_id=${encodeURIComponent(membroId)}&inicio=${inicio}&fim=${fim}`),
+
+  // Planner (Fase 4b) · membros (raias) + entregaveis (barras) no periodo
+  planner: (inicio, fim) => get(`/marketing/planner?inicio=${inicio}&fim=${fim}`),
 
   // Admin (Spec 009 · nivel 5)
   admin: {
