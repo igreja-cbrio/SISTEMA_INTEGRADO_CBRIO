@@ -1512,11 +1512,12 @@ router.get('/dashboard/semana-completa', async (req, res) => {
       return nome?.split('·')[0]?.trim() || 'Outros';
     };
 
-    // Bucket por DOW da data_competencia (regra Power BI · 2026-05-28):
+    // Bucket pela DATA REAL DO CULTO (2026-06-01 · oferta lançada na data do culto,
+    // não mais em D+1):
     //   Sun=0 Mon=1 Tue=2 Wed=3 Thu=4 Fri=5 Sat=6
-    //   w=4 (Quinta) → "Quarta com Deus" (quinta lança quarta)
-    //   w=1 (Segunda) → "Final de Semana" (segunda lança sex+sab+dom)
-    //   else → "Durante a Semana"
+    //   w=3 (Quarta)        → "Quarta com Deus"
+    //   w=6/0 (Sáb/Dom)     → "Final de Semana"
+    //   else                → "Durante a Semana"
     // Empréstimo / transferência / estorno NÃO entram em arrecadação por culto.
     for (const t of categorias.data || []) {
       if (['emprestimo','transferencia','estorno'].includes(t.classe_movimento)) continue;
@@ -1525,8 +1526,8 @@ router.get('/dashboard/semana-completa', async (req, res) => {
       const data = t.data_competencia ? new Date(t.data_competencia + 'T12:00:00Z') : null;
       const dow = data ? data.getUTCDay() : -1; // 0=Sun..6=Sat
       let key;
-      if (dow === 4) key = 'quarta';
-      else if (dow === 1) key = 'domingo';
+      if (dow === 3) key = 'quarta';
+      else if (dow === 0 || dow === 6) key = 'domingo';
       else key = 'outros';
       buckets[key].categorias[cat] = (buckets[key].categorias[cat] || 0) + v;
       buckets[key].total += v;

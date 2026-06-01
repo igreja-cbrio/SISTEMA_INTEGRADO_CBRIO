@@ -39,6 +39,14 @@ const fmtInt = (v) => Number(v || 0).toLocaleString('pt-BR');
 
 const DIAS = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
 
+// Ordem logica dos cultos: Quarta -> Bridge/AMI (sabado) -> Domingos (por horario).
+// Semana comecando na segunda (Seg=0..Dom=6) + minutos do dia desempata.
+const ordemCulto = (day, time) => {
+  const d = day === null || day === undefined ? 99 : ((Number(day) + 6) % 7);
+  const [h, m] = String(time || '0:0').split(':').map(Number);
+  return d * 10000 + (h || 0) * 100 + (m || 0);
+};
+
 // ============================================================
 // FILTROS GLOBAIS · persistidos em localStorage
 // ============================================================
@@ -403,6 +411,9 @@ function SlideNav({ current, onChange }) {
 // ============================================================
 
 function Slide0Resumo({ kpis, cultos, top_contribuintes, historico }) {
+  const cultosOrd = [...(cultos || [])].sort(
+    (a, b) => ordemCulto(a.dia_semana, a.hora_culto) - ordemCulto(b.dia_semana, b.hora_culto)
+  );
   return (
     <>
       {/* 4 KPIs principais com count-up + comparativos */}
@@ -468,7 +479,7 @@ function Slide0Resumo({ kpis, cultos, top_contribuintes, historico }) {
                   </tr>
                 </thead>
                 <tbody>
-                  {cultos.map((c, i) => (
+                  {cultosOrd.map((c, i) => (
                     <motion.tr
                       key={c.culto_id}
                       initial={{ opacity: 0, x: -20 }}
@@ -2092,6 +2103,7 @@ function FreqVsArrecadacaoSemanal() {
                   <Bar
                     yAxisId="left"
                     dataKey="Receita"
+                    fill={C.primary}
                     radius={[6, 6, 0, 0]}
                     animationDuration={1400}
                     cursor="pointer"
@@ -2270,10 +2282,14 @@ function MetasFinanceirasComFiltros({ metas: metasIniciais, onMetasChange }) {
   useEffect(() => {
     let cancelled = false;
     setLoadingProg(true);
+    // Sem mês/semana selecionados, NÃO força o ano inteiro · cada meta usa seu
+    // período natural (semanal=esta semana · mensal=este mês · anual=este ano).
+    // Evita agregar o ano todo numa meta semanal/mensal e evita o range anual
+    // que deixava os gauges presos em "Calculando..." no carregamento inicial.
     const params = {};
     if (filtroSemana) params.semana_inicio = filtroSemana;
-    else if (filtroAno && filtroMes) { params.ano = filtroAno; params.mes = filtroMes; }
-    else if (filtroAno) params.ano = filtroAno;
+    else if (filtroMes) { params.ano = filtroAno; params.mes = filtroMes; }
+    else if (filtroAno !== anoAtual) params.ano = filtroAno;
 
     financeiroV2.metas.progresso(params)
       .then(r => {
@@ -2304,11 +2320,11 @@ function MetasFinanceirasComFiltros({ metas: metasIniciais, onMetasChange }) {
     });
 
     if (period === null) {
-      // Volta ao default · recarrega via global
+      // Volta ao default · recarrega via global (mesmo critério do load inicial)
       const params = { meta_id: metaId };
       if (filtroSemana) params.semana_inicio = filtroSemana;
-      else if (filtroAno && filtroMes) { params.ano = filtroAno; params.mes = filtroMes; }
-      else if (filtroAno) params.ano = filtroAno;
+      else if (filtroMes) { params.ano = filtroAno; params.mes = filtroMes; }
+      else if (filtroAno !== anoAtual) params.ano = filtroAno;
       try {
         const r = await financeiroV2.metas.progresso(params);
         const item = (r?.metas || []).find(m => m.meta_id === metaId);
@@ -2821,7 +2837,7 @@ function ArrecadacaoAnualChart() {
                   <YAxis yAxisId="right" orientation="right" tick={{ fontSize: 10 }} tickFormatter={(v) => fmtCompact(v).replace('R$ ', '')} />
                   <Tooltip cursor={{ fill: 'rgba(0,179,157,0.08)' }} formatter={(v) => fmtMoney(v)} contentStyle={{ borderRadius: 10, fontSize: 12, border: '1px solid var(--cbrio-border)' }} />
                   <Legend wrapperStyle={{ fontSize: 11 }} iconSize={10} />
-                  <Bar yAxisId="left" dataKey="Receita" radius={[6, 6, 0, 0]} animationDuration={1200} cursor="pointer">
+                  <Bar yAxisId="left" dataKey="Receita" fill={C.primary} radius={[6, 6, 0, 0]} animationDuration={1200} cursor="pointer">
                     {formatado.map((entry, i) => (
                       <Cell key={i} fill={i === selectedIdx ? 'url(#gradArrecAnualSel)' : 'url(#gradArrecAnual)'} stroke={i === selectedIdx ? C.amber : 'transparent'} strokeWidth={i === selectedIdx ? 2 : 0} />
                     ))}
@@ -2964,12 +2980,12 @@ function ReceitaVsSaidaMensal() {
                   <YAxis tick={{ fontSize: 10 }} tickFormatter={(v) => fmtCompact(v).replace('R$ ', '')} />
                   <Tooltip cursor={{ fill: 'rgba(0,179,157,0.06)' }} formatter={(v) => fmtMoney(v)} contentStyle={{ borderRadius: 10, fontSize: 12, border: '1px solid var(--cbrio-border)' }} />
                   <Legend wrapperStyle={{ fontSize: 11 }} iconSize={10} />
-                  <Bar dataKey="Receita" radius={[6, 6, 0, 0]} animationDuration={1200} cursor="pointer">
+                  <Bar dataKey="Receita" fill={C.green} radius={[6, 6, 0, 0]} animationDuration={1200} cursor="pointer">
                     {formatado.map((entry, i) => (
                       <Cell key={i} fill="url(#gradMesReceita)" stroke={i === selectedIdx ? C.amber : 'transparent'} strokeWidth={i === selectedIdx ? 2 : 0} />
                     ))}
                   </Bar>
-                  <Bar dataKey="Despesa" radius={[6, 6, 0, 0]} animationDuration={1400} cursor="pointer">
+                  <Bar dataKey="Despesa" fill={C.red} radius={[6, 6, 0, 0]} animationDuration={1400} cursor="pointer">
                     {formatado.map((entry, i) => (
                       <Cell key={i} fill="url(#gradMesDespesa)" stroke={i === selectedIdx ? C.amber : 'transparent'} strokeWidth={i === selectedIdx ? 2 : 0} />
                     ))}
@@ -3561,7 +3577,15 @@ function SlideDizimoOferta() {
                   formatter={(v, n) => n === '% dízimo' ? [`${Number(v).toFixed(1)}%`, n] : [fmtMoney(v), n]}
                   contentStyle={{ borderRadius: 10, fontSize: 12, border: '1px solid var(--cbrio-border)' }}
                 />
-                <Legend wrapperStyle={{ fontSize: 11 }} iconSize={10} />
+                <Legend
+                  wrapperStyle={{ fontSize: 11 }}
+                  iconSize={10}
+                  payload={[
+                    { value: 'Dízimo', type: 'square', id: 'Dízimo', color: C.primary },
+                    { value: 'Oferta', type: 'square', id: 'Oferta', color: C.blue },
+                    { value: '% dízimo', type: 'line', id: 'pct', color: C.purple },
+                  ]}
+                />
                 <Bar yAxisId="left" dataKey="Dízimo" stackId="a" fill="url(#gradDiz)" radius={[0, 0, 0, 0]} animationDuration={1200} />
                 <Bar yAxisId="left" dataKey="Oferta" stackId="a" fill="url(#gradOf)" radius={[6, 6, 0, 0]} animationDuration={1300} />
                 <Line yAxisId="right" type="monotone" dataKey="pct" name="% dízimo" stroke={C.purple} strokeWidth={2.5} dot={{ r: 3 }} animationDuration={1600} />
