@@ -8,7 +8,7 @@ import { Textarea } from '../../components/ui/textarea';
 import { Select as ShadSelect, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../components/ui/select';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../../components/ui/dialog';
 import { toast } from 'sonner';
-import { Users, MapPin, Clock, Plus, Search, ChevronLeft, UserPlus, X, ArrowRightLeft, FileUp, Trash2, FileText, Image, File as FileIcon, Map as MapIcon, ListChecks, ClipboardCheck, Calendar, Activity, TrendingUp, TrendingDown, Minus, AlertTriangle, Inbox, QrCode, Compass, Copy, Check, Download, ExternalLink, Lock } from 'lucide-react';
+import { Users, MapPin, Clock, Plus, Search, ChevronLeft, UserPlus, X, ArrowRightLeft, FileUp, Trash2, FileText, Image, File as FileIcon, Map as MapIcon, ListChecks, ClipboardCheck, Calendar, Activity, TrendingUp, TrendingDown, Minus, AlertTriangle, Inbox, QrCode, Compass, Copy, Check, Download, ExternalLink, Lock, BarChart3, GraduationCap, Star, UserCog } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import PedidosGrupo from './PedidosGrupo';
 import InscricaoGruposQRCode from '../admin/InscricaoGruposQRCode';
@@ -16,6 +16,9 @@ import GruposGeocode from '../admin/GruposGeocode';
 import TemporadasGrupos from '../admin/TemporadasGrupos';
 import ProcessosTarefas from '../../components/ProcessosTarefas';
 import { GruposMapView } from '@/components/grupos/GruposMapView';
+import { StatisticsCard } from '../../components/ui/statistics-card';
+import { Card, CardContent, CardHeader, CardTitle } from '../../components/ui/card';
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 
 const C = {
   bg: 'var(--cbrio-bg)', card: 'var(--cbrio-card)', primary: '#00B39D', primaryBg: '#00B39D18',
@@ -719,6 +722,7 @@ export default function Grupos() {
       <div className="cbrio-grupos-tabs" style={{ display: 'flex', gap: 0, marginBottom: 16, borderBottom: `1px solid ${C.border}` }}>
         {[
           { key: 'grupos', label: 'Grupos', icon: Users },
+          { key: 'relatorios', label: 'Relatórios', icon: BarChart3 },
           { key: 'mapa', label: 'Mapa', icon: MapIcon },
           { key: 'pedidos', label: 'Pedidos', icon: Inbox, badge: pedidosCount },
           { key: 'materiais', label: 'Materiais', icon: FileText },
@@ -933,6 +937,11 @@ export default function Grupos() {
         <div style={{ margin: '0 -32px' }}>
           <TemporadasGrupos />
         </div>
+      )}
+
+      {/* ═══ TAB RELATÓRIOS ═══ */}
+      {pageTab === 'relatorios' && (
+        <RelatorioGrupos temporada={filterTemporada} />
       )}
 
       {/* ═══ TAB GRUPOS ═══ */}
@@ -1677,6 +1686,176 @@ function MetricaCard({ label, valor, sufixo, cor }) {
         {valor}<span style={{ fontSize: 11, fontWeight: 500, color: t3 }}>{sufixo}</span>
       </div>
       <div style={{ fontSize: 10, color: t3, marginTop: 2 }}>{label}</div>
+    </div>
+  );
+}
+
+// ── RELATÓRIO DE KPIs DO MÓDULO (aba Relatórios) ──
+// Espelha o estilo dos relatórios de Integração: seletor de período + cards de
+// KPI + gráfico de frequência por mês + distribuição de papéis. Dados vêm de
+// uma RPC agregada (fn_grupos_kpis_relatorio) pra não bater no cap do PostgREST.
+const REL_RANGES = [
+  { value: 3, label: '3 meses' },
+  { value: 6, label: '6 meses' },
+  { value: 12, label: '12 meses' },
+  { value: 24, label: '2 anos' },
+];
+const REL_MESES_PT = ['jan', 'fev', 'mar', 'abr', 'mai', 'jun', 'jul', 'ago', 'set', 'out', 'nov', 'dez'];
+const relLabelMes = (ym) => {
+  if (!ym) return '';
+  const [y, m] = ym.split('-');
+  return `${REL_MESES_PT[parseInt(m, 10) - 1]}/${y.slice(2)}`;
+};
+const FUNCAO_LABELS = {
+  coordenador: 'Coordenadores',
+  supervisor: 'Supervisores',
+  co_lider: 'Co-líderes',
+  lider: 'Líderes',
+  lider_treinamento: 'Líderes em treinamento',
+  frequentador: 'Frequentadores',
+  visitante: 'Visitantes',
+};
+const FUNCAO_ORDEM = ['coordenador', 'supervisor', 'co_lider', 'lider', 'lider_treinamento', 'frequentador', 'visitante'];
+
+function RelatorioGrupos({ temporada }) {
+  const [meses, setMeses] = useState(12);
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let alive = true;
+    setLoading(true);
+    const params = { meses };
+    if (temporada) params.temporada = temporada;
+    api.relatorioKpis(params)
+      .then(d => { if (alive) setData(d); })
+      .catch(() => { if (alive) setData(null); })
+      .finally(() => { if (alive) setLoading(false); });
+    return () => { alive = false; };
+  }, [meses, temporada]);
+
+  const serie = (data?.frequencia?.serie || []).map(s => ({ ...s, mes: relLabelMes(s.ym) }));
+  const nps = data?.satisfacao_lideres;
+  const funcoes = data?.funcoes || {};
+  const maxFuncao = Math.max(1, ...FUNCAO_ORDEM.map(f => funcoes[f] || 0));
+  const semPapeis = FUNCAO_ORDEM.every(f => !funcoes[f]);
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+      {/* Seletor de período */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+        <div style={{ display: 'inline-flex', gap: 2, padding: 2, borderRadius: 12, border: `1px solid ${C.border}`, background: C.bg }}>
+          {REL_RANGES.map(r => (
+            <button key={r.value} onClick={() => setMeses(r.value)} style={{
+              padding: '6px 14px', fontSize: 12, fontWeight: 600, borderRadius: 10, border: 'none', cursor: 'pointer',
+              background: meses === r.value ? C.primary : 'transparent',
+              color: meses === r.value ? '#fff' : C.t3, transition: 'all 0.15s',
+            }}>{r.label}</button>
+          ))}
+        </div>
+        <span style={{ fontSize: 12, color: C.t3 }}>
+          {data?.frequencia?.total_encontros ?? 0} encontro(s) no período
+        </span>
+      </div>
+
+      {loading ? (
+        <div style={{ padding: 40, textAlign: 'center', color: C.t3 }}>Carregando relatório...</div>
+      ) : !data ? (
+        <div style={{ padding: 40, textAlign: 'center', color: C.t3, fontSize: 13 }}>Não foi possível carregar o relatório.</div>
+      ) : (
+        <>
+          {/* KPIs principais */}
+          <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
+            <StatisticsCard title="Grupos ativos" value={data.total_grupos ?? 0} icon={Users} iconColor={C.primary} />
+            <StatisticsCard title="Líderes" value={data.total_lideres ?? 0} icon={UserCog} iconColor={C.blue} subtitle="líderes de grupo" />
+            <StatisticsCard title="Em treinamento" value={data.lideres_treinamento ?? 0} icon={GraduationCap} iconColor="#8b5cf6" subtitle="líderes em formação" />
+            <StatisticsCard
+              title="Satisfação líderes"
+              value={nps ? Number(nps.valor).toLocaleString('pt-BR') : '—'}
+              icon={Star}
+              iconColor={C.amber}
+              subtitle={nps ? `NPS · ${fmtDate(nps.data)}` : 'Sem NPS registrado'}
+            />
+            <StatisticsCard title="Frequência média" value={data.frequencia?.media_por_encontro ?? 0} icon={Activity} iconColor={C.primary} subtitle="presenças / encontro" />
+          </div>
+
+          {/* Frequência por mês */}
+          <Card>
+            <CardHeader className="pb-2 flex flex-row items-center justify-between space-y-0">
+              <CardTitle className="text-sm font-medium flex items-center gap-2">
+                <BarChart3 className="h-4 w-4 text-muted-foreground" />
+                Frequência por mês
+              </CardTitle>
+              <span className="text-xs text-muted-foreground">
+                {(data.frequencia?.total_presencas ?? 0).toLocaleString('pt-BR')} presenças no período
+              </span>
+            </CardHeader>
+            <CardContent>
+              {serie.length === 0 ? (
+                <div style={{ padding: 32, textAlign: 'center', color: C.t3, fontSize: 13 }}>
+                  Nenhum encontro registrado no período. A frequência aparece aqui conforme os líderes registram as chamadas dos encontros.
+                </div>
+              ) : (
+                <div className="h-[260px]">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={serie} margin={{ top: 6, right: 8, left: -16, bottom: 0 }}>
+                      <CartesianGrid strokeDasharray="3 3" opacity={0.25} />
+                      <XAxis dataKey="mes" tick={{ fontSize: 11 }} />
+                      <YAxis tick={{ fontSize: 11 }} allowDecimals={false} />
+                      <Tooltip
+                        cursor={{ fill: 'rgba(0,179,157,0.08)' }}
+                        contentStyle={{ borderRadius: 8, fontSize: 12 }}
+                        formatter={(v) => [Number(v).toLocaleString('pt-BR'), 'Presenças']}
+                        labelFormatter={(l, payload) => {
+                          const p = payload?.[0]?.payload;
+                          return p ? `${l} · ${p.encontros} encontro(s) · média ${p.media}` : l;
+                        }}
+                      />
+                      <Bar dataKey="presencas" name="Presenças" fill={C.primary} radius={[4, 4, 0, 0]} />
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+
+          {/* Distribuição de papéis (substancia líderes e em treinamento) */}
+          <Card>
+            <CardHeader className="pb-2 flex flex-row items-center space-y-0">
+              <CardTitle className="text-sm font-medium flex items-center gap-2">
+                <Users className="h-4 w-4 text-muted-foreground" />
+                Distribuição de papéis
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              {semPapeis ? (
+                <div style={{ padding: 24, textAlign: 'center', color: C.t3, fontSize: 13 }}>
+                  Nenhum papel atribuído ainda. Defina a função de cada membro nos grupos (líder em treinamento, supervisor, etc.) em Grupos · Supervisão.
+                </div>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                  {FUNCAO_ORDEM.filter(f => funcoes[f]).map(f => {
+                    const n = funcoes[f] || 0;
+                    return (
+                      <div key={f} style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                        <span style={{ fontSize: 12, color: C.t2, width: 170, flexShrink: 0 }}>{FUNCAO_LABELS[f] || f}</span>
+                        <div style={{ flex: 1, height: 8, borderRadius: 6, background: C.bg, overflow: 'hidden' }}>
+                          <div style={{ width: `${(n / maxFuncao) * 100}%`, height: '100%', borderRadius: 6, background: f === 'lider_treinamento' ? '#8b5cf6' : C.primary }} />
+                        </div>
+                        <span style={{ fontSize: 13, fontWeight: 700, color: C.text, width: 40, textAlign: 'right' }}>{n}</span>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+
+          <div style={{ fontSize: 11, color: C.t3, lineHeight: 1.6 }}>
+            <strong>Fontes:</strong> grupos ativos e líderes vêm do cadastro de grupos; líderes em treinamento e a distribuição de papéis, da função de cada membro no grupo; a frequência, das chamadas dos encontros; a satisfação dos líderes, do último NPS registrado em Dados Brutos (tipo "NPS dos líderes").
+          </div>
+        </>
+      )}
     </div>
   );
 }

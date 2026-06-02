@@ -2,6 +2,46 @@
 
 Guia operacional para o Claude Code quando trabalhar neste repositório.
 
+## Grupos · aba Relatórios de KPIs (2026-06-02)
+
+Marcos: "crie uma área dentro de grupos que seja possível ver os relatórios de
+kpis de grupos, como fizemos em integração... frequência, número de líderes,
+número de grupos, satisfação dos líderes e quantidade de líderes em treinamento".
+
+Nova aba **Relatórios** em `/grupos` (`src/pages/ministerial/Grupos.jsx`),
+espelhando o estilo de relatório da Integração (`VisualizacaoFrequencia.tsx`):
+seletor de período (3/6/12/24 meses) → linha de `StatisticsCard` → gráfico
+Recharts de frequência por mês → distribuição de papéis. Respeita o filtro de
+**temporada** já presente na página. Read-only (visível a qualquer nível ≥1 no
+módulo · não gated por `podeEditarGrupos`).
+
+**5 métricas → fontes reais (todas computadas, não dependem do cache de KPI):**
+- **Nº de grupos** · `mem_grupos` ativos (`deleted_at IS NULL`, `ativo=true`)
+- **Nº de líderes** · count distinct `mem_grupos.lider_id` dos grupos ativos
+- **Líderes em treinamento** · `mem_grupo_membros.funcao='lider_treinamento'` (ativos)
+- **Satisfação dos líderes** · último `dados_brutos` com `tipo_id='nps_lideres'`
+  (preenchido em /dados-brutos ou módulo NPS · mostra "—" se não houver)
+- **Frequência** · `mem_grupo_encontros` + `mem_grupo_encontro_presencas`
+  (`presente=true`) · média por encontro + série mensal de presenças
+
+Também mostra a **distribuição de papéis** (`funcao`) pra substanciar os números
+de líderes/treinamento.
+
+**Migration `20260602120000_grupos_kpis_relatorio.sql`** (ADITIVA · `CREATE OR
+REPLACE FUNCTION` · sem mudança de schema): RPC `fn_grupos_kpis_relatorio(p_temporada
+text, p_meses int)` que agrega **tudo numa chamada** (STABLE SECURITY DEFINER).
+Motivo de ser RPC e não query no backend: encontros+presenças crescem rápido e
+bateriam no **cap de 1000 linhas do PostgREST** (silenciaria a frequência). ⚠️
+Aplicar a migration antes do merge (o backend chama a RPC).
+
+**Backend** (`backend/routes/grupos.js`): `GET /api/grupos/kpis/relatorio?temporada=&meses=`
+(nível 1 · só `authenticate`) chama a RPC. Colocado **antes de `/:id`** (senão o
+Express casa `/kpis` como `/:id`).
+
+**Frontend**: `api.relatorioKpis(params)` em `src/api.js`; componente
+`RelatorioGrupos` no fim de `Grupos.jsx`; aba `relatorios` (ícone `BarChart3`)
+logo após "Grupos" na barra de abas.
+
 ## Marketing · REDESENHO em fases (2026-05-30) · EM ANDAMENTO
 
 Após feedback profundo do Pedro, o módulo Marketing está sendo redesenhado de

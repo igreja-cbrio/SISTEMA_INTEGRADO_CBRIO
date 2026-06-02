@@ -473,6 +473,27 @@ router.get('/saude/agregado', async (req, res) => {
   } catch (e) { console.error('[Grupos saude agregado]', e.message); res.status(500).json({ error: 'Erro ao calcular saude agregada' }); }
 });
 
+// GET /api/grupos/kpis/relatorio — relatorio agregado de KPIs do modulo Grupos
+// (aba Relatorios). Agrega tudo numa RPC para evitar o cap de 1000 linhas do
+// PostgREST sobre encontros/presencas. Query: temporada (uuid), meses (1-60).
+// Retorna: total_grupos, total_lideres, lideres_treinamento, satisfacao_lideres,
+//          frequencia { media_por_encontro, serie mensal } e funcoes (distribuicao).
+router.get('/kpis/relatorio', async (req, res) => {
+  try {
+    const { temporada } = req.query;
+    const meses = Math.min(Math.max(parseInt(req.query.meses, 10) || 12, 1), 60);
+    const { data, error } = await supabase.rpc('fn_grupos_kpis_relatorio', {
+      p_temporada: temporada || null,
+      p_meses: meses,
+    });
+    if (error) throw error;
+    res.json(data || {});
+  } catch (e) {
+    console.error('[Grupos relatorio kpis]', e.message);
+    res.status(500).json({ error: 'Erro ao gerar relatorio de KPIs' });
+  }
+});
+
 // ══════════════════════════════════════════════
 // BUSCA E PEDIDOS DE INSCRICAO (rotas especificas antes de /:id)
 // ══════════════════════════════════════════════
