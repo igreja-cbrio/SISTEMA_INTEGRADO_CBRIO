@@ -11,9 +11,9 @@ número de grupos, satisfação dos líderes e quantidade de líderes em treinam
 Nova aba **Relatórios** em `/grupos` (`src/pages/ministerial/Grupos.jsx`),
 espelhando o estilo de relatório da Integração (`VisualizacaoFrequencia.tsx`):
 seletor de período (3/6/12/24 meses) → linha de `StatisticsCard` → gráfico
-Recharts de frequência por mês → distribuição de papéis. Respeita o filtro de
-**temporada** já presente na página. Read-only (visível a qualquer nível ≥1 no
-módulo · não gated por `podeEditarGrupos`).
+Recharts de frequência por mês → lista de líderes em treinamento. Respeita o
+filtro de **temporada** já presente na página. Read-only (visível a qualquer
+nível ≥1 no módulo · não gated por `podeEditarGrupos`).
 
 **5 métricas → fontes reais (todas computadas, não dependem do cache de KPI):**
 - **Nº de grupos** · `mem_grupos` ativos (`deleted_at IS NULL`, `ativo=true`)
@@ -24,8 +24,24 @@ módulo · não gated por `podeEditarGrupos`).
 - **Frequência** · `mem_grupo_encontros` + `mem_grupo_encontro_presencas`
   (`presente=true`) · média por encontro + série mensal de presenças
 
-Também mostra a **distribuição de papéis** (`funcao`) pra substanciar os números
-de líderes/treinamento.
+**Modelo de líder (refinamento Marcos · 2026-06-02):** uma só noção de líder = o
+**responsável pelo grupo** (`mem_grupos.lider_id`). A única outra função relevante
+é **líder em treinamento** (opcional). Por isso o relatório lista nominalmente os
+líderes em treinamento (nome + grupo) em vez da distribuição genérica de papéis.
+
+- **Marcar/desmarcar líder em treinamento** · na lista de membros do grupo
+  (`Grupos.jsx` detalhe) há a coluna **Treino**: quem edita grupos
+  (`podeEditarGrupos`) liga/desliga via `api.setFuncaoMembro(participacao_id, ...)`
+  (`'lider_treinamento'` ↔ `'frequentador'`). `GET /:id` passou a devolver `funcao`
+  em cada membro.
+- **`PUT /membros/:rowId/funcao`** · autorização ampliada (era só
+  admin/coordenador/supervisor da hierarquia): agora aceita também quem tem
+  **grupos ≥ 3** no módulo (mesma regra do `podeEditarGrupos`), pros líderes de
+  área (boost) conseguirem marcar. Ajuste no check do route handler (não em
+  `auth.js`/RLS/login).
+- **`GET /api/grupos/kpis/lideres-treinamento?temporada=`** · lista os
+  `funcao='lider_treinamento'` ativos (nome + grupo) · alimenta o card do relatório
+  (`api.lideresTreinamento`). Volume pequeno (sem risco do cap de 1000 linhas).
 
 **Migration `20260602120000_grupos_kpis_relatorio.sql`** (ADITIVA · `CREATE OR
 REPLACE FUNCTION` · sem mudança de schema): RPC `fn_grupos_kpis_relatorio(p_temporada
