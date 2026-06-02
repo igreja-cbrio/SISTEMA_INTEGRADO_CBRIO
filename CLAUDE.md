@@ -2,6 +2,26 @@
 
 Guia operacional para o Claude Code quando trabalhar neste repositório.
 
+## Integração · % de ocupação de assentos na aba Frequência (2026-06-02 · sem migration)
+
+Marcos: card (estilo do de batismo) na aba **Frequência** (`/integracao` →
+`VisualizacaoFrequencia.tsx`, value `vis_frequencia`) com a **% média de assentos
+ocupados**, **toggle Templo/Kids** + **seletor por culto**.
+
+- **Conta:** `% = média da presença por culto ÷ capacidade`. Como a capacidade é
+  constante, isso equivale à média das ocupações por culto. Conta só cultos com
+  presença lançada (>0) no modo escolhido (culto sem dado não derruba a média).
+- **Capacidades (constantes no código):** Templo **1200** · Kids **250**.
+- **Templo** usa `presencial_adulto`; **Kids** usa `presencial_kids` (÷250 · seletor
+  só mostra cultos com Kids = Domingo + Quarta).
+- **Exclui Bridge e Online** do seletor de Templo (`foraDoTemplo` = regex no nome).
+  **AMI entra no Templo** (decisão do Marcos · 2026-06-02). Domingo + Quarta + AMI.
+- **100% client-side:** reusa o `cultos.list({data_inicio,data_fim})` que a aba já
+  carrega — sem backend, sem migration, sem mudança no `api.js`. Respeita o período
+  (3m/6m/12m/2a/5a) já selecionado na aba.
+- **UI:** `Armchair` + número grande (`X%`) + média/culto, nº de cultos e capacidade.
+  `ocupacao.alvo` faz fallback p/ 'todos' quando o culto selecionado não existe no modo.
+
 ## Grupos · aba Relatórios de KPIs (2026-06-02)
 
 Marcos: "crie uma área dentro de grupos que seja possível ver os relatórios de
