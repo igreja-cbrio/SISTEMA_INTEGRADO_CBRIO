@@ -1200,6 +1200,7 @@ export const solicitacoes = {
 
 export const producao = {
   serviceTypes: () => get('/producao/service-types'),
+  salvarMetaTipo: (id, meta_duracao_min) => patch(`/producao/service-types/${id}/meta`, { meta_duracao_min }),
   semana:       (inicio, fim) => get(`/producao/semana?inicio=${inicio}&fim=${fim}`),
   culto:        (id) => get(`/producao/culto/${id}`),
   salvarCulto:  (id, data) => put(`/producao/culto/${id}`, data),

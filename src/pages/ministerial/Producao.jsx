@@ -474,50 +474,98 @@ function AbaAcumulado({ modo }) {
 // ── Aba Checklists (template · admin) ─────────────────────────────────────────
 function AbaChecklists() {
   const [itens, setItens] = useState([]);
+  const [tipos, setTipos] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [novo, setNovo] = useState({ titulo: '', descricao: '' });
+  const [novo, setNovo] = useState({ titulo: '', descricao: '', service_type_id: '' });
+  const [metas, setMetas] = useState({}); // service_type_id -> valor em edição
 
   const carregar = useCallback(async () => {
     setLoading(true);
-    try { setItens(await prodApi.checklistItens.list()); }
-    catch (e) { toast.error(formatErro(e)); }
+    try {
+      const [its, sts] = await Promise.all([prodApi.checklistItens.list(), prodApi.serviceTypes()]);
+      setItens(its); setTipos(sts);
+      const m = {}; (sts || []).forEach(s => { m[s.id] = s.meta_duracao_min ?? 60; });
+      setMetas(m);
+    } catch (e) { toast.error(formatErro(e)); }
     finally { setLoading(false); }
   }, []);
   useEffect(() => { carregar(); }, [carregar]);
+
+  const tipoNome = (id) => tipos.find(t => t.id === id)?.name || 'tipo';
 
   const criar = async () => {
     if (!novo.titulo.trim()) { toast.error('Título obrigatório'); return; }
     try {
       const ordem = (itens.reduce((a, i) => Math.max(a, i.ordem || 0), 0)) + 1;
-      await prodApi.checklistItens.create({ ...novo, ordem });
-      setNovo({ titulo: '', descricao: '' }); carregar(); toast.success('Item criado');
+      await prodApi.checklistItens.create({
+        titulo: novo.titulo, descricao: novo.descricao,
+        service_type_id: novo.service_type_id || null, ordem,
+      });
+      setNovo({ titulo: '', descricao: '', service_type_id: '' }); carregar(); toast.success('Item criado');
     } catch (e) { toast.error(formatErro(e)); }
   };
   const toggle = async (it) => { try { await prodApi.checklistItens.update(it.id, { ativo: !it.ativo }); carregar(); } catch (e) { toast.error(formatErro(e)); } };
   const remover = async (id) => { if (!window.confirm('Remover item do checklist?')) return; try { await prodApi.checklistItens.remove(id); carregar(); } catch (e) { toast.error(formatErro(e)); } };
+  const salvarMeta = async (id) => {
+    try { await prodApi.salvarMetaTipo(id, Number(metas[id])); toast.success('Duração-alvo salva'); }
+    catch (e) { toast.error(formatErro(e)); }
+  };
 
   return (
-    <section>
-      <p style={{ fontSize: 12, color: C.t3, marginBottom: 12 }}>
-        Itens do checklist técnico que a equipe marca em cada culto. O “% executado” é derivado destes itens.
-      </p>
-      <div style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
-        <input type="text" value={novo.titulo} onChange={e => setNovo(n => ({ ...n, titulo: e.target.value }))} style={{ ...inp, flex: 1 }} placeholder="Novo item (ex: Áudio testado)" />
-        <input type="text" value={novo.descricao} onChange={e => setNovo(n => ({ ...n, descricao: e.target.value }))} style={{ ...inp, flex: 1 }} placeholder="Descrição (opcional)" />
-        <button onClick={criar} style={btnPrimary}><Plus size={13} /> Adicionar</button>
+    <section style={{ display: 'flex', flexDirection: 'column', gap: 24 }}>
+      {/* Duração-alvo por tipo de culto (pontualidade) */}
+      <div>
+        <h3 style={subTit}>Duração-alvo por tipo de culto (pontualidade)</h3>
+        <p style={{ fontSize: 12, color: C.t3, margin: '0 0 10px' }}>
+          Acima desse tempo o culto conta como “fora do horário”. Padrão 60 min.
+        </p>
+        {loading ? <div style={loadingBox}>Carregando…</div> : (
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 8 }}>
+            {tipos.map(t => (
+              <div key={t.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px', background: C.card, border: `1px solid ${C.border}`, borderRadius: 8 }}>
+                <span style={{ flex: 1, fontWeight: 600, color: C.text, fontSize: 13 }}>{t.name}</span>
+                <input type="number" min="1" max="600" value={metas[t.id] ?? ''} onChange={e => setMetas(m => ({ ...m, [t.id]: e.target.value }))} style={{ ...inp, width: 70, padding: '6px 8px' }} />
+                <span style={{ fontSize: 11, color: C.t3 }}>min</span>
+                <button onClick={() => salvarMeta(t.id)} style={{ ...chip, ...chipSel }}>Salvar</button>
+              </div>
+            ))}
+            {tipos.length === 0 && <div style={{ fontSize: 12, color: C.t3, fontStyle: 'italic' }}>Nenhum tipo de culto ativo.</div>}
+          </div>
+        )}
       </div>
-      {loading ? <div style={loadingBox}>Carregando…</div> : (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-          {itens.map(it => (
-            <div key={it.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px', background: C.card, border: `1px solid ${C.border}`, borderRadius: 8, opacity: it.ativo ? 1 : 0.5 }}>
-              <span style={{ flex: 1, fontWeight: 600, color: C.text, fontSize: 13 }}>{it.titulo}{it.descricao && <span style={{ fontWeight: 400, color: C.t3, fontSize: 11 }}> · {it.descricao}</span>}</span>
-              <button onClick={() => toggle(it)} style={{ ...chip, ...(it.ativo ? chipSel : {}) }}>{it.ativo ? 'Ativo' : 'Inativo'}</button>
-              <button onClick={() => remover(it.id)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#EF4444', padding: 4 }}><Trash2 size={14} /></button>
-            </div>
-          ))}
-          {itens.length === 0 && <div style={{ fontSize: 12, color: C.t3, fontStyle: 'italic' }}>Nenhum item cadastrado ainda.</div>}
+
+      {/* Itens do checklist técnico */}
+      <div>
+        <h3 style={subTit}>Itens do checklist técnico</h3>
+        <p style={{ fontSize: 12, color: C.t3, margin: '0 0 12px' }}>
+          A equipe marca estes itens em cada culto. O “% executado” é derivado deles.
+          Itens “gerais” valem para todos os cultos; itens por tipo só aparecem no culto daquele tipo.
+        </p>
+        <div style={{ display: 'flex', gap: 8, marginBottom: 16, flexWrap: 'wrap' }}>
+          <input type="text" value={novo.titulo} onChange={e => setNovo(n => ({ ...n, titulo: e.target.value }))} style={{ ...inp, flex: 2, minWidth: 160 }} placeholder="Novo item (ex: Áudio testado)" />
+          <input type="text" value={novo.descricao} onChange={e => setNovo(n => ({ ...n, descricao: e.target.value }))} style={{ ...inp, flex: 2, minWidth: 140 }} placeholder="Descrição (opcional)" />
+          <select value={novo.service_type_id} onChange={e => setNovo(n => ({ ...n, service_type_id: e.target.value }))} style={{ ...inp, flex: 1, minWidth: 130 }}>
+            <option value="">Geral (todos)</option>
+            {tipos.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+          </select>
+          <button onClick={criar} style={btnPrimary}><Plus size={13} /> Adicionar</button>
         </div>
-      )}
+        {loading ? <div style={loadingBox}>Carregando…</div> : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+            {itens.map(it => (
+              <div key={it.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px', background: C.card, border: `1px solid ${C.border}`, borderRadius: 8, opacity: it.ativo ? 1 : 0.5 }}>
+                <span style={{ flex: 1, fontWeight: 600, color: C.text, fontSize: 13 }}>{it.titulo}{it.descricao && <span style={{ fontWeight: 400, color: C.t3, fontSize: 11 }}> · {it.descricao}</span>}</span>
+                <span style={{ fontSize: 9, padding: '2px 8px', borderRadius: 99, background: C.inputBg, color: it.service_type_id ? C.primary : C.t3, fontWeight: 700 }}>
+                  {it.service_type_id ? tipoNome(it.service_type_id) : 'Geral'}
+                </span>
+                <button onClick={() => toggle(it)} style={{ ...chip, ...(it.ativo ? chipSel : {}) }}>{it.ativo ? 'Ativo' : 'Inativo'}</button>
+                <button onClick={() => remover(it.id)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#EF4444', padding: 4 }}><Trash2 size={14} /></button>
+              </div>
+            ))}
+            {itens.length === 0 && <div style={{ fontSize: 12, color: C.t3, fontStyle: 'italic' }}>Nenhum item cadastrado ainda.</div>}
+          </div>
+        )}
+      </div>
     </section>
   );
 }

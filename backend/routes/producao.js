@@ -48,6 +48,21 @@ router.get('/service-types', authorizeModule('producao', 1), async (req, res) =>
   res.json(data || []);
 });
 
+// Duração-alvo por tipo de culto (pontualidade · admin nível 3)
+router.patch('/service-types/:id/meta', authorizeModule('producao', 3), async (req, res) => {
+  const min = Number(req.body?.meta_duracao_min);
+  if (!Number.isFinite(min) || min < 1 || min > 600) {
+    return res.status(400).json({ error: 'meta_duracao_min deve ser entre 1 e 600 minutos' });
+  }
+  const { data, error } = await supabase
+    .from('vol_service_types')
+    .update({ meta_duracao_min: Math.round(min) })
+    .eq('id', req.params.id)
+    .select('id, name, meta_duracao_min').single();
+  if (error) return res.status(500).json({ error: error.message });
+  res.json(data);
+});
+
 // ── Semana de cultos com os dados de produção mesclados ──────────────────────
 // GET /api/producao/semana?inicio=YYYY-MM-DD&fim=YYYY-MM-DD
 router.get('/semana', authorizeModule('producao', 1), async (req, res) => {
