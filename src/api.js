@@ -258,6 +258,7 @@ export const grupos = {
   removerEncontro: (encontroId) => del(`/grupos/encontros/${encontroId}`),
   metricas: (grupoId) => get(`/grupos/${grupoId}/metricas`),
   saudeAgregada: (params) => get('/grupos/saude/agregado' + (params ? '?' + new URLSearchParams(params) : '')),
+  relatorioKpis: (params) => get('/grupos/kpis/relatorio' + (params ? '?' + new URLSearchParams(params) : '')),
   temporadas: () => get('/grupos/temporadas/list'),
   atualizarTemporada: (id, data) => patch(`/grupos/temporadas/${id}`, data),
   bairros: (params) => get('/grupos/bairros/list' + (params ? '?' + new URLSearchParams(params) : '')),
