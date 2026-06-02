@@ -463,7 +463,43 @@ router.get('/batismos', async (req, res) => {
   if (status) query = query.eq('status', status);
   const { data, error } = await query;
   if (error) return res.status(500).json({ error: error.message });
-  res.json(data);
+
+  const inscricoes = data || [];
+
+  // Enriquece com a data de conversão (etapa 'conversao' da jornada do membro,
+  // em mem_trilha_valores.data_conclusao — mesma fonte do "Seguir a Jesus") e o
+  // tempo em dias até o batismo. Busca em lote pelos membros vinculados.
+  const membroIds = [...new Set(inscricoes.map(b => b.membro_id).filter(Boolean))];
+  const conversaoPorMembro = {};
+  if (membroIds.length) {
+    const { data: trilhas } = await supabase
+      .from('mem_trilha_valores')
+      .select('membro_id, data_conclusao')
+      .eq('etapa', 'conversao')
+      .eq('concluida', true)
+      .in('membro_id', membroIds);
+    (trilhas || []).forEach(t => {
+      if (!t.data_conclusao) return;
+      // Conserva a conversão mais antiga por membro (defensivo contra duplicatas)
+      const atual = conversaoPorMembro[t.membro_id];
+      if (!atual || t.data_conclusao < atual) conversaoPorMembro[t.membro_id] = t.data_conclusao;
+    });
+  }
+
+  const DIA_MS = 86400000;
+  const enriched = inscricoes.map(b => {
+    const data_conversao = b.membro_id ? (conversaoPorMembro[b.membro_id] || null) : null;
+    let dias_conversao_batismo = null;
+    if (data_conversao && b.data_batismo) {
+      dias_conversao_batismo = Math.round(
+        (new Date(`${b.data_batismo}T12:00:00`).getTime()
+          - new Date(`${data_conversao}T12:00:00`).getTime()) / DIA_MS,
+      );
+    }
+    return { ...b, data_conversao, dias_conversao_batismo };
+  });
+
+  res.json(enriched);
 });
 
 router.post('/batismos', authorizeIntegracao, async (req, res) => {
