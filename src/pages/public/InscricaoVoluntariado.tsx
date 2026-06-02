@@ -389,6 +389,28 @@ export default function InscricaoVoluntariado() {
               pelo WhatsApp ou e-mail pra falar dos próximos passos. Obrigado por
               querer servir com a gente!
             </p>
+
+            <div style={{
+              marginTop: 24, padding: '24px 22px', textAlign: 'center',
+              background: 'linear-gradient(160deg, #0e7c8e, #0a5f70)',
+              borderRadius: 16, color: '#fff',
+            }}>
+              <h3 style={{
+                fontSize: 15, fontWeight: 800, letterSpacing: 1, textTransform: 'uppercase',
+                margin: '0 0 14px', color: '#fff',
+              }}>
+                Servir em Comunidade
+              </h3>
+              <p style={{ fontSize: 14, lineHeight: 1.6, margin: 0, color: 'rgba(255,255,255,0.95)' }}>
+                "Porém vocês, irmãos, foram chamados para serem livres. Mas não deixem que essa
+                liberdade se torne uma desculpa para permitir que a natureza humana domine vocês.
+                Pelo contrário, que o amor faça com que vocês sirvam uns aos outros. Pois a lei
+                inteira se resume em um mandamento só: 'Ame os outros como você ama a você mesmo'."
+              </p>
+              <p style={{ fontSize: 13, fontWeight: 700, marginTop: 12, marginBottom: 0, color: '#fff' }}>
+                Gálatas 5:13-14
+              </p>
+            </div>
           </div>
         ) : (
           <>
