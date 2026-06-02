@@ -480,9 +480,12 @@ router.post('/inscrever-form', publicLimiter, async (req, res) => {
       const { notificar } = require('../services/notificar');
       await notificar({
         modulo: 'voluntariado',
-        titulo: 'Nova inscricao de voluntario',
-        mensagem: `${nomeCompleto} (${cleanEmail}) se inscreveu para servir na area ${String(area).toUpperCase()}.`,
+        tipo: 'nova_inscricao',
+        titulo: 'Nova inscrição de voluntário',
+        mensagem: `${nomeCompleto} (${cleanEmail}) se inscreveu para servir${cleanMinisterios ? ` em: ${cleanMinisterios}` : ` na área ${String(area).toUpperCase()}`}.`,
         link: '/ministerial/voluntariado/inscricoes',
+        severidade: 'info',
+        chaveDedup: `vol_inscricao_${insc.id}`,
       });
     } catch (e) {
       console.error('[PublicVol/inscrever-form] notificar:', e.message);
