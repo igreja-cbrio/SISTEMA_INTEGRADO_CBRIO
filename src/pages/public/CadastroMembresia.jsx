@@ -546,7 +546,7 @@ export default function CadastroMembresia() {
         position: 'relative', zIndex: 1, width: '100%', maxWidth: 640,
         background: C.card, backdropFilter: 'blur(24px)',
         border: `1px solid ${C.cardBorder}`, borderRadius: 20,
-        padding: '40px 36px',
+        padding: 'clamp(28px, 6vw, 40px) clamp(18px, 5vw, 36px)',
       }}>
         {fromTotem && (
           <button

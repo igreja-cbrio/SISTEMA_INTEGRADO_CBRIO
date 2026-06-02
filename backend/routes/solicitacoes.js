@@ -36,7 +36,7 @@ router.use((req, res, next) => {
   next();
 });
 
-const ALLOWED_CATEGORIES = ['ti', 'compras', 'reembolso', 'reserva_espaco', 'espaco', 'infraestrutura', 'ferias', 'licenca', 'marketing', 'pagamento', 'servico', 'outro'];
+const ALLOWED_CATEGORIES = ['ti', 'compras', 'reembolso', 'reserva_espaco', 'espaco', 'infraestrutura', 'ferias', 'licenca', 'marketing', 'pagamento', 'servico', 'producao', 'outro'];
 
 // Map categoria → notification module
 const CATEGORIA_MODULO = {
@@ -51,6 +51,7 @@ const CATEGORIA_MODULO = {
   ferias: 'rh',
   licenca: 'rh',
   marketing: 'marketing',
+  producao: 'producao',     // movimentação de material / configuração de equipamentos
   outro: 'administrativo',
 };
 
@@ -67,6 +68,7 @@ const CATEGORIA_TO_AREA_RESP = {
   ferias:          { area: 'rh',                subcategoria: 'ferias' },
   licenca:         { area: 'rh',                subcategoria: 'licenca' },
   marketing:       { area: 'marketing',         subcategoria: 'default' },
+  producao:        { area: 'producao',          subcategoria: 'default' },
   outro:           { area: null,                subcategoria: 'default' },
 };
 
@@ -78,6 +80,7 @@ const MODULO_CATEGORIAS = {
   administrativo: ['espaco', 'reserva_espaco', 'infraestrutura', 'outro'],
   rh: ['ferias', 'licenca'],
   marketing: ['marketing'],
+  producao: ['producao'],
 };
 
 // Map modulePerms key → backend modulo

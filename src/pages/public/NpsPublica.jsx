@@ -92,7 +92,7 @@ export default function NpsPublica() {
               onSubmit={enviar}
               enviando={enviando}
               extraHeader={
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, paddingBottom: 16, borderBottom: `1px dashed ${C.border}` }}>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 10, paddingBottom: 16, borderBottom: `1px dashed ${C.border}` }}>
                   <div>
                     <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: C.t2, marginBottom: 6 }}>Seu nome *</label>
                     <input value={nome} onChange={e => setNome(e.target.value)} placeholder="Como prefere ser chamado" style={inp} />

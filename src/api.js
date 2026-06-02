@@ -1211,6 +1211,26 @@ export const solicitacoes = {
   mlTimeline:   (id) => get(`/solicitacoes/${id}/ml-timeline`),
 };
 
+export const producao = {
+  serviceTypes: () => get('/producao/service-types'),
+  salvarMetaTipo: (id, meta_duracao_min) => patch(`/producao/service-types/${id}/meta`, { meta_duracao_min }),
+  semana:       (inicio, fim) => get(`/producao/semana?inicio=${inicio}&fim=${fim}`),
+  culto:        (id) => get(`/producao/culto/${id}`),
+  salvarCulto:  (id, data) => put(`/producao/culto/${id}`, data),
+  addOcorrencia:(id, data) => post(`/producao/culto/${id}/ocorrencias`, data),
+  removerOcorrencia: (id) => del(`/producao/ocorrencias/${id}`),
+  salvarChecklist: (cultoId, marks) => put(`/producao/culto/${cultoId}/checklist`, { marks }),
+  acumulado:    (params = {}) => get('/producao/acumulado' + (Object.keys(params).length ? '?' + new URLSearchParams(params) : '')),
+  desempenho:   () => get('/producao/desempenho'),
+  // Template do checklist (aba admin)
+  checklistItens: {
+    list:   () => get('/producao/checklist-itens'),
+    create: (data) => post('/producao/checklist-itens', data),
+    update: (id, data) => patch(`/producao/checklist-itens/${id}`, data),
+    remove: (id) => del(`/producao/checklist-itens/${id}`),
+  },
+};
+
 export const membresia = {
   kpis: () => get('/membresia/kpis'),
   qrLookup: (token) => get(`/membresia/qr-lookup/${encodeURIComponent(token)}`),
@@ -2099,6 +2119,8 @@ export const painel = {
     const qs = new URLSearchParams(clean).toString();
     return get('/painel/serie-temporal' + (qs ? '?' + qs : ''));
   },
+  // Aba "Monitoramento OKR" (planilha do Pr. Juninho) · NSM + métricas vivas
+  monitoramentoOkr: () => get('/painel/monitoramento-okr'),
 };
 
 export const nps = {

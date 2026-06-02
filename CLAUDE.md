@@ -53,6 +53,140 @@ em uso). `api.js`: `totemKids.pagers.{list,create,update,remove,testar,emUso,env
   qual a **porta TCP** (`LRS_PORT`, default 5000 é chute). Se a Ethernet só servir SMS em
   nuvem, habilitar NetPage ou usar um TX-7471 — o comando LRSN já está implementado.
 
+## Monitoramento OKR · aba /monitoramento-okr (2026-06-02)
+
+Marcos pediu uma aba nova na **Inteligência** reproduzindo a planilha
+**"CBRio_cabeca_Juninho"** (ótica enxuta do Pr. Juninho · 1 NSM → 9 OKRs em 4
+blocos de Área Responsável → ~25 indicadores táticos), que se alimente sozinha
+onde já temos dado. **Decisão explícita do Marcos:** NÃO integrar à lógica dos
+25 OKRs / 150 KPIs do `/painel` — é uma ótica paralela, só reproduzir e exibir
+(não questionar a lógica da planilha).
+
+**Arquitetura (read-only · SEM migration · não toca o sistema OKR existente):**
+- **A estrutura fixa da planilha vive no frontend** (`src/pages/MonitoramentoOkr.jsx`,
+  consts `NSM`/`BLOCOS`) — textos, alvos, objetivos, área envolvida e memória de
+  cálculo exatos da planilha. É o modelo do Juninho, versionado em código.
+- **O backend devolve só os VALORES VIVOS** dos indicadores com fonte real
+  (`GET /api/painel/monitoramento-okr` em `backend/routes/painel.js`), indexados
+  por chave estável em `metricas[chave]`. Indicador sem fonte → o front mostra
+  pílula **"manual"** + a memória de cálculo (honesto · a maioria das fontes
+  operacionais ainda é nascente — ver abaixo).
+- Rota `/monitoramento-okr` (`App.tsx`, lazy) · item "Monitoramento OKR" em
+  Inteligência > Visão macro (`AppShell.jsx`, `module:'painel-cbrio'`, ícone
+  Compass) · `api.painel.monitoramentoOkr()`. Cache de 5 min (mesmo
+  `painelCache` do resto de `/painel`).
+
+**7 indicadores auto-alimentados (colunas verificadas contra o banco em 2026-06-02):**
+- **NSM central** (`vw_nsm_painel` segmento='central') = a Estrela do Norte do
+  Juninho na veia · hoje 5,9% vs alvo ≥50%.
+- **OKR Batismos** = batismos realizados 90d ÷ conversões 90d (`cultos`) · ~14,5%.
+- **Nº batismos/mês** (`batismo_inscricoes` status='realizado' · último mês
+  completo + média de 6 meses).
+- **Tempo decisão→batismo** = avg(`batismo_inscricoes.data_batismo` −
+  `mem_trilha_valores`(etapa='conversao')`.data_conclusao`) · ~57d (alvo ≤90).
+- **Nº DS online** = soma `cultos.decisoes_online` 90d.
+- **% assentos ocupados** = média `cultos.presencial_adulto` do Templo
+  (Domingo+Quarta+AMI, exclui Bridge via `vol_service_types.name`) ÷ 1200 ·
+  ~30,3% (mesma regra do card de ocupação da Integração).
+- **Rotatividade staff** = demissões 12m ÷ ativos (`rh_funcionarios`) · ~2%.
+
+**Manual (sem fonte ainda · mostram alvo + memória de cálculo):** prazo/café/Next,
+% grupos, % voluntários, % dizimistas (tabelas `mem_grupo_membros` /
+`mem_voluntarios` / `mem_contribuicoes` ainda **vazias** em prod), NPS culto
+on/presencial, follow-up online, retenção/compart./cliques YouTube, eficiência
+financeira, Q12 (Gallup), treinamentos, cronogramas/orçamentos de expansão.
+Quando essas fontes ganharem dado (módulos NPS, grupos, voluntariado,
+financeiro, produção), basta **adicionar um ramo no endpoint** + a chave `live`
+no tático correspondente em `BLOCOS` — sem mexer na estrutura.
+
+## Produção de Culto · aba /producao (2026-06-02)
+
+Marcos: criar aba pra área de **Produção de Culto** com (A) KPIs técnicos
+preenchidos POR CULTO (espelhando a Integração) e (B) os KPIs gerais que já
+existem (SLA de solicitações + NPS interno).
+
+**Achado que enxugou o trabalho:** `producao` já era área de Solicitações (SLA
+24/72 · coord Pedro Fernandes) e os KPIs gerais já existiam — `ADM-C-G-PRODUCAO`
+(% no SLA) e `ADM-C-Q-PRODUCAO` (NPS interno). A Parte B só **expõe** isso (não
+recria). Ver "OKR Criativo" (`20260512280000`).
+
+**Decisões (Marcos · 2026-06-02):**
+- Ocorrências = **log unificado** (tipo técnica/estrutura · descrição = rastro ·
+  severidade), não 2 campos soltos.
+- Checklist **itemizado** (template editável + marcação por culto → "% executado").
+- Pontualidade: duração-alvo **60 min** (`vol_service_types.meta_duracao_min`,
+  configurável por tipo no futuro) · observação **SEMPRE opcional** (nunca bloqueia
+  salvar, mesmo passando do tempo).
+- Os 4 KPIs por culto são **ESPECÍFICOS, não cascateiam**: `is_okr=false`,
+  `valores='{}'`, `objetivo_geral_id=NULL`. Aparecem no painel da área mas ficam
+  FORA da matriz NSM e da cascata OKR (separação que o Marcos pediu).
+
+**Migration `20260602140000_producao_culto_fundacao.sql`:**
+- Módulo `producao` em `modulos` + matriz copiada de `kids` (read universal nível 1).
+- Tabelas: `culto_producao` (satélite 1:1 de `cultos` · duração + obs),
+  `culto_producao_ocorrencias` (log), `producao_checklist_itens` (template ·
+  `service_type_id` NULL = vale pra todos), `culto_producao_checklist` (marcação).
+- `vol_service_types.meta_duracao_min int default 60`.
+- 4 KPIs `PROD-CULTO-{PONTUAL,CHECKLIST,FALHAS,ESTAB}` (`tipo_kpi='operacional'` ·
+  ⚠️ `tipo_kpi` só aceita `qualitativo|quantitativo|operacional`, NÃO `'tatico'` ·
+  `tipo_calculo='manual'`, `fonte_auto='producao.*'`).
+- Estende `kpi_calcular_valor_auto` com 4 ramos `producao.*` e `kpi_recalcular_para_data`
+  passa a cobrir `fonte_auto LIKE 'producao.%'`. Triggers AFTER ROW em
+  culto_producao/ocorrencias/checklist → recalc em tempo real (data via lookup).
+  Seed de 6 itens de checklist.
+
+**Boost (`backend/middleware/auth.js`):** `AREA_MODULO_BOOST['producao']='producao'`
++ `ROUTE_MODULE_MAP['producao']=['producao']` + `painel-area` inclui producao.
+⚠️ pós-migration: atribuir a área "Produção" ao Pedro Fernandes em /admin/permissoes
++ cache bust + logout/login → vira admin nível 5.
+
+**Backend (`routes/producao.js` · `/api/producao`):** `GET /semana?inicio&fim`
+(cultos da `vw_culto_stats` + produção mesclada); `GET /culto/:id`; `PUT /culto/:id`
+(nível 2 · upsert satélite); `POST /culto/:id/ocorrencias` + `DELETE /ocorrencias/:id`;
+`PUT /culto/:id/checklist` (bulk); `GET/POST/PATCH/DELETE /checklist-itens` (template,
+nível 3); `GET /acumulado`; `GET /desempenho` (KPIs próprios + SLA + NPS comparativo
+via `vw_kpi_trajetoria_atual`).
+
+**Frontend (`src/pages/ministerial/Producao.jsx` · rota `/producao`):** 6 sub-abas —
+Preenchimento (calendário semanal + modal: pontualidade, ocorrências, checklist,
+obs), Acumulado, Detalhado, Checklists (admin), Solicitações (fila
+`area_responsavel='producao'` reusando a API `solicitacoes` · andamento por select),
+Desempenho. `api.js` ganhou namespace `producao`. Menu em Criativo (`module:'producao'`).
+
+**Notificações (2026-06-02):** ocorrência crítica (`severidade='critica'`) dispara
+`notificar()` urgente (módulo `producao` · responsáveis da área + regras). Módulo
+`producao` registrado em `NotificacaoRegras.jsx`. Nova solicitação já é notificada
+pelo backbone de Solicitações.
+
+**Intake de Solicitações (2026-06-02 · migration `20260602160000`):** categoria
+**`producao`** no form de Solicitações roteia `area_responsavel='producao'` (só campos
+básicos · uso: movimentação de material, configuração de equipamentos). CHECK de
+`categoria` estendido; SLA da produção já existia (24/72). Backend: `ALLOWED_CATEGORIES`
++ `CATEGORIA_MODULO['producao']='producao'` + `CATEGORIA_TO_AREA_RESP` +
+`MODULO_CATEGORIAS`. Frontend: `CATEGORIAS` + `CATEGORIA_HINT` (sem bloco específico ·
+validação base titulo+categoria). Isso alimenta a fila da aba Solicitações da Produção
++ o KPI `ADM-C-G-PRODUCAO` (SLA).
+
+## Integração · % de ocupação de assentos na aba Frequência (2026-06-02 · sem migration)
+
+Marcos: card (estilo do de batismo) na aba **Frequência** (`/integracao` →
+`VisualizacaoFrequencia.tsx`, value `vis_frequencia`) com a **% média de assentos
+ocupados**, **toggle Templo/Kids** + **seletor por culto**.
+
+- **Conta:** `% = média da presença por culto ÷ capacidade`. Como a capacidade é
+  constante, isso equivale à média das ocupações por culto. Conta só cultos com
+  presença lançada (>0) no modo escolhido (culto sem dado não derruba a média).
+- **Capacidades (constantes no código):** Templo **1200** · Kids **250**.
+- **Templo** usa `presencial_adulto`; **Kids** usa `presencial_kids` (÷250 · seletor
+  só mostra cultos com Kids = Domingo + Quarta).
+- **Exclui Bridge e Online** do seletor de Templo (`foraDoTemplo` = regex no nome).
+  **AMI entra no Templo** (decisão do Marcos · 2026-06-02). Domingo + Quarta + AMI.
+- **100% client-side:** reusa o `cultos.list({data_inicio,data_fim})` que a aba já
+  carrega — sem backend, sem migration, sem mudança no `api.js`. Respeita o período
+  (3m/6m/12m/2a/5a) já selecionado na aba.
+- **UI:** `Armchair` + número grande (`X%`) + média/culto, nº de cultos e capacidade.
+  `ocupacao.alvo` faz fallback p/ 'todos' quando o culto selecionado não existe no modo.
+
 ## Grupos · aba Relatórios de KPIs (2026-06-02)
 
 Marcos: "crie uma área dentro de grupos que seja possível ver os relatórios de
