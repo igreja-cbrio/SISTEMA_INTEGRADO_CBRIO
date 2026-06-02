@@ -2,6 +2,64 @@
 
 Guia operacional para o Claude Code quando trabalhar neste repositório.
 
+## Produção de Culto · aba /producao (2026-06-02)
+
+Marcos: criar aba pra área de **Produção de Culto** com (A) KPIs técnicos
+preenchidos POR CULTO (espelhando a Integração) e (B) os KPIs gerais que já
+existem (SLA de solicitações + NPS interno).
+
+**Achado que enxugou o trabalho:** `producao` já era área de Solicitações (SLA
+24/72 · coord Pedro Fernandes) e os KPIs gerais já existiam — `ADM-C-G-PRODUCAO`
+(% no SLA) e `ADM-C-Q-PRODUCAO` (NPS interno). A Parte B só **expõe** isso (não
+recria). Ver seção "OKR Criativo" (`20260512280000`).
+
+**Decisões (Marcos · 2026-06-02):**
+- Ocorrências = **log unificado** (tipo técnica/estrutura · descrição = rastro ·
+  severidade), não 2 campos soltos.
+- Checklist **itemizado** (template editável + marcação por culto → "% executado").
+- Pontualidade: duração-alvo **60 min** (coluna `vol_service_types.meta_duracao_min`,
+  configurável por tipo no futuro) · observação **SEMPRE opcional** (nunca bloqueia
+  salvar, mesmo passando do tempo).
+- Os 4 KPIs por culto são **ESPECÍFICOS, não cascateiam**: `is_okr=false`,
+  `valores='{}'`, `objetivo_geral_id=NULL`. Aparecem no painel da área mas ficam
+  FORA da matriz NSM e da cascata OKR (separação que o Marcos pediu explicitamente).
+
+**Migration `20260602140000_producao_culto_fundacao.sql`:**
+- Módulo `producao` em `modulos` + matriz copiada de `kids` (read universal nível 1).
+- Tabelas: `culto_producao` (satélite 1:1 de `cultos` · duração + obs), 
+  `culto_producao_ocorrencias` (log), `producao_checklist_itens` (template ·
+  `service_type_id` NULL = vale pra todos), `culto_producao_checklist` (marcação).
+- `vol_service_types.meta_duracao_min int default 60`.
+- 4 KPIs `PROD-CULTO-{PONTUAL,CHECKLIST,FALHAS,ESTAB}` (`tipo_kpi='operacional'`,
+  `tipo_calculo='manual'`, `fonte_auto='producao.*'`). ⚠️ `tipo_kpi` só aceita
+  `qualitativo|quantitativo|operacional` (não existe `'tatico'`).
+- Estende `kpi_calcular_valor_auto` com os 4 ramos `producao.*` e
+  `kpi_recalcular_para_data` passa a cobrir `fonte_auto LIKE 'producao.%'`.
+- Triggers AFTER ROW em culto_producao/ocorrencias/checklist → recalc em tempo real
+  (resolvem a data do culto via lookup). Seed de 6 itens de checklist.
+
+**Boost de área (`backend/middleware/auth.js`):** `AREA_MODULO_BOOST['producao']
+= 'producao'` + `ROUTE_MODULE_MAP['producao'] = ['producao']` + `painel-area`
+inclui producao. Pedro Fernandes (área "Produção" em usuario_areas) vira admin
+nível 5. ⚠️ pós-migration: atribuir a área a ele em /admin/permissoes + cache bust
++ logout/login.
+
+**Backend (`routes/producao.js`, montado `/api/producao`):**
+- `GET /semana?inicio&fim` · cultos da `vw_culto_stats` + dados de produção mesclados.
+- `GET /culto/:id` · detalhe (duração, ocorrências, checklist aplicável).
+- `PUT /culto/:id` (nível 2) · upsert do satélite. `POST /culto/:id/ocorrencias` +
+  `DELETE /ocorrencias/:id`. `PUT /culto/:id/checklist` · bulk upsert das marcações.
+- `GET/POST/PATCH/DELETE /checklist-itens` (template · CRUD nível 3).
+- `GET /acumulado?inicio&fim` · totais + detalhado por tipo de culto.
+- `GET /desempenho` · KPIs próprios + SLA (ADM-C-G-PRODUCAO) + NPS comparativo
+  (ADM-C-Q-PRODUCAO/ADORACAO/MARKETING via `vw_kpi_trajetoria_atual`).
+
+**Frontend (`src/pages/ministerial/Producao.jsx`, rota `/producao`):** 6 sub-abas —
+Preenchimento (calendário semanal + modal com 4 grupos), Acumulado, Detalhado,
+Checklists (admin), Solicitações (fila `area_responsavel='producao'` reusando
+`solicitacoes` API · andamento por select de status), Desempenho. `api.js` ganhou
+namespace `producao`. Menu em Criativo (AppShell · `module:'producao'`).
+
 ## Grupos · aba Relatórios de KPIs (2026-06-02)
 
 Marcos: "crie uma área dentro de grupos que seja possível ver os relatórios de
@@ -11,9 +69,9 @@ número de grupos, satisfação dos líderes e quantidade de líderes em treinam
 Nova aba **Relatórios** em `/grupos` (`src/pages/ministerial/Grupos.jsx`),
 espelhando o estilo de relatório da Integração (`VisualizacaoFrequencia.tsx`):
 seletor de período (3/6/12/24 meses) → linha de `StatisticsCard` → gráfico
-Recharts de frequência por mês → distribuição de papéis. Respeita o filtro de
-**temporada** já presente na página. Read-only (visível a qualquer nível ≥1 no
-módulo · não gated por `podeEditarGrupos`).
+Recharts de frequência por mês → lista de líderes em treinamento. Respeita o
+filtro de **temporada** já presente na página. Read-only (visível a qualquer
+nível ≥1 no módulo · não gated por `podeEditarGrupos`).
 
 **5 métricas → fontes reais (todas computadas, não dependem do cache de KPI):**
 - **Nº de grupos** · `mem_grupos` ativos (`deleted_at IS NULL`, `ativo=true`)
@@ -24,8 +82,24 @@ módulo · não gated por `podeEditarGrupos`).
 - **Frequência** · `mem_grupo_encontros` + `mem_grupo_encontro_presencas`
   (`presente=true`) · média por encontro + série mensal de presenças
 
-Também mostra a **distribuição de papéis** (`funcao`) pra substanciar os números
-de líderes/treinamento.
+**Modelo de líder (refinamento Marcos · 2026-06-02):** uma só noção de líder = o
+**responsável pelo grupo** (`mem_grupos.lider_id`). A única outra função relevante
+é **líder em treinamento** (opcional). Por isso o relatório lista nominalmente os
+líderes em treinamento (nome + grupo) em vez da distribuição genérica de papéis.
+
+- **Marcar/desmarcar líder em treinamento** · na lista de membros do grupo
+  (`Grupos.jsx` detalhe) há a coluna **Treino**: quem edita grupos
+  (`podeEditarGrupos`) liga/desliga via `api.setFuncaoMembro(participacao_id, ...)`
+  (`'lider_treinamento'` ↔ `'frequentador'`). `GET /:id` passou a devolver `funcao`
+  em cada membro.
+- **`PUT /membros/:rowId/funcao`** · autorização ampliada (era só
+  admin/coordenador/supervisor da hierarquia): agora aceita também quem tem
+  **grupos ≥ 3** no módulo (mesma regra do `podeEditarGrupos`), pros líderes de
+  área (boost) conseguirem marcar. Ajuste no check do route handler (não em
+  `auth.js`/RLS/login).
+- **`GET /api/grupos/kpis/lideres-treinamento?temporada=`** · lista os
+  `funcao='lider_treinamento'` ativos (nome + grupo) · alimenta o card do relatório
+  (`api.lideresTreinamento`). Volume pequeno (sem risco do cap de 1000 linhas).
 
 **Migration `20260602120000_grupos_kpis_relatorio.sql`** (ADITIVA · `CREATE OR
 REPLACE FUNCTION` · sem mudança de schema): RPC `fn_grupos_kpis_relatorio(p_temporada

@@ -241,6 +241,7 @@ const DevocionalLogin = lazyWithRetry(() => import('./pages/devocional/Devociona
 const DevocionalHoje = lazyWithRetry(() => import('./pages/devocional/DevocionalHoje'));
 const DevocionalHistorico = lazyWithRetry(() => import('./pages/devocional/DevocionalHistorico'));
 const Integracao = lazyWithRetry(() => import('./pages/ministerial/Integracao'));
+const Producao = lazyWithRetry(() => import('./pages/ministerial/Producao'));
 const ColetaCulto = lazyWithRetry(() => import('./pages/ministerial/coleta/ColetaCulto'));
 const Next = lazyWithRetry(() => import('./pages/ministerial/Next'));
 // Jornada virou aba dentro de Membresia (componente MembersJornadaPanel).
@@ -473,6 +474,7 @@ function AppRoutes() {
         <Route path="/ministerial/integracao" element={<ModuleGuard permKey="canMembresia"><Suspense fallback={<Loading />}><Integracao /></Suspense></ModuleGuard>} />
         <Route path="/integracao/coleta" element={<ModuleGuard moduleSlug="integracao" nivelMinimo={2}><Suspense fallback={<Loading />}><ColetaCulto /></Suspense></ModuleGuard>} />
         <Route path="/integracao" element={<Navigate to="/ministerial/integracao" replace />} />
+        <Route path="/producao" element={<ModuleGuard moduleSlug="producao" nivelMinimo={1}><Suspense fallback={<Loading />}><Producao /></Suspense></ModuleGuard>} />
         {/* Cultos · rotas na raiz (sem prefixo /ministerial) · 2026-05-21 */}
         <Route path="/online" element={<ModuleGuard permKey="canMembresia"><Suspense fallback={<Loading />}><Online /></Suspense></ModuleGuard>} />
         <Route path="/kids" element={<ModuleGuard moduleSlug="kids"><Suspense fallback={<Loading />}><PainelKids /></Suspense></ModuleGuard>} />

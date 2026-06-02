@@ -16,7 +16,7 @@ import {
   UserCheck, UsersRound, Heart, HandHelping, BookOpen, ArrowRight, TrendingUp, Youtube,
   Megaphone, BrainCircuit, ShoppingCart, LayoutDashboard,
   Sun, Moon, Bell, BellRing, BellOff, LogOut, Search, CheckCheck, Settings, MonitorSmartphone, BarChart2, ClipboardCheck, Activity, MessageSquare, Shield, Menu as MenuIcon,
-  Baby, GraduationCap, ArrowRightLeft, Sparkles,
+  Baby, GraduationCap, ArrowRightLeft, Sparkles, SlidersHorizontal,
 } from 'lucide-react';
 import { Sheet, SheetContent, SheetTrigger } from '../ui/sheet';
 import {
@@ -132,7 +132,19 @@ const NAV_ITEMS = [
           { label: 'Kids', description: 'Indicadores do ministério infantil', icon: Baby, path: '/kids', module: 'kids' },
           { label: 'AMI', description: 'Indicadores do culto AMI', icon: GraduationCap, path: '/ami', module: 'ami' },
           { label: 'Bridge', description: 'Indicadores do culto Bridge', icon: ArrowRightLeft, path: '/bridge', module: 'bridge' },
+        ],
+      },
+    ],
+  },
+  {
+    id: 6,
+    label: 'Criativo',
+    subMenus: [
+      {
+        title: 'Demandas criativas',
+        items: [
           { label: 'Marketing', description: 'Kanban de demandas criativas · capacidade · analytics', icon: Megaphone, path: '/marketing', module: 'marketing' },
+          { label: 'Produção de Culto', description: 'Indicadores técnicos por culto · solicitações · desempenho', icon: SlidersHorizontal, path: '/producao', module: 'producao' },
         ],
       },
     ],
