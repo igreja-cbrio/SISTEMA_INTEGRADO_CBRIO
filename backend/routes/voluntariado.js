@@ -2129,9 +2129,9 @@ router.get('/inscricoes', async (req, res) => {
       .from('vol_inscricoes')
       .select(`
         id, nome, sobrenome, nome_completo, cpf, email, telefone,
-        data_nascimento, data_inscricao, area, status,
+        data_nascimento, nome_mae, data_inscricao, area, status,
         dom_predominante, ministerios_interesse, participou_next,
-        feedback, integrado_em, membro_id
+        feedback, integrado_em, membro_id, origem
       `, { count: 'exact' })
       .order('data_inscricao', { ascending: false })
       .range(offset, offset + limit - 1);
