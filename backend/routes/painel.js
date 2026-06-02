@@ -9,7 +9,7 @@
 
 const router = require('express').Router();
 const { authenticate } = require('../middleware/auth');
-const { supabase } = require('../utils/supabase');
+const { supabase, query } = require('../utils/supabase');
 
 router.use(authenticate);
 
@@ -1524,6 +1524,166 @@ router.get('/serie-temporal', async (req, res) => {
   } catch (e) {
     console.error('painel/serie-temporal:', e.message);
     res.status(e.status || 500).json({ error: e.message || 'Erro ao montar série temporal' });
+  }
+});
+
+// ============================================================================
+// GET /api/painel/monitoramento-okr
+//
+// Alimenta a aba "Monitoramento OKR" (planilha do Pr. Juninho · ótica enxuta:
+// 1 NSM → 9 OKRs → ~25 indicadores táticos). A ESTRUTURA da planilha (textos,
+// alvos, objetivos, áreas, memória de cálculo) vive no frontend — é o modelo
+// fixo do Juninho. Aqui devolvemos APENAS os valores VIVOS dos indicadores que
+// já têm fonte de dado real no sistema, indexados por uma chave estável
+// (`metricas[chave]`). Os indicadores sem fonte ficam como preenchimento
+// manual (o frontend mostra o alvo + a memória de cálculo da planilha).
+//
+// Read-only · sem migration · não toca a lógica dos 25 OKRs/150 KPIs do
+// /painel (modelo separado, a pedido do Marcos).
+// ============================================================================
+router.get('/monitoramento-okr', async (req, res) => {
+  try {
+    const cacheKey = 'monitoramento-okr';
+    const cached = cacheGet(cacheKey);
+    if (cached) return res.json(cached);
+
+    // Cada métrica roda isolada: se uma falhar, vira null (não derruba a aba).
+    const uma = async (fn) => { try { return await fn(); } catch (e) { console.warn('[monitoramento-okr]', e.message); return null; } };
+    const num = (v) => (v == null ? null : Number(v));
+
+    const [nsmRow, batRatio, batMes, tempoBat, dsOnline, assentos, rotativ] = await Promise.all([
+      // NSM central · exatamente a estrela-guia do Juninho (engajados em ≤60d)
+      uma(async () => {
+        const r = await query(
+          `SELECT percentual, meta_percentual, status, total_convertidos_periodo,
+                  engajados_em_60d, janela_inicio, janela_fim, atualizado_em
+             FROM vw_nsm_painel WHERE segmento = 'central' LIMIT 1`);
+        return r.rows[0] || null;
+      }),
+      // OKR Batismos · batismos realizados nos últimos 90d ÷ conversões 90d
+      uma(async () => {
+        const r = await query(
+          `WITH b AS (
+             SELECT count(*) n FROM batismo_inscricoes
+              WHERE status='realizado' AND data_batismo >= CURRENT_DATE - INTERVAL '90 days'
+                AND deleted_at IS NULL
+           ), c AS (
+             SELECT coalesce(sum(decisoes_presenciais + decisoes_online),0) n
+               FROM cultos WHERE data >= CURRENT_DATE - INTERVAL '90 days' AND deleted_at IS NULL
+           )
+           SELECT b.n batismos, c.n conversoes,
+                  CASE WHEN c.n > 0 THEN round(b.n::numeric / c.n * 100, 1) ELSE NULL END pct
+             FROM b, c`);
+        return r.rows[0] || null;
+      }),
+      // Nº batismos mensais · último mês completo + média dos últimos 6 meses
+      uma(async () => {
+        const r = await query(
+          `WITH m AS (
+             SELECT date_trunc('month', data_batismo) mes, count(*) n
+               FROM batismo_inscricoes
+              WHERE status='realizado' AND data_batismo IS NOT NULL AND deleted_at IS NULL
+                AND data_batismo >= date_trunc('month', CURRENT_DATE) - INTERVAL '6 months'
+                AND data_batismo <  date_trunc('month', CURRENT_DATE)
+              GROUP BY 1
+           )
+           SELECT (SELECT n FROM m ORDER BY mes DESC LIMIT 1) ultimo,
+                  (SELECT to_char(mes,'MM/YYYY') FROM m ORDER BY mes DESC LIMIT 1) ultimo_label,
+                  round(avg(n),1) media FROM m`);
+        return r.rows[0] || null;
+      }),
+      // Tempo médio decisão → batismo (dias) · só membros com as duas datas
+      uma(async () => {
+        const r = await query(
+          `SELECT round(avg(b.data_batismo - t.data_conclusao)::numeric, 0) media_dias, count(*) n
+             FROM batismo_inscricoes b
+             JOIN mem_trilha_valores t
+               ON t.membro_id = b.membro_id AND t.etapa = 'conversao'
+              AND t.concluida = true AND t.deleted_at IS NULL
+            WHERE b.status='realizado' AND b.data_batismo IS NOT NULL AND b.membro_id IS NOT NULL
+              AND b.deleted_at IS NULL AND (b.data_batismo - t.data_conclusao) >= 0`);
+        return r.rows[0] || null;
+      }),
+      // Nº decisões online (DS) · soma dos últimos 90d
+      uma(async () => {
+        const r = await query(
+          `SELECT coalesce(sum(decisoes_online),0) ds_90d
+             FROM cultos
+            WHERE data >= CURRENT_DATE - INTERVAL '90 days' AND data < CURRENT_DATE
+              AND deleted_at IS NULL`);
+        return r.rows[0] || null;
+      }),
+      // % de assentos ocupados · Templo (Domingo+Quarta+AMI, exclui Bridge) ÷ 1200
+      uma(async () => {
+        const r = await query(
+          `SELECT round(avg(c.presencial_adulto)::numeric, 0) media_pres, count(*) n,
+                  round(avg(c.presencial_adulto)::numeric / 1200 * 100, 1) pct
+             FROM cultos c JOIN vol_service_types st ON st.id = c.service_type_id
+            WHERE c.data >= CURRENT_DATE - INTERVAL '90 days' AND c.presencial_adulto > 0
+              AND c.deleted_at IS NULL AND st.name NOT ILIKE '%bridge%'`);
+        return r.rows[0] || null;
+      }),
+      // Rotatividade do staff · demissões nos últimos 12m ÷ ativos hoje
+      uma(async () => {
+        const r = await query(
+          `SELECT count(*) FILTER (WHERE data_demissao >= CURRENT_DATE - INTERVAL '12 months') demitidos,
+                  count(*) FILTER (WHERE status='ativo') ativos
+             FROM rh_funcionarios WHERE deleted_at IS NULL`);
+        return r.rows[0] || null;
+      }),
+    ]);
+
+    const nsm = nsmRow ? {
+      percentual: num(nsmRow.percentual),
+      meta: num(nsmRow.meta_percentual),
+      status: nsmRow.status,
+      totalConvertidos: num(nsmRow.total_convertidos_periodo),
+      engajados: num(nsmRow.engajados_em_60d),
+      janelaInicio: nsmRow.janela_inicio,
+      janelaFim: nsmRow.janela_fim,
+      atualizadoEm: nsmRow.atualizado_em,
+    } : null;
+
+    // metricas[chave] = { valor, unidade, detalhe }. Só inclui o que tem dado real.
+    const metricas = {};
+    const addM = (chave, valor, unidade, detalhe) => {
+      if (valor == null || Number.isNaN(valor)) return;
+      metricas[chave] = { valor, unidade, detalhe };
+    };
+
+    if (batRatio) {
+      addM('okr_batismos', num(batRatio.pct), '%',
+        `${batRatio.batismos} batismos / ${batRatio.conversoes} convertidos (90 dias)`);
+    }
+    if (batMes && batMes.ultimo != null) {
+      addM('batismos_mes', num(batMes.ultimo), '',
+        `${batMes.ultimo_label || 'último mês'} · média ${batMes.media ?? '—'}/mês`);
+    }
+    if (tempoBat && tempoBat.media_dias != null && Number(tempoBat.n) > 0) {
+      addM('tempo_batismo', num(tempoBat.media_dias), ' dias',
+        `média de ${tempoBat.n} batizados com data de conversão registrada`);
+    }
+    if (dsOnline) {
+      addM('ds_online', num(dsOnline.ds_90d), '',
+        'decisões online nos últimos 90 dias');
+    }
+    if (assentos && assentos.n > 0) {
+      addM('assentos', num(assentos.pct), '%',
+        `${assentos.media_pres} de 1200 lugares · média do Templo (90 dias)`);
+    }
+    if (rotativ) {
+      const ativos = num(rotativ.ativos) || 0;
+      const demit = num(rotativ.demitidos) || 0;
+      const pct = ativos > 0 ? Math.round((demit / ativos) * 1000) / 10 : null;
+      addM('rotatividade', pct, '%', `${demit} saída(s) / ${ativos} ativos (12 meses)`);
+    }
+
+    const resp = { geradoEm: new Date().toISOString(), nsm, metricas };
+    cacheSet(cacheKey, resp);
+    res.json(resp);
+  } catch (e) {
+    console.error('painel/monitoramento-okr:', e.message);
+    res.status(500).json({ error: e.message || 'Erro ao montar Monitoramento OKR' });
   }
 });
 

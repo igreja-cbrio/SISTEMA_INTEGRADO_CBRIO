@@ -2106,6 +2106,8 @@ export const painel = {
     const qs = new URLSearchParams(clean).toString();
     return get('/painel/serie-temporal' + (qs ? '?' + qs : ''));
   },
+  // Aba "Monitoramento OKR" (planilha do Pr. Juninho) · NSM + métricas vivas
+  monitoramentoOkr: () => get('/painel/monitoramento-okr'),
 };
 
 export const nps = {
