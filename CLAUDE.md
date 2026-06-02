@@ -2,6 +2,52 @@
 
 Guia operacional para o Claude Code quando trabalhar neste repositório.
 
+## Monitoramento OKR · aba /monitoramento-okr (2026-06-02)
+
+Marcos pediu uma aba nova na **Inteligência** reproduzindo a planilha
+**"CBRio_cabeca_Juninho"** (ótica enxuta do Pr. Juninho · 1 NSM → 9 OKRs em 4
+blocos de Área Responsável → ~25 indicadores táticos), que se alimente sozinha
+onde já temos dado. **Decisão explícita do Marcos:** NÃO integrar à lógica dos
+25 OKRs / 150 KPIs do `/painel` — é uma ótica paralela, só reproduzir e exibir
+(não questionar a lógica da planilha).
+
+**Arquitetura (read-only · SEM migration · não toca o sistema OKR existente):**
+- **A estrutura fixa da planilha vive no frontend** (`src/pages/MonitoramentoOkr.jsx`,
+  consts `NSM`/`BLOCOS`) — textos, alvos, objetivos, área envolvida e memória de
+  cálculo exatos da planilha. É o modelo do Juninho, versionado em código.
+- **O backend devolve só os VALORES VIVOS** dos indicadores com fonte real
+  (`GET /api/painel/monitoramento-okr` em `backend/routes/painel.js`), indexados
+  por chave estável em `metricas[chave]`. Indicador sem fonte → o front mostra
+  pílula **"manual"** + a memória de cálculo (honesto · a maioria das fontes
+  operacionais ainda é nascente — ver abaixo).
+- Rota `/monitoramento-okr` (`App.tsx`, lazy) · item "Monitoramento OKR" em
+  Inteligência > Visão macro (`AppShell.jsx`, `module:'painel-cbrio'`, ícone
+  Compass) · `api.painel.monitoramentoOkr()`. Cache de 5 min (mesmo
+  `painelCache` do resto de `/painel`).
+
+**7 indicadores auto-alimentados (colunas verificadas contra o banco em 2026-06-02):**
+- **NSM central** (`vw_nsm_painel` segmento='central') = a Estrela do Norte do
+  Juninho na veia · hoje 5,9% vs alvo ≥50%.
+- **OKR Batismos** = batismos realizados 90d ÷ conversões 90d (`cultos`) · ~14,5%.
+- **Nº batismos/mês** (`batismo_inscricoes` status='realizado' · último mês
+  completo + média de 6 meses).
+- **Tempo decisão→batismo** = avg(`batismo_inscricoes.data_batismo` −
+  `mem_trilha_valores`(etapa='conversao')`.data_conclusao`) · ~57d (alvo ≤90).
+- **Nº DS online** = soma `cultos.decisoes_online` 90d.
+- **% assentos ocupados** = média `cultos.presencial_adulto` do Templo
+  (Domingo+Quarta+AMI, exclui Bridge via `vol_service_types.name`) ÷ 1200 ·
+  ~30,3% (mesma regra do card de ocupação da Integração).
+- **Rotatividade staff** = demissões 12m ÷ ativos (`rh_funcionarios`) · ~2%.
+
+**Manual (sem fonte ainda · mostram alvo + memória de cálculo):** prazo/café/Next,
+% grupos, % voluntários, % dizimistas (tabelas `mem_grupo_membros` /
+`mem_voluntarios` / `mem_contribuicoes` ainda **vazias** em prod), NPS culto
+on/presencial, follow-up online, retenção/compart./cliques YouTube, eficiência
+financeira, Q12 (Gallup), treinamentos, cronogramas/orçamentos de expansão.
+Quando essas fontes ganharem dado (módulos NPS, grupos, voluntariado,
+financeiro, produção), basta **adicionar um ramo no endpoint** + a chave `live`
+no tático correspondente em `BLOCOS` — sem mexer na estrutura.
+
 ## Produção de Culto · aba /producao (2026-06-02)
 
 Marcos: criar aba pra área de **Produção de Culto** com (A) KPIs técnicos

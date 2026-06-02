@@ -16,7 +16,7 @@ import {
   UserCheck, UsersRound, Heart, HandHelping, BookOpen, ArrowRight, TrendingUp, Youtube,
   Megaphone, BrainCircuit, ShoppingCart, LayoutDashboard, SlidersHorizontal,
   Sun, Moon, Bell, BellRing, BellOff, LogOut, Search, CheckCheck, Settings, MonitorSmartphone, BarChart2, ClipboardCheck, Activity, MessageSquare, Shield, Menu as MenuIcon,
-  Baby, GraduationCap, ArrowRightLeft, Sparkles,
+  Baby, GraduationCap, ArrowRightLeft, Sparkles, Compass,
 } from 'lucide-react';
 import { Sheet, SheetContent, SheetTrigger } from '../ui/sheet';
 import {
@@ -68,6 +68,7 @@ const NAV_ITEMS = [
         title: 'Visão macro',
         items: [
           { label: 'Painel CBRio', description: 'NSM · 5 valores · 6 áreas — visão macro · ritual mensal', icon: Activity, path: '/painel', module: 'painel-cbrio' },
+          { label: 'Monitoramento OKR', description: 'Planejamento estratégico 2026 · NSM, 9 OKRs e indicadores táticos', icon: Compass, path: '/monitoramento-okr', module: 'painel-cbrio' },
           { label: 'Dashboard Semanal', description: 'Painel da reunião de quarta · semanal · mensal · metas · gerador IA', icon: LayoutDashboard, path: '/dashboard-semanal' },
           { label: 'Minha Área', description: 'KPIs (resultado) e Dados (entrada) da sua área', icon: BarChart2, path: '/minha-area', module: 'minha-area' },
         ],
