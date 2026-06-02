@@ -99,6 +99,24 @@ Quando essas fontes ganharem dado (módulos NPS, grupos, voluntariado,
 financeiro, produção), basta **adicionar um ramo no endpoint** + a chave `live`
 no tático correspondente em `BLOCOS` — sem mexer na estrutura.
 
+### Ajustes pós-avaliação do Marcos (2026-06-02 · v2)
+
+- **Pílula "manual" removida.** Tático sem fonte mostra só **"—"** (cinza); ao
+  **expandir** ele exibe a memória de cálculo + um bloco **"Para puxar automático,
+  preciso de: …"** (campo `precisa` no `BLOCOS`) — vira a lista do que o Marcos
+  precisa mandar pra cada indicador virar automático.
+- **Número inline + cor binária** em todo tático: verde no alvo / vermelho fora
+  (`avaliar()` agora retorna só verde/vermelho; sem alvo numérico comparável →
+  neutro teal, sem julgar — ex.: "+20% YoY" e "Nº batismos/mês"). NSM e OKR
+  idem (binário).
+- **Linha clicável → expande** (accordion inline, `ChevronDown` rotativo). Quando
+  o indicador tem série, mostra **gráfico de barras mensal** (recharts · 6 meses
+  completos) com linha tracejada no alvo. Backend passou a devolver `serie:
+  [{mes,valor}]` em `okr_batismos`/`batismos_mes` (batismos/mês), `ds_online` e
+  `assentos` (% ocupação/mês). `tempo_batismo`/`rotativ`/NSM ficam só com o número.
+- **"Café" → Acompanhamento "1º Encontro"** em todo o 1º OKR (nome + 2 táticos),
+  a pedido do Marcos.
+
 ## Produção de Culto · aba /producao (2026-06-02)
 
 Marcos: criar aba pra área de **Produção de Culto** com (A) KPIs técnicos
