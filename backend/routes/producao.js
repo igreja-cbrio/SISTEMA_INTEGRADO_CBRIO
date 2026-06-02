@@ -17,8 +17,19 @@ const router = require('express').Router();
 const { authenticate, authorizeModule } = require('../middleware/auth');
 const { supabase } = require('../utils/supabase');
 const painelCache = require('../services/painelCache');
+const { notificar } = require('../services/notificar');
 
 router.use(authenticate);
+
+// Responsáveis cadastrados da área Produção (pra notificar diretamente além
+// das regras do módulo). Vazio é tolerado (notificar cai no fallback admin/diretor).
+async function responsaveisProducao() {
+  const { data } = await supabase
+    .from('area_solicitacoes_responsaveis')
+    .select('profile_id')
+    .eq('area', 'producao');
+  return (data || []).map(r => r.profile_id).filter(Boolean);
+}
 
 const SEVERIDADES = ['baixa', 'media', 'alta', 'critica'];
 const TIPOS_OCORR = ['tecnica', 'estrutura'];
@@ -223,6 +234,29 @@ router.post('/culto/:id/ocorrencias', authorizeModule('producao', 2), async (req
       .select().single();
     if (error) return res.status(500).json({ error: error.message });
     painelCache.bust('');
+
+    // Notificação imediata só pra ocorrência CRÍTICA · alerta o time de Produção
+    if (data.severidade === 'critica') {
+      try {
+        const { data: culto } = await supabase
+          .from('cultos').select('nome, data').eq('id', cultoId).maybeSingle();
+        const ctx = culto ? `${culto.nome || 'culto'}${culto.data ? ` (${culto.data})` : ''}` : 'um culto';
+        const labelTipo = data.tipo === 'tecnica' ? 'falha técnica' : 'instabilidade de estrutura';
+        notificar({
+          modulo: 'producao',
+          tipo: 'producao_ocorrencia_critica',
+          titulo: `⚠️ Ocorrência crítica · Produção`,
+          mensagem: `${labelTipo} crítica em ${ctx}: ${data.descricao}`,
+          link: '/producao',
+          severidade: 'urgente',
+          chaveDedup: `producao_ocorrencia_critica_${data.id}`,
+          extraTargetIds: await responsaveisProducao(),
+        }).catch(err => console.error('[PRODUCAO] notify ocorrencia:', err.message));
+      } catch (err) {
+        console.error('[PRODUCAO] notify ocorrencia (lookup):', err.message);
+      }
+    }
+
     res.json(data);
   } catch (e) {
     console.error('producao POST ocorrencia:', e.message);
