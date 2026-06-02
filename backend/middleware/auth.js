@@ -37,9 +37,10 @@ const ROUTE_MODULE_MAP = {
   'totem-kids':   ['kids'],
   'ami':          ['ami'],
   'bridge':       ['bridge'],
+  'producao':     ['producao'],
   'marketing':    ['marketing'],
   'marketing-admin': ['marketing'],
-  'painel-area':  ['kids', 'ami', 'bridge', 'online'],
+  'painel-area':  ['kids', 'ami', 'bridge', 'online', 'producao'],
   'whatsapp-admin': ['integracao', 'grupos'],
   // estrategicos
   'gestao':       ['gestao'],
@@ -115,6 +116,9 @@ const AREA_MODULO_BOOST = {
   // Marketing (Spec 003 · 2026-05-28) · Pedro Paiva + Allan/Caua/Leticia/Lorena
   // ganham nivel 5 automatico via area "Marketing" em usuario_areas.
   'marketing':    'marketing',
+  // Producao de Culto (2026-06-02) · Pedro Fernandes (area "Produção") vira
+  // admin nivel 5 do modulo producao via boost.
+  'producao':     'producao',
 };
 
 function _normalizarArea(nome) {

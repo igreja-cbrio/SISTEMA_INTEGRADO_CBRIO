@@ -120,6 +120,7 @@ app.use('/api/public/decisao-online', require('./routes/publicDecisaoOnline'));
 app.use('/api/whatsapp/webhook', require('./routes/publicWhatsapp'));
 app.use('/api/whatsapp', require('./routes/whatsapp'));
 app.use('/api/solicitacoes', require('./routes/solicitacoes'));
+app.use('/api/producao', require('./routes/producao'));
 app.use('/api/marketing', require('./routes/marketing'));
 app.use('/api/cerebro', require('./routes/cerebro'));
 app.use('/api/voluntariado', require('./routes/voluntariado'));

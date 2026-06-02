@@ -14,7 +14,7 @@ import {
   Users, DollarSign, Truck, Tag,
   CalendarDays, FolderKanban, Map, ListChecks,
   UserCheck, UsersRound, Heart, HandHelping, BookOpen, ArrowRight, TrendingUp, Youtube,
-  Megaphone, BrainCircuit, ShoppingCart, LayoutDashboard,
+  Megaphone, BrainCircuit, ShoppingCart, LayoutDashboard, SlidersHorizontal,
   Sun, Moon, Bell, BellRing, BellOff, LogOut, Search, CheckCheck, Settings, MonitorSmartphone, BarChart2, ClipboardCheck, Activity, MessageSquare, Shield, Menu as MenuIcon,
   Baby, GraduationCap, ArrowRightLeft, Sparkles,
 } from 'lucide-react';
@@ -144,6 +144,7 @@ const NAV_ITEMS = [
         title: 'Demandas criativas',
         items: [
           { label: 'Marketing', description: 'Kanban de demandas criativas · capacidade · analytics', icon: Megaphone, path: '/marketing', module: 'marketing' },
+          { label: 'Produção de Culto', description: 'Indicadores técnicos por culto · solicitações · desempenho', icon: SlidersHorizontal, path: '/producao', module: 'producao' },
         ],
       },
     ],
