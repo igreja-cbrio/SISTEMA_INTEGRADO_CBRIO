@@ -2,6 +2,60 @@
 
 Guia operacional para o Claude Code quando trabalhar neste repositório.
 
+## Produção de Culto · aba /producao (2026-06-02)
+
+Marcos: criar aba pra área de **Produção de Culto** com (A) KPIs técnicos
+preenchidos POR CULTO (espelhando a Integração) e (B) os KPIs gerais que já
+existem (SLA de solicitações + NPS interno).
+
+**Achado que enxugou o trabalho:** `producao` já era área de Solicitações (SLA
+24/72 · coord Pedro Fernandes) e os KPIs gerais já existiam — `ADM-C-G-PRODUCAO`
+(% no SLA) e `ADM-C-Q-PRODUCAO` (NPS interno). A Parte B só **expõe** isso (não
+recria). Ver "OKR Criativo" (`20260512280000`).
+
+**Decisões (Marcos · 2026-06-02):**
+- Ocorrências = **log unificado** (tipo técnica/estrutura · descrição = rastro ·
+  severidade), não 2 campos soltos.
+- Checklist **itemizado** (template editável + marcação por culto → "% executado").
+- Pontualidade: duração-alvo **60 min** (`vol_service_types.meta_duracao_min`,
+  configurável por tipo no futuro) · observação **SEMPRE opcional** (nunca bloqueia
+  salvar, mesmo passando do tempo).
+- Os 4 KPIs por culto são **ESPECÍFICOS, não cascateiam**: `is_okr=false`,
+  `valores='{}'`, `objetivo_geral_id=NULL`. Aparecem no painel da área mas ficam
+  FORA da matriz NSM e da cascata OKR (separação que o Marcos pediu).
+
+**Migration `20260602140000_producao_culto_fundacao.sql`:**
+- Módulo `producao` em `modulos` + matriz copiada de `kids` (read universal nível 1).
+- Tabelas: `culto_producao` (satélite 1:1 de `cultos` · duração + obs),
+  `culto_producao_ocorrencias` (log), `producao_checklist_itens` (template ·
+  `service_type_id` NULL = vale pra todos), `culto_producao_checklist` (marcação).
+- `vol_service_types.meta_duracao_min int default 60`.
+- 4 KPIs `PROD-CULTO-{PONTUAL,CHECKLIST,FALHAS,ESTAB}` (`tipo_kpi='operacional'` ·
+  ⚠️ `tipo_kpi` só aceita `qualitativo|quantitativo|operacional`, NÃO `'tatico'` ·
+  `tipo_calculo='manual'`, `fonte_auto='producao.*'`).
+- Estende `kpi_calcular_valor_auto` com 4 ramos `producao.*` e `kpi_recalcular_para_data`
+  passa a cobrir `fonte_auto LIKE 'producao.%'`. Triggers AFTER ROW em
+  culto_producao/ocorrencias/checklist → recalc em tempo real (data via lookup).
+  Seed de 6 itens de checklist.
+
+**Boost (`backend/middleware/auth.js`):** `AREA_MODULO_BOOST['producao']='producao'`
++ `ROUTE_MODULE_MAP['producao']=['producao']` + `painel-area` inclui producao.
+⚠️ pós-migration: atribuir a área "Produção" ao Pedro Fernandes em /admin/permissoes
++ cache bust + logout/login → vira admin nível 5.
+
+**Backend (`routes/producao.js` · `/api/producao`):** `GET /semana?inicio&fim`
+(cultos da `vw_culto_stats` + produção mesclada); `GET /culto/:id`; `PUT /culto/:id`
+(nível 2 · upsert satélite); `POST /culto/:id/ocorrencias` + `DELETE /ocorrencias/:id`;
+`PUT /culto/:id/checklist` (bulk); `GET/POST/PATCH/DELETE /checklist-itens` (template,
+nível 3); `GET /acumulado`; `GET /desempenho` (KPIs próprios + SLA + NPS comparativo
+via `vw_kpi_trajetoria_atual`).
+
+**Frontend (`src/pages/ministerial/Producao.jsx` · rota `/producao`):** 6 sub-abas —
+Preenchimento (calendário semanal + modal: pontualidade, ocorrências, checklist,
+obs), Acumulado, Detalhado, Checklists (admin), Solicitações (fila
+`area_responsavel='producao'` reusando a API `solicitacoes` · andamento por select),
+Desempenho. `api.js` ganhou namespace `producao`. Menu em Criativo (`module:'producao'`).
+
 ## Integração · % de ocupação de assentos na aba Frequência (2026-06-02 · sem migration)
 
 Marcos: card (estilo do de batismo) na aba **Frequência** (`/integracao` →
