@@ -1043,6 +1043,19 @@ export const totemKids = {
   auditoria: {
     overrides: () => get('/totem-kids/auditoria/overrides'),
   },
+  // Pagers fisicos (pulseira/coaster da familia) · integracao com transmissor LRS
+  pagers: {
+    list: (params = {}) => {
+      const q = new URLSearchParams(params).toString();
+      return get(`/totem-kids/pager/pagers${q ? `?${q}` : ''}`);
+    },
+    create: (data) => post('/totem-kids/pager/pagers', data),
+    update: (id, data) => patch(`/totem-kids/pager/pagers/${id}`, data),
+    remove: (id) => del(`/totem-kids/pager/pagers/${id}`),
+    testar: (id) => post(`/totem-kids/pager/pagers/${id}/testar`, {}),
+    emUso: () => get('/totem-kids/pager/em-uso'),
+    envios: (limit = 50) => get(`/totem-kids/pager/envios?limit=${limit}`),
+  },
 };
 
 export const permissoes = {

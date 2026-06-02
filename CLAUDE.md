@@ -2,6 +2,57 @@
 
 Guia operacional para o Claude Code quando trabalhar neste repositório.
 
+## Totem Kids · integração com PAGERS físicos (2026-06-02)
+
+Eduardo/Marcos: integrar os pagers que a igreja já usa ao pickup do Totem Kids —
+no check-in o voluntário entrega um pager numerado à família; no pickup o sistema
+faz **aquele** pager vibrar ("caso vibre, suba para ver sua criança").
+
+**Hardware real (confirmado por foto):** transmissor **LRS Freedom T7470** com
+porta **RJ-45 (rede)** + coasters redondos da LRS. (Há também um Retekess TD163 +
+coasters R8500, mas a LRS foi escolhida porque o **protocolo é público**: LRSN =
+XML sobre TCP, comando `<PageRequest pager="2;NUMERO" color="R" message="Flash5Min"/>`.)
+
+**Arquitetura — agente local (mesmo padrão do Brother/worker financeiro):** o
+Vercel serverless não alcança o transmissor físico, então um **agente local**
+(`pager-bridge/`, Node puro) roda num PC da recepção, na rede do Freedom. Ele faz
+só conexões de **saída** (HTTPS pro backend + TCP pro Freedom) e autentica por
+**bearer token** (`PAGER_BRIDGE_TOKEN`) — **não** carrega service_role nem abre porta.
+
+**Migration `20260602140000_kids_pagers.sql`** (ADITIVA · idempotente):
+- `kids_pagers` · catálogo de cada pager (`numero` = ID no LRS, `cor` char R/B/G/Y/O/P/W,
+  `tipo_lrs` default 2 = Guest, `responsavel_padrao_id`, `ativo`, soft-delete · na
+  whitelist `app_soft_deletable_tables()`).
+- `kids_checkins.pager_id` · qual pager a família levou (FK SET NULL).
+- `kids_pager_envios` · fila de saída que o agente consome (`status`
+  pendente→enviado/erro/cancelado, `origem` chamada/rechamada/teste/manual, snapshot
+  `pager_numero`/`cor`).
+- Trigger `fn_kids_checkout_cancela_pager` · cancela envios pendentes quando a
+  criança já saiu (checkout). RLS contextual `current_user_module_level('kids')`
+  (read≥1 · write≥3 · delete super-admin · service_role all).
+
+**Backend (`routes/totemKids.js`):** CRUD `/pager/pagers` (kids≥3), `/pager/em-uso`
+(quem está com cada pager agora), `/pager/pagers/:id/testar` (enfileira toque de teste),
+`/pager/envios` (histórico). No `POST /chamadas` (pickup, já existia e aciona a TV da
+sala), se o checkin tem `pager_id` ativo → insere `kids_pager_envios`. Endpoints do
+agente (bearer token · bypassam JWT): `GET /pager/bridge/fila` + `POST
+/pager/bridge/envios/:id/resultado`. `POST /checkin` aceita `pager_id`.
+
+**Frontend:** nova aba **"Pagers"** em `/admin/totem-kids` (CRUD + cor + vínculo a
+responsável padrão + botão "Testar toque" + aviso do agente). No check-in
+(`TotemKidsCheckin.tsx`) um select opcional "Pager da família" (lista só ativos e não
+em uso). `api.js`: `totemKids.pagers.{list,create,update,remove,testar,emUso,envios}`.
+
+**Agente `pager-bridge/`:** `index.js` (poll da fila → LRSN/TCP → reporta) + `.env.example`
++ `README.md`. Roda com `npm start` (Node 18+). `DRY_RUN=1` testa sem hardware.
+
+**⚠️ Pendências operacionais (não-código):**
+- **Aplicar a migration** antes do merge (o backend chama as tabelas novas).
+- Definir `PAGER_BRIDGE_TOKEN` no **Vercel** (backend) e no `.env` do agente (mesmo valor).
+- Confirmar com a LRS que a **Ethernet do Freedom aceita paging local (NetPage/LRSN)** e
+  qual a **porta TCP** (`LRS_PORT`, default 5000 é chute). Se a Ethernet só servir SMS em
+  nuvem, habilitar NetPage ou usar um TX-7471 — o comando LRSN já está implementado.
+
 ## Monitoramento OKR · aba /monitoramento-okr (2026-06-02)
 
 Marcos pediu uma aba nova na **Inteligência** reproduzindo a planilha
