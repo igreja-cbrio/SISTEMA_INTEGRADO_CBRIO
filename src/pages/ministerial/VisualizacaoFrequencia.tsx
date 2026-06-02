@@ -4,12 +4,23 @@ import { kpis as kpisApi } from '../../api';
 import { Card, CardContent, CardHeader, CardTitle } from '../../components/ui/card';
 import { StatisticsCard } from '../../components/ui/statistics-card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../../components/ui/table';
-import { Users, Tv, Loader2, BarChart3, Calendar } from 'lucide-react';
+import { Users, Tv, Loader2, BarChart3, Calendar, Armchair } from 'lucide-react';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend,
 } from 'recharts';
 
 const C = { primary: '#00B39D', info: '#3b82f6', warn: '#f59e0b', purple: '#8b5cf6', pink: '#ec4899' };
+
+// Capacidade de assentos · usado pro % de ocupacao media.
+// Templo = 1200 lugares (Domingo, Quarta, AMI) · Kids = 250.
+const CAP_TEMPLO = 1200;
+const CAP_KIDS = 250;
+
+// Bridge e Online nao acontecem no templo → ficam de fora da ocupacao.
+// (Online nem e tipo de culto · so sai de graca por usarmos presencial.)
+const ehBridge = (nome: string) => /bridge/i.test(nome);
+const ehOnline = (nome: string) => /online/i.test(nome);
+const foraDoTemplo = (nome: string) => ehBridge(nome) || ehOnline(nome);
 
 type Culto = {
   id: string;
@@ -49,6 +60,9 @@ function dataInicio(mesesAtras: number): string {
 
 export default function VisualizacaoFrequencia() {
   const [range, setRange] = useState<RangeValue>('12m');
+  // Card de ocupacao · modo (templo/kids) + filtro por culto
+  const [modoOcup, setModoOcup] = useState<'templo' | 'kids'>('templo');
+  const [cultoOcup, setCultoOcup] = useState<string>('todos');
 
   // useQuery: cache de 5 min · trocar 3m↔6m↔12m sem refetch enquanto cache
   // estiver quente. Limit 5000 cobre 5 anos × 7 slots/sem × 52 sem = 1.820.
@@ -113,6 +127,42 @@ export default function VisualizacaoFrequencia() {
     return Array.from(map.values()).sort((a, b) => (b.presencial + b.kids + b.online) - (a.presencial + a.kids + a.online));
   }, [cultos]);
 
+  // Tipos de culto elegiveis pro seletor de ocupacao (exclui Bridge/Online).
+  // No modo Kids, so os tipos que tem presenca de kids registrada no periodo.
+  const tiposOcup = useMemo(() => {
+    const m = new Map<string, number>();
+    cultos.forEach(c => {
+      const nome = c.service_type_name || 'Sem tipo';
+      if (foraDoTemplo(nome)) return;
+      const val = modoOcup === 'templo' ? (c.presencial_adulto || 0) : (c.presencial_kids || 0);
+      m.set(nome, (m.get(nome) || 0) + val);
+    });
+    return Array.from(m.entries())
+      .filter(([, soma]) => modoOcup === 'templo' || soma > 0)
+      .map(([nome]) => nome)
+      .sort();
+  }, [cultos, modoOcup]);
+
+  // % medio de assentos ocupados · media da presenca por culto ÷ capacidade.
+  // Conta so cultos com presenca lancada (>0) no modo escolhido · culto sem
+  // dado nao derruba a media. Capacidade: Templo 1200 · Kids 250.
+  const ocupacao = useMemo(() => {
+    const cap = modoOcup === 'templo' ? CAP_TEMPLO : CAP_KIDS;
+    const alvo = (cultoOcup === 'todos' || tiposOcup.includes(cultoOcup)) ? cultoOcup : 'todos';
+    const valores: number[] = [];
+    cultos.forEach(c => {
+      const nome = c.service_type_name || 'Sem tipo';
+      if (foraDoTemplo(nome)) return;
+      if (alvo !== 'todos' && nome !== alvo) return;
+      const val = modoOcup === 'templo' ? (c.presencial_adulto || 0) : (c.presencial_kids || 0);
+      if (val > 0) valores.push(val);
+    });
+    if (valores.length === 0) return { pct: null as number | null, media: 0, nCultos: 0, cap, alvo };
+    const media = Math.round(valores.reduce((s, v) => s + v, 0) / valores.length);
+    const pct = Math.round((media / cap) * 1000) / 10; // 1 casa decimal
+    return { pct, media, nCultos: valores.length, cap, alvo };
+  }, [cultos, modoOcup, cultoOcup, tiposOcup]);
+
   if (loading) {
     return (
       <div className="flex items-center justify-center py-16">
@@ -170,6 +220,83 @@ export default function VisualizacaoFrequencia() {
           iconColor={C.primary}
         />
       </div>
+
+      {/* % medio de assentos ocupados · toggle Templo/Kids + filtro por culto */}
+      <Card>
+        <CardContent className="py-4 space-y-3">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="inline-flex rounded-xl border border-border p-0.5 bg-muted/30">
+                {(['templo', 'kids'] as const).map(m => (
+                  <button
+                    key={m}
+                    onClick={() => { setModoOcup(m); setCultoOcup('todos'); }}
+                    className={`px-3 py-1.5 text-xs font-medium rounded-lg transition-colors ${
+                      modoOcup === m ? 'bg-[#00B39D] text-white' : 'text-muted-foreground hover:text-foreground'
+                    }`}
+                  >
+                    {m === 'templo' ? 'Templo' : 'Kids'}
+                  </button>
+                ))}
+              </div>
+              <select
+                value={ocupacao.alvo}
+                onChange={e => setCultoOcup(e.target.value)}
+                className="h-9 px-3 rounded-lg border border-border bg-background text-xs"
+              >
+                <option value="todos">Todos os cultos</option>
+                {tiposOcup.map(nome => (
+                  <option key={nome} value={nome}>{nome}</option>
+                ))}
+              </select>
+            </div>
+            <span className="text-[11px] text-muted-foreground">
+              Capacidade: {ocupacao.cap.toLocaleString('pt-BR')} lugares
+            </span>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-x-6 gap-y-3">
+            <div className="rounded-lg p-2.5 shrink-0" style={{ background: `${C.primary}18` }}>
+              <Armchair className="h-6 w-6" style={{ color: C.primary }} />
+            </div>
+            <div className="flex-1 min-w-[200px]">
+              <p className="text-[11px] font-medium text-muted-foreground uppercase tracking-wider">
+                % médio de assentos ocupados · {modoOcup === 'templo' ? 'Templo' : 'Kids'}
+              </p>
+              <div className="flex items-baseline gap-2 mt-0.5">
+                <span className="text-3xl font-bold text-foreground">
+                  {ocupacao.pct != null ? `${ocupacao.pct}%` : '—'}
+                </span>
+                <span className="text-sm text-muted-foreground">
+                  {ocupacao.pct != null
+                    ? `${ocupacao.media.toLocaleString('pt-BR')} / ${ocupacao.cap.toLocaleString('pt-BR')} por culto`
+                    : 'sem dados'}
+                </span>
+              </div>
+              <p className="text-[11px] text-muted-foreground mt-1">
+                Média da presença {modoOcup === 'templo' ? 'presencial (adultos)' : 'de Kids'} ÷ capacidade ·{' '}
+                {ocupacao.alvo === 'todos' ? 'todos os cultos' : ocupacao.alvo} · período selecionado acima
+              </p>
+            </div>
+            {ocupacao.nCultos > 0 && (
+              <div className="flex gap-5 text-center shrink-0">
+                <div>
+                  <p className="text-lg font-semibold text-foreground">{ocupacao.media.toLocaleString('pt-BR')}</p>
+                  <p className="text-[10px] text-muted-foreground uppercase tracking-wide">média/culto</p>
+                </div>
+                <div>
+                  <p className="text-lg font-semibold text-foreground">{ocupacao.nCultos}</p>
+                  <p className="text-[10px] text-muted-foreground uppercase tracking-wide">cultos</p>
+                </div>
+                <div>
+                  <p className="text-lg font-semibold text-foreground">{ocupacao.cap.toLocaleString('pt-BR')}</p>
+                  <p className="text-[10px] text-muted-foreground uppercase tracking-wide">capacidade</p>
+                </div>
+              </div>
+            )}
+          </div>
+        </CardContent>
+      </Card>
 
       <Card>
         <CardHeader className="pb-2 flex flex-row items-center justify-between space-y-0">
