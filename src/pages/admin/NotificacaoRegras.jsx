@@ -26,6 +26,7 @@ const MODULOS = [
   { id: 'processos', label: 'Processos', desc: 'Novos processos, OKRs e acompanhamento de indicadores', color: '#00B39D' },
   { id: 'nps', label: 'NPS', desc: 'Novas pesquisas de satisfação, lembretes e análises', color: '#06b6d4' },
   { id: 'marketing', label: 'Marketing', desc: 'Cards atribuídos, prazo confirmado, preview pronto, entrega aprovada, revisão sugerida, gargalo de aprovação', color: '#ec4899' },
+  { id: 'producao', label: 'Produção de Culto', desc: 'Ocorrências críticas (falha técnica / estrutura) e novas solicitações da Produção', color: '#6366f1' },
 ];
 
 export default function NotificacaoRegras() {
