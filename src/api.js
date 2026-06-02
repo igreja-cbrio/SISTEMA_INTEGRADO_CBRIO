@@ -1564,10 +1564,21 @@ export const publicVoluntariado = {
     if (!r.ok) throw new Error(j.error || 'Erro ao enviar inscricao');
     return j;
   }),
+  formOpcoes: () => fetch(`${API}/public/voluntariado/form-opcoes`).then(async r => {
+    const j = await r.json().catch(() => ({}));
+    return j?.opcoes || [];
+  }),
 };
 
 // ── Voluntariado ──
 export const voluntariado = {
+  // Opcoes do formulario publico ("Onde voce quer servir")
+  formOpcoes: {
+    list: () => get('/voluntariado/form-opcoes'),
+    create: (data) => post('/voluntariado/form-opcoes', data),
+    update: (id, data) => put(`/voluntariado/form-opcoes/${id}`, data),
+    remove: (id) => del(`/voluntariado/form-opcoes/${id}`),
+  },
   // Inscricoes (funil recebidas vs alocadas, do formulario Google)
   inscricoesSummary: (params = {}) => {
     const qs = new URLSearchParams();

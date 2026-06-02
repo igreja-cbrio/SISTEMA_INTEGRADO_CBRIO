@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { publicVoluntariado } from '../../api';
 import AnimatedBackground from './AnimatedBackground';
 import { usePublicTheme, PublicThemeToggle, PublicPaletteCtx, usePublicPalette } from './publicTheme';
@@ -46,23 +46,39 @@ const DONS = [
   'Não sei ainda',
 ];
 
-const MINISTERIOS = [
-  'Kids',
-  'AMI',
-  'Bridge',
-  'Online',
-  'Recepção - Integração',
-  'Estacionamento - Integração',
-  'Intercessão - Integração',
-  'Check-in do voluntariado',
-  'Cozinha do voluntariado',
-  'Cuidados',
-  'Produção',
-  'Marketing - Fotografia',
-  'Marketing - Vídeo',
-  'Next',
-  'Grupos',
-  'Onde for mais necessário',
+interface OpcaoServir {
+  label: string;
+  area_canonica: string;
+  exige_dados_menor: boolean;
+  aviso_titulo?: string | null;
+  aviso_texto?: string | null;
+}
+
+// Fallback usado se o endpoint nao responder (ex: migration ainda nao aplicada).
+// As opcoes "de verdade" vem de GET /public/voluntariado/form-opcoes e sao
+// gerenciadas em /ministerial/voluntariado/admin (ativar/desativar/adicionar).
+const OPCOES_FALLBACK: OpcaoServir[] = [
+  { label: 'Kids', area_canonica: 'kids', exige_dados_menor: true,
+    aviso_titulo: 'Para servir no CBKids, precisamos de algumas informações específicas',
+    aviso_texto: 'Prezamos pelo bem-estar e segurança das nossas crianças, e para garantir que estamos proporcionando um ambiente seguro e confiável, realizamos a verificação de antecedentes criminais de todos os envolvidos. Assim, reforçamos nosso compromisso com a proteção e o cuidado contínuo de nossos pequenos.' },
+  { label: 'AMI', area_canonica: 'ami', exige_dados_menor: false },
+  { label: 'Bridge', area_canonica: 'bridge', exige_dados_menor: true,
+    aviso_titulo: 'Para servir no Bridge, precisamos de algumas informações específicas',
+    aviso_texto: 'Prezamos pelo bem-estar e segurança dos nossos adolescentes, e para garantir que estamos proporcionando um ambiente seguro e confiável, realizamos a verificação de antecedentes criminais de todos os envolvidos. Assim, reforçamos nosso compromisso com a proteção e o cuidado contínuo dos nossos jovens.' },
+  { label: 'Online', area_canonica: 'online', exige_dados_menor: false },
+  { label: 'Recepção - Integração', area_canonica: 'sede', exige_dados_menor: false },
+  { label: 'Estacionamento - Integração', area_canonica: 'sede', exige_dados_menor: false },
+  { label: 'Intercessão - Integração', area_canonica: 'sede', exige_dados_menor: false },
+  { label: 'Check-in do voluntariado', area_canonica: 'sede', exige_dados_menor: false },
+  { label: 'Cozinha do voluntariado', area_canonica: 'sede', exige_dados_menor: false },
+  { label: 'Cuidados', area_canonica: 'sede', exige_dados_menor: false },
+  { label: 'Louvor', area_canonica: 'sede', exige_dados_menor: false },
+  { label: 'Produção', area_canonica: 'sede', exige_dados_menor: false },
+  { label: 'Marketing - Fotografia', area_canonica: 'sede', exige_dados_menor: false },
+  { label: 'Marketing - Vídeo', area_canonica: 'sede', exige_dados_menor: false },
+  { label: 'Next', area_canonica: 'sede', exige_dados_menor: false },
+  { label: 'Grupos', area_canonica: 'sede', exige_dados_menor: false },
+  { label: 'Onde for mais necessário', area_canonica: 'sede', exige_dados_menor: false },
 ];
 
 // ── Componentes de UI (estilo identico ao InscricaoNext) ──
@@ -231,20 +247,40 @@ export default function InscricaoVoluntariado() {
     website: '', // honeypot
   });
   const [ministerios, setMinisterios] = useState<string[]>([]);
+  const [opcoes, setOpcoes] = useState<OpcaoServir[]>(OPCOES_FALLBACK);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [sent, setSent] = useState(false);
   const { C } = usePublicTheme();
 
+  // Opcoes vem do banco (gerenciadas no modulo de voluntariado). Fallback fica
+  // valendo se o endpoint nao responder.
+  useEffect(() => {
+    publicVoluntariado.formOpcoes()
+      .then((data: any[]) => {
+        if (Array.isArray(data) && data.length) {
+          setOpcoes(data.map(o => ({
+            label: o.label,
+            area_canonica: o.area_canonica || 'sede',
+            exige_dados_menor: !!o.exige_dados_menor,
+            aviso_titulo: o.aviso_titulo,
+            aviso_texto: o.aviso_texto,
+          })));
+        }
+      })
+      .catch(() => { /* mantem fallback */ });
+  }, []);
+
   const MAX_MINISTERIOS = 3;
-  // Areas que exigem dados do menor (LGPD): Kids e Bridge
-  const precisaDadosMenor = ministerios.includes('Kids') || ministerios.includes('Bridge');
-  // Deriva a area canonica (vol_inscricoes.area) a partir dos ministerios marcados
+  const selecionadas = opcoes.filter(o => ministerios.includes(o.label));
+  // Opcoes que exigem dados do menor (LGPD · CPF + nome da mae): Kids/Bridge.
+  const precisaDadosMenor = selecionadas.some(o => o.exige_dados_menor);
+  // Deriva a area canonica (vol_inscricoes.area) a partir das opcoes marcadas.
   const deriveArea = (mins: string[]): string => {
-    if (mins.includes('Kids')) return 'kids';
-    if (mins.includes('Bridge')) return 'bridge';
-    if (mins.includes('AMI')) return 'ami';
-    if (mins.includes('Online')) return 'online';
+    const areas = opcoes.filter(o => mins.includes(o.label)).map(o => o.area_canonica);
+    for (const a of ['kids', 'bridge', 'ami', 'online']) {
+      if (areas.includes(a)) return a;
+    }
     return 'sede';
   };
 
@@ -398,7 +434,8 @@ export default function InscricaoVoluntariado() {
                 Marque até {MAX_MINISTERIOS} áreas ({ministerios.length}/{MAX_MINISTERIOS}). Em dúvida, marque "Onde for mais necessário".
               </p>
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 20 }}>
-                {MINISTERIOS.map(m => {
+                {opcoes.map(o => {
+                  const m = o.label;
                   const checked = ministerios.includes(m);
                   const atingiuLimite = !checked && ministerios.length >= MAX_MINISTERIOS;
                   return (
@@ -409,26 +446,19 @@ export default function InscricaoVoluntariado() {
                 })}
               </div>
 
-              {[
-                ministerios.includes('Kids') && {
-                  titulo: 'Para servir no CBKids, precisamos de algumas informações específicas',
-                  corpo: 'Prezamos pelo bem-estar e segurança das nossas crianças, e para garantir que estamos proporcionando um ambiente seguro e confiável, realizamos a verificação de antecedentes criminais de todos os envolvidos. Assim, reforçamos nosso compromisso com a proteção e o cuidado contínuo de nossos pequenos.',
-                },
-                ministerios.includes('Bridge') && {
-                  titulo: 'Para servir no Bridge, precisamos de algumas informações específicas',
-                  corpo: 'Prezamos pelo bem-estar e segurança dos nossos adolescentes, e para garantir que estamos proporcionando um ambiente seguro e confiável, realizamos a verificação de antecedentes criminais de todos os envolvidos. Assim, reforçamos nosso compromisso com a proteção e o cuidado contínuo dos nossos jovens.',
-                },
-              ].filter(Boolean).map((aviso: any, i) => (
+              {selecionadas.filter(o => o.aviso_titulo).map((o, i) => (
                 <div key={i} style={{
                   background: '#00B39D14', border: '1px solid #00B39D40',
                   borderRadius: 12, padding: '14px 16px', marginBottom: 16,
                 }}>
                   <div style={{ fontSize: 13, fontWeight: 700, color: C.text, marginBottom: 6 }}>
-                    {aviso.titulo}
+                    {o.aviso_titulo}
                   </div>
-                  <p style={{ fontSize: 12.5, color: C.text3, lineHeight: 1.55, margin: 0 }}>
-                    {aviso.corpo}
-                  </p>
+                  {o.aviso_texto && (
+                    <p style={{ fontSize: 12.5, color: C.text3, lineHeight: 1.55, margin: 0 }}>
+                      {o.aviso_texto}
+                    </p>
+                  )}
                 </div>
               ))}
               {precisaDadosMenor && (

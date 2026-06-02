@@ -498,4 +498,27 @@ router.post('/inscrever-form', publicLimiter, async (req, res) => {
   }
 });
 
+// ---------------------------------------------------------------------------
+// GET /form-opcoes · opcoes ativas do formulario "Onde voce quer servir".
+// Publico (leitura de catalogo · sem PII). Cai num fallback vazio se a tabela
+// ainda nao existir (migration nao aplicada) pra nao quebrar o formulario.
+// ---------------------------------------------------------------------------
+router.get('/form-opcoes', async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('vol_form_opcoes')
+      .select('id, label, area_canonica, exige_dados_menor, aviso_titulo, aviso_texto')
+      .eq('ativo', true)
+      .order('ordem', { ascending: true });
+    if (error) {
+      console.warn('[PublicVol/form-opcoes]', error.message);
+      return res.json({ opcoes: [] });
+    }
+    res.json({ opcoes: data || [] });
+  } catch (e) {
+    console.error('[PublicVol/form-opcoes] error:', e.message);
+    res.json({ opcoes: [] });
+  }
+});
+
 module.exports = router;
