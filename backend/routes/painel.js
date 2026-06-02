@@ -1551,7 +1551,7 @@ router.get('/monitoramento-okr', async (req, res) => {
     const uma = async (fn) => { try { return await fn(); } catch (e) { console.warn('[monitoramento-okr]', e.message); return null; } };
     const num = (v) => (v == null ? null : Number(v));
 
-    const [nsmRow, batRatio, batMes, tempoBat, dsOnline, assentos, rotativ] = await Promise.all([
+    const [nsmRow, batRatio, batMes, tempoBat, dsOnline, assentos, rotativ, batSerie, dsSerie, assentosSerie] = await Promise.all([
       // NSM central · exatamente a estrela-guia do Juninho (engajados em ≤60d)
       uma(async () => {
         const r = await query(
@@ -1631,6 +1631,39 @@ router.get('/monitoramento-okr', async (req, res) => {
              FROM rh_funcionarios WHERE deleted_at IS NULL`);
         return r.rows[0] || null;
       }),
+      // Série mensal de batismos (6 meses completos) · expande OKR Batismos / Nº batismos
+      uma(async () => {
+        const r = await query(
+          `SELECT to_char(date_trunc('month', data_batismo),'YYYY-MM') mes, count(*)::int valor
+             FROM batismo_inscricoes
+            WHERE status='realizado' AND data_batismo IS NOT NULL AND deleted_at IS NULL
+              AND data_batismo >= date_trunc('month', CURRENT_DATE) - INTERVAL '6 months'
+              AND data_batismo <  date_trunc('month', CURRENT_DATE)
+            GROUP BY 1 ORDER BY 1`);
+        return r.rows;
+      }),
+      // Série mensal de decisões online (6 meses completos)
+      uma(async () => {
+        const r = await query(
+          `SELECT to_char(date_trunc('month', data),'YYYY-MM') mes, coalesce(sum(decisoes_online),0)::int valor
+             FROM cultos
+            WHERE data >= date_trunc('month', CURRENT_DATE) - INTERVAL '6 months'
+              AND data <  date_trunc('month', CURRENT_DATE) AND deleted_at IS NULL
+            GROUP BY 1 ORDER BY 1`);
+        return r.rows;
+      }),
+      // Série mensal de % de ocupação do Templo (6 meses completos)
+      uma(async () => {
+        const r = await query(
+          `SELECT to_char(date_trunc('month', c.data),'YYYY-MM') mes,
+                  round(avg(c.presencial_adulto)::numeric / 1200 * 100, 1)::float valor
+             FROM cultos c JOIN vol_service_types st ON st.id = c.service_type_id
+            WHERE c.data >= date_trunc('month', CURRENT_DATE) - INTERVAL '6 months'
+              AND c.data <  date_trunc('month', CURRENT_DATE)
+              AND c.presencial_adulto > 0 AND c.deleted_at IS NULL AND st.name NOT ILIKE '%bridge%'
+            GROUP BY 1 ORDER BY 1`);
+        return r.rows;
+      }),
     ]);
 
     const nsm = nsmRow ? {
@@ -1646,18 +1679,21 @@ router.get('/monitoramento-okr', async (req, res) => {
 
     // metricas[chave] = { valor, unidade, detalhe }. Só inclui o que tem dado real.
     const metricas = {};
-    const addM = (chave, valor, unidade, detalhe) => {
+    const serieFmt = (rows) => Array.isArray(rows) ? rows.map(r => ({ mes: r.mes, valor: Number(r.valor) })) : [];
+    const addM = (chave, valor, unidade, detalhe, serie) => {
       if (valor == null || Number.isNaN(valor)) return;
       metricas[chave] = { valor, unidade, detalhe };
+      if (serie && serie.length) metricas[chave].serie = serie;
     };
 
+    const batSerieFmt = serieFmt(batSerie);
     if (batRatio) {
       addM('okr_batismos', num(batRatio.pct), '%',
-        `${batRatio.batismos} batismos / ${batRatio.conversoes} convertidos (90 dias)`);
+        `${batRatio.batismos} batismos / ${batRatio.conversoes} convertidos (90 dias)`, batSerieFmt);
     }
     if (batMes && batMes.ultimo != null) {
       addM('batismos_mes', num(batMes.ultimo), '',
-        `${batMes.ultimo_label || 'último mês'} · média ${batMes.media ?? '—'}/mês`);
+        `${batMes.ultimo_label || 'último mês'} · média ${batMes.media ?? '—'}/mês`, batSerieFmt);
     }
     if (tempoBat && tempoBat.media_dias != null && Number(tempoBat.n) > 0) {
       addM('tempo_batismo', num(tempoBat.media_dias), ' dias',
@@ -1665,11 +1701,11 @@ router.get('/monitoramento-okr', async (req, res) => {
     }
     if (dsOnline) {
       addM('ds_online', num(dsOnline.ds_90d), '',
-        'decisões online nos últimos 90 dias');
+        'decisões online nos últimos 90 dias', serieFmt(dsSerie));
     }
     if (assentos && assentos.n > 0) {
       addM('assentos', num(assentos.pct), '%',
-        `${assentos.media_pres} de 1200 lugares · média do Templo (90 dias)`);
+        `${assentos.media_pres} de 1200 lugares · média do Templo (90 dias)`, serieFmt(assentosSerie));
     }
     if (rotativ) {
       const ativos = num(rotativ.ativos) || 0;
