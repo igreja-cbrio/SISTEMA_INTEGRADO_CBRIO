@@ -308,6 +308,15 @@ export default function Grupos() {
     } catch { toast.error('Erro ao remover'); }
   };
 
+  // Marca/desmarca um membro como "líder em treinamento" naquele grupo (opcional).
+  const handleToggleTreinamento = async (participacaoId, emTreino) => {
+    try {
+      await api.setFuncaoMembro(participacaoId, emTreino ? 'frequentador' : 'lider_treinamento');
+      toast.success(emTreino ? 'Removido de líder em treinamento' : 'Marcado como líder em treinamento');
+      loadDetail(selectedGrupo);
+    } catch (e) { toast.error(e.message || 'Erro ao atualizar função'); }
+  };
+
   const handleUploadMaterial = async (file) => {
     if (!file) return;
     if (file.size > 10 * 1024 * 1024) { toast.error('Arquivo deve ter no maximo 10MB'); return; }
@@ -533,6 +542,7 @@ export default function Grupos() {
                   <th style={{ padding: '8px 16px', textAlign: 'left', fontSize: 11, fontWeight: 600, color: C.t3, textTransform: 'uppercase' }}>Entrou em</th>
                   <th style={{ padding: '8px 16px', textAlign: 'center', fontSize: 11, fontWeight: 600, color: C.t3, textTransform: 'uppercase' }}>Presencas</th>
                   <th style={{ padding: '8px 16px', textAlign: 'center', fontSize: 11, fontWeight: 600, color: C.t3, textTransform: 'uppercase' }}>Tipo</th>
+                  <th style={{ padding: '8px 16px', textAlign: 'center', fontSize: 11, fontWeight: 600, color: C.t3, textTransform: 'uppercase' }}>Treino</th>
                   <th style={{ padding: '8px 16px', textAlign: 'center', fontSize: 11, fontWeight: 600, color: C.t3 }}></th>
                 </tr>
               </thead>
@@ -552,6 +562,32 @@ export default function Grupos() {
                       <span style={{ fontSize: 11, padding: '2px 8px', borderRadius: 99, background: m.is_visitante ? '#f59e0b20' : '#10b98120', color: m.is_visitante ? C.amber : C.green, fontWeight: 600 }}>
                         {m.is_visitante ? 'Visitante' : 'Membro'}
                       </span>
+                    </td>
+                    <td style={{ padding: '10px 16px', textAlign: 'center' }}>
+                      {(() => {
+                        const emTreino = m.funcao === 'lider_treinamento';
+                        if (podeEditarGrupos) {
+                          return (
+                            <button
+                              onClick={() => handleToggleTreinamento(m.participacao_id, emTreino)}
+                              title={emTreino ? 'Remover de líder em treinamento' : 'Marcar como líder em treinamento'}
+                              style={{
+                                fontSize: 11, padding: '2px 10px', borderRadius: 99, cursor: 'pointer', fontWeight: 600,
+                                display: 'inline-flex', alignItems: 'center', gap: 4,
+                                border: emTreino ? '1px solid #8b5cf6' : `1px dashed ${C.border}`,
+                                background: emTreino ? '#8b5cf620' : 'transparent',
+                                color: emTreino ? '#8b5cf6' : C.t3,
+                              }}>
+                              <GraduationCap size={12} /> {emTreino ? 'Em treino' : 'Marcar'}
+                            </button>
+                          );
+                        }
+                        return emTreino ? (
+                          <span style={{ fontSize: 11, padding: '2px 10px', borderRadius: 99, background: '#8b5cf620', color: '#8b5cf6', fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                            <GraduationCap size={12} /> Em treino
+                          </span>
+                        ) : <span style={{ fontSize: 11, color: C.t3 }}>—</span>;
+                      })()}
                     </td>
                     <td style={{ padding: '10px 16px', textAlign: 'center' }}>
                       <button onClick={() => handleRemoveMembro(m.participacao_id)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: C.red, fontSize: 11 }}><X size={14} /></button>
@@ -1692,8 +1728,9 @@ function MetricaCard({ label, valor, sufixo, cor }) {
 
 // ── RELATÓRIO DE KPIs DO MÓDULO (aba Relatórios) ──
 // Espelha o estilo dos relatórios de Integração: seletor de período + cards de
-// KPI + gráfico de frequência por mês + distribuição de papéis. Dados vêm de
-// uma RPC agregada (fn_grupos_kpis_relatorio) pra não bater no cap do PostgREST.
+// KPI + gráfico de frequência por mês + lista de líderes em treinamento. Os
+// números vêm da RPC agregada (fn_grupos_kpis_relatorio); a lista nominal de
+// líderes em treinamento, do endpoint /kpis/lideres-treinamento.
 const REL_RANGES = [
   { value: 3, label: '3 meses' },
   { value: 6, label: '6 meses' },
@@ -1706,20 +1743,11 @@ const relLabelMes = (ym) => {
   const [y, m] = ym.split('-');
   return `${REL_MESES_PT[parseInt(m, 10) - 1]}/${y.slice(2)}`;
 };
-const FUNCAO_LABELS = {
-  coordenador: 'Coordenadores',
-  supervisor: 'Supervisores',
-  co_lider: 'Co-líderes',
-  lider: 'Líderes',
-  lider_treinamento: 'Líderes em treinamento',
-  frequentador: 'Frequentadores',
-  visitante: 'Visitantes',
-};
-const FUNCAO_ORDEM = ['coordenador', 'supervisor', 'co_lider', 'lider', 'lider_treinamento', 'frequentador', 'visitante'];
 
 function RelatorioGrupos({ temporada }) {
   const [meses, setMeses] = useState(12);
   const [data, setData] = useState(null);
+  const [treino, setTreino] = useState([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -1727,18 +1755,19 @@ function RelatorioGrupos({ temporada }) {
     setLoading(true);
     const params = { meses };
     if (temporada) params.temporada = temporada;
-    api.relatorioKpis(params)
-      .then(d => { if (alive) setData(d); })
-      .catch(() => { if (alive) setData(null); })
+    const treinoParams = temporada ? { temporada } : undefined;
+    Promise.all([
+      api.relatorioKpis(params),
+      api.lideresTreinamento(treinoParams).catch(() => []),
+    ])
+      .then(([d, t]) => { if (alive) { setData(d); setTreino(Array.isArray(t) ? t : []); } })
+      .catch(() => { if (alive) { setData(null); setTreino([]); } })
       .finally(() => { if (alive) setLoading(false); });
     return () => { alive = false; };
   }, [meses, temporada]);
 
   const serie = (data?.frequencia?.serie || []).map(s => ({ ...s, mes: relLabelMes(s.ym) }));
   const nps = data?.satisfacao_lideres;
-  const funcoes = data?.funcoes || {};
-  const maxFuncao = Math.max(1, ...FUNCAO_ORDEM.map(f => funcoes[f] || 0));
-  const semPapeis = FUNCAO_ORDEM.every(f => !funcoes[f]);
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
@@ -1819,40 +1848,39 @@ function RelatorioGrupos({ temporada }) {
             </CardContent>
           </Card>
 
-          {/* Distribuição de papéis (substancia líderes e em treinamento) */}
+          {/* Líderes em treinamento · quem está em formação, por grupo */}
           <Card>
-            <CardHeader className="pb-2 flex flex-row items-center space-y-0">
+            <CardHeader className="pb-2 flex flex-row items-center justify-between space-y-0">
               <CardTitle className="text-sm font-medium flex items-center gap-2">
-                <Users className="h-4 w-4 text-muted-foreground" />
-                Distribuição de papéis
+                <GraduationCap className="h-4 w-4 text-muted-foreground" />
+                Líderes em treinamento
               </CardTitle>
+              <span className="text-xs text-muted-foreground">{treino.length} pessoa(s)</span>
             </CardHeader>
             <CardContent>
-              {semPapeis ? (
+              {treino.length === 0 ? (
                 <div style={{ padding: 24, textAlign: 'center', color: C.t3, fontSize: 13 }}>
-                  Nenhum papel atribuído ainda. Defina a função de cada membro nos grupos (líder em treinamento, supervisor, etc.) em Grupos · Supervisão.
+                  Nenhum líder em treinamento. Abra um grupo e marque um membro como "líder em treino" na lista de membros.
                 </div>
               ) : (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                  {FUNCAO_ORDEM.filter(f => funcoes[f]).map(f => {
-                    const n = funcoes[f] || 0;
-                    return (
-                      <div key={f} style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-                        <span style={{ fontSize: 12, color: C.t2, width: 170, flexShrink: 0 }}>{FUNCAO_LABELS[f] || f}</span>
-                        <div style={{ flex: 1, height: 8, borderRadius: 6, background: C.bg, overflow: 'hidden' }}>
-                          <div style={{ width: `${(n / maxFuncao) * 100}%`, height: '100%', borderRadius: 6, background: f === 'lider_treinamento' ? '#8b5cf6' : C.primary }} />
-                        </div>
-                        <span style={{ fontSize: 13, fontWeight: 700, color: C.text, width: 40, textAlign: 'right' }}>{n}</span>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                  {treino.map(t => (
+                    <div key={t.participacao_id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 4px', borderBottom: `1px solid ${C.border}` }}>
+                      <div style={{ width: 30, height: 30, borderRadius: '50%', background: t.foto_url ? `url(${t.foto_url}) center/cover` : '#8b5cf620', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, fontSize: 12, fontWeight: 700, color: '#8b5cf6' }}>
+                        {!t.foto_url && (t.nome?.charAt(0) || '?')}
                       </div>
-                    );
-                  })}
+                      <span style={{ fontSize: 13, fontWeight: 600, color: C.text, flex: 1, minWidth: 0 }}>{t.nome}</span>
+                      <span style={{ fontSize: 12, color: C.t2 }}>{t.grupo_nome}</span>
+                      {t.desde && <span style={{ fontSize: 11, color: C.t3, width: 96, textAlign: 'right' }}>desde {fmtDate(t.desde)}</span>}
+                    </div>
+                  ))}
                 </div>
               )}
             </CardContent>
           </Card>
 
           <div style={{ fontSize: 11, color: C.t3, lineHeight: 1.6 }}>
-            <strong>Fontes:</strong> grupos ativos e líderes vêm do cadastro de grupos; líderes em treinamento e a distribuição de papéis, da função de cada membro no grupo; a frequência, das chamadas dos encontros; a satisfação dos líderes, do último NPS registrado em Dados Brutos (tipo "NPS dos líderes").
+            <strong>Fontes:</strong> grupos ativos e líderes (responsáveis pelos grupos) vêm do cadastro de grupos; líderes em treinamento, dos membros marcados como tal em cada grupo; a frequência, das chamadas dos encontros; a satisfação dos líderes, do último NPS registrado em Dados Brutos (tipo "NPS dos líderes").
           </div>
         </>
       )}

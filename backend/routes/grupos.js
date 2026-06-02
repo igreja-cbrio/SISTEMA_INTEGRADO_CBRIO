@@ -494,6 +494,44 @@ router.get('/kpis/relatorio', async (req, res) => {
   }
 });
 
+// GET /api/grupos/kpis/lideres-treinamento — lista os lideres em treinamento
+// (funcao='lider_treinamento') dos grupos ativos, com nome e grupo. Volume
+// pequeno (poucos por vez); alimenta o detalhamento da aba Relatorios.
+router.get('/kpis/lideres-treinamento', async (req, res) => {
+  try {
+    const { temporada } = req.query;
+    let gq = supabase.from('mem_grupos').select('id, nome').is('deleted_at', null).eq('ativo', true);
+    if (temporada) gq = gq.eq('temporada', temporada);
+    const { data: grupos, error: gErr } = await gq;
+    if (gErr) throw gErr;
+    const grupoIds = (grupos || []).map(g => g.id);
+    if (!grupoIds.length) return res.json([]);
+    const nomeGrupo = Object.fromEntries((grupos || []).map(g => [g.id, g.nome]));
+
+    const { data: membros, error } = await supabase.from('mem_grupo_membros')
+      .select('id, membro_id, grupo_id, entrou_em, mem_membros(nome, foto_url)')
+      .eq('funcao', 'lider_treinamento')
+      .is('saiu_em', null)
+      .is('deleted_at', null)
+      .in('grupo_id', grupoIds);
+    if (error) throw error;
+
+    const list = (membros || []).map(m => ({
+      participacao_id: m.id,
+      membro_id: m.membro_id,
+      nome: m.mem_membros?.nome || '—',
+      foto_url: m.mem_membros?.foto_url || null,
+      grupo_id: m.grupo_id,
+      grupo_nome: nomeGrupo[m.grupo_id] || '—',
+      desde: m.entrou_em,
+    })).sort((a, b) => (a.grupo_nome || '').localeCompare(b.grupo_nome || ''));
+    res.json(list);
+  } catch (e) {
+    console.error('[Grupos lideres-treinamento]', e.message);
+    res.status(500).json({ error: 'Erro ao listar lideres em treinamento' });
+  }
+});
+
 // ══════════════════════════════════════════════
 // BUSCA E PEDIDOS DE INSCRICAO (rotas especificas antes de /:id)
 // ══════════════════════════════════════════════
@@ -1023,6 +1061,7 @@ router.get('/:id', async (req, res) => {
       entrou_em: p.entrou_em,
       presencas: p.presencas || 0,
       is_visitante: (p.presencas || 0) < 3,
+      funcao: p.funcao || 'frequentador',
       ...p.mem_membros,
     }));
 
@@ -1589,8 +1628,18 @@ router.put('/membros/:membroRowId/funcao', async (req, res) => {
     if (!VALIDAS.includes(funcao)) {
       return res.status(400).json({ error: `funcao deve ser uma de: ${VALIDAS.join(', ')}` });
     }
-    const { papel } = await getMeuPerfilGrupo(req.user.userId, req.user.role);
-    if (!['admin', 'coordenador', 'supervisor'].includes(papel)) {
+    // Autoriza quem edita grupos (mesma regra de podeEditarGrupos no front:
+    // admin/diretor ou nível >=3 no módulo grupos) OU papel da hierarquia
+    // (coordenador/supervisor). O módulo de permissões é a fonte canônica.
+    const isAdminRole = ['admin', 'diretor'].includes(req.user.role);
+    const gp = req.user.granular?.modulePerms?.grupos || {};
+    const editaGrupos = isAdminRole || (gp.escrita ?? 0) >= 3 || (gp.leitura ?? 0) >= 3;
+    let autorizado = editaGrupos;
+    if (!autorizado) {
+      const { papel } = await getMeuPerfilGrupo(req.user.userId, req.user.role);
+      autorizado = ['admin', 'coordenador', 'supervisor'].includes(papel);
+    }
+    if (!autorizado) {
       return res.status(403).json({ error: 'Sem permissao' });
     }
     const { data, error } = await supabase
