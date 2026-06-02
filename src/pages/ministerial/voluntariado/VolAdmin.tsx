@@ -8,6 +8,7 @@ import { Search, UserMinus, History, Loader2, Stethoscope, ChevronDown, ChevronR
 import { useAllVolUsers, useAddVolRole, useRemoveVolRole, useSyncHistorical } from './hooks';
 import { toast } from 'sonner';
 import { voluntariado } from '@/api';
+import FormOpcoesManager from './components/FormOpcoesManager';
 
 export default function VolAdmin() {
   const { data: users = [], isLoading } = useAllVolUsers();
@@ -73,6 +74,9 @@ export default function VolAdmin() {
   return (
     <div className="space-y-6">
       <h1 className="text-2xl font-bold text-foreground">Administracao</h1>
+
+      {/* Opcoes do formulario publico */}
+      <FormOpcoesManager />
 
       {/* PC Diagnostics */}
       <Card>
