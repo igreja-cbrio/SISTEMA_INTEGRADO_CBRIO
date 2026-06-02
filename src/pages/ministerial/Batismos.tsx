@@ -13,7 +13,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '../../components/ui/ca
 import {
   Droplets, Loader2, Search, Plus, Calendar, Phone, Mail, AlertCircle,
   CheckCircle2, Clock, XCircle, ChevronRight, User, IdCard, FileText, BarChart3,
-  Share2, Copy, Check,
+  Share2, Copy, Check, Hourglass,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import {
@@ -49,6 +49,9 @@ type BatismoInscricao = {
   possui_deficiencia?: boolean;
   deficiencia_descricao?: string | null;
   endereco?: string | null;
+  // Jornada · tempo de conversao ate o batismo (vem enriquecido do backend)
+  data_conversao?: string | null;       // etapa 'conversao' da trilha (data_conclusao)
+  dias_conversao_batismo?: number | null; // data_batismo - data_conversao, em dias
 };
 
 const CATEGORIA_LABEL: Record<CategoriaEtaria, string> = {
@@ -223,6 +226,23 @@ export default function Batismos() {
     }));
   }, [list]);
 
+  // Tempo de conversao ate o batismo · visao geral (media em dias entre os
+  // batismos JA realizados que tem data de conversao registrada na jornada).
+  // Ignora valores negativos (conversao posterior ao batismo = inconsistencia).
+  const tempoConversao = useMemo(() => {
+    const dias = list
+      .filter(b => b.status === 'realizado' && b.dias_conversao_batismo != null && (b.dias_conversao_batismo as number) >= 0)
+      .map(b => b.dias_conversao_batismo as number);
+    if (dias.length === 0) return { media: null as number | null, n: 0, min: null as number | null, max: null as number | null };
+    const soma = dias.reduce((s, d) => s + d, 0);
+    return {
+      media: Math.round(soma / dias.length),
+      n: dias.length,
+      min: Math.min(...dias),
+      max: Math.max(...dias),
+    };
+  }, [list]);
+
   const linkPublico = typeof window !== 'undefined'
     ? `${window.location.origin}/inscricao-batismo`
     : '/inscricao-batismo';
@@ -292,6 +312,47 @@ export default function Batismos() {
           iconColor={C.purple}
         />
       </div>
+
+      {/* Tempo medio de conversao ate o batismo · visao geral (todos os membros) */}
+      <Card>
+        <CardContent className="py-4 flex flex-wrap items-center gap-x-6 gap-y-3">
+          <div className="rounded-lg p-2.5 shrink-0" style={{ background: `${C.info}18` }}>
+            <Hourglass className="h-6 w-6" style={{ color: C.info }} />
+          </div>
+          <div className="flex-1 min-w-[200px]">
+            <p className="text-[11px] font-medium text-muted-foreground uppercase tracking-wider">
+              Tempo médio de conversão até o batismo
+            </p>
+            <div className="flex items-baseline gap-2 mt-0.5">
+              <span className="text-3xl font-bold text-foreground">
+                {tempoConversao.media != null ? tempoConversao.media : '—'}
+              </span>
+              <span className="text-sm text-muted-foreground">
+                {tempoConversao.media != null ? 'dias' : 'sem dados'}
+              </span>
+            </div>
+            <p className="text-[11px] text-muted-foreground mt-1">
+              Da decisão (conversão) até o batismo realizado · base na jornada de cada membro
+            </p>
+          </div>
+          {tempoConversao.n > 0 && (
+            <div className="flex gap-5 text-center shrink-0">
+              <div>
+                <p className="text-lg font-semibold text-foreground">{tempoConversao.n}</p>
+                <p className="text-[10px] text-muted-foreground uppercase tracking-wide">membros</p>
+              </div>
+              <div>
+                <p className="text-lg font-semibold text-foreground">{tempoConversao.min}</p>
+                <p className="text-[10px] text-muted-foreground uppercase tracking-wide">mín (dias)</p>
+              </div>
+              <div>
+                <p className="text-lg font-semibold text-foreground">{tempoConversao.max}</p>
+                <p className="text-[10px] text-muted-foreground uppercase tracking-wide">máx (dias)</p>
+              </div>
+            </div>
+          )}
+        </CardContent>
+      </Card>
 
       {/* Grafico de barras · batismos realizados por mes (ultimos 12 meses) */}
       <Card>
@@ -509,6 +570,16 @@ function ModalDetalheBatismo({ batismo, onClose, onSaved }: {
   const [deficienciaDescricao, setDeficienciaDescricao] = useState(batismo.deficiencia_descricao || '');
   const [saving, setSaving] = useState(false);
 
+  // Tempo de conversao ate o batismo deste membro · recalcula ao vivo conforme
+  // a data do batismo e editada. data_conversao vem da jornada (trilha).
+  const diasConversao = useMemo(() => {
+    if (!batismo.data_conversao || !dataBatismo) return null;
+    return Math.round(
+      (new Date(`${dataBatismo}T12:00:00`).getTime()
+        - new Date(`${batismo.data_conversao}T12:00:00`).getTime()) / 86400000,
+    );
+  }, [batismo.data_conversao, dataBatismo]);
+
   const handleSave = async () => {
     setSaving(true);
     try {
@@ -578,6 +649,34 @@ function ModalDetalheBatismo({ batismo, onClose, onSaved }: {
               </div>
             )}
           </div>
+
+          {/* Tempo de conversao ate o batismo · especifico deste membro */}
+          {batismo.membro_id && (
+            <div className="rounded-xl border border-sky-200 bg-sky-50/50 dark:bg-sky-950/20 dark:border-sky-900/40 p-3 text-xs text-sky-900 dark:text-sky-200">
+              <div className="flex items-center gap-2 font-medium">
+                <Hourglass className="h-4 w-4" />
+                Tempo de conversão até o batismo
+              </div>
+              {batismo.data_conversao ? (
+                diasConversao != null ? (
+                  <p className="mt-1">
+                    <strong className="text-base">{diasConversao} dia{diasConversao === 1 ? '' : 's'}</strong>
+                    {' — conversão em '}{ymdLocal(batismo.data_conversao)}
+                    {dataBatismo ? ` · batismo em ${ymdLocal(dataBatismo)}` : ''}
+                    {diasConversao < 0 ? ' · verificar datas (conversão posterior ao batismo)' : ''}
+                  </p>
+                ) : (
+                  <p className="mt-1 text-sky-800/80 dark:text-sky-300/80">
+                    Conversão em {ymdLocal(batismo.data_conversao)} · defina a data do batismo abaixo para calcular o tempo.
+                  </p>
+                )
+              ) : (
+                <p className="mt-1 text-sky-800/80 dark:text-sky-300/80">
+                  Sem data de conversão registrada na jornada deste membro.
+                </p>
+              )}
+            </div>
+          )}
 
           {batismo.status === 'pendente' && status === 'confirmado' && (
             <div className="rounded-xl border border-emerald-200 bg-emerald-50/40 dark:bg-emerald-950/20 dark:border-emerald-900/40 p-3 flex gap-2 text-xs text-emerald-800 dark:text-emerald-200">

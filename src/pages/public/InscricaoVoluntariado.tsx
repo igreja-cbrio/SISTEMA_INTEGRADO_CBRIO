@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { publicVoluntariado } from '../../api';
 import AnimatedBackground from './AnimatedBackground';
 import { usePublicTheme, PublicThemeToggle, PublicPaletteCtx, usePublicPalette } from './publicTheme';
@@ -39,33 +39,46 @@ function cpfValido(v: string) {
 
 // ── Catalogos (espelham os valores reais que ja existem em vol_inscricoes) ──
 const DONS = [
-  'Encorajamento', 'Hospitalidade', 'Ensino', 'Lideranca', 'Ajuda',
-  'Generosidade', 'Misericordia', 'Cura', 'Fe', 'Sabedoria',
-  'Conhecimento', 'Profecia', 'Discernimento', 'Servico',
-  'Administracao', 'Pastoreio', 'Evangelismo', 'Criatividade Artistica',
-  'Nao sei ainda',
+  'Encorajamento', 'Hospitalidade', 'Ensino', 'Liderança', 'Ajuda',
+  'Generosidade', 'Misericórdia', 'Cura', 'Fé', 'Sabedoria',
+  'Conhecimento', 'Profecia', 'Discernimento', 'Serviço',
+  'Administração', 'Pastoreio', 'Evangelismo', 'Criatividade Artística',
+  'Não sei ainda',
 ];
 
-const MINISTERIOS = [
-  'Kids',
-  'AMI',
-  'Bridge',
-  'Online',
-  'Recepcao - Integracao',
-  'Estacionamento - Integracao',
-  'Check-in do voluntariado',
-  'Cozinha do voluntariado',
-  'Capelania - Cuidados',
-  'Aconselhamento - Cuidados',
-  'Producao',
-  'Marketing - Fotografia',
-  'Marketing - Video',
-  'Logistica',
-  'Next',
-  'Grupos',
-  'Generosidade',
-  'Oracao',
-  'Onde for mais necessario',
+interface OpcaoServir {
+  label: string;
+  area_canonica: string;
+  exige_dados_menor: boolean;
+  aviso_titulo?: string | null;
+  aviso_texto?: string | null;
+}
+
+// Fallback usado se o endpoint nao responder (ex: migration ainda nao aplicada).
+// As opcoes "de verdade" vem de GET /public/voluntariado/form-opcoes e sao
+// gerenciadas em /ministerial/voluntariado/admin (ativar/desativar/adicionar).
+const OPCOES_FALLBACK: OpcaoServir[] = [
+  { label: 'Kids', area_canonica: 'kids', exige_dados_menor: true,
+    aviso_titulo: 'Para servir no CBKids, precisamos de algumas informações específicas',
+    aviso_texto: 'Prezamos pelo bem-estar e segurança das nossas crianças, e para garantir que estamos proporcionando um ambiente seguro e confiável, realizamos a verificação de antecedentes criminais de todos os envolvidos. Assim, reforçamos nosso compromisso com a proteção e o cuidado contínuo de nossos pequenos.' },
+  { label: 'AMI', area_canonica: 'ami', exige_dados_menor: false },
+  { label: 'Bridge', area_canonica: 'bridge', exige_dados_menor: true,
+    aviso_titulo: 'Para servir no Bridge, precisamos de algumas informações específicas',
+    aviso_texto: 'Prezamos pelo bem-estar e segurança dos nossos adolescentes, e para garantir que estamos proporcionando um ambiente seguro e confiável, realizamos a verificação de antecedentes criminais de todos os envolvidos. Assim, reforçamos nosso compromisso com a proteção e o cuidado contínuo dos nossos jovens.' },
+  { label: 'Online', area_canonica: 'online', exige_dados_menor: false },
+  { label: 'Recepção - Integração', area_canonica: 'sede', exige_dados_menor: false },
+  { label: 'Estacionamento - Integração', area_canonica: 'sede', exige_dados_menor: false },
+  { label: 'Intercessão - Integração', area_canonica: 'sede', exige_dados_menor: false },
+  { label: 'Check-in do voluntariado', area_canonica: 'sede', exige_dados_menor: false },
+  { label: 'Cozinha do voluntariado', area_canonica: 'sede', exige_dados_menor: false },
+  { label: 'Cuidados', area_canonica: 'sede', exige_dados_menor: false },
+  { label: 'Louvor', area_canonica: 'sede', exige_dados_menor: false },
+  { label: 'Produção', area_canonica: 'sede', exige_dados_menor: false },
+  { label: 'Marketing - Fotografia', area_canonica: 'sede', exige_dados_menor: false },
+  { label: 'Marketing - Vídeo', area_canonica: 'sede', exige_dados_menor: false },
+  { label: 'Next', area_canonica: 'sede', exige_dados_menor: false },
+  { label: 'Grupos', area_canonica: 'sede', exige_dados_menor: false },
+  { label: 'Onde for mais necessário', area_canonica: 'sede', exige_dados_menor: false },
 ];
 
 // ── Componentes de UI (estilo identico ao InscricaoNext) ──
@@ -234,20 +247,40 @@ export default function InscricaoVoluntariado() {
     website: '', // honeypot
   });
   const [ministerios, setMinisterios] = useState<string[]>([]);
+  const [opcoes, setOpcoes] = useState<OpcaoServir[]>(OPCOES_FALLBACK);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [sent, setSent] = useState(false);
   const { C } = usePublicTheme();
 
+  // Opcoes vem do banco (gerenciadas no modulo de voluntariado). Fallback fica
+  // valendo se o endpoint nao responder.
+  useEffect(() => {
+    publicVoluntariado.formOpcoes()
+      .then((data: any[]) => {
+        if (Array.isArray(data) && data.length) {
+          setOpcoes(data.map(o => ({
+            label: o.label,
+            area_canonica: o.area_canonica || 'sede',
+            exige_dados_menor: !!o.exige_dados_menor,
+            aviso_titulo: o.aviso_titulo,
+            aviso_texto: o.aviso_texto,
+          })));
+        }
+      })
+      .catch(() => { /* mantem fallback */ });
+  }, []);
+
   const MAX_MINISTERIOS = 3;
-  // Areas que exigem dados do menor (LGPD): Kids e Bridge
-  const precisaDadosMenor = ministerios.includes('Kids') || ministerios.includes('Bridge');
-  // Deriva a area canonica (vol_inscricoes.area) a partir dos ministerios marcados
+  const selecionadas = opcoes.filter(o => ministerios.includes(o.label));
+  // Opcoes que exigem dados do menor (LGPD · CPF + nome da mae): Kids/Bridge.
+  const precisaDadosMenor = selecionadas.some(o => o.exige_dados_menor);
+  // Deriva a area canonica (vol_inscricoes.area) a partir das opcoes marcadas.
   const deriveArea = (mins: string[]): string => {
-    if (mins.includes('Kids')) return 'kids';
-    if (mins.includes('Bridge')) return 'bridge';
-    if (mins.includes('AMI')) return 'ami';
-    if (mins.includes('Online')) return 'online';
+    const areas = opcoes.filter(o => mins.includes(o.label)).map(o => o.area_canonica);
+    for (const a of ['kids', 'bridge', 'ami', 'online']) {
+      if (areas.includes(a)) return a;
+    }
     return 'sede';
   };
 
@@ -262,7 +295,7 @@ export default function InscricaoVoluntariado() {
     setMinisterios(prev => {
       if (prev.includes(m)) return prev.filter(x => x !== m);
       if (prev.length >= MAX_MINISTERIOS) {
-        setError(`Voce pode escolher ate ${MAX_MINISTERIOS} areas.`);
+        setError(`Você pode escolher até ${MAX_MINISTERIOS} áreas.`);
         return prev;
       }
       setError('');
@@ -275,12 +308,13 @@ export default function InscricaoVoluntariado() {
     setError('');
     if (!form.nome || form.nome.trim().length < 2) return setError('Informe seu nome');
     if (!form.sobrenome || form.sobrenome.trim().length < 1) return setError('Informe seu sobrenome');
-    if (!form.email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email)) return setError('Email invalido');
-    if (!form.telefone || soDigitos(form.telefone).length < 10) return setError('Telefone invalido');
-    if (form.cpf && !cpfValido(form.cpf)) return setError('CPF invalido');
-    if (ministerios.length === 0) return setError('Escolha ao menos uma area pra servir');
-    if (precisaDadosMenor && !form.data_nascimento) return setError('Data de nascimento obrigatoria para Kids/Bridge');
-    if (precisaDadosMenor && (!form.nome_mae || form.nome_mae.trim().length < 2)) return setError('Nome da mae obrigatorio para Kids/Bridge');
+    if (!form.email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email)) return setError('E-mail inválido');
+    if (!form.telefone || soDigitos(form.telefone).length < 10) return setError('Telefone inválido');
+    if (precisaDadosMenor && !form.cpf) return setError('Informe seu CPF');
+    if (form.cpf && !cpfValido(form.cpf)) return setError('CPF inválido');
+    if (!form.data_nascimento) return setError('Informe sua data de nascimento');
+    if (ministerios.length === 0) return setError('Escolha ao menos uma área pra servir');
+    if (precisaDadosMenor && (!form.nome_mae || form.nome_mae.trim().length < 2)) return setError('Nome da mãe obrigatório para Kids/Bridge');
 
     setLoading(true);
     try {
@@ -300,7 +334,7 @@ export default function InscricaoVoluntariado() {
       });
       setSent(true);
     } catch (err: any) {
-      setError(err?.message || 'Erro ao enviar inscricao');
+      setError(err?.message || 'Erro ao enviar inscrição');
     }
     setLoading(false);
   };
@@ -328,11 +362,11 @@ export default function InscricaoVoluntariado() {
             style={{ width: 72, height: 72, marginBottom: 12, display: 'inline-block' }}
           />
           <h1 style={{ fontSize: 24, fontWeight: 800, margin: 0, letterSpacing: -0.5, background: 'linear-gradient(90deg, #00B39D, #00d9bd)', WebkitBackgroundClip: 'text', backgroundClip: 'text', color: 'transparent' }}>
-            Quero ser voluntario
+            Quero ser voluntário
           </h1>
           <p style={{ fontSize: 13, color: C.text3, marginTop: 6, lineHeight: 1.5 }}>
-            Sirva com a gente · cada dom encontra um lugar. Conte um pouco sobre voce
-            e nossa equipe entra em contato pra te conectar com a area certa.
+            Sirva com a gente · cada dom encontra um lugar. Conte um pouco sobre você
+            e nossa equipe entra em contato pra te conectar com a área certa.
           </p>
         </div>
 
@@ -348,11 +382,11 @@ export default function InscricaoVoluntariado() {
               fontSize: 28, marginBottom: 16,
             }}>&#10003;</div>
             <h2 style={{ fontSize: 18, fontWeight: 700, color: C.text, margin: 0 }}>
-              Inscricao recebida!
+              Inscrição recebida!
             </h2>
             <p style={{ fontSize: 13, color: C.text3, marginTop: 10, lineHeight: 1.5 }}>
-              Recebemos sua inscricao. Em ate 7 dias nossa equipe entra em contato
-              pelo WhatsApp ou email pra falar dos proximos passos. Obrigado por
+              Recebemos sua inscrição. Em até 7 dias nossa equipe entra em contato
+              pelo WhatsApp ou e-mail pra falar dos próximos passos. Obrigado por
               querer servir com a gente!
             </p>
           </div>
@@ -380,37 +414,28 @@ export default function InscricaoVoluntariado() {
                 <Field id="nome" label="Nome" value={form.nome} onChange={set('nome')} required autoComplete="given-name" />
                 <Field id="sobrenome" label="Sobrenome" value={form.sobrenome} onChange={set('sobrenome')} required autoComplete="family-name" />
               </Row>
-              <Field id="email" label="Email" type="email" value={form.email} onChange={set('email')} required autoComplete="email" inputMode="email" />
+              <Field id="email" label="E-mail" type="email" value={form.email} onChange={set('email')} required autoComplete="email" inputMode="email" />
               <Row>
                 <Field id="telefone" label="Telefone (WhatsApp)" value={form.telefone} onChange={set('telefone')} required placeholder="(00) 00000-0000" inputMode="tel" autoComplete="tel" />
-                <Field id="cpf" label="CPF (opcional)" value={form.cpf} onChange={set('cpf')} placeholder="000.000.000-00" inputMode="numeric" autoComplete="off" />
+                <Field id="cpf" label={precisaDadosMenor ? 'CPF' : 'CPF (opcional)'} value={form.cpf} onChange={set('cpf')} required={precisaDadosMenor} placeholder="000.000.000-00" inputMode="numeric" autoComplete="off" />
               </Row>
               <Field
                 id="data_nascimento"
-                label={precisaDadosMenor ? 'Data de nascimento' : 'Data de nascimento (opcional)'}
+                label="Data de nascimento"
                 type="date"
                 value={form.data_nascimento}
                 onChange={set('data_nascimento')}
-                required={precisaDadosMenor}
+                required
                 autoComplete="bday"
               />
-              {precisaDadosMenor && (
-                <Field
-                  id="nome_mae"
-                  label="Nome da mae"
-                  value={form.nome_mae}
-                  onChange={set('nome_mae')}
-                  required
-                />
-              )}
 
-              <SectionTitle>Onde voce quer servir</SectionTitle>
+              <SectionTitle>Onde você quer servir</SectionTitle>
               <p style={{ fontSize: 12, color: C.text3, marginTop: -6, marginBottom: 14 }}>
-                Marque ate {MAX_MINISTERIOS} areas ({ministerios.length}/{MAX_MINISTERIOS}). Em duvida, marca "Onde for mais necessario".
-                {precisaDadosMenor && ' Kids/Bridge pedem data de nascimento e nome da mae acima.'}
+                Marque até {MAX_MINISTERIOS} áreas ({ministerios.length}/{MAX_MINISTERIOS}). Em dúvida, marque "Onde for mais necessário".
               </p>
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 20 }}>
-                {MINISTERIOS.map(m => {
+                {opcoes.map(o => {
+                  const m = o.label;
                   const checked = ministerios.includes(m);
                   const atingiuLimite = !checked && ministerios.length >= MAX_MINISTERIOS;
                   return (
@@ -421,15 +446,40 @@ export default function InscricaoVoluntariado() {
                 })}
               </div>
 
-              <SectionTitle>Sua historia com a gente</SectionTitle>
+              {selecionadas.filter(o => o.aviso_titulo).map((o, i) => (
+                <div key={i} style={{
+                  background: '#00B39D14', border: '1px solid #00B39D40',
+                  borderRadius: 12, padding: '14px 16px', marginBottom: 16,
+                }}>
+                  <div style={{ fontSize: 13, fontWeight: 700, color: C.text, marginBottom: 6 }}>
+                    {o.aviso_titulo}
+                  </div>
+                  {o.aviso_texto && (
+                    <p style={{ fontSize: 12.5, color: C.text3, lineHeight: 1.55, margin: 0 }}>
+                      {o.aviso_texto}
+                    </p>
+                  )}
+                </div>
+              ))}
+              {precisaDadosMenor && (
+                <Field
+                  id="nome_mae"
+                  label="Nome da mãe"
+                  value={form.nome_mae}
+                  onChange={set('nome_mae')}
+                  required
+                />
+              )}
+
+              <SectionTitle>Sua história com a gente</SectionTitle>
               <SelectField
                 id="participou_next"
-                label="Voce ja participou do NEXT?"
+                label="Você já participou do NEXT?"
                 value={form.participou_next}
                 onChange={set('participou_next') as any}
                 options={[
-                  { value: 'Sim', label: 'Sim, ja participei' },
-                  { value: 'Nao', label: 'Ainda nao' },
+                  { value: 'Sim', label: 'Sim, já participei' },
+                  { value: 'Nao', label: 'Ainda não' },
                 ]}
               />
               <SelectField
@@ -451,13 +501,13 @@ export default function InscricaoVoluntariado() {
                   marginTop: 12, transition: 'background 0.2s',
                 }}
               >
-                {loading ? 'Enviando...' : 'Confirmar inscricao'}
+                {loading ? 'Enviando...' : 'Confirmar inscrição'}
               </button>
 
               <p style={{
                 fontSize: 11, color: C.textDim, textAlign: 'center', marginTop: 16, lineHeight: 1.5,
               }}>
-                Ao se inscrever, voce concorda em receber contato da equipe da CBRio sobre
+                Ao se inscrever, você concorda em receber contato da equipe da CBRio sobre
                 voluntariado e oportunidades de servir.
               </p>
             </form>

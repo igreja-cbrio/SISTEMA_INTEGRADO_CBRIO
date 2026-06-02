@@ -42,6 +42,33 @@ Express casa `/kpis` como `/:id`).
 `RelatorioGrupos` no fim de `Grupos.jsx`; aba `relatorios` (ícone `BarChart3`)
 logo após "Grupos" na barra de abas.
 
+## Batismos · tempo de conversão até o batismo (2026-06-02 · sem migration)
+
+Marcos: mostrar, na área de Batismos (`/integracao` aba Batismos), o **tempo de
+conversão até o batismo** — por pessoa (na janela do membro) e uma média geral
+em dias de todos os membros batizados.
+
+- **Data de conversão** = `mem_trilha_valores.data_conclusao` da etapa
+  `'conversao'` (mesma fonte do "Seguir a Jesus" da Jornada; criada pelo trigger
+  quando o visitante decide / decisão de culto vira trilha). **Data do batismo** =
+  `batismo_inscricoes.data_batismo`. Dias = `data_batismo − data_conversao`.
+- **Backend** (`routes/kpis.js` `GET /batismos`): além de `membro:membro_id(...)`,
+  busca em **lote** as trilhas `etapa='conversao'` dos membros vinculados e
+  devolve por inscrição `data_conversao` + `dias_conversao_batismo` (campos
+  aditivos · `membro` segue com o mesmo shape). Sem migration · sem mudança no
+  `api.js` (a lista só ganha 2 campos).
+- **Frontend** (`Batismos.tsx`):
+  - **Visão geral** · card "Tempo médio de conversão até o batismo" (após os 4
+    KPIs, antes do gráfico): média em dias entre os batismos **realizados** com
+    conversão registrada, + n de membros, mín e máx. Ignora dias negativos
+    (conversão posterior ao batismo = inconsistência).
+  - **Por membro** · no `ModalDetalheBatismo`, bloco azul que recalcula ao vivo
+    conforme a data do batismo é editada; trata 3 casos (tem conversão+data →
+    "N dias"; tem conversão sem data → pede a data; sem conversão na jornada →
+    aviso). Só aparece quando a inscrição tem `membro_id`.
+- Membros batizados **sem** etapa `conversao` na trilha (ex.: importados direto)
+  ficam de fora da média — honesto: só medimos quando há as duas datas.
+
 ## Marketing · REDESENHO em fases (2026-05-30) · EM ANDAMENTO
 
 Após feedback profundo do Pedro, o módulo Marketing está sendo redesenhado de

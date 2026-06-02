@@ -480,9 +480,12 @@ router.post('/inscrever-form', publicLimiter, async (req, res) => {
       const { notificar } = require('../services/notificar');
       await notificar({
         modulo: 'voluntariado',
-        titulo: 'Nova inscricao de voluntario',
-        mensagem: `${nomeCompleto} (${cleanEmail}) se inscreveu para servir na area ${String(area).toUpperCase()}.`,
+        tipo: 'nova_inscricao',
+        titulo: 'Nova inscrição de voluntário',
+        mensagem: `${nomeCompleto} (${cleanEmail}) se inscreveu para servir${cleanMinisterios ? ` em: ${cleanMinisterios}` : ` na área ${String(area).toUpperCase()}`}.`,
         link: '/ministerial/voluntariado/inscricoes',
+        severidade: 'info',
+        chaveDedup: `vol_inscricao_${insc.id}`,
       });
     } catch (e) {
       console.error('[PublicVol/inscrever-form] notificar:', e.message);
@@ -492,6 +495,29 @@ router.post('/inscrever-form', publicLimiter, async (req, res) => {
   } catch (err) {
     console.error('[PublicVol/inscrever-form] error:', err.message);
     res.status(500).json({ error: 'Erro ao registrar inscricao' });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// GET /form-opcoes · opcoes ativas do formulario "Onde voce quer servir".
+// Publico (leitura de catalogo · sem PII). Cai num fallback vazio se a tabela
+// ainda nao existir (migration nao aplicada) pra nao quebrar o formulario.
+// ---------------------------------------------------------------------------
+router.get('/form-opcoes', async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('vol_form_opcoes')
+      .select('id, label, area_canonica, exige_dados_menor, aviso_titulo, aviso_texto')
+      .eq('ativo', true)
+      .order('ordem', { ascending: true });
+    if (error) {
+      console.warn('[PublicVol/form-opcoes]', error.message);
+      return res.json({ opcoes: [] });
+    }
+    res.json({ opcoes: data || [] });
+  } catch (e) {
+    console.error('[PublicVol/form-opcoes] error:', e.message);
+    res.json({ opcoes: [] });
   }
 });
 

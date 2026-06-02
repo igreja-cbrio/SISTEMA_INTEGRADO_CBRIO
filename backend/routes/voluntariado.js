@@ -557,6 +557,85 @@ router.put('/profiles/:id', async (req, res) => {
 });
 
 // ══════════════════════════════════════════════════════════════
+// OPCOES DO FORMULARIO PUBLICO ("Onde voce quer servir")
+// Editaveis pela equipe de voluntariado · alimentam /inscricao-voluntariado
+// ══════════════════════════════════════════════════════════════
+router.get('/form-opcoes', async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('vol_form_opcoes')
+      .select('*')
+      .order('ordem', { ascending: true });
+    if (error) return res.status(400).json({ error: error.message });
+    res.json(data || []);
+  } catch (e) { res.status(500).json({ error: 'Erro ao listar opcoes do formulario' }); }
+});
+
+router.post('/form-opcoes', authorizeModule('voluntariado', 3), async (req, res) => {
+  try {
+    const { label, area_canonica, exige_dados_menor, aviso_titulo, aviso_texto, ordem } = req.body || {};
+    if (!label || !String(label).trim()) return res.status(400).json({ error: 'Informe o nome da opcao' });
+    const areas = ['kids', 'sede', 'ami', 'bridge', 'online'];
+    const area = areas.includes(String(area_canonica)) ? String(area_canonica) : 'sede';
+    // ordem default = fim da lista
+    let ord = Number.isFinite(Number(ordem)) ? Number(ordem) : null;
+    if (ord == null) {
+      const { data: max } = await supabase
+        .from('vol_form_opcoes').select('ordem').order('ordem', { ascending: false }).limit(1).maybeSingle();
+      ord = (max?.ordem || 0) + 10;
+    }
+    const { data, error } = await supabase
+      .from('vol_form_opcoes')
+      .insert({
+        label: String(label).trim(),
+        area_canonica: area,
+        exige_dados_menor: !!exige_dados_menor,
+        aviso_titulo: aviso_titulo ? String(aviso_titulo).trim() : null,
+        aviso_texto: aviso_texto ? String(aviso_texto).trim() : null,
+        ordem: ord,
+      })
+      .select('*').single();
+    if (error) {
+      if (error.code === '23505') return res.status(400).json({ error: 'Ja existe uma opcao com esse nome' });
+      return res.status(400).json({ error: error.message });
+    }
+    res.json(data);
+  } catch (e) { res.status(500).json({ error: 'Erro ao criar opcao do formulario' }); }
+});
+
+router.put('/form-opcoes/:id', authorizeModule('voluntariado', 3), async (req, res) => {
+  try {
+    const { label, area_canonica, exige_dados_menor, aviso_titulo, aviso_texto, ordem, ativo } = req.body || {};
+    const patch = { updated_at: new Date().toISOString() };
+    if (label !== undefined) patch.label = String(label).trim();
+    if (area_canonica !== undefined) {
+      const areas = ['kids', 'sede', 'ami', 'bridge', 'online'];
+      patch.area_canonica = areas.includes(String(area_canonica)) ? String(area_canonica) : 'sede';
+    }
+    if (exige_dados_menor !== undefined) patch.exige_dados_menor = !!exige_dados_menor;
+    if (aviso_titulo !== undefined) patch.aviso_titulo = aviso_titulo ? String(aviso_titulo).trim() : null;
+    if (aviso_texto !== undefined) patch.aviso_texto = aviso_texto ? String(aviso_texto).trim() : null;
+    if (ordem !== undefined && Number.isFinite(Number(ordem))) patch.ordem = Number(ordem);
+    if (ativo !== undefined) patch.ativo = !!ativo;
+    const { data, error } = await supabase
+      .from('vol_form_opcoes').update(patch).eq('id', req.params.id).select('*').single();
+    if (error) {
+      if (error.code === '23505') return res.status(400).json({ error: 'Ja existe uma opcao com esse nome' });
+      return res.status(400).json({ error: error.message });
+    }
+    res.json(data);
+  } catch (e) { res.status(500).json({ error: 'Erro ao atualizar opcao do formulario' }); }
+});
+
+router.delete('/form-opcoes/:id', authorizeModule('voluntariado', 3), async (req, res) => {
+  try {
+    const { error } = await supabase.from('vol_form_opcoes').delete().eq('id', req.params.id);
+    if (error) return res.status(400).json({ error: error.message });
+    res.json({ success: true });
+  } catch (e) { res.status(500).json({ error: 'Erro ao remover opcao do formulario' }); }
+});
+
+// ══════════════════════════════════════════════════════════════
 // USER ROLES
 // ══════════════════════════════════════════════════════════════
 router.get('/roles', async (req, res) => {
@@ -2129,9 +2208,9 @@ router.get('/inscricoes', async (req, res) => {
       .from('vol_inscricoes')
       .select(`
         id, nome, sobrenome, nome_completo, cpf, email, telefone,
-        data_nascimento, data_inscricao, area, status,
+        data_nascimento, nome_mae, data_inscricao, area, status,
         dom_predominante, ministerios_interesse, participou_next,
-        feedback, integrado_em, membro_id
+        feedback, integrado_em, membro_id, origem
       `, { count: 'exact' })
       .order('data_inscricao', { ascending: false })
       .range(offset, offset + limit - 1);
