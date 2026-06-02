@@ -1,9 +1,10 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, type ReactNode } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { useQuery } from '@tanstack/react-query';
 import { voluntariado } from '@/api';
 import { Inbox, CheckCircle2, Percent, Search, Link2 } from 'lucide-react';
@@ -29,6 +30,42 @@ const STATUS_COLORS: Record<string, string> = {
   nao_responde: 'bg-orange-500/10 text-orange-700 border-orange-500/20',
   nao_pode_ou_duplicata: 'bg-red-500/10 text-red-700 border-red-500/20',
 };
+
+const ORIGEM_LABELS: Record<string, string> = {
+  formulario_publico: 'Formulario publico',
+  form_google: 'Formulario Google',
+  form_google_backfill: 'Importacao (Google)',
+  membresia: 'Membresia',
+  manual: 'Manual',
+};
+
+function Info({ label, value }: { label: string; value: ReactNode }) {
+  return (
+    <div>
+      <div className="text-[11px] uppercase tracking-wide text-muted-foreground">{label}</div>
+      <div className="text-foreground break-words">{value}</div>
+    </div>
+  );
+}
+
+const fmtCpf = (v?: string | null) => {
+  const d = (v || '').replace(/\D+/g, '');
+  if (d.length !== 11) return v || '-';
+  return `${d.slice(0, 3)}.${d.slice(3, 6)}.${d.slice(6, 9)}-${d.slice(9)}`;
+};
+const fmtTel = (v?: string | null) => {
+  const d = (v || '').replace(/\D+/g, '');
+  if (d.length === 11) return `(${d.slice(0, 2)}) ${d.slice(2, 7)}-${d.slice(7)}`;
+  if (d.length === 10) return `(${d.slice(0, 2)}) ${d.slice(2, 6)}-${d.slice(6)}`;
+  return v || '-';
+};
+const fmtDataNasc = (v?: string | null) => {
+  if (!v) return '-';
+  const s = String(v).slice(0, 10);
+  const [y, m, d] = s.split('-');
+  return d && m && y ? `${d}/${m}/${y}` : s;
+};
+const origemLabel = (o?: string | null) => (o ? (ORIGEM_LABELS[o] || o) : '-');
 
 const ANO_ATUAL = new Date().getFullYear();
 const ANOS = [ANO_ATUAL, ANO_ATUAL - 1, ANO_ATUAL - 2];
@@ -75,6 +112,8 @@ interface InscricaoRow {
   feedback: string | null;
   integrado_em: string | null;
   membro_id: string | null;
+  nome_mae: string | null;
+  origem: string | null;
 }
 
 interface InscricoesListResponse {
@@ -92,6 +131,7 @@ export default function VolInscricoes() {
   const [searchInput, setSearchInput] = useState<string>('');
   const [page, setPage] = useState(0);
   const [copied, setCopied] = useState(false);
+  const [selected, setSelected] = useState<InscricaoRow | null>(null);
   const pageSize = 50;
 
   const { data, isLoading } = useQuery<InscricoesSummary>({
@@ -430,7 +470,11 @@ export default function VolInscricoes() {
                   <tr><td colSpan={7} className="text-center text-muted-foreground py-6">Nenhuma inscricao com esses filtros</td></tr>
                 )}
                 {lista?.rows?.map(p => (
-                  <tr key={p.id} className="border-b last:border-b-0 hover:bg-accent/30">
+                  <tr
+                    key={p.id}
+                    onClick={() => setSelected(p)}
+                    className="border-b last:border-b-0 hover:bg-accent/30 cursor-pointer"
+                  >
                     <td className="px-4 py-2 font-medium">
                       {p.nome_completo}
                       {p.email && <div className="text-xs text-muted-foreground">{p.email}</div>}
@@ -487,6 +531,51 @@ export default function VolInscricoes() {
           )}
         </CardContent>
       </Card>
+
+      {/* Detalhe da inscricao · clique numa linha pra abrir */}
+      <Dialog open={!!selected} onOpenChange={(o) => { if (!o) setSelected(null); }}>
+        <DialogContent className="max-w-lg">
+          {selected && (
+            <>
+              <DialogHeader>
+                <DialogTitle className="flex items-center gap-2 flex-wrap">
+                  {selected.nome_completo}
+                  <Badge variant="outline" className={STATUS_COLORS[selected.status] || ''}>
+                    {STATUS_LABELS[selected.status] || selected.status}
+                  </Badge>
+                </DialogTitle>
+              </DialogHeader>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-3 text-sm mt-1">
+                <Info label="Area" value={<span className="capitalize">{selected.area}</span>} />
+                <Info label="Inscricao" value={new Date(selected.data_inscricao).toLocaleDateString('pt-BR')} />
+                <Info label="Telefone" value={fmtTel(selected.telefone)} />
+                <Info label="E-mail" value={selected.email || '-'} />
+                <Info label="CPF" value={fmtCpf(selected.cpf)} />
+                <Info label="Data de nascimento" value={fmtDataNasc(selected.data_nascimento)} />
+                <Info label="Nome da mae" value={selected.nome_mae || '-'} />
+                <Info label="Participou do NEXT" value={selected.participou_next || '-'} />
+                <Info label="Dom predominante" value={selected.dom_predominante || '-'} />
+                <Info label="Origem" value={origemLabel(selected.origem)} />
+                <div className="sm:col-span-2">
+                  <Info label="Areas de interesse" value={selected.ministerios_interesse || '-'} />
+                </div>
+                <Info
+                  label="Vinculo de membro"
+                  value={selected.membro_id
+                    ? <span className="text-green-600 font-medium">Vinculado</span>
+                    : 'Nao vinculado'}
+                />
+                {selected.integrado_em && <Info label="Integrado em" value={selected.integrado_em} />}
+                {selected.feedback && (
+                  <div className="sm:col-span-2">
+                    <Info label="Observacoes" value={selected.feedback} />
+                  </div>
+                )}
+              </div>
+            </>
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
