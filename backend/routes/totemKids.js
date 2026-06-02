@@ -43,7 +43,10 @@ router.use((req, res, next) => {
   const isDisplay = req.path.startsWith('/display/');
   const isChamadaComToken = req.path === '/chamadas' && req.method === 'POST' && req.body?.estacao_token;
   const isParear = req.path === '/estacoes/parear' && req.method === 'POST';
-  if (isDisplay || isChamadaComToken || isParear) {
+  // Agente local de pagers (recepcao) · autentica por bearer token (PAGER_BRIDGE_TOKEN),
+  // nao por JWT de usuario · handlers validam internamente via bridgeAutorizado()
+  const isPagerBridge = req.path.startsWith('/pager/bridge/');
+  if (isDisplay || isChamadaComToken || isParear || isPagerBridge) {
     // Pula authenticate · handlers validam token internamente
     return next();
   }
@@ -617,6 +620,7 @@ router.post('/checkin', authorizeModule('kids', 2), async (req, res) => {
     const {
       sessao_id, crianca_id, sala_id, estacao_id,
       responsavel_id, responsavel_nome_manual, responsavel_telefone_manual, responsavel_parentesco,
+      pager_id,
     } = req.body;
 
     if (!sessao_id) return res.status(400).json({ error: 'sessao_id obrigatorio' });
@@ -712,6 +716,7 @@ router.post('/checkin', authorizeModule('kids', 2), async (req, res) => {
         responsavel_checkin_parentesco: responsavel_parentesco || null,
         codigo_seguranca: codigoFinal,
         codigo_barras: codigoFinal,                      // mesmo codigo
+        pager_id: pager_id || null,                      // pager entregue a familia (opcional)
         checkin_por: req.user.userId,
       })
       .select('*')
@@ -1641,7 +1646,7 @@ router.post('/chamadas', async (req, res) => {
     // Acha checkin ativo
     const { data: checkin } = await supabase
       .from('kids_checkins')
-      .select('id, sessao_id, crianca_id, sala_id, codigo_seguranca, responsavel_checkin_nome, responsavel_checkin_telefone, checkout_at, kids_criancas(nome, observacoes_medicas), kids_salas(nome, cor)')
+      .select('id, sessao_id, crianca_id, sala_id, codigo_seguranca, responsavel_checkin_nome, responsavel_checkin_telefone, checkout_at, pager_id, pager:kids_pagers(id, numero, cor, tipo_lrs, ativo), kids_criancas(nome, observacoes_medicas), kids_salas(nome, cor)')
       .eq('codigo_seguranca', codigoUpper)
       .is('checkout_at', null)
       .order('checkin_at', { ascending: false })
@@ -1692,11 +1697,33 @@ router.post('/chamadas', async (req, res) => {
       chamada = data;
     }
 
+    // Enfileira o toque no pager da familia (se a crianca recebeu um no check-in).
+    // O agente local da recepcao consome /pager/bridge/fila e dispara via LRSN/TCP.
+    let pager_enfileirado = false;
+    if (checkin.pager && checkin.pager.ativo) {
+      const { error: errEnvio } = await supabase
+        .from('kids_pager_envios')
+        .insert({
+          chamada_id: chamada.id,
+          checkin_id: checkin.id,
+          pager_id: checkin.pager.id,
+          pager_numero: checkin.pager.numero,
+          cor: checkin.pager.cor || 'R',
+          tipo_lrs: checkin.pager.tipo_lrs ?? 2,
+          origem: existente ? 'rechamada' : 'chamada',
+          criado_por: userId,
+        });
+      if (errEnvio) console.warn('[totemKids/chamadas] enfileirar pager falhou:', errEnvio.message);
+      else pager_enfileirado = true;
+    }
+
     res.json({
       chamada,
       crianca: { id: checkin.crianca_id, nome: checkin.kids_criancas?.nome, observacoes_medicas: checkin.kids_criancas?.observacoes_medicas },
       sala: { id: checkin.sala_id, nome: checkin.kids_salas?.nome, cor: checkin.kids_salas?.cor },
       responsavel: { nome: checkin.responsavel_checkin_nome, telefone: checkin.responsavel_checkin_telefone },
+      pager: checkin.pager ? { numero: checkin.pager.numero } : null,
+      pager_enfileirado,
       ja_existia: !!existente,
     });
   } catch (e) {
@@ -1815,6 +1842,231 @@ router.get('/display/foyer-resumo', async (req, res) => {
   } catch (e) {
     console.error('[totemKids/display/foyer]', e.message);
     res.status(500).json({ error: 'Erro' });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// PAGERS · integracao com o transmissor fisico (LRS Freedom via agente local)
+// ═══════════════════════════════════════════════════════════════════════════
+
+// Autoriza o agente local da recepcao por bearer token (PAGER_BRIDGE_TOKEN).
+// Usado so nas rotas /pager/bridge/* (que bypassam o authenticate de JWT).
+function bridgeAutorizado(req) {
+  const expected = process.env.PAGER_BRIDGE_TOKEN;
+  if (!expected) return false;
+  const header = String(req.headers.authorization || '');
+  const token = header.replace(/^Bearer\s+/i, '').trim() || String(req.query.token || '');
+  return token.length > 0 && token === expected;
+}
+
+// ─── CRUD do catalogo de pagers (admin do modulo) ───────────────────────────
+router.get('/pager/pagers', authorizeModule('kids', 1), async (req, res) => {
+  try {
+    let q = supabase
+      .from('kids_pagers')
+      .select('*, responsavel:mem_membros(id, nome)')
+      .is('deleted_at', null)
+      .order('numero');
+    if (req.query.ativo === 'true') q = q.eq('ativo', true);
+    const { data, error } = await q;
+    if (error) throw error;
+    res.json(data || []);
+  } catch (e) {
+    console.error('[totemKids/pagers list]', e.message);
+    res.status(500).json({ error: 'Erro ao listar pagers' });
+  }
+});
+
+// Quem esta com cada pager AGORA (check-ins ativos da sessao aberta)
+router.get('/pager/em-uso', authorizeModule('kids', 1), async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('kids_checkins')
+      .select('id, pager_id, codigo_seguranca, responsavel_checkin_nome, crianca:kids_criancas(nome), sala:kids_salas(nome)')
+      .not('pager_id', 'is', null)
+      .is('checkout_at', null);
+    if (error) throw error;
+    const porPager = {};
+    for (const c of (data || [])) porPager[c.pager_id] = c;
+    res.json(porPager);
+  } catch (e) {
+    console.error('[totemKids/pagers em-uso]', e.message);
+    res.status(500).json({ error: 'Erro ao listar uso dos pagers' });
+  }
+});
+
+router.post('/pager/pagers', authorizeModule('kids', 3), async (req, res) => {
+  try {
+    const { numero, rotulo, cor, tipo_lrs, responsavel_padrao_id, observacao, ativo } = req.body || {};
+    if (numero == null || isNaN(Number(numero))) {
+      return res.status(400).json({ error: 'numero do pager obrigatorio' });
+    }
+    const { data, error } = await supabase
+      .from('kids_pagers')
+      .insert({
+        numero: Number(numero),
+        rotulo: rotulo || null,
+        cor: (cor || 'R').toUpperCase(),
+        tipo_lrs: tipo_lrs ?? 2,
+        responsavel_padrao_id: responsavel_padrao_id || null,
+        observacao: observacao || null,
+        ativo: ativo !== false,
+      })
+      .select('*')
+      .single();
+    if (error) {
+      if (error.code === '23505') return res.status(409).json({ error: 'Ja existe um pager com esse numero' });
+      throw error;
+    }
+    res.status(201).json(data);
+  } catch (e) {
+    console.error('[totemKids/pagers create]', e.message);
+    res.status(500).json({ error: 'Erro ao criar pager' });
+  }
+});
+
+router.patch('/pager/pagers/:id', authorizeModule('kids', 3), async (req, res) => {
+  try {
+    const { numero, rotulo, cor, tipo_lrs, responsavel_padrao_id, observacao, ativo } = req.body || {};
+    const patch = {};
+    if (numero != null) patch.numero = Number(numero);
+    if (rotulo !== undefined) patch.rotulo = rotulo || null;
+    if (cor !== undefined) patch.cor = (cor || 'R').toUpperCase();
+    if (tipo_lrs !== undefined) patch.tipo_lrs = tipo_lrs ?? 2;
+    if (responsavel_padrao_id !== undefined) patch.responsavel_padrao_id = responsavel_padrao_id || null;
+    if (observacao !== undefined) patch.observacao = observacao || null;
+    if (ativo !== undefined) patch.ativo = !!ativo;
+    const { data, error } = await supabase
+      .from('kids_pagers')
+      .update(patch)
+      .eq('id', req.params.id)
+      .is('deleted_at', null)
+      .select('*')
+      .single();
+    if (error) {
+      if (error.code === '23505') return res.status(409).json({ error: 'Ja existe um pager com esse numero' });
+      throw error;
+    }
+    res.json(data);
+  } catch (e) {
+    console.error('[totemKids/pagers update]', e.message);
+    res.status(500).json({ error: 'Erro ao editar pager' });
+  }
+});
+
+router.delete('/pager/pagers/:id', authorizeModule('kids', 3), async (req, res) => {
+  try {
+    // soft delete (kids_pagers esta na whitelist app_soft_deletable_tables)
+    const { error } = await supabase.rpc('app_soft_delete', {
+      p_table_name: 'kids_pagers',
+      p_row_id: req.params.id,
+      p_deleted_by: req.user?.userId ?? null,
+    });
+    if (error) throw error;
+    res.json({ ok: true });
+  } catch (e) {
+    console.error('[totemKids/pagers delete]', e.message);
+    res.status(500).json({ error: 'Erro ao remover pager' });
+  }
+});
+
+// Toque de teste · enfileira um envio avulso pro agente disparar
+router.post('/pager/pagers/:id/testar', authorizeModule('kids', 3), async (req, res) => {
+  try {
+    const { data: pager, error: errP } = await supabase
+      .from('kids_pagers')
+      .select('id, numero, cor, tipo_lrs')
+      .eq('id', req.params.id)
+      .is('deleted_at', null)
+      .maybeSingle();
+    if (errP) throw errP;
+    if (!pager) return res.status(404).json({ error: 'Pager nao encontrado' });
+
+    const { data, error } = await supabase
+      .from('kids_pager_envios')
+      .insert({
+        pager_id: pager.id,
+        pager_numero: pager.numero,
+        cor: pager.cor || 'R',
+        tipo_lrs: pager.tipo_lrs ?? 2,
+        origem: 'teste',
+        criado_por: req.user?.userId ?? null,
+      })
+      .select('id')
+      .single();
+    if (error) throw error;
+    res.status(201).json({ ok: true, envio_id: data.id });
+  } catch (e) {
+    console.error('[totemKids/pagers testar]', e.message);
+    res.status(500).json({ error: 'Erro ao enfileirar teste' });
+  }
+});
+
+// Historico recente de envios (pro admin acompanhar status)
+router.get('/pager/envios', authorizeModule('kids', 1), async (req, res) => {
+  try {
+    const limit = Math.min(Number(req.query.limit) || 50, 200);
+    const { data, error } = await supabase
+      .from('kids_pager_envios')
+      .select('*')
+      .order('created_at', { ascending: false })
+      .limit(limit);
+    if (error) throw error;
+    res.json(data || []);
+  } catch (e) {
+    res.status(500).json({ error: 'Erro ao listar envios' });
+  }
+});
+
+// ─── Endpoints do AGENTE LOCAL (bearer token · sem JWT) ─────────────────────
+// GET /pager/bridge/fila?max=20 · pendentes mais antigos primeiro
+router.get('/pager/bridge/fila', async (req, res) => {
+  try {
+    if (!bridgeAutorizado(req)) return res.status(401).json({ error: 'bridge nao autorizado' });
+    const max = Math.min(Number(req.query.max) || 20, 100);
+    const { data, error } = await supabase
+      .from('kids_pager_envios')
+      .select('id, pager_numero, cor, tipo_lrs, origem, tentativas, created_at')
+      .eq('status', 'pendente')
+      .order('created_at', { ascending: true })
+      .limit(max);
+    if (error) throw error;
+    res.json({ envios: data || [], server_time: new Date().toISOString() });
+  } catch (e) {
+    console.error('[totemKids/pager/bridge/fila]', e.message);
+    res.status(500).json({ error: 'Erro ao buscar fila' });
+  }
+});
+
+// POST /pager/bridge/envios/:id/resultado · { ok:boolean, erro?:string }
+router.post('/pager/bridge/envios/:id/resultado', async (req, res) => {
+  try {
+    if (!bridgeAutorizado(req)) return res.status(401).json({ error: 'bridge nao autorizado' });
+    const { ok, erro } = req.body || {};
+    // tentativas++ e status final
+    const { data: atual } = await supabase
+      .from('kids_pager_envios')
+      .select('tentativas, status')
+      .eq('id', req.params.id)
+      .maybeSingle();
+    if (!atual) return res.status(404).json({ error: 'envio nao encontrado' });
+    if (atual.status === 'cancelado') return res.json({ ok: true, ignorado: 'cancelado' });
+
+    const patch = {
+      tentativas: (atual.tentativas || 0) + 1,
+      status: ok ? 'enviado' : 'erro',
+      erro: ok ? null : (erro ? String(erro).slice(0, 500) : 'falha no envio'),
+    };
+    if (ok) patch.enviado_em = new Date().toISOString();
+    const { error } = await supabase
+      .from('kids_pager_envios')
+      .update(patch)
+      .eq('id', req.params.id);
+    if (error) throw error;
+    res.json({ ok: true });
+  } catch (e) {
+    console.error('[totemKids/pager/bridge/resultado]', e.message);
+    res.status(500).json({ error: 'Erro ao registrar resultado' });
   }
 });
 

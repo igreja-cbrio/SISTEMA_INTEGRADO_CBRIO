@@ -63,6 +63,10 @@ export default function TotemKidsCheckin() {
   const [usarRespManual, setUsarRespManual] = useState(false);
   const [imprimindo, setImprimindo] = useState(false);
 
+  // Pagers (pulseira/coaster entregue a familia · opcional)
+  const [pagers, setPagers] = useState<any[]>([]);
+  const [pagerSelecionado, setPagerSelecionado] = useState<string>('');
+
   // Modal de cadastro novo
   const [modalNovo, setModalNovo] = useState(false);
 
@@ -76,7 +80,20 @@ export default function TotemKidsCheckin() {
         setSalas(sl);
       })
       .finally(() => setCarregando(false));
+    carregarPagers();
   }, []);
+
+  // Pagers disponíveis = ativos e não em uso por outra criança agora
+  async function carregarPagers() {
+    try {
+      const [lista, uso] = await Promise.all([
+        totemKids.pagers.list({ ativo: 'true' }),
+        totemKids.pagers.emUso().catch(() => ({})),
+      ]);
+      const disponiveis = (lista || []).filter((p: any) => !uso?.[p.id]);
+      setPagers(disponiveis);
+    } catch { setPagers([]); }
+  }
 
   // Foco no input apos limpar selecao
   useEffect(() => {
@@ -137,6 +154,7 @@ export default function TotemKidsCheckin() {
         crianca_id: crianca.id,
         sala_id: salaSelecionada,
         estacao_id: estacao?.id || null,
+        pager_id: pagerSelecionado || null,
       };
       if (usarRespManual) {
         payload.responsavel_nome_manual = respManualNome.trim();
@@ -178,7 +196,9 @@ export default function TotemKidsCheckin() {
       setUsarRespManual(false);
       setRespManualNome('');
       setRespManualTel('');
+      setPagerSelecionado('');
       setResultados([]);
+      carregarPagers();          // o pager usado some da lista de disponíveis
     } catch (e: unknown) {
       toast.error((e as { message?: string })?.message || 'Erro no check-in');
     } finally {
@@ -338,6 +358,9 @@ export default function TotemKidsCheckin() {
           setSalaSelecionada={setSalaSelecionada}
           responsavelSelecionado={responsavelSelecionado}
           setResponsavelSelecionado={setResponsavelSelecionado}
+          pagers={pagers}
+          pagerSelecionado={pagerSelecionado}
+          setPagerSelecionado={setPagerSelecionado}
           usarRespManual={usarRespManual}
           setUsarRespManual={setUsarRespManual}
           respManualNome={respManualNome}
@@ -379,6 +402,9 @@ function CheckinSelecao(props: {
   setSalaSelecionada: (s: string) => void;
   responsavelSelecionado: string;
   setResponsavelSelecionado: (s: string) => void;
+  pagers: any[];
+  pagerSelecionado: string;
+  setPagerSelecionado: (s: string) => void;
   usarRespManual: boolean;
   setUsarRespManual: (b: boolean) => void;
   respManualNome: string;
@@ -392,6 +418,7 @@ function CheckinSelecao(props: {
 }) {
   const { crianca, salas, salaSelecionada, setSalaSelecionada,
     responsavelSelecionado, setResponsavelSelecionado,
+    pagers, pagerSelecionado, setPagerSelecionado,
     usarRespManual, setUsarRespManual,
     respManualNome, setRespManualNome, respManualTel, setRespManualTel,
     onCancelar, onConfirmar, imprimindo, onResponsavelCadastrado } = props;
@@ -459,6 +486,27 @@ function CheckinSelecao(props: {
             </SelectContent>
           </Select>
         </div>
+
+        {pagers.length > 0 && (
+          <div>
+            <label className="text-sm font-medium block mb-2">
+              Pager da família <span className="text-muted-foreground font-normal">(opcional · vibra no pickup)</span>
+            </label>
+            <Select value={pagerSelecionado || 'nenhum'} onValueChange={(v) => setPagerSelecionado(v === 'nenhum' ? '' : v)}>
+              <SelectTrigger className="h-12">
+                <SelectValue placeholder="Sem pager" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="nenhum">Sem pager</SelectItem>
+                {pagers.map(p => (
+                  <SelectItem key={p.id} value={p.id}>
+                    {p.rotulo || `Pager ${p.numero}`} <span className="text-muted-foreground text-xs ml-1">(nº {p.numero})</span>
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+        )}
 
         <div>
           <label className="text-sm font-medium block mb-2">Quem está trazendo</label>
