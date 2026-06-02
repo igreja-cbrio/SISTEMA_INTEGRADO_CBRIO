@@ -56,6 +56,20 @@ obs), Acumulado, Detalhado, Checklists (admin), Solicitações (fila
 `area_responsavel='producao'` reusando a API `solicitacoes` · andamento por select),
 Desempenho. `api.js` ganhou namespace `producao`. Menu em Criativo (`module:'producao'`).
 
+**Notificações (2026-06-02):** ocorrência crítica (`severidade='critica'`) dispara
+`notificar()` urgente (módulo `producao` · responsáveis da área + regras). Módulo
+`producao` registrado em `NotificacaoRegras.jsx`. Nova solicitação já é notificada
+pelo backbone de Solicitações.
+
+**Intake de Solicitações (2026-06-02 · migration `20260602160000`):** categoria
+**`producao`** no form de Solicitações roteia `area_responsavel='producao'` (só campos
+básicos · uso: movimentação de material, configuração de equipamentos). CHECK de
+`categoria` estendido; SLA da produção já existia (24/72). Backend: `ALLOWED_CATEGORIES`
++ `CATEGORIA_MODULO['producao']='producao'` + `CATEGORIA_TO_AREA_RESP` +
+`MODULO_CATEGORIAS`. Frontend: `CATEGORIAS` + `CATEGORIA_HINT` (sem bloco específico ·
+validação base titulo+categoria). Isso alimenta a fila da aba Solicitações da Produção
++ o KPI `ADM-C-G-PRODUCAO` (SLA).
+
 ## Integração · % de ocupação de assentos na aba Frequência (2026-06-02 · sem migration)
 
 Marcos: card (estilo do de batismo) na aba **Frequência** (`/integracao` →
