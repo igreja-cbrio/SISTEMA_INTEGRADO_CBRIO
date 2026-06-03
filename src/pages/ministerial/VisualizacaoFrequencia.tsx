@@ -12,8 +12,8 @@ import {
 const C = { primary: '#00B39D', info: '#3b82f6', warn: '#f59e0b', purple: '#8b5cf6', pink: '#ec4899' };
 
 // Capacidade de assentos · usado pro % de ocupacao media.
-// Templo = 1200 lugares (Domingo, Quarta, AMI) · Kids = 250.
-const CAP_TEMPLO = 1200;
+// Templo = 1050 lugares (Domingo, Quarta, AMI) · Kids = 250.
+const CAP_TEMPLO = 1050;
 const CAP_KIDS = 250;
 
 // Bridge e Online nao acontecem no templo → ficam de fora da ocupacao.
@@ -145,7 +145,7 @@ export default function VisualizacaoFrequencia() {
 
   // % medio de assentos ocupados · media da presenca por culto ÷ capacidade.
   // Conta so cultos com presenca lancada (>0) no modo escolhido · culto sem
-  // dado nao derruba a media. Capacidade: Templo 1200 · Kids 250.
+  // dado nao derruba a media. Capacidade: Templo 1050 · Kids 250.
   const ocupacao = useMemo(() => {
     const cap = modoOcup === 'templo' ? CAP_TEMPLO : CAP_KIDS;
     const alvo = (cultoOcup === 'todos' || tiposOcup.includes(cultoOcup)) ? cultoOcup : 'todos';

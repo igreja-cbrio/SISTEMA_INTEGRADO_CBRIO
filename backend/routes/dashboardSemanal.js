@@ -22,7 +22,7 @@ const Anthropic = require('@anthropic-ai/sdk');
 
 router.use(authenticate);
 
-const CAPACIDADE_TEMPLO = 1200;
+const CAPACIDADE_TEMPLO = 1050;
 
 const INDICADORES = {
   frequencia:        { coluna: 'frequencia',        rotulo: 'Frequência',        usa_ocupacao: true },
@@ -931,7 +931,7 @@ Tabelas principais do CBRio com dados de cultos:
 - mem_devocionais: check-ins de devocional
 - cultos_decisoes_pessoas: pessoas que decidiram em cada culto
 
-Capacidade do templo: 1200 lugares.
+Capacidade do templo: 1050 lugares.
 
 Indicadores já existentes no Dashboard Semanal:
 - frequencia, frequencia_kids, aceitacoes, aceitacoes_online,
