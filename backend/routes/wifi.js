@@ -48,6 +48,7 @@ router.get('/pessoas', authorizeModule('wifi', 1), async (req, res) => {
   try {
     const page = Math.max(1, parseInt(req.query.page) || 1);
     const limit = Math.min(200, parseInt(req.query.limit) || 50);
+    const flag = (v) => v === '1' || v === 'true';
     const { data, error } = await supabase.rpc('fn_wifi_pessoas', {
       p_busca: req.query.busca || null,
       p_culto: req.query.culto_id || null,
@@ -55,6 +56,13 @@ router.get('/pessoas', authorizeModule('wifi', 1), async (req, res) => {
       p_fim: req.query.fim || null,
       p_limit: limit,
       p_offset: (page - 1) * limit,
+      p_membro: flag(req.query.membro),
+      p_serve: flag(req.query.serve),
+      p_grupo: flag(req.query.grupo),
+      p_dizima: flag(req.query.dizima),
+      p_batismo: flag(req.query.batismo),
+      p_next: flag(req.query.next),
+      p_decisao: flag(req.query.decisao),
     });
     if (error) throw error;
     res.json({ total: data?.total || 0, page, limit, pessoas: data?.pessoas || [] });
