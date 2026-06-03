@@ -1547,168 +1547,30 @@ router.get('/monitoramento-okr', async (req, res) => {
     const cached = cacheGet(cacheKey);
     if (cached) return res.json(cached);
 
-    // Cada métrica roda isolada: se uma falhar, vira null (não derruba a aba).
-    const uma = async (fn) => { try { return await fn(); } catch (e) { console.warn('[monitoramento-okr]', e.message); return null; } };
     const num = (v) => (v == null ? null : Number(v));
 
-    const [nsmRow, batRatio, batMes, tempoBat, dsOnline, assentos, rotativ, batSerie, dsSerie, assentosSerie, baseMembros, freqGrupos, voluntAtivos, dizimistas, cafeAtend] = await Promise.all([
-      // NSM central · exatamente a estrela-guia do Juninho (engajados em ≤60d)
-      uma(async () => {
-        const r = await query(
-          `SELECT percentual, meta_percentual, status, total_convertidos_periodo,
-                  engajados_em_60d, janela_inicio, janela_fim, atualizado_em
-             FROM vw_nsm_painel WHERE segmento = 'central' LIMIT 1`);
-        return r.rows[0] || null;
-      }),
-      // OKR Batismos · batismos realizados nos últimos 90d ÷ conversões 90d
-      uma(async () => {
-        const r = await query(
-          `WITH b AS (
-             SELECT count(*) n FROM batismo_inscricoes
-              WHERE status='realizado' AND data_batismo >= CURRENT_DATE - INTERVAL '90 days'
-                AND deleted_at IS NULL
-           ), c AS (
-             SELECT coalesce(sum(decisoes_presenciais + decisoes_online),0) n
-               FROM cultos WHERE data >= CURRENT_DATE - INTERVAL '90 days' AND deleted_at IS NULL
-           )
-           SELECT b.n batismos, c.n conversoes,
-                  CASE WHEN c.n > 0 THEN round(b.n::numeric / c.n * 100, 1) ELSE NULL END pct
-             FROM b, c`);
-        return r.rows[0] || null;
-      }),
-      // Nº batismos mensais · último mês completo + média dos últimos 6 meses
-      uma(async () => {
-        const r = await query(
-          `WITH m AS (
-             SELECT date_trunc('month', data_batismo) mes, count(*) n
-               FROM batismo_inscricoes
-              WHERE status='realizado' AND data_batismo IS NOT NULL AND deleted_at IS NULL
-                AND data_batismo >= date_trunc('month', CURRENT_DATE) - INTERVAL '6 months'
-                AND data_batismo <  date_trunc('month', CURRENT_DATE)
-              GROUP BY 1
-           )
-           SELECT (SELECT n FROM m ORDER BY mes DESC LIMIT 1) ultimo,
-                  (SELECT to_char(mes,'MM/YYYY') FROM m ORDER BY mes DESC LIMIT 1) ultimo_label,
-                  round(avg(n),1) media FROM m`);
-        return r.rows[0] || null;
-      }),
-      // Tempo médio decisão → batismo (dias) · só membros com as duas datas
-      uma(async () => {
-        const r = await query(
-          `SELECT round(avg(b.data_batismo - t.data_conclusao)::numeric, 0) media_dias, count(*) n
-             FROM batismo_inscricoes b
-             JOIN mem_trilha_valores t
-               ON t.membro_id = b.membro_id AND t.etapa = 'conversao'
-              AND t.concluida = true AND t.deleted_at IS NULL
-            WHERE b.status='realizado' AND b.data_batismo IS NOT NULL AND b.membro_id IS NOT NULL
-              AND b.deleted_at IS NULL AND (b.data_batismo - t.data_conclusao) >= 0`);
-        return r.rows[0] || null;
-      }),
-      // Nº decisões online (DS) · soma dos últimos 90d
-      uma(async () => {
-        const r = await query(
-          `SELECT coalesce(sum(decisoes_online),0) ds_90d
-             FROM cultos
-            WHERE data >= CURRENT_DATE - INTERVAL '90 days' AND data < CURRENT_DATE
-              AND deleted_at IS NULL`);
-        return r.rows[0] || null;
-      }),
-      // % de assentos ocupados · Templo (Domingo+Quarta+AMI, exclui Bridge) ÷ 1050
-      uma(async () => {
-        const r = await query(
-          `SELECT round(avg(c.presencial_adulto)::numeric, 0) media_pres, count(*) n,
-                  round(avg(c.presencial_adulto)::numeric / 1050 * 100, 1) pct
-             FROM cultos c JOIN vol_service_types st ON st.id = c.service_type_id
-            WHERE c.data >= CURRENT_DATE - INTERVAL '90 days' AND c.presencial_adulto > 0
-              AND c.deleted_at IS NULL AND st.name NOT ILIKE '%bridge%'`);
-        return r.rows[0] || null;
-      }),
-      // Rotatividade do staff · demissões nos últimos 12m ÷ ativos hoje
-      uma(async () => {
-        const r = await query(
-          `SELECT count(*) FILTER (WHERE data_demissao >= CURRENT_DATE - INTERVAL '12 months') demitidos,
-                  count(*) FILTER (WHERE status='ativo') ativos
-             FROM rh_funcionarios WHERE deleted_at IS NULL`);
-        return r.rows[0] || null;
-      }),
-      // Série mensal de batismos (6 meses completos) · expande OKR Batismos / Nº batismos
-      uma(async () => {
-        const r = await query(
-          `SELECT to_char(date_trunc('month', data_batismo),'YYYY-MM') mes, count(*)::int valor
-             FROM batismo_inscricoes
-            WHERE status='realizado' AND data_batismo IS NOT NULL AND deleted_at IS NULL
-              AND data_batismo >= date_trunc('month', CURRENT_DATE) - INTERVAL '6 months'
-              AND data_batismo <  date_trunc('month', CURRENT_DATE)
-            GROUP BY 1 ORDER BY 1`);
-        return r.rows;
-      }),
-      // Série mensal de decisões online (6 meses completos)
-      uma(async () => {
-        const r = await query(
-          `SELECT to_char(date_trunc('month', data),'YYYY-MM') mes, coalesce(sum(decisoes_online),0)::int valor
-             FROM cultos
-            WHERE data >= date_trunc('month', CURRENT_DATE) - INTERVAL '6 months'
-              AND data <  date_trunc('month', CURRENT_DATE) AND deleted_at IS NULL
-            GROUP BY 1 ORDER BY 1`);
-        return r.rows;
-      }),
-      // Série mensal de % de ocupação do Templo (6 meses completos)
-      uma(async () => {
-        const r = await query(
-          `SELECT to_char(date_trunc('month', c.data),'YYYY-MM') mes,
-                  round(avg(c.presencial_adulto)::numeric / 1050 * 100, 1)::float valor
-             FROM cultos c JOIN vol_service_types st ON st.id = c.service_type_id
-            WHERE c.data >= date_trunc('month', CURRENT_DATE) - INTERVAL '6 months'
-              AND c.data <  date_trunc('month', CURRENT_DATE)
-              AND c.presencial_adulto > 0 AND c.deleted_at IS NULL AND st.name NOT ILIKE '%bridge%'
-            GROUP BY 1 ORDER BY 1`);
-        return r.rows;
-      }),
-      // Base do denominador dos % de engajamento: membros ativos
-      uma(async () => {
-        const r = await query(`SELECT count(*) n FROM mem_membros WHERE status='membro_ativo' AND deleted_at IS NULL`);
-        return r.rows[0] || null;
-      }),
-      // % frequência em grupos · fonte existe (mem_grupo_membros), hoje 0
-      uma(async () => {
-        const r = await query(
-          `SELECT coalesce(round(count(DISTINCT gm.membro_id)::numeric
-                  / NULLIF((SELECT count(*) FROM mem_membros WHERE status='membro_ativo' AND deleted_at IS NULL),0) * 100, 1), 0) pct,
-                  count(DISTINCT gm.membro_id) n
-             FROM mem_grupo_membros gm WHERE gm.saiu_em IS NULL AND gm.deleted_at IS NULL`);
-        return r.rows[0] || null;
-      }),
-      // % voluntários ativos · fonte existe (mem_voluntarios), hoje 0
-      uma(async () => {
-        const r = await query(
-          `SELECT coalesce(round(count(DISTINCT membro_id)::numeric
-                  / NULLIF((SELECT count(*) FROM mem_membros WHERE status='membro_ativo' AND deleted_at IS NULL),0) * 100, 1), 0) pct,
-                  count(DISTINCT membro_id) n
-             FROM mem_voluntarios WHERE ate IS NULL AND deleted_at IS NULL`);
-        return r.rows[0] || null;
-      }),
-      // % dizimistas regulares (3+ meses em 6m) · fonte existe (mem_contribuicoes), hoje 0
-      uma(async () => {
-        const r = await query(
-          `SELECT coalesce(round((SELECT count(*) FROM (
-                    SELECT membro_id FROM mem_contribuicoes WHERE deleted_at IS NULL AND data >= CURRENT_DATE - INTERVAL '6 months'
-                    GROUP BY membro_id HAVING count(DISTINCT date_trunc('month', data)) >= 3) t)::numeric
-                  / NULLIF((SELECT count(*) FROM mem_membros WHERE status='membro_ativo' AND deleted_at IS NULL),0) * 100, 1), 0) pct,
-                  (SELECT count(*) FROM (
-                    SELECT membro_id FROM mem_contribuicoes WHERE deleted_at IS NULL AND data >= CURRENT_DATE - INTERVAL '6 months'
-                    GROUP BY membro_id HAVING count(DISTINCT date_trunc('month', data)) >= 3) t) n`);
-        return r.rows[0] || null;
-      }),
-      // % convertidos atendidos no Acompanhamento (cui_convertidos.atendido_apos_culto · 90d)
-      uma(async () => {
-        const r = await query(
-          `SELECT coalesce(round(count(*) FILTER (WHERE atendido_apos_culto = true)::numeric
-                  / NULLIF(count(*),0) * 100, 1), 0) pct,
-                  count(*) FILTER (WHERE atendido_apos_culto = true) atendidos, count(*) total
-             FROM cui_convertidos WHERE data_culto >= CURRENT_DATE - INTERVAL '90 days'`);
-        return r.rows[0] || null;
-      }),
-    ]);
+    // Tudo via 1 RPC pelo cliente supabase (REST/HTTPS) · fn_monitoramento_okr_raw.
+    // ANTES eram 15 queries no pool pg direto (DATABASE_URL), que nao conecta no
+    // serverless do Vercel -> metricas vinha vazia (200 + {}). A migration
+    // 20260603220000_fn_monitoramento_okr_raw.sql moveu tudo pro banco.
+    const { data: raw, error: rawErr } = await supabase.rpc('fn_monitoramento_okr_raw');
+    if (rawErr) throw rawErr;
+    const r = raw || {};
+    const nsmRow = r.nsm || null;
+    const batRatio = r.batRatio || null;
+    const batMes = r.batMes || null;
+    const tempoBat = r.tempoBat || null;
+    const dsOnline = r.dsOnline || null;
+    const assentos = r.assentos || null;
+    const rotativ = r.rotativ || null;
+    const batSerie = r.batSerie || [];
+    const dsSerie = r.dsSerie || [];
+    const assentosSerie = r.assentosSerie || [];
+    const baseMembros = r.baseMembros || null;
+    const freqGrupos = r.freqGrupos || null;
+    const voluntAtivos = r.voluntAtivos || null;
+    const dizimistas = r.dizimistas || null;
+    const cafeAtend = r.cafeAtend || null;
 
     const nsm = nsmRow ? {
       percentual: num(nsmRow.percentual),
