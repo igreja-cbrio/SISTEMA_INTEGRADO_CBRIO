@@ -2,6 +2,40 @@
 
 Guia operacional para o Claude Code quando trabalhar neste repositório.
 
+## Jornada na NSM · 3 marcos medidos + KRs (Frente A · 2026-06-03)
+
+Marcos: levar os 3 marcos pra matriz/mandala, medidos pela lógica de coorte do tracker.
+Metas: **Batismo ≥30%/90d · Next ≥30%/90d · Reunião aceita ≥70%**. Contato (100%) fica no
+operacional (não vira KPI · a escalação já existe).
+
+**Achado do audit (consulta ao vivo):** os objetivos já existiam, mas o tático que os media
+era **crescimento de volume**, não o % de coorte 90d. E os **KRs (`kpi_krs`) são só texto-alvo,
+sem valor medido** e estão **duplicados** (~6-7 cópias/objetivo, resíduo da cascata) — Marcos
+levantou isso → **Frente B**. Então, na Frente A:
+- **Batismo (obj `ac906f19`) e Next (obj `68c17f72`):** CRIADOS táticos de coorte por área
+  (`AMI/BRG/ONL/SED-BAT90` e `-NEXT90` · `valores=['seguir']` · mensal · meta 30 ·
+  `tipo_calculo='manual'` · `fonte_auto` cuidados.batismo_90d_pct/next_90d_pct). O de crescimento
+  CONTINUA (métrica diferente, não duplicata).
+- **Atendidos (obj `5ffafa58`):** RELIGADOS os táticos existentes (`AMI-21/SED-17/BRG-19/ONL-04`)
+  → "% que aceitou a reunião", `fonte_auto='cuidados.reuniao_aceita_pct'`, meta 70 (sem KPI novo).
+- **KRs:** trocado "1 ciclo NEXT/trimestre" → "Next em ≤90d"; "contato ≤7d" → "aceita reunião".
+
+**Coletores (`kpiAutoCollector.js`):** `cuidados.{reuniao_aceita_pct,batismo_90d_pct,next_90d_pct}`
+(coorte mensal por área · helper `cohortNoPrazoPct` cruza `cui_convertidos` × `batismo_inscricoes`/
+`next_inscricoes` por membro/cpf/nome, janela 90d). **`coletarTodos` agora passa `area: ind.area`**
+ao coletor (retrocompatível) → 1 coletor serve N áreas (não precisa fonte por área).
+`tipo_calculo='manual'` → a view lê de `kpi_registros` (que o coletor JS popula). `meta_valor_absoluto`
+fica NULL nos %s (não normaliza por periodicidade · é %, não volume).
+
+**Migration `20260603190000_jornada_nsm_kpis.sql`.** ⚠️ Aplicar antes do merge; depois rodar o
+coletor: `POST /api/kpis/v2/coletar` body `{ fontes: ['cuidados.'] }` (ou esperar o cron diário).
+
+**Frente B (A FAZER · Marcos pediu "rever a lógica dos KR"):** KRs hoje não têm valor/medição
+(só texto) e estão duplicados. Projeto: deduplicar + dar fonte/medição a cada KR (ligar ao tático
+que o mede via `kpi_krs.kpi_id`, ou marcar 'manual') + `estrategia.js`/gestão mostrar "% atingido
+por KR". Começa por um diagnóstico dos 75 KRs (quais medem automático, quais são duplicata, quais
+precisam de fonte).
+
 ## Jornada do novo convertido · 90 dias + responsabilidade por área (2026-06-03)
 
 Marcos: medir 3 marcos por novo convertido a partir da conversão — **Contato pastoral ≤3d**,
