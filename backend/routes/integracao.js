@@ -225,7 +225,7 @@ router.delete('/acompanhamentos/:id', async (req, res) => {
 // ── GET /dashboard — cards do header de /integracao ─────────────────────────
 // Reformulado em 2026-05-14 · visitantes/acompanhamentos descontinuados (PR
 // #399). Agora retorna dados acionaveis: cultos pendentes de preenchimento,
-// frequencia + decisoes do mes corrente, batismos aguardando.
+// frequência + decisões do mês corrente, batismos aguardando.
 router.get('/dashboard', async (req, res) => {
   try {
     const hoje = new Date();
@@ -233,7 +233,7 @@ router.get('/dashboard', async (req, res) => {
     const inicioMes = new Date(hoje.getFullYear(), hoje.getMonth(), 1).toISOString().slice(0, 10);
     const sessentaDiasAtrasStr = new Date(hoje.getTime() - 60 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
 
-    // 1. Cultos pendentes · passados nos ultimos 60 dias sem preenchimento
+    // 1. Cultos pendentes · passados nos últimos 60 dias sem preenchimento
     const { data: cultosRecentes } = await supabase
       .from('cultos')
       .select('id, data, presencial_adulto, presencial_kids')
@@ -243,7 +243,7 @@ router.get('/dashboard', async (req, res) => {
       c => (c.presencial_adulto || 0) === 0 && (c.presencial_kids || 0) === 0
     ).length;
 
-    // 2. Frequencia + decisoes do mes corrente
+    // 2. Frequência + decisões do mês corrente
     const { data: cultosMes } = await supabase
       .from('cultos')
       .select('presencial_adulto, presencial_kids, decisoes_presenciais, decisoes_online')
@@ -256,11 +256,11 @@ router.get('/dashboard', async (req, res) => {
       decisoesMes   += (c.decisoes_presenciais || 0) + (c.decisoes_online || 0);
     }
 
-    // Soma tambem decisoes sem culto vinculado · trilha 'conversao' concluida
-    // que veio de importacao (planilha) e cai no mes corrente.
-    // (Decisoes registradas via cultos_decisoes_pessoas tambem criam trilha,
-    //  mas com observacao 'Decisao registrada no culto' · filtramos por
-    //  observacao ILIKE '%importacao%' pra contar so as historicas/avulsas.)
+    // Soma também decisões sem culto vinculado · trilha 'conversao' concluída
+    // que veio de importação (planilha) e cai no mês corrente.
+    // (Decisões registradas via cultos_decisoes_pessoas também criam trilha,
+    //  mas com observação 'Decisão registrada no culto' · filtramos por
+    //  observação ILIKE '%importação%' pra contar so as historicas/avulsas.)
     const { count: decisoesImportadasMes } = await supabase
       .from('mem_trilha_valores')
       .select('id', { count: 'exact', head: true })
@@ -271,7 +271,7 @@ router.get('/dashboard', async (req, res) => {
       .ilike('observacoes', '%importacao%');
     decisoesMes += decisoesImportadasMes || 0;
 
-    // 3. Batismos aguardando + proxima data
+    // 3. Batismos aguardando + próxima data
     const { data: batismosAg } = await supabase
       .from('batismo_inscricoes')
       .select('id, data_batismo, status')
@@ -308,7 +308,7 @@ router.get('/historico-anual', async (req, res) => {
     res.json(data || []);
   } catch (e) {
     console.error('[INTEGRACAO] historico-anual', e.message);
-    res.status(500).json({ error: 'Erro ao carregar historico' });
+    res.status(500).json({ error: 'Erro ao carregar histórico' });
   }
 });
 
@@ -323,15 +323,15 @@ router.get('/historico-batismos', async (req, res) => {
     res.json(data || []);
   } catch (e) {
     console.error('[INTEGRACAO] historico-batismos', e.message);
-    res.status(500).json({ error: 'Erro ao carregar historico de batismos' });
+    res.status(500).json({ error: 'Erro ao carregar histórico de batismos' });
   }
 });
 
 // ═════════════════════════════════════════════════════════════════════════
-// COLETA MOBILE · submissoes de dados de culto pendentes de aprovacao
+// COLETA MOBILE · submissoes de dados de culto pendentes de aprovação
 // ═════════════════════════════════════════════════════════════════════════
 
-// GET /coleta/cultos-abertos · lista cultos dos ultimos 14 dias com status por ambiente
+// GET /coleta/cultos-abertos · lista cultos dos últimos 14 dias com status por ambiente
 router.get('/coleta/cultos-abertos', async (req, res) => {
   try {
     const hoje = new Date().toISOString().slice(0, 10);
@@ -400,10 +400,10 @@ router.post('/coleta', async (req, res) => {
     const pres = Number(presencial);
     const dec = Number(decisoes ?? 0);
     if (!Number.isFinite(pres) || pres < 0) {
-      return res.status(400).json({ error: 'presencial deve ser numero >= 0' });
+      return res.status(400).json({ error: 'presencial deve ser número >= 0' });
     }
     if (!Number.isFinite(dec) || dec < 0) {
-      return res.status(400).json({ error: 'decisoes deve ser numero >= 0' });
+      return res.status(400).json({ error: 'decisões deve ser número >= 0' });
     }
 
     const { data, error } = await supabase
@@ -420,16 +420,16 @@ router.post('/coleta', async (req, res) => {
       .select()
       .single();
     if (error) {
-      // 23505 = unique_violation · ja tem submissao ativa pra esse (culto, ambiente)
+      // 23505 = unique_violation · já tem submissao ativa pra esse (culto, ambiente)
       if (error.code === '23505') {
         return res.status(409).json({
-          error: 'Ja existe uma submissao pendente ou aprovada deste ambiente neste culto.',
+          error: 'Já existe uma submissao pendente ou aprovada deste ambiente neste culto.',
         });
       }
       return res.status(400).json({ error: error.message });
     }
 
-    // Notificacao · admins/diretores (ou regras customizadas em /admin/notificacoes-regras)
+    // Notificação · admins/diretores (ou regras customizadas em /admin/notificacoes-regras)
     (async () => {
       try {
         const [{ data: prof }, { data: culto }] = await Promise.all([
@@ -447,8 +447,8 @@ router.post('/coleta', async (req, res) => {
         await notificar({
           modulo: 'integracao',
           tipo: 'dados_culto_pendente',
-          titulo: `Dados de culto aguardando aprovacao`,
-          mensagem: `${quem} lancou ${ambienteLabel} do ${cultoLabel} · presencial ${Math.round(pres)} · decisoes ${Math.round(dec)}`,
+          titulo: `Dados de culto aguardando aprovação`,
+          mensagem: `${quem} lancou ${ambienteLabel} do ${cultoLabel} · presencial ${Math.round(pres)} · decisões ${Math.round(dec)}`,
           link: '/integracao?tab=pendentes',
           severidade: 'info',
           chaveDedup: `dados_culto_sub_${data.id}`,
@@ -465,7 +465,7 @@ router.post('/coleta', async (req, res) => {
   }
 });
 
-// GET /coleta/minhas · submissoes do proprio usuario (historico pessoal)
+// GET /coleta/minhas · submissoes do próprio usuário (histórico pessoal)
 router.get('/coleta/minhas', async (req, res) => {
   try {
     const { data, error } = await supabase
@@ -517,9 +517,9 @@ router.post('/coleta/:id/aprovar', async (req, res) => {
       .select('id, culto_id, ambiente, presencial, decisoes, status')
       .eq('id', id)
       .single();
-    if (errFetch || !sub) return res.status(404).json({ error: 'Submissao nao encontrada' });
+    if (errFetch || !sub) return res.status(404).json({ error: 'Submissao não encontrada' });
     if (sub.status !== 'pendente') {
-      return res.status(409).json({ error: `Submissao ja esta ${sub.status}` });
+      return res.status(409).json({ error: `Submissao já esta ${sub.status}` });
     }
 
     const updateCulto = sub.ambiente === 'templo'
@@ -572,7 +572,7 @@ router.post('/coleta/:id/rejeitar', async (req, res) => {
       .select()
       .single();
     if (error) return res.status(400).json({ error: error.message });
-    if (!data) return res.status(404).json({ error: 'Submissao nao encontrada ou ja decidida' });
+    if (!data) return res.status(404).json({ error: 'Submissao não encontrada ou já decidida' });
     res.json(data);
   } catch (e) {
     console.error('[INTEGRACAO] coleta rejeitar', e.message);

@@ -18,7 +18,7 @@ async function generateDigestsInBackground(attachmentRows) {
       const buffer = await downloadFile(att.supabase_path, att.sharepoint_item_id);
       const text = (await extractText(buffer, att.file_type, att.file_name, 8000)).trim();
 
-      // Video: salvar apenas referência
+      // Vídeo: salvar apenas referência
       if (text.startsWith('[VIDEO:')) {
         await supabase.from('event_task_attachments').update({ file_digest: `Vídeo enviado: ${att.file_name}` }).eq('id', att.id);
         console.log(`[DIGEST] ${att.file_name} → video registrado`);
@@ -159,7 +159,7 @@ router.post('/', async (req, res) => {
       }
     }
 
-    // Atualizar status do card para 'concluida'
+    // Atualizar status do card para 'concluída'
     await supabase.from('cycle_phase_tasks')
       .update({ status: 'concluida' })
       .eq('id', task_id);

@@ -6,7 +6,7 @@
  *   2. Backend redirects to PC OAuth authorize URL
  *   3. PC redirects back to GET /api/auth/planning-center/callback?code=...
  *   4. Backend exchanges code for token, fetches user info from PC
- *   5. Creates / finds Supabase user with role='voluntario'
+ *   5. Creates / finds Supabase user with role='voluntário'
  *   6. Generates a magic-link token_hash via admin API
  *   7. Redirects browser to frontend /auth/pc-callback?token_hash=...
  *   8. Frontend verifies OTP and establishes session
@@ -202,7 +202,7 @@ router.get('/callback', async (req, res) => {
         supaUserId = created.user.id;
       }
 
-      // Create profile with 'voluntario' role
+      // Create profile with 'voluntário' role
       await supabase.from('profiles').upsert({
         id: supaUserId,
         email,
@@ -216,7 +216,7 @@ router.get('/callback', async (req, res) => {
 
     // ── 5. Link to vol_profiles if exists ───────────────────────────
     // Update the vol_profiles record to link the supabase user
-    // (coluna correta e auth_user_id, nao user_id)
+    // (coluna correta e auth_user_id, não user_id)
     await supabase.from('vol_profiles')
       .update({ auth_user_id: supaUserId })
       .eq('planning_center_id', pcId)

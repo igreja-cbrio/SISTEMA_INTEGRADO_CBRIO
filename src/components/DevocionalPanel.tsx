@@ -99,7 +99,7 @@ export default function DevocionalPanel() {
         setChapters(list);
         if (!list.find(c => c.id === chapterId) && list.length) setChapterId(list[0].id);
       })
-      .catch((e: any) => toast.error('Erro ao carregar capitulos: ' + e.message));
+      .catch((e: any) => toast.error('Erro ao carregar capítulos: ' + e.message));
   }, [bibleId, bookId]);
 
   useEffect(() => {
@@ -107,7 +107,7 @@ export default function DevocionalPanel() {
     setLoadingChapter(true);
     bibleApi.chapter(bibleId, chapterId)
       .then((r: any) => setChapter(r?.data || null))
-      .catch((e: any) => toast.error('Erro ao carregar capitulo: ' + e.message))
+      .catch((e: any) => toast.error('Erro ao carregar capítulo: ' + e.message))
       .finally(() => setLoadingChapter(false));
   }, [bibleId, chapterId]);
 
@@ -148,7 +148,7 @@ export default function DevocionalPanel() {
 
   async function salvar() {
     if (!membro?.id) {
-      toast.error('Voce nao esta vinculado a um membro. Avise a equipe para cadastrar seu email.');
+      toast.error('Você não esta vinculado a um membro. Avise a equipe para cadastrar seu email.');
       return;
     }
     if (!observacoes.trim()) {
@@ -191,7 +191,7 @@ export default function DevocionalPanel() {
           )}
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
             <div>
-              <Label className="text-xs">Versao</Label>
+              <Label className="text-xs">Versão</Label>
               <Select value={bibleId} onValueChange={setBibleId} disabled={loadingBibles}>
                 <SelectTrigger><SelectValue placeholder={loadingBibles ? 'Carregando...' : 'Selecione'} /></SelectTrigger>
                 <SelectContent>
@@ -211,7 +211,7 @@ export default function DevocionalPanel() {
               </Select>
             </div>
             <div>
-              <Label className="text-xs">Capitulo</Label>
+              <Label className="text-xs">Capítulo</Label>
               <Select value={chapterId} onValueChange={setChapterId} disabled={!chapters.length}>
                 <SelectTrigger><SelectValue placeholder="Cap." /></SelectTrigger>
                 <SelectContent className="max-h-80">
@@ -246,7 +246,7 @@ export default function DevocionalPanel() {
                 {chapter.copyright && <p className="text-xs text-muted-foreground mt-6 not-prose">{chapter.copyright}</p>}
               </div>
             ) : (
-              <p className="text-muted-foreground text-sm">Selecione livro e capitulo para comecar.</p>
+              <p className="text-muted-foreground text-sm">Selecione livro e capítulo para comecar.</p>
             )}
           </div>
         </Card>
@@ -264,7 +264,7 @@ export default function DevocionalPanel() {
           </div>
 
           <div>
-            <Label className="text-xs">Referencia</Label>
+            <Label className="text-xs">Referência</Label>
             <Input value={referencia} readOnly className="bg-muted" />
           </div>
 

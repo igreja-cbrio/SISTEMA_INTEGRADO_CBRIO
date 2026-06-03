@@ -37,7 +37,7 @@ export default function SuccessOverlay({ volunteerName, teamName, positionName, 
             <div className="flex items-start gap-2">
               <AlertTriangle className="h-5 w-5 text-yellow-300 shrink-0 mt-0.5" />
               <div className="space-y-1">
-                <p className="font-semibold text-yellow-200">Voce nao estava escalado para hoje.</p>
+                <p className="font-semibold text-yellow-200">Você não estava escalado para hoje.</p>
                 <p className="text-sm text-yellow-100/90 leading-relaxed">
                   A lideranca aconselha que voce se escale nas proximas vezes para
                   ajudar na gestao dos voluntarios da CBRio.

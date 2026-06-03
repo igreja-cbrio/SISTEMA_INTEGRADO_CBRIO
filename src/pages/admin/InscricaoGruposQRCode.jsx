@@ -1,6 +1,6 @@
 // ============================================================================
 // /admin/grupos/qrcode-inscricao — gera o QR code para a campanha de
-// inscricao em grupos. Imprimir e distribuir nos cultos / divulgar nas
+// inscrição em grupos. Imprimir e distribuir nos cultos / divulgar nas
 // redes sociais. Aponta pra /inscricao-grupos?temporada=T1-2026.
 // ============================================================================
 

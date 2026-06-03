@@ -1,5 +1,5 @@
 // Web Push helpers para PWA do CBRio.
-// Registra o service worker, pede permissao e gerencia subscription.
+// Registra o service worker, pede permissão e gerencia subscription.
 
 const API = (typeof window !== 'undefined' && (window as any).__API_BASE__) || '/api';
 
@@ -50,7 +50,7 @@ async function fetchVapidKey(): Promise<string | null> {
   return j?.key || null;
 }
 
-// Pede permissao + cria subscription + registra no backend.
+// Pede permissão + cria subscription + registra no backend.
 // Retorna 'ok' | 'denied' | 'unsupported' | 'no_vapid' | 'error'.
 export async function subscribePush(): Promise<'ok' | 'denied' | 'unsupported' | 'no_vapid' | 'error'> {
   if (!isPushSupported()) return 'unsupported';

@@ -68,7 +68,7 @@ export default function VolMeuPerfil() {
   const [cameraActive, setCameraActive] = useState(false);
   const [faceStatus, setFaceStatus] = useState('');
 
-  // Dialog de cadastro de membro (quando o CPF nao existe em mem_membros)
+  // Dialog de cadastro de membro (quando o CPF não existe em mem_membros)
   const [memberDialogOpen, setMemberDialogOpen] = useState(false);
   const [regNome, setRegNome] = useState('');
   const [regSobrenome, setRegSobrenome] = useState('');
@@ -86,7 +86,7 @@ export default function VolMeuPerfil() {
   };
 
   const openMemberDialog = (triedCpf: string) => {
-    // pre-preenche a partir do que o usuario ja tinha digitado
+    // pre-preenche a partir do que o usuário já tinha digitado
     const [first, ...rest] = (fullName.trim() || profile?.full_name || '').split(/\s+/);
     setRegNome(first || '');
     setRegSobrenome(rest.join(' ') || '');
@@ -149,7 +149,7 @@ export default function VolMeuPerfil() {
     setFaceStatus('Salvando reconhecimento facial...');
     try {
       await saveFace.mutateAsync({ descriptor: Array.from(descriptor) });
-      setFaceStatus('Reconhecimento facial salvo! Voce ja pode fazer check-in pelo rosto.');
+      setFaceStatus('Reconhecimento facial salvo! Você já pode fazer check-in pelo rosto.');
       toast.success('Reconhecimento facial salvo');
       stopCamera();
       setCameraActive(false);
@@ -254,7 +254,7 @@ export default function VolMeuPerfil() {
         <CardContent className="space-y-3">
           <p className="text-sm text-muted-foreground">
             {hasFace
-              ? 'Ja existe uma foto cadastrada. Voce pode atualizar capturando novamente.'
+              ? 'Já existe uma foto cadastrada. Você pode atualizar capturando novamente.'
               : 'Cadastre seu rosto para fazer check-in sem precisar do QR code.'}
           </p>
 
@@ -310,7 +310,7 @@ export default function VolMeuPerfil() {
         </CardContent>
       </Card>
 
-      {/* Dialog de cadastro obrigatorio de membro */}
+      {/* Dialog de cadastro obrigatório de membro */}
       <Dialog
         open={memberDialogOpen}
         onOpenChange={(open) => { if (!registerMember.isPending) setMemberDialogOpen(open); }}

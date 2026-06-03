@@ -2,9 +2,9 @@
 // /api/gestao/* — Painel administrativo do PMO (Marcos + Matheus + Eduardo)
 //
 // 3 abas:
-//   - Pulso        → quem esta atrasado, KPIs cronicamente vermelhos, calendario
+//   - Pulso        → quem esta atrasado, KPIs cronicamente vermelhos, calendário
 //   - Configurar   → reusa /api/estrategia/* e /api/notificacao-regras/*
-//   - Saude        → health check do sistema (KPIs sem meta, sem dono, etc)
+//   - Saúde        → health check do sistema (KPIs sem meta, sem dono, etc)
 // ============================================================================
 
 const router = require('express').Router();
@@ -15,7 +15,7 @@ router.use(authenticate);
 router.use(authorize('admin', 'diretor'));
 
 // ----------------------------------------------------------------------------
-// GET /pulso - dashboard de operacao do PMO
+// GET /pulso - dashboard de operação do PMO
 // ----------------------------------------------------------------------------
 router.get('/pulso', async (req, res) => {
   try {
@@ -30,7 +30,7 @@ router.get('/pulso', async (req, res) => {
     const trajByKpi = {};
     (trajs || []).forEach(t => { trajByKpi[t.kpi_id] = t; });
 
-    // 1. Quem esta atrasado (lideres com KPIs sem registro recente)
+    // 1. Quem esta atrasado (líderes com KPIs sem registro recente)
     const liderIds = [...new Set((kpis || []).map(k => k.lider_funcionario_id).filter(Boolean))];
     const { data: lideres } = liderIds.length > 0 ? await supabase
       .from('rh_funcionarios')
@@ -70,7 +70,7 @@ router.get('/pulso', async (req, res) => {
       .sort((a, b) => b.score - a.score);
 
     // 2. KPIs cronicamente vermelhos (≥ 2 ciclos)
-    // Por enquanto: KPIs com status critico (refinamos depois com historico)
+    // Por enquanto: KPIs com status critico (refinamos depois com histórico)
     const cronicamente = (kpis || [])
       .map(k => ({ ...k, traj: trajByKpi[k.id] }))
       .filter(k => k.traj?.status_trajetoria === 'critico')
@@ -84,7 +84,7 @@ router.get('/pulso', async (req, res) => {
         percentual_meta: k.traj?.percentual_meta,
       }));
 
-    // 3. Por area: % de KPIs em dia
+    // 3. Por área: % de KPIs em dia
     const areasStat = {};
     (kpis || []).forEach(k => {
       const a = String(k.area || 'sem_area').toLowerCase();
@@ -114,7 +114,7 @@ router.get('/pulso', async (req, res) => {
 });
 
 // ----------------------------------------------------------------------------
-// GET /saude - meta-monitoramento do proprio sistema OKR
+// GET /saude - meta-monitoramento do próprio sistema OKR
 // ----------------------------------------------------------------------------
 router.get('/saude', async (req, res) => {
   try {
@@ -123,12 +123,12 @@ router.get('/saude', async (req, res) => {
       .select('id, indicador, descricao, area, valores, meta_descricao, meta_valor, lider_funcionario_id, objetivo_geral_id, is_okr, ativo')
       .eq('ativo', true);
 
-    // Apenas KPIs das 6 areas oficiais (kids/ami/bridge/sede/online/cba) entram
+    // Apenas KPIs das 6 áreas oficiais (kids/ami/bridge/sede/online/cba) entram
     // nos checks de "sem objetivo geral" e "sem valor da jornada". KPIs cuja
-    // area e ministerio (integracao/grupos/cuidados/voluntariado/generosidade/next)
-    // sao processos do ministerio · nao precisam estar amarrados num objetivo
-    // geral nem ter valor da jornada (Marcos: "nao e erro ter um processo num
-    // ministerio e nao no outro").
+    // área e ministério (integracao/grupos/cuidados/voluntariado/generosidade/next)
+    // são processos do ministério · não precisam estar amarrados num objetivo
+    // geral nem ter valor da jornada (Marcos: "não e erro ter um processo num
+    // ministério e não no outro").
     const AREAS_OFICIAIS = ['kids', 'ami', 'bridge', 'sede', 'online', 'cba'];
     const isAreaOficial = (k) => AREAS_OFICIAIS.includes(String(k.area || '').toLowerCase());
     const kpisAreas = (kpis || []).filter(isAreaOficial);
@@ -142,7 +142,7 @@ router.get('/saude', async (req, res) => {
     const sem_objetivo = kpisAreas.filter(k => !k.objetivo_geral_id);
     const sem_valores = kpisAreas.filter(k => !Array.isArray(k.valores) || k.valores.length === 0);
 
-    // Sem registro nos ultimos 60 dias
+    // Sem registro nos últimos 60 dias
     const dataLimite = new Date();
     dataLimite.setDate(dataLimite.getDate() - 60);
     const dataLimiteStr = dataLimite.toISOString().slice(0, 10);
@@ -154,7 +154,7 @@ router.get('/saude', async (req, res) => {
     const ativosRecentes = new Set((regs || []).map(r => r.indicador_id));
     const sem_registro_60d = (kpis || []).filter(k => !ativosRecentes.has(k.id));
 
-    // Areas com cobertura incompleta na matriz
+    // Áreas com cobertura incompleta na matriz
     const VALORES = ['seguir', 'conectar', 'investir', 'servir', 'generosidade'];
     const matriz = {};
     (kpis || []).forEach(k => {
@@ -232,7 +232,7 @@ router.get('/saude', async (req, res) => {
 });
 
 // ----------------------------------------------------------------------------
-// POST /pulso/cobrar - dispara notificacao para lider
+// POST /pulso/cobrar - dispara notificação para líder
 // ----------------------------------------------------------------------------
 router.post('/pulso/cobrar/:lider_id', async (req, res) => {
   try {
@@ -242,9 +242,9 @@ router.post('/pulso/cobrar/:lider_id', async (req, res) => {
       .select('id, nome, email')
       .eq('id', req.params.lider_id)
       .maybeSingle();
-    if (!lider) return res.status(404).json({ error: 'Lider nao encontrado' });
+    if (!lider) return res.status(404).json({ error: 'Líder não encontrado' });
 
-    // Tentar achar profile do lider via email
+    // Tentar achar profile do líder via email
     let userId = null;
     if (lider.email) {
       const { data: prof } = await supabase
@@ -256,14 +256,14 @@ router.post('/pulso/cobrar/:lider_id', async (req, res) => {
     }
 
     if (!userId) {
-      return res.status(404).json({ error: 'Lider sem profile vinculado' });
+      return res.status(404).json({ error: 'Líder sem profile vinculado' });
     }
 
-    // Inserir notificacao
+    // Inserir notificação
     const { error } = await supabase.from('notificacoes').insert({
       usuario_id: userId,
       titulo: 'Atualize seus KPIs',
-      mensagem: mensagem || 'O PMO solicitou que voce atualize os indicadores da sua area. Acesse Meus KPIs.',
+      mensagem: mensagem || 'O PMO solicitou que você atualize os indicadores da sua área. Acesse Meus KPIs.',
       tipo: 'cobranca_kpi',
       modulo: 'kpis',
       severidade: 'aviso',
@@ -279,8 +279,8 @@ router.post('/pulso/cobrar/:lider_id', async (req, res) => {
 });
 
 // ----------------------------------------------------------------------------
-// GET /painel-adm · agrega 8 areas adm com indicadores operacionais
-// Le KPIs operacionais ja calculados + agrega solicitacoes do mes corrente
+// GET /painel-adm · agrega 8 áreas adm com indicadores operacionais
+// Le KPIs operacionais já calculados + agrega solicitações do mês corrente
 // ----------------------------------------------------------------------------
 router.get('/painel-adm', async (req, res) => {
   try {
@@ -295,12 +295,12 @@ router.get('/painel-adm', async (req, res) => {
       { key: 'financeiro',         label: 'Financeiro',         cor: '#84CC16' },
     ];
 
-    // Periodo: mes corrente
+    // Período: mês corrente
     const hoje = new Date();
     const inicio = `${hoje.getFullYear()}-${String(hoje.getMonth() + 1).padStart(2, '0')}-01`;
     const fim = `${hoje.getFullYear()}-${String(hoje.getMonth() + 1).padStart(2, '0')}-${String(new Date(hoje.getFullYear(), hoje.getMonth() + 1, 0).getDate()).padStart(2, '0')}`;
 
-    // Le KPIs operacionais ativos + ultimo valor calculado
+    // Le KPIs operacionais ativos + último valor calculado
     const { data: kpis } = await supabase
       .from('kpi_indicadores_taticos')
       .select('id, indicador, formula_config, meta_valor, unidade, objetivo_geral_id')
@@ -319,7 +319,7 @@ router.get('/painel-adm', async (req, res) => {
       if (!valorByKpi[v.kpi_id]) valorByKpi[v.kpi_id] = v;
     });
 
-    // Pra cada area, agrega contagem de solicitacoes do mes
+    // Pra cada área, agrega contagem de solicitações do mês
     const areas = await Promise.all(AREAS_ADM.map(async (area) => {
       const { count: total } = await supabase
         .from('solicitacoes')
@@ -342,7 +342,7 @@ router.get('/painel-adm', async (req, res) => {
         .eq('area_responsavel', area.key)
         .in('status', ['pendente', 'em_analise', 'aguardando_aprovacao_financeira', 'em_atendimento', 'aguardando_entrega']);
 
-      // KPIs dessa area (matching pelo formula_config.area_responsavel)
+      // KPIs dessa área (matching pelo formula_config.area_responsavel)
       const kpisArea = (kpis || []).filter(k => k.formula_config?.area_responsavel === area.key);
       const indicadores = kpisArea.map(k => {
         const vc = valorByKpi[k.id];

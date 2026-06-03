@@ -1,12 +1,12 @@
 // ============================================================================
-// /api/painel-area/:area · drill-down completo de KPIs + DADOS BRUTOS + saude
+// /api/painel-area/:área · drill-down completo de KPIs + DADOS BRUTOS + saúde
 // ============================================================================
-// Usado pelos modulos kids/ami/bridge/online · paginas read-only
+// Usado pelos módulos kids/ami/bridge/online · páginas read-only
 //
 // Retorna:
 //   - kpis: indicadores calculados (kpi_indicadores_taticos) com trajetoria
-//   - dados: dados_brutos agregados por tipo · ultimo valor + tendencia
-//   - saude: score 0-100 + breakdown
+//   - dados: dados_brutos agregados por tipo · último valor + tendência
+//   - saúde: score 0-100 + breakdown
 //   - NPS de culto destacado no topo (CULTO-NPS-*)
 // ============================================================================
 
@@ -18,8 +18,8 @@ router.use(authenticate);
 
 const AREAS_VALIDAS = ['kids', 'ami', 'bridge', 'online', 'sede', 'cba'];
 
-// Filtra cultos da `vw_culto_stats` pela area pedida · usa service_type_name
-// porque eh mais robusto que nome livre (mesma logica do kpiAutoCollector)
+// Filtra cultos da `vw_culto_stats` pela área pedida · usa service_type_name
+// porque eh mais robusto que nome livre (mesma lógica do kpiAutoCollector)
 function filtrarCultosPorArea(cultos, area) {
   if (!cultos || cultos.length === 0) return [];
   const n = (s) => String(s || '').toLowerCase();
@@ -38,7 +38,7 @@ function filtrarCultosPorArea(cultos, area) {
     });
   }
   if (area === 'online') {
-    // Todos cultos com transmissao online (pico online > 0 OU has_online)
+    // Todos cultos com transmissão online (pico online > 0 OU has_online)
     return cultos.filter(c => (c.online_pico || 0) > 0);
   }
   if (area === 'kids') {
@@ -68,7 +68,7 @@ router.get('/:area', authorizeModule('painel-area', 1), async (req, res) => {
       return res.status(400).json({ error: 'Area invalida', validas: AREAS_VALIDAS });
     }
 
-    // Filtro de periodo via query param · desde=YYYY-MM-DD&ate=YYYY-MM-DD
+    // Filtro de período via query param · desde=YYYY-MM-DD&ate=YYYY-MM-DD
     // OU periodo=30d|90d|180d|365d (default 180d)
     const hoje = new Date();
     let desde = req.query.desde;
@@ -81,7 +81,7 @@ router.get('/:area', authorizeModule('painel-area', 1), async (req, res) => {
     }
 
     // ──────────────────────────────────────────────────────────────────────
-    // 1. KPIs ativos da area + trajetoria + lideres + formula (pra cruzar com dados)
+    // 1. KPIs ativos da área + trajetoria + líderes + formula (pra cruzar com dados)
     // ──────────────────────────────────────────────────────────────────────
     const { data: kpisRaw } = await supabase
       .from('kpi_indicadores_taticos')
@@ -181,7 +181,7 @@ router.get('/:area', authorizeModule('painel-area', 1), async (req, res) => {
       tiposCatalogo = catalogo || [];
     }
 
-    // 2c. Busca registros existentes (no periodo · pra sparkline + variacao)
+    // 2c. Busca registros existentes (no período · pra sparkline + variacao)
     const { data: dadosRaw } = await supabase
       .from('dados_brutos')
       .select('tipo_id, data, valor')
@@ -199,7 +199,7 @@ router.get('/:area', authorizeModule('painel-area', 1), async (req, res) => {
 
     // 2d. Monta a lista final · 1 entrada por tipo esperado · com ou sem dado
     const dados = tiposCatalogo.map(t => {
-      const regs = registrosPorTipo.get(t.id) || []; // ja em ordem desc
+      const regs = registrosPorTipo.get(t.id) || []; // já em ordem desc
       const ultimo = regs[0] || null;
       const historico6 = regs.slice(0, 6).reverse();
       const totalMesAtual = regs
@@ -233,12 +233,12 @@ router.get('/:area', authorizeModule('painel-area', 1), async (req, res) => {
     }).sort((a, b) => a.ordem - b.ordem);
 
     // ──────────────────────────────────────────────────────────────────────
-    // 2e. Cultos recentes da area · principal fonte de dado pro lider hoje
+    // 2e. Cultos recentes da área · principal fonte de dado pro líder hoje
     // ──────────────────────────────────────────────────────────────────────
-    // Marcos: "decisao arquitetural · pode ler de vw_culto_stats, bom adicionar
-    // filtro por data tambem". Os 4 modulos veem os cultos da sua area
+    // Marcos: "decisão arquitetural · pode ler de vw_culto_stats, bom adicionar
+    // filtro por data também". Os 4 módulos veem os cultos da sua área
     // diretamente (cultos.X eh source-of-truth de frequencia/decisoes/batismos
-    // hoje, NAO dados_brutos).
+    // hoje, NÃO dados_brutos).
     let cultosRecentes = [];
     let totaisCultos = null;
     if (area !== 'sede' && area !== 'cba') {
@@ -277,7 +277,7 @@ router.get('/:area', authorizeModule('painel-area', 1), async (req, res) => {
     }
 
     // ──────────────────────────────────────────────────────────────────────
-    // 3. Score de saude
+    // 3. Score de saúde
     // ──────────────────────────────────────────────────────────────────────
     const totalKpis = enriched.length;
     const noAlvo = enriched.filter(k => k.trajetoria?.status_trajetoria === 'no_alvo').length;
@@ -286,7 +286,7 @@ router.get('/:area', authorizeModule('painel-area', 1), async (req, res) => {
     const semDado = enriched.filter(k => !k.trajetoria || k.trajetoria.ultimo_valor == null).length;
     const comMeta = enriched.filter(k => k.trajetoria?.checkpoint_meta != null).length;
 
-    // Dados com registro nos ultimos 30 dias
+    // Dados com registro nos últimos 30 dias
     const limite30 = new Date(hoje); limite30.setDate(limite30.getDate() - 30);
     const limite30Str = limite30.toISOString().slice(0, 10);
     const dadosRecentes = dados.filter(d => d.ultima_data && d.ultima_data >= limite30Str).length;
@@ -335,21 +335,21 @@ router.get('/:area', authorizeModule('painel-area', 1), async (req, res) => {
     });
   } catch (e) {
     console.error('painel-area:', e.message);
-    res.status(500).json({ error: 'Erro ao buscar dados da area' });
+    res.status(500).json({ error: 'Erro ao buscar dados da área' });
   }
 });
 
 // ============================================================================
-// POST /:area/nps · registra NPS mensal da area (coord da area · nivel >= 3)
+// POST /:area/nps · registra NPS mensal da área (coord da área · nível >= 3)
 // ============================================================================
-// Os 5 KPIs CULTO-NPS-* (kids/ami/bridge/online/sede) ja apontam pra
+// Os 5 KPIs CULTO-NPS-* (kids/ami/bridge/online/sede) já apontam pra
 // tipo_id='nps_culto' via formula_config. So falta o canal de coleta ·
 // este endpoint grava nota agregada em dados_brutos · trigger SQL recalcula.
 //
-// Body: { nota: 0-10, mes: 'YYYY-MM' (default mes atual), qtd_respostas?: number, observacao?: string }
+// Body: { nota: 0-10, mês: 'YYYY-MM' (default mês atual), qtd_respostas?: number, observação?: string }
 //
-// Pra automacao futura: quando o modulo NPS rodar com pesquisa pos-culto,
-// substituir este endpoint por agregacao automatica.
+// Pra automacao futura: quando o módulo NPS rodar com pesquisa pos-culto,
+// substituir este endpoint por agregacao automática.
 // ============================================================================
 router.post('/:area/nps', authorizeModule('painel-area', 3), async (req, res) => {
   try {
@@ -363,7 +363,7 @@ router.post('/:area/nps', authorizeModule('painel-area', 3), async (req, res) =>
       return res.status(400).json({ error: 'nota deve ser entre 0 e 10' });
     }
     const mesUsado = (mes && /^\d{4}-\d{2}$/.test(mes)) ? mes : new Date().toISOString().slice(0, 7);
-    // Data canonica: dia 1 do mes (granularidade mensal do tipo nps_culto)
+    // Data canonica: dia 1 do mês (granularidade mensal do tipo nps_culto)
     const dataReg = `${mesUsado}-01`;
 
     const payload = {
@@ -377,7 +377,7 @@ router.post('/:area/nps', authorizeModule('painel-area', 3), async (req, res) =>
       origem: 'painel-area-nps',
     };
 
-    // UNIQUE em (tipo, area, data, contexto) · UPSERT
+    // UNIQUE em (tipo, área, data, contexto) · UPSERT
     const { data, error } = await supabase
       .from('dados_brutos')
       .upsert(payload, { onConflict: 'tipo_id,area,data,contexto' })

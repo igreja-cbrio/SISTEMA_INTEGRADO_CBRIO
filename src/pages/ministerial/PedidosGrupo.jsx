@@ -1,8 +1,8 @@
 // ============================================================================
-// /grupos/pedidos — tela onde o lider aprova/rejeita pedidos de inscricao.
+// /grupos/pedidos — tela onde o líder aprova/rejeita pedidos de inscrição.
 //
-// Modo "mine" por padrao: mostra so os pedidos dos grupos onde o user
-// logado e o lider (resolvido via vol_profiles.membresia_id no backend).
+// Modo "mine" por padrão: mostra so os pedidos dos grupos onde o user
+// logado e o líder (resolvido via vol_profiles.membresia_id no backend).
 // Admin/diretor pode mudar pra ver tudo.
 // ============================================================================
 
@@ -35,7 +35,7 @@ export default function PedidosGrupo() {
   const isAdmin = ['admin', 'diretor'].includes(profile?.role);
   const [pedidos, setPedidos] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [showAll, setShowAll] = useState(isAdmin); // admin ve tudo por padrao
+  const [showAll, setShowAll] = useState(isAdmin); // admin ve tudo por padrão
   const [filterStatus, setFilterStatus] = useState('pendente');
   const [rejectingId, setRejectingId] = useState(null);
   const [motivoRej, setMotivoRej] = useState('');

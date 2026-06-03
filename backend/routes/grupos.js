@@ -10,7 +10,7 @@ const sanitizePath = (s) => (s || '').replace(/[^a-zA-Z0-9\-_ ]/g, '').trim();
 
 router.use(authenticate);
 
-// GET /api/grupos — lista todos com contagem de membros e lider
+// GET /api/grupos — lista todos com contagem de membros e líder
 router.get('/', async (req, res) => {
   try {
     const { ativo, categoria, bairro, temporada, status_temporada, codigo } = req.query;
@@ -36,7 +36,7 @@ router.get('/', async (req, res) => {
     const { data: participacoes } = await supabase.from('mem_grupo_membros')
       .select('grupo_id, membro_id').is('saiu_em', null);
 
-    // Buscar dados dos lideres
+    // Buscar dados dos líderes
     const liderIds = [...new Set((grupos || []).map(g => g.lider_id).filter(Boolean))];
     let lideresMap = {};
     if (liderIds.length > 0) {
@@ -90,7 +90,7 @@ router.get('/materiais', async (req, res) => {
 router.post('/materiais', uploadMw.single('arquivo'), async (req, res) => {
   try {
     const { nome, comentario, etiquetas, grupo_ids } = req.body;
-    if (!req.file) return res.status(400).json({ error: 'Arquivo nao fornecido' });
+    if (!req.file) return res.status(400).json({ error: 'Arquivo não fornecido' });
     const fileName = nome || req.file.originalname;
     const ext = fileName.split('.').pop().toLowerCase();
     const parsedEtiquetas = etiquetas ? JSON.parse(etiquetas) : ['Todos'];
@@ -161,7 +161,7 @@ router.delete('/materiais/:docId', authorize('admin', 'diretor'), async (req, re
 });
 
 // ══════════════════════════════════════════════
-// PARTICIPACAO (rotas especificas antes de /:id)
+// PARTICIPAÇÃO (rotas especificas antes de /:id)
 // ══════════════════════════════════════════════
 
 // PATCH /api/grupos/participacao/:id/sair — remover membro
@@ -176,7 +176,7 @@ router.patch('/participacao/:id/sair', async (req, res) => {
   } catch (e) { res.status(500).json({ error: 'Erro' }); }
 });
 
-// PATCH /api/grupos/participacao/:id/presenca — incrementar presenca atomicamente
+// PATCH /api/grupos/participacao/:id/presenca — incrementar presença atomicamente
 router.patch('/participacao/:id/presenca', async (req, res) => {
   try {
     const { data, error } = await supabase.rpc('incrementar_presenca_grupo', { p_id: req.params.id });
@@ -186,7 +186,7 @@ router.patch('/participacao/:id/presenca', async (req, res) => {
 });
 
 // ══════════════════════════════════════════════
-// ENCONTROS (chamada / lista de presenca)
+// ENCONTROS (chamada / lista de presença)
 // ══════════════════════════════════════════════
 
 // GET /api/grupos/:id/encontros — lista encontros do grupo (mais recentes primeiro)
@@ -237,14 +237,14 @@ router.post('/:id/encontros', async (req, res) => {
       p_membros_presentes: membros_presentes,
     });
     if (error) {
-      if (error.code === '23505') return res.status(409).json({ error: 'Ja existe encontro registrado nessa data' });
+      if (error.code === '23505') return res.status(409).json({ error: 'Já existe encontro registrado nessa data' });
       throw error;
     }
     res.json({ id: encontroId, total_presentes: membros_presentes.length });
   } catch (e) { console.error('[Grupos encontro create]', e.message); res.status(500).json({ error: 'Erro ao registrar encontro' }); }
 });
 
-// GET /api/grupos/encontros/:encontroId — detalhe + presencas
+// GET /api/grupos/encontros/:encontroId — detalhe + presenças
 router.get('/encontros/:encontroId', async (req, res) => {
   try {
     const { data: encontro, error } = await supabase.from('mem_grupo_encontros')
@@ -261,7 +261,7 @@ router.get('/encontros/:encontroId', async (req, res) => {
   } catch (e) { console.error('[Grupos encontro get]', e.message); res.status(500).json({ error: 'Erro ao buscar encontro' }); }
 });
 
-// PATCH /api/grupos/encontros/:encontroId — editar encontro (tema, observacoes, data, presencas)
+// PATCH /api/grupos/encontros/:encontroId — editar encontro (tema, observações, data, presenças)
 router.patch('/encontros/:encontroId', async (req, res) => {
   try {
     const { data: dataEncontro, tema, observacoes, membros_presentes } = req.body;
@@ -277,7 +277,7 @@ router.patch('/encontros/:encontroId', async (req, res) => {
       p_membros_presentes: Array.isArray(membros_presentes) ? membros_presentes : null,
     });
     if (error) {
-      if (error.code === '23505') return res.status(409).json({ error: 'Ja existe encontro registrado nessa data' });
+      if (error.code === '23505') return res.status(409).json({ error: 'Já existe encontro registrado nessa data' });
       throw error;
     }
     res.json({ success: true });
@@ -294,7 +294,7 @@ router.delete('/encontros/:encontroId', authorize('admin', 'diretor'), async (re
 
     const grupoId = presencas?.[0]?.mem_grupo_encontros?.grupo_id;
 
-    // Delete cascateia presencas; antes decrementa contador de cada membro presente
+    // Delete cascateia presenças; antes decrementa contador de cada membro presente
     if (grupoId && presencas?.length) {
       for (const p of presencas) {
         await supabase.rpc('decrementar_presenca_grupo_membro', {
@@ -310,7 +310,7 @@ router.delete('/encontros/:encontroId', authorize('admin', 'diretor'), async (re
 });
 
 // ══════════════════════════════════════════════
-// METRICAS / SAUDE
+// METRICAS / SAÚDE
 // ══════════════════════════════════════════════
 
 const RECORRENCIA_DIAS = { semanal: 7, quinzenal: 14, mensal: 30 };
@@ -324,7 +324,7 @@ function calcularMetricasGrupo(grupo, encontrosRaw, presencasPorEncontro, totalM
     ? presencasUltimos8.reduce((a, b) => a + b, 0) / presencasUltimos8.length
     : 0;
 
-  // Tendencia: 4 mais novos vs 4 anteriores
+  // Tendência: 4 mais novos vs 4 anteriores
   const recentes = presencasUltimos8.slice(0, 4);
   const anteriores = presencasUltimos8.slice(4, 8);
   const mediaRec = recentes.length ? recentes.reduce((a, b) => a + b, 0) / recentes.length : 0;
@@ -335,19 +335,19 @@ function calcularMetricasGrupo(grupo, encontrosRaw, presencasPorEncontro, totalM
     else if (mediaRec < mediaAnt * 0.85) tendencia = 'caindo';
   }
 
-  // Regularidade: encontros nos ultimos 90 dias / esperados
+  // Regularidade: encontros nos últimos 90 dias / esperados
   const recDias = RECORRENCIA_DIAS[grupo.recorrencia || 'semanal'] || 7;
   const limite90 = new Date(Date.now() - 90 * 86400000);
   const realizados90 = encontrosRaw.filter(e => new Date(e.data + 'T12:00:00') >= limite90).length;
   const esperados90 = Math.floor(90 / recDias);
   const regularidade = esperados90 > 0 ? Math.min(100, Math.round((realizados90 / esperados90) * 100)) : 0;
 
-  // Taxa de presenca (% dos membros atuais)
+  // Taxa de presença (% dos membros atuais)
   const taxaPresenca = totalMembrosAtuais > 0
     ? Math.min(100, Math.round((freqMedia / totalMembrosAtuais) * 100))
     : 0;
 
-  // Score de saude composto
+  // Score de saúde composto
   const tendBonus = tendencia === 'subindo' ? 100 : tendencia === 'caindo' ? 30 : 70;
   const score = Math.round(0.4 * regularidade + 0.4 * taxaPresenca + 0.2 * tendBonus);
 
@@ -360,12 +360,12 @@ function calcularMetricasGrupo(grupo, encontrosRaw, presencasPorEncontro, totalM
     tendencia,
     score_saude: score,
     em_risco: score < 50,
-    presencas_ultimos: presencasUltimos8.reverse(), // mais antigo primeiro pra grafico
+    presencas_ultimos: presencasUltimos8.reverse(), // mais antigo primeiro pra gráfico
     datas_ultimos: ultimos8.slice().reverse().map(e => e.data),
   };
 }
 
-// GET /api/grupos/:id/metricas — saude do grupo individual
+// GET /api/grupos/:id/metricas — saúde do grupo individual
 router.get('/:id/metricas', async (req, res) => {
   try {
     const id = req.params.id;
@@ -430,7 +430,7 @@ router.get('/saude/agregado', async (req, res) => {
       membrosPorGrupo[p.grupo_id] = (membrosPorGrupo[p.grupo_id] || 0) + 1;
     });
 
-    // Presencas em batch
+    // Presenças em batch
     const todosEncontroIds = (encRes.data || []).map(e => e.id);
     let presencasPorEncontro = {};
     if (todosEncontroIds.length) {
@@ -470,14 +470,14 @@ router.get('/saude/agregado', async (req, res) => {
       saudaveis: grupos.length - emRisco,
       grupos: ranking,
     });
-  } catch (e) { console.error('[Grupos saude agregado]', e.message); res.status(500).json({ error: 'Erro ao calcular saude agregada' }); }
+  } catch (e) { console.error('[Grupos saude agregado]', e.message); res.status(500).json({ error: 'Erro ao calcular saúde agregada' }); }
 });
 
-// GET /api/grupos/kpis/relatorio — relatorio agregado de KPIs do modulo Grupos
-// (aba Relatorios). Agrega tudo numa RPC para evitar o cap de 1000 linhas do
+// GET /api/grupos/kpis/relatorio — relatório agregado de KPIs do módulo Grupos
+// (aba Relatórios). Agrega tudo numa RPC para evitar o cap de 1000 linhas do
 // PostgREST sobre encontros/presencas. Query: temporada (uuid), meses (1-60).
 // Retorna: total_grupos, total_lideres, lideres_treinamento, satisfacao_lideres,
-//          frequencia { media_por_encontro, serie mensal } e funcoes (distribuicao).
+//          frequência { media_por_encontro, série mensal } e funções (distribuição).
 router.get('/kpis/relatorio', async (req, res) => {
   try {
     const { temporada } = req.query;
@@ -490,13 +490,13 @@ router.get('/kpis/relatorio', async (req, res) => {
     res.json(data || {});
   } catch (e) {
     console.error('[Grupos relatorio kpis]', e.message);
-    res.status(500).json({ error: 'Erro ao gerar relatorio de KPIs' });
+    res.status(500).json({ error: 'Erro ao gerar relatório de KPIs' });
   }
 });
 
-// GET /api/grupos/kpis/lideres-treinamento — lista os lideres em treinamento
+// GET /api/grupos/kpis/lideres-treinamento — lista os líderes em treinamento
 // (funcao='lider_treinamento') dos grupos ativos, com nome e grupo. Volume
-// pequeno (poucos por vez); alimenta o detalhamento da aba Relatorios.
+// pequeno (poucos por vez); alimenta o detalhamento da aba Relatórios.
 router.get('/kpis/lideres-treinamento', async (req, res) => {
   try {
     const { temporada } = req.query;
@@ -528,12 +528,12 @@ router.get('/kpis/lideres-treinamento', async (req, res) => {
     res.json(list);
   } catch (e) {
     console.error('[Grupos lideres-treinamento]', e.message);
-    res.status(500).json({ error: 'Erro ao listar lideres em treinamento' });
+    res.status(500).json({ error: 'Erro ao listar líderes em treinamento' });
   }
 });
 
 // ══════════════════════════════════════════════
-// BUSCA E PEDIDOS DE INSCRICAO (rotas especificas antes de /:id)
+// BUSCA E PEDIDOS DE INSCRIÇÃO (rotas especificas antes de /:id)
 // ══════════════════════════════════════════════
 
 // Distancia entre dois pontos em km (Haversine)
@@ -549,7 +549,7 @@ function distanciaKm(lat1, lng1, lat2, lng2) {
 
 // GET /api/grupos/buscar — busca com filtros para o seletor
 // Query: lider_nome, categoria, bairro, cep, raio_km, temporada, status_temporada
-// Retorna grupos ATIVOS da temporada filtrada com info do lider
+// Retorna grupos ATIVOS da temporada filtrada com info do líder
 router.get('/buscar', async (req, res) => {
   try {
     const { lider_nome, categoria, bairro, cep, raio_km, temporada, status_temporada, q } = req.query;
@@ -564,7 +564,7 @@ router.get('/buscar', async (req, res) => {
     const { data: grupos, error } = await query;
     if (error) throw error;
 
-    // Enriquecer com lider
+    // Enriquecer com líder
     const liderIds = [...new Set((grupos || []).map(g => g.lider_id).filter(Boolean))];
     let lideresMap = {};
     if (liderIds.length > 0) {
@@ -578,7 +578,7 @@ router.get('/buscar', async (req, res) => {
       lider_foto: lideresMap[g.lider_id]?.foto_url || null,
     }));
 
-    // Filtro client-side por nome do lider (texto livre)
+    // Filtro client-side por nome do líder (texto livre)
     if (lider_nome) {
       const term = String(lider_nome).toLowerCase();
       resultado = resultado.filter(g => g.lider_nome?.toLowerCase().includes(term));
@@ -602,7 +602,7 @@ router.get('/buscar', async (req, res) => {
       const cepLimpo = String(cep).replace(/\D/g, '');
       if (cepLimpo.length === 8) {
         try {
-          // Geocode do CEP via ViaCEP + Nominatim (mesma logica de membresia)
+          // Geocode do CEP via ViaCEP + Nominatim (mesma lógica de membresia)
           const viaCepRes = await fetch(`https://viacep.com.br/ws/${cepLimpo}/json/`);
           const viaCep = await viaCepRes.json();
           if (!viaCep.erro) {
@@ -632,7 +632,7 @@ router.get('/buscar', async (req, res) => {
   } catch (e) { console.error('[Grupos buscar]', e.message); res.status(500).json({ error: 'Erro ao buscar grupos' }); }
 });
 
-// GET /api/grupos/lideres/buscar — autocomplete de lideres com seus grupos
+// GET /api/grupos/lideres/buscar — autocomplete de líderes com seus grupos
 // Query: q (texto), temporada
 router.get('/lideres/buscar', async (req, res) => {
   try {
@@ -655,7 +655,7 @@ router.get('/lideres/buscar', async (req, res) => {
       .limit(20);
 
     res.json(lideres || []);
-  } catch (e) { console.error('[Grupos lideres]', e.message); res.status(500).json({ error: 'Erro ao buscar lideres' }); }
+  } catch (e) { console.error('[Grupos lideres]', e.message); res.status(500).json({ error: 'Erro ao buscar líderes' }); }
 });
 
 // GET /api/grupos/lideres/:liderId/grupos — grupos liderados por um membro
@@ -668,31 +668,31 @@ router.get('/lideres/:liderId/grupos', async (req, res) => {
     const { data, error } = await query;
     if (error) throw error;
     res.json(data || []);
-  } catch (e) { console.error('[Grupos lideres/grupos]', e.message); res.status(500).json({ error: 'Erro ao buscar grupos do lider' }); }
+  } catch (e) { console.error('[Grupos lideres/grupos]', e.message); res.status(500).json({ error: 'Erro ao buscar grupos do líder' }); }
 });
 
-// ── PEDIDOS DE INSCRICAO ──
+// ── PEDIDOS DE INSCRIÇÃO ──
 
 // POST /api/grupos/:id/pedidos — pessoa (logada como staff/totem) cria pedido em nome de um membro
-// Body: { membro_id?, cadastro_pendente_id?, nome, email?, telefone?, origem?, observacao? }
+// Body: { membro_id?, cadastro_pendente_id?, nome, email?, telefone?, origem?, observação? }
 router.post('/:id/pedidos', async (req, res) => {
   try {
     const grupoId = req.params.id;
     const b = req.body || {};
     if (!b.membro_id && !b.cadastro_pendente_id) {
-      return res.status(400).json({ error: 'membro_id ou cadastro_pendente_id obrigatorio' });
+      return res.status(400).json({ error: 'membro_id ou cadastro_pendente_id obrigatório' });
     }
     if (!b.nome) return res.status(400).json({ error: 'nome obrigatorio' });
 
-    // Verifica se ja nao existe pedido pendente
+    // Verifica se já não existe pedido pendente
     if (b.membro_id) {
       const { data: ja } = await supabase.from('mem_grupo_pedidos')
         .select('id').eq('grupo_id', grupoId).eq('membro_id', b.membro_id).eq('status', 'pendente').maybeSingle();
-      if (ja) return res.status(409).json({ error: 'Ja existe pedido pendente desse membro pra esse grupo' });
-      // E se ja for membro ativo
+      if (ja) return res.status(409).json({ error: 'Já existe pedido pendente desse membro pra esse grupo' });
+      // E se já for membro ativo
       const { data: jaMembro } = await supabase.from('mem_grupo_membros')
         .select('id').eq('grupo_id', grupoId).eq('membro_id', b.membro_id).is('saiu_em', null).maybeSingle();
-      if (jaMembro) return res.status(409).json({ error: 'Ja e membro ativo desse grupo' });
+      if (jaMembro) return res.status(409).json({ error: 'Já e membro ativo desse grupo' });
     }
 
     const { data, error } = await supabase.from('mem_grupo_pedidos').insert({
@@ -708,7 +708,7 @@ router.post('/:id/pedidos', async (req, res) => {
     }).select().single();
     if (error) throw error;
 
-    // Notificar lider (em background) + admins via fallback
+    // Notificar líder (em background) + admins via fallback
     (async () => {
       try {
         const { data: grupo } = await supabase.from('mem_grupos').select('nome, lider_id').eq('id', grupoId).single();
@@ -747,7 +747,7 @@ router.get('/pedidos/list', async (req, res) => {
     if (status) query = query.eq('status', status);
     if (grupo_id) query = query.eq('grupo_id', grupo_id);
 
-    // mine=true filtra por grupos onde o user logado e o lider
+    // mine=true filtra por grupos onde o user logado e o líder
     if (mine === 'true') {
       // Resolve mem_membros.id do user via vol_profiles.membresia_id ou email match
       const { data: prof } = await supabase
@@ -814,7 +814,7 @@ router.get('/:id/historico-membros', async (req, res) => {
       .order('entrou_em', { ascending: false });
     if (error) throw error;
 
-    // Para cada saida, tentar identificar o "destino" (proximo grupo do membro)
+    // Para cada saída, tentar identificar o "destino" (próximo grupo do membro)
     const saidas = (participacoes || []).filter(p => p.saiu_em);
     const membroIds = [...new Set(saidas.map(p => p.membro_id))];
     let destinosMap = {};
@@ -825,7 +825,7 @@ router.get('/:id/historico-membros', async (req, res) => {
         .in('membro_id', membroIds)
         .neq('grupo_id', grupoId)
         .order('entrou_em', { ascending: true });
-      // Para cada saida, encontra a primeira entrada subsequente em outro grupo
+      // Para cada saída, encontra a primeira entrada subsequente em outro grupo
       for (const s of saidas) {
         const candidatos = (outros || []).filter(o =>
           o.membro_id === s.membro_id && o.entrou_em >= s.saiu_em
@@ -840,7 +840,7 @@ router.get('/:id/historico-membros', async (req, res) => {
     })));
   } catch (e) {
     console.error('[Historico membros]', e.message);
-    res.status(500).json({ error: 'Erro ao buscar historico' });
+    res.status(500).json({ error: 'Erro ao buscar histórico' });
   }
 });
 
@@ -851,12 +851,12 @@ router.post('/pedidos/:pedidoId/aprovar', async (req, res) => {
       .select('*').eq('id', req.params.pedidoId).single();
     if (ePedido) throw ePedido;
     if (pedido.status !== 'pendente') {
-      return res.status(409).json({ error: `Pedido ja foi ${pedido.status}` });
+      return res.status(409).json({ error: `Pedido já foi ${pedido.status}` });
     }
 
     let membroId = pedido.membro_id;
 
-    // Se o pedido veio do formulario publico (cadastro pendente), promove a membro
+    // Se o pedido veio do formulário público (cadastro pendente), promove a membro
     if (!membroId && pedido.cadastro_pendente_id) {
       const { data: cad } = await supabase.from('mem_cadastros_pendentes')
         .select('*').eq('id', pedido.cadastro_pendente_id).single();
@@ -881,12 +881,12 @@ router.post('/pedidos/:pedidoId/aprovar', async (req, res) => {
       return res.status(400).json({ error: 'Pedido sem membro nem cadastro pendente valido' });
     }
 
-    // Fecha participacao anterior do membro
+    // Fecha participação anterior do membro
     await supabase.from('mem_grupo_membros')
-      .update({ saiu_em: new Date().toISOString().slice(0, 10), motivo_saida: 'Trocou de grupo via aprovacao' })
+      .update({ saiu_em: new Date().toISOString().slice(0, 10), motivo_saida: 'Trocou de grupo via aprovação' })
       .eq('membro_id', membroId).is('saiu_em', null);
 
-    // Cria nova participacao
+    // Cria nova participação
     await supabase.from('mem_grupo_membros').insert({
       grupo_id: pedido.grupo_id, membro_id: membroId,
       entrou_em: new Date().toISOString().slice(0, 10),
@@ -901,7 +901,7 @@ router.post('/pedidos/:pedidoId/aprovar', async (req, res) => {
       membro_id: membroId,
     }).eq('id', pedido.id);
 
-    // Fluxo de boas-vindas: notifica a pessoa (rica) e o lider (novo membro)
+    // Fluxo de boas-vindas: notifica a pessoa (rica) e o líder (novo membro)
     (async () => {
       try {
         const { data: grupo } = await supabase.from('mem_grupos')
@@ -929,13 +929,13 @@ router.post('/pedidos/:pedidoId/aprovar', async (req, res) => {
         const onde = ondePartes.length ? ondePartes.join(' — ') : null;
 
         const partesPessoa = [];
-        partesPessoa.push(`Voce foi aprovado(a) no grupo ${grupo.nome}.`);
+        partesPessoa.push(`Você foi aprovado(a) no grupo ${grupo.nome}.`);
         if (quando) partesPessoa.push(`Encontros ${quando}.`);
         if (onde) partesPessoa.push(`Local: ${onde}.`);
         if (liderNome) {
           partesPessoa.push(`Lider: ${liderNome}${liderTelefone ? ` (${liderTelefone})` : ''}.`);
         }
-        partesPessoa.push('O lider entrara em contato em breve.');
+        partesPessoa.push('O líder entrara em contato em breve.');
         const mensagemPessoa = partesPessoa.join(' ');
 
         // Notifica a pessoa (so se tiver login)
@@ -954,7 +954,7 @@ router.post('/pedidos/:pedidoId/aprovar', async (req, res) => {
           });
         }
 
-        // Notifica o lider — novo membro chegando
+        // Notifica o líder — novo membro chegando
         if (liderAuthUserId) {
           await notificar({
             modulo: 'grupos',
@@ -980,9 +980,9 @@ router.post('/pedidos/:pedidoId/rejeitar', async (req, res) => {
     const { motivo } = req.body || {};
     const { data: pedido } = await supabase.from('mem_grupo_pedidos')
       .select('id, status, grupo_id, membro_id, nome').eq('id', req.params.pedidoId).single();
-    if (!pedido) return res.status(404).json({ error: 'Pedido nao encontrado' });
+    if (!pedido) return res.status(404).json({ error: 'Pedido não encontrado' });
     if (pedido.status !== 'pendente') {
-      return res.status(409).json({ error: `Pedido ja foi ${pedido.status}` });
+      return res.status(409).json({ error: `Pedido já foi ${pedido.status}` });
     }
 
     await supabase.from('mem_grupo_pedidos').update({
@@ -1004,10 +1004,10 @@ router.post('/pedidos/:pedidoId/rejeitar', async (req, res) => {
             await notificar({
               modulo: 'grupos',
               tipo: 'pedido_rejeitado',
-              titulo: `Pedido para ${grupo?.nome || 'grupo'} nao foi aceito`,
+              titulo: `Pedido para ${grupo?.nome || 'grupo'} não foi aceito`,
               mensagem: motivo
-                ? `Seu pedido foi recusado: ${motivo}. Voce pode tentar outro grupo.`
-                : `Seu pedido foi recusado pelo lider. Voce pode tentar outro grupo.`,
+                ? `Seu pedido foi recusado: ${motivo}. Você pode tentar outro grupo.`
+                : `Seu pedido foi recusado pelo líder. Você pode tentar outro grupo.`,
               link: '/grupos',
               severidade: 'info',
               chaveDedup: `pedido_rejeitado_${pedido.id}`,
@@ -1023,7 +1023,7 @@ router.post('/pedidos/:pedidoId/rejeitar', async (req, res) => {
 });
 
 // ══════════════════════════════════════════════
-// CRUD do grupo (rotas com /:id por ultimo)
+// CRUD do grupo (rotas com /:id por último)
 // ══════════════════════════════════════════════
 
 // GET /api/grupos/:id — detalhe com membros
@@ -1046,7 +1046,7 @@ router.get('/:id', async (req, res) => {
     if (grupoRes.error) throw grupoRes.error;
     const grupo = grupoRes.data;
 
-    // Round 2: lider e grupo de origem (so se houver — em paralelo)
+    // Round 2: líder e grupo de origem (so se houver — em paralelo)
     const [liderRes, origemRes] = await Promise.all([
       grupo.lider_id
         ? supabase.from('mem_membros').select('id, nome, telefone, email, foto_url').eq('id', grupo.lider_id).single()
@@ -1169,17 +1169,17 @@ router.get('/bairros/list', async (req, res) => {
 });
 
 // POST /api/grupos/geocode-batch — geocoda em massa os grupos sem lat/lng.
-// Pula grupos online (bairro=Online) e os que ja tem lat/lng.
+// Pula grupos online (bairro=Online) e os que já tem lat/lng.
 // Para cada grupo: tenta CEP -> ViaCEP+Nominatim. Se falhar, tenta texto livre
 // no Nominatim. Atualiza lat/lng quando sucesso.
 // Rate-limit interno: 1.1s entre chamadas (Nominatim policy).
 //
-// Retorna { ok: [...], falhas: [{id, codigo, nome, motivo, local, bairro}] }
+// Retorna { ok: [...], falhas: [{id, código, nome, motivo, local, bairro}] }
 router.post('/geocode-batch', authorize('admin', 'diretor'), async (req, res) => {
   try {
     const { temporada, somente_sem_coords, limit, offset } = req.body || {};
-    // Limita o lote para nao estourar timeout do Vercel (60s).
-    // Cada grupo demora ~1.1s no Nominatim, entao 30 grupos = ~33s.
+    // Limita o lote para não estourar timeout do Vercel (60s).
+    // Cada grupo demora ~1.1s no Nominatim, então 30 grupos = ~33s.
     const LIMITE = Math.min(Math.max(parseInt(limit, 10) || 30, 1), 50);
     const OFFSET = Math.max(parseInt(offset, 10) || 0, 0);
 
@@ -1226,7 +1226,7 @@ router.post('/geocode-batch', authorize('admin', 'diretor'), async (req, res) =>
         skip.push({ id: g.id, codigo: g.codigo, nome: g.nome, motivo: 'online' });
         continue;
       }
-      // Pula se ja tem coords e somente_sem_coords=true
+      // Pula se já tem coords e somente_sem_coords=true
       if (somente_sem_coords && g.lat != null && g.lng != null) {
         skip.push({ id: g.id, codigo: g.codigo, nome: g.nome, motivo: 'ja_tem_coords' });
         continue;
@@ -1319,7 +1319,7 @@ router.post('/:id/membros', authorize('admin', 'diretor'), async (req, res) => {
     const { membro_id } = req.body;
     if (!membro_id) return res.status(400).json({ error: 'membro_id obrigatorio' });
 
-    // Fechar participacao anterior ativa do membro
+    // Fechar participação anterior ativa do membro
     await supabase.from('mem_grupo_membros')
       .update({ saiu_em: new Date().toISOString().split('T')[0], motivo_saida: 'Transferido para outro grupo' })
       .eq('membro_id', membro_id).is('saiu_em', null);
@@ -1329,7 +1329,7 @@ router.post('/:id/membros', authorize('admin', 'diretor'), async (req, res) => {
     }).select().single();
     if (error) throw error;
 
-    // Notificacao imediata: novo membro no grupo
+    // Notificação imediata: novo membro no grupo
     (async () => {
       try {
         const [{ data: grupo }, { data: membro }] = await Promise.all([
@@ -1355,9 +1355,9 @@ router.post('/:id/membros', authorize('admin', 'diretor'), async (req, res) => {
 });
 
 // ============================================================================
-// SUPERVISAO · funcoes hierarquicas + visitas + observacoes mensais
+// SUPERVISAO · funções hierarquicas + visitas + observações mensais
 //
-// Modelo de papeis (na pratica · descobrimos pelo membro_id do user):
+// Modelo de papéis (na pratica · descobrimos pelo membro_id do user):
 //   - admin/diretor (role) → ve TUDO
 //   - coordenador (existe row em mem_grupo_membros com funcao='coordenador') → ve TODOS os supervisores e grupos
 //   - supervisor (mem_grupos.supervisor_id = my_membro_id) → ve apenas os grupos que supervisiona
@@ -1385,7 +1385,7 @@ async function getMeuPerfilGrupo(userId, role) {
 
   if (!meuMembroId) return { papel: null, membro_id: null };
 
-  // Coordenador? Tem alguma participacao ativa com funcao=coordenador
+  // Coordenador? Tem alguma participação ativa com funcao=coordenador
   const { data: coordRow } = await supabase
     .from('mem_grupo_membros')
     .select('id')
@@ -1409,11 +1409,11 @@ async function getMeuPerfilGrupo(userId, role) {
   return { papel: null, membro_id: meuMembroId };
 }
 
-// GET /api/grupos/supervisao/me · papel + grupos visiveis na hierarquia
+// GET /api/grupos/supervisao/me · papel + grupos visíveis na hierarquia
 router.get('/supervisao/me', async (req, res) => {
   try {
     const { papel, membro_id } = await getMeuPerfilGrupo(req.user.userId, req.user.role);
-    if (!papel) return res.status(403).json({ error: 'Voce nao tem papel ativo nos grupos (supervisor/coordenador/admin)' });
+    if (!papel) return res.status(403).json({ error: 'Você não tem papel ativo nos grupos (supervisor/coordenador/admin)' });
 
     let grupos = [];
     if (papel === 'admin' || papel === 'coordenador') {
@@ -1455,7 +1455,7 @@ router.get('/supervisao/me', async (req, res) => {
       membro_id,
       total_grupos: grupos.length,
       supervisores: Object.values(porSupervisor),
-      grupos, // tambem lista flat
+      grupos, // também lista flat
     });
   } catch (e) {
     console.error('[grupos] supervisao/me:', e.message);
@@ -1481,7 +1481,7 @@ router.post('/:id/visitas', async (req, res) => {
   try {
     const { data_visita, observacao } = req.body || {};
     const { papel, membro_id } = await getMeuPerfilGrupo(req.user.userId, req.user.role);
-    if (!papel) return res.status(403).json({ error: 'Sem permissao' });
+    if (!papel) return res.status(403).json({ error: 'Sem permissão' });
 
     // Supervisor só registra nos seus grupos
     if (papel === 'supervisor') {
@@ -1491,7 +1491,7 @@ router.post('/:id/visitas', async (req, res) => {
         .eq('id', req.params.id)
         .maybeSingle();
       if (!g || g.supervisor_id !== membro_id) {
-        return res.status(403).json({ error: 'Voce so registra visitas nos grupos que supervisiona' });
+        return res.status(403).json({ error: 'Você so registra visitas nos grupos que supervisiona' });
       }
     }
 
@@ -1531,7 +1531,7 @@ router.delete('/visitas/:visitaId', async (req, res) => {
   try {
     const { papel } = await getMeuPerfilGrupo(req.user.userId, req.user.role);
     if (!['admin', 'coordenador', 'supervisor'].includes(papel)) {
-      return res.status(403).json({ error: 'Sem permissao' });
+      return res.status(403).json({ error: 'Sem permissão' });
     }
     const { error } = await supabase.from('grupo_supervisao_visitas').delete().eq('id', req.params.visitaId);
     if (error) throw error;
@@ -1552,17 +1552,17 @@ router.get('/:id/observacoes', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-// PUT /api/grupos/:id/observacoes/:periodo · upsert por mes
+// PUT /api/grupos/:id/observacoes/:período · upsert por mês
 router.put('/:id/observacoes/:periodo', async (req, res) => {
   try {
     const { observacao } = req.body || {};
     if (!observacao) return res.status(400).json({ error: 'observacao obrigatoria' });
     if (!/^\d{4}-\d{2}$/.test(req.params.periodo)) {
-      return res.status(400).json({ error: 'periodo deve ser YYYY-MM' });
+      return res.status(400).json({ error: 'período deve ser YYYY-MM' });
     }
 
     const { papel, membro_id } = await getMeuPerfilGrupo(req.user.userId, req.user.role);
-    if (!papel) return res.status(403).json({ error: 'Sem permissao' });
+    if (!papel) return res.status(403).json({ error: 'Sem permissão' });
 
     if (papel === 'supervisor') {
       const { data: g } = await supabase
@@ -1571,7 +1571,7 @@ router.put('/:id/observacoes/:periodo', async (req, res) => {
         .eq('id', req.params.id)
         .maybeSingle();
       if (!g || g.supervisor_id !== membro_id) {
-        return res.status(403).json({ error: 'Voce so escreve observacao nos grupos que supervisiona' });
+        return res.status(403).json({ error: 'Você so escreve observação nos grupos que supervisiona' });
       }
     }
 
@@ -1620,13 +1620,13 @@ router.put('/:id/supervisor', authorize('admin', 'diretor'), async (req, res) =>
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-// PUT /api/grupos/membros/:membroRowId/funcao · trocar funcao de um membro
+// PUT /api/grupos/membros/:membroRowId/funcao · trocar função de um membro
 router.put('/membros/:membroRowId/funcao', async (req, res) => {
   try {
     const { funcao } = req.body || {};
     const VALIDAS = ['visitante', 'frequentador', 'lider_treinamento', 'lider', 'co_lider', 'supervisor', 'coordenador'];
     if (!VALIDAS.includes(funcao)) {
-      return res.status(400).json({ error: `funcao deve ser uma de: ${VALIDAS.join(', ')}` });
+      return res.status(400).json({ error: `função deve ser uma de: ${VALIDAS.join(', ')}` });
     }
     // Autoriza quem edita grupos (mesma regra de podeEditarGrupos no front:
     // admin/diretor ou nível >=3 no módulo grupos) OU papel da hierarquia
@@ -1640,7 +1640,7 @@ router.put('/membros/:membroRowId/funcao', async (req, res) => {
       autorizado = ['admin', 'coordenador', 'supervisor'].includes(papel);
     }
     if (!autorizado) {
-      return res.status(403).json({ error: 'Sem permissao' });
+      return res.status(403).json({ error: 'Sem permissão' });
     }
     const { data, error } = await supabase
       .from('mem_grupo_membros')

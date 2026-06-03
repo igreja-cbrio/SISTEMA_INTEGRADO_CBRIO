@@ -12,7 +12,7 @@ interface Logo {
   dur: number;
 }
 
-// Fundo animado com o coracao da CBRio flutuando · usado nos formularios publicos.
+// Fundo animado com o coração da CBRio flutuando · usado nos formulários públicos.
 export default function AnimatedBackground() {
   const [logos, setLogos] = useState<Logo[]>([]);
   const ref = useRef<HTMLDivElement>(null);

@@ -1,21 +1,21 @@
 // ============================================================================
 // /api/marketing · CRUD do Kanban Marketing (Spec 004)
 // ============================================================================
-// Permissoes (boost por area "Marketing" eleva pra nivel 5):
-//   nivel 1 · read analytics e catalogos (diretoria · pastores seniors)
-//   nivel 3 · read fila geral + write proprio card (produtor)
-//   nivel 5 · admin do modulo (Pedro Paiva via boost · Marcos via dev)
+// Permissões (boost por área "Marketing" eleva pra nível 5):
+//   nível 1 · read analytics e catalogos (diretoria · pastores seniors)
+//   nível 3 · read fila geral + write próprio card (produtor)
+//   nível 5 · admin do módulo (Pedro Paiva via boost · Marcos via dev)
 //
 // CHECK constraint do schema (Spec 002):
-//   origem='solicitacao' · solicitacao_id NOT NULL · evento_task_id NULL
+//   origem='solicitação' · solicitacao_id NOT NULL · evento_task_id NULL
 //   origem='evento'      · evento_task_id NOT NULL · solicitacao_id NULL
 //   origem='interna'     · ambos NULL
 //
 // Cards origem=solicitacao/evento NASCEM via triggers SQL · backend so cria
 // origem=interna explicitamente (Pedro abre task direto em /marketing).
 //
-// Revisao (D-14):
-//   Maximo 1 por card · tem_revisao boolean · trigger SQL fn_marketing_cards_estado_ts
+// Revisão (D-14):
+//   Máximo 1 por card · tem_revisao boolean · trigger SQL fn_marketing_cards_estado_ts
 //   atualiza ordem_fila pro fim quando tem_revisao vira true.
 // ============================================================================
 
@@ -59,7 +59,7 @@ async function meuMembroId(req) {
   return (data || []).map(m => m.id);
 }
 
-// Dias uteis (seg-sex) inclusive entre duas datas YYYY-MM-DD · null se invalido.
+// Dias úteis (seg-sex) inclusive entre duas datas YYYY-MM-DD · null se invalido.
 function diasUteisInclusive(inicioStr, fimStr) {
   if (!inicioStr || !fimStr) return null;
   let d = new Date(String(inicioStr).slice(0, 10) + 'T00:00:00');
@@ -77,7 +77,7 @@ function diasUteisInclusive(inicioStr, fimStr) {
 async function enrichCards(cards) {
   if (!cards?.length) return cards || [];
 
-  // 1 query por dimensao p/ evitar N+1
+  // 1 query por dimensão p/ evitar N+1
   const tipoIds     = [...new Set(cards.map(c => c.etiqueta_tipo_id).filter(Boolean))];
   const destinoIds  = [...new Set(cards.map(c => c.etiqueta_destino_id).filter(Boolean))];
   const membroIds   = [...new Set(cards.map(c => c.atribuido_a).filter(Boolean))];
@@ -287,7 +287,7 @@ router.get('/cards/:id', authorizeModule('marketing', 1), async (req, res) => {
       .is('deleted_at', null)
       .maybeSingle();
     if (error) throw error;
-    if (!data) return res.status(404).json({ error: 'Card nao encontrado' });
+    if (!data) return res.status(404).json({ error: 'Card não encontrado' });
 
     const enriched = await enrichCards([data]);
     // Entregaveis do card
@@ -330,7 +330,7 @@ router.post('/cards', authorizeModule('marketing', 5), async (req, res) => {
       .single();
     if (error) throw error;
 
-    // Notifica responsavel atribuido (se houver)
+    // Notifica responsável atribuído (se houver)
     if (data.atribuido_a) {
       const { data: membro } = await supabase
         .from('marketing_membros')
@@ -342,7 +342,7 @@ router.post('/cards', authorizeModule('marketing', 5), async (req, res) => {
           modulo: 'marketing',
           tipo: 'marketing_card_atribuido',
           titulo: `Nova task: ${data.titulo}`,
-          mensagem: `Pedro Paiva atribuiu uma task interna pra voce.`,
+          mensagem: `Pedro Paiva atribuiu uma task interna pra você.`,
           link: '/marketing',
           severidade: 'info',
           chaveDedup: `marketing_card_atribuido_${data.id}_${membro.profile_id}`,
@@ -367,15 +367,15 @@ router.patch('/cards/:id', authorizeModule('marketing', 3), async (req, res) => 
       .eq('id', req.params.id)
       .is('deleted_at', null)
       .maybeSingle();
-    if (!atual) return res.status(404).json({ error: 'Card nao encontrado' });
+    if (!atual) return res.status(404).json({ error: 'Card não encontrado' });
 
-    // RLS UPDATE policy ja bloqueia produtor que nao eh o atribuido, mas
+    // RLS UPDATE policy já bloqueia produtor que não eh o atribuído, mas
     // duplicamos o check no backend pra dar feedback claro de UX.
     const admin = isAdminLike(req);
     const meusMembroIds = await meuMembroId(req);
     const ehDoProdutor = atual.atribuido_a && meusMembroIds.includes(atual.atribuido_a);
     if (!admin && !ehDoProdutor) {
-      return res.status(403).json({ error: 'Voce so pode editar cards atribuidos a voce' });
+      return res.status(403).json({ error: 'Você so pode editar cards atribuídos a você' });
     }
 
     // Campos editaveis por produtor: estado (apenas seu card)
@@ -406,7 +406,7 @@ router.patch('/cards/:id', authorizeModule('marketing', 3), async (req, res) => 
         if (dd) update.duracao_dias = dd;
       }
     } else {
-      // Produtor pode mover estado · proibido pular pra "concluido"
+      // Produtor pode mover estado · proibido pular pra "concluído"
       // direto sem passar por aguardando_solicitante (definicao do fluxo).
       const { estado } = req.body || {};
       if (estado) update.estado = estado;
@@ -422,7 +422,7 @@ router.patch('/cards/:id', authorizeModule('marketing', 3), async (req, res) => 
       .single();
     if (error) throw error;
 
-    // Notificacao · mudou atribuicao
+    // Notificação · mudou atribuicao
     if (update.atribuido_a && update.atribuido_a !== atual.atribuido_a) {
       const { data: membro } = await supabase
         .from('marketing_membros')
@@ -434,7 +434,7 @@ router.patch('/cards/:id', authorizeModule('marketing', 3), async (req, res) => 
           modulo: 'marketing',
           tipo: 'marketing_card_atribuido',
           titulo: `Card atribuido: ${data.titulo}`,
-          mensagem: 'Voce foi atribuido a um card no Kanban Marketing.',
+          mensagem: 'Você foi atribuído a um card no Kanban Marketing.',
           link: '/marketing',
           severidade: 'info',
           chaveDedup: `marketing_card_atribuido_${data.id}_${membro.profile_id}`,
@@ -443,7 +443,7 @@ router.patch('/cards/:id', authorizeModule('marketing', 3), async (req, res) => 
       }
     }
 
-    // Notificacao · entregue (estado=concluido) · solicitante avisado
+    // Notificação · entregue (estado=concluido) · solicitante avisado
     if (update.estado === 'concluido' && atual.estado !== 'concluido' && data.solicitacao_id) {
       const { data: sol } = await supabase
         .from('solicitacoes')
@@ -455,7 +455,7 @@ router.patch('/cards/:id', authorizeModule('marketing', 3), async (req, res) => 
           modulo: 'marketing',
           tipo: 'marketing_card_entregue',
           titulo: `Entregue: ${sol.titulo}`,
-          mensagem: 'Sua solicitacao foi marcada como entregue. Avalie em 30 segundos.',
+          mensagem: 'Sua solicitação foi marcada como entregue. Avalie em 30 segundos.',
           link: '/solicitacoes',
           severidade: 'info',
           chaveDedup: `marketing_card_entregue_${data.id}`,
@@ -464,7 +464,7 @@ router.patch('/cards/:id', authorizeModule('marketing', 3), async (req, res) => 
       }
     }
 
-    // Notificacao · prazo confirmado (Pedro definiu prazo) · solicitante avisado
+    // Notificação · prazo confirmado (Pedro definiu prazo) · solicitante avisado
     if (update.prazo_confirmado !== undefined
         && update.prazo_confirmado !== atual.prazo_confirmado
         && data.solicitacao_id) {
@@ -488,7 +488,7 @@ router.patch('/cards/:id', authorizeModule('marketing', 3), async (req, res) => 
       }
     }
 
-    // Notificacao · aguardando solicitante (preview pro solicitante revisar)
+    // Notificação · aguardando solicitante (preview pro solicitante revisar)
     if (update.estado === 'aguardando_solicitante' && atual.estado !== 'aguardando_solicitante'
         && data.solicitacao_id) {
       const { data: sol } = await supabase
@@ -501,7 +501,7 @@ router.patch('/cards/:id', authorizeModule('marketing', 3), async (req, res) => 
           modulo: 'marketing',
           tipo: 'marketing_card_preview',
           titulo: `Preview pronto: ${sol.titulo}`,
-          mensagem: 'Equipe Marketing finalizou um preview. Aprove ou sugira revisao em /solicitacoes.',
+          mensagem: 'Equipe Marketing finalizou um preview. Aprove ou sugira revisão em /solicitacoes.',
           link: '/solicitacoes',
           severidade: 'info',
           chaveDedup: `marketing_card_preview_${data.id}_${atual.estado_atualizado_em || ''}`,
@@ -518,8 +518,8 @@ router.patch('/cards/:id', authorizeModule('marketing', 3), async (req, res) => 
   }
 });
 
-// Solicitante aprova entrega · card vira concluido (Spec 012)
-// Endpoint dedicado pq solicitante nao tem permissao geral de UPDATE no card.
+// Solicitante aprova entrega · card vira concluído (Spec 012)
+// Endpoint dedicado pq solicitante não tem permissão geral de UPDATE no card.
 router.patch('/cards/:id/aprovar-entrega', async (req, res) => {
   try {
     const { data: card } = await supabase
@@ -528,16 +528,16 @@ router.patch('/cards/:id/aprovar-entrega', async (req, res) => {
       .eq('id', req.params.id)
       .is('deleted_at', null)
       .maybeSingle();
-    if (!card) return res.status(404).json({ error: 'Card nao encontrado' });
+    if (!card) return res.status(404).json({ error: 'Card não encontrado' });
 
-    // Permissoes: solicitante do card OU admin/coord
+    // Permissões: solicitante do card OU admin/coord
     const isSolicitante = card.solicitacao?.solicitante_id === req.user.userId;
     const isAdminMkt = isAdminLike(req);
     if (!isSolicitante && !isAdminMkt) {
       return res.status(403).json({ error: 'Apenas o solicitante (ou admin) pode aprovar a entrega.' });
     }
     if (!['aguardando_solicitante', 'em_producao'].includes(card.estado)) {
-      return res.status(400).json({ error: 'Card nao esta em estado aguardando_solicitante' });
+      return res.status(400).json({ error: 'Card não esta em estado aguardando_solicitante' });
     }
 
     const { data: novo, error } = await supabase
@@ -548,7 +548,7 @@ router.patch('/cards/:id/aprovar-entrega', async (req, res) => {
       .single();
     if (error) throw error;
 
-    // Notifica produtor + concluir solicitacao automaticamente
+    // Notifica produtor + concluir solicitação automaticamente
     if (card.atribuido_a) {
       const { data: membro } = await supabase
         .from('marketing_membros')
@@ -560,7 +560,7 @@ router.patch('/cards/:id/aprovar-entrega', async (req, res) => {
           modulo: 'marketing',
           tipo: 'marketing_entrega_aprovada',
           titulo: `Entrega aprovada: ${card.titulo}`,
-          mensagem: 'Solicitante aprovou · card concluido. Avalia pelo NPS agora.',
+          mensagem: 'Solicitante aprovou · card concluído. Avalia pelo NPS agora.',
           link: '/marketing',
           severidade: 'info',
           chaveDedup: `marketing_entrega_aprovada_${card.id}`,
@@ -569,8 +569,8 @@ router.patch('/cards/:id/aprovar-entrega', async (req, res) => {
       }
     }
 
-    // Marca solicitacao como concluida pra acionar NPS (status=concluido dispara
-    // o fluxo padrao + notificacao de avaliacao em routes/solicitacoes patch)
+    // Marca solicitação como concluída pra acionar NPS (status=concluido dispara
+    // o fluxo padrão + notificação de avaliação em routes/solicitacoes patch)
     if (card.solicitacao_id) {
       await supabase
         .from('solicitacoes')
@@ -586,14 +586,14 @@ router.patch('/cards/:id/aprovar-entrega', async (req, res) => {
   }
 });
 
-// Sugerir revisao · 1x apenas (D-14) · trigger SQL atualiza ordem_fila pro fim.
-// Solicitante chama esse endpoint via UI de Solicitacoes (Spec 012),
-// mas tambem permitimos coordenador/produtor disparar (caso volte feedback offline).
+// Sugerir revisão · 1x apenas (D-14) · trigger SQL atualiza ordem_fila pro fim.
+// Solicitante chama esse endpoint via UI de Solicitações (Spec 012),
+// mas também permitimos coordenador/produtor disparar (caso volte feedback offline).
 router.patch('/cards/:id/sugerir-revisao', async (req, res) => {
   try {
     const { motivo } = req.body || {};
     if (!motivo || motivo.trim().length < 5) {
-      return res.status(400).json({ error: 'Motivo da revisao obrigatorio (>= 5 chars)' });
+      return res.status(400).json({ error: 'Motivo da revisão obrigatório (>= 5 chars)' });
     }
 
     const { data: atual } = await supabase
@@ -602,12 +602,12 @@ router.patch('/cards/:id/sugerir-revisao', async (req, res) => {
       .eq('id', req.params.id)
       .is('deleted_at', null)
       .maybeSingle();
-    if (!atual) return res.status(404).json({ error: 'Card nao encontrado' });
+    if (!atual) return res.status(404).json({ error: 'Card não encontrado' });
     if (atual.tem_revisao) {
-      return res.status(400).json({ error: 'Card ja teve revisao (1 maximo · D-14)' });
+      return res.status(400).json({ error: 'Card já teve revisão (1 máximo · D-14)' });
     }
 
-    // Permissoes: solicitante do card OR admin marketing OR produtor atribuido
+    // Permissões: solicitante do card OR admin marketing OR produtor atribuído
     const admin = isAdminLike(req);
     let podeSugerir = admin;
     if (!podeSugerir && atual.solicitacao_id) {
@@ -622,7 +622,7 @@ router.patch('/cards/:id/sugerir-revisao', async (req, res) => {
       const meusMembroIds = await meuMembroId(req);
       if (meusMembroIds.includes(atual.atribuido_a)) podeSugerir = true;
     }
-    if (!podeSugerir) return res.status(403).json({ error: 'Sem permissao para sugerir revisao' });
+    if (!podeSugerir) return res.status(403).json({ error: 'Sem permissão para sugerir revisão' });
 
     const { data, error } = await supabase
       .from('marketing_kanban_cards')
@@ -636,7 +636,7 @@ router.patch('/cards/:id/sugerir-revisao', async (req, res) => {
       .single();
     if (error) throw error;
 
-    // Notifica produtor atribuido
+    // Notifica produtor atribuído
     if (data.atribuido_a) {
       const { data: membro } = await supabase
         .from('marketing_membros')
@@ -648,7 +648,7 @@ router.patch('/cards/:id/sugerir-revisao', async (req, res) => {
           modulo: 'marketing',
           tipo: 'marketing_card_revisao',
           titulo: `Revisao pedida: ${data.titulo}`,
-          mensagem: `Solicitante pediu revisao · "${motivo.trim()}". Card foi pro fim da fila.`,
+          mensagem: `Solicitante pediu revisão · "${motivo.trim()}". Card foi pro fim da fila.`,
           link: '/marketing',
           severidade: 'alta',
           chaveDedup: `marketing_card_revisao_${data.id}`,
@@ -696,7 +696,7 @@ router.get('/ciclo-criativo', authorizeModule('marketing', 1), async (req, res) 
       grupos[key].tarefas.push(c);
     }
 
-    // Ordena por evento e fase (numero da fase eh prefixo)
+    // Ordena por evento e fase (número da fase eh prefixo)
     const lista = Object.values(grupos).sort((a, b) => {
       if (a.event_name !== b.event_name) return (a.event_name || '').localeCompare(b.event_name || '');
       return (a.fase || '').localeCompare(b.fase || '');
@@ -709,7 +709,7 @@ router.get('/ciclo-criativo', authorizeModule('marketing', 1), async (req, res) 
   }
 });
 
-// Batch · aplica mesmo etiqueta_tipo_id + atribuido_a pra varios cards
+// Batch · aplica mesmo etiqueta_tipo_id + atribuido_a pra vários cards
 router.patch('/ciclo-criativo/batch', authorizeModule('marketing', 5), async (req, res) => {
   try {
     const { card_ids, etiqueta_tipo_id, atribuido_a } = req.body || {};
@@ -742,8 +742,8 @@ router.patch('/ciclo-criativo/batch', authorizeModule('marketing', 5), async (re
 // virou ordenação dentro das colunas do Kanban (urgente→ordem_fila). Só o
 // /fila/posicao (abaixo · mostrado ao solicitante) sobrevive.
 
-// Posicao da fila pra solicitante · so retorna se o card pertence a uma
-// solicitacao do user (transparencia sem expor outros cards).
+// Posição da fila pra solicitante · so retorna se o card pertence a uma
+// solicitação do user (transparencia sem expor outros cards).
 router.get('/fila/posicao/:cardId', async (req, res) => {
   try {
     const { data: card } = await supabase
@@ -752,12 +752,12 @@ router.get('/fila/posicao/:cardId', async (req, res) => {
       .eq('id', req.params.cardId)
       .is('deleted_at', null)
       .maybeSingle();
-    if (!card) return res.status(404).json({ error: 'Card nao encontrado' });
+    if (!card) return res.status(404).json({ error: 'Card não encontrado' });
 
     const isOwner = card.solicitacoes?.solicitante_id === req.user.userId;
     const isMktMember = (req.user.granular?.modulePerms?.marketing?.leitura || 0) >= 1;
     if (!isOwner && !isMktMember && !['admin', 'diretor'].includes(req.user.role)) {
-      return res.status(403).json({ error: 'Sem permissao' });
+      return res.status(403).json({ error: 'Sem permissão' });
     }
 
     if (!['fila', 'em_producao'].includes(card.estado)) {
@@ -802,7 +802,7 @@ router.get('/cards/:id/entregaveis', authorizeModule('marketing', 1), async (req
         .eq('id', req.params.id)
         .is('deleted_at', null)
         .maybeSingle();
-      if (!card) return res.status(404).json({ error: 'Card nao encontrado' });
+      if (!card) return res.status(404).json({ error: 'Card não encontrado' });
       if (card.solicitacao_id) {
         const { data: sol } = await supabase
           .from('solicitacoes')
@@ -810,10 +810,10 @@ router.get('/cards/:id/entregaveis', authorizeModule('marketing', 1), async (req
           .eq('id', card.solicitacao_id)
           .maybeSingle();
         if (sol?.solicitante_id !== req.user.userId) {
-          return res.status(403).json({ error: 'Sem permissao' });
+          return res.status(403).json({ error: 'Sem permissão' });
         }
       } else {
-        return res.status(403).json({ error: 'Sem permissao' });
+        return res.status(403).json({ error: 'Sem permissão' });
       }
     }
 
@@ -840,7 +840,7 @@ router.post('/cards/:id/entregaveis',
         tipo,
       });
 
-      // Notifica solicitante quando arquivo FINAL eh anexado (nao referencia · card no estado correto)
+      // Notifica solicitante quando arquivo FINAL eh anexado (não referência · card no estado correto)
       try {
         const { data: card } = await supabase
           .from('marketing_kanban_cards')
@@ -858,7 +858,7 @@ router.post('/cards/:id/entregaveis',
               modulo: 'marketing',
               tipo: 'marketing_entregavel_anexado',
               titulo: `Arquivo final: ${sol.titulo}`,
-              mensagem: `${req.file.originalname} anexado ao seu pedido · disponivel pra download.`,
+              mensagem: `${req.file.originalname} anexado ao seu pedido · disponível pra download.`,
               link: '/solicitacoes',
               severidade: 'info',
               chaveDedup: `marketing_entregavel_${result.id}`,
@@ -890,20 +890,20 @@ router.get('/entregaveis/:id/download', authorizeModule('marketing', 1), async (
         .eq('id', req.params.id)
         .is('deleted_at', null)
         .maybeSingle();
-      if (!ent) return res.status(404).json({ error: 'Entregavel nao encontrado' });
+      if (!ent) return res.status(404).json({ error: 'Entregavel não encontrado' });
       const { data: card } = await supabase
         .from('marketing_kanban_cards')
         .select('solicitacao_id')
         .eq('id', ent.card_id)
         .maybeSingle();
-      if (!card?.solicitacao_id) return res.status(403).json({ error: 'Sem permissao' });
+      if (!card?.solicitacao_id) return res.status(403).json({ error: 'Sem permissão' });
       const { data: sol } = await supabase
         .from('solicitacoes')
         .select('solicitante_id')
         .eq('id', card.solicitacao_id)
         .maybeSingle();
       if (sol?.solicitante_id !== req.user.userId) {
-        return res.status(403).json({ error: 'Sem permissao' });
+        return res.status(403).json({ error: 'Sem permissão' });
       }
     }
 
@@ -935,7 +935,7 @@ router.delete('/cards/:id', authorizeModule('marketing', 5), async (req, res) =>
         p_deleted_by: req.user.userId,
       });
     if (error) throw error;
-    if (data === false) return res.status(404).json({ error: 'Card nao encontrado ou ja excluido' });
+    if (data === false) return res.status(404).json({ error: 'Card não encontrado ou já excluido' });
     res.json({ ok: true });
   } catch (e) {
     console.error('[MARKETING] soft delete:', e.message);
@@ -943,16 +943,16 @@ router.delete('/cards/:id', authorizeModule('marketing', 5), async (req, res) =>
   }
 });
 
-// ─── Decisao de urgencia · coord aceita/recusa raia rapida ──────────────────
+// ─── Decisão de urgência · coord aceita/recusa raia rapida ──────────────────
 
 router.patch('/cards/:id/decidir-urgencia', authorizeModule('marketing', 5), async (req, res) => {
   try {
     const { decisao, motivo_recusa } = req.body || {};
     if (!['aceita', 'recusada'].includes(decisao)) {
-      return res.status(400).json({ error: 'decisao deve ser "aceita" ou "recusada"' });
+      return res.status(400).json({ error: 'decisão deve ser "aceita" ou "recusada"' });
     }
     if (decisao === 'recusada' && (!motivo_recusa || motivo_recusa.trim().length < 5)) {
-      return res.status(400).json({ error: 'motivo_recusa obrigatorio (>= 5 chars) quando recusar' });
+      return res.status(400).json({ error: 'motivo_recusa obrigatório (>= 5 chars) quando recusar' });
     }
 
     const { data: atual } = await supabase
@@ -961,9 +961,9 @@ router.patch('/cards/:id/decidir-urgencia', authorizeModule('marketing', 5), asy
       .eq('id', req.params.id)
       .is('deleted_at', null)
       .maybeSingle();
-    if (!atual) return res.status(404).json({ error: 'Card nao encontrado' });
+    if (!atual) return res.status(404).json({ error: 'Card não encontrado' });
     if (!atual.solicitacao_id) {
-      return res.status(400).json({ error: 'Card sem solicitacao linkada · urgencia decidida no proprio card eh raia_rapida (use PATCH)' });
+      return res.status(400).json({ error: 'Card sem solicitação linkada · urgência decidida no próprio card eh raia_rapida (use PATCH)' });
     }
 
     const solUpdate = {
@@ -995,8 +995,8 @@ router.patch('/cards/:id/decidir-urgencia', authorizeModule('marketing', 5), asy
         tipo: 'marketing_urgencia_decisao',
         titulo: decisao === 'aceita' ? `Urgencia aceita: ${sol.titulo}` : `Urgencia recusada: ${sol.titulo}`,
         mensagem: decisao === 'aceita'
-          ? 'Pedro aceitou a urgencia · entrou na raia rapida.'
-          : `Pedro recusou a urgencia · ${motivo_recusa.trim()}. Segue o fluxo normal.`,
+          ? 'Pedro aceitou a urgência · entrou na raia rapida.'
+          : `Pedro recusou a urgência · ${motivo_recusa.trim()}. Segue o fluxo normal.`,
         link: '/solicitacoes',
         severidade: decisao === 'aceita' ? 'info' : 'alta',
         chaveDedup: `marketing_urgencia_${atual.solicitacao_id}_${decisao}`,
@@ -1013,12 +1013,12 @@ router.patch('/cards/:id/decidir-urgencia', authorizeModule('marketing', 5), asy
 });
 
 // ═══════════════════════════════════════════════════════════════════════
-// ANALYTICS (Spec 013 · nivel 1)
+// ANALYTICS (Spec 013 · nível 1)
 // ═══════════════════════════════════════════════════════════════════════
 
 router.get('/analytics/kpis', authorizeModule('marketing', 1), async (req, res) => {
   try {
-    // Serie temporal dos 4 KPIs MKT-* nas ultimas N semanas (default 12)
+    // Série temporal dos 4 KPIs MKT-* nas últimas N semanas (default 12)
     const semanas = Math.min(52, parseInt(req.query.semanas) || 12);
     const desde = new Date();
     desde.setDate(desde.getDate() - semanas * 7);
@@ -1044,7 +1044,7 @@ router.get('/analytics/kpis', authorizeModule('marketing', 1), async (req, res) 
       if (byKpi[r.kpi_id]) byKpi[r.kpi_id].push(r);
     });
 
-    // Ultimo valor (snapshot atual)
+    // Último valor (snapshot atual)
     const snapshot = {};
     Object.entries(byKpi).forEach(([id, arr]) => {
       const last = arr[arr.length - 1];
@@ -1060,7 +1060,7 @@ router.get('/analytics/kpis', authorizeModule('marketing', 1), async (req, res) 
 
 router.get('/analytics/aprovacoes-origem', authorizeModule('marketing', 1), async (req, res) => {
   try {
-    // Tempo medio que cada diretor leva pra aprovar solicitacao da area marketing
+    // Tempo medio que cada diretor leva pra aprovar solicitação da área marketing
     // janela default 90d
     const dias = Math.min(365, parseInt(req.query.dias) || 90);
     const desde = new Date();
@@ -1110,7 +1110,7 @@ router.get('/analytics/aprovacoes-origem', authorizeModule('marketing', 1), asyn
 });
 
 // ═══════════════════════════════════════════════════════════════════════
-// ADMIN · CRUD das 4 entidades (Spec 009 · so nivel 5)
+// ADMIN · CRUD das 4 entidades (Spec 009 · so nível 5)
 // ═══════════════════════════════════════════════════════════════════════
 
 // ─── Membros ────────────────────────────────────────────────────────────────
@@ -1142,7 +1142,7 @@ router.post('/admin/membros', authorizeModule('marketing', 5), async (req, res) 
     const { profile_id, habilidade, horas_semanais, slots_dia, observacao, nome_display } = req.body || {};
     if (!habilidade) return res.status(400).json({ error: 'habilidade obrigatoria' });
     if (!profile_id && !nome_display) {
-      return res.status(400).json({ error: 'profile_id OU nome_display obrigatorio (use nome_display pra pessoas sem login)' });
+      return res.status(400).json({ error: 'profile_id OU nome_display obrigatório (use nome_display pra pessoas sem login)' });
     }
     const { data, error } = await supabase
       .from('marketing_membros')
@@ -1161,7 +1161,7 @@ router.post('/admin/membros', authorizeModule('marketing', 5), async (req, res) 
     res.status(201).json(data);
   } catch (e) {
     if (/duplicate key/i.test(e.message)) {
-      return res.status(409).json({ error: 'Este profile ja tem essa habilidade · use PATCH pra editar.' });
+      return res.status(409).json({ error: 'Este profile já tem essa habilidade · use PATCH pra editar.' });
     }
     res.status(500).json({ error: e.message });
   }
@@ -1217,7 +1217,7 @@ router.get('/admin/etiquetas/tipo', authorizeModule('marketing', 5), async (req,
 router.post('/admin/etiquetas/tipo', authorizeModule('marketing', 5), async (req, res) => {
   try {
     const { slug, nome, habilidade_padrao, esforco_max_h, cor, ordem, grupo } = req.body || {};
-    if (!slug || !nome) return res.status(400).json({ error: 'slug e nome obrigatorios' });
+    if (!slug || !nome) return res.status(400).json({ error: 'slug e nome obrigatórios' });
     const { data, error } = await supabase
       .from('marketing_etiquetas_tipo')
       .insert({ slug, nome, habilidade_padrao, esforco_max_h, cor, ordem: ordem ?? 100, grupo: grupo || null, ativo: true })
@@ -1264,7 +1264,7 @@ router.get('/admin/etiquetas/destino', authorizeModule('marketing', 5), async (r
 router.post('/admin/etiquetas/destino', authorizeModule('marketing', 5), async (req, res) => {
   try {
     const { slug, nome, cor, ordem } = req.body || {};
-    if (!slug || !nome) return res.status(400).json({ error: 'slug e nome obrigatorios' });
+    if (!slug || !nome) return res.status(400).json({ error: 'slug e nome obrigatórios' });
     const { data, error } = await supabase
       .from('marketing_etiquetas_destino')
       .insert({ slug, nome, cor, ordem: ordem ?? 100, ativo: true })
@@ -1407,7 +1407,7 @@ router.delete('/admin/recorrentes/:id', authorizeModule('marketing', 5), async (
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-// ─── Overrides de capacidade (ferias / picos) ───────────────────────────────
+// ─── Overrides de capacidade (férias / picos) ───────────────────────────────
 
 router.get('/admin/overrides', authorizeModule('marketing', 5), async (req, res) => {
   try {
@@ -1439,7 +1439,7 @@ router.post('/admin/overrides', authorizeModule('marketing', 5), async (req, res
     res.status(201).json(data);
   } catch (e) {
     if (/duplicate key/i.test(e.message)) {
-      return res.status(409).json({ error: 'Ja existe override pra esse membro nessa semana · use PATCH' });
+      return res.status(409).json({ error: 'Já existe override pra esse membro nessa semana · use PATCH' });
     }
     res.status(500).json({ error: e.message });
   }
@@ -1529,8 +1529,8 @@ router.delete('/checklist/:itemId', authorizeModule('marketing', 3), async (req,
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-// ─── Padroes por fase do ciclo criativo (2026-05-29) ────────────────────────
-// (categoria do evento × nome da fase) -> etiqueta + dono automaticos no
+// ─── Padrões por fase do ciclo criativo (2026-05-29) ────────────────────────
+// (categoria do evento × nome da fase) -> etiqueta + dono automáticos no
 // nascimento do card de evento. CRUD + catalogos + backfill manual.
 
 router.get('/admin/ciclo-padroes', authorizeModule('marketing', 5), async (req, res) => {
@@ -1579,7 +1579,7 @@ router.get('/admin/ciclo-padroes/fases', authorizeModule('marketing', 5), async 
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-// Backfill manual · aplica padroes aos cards de evento ativos sem dono/etiqueta
+// Backfill manual · aplica padrões aos cards de evento ativos sem dono/etiqueta
 router.post('/admin/ciclo-padroes/aplicar', authorizeModule('marketing', 5), async (req, res) => {
   try {
     const { category_id } = req.body || {};
@@ -1594,7 +1594,7 @@ router.post('/admin/ciclo-padroes/aplicar', authorizeModule('marketing', 5), asy
 router.post('/admin/ciclo-padroes', authorizeModule('marketing', 5), async (req, res) => {
   try {
     const { category_id, nome_fase, etiqueta_tipo_id, atribuido_a } = req.body || {};
-    if (!category_id || !nome_fase) return res.status(400).json({ error: 'category_id e nome_fase obrigatorios' });
+    if (!category_id || !nome_fase) return res.status(400).json({ error: 'category_id e nome_fase obrigatórios' });
     if (!etiqueta_tipo_id && !atribuido_a) return res.status(400).json({ error: 'informe ao menos etiqueta ou dono' });
     const { data, error } = await supabase
       .from('marketing_ciclo_padroes')
@@ -1610,7 +1610,7 @@ router.post('/admin/ciclo-padroes', authorizeModule('marketing', 5), async (req,
     res.status(201).json(data);
   } catch (e) {
     if (/duplicate key/i.test(e.message)) {
-      return res.status(409).json({ error: 'Ja existe padrao pra essa categoria + fase · edite o existente.' });
+      return res.status(409).json({ error: 'Já existe padrão pra essa categoria + fase · edite o existente.' });
     }
     res.status(500).json({ error: e.message });
   }
@@ -1648,7 +1648,7 @@ router.delete('/admin/ciclo-padroes/:id', authorizeModule('marketing', 5), async
 
 // ─── Campanhas + Triagem (Redesenho Fase 2 · 2026-05-30) ────────────────────
 // A solicitacao-dor vira campanha em triagem (trigger) · o Pedro tria e
-// materializa os entregaveis (cards de producao vinculados via campanha_id).
+// materializa os entregaveis (cards de produção vinculados via campanha_id).
 
 router.get('/campanhas', authorizeModule('marketing', 1), async (req, res) => {
   try {
@@ -1664,7 +1664,7 @@ router.get('/campanhas', authorizeModule('marketing', 1), async (req, res) => {
       const { data: profs } = await supabase.from('profiles').select('id, name').in('id', solIds);
       profMap = Object.fromEntries((profs || []).map(p => [p.id, p.name]));
     }
-    // Solicitacao de origem: data que o cliente pediu + urgencia (pra triagem mostrar)
+    // Solicitação de origem: data que o cliente pediu + urgência (pra triagem mostrar)
     const reqIds = [...new Set(lista.map(c => c.solicitacao_id).filter(Boolean))];
     let solMap = {};
     if (reqIds.length) {
@@ -1694,8 +1694,8 @@ router.get('/campanhas/:id', authorizeModule('marketing', 1), async (req, res) =
     const { data: camp, error } = await supabase
       .from('marketing_campanhas').select('*').eq('id', req.params.id).is('deleted_at', null).maybeSingle();
     if (error) throw error;
-    if (!camp) return res.status(404).json({ error: 'Campanha nao encontrada' });
-    // O que o cliente pediu (data + urgencia)
+    if (!camp) return res.status(404).json({ error: 'Campanha não encontrada' });
+    // O que o cliente pediu (data + urgência)
     let data_pedida = null, eh_urgente = false;
     if (camp.solicitacao_id) {
       const { data: sol } = await supabase.from('solicitacoes')
@@ -1775,16 +1775,16 @@ router.delete('/campanhas/:id', authorizeModule('marketing', 5), async (req, res
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-// Materializa um entregavel (card de producao) a partir da campanha · nivel 5.
+// Materializa um entregavel (card de produção) a partir da campanha · nível 5.
 // Card nasce origem='interna' + campanha_id · estado 'fila' (Fase 3 remapeia p/ backlog).
 router.post('/campanhas/:id/cards', authorizeModule('marketing', 5), async (req, res) => {
   try {
     const { titulo, descricao, etiqueta_tipo_id, atribuido_a, pode_paralelo, data_inicio, data_fim } = req.body || {};
-    if (!titulo || !titulo.trim()) return res.status(400).json({ error: 'titulo do entregavel obrigatorio' });
+    if (!titulo || !titulo.trim()) return res.status(400).json({ error: 'título do entregavel obrigatório' });
     const { data: camp } = await supabase
       .from('marketing_campanhas').select('id, status').eq('id', req.params.id).is('deleted_at', null).maybeSingle();
-    if (!camp) return res.status(404).json({ error: 'Campanha nao encontrada' });
-    // duracao em DIAS UTEIS derivada de inicio/fim (inclusivo · pula sab/dom)
+    if (!camp) return res.status(404).json({ error: 'Campanha não encontrada' });
+    // duração em DIAS ÚTEIS derivada de inicio/fim (inclusivo · pula sab/dom)
     const dur = diasUteisInclusive(data_inicio, data_fim);
     const { data, error } = await supabase
       .from('marketing_kanban_cards')
@@ -1823,19 +1823,19 @@ router.post('/campanhas/:id/aprovar', async (req, res) => {
       .from('marketing_campanhas')
       .select('id, titulo, status, solicitante_id, solicitacao_id')
       .eq('id', req.params.id).is('deleted_at', null).maybeSingle();
-    if (!camp) return res.status(404).json({ error: 'Campanha nao encontrada' });
+    if (!camp) return res.status(404).json({ error: 'Campanha não encontrada' });
     if (camp.solicitante_id !== req.user.userId && !isAdminLike(req)) {
       return res.status(403).json({ error: 'Apenas o solicitante (ou coordenacao) pode aprovar a entrega.' });
     }
-    if (camp.status === 'concluida') return res.status(400).json({ error: 'Campanha ja concluida' });
+    if (camp.status === 'concluida') return res.status(400).json({ error: 'Campanha já concluída' });
 
     const { data: cards } = await supabase
       .from('marketing_kanban_cards')
       .select('id, estado, atribuido_a').eq('campanha_id', camp.id).is('deleted_at', null);
     const ativos = cards || [];
-    if (!ativos.length) return res.status(400).json({ error: 'Campanha ainda nao tem entregaveis' });
+    if (!ativos.length) return res.status(400).json({ error: 'Campanha ainda não tem entregaveis' });
     const pendentes = ativos.filter(c => c.estado !== 'concluido').length;
-    if (pendentes > 0) return res.status(400).json({ error: `Ainda ha ${pendentes} entregavel(is) nao concluido(s)` });
+    if (pendentes > 0) return res.status(400).json({ error: `Ainda ha ${pendentes} entregavel(is) não concluído(s)` });
 
     await supabase.from('marketing_campanhas')
       .update({ status: 'concluida', updated_at: new Date().toISOString() }).eq('id', camp.id);
@@ -1852,7 +1852,7 @@ router.post('/campanhas/:id/aprovar', async (req, res) => {
         notificar({
           modulo: 'marketing', tipo: 'marketing_campanha_aprovada',
           titulo: `Demanda aprovada: ${camp.titulo}`,
-          mensagem: 'O solicitante aprovou a entrega completa · campanha concluida.',
+          mensagem: 'O solicitante aprovou a entrega completa · campanha concluída.',
           link: '/marketing', severidade: 'info',
           chaveDedup: `marketing_campanha_aprovada_${camp.id}`, targetIds: pids,
         }).catch(err => console.error('[MARKETING] notify campanha aprovada:', err.message));
@@ -1865,32 +1865,32 @@ router.post('/campanhas/:id/aprovar', async (req, res) => {
   }
 });
 
-// Solicitante pede revisao da CAMPANHA (1x) · reabre os entregaveis concluidos pra
-// 'revisao' (sem migration · a campanha volta a "em producao" e o botao de aprovar
-// some ate o Pedro refazer). Notifica os donos com o motivo.
+// Solicitante pede revisão da CAMPANHA (1x) · reabre os entregaveis concluídos pra
+// 'revisão' (sem migration · a campanha volta a "em produção" e o botao de aprovar
+// some até o Pedro refazer). Notifica os donos com o motivo.
 router.post('/campanhas/:id/revisar', async (req, res) => {
   try {
     const { motivo } = req.body || {};
     if (!motivo || motivo.trim().length < 5) {
-      return res.status(400).json({ error: 'Motivo da revisao obrigatorio (>= 5 chars)' });
+      return res.status(400).json({ error: 'Motivo da revisão obrigatório (>= 5 chars)' });
     }
     const { data: camp } = await supabase
       .from('marketing_campanhas')
       .select('id, titulo, solicitante_id')
       .eq('id', req.params.id).is('deleted_at', null).maybeSingle();
-    if (!camp) return res.status(404).json({ error: 'Campanha nao encontrada' });
+    if (!camp) return res.status(404).json({ error: 'Campanha não encontrada' });
     if (camp.solicitante_id !== req.user.userId && !isAdminLike(req)) {
-      return res.status(403).json({ error: 'Apenas o solicitante (ou coordenacao) pode pedir revisao.' });
+      return res.status(403).json({ error: 'Apenas o solicitante (ou coordenacao) pode pedir revisão.' });
     }
     const { data: cards } = await supabase
       .from('marketing_kanban_cards')
       .select('id, estado, tem_revisao, atribuido_a').eq('campanha_id', camp.id).is('deleted_at', null);
     const ativos = cards || [];
     if (ativos.some(c => c.tem_revisao)) {
-      return res.status(400).json({ error: 'Esta demanda ja teve uma revisao (1 maximo)' });
+      return res.status(400).json({ error: 'Esta demanda já teve uma revisão (1 máximo)' });
     }
     const concluidos = ativos.filter(c => c.estado === 'concluido');
-    if (!concluidos.length) return res.status(400).json({ error: 'Nada concluido para revisar ainda' });
+    if (!concluidos.length) return res.status(400).json({ error: 'Nada concluído para revisar ainda' });
 
     for (const c of concluidos) {
       await supabase.from('marketing_kanban_cards')
@@ -1920,11 +1920,11 @@ router.post('/campanhas/:id/revisar', async (req, res) => {
 // ─── Capacidade por dia (Fase 4 · fundacao · 2026-05-30) ────────────────────
 // Ocupacao de slots de um membro por dia, a partir dos intervalos data_inicio→
 // data_fim dos cards ativos. Usado na triagem pra avisar sobrecarga (>slots_dia).
-// Paralela conta 1 slot/dia · foco (nao paralela) enche o dia.
+// Paralela conta 1 slot/dia · foco (não paralela) enche o dia.
 router.get('/capacidade-dia', authorizeModule('marketing', 1), async (req, res) => {
   try {
     const { membro_id, inicio, fim } = req.query;
-    if (!membro_id || !inicio || !fim) return res.status(400).json({ error: 'membro_id, inicio e fim obrigatorios' });
+    if (!membro_id || !inicio || !fim) return res.status(400).json({ error: 'membro_id, início e fim obrigatórios' });
     const { data: membro } = await supabase
       .from('marketing_membros').select('id, slots_dia').eq('id', membro_id).maybeSingle();
     const slots_dia = membro?.slots_dia || 3;
@@ -1960,12 +1960,12 @@ router.get('/capacidade-dia', authorizeModule('marketing', 1), async (req, res) 
 });
 
 // ─── Planner (Fase 4b · 2026-05-30) ─────────────────────────────────────────
-// Membros (raias) + entregaveis com intervalo (barras) que cruzam [inicio, fim].
-// O front desenha as barras por dia util e permite arrastar (PATCH /cards/:id).
+// Membros (raias) + entregaveis com intervalo (barras) que cruzam [início, fim].
+// O front desenha as barras por dia útil e permite arrastar (PATCH /cards/:id).
 router.get('/planner', authorizeModule('marketing', 1), async (req, res) => {
   try {
     const { inicio, fim } = req.query;
-    if (!inicio || !fim) return res.status(400).json({ error: 'inicio e fim obrigatorios' });
+    if (!inicio || !fim) return res.status(400).json({ error: 'início e fim obrigatórios' });
     const { data: membrosRaw } = await supabase
       .from('marketing_membros')
       .select('id, profile_id, habilidade, nome_display, slots_dia')

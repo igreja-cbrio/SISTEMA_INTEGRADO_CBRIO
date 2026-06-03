@@ -4,7 +4,7 @@
 //   47 digitos · boleto bancario (banco emissor diferente de 8)
 //   48 digitos · tributo/concessionaria (comeca com 8)
 //
-// Conversao linha → codigo de barras (44 digitos): segue norma FEBRABAN.
+// Conversao linha → código de barras (44 digitos): segue norma FEBRABAN.
 //
 // Endpoints variam por produto Santander (cada um tem seu silo). Override:
 //   SANTANDER_PAGTO_BASE_PATH (default '/payments/v1')
@@ -121,7 +121,7 @@ function normalizar(linha) {
  */
 function detectarTipo(linhaNorm) {
   if (linhaNorm.length === 48 && linhaNorm.startsWith('8')) {
-    // Posicao 1 (0-indexed) diz o segmento:
+    // Posição 1 (0-indexed) diz o segmento:
     // 1=prefeituras 2=saneamento 3=energia/gas 4=telecom
     // 5=ordens publicas 6=outros 7=multas/transito 9=concessionarias
     const seg = linhaNorm[1];
@@ -133,17 +133,17 @@ function detectarTipo(linhaNorm) {
 }
 
 /**
- * Converte linha digitavel (47) em codigo de barras (44 digitos).
+ * Converte linha digitavel (47) em código de barras (44 digitos).
  * Boleto: layout
  *   AAABC.CCCCX DDDDD.DDDDDY EEEEE.EEEEEZ K UUUUVVVVVVVVVV
  *   A = banco (3) + B = moeda (1) + C+D+E (campos 5-5-5+5-5-5+5-5-5+digit)
- *   Codigo de barras: AAA + B + K + UUUU + VVVVVVVVVV + C + D + E
+ *   Código de barras: AAA + B + K + UUUU + VVVVVVVVVV + C + D + E
  */
 function boletoLinhaParaBarcode(linhaNorm) {
   if (linhaNorm.length !== 47) return null;
   const banco = linhaNorm.slice(0, 3);
   const moeda = linhaNorm[3];
-  const campo1 = linhaNorm.slice(4, 9);   // posicoes 4-8 (5 chars)
+  const campo1 = linhaNorm.slice(4, 9);   // posições 4-8 (5 chars)
   const campo2 = linhaNorm.slice(10, 15); // pula DV (pos 9)
   const campo3 = linhaNorm.slice(16, 21);
   const campo4 = linhaNorm.slice(22, 27);
@@ -155,7 +155,7 @@ function boletoLinhaParaBarcode(linhaNorm) {
 }
 
 /**
- * Converte linha digitavel de tributo (48) em codigo de barras (44).
+ * Converte linha digitavel de tributo (48) em código de barras (44).
  * Tributo: 4 grupos de 12 com DV ao fim de cada → tira os 4 DVs.
  */
 function tributoLinhaParaBarcode(linhaNorm) {
@@ -169,8 +169,8 @@ function tributoLinhaParaBarcode(linhaNorm) {
 
 /**
  * Extrai valor da linha digitavel.
- * - Boleto (47): posicoes 38-46 (9 digitos) em centavos
- * - Tributo (48): posicoes 4-14 (11 digitos) em centavos (apos os primeiros 4)
+ * - Boleto (47): posições 38-46 (9 digitos) em centavos
+ * - Tributo (48): posições 4-14 (11 digitos) em centavos (após os primeiros 4)
  */
 function valorDaLinha(linhaNorm) {
   if (linhaNorm.length === 47) {
@@ -191,14 +191,14 @@ function vencimentoDaLinha(linhaNorm) {
   if (linhaNorm.length !== 47) return null;
   const fator = Number(linhaNorm.slice(33, 37));
   if (!fator || fator < 1000) return null;
-  // Base FEBRABAN: 07/10/1997. Apos 22/02/2025 reset opcional · usar referencia simples
+  // Base FEBRABAN: 07/10/1997. Após 22/02/2025 reset opcional · usar referência simples
   const base = new Date(Date.UTC(1997, 9, 7));
   base.setUTCDate(base.getUTCDate() + fator);
   return base.toISOString().slice(0, 10);
 }
 
 /**
- * Parser completo · entrada string, saida `{tipo, valor, vencimento, codigoBarras, linha}`.
+ * Parser completo · entrada string, saída `{tipo, valor, vencimento, codigoBarras, linha}`.
  */
 function parseLinha(linha) {
   const linhaNorm = normalizar(linha);

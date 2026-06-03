@@ -1,18 +1,18 @@
 // ============================================================================
-// /api/totem-kids · backend do Totem Kids (modulo Ministerial > Totem Kids)
+// /api/totem-kids · backend do Totem Kids (módulo Ministerial > Totem Kids)
 // ============================================================================
-// Operacao: voluntario opera o totem (modo manned · unico tipo no MVP).
-// Substitui o Planning Center Check-Ins para o ministerio infantil.
+// Operação: voluntário opera o totem (modo manned · único tipo no MVP).
+// Substitui o Planning Center Check-Ins para o ministério infantil.
 //
-// Permissoes:
+// Permissões:
 //   - admin/diretor (role) passam direto (backward compat)
-//   - coordenador-kids (nivel >= 3 no modulo 'kids') tem acesso total
-//   - boost via area KIDS (auth.js) eleva pra nivel 5 automatico
-//   - "lider Kids do dia" e qualquer staff que tenha check-in ativo no
+//   - coordenador-kids (nível >= 3 no módulo 'kids') tem acesso total
+//   - boost via área KIDS (auth.js) eleva pra nível 5 automático
+//   - "líder Kids do dia" e qualquer staff que tenha check-in ativo no
 //     voluntariado em culto com has_kids=true · validado dinamicamente
-//     em `checkLiderKidsDoDia` quando necessario (override).
+//     em `checkLiderKidsDoDia` quando necessário (override).
 //
-// Decisoes em docs/checkin-kids-plano.md (2026-05-21).
+// Decisões em docs/checkin-kids-plano.md (2026-05-21).
 // ============================================================================
 
 const router = require('express').Router();
@@ -39,12 +39,12 @@ router.use((req, res, next) => {
   // Bypass authenticate pra:
   //   - GET /display/* (TV consulta com ?token=X)
   //   - POST /chamadas se vier estacao_token no body (self-service)
-  //   - POST /estacoes/parear (qualquer autenticado · ja era publico via authorizeModule)
+  //   - POST /estacoes/parear (qualquer autenticado · já era público via authorizeModule)
   const isDisplay = req.path.startsWith('/display/');
   const isChamadaComToken = req.path === '/chamadas' && req.method === 'POST' && req.body?.estacao_token;
   const isParear = req.path === '/estacoes/parear' && req.method === 'POST';
   // Agente local de pagers (recepcao) · autentica por bearer token (PAGER_BRIDGE_TOKEN),
-  // nao por JWT de usuario · handlers validam internamente via bridgeAutorizado()
+  // não por JWT de usuário · handlers validam internamente via bridgeAutorizado()
   const isPagerBridge = req.path.startsWith('/pager/bridge/');
   if (isDisplay || isChamadaComToken || isParear || isPagerBridge) {
     // Pula authenticate · handlers validam token internamente
@@ -99,7 +99,7 @@ async function sugerirSala(idadeMeses) {
   return data || null;
 }
 
-// Verifica se o usuario e "lider Kids do dia": voluntario com check-in ativo
+// Verifica se o usuário e "líder Kids do dia": voluntário com check-in ativo
 // no voluntariado em algum culto com has_kids=true.
 async function isLiderKidsDoDia(authUserId) {
   if (!authUserId) return false;
@@ -133,10 +133,10 @@ async function isLiderKidsDoDia(authUserId) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// SESSOES
+// SESSÕES
 // ═══════════════════════════════════════════════════════════════════════════
 
-// GET /api/totem-kids/sessoes/atual · retorna a sessao aberta agora (se houver)
+// GET /api/totem-kids/sessoes/atual · retorna a sessão aberta agora (se houver)
 router.get('/sessoes/atual', authorizeModule('kids', 1), async (req, res) => {
   try {
     const { data, error } = await supabase
@@ -154,11 +154,11 @@ router.get('/sessoes/atual', authorizeModule('kids', 1), async (req, res) => {
     res.json(data || null);
   } catch (e) {
     console.error('[totemKids/sessoes/atual]', e.message);
-    res.status(500).json({ error: 'Erro ao buscar sessao atual' });
+    res.status(500).json({ error: 'Erro ao buscar sessão atual' });
   }
 });
 
-// GET /api/totem-kids/sessoes · lista sessoes (admin)
+// GET /api/totem-kids/sessoes · lista sessões (admin)
 router.get('/sessoes', authorizeModule('kids', 1), async (req, res) => {
   try {
     const status = req.query.status; // opcional · filtra por status
@@ -178,11 +178,11 @@ router.get('/sessoes', authorizeModule('kids', 1), async (req, res) => {
     res.json(data || []);
   } catch (e) {
     console.error('[totemKids/sessoes]', e.message);
-    res.status(500).json({ error: 'Erro ao listar sessoes' });
+    res.status(500).json({ error: 'Erro ao listar sessões' });
   }
 });
 
-// POST /api/totem-kids/sessoes · cria sessao pra um culto
+// POST /api/totem-kids/sessoes · cria sessão pra um culto
 router.post('/sessoes', authorizeModule('kids', 3), async (req, res) => {
   try {
     const { culto_id, abrir_em, fechar_em } = req.body;
@@ -201,14 +201,14 @@ router.post('/sessoes', authorizeModule('kids', 3), async (req, res) => {
     if (error) {
       // duplicidade culto_id
       if (error.code === '23505') {
-        return res.status(409).json({ error: 'Ja existe sessao pra esse culto' });
+        return res.status(409).json({ error: 'Já existe sessão pra esse culto' });
       }
       throw error;
     }
     res.status(201).json(data);
   } catch (e) {
     console.error('[totemKids/sessoes POST]', e.message);
-    res.status(500).json({ error: 'Erro ao criar sessao' });
+    res.status(500).json({ error: 'Erro ao criar sessão' });
   }
 });
 
@@ -224,7 +224,7 @@ router.post('/sessoes/:id/abrir', authorizeModule('kids', 3), async (req, res) =
     if (error) throw error;
     res.json(data);
   } catch (e) {
-    res.status(500).json({ error: 'Erro ao abrir sessao' });
+    res.status(500).json({ error: 'Erro ao abrir sessão' });
   }
 });
 
@@ -245,12 +245,12 @@ router.post('/sessoes/:id/encerrar', authorizeModule('kids', 3), async (req, res
     res.json(data);
   } catch (e) {
     console.error('[totemKids/sessoes/encerrar]', e.message);
-    res.status(500).json({ error: 'Erro ao encerrar sessao' });
+    res.status(500).json({ error: 'Erro ao encerrar sessão' });
   }
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
-// CRIANCAS
+// CRIANÇAS
 // ═══════════════════════════════════════════════════════════════════════════
 
 // GET /api/totem-kids/criancas/buscar?q=... · fuzzy search (trigram)
@@ -259,7 +259,7 @@ router.get('/criancas/buscar', authorizeModule('kids', 1), async (req, res) => {
     const q = String(req.query.q || '').trim();
     if (q.length < 2) return res.json([]);
 
-    // Busca por nome (trigram) OU por nome do responsavel OU telefone
+    // Busca por nome (trigram) OU por nome do responsável OU telefone
     const { data: criancas } = await supabase
       .from('kids_criancas')
       .select(`
@@ -276,7 +276,7 @@ router.get('/criancas/buscar', authorizeModule('kids', 1), async (req, res) => {
       .order('nome')
       .limit(20);
 
-    // Tambem busca por telefone do responsavel (se q parece telefone)
+    // Também busca por telefone do responsável (se q parece telefone)
     const digits = q.replace(/\D/g, '');
     let extras = [];
     if (digits.length >= 4) {
@@ -342,7 +342,7 @@ router.get('/criancas/:id', authorizeModule('kids', 1), async (req, res) => {
       .eq('id', req.params.id)
       .maybeSingle();
     if (error) throw error;
-    if (!data) return res.status(404).json({ error: 'Crianca nao encontrada' });
+    if (!data) return res.status(404).json({ error: 'Criança não encontrada' });
 
     res.json({
       ...data,
@@ -352,26 +352,26 @@ router.get('/criancas/:id', authorizeModule('kids', 1), async (req, res) => {
     });
   } catch (e) {
     console.error('[totemKids/criancas/:id]', e.message);
-    res.status(500).json({ error: 'Erro ao buscar crianca' });
+    res.status(500).json({ error: 'Erro ao buscar criança' });
   }
 });
 
-// POST /api/totem-kids/criancas · cria crianca + responsavel (first visit)
+// POST /api/totem-kids/criancas · cria criança + responsável (first visit)
 // Body:
-//   { crianca: { nome, data_nascimento, sexo, observacoes_medicas, ... },
-//     responsavel: { nome, telefone, cpf, parentesco, email? } }
+//   { criança: { nome, data_nascimento, sexo, observacoes_medicas, ... },
+//     responsável: { nome, telefone, cpf, parentesco, email? } }
 router.post('/criancas', authorizeModule('kids', 2), async (req, res) => {
   try {
     const { crianca, responsavel } = req.body || {};
     if (!crianca?.nome) return res.status(400).json({ error: 'crianca.nome obrigatorio' });
     if (!responsavel?.nome || !responsavel?.telefone) {
-      return res.status(400).json({ error: 'responsavel.nome e responsavel.telefone obrigatorios' });
+      return res.status(400).json({ error: 'responsavel.nome e responsavel.telefone obrigatórios' });
     }
 
     const tel = normalizarTelefone(responsavel.telefone);
     const cpf = normalizarCpf(responsavel.cpf);
 
-    // 1. Resolve responsavel em mem_membros (cpf > telefone > cria)
+    // 1. Resolve responsável em mem_membros (cpf > telefone > cria)
     let membro = null;
     if (cpf) {
       const { data } = await supabase.from('mem_membros').select('id, nome, familia_id').eq('cpf', cpf).maybeSingle();
@@ -397,7 +397,7 @@ router.post('/criancas', authorizeModule('kids', 2), async (req, res) => {
       membro = data;
     }
 
-    // 2. Garante familia (se responsavel nao tem, cria)
+    // 2. Garante família (se responsável não tem, cria)
     let familiaId = membro.familia_id;
     if (!familiaId) {
       const { data: f, error: fe } = await supabase.from('mem_familias')
@@ -409,7 +409,7 @@ router.post('/criancas', authorizeModule('kids', 2), async (req, res) => {
       await supabase.from('mem_membros').update({ familia_id: familiaId, parentesco: 'responsavel' }).eq('id', membro.id);
     }
 
-    // 3. Cria crianca
+    // 3. Cria criança
     const { data: criancaCriada, error: errCrianca } = await supabase
       .from('kids_criancas')
       .insert({
@@ -428,7 +428,7 @@ router.post('/criancas', authorizeModule('kids', 2), async (req, res) => {
       .single();
     if (errCrianca) throw errCrianca;
 
-    // 4. Liga responsavel <-> crianca
+    // 4. Liga responsável <-> criança
     await supabase.from('kids_responsaveis').insert({
       crianca_id: criancaCriada.id,
       membro_id: membro.id,
@@ -443,7 +443,7 @@ router.post('/criancas', authorizeModule('kids', 2), async (req, res) => {
     });
   } catch (e) {
     console.error('[totemKids/criancas POST]', e.message);
-    res.status(500).json({ error: 'Erro ao cadastrar crianca' });
+    res.status(500).json({ error: 'Erro ao cadastrar criança' });
   }
 });
 
@@ -466,7 +466,7 @@ router.patch('/criancas/:id', authorizeModule('kids', 3), async (req, res) => {
     if (error) throw error;
     res.json(data);
   } catch (e) {
-    res.status(500).json({ error: 'Erro ao editar crianca' });
+    res.status(500).json({ error: 'Erro ao editar criança' });
   }
 });
 
@@ -492,15 +492,15 @@ router.get('/criancas', authorizeModule('kids', 1), async (req, res) => {
       idade_label: formatIdade(calcIdadeMeses(c.data_nascimento)),
     })));
   } catch (e) {
-    res.status(500).json({ error: 'Erro ao listar criancas' });
+    res.status(500).json({ error: 'Erro ao listar crianças' });
   }
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
-// RESPONSAVEIS
+// RESPONSÁVEIS
 // ═══════════════════════════════════════════════════════════════════════════
 
-// POST /api/totem-kids/criancas/:id/responsaveis · adiciona responsavel autorizado
+// POST /api/totem-kids/criancas/:id/responsaveis · adiciona responsável autorizado
 router.post('/criancas/:id/responsaveis', authorizeModule('kids', 2), async (req, res) => {
   try {
     const { membro_id, parentesco, autorizado_buscar, contato_emergencia, observacao } = req.body;
@@ -519,19 +519,19 @@ router.post('/criancas/:id/responsaveis', authorizeModule('kids', 2), async (req
       .select('*, membro:mem_membros(id, nome, telefone, foto_url)')
       .single();
     if (error) {
-      if (error.code === '23505') return res.status(409).json({ error: 'Responsavel ja cadastrado' });
+      if (error.code === '23505') return res.status(409).json({ error: 'Responsável já cadastrado' });
       throw error;
     }
     res.status(201).json(data);
   } catch (e) {
-    res.status(500).json({ error: 'Erro ao adicionar responsavel' });
+    res.status(500).json({ error: 'Erro ao adicionar responsável' });
   }
 });
 
 // POST /api/totem-kids/criancas/:id/responsavel-rapido
-// Cria/vincula responsavel a partir de dados crus (nome, tel, cpf, parentesco).
-// Cria mem_membros se nao existir (match por cpf/telefone) + liga em kids_responsaveis.
-// Usado pelo modal de auto-cadastro quando crianca chega sem responsavel.
+// Cria/vincula responsável a partir de dados crus (nome, tel, cpf, parentesco).
+// Cria mem_membros se não existir (match por cpf/telefone) + liga em kids_responsaveis.
+// Usado pelo modal de auto-cadastro quando criança chega sem responsável.
 router.post('/criancas/:id/responsavel-rapido', authorizeModule('kids', 2), async (req, res) => {
   try {
     const { nome, telefone, cpf, parentesco, autorizado_buscar } = req.body || {};
@@ -542,14 +542,14 @@ router.post('/criancas/:id/responsavel-rapido', authorizeModule('kids', 2), asyn
     const cpfNorm = normalizarCpf(cpf);
     if (!tel) return res.status(400).json({ error: 'telefone invalido (precisa ter pelo menos 8 digitos)' });
 
-    // 1. Resolve crianca + familia (pra vincular novo mem_membros na familia)
+    // 1. Resolve criança + família (pra vincular novo mem_membros na família)
     const { data: crianca, error: errC } = await supabase
       .from('kids_criancas')
       .select('id, nome, familia_id')
       .eq('id', req.params.id)
       .maybeSingle();
     if (errC) throw errC;
-    if (!crianca) return res.status(404).json({ error: 'crianca nao encontrada' });
+    if (!crianca) return res.status(404).json({ error: 'criança não encontrada' });
 
     // 2. Match mem_membros por cpf > telefone
     let membro = null;
@@ -562,7 +562,7 @@ router.post('/criancas/:id/responsavel-rapido', authorizeModule('kids', 2), asyn
       if (data) membro = data;
     }
 
-    // 3. Cria mem_membros se nao existe
+    // 3. Cria mem_membros se não existe
     if (!membro) {
       const { data, error } = await supabase.from('mem_membros').insert({
         nome: nome.trim(),
@@ -575,7 +575,7 @@ router.post('/criancas/:id/responsavel-rapido', authorizeModule('kids', 2), asyn
       if (error) throw error;
       membro = data;
     } else if (crianca.familia_id && !membro.familia_id) {
-      // Atualiza familia_id do membro existente se nao tinha
+      // Atualiza familia_id do membro existente se não tinha
       await supabase.from('mem_membros').update({ familia_id: crianca.familia_id }).eq('id', membro.id);
     }
 
@@ -595,18 +595,18 @@ router.post('/criancas/:id/responsavel-rapido', authorizeModule('kids', 2), asyn
     res.status(201).json(ligacao);
   } catch (e) {
     console.error('[totemKids/responsavel-rapido]', e.message);
-    res.status(500).json({ error: e.message || 'Erro ao adicionar responsavel' });
+    res.status(500).json({ error: e.message || 'Erro ao adicionar responsável' });
   }
 });
 
-// DELETE /api/totem-kids/responsaveis/:id · remove responsavel
+// DELETE /api/totem-kids/responsaveis/:id · remove responsável
 router.delete('/responsaveis/:id', authorizeModule('kids', 3), async (req, res) => {
   try {
     const { error } = await supabase.from('kids_responsaveis').delete().eq('id', req.params.id);
     if (error) throw error;
     res.json({ ok: true });
   } catch (e) {
-    res.status(500).json({ error: 'Erro ao remover responsavel' });
+    res.status(500).json({ error: 'Erro ao remover responsável' });
   }
 });
 
@@ -614,7 +614,7 @@ router.delete('/responsaveis/:id', authorizeModule('kids', 3), async (req, res) 
 // CHECK-IN / CHECK-OUT
 // ═══════════════════════════════════════════════════════════════════════════
 
-// POST /api/totem-kids/checkin · cria check-in + gera codigo + retorna pra impressao
+// POST /api/totem-kids/checkin · cria check-in + gera código + retorna pra impressão
 router.post('/checkin', authorizeModule('kids', 2), async (req, res) => {
   try {
     const {
@@ -627,18 +627,18 @@ router.post('/checkin', authorizeModule('kids', 2), async (req, res) => {
     if (!crianca_id) return res.status(400).json({ error: 'crianca_id obrigatorio' });
     if (!sala_id) return res.status(400).json({ error: 'sala_id obrigatorio' });
 
-    // Sessao deve estar aberta
+    // Sessão deve estar aberta
     const { data: sessao } = await supabase
       .from('kids_sessoes')
       .select('id, status, culto_id, culto:cultos(data, nome)')
       .eq('id', sessao_id)
       .maybeSingle();
-    if (!sessao) return res.status(404).json({ error: 'Sessao nao encontrada' });
+    if (!sessao) return res.status(404).json({ error: 'Sessão não encontrada' });
     if (sessao.status !== 'aberta') {
-      return res.status(400).json({ error: 'Sessao nao esta aberta', status: sessao.status });
+      return res.status(400).json({ error: 'Sessão não esta aberta', status: sessao.status });
     }
 
-    // Anti-duplicidade: nao deixa 2 checkins na mesma sessao pra mesma crianca
+    // Anti-duplicidade: não deixa 2 checkins na mesma sessão pra mesma criança
     const { data: existing } = await supabase
       .from('kids_checkins')
       .select('id, codigo_seguranca, sala_id, checkout_at')
@@ -647,12 +647,12 @@ router.post('/checkin', authorizeModule('kids', 2), async (req, res) => {
       .maybeSingle();
     if (existing) {
       return res.status(409).json({
-        error: 'Crianca ja com check-in nessa sessao',
+        error: 'Criança já com check-in nessa sessão',
         checkin_existente: existing,
       });
     }
 
-    // Resolve snapshot do responsavel
+    // Resolve snapshot do responsável
     let respId = null, respNome = null, respTel = null;
     if (responsavel_id) {
       const { data: m } = await supabase
@@ -667,15 +667,15 @@ router.post('/checkin', authorizeModule('kids', 2), async (req, res) => {
       respNome = responsavel_nome_manual;
       respTel = normalizarTelefone(responsavel_telefone_manual);
     }
-    if (!respNome) return res.status(400).json({ error: 'responsavel_id ou responsavel_nome_manual obrigatorio' });
+    if (!respNome) return res.status(400).json({ error: 'responsavel_id ou responsavel_nome_manual obrigatório' });
 
-    // Buscar dados da crianca (pro snapshot na resposta)
+    // Buscar dados da criança (pro snapshot na resposta)
     const { data: crianca } = await supabase
       .from('kids_criancas')
       .select('id, nome, data_nascimento, observacoes_medicas, necessidades_especiais')
       .eq('id', crianca_id)
       .maybeSingle();
-    if (!crianca) return res.status(404).json({ error: 'Crianca nao encontrada' });
+    if (!crianca) return res.status(404).json({ error: 'Criança não encontrada' });
 
     // Buscar sala
     const { data: sala } = await supabase
@@ -683,9 +683,9 @@ router.post('/checkin', authorizeModule('kids', 2), async (req, res) => {
       .select('id, nome, cor')
       .eq('id', sala_id)
       .maybeSingle();
-    if (!sala) return res.status(404).json({ error: 'Sala nao encontrada' });
+    if (!sala) return res.status(404).json({ error: 'Sala não encontrada' });
 
-    // Gera codigo via funcao do banco
+    // Gera código via função do banco
     const { data: codigoRow, error: errCod } = await supabase.rpc('fn_kids_gerar_codigo_seguranca');
     const codigo = codigoRow || (errCod ? null : null);
     if (!codigo) {
@@ -715,8 +715,8 @@ router.post('/checkin', authorizeModule('kids', 2), async (req, res) => {
         responsavel_checkin_telefone: respTel,
         responsavel_checkin_parentesco: responsavel_parentesco || null,
         codigo_seguranca: codigoFinal,
-        codigo_barras: codigoFinal,                      // mesmo codigo
-        pager_id: pager_id || null,                      // pager entregue a familia (opcional)
+        codigo_barras: codigoFinal,                      // mesmo código
+        pager_id: pager_id || null,                      // pager entregue a família (opcional)
         checkin_por: req.user.userId,
       })
       .select('*')
@@ -739,7 +739,7 @@ router.post('/checkin', authorizeModule('kids', 2), async (req, res) => {
   }
 });
 
-// GET /api/totem-kids/checkin/codigo/:codigo · busca por codigo de seguranca
+// GET /api/totem-kids/checkin/codigo/:código · busca por código de segurança
 router.get('/checkin/codigo/:codigo', authorizeModule('kids', 2), async (req, res) => {
   try {
     const codigo = String(req.params.codigo).toUpperCase().trim();
@@ -759,9 +759,9 @@ router.get('/checkin/codigo/:codigo', authorizeModule('kids', 2), async (req, re
       .limit(1)
       .maybeSingle();
     if (error) throw error;
-    if (!data) return res.status(404).json({ error: 'Codigo nao encontrado ou ja foi feito checkout' });
+    if (!data) return res.status(404).json({ error: 'Código não encontrado ou já foi feito checkout' });
 
-    // Lista responsaveis autorizados pra exibir no pickup
+    // Lista responsáveis autorizados pra exibir no pickup
     const { data: responsaveis } = await supabase
       .from('kids_responsaveis')
       .select('id, parentesco, autorizado_buscar, membro:mem_membros(id, nome, telefone, foto_url)')
@@ -771,12 +771,12 @@ router.get('/checkin/codigo/:codigo', authorizeModule('kids', 2), async (req, re
     res.json({ ...data, responsaveis: responsaveis || [] });
   } catch (e) {
     console.error('[totemKids/checkin/codigo]', e.message);
-    res.status(500).json({ error: 'Erro ao buscar codigo' });
+    res.status(500).json({ error: 'Erro ao buscar código' });
   }
 });
 
 // POST /api/totem-kids/checkout · faz checkout
-// Body: { checkin_id, responsavel_id?, responsavel_nome?, metodo, override_motivo? }
+// Body: { checkin_id, responsavel_id?, responsavel_nome?, método, override_motivo? }
 router.post('/checkout', authorizeModule('kids', 2), async (req, res) => {
   try {
     const { checkin_id, responsavel_id, responsavel_nome, metodo, override_motivo } = req.body;
@@ -786,23 +786,23 @@ router.post('/checkout', authorizeModule('kids', 2), async (req, res) => {
     const validMetodos = ['codigo_digitado', 'barcode_escaneado', 'responsavel_autorizado', 'override_supervisor'];
     if (!validMetodos.includes(metodo)) return res.status(400).json({ error: 'metodo invalido', validos: validMetodos });
 
-    // Override exige motivo + permissao
+    // Override exige motivo + permissão
     if (metodo === 'override_supervisor') {
       if (!override_motivo || override_motivo.trim().length < 10) {
         return res.status(400).json({ error: 'override_motivo obrigatorio (min 10 chars)' });
       }
-      // Verifica se pode aprovar override: coord-kids OU admin OU lider Kids do dia
+      // Verifica se pode aprovar override: coord-kids OU admin OU líder Kids do dia
       const podeOverride =
         ['admin', 'diretor'].includes(req.user.role) ||
         (req.user.granular?.modulePerms?.kids?.pode_aprovar) ||
         (req.user.granular?.modulePerms?.kids?.leitura >= 5) ||
         await isLiderKidsDoDia(req.user.userId);
       if (!podeOverride) {
-        return res.status(403).json({ error: 'Sem permissao pra override · pedir coord Kids ou admin' });
+        return res.status(403).json({ error: 'Sem permissão pra override · pedir coord Kids ou admin' });
       }
     }
 
-    // Buscar nome do responsavel (snapshot)
+    // Buscar nome do responsável (snapshot)
     let respNome = responsavel_nome;
     if (responsavel_id && !respNome) {
       const { data: m } = await supabase.from('mem_membros').select('nome').eq('id', responsavel_id).maybeSingle();
@@ -826,7 +826,7 @@ router.post('/checkout', authorizeModule('kids', 2), async (req, res) => {
       .select(`*, crianca:kids_criancas(id, nome), sala:kids_salas(id, nome)`)
       .single();
     if (error) {
-      if (error.code === 'PGRST116') return res.status(409).json({ error: 'Check-in ja foi feito checkout' });
+      if (error.code === 'PGRST116') return res.status(409).json({ error: 'Check-in já foi feito checkout' });
       throw error;
     }
     res.json(data);
@@ -877,7 +877,7 @@ router.get('/painel/ao-vivo', authorizeModule('kids', 1), async (req, res) => {
   }
 });
 
-// GET /api/totem-kids/painel/sala/:id?sessao_id=... · lista de criancas na sala
+// GET /api/totem-kids/painel/sala/:id?sessao_id=... · lista de crianças na sala
 router.get('/painel/sala/:id', authorizeModule('kids', 1), async (req, res) => {
   try {
     const sessaoId = req.query.sessao_id;
@@ -894,7 +894,7 @@ router.get('/painel/sala/:id', authorizeModule('kids', 1), async (req, res) => {
     const { data, error } = await q;
     if (error) throw error;
 
-    // Anexa total de decisoes anteriores por crianca (vw_kids_decisoes_resumo_crianca)
+    // Anexa total de decisões anteriores por criança (vw_kids_decisoes_resumo_crianca)
     const criancaIds = [...new Set((data || []).map(d => d.crianca_id).filter(Boolean))];
     let resumoPorCrianca = {};
     if (criancaIds.length) {
@@ -914,12 +914,12 @@ router.get('/painel/sala/:id', authorizeModule('kids', 1), async (req, res) => {
       total_decisoes_historico: resumoPorCrianca[ci.crianca_id] || 0,
     })));
   } catch (e) {
-    res.status(500).json({ error: 'Erro ao listar criancas da sala' });
+    res.status(500).json({ error: 'Erro ao listar crianças da sala' });
   }
 });
 
 // GET /api/totem-kids/sessoes/:id/criancas-presentes · lista quem fez check-in
-// Usado pela UI de decisoes pra selecionar criancas reais (nao texto livre).
+// Usado pela UI de decisões pra selecionar crianças reais (não texto livre).
 router.get('/sessoes/:id/criancas-presentes', authorizeModule('kids', 1), async (req, res) => {
   try {
     const { data, error } = await supabase
@@ -934,11 +934,11 @@ router.get('/sessoes/:id/criancas-presentes', authorizeModule('kids', 1), async 
     })));
   } catch (e) {
     console.error('[totemKids/sessoes/criancas-presentes]', e.message);
-    res.status(500).json({ error: 'Erro ao listar criancas presentes' });
+    res.status(500).json({ error: 'Erro ao listar crianças presentes' });
   }
 });
 
-// GET /api/totem-kids/decisoes/historico/:criancaId · todas as decisoes da crianca
+// GET /api/totem-kids/decisoes/historico/:criancaId · todas as decisões da criança
 router.get('/decisoes/historico/:criancaId', authorizeModule('kids', 1), async (req, res) => {
   try {
     const { data, error } = await supabase
@@ -949,11 +949,11 @@ router.get('/decisoes/historico/:criancaId', authorizeModule('kids', 1), async (
     if (error) throw error;
     res.json(data || []);
   } catch (e) {
-    res.status(500).json({ error: 'Erro ao buscar historico de decisoes' });
+    res.status(500).json({ error: 'Erro ao buscar histórico de decisões' });
   }
 });
 
-// GET /api/totem-kids/decisoes/resumo-por-crianca · ranking de decisoes
+// GET /api/totem-kids/decisoes/resumo-por-crianca · ranking de decisões
 router.get('/decisoes/resumo-por-crianca', authorizeModule('kids', 1), async (req, res) => {
   try {
     const { data, error } = await supabase
@@ -965,7 +965,7 @@ router.get('/decisoes/resumo-por-crianca', authorizeModule('kids', 1), async (re
     if (error) throw error;
     res.json(data || []);
   } catch (e) {
-    res.status(500).json({ error: 'Erro ao buscar resumo de decisoes' });
+    res.status(500).json({ error: 'Erro ao buscar resumo de decisões' });
   }
 });
 
@@ -1028,7 +1028,7 @@ router.delete('/salas/:id', authorizeModule('kids', 5), async (req, res) => {
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
-// ESTACOES
+// ESTAÇÕES
 // ═══════════════════════════════════════════════════════════════════════════
 
 router.get('/estacoes', authorizeModule('kids', 1), async (req, res) => {
@@ -1040,7 +1040,7 @@ router.get('/estacoes', authorizeModule('kids', 1), async (req, res) => {
     if (error) throw error;
     res.json(data || []);
   } catch (e) {
-    res.status(500).json({ error: 'Erro ao listar estacoes' });
+    res.status(500).json({ error: 'Erro ao listar estações' });
   }
 });
 
@@ -1054,7 +1054,7 @@ router.post('/estacoes', authorizeModule('kids', 3), async (req, res) => {
     if (error) throw error;
     res.status(201).json(data);
   } catch (e) {
-    res.status(500).json({ error: 'Erro ao criar estacao' });
+    res.status(500).json({ error: 'Erro ao criar estação' });
   }
 });
 
@@ -1072,14 +1072,14 @@ router.patch('/estacoes/:id', authorizeModule('kids', 3), async (req, res) => {
     if (error) throw error;
     res.json(data);
   } catch (e) {
-    res.status(500).json({ error: 'Erro ao editar estacao' });
+    res.status(500).json({ error: 'Erro ao editar estação' });
   }
 });
 
-// ── Pareamento de tablet ↔ estacao ──
+// ── Pareamento de tablet ↔ estação ──
 
 // GET /api/totem-kids/estacoes/:id/info-pareamento · pra admin gerar QR
-// Retorna URL completa pareada · so coord-kids/admin (nivel 3+)
+// Retorna URL completa pareada · so coord-kids/admin (nível 3+)
 router.get('/estacoes/:id/info-pareamento', authorizeModule('kids', 3), async (req, res) => {
   try {
     const { data, error } = await supabase
@@ -1088,7 +1088,7 @@ router.get('/estacoes/:id/info-pareamento', authorizeModule('kids', 3), async (r
       .eq('id', req.params.id)
       .maybeSingle();
     if (error) throw error;
-    if (!data) return res.status(404).json({ error: 'Estacao nao encontrada' });
+    if (!data) return res.status(404).json({ error: 'Estação não encontrada' });
 
     const baseUrl = process.env.FRONTEND_URL || `https://${req.get('host')}`;
     const url = `${baseUrl}/ministerial/totem-kids/parear?estacao=${data.id}&token=${data.token_pareamento}`;
@@ -1123,7 +1123,7 @@ router.post('/estacoes/:id/regenerar-token', authorizeModule('kids', 3), async (
 router.post('/estacoes/parear', async (req, res) => {
   try {
     const { estacao_id, token } = req.body || {};
-    if (!estacao_id || !token) return res.status(400).json({ error: 'estacao_id e token obrigatorios' });
+    if (!estacao_id || !token) return res.status(400).json({ error: 'estacao_id e token obrigatórios' });
 
     const { data: estacao } = await supabase
       .from('kids_estacoes')
@@ -1131,7 +1131,7 @@ router.post('/estacoes/parear', async (req, res) => {
       .eq('id', estacao_id)
       .maybeSingle();
 
-    if (!estacao) return res.status(404).json({ error: 'Estacao nao encontrada' });
+    if (!estacao) return res.status(404).json({ error: 'Estação não encontrada' });
     if (!estacao.ativo) return res.status(400).json({ error: 'Estacao inativa' });
     if (estacao.token_pareamento !== token) {
       return res.status(403).json({ error: 'Token invalido · pareamento foi revogado · peca admin pra gerar QR novo' });
@@ -1159,13 +1159,13 @@ router.post('/estacoes/parear', async (req, res) => {
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
-// ETIQUETAS · LOG (auditoria de impressao)
+// ETIQUETAS · LOG (auditoria de impressão)
 // ═══════════════════════════════════════════════════════════════════════════
 
 router.post('/etiquetas-log', authorizeModule('kids', 2), async (req, res) => {
   try {
     const { checkin_id, estacao_id, tipo, conteudo, reimpressao, motivo_reimpressao, status, erro } = req.body;
-    if (!checkin_id || !tipo) return res.status(400).json({ error: 'checkin_id e tipo obrigatorios' });
+    if (!checkin_id || !tipo) return res.status(400).json({ error: 'checkin_id e tipo obrigatórios' });
 
     const { data, error } = await supabase
       .from('kids_etiquetas_log')
@@ -1222,7 +1222,7 @@ router.get('/auditoria/overrides', authorizeModule('kids', 3), async (req, res) 
   }
 });
 
-// GET /api/totem-kids/historico/crianca/:id · historico completo
+// GET /api/totem-kids/historico/crianca/:id · histórico completo
 router.get('/historico/crianca/:id', authorizeModule('kids', 1), async (req, res) => {
   try {
     const { data, error } = await supabase
@@ -1233,12 +1233,12 @@ router.get('/historico/crianca/:id', authorizeModule('kids', 1), async (req, res
     if (error) throw error;
     res.json(data || []);
   } catch (e) {
-    res.status(500).json({ error: 'Erro ao buscar historico' });
+    res.status(500).json({ error: 'Erro ao buscar histórico' });
   }
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
-// IMPORT XLSX · cadastro em massa de criancas + responsaveis
+// IMPORT XLSX · cadastro em massa de crianças + responsáveis
 // ═══════════════════════════════════════════════════════════════════════════
 
 // Normaliza nome de coluna pra match · lowercase, sem acento, sem espaco
@@ -1249,7 +1249,7 @@ function normalizeColName(s) {
     .replace(/^_+|_+$/g, '');
 }
 
-// Aliases aceitos por campo logico
+// Aliases aceitos por campo lógico
 const COL_ALIASES = {
   nome_crianca:           ['nome_crianca','nome','crianca','child_name','first_name'],
   data_nascimento:        ['data_nascimento','nascimento','aniversario','birthdate','dob','data_nasc'],
@@ -1341,7 +1341,7 @@ function normalizeParentesco(v) {
   return 'outro';
 }
 
-// Resolve ou cria mem_membros do responsavel
+// Resolve ou cria mem_membros do responsável
 async function resolveOrCreateMembro({ nome, telefone, cpf, parentesco }) {
   let membro = null;
   if (cpf) {
@@ -1380,7 +1380,7 @@ async function getOrCreateFamilia(membro) {
   return data.id;
 }
 
-// Processa 1 linha · retorna { status, msg } pra relatorio
+// Processa 1 linha · retorna { status, msg } pra relatório
 async function processarLinhaImport(row, colMap, dryRun, userId) {
   const nomeCrianca = pickRowValue(row, colMap, 'nome_crianca');
   const respNome = pickRowValue(row, colMap, 'responsavel_nome');
@@ -1401,15 +1401,15 @@ async function processarLinhaImport(row, colMap, dryRun, userId) {
     return { status: 'preview', msg: `${nomeCrianca} → resp ${respNome}` };
   }
 
-  // 1. Resolve responsavel
+  // 1. Resolve responsável
   const { membro: resp1, criado: resp1Criado } = await resolveOrCreateMembro({
     nome: respNome, telefone: respTel, cpf: respCpf, parentesco: respParentesco,
   });
 
-  // 2. Familia
+  // 2. Família
   const familiaId = await getOrCreateFamilia(resp1);
 
-  // 3. Crianca · match por nome (case-insensitive) + familia
+  // 3. Criança · match por nome (case-insensitive) + família
   const { data: jaExiste } = await supabase
     .from('kids_criancas')
     .select('id')
@@ -1447,7 +1447,7 @@ async function processarLinhaImport(row, colMap, dryRun, userId) {
     statusResp = 'criada';
   }
 
-  // 4. Liga responsavel 1 (se nao tem)
+  // 4. Liga responsável 1 (se não tem)
   await supabase.from('kids_responsaveis').upsert({
     crianca_id: criancaId,
     membro_id: resp1.id,
@@ -1455,7 +1455,7 @@ async function processarLinhaImport(row, colMap, dryRun, userId) {
     autorizado_buscar: true,
   }, { onConflict: 'crianca_id,membro_id', ignoreDuplicates: false });
 
-  // 5. Responsavel 2 (opcional)
+  // 5. Responsável 2 (opcional)
   const resp2Nome = pickRowValue(row, colMap, 'responsavel2_nome');
   const resp2Tel = normalizeTelefone(pickRowValue(row, colMap, 'responsavel2_telefone'));
   if (resp2Nome && resp2Tel) {
@@ -1465,7 +1465,7 @@ async function processarLinhaImport(row, colMap, dryRun, userId) {
       const { membro: resp2 } = await resolveOrCreateMembro({
         nome: resp2Nome, telefone: resp2Tel, cpf: resp2Cpf, parentesco: resp2Parentesco,
       });
-      // Mesma familia
+      // Mesma família
       if (!resp2.familia_id) {
         await supabase.from('mem_membros').update({ familia_id: familiaId }).eq('id', resp2.id);
       }
@@ -1581,19 +1581,19 @@ router.get('/criancas/modelo-importacao', authorizeModule('kids', 1), async (req
 // CHAMADAS · sistema de display nas TVs das salas
 // ═══════════════════════════════════════════════════════════════════════════
 // Fluxo:
-//   1. Pai digita codigo no PC touch self-service da recepcao
-//   2. POST /api/totem-kids/chamadas { codigo, estacao_token }
+//   1. Pai digita código no PC touch self-service da recepcao
+//   2. POST /api/totem-kids/chamadas { código, estacao_token }
 //   3. Backend valida + cria row em kids_chamadas
-//   4. TV da sala (estacao tipo=display) faz polling em /display/sala
+//   4. TV da sala (estação tipo=display) faz polling em /display/sala
 //   5. Renderiza grande + sino + TTS
 //   6. Quando voluntaria confirma checkout, trigger fecha chamada
 //      (atendida_em e preenchido) e TV remove do display
 
 const publicRouter = require('express').Router();
-// Sub-router publico (sem authenticate) · pareamento via token de estacao
+// Sub-router público (sem authenticate) · pareamento via token de estação
 // E montado dentro do main router em rota separada
 
-// Helper: valida token de estacao e retorna { id, nome, tipo, sala_id, sala_nome }
+// Helper: valida token de estação e retorna { id, nome, tipo, sala_id, sala_nome }
 async function validarEstacaoToken(token, tipoEsperado = null) {
   if (!token) return null;
   let q = supabase
@@ -1619,13 +1619,13 @@ async function validarEstacaoToken(token, tipoEsperado = null) {
 }
 
 // POST /api/totem-kids/chamadas
-// Body: { codigo, estacao_token? }
-// Cria chamada · valida codigo · faz upsert (se ja tem ativa, incrementa re_chamadas)
+// Body: { código, estacao_token? }
+// Cria chamada · valida código · faz upsert (se já tem ativa, incrementa re_chamadas)
 router.post('/chamadas', async (req, res) => {
   try {
     const { codigo, estacao_token } = req.body || {};
     if (!codigo || String(codigo).trim().length !== 4) {
-      return res.status(400).json({ error: 'codigo de 4 caracteres obrigatorio' });
+      return res.status(400).json({ error: 'código de 4 caracteres obrigatório' });
     }
 
     // Se enviou estacao_token, valida (modo self-service · sem login)
@@ -1634,10 +1634,10 @@ router.post('/chamadas', async (req, res) => {
     let userId = null;
     if (estacao_token) {
       estacao = await validarEstacaoToken(estacao_token, ['self', 'manned']);
-      if (!estacao) return res.status(403).json({ error: 'estacao invalida ou nao pareada' });
+      if (!estacao) return res.status(403).json({ error: 'estação invalida ou não pareada' });
     } else {
       // Exige auth normal · req.user populado pelo authenticate
-      if (!req.user) return res.status(401).json({ error: 'login ou estacao_token necessario' });
+      if (!req.user) return res.status(401).json({ error: 'login ou estacao_token necessário' });
       userId = req.user.userId;
     }
 
@@ -1654,10 +1654,10 @@ router.post('/chamadas', async (req, res) => {
       .maybeSingle();
 
     if (!checkin) {
-      return res.status(404).json({ error: 'Codigo nao encontrado · crianca pode ja ter saido ou codigo errado' });
+      return res.status(404).json({ error: 'Código não encontrado · criança pode já ter saido ou código errado' });
     }
 
-    // Upsert · se ja tem chamada ativa, incrementa re_chamadas
+    // Upsert · se já tem chamada ativa, incrementa re_chamadas
     const { data: existente } = await supabase
       .from('kids_chamadas')
       .select('id, re_chamadas')
@@ -1697,7 +1697,7 @@ router.post('/chamadas', async (req, res) => {
       chamada = data;
     }
 
-    // Enfileira o toque no pager da familia (se a crianca recebeu um no check-in).
+    // Enfileira o toque no pager da família (se a criança recebeu um no check-in).
     // O agente local da recepcao consome /pager/bridge/fila e dispara via LRSN/TCP.
     let pager_enfileirado = false;
     if (checkin.pager && checkin.pager.ativo) {
@@ -1733,7 +1733,7 @@ router.post('/chamadas', async (req, res) => {
 });
 
 // GET /api/totem-kids/display/info?token=X
-// Tela display da TV consulta no boot · valida token e retorna sua estacao
+// Tela display da TV consulta no boot · valida token e retorna sua estação
 router.get('/display/info', async (req, res) => {
   try {
     const token = req.query.token;
@@ -1787,7 +1787,7 @@ router.get('/display/foyer-resumo', async (req, res) => {
     const estacao = await validarEstacaoToken(token, ['display_foyer', 'display']);
     if (!estacao) return res.status(403).json({ error: 'token invalido' });
 
-    // Sessao aberta atual
+    // Sessão aberta atual
     const { data: sessao } = await supabase
       .from('kids_sessoes')
       .select('id, culto:cultos(nome, data)')
@@ -1846,7 +1846,7 @@ router.get('/display/foyer-resumo', async (req, res) => {
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
-// PAGERS · integracao com o transmissor fisico (LRS Freedom via agente local)
+// PAGERS · integração com o transmissor físico (LRS Freedom via agente local)
 // ═══════════════════════════════════════════════════════════════════════════
 
 // Autoriza o agente local da recepcao por bearer token (PAGER_BRIDGE_TOKEN).
@@ -1859,7 +1859,7 @@ function bridgeAutorizado(req) {
   return token.length > 0 && token === expected;
 }
 
-// ─── CRUD do catalogo de pagers (admin do modulo) ───────────────────────────
+// ─── CRUD do catalogo de pagers (admin do módulo) ───────────────────────────
 router.get('/pager/pagers', authorizeModule('kids', 1), async (req, res) => {
   try {
     let q = supabase
@@ -1877,7 +1877,7 @@ router.get('/pager/pagers', authorizeModule('kids', 1), async (req, res) => {
   }
 });
 
-// Quem esta com cada pager AGORA (check-ins ativos da sessao aberta)
+// Quem esta com cada pager AGORA (check-ins ativos da sessão aberta)
 router.get('/pager/em-uso', authorizeModule('kids', 1), async (req, res) => {
   try {
     const { data, error } = await supabase
@@ -1899,7 +1899,7 @@ router.post('/pager/pagers', authorizeModule('kids', 3), async (req, res) => {
   try {
     const { numero, rotulo, cor, tipo_lrs, responsavel_padrao_id, observacao, ativo } = req.body || {};
     if (numero == null || isNaN(Number(numero))) {
-      return res.status(400).json({ error: 'numero do pager obrigatorio' });
+      return res.status(400).json({ error: 'número do pager obrigatório' });
     }
     const { data, error } = await supabase
       .from('kids_pagers')
@@ -1915,7 +1915,7 @@ router.post('/pager/pagers', authorizeModule('kids', 3), async (req, res) => {
       .select('*')
       .single();
     if (error) {
-      if (error.code === '23505') return res.status(409).json({ error: 'Ja existe um pager com esse numero' });
+      if (error.code === '23505') return res.status(409).json({ error: 'Já existe um pager com esse número' });
       throw error;
     }
     res.status(201).json(data);
@@ -1944,7 +1944,7 @@ router.patch('/pager/pagers/:id', authorizeModule('kids', 3), async (req, res) =
       .select('*')
       .single();
     if (error) {
-      if (error.code === '23505') return res.status(409).json({ error: 'Ja existe um pager com esse numero' });
+      if (error.code === '23505') return res.status(409).json({ error: 'Já existe um pager com esse número' });
       throw error;
     }
     res.json(data);
@@ -1980,7 +1980,7 @@ router.post('/pager/pagers/:id/testar', authorizeModule('kids', 3), async (req, 
       .is('deleted_at', null)
       .maybeSingle();
     if (errP) throw errP;
-    if (!pager) return res.status(404).json({ error: 'Pager nao encontrado' });
+    if (!pager) return res.status(404).json({ error: 'Pager não encontrado' });
 
     const { data, error } = await supabase
       .from('kids_pager_envios')
@@ -2002,7 +2002,7 @@ router.post('/pager/pagers/:id/testar', authorizeModule('kids', 3), async (req, 
   }
 });
 
-// Historico recente de envios (pro admin acompanhar status)
+// Histórico recente de envios (pro admin acompanhar status)
 router.get('/pager/envios', authorizeModule('kids', 1), async (req, res) => {
   try {
     const limit = Math.min(Number(req.query.limit) || 50, 200);
@@ -2022,7 +2022,7 @@ router.get('/pager/envios', authorizeModule('kids', 1), async (req, res) => {
 // GET /pager/bridge/fila?max=20 · pendentes mais antigos primeiro
 router.get('/pager/bridge/fila', async (req, res) => {
   try {
-    if (!bridgeAutorizado(req)) return res.status(401).json({ error: 'bridge nao autorizado' });
+    if (!bridgeAutorizado(req)) return res.status(401).json({ error: 'bridge não autorizado' });
     const max = Math.min(Number(req.query.max) || 20, 100);
     const { data, error } = await supabase
       .from('kids_pager_envios')
@@ -2041,7 +2041,7 @@ router.get('/pager/bridge/fila', async (req, res) => {
 // POST /pager/bridge/envios/:id/resultado · { ok:boolean, erro?:string }
 router.post('/pager/bridge/envios/:id/resultado', async (req, res) => {
   try {
-    if (!bridgeAutorizado(req)) return res.status(401).json({ error: 'bridge nao autorizado' });
+    if (!bridgeAutorizado(req)) return res.status(401).json({ error: 'bridge não autorizado' });
     const { ok, erro } = req.body || {};
     // tentativas++ e status final
     const { data: atual } = await supabase
@@ -2049,7 +2049,7 @@ router.post('/pager/bridge/envios/:id/resultado', async (req, res) => {
       .select('tentativas, status')
       .eq('id', req.params.id)
       .maybeSingle();
-    if (!atual) return res.status(404).json({ error: 'envio nao encontrado' });
+    if (!atual) return res.status(404).json({ error: 'envio não encontrado' });
     if (atual.status === 'cancelado') return res.json({ ok: true, ignorado: 'cancelado' });
 
     const patch = {

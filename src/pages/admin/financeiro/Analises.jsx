@@ -62,7 +62,7 @@ export default function Analises() {
 }
 
 // ============================================================
-// VISAO GERAL · resumo de tudo
+// VISÃO GERAL · resumo de tudo
 // ============================================================
 function VisaoGeral({ onJumpToAlertas }) {
   const [alertas, setAlertas] = useState([]);
@@ -132,7 +132,7 @@ function VisaoGeral({ onJumpToAlertas }) {
         />
       </div>
 
-      {/* Acoes */}
+      {/* Ações */}
       <Card>
         <CardContent className="pt-4 pb-4 flex items-center justify-between flex-wrap gap-3">
           <div>
@@ -167,7 +167,7 @@ function VisaoGeral({ onJumpToAlertas }) {
         </Card>
       )}
 
-      {/* Previsao mini */}
+      {/* Previsão mini */}
       {forecast && !forecast.erro && (
         <Card>
           <CardContent className="pt-5">
@@ -353,7 +353,7 @@ function topHorarios(data) {
 }
 
 // ============================================================
-// PREVISAO · forecast
+// PREVISÃO · forecast
 // ============================================================
 function Previsao() {
   const [semanas, setSemanas] = useState(4);

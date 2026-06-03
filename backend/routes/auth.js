@@ -25,7 +25,7 @@ router.get('/me', authenticate, async (req, res) => {
   }
 });
 
-// PATCH /api/auth/profile — atualiza perfil (apenas o proprio, sem mexer em kpi_areas)
+// PATCH /api/auth/profile — atualiza perfil (apenas o próprio, sem mexer em kpi_areas)
 router.patch('/profile', authenticate, async (req, res) => {
   try {
     const { name, area, avatar_url } = req.body;
@@ -43,7 +43,7 @@ router.patch('/profile', authenticate, async (req, res) => {
   }
 });
 
-// POST /api/auth/profile/foto — upload foto de perfil do proprio usuario (multipart 'foto')
+// POST /api/auth/profile/foto — upload foto de perfil do próprio usuário (multipart 'foto')
 router.post('/profile/foto', authenticate, uploadMw.single('foto'), async (req, res) => {
   try {
     if (!req.file) return res.status(400).json({ error: 'Arquivo "foto" obrigatorio' });

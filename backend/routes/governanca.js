@@ -35,7 +35,7 @@ const TIPOS = [
   { sigla: 'DRE', nome: 'DRE', cor: '#10b981', recorrencia: 'Mensal — 2a quarta', descricao: 'Saude economica: receita, custos, despesas, planejado x realizado' },
   { sigla: 'KPI', nome: 'KPI', cor: '#f59e0b', recorrencia: 'Mensal — 3a quarta', descricao: 'Performance operacional: 5 pilares, meta x realizado, tendencia' },
   { sigla: 'CC',  nome: 'Conselho Consultivo', cor: '#8b5cf6', recorrencia: 'Mensal — 4a quarta', descricao: 'Sintese OKR+DRE+KPI, riscos, decisoes estruturais' },
-  { sigla: 'DE',  nome: 'Diretoria Estatutaria', cor: '#ef4444', recorrencia: 'Quadrimestral', descricao: 'Relatorio de diretoria: RH, patrimonio, financeiro acumulado' },
+  { sigla: 'DE',  nome: 'Diretoria Estatutaria', cor: '#ef4444', recorrencia: 'Quadrimestral', descricao: 'Relatório de diretoria: RH, patrimônio, financeiro acumulado' },
   { sigla: 'AG',  nome: 'Assembleia Geral', cor: '#06b6d4', recorrencia: 'Semestral', descricao: 'Prestacao de contas completa a igreja' },
 ];
 
@@ -94,10 +94,10 @@ async function buildOKR() {
     };
   });
 
-  // Agrupar por area
+  // Agrupar por área
   const porArea = {};
   projEnriched.forEach(p => {
-    const a = p.area || 'Sem area';
+    const a = p.area || 'Sem área';
     if (!porArea[a]) porArea[a] = [];
     porArea[a].push(p);
   });
@@ -129,8 +129,8 @@ async function buildOKR() {
       { item: 'Key Results cadastrados', ok: totalKRs > 0, valor: totalKRs > 0 ? `${totalKRs} KRs em ${projEnriched.filter(p => p.krs_total > 0).length} objetivos` : 'Nenhum KR cadastrado' },
       { item: 'KRs com valor atual preenchido', ok: allKpis.every(k => k.current_value != null), valor: `${allKpis.filter(k => k.current_value != null).length}/${totalKRs} atualizados` },
       { item: 'Projetos no prazo', ok: atrasados.length === 0, valor: `${proj.length - atrasados.length}/${proj.length}` },
-      { item: 'Todos com responsavel', ok: projEnriched.every(p => p.responsible), valor: projEnriched.filter(p => !p.responsible).length === 0 ? 'OK' : `${projEnriched.filter(p => !p.responsible).length} sem resp.` },
-      { item: 'Marcos de expansao atualizados', ok: marcosAtrasados.length === 0, valor: `${marcos.length - marcosAtrasados.length}/${marcos.length} no prazo` },
+      { item: 'Todos com responsável', ok: projEnriched.every(p => p.responsible), valor: projEnriched.filter(p => !p.responsible).length === 0 ? 'OK' : `${projEnriched.filter(p => !p.responsible).length} sem resp.` },
+      { item: 'Marcos de expansão atualizados', ok: marcosAtrasados.length === 0, valor: `${marcos.length - marcosAtrasados.length}/${marcos.length} no prazo` },
       { item: 'Sem KRs criticos', ok: krsOffTrack === 0, valor: krsOffTrack === 0 ? 'OK' : `${krsOffTrack} KRs abaixo de 50%` },
     ],
     resumo: {
@@ -192,7 +192,7 @@ async function buildDRE(mes) {
 
   return {
     checklist: [
-      { item: 'Transacoes do mes lancadas', ok: transAtual.length > 0, valor: `${transAtual.length} transacoes` },
+      { item: 'Transacoes do mês lancadas', ok: transAtual.length > 0, valor: `${transAtual.length} transacoes` },
       { item: 'Contas com saldo atualizado', ok: contas.length > 0, valor: `${contas.length} contas ativas` },
       { item: 'Sem contas a pagar vencidas', ok: pagarVencidas.length === 0, valor: pagarVencidas.length === 0 ? 'OK' : `${pagarVencidas.length} vencidas` },
       { item: 'Reembolsos processados', ok: reemb.length === 0, valor: reemb.length === 0 ? 'OK' : `${reemb.length} pendentes` },
@@ -251,16 +251,16 @@ async function buildKPI(mes) {
   const mandala = {
     seguir_jesus: { label: 'Seguir Jesus', valor: presMedia, detalhe: `${presMedia} presencial + ${Math.round(onlineAtual / semanasNoMes)} online / semana`, cor: '#3b82f6' },
     conectar_pessoas: { label: 'Conectar Pessoas', valor: gruposCount, detalhe: `${gruposCount} membros ativos em grupos`, cor: '#10b981' },
-    investir_deus: { label: 'Investir em Deus', valor: diasNoMes > 0 ? Math.round(penseViews / diasNoMes) : 0, detalhe: `${penseViews} views PENSE no mes (${diasNoMes > 0 ? Math.round(penseViews / diasNoMes) : 0}/dia)`, cor: '#f59e0b' },
+    investir_deus: { label: 'Investir em Deus', valor: diasNoMes > 0 ? Math.round(penseViews / diasNoMes) : 0, detalhe: `${penseViews} views PENSE no mês (${diasNoMes > 0 ? Math.round(penseViews / diasNoMes) : 0}/dia)`, cor: '#f59e0b' },
     servir: { label: 'Servir', valor: volAtivos, detalhe: `${volAtivos} voluntarios ativos (90d)`, cor: '#ef4444' },
     generosidade: { label: 'Generosidade', valor: (cm?.qtd_dizimistas || 0) + (cm?.qtd_ofertantes || 0), detalhe: `${cm?.qtd_dizimistas || 0} dizimistas + ${cm?.qtd_ofertantes || 0} ofertantes`, cor: '#8b5cf6' },
   };
 
   return {
     checklist: [
-      { item: 'Cultos do mes registrados', ok: cultosAtual.length > 0, valor: `${cultosAtual.length} cultos` },
+      { item: 'Cultos do mês registrados', ok: cultosAtual.length > 0, valor: `${cultosAtual.length} cultos` },
       { item: 'Presenca registrada', ok: presMedia > 0, valor: presMedia > 0 ? `Media: ${presMedia}` : 'Sem registros' },
-      { item: 'Dados de generosidade', ok: cm != null, valor: cm ? `${cm.qtd_dizimistas || 0} dizimistas` : 'Nao preenchido' },
+      { item: 'Dados de generosidade', ok: cm != null, valor: cm ? `${cm.qtd_dizimistas || 0} dizimistas` : 'Não preenchido' },
       { item: 'Membresia atualizada', ok: membrosAtivos > 0, valor: `${membrosAtivos} membros ativos` },
     ],
     resumo: {
@@ -281,7 +281,7 @@ async function buildCC(mes) {
     .select('id, title, probability, impact, score, owner_name, status, mitigation, project_id, projects(name)')
     .neq('status', 'mitigado').order('score', { ascending: false }).limit(5);
 
-  // Pendencias anteriores (governance_tasks)
+  // Pendências anteriores (governance_tasks)
   let pendencias = [];
   try {
     const { data } = await supabase.from('governance_tasks').select('id, titulo, responsavel, prazo, status').in('status', ['pendente', 'em_andamento']).order('prazo');
@@ -318,7 +318,7 @@ async function buildDE() {
   const despAno = trans.filter(t => t.tipo === 'despesa').reduce((s, t) => s + Number(t.valor), 0);
   return {
     checklist: [
-      { item: 'Quadro de funcionarios atualizado', ok: funcs.length > 0, valor: `${funcs.length} ativos` },
+      { item: 'Quadro de funcionários atualizado', ok: funcs.length > 0, valor: `${funcs.length} ativos` },
       { item: 'Patrimonio inventariado', ok: bens.length > 0, valor: `${bens.length} bens` },
       { item: 'Financeiro acumulado do ano', ok: trans.length > 0, valor: `Resultado: R$ ${(recAno - despAno).toLocaleString('pt-BR')}` },
     ],
@@ -359,7 +359,7 @@ router.get('/relatorio/:sigla', async (req, res) => {
   try {
     const sigla = req.params.sigla.toUpperCase();
     const tipo = TIPOS.find(t => t.sigla === sigla);
-    if (!tipo) return res.status(404).json({ error: 'Tipo nao encontrado' });
+    if (!tipo) return res.status(404).json({ error: 'Tipo não encontrado' });
 
     const mes = req.query.mes; // opcional: YYYY-MM
     let result;
@@ -369,9 +369,9 @@ router.get('/relatorio/:sigla', async (req, res) => {
     else if (sigla === 'CC') result = await buildCC(mes);
     else if (sigla === 'DE') result = await buildDE();
     else if (sigla === 'AG') result = await buildAG();
-    else return res.status(404).json({ error: 'Builder nao implementado' });
+    else return res.status(404).json({ error: 'Builder não implementado' });
 
-    // Buscar observacoes salvas (se existirem)
+    // Buscar observações salvas (se existirem)
     let observacoes = '';
     try {
       const h = hoje();
@@ -388,7 +388,7 @@ router.get('/relatorio/:sigla', async (req, res) => {
 });
 
 // ══════════════════════════════════════════════
-// SALVAR OBSERVACOES
+// SALVAR OBSERVAÇÕES
 // ══════════════════════════════════════════════
 
 router.post('/relatorio/:sigla/observacoes', async (req, res) => {
@@ -408,7 +408,7 @@ router.post('/relatorio/:sigla/observacoes', async (req, res) => {
 
     // Find type
     const { data: tipo } = await supabase.from('governance_meeting_types').select('id').eq('sigla', sigla).maybeSingle();
-    if (!tipo) return res.status(404).json({ error: 'Tipo nao encontrado' });
+    if (!tipo) return res.status(404).json({ error: 'Tipo não encontrado' });
 
     // Find or create meeting
     let { data: meeting } = await supabase.from('governance_meetings').select('id').eq('cycle_id', cycle.id).eq('type_id', tipo.id).maybeSingle();
@@ -437,12 +437,12 @@ router.get('/cron/lembrete', async (req, res) => {
     const dayOfWeek = new Date().getDay(); // 0=dom, 1=seg
 
     // Só roda na segunda-feira
-    if (dayOfWeek !== 1) return res.json({ skipped: true, reason: 'Nao e segunda-feira' });
+    if (dayOfWeek !== 1) return res.json({ skipped: true, reason: 'Não e segunda-feira' });
 
-    // Verificar se a proxima quarta é a 1a quarta do mês
+    // Verificar se a próxima quarta é a 1a quarta do mês
     const nextWed = new Date();
     nextWed.setDate(nextWed.getDate() + 2); // segunda + 2 = quarta
-    if (nextWed.getDate() > 7) return res.json({ skipped: true, reason: 'Nao e a 1a quarta do mes' });
+    if (nextWed.getDate() > 7) return res.json({ skipped: true, reason: 'Não e a 1a quarta do mês' });
 
     // Gerar checklist
     const okr = await buildOKR();
@@ -450,7 +450,7 @@ router.get('/cron/lembrete', async (req, res) => {
     const projSemResp = (okr.checklist.find(c => c.item.includes('responsavel')) || {});
 
     const mensagem = [
-      `Reuniao OKR em 2 dias (${nextWed.toLocaleDateString('pt-BR')}).`,
+      `Reunião OKR em 2 dias (${nextWed.toLocaleDateString('pt-BR')}).`,
       `Checklist de preparo:`,
       ...okr.checklist.map(c => `${c.ok ? '  ✓' : '  ✗'} ${c.item}: ${c.valor}`),
     ].join('\n');
@@ -460,7 +460,7 @@ router.get('/cron/lembrete', async (req, res) => {
     await notificar({
       modulo: 'governanca',
       tipo: 'lembrete_okr',
-      titulo: `Reuniao OKR em 2 dias`,
+      titulo: `Reunião OKR em 2 dias`,
       mensagem,
       link: '/eventos',
       severidade: okr.checklist.every(c => c.ok) ? 'info' : 'warning',

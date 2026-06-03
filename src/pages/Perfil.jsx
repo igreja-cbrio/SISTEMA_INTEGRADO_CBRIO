@@ -50,7 +50,7 @@ export default function Perfil() {
       return;
     }
     if (file.size > 25 * 1024 * 1024) {
-      toast.error('Imagem precisa ter no maximo 25 MB');
+      toast.error('Imagem precisa ter no máximo 25 MB');
       return;
     }
     setUploadingFoto(true);
@@ -81,7 +81,7 @@ export default function Perfil() {
     try {
       const digits = telefone.replace(/\D+/g, '');
       if (digits && digits.length < 10) {
-        toast.error('Telefone invalido. Informe DDD + numero.');
+        toast.error('Telefone invalido. Informe DDD + número.');
         setSavingTel(false);
         return;
       }
@@ -90,7 +90,7 @@ export default function Perfil() {
         .update({ telefone: digits ? mascaraTelefone(digits) : null })
         .eq('id', profile.id);
       if (error) throw error;
-      toast.success('Telefone atualizado · voce passa a receber notificacoes no WhatsApp');
+      toast.success('Telefone atualizado · você passa a receber notificações no WhatsApp');
     } catch (e) {
       toast.error(e.message || 'Erro ao salvar');
     } finally {

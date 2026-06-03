@@ -4,9 +4,9 @@
 // Roda no Fire TV / Pi / Smart TV / Notebook ligado na TV da sala.
 //
 // URL: /ministerial/totem-kids/display-sala?sala=X&token=Y
-//   - Sem login (validado via token da estacao)
+//   - Sem login (validado via token da estação)
 //   - Pareamento via QR · token salvo no localStorage do device (Fire TV)
-//   - Fullscreen automatico ao primeiro click
+//   - Fullscreen automático ao primeiro click
 //
 // Polling a cada 2s · quando chega chamada nova: sino + TTS + render grande.
 // ============================================================================

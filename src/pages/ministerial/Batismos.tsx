@@ -49,7 +49,7 @@ type BatismoInscricao = {
   possui_deficiencia?: boolean;
   deficiencia_descricao?: string | null;
   endereco?: string | null;
-  // Jornada · tempo de conversao ate o batismo (vem enriquecido do backend)
+  // Jornada · tempo de conversao até o batismo (vem enriquecido do backend)
   data_conversao?: string | null;       // etapa 'conversao' da trilha (data_conclusao)
   dias_conversao_batismo?: number | null; // data_batismo - data_conversao, em dias
 };
@@ -66,7 +66,7 @@ const CATEGORIA_COLOR: Record<CategoriaEtaria, string> = {
   adulto: '#0ea5e9',       // sky
 };
 
-// Calcula categoria etaria no client (espelha logica do trigger SQL)
+// Calcula categoria etaria no client (espelha lógica do trigger SQL)
 function categoriaDe(b: { data_nascimento?: string | null; eh_crianca?: boolean; categoria_etaria?: CategoriaEtaria | null }): CategoriaEtaria | null {
   if (b.categoria_etaria) return b.categoria_etaria;
   if (b.eh_crianca) return 'crianca';
@@ -112,14 +112,14 @@ function ymdHoje(): string {
   return new Date().toISOString().slice(0, 10);
 }
 
-// Calcula o 4o domingo de um mes (year + 0-indexed month)
+// Calcula o 4o domingo de um mês (year + 0-indexed month)
 function quartoDomingo(year: number, month: number): Date {
   const primeiro = new Date(year, month, 1);
   const offset = (7 - primeiro.getDay()) % 7;
   return new Date(year, month, 1 + offset + 21);
 }
 
-// Proximo batismo: 4o domingo deste mes (se ainda nao passou) ou do proximo
+// Próximo batismo: 4o domingo deste mês (se ainda não passou) ou do próximo
 function proximoQuartoDomingo(): string {
   const hoje = new Date();
   hoje.setHours(0, 0, 0, 0);
@@ -163,7 +163,7 @@ export default function Batismos() {
 
   useEffect(() => { load(); }, [load]);
 
-  // Meses disponiveis para o filtro · ordenados desc (mais recente primeiro)
+  // Meses disponíveis para o filtro · ordenados desc (mais recente primeiro)
   const mesesDisponiveis = useMemo(() => {
     const set = new Set<string>();
     list.forEach(b => {
@@ -195,8 +195,8 @@ export default function Batismos() {
   const pendentes = list.filter(b => b.status === 'pendente').length;
   const confirmados = list.filter(b => b.status === 'confirmado').length;
 
-  // Proximo batismo: pega data agendada futura mais proxima, ou cai pro 4o
-  // domingo automatico se nao houver agendamento futuro registrado.
+  // Próximo batismo: pega data agendada futura mais próxima, ou cai pro 4o
+  // domingo automático se não houver agendamento futuro registrado.
   const proximaDataBatismo = useMemo(() => {
     const agendadas = list
       .filter(b => (b.status === 'pendente' || b.status === 'confirmado') && b.data_batismo && b.data_batismo >= ymdHoje())
@@ -205,7 +205,7 @@ export default function Batismos() {
     return agendadas[0] || proximoQuartoDomingo();
   }, [list]);
 
-  // Realizados por mes nos ultimos 12 meses (para o grafico)
+  // Realizados por mês nos últimos 12 meses (para o gráfico)
   const realizadosPorMes = useMemo(() => {
     const buckets: Record<string, number> = {};
     const hoje = new Date();
@@ -226,8 +226,8 @@ export default function Batismos() {
     }));
   }, [list]);
 
-  // Tempo de conversao ate o batismo · visao geral (media em dias entre os
-  // batismos JA realizados que tem data de conversao registrada na jornada).
+  // Tempo de conversao até o batismo · visão geral (media em dias entre os
+  // batismos JÁ realizados que tem data de conversao registrada na jornada).
   // Ignora valores negativos (conversao posterior ao batismo = inconsistencia).
   const tempoConversao = useMemo(() => {
     const dias = list
@@ -252,7 +252,7 @@ export default function Batismos() {
       setLinkCopiado(true);
       toast.success('Link copiado!');
       setTimeout(() => setLinkCopiado(false), 2500);
-    }).catch(() => toast.error('Nao foi possivel copiar'));
+    }).catch(() => toast.error('Não foi possível copiar'));
   };
   const compartilharWhatsApp = () => {
     const msg = encodeURIComponent(`Inscreva-se para o batismo na CBRio: ${linkPublico}`);
@@ -313,7 +313,7 @@ export default function Batismos() {
         />
       </div>
 
-      {/* Tempo medio de conversao ate o batismo · visao geral (todos os membros) */}
+      {/* Tempo medio de conversao até o batismo · visão geral (todos os membros) */}
       <Card>
         <CardContent className="py-4 flex flex-wrap items-center gap-x-6 gap-y-3">
           <div className="rounded-lg p-2.5 shrink-0" style={{ background: `${C.info}18` }}>
@@ -354,13 +354,13 @@ export default function Batismos() {
         </CardContent>
       </Card>
 
-      {/* Grafico de barras · batismos realizados por mes (ultimos 12 meses) */}
+      {/* Gráfico de barras · batismos realizados por mês (últimos 12 meses) */}
       <Card>
         <CardHeader className="pb-2 flex flex-row items-center justify-between space-y-0">
           <CardTitle className="text-sm font-medium flex items-center gap-2">
             <BarChart3 className="h-4 w-4 text-muted-foreground" />
             Batismos realizados por mes
-            <span className="text-xs text-muted-foreground font-normal">(ultimos 12 meses)</span>
+            <span className="text-xs text-muted-foreground font-normal">(últimos 12 meses)</span>
           </CardTitle>
           <span className="text-xs text-muted-foreground">
             Total: {realizadosPorMes.reduce((s, m) => s + m.batizados, 0)}
@@ -438,7 +438,7 @@ export default function Batismos() {
         <Loader2 className="h-6 w-6 animate-spin text-muted-foreground mx-auto my-12" />
       ) : filtrada.length === 0 ? (
         <div className="rounded-xl border border-dashed border-border bg-muted/20 p-6 text-center text-sm text-muted-foreground">
-          {list.length === 0 ? 'Nenhuma inscricao de batismo.' : 'Nenhum registro corresponde aos filtros.'}
+          {list.length === 0 ? 'Nenhuma inscrição de batismo.' : 'Nenhum registro corresponde aos filtros.'}
         </div>
       ) : (
         <div className="rounded-2xl border border-border overflow-hidden">
@@ -550,14 +550,14 @@ export default function Batismos() {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// MODAL DE DETALHE / EDICAO
+// MODAL DE DETALHE / EDIÇÃO
 // ──────────────────────────────────────────────────────────────────────────
 function ModalDetalheBatismo({ batismo, onClose, onSaved }: {
   batismo: BatismoInscricao;
   onClose: () => void;
   onSaved: () => void;
 }) {
-  // Auto-confirm: quando admin abre uma inscricao 'pendente', ja vem
+  // Auto-confirm: quando admin abre uma inscrição 'pendente', já vem
   // pre-selecionado como 'confirmado'. So persiste no save · se fechar
   // sem salvar, fica pendente.
   const [status, setStatus] = useState<Status>(batismo.status === 'pendente' ? 'confirmado' : batismo.status);
@@ -570,7 +570,7 @@ function ModalDetalheBatismo({ batismo, onClose, onSaved }: {
   const [deficienciaDescricao, setDeficienciaDescricao] = useState(batismo.deficiencia_descricao || '');
   const [saving, setSaving] = useState(false);
 
-  // Tempo de conversao ate o batismo deste membro · recalcula ao vivo conforme
+  // Tempo de conversao até o batismo deste membro · recalcula ao vivo conforme
   // a data do batismo e editada. data_conversao vem da jornada (trilha).
   const diasConversao = useMemo(() => {
     if (!batismo.data_conversao || !dataBatismo) return null;
@@ -650,7 +650,7 @@ function ModalDetalheBatismo({ batismo, onClose, onSaved }: {
             )}
           </div>
 
-          {/* Tempo de conversao ate o batismo · especifico deste membro */}
+          {/* Tempo de conversao até o batismo · especifico deste membro */}
           {batismo.membro_id && (
             <div className="rounded-xl border border-sky-200 bg-sky-50/50 dark:bg-sky-950/20 dark:border-sky-900/40 p-3 text-xs text-sky-900 dark:text-sky-200">
               <div className="flex items-center gap-2 font-medium">
@@ -770,7 +770,7 @@ function ModalDetalheBatismo({ batismo, onClose, onSaved }: {
           </div>
 
           <div>
-            <Label htmlFor="obs" className="text-xs">Observacoes</Label>
+            <Label htmlFor="obs" className="text-xs">Observações</Label>
             <Textarea
               id="obs"
               value={observacoes}
@@ -887,7 +887,7 @@ function ModalNovaInscricao({ onClose, onCreated }: { onClose: () => void; onCre
         possui_deficiencia: form.possui_deficiencia,
         deficiencia_descricao: form.possui_deficiencia ? (form.deficiencia_descricao.trim() || null) : null,
       });
-      toast.success('Inscricao cadastrada!');
+      toast.success('Inscrição cadastrada!');
       onCreated();
     } catch (e: any) {
       setErro(e?.message || 'Erro ao cadastrar');
@@ -941,7 +941,7 @@ function ModalNovaInscricao({ onClose, onCreated }: { onClose: () => void; onCre
           </div>
 
           <div>
-            <Label htmlFor="bn-campus" className="text-xs">Campus (alimenta KPI por area)</Label>
+            <Label htmlFor="bn-campus" className="text-xs">Campus (alimenta KPI por área)</Label>
             <select
               id="bn-campus"
               value={form.area_kpi}
@@ -1014,7 +1014,7 @@ function ModalNovaInscricao({ onClose, onCreated }: { onClose: () => void; onCre
           </div>
 
           <div>
-            <Label htmlFor="bn-obs" className="text-xs">Observacoes</Label>
+            <Label htmlFor="bn-obs" className="text-xs">Observações</Label>
             <Textarea id="bn-obs" value={form.observacoes} onChange={set('observacoes')} rows={2} />
           </div>
 

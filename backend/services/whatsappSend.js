@@ -1,12 +1,12 @@
 // Envio de mensagens via WhatsApp Cloud API (Graph API da Meta).
-// Usado pra responder o lider dentro da janela de 24h (mensagem de
-// servico · gratis quando o lider iniciou a conversa).
+// Usado pra responder o líder dentro da janela de 24h (mensagem de
+// serviço · gratis quando o líder iniciou a conversa).
 //
-// Envs necessarias:
-//   WHATSAPP_PHONE_NUMBER_ID  · id do numero (nao eh o numero em si)
+// Envs necessárias:
+//   WHATSAPP_PHONE_NUMBER_ID  · id do número (não eh o número em si)
 //   WHATSAPP_ACCESS_TOKEN     · token do System User (permanente em prod)
 //
-// Versao da Graph API · estavel o suficiente; subir quando a Meta exigir.
+// Versão da Graph API · estavel o suficiente; subir quando a Meta exigir.
 const GRAPH_VERSION = process.env.WHATSAPP_GRAPH_VERSION || 'v21.0';
 
 function isConfigured() {

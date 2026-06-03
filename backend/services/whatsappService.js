@@ -1,21 +1,21 @@
 // WhatsApp Cloud API (Meta) — envio de mensagens transacionais.
 //
 // Feature flag · so envia se WHATSAPP_ENABLED === 'true' E todas as credenciais
-// estao presentes. Caso contrario, loga e retorna { sent: false }.
+// estão presentes. Caso contrario, loga e retorna { sent: false }.
 //
-// Credenciais necessarias (env vars):
+// Credenciais necessárias (env vars):
 //   WHATSAPP_TOKEN              · access token permanente do app Meta
-//   WHATSAPP_PHONE_NUMBER_ID    · ID do numero registrado (nao o numero em si)
+//   WHATSAPP_PHONE_NUMBER_ID    · ID do número registrado (não o número em si)
 //   WHATSAPP_BUSINESS_ACCOUNT_ID · WABA ID (opcional · so para listar templates)
 //
 // Templates de utility precisam estar aprovados no Meta Business Manager
-// antes de funcionar. Sugestao de template:
+// antes de funcionar. Sugestão de template:
 //
 //   Nome:  pedido_atualizado
 //   Idioma: pt_BR
 //   Categoria: UTILITY
 //   Corpo:
-//     Ola {{1}}, sua solicitacao "{{2}}" teve uma atualizacao:
+//     Olá {{1}}, sua solicitação "{{2}}" teve uma atualização:
 //
 //     Status: {{3}}
 //     {{4}}
@@ -33,7 +33,7 @@ function configurado() {
   return !!(ENABLED && TOKEN && PHONE_NUMBER_ID);
 }
 
-// Normaliza telefone para E.164 brasileiro (55 + DDD + numero, so digitos).
+// Normaliza telefone para E.164 brasileiro (55 + DDD + número, so digitos).
 // Aceita formatos: (21) 99999-9999, 21999999999, +5521999999999, 5521999999999
 function normalizarTelefone(raw) {
   if (!raw) return null;
@@ -88,12 +88,12 @@ async function sendTemplate(toRaw, templateName, language, parameters) {
   }
 }
 
-// Envia notificacao de atualizacao de pedido (template `pedido_atualizado`).
+// Envia notificação de atualização de pedido (template `pedido_atualizado`).
 // vars: { primeiroNome, tituloSolicitacao, statusLabel, detalhe, link }
 async function sendPedidoAtualizado(telefone, vars) {
   const params = [
     vars.primeiroNome || 'Ola',
-    vars.tituloSolicitacao || 'sua solicitacao',
+    vars.tituloSolicitacao || 'sua solicitação',
     vars.statusLabel || 'atualizado',
     vars.detalhe || '',
     vars.link || '',
@@ -104,7 +104,7 @@ async function sendPedidoAtualizado(telefone, vars) {
 // Envia devocional diario (template `devocional_diario`).
 // Body esperado no template (3 params):
 //   "Bom dia, {{1}}! Seu devocional de hoje: {{2}}. Leia em: {{3}}"
-// vars: { primeiroNome, titulo, link }
+// vars: { primeiroNome, título, link }
 const TEMPLATE_DEVOCIONAL = process.env.WHATSAPP_TEMPLATE_DEVOCIONAL || 'devocional_diario';
 async function sendDevocionalDiario(telefone, vars) {
   const params = [

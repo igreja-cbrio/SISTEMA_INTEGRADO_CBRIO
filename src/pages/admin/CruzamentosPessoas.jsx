@@ -1,15 +1,15 @@
 // ============================================================================
-// /admin/cruzamentos · cruzamento livre de criterios sobre pessoas
+// /admin/cruzamentos · cruzamento livre de critérios sobre pessoas
 //
-// Cada criterio tem 3 estados clicando no chip:
-//   ○ indiferente (nao filtra · default)
+// Cada critério tem 3 estados clicando no chip:
+//   ○ indiferente (não filtra · default)
 //   ✓ tem (filtra pra quem TEM)
-//   ✕ nao tem (filtra pra quem NAO TEM)
+//   ✕ não tem (filtra pra quem NÃO TEM)
 //
-// Combinacoes uteis exemplos:
-// - "Servir ✓ + Generosidade ✓" · voluntarios que dizimam
-// - "Seguir ✓ + Conectar ✕" · convertidos que NAO estao em grupo (acompanhar)
-// - "NEXT ✓ + Servir ✕" · participaram do NEXT mas ainda nao servem
+// Combinacoes úteis exemplos:
+// - "Servir ✓ + Generosidade ✓" · voluntários que dizimam
+// - "Seguir ✓ + Conectar ✕" · convertidos que NÃO estão em grupo (acompanhar)
+// - "NEXT ✓ + Servir ✕" · participaram do NEXT mas ainda não servem
 // ============================================================================
 
 import { useState, useEffect, useCallback, useMemo } from 'react';
@@ -28,17 +28,17 @@ const C = {
   inputBg: 'var(--cbrio-input-bg)',
 };
 
-// Catalogo de criterios disponiveis
+// Catalogo de critérios disponíveis
 const CRITERIOS = [
   {
     grupo: 'Valores da Jornada',
-    desc: 'Calculado em tempo real · pessoa "tem" se atende ao criterio do valor',
+    desc: 'Calculado em tempo real · pessoa "tem" se atende ao critério do valor',
     itens: [
       { key: 'seguir',       label: 'Seguir a Jesus',  cor: COLORS.purple, Icone: BookOpenCheck, info: 'Convertido (conversao/primeiro contato/batismo concluido)' },
-      { key: 'conectar',     label: 'Conectar Pessoas', cor: COLORS.blue,  Icone: Link2,         info: 'Em grupo ativo (mem_grupo_membros sem saida)' },
-      { key: 'investir',     label: 'Investir Tempo',   cor: COLORS.amber, Icone: Sparkles,      info: 'Encontro Jornada 180 nos ultimos 90 dias' },
-      { key: 'servir',       label: 'Servir',           cor: COLORS.green, Icone: HandHeart,     info: 'Voluntario ativo (mem_voluntarios sem saida)' },
-      { key: 'generosidade', label: 'Generosidade',     cor: COLORS.pink,  Icone: Heart,         info: 'Contribuicao nos ultimos 90 dias' },
+      { key: 'conectar',     label: 'Conectar Pessoas', cor: COLORS.blue,  Icone: Link2,         info: 'Em grupo ativo (mem_grupo_membros sem saída)' },
+      { key: 'investir',     label: 'Investir Tempo',   cor: COLORS.amber, Icone: Sparkles,      info: 'Encontro Jornada 180 nos últimos 90 dias' },
+      { key: 'servir',       label: 'Servir',           cor: COLORS.green, Icone: HandHeart,     info: 'Voluntário ativo (mem_voluntarios sem saída)' },
+      { key: 'generosidade', label: 'Generosidade',     cor: COLORS.pink,  Icone: Heart,         info: 'Contribuição nos últimos 90 dias' },
     ],
   },
   {
@@ -48,7 +48,7 @@ const CRITERIOS = [
       { key: 'voluntario',     label: 'Voluntário ativo',   cor: COLORS.green, Icone: UserCheck, info: 'Tem entrada em vol_profiles' },
       { key: 'visitante',      label: 'Já foi visitante',   cor: COLORS.amber, Icone: UserPlus,  info: 'Tem entrada em int_visitantes' },
       { key: 'inscrito_next',  label: 'Inscrito no NEXT',   cor: COLORS.blue,  Icone: Activity,  info: 'Tem entrada em next_inscricoes' },
-      { key: 'grupo_ativo',    label: 'Em grupo ativo',     cor: COLORS.blue,  Icone: Link2,     info: 'mem_grupo_membros sem saida (mesmo set do Conectar)' },
+      { key: 'grupo_ativo',    label: 'Em grupo ativo',     cor: COLORS.blue,  Icone: Link2,     info: 'mem_grupo_membros sem saída (mesmo set do Conectar)' },
       { key: 'contribuinte',   label: 'Contribuinte (90d)', cor: COLORS.pink,  Icone: Heart,     info: 'Mesmo set da Generosidade' },
     ],
   },
@@ -138,21 +138,21 @@ export default function CruzamentosPessoas() {
             Cruzamentos de pessoas
           </h1>
           <p style={{ fontSize: 13, color: C.t3, marginTop: 6 }}>
-            Combine criterios pra responder perguntas como "quantos voluntarios dizimam?",
-            "convertidos que ainda nao estao em grupos", "NEXT + contribuintes recorrentes". Cada chip alterna entre <strong>indiferente</strong> ⟶ <strong style={{ color: COLORS.green }}>tem ✓</strong> ⟶ <strong style={{ color: COLORS.red }}>nao tem ✕</strong>.
+            Combine criterios pra responder perguntas como "quantos voluntários dizimam?",
+            "convertidos que ainda não estão em grupos", "NEXT + contribuintes recorrentes". Cada chip alterna entre <strong>indiferente</strong> ⟶ <strong style={{ color: COLORS.green }}>tem ✓</strong> ⟶ <strong style={{ color: COLORS.red }}>não tem ✕</strong>.
           </p>
         </div>
         <button
           onClick={forcarRefresh}
           disabled={refreshing}
           style={{ ...btnGhostSm, opacity: refreshing ? 0.5 : 1 }}
-          title="Force refresh da view materializada · use apos inserir dados em massa"
+          title="Force refresh da view materializada · use após inserir dados em massa"
         >
           {refreshing ? 'Atualizando...' : '↻ Atualizar dados'}
         </button>
       </header>
 
-      {/* Painel de criterios · 2 grupos */}
+      {/* Painel de critérios · 2 grupos */}
       <div style={{ display: 'flex', flexDirection: 'column', gap: 16, marginBottom: 20 }}>
         {CRITERIOS.map(grupo => (
           <section key={grupo.grupo} style={{
@@ -244,7 +244,7 @@ export default function CruzamentosPessoas() {
                 <div style={{ fontSize: 13, color: C.t2, marginTop: 6 }}>
                   {resultado.percentual}% do total
                   {ativos.length === 0 && ' · sem filtros, mostrando todos'}
-                  {ativos.length > 0 && ` · com ${ativos.length} criterio${ativos.length > 1 ? 's' : ''}`}
+                  {ativos.length > 0 && ` · com ${ativos.length} critério${ativos.length > 1 ? 's' : ''}`}
                 </div>
               </div>
               <div style={{ display: 'flex', gap: 8 }}>

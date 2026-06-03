@@ -470,7 +470,7 @@ function IndicadorCustomCard({ ind, onArchive }) {
   const Icone = ICONES_GRAFICO_IA[ind.sugestao_ia?.tipo_grafico] || BarChart2;
   const sug = ind.sugestao_ia || {};
   const [detalhesAbertos, setDetalhesAbertos] = useState(false);
-  // Semente unica por indicador pra dados placeholder variarem visualmente
+  // Semente única por indicador pra dados placeholder variarem visualmente
   const semente = (ind.id || '').split('').reduce((s, c) => s + c.charCodeAt(0), 0) % 100;
 
   return (
@@ -501,7 +501,7 @@ function IndicadorCustomCard({ ind, onArchive }) {
         </div>
       </CardHeader>
       <CardContent className="space-y-3">
-        {/* Preview do grafico baseado no tipo sugerido pela IA */}
+        {/* Preview do gráfico baseado no tipo sugerido pela IA */}
         <div className="bg-card/60 rounded-lg border border-border/40 p-2">
           <PreviewChartIA tipoGrafico={sug.tipo_grafico} semente={semente} height={160} />
           <p className="text-[9px] text-center text-muted-foreground mt-1">

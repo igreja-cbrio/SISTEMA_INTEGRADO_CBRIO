@@ -44,7 +44,7 @@ const MES_NOMES = ['Jan','Fev','Mar','Abr','Mai','Jun','Jul','Ago','Set','Out','
 
 export default function DashboardOverview({ onNavigate }) {
   const hoje = new Date();
-  const [modo, setModo] = useState('preset'); // 'preset' | 'mes' | 'ano'
+  const [modo, setModo] = useState('preset'); // 'preset' | 'mês' | 'ano'
   const [period, setPeriod] = useState('month');
   const [ano, setAno] = useState(hoje.getFullYear());
   const [mes, setMes] = useState(hoje.getMonth());
@@ -67,7 +67,7 @@ export default function DashboardOverview({ onNavigate }) {
       .finally(() => setLoading(false));
   }, [queryKey]); // eslint-disable-line
 
-  // Lista de anos · 2022 ate ano corrente
+  // Lista de anos · 2022 até ano corrente
   const anosDisponiveis = useMemo(() => {
     const arr = [];
     for (let y = hoje.getFullYear(); y >= 2022; y--) arr.push(y);
@@ -87,7 +87,7 @@ export default function DashboardOverview({ onNavigate }) {
   };
 
   // IMPORTANTE: hooks (useMemo) devem vir ANTES de qualquer early return
-  // pra nao violar a regra dos hooks do React (erro #310)
+  // pra não violar a regra dos hooks do React (erro #310)
   const fluxoCaixa = useMemo(
     () => normalizarSerieAnual(data?.serie_6_meses),
     [data?.serie_6_meses]
@@ -98,7 +98,7 @@ export default function DashboardOverview({ onNavigate }) {
   );
 
   // Stale-while-revalidate · so bloqueia carregamento INICIAL.
-  // Trocas de periodo mantem dados anteriores + spinner sutil.
+  // Trocas de período mantem dados anteriores + spinner sutil.
   if (erro && !data) {
     return (
       <div className="border border-destructive/40 bg-destructive/5 rounded-lg p-6 text-sm">
@@ -557,7 +557,7 @@ function ModalDespesaDetalhe({ categoria, inicio, fim, labelPeriodo, onClose }) 
       .finally(() => setLoading(false));
   }, [categoria.codigo, inicio, fim]);
 
-  // Agrupa por subcategoria (nivel 3 do plano)
+  // Agrupa por subcategoria (nível 3 do plano)
   const grupos = useMemo(() => {
     if (!items) return [];
     const map = new Map();
@@ -759,7 +759,7 @@ function labelStatus(s) {
   return m[s] || s;
 }
 
-// Normaliza serie pra 12 meses recentes (preenche meses sem dado com 0)
+// Normaliza série pra 12 meses recentes (preenche meses sem dado com 0)
 function normalizarSerieAnual(serie) {
   const hoje = new Date();
   const meses = [];

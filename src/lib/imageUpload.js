@@ -1,8 +1,8 @@
 // Helper de processamento de imagem antes do upload.
-// - Detecta HEIC (iPhone/Mac) por mime ou extensao e converte pra JPEG via heic-to (lazy import)
-// - Redimensiona via canvas pro maior lado nao passar de maxDim
+// - Detecta HEIC (iPhone/Mac) por mime ou extensão e converte pra JPEG via heic-to (lazy import)
+// - Redimensiona via canvas pro maior lado não passar de maxDim
 // - Reencoda como JPEG comprimido (quality)
-// - Garante saida sempre em File JPEG com nome estavel
+// - Garante saída sempre em File JPEG com nome estavel
 
 const HEIC_EXT_RE = /\.(heic|heif)$/i;
 const HEIC_MIME_RE = /^image\/(heic|heif)$/i;
@@ -33,7 +33,7 @@ function carregarImagem(file) {
     };
     img.onerror = () => {
       URL.revokeObjectURL(url);
-      reject(new Error('Nao consegui ler a imagem'));
+      reject(new Error('Não consegui ler a imagem'));
     };
     img.src = url;
   });

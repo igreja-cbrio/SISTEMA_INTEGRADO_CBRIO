@@ -49,7 +49,7 @@ function DependencyGraph({ item, dependentes, deltaDias, fullscreen, onToggleFul
   const totalW = numCols * COL_W + (numCols - 1) * COL_GAP;
   const svgW = totalW + PAD * 2;
 
-  // Posicoes X das colunas
+  // Posições X das colunas
   const colXs = [];
   let curX = PAD;
   colXs.push(curX); // col item principal
@@ -82,7 +82,7 @@ function DependencyGraph({ item, dependentes, deltaDias, fullscreen, onToggleFul
     strokeWidth: isAffected ? 2 : 1,
   });
 
-  // Nó clicavel — navega para a pagina do marco
+  // Nó clicavel — navega para a página do marco
   const ClickableNode = ({ d, x, y, color, isAffected }) => {
     const top = y - NODE_H / 2;
     const impactLine = isAffected && d.data_projetada && d.data_projetada !== d.date_end
@@ -173,7 +173,7 @@ function DependencyGraph({ item, dependentes, deltaDias, fullscreen, onToggleFul
 }
 
 // ══════════════════════════════════════════════
-// PAGINA DE DETALHE
+// PÁGINA DE DETALHE
 // ══════════════════════════════════════════════
 
 export default function RevisaoDetalhe() {
@@ -192,7 +192,7 @@ export default function RevisaoDetalhe() {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      // Carregar item + impacto + historico em paralelo
+      // Carregar item + impacto + histórico em paralelo
       const [simRes, histRes] = await Promise.all([
         revisoes.simular(tipo, id),
         revisoes.historico({ tipo, item_id: id }),
@@ -231,7 +231,7 @@ export default function RevisaoDetalhe() {
   };
 
   if (loading) return <div style={{ padding: 60, textAlign: 'center', color: C.t3 }}>Carregando...</div>;
-  if (!item) return <div style={{ padding: 60, textAlign: 'center', color: C.t3 }}>Item nao encontrado.</div>;
+  if (!item) return <div style={{ padding: 60, textAlign: 'center', color: C.t3 }}>Item não encontrado.</div>;
 
   const statusOpts = tipo === 'projeto' ? STATUS_PROJ : STATUS_EXP;
   const dateChanged = form.date_end !== item.date_end;
@@ -241,7 +241,7 @@ export default function RevisaoDetalhe() {
       {/* Header */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 24 }}>
         <button onClick={() => navigate('/revisao')} style={{ background: 'none', border: 'none', color: C.primary, cursor: 'pointer', fontSize: 14, fontWeight: 600 }}>{'\u2190'} Voltar</button>
-        <span style={{ fontSize: 10, padding: '3px 10px', borderRadius: 99, background: tipo === 'projeto' ? '#3b82f620' : '#8b5cf620', color: tipo === 'projeto' ? C.blue : C.purple, fontWeight: 700 }}>{tipo === 'projeto' ? 'Projeto' : 'Marco de Expansao'}</span>
+        <span style={{ fontSize: 10, padding: '3px 10px', borderRadius: 99, background: tipo === 'projeto' ? '#3b82f620' : '#8b5cf620', color: tipo === 'projeto' ? C.blue : C.purple, fontWeight: 700 }}>{tipo === 'projeto' ? 'Projeto' : 'Marco de Expansão'}</span>
         <h1 style={{ fontSize: 20, fontWeight: 700, color: C.text, margin: 0, flex: 1 }}>{item.name}</h1>
         {item.area && <span style={{ fontSize: 11, padding: '3px 10px', borderRadius: 99, background: C.primaryBg, color: C.primary, fontWeight: 600 }}>{item.area}</span>}
       </div>
@@ -272,7 +272,7 @@ export default function RevisaoDetalhe() {
         <DependencyGraph item={{ ...item, date_end: form.date_end }} dependentes={impacto?.dependentes || []} deltaDias={dateChanged ? (impacto?.delta_dias || 0) : 0} fullscreen={graphFullscreen} onToggleFullscreen={() => setGraphFullscreen(f => !f)} />
       </div>
 
-      {/* ═══ FORMULARIO DE EDICAO ═══ */}
+      {/* ═══ FORMULÁRIO DE EDIÇÃO ═══ */}
       <div style={{ background: C.card, borderRadius: 14, border: `1px solid ${C.border}`, padding: 24, marginBottom: 24 }}>
         <div style={{ fontSize: 14, fontWeight: 700, color: C.text, marginBottom: 16 }}>Editar {tipo === 'projeto' ? 'Projeto' : 'Marco'}</div>
 
@@ -288,11 +288,11 @@ export default function RevisaoDetalhe() {
             </select>
           </div>
           <div>
-            <label style={LABEL}>Responsavel</label>
+            <label style={LABEL}>Responsável</label>
             <input value={form.responsible || ''} onChange={ev => setForm(f => ({ ...f, responsible: ev.target.value }))} style={INPUT} />
           </div>
           <div>
-            <label style={LABEL}>Data inicio</label>
+            <label style={LABEL}>Data início</label>
             <input type="date" value={form.date_start || ''} onChange={ev => setForm(f => ({ ...f, date_start: ev.target.value }))} style={INPUT} />
           </div>
           <div>
@@ -307,7 +307,7 @@ export default function RevisaoDetalhe() {
             <input type="number" value={form.budget_planned ?? ''} onChange={ev => setForm(f => ({ ...f, budget_planned: Number(ev.target.value) || 0 }))} style={INPUT} />
           </div>
           <div>
-            <label style={LABEL}>Area</label>
+            <label style={LABEL}>Área</label>
             <input value={form.area || ''} onChange={ev => setForm(f => ({ ...f, area: ev.target.value }))} style={INPUT} />
           </div>
           {tipo === 'projeto' ? (
@@ -332,7 +332,7 @@ export default function RevisaoDetalhe() {
         </div>
 
         <div style={{ marginTop: 14 }}>
-          <label style={LABEL}>Descricao / Objetivo</label>
+          <label style={LABEL}>Descrição / Objetivo</label>
           <textarea value={form.description || ''} onChange={ev => setForm(f => ({ ...f, description: ev.target.value }))} rows={3} style={{ ...INPUT, resize: 'vertical' }} />
         </div>
 
@@ -344,8 +344,8 @@ export default function RevisaoDetalhe() {
         )}
 
         <div style={{ marginTop: 14 }}>
-          <label style={LABEL}>Motivo da revisao</label>
-          <input value={motivo} onChange={ev => setMotivo(ev.target.value)} placeholder="Ex: Reuniao com Pedro 24/04 — decidido postergar para Q3" style={INPUT} />
+          <label style={LABEL}>Motivo da revisão</label>
+          <input value={motivo} onChange={ev => setMotivo(ev.target.value)} placeholder="Ex: Reunião com Pedro 24/04 — decidido postergar para Q3" style={INPUT} />
         </div>
 
         <div style={{ marginTop: 18, display: 'flex', gap: 10, alignItems: 'center' }}>
@@ -353,7 +353,7 @@ export default function RevisaoDetalhe() {
           <button onClick={() => navigate('/revisao')} style={{ padding: '10px 24px', borderRadius: 8, border: `1px solid ${C.border}`, background: 'transparent', color: C.t2, fontSize: 13, cursor: 'pointer' }}>Cancelar</button>
           <button onClick={async () => {
             const label = tipo === 'projeto' ? 'projeto' : 'marco';
-            if (!window.confirm(`Tem certeza que deseja excluir este ${label}?\n\n"${item.name}"\n\nEssa acao nao pode ser desfeita.`)) return;
+            if (!window.confirm(`Tem certeza que deseja excluir este ${label}?\n\n"${item.name}"\n\nEssa ação não pode ser desfeita.`)) return;
             const motivoExclusao = window.prompt('Motivo da exclusao (opcional):') || '';
             try {
               const fn = tipo === 'projeto' ? revisoes.deleteProjeto : revisoes.deleteExpansao;
@@ -365,7 +365,7 @@ export default function RevisaoDetalhe() {
         </div>
       </div>
 
-      {/* ═══ HISTORICO ═══ */}
+      {/* ═══ HISTÓRICO ═══ */}
       {historico.length > 0 && (
         <div style={{ background: C.card, borderRadius: 14, border: `1px solid ${C.border}`, overflow: 'hidden' }}>
           <div style={{ padding: '12px 20px', borderBottom: `1px solid ${C.border}`, background: 'var(--cbrio-table-header)' }}>

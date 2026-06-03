@@ -546,10 +546,10 @@ router.post('/queue/:id/apply', authorize('admin', 'diretor'), async (req, res) 
       .select('id, action_type, payload, status, reviewed_by')
       .eq('id', req.params.id)
       .single();
-    if (errRow || !row) return res.status(404).json({ error: 'Proposta nao encontrada' });
+    if (errRow || !row) return res.status(404).json({ error: 'Proposta não encontrada' });
     if (row.status !== 'pending') {
       return res.status(400).json({
-        error: `Proposta ja com status=${row.status} · nao pode aplicar novamente`,
+        error: `Proposta já com status=${row.status} · não pode aplicar novamente`,
       });
     }
 
@@ -590,7 +590,7 @@ router.post('/queue/:id/apply', authorize('admin', 'diretor'), async (req, res) 
     res.json({ ok: true, info: result.info || null });
   } catch (e) {
     console.error('[AGENTS] /queue/:id/apply error:', e.message);
-    res.status(500).json({ error: 'Erro ao aplicar acao' });
+    res.status(500).json({ error: 'Erro ao aplicar ação' });
   }
 });
 
@@ -601,7 +601,7 @@ router.post('/worker/trigger', authorize('admin', 'diretor'), async (req, res) =
     const secret = process.env.AGENT_WORKER_HMAC_SECRET;
     if (!workerUrl || !secret) {
       return res.status(503).json({
-        error: 'Worker nao configurado · setar AGENT_WORKER_URL e AGENT_WORKER_HMAC_SECRET no Vercel',
+        error: 'Worker não configurado · setar AGENT_WORKER_URL e AGENT_WORKER_HMAC_SECRET no Vercel',
       });
     }
     const agentType = (req.body || {}).agentType || 'financeiro_executor';

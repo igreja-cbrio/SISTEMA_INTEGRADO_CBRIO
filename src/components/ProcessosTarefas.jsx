@@ -1,7 +1,7 @@
 /**
- * Calendario semanal de tarefas por area.
+ * Calendário semanal de tarefas por área.
  * Seg-Dom com KPIs agendados + tarefas pessoais completas.
- * Modal para criar tarefa com: prioridade, recorrencia, horario, responsavel, tipo, descricao, vinculo.
+ * Modal para criar tarefa com: prioridade, recorrencia, horario, responsável, tipo, descrição, vinculo.
  */
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useAuth } from '../contexts/AuthContext';
@@ -41,8 +41,8 @@ const RECORRENCIAS = [
 
 function getMonday(d) { const dt = new Date(d); const day = dt.getDay(); dt.setDate(dt.getDate() - (day === 0 ? 6 : day - 1)); dt.setHours(0,0,0,0); return dt; }
 function addDays(d, n) { const r = new Date(d); r.setDate(r.getDate() + n); return r; }
-// fmtDate: usa data LOCAL (nao UTC) pra evitar off-by-one em fusos negativos.
-// `d.toISOString().slice(0,10)` daria a data UTC, que em UTC-3 a noite vira amanha.
+// fmtDate: usa data LOCAL (não UTC) pra evitar off-by-one em fusos negativos.
+// `d.toISOString().slice(0,10)` daria a data UTC, que em UTC-3 a noite vira amanhã.
 function fmtDate(d) {
   if (!d || !(d instanceof Date) || isNaN(d.getTime())) return '';
   const y = d.getFullYear();
@@ -55,7 +55,7 @@ function fmtShort(d) {
   return `${String(d.getDate()).padStart(2,'0')}/${String(d.getMonth()+1).padStart(2,'0')}`;
 }
 
-// Periodicidade -> chave de periodo (para matchar registros do mesmo periodo)
+// Periodicidade -> chave de período (para matchar registros do mesmo período)
 function getPeriodKey(date, periodicidade) {
   const d = typeof date === 'string' ? new Date(date) : new Date(date);
   const y = d.getFullYear();
@@ -79,17 +79,17 @@ function getPeriodKey(date, periodicidade) {
 //
 // Regras (revisadas 2026-05-04):
 //   Semanal     -> toda semana
-//   Mensal      -> qualquer semana do mes (4 semanas pra preencher, nao 1)
-//   Trimestral  -> qualquer semana do mes inicial do trimestre (jan/abr/jul/out)
-//   Semestral   -> qualquer semana do mes inicial do semestre (jan/jul)
-//   Anual       -> qualquer semana do mes inicial do ano (janeiro)
+//   Mensal      -> qualquer semana do mês (4 semanas pra preencher, não 1)
+//   Trimestral  -> qualquer semana do mês inicial do trimestre (jan/abr/jul/out)
+//   Semestral   -> qualquer semana do mês inicial do semestre (jan/jul)
+//   Anual       -> qualquer semana do mês inicial do ano (janeiro)
 //
-// offsetMeses desloca o mes inicial:
-//   trimestral 0 -> jan/abr/jul/out (padrao)
+// offsetMeses desloca o mês inicial:
+//   trimestral 0 -> jan/abr/jul/out (padrão)
 //   trimestral 1 -> fev/mai/ago/nov
-//   semestral 0  -> jan/jul (padrao)
+//   semestral 0  -> jan/jul (padrão)
 //   semestral 1  -> fev/ago
-//   anual N      -> mes N (0=jan, 11=dez)
+//   anual N      -> mês N (0=jan, 11=dez)
 function isShowingWeekFor(weekStart, periodicidade, offsetMeses = 0) {
   const p = String(periodicidade || '').toLowerCase();
   if (p === 'semanal') return true;
@@ -97,7 +97,7 @@ function isShowingWeekFor(weekStart, periodicidade, offsetMeses = 0) {
   for (let i = 0; i < 7; i++) {
     const d = new Date(weekStart); d.setDate(d.getDate() + i);
     const month = d.getMonth();
-    if (p === 'mensal') return true; // qualquer semana do mes
+    if (p === 'mensal') return true; // qualquer semana do mês
     if (p === 'trimestral' && ((month - off + 12) % 3 === 0)) return true;
     if (p === 'semestral' && ((month - off + 12) % 6 === 0)) return true;
     if (p === 'anual' && month === (off % 12)) return true;
@@ -144,7 +144,7 @@ export default function ProcessosTarefas({ area }) {
   const [fillVal, setFillVal] = useState('');
   const [saving, setSaving] = useState(false);
   // Quando user marca tarefa done que esta linkada a KPI, abre o quick-fill
-  // antes de marcar done. Apos save, marca done automaticamente.
+  // antes de marcar done. Após save, marca done automaticamente.
   const [fillFromTask, setFillFromTask] = useState(null); // { tarefa, kpi, periodKey }
 
   const emptyForm = { titulo: '', prioridade: 'media', recorrencia: 'unica', horario: '', responsavel_id: '', responsavel_nome: '', tipo: 'outro', descricao: '', processo_id: '' };
@@ -177,8 +177,8 @@ export default function ProcessosTarefas({ area }) {
 
   const agendaMap = useMemo(() => { const m = {}; agenda.forEach(a => { m[a.indicador_id] = a.dia_semana; }); return m; }, [agenda]);
 
-  // Mapa de "ja preenchido neste periodo": { indicadorId|periodKey -> registro }
-  // Periodo derivado da periodicidade do KPI a partir de data_preenchimento.
+  // Mapa de "já preenchido neste período": { indicadorId|periodKey -> registro }
+  // Período derivado da periodicidade do KPI a partir de data_preenchimento.
   const fillByPeriod = useMemo(() => {
     const m = {};
     registros.forEach(r => {
@@ -199,7 +199,7 @@ export default function ProcessosTarefas({ area }) {
       if (agendaMap[indId] !== bankDay) return;
       const kpi = kpiById[indId];
       if (!kpi) return;
-      // So mostra se a janela do periodo cobre esta semana (com offset)
+      // So mostra se a janela do período cobre esta semana (com offset)
       if (!isShowingWeekFor(weekStart, kpi.periodicidade, kpi.periodo_offset_meses)) return;
       const periodKey = getPeriodKey(date, kpi.periodicidade);
       const reg = fillByPeriod[`${indId}|${periodKey}`];
@@ -219,12 +219,12 @@ export default function ProcessosTarefas({ area }) {
 
   const dayTarefas = useMemo(() => weekDates.map(date => tarefas.filter(t => t.data === fmtDate(date))), [weekDates, tarefas]);
 
-  // ── Operacoes otimistas (atualiza state local, sync no background) ──
+  // ── Operações otimistas (atualiza state local, sync no background) ──
 
   const submitFill = async () => {
     if (!fillTarget || !fillVal) return;
     const val = Number(fillVal);
-    // Otimista: adiciona ao state imediatamente. fillByPeriod recompoe automatico.
+    // Otimista: adiciona ao state imediatamente. fillByPeriod recompoe automático.
     setRegistros(prev => [...prev, {
       indicador_id: fillTarget.indicadorId,
       data_preenchimento: fillTarget.date,
@@ -236,13 +236,13 @@ export default function ProcessosTarefas({ area }) {
       processo_id: fillTarget.processoId,
       indicador_id: fillTarget.indicadorId,
       valor: val,
-      periodo: fillTarget.periodKey, // grava o periodo no banco (util pra auditoria)
+      periodo: fillTarget.periodKey, // grava o período no banco (útil pra auditoria)
       data_preenchimento: fillTarget.date,
     }).catch(e => { console.error(e); loadWeek(); });
   };
 
   const toggleTarefa = async (id, done) => {
-    // Se ja esta done -> desmarcar (toggle visual normal)
+    // Se já esta done -> desmarcar (toggle visual normal)
     if (done) {
       setTarefas(prev => prev.map(t => t.id === id ? { ...t, done: false } : t));
       api.tarefas.toggle(id, false).catch(e => { console.error(e); loadWeek(); });
@@ -268,7 +268,7 @@ export default function ProcessosTarefas({ area }) {
     api.tarefas.toggle(id, true).catch(e => { console.error(e); loadWeek(); });
   };
 
-  // Apos QuickFillModal salvar, marca a tarefa origem como done
+  // Após QuickFillModal salvar, marca a tarefa origem como done
   const onFillFromTaskSaved = useCallback(() => {
     const t = fillFromTask?.tarefa;
     if (!t) return;
@@ -421,7 +421,7 @@ export default function ProcessosTarefas({ area }) {
             </div>
 
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-              {/* Titulo - span full */}
+              {/* Título - span full */}
               <div style={{ gridColumn: '1/-1' }}>
                 <label style={{ fontSize: 12, fontWeight: 600, color: C.t2, display: 'block', marginBottom: 4 }}>{'T\u00edtulo *'}</label>
                 <input value={form.titulo} onChange={e => setForm(f => ({ ...f, titulo: e.target.value }))} placeholder="O que precisa ser feito?" style={inp} autoFocus />
@@ -454,7 +454,7 @@ export default function ProcessosTarefas({ area }) {
                 <select value={form.recorrencia} onChange={e => setForm(f => ({ ...f, recorrencia: e.target.value }))} style={inp}>
                   {RECORRENCIAS.map(r => <option key={r.value} value={r.value}>{r.label}</option>)}
                 </select>
-                {form.recorrencia !== 'unica' && <span style={{ fontSize: 10, color: C.t3, marginTop: 2, display: 'block' }}>Gera automaticamente para as proximas 12 semanas</span>}
+                {form.recorrencia !== 'unica' && <span style={{ fontSize: 10, color: C.t3, marginTop: 2, display: 'block' }}>Gera automaticamente para as próximas 12 semanas</span>}
               </div>
 
               {/* Horario */}
@@ -463,7 +463,7 @@ export default function ProcessosTarefas({ area }) {
                 <input type="time" value={form.horario} onChange={e => setForm(f => ({ ...f, horario: e.target.value }))} style={inp} />
               </div>
 
-              {/* Responsavel */}
+              {/* Responsável */}
               <div>
                 <label style={{ fontSize: 12, fontWeight: 600, color: C.t2, display: 'block', marginBottom: 4 }}>{'Respons\u00e1vel'}</label>
                 <select value={form.responsavel_id} onChange={e => { const u = usersList.find(u => u.id === e.target.value); setForm(f => ({ ...f, responsavel_id: e.target.value, responsavel_nome: u?.name || '' })); }} style={inp}>
@@ -481,7 +481,7 @@ export default function ProcessosTarefas({ area }) {
                 </select>
               </div>
 
-              {/* Descricao - span full */}
+              {/* Descrição - span full */}
               <div style={{ gridColumn: '1/-1' }}>
                 <label style={{ fontSize: 12, fontWeight: 600, color: C.t2, display: 'block', marginBottom: 4 }}>{'Descri\u00e7\u00e3o'}</label>
                 <textarea value={form.descricao} onChange={e => setForm(f => ({ ...f, descricao: e.target.value }))} placeholder="Detalhes adicionais..." rows={2} style={{ ...inp, resize: 'vertical' }} />

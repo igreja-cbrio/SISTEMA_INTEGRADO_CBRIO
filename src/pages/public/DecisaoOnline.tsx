@@ -1,9 +1,9 @@
 import { useEffect, useState } from 'react';
 import { decisaoOnline } from '../../api';
 
-// Pagina PUBLICA standalone (fora do AppShell/ProtectedRoute · sem login).
+// Página PUBLICA standalone (fora do AppShell/ProtectedRoute · sem login).
 // Link fixado na descricao/chat da live. Quem assiste online e decide por
-// Jesus preenche nome + telefone · alimenta cultos.decisoes_online automatico.
+// Jesus preenche nome + telefone · alimenta cultos.decisoes_online automático.
 
 const PRIMARY = '#00B39D';
 

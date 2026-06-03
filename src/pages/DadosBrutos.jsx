@@ -1,6 +1,6 @@
 // ============================================================================
-// /dados-brutos — Lider preenche numeros absolutos (frequencia, conversoes,
-// batismos, doacoes, etc). KPIs com tipo_calculo automatico leem daqui.
+// /dados-brutos — Líder preenche números absolutos (frequência, conversoes,
+// batismos, doacoes, etc). KPIs com tipo_calculo automático leem daqui.
 // ============================================================================
 
 import { useState, useEffect, useMemo, useCallback } from 'react';
@@ -29,8 +29,8 @@ const AREAS_OFICIAIS = [
   // CBA removido · so coleta batismos/aceitacoes (dados_brutos com area=igreja)
 ];
 
-// Quick log · 4-6 tipos mais comuns por area. Click pre-preenche tipo+area.
-// Frequencia/decisoes de culto sao preenchidas pelo calendario acima · aqui
+// Quick log · 4-6 tipos mais comuns por área. Click pre-preenche tipo+área.
+// Frequencia/decisoes de culto são preenchidas pelo calendário acima · aqui
 // ficam so os tipos avulsos (fora de culto regular).
 const QUICK_LOG_POR_AREA = {
   kids:   ['conversoes', 'batismos', 'voluntarios_checkin'],
@@ -41,10 +41,10 @@ const QUICK_LOG_POR_AREA = {
   cba:    ['conversoes', 'batismos', 'lideres_treinados', 'lideres_acompanhados'],
 };
 
-// Default para admin/diretor sem area especifica
+// Default para admin/diretor sem área especifica
 const QUICK_LOG_DEFAULT = ['conversoes', 'batismos', 'doacoes_valor', 'voluntarios_ativos', 'nps_geral'];
 
-// Icone + cor por familia de tipo · usado nos cards do quick log
+// Icone + cor por família de tipo · usado nos cards do quick log
 const TIPO_VISUAL = {
   frequencia_culto:        { Icon: Users,         cor: '#3B82F6', label: 'Frequência do culto' },
   frequencia_next:         { Icon: Users,         cor: '#3B82F6', label: 'Frequência Next' },
@@ -96,16 +96,16 @@ export default function DadosBrutos({ embedded = false }) {
   });
   const [editando, setEditando] = useState(null); // null | {} (novo) | {dado existente}
 
-  // Todos veem todas as areas (read). So edita as proprias (validado no submit).
+  // Todos veem todas as áreas (read). So edita as próprias (validado no submit).
   const areasDisponiveis = AREAS_OFICIAIS;
 
-  // Areas que o usuario pode registrar dado AS suas (lider de area)
+  // Áreas que o usuário pode registrar dado AS suas (líder de área)
   const areasEditaveis = useMemo(() => {
     if (isAdmin) return AREAS_OFICIAIS;
     return AREAS_OFICIAIS.filter(a => kpiAreas.includes(a.id));
   }, [isAdmin, kpiAreas]);
 
-  // Lider/assistente de ministerio pode registrar dados em todas areas
+  // Lider/assistente de ministério pode registrar dados em todas áreas
   const podeRegistrar = isAdmin || areasEditaveis.length > 0 || !!ministerioId;
 
   // Carregar tipos
@@ -131,7 +131,7 @@ export default function DadosBrutos({ embedded = false }) {
     }
   }, [filtroArea, filtroTipo, filtroDesde]);
 
-  // Default · ao montar, se lider tem 1+ areas pre-seleciona a primeira (evita
+  // Default · ao montar, se líder tem 1+ áreas pre-seleciona a primeira (evita
   // tela vazia para nao-admin). Admin/ministerial veem tudo.
   useEffect(() => {
     if (!filtroArea && !isAdmin && !ministerioId && kpiAreas.length > 0) {
@@ -139,7 +139,7 @@ export default function DadosBrutos({ embedded = false }) {
     }
   }, [filtroArea, isAdmin, ministerioId, kpiAreas]);
 
-  // Carrega sempre · admin/ministerial sem filtro = todas; lider so a sua area
+  // Carrega sempre · admin/ministerial sem filtro = todas; líder so a sua área
   useEffect(() => {
     loadDados();
   }, [loadDados]);
@@ -173,10 +173,10 @@ export default function DadosBrutos({ embedded = false }) {
     return m;
   }, [tipos]);
 
-  // Quick log · tipos sugeridos baseado em quem voce e
-  // - Lider de area(s): uniao dos quick log das suas areas (max 6)
-  // - Lider de ministerio: tipos do ministerio dele (max 6)
-  // - Admin/diretor sem area: lista default
+  // Quick log · tipos sugeridos baseado em quem você e
+  // - Líder de área(s): uniao dos quick log das suas áreas (max 6)
+  // - Líder de ministério: tipos do ministério dele (max 6)
+  // - Admin/diretor sem área: lista default
   const quickLog = useMemo(() => {
     if (!tipos.length) return [];
     const tipoById = Object.fromEntries(tipos.map(t => [t.id, t]));
@@ -193,7 +193,7 @@ export default function DadosBrutos({ embedded = false }) {
     return ids.map(id => tipoById[id]).filter(Boolean);
   }, [tipos, isAdmin, ministerioId, kpiAreas, areasEditaveis]);
 
-  // Abre modal com tipo (e area se unica) pre-preenchidos
+  // Abre modal com tipo (e área se única) pre-preenchidos
   const quickLogClick = (tipoId) => {
     const tipo = tipos.find(t => t.id === tipoId);
     if (!tipo) return;
@@ -213,12 +213,12 @@ export default function DadosBrutos({ embedded = false }) {
           </h1>
           <p style={{ fontSize: 12, color: C.t3, marginTop: 6 }}>
             Numeros absolutos da igreja (frequencia, conversoes, batismos, doacoes...).
-            {isAdmin && ' Voce edita qualquer dado (admin).'}
+            {isAdmin && ' Você edita qualquer dado (admin).'}
             {!isAdmin && areasEditaveis.length > 0 && (
-              <> Voce e <strong>lider de area</strong> ({areasEditaveis.map(a => a.nome).join(', ')}) — edita/valida dados da sua area.</>
+              <> Você e <strong>líder de área</strong> ({areasEditaveis.map(a => a.nome).join(', ')}) — edita/valida dados da sua area.</>
             )}
             {!isAdmin && ministerioId && (
-              <> Voce e <strong>{ministerioPapel} de {ministerioId}</strong> — preenche dados do seu ministerio em todas as areas.</>
+              <> Você e <strong>{ministerioPapel} de {ministerioId}</strong> — preenche dados do seu ministerio em todas as areas.</>
             )}
             {!isAdmin && !areasEditaveis.length && !ministerioId && ' Modo leitura.'}
           </p>
@@ -226,12 +226,12 @@ export default function DadosBrutos({ embedded = false }) {
       </header>
       )}
 
-      {/* Cultos do mes · forma principal de preencher frequencia/decisoes/online.
+      {/* Cultos do mês · forma principal de preencher frequencia/decisoes/online.
           Click no culto abre modal com campos nativos da tabela `cultos`. */}
       {podeRegistrar && <CalendarioCultos />}
 
-      {/* Quick log · cards grandes com os tipos mais comuns da sua area.
-          Click pre-preenche tipo (e area se voce so lidera uma). */}
+      {/* Quick log · cards grandes com os tipos mais comuns da sua área.
+          Click pre-preenche tipo (e área se você so lidera uma). */}
       {podeRegistrar && quickLog.length > 0 && (
         <section style={{ marginBottom: 16 }}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginBottom: 8 }}>
@@ -287,7 +287,7 @@ export default function DadosBrutos({ embedded = false }) {
         </section>
       )}
 
-      {/* Fallback geral quando nao tem area mapeada para quick log */}
+      {/* Fallback geral quando não tem área mapeada para quick log */}
       {podeRegistrar && quickLog.length === 0 && (
         <div style={{ marginBottom: 12, display: 'flex', justifyContent: 'flex-end' }}>
           <button
@@ -337,8 +337,8 @@ export default function DadosBrutos({ embedded = false }) {
           titulo="Nenhum dado registrado neste filtro"
           mensagem={
             filtroArea || filtroTipo
-              ? 'Tente ajustar os filtros acima ou expandir o periodo.'
-              : 'Comece registrando o primeiro dado bruto · frequencia de culto, conversoes, doacoes etc.'
+              ? 'Tente ajustar os filtros acima ou expandir o período.'
+              : 'Comece registrando o primeiro dado bruto · frequência de culto, conversoes, doacoes etc.'
           }
           cta={podeRegistrar ? { label: '+ Registrar dado', onClick: () => setEditando({}) } : null}
         />
@@ -351,7 +351,7 @@ export default function DadosBrutos({ embedded = false }) {
                 <tr style={{ background: C.inputBg }}>
                   <th style={th}>Data</th>
                   <th style={th}>Tipo</th>
-                  <th style={th}>Area</th>
+                  <th style={th}>Área</th>
                   <th style={{ ...th, textAlign: 'right' }}>Valor</th>
                   <th style={th}>Origem</th>
                   <th style={th}>Observação</th>
@@ -494,11 +494,11 @@ export default function DadosBrutos({ embedded = false }) {
 // ModalRegistrar — criar/editar registro
 // ----------------------------------------------------------------------------
 function ModalRegistrar({ dado, tipos, ministerioId, isAdmin, areasOficiais, areasEditaveis, areaDefault, onClose, onSaved }) {
-  // Lider de ministerio pode preencher em qualquer area; lider de area so na sua
+  // Líder de ministério pode preencher em qualquer área; líder de área so na sua
   const areasDisponiveis = (isAdmin || ministerioId) ? areasOficiais : areasEditaveis;
-  // 1. Filtra tipos automaticos (entrada_manual=false vem de modulos externos)
+  // 1. Filtra tipos automáticos (entrada_manual=false vem de módulos externos)
   const tiposManuais = tipos.filter(t => t.entrada_manual !== false);
-  // 2. Tipos disponiveis conforme permissao
+  // 2. Tipos disponíveis conforme permissão
   const tiposDisponiveis = (isAdmin || areasEditaveis?.length > 0 || !ministerioId)
     ? tiposManuais
     : tiposManuais.filter(t => t.ministerio_id === ministerioId);

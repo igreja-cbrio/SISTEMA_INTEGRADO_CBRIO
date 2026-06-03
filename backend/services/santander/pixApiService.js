@@ -6,7 +6,7 @@
 //   - Dados completos do pagador (nome, doc, banco origem)
 //   - Sem precisar do upload manual do Excel
 //
-// Como nao temos certeza do path exato sem acesso ao portal, este service
+// Como não temos certeza do path exato sem acesso ao portal, este service
 // tenta multiplas variacoes conhecidas. Toggle global via env:
 //
 //   SANTANDER_PIX_API_ENABLED=true   · ativa este service no cron pix-sync
@@ -20,7 +20,7 @@ const { callApi } = require('./httpClient');
 const PIX_API_ENABLED = (process.env.SANTANDER_PIX_API_ENABLED || 'false').toLowerCase() === 'true';
 const PIX_API_PATH_OVERRIDE = process.env.SANTANDER_PIX_API_PATH || '';
 
-// Paths plausíveis baseados em padroes Open Banking Brasil + Santander
+// Paths plausíveis baseados em padrões Open Banking Brasil + Santander
 // Ordem de tentativa · o primeiro que retornar 200 ganha
 const PIX_API_PATHS = PIX_API_PATH_OVERRIDE ? [PIX_API_PATH_OVERRIDE] : [
   '/pix/v1/recebimentos',
@@ -38,7 +38,7 @@ function isEnabled() {
 
 /**
  * Decodifica End-to-End ID PIX em datetime BRT.
- * Reuso da logica que ja temos em pixExtratoParser.
+ * Reuso da lógica que já temos em pixExtratoParser.
  * Formato: E[ISPB 8][YYYY][MM][DD][HH][MI][suffix 11]
  */
 function decodeEndToEndId(e2eId) {
@@ -70,7 +70,7 @@ function decodeEndToEndId(e2eId) {
  * Normaliza um PIX recebido vindo da API pra formato fin_pix_detalhe
  */
 function normalizarPix(raw) {
-  // Tenta varias chaves comuns
+  // Tenta várias chaves comuns
   const e2eId = raw.endToEndId || raw.endToEndID || raw.id_transacao
     || raw.transactionId || raw.idTransacao || raw.txid || null;
   const decoded = decodeEndToEndId(e2eId);
@@ -106,8 +106,8 @@ function normalizarPix(raw) {
 }
 
 /**
- * Busca PIX recebidos no periodo. Tenta paths ate achar um que funciona.
- * Cacheia o path bem-sucedido em memoria pra proxima chamada.
+ * Busca PIX recebidos no período. Tenta paths até achar um que funciona.
+ * Cacheia o path bem-sucedido em memória pra próxima chamada.
  */
 async function buscarPixRecebidos({ inicio, fim, userId } = {}) {
   if (!isEnabled()) {
@@ -124,7 +124,7 @@ async function buscarPixRecebidos({ inicio, fim, userId } = {}) {
         userId,
       });
 
-      // Cacheia path bem-sucedido pra proximas chamadas
+      // Cacheia path bem-sucedido pra próximas chamadas
       pathFuncionando = path;
 
       // API pode retornar { payments: [...] }, { data: [...] }, ou array direto
@@ -142,11 +142,11 @@ async function buscarPixRecebidos({ inicio, fim, userId } = {}) {
       };
     } catch (e) {
       tentativas.push({ path, status: e.status, msg: (e.message || '').slice(0, 120) });
-      // Se 401, parar (auth/cert problem · nao adianta tentar outros paths)
+      // Se 401, parar (auth/cert problem · não adianta tentar outros paths)
       if (e.status === 401 || e.status === 403) {
         return { habilitado: true, erro: 'sem_permissao', tentativas, transacoes: [] };
       }
-      // 404/422 · tenta proximo path
+      // 404/422 · tenta próximo path
       continue;
     }
   }
@@ -156,7 +156,7 @@ async function buscarPixRecebidos({ inicio, fim, userId } = {}) {
     erro: 'nenhum_path_funcionou',
     tentativas,
     transacoes: [],
-    dica: 'Verifique se o produto PIX esta contratado na aplicacao Santander · ou configure SANTANDER_PIX_API_PATH com o path correto',
+    dica: 'Verifique se o produto PIX esta contratado na aplicação Santander · ou configure SANTANDER_PIX_API_PATH com o path correto',
   };
 }
 
