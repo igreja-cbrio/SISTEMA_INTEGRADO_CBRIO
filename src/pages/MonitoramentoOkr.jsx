@@ -74,7 +74,7 @@ const BLOCOS = [
         envolvida: 'Cuidados',
         taticos: [
           { ind: 'Prazo médio para primeiro contato', alvo: '3 dias entre a conversão e o contato do pastor', memoria: 'Planilha comparando o número de convertidos com o número de atendidos — semanal', precisa: 'registrar a data do 1º contato pastoral de cada convertido (hoje só temos a data da decisão)' },
-          { ind: '% convertidos presentes no Acompanhamento "1º Encontro" com pastores', alvo: '70%', memoria: 'Planilha comparando o número de convertidos com o número de atendidos — semanal', precisa: 'marcar no módulo Cuidados quais convertidos compareceram (a marcação "atendido" já existe, mas está zerada)' },
+          { ind: '% convertidos presentes no Acompanhamento "1º Encontro" com pastores', alvo: '70%', live: 'cafe_atendidos', alvoNum: 70, cmp: 'gte' },
           { ind: '% de pessoas do Acompanhamento "1º Encontro" que concluíram o Next', alvo: '50%', memoria: 'Planilha comparando convertidos com participantes no Next — mensal', precisa: 'marcar quem veio do Acompanhamento e concluiu o Next (as inscrições do Next já existem; falta ligar a origem)' },
         ],
       },
@@ -84,9 +84,9 @@ const BLOCOS = [
         objetivo: 'Avaliar engajamento dos membros no crescimento espiritual e no suporte ao crescimento da Igreja',
         envolvida: 'Grupos, Voluntariado e Generosidade',
         taticos: [
-          { ind: '% frequência em Grupos', alvo: '60%', memoria: 'Nº de pessoas inscritas em grupos x total de pessoas na igreja — semestral', precisa: 'os membros vinculados a grupos ativos (módulo Grupos · tabela hoje vazia) + a base de "total da igreja"' },
-          { ind: '% Voluntários ativos', alvo: '60%', memoria: 'Nº de voluntários x total de pessoas na igreja — semestral', precisa: 'os voluntários ativos por ministério (tabela hoje vazia · check-ins de escala) + a base total' },
-          { ind: '% dizimistas regulares', alvo: '60%', memoria: 'Nº de dizimistas / ofertantes x total de pessoas na igreja — semanal', precisa: 'o lançamento das contribuições/dízimos (tabela hoje vazia) + a base total' },
+          { ind: '% frequência em Grupos', alvo: '60%', live: 'freq_grupos', alvoNum: 60, cmp: 'gte' },
+          { ind: '% Voluntários ativos', alvo: '60%', live: 'volunt_ativos', alvoNum: 60, cmp: 'gte' },
+          { ind: '% dizimistas regulares', alvo: '60%', live: 'dizimistas', alvoNum: 60, cmp: 'gte' },
         ],
       },
       {
@@ -428,11 +428,6 @@ function TaticoRow({ tatico, metricas }) {
           )}
           {m && m.detalhe && (
             <div style={{ fontSize: 11, color: C.t2 }}>{m.detalhe}</div>
-          )}
-          {tatico.memoria && (
-            <div style={{ fontSize: 11, color: C.t3, lineHeight: 1.5 }}>
-              <strong style={{ color: C.t2 }}>Como medir:</strong> {tatico.memoria}
-            </div>
           )}
           {!m && tatico.precisa && (
             <div style={{ display: 'flex', gap: 8, background: C.primaryBg, border: `1px solid ${C.primary}40`, borderRadius: 8, padding: '9px 11px' }}>
