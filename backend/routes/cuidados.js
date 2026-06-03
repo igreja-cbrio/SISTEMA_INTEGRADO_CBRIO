@@ -312,6 +312,11 @@ router.post('/convertidos/:id/agendar-encontro', async (req, res) => {
   try {
     const { data_encontro, encontro_hora, encontro_responsavel_id, encontro_responsavel_nome, observacoes } = req.body;
     if (!data_encontro) return res.status(400).json({ error: 'Data do encontro é obrigatória' });
+    const uid = req.user.userId || req.user.id;
+    // 1º contato pastoral (base do SLA de 3 dias) · grava só na primeira vez
+    await supabase.from('cui_convertidos')
+      .update({ primeiro_contato_em: new Date().toISOString(), primeiro_contato_por: uid })
+      .eq('id', req.params.id).is('primeiro_contato_em', null);
     const patch = {
       encontro_marcado: true,
       encontro_status: 'agendado',
@@ -354,6 +359,24 @@ router.post('/convertidos/:id/cancelar-encontro', async (req, res) => {
       .eq('id', req.params.id).select().single();
     if (error) throw error;
     res.json(data);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// POST /api/cuidados/convertidos/:id/registrar-contato
+// Marca que o líder fez o 1º contato (fecha o SLA de 3 dias) sem precisar
+// agendar o encontro ainda. Usado pelos líderes de área no módulo deles.
+router.post('/convertidos/:id/registrar-contato', async (req, res) => {
+  try {
+    const uid = req.user.userId || req.user.id;
+    const { data, error } = await supabase
+      .from('cui_convertidos')
+      .update({ primeiro_contato_em: new Date().toISOString(), primeiro_contato_por: uid })
+      .eq('id', req.params.id).is('primeiro_contato_em', null)
+      .select().maybeSingle();
+    if (error) throw error;
+    res.json(data || { ok: true });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
@@ -415,6 +438,108 @@ router.post('/convertidos/:id/desfecho', async (req, res) => {
     }
     res.json({ convertido: conv, encaminhamentos: criados });
   } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// GET /api/cuidados/jornada-convertidos?area=&status=
+// Os 3 marcos dos primeiros 90 dias por convertido: contato ≤3d, batismo ≤90d,
+// Next ≤90d · status semáforo. Segmentável por área (cada líder vê a sua;
+// Marcelo/Cuidados vê todas). Cruza batismo_inscricoes + next_inscricoes (paginado).
+router.get('/jornada-convertidos', async (req, res) => {
+  try {
+    const { area } = req.query;
+    const DIA = 86400000;
+    const agora = Date.now();
+    const onlyDigits = (v) => String(v || '').replace(/\D/g, '');
+
+    const fetchAll = async (table, columns, applyFilter) => {
+      const out = []; let from = 0; const page = 1000;
+      while (true) {
+        let q = supabase.from(table).select(columns).range(from, from + page - 1);
+        if (applyFilter) q = applyFilter(q);
+        const { data, error } = await q;
+        if (error) throw error;
+        out.push(...(data || []));
+        if (!data || data.length < page) break;
+        from += page;
+      }
+      return out;
+    };
+
+    const convertidos = await fetchAll(
+      'cui_convertidos',
+      'id, nome, telefone, cpf, membro_id, data_culto, area, primeiro_contato_em, encontro_status, encontro_responsavel_nome',
+      (q) => { q = q.is('deleted_at', null); return area ? q.eq('area', area) : q; },
+    );
+    const batismos = await fetchAll('batismo_inscricoes', 'status, membro_id, cpf, nome', (q) => q.is('deleted_at', null));
+    const nextInsc = await fetchAll('next_inscricoes', 'membro_id, nome, check_in_at'); // sem deleted_at nessa tabela
+
+    // índices de batismo (realizado > inscrito) e de Next (fez check-in > só inscrito)
+    const bM = new Map(), bC = new Map(), bN = new Map();
+    const putB = (m, k, real) => { if (!k) return; const c = m.get(k); const r = real ? 2 : 1; if (!c || r > c.r) m.set(k, { r, real }); };
+    for (const b of batismos) {
+      const real = b.status === 'realizado';
+      putB(bM, b.membro_id, real);
+      putB(bC, onlyDigits(b.cpf).length === 11 ? onlyDigits(b.cpf) : null, real);
+      putB(bN, String(b.nome || '').trim().toLowerCase() || null, real);
+    }
+    const batOf = (c) => {
+      const cs = [c.membro_id ? bM.get(c.membro_id) : null, onlyDigits(c.cpf).length === 11 ? bC.get(onlyDigits(c.cpf)) : null, bN.get(String(c.nome || '').trim().toLowerCase())].filter(Boolean);
+      return cs.length ? { real: cs.some(x => x.real) } : null;
+    };
+    const nM = new Map(), nN = new Map();
+    const putN = (m, k, fez) => { if (!k) return; const c = m.get(k); const r = fez ? 2 : 1; if (!c || r > c.r) m.set(k, { r, fez }); };
+    for (const n of nextInsc) {
+      const fez = !!n.check_in_at;
+      putN(nM, n.membro_id, fez);
+      putN(nN, String(n.nome || '').trim().toLowerCase() || null, fez);
+    }
+    const nextOf = (c) => {
+      const cs = [c.membro_id ? nM.get(c.membro_id) : null, nN.get(String(c.nome || '').trim().toLowerCase())].filter(Boolean);
+      return cs.length ? { fez: cs.some(x => x.fez) } : null;
+    };
+
+    const itens = convertidos.map((c) => {
+      const ddesde = Math.floor((agora - new Date(c.data_culto + 'T12:00:00').getTime()) / DIA);
+      // contato ≤ 3d
+      let contato;
+      if (c.primeiro_contato_em) {
+        const d = Math.floor((new Date(c.primeiro_contato_em).getTime() - new Date(c.data_culto + 'T12:00:00').getTime()) / DIA);
+        contato = { feito: true, status: d <= 3 ? 'feito_no_prazo' : 'feito_atrasado', dias: d };
+      } else {
+        contato = { feito: false, status: ddesde > 3 ? 'atrasado' : (ddesde >= 2 ? 'vencendo' : 'no_prazo'), dias: ddesde };
+      }
+      // batismo ≤ 90d
+      const b = batOf(c);
+      const batismo = b && b.real ? { feito: true, status: 'feito' }
+        : b ? { feito: false, status: 'inscrito' }
+        : { feito: false, status: ddesde > 90 ? 'atrasado' : (ddesde > 75 ? 'vencendo' : 'no_prazo') };
+      // Next ≤ 90d
+      const n = nextOf(c);
+      const nxt = n && n.fez ? { feito: true, status: 'feito' }
+        : n ? { feito: false, status: 'inscrito' }
+        : { feito: false, status: ddesde > 90 ? 'atrasado' : (ddesde > 75 ? 'vencendo' : 'no_prazo') };
+      return { id: c.id, nome: c.nome, telefone: c.telefone, area: c.area, data_culto: c.data_culto, dias_desde_conversao: ddesde, membro_id: c.membro_id, encontro_responsavel_nome: c.encontro_responsavel_nome, contato, batismo, next: nxt };
+    });
+
+    const total = itens.length;
+    const pct = (n) => total ? Math.round((n / total) * 100) : 0;
+    const contatoOk = itens.filter(i => i.contato.feito && i.contato.status === 'feito_no_prazo').length;
+    const batOk = itens.filter(i => i.batismo.feito).length;
+    const nextOk = itens.filter(i => i.next.feito).length;
+    res.json({
+      resumo: {
+        total,
+        contato_no_prazo: contatoOk, contato_pct: pct(contatoOk),
+        contato_atrasados: itens.filter(i => i.contato.status === 'atrasado').length,
+        batismo_feitos: batOk, batismo_pct: pct(batOk),
+        next_feitos: nextOk, next_pct: pct(nextOk),
+      },
+      itens,
+    });
+  } catch (e) {
+    console.error('[cuidados/jornada-convertidos]', e.message);
     res.status(500).json({ error: e.message });
   }
 });

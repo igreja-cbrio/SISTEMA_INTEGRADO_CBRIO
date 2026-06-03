@@ -25,6 +25,7 @@ import { Input } from '../../components/ui/input';
 import { Label } from '../../components/ui/label';
 import { ArrowLeft, ChevronRight, Plus } from 'lucide-react';
 import { toast } from 'sonner';
+import JornadaConvertidos from '../../components/JornadaConvertidos';
 
 const AREA_META = {
   kids: {
@@ -300,7 +301,7 @@ export default function PainelArea({ area }) {
 
       {/* ─────────────────────── TABS PRINCIPAIS ─────────────────────── */}
       <Tabs defaultValue={temCultos ? 'cultos' : 'indicadores'}>
-        <TabsList className={`grid w-full max-w-2xl ${temCultos ? 'grid-cols-4' : 'grid-cols-3'}`}>
+        <TabsList className={`grid w-full max-w-3xl ${temCultos ? 'grid-cols-5' : 'grid-cols-4'}`}>
           {temCultos && (
             <TabsTrigger value="cultos">
               Cultos <span className="ml-1 opacity-60">({cultos.length})</span>
@@ -313,7 +314,14 @@ export default function PainelArea({ area }) {
             Dados {data.dados?.length > 0 && <span className="ml-1 opacity-60">({data.dados.length})</span>}
           </TabsTrigger>
           <TabsTrigger value="saude">Saúde</TabsTrigger>
+          <TabsTrigger value="novos-convertidos">Novos convertidos</TabsTrigger>
         </TabsList>
+
+        {/* ──────── ABA NOVOS CONVERTIDOS ──────── */}
+        <TabsContent value="novos-convertidos" className="mt-6 space-y-4">
+          <p className="text-sm text-muted-foreground">Os primeiros 90 dias de quem se converteu nesta área: contato pastoral (3 dias), batismo e Next (90 dias). Atrasados em vermelho.</p>
+          <JornadaConvertidos area={area} />
+        </TabsContent>
 
         {/* ──────── ABA CULTOS ──────── */}
         {temCultos && (

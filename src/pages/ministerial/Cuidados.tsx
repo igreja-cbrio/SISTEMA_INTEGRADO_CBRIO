@@ -4,6 +4,7 @@ import { cuidados as cuidadosApi, devocionalPlanos as devPlanosApi, users as use
 import ProcessosTarefas from '../../components/ProcessosTarefas';
 import DevocionalAdmin from '../../components/DevocionalAdmin';
 import EncaminhamentosInbox from '../../components/EncaminhamentosInbox';
+import JornadaConvertidos from '../../components/JornadaConvertidos';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '../../components/ui/tabs';
 import { Button } from '../../components/ui/button';
 import { Input } from '../../components/ui/input';
@@ -787,6 +788,7 @@ export default function Cuidados() {
           <TabsTrigger value="acomp">Acompanhamentos</TabsTrigger>
           <TabsTrigger value="jornada">Jornada 180</TabsTrigger>
           <TabsTrigger value="convertidos">Convertidos</TabsTrigger>
+          <TabsTrigger value="primeiros-passos">Primeiros passos</TabsTrigger>
           <TabsTrigger value="agregado">Mensal / Agregado</TabsTrigger>
           <TabsTrigger value="devocional">Devocional</TabsTrigger>
           <TabsTrigger value="tarefas">Tarefas</TabsTrigger>
@@ -1072,6 +1074,15 @@ export default function Cuidados() {
               </TableBody>
             </Table>
           </div>
+        </TabsContent>
+
+        {/* Primeiros passos · jornada dos primeiros 90 dias do novo convertido */}
+        <TabsContent value="primeiros-passos" className="space-y-4">
+          <div>
+            <h3 className="font-semibold text-sm flex items-center gap-2"><Sparkles className="h-4 w-4 text-primary" />Primeiros 90 dias do novo convertido</h3>
+            <p className="text-xs text-muted-foreground">Contato pastoral em 3 dias · batismo e Next em 90 dias. Cada líder de área acompanha a sua gente; aqui você (Marcelo/Cuidados) vê todas e cobra os atrasados (em vermelho).</p>
+          </div>
+          <JornadaConvertidos />
         </TabsContent>
 
         {/* Agregado · totais mensais por tipo */}
