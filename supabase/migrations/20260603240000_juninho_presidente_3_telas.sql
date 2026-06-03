@@ -10,7 +10,9 @@
 --
 -- MECÂNICA (o frontend trata role diretor/admin como "vê tudo" via
 -- isAdmin = ['admin','diretor'] · então só zerar a matriz não bastaria):
--- 1. profiles.role 'diretor' → 'membro' (não-admin · destrava o filtro de menu).
+-- 1. profiles.role 'diretor' → 'assistente' (não-admin · destrava o filtro de menu).
+--    OBS: a CHECK profiles_role_check só aceita 'assistente'|'admin'|'diretor'
+--    ('membro' não é valor válido aqui) → 'assistente' é o único role não-admin.
 --    NÃO mexe no cargo (usuarios.cargo_id segue pastor-presidente · /perfil
 --    continua mostrando "Pastor Presidente"). is_membro_only=false → cai no
 --    /dashboard ao logar (não vira webapp de devocional).
@@ -29,7 +31,7 @@
 
 -- 1. Rebaixa o role legado da conta ativa (mantém cargo + nome de exibição)
 UPDATE public.profiles
-   SET role = 'membro',
+   SET role = 'assistente',
        is_membro_only = false
  WHERE lower(email) = 'juninho.lit@cbrio.org';
 

@@ -85,9 +85,11 @@ desde abr/2026 · duplicata conhecida).
 true` → vê tudo ignorando a matriz. Logo, restringir EXIGE rebaixar o role.
 
 **Migration `20260603240000_juninho_presidente_3_telas.sql`:**
-1. `profiles.role` `'diretor'→'membro'` em `juninho.lit@cbrio.org` (+`is_membro_only=false`
+1. `profiles.role` `'diretor'→'assistente'` em `juninho.lit@cbrio.org` (+`is_membro_only=false`
    pra cair no `/dashboard`, não no webapp de devocional). **NÃO** toca o cargo →
-   `/perfil` segue mostrando "Pastor Presidente".
+   `/perfil` segue mostrando "Pastor Presidente". OBS: a CHECK `profiles_role_check` só
+   aceita `assistente|admin|diretor` — `'assistente'` é o único role não-admin (não existe
+   `'membro'` como role aqui).
 2. Zera a matriz do cargo `pastor-presidente` (cargo_id 32 · só o Juninho o tem) → some
    todo item de menu gateado por módulo.
 
