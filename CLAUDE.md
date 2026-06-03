@@ -161,6 +161,9 @@ no tático correspondente em `BLOCOS` — sem mexer na estrutura.
   328) — provisório. Quando grupos/voluntários/dízimos começarem a popular,
   confirmar com o Marcos qual é o "total da igreja" certo (a planilha do Juninho
   diz "total de pessoas na igreja", que pode ser > membros ativos).
+- **Bloco "Ministerial — Geracionais" REMOVIDO** (2026-06-03 · pedido do Marcos):
+  era um bloco de Área Responsável só com a nota do censo e sem OKRs — saiu do
+  `BLOCOS`. Restam 3 blocos: Ministerial · Criativo · Operações (+ a NSM no topo).
 
 ## Produção de Culto · aba /producao (2026-06-02)
 

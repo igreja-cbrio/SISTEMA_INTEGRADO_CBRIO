@@ -103,12 +103,6 @@ const BLOCOS = [
     ],
   },
   {
-    area: 'Ministerial — Geracionais',
-    papel: 'Move a NSM',
-    nota: 'Faz-se muito importante fazermos um censo para sabermos o universo de membros em idade para participar do Kids, Bridge e AMI.',
-    okrs: [],
-  },
-  {
     area: 'Criativo',
     papel: 'Amplifica a NSM',
     okrs: [
