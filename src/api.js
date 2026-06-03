@@ -1069,6 +1069,7 @@ export const permissoes = {
   usuarioPorEmail: (email) => get(`/permissoes/usuario-por-email/${encodeURIComponent(email)}`),
   criarUsuario: (data) => post('/permissoes/usuario', data),
   setCargo: (id, cargo_id) => put(`/permissoes/usuario/${id}/cargo`, { cargo_id }),
+  setRole: (id, role) => put(`/permissoes/usuario/${id}/role`, { role }),
   setAreas: (id, area_ids) => put(`/permissoes/usuario/${id}/areas`, { area_ids }),
   setModulo: (id, data) => put(`/permissoes/usuario/${id}/modulo`, data),
   removerOverride: (id, moduloId) => del(`/permissoes/usuario/${id}/modulo/${moduloId}`),
