@@ -493,6 +493,33 @@ router.put('/usuario/:id/cargo', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// PUT /api/permissoes/usuario/:id/role — muda o "acesso base" (profiles.role)
+// role ∈ {assistente, admin, diretor} (CHECK profiles_role_check). admin/diretor
+// viram `isAdmin` no frontend (veem tudo, ignoram a matriz); assistente segue só
+// o que cargo + áreas + overrides liberam. O :id é o UUID do profile (a lista de
+// colaboradores vem de profiles). Permite promover/rebaixar sem SQL.
+const ROLES_VALIDOS = ['assistente', 'admin', 'diretor'];
+router.put('/usuario/:id/role', async (req, res) => {
+  try {
+    const { role } = req.body;
+    if (!ROLES_VALIDOS.includes(role)) {
+      return res.status(400).json({ error: `Acesso base inválido. Use: ${ROLES_VALIDOS.join(', ')}.` });
+    }
+    // Anti-autoescalação · ninguém muda o próprio acesso base (separação de funções).
+    if (bloqueiaAutoEdicao(req, null)) {
+      return res.status(403).json({ error: 'Você não pode alterar o próprio acesso base. Peça a outro administrador.' });
+    }
+    // O :id é o UUID do profile (vem de GET /colaboradores)
+    const { data, error } = await supabase.from('profiles')
+      .update({ role }).eq('id', req.params.id).select('id').maybeSingle();
+    if (error) return res.status(400).json({ error: error.message });
+    if (!data) return res.status(404).json({ error: 'Perfil não encontrado.' });
+
+    bustPermissionCaches();
+    res.json({ success: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // PUT /api/permissoes/usuario/:id/areas — set user áreas
 router.put('/usuario/:id/areas', async (req, res) => {
   try {

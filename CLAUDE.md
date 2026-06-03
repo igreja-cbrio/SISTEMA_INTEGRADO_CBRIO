@@ -114,6 +114,32 @@ matriz zerada.
 (`POST /api/permissoes/cache/bust` ou botão em `/admin/permissoes`) → **Juninho
 logout/login** pra renovar o JWT. Sem isso a matriz antiga fica no cache 5 min.
 
+## Permissões · "Acesso base" (role) editável na tela de Usuários (2026-06-03)
+
+Marcos: poder **promover/rebaixar o `profiles.role` sem SQL** (motivado pelo caso
+do Juninho, que precisou de migration só pra virar `assistente`). O `role` controla
+o `isAdmin` do frontend (`role ∈ {admin,diretor}` → vê o sistema inteiro, ignora a
+matriz; `assistente` → segue cargo + áreas + overrides). Antes só dava pra mudar via
+SQL direto. **SEM migration** (é `UPDATE` em `profiles` via service_role).
+
+- **Backend** (`routes/permissoes.js`): `PUT /usuario/:id/role` (já sob
+  `authorize('admin','diretor')` do topo do arquivo). Valida `role ∈
+  {assistente,admin,diretor}` (= CHECK `profiles_role_check` · não existe `'membro'`
+  como role). `:id` é o **UUID do profile** (a lista de colaboradores vem de
+  `profiles`) → `UPDATE profiles SET role` direto pelo id (não passa por
+  `resolverUsuarioId`, que resolve a tabela `usuarios`/int). Anti-autoescalação via
+  `bloqueiaAutoEdicao(req, null)` — ninguém muda o próprio acesso base. `bustPermissionCaches()`.
+- **api.js**: `permissoes.setRole(id, role)`.
+- **Frontend** (`src/pages/admin/Usuarios.jsx`): no diálogo de edição, seção
+  **"Acesso base"** (entre Cargo e Áreas) com select assistente/diretor/admin +
+  texto explicando que admin/diretor liberam tudo. Estado `role` inicia de
+  `colaborador.role` (o `GET /colaboradores` já devolve `role`). `patchColaborador`
+  no pai sincroniza lista + diálogo aberto após salvar (o role NÃO vem do
+  `GET /usuario/:id`, que lê `usuarios`, não `profiles`).
+- ⚠️ Mudar o role **exige logout/login** da pessoa afetada pra renovar o
+  acesso no frontend (toast já avisa). É a mesma capacidade do `setCargo` (que via
+  boost de área concede nível 5), só que sobre o role — escopo aprovado pelo Marcos.
+
 ## ⚠️ REGRA GLOBAL · acentuação correta do português do Brasil (SEMPRE)
 
 **Toda vez** que implementar QUALQUER coisa neste sistema (nova feature, fix,
