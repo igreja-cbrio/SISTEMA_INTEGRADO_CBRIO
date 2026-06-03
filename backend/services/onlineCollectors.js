@@ -713,28 +713,35 @@ async function catchUpMetricas({ limit = 5 } = {}) {
       }
     }
 
-    // 2a. DS · views dia D
-    if (!c.online_ds || c.online_ds === 0) {
+    // 2a. DS · total acumulado de views (viewCount Data API · manha seguinte+).
+    //     Mesma fonte do dsCollector · sem o atraso da Analytics.
+    if ((!c.online_ds || c.online_ds === 0) && diasDesdeData(c.data) >= 1) {
       try {
-        const stats = await yt.fetchVideoViews(null, c.youtube_video_id, c.data, c.data);
-        await supabase.from('cultos').update({
-          online_ds: stats.views,
-          online_watch_minutes_ds: Math.round(stats.watch_minutes || 0) || null,
-          online_retencao_pct_ds: stats.avg_view_percentage ? Number(stats.avg_view_percentage.toFixed(2)) : null,
-        }).eq('id', c.id);
+        const st = await yt.fetchVideoStatistics(null, c.youtube_video_id);
+        const upd = { online_ds: st?.viewCount ?? 0 };
+        try {
+          const a = await yt.fetchVideoViews(null, c.youtube_video_id, c.data, c.data);
+          upd.online_watch_minutes_ds = Math.round(a.watch_minutes || 0) || null;
+          upd.online_retencao_pct_ds = a.avg_view_percentage ? Number(a.avg_view_percentage.toFixed(2)) : null;
+        } catch { /* analytics best-effort */ }
+        await supabase.from('cultos').update(upd).eq('id', c.id);
+        c.online_ds = upd.online_ds; // disponibiliza pro DDUS abaixo subtrair
         out.ds++;
       } catch (e) { out.erros.push({ culto: c.id, metrica: 'ds', msg: e.message }); }
     }
 
-    // 2b. DDUS · views D+1..D+7
-    if (!c.online_ddus || c.online_ddus === 0) {
+    // 2b. DDUS · on-demand acumulado = viewCount agora (>= D+7) MENOS o DS.
+    //     So no D+7+ e com DS presente (ponto de partida da subtracao).
+    if ((!c.online_ddus || c.online_ddus === 0) && diasDesdeData(c.data) >= 7 && c.online_ds != null) {
       try {
-        const stats = await yt.fetchVideoViews(null, c.youtube_video_id, inicioDplus1, fimDplus7);
-        await supabase.from('cultos').update({
-          online_ddus: stats.views,
-          online_watch_minutes_ddus: Math.round(stats.watch_minutes || 0) || null,
-          online_retencao_pct_ddus: stats.avg_view_percentage ? Number(stats.avg_view_percentage.toFixed(2)) : null,
-        }).eq('id', c.id);
+        const st = await yt.fetchVideoStatistics(null, c.youtube_video_id);
+        const upd = { online_ddus: Math.max(0, (st?.viewCount ?? 0) - (c.online_ds || 0)) };
+        try {
+          const a = await yt.fetchVideoViews(null, c.youtube_video_id, inicioDplus1, fimDplus7);
+          upd.online_watch_minutes_ddus = Math.round(a.watch_minutes || 0) || null;
+          upd.online_retencao_pct_ddus = a.avg_view_percentage ? Number(a.avg_view_percentage.toFixed(2)) : null;
+        } catch { /* analytics best-effort */ }
+        await supabase.from('cultos').update(upd).eq('id', c.id);
         out.ddus++;
       } catch (e) { out.erros.push({ culto: c.id, metrica: 'ddus', msg: e.message }); }
     }
