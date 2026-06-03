@@ -2177,6 +2177,7 @@ export const nps = {
 
 export const online = {
   dashboard: () => get('/online/dashboard'),
+  engajamento: () => get('/online/engajamento'),
   cultosMetricas: (limit) => get('/online/cultos-metricas' + (limit ? '?limit=' + limit : '')),
   series: (order) => get('/online/series' + (order ? '?order=' + order : '')),
   serie: (id) => get('/online/series/' + id),

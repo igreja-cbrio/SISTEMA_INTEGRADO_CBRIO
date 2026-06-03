@@ -241,6 +241,38 @@ router.post('/coletar/catch-up', authorize('admin', 'diretor'), async (req, res)
 });
 
 // ---------------------------------------------------------------------------
+// GET /api/online/engajamento
+// KPIs de engajamento de conteúdo do canal (retenção média, taxa de
+// compartilhamento, cliques em séries) · mês mais recente de online_engajamento.
+// Estrutura pronta pra receber dados da API/Analytics do YouTube; enquanto não há
+// coleta, devolve 0 (não "—"). Mesma fonte que alimenta a aba /monitoramento-okr.
+// ---------------------------------------------------------------------------
+router.get('/engajamento', async (_req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('online_engajamento')
+      .select('mes, retencao_media_pct, taxa_compartilhamento_pct, cliques_series_pct, fonte, observacao, collected_at')
+      .order('mes', { ascending: false })
+      .limit(1);
+    if (error) throw error;
+    const row = (data || [])[0] || null;
+    const mesLabel = row?.mes
+      ? new Date(row.mes + 'T00:00:00').toLocaleDateString('pt-BR', { month: '2-digit', year: 'numeric' })
+      : null;
+    res.json({
+      mes: row?.mes ?? null,
+      mes_label: mesLabel,
+      retencao: Number(row?.retencao_media_pct ?? 0),
+      compartilhamento: Number(row?.taxa_compartilhamento_pct ?? 0),
+      cliques_series: Number(row?.cliques_series_pct ?? 0),
+      fonte: row?.fonte ?? null,
+      observacao: row?.observacao ?? null,
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // GET /api/online/dashboard
 // ---------------------------------------------------------------------------
 router.get('/dashboard', async (_req, res) => {
