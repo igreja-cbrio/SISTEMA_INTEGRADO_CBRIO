@@ -69,6 +69,49 @@ Follow-ups (próximas PRs): "engajou" cruzar com o sinal real do valor (grupo/vo
 fechar-o-loop (aceite na área cria o pedido de grupo / inscrição de voluntário nativos),
 funil de analytics encaminhados→aderiram.
 
+## Juninho (presidente) · acesso restrito a 3 telas (2026-06-03)
+
+Marcos: o Pr. Juninho deve ver **só 3 telas** (Dashboard do sistema · Monitoramento
+OKR · Dashboard Semanal) pra não se confundir enquanto o time desenvolve o resto.
+Manter o **cargo pastor-presidente** (só ele tem), mas rebaixar o acesso —
+**sem criar módulo novo** (decisão do Marcos: nada de "lógica morta" que ele perceba
+e queira o sistema todo).
+
+**Conta ativa = `juninho.lit@cbrio.org`** (a `juninho@cbrio.com.br` está abandonada
+desde abr/2026 · duplicata conhecida).
+
+**Por que mexer no role:** o frontend trata `role ∈ {admin,diretor}` como **admin**
+(`isAdmin` em AuthContext) e `itemAllowed`/`sectionAllowed` fazem `if (isAdmin) return
+true` → vê tudo ignorando a matriz. Logo, restringir EXIGE rebaixar o role.
+
+**Migration `20260603240000_juninho_presidente_3_telas.sql`:**
+1. `profiles.role` `'diretor'→'membro'` em `juninho.lit@cbrio.org` (+`is_membro_only=false`
+   pra cair no `/dashboard`, não no webapp de devocional). **NÃO** toca o cargo →
+   `/perfil` segue mostrando "Pastor Presidente".
+2. Zera a matriz do cargo `pastor-presidente` (cargo_id 32 · só o Juninho o tem) → some
+   todo item de menu gateado por módulo.
+
+**Mudanças no menu (`AppShell.jsx`) pra deixar exatamente as 3 visíveis:**
+- **Monitoramento OKR**: removido o `module: 'painel-cbrio'` → vira **sem-módulo** (igual
+  ao Dashboard Semanal). Aparece pro Juninho (e pros demais que veem o menu · benigno, é
+  read-only macro). Necessário porque dividia o módulo com o **Painel CBRio**, que precisa
+  continuar escondido pro Juninho.
+- **Integração** e **Grupos**: GANHARAM `module: 'integracao'`/`'grupos'` (antes eram
+  sem-módulo e vazavam pra qualquer não-admin). Agora só aparecem pra quem tem o módulo —
+  correção que também os esconde do Juninho.
+- **Dashboard Semanal** segue sem-módulo (alvo · aparece). **Dashboard do sistema**
+  (`/dashboard`) é o landing pós-login + logo (não é item de menu).
+
+**Dashboard Semanal · aba Financeiro gateada:** `DashboardSemanal.jsx` esconde a aba
+Financeiro (que puxa de `/financeiro-v2`, gateado) pra quem não tem `canFinanceiro` —
+senão quebraria pra ele. As outras abas (semanal/mensal/média-móvel/kpis/metas/IA) e o
+`/monitoramento-okr` puxam de endpoints **authenticate-only**, então funcionam com a
+matriz zerada.
+
+**⚠️ Pós-merge (obrigatório):** aplicar a migration → **bust de cache**
+(`POST /api/permissoes/cache/bust` ou botão em `/admin/permissoes`) → **Juninho
+logout/login** pra renovar o JWT. Sem isso a matriz antiga fica no cache 5 min.
+
 ## ⚠️ REGRA GLOBAL · acentuação correta do português do Brasil (SEMPRE)
 
 **Toda vez** que implementar QUALQUER coisa neste sistema (nova feature, fix,
