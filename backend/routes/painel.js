@@ -1551,7 +1551,7 @@ router.get('/monitoramento-okr', async (req, res) => {
     const uma = async (fn) => { try { return await fn(); } catch (e) { console.warn('[monitoramento-okr]', e.message); return null; } };
     const num = (v) => (v == null ? null : Number(v));
 
-    const [nsmRow, batRatio, batMes, tempoBat, dsOnline, assentos, rotativ, batSerie, dsSerie, assentosSerie] = await Promise.all([
+    const [nsmRow, batRatio, batMes, tempoBat, dsOnline, assentos, rotativ, batSerie, dsSerie, assentosSerie, baseMembros, freqGrupos, voluntAtivos, dizimistas, cafeAtend] = await Promise.all([
       // NSM central · exatamente a estrela-guia do Juninho (engajados em ≤60d)
       uma(async () => {
         const r = await query(
@@ -1664,6 +1664,50 @@ router.get('/monitoramento-okr', async (req, res) => {
             GROUP BY 1 ORDER BY 1`);
         return r.rows;
       }),
+      // Base do denominador dos % de engajamento: membros ativos
+      uma(async () => {
+        const r = await query(`SELECT count(*) n FROM mem_membros WHERE status='membro_ativo' AND deleted_at IS NULL`);
+        return r.rows[0] || null;
+      }),
+      // % frequência em grupos · fonte existe (mem_grupo_membros), hoje 0
+      uma(async () => {
+        const r = await query(
+          `SELECT coalesce(round(count(DISTINCT gm.membro_id)::numeric
+                  / NULLIF((SELECT count(*) FROM mem_membros WHERE status='membro_ativo' AND deleted_at IS NULL),0) * 100, 1), 0) pct,
+                  count(DISTINCT gm.membro_id) n
+             FROM mem_grupo_membros gm WHERE gm.saiu_em IS NULL AND gm.deleted_at IS NULL`);
+        return r.rows[0] || null;
+      }),
+      // % voluntários ativos · fonte existe (mem_voluntarios), hoje 0
+      uma(async () => {
+        const r = await query(
+          `SELECT coalesce(round(count(DISTINCT membro_id)::numeric
+                  / NULLIF((SELECT count(*) FROM mem_membros WHERE status='membro_ativo' AND deleted_at IS NULL),0) * 100, 1), 0) pct,
+                  count(DISTINCT membro_id) n
+             FROM mem_voluntarios WHERE ate IS NULL AND deleted_at IS NULL`);
+        return r.rows[0] || null;
+      }),
+      // % dizimistas regulares (3+ meses em 6m) · fonte existe (mem_contribuicoes), hoje 0
+      uma(async () => {
+        const r = await query(
+          `SELECT coalesce(round((SELECT count(*) FROM (
+                    SELECT membro_id FROM mem_contribuicoes WHERE deleted_at IS NULL AND data >= CURRENT_DATE - INTERVAL '6 months'
+                    GROUP BY membro_id HAVING count(DISTINCT date_trunc('month', data)) >= 3) t)::numeric
+                  / NULLIF((SELECT count(*) FROM mem_membros WHERE status='membro_ativo' AND deleted_at IS NULL),0) * 100, 1), 0) pct,
+                  (SELECT count(*) FROM (
+                    SELECT membro_id FROM mem_contribuicoes WHERE deleted_at IS NULL AND data >= CURRENT_DATE - INTERVAL '6 months'
+                    GROUP BY membro_id HAVING count(DISTINCT date_trunc('month', data)) >= 3) t) n`);
+        return r.rows[0] || null;
+      }),
+      // % convertidos atendidos no Acompanhamento (cui_convertidos.atendido_apos_culto · 90d)
+      uma(async () => {
+        const r = await query(
+          `SELECT coalesce(round(count(*) FILTER (WHERE atendido_apos_culto = true)::numeric
+                  / NULLIF(count(*),0) * 100, 1), 0) pct,
+                  count(*) FILTER (WHERE atendido_apos_culto = true) atendidos, count(*) total
+             FROM cui_convertidos WHERE data_culto >= CURRENT_DATE - INTERVAL '90 days'`);
+        return r.rows[0] || null;
+      }),
     ]);
 
     const nsm = nsmRow ? {
@@ -1712,6 +1756,21 @@ router.get('/monitoramento-okr', async (req, res) => {
       const demit = num(rotativ.demitidos) || 0;
       const pct = ativos > 0 ? Math.round((demit / ativos) * 1000) / 10 : null;
       addM('rotatividade', pct, '%', `${demit} saída(s) / ${ativos} ativos (12 meses)`);
+    }
+    // Automáticos cuja fonte já existe no banco mas hoje está ~0 (mostram o número, não "—")
+    const baseAtivos = baseMembros ? num(baseMembros.n) : null;
+    const sufixoBase = baseAtivos != null ? ` · base ${baseAtivos} membros ativos` : '';
+    if (freqGrupos) {
+      addM('freq_grupos', num(freqGrupos.pct), '%', `${num(freqGrupos.n)} em grupos ativos${sufixoBase}`);
+    }
+    if (voluntAtivos) {
+      addM('volunt_ativos', num(voluntAtivos.pct), '%', `${num(voluntAtivos.n)} voluntários ativos${sufixoBase}`);
+    }
+    if (dizimistas) {
+      addM('dizimistas', num(dizimistas.pct), '%', `${num(dizimistas.n)} dizimistas recorrentes${sufixoBase}`);
+    }
+    if (cafeAtend) {
+      addM('cafe_atendidos', num(cafeAtend.pct), '%', `${num(cafeAtend.atendidos)} de ${num(cafeAtend.total)} convertidos atendidos (90 dias)`);
     }
 
     const resp = { geradoEm: new Date().toISOString(), nsm, metricas };
