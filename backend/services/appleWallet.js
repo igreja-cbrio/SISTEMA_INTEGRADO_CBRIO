@@ -77,7 +77,7 @@ function makeSolidPng(w, h, r, g, b) {
 }
 
 // Cores por tipo de passe
-// Membro: bege #eae3da = rgb(234, 227, 218)
+// Membro: azul/teal #408097 (fundo) · texto branco · rótulos #D5E4E6
 // Voluntário: azul escuro #408097 = rgb(64, 128, 151)
 
 // Logo CBRio — lido do filesystem (incluído via vercel.json templates/**)
@@ -86,11 +86,11 @@ const LOGO_CBRIO_WHITE = fs.readFileSync(path.join(__dirname, '..', 'templates',
 
 // Icones pre-gerados por tipo (cached — gerados uma vez no startup)
 const ICONS_MEMBRO = {
-  'icon.png':    makeSolidPng(29,  29,  234, 227, 218),
-  'icon@2x.png': makeSolidPng(58,  58,  234, 227, 218),
-  'icon@3x.png': makeSolidPng(87,  87,  234, 227, 218),
-  'logo.png':    LOGO_CBRIO,
-  'logo@2x.png': LOGO_CBRIO,
+  'icon.png':    makeSolidPng(29,  29,  64, 128, 151),
+  'icon@2x.png': makeSolidPng(58,  58,  64, 128, 151),
+  'icon@3x.png': makeSolidPng(87,  87,  64, 128, 151),
+  'logo.png':    LOGO_CBRIO_WHITE,
+  'logo@2x.png': LOGO_CBRIO_WHITE,
 };
 
 const ICONS_VOLUNTARIO = {
@@ -198,9 +198,9 @@ async function buildMembroPass({ nome, qrToken, memberId, pending = false }) {
     teamIdentifier: teamId,
     organizationName: 'CBRio',
     description: 'CBRio — Cartao de Membro',
-    backgroundColor: 'rgb(234, 227, 218)',
-    foregroundColor: 'rgb(64, 128, 151)',
-    labelColor: 'rgb(64, 128, 151)',
+    backgroundColor: 'rgb(64, 128, 151)',
+    foregroundColor: 'rgb(255, 255, 255)',
+    labelColor: 'rgb(213, 228, 230)',
     generic: {
       primaryFields: [
         { key: 'name', label: 'MEMBRO', value: nome || 'Membro' },

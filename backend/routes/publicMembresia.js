@@ -712,7 +712,7 @@ router.post('/wallet/google', cadastroLimiter, async (req, res) => {
       id: objectId,
       classId,
       genericType: 'GENERIC_OTHER',
-      hexBackgroundColor: '#eae3da',
+      hexBackgroundColor: '#408097',
       logo: {
         sourceUri: { uri: logoUrl },
         contentDescription: { defaultValue: { language: 'pt-BR', value: 'CBRio' } },
