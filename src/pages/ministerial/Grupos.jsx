@@ -15,6 +15,7 @@ import InscricaoGruposQRCode from '../admin/InscricaoGruposQRCode';
 import GruposGeocode from '../admin/GruposGeocode';
 import TemporadasGrupos from '../admin/TemporadasGrupos';
 import ProcessosTarefas from '../../components/ProcessosTarefas';
+import EncaminhamentosInbox from '../../components/EncaminhamentosInbox';
 import { GruposMapView } from '@/components/grupos/GruposMapView';
 import { StatisticsCard } from '../../components/ui/statistics-card';
 import { Card, CardContent, CardHeader, CardTitle } from '../../components/ui/card';
@@ -761,6 +762,7 @@ export default function Grupos() {
           { key: 'relatorios', label: 'Relatórios', icon: BarChart3 },
           { key: 'mapa', label: 'Mapa', icon: MapIcon },
           { key: 'pedidos', label: 'Pedidos', icon: Inbox, badge: pedidosCount },
+          { key: 'encaminhados', label: 'Encaminhados', icon: UserPlus },
           { key: 'materiais', label: 'Materiais', icon: FileText },
           { key: 'tarefas', label: 'Tarefas', icon: ListChecks },
           { key: 'qrcode', label: 'QR Inscrição', icon: QrCode },
@@ -784,6 +786,17 @@ export default function Grupos() {
           </button>
         ))}
       </div>
+
+      {/* ═══ TAB ENCAMINHADOS ═══ */}
+      {pageTab === 'encaminhados' && (
+        <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 12, padding: 20 }}>
+          <div style={{ marginBottom: 12 }}>
+            <h3 style={{ fontSize: 15, fontWeight: 700, color: C.text, margin: 0 }}>Encaminhados pra Grupos</h3>
+            <p style={{ fontSize: 12, color: C.t3, margin: '4px 0 0' }}>Pessoas que o cuidado pastoral encaminhou pra conectar num grupo. Faça o primeiro contato e registre a devolutiva.</p>
+          </div>
+          <EncaminhamentosInbox destino="grupos" canWrite={podeEditarGrupos} />
+        </div>
+      )}
 
       {/* ═══ TAB MAPA ═══ */}
       {pageTab === 'mapa' && (

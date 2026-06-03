@@ -136,6 +136,7 @@ app.use('/api/next', require('./routes/next'));
 app.use('/api/governanca', require('./routes/governanca'));
 app.use('/api/processos', require('./routes/processos'));
 app.use('/api/jornada', require('./routes/jornada'));
+app.use('/api/encaminhamentos', require('./routes/encaminhamentos'));
 app.use('/api/devocionais', require('./routes/devocionais'));
 app.use('/api/devocional-planos', require('./routes/devocionalPlanos'));
 app.use('/api/devocional-membro', require('./routes/devocionalMembro'));

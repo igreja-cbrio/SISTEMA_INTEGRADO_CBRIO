@@ -149,12 +149,15 @@ export default function Batismos() {
   const [categoriaFiltro, setCategoriaFiltro] = useState<CategoriaEtaria | 'todos'>('todos');
   const [selected, setSelected] = useState<BatismoInscricao | null>(null);
   const [novaOpen, setNovaOpen] = useState(false);
+  const [cobertura, setCobertura] = useState<any>(null);
+  const [showPendentes, setShowPendentes] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
       const data = await kpisApi.batismos.list();
       setList(Array.isArray(data) ? data : []);
+      kpisApi.batismos.coberturaConvertidos().then(setCobertura).catch(() => {});
     } catch (e: any) {
       toast.error(e?.message || 'Erro ao carregar batismos');
     }
@@ -353,6 +356,77 @@ export default function Batismos() {
           )}
         </CardContent>
       </Card>
+
+      {/* Cobertura de batismo dos convertidos · trilho universal (todo convertido chamado) */}
+      {cobertura && cobertura.total > 0 && (
+        <Card>
+          <CardContent className="py-4 space-y-3">
+            <div className="flex flex-wrap items-center gap-x-6 gap-y-3">
+              <div className="rounded-lg p-2.5 shrink-0" style={{ background: `${C.primary}18` }}>
+                <Droplets className="h-6 w-6" style={{ color: C.primary }} />
+              </div>
+              <div className="flex-1 min-w-[220px]">
+                <p className="text-[11px] font-medium text-muted-foreground uppercase tracking-wider">
+                  Convertidos chamados pro batismo
+                </p>
+                <div className="flex items-baseline gap-2 mt-0.5">
+                  <span className="text-3xl font-bold text-foreground">{cobertura.pct_batizados}%</span>
+                  <span className="text-sm text-muted-foreground">batizados ({cobertura.batizados}/{cobertura.total})</span>
+                </div>
+                <p className="text-[11px] text-muted-foreground mt-1">
+                  Todo convertido deve ser chamado · acompanhe quem ainda falta, independente do cuidado pastoral
+                </p>
+              </div>
+              <div className="flex gap-5 text-center shrink-0">
+                <div>
+                  <p className="text-lg font-semibold text-foreground">{cobertura.inscritos}</p>
+                  <p className="text-[10px] text-muted-foreground uppercase tracking-wide">inscritos</p>
+                </div>
+                <div>
+                  <p className="text-lg font-semibold text-foreground">{cobertura.nao_inscritos}</p>
+                  <p className="text-[10px] text-muted-foreground uppercase tracking-wide">não inscritos</p>
+                </div>
+              </div>
+              {cobertura.pendentes?.length > 0 && (
+                <Button variant="outline" size="sm" onClick={() => setShowPendentes(v => !v)}>
+                  {showPendentes ? 'Ocultar' : `Ver quem falta (${cobertura.pendentes.length})`}
+                </Button>
+              )}
+            </div>
+            {showPendentes && cobertura.pendentes?.length > 0 && (
+              <div className="rounded-lg border border-border overflow-hidden">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Nome</TableHead>
+                      <TableHead>Telefone</TableHead>
+                      <TableHead>Data culto</TableHead>
+                      <TableHead>Status</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {cobertura.pendentes.slice(0, 100).map((p: any) => (
+                      <TableRow key={p.id}>
+                        <TableCell className="font-medium">{p.nome}</TableCell>
+                        <TableCell>{p.telefone || '—'}</TableCell>
+                        <TableCell className="whitespace-nowrap">{p.data_culto ? ymdLocal(p.data_culto) : '—'}</TableCell>
+                        <TableCell>
+                          <Badge variant={p.status_batismo === 'inscrito' ? 'default' : 'secondary'}>
+                            {p.status_batismo === 'inscrito' ? 'Inscrito' : 'Não inscrito'}
+                          </Badge>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+                {cobertura.pendentes.length > 100 && (
+                  <p className="text-xs text-muted-foreground p-2">Mostrando 100 de {cobertura.pendentes.length}.</p>
+                )}
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      )}
 
       {/* Gráfico de barras · batismos realizados por mês (últimos 12 meses) */}
       <Card>

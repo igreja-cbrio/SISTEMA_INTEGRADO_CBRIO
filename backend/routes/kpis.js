@@ -500,6 +500,81 @@ router.get('/batismos', async (req, res) => {
   res.json(enriched);
 });
 
+// ── Cobertura de batismo dos convertidos ────────────────────────────────────
+// Trilho UNIVERSAL: todo convertido deve ser chamado pro batismo. A Integracao
+// acompanha aqui quem ja foi batizado, quem esta inscrito e quem ainda falta —
+// independente do acompanhamento pastoral (Cuidados). Cruza cui_convertidos com
+// batismo_inscricoes por membro_id, CPF ou nome. Paginado (cap de 1000 do PostgREST).
+router.get('/batismos/cobertura-convertidos', async (req, res) => {
+  try {
+    const onlyDigits = (v) => String(v || '').replace(/\D/g, '');
+    const fetchAll = async (table, columns) => {
+      const out = []; let from = 0; const page = 1000;
+      while (true) {
+        const { data, error } = await supabase.from(table).select(columns)
+          .is('deleted_at', null).range(from, from + page - 1);
+        if (error) throw error;
+        out.push(...(data || []));
+        if (!data || data.length < page) break;
+        from += page;
+      }
+      return out;
+    };
+
+    const [convertidos, inscricoes] = await Promise.all([
+      fetchAll('cui_convertidos', 'id, nome, telefone, cpf, membro_id, data_culto'),
+      fetchAll('batismo_inscricoes', 'status, membro_id, cpf, nome, data_batismo'),
+    ]);
+
+    // Indices de batismo · realizado tem prioridade sobre inscrito
+    const byMembro = new Map(), byCpf = new Map(), byNome = new Map();
+    const put = (map, key, realizado) => {
+      if (!key) return;
+      const cur = map.get(key);
+      const rank = realizado ? 2 : 1;
+      if (!cur || rank > cur.rank) map.set(key, { realizado });
+    };
+    for (const b of inscricoes) {
+      const realizado = b.status === 'realizado';
+      put(byMembro, b.membro_id, realizado);
+      put(byCpf, onlyDigits(b.cpf).length === 11 ? onlyDigits(b.cpf) : null, realizado);
+      put(byNome, String(b.nome || '').trim().toLowerCase() || null, realizado);
+    }
+    const matchOf = (c) => {
+      const cands = [
+        c.membro_id ? byMembro.get(c.membro_id) : null,
+        onlyDigits(c.cpf).length === 11 ? byCpf.get(onlyDigits(c.cpf)) : null,
+        byNome.get(String(c.nome || '').trim().toLowerCase()),
+      ].filter(Boolean);
+      if (!cands.length) return null;
+      return { realizado: cands.some(m => m.realizado) };
+    };
+
+    let batizados = 0, inscritos = 0, naoInscritos = 0;
+    const pendentes = [];
+    for (const c of convertidos) {
+      const m = matchOf(c);
+      if (m && m.realizado) { batizados++; continue; }
+      if (m) inscritos++; else naoInscritos++;
+      pendentes.push({
+        id: c.id, nome: c.nome, telefone: c.telefone, membro_id: c.membro_id,
+        data_culto: c.data_culto, status_batismo: m ? 'inscrito' : 'nao_inscrito',
+      });
+    }
+    pendentes.sort((a, b) => String(b.data_culto || '').localeCompare(String(a.data_culto || '')));
+
+    res.json({
+      total: convertidos.length,
+      batizados, inscritos, nao_inscritos: naoInscritos,
+      pct_batizados: convertidos.length ? Math.round((batizados / convertidos.length) * 100) : 0,
+      pendentes,
+    });
+  } catch (e) {
+    console.error('[kpis/batismos/cobertura-convertidos]', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 router.post('/batismos', authorizeIntegracao, async (req, res) => {
   const {
     cpf, nome, sobrenome, data_nascimento, telefone, email,

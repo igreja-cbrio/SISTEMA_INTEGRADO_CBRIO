@@ -1827,6 +1827,7 @@ export const kpis = {
     list: (params) => get('/kpis/batismos' + (params ? '?' + new URLSearchParams(params) : '')),
     create: (data) => post('/kpis/batismos', data),
     update: (id, data) => put(`/kpis/batismos/${id}`, data),
+    coberturaConvertidos: () => get('/kpis/batismos/cobertura-convertidos'),
   },
   // Dashboard & metas
   dashboard: (semanas) => get(`/kpis/dashboard?semanas=${semanas || 12}`),
@@ -1897,6 +1898,9 @@ export const cuidados = {
     update: (id, data) => patch(`/cuidados/convertidos/${id}`, data),
     remove: (id) => del(`/cuidados/convertidos/${id}`),
     tags: () => get('/cuidados/convertidos/tags'),
+    agendarEncontro: (id, data) => post(`/cuidados/convertidos/${id}/agendar-encontro`, data),
+    cancelarEncontro: (id) => post(`/cuidados/convertidos/${id}/cancelar-encontro`, {}),
+    desfecho: (id, data) => post(`/cuidados/convertidos/${id}/desfecho`, data),
   },
   agregado: {
     list: (mes) => get(`/cuidados/agregado${mes ? `?mes=${mes}` : ''}`),
@@ -1904,6 +1908,16 @@ export const cuidados = {
   },
   buscarMembro: (cpf) => get(`/cuidados/buscar-membro?cpf=${encodeURIComponent(cpf)}`),
   criarMembro: (data) => post('/cuidados/criar-membro', data),
+};
+
+// Encaminhamentos da jornada · caixa de entrada das áreas receptoras
+// (Grupos / Voluntários / Jornada 180). Origem = desfecho do encontro em Cuidados.
+export const encaminhamentos = {
+  list: (params) => get('/encaminhamentos' + (params ? '?' + new URLSearchParams(params) : '')),
+  resumo: (destino) => get('/encaminhamentos/resumo' + (destino ? `?destino=${encodeURIComponent(destino)}` : '')),
+  get: (id) => get(`/encaminhamentos/${id}`),
+  contato: (id, data) => post(`/encaminhamentos/${id}/contato`, data),
+  updateStatus: (id, status) => patch(`/encaminhamentos/${id}`, { status }),
 };
 
 export const processos = {

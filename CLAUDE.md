@@ -2,6 +2,73 @@
 
 Guia operacional para o Claude Code quando trabalhar neste repositório.
 
+## Cuidados · Encontro pastoral + Encaminhamento da jornada (2026-06-03)
+
+Marcos: na aba **Convertidos** (`/ministerial/cuidados`), (1) filtro **"Já atendidas"**;
+(2) o encontro pastoral vira registro real (data + **hora** + **quem vai atender** +
+**compareceu**); (3) o **desfecho** encaminha a pessoa pros próximos valores
+(**Jornada 180 / Grupos / Voluntários**) e cada área recebe numa **caixa de entrada**
+onde registra contato + **devolutiva** (Pendente/Não respondeu/Em dúvida/Engajou/Sem
+interesse). É a **amarração conversão→valores** que faltava (alimenta o NSM · ver
+`project_jornada_gaps`).
+
+**Decisões do Marcos (travadas):** SEM opção "não se converteu" (não interrompe o
+fluxo, qualidade de entrada é da Integração · NÃO mexe em trilha/NSM); **sem rótulo de
+dor** (guarda a *direção*, não o *diagnóstico* · motivo sensível só em observação
+discreta); **toda pessoa sai com ≥1 encaminhamento**; o "primeiro contato" (encontro)
+é o diferencial → continua sendo **agendado** (data/hora/quem). A tarefa-automática na
+aba Tarefas + agenda-da-área foram **descartadas** em favor do registro de contato +
+devolutiva na caixa de entrada da área.
+
+**Migration `20260603120000_cuidados_encontro_encaminhamento.sql`** (aditiva · idempotente):
+- `cui_convertidos` += `encontro_hora`, `encontro_responsavel_id/nome`, `encontro_status`
+  (agendado/realizado/faltou/cancelado), `encontro_compareceu`, `desfecho_em/por/observacoes`.
+- `jornada_encaminhamentos` (pessoa×destino · `destino` jornada180/grupos/voluntarios ·
+  `valor_alvo` · `status`=devolutiva · encaminhado/recebido/resolvido) + filho
+  `jornada_encaminhamento_contatos` (log: data_contato, canal, observacao, devolutiva,
+  feito_por · CASCADE, sem soft-delete próprio). Padrão PII: `deleted_at` + whitelist
+  `app_soft_deletable_tables()` + RLS contextual **por módulo do destino** (cuidados vê
+  tudo; grupos/voluntariado veem o seu) + service_role.
+
+**Backend:**
+- `routes/cuidados.js`: `POST /convertidos/:id/agendar-encontro` (notifica o pastor via
+  `targetIds`), `…/cancelar-encontro`, `…/desfecho` (cria os encaminhamentos só se
+  compareceu + notifica as áreas). Mapa `DESTINO_META` (destino→valor+módulo notif+link).
+- `routes/encaminhamentos.js` (`/api/encaminhamentos`, montado no `server.js`):
+  `GET /` (?destino=&status=), `GET /resumo`, `GET /:id` (+ log de contatos),
+  `POST /:id/contato` (insere + atualiza pai: status=devolutiva, recebido_em na 1ª vez,
+  resolvido em engajou/sem_interesse), `PATCH /:id`. Auth **in-handler por módulo do
+  destino** (`req.user.granular.modulePerms` · admin/diretor=5) — não usa authorizeModule.
+
+**Frontend:**
+- `Cuidados.tsx`: filtros "Já atendidas"/"Aguardando desfecho"; modais
+  `AgendarEncontroModal` (data/hora/quem · select de `users`) e `DesfechoModal`
+  (compareceu? + destinos `DESTINOS_ENC` + observação discreta); ficha do convertido
+  mostra o encontro (data/hora/quem/status) + botões Agendar/Reagendar/Desfecho;
+  botões na linha da tabela. Bloco de encontro saiu do `ConvertidoModal` (virou fluxo
+  dedicado). Aba **Jornada 180** recebe `<EncaminhamentosInbox destino="jornada180">`.
+- **Componente reusável** `src/components/EncaminhamentosInbox.tsx` (lista + dialog com
+  log de contato + form de devolutiva) usado nos 3 destinos. Filtros: **A contatar /
+  Já atendidos** (recebido_em set · já houve contato) **/ Engajaram / Todos** + contagem no topo.
+- **Grupos.jsx**: aba **"Encaminhados"** (`pageTab='encaminhados'` · `destino=grupos`).
+- **Voluntariado**: `VolEncaminhados.tsx` + rota `encaminhados` no `index.tsx` + item no
+  `VolNavBar` (`destino=voluntarios`).
+- `api.js`: `cuidados.convertidos.{agendarEncontro,cancelarEncontro,desfecho}` + namespace
+  `encaminhamentos.{list,resumo,get,contato,updateStatus}`.
+
+**Cobertura de batismo (Integração · mesma PR · SEM migration):** trilho **universal** —
+todo convertido deve ser chamado pro batismo, a Integração acompanha independente do
+Cuidados. `GET /kpis/batismos/cobertura-convertidos` cruza `cui_convertidos` ×
+`batismo_inscricoes` (por `membro_id`, CPF ou nome · **paginado** p/ o cap de 1000 do
+PostgREST) → card **"Convertidos chamados pro batismo"** na aba Batismos (`Batismos.tsx`):
+% batizados + nº inscritos + nº não inscritos + botão "Ver quem falta" (lista dos
+pendentes). `api.kpis.batismos.coberturaConvertidos()`.
+
+⚠️ **Aplicar a migration `20260603120000` antes do merge** (APLICADA em prod 2026-06-03).
+Follow-ups (próximas PRs): "engajou" cruzar com o sinal real do valor (grupo/voluntário),
+fechar-o-loop (aceite na área cria o pedido de grupo / inscrição de voluntário nativos),
+funil de analytics encaminhados→aderiram.
+
 ## ⚠️ REGRA GLOBAL · acentuação correta do português do Brasil (SEMPRE)
 
 **Toda vez** que implementar QUALQUER coisa neste sistema (nova feature, fix,
