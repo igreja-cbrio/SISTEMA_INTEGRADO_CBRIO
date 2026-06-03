@@ -1,13 +1,13 @@
 // ============================================================================
 // /grupos/supervisao · tela hierarquica de supervisao
 //
-// Marcos: "caso voce seja supervisor voce ve todos os grupos que acompanha e
-// pode deixar observacoes mensais la e va colocando as datas que voce
-// visitou, se for coordenador, ve todos os supervisores e como eles estao
-// mexendo e tambem todos os grupos abaixo, como se fosse expansivel e os
-// funcionarios cadastrados como admin nesse modulo veem a organizacao geral"
+// Marcos: "caso você seja supervisor você ve todos os grupos que acompanha e
+// pode deixar observações mensais la e va colocando as datas que você
+// visitou, se for coordenador, ve todos os supervisores e como eles estão
+// mexendo e também todos os grupos abaixo, como se fosse expansivel e os
+// funcionários cadastrados como admin nesse módulo veem a organização geral"
 //
-// Permissao (vem do backend GET /api/grupos/supervisao/me):
+// Permissão (vem do backend GET /api/grupos/supervisao/me):
 //   - admin           · ve todos os supervisores e grupos
 //   - coordenador     · ve todos os supervisores e grupos
 //   - supervisor      · ve apenas seus grupos
@@ -222,10 +222,10 @@ function LinhaGrupo({ grupo, onClick }) {
 }
 
 // ============================================================================
-// ModalGrupo · detalhes do grupo + visitas + observacao mensal
+// ModalGrupo · detalhes do grupo + visitas + observação mensal
 // ============================================================================
 function ModalGrupo({ grupo, papel, onClose, onChanged }) {
-  const [tab, setTab] = useState('visitas'); // visitas | observacao | membros
+  const [tab, setTab] = useState('visitas'); // visitas | observação | membros
   const [visitas, setVisitas] = useState([]);
   const [observacoes, setObservacoes] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -398,7 +398,7 @@ function TabVisitas({ grupo, visitas, onChanged }) {
 }
 
 // ============================================================================
-// TabObservacao · 1 textarea por mes (upsert)
+// TabObservacao · 1 textarea por mês (upsert)
 // ============================================================================
 function TabObservacao({ grupo, observacoes, onChanged }) {
   const periodo = periodoAtual();

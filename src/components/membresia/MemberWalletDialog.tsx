@@ -10,9 +10,9 @@ import MemberWalletPass from './MemberWalletPass';
 interface Props {
   open: boolean;
   onOpenChange: (v: boolean) => void;
-  /** Pre-preenche o CPF (ex.: voluntario ja tem CPF na sessao) */
+  /** Pre-preenche o CPF (ex.: voluntário já tem CPF na sessão) */
   initialCpf?: string;
-  /** Pre-preenche a DOB (ex.: logo apos cadastro, ja temos o valor) */
+  /** Pre-preenche a DOB (ex.: logo após cadastro, já temos o valor) */
   initialDob?: string;
 }
 
@@ -29,7 +29,7 @@ function maskCpf(v: string) {
  *  1. Pede CPF + DOB
  *  2. Valida via /wallet/verify
  *  3. Se encontrado, renderiza <MemberWalletPass /> com os mesmos dados
- *  4. Se nao encontrado, instrui a preencher o formulario
+ *  4. Se não encontrado, instrui a preencher o formulário
  */
 export default function MemberWalletDialog({ open, onOpenChange, initialCpf = '', initialDob = '' }: Props) {
   const [cpf, setCpf] = useState(maskCpf(initialCpf));
@@ -66,7 +66,7 @@ export default function MemberWalletDialog({ open, onOpenChange, initialCpf = ''
     try {
       const r = await cadastroPublico.walletVerify(clean, dob);
       if (!r.found) {
-        setError('Nao encontramos seu cadastro com esses dados. Confira ou preencha o formulario acima.');
+        setError('Não encontramos seu cadastro com esses dados. Confira ou preencha o formulário acima.');
         return;
       }
       setVerified(true);
@@ -89,7 +89,7 @@ export default function MemberWalletDialog({ open, onOpenChange, initialCpf = ''
           <DialogDescription className="text-white/60">
             {verified
               ? 'Cadastro confirmado. Escolha como quer guardar seu QR.'
-              : 'Informe seu CPF e data de nascimento. Se seu cadastro ja existir, geramos seu QR.'}
+              : 'Informe seu CPF e data de nascimento. Se seu cadastro já existir, geramos seu QR.'}
           </DialogDescription>
         </DialogHeader>
 

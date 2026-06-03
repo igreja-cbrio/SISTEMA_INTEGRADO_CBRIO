@@ -6,7 +6,7 @@
  *   2. Backend redirects to PC OAuth authorize URL
  *   3. PC redirects back to GET /api/auth/planning-center/callback?code=...
  *   4. Backend exchanges code for token, fetches user info from PC
- *   5. Creates / finds Supabase user with role='voluntario'
+ *   5. Creates / finds Supabase user with role='voluntário'
  *   6. Generates a magic-link token_hash via admin API
  *   7. Redirects browser to frontend /auth/pc-callback?token_hash=...
  *   8. Frontend verifies OTP and establishes session
@@ -18,7 +18,34 @@
  */
 
 const router = require('express').Router();
+const crypto = require('crypto');
 const { supabase } = require('../utils/supabase');
+const { safeEqual } = require('../utils/cronAuth');
+
+// Anti-CSRF de OAuth (login CSRF): double-submit cookie. O `state` vai na URL de
+// autorizacao E num cookie HttpOnly da nossa origem; no callback exigimos que os
+// dois batam. Um atacante nao consegue setar/ler o cookie da nossa origem, entao
+// nao consegue forcar o browser da vitima a completar o fluxo dele.
+const STATE_COOKIE = 'pc_oauth_state';
+const STATE_PATH = '/api/auth/planning-center';
+function setStateCookie(res, state) {
+  res.cookie(STATE_COOKIE, state, {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === 'production',
+    sameSite: 'lax',
+    maxAge: 10 * 60 * 1000,
+    path: STATE_PATH,
+  });
+}
+function readCookie(req, name) {
+  const raw = req.headers.cookie || '';
+  for (const part of raw.split(';')) {
+    const idx = part.indexOf('=');
+    if (idx === -1) continue;
+    if (part.slice(0, idx).trim() === name) return decodeURIComponent(part.slice(idx + 1).trim());
+  }
+  return null;
+}
 
 function getOAuthCredentials() {
   const clientId = (process.env.PC_OAUTH_CLIENT_ID || process.env.PLANNING_CENTER_APP_ID || '').trim();
@@ -47,6 +74,11 @@ router.get('/login', (req, res) => {
   authorizeUrl.searchParams.set('redirect_uri', callbackUrl);
   authorizeUrl.searchParams.set('response_type', 'code');
   authorizeUrl.searchParams.set('scope', 'people');
+
+  // Anti-CSRF · state aleatorio espelhado em cookie HttpOnly
+  const state = crypto.randomBytes(24).toString('base64url');
+  setStateCookie(res, state);
+  authorizeUrl.searchParams.set('state', state);
 
   res.redirect(authorizeUrl.toString());
 });
@@ -81,11 +113,20 @@ router.get('/debug', (req, res) => {
 // Exchanges authorization code for PC access token, creates Supabase user, generates session
 router.get('/callback', async (req, res) => {
   const frontendUrl = getFrontendUrl();
-  const { code, error: oauthError } = req.query;
+  const { code, state, error: oauthError } = req.query;
+
+  // Valida o state (anti-CSRF) e consome o cookie sempre.
+  const cookieState = readCookie(req, STATE_COOKIE);
+  res.clearCookie(STATE_COOKIE, { path: STATE_PATH });
 
   if (oauthError || !code) {
     console.error('[PC OAuth] Error or no code:', oauthError);
     return res.redirect(`${frontendUrl}/login?error=pc_oauth_denied`);
+  }
+
+  if (!state || !cookieState || !safeEqual(String(state), cookieState)) {
+    console.warn('[PC OAuth] state invalido/ausente · possivel CSRF');
+    return res.redirect(`${frontendUrl}/login?error=pc_state_invalid`);
   }
 
   try {
@@ -202,7 +243,7 @@ router.get('/callback', async (req, res) => {
         supaUserId = created.user.id;
       }
 
-      // Create profile with 'voluntario' role
+      // Create profile with 'voluntário' role
       await supabase.from('profiles').upsert({
         id: supaUserId,
         email,
@@ -216,7 +257,7 @@ router.get('/callback', async (req, res) => {
 
     // ── 5. Link to vol_profiles if exists ───────────────────────────
     // Update the vol_profiles record to link the supabase user
-    // (coluna correta e auth_user_id, nao user_id)
+    // (coluna correta e auth_user_id, não user_id)
     await supabase.from('vol_profiles')
       .update({ auth_user_id: supaUserId })
       .eq('planning_center_id', pcId)

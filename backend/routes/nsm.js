@@ -5,7 +5,7 @@
 //   GET  /api/nsm/painel              -> vw_nsm_painel (4 segmentos + status)
 //   GET  /api/nsm/painel/:segmento    -> 1 segmento especifico
 //   POST /api/nsm/recalcular          -> dispara recalculo manual (admin/diretor)
-//   GET  /api/nsm/eventos             -> ultimos eventos NSM (auditoria/drilldown)
+//   GET  /api/nsm/eventos             -> últimos eventos NSM (auditoria/drilldown)
 // ============================================================================
 
 const router = require('express').Router();
@@ -41,7 +41,7 @@ router.get('/painel/:segmento', async (req, res) => {
       .eq('segmento', req.params.segmento)
       .maybeSingle();
     if (error) throw error;
-    if (!data) return res.status(404).json({ error: 'Segmento nao encontrado' });
+    if (!data) return res.status(404).json({ error: 'Segmento não encontrado' });
     res.json(data);
   } catch (e) {
     console.error('nsm/painel/segmento:', e.message);
@@ -51,7 +51,7 @@ router.get('/painel/:segmento', async (req, res) => {
 
 // ----------------------------------------------------------------------------
 // POST /recalcular - dispara recalculo manual (admin/diretor)
-// Util quando admin quer forcar atualizacao apos correcao de dados
+// Útil quando admin quer forcar atualização após correcao de dados
 // ----------------------------------------------------------------------------
 router.post('/recalcular', authorize('admin', 'diretor'), async (req, res) => {
   try {
@@ -65,7 +65,7 @@ router.post('/recalcular', authorize('admin', 'diretor'), async (req, res) => {
 });
 
 // ----------------------------------------------------------------------------
-// GET /eventos - ultimos eventos (drilldown camada 4)
+// GET /eventos - últimos eventos (drilldown camada 4)
 // query: ?segmento=cbrio (filtra por igreja_tipo) ?limit=50 ?valor=seguir
 // ----------------------------------------------------------------------------
 router.get('/eventos', async (req, res) => {

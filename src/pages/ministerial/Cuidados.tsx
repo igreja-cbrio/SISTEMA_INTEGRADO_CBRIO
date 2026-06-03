@@ -952,7 +952,7 @@ export default function Cuidados() {
             <div className="relative flex-1 min-w-[220px]">
               <Search className="absolute left-2.5 top-2.5 h-3.5 w-3.5 text-muted-foreground" />
               <Input
-                placeholder="Buscar por nome, telefone, CPF ou observacao..."
+                placeholder="Buscar por nome, telefone, CPF ou observação..."
                 value={convertSearch}
                 onChange={e => setConvertSearch(e.target.value)}
                 className="pl-8"
@@ -981,7 +981,7 @@ export default function Cuidados() {
             <div className="flex items-center gap-1 text-xs">
               <Label className="text-xs text-muted-foreground">De</Label>
               <Input type="date" value={convertFilterFrom} onChange={e => setConvertFilterFrom(e.target.value)} className="w-36 h-9" />
-              <Label className="text-xs text-muted-foreground">ate</Label>
+              <Label className="text-xs text-muted-foreground">até</Label>
               <Input type="date" value={convertFilterTo} onChange={e => setConvertFilterTo(e.target.value)} className="w-36 h-9" />
             </div>
             {filtersActive && (

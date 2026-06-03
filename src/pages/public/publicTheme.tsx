@@ -1,7 +1,7 @@
 import { createContext, useContext } from 'react';
 import { useTheme } from '../../contexts/ThemeContext';
 
-// Paleta dos formularios publicos · troca conforme tema claro/escuro.
+// Paleta dos formulários públicos · troca conforme tema claro/escuro.
 export interface PublicPalette {
   isDark: boolean;
   pageBg: string;

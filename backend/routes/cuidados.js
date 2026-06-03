@@ -459,7 +459,7 @@ router.post('/agregado', async (req, res) => {
     }
     const areaNormalizada = (area || 'igreja').toLowerCase();
 
-    // Upsert manual: deletar existente do mesmo (mes,tipo,responsavel) e inserir
+    // Upsert manual: deletar existente do mesmo (mês,tipo,responsável) e inserir
     await supabase
       .from('cui_atendimentos_agregado')
       .delete()

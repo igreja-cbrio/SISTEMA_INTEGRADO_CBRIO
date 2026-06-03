@@ -1,4 +1,4 @@
-// Handlers do logistica_watcher · cria notificacoes pros responsaveis.
+// Handlers do logistica_watcher · cria notificações pros responsáveis.
 
 const { supabase } = require('../../utils/supabase');
 
@@ -9,7 +9,7 @@ async function notif(opts) {
 
 async function resolverResponsavel(responsavel_id) {
   if (!responsavel_id) return null;
-  return responsavel_id; // ja eh profile id em solicitacoes
+  return responsavel_id; // já eh profile id em solicitações
 }
 
 async function applyAlertarSla({ payload }) {
@@ -19,7 +19,7 @@ async function applyAlertarSla({ payload }) {
     modulo: 'solicitacoes',
     tipo: 'sla_estourado',
     titulo: `SLA estourado · ${titulo}`,
-    mensagem: `Solicitacao "${titulo}" (${area_responsavel}) esta ${horas_atrasada}h alem do SLA. Atender.`,
+    mensagem: `Solicitação "${titulo}" (${area_responsavel}) esta ${horas_atrasada}h além do SLA. Atender.`,
     link: `/solicitacoes`,
     severidade: severidade || 'aviso',
     chaveDedup: `log_sla_${solicitacao_id}_${new Date().toISOString().slice(0, 10)}`,

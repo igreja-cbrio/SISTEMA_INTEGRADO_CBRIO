@@ -3,9 +3,9 @@
 //
 // Estrutura final (em construcao por sub-PRs):
 //   1. NSM no topo (este sub-PR)
-//   2. Carrossel de 6 mandalas (proximo sub-PR)
-//   3. Matriz colorida 6×5 + modal drilldown (proximo sub-PR)
-//   4. 3 alertas criticos (proximo sub-PR)
+//   2. Carrossel de 6 mandalas (próximo sub-PR)
+//   3. Matriz colorida 6×5 + modal drilldown (próximo sub-PR)
+//   4. 3 alertas criticos (próximo sub-PR)
 //
 // Diretoria + todos os autenticados leem. Admin/diretor pode forcar
 // recalculo da NSM via botao no header.
@@ -86,7 +86,7 @@ export default function Painel() {
 
   useEffect(() => { carregar(); }, [carregar]);
 
-  // Estabiliza as funcoes passadas pras matrizes filhas · evita re-renders
+  // Estabiliza as funções passadas pras matrizes filhas · evita re-renders
   // do MatrizSlaGrupo (que dispararia loading na volta de alt-tab)
   const loadMatrizAdm = useCallback(() => painelApi.matrizAdm(), []);
   const loadCelulaAdm = useCallback((g, c) => painelApi.celulaAdm(g, c), []);
@@ -135,7 +135,7 @@ export default function Painel() {
                 background: C.primary, color: '#fff', border: 'none',
                 display: 'inline-flex', alignItems: 'center', gap: 6,
               }}
-              title="Revisar OKRs em alerta este mes"
+              title="Revisar OKRs em alerta este mês"
             >
               <ClipboardCheck size={14} />
               Ritual Mensal
@@ -194,7 +194,7 @@ export default function Painel() {
         </div>
       ) : null}
 
-      {/* Sub-componentes carregam em paralelo ao NSM · cada um tem proprio loading */}
+      {/* Sub-componentes carregam em paralelo ao NSM · cada um tem próprio loading */}
       <div style={{ marginTop: 24 }}>
         <CarrosselMandalas />
       </div>
@@ -210,7 +210,7 @@ export default function Painel() {
       <div style={{ marginTop: 24 }}>
         <MatrizSlaGrupo
           titulo="Matriz Gestão × Área"
-          subtitulo="Clique numa celula para ver solicitacoes e KPIs daquela area da gestao. Hospitalidade = Reserva + Cozinha + Manutencao · Logistica = Estoque + Compras."
+          subtitulo="Clique numa celula para ver solicitações e KPIs daquela área da gestão. Hospitalidade = Reserva + Cozinha + Manutenção · Logística = Estoque + Compras."
           loadMatriz={loadMatrizAdm}
           loadCelula={loadCelulaAdm}
         />
@@ -219,7 +219,7 @@ export default function Painel() {
       <div style={{ marginTop: 24 }}>
         <MatrizSlaGrupo
           titulo="Matriz Criativo × Área"
-          subtitulo="Clique numa celula para ver solicitacoes e KPIs do criativo · 3 areas: Produção, Adoração, Marketing."
+          subtitulo="Clique numa celula para ver solicitações e KPIs do criativo · 3 áreas: Produção, Adoração, Marketing."
           loadMatriz={loadMatrizCriativo}
           loadCelula={loadCelulaCriativo}
         />

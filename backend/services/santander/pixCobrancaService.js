@@ -1,14 +1,14 @@
-// Service de Cobranca PIX (QR Code) via API Santander
+// Service de Cobrança PIX (QR Code) via API Santander
 //
-// O Santander expoe PIX Cobranca em paths que VARIAM por contrato/produto.
-// Padrao BACEN/Open Finance e' /pix/v1/cob/{txid} mas o Trust Open Sandbox
+// O Santander expoe PIX Cobrança em paths que VARIAM por contrato/produto.
+// Padrão BACEN/Open Finance e' /pix/v1/cob/{txid} mas o Trust Open Sandbox
 // pode mapear o produto em paths como:
 //   - /cob_management/v1/cobs/{txid}
 //   - /pix_cobranca/v1/cob/{txid}
 //   - /collection_management/v1/cob/{txid}
 //
 // Estrategia: tenta multiplos paths em ordem · primeiro que retornar !=404
-// vira o "path funcionando" e fica em cache de memoria.
+// vira o "path funcionando" e fica em cache de memória.
 //
 // Toggle e overrides:
 //   SANTANDER_PIX_COB_ENABLED=true
@@ -86,7 +86,7 @@ async function tentarComPaths(fn) {
     }
   }
   const ag = new Error(
-    `Nenhum dos ${PIX_COB_PATHS.length} paths Santander PIX Cobranca respondeu. Tentativas:\n` +
+    `Nenhum dos ${PIX_COB_PATHS.length} paths Santander PIX Cobrança respondeu. Tentativas:\n` +
     errosPorPath.map((x, i) => `  ${i+1}. [${x.status}] ${x.path}`).join('\n') +
     `\n\nUltimo erro: ${errosPorPath[errosPorPath.length-1]?.msg || ''}`
   );
@@ -96,7 +96,7 @@ async function tentarComPaths(fn) {
 
 async function criarCobranca({ txid, valor, devedor, solicitacao, expiracao = 3600 }) {
   if (!ENABLED) throw new Error('PIX Cobranca desabilitado · setar SANTANDER_PIX_COB_ENABLED=true');
-  if (!CHAVE_PIX) throw new Error('SANTANDER_PIX_COB_CHAVE nao configurada');
+  if (!CHAVE_PIX) throw new Error('SANTANDER_PIX_COB_CHAVE não configurada');
   if (!txid) throw new Error('txid obrigatorio');
   if (!valor || valor <= 0) throw new Error('valor invalido');
 

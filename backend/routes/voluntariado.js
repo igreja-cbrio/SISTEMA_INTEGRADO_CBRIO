@@ -43,7 +43,7 @@ router.get('/me', async (req, res) => {
     }
 
     res.json({ profile: volProfile, teams });
-  } catch (e) { res.status(500).json({ error: 'Erro ao buscar perfil do voluntario' }); }
+  } catch (e) { res.status(500).json({ error: 'Erro ao buscar perfil do voluntário' }); }
 });
 
 // Save face descriptor for MY OWN volunteer profile (self-service enrollment)
@@ -58,7 +58,7 @@ router.post('/me/face', async (req, res) => {
     const { data: profile } = await supabase.from('vol_profiles')
       .select('id').eq('auth_user_id', userId).maybeSingle();
     if (!profile) {
-      return res.status(404).json({ error: 'Perfil de voluntario nao encontrado' });
+      return res.status(404).json({ error: 'Perfil de voluntário não encontrado' });
     }
 
     const { data, error } = await supabase.rpc('vol_save_profile_face_descriptor', {
@@ -90,8 +90,8 @@ router.put('/me', async (req, res) => {
     const cpfChanged = cleanCpf && cleanCpf !== currentCpf;
 
     // Quando o CPF for alterado (ou definido pela primeira vez), vincular com
-    // o cadastro de membros. Se o CPF nao existir em mem_membros, devolver
-    // MEMBER_NOT_FOUND para que o frontend peca o cadastro obrigatorio.
+    // o cadastro de membros. Se o CPF não existir em mem_membros, devolver
+    // MEMBER_NOT_FOUND para que o frontend peca o cadastro obrigatório.
     let membroMatch = null;
     if (cpfChanged) {
       if (cleanCpf.length !== 11) {
@@ -101,7 +101,7 @@ router.put('/me', async (req, res) => {
         .select('id, nome, telefone, email').eq('cpf', cleanCpf).maybeSingle();
       if (!membro) {
         return res.status(409).json({
-          error: 'CPF nao encontrado no cadastro de membros. Complete o cadastro para continuar.',
+          error: 'CPF não encontrado no cadastro de membros. Complete o cadastro para continuar.',
           code: 'MEMBER_NOT_FOUND',
           cpf: cleanCpf,
         });
@@ -149,8 +149,8 @@ router.put('/me', async (req, res) => {
   }
 });
 
-// Cadastro obrigatorio de membro disparado quando o CPF informado em PUT /me
-// nao existe em mem_membros. Cria o membro e vincula o vol_profile.
+// Cadastro obrigatório de membro disparado quando o CPF informado em PUT /me
+// não existe em mem_membros. Cria o membro e vincula o vol_profile.
 router.post('/me/register-member', async (req, res) => {
   try {
     const userId = req.user.userId;
@@ -168,7 +168,7 @@ router.post('/me/register-member', async (req, res) => {
 
     const fullName = `${nome.trim()} ${sobrenome.trim()}`.replace(/\s+/g, ' ');
 
-    // Se ja existe membro com esse CPF, reutilizar em vez de duplicar
+    // Se já existe membro com esse CPF, reutilizar em vez de duplicar
     let { data: membro } = await supabase.from('mem_membros')
       .select('id, nome, telefone, email').eq('cpf', cleanCpf).maybeSingle();
 
@@ -223,7 +223,7 @@ router.post('/me/register-member', async (req, res) => {
   }
 });
 
-// Google Wallet — gera URL "Save to Google Wallet" com o QR pessoal do voluntario
+// Google Wallet — gera URL "Save to Google Wallet" com o QR pessoal do voluntário
 router.get('/me/wallet/google', async (req, res) => {
   try {
     const userId = req.user.userId;
@@ -234,14 +234,14 @@ router.get('/me/wallet/google', async (req, res) => {
     const privateKey = rawKey.replace(/\\n/g, '\n');
 
     if (!issuerId || !serviceAccountEmail || !privateKey) {
-      return res.status(503).json({ error: 'Google Wallet nao configurado' });
+      return res.status(503).json({ error: 'Google Wallet não configurado' });
     }
 
     const { data: profile } = await supabase.from('vol_profiles')
       .select('id, full_name, qr_code').eq('auth_user_id', userId).maybeSingle();
 
-    if (!profile) return res.status(404).json({ error: 'Perfil nao encontrado' });
-    if (!profile.qr_code) return res.status(400).json({ error: 'QR Code ainda nao gerado para este perfil' });
+    if (!profile) return res.status(404).json({ error: 'Perfil não encontrado' });
+    if (!profile.qr_code) return res.status(400).json({ error: 'QR Code ainda não gerado para este perfil' });
 
     const jwt = require('jsonwebtoken');
     const classId = `${issuerId}.cbrio_voluntario_v1`;
@@ -298,8 +298,8 @@ router.get('/me/wallet/apple', async (req, res) => {
     const { data: profile } = await supabase.from('vol_profiles')
       .select('id, full_name, qr_code').eq('auth_user_id', userId).maybeSingle();
 
-    if (!profile) return res.status(404).json({ error: 'Perfil nao encontrado' });
-    if (!profile.qr_code) return res.status(400).json({ error: 'QR Code ainda nao gerado para este perfil' });
+    if (!profile) return res.status(404).json({ error: 'Perfil não encontrado' });
+    if (!profile.qr_code) return res.status(400).json({ error: 'QR Code ainda não gerado para este perfil' });
 
     const voluntarioId = `CBR-${profile.id.replace(/-/g, '').slice(0, 8).toUpperCase()}`;
 
@@ -314,7 +314,7 @@ router.get('/me/wallet/apple', async (req, res) => {
     res.send(pkpassBuffer);
   } catch (err) {
     console.error('[Wallet] Apple error:', err.message);
-    res.status(503).json({ error: 'Apple Wallet indisponivel no momento.' });
+    res.status(503).json({ error: 'Apple Wallet indisponível no momento.' });
   }
 });
 
@@ -411,7 +411,7 @@ router.get('/my-services', async (req, res) => {
       is_unavailable: availabilityMap.has(s.id),
       availability_id: availabilityMap.get(s.id) || null,
     })));
-  } catch (e) { res.status(500).json({ error: 'Erro ao buscar cultos do voluntario' }); }
+  } catch (e) { res.status(500).json({ error: 'Erro ao buscar cultos do voluntário' }); }
 });
 
 // Get my availability
@@ -438,7 +438,7 @@ router.post('/my-availability', async (req, res) => {
 
     const { data: volProfile } = await supabase.from('vol_profiles')
       .select('id').eq('auth_user_id', userId).maybeSingle();
-    if (!volProfile) return res.status(404).json({ error: 'Perfil de voluntario nao encontrado' });
+    if (!volProfile) return res.status(404).json({ error: 'Perfil de voluntário não encontrado' });
 
     let fromDate = unavailable_from;
     let toDate = unavailable_to;
@@ -447,12 +447,12 @@ router.post('/my-availability', async (req, res) => {
       // Disponibilidade por culto especifico: busca a data do culto
       const { data: service } = await supabase.from('vol_services')
         .select('scheduled_at').eq('id', service_id).single();
-      if (!service) return res.status(404).json({ error: 'Culto nao encontrado' });
+      if (!service) return res.status(404).json({ error: 'Culto não encontrado' });
       fromDate = service.scheduled_at.split('T')[0];
       toDate = fromDate;
     }
 
-    if (!fromDate) return res.status(400).json({ error: 'service_id ou datas obrigatorios' });
+    if (!fromDate) return res.status(400).json({ error: 'service_id ou datas obrigatórios' });
 
     const { data, error } = await supabase.from('vol_availability')
       .insert({ volunteer_profile_id: volProfile.id, service_id: service_id || null, unavailable_from: fromDate, unavailable_to: toDate, reason: reason || null })
@@ -468,7 +468,7 @@ router.delete('/my-availability/:id', async (req, res) => {
     const userId = req.user.userId;
     const { data: volProfile } = await supabase.from('vol_profiles')
       .select('id').eq('auth_user_id', userId).maybeSingle();
-    if (!volProfile) return res.status(404).json({ error: 'Perfil nao encontrado' });
+    if (!volProfile) return res.status(404).json({ error: 'Perfil não encontrado' });
 
     // Only delete own availability
     const { error } = await supabase.from('vol_availability')
@@ -484,7 +484,7 @@ router.get('/self-checkin-qr/:serviceId', async (req, res) => {
     const serviceId = req.params.serviceId;
     const { data: service } = await supabase.from('vol_services')
       .select('id, name, scheduled_at').eq('id', serviceId).single();
-    if (!service) return res.status(404).json({ error: 'Culto nao encontrado' });
+    if (!service) return res.status(404).json({ error: 'Culto não encontrado' });
 
     // The QR code payload is a URL to the self-checkin page
     const frontendUrl = process.env.FRONTEND_URL || (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : 'http://localhost:5173');
@@ -508,7 +508,7 @@ router.get('/profiles', async (req, res) => {
 router.get('/profiles/:id', async (req, res) => {
   try {
     const { data, error } = await supabase.from('vol_profiles').select('*').eq('id', req.params.id).single();
-    if (error) return res.status(404).json({ error: 'Perfil nao encontrado' });
+    if (error) return res.status(404).json({ error: 'Perfil não encontrado' });
     res.json(data);
   } catch (e) { res.status(500).json({ error: 'Erro ao buscar perfil' }); }
 });
@@ -519,7 +519,7 @@ router.post('/profiles', async (req, res) => {
     if (!full_name || !full_name.trim()) return res.status(400).json({ error: 'Nome obrigatorio' });
     const cleanCpf = cpf ? cpf.replace(/\D/g, '') : null;
 
-    // Membresia e fonte unica: garantir mem_membros antes de criar vol_profile
+    // Membresia e fonte única: garantir mem_membros antes de criar vol_profile
     let membresiaId = null;
     try {
       const { findOrCreateMembro } = require('./pessoas');
@@ -557,7 +557,7 @@ router.put('/profiles/:id', async (req, res) => {
 });
 
 // ══════════════════════════════════════════════════════════════
-// OPCOES DO FORMULARIO PUBLICO ("Onde voce quer servir")
+// OPÇÕES DO FORMULÁRIO PÚBLICO ("Onde você quer servir")
 // Editaveis pela equipe de voluntariado · alimentam /inscricao-voluntariado
 // ══════════════════════════════════════════════════════════════
 router.get('/form-opcoes', async (req, res) => {
@@ -568,13 +568,13 @@ router.get('/form-opcoes', async (req, res) => {
       .order('ordem', { ascending: true });
     if (error) return res.status(400).json({ error: error.message });
     res.json(data || []);
-  } catch (e) { res.status(500).json({ error: 'Erro ao listar opcoes do formulario' }); }
+  } catch (e) { res.status(500).json({ error: 'Erro ao listar opções do formulário' }); }
 });
 
 router.post('/form-opcoes', authorizeModule('voluntariado', 3), async (req, res) => {
   try {
     const { label, area_canonica, exige_dados_menor, aviso_titulo, aviso_texto, ordem } = req.body || {};
-    if (!label || !String(label).trim()) return res.status(400).json({ error: 'Informe o nome da opcao' });
+    if (!label || !String(label).trim()) return res.status(400).json({ error: 'Informe o nome da opção' });
     const areas = ['kids', 'sede', 'ami', 'bridge', 'online'];
     const area = areas.includes(String(area_canonica)) ? String(area_canonica) : 'sede';
     // ordem default = fim da lista
@@ -596,11 +596,11 @@ router.post('/form-opcoes', authorizeModule('voluntariado', 3), async (req, res)
       })
       .select('*').single();
     if (error) {
-      if (error.code === '23505') return res.status(400).json({ error: 'Ja existe uma opcao com esse nome' });
+      if (error.code === '23505') return res.status(400).json({ error: 'Já existe uma opção com esse nome' });
       return res.status(400).json({ error: error.message });
     }
     res.json(data);
-  } catch (e) { res.status(500).json({ error: 'Erro ao criar opcao do formulario' }); }
+  } catch (e) { res.status(500).json({ error: 'Erro ao criar opção do formulário' }); }
 });
 
 router.put('/form-opcoes/:id', authorizeModule('voluntariado', 3), async (req, res) => {
@@ -620,11 +620,11 @@ router.put('/form-opcoes/:id', authorizeModule('voluntariado', 3), async (req, r
     const { data, error } = await supabase
       .from('vol_form_opcoes').update(patch).eq('id', req.params.id).select('*').single();
     if (error) {
-      if (error.code === '23505') return res.status(400).json({ error: 'Ja existe uma opcao com esse nome' });
+      if (error.code === '23505') return res.status(400).json({ error: 'Já existe uma opção com esse nome' });
       return res.status(400).json({ error: error.message });
     }
     res.json(data);
-  } catch (e) { res.status(500).json({ error: 'Erro ao atualizar opcao do formulario' }); }
+  } catch (e) { res.status(500).json({ error: 'Erro ao atualizar opção do formulário' }); }
 });
 
 router.delete('/form-opcoes/:id', authorizeModule('voluntariado', 3), async (req, res) => {
@@ -632,7 +632,7 @@ router.delete('/form-opcoes/:id', authorizeModule('voluntariado', 3), async (req
     const { error } = await supabase.from('vol_form_opcoes').delete().eq('id', req.params.id);
     if (error) return res.status(400).json({ error: error.message });
     res.json({ success: true });
-  } catch (e) { res.status(500).json({ error: 'Erro ao remover opcao do formulario' }); }
+  } catch (e) { res.status(500).json({ error: 'Erro ao remover opção do formulário' }); }
 });
 
 // ══════════════════════════════════════════════════════════════
@@ -649,7 +649,7 @@ router.get('/roles', async (req, res) => {
 router.post('/roles', async (req, res) => {
   try {
     const { profile_id, role } = req.body;
-    if (!profile_id || !role) return res.status(400).json({ error: 'profile_id e role obrigatorios' });
+    if (!profile_id || !role) return res.status(400).json({ error: 'profile_id e role obrigatórios' });
     const { data, error } = await supabase.from('vol_user_roles').insert({ profile_id, role }).select().single();
     if (error) return res.status(400).json({ error: error.message });
     res.json(data);
@@ -679,7 +679,7 @@ router.get('/vol-by-membro/:membroId', async (req, res) => {
       .maybeSingle();
     if (error) return res.status(400).json({ error: error.message });
     res.json(data || null);
-  } catch (e) { res.status(500).json({ error: 'Erro ao buscar perfil do voluntario' }); }
+  } catch (e) { res.status(500).json({ error: 'Erro ao buscar perfil do voluntário' }); }
 });
 
 // POST /quero-servir — member opts in; creates or links vol_profile
@@ -694,7 +694,7 @@ router.post('/quero-servir', async (req, res) => {
       .select('id, nome, cpf, email')
       .eq('id', membro_id)
       .single();
-    if (memErr || !membro) return res.status(404).json({ error: 'Membro nao encontrado' });
+    if (memErr || !membro) return res.status(404).json({ error: 'Membro não encontrado' });
 
     const cleanCpf = membro.cpf ? membro.cpf.replace(/\D/g, '') : null;
     let volProfile = null;
@@ -810,7 +810,7 @@ router.post('/allocate/:id', async (req, res) => {
       .select('id, full_name, planning_center_id')
       .eq('id', id)
       .maybeSingle();
-    if (!vol) return res.status(404).json({ error: 'Voluntario nao encontrado' });
+    if (!vol) return res.status(404).json({ error: 'Voluntário não encontrado' });
 
     // Add to team (upsert to avoid duplicate)
     const { error: tmErr } = await supabase.from('vol_team_members')
@@ -829,7 +829,7 @@ router.post('/allocate/:id', async (req, res) => {
     res.json({ success: true });
   } catch (e) {
     console.error('[ALLOCATE]', e.message);
-    res.status(500).json({ error: 'Erro ao alocar voluntario' });
+    res.status(500).json({ error: 'Erro ao alocar voluntário' });
   }
 });
 
@@ -852,7 +852,7 @@ router.get('/volunteers-pool', async (req, res) => {
       .order('full_name');
     if (error) return res.status(400).json({ error: error.message });
     res.json(data);
-  } catch (e) { res.status(500).json({ error: 'Erro ao listar pool de voluntarios' }); }
+  } catch (e) { res.status(500).json({ error: 'Erro ao listar pool de voluntários' }); }
 });
 
 // ══════════════════════════════════════════════════════════════
@@ -891,7 +891,7 @@ router.get('/services/upcoming', async (req, res) => {
       .gte('scheduled_at', new Date().toISOString()).order('scheduled_at').limit(10);
     if (error) return res.status(400).json({ error: error.message });
     res.json(await attachScheduledCount(data));
-  } catch (e) { res.status(500).json({ error: 'Erro ao listar proximos cultos' }); }
+  } catch (e) { res.status(500).json({ error: 'Erro ao listar próximos cultos' }); }
 });
 
 router.get('/services/today', async (req, res) => {
@@ -956,10 +956,10 @@ router.post('/check-ins', async (req, res) => {
     const { schedule_id, volunteer_id, service_id, method, is_unscheduled } = req.body;
     if (!method) return res.status(400).json({ error: 'method obrigatorio' });
 
-    // Auto-detectar "sem escala" se nao informado explicitamente:
+    // Auto-detectar "sem escala" se não informado explicitamente:
     // - sem schedule_id vinculado E
     // - existe volunteer_id + service_id E
-    // - nao ha escala no vol_schedules pra esse volunteer+service
+    // - não ha escala no vol_schedules pra esse volunteer+service
     let resolvedUnscheduled = is_unscheduled;
     if (resolvedUnscheduled === undefined && !schedule_id && volunteer_id && service_id) {
       // Pode haver múltiplas linhas (mesma pessoa em mais de uma posição) —
@@ -1010,7 +1010,7 @@ router.post('/check-ins', async (req, res) => {
           }
         } catch {}
         return res.status(409).json({
-          error: 'Check-in ja foi realizado',
+          error: 'Check-in já foi realizado',
           alreadyCheckedIn: true,
           volunteerName,
           checkedInAt,
@@ -1026,8 +1026,8 @@ router.post('/check-ins', async (req, res) => {
         .update({ confirmation_status: 'confirmed' }).eq('id', schedule_id).eq('confirmation_status', 'pending');
     }
 
-    // Sinaliza ao operador se o voluntario ainda nao tem CPF cadastrado, pra
-    // oferecer a captura logo apos o check-in (frente 2 da unificacao).
+    // Sinaliza ao operador se o voluntário ainda não tem CPF cadastrado, pra
+    // oferecer a captura logo após o check-in (frente 2 da unificacao).
     let needsCpf = false;
     let resolvedVolunteerId = volunteer_id || null;
     if (!resolvedVolunteerId && schedule_id) {
@@ -1046,7 +1046,7 @@ router.post('/check-ins', async (req, res) => {
 });
 
 // Atualiza dados de contato de UM vol_profile (operador do check-in preenche
-// o CPF/telefone/email do voluntario que acabou de chegar). Update parcial:
+// o CPF/telefone/email do voluntário que acabou de chegar). Update parcial:
 // so grava o que vier, nunca apaga valor existente. O trigger BEFORE UPDATE
 // OF cpf vincula ao mem_membros automaticamente.
 router.put('/profiles/:id/contact', async (req, res) => {
@@ -1057,7 +1057,7 @@ router.put('/profiles/:id/contact', async (req, res) => {
     const { data: prof, error: fetchErr } = await supabase.from('vol_profiles')
       .select('id, cpf, phone, email').eq('id', id).maybeSingle();
     if (fetchErr) return res.status(400).json({ error: fetchErr.message });
-    if (!prof) return res.status(404).json({ error: 'Voluntario nao encontrado' });
+    if (!prof) return res.status(404).json({ error: 'Voluntário não encontrado' });
 
     const update = {};
 
@@ -1090,7 +1090,7 @@ router.put('/profiles/:id/contact', async (req, res) => {
   }
 });
 
-// Historico de check-ins do voluntario logado (self-service)
+// Histórico de check-ins do voluntário logado (self-service)
 router.get('/my-check-ins', async (req, res) => {
   try {
     const userId = req.user.userId;
@@ -1129,7 +1129,7 @@ router.post('/qr-lookup', async (req, res) => {
     } else {
       const { data: vqr } = await supabase.from('vol_volunteer_qrcodes')
         .select('id, planning_center_person_id, volunteer_name').eq('qr_code', qr_code).maybeSingle();
-      if (!vqr) return res.status(404).json({ error: 'Voluntario nao encontrado' });
+      if (!vqr) return res.status(404).json({ error: 'Voluntário não encontrado' });
       volunteerData = { type: 'volunteer_qrcode', id: null, planning_center_id: vqr.planning_center_person_id, name: vqr.volunteer_name };
     }
 
@@ -1162,7 +1162,7 @@ router.post('/qr-lookup', async (req, res) => {
     const { data: existingCIs } = await supabase.from('vol_check_ins').select('schedule_id').in('schedule_id', schedules.map(s => s.id));
     const unchecked = schedules.find(s => !(existingCIs || []).some(c => c.schedule_id === s.id));
 
-    if (!unchecked) return res.status(409).json({ error: 'Voluntario ja fez check-in em todas as escalas de hoje' });
+    if (!unchecked) return res.status(409).json({ error: 'Voluntário já fez check-in em todas as escalas de hoje' });
 
     res.json({ schedule: unchecked, profile: profileResult, isUnscheduled: false, volunteerName: unchecked.volunteer_name });
   } catch (e) { console.error('[VOL] qr-lookup error:', e.message); res.status(500).json({ error: 'Erro ao buscar QR' }); }
@@ -1199,7 +1199,7 @@ router.post('/volunteer-qrcodes', async (req, res) => {
 router.post('/face/save-profile', async (req, res) => {
   try {
     const { profile_id, descriptor, photo_url } = req.body;
-    if (!profile_id || !descriptor) return res.status(400).json({ error: 'profile_id e descriptor obrigatorios' });
+    if (!profile_id || !descriptor) return res.status(400).json({ error: 'profile_id e descriptor obrigatórios' });
     const { data, error } = await supabase.rpc('vol_save_profile_face_descriptor', {
       p_profile_id: profile_id, descriptor, photo_url: photo_url || null,
     });
@@ -1211,7 +1211,7 @@ router.post('/face/save-profile', async (req, res) => {
 router.post('/face/save-qrcode', async (req, res) => {
   try {
     const { qrcode_id, descriptor, photo_url } = req.body;
-    if (!qrcode_id || !descriptor) return res.status(400).json({ error: 'qrcode_id e descriptor obrigatorios' });
+    if (!qrcode_id || !descriptor) return res.status(400).json({ error: 'qrcode_id e descriptor obrigatórios' });
     const { data, error } = await supabase.rpc('vol_save_qrcode_face_descriptor', {
       qrcode_id, descriptor, photo_url: photo_url || null,
     });
@@ -1241,12 +1241,12 @@ router.post('/self-checkin', async (req, res) => {
     if (!serviceId) return res.status(400).json({ error: 'serviceId obrigatorio' });
 
     const { data: service } = await supabase.from('vol_services').select('id, name, scheduled_at').eq('id', serviceId).single();
-    if (!service) return res.status(404).json({ error: 'Culto nao encontrado' });
+    if (!service) return res.status(404).json({ error: 'Culto não encontrado' });
 
     const serviceDate = new Date(service.scheduled_at);
     const today = new Date();
     if (serviceDate.toDateString() !== today.toDateString()) {
-      return res.status(400).json({ error: 'Este culto nao e de hoje' });
+      return res.status(400).json({ error: 'Este culto não e de hoje' });
     }
 
     // LIST action
@@ -1263,23 +1263,23 @@ router.post('/self-checkin', async (req, res) => {
     // Scheduled check-in
     if (scheduleId) {
       const { data: existing } = await supabase.from('vol_check_ins').select('id').eq('schedule_id', scheduleId).maybeSingle();
-      if (existing) return res.status(409).json({ error: 'Check-in ja realizado', alreadyCheckedIn: true });
+      if (existing) return res.status(409).json({ error: 'Check-in já realizado', alreadyCheckedIn: true });
 
       const { data: schedule } = await supabase.from('vol_schedules')
         .select('id, volunteer_id, volunteer_name, team_name, position_name').eq('id', scheduleId).single();
-      if (!schedule) return res.status(404).json({ error: 'Escala nao encontrada' });
+      if (!schedule) return res.status(404).json({ error: 'Escala não encontrada' });
 
       const { error } = await supabase.from('vol_check_ins').insert({
         schedule_id: scheduleId, volunteer_id: schedule.volunteer_id, service_id: serviceId, method: 'self_service', is_unscheduled: false,
       });
-      if (error) { if (error.code === '23505') return res.status(409).json({ error: 'Check-in ja realizado', alreadyCheckedIn: true }); throw error; }
+      if (error) { if (error.code === '23505') return res.status(409).json({ error: 'Check-in já realizado', alreadyCheckedIn: true }); throw error; }
 
       await supabase.from('vol_schedules').update({ confirmation_status: 'confirmed' }).eq('id', scheduleId).eq('confirmation_status', 'pending');
       return res.json({ success: true, volunteerName: schedule.volunteer_name, teamName: schedule.team_name, positionName: schedule.position_name });
     }
 
     // Unscheduled
-    if (!volunteerName) return res.status(400).json({ error: 'volunteerName obrigatorio para check-in sem escala' });
+    if (!volunteerName) return res.status(400).json({ error: 'volunteerName obrigatório para check-in sem escala' });
     let volunteerId = null;
     if (planningCenterId) {
       const { data: prof } = await supabase.from('vol_profiles').select('id').eq('planning_center_id', planningCenterId).maybeSingle();
@@ -1321,7 +1321,7 @@ router.get('/training-checkins', async (req, res) => {
 router.post('/training-checkins', async (req, res) => {
   try {
     const { service_id, volunteer_name, team_name, phone } = req.body;
-    if (!volunteer_name || !team_name) return res.status(400).json({ error: 'volunteer_name e team_name obrigatorios' });
+    if (!volunteer_name || !team_name) return res.status(400).json({ error: 'volunteer_name e team_name obrigatórios' });
     const { data, error } = await supabase.from('vol_training_checkins')
       .insert({ service_id: service_id || null, volunteer_name, team_name, phone: phone || null, registered_by: req.user.userId }).select().single();
     if (error) return res.status(400).json({ error: error.message });
@@ -1330,11 +1330,11 @@ router.post('/training-checkins', async (req, res) => {
 });
 
 // ══════════════════════════════════════════════════════════════
-// REUNIOES 1x1 MENSAIS (lider/coordenador <-> voluntario)
+// REUNIÕES 1x1 MENSAIS (lider/coordenador <-> voluntário)
 // ══════════════════════════════════════════════════════════════
 
-// GET /api/voluntariado/team/:teamId/members - lista voluntarios de uma equipe
-// com info de 1x1 no mes corrente (ou ?year_month=YYYY-MM)
+// GET /api/voluntariado/team/:teamId/members - lista voluntários de uma equipe
+// com info de 1x1 no mês corrente (ou ?year_month=YYYY-MM)
 router.get('/team/:teamId/members', async (req, res) => {
   try {
     const { teamId } = req.params;
@@ -1343,7 +1343,7 @@ router.get('/team/:teamId/members', async (req, res) => {
     const [y, m] = yearMonth.split('-').map(Number);
     const fim = new Date(Date.UTC(y, m, 1)).toISOString().slice(0, 10);
 
-    // Voluntarios da equipe
+    // Voluntários da equipe
     const { data: members, error: e1 } = await supabase
       .from('vol_team_members')
       .select('id, volunteer_profile_id, volunteer_name, position_id, position:vol_positions(id, name)')
@@ -1362,7 +1362,7 @@ router.get('/team/:teamId/members', async (req, res) => {
       for (const p of (profiles || [])) profilesMap[p.id] = p;
     }
 
-    // 1x1 do mes
+    // 1x1 do mês
     let oneOnOneMap = {};
     if (profileIds.length) {
       const { data: meetings } = await supabase
@@ -1388,17 +1388,17 @@ router.get('/team/:teamId/members', async (req, res) => {
   }
 });
 
-// POST /api/voluntariado/1x1 - registrar reuniao 1x1
+// POST /api/voluntariado/1x1 - registrar reunião 1x1
 router.post('/1x1', async (req, res) => {
   try {
     const { volunteer_profile_id, team_id, meeting_date, observacoes } = req.body;
     if (!volunteer_profile_id || !team_id) {
-      return res.status(400).json({ error: 'volunteer_profile_id e team_id obrigatorios' });
+      return res.status(400).json({ error: 'volunteer_profile_id e team_id obrigatórios' });
     }
     const date = meeting_date || new Date().toISOString().slice(0, 10);
 
-    // Upsert por (voluntario, mes) - evita duplicar no mesmo mes
-    // Estrategia: deletar qualquer 1x1 do mes e inserir novo
+    // Upsert por (voluntário, mês) - evita duplicar no mesmo mês
+    // Estrategia: deletar qualquer 1x1 do mês e inserir novo
     const ym = date.slice(0, 7);
     const inicio = `${ym}-01`;
     const [y, m] = ym.split('-').map(Number);
@@ -1465,7 +1465,7 @@ router.post('/pc/search-people', async (req, res) => {
     if (!query || query.trim().length < 2) return res.status(400).json({ error: 'Query minimo 2 caracteres' });
     const appId = process.env.PLANNING_CENTER_APP_ID;
     const secret = process.env.PLANNING_CENTER_SECRET;
-    if (!appId || !secret) return res.status(500).json({ error: 'Planning Center nao configurado' });
+    if (!appId || !secret) return res.status(500).json({ error: 'Planning Center não configurado' });
     const auth = Buffer.from(`${appId}:${secret}`).toString('base64');
     const url = `https://api.planningcenteronline.com/people/v2/people?where[search_name_or_email]=${encodeURIComponent(query.trim())}&per_page=10`;
     const response = await fetch(url, { headers: { Authorization: `Basic ${auth}` } });
@@ -1485,7 +1485,7 @@ router.post('/pc/get-person', async (req, res) => {
     if (!person_id) return res.status(400).json({ error: 'person_id obrigatorio' });
     const appId = process.env.PLANNING_CENTER_APP_ID;
     const secret = process.env.PLANNING_CENTER_SECRET;
-    if (!appId || !secret) return res.status(500).json({ error: 'Planning Center nao configurado' });
+    if (!appId || !secret) return res.status(500).json({ error: 'Planning Center não configurado' });
     const auth = Buffer.from(`${appId}:${secret}`).toString('base64');
     const response = await fetch(`https://api.planningcenteronline.com/people/v2/people/${person_id}`, {
       headers: { Authorization: `Basic ${auth}` },
@@ -1545,7 +1545,7 @@ router.post('/service-types/:id/generate', async (req, res) => {
 
     const { data: sType, error: stErr } = await supabase.from('vol_service_types')
       .select('*').eq('id', req.params.id).single();
-    if (stErr || !sType) return res.status(404).json({ error: 'Tipo de culto nao encontrado' });
+    if (stErr || !sType) return res.status(404).json({ error: 'Tipo de culto não encontrado' });
     if (sType.recurrence_day == null || !sType.recurrence_time) {
       return res.status(400).json({ error: 'Tipo de culto sem recorrencia configurada' });
     }
@@ -1575,7 +1575,7 @@ router.post('/service-types/:id/generate', async (req, res) => {
     };
 
     if (year) {
-      // Gera todas as ocorrencias do tipo no ano inteiro.
+      // Gera todas as ocorrências do tipo no ano inteiro.
       // Caminhamos pelos dias usando UTC para não sofrer interferência do TZ do servidor.
       let cursor = new Date(Date.UTC(year, 0, 1));
       while (cursor.getUTCDay() !== sType.recurrence_day) {
@@ -1610,7 +1610,7 @@ router.post('/service-types/:id/generate', async (req, res) => {
 router.post('/services', async (req, res) => {
   try {
     const { name, service_type_name, service_type_id, scheduled_at } = req.body;
-    if (!name || !scheduled_at) return res.status(400).json({ error: 'name e scheduled_at obrigatorios' });
+    if (!name || !scheduled_at) return res.status(400).json({ error: 'name e scheduled_at obrigatórios' });
     const { data, error } = await supabase.from('vol_services')
       .insert({ name, service_type_name, service_type_id, scheduled_at }).select().single();
     if (error) return res.status(400).json({ error: error.message });
@@ -1690,18 +1690,18 @@ router.get('/positions', async (req, res) => {
     const { data, error } = await q;
     if (error) return res.status(400).json({ error: error.message });
     res.json(data);
-  } catch (e) { res.status(500).json({ error: 'Erro ao listar posicoes' }); }
+  } catch (e) { res.status(500).json({ error: 'Erro ao listar posições' }); }
 });
 
 router.post('/positions', async (req, res) => {
   try {
     const { team_id, name, description, min_volunteers, max_volunteers, sort_order } = req.body;
-    if (!team_id || !name) return res.status(400).json({ error: 'team_id e name obrigatorios' });
+    if (!team_id || !name) return res.status(400).json({ error: 'team_id e name obrigatórios' });
     const { data, error } = await supabase.from('vol_positions')
       .insert({ team_id, name, description, min_volunteers, max_volunteers, sort_order: sort_order || 0 }).select().single();
     if (error) return res.status(400).json({ error: error.message });
     res.json(data);
-  } catch (e) { res.status(500).json({ error: 'Erro ao criar posicao' }); }
+  } catch (e) { res.status(500).json({ error: 'Erro ao criar posição' }); }
 });
 
 router.put('/positions/:id', async (req, res) => {
@@ -1712,7 +1712,7 @@ router.put('/positions/:id', async (req, res) => {
       .eq('id', req.params.id).select().single();
     if (error) return res.status(400).json({ error: error.message });
     res.json(data);
-  } catch (e) { res.status(500).json({ error: 'Erro ao atualizar posicao' }); }
+  } catch (e) { res.status(500).json({ error: 'Erro ao atualizar posição' }); }
 });
 
 router.delete('/positions/:id', async (req, res) => {
@@ -1720,7 +1720,7 @@ router.delete('/positions/:id', async (req, res) => {
     const { error } = await supabase.from('vol_positions').delete().eq('id', req.params.id);
     if (error) return res.status(400).json({ error: error.message });
     res.json({ success: true });
-  } catch (e) { res.status(500).json({ error: 'Erro ao remover posicao' }); }
+  } catch (e) { res.status(500).json({ error: 'Erro ao remover posição' }); }
 });
 
 // ══════════════════════════════════════════════════════════════
@@ -1742,15 +1742,15 @@ router.get('/team-members', async (req, res) => {
 router.post('/team-members', async (req, res) => {
   try {
     const { team_id, position_id, volunteer_profile_id, planning_center_person_id, volunteer_name } = req.body;
-    if (!team_id || !volunteer_name) return res.status(400).json({ error: 'team_id e volunteer_name obrigatorios' });
+    if (!team_id || !volunteer_name) return res.status(400).json({ error: 'team_id e volunteer_name obrigatórios' });
     if (!volunteer_profile_id && !planning_center_person_id) {
-      return res.status(400).json({ error: 'volunteer_profile_id ou planning_center_person_id obrigatorio' });
+      return res.status(400).json({ error: 'volunteer_profile_id ou planning_center_person_id obrigatório' });
     }
     const { data, error } = await supabase.from('vol_team_members')
       .insert({ team_id, position_id, volunteer_profile_id, planning_center_person_id, volunteer_name })
       .select().single();
     if (error) {
-      if (error.code === '23505') return res.status(409).json({ error: 'Voluntario ja esta nesta equipe' });
+      if (error.code === '23505') return res.status(409).json({ error: 'Voluntário já esta nesta equipe' });
       return res.status(400).json({ error: error.message });
     }
     res.json(data);
@@ -1779,11 +1779,11 @@ router.delete('/team-members/:id', async (req, res) => {
 // AVAILABILITY (volunteer unavailability dates)
 // ══════════════════════════════════════════════════════════════
 
-// Cultos de um periodo com contagem/lista de quem esta indisponivel em cada um
+// Cultos de um período com contagem/lista de quem esta indisponível em cada um
 router.get('/services-availability', async (req, res) => {
   try {
     const { from, to } = req.query;
-    if (!from || !to) return res.status(400).json({ error: 'from e to obrigatorios' });
+    if (!from || !to) return res.status(400).json({ error: 'from e to obrigatórios' });
 
     const { data: services, error: svcErr } = await supabase
       .from('vol_services')
@@ -1841,7 +1841,7 @@ router.post('/availability', async (req, res) => {
     const { volunteer_profile_id, planning_center_person_id, unavailable_from, unavailable_to, reason } = req.body;
     if (!unavailable_from || !unavailable_to) return res.status(400).json({ error: 'Datas obrigatorias' });
     if (!volunteer_profile_id && !planning_center_person_id) {
-      return res.status(400).json({ error: 'volunteer_profile_id ou planning_center_person_id obrigatorio' });
+      return res.status(400).json({ error: 'volunteer_profile_id ou planning_center_person_id obrigatório' });
     }
     const { data, error } = await supabase.from('vol_availability')
       .insert({ volunteer_profile_id, planning_center_person_id, unavailable_from, unavailable_to, reason })
@@ -1867,7 +1867,7 @@ router.delete('/availability/:id', async (req, res) => {
 router.post('/schedules', async (req, res) => {
   try {
     const { service_id, volunteer_id, volunteer_name, team_id, team_name, position_id, position_name, planning_center_person_id, notes } = req.body;
-    if (!service_id || !volunteer_name) return res.status(400).json({ error: 'service_id e volunteer_name obrigatorios' });
+    if (!service_id || !volunteer_name) return res.status(400).json({ error: 'service_id e volunteer_name obrigatórios' });
 
     const { data, error } = await supabase.from('vol_schedules')
       .insert({
@@ -1885,7 +1885,7 @@ router.post('/schedules', async (req, res) => {
       }).select().single();
 
     if (error) {
-      if (error.code === '23505') return res.status(409).json({ error: 'Voluntario ja escalado neste culto' });
+      if (error.code === '23505') return res.status(409).json({ error: 'Voluntário já escalado neste culto' });
       return res.status(400).json({ error: error.message });
     }
     res.json(data);
@@ -1925,7 +1925,7 @@ router.post('/schedules/bulk', async (req, res) => {
   try {
     const { service_id, assignments } = req.body;
     if (!service_id || !Array.isArray(assignments) || !assignments.length) {
-      return res.status(400).json({ error: 'service_id e assignments[] obrigatorios' });
+      return res.status(400).json({ error: 'service_id e assignments[] obrigatórios' });
     }
 
     const rows = assignments.map(a => ({
@@ -1955,7 +1955,7 @@ router.post('/schedules/copy', async (req, res) => {
   try {
     const { from_service_id, to_service_id } = req.body;
     if (!from_service_id || !to_service_id) {
-      return res.status(400).json({ error: 'from_service_id e to_service_id obrigatorios' });
+      return res.status(400).json({ error: 'from_service_id e to_service_id obrigatórios' });
     }
 
     const { data: source } = await supabase.from('vol_schedules')
@@ -1986,12 +1986,12 @@ router.post('/schedules/copy', async (req, res) => {
 router.post('/schedules/auto-fill', async (req, res) => {
   try {
     const { service_id, team_id } = req.body;
-    if (!service_id || !team_id) return res.status(400).json({ error: 'service_id e team_id obrigatorios' });
+    if (!service_id || !team_id) return res.status(400).json({ error: 'service_id e team_id obrigatórios' });
 
     // Get service date
     const { data: service } = await supabase.from('vol_services')
       .select('scheduled_at').eq('id', service_id).single();
-    if (!service) return res.status(404).json({ error: 'Culto nao encontrado' });
+    if (!service) return res.status(404).json({ error: 'Culto não encontrado' });
 
     const serviceDate = new Date(service.scheduled_at).toISOString().split('T')[0];
 
@@ -2046,7 +2046,7 @@ router.post('/schedules/auto-fill', async (req, res) => {
       return countA - countB;
     });
 
-    if (!available.length) return res.json({ created: 0, schedules: [], message: 'Todos os membros estao indisponiveis ou ja escalados' });
+    if (!available.length) return res.json({ created: 0, schedules: [], message: 'Todos os membros estão indisponiveis ou já escalados' });
 
     const rows = available.map(m => ({
       service_id,
@@ -2092,7 +2092,7 @@ router.post('/teams-manage/import-from-schedules', async (req, res) => {
       console.warn('[import-teams] PCO indisponivel, usando vol_schedules:', pcoErr.message);
     }
 
-    // 2. Complementa com nomes ja existentes em vol_schedules (fallback)
+    // 2. Complementa com nomes já existentes em vol_schedules (fallback)
     const { data: schedData } = await supabase.from('vol_schedules')
       .select('team_name').not('team_name', 'is', null);
     (schedData || []).forEach(s => {
@@ -2110,7 +2110,7 @@ router.post('/teams-manage/import-from-schedules', async (req, res) => {
   } catch (e) { res.status(500).json({ error: 'Erro ao importar equipes' }); }
 });
 
-// Opção B: backfill — varre vol_schedules existentes e atribui voluntarios às equipes
+// Opção B: backfill — varre vol_schedules existentes e atribui voluntários às equipes
 router.post('/teams-manage/sync-members-from-schedules', async (req, res) => {
   try {
     const result = await syncTeamMembersFromSchedules(supabase);
@@ -2122,7 +2122,7 @@ router.post('/teams-manage/sync-members-from-schedules', async (req, res) => {
 });
 
 // ════════════════════════════════════════════════════════════════════════════
-// Inscricoes (form Google) · funil recebidas vs alocadas
+// Inscrições (form Google) · funil recebidas vs alocadas
 // Le da tabela vol_inscricoes (linha por pessoa) para suportar cruzamentos.
 // ════════════════════════════════════════════════════════════════════════════
 router.get('/inscricoes-summary', async (req, res) => {
@@ -2189,11 +2189,11 @@ router.get('/inscricoes-summary', async (req, res) => {
     });
   } catch (e) {
     console.error('[inscricoes-summary]', e.message);
-    res.status(500).json({ error: 'Erro ao agregar inscricoes' });
+    res.status(500).json({ error: 'Erro ao agregar inscrições' });
   }
 });
 
-// Lista detalhada de inscricoes (drill-down com nomes individuais)
+// Lista detalhada de inscrições (drill-down com nomes individuais)
 router.get('/inscricoes', async (req, res) => {
   try {
     const ano = req.query.ano ? String(req.query.ano) : null;
@@ -2233,7 +2233,7 @@ router.get('/inscricoes', async (req, res) => {
     res.json({ total: count || 0, limit, offset, rows: data || [] });
   } catch (e) {
     console.error('[inscricoes-list]', e.message);
-    res.status(500).json({ error: 'Erro ao listar inscricoes' });
+    res.status(500).json({ error: 'Erro ao listar inscrições' });
   }
 });
 

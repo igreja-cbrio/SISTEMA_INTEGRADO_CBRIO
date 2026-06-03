@@ -32,7 +32,7 @@ const CAT_MAP = {
 };
 const FALLBACK_CAT = { c: C.t2, bg: C.border };
 
-// Case-insensitive: banco usa lowercase, codigo legacy capitalizado.
+// Case-insensitive: banco usa lowercase, código legacy capitalizado.
 const PERIOD_COLORS_RAW = { semanal: '#3b82f6', mensal: '#10b981', trimestral: '#f59e0b', semestral: '#8b5cf6', anual: '#ef4444' };
 const PERIOD_COLORS = new Proxy(PERIOD_COLORS_RAW, {
   get(t, k) { return t[String(k || '').toLowerCase()]; },
@@ -163,7 +163,7 @@ export default function Processos() {
 
   const [coletando, setColetando] = useState(false);
   const handleColetar = async () => {
-    if (!confirm('Rodar coletor automatico agora? Os indicadores com fonte automatica serao atualizados.')) return;
+    if (!confirm('Rodar coletor automático agora? Os indicadores com fonte automática serão atualizados.')) return;
     setColetando(true);
     try {
       const r = await api.coletar();
@@ -185,7 +185,7 @@ export default function Processos() {
   }, [list]);
 
   // OKR e Agenda saiu para /painel (Sistema OKR/NSM 2026) e /meus-kpis.
-  // KPIs foca em referencia processo->indicador.
+  // KPIs foca em referência processo->indicador.
   const tabs = ['Home', 'Lista', 'KPIs'];
 
   return (
@@ -618,7 +618,7 @@ function TabAgenda({ agenda, canWrite, onSave }) {
   };
 
   const handleDelete = async (kpi) => {
-    if (!window.confirm(`Desativar "${kpi.id} \u2014 ${kpi.indicador}"? (soft delete: dados ficam no historico)`)) return;
+    if (!window.confirm(`Desativar "${kpi.id} \u2014 ${kpi.indicador}"? (soft delete: dados ficam no histórico)`)) return;
     try { await remove(kpi.id, false); } catch (e) { console.error(e); alert('Erro ao desativar KPI'); }
   };
 

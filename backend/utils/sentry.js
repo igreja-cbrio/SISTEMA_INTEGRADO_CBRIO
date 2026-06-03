@@ -1,11 +1,11 @@
-// Wrapper do Sentry com no-op quando SENTRY_DSN nao esta configurado.
+// Wrapper do Sentry com no-op quando SENTRY_DSN não esta configurado.
 //
 // Sentry v8 (@sentry/node ^8.x) instrumenta o Express automaticamente
 // via integration; so precisamos chamar setupExpressErrorHandler(app)
 // depois das rotas e antes do nosso error handler.
 //
 // Variaveis de ambiente:
-//   SENTRY_DSN         (obrigatoria pra ativar)
+//   SENTRY_DSN         (obrigatória pra ativar)
 //   SENTRY_ENV         (opcional, default = NODE_ENV ou 'development')
 //   SENTRY_TRACES_RATE (opcional, default 0.1 em prod, 0 em dev)
 
@@ -45,7 +45,7 @@ function initSentryBackend() {
   }
 }
 
-// No-op middleware quando Sentry nao esta ativo.
+// No-op middleware quando Sentry não esta ativo.
 function noopRequestHandler() {
   return (_req, _res, next) => next();
 }
@@ -53,8 +53,8 @@ function noopErrorHandler() {
   return (err, _req, _res, next) => next(err);
 }
 
-// No Sentry v8 nao existe Handlers.requestHandler — a integracao e
-// automatica. Mantemos a funcao no fluxo do server.js para preservar
+// No Sentry v8 não existe Handlers.requestHandler — a integração e
+// automática. Mantemos a função no fluxo do server.js para preservar
 // a ordem dos middlewares se um dia voltar.
 function sentryRequestHandler() {
   return noopRequestHandler();

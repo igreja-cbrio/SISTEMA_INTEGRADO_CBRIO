@@ -76,7 +76,7 @@ export function AuthProvider({ children }) {
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (_event, session) => {
       // ERP interno · qualquer user autenticado pelo Supabase (email ou OAuth)
-      // entra direto · nao tem cadastro publico, entao nao tem risco de
+      // entra direto · não tem cadastro público, então não tem risco de
       // hijacking de email. Microsoft eh restrito ao tenant CBRio e Google
       // tem email verificado.
       setUser(session?.user ?? null);
@@ -101,7 +101,7 @@ export function AuthProvider({ children }) {
     const faltam = [];
     if (!url) faltam.push('VITE_SUPABASE_URL');
     if (!key) faltam.push('VITE_SUPABASE_ANON_KEY');
-    return `Supabase nao configurado · faltam: ${faltam.join(', ') || '(?)'}. `
+    return `Supabase não configurado · faltam: ${faltam.join(', ') || '(?)'}. `
       + `Vite ve essas envs: [${viteKeys.join(', ') || 'nenhuma'}]. `
       + 'Confira no Vercel se cada var tem prefixo VITE_, esta marcada para "Preview" e o deploy foi refeito.';
   }
@@ -119,7 +119,7 @@ export function AuthProvider({ children }) {
     return supabase.auth.signInWithOAuth({
       provider: 'azure',
       // Supabase sempre inclui openid; estes escopos garantem que o Azure
-      // devolva dados suficientes para criar/associar o usuario por e-mail.
+      // devolva dados suficientes para criar/associar o usuário por e-mail.
       options: { redirectTo: window.location.origin, scopes: 'email profile' },
     });
   }
@@ -139,13 +139,13 @@ export function AuthProvider({ children }) {
   async function updatePasswordWithCurrent(currentPassword, newPassword) {
     if (!supabase) return { error: { message: supabaseErroMsg() } };
     const email = user?.email || profile?.email;
-    if (!email) return { error: { message: 'Sessao sem email · refaca login.' } };
-    // Reauth · valida senha atual sem invalidar a sessao
+    if (!email) return { error: { message: 'Sessão sem email · refaca login.' } };
+    // Reauth · valida senha atual sem invalidar a sessão
     const { error: reauthErr } = await supabase.auth.signInWithPassword({ email, password: currentPassword });
     if (reauthErr) return { error: { message: 'Senha atual incorreta.' } };
     const { error: updErr } = await supabase.auth.updateUser({ password: newPassword });
     if (updErr) return { error: updErr };
-    try { await supabase.rpc('app_marcar_senha_trocada'); } catch { /* nao bloqueante */ }
+    try { await supabase.rpc('app_marcar_senha_trocada'); } catch { /* não bloqueante */ }
     await fetchProfile(user.id).catch(() => {});
     return { error: null };
   }
@@ -154,7 +154,7 @@ export function AuthProvider({ children }) {
     if (!supabase) return { error: { message: supabaseErroMsg() } };
     const { error } = await supabase.auth.updateUser({ password: newPassword });
     if (error) return { error };
-    try { await supabase.rpc('app_marcar_senha_trocada'); } catch { /* nao bloqueante */ }
+    try { await supabase.rpc('app_marcar_senha_trocada'); } catch { /* não bloqueante */ }
     if (user?.id) await fetchProfile(user.id).catch(() => {});
     return { error: null };
   }
@@ -195,7 +195,7 @@ export function AuthProvider({ children }) {
   const isMembroOnly = !!profile?.is_membro_only;
   const isAdmin = ['admin', 'diretor'].includes(profile?.role);
 
-  // Helpers de gating por modulo · usa slug novo (matriz reuniao 2026-05-18)
+  // Helpers de gating por módulo · usa slug novo (matriz reunião 2026-05-18)
   // com fallback para nome antigo pra compatibilidade durante a transicao.
   const canRH = canAccessModule(['rh', 'RH', 'DP', 'Pessoas']);
   const canFinanceiro = canAccessModule(['financeiro', 'Financeiro']);
@@ -208,14 +208,14 @@ export function AuthProvider({ children }) {
   const canIAModulo = canAccessModule(['assistente-ia', 'Assistente IA', 'IA / Agentes']);
   const canKPIs = isAdmin || canAccessModule(['minha-area', 'Minha Área', 'KPIs', 'Indicadores']);
   const canCuidados = isAdmin || canAccessModule(['cuidados', 'Cuidados']);
-  // Modulo Processos removido na reuniao 2026-05-18 — rota redireciona pra /eventos
+  // Módulo Processos removido na reunião 2026-05-18 — rota redireciona pra /eventos
   const canProcessos = false;
   const canSolicitacoes = isAdmin || canAccessModule(['solicitacoes', 'Solicitações'], 'leitura', 1);
   const canNPS = isAdmin || canAccessModule(['nps', 'NPS']);
   const canDadosBrutos = isAdmin || canAccessModule(['dados-brutos', 'Dados Brutos']);
   const canPainel = isAdmin || canAccessModule(['painel-cbrio', 'Painel CBRio'], 'leitura', 1);
-  // Colaborador = admin/diretor ou usuario com qualquer permissao de modulo
-  // (voluntarios e membros sem permissao nao sao colaboradores)
+  // Colaborador = admin/diretor ou usuário com qualquer permissão de módulo
+  // (voluntários e membros sem permissão não são colaboradores)
   const isColaborador = isAdmin || canRH || canFinanceiro || canLogistica || canPatrimonio || canMembresia || canProjetos || canExpansao || canAgenda || canIAModulo || canCuidados || canSolicitacoes || canDadosBrutos || canNPS;
   // Assistente IA é liberado para qualquer colaborador; o backend filtra os
   // agentes e os dados conforme as permissões de cada usuário.

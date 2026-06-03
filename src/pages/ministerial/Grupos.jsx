@@ -49,8 +49,8 @@ function fmtDate(d) { if (!d) return ''; try { return new Date(d + 'T12:00:00').
 // v2 - tabs membros/arquivos
 export default function Grupos() {
   const { profile, isAdmin, getAccessLevel } = useAuth();
-  // Lider de area com nivel 1 (so leitura) na matriz: ve tudo mas nao edita.
-  // Admin/diretor/lider com nivel >=3 edita. Sincroniza com cargo_modulo_permissao.
+  // Líder de área com nível 1 (so leitura) na matriz: ve tudo mas não edita.
+  // Admin/diretor/lider com nível >=3 edita. Sincroniza com cargo_modulo_permissao.
   const podeEditarGrupos = isAdmin || (getAccessLevel?.(['grupos']) ?? 0) >= 3;
   const [gruposList, setGruposList] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -219,7 +219,7 @@ export default function Grupos() {
   };
 
   const handleRemoverEncontro = async (encontroId) => {
-    if (!window.confirm('Remover este encontro? As presencas serao revertidas.')) return;
+    if (!window.confirm('Remover este encontro? As presenças serão revertidas.')) return;
     try {
       await api.removerEncontro(encontroId);
       toast.success('Encontro removido');
@@ -320,7 +320,7 @@ export default function Grupos() {
 
   const handleUploadMaterial = async (file) => {
     if (!file) return;
-    if (file.size > 10 * 1024 * 1024) { toast.error('Arquivo deve ter no maximo 10MB'); return; }
+    if (file.size > 10 * 1024 * 1024) { toast.error('Arquivo deve ter no máximo 10MB'); return; }
     setUploading(true);
     try {
       const fd = new FormData();
@@ -355,7 +355,7 @@ export default function Grupos() {
     } catch {}
   };
 
-  // Extrair opcoes unicas para filtros
+  // Extrair opções únicas para filtros
   const tiposUnicos = [...new Set(gruposList.map(g => g.categoria).filter(Boolean))].sort();
   const locaisUnicos = [...new Set(gruposList.map(g => g.local).filter(Boolean))].sort();
   const temasUnicos = [...new Set(gruposList.map(g => g.tema).filter(Boolean))].sort();
@@ -401,7 +401,7 @@ export default function Grupos() {
             {g.codigo && <div style={{ fontSize: 11, color: C.t3, fontWeight: 600, fontFamily: 'monospace', marginBottom: 2 }}>{g.codigo}</div>}
             <h1 style={{ fontSize: 22, fontWeight: 700, color: C.text, margin: 0 }}>{g.nome}</h1>
             <div style={{ display: 'flex', gap: 16, marginTop: 6, flexWrap: 'wrap' }}>
-              {g.lider && <span style={{ fontSize: 13, color: C.t2 }}>Lider: <strong style={{ color: C.text }}>{g.lider.nome}</strong></span>}
+              {g.lider && <span style={{ fontSize: 13, color: C.t2 }}>Líder: <strong style={{ color: C.text }}>{g.lider.nome}</strong></span>}
               {(g.bairro || g.local) && (() => {
                 const url = (g.lat != null && g.lng != null)
                   ? `https://www.google.com/maps/search/?api=1&query=${g.lat},${g.lng}`
@@ -468,7 +468,7 @@ export default function Grupos() {
           ))}
         </div>
 
-        {/* Saude do grupo */}
+        {/* Saúde do grupo */}
         {!isOptimistic && metricas && metricas.total_encontros > 0 && (
           <SaudeDoGrupo metricas={metricas} />
         )}
@@ -541,7 +541,7 @@ export default function Grupos() {
                   <th style={{ padding: '8px 16px', textAlign: 'left', fontSize: 11, fontWeight: 600, color: C.t3, textTransform: 'uppercase' }}>Nome</th>
                   <th style={{ padding: '8px 16px', textAlign: 'left', fontSize: 11, fontWeight: 600, color: C.t3, textTransform: 'uppercase' }}>Telefone</th>
                   <th style={{ padding: '8px 16px', textAlign: 'left', fontSize: 11, fontWeight: 600, color: C.t3, textTransform: 'uppercase' }}>Entrou em</th>
-                  <th style={{ padding: '8px 16px', textAlign: 'center', fontSize: 11, fontWeight: 600, color: C.t3, textTransform: 'uppercase' }}>Presencas</th>
+                  <th style={{ padding: '8px 16px', textAlign: 'center', fontSize: 11, fontWeight: 600, color: C.t3, textTransform: 'uppercase' }}>Presenças</th>
                   <th style={{ padding: '8px 16px', textAlign: 'center', fontSize: 11, fontWeight: 600, color: C.t3, textTransform: 'uppercase' }}>Tipo</th>
                   <th style={{ padding: '8px 16px', textAlign: 'center', fontSize: 11, fontWeight: 600, color: C.t3, textTransform: 'uppercase' }}>Treino</th>
                   <th style={{ padding: '8px 16px', textAlign: 'center', fontSize: 11, fontWeight: 600, color: C.t3 }}></th>
@@ -641,7 +641,7 @@ export default function Grupos() {
           </div>
         )}
 
-        {/* Historico completo de membros (entradas + saidas + transferencias) */}
+        {/* Histórico completo de membros (entradas + saídas + transferencias) */}
         {!isOptimistic && historicoMembros.length > 0 && (() => {
           const saidas = historicoMembros.filter(h => h.saiu_em);
           if (saidas.length === 0) return null;
@@ -689,15 +689,15 @@ export default function Grupos() {
           );
         })()}
 
-        {/* Observacoes */}
+        {/* Observações */}
         {g.observacoes && (
           <div style={{ background: C.card, borderRadius: 12, padding: 16, border: `1px solid ${C.border}`, marginTop: 16 }}>
-            <div style={{ fontSize: 14, fontWeight: 600, color: C.text, marginBottom: 8 }}>Observacoes</div>
+            <div style={{ fontSize: 14, fontWeight: 600, color: C.text, marginBottom: 8 }}>Observações</div>
             <div style={{ fontSize: 13, color: C.t2, whiteSpace: 'pre-wrap' }}>{g.observacoes}</div>
           </div>
         )}
 
-        {/* Modal de chamada / edicao */}
+        {/* Modal de chamada / edição */}
         <ChamadaModal
           open={chamadaOpen}
           onClose={() => { setChamadaOpen(false); setEncontroEdit(null); }}
@@ -826,7 +826,7 @@ export default function Grupos() {
             </div>
             <div style={{ display: 'flex', gap: 10, marginBottom: 10, flexWrap: 'wrap' }}>
               <div style={{ flex: 1, minWidth: 200 }}>
-                <Label style={{ fontSize: 11 }}>Comentario</Label>
+                <Label style={{ fontSize: 11 }}>Comentário</Label>
                 <Input placeholder="Ex: Roteiro semana 14/04, Devocional igreja..." value={uploadComment} onChange={e => setUploadComment(e.target.value)} />
               </div>
             </div>
@@ -995,12 +995,12 @@ export default function Grupos() {
 
       {/* ═══ TAB GRUPOS ═══ */}
       {pageTab === 'grupos' && <>
-      {/* Resumo de saude */}
+      {/* Resumo de saúde */}
       {saudeAgregada && saudeAgregada.total > 0 && (
         <div style={{ background: C.card, borderRadius: 12, padding: 14, border: `1px solid ${C.border}`, marginBottom: 12, display: 'flex', gap: 16, alignItems: 'center', flexWrap: 'wrap' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
             <Activity size={18} style={{ color: C.primary }} />
-            <span style={{ fontSize: 13, fontWeight: 700, color: C.text }}>Saude dos grupos</span>
+            <span style={{ fontSize: 13, fontWeight: 700, color: C.text }}>Saúde dos grupos</span>
           </div>
           <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap' }}>
             <span style={{ fontSize: 12, color: C.t2 }}><strong style={{ color: C.green }}>{saudeAgregada.saudaveis}</strong> saudaveis</span>
@@ -1212,7 +1212,7 @@ export default function Grupos() {
   );
 }
 
-// ── MODAL DE FORMULARIO ──
+// ── MODAL DE FORMULÁRIO ──
 function GrupoQRModal({ open, onClose, grupo, temporada, copied, setCopied }) {
   if (!grupo) return null;
   const baseUrl = typeof window !== 'undefined' ? window.location.origin : '';
@@ -1336,7 +1336,7 @@ function GrupoFormModal({ open, onClose, data, onSave, saving, gruposForSelect, 
 
   const handleSubmit = (e) => {
     e.preventDefault();
-    if (!form.nome?.trim()) { toast.error('Nome e obrigatorio'); return; }
+    if (!form.nome?.trim()) { toast.error('Nome e obrigatório'); return; }
     const { _geocoding, ...rest } = form;
     onSave({
       ...rest,
@@ -1404,14 +1404,14 @@ function GrupoFormModal({ open, onClose, data, onSave, saving, gruposForSelect, 
               <Input value={form.local || ''} onChange={e => set('local', e.target.value)} placeholder="Ex: Barra da Tijuca" />
             </div>
             <div>
-              <Label>Endereco</Label>
+              <Label>Endereço</Label>
               <Input value={form.endereco || ''} onChange={e => set('endereco', e.target.value)} placeholder="Rua, numero" />
             </div>
           </div>
 
           <div>
             <Label>Complemento</Label>
-            <Input value={form.complemento || ''} onChange={e => set('complemento', e.target.value)} placeholder="Apto, bloco, casa, ponto de referencia..." />
+            <Input value={form.complemento || ''} onChange={e => set('complemento', e.target.value)} placeholder="Apto, bloco, casa, ponto de referência..." />
           </div>
 
           <div>
@@ -1453,7 +1453,7 @@ function GrupoFormModal({ open, onClose, data, onSave, saving, gruposForSelect, 
           </div>
 
           <div>
-            <Label>Lider</Label>
+            <Label>Líder</Label>
             <Input placeholder="Buscar lider..." value={liderSearch} onChange={e => setLiderSearch(e.target.value)} />
             {liderSearch.length >= 2 && (
               <div style={{ maxHeight: 150, overflowY: 'auto', border: `1px solid ${C.border}`, borderRadius: 8, marginTop: 4, background: C.card }}>
@@ -1536,12 +1536,12 @@ function GrupoFormModal({ open, onClose, data, onSave, saving, gruposForSelect, 
           </div>
 
           <div>
-            <Label>Descricao</Label>
+            <Label>Descrição</Label>
             <Textarea value={form.descricao || ''} onChange={e => set('descricao', e.target.value)} rows={2} />
           </div>
 
           <div>
-            <Label>Observacoes</Label>
+            <Label>Observações</Label>
             <Textarea value={form.observacoes || ''} onChange={e => set('observacoes', e.target.value)} rows={3} />
           </div>
 
@@ -1555,7 +1555,7 @@ function GrupoFormModal({ open, onClose, data, onSave, saving, gruposForSelect, 
   );
 }
 
-// ── MODAL DE CHAMADA / REGISTRO / EDICAO DE ENCONTRO ──
+// ── MODAL DE CHAMADA / REGISTRO / EDIÇÃO DE ENCONTRO ──
 function ChamadaModal({ open, onClose, membros, onSubmit, encontroEdit }) {
   const [data, setData] = useState('');
   const [tema, setTema] = useState('');
@@ -1576,7 +1576,7 @@ function ChamadaModal({ open, onClose, membros, onSubmit, encontroEdit }) {
         setData(new Date().toISOString().split('T')[0]);
         setTema('');
         setObservacoes('');
-        // Default: todos selecionados (mais comum o lider desmarcar quem faltou)
+        // Default: todos selecionados (mais comum o líder desmarcar quem faltou)
         setPresentes(new Set(membros.map(m => m.id)));
       }
       setSaving(false);
@@ -1655,8 +1655,8 @@ function ChamadaModal({ open, onClose, membros, onSubmit, encontroEdit }) {
           </div>
 
           <div>
-            <Label style={{ fontSize: 11 }}>Observacoes (opcional)</Label>
-            <Textarea value={observacoes} onChange={e => setObservacoes(e.target.value)} rows={2} placeholder="Notas do encontro, oracoes, decisoes..." />
+            <Label style={{ fontSize: 11 }}>Observações (opcional)</Label>
+            <Textarea value={observacoes} onChange={e => setObservacoes(e.target.value)} rows={2} placeholder="Notas do encontro, orações, decisões..." />
           </div>
 
           <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', marginTop: 4 }}>
@@ -1669,7 +1669,7 @@ function ChamadaModal({ open, onClose, membros, onSubmit, encontroEdit }) {
   );
 }
 
-// ── SAUDE DO GRUPO (cards de metricas + sparkline) ──
+// ── SAÚDE DO GRUPO (cards de metricas + sparkline) ──
 function SaudeDoGrupo({ metricas }) {
   const C = {
     text: 'var(--cbrio-text)', t2: 'var(--cbrio-text2)', t3: 'var(--cbrio-text3)',
@@ -1687,7 +1687,7 @@ function SaudeDoGrupo({ metricas }) {
     <div style={{ background: C.card, borderRadius: 12, padding: 16, border: `1px solid ${m.em_risco ? '#ef444460' : C.border}`, marginBottom: 24 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 14 }}>
         <Activity size={16} style={{ color: corScore }} />
-        <span style={{ fontSize: 14, fontWeight: 700, color: C.text }}>Saude do grupo</span>
+        <span style={{ fontSize: 14, fontWeight: 700, color: C.text }}>Saúde do grupo</span>
         {m.em_risco && (
           <span style={{ fontSize: 10, padding: '2px 8px', borderRadius: 99, background: '#ef444420', color: C.red, fontWeight: 600, display: 'flex', alignItems: 'center', gap: 4 }}>
             <AlertTriangle size={10} /> EM RISCO
@@ -1698,7 +1698,7 @@ function SaudeDoGrupo({ metricas }) {
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 10, marginBottom: 14 }}>
         <MetricaCard label="Score" valor={m.score_saude} sufixo="/100" cor={corScore} />
         <MetricaCard label="Frequencia media" valor={m.freq_media} sufixo=" pres." cor={C.primary} />
-        <MetricaCard label="Taxa de presenca" valor={m.taxa_presenca} sufixo="%" cor={C.primary} />
+        <MetricaCard label="Taxa de presença" valor={m.taxa_presenca} sufixo="%" cor={C.primary} />
         <MetricaCard label="Regularidade" valor={m.regularidade} sufixo="%" cor={m.regularidade >= 70 ? C.green : m.regularidade >= 50 ? C.amber : C.red} />
       </div>
 

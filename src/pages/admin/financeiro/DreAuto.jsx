@@ -218,7 +218,7 @@ function Section({ title, total, color, collapsed, onToggle, children }) {
 function Bloco({ titulo, total, linhas, cor, totalGeral, classeBadge }) {
   if (!linhas || linhas.length === 0) return null;
 
-  // Agrupa por grupo_codigo (nivel 2 do plano)
+  // Agrupa por grupo_codigo (nível 2 do plano)
   const grupos = new Map();
   for (const r of linhas) {
     const k = r.grupo_codigo;

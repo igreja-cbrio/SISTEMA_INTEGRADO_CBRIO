@@ -38,7 +38,7 @@ function ServiceChip({ service, onToggle, disabled }: {
     <button
       onClick={() => onToggle(service)}
       disabled={disabled}
-      title={unavailable ? 'Toque para marcar como disponivel' : 'Toque para marcar ausencia'}
+      title={unavailable ? 'Toque para marcar como disponível' : 'Toque para marcar ausencia'}
       className={`flex flex-col items-center w-[58px] py-2 rounded-xl border text-xs font-medium transition-all shrink-0
         ${unavailable
           ? 'bg-red-50 border-red-300 text-red-700 dark:bg-red-950/30 dark:border-red-700 dark:text-red-300'
@@ -108,7 +108,7 @@ export default function VolMinhaDisponibilidade() {
         <div>
           <h1 className="text-xl font-bold text-foreground">Minha Disponibilidade</h1>
           <p className="text-sm text-muted-foreground">
-            Toque nos cultos que voce <strong>nao pode comparecer</strong>
+            Toque nos cultos que voce <strong>não pode comparecer</strong>
           </p>
         </div>
         <div className="flex items-center gap-2 shrink-0">

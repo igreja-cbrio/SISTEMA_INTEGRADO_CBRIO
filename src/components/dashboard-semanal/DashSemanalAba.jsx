@@ -132,8 +132,8 @@ export default function DashSemanalAba() {
     const variacao_pct = mediaGeral > 0 ? Math.round(((total - mediaGeral) / mediaGeral) * 100) : 0;
     const totalPresencial = itemsFiltrados.reduce((s, it) => s + (it.total_presencial || 0), 0);
     const taxa_ocupacao_geral = indDef?.usa_ocupacao
-      ? Math.round((total / 1200) * 1000) / 10
-      : Math.round((totalPresencial / 1200) * 1000) / 10;
+      ? Math.round((total / 1050) * 1000) / 10
+      : Math.round((totalPresencial / 1050) * 1000) / 10;
 
     return {
       indicador: indicadoresSel[i],
@@ -151,7 +151,7 @@ export default function DashSemanalAba() {
   const isEmpty = indicadoresSel.length === 0;
   const primario = datasets[0];
 
-  // Nome do culto selecionado (pra mostrar nos titulos quando filtrado)
+  // Nome do culto selecionado (pra mostrar nos títulos quando filtrado)
   const cultoSelInfo = useMemo(() => {
     if (culto === 'todos') return null;
     return (cultos || []).find(c => c.id === culto) || null;
@@ -214,8 +214,8 @@ export default function DashSemanalAba() {
     setCulto(prev => prev === entry.service_type_id ? 'todos' : entry.service_type_id);
   };
 
-  // Modo DDUS completo: DDUS so fecha 7 dias depois do culto, entao a semana
-  // que estamos apresentando ainda nao tem dados completos. Esse modo mostra
+  // Modo DDUS completo: DDUS so fecha 7 dias depois do culto, então a semana
+  // que estamos apresentando ainda não tem dados completos. Esse modo mostra
   // SO online_ddus + semana = (semana atual selecionada) - 1, garantindo
   // a janela completa.
   const [modoDdus, setModoDdus] = useState(false);
@@ -765,7 +765,7 @@ function shortLabel(nome, day, time) {
   return nome;
 }
 
-// Ordem logica dos cultos: Quarta -> Bridge/AMI (sabado) -> Domingos (por horario).
+// Ordem lógica dos cultos: Quarta -> Bridge/AMI (sábado) -> Domingos (por horario).
 // Semana comecando na segunda (Seg=0..Dom=6) + minutos do dia desempata.
 function ordemCulto(day, time) {
   const d = day === null || day === undefined ? 99 : ((Number(day) + 6) % 7);

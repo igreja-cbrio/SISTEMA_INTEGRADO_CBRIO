@@ -283,7 +283,7 @@ export default function Financeiro() {
   const [filtroTipo, setFiltroTipo] = useState('');
   const [filtroStatus, setFiltroStatus] = useState('');
   const [filtroMes, setFiltroMes] = useState('');
-  // Periodo: 'mes' (mes/ano) · 'ano' (ano inteiro) · 'custom' (range com calendario)
+  // Período: 'mês' (mes/ano) · 'ano' (ano inteiro) · 'custom' (range com calendário)
   const [filtroPeriodoModo, setFiltroPeriodoModo] = useState('mes');
   const [filtroAno, setFiltroAno] = useState(new Date().getFullYear());
   const [filtroMesNum, setFiltroMesNum] = useState(new Date().getMonth());
@@ -332,7 +332,7 @@ export default function Financeiro() {
       if (filtroStatus) params.status = filtroStatus;
       if (filtroBusca) params.busca = filtroBusca;
 
-      // Periodo · monta inicio/fim conforme modo
+      // Período · monta inicio/fim conforme modo
       if (filtroPeriodoModo === 'mes') {
         const ini = new Date(filtroAno, filtroMesNum, 1).toISOString().slice(0, 10);
         const fim = new Date(filtroAno, filtroMesNum + 1, 0).toISOString().slice(0, 10);
@@ -473,12 +473,12 @@ export default function Financeiro() {
             <tr>
               <th style={styles.th}>Nome</th>
               <th style={styles.th}>Banco</th>
-              <th style={styles.th}>Agencia</th>
+              <th style={styles.th}>Agência</th>
               <th style={styles.th}>Conta</th>
               <th style={styles.th}>Tipo</th>
               <th style={styles.th}>Saldo</th>
               <th style={styles.th}>Status</th>
-              {isDiretor && <th style={styles.th}>Acoes</th>}
+              {isDiretor && <th style={styles.th}>Ações</th>}
             </tr>
           </thead>
           <tbody>
@@ -674,13 +674,13 @@ export default function Financeiro() {
             <thead>
               <tr>
                 <th style={styles.th}>Data</th>
-                <th style={styles.th}>Descricao</th>
+                <th style={styles.th}>Descrição</th>
                 <th style={styles.th}>Conta</th>
                 <th style={styles.th}>Categoria</th>
                 <th style={styles.th}>Tipo</th>
                 <th style={styles.th}>Valor</th>
                 <th style={styles.th}>Status</th>
-                {isDiretor && <th style={styles.th}>Acoes</th>}
+                {isDiretor && <th style={styles.th}>Ações</th>}
               </tr>
             </thead>
             <tbody>
@@ -752,13 +752,13 @@ export default function Financeiro() {
           <table style={styles.table}>
             <thead>
               <tr>
-                <th style={styles.th}>Descricao</th>
+                <th style={styles.th}>Descrição</th>
                 <th style={styles.th}>Fornecedor</th>
                 <th style={styles.th}>Valor</th>
                 <th style={styles.th}>Vencimento</th>
                 <th style={styles.th}>Pagamento</th>
                 <th style={styles.th}>Status</th>
-                {isDiretor && <th style={styles.th}>Acoes</th>}
+                {isDiretor && <th style={styles.th}>Ações</th>}
               </tr>
             </thead>
             <tbody>
@@ -816,12 +816,12 @@ export default function Financeiro() {
           <table style={styles.table}>
             <thead>
               <tr>
-                <th style={styles.th}>Descricao</th>
+                <th style={styles.th}>Descrição</th>
                 <th style={styles.th}>Valor</th>
                 <th style={styles.th}>Data Despesa</th>
                 <th style={styles.th}>Status</th>
-                <th style={styles.th}>Observacoes</th>
-                {isDiretor && <th style={styles.th}>Acoes</th>}
+                <th style={styles.th}>Observações</th>
+                {isDiretor && <th style={styles.th}>Ações</th>}
               </tr>
             </thead>
             <tbody>
@@ -1127,7 +1127,7 @@ export default function Financeiro() {
     const linhasVisiveis = [];
     for (const item of dreData.estrutura) {
       const total = dreSomar(item.cod);
-      // Sempre mostrar nivel 1 (3, 4), 2, 3. Para 4+ só mostrar se tem valor.
+      // Sempre mostrar nível 1 (3, 4), 2, 3. Para 4+ só mostrar se tem valor.
       if (item.tipo === 'total') {
         linhasVisiveis.push({ ...item, total });
         continue;
@@ -1201,7 +1201,7 @@ export default function Financeiro() {
             <thead>
               <tr>
                 <th style={{ ...styles.th, width: '60%' }}>Conta</th>
-                <th style={{ ...styles.th, textAlign: 'right' }}>Codigo</th>
+                <th style={{ ...styles.th, textAlign: 'right' }}>Código</th>
                 <th style={{ ...styles.th, textAlign: 'right' }}>Valor (R$)</th>
               </tr>
             </thead>
@@ -1266,7 +1266,7 @@ export default function Financeiro() {
       <div style={styles.header}>
         <div>
           <div style={styles.title}>Financeiro</div>
-          <div style={styles.subtitle}>Gestao financeira da igreja</div>
+          <div style={styles.subtitle}>Gestão financeira da igreja</div>
         </div>
       </div>
 
@@ -1288,7 +1288,7 @@ export default function Financeiro() {
       {/* 1 · Transações · todas as transacoes classificadas */}
       {tab === 1 && renderTransacoes()}
 
-      {/* 2 · Arrecadações · apenas contribuicoes (3.01.*) */}
+      {/* 2 · Arrecadações · apenas contribuições (3.01.*) */}
       {tab === 2 && <Arrecadacoes />}
 
       {/* 3 · Contas a Pagar */}
@@ -1336,7 +1336,7 @@ export default function Financeiro() {
         </div>
       )}
 
-      {/* 9 · Gestão · sub-abas (solicitacoes, alertas, fechamento, auditoria) */}
+      {/* 9 · Gestão · sub-abas (solicitações, alertas, fechamento, auditoria) */}
       {tab === 9 && (
         <div>
           <SubTabBar items={SUBS_GESTAO} current={subGestao} onSelect={setSubGestao} />

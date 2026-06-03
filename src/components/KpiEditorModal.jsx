@@ -8,7 +8,7 @@
 //   onSaved: (kpi) => void
 //
 // Campos editaveis:
-//   id (so na criacao), area, indicador, descricao, periodicidade,
+//   id (so na criacao), área, indicador, descrição, periodicidade,
 //   periodo_offset_meses, meta_descricao, meta_valor, unidade, pilar,
 //   responsavel_area, apuracao, sort_order, ativo, valores[].
 // ============================================================================
@@ -43,7 +43,7 @@ const VALORES_KEYS = [
   { key: 'generosidade', label: 'Generosidade', color: '#ef4444' },
 ];
 
-// Opcoes de offset segundo a periodicidade.
+// Opções de offset segundo a periodicidade.
 function offsetOptionsFor(periodicidade) {
   const p = String(periodicidade || '').toLowerCase();
   if (p === 'trimestral') {
@@ -96,12 +96,12 @@ const TIPOS_CALCULO = [
   {
     key: 'manual',
     label: 'Manual',
-    desc: 'Lider preenche o valor do indicador diretamente (legado).',
+    desc: 'Líder preenche o valor do indicador diretamente (legado).',
   },
   {
     key: 'delta_pct',
     label: '% crescimento',
-    desc: '(atual − anterior) / anterior × 100. Ex: "frequencia cresceu 6,2% vs semana anterior".',
+    desc: '(atual − anterior) / anterior × 100. Ex: "frequência cresceu 6,2% vs semana anterior".',
     fields: ['dado_tipo', 'comparacao'],
   },
   {
@@ -119,13 +119,13 @@ const TIPOS_CALCULO = [
   {
     key: 'contagem_janela',
     label: 'Contagem em janela',
-    desc: 'Conta eventos numa janela. Ex: "convertidos engajados nos ultimos 60 dias".',
+    desc: 'Conta eventos numa janela. Ex: "convertidos engajados nos últimos 60 dias".',
     fields: ['dado_tipo', 'janela_dias'],
   },
   {
     key: 'soma_periodo',
-    label: 'Soma no periodo',
-    desc: 'Soma de valores num periodo. Ex: "valor arrecadado no ano".',
+    label: 'Soma no período',
+    desc: 'Soma de valores num período. Ex: "valor arrecadado no ano".',
     fields: ['dado_tipo', 'periodo'],
   },
 ];
@@ -159,7 +159,7 @@ export default function KpiEditorModal({ open, kpi, onClose, onSaved, defaultAre
   const [editKr, setEditKr] = useState(null);
   const isEdit = !!kpi;
 
-  // Carrega dropdowns: funcionarios + objetivos + tipos de dado
+  // Carrega dropdowns: funcionários + objetivos + tipos de dado
   useEffect(() => {
     if (!open) return;
     rhApi.funcionarios.list({ status: 'ativo' })
@@ -173,7 +173,7 @@ export default function KpiEditorModal({ open, kpi, onClose, onSaved, defaultAre
       .catch(() => setTiposDado([]));
   }, [open]);
 
-  // Carrega KRs especificos do KPI (se em edicao)
+  // Carrega KRs especificos do KPI (se em edição)
   const loadKrs = useCallback(() => {
     if (!isEdit || !kpi?.id) { setKrs([]); return; }
     estrategiaApi.krs.list({ kpi_id: kpi.id })
@@ -292,7 +292,7 @@ export default function KpiEditorModal({ open, kpi, onClose, onSaved, defaultAre
             </Field>
           )}
 
-          {/* Area */}
+          {/* Área */}
           <Field label="Área *">
             <select value={form.area} onChange={e => set('area', e.target.value)} style={inp} disabled={isEdit && allowedAreas && !allowedAreas.includes(String(form.area).toLowerCase())}>
               <option value="">Selecione...</option>
@@ -314,10 +314,10 @@ export default function KpiEditorModal({ open, kpi, onClose, onSaved, defaultAre
             </Field>
           </div>
 
-          {/* Objetivo especifico (chamado descricao no banco · nome da planilha "consolidado oficial") */}
+          {/* Objetivo especifico (chamado descrição no banco · nome da planilha "consolidado oficial") */}
           <div style={{ gridColumn: '1/-1' }}>
             <Field label="Objetivo específico">
-              <textarea value={form.descricao} onChange={e => set('descricao', e.target.value)} rows={2} placeholder="ex: Aumentar numero de jovens fazendo Devocionais no AMI" style={{ ...inp, resize: 'vertical' }} />
+              <textarea value={form.descricao} onChange={e => set('descricao', e.target.value)} rows={2} placeholder="ex: Aumentar número de jovens fazendo Devocionais no AMI" style={{ ...inp, resize: 'vertical' }} />
             </Field>
           </div>
 
@@ -353,7 +353,7 @@ export default function KpiEditorModal({ open, kpi, onClose, onSaved, defaultAre
             <input value={form.pilar} onChange={e => set('pilar', e.target.value)} placeholder="Crescimento, Servico..." style={inp} />
           </Field>
 
-          {/* Responsavel + Apuracao */}
+          {/* Responsável + Apuracao */}
           <Field label="Responsável (área/cargo) — descrição livre">
             <input value={form.responsavel_area} onChange={e => set('responsavel_area', e.target.value)} style={inp} placeholder="Ex: Coord Voluntariado" />
           </Field>
@@ -361,7 +361,7 @@ export default function KpiEditorModal({ open, kpi, onClose, onSaved, defaultAre
             <input value={form.apuracao} onChange={e => set('apuracao', e.target.value)} style={inp} />
           </Field>
 
-          {/* Lider funcionario (vincula com RH) */}
+          {/* Líder funcionário (vincula com RH) */}
           <div style={{ gridColumn: '1/-1' }}>
             <Field label="Líder responsável (funcionário)" hint="Quem é cobrado pelo OKR. Notificações e filtro 'meus OKRs' usam este campo.">
               <select value={form.lider_funcionario_id || ''} onChange={e => set('lider_funcionario_id', e.target.value || null)} style={inp}>
@@ -419,9 +419,9 @@ export default function KpiEditorModal({ open, kpi, onClose, onSaved, defaultAre
             </Field>
           </div>
 
-          {/* Objetivo Geral + Memoria + Observacoes (Fase 2.5C) */}
+          {/* Objetivo Geral + Memória + Observações (Fase 2.5C) */}
           <div style={{ gridColumn: '1/-1' }}>
-            <Field label="Objetivo Geral (agrupa KPIs do mesmo tema)" hint="Ex: 'Aumentar batismos' agrupa o KPI de cada area. Cascata automatica: ao preencher este KPI, o objetivo geral atualiza % automaticamente.">
+            <Field label="Objetivo Geral (agrupa KPIs do mesmo tema)" hint="Ex: 'Aumentar batismos' agrupa o KPI de cada área. Cascata automática: ao preencher este KPI, o objetivo geral atualiza % automaticamente.">
               <select value={form.objetivo_geral_id || ''} onChange={e => set('objetivo_geral_id', e.target.value || null)} style={inp}>
                 <option value="">— Sem objetivo geral —</option>
                 {objetivos.length === 0 && <option disabled>Carregando objetivos...</option>}
@@ -432,9 +432,9 @@ export default function KpiEditorModal({ open, kpi, onClose, onSaved, defaultAre
             </Field>
           </div>
           <div style={{ gridColumn: '1/-1' }}>
-            <Field label="Memoria de calculo" hint="Como o indicador eh efetivamente calculado. Ex: '% crescimento da frequencia em relacao a semana anterior'.">
+            <Field label="Memória de calculo" hint="Como o indicador eh efetivamente calculado. Ex: '% crescimento da frequência em relação a semana anterior'.">
               <textarea value={form.memoria_calculo} onChange={e => set('memoria_calculo', e.target.value)} rows={2} style={{ ...inp, resize: 'vertical' }}
-                placeholder="Ex: '8% da frequencia media dominical'" />
+                placeholder="Ex: '8% da frequência media dominical'" />
             </Field>
           </div>
           <div style={{ gridColumn: '1/-1' }}>
@@ -485,7 +485,7 @@ export default function KpiEditorModal({ open, kpi, onClose, onSaved, defaultAre
             })}
           </div>
 
-          {/* Configuracao da formula (depende do tipo escolhido) */}
+          {/* Configuração da formula (depende do tipo escolhido) */}
           {form.tipo_calculo !== 'manual' && (
             <div style={{
               marginTop: 14, padding: 12,
@@ -511,7 +511,7 @@ export default function KpiEditorModal({ open, kpi, onClose, onSaved, defaultAre
                   Resultados-chave (KRs) deste KPI
                 </h3>
                 <p style={{ fontSize: 11, color: C.t3, marginTop: 4 }}>
-                  Analises que triangulam o KPI principal. Ex: alem de "% crescimento da frequencia",
+                  Analises que triangulam o KPI principal. Ex: alem de "% crescimento da frequência",
                   KRs como "0 cultos com queda &gt; 15%" ou "% retencao semana-a-semana".
                 </p>
               </div>
@@ -666,7 +666,7 @@ function KrEditorInline({ kr, onClose, onSaved }) {
 }
 
 // ============================================================================
-// FormulaConfig — UI da configuracao de formula (depende do tipo_calculo)
+// FormulaConfig — UI da configuração de formula (depende do tipo_calculo)
 // ============================================================================
 function FormulaConfig({ tipo, config, tiposDado, onChange }) {
   const set = (k, v) => onChange({ ...config, [k]: v });

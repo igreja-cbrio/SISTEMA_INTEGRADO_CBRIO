@@ -1,15 +1,15 @@
 // ============================================================================
-// /api/ritual/* — Ritual Mensal de Revisao OKR
+// /api/ritual/* — Ritual Mensal de Revisão OKR
 //
-// "Regra de ouro": todo desvio gera causa, decisao, responsavel, proximo passo.
+// "Regra de ouro": todo desvio gera causa, decisão, responsável, próximo passo.
 //
 // Endpoints:
-//   GET  /pendentes              — KPIs em vermelho/amarelo nao revisados no mes
-//   GET  /revisados              — KPIs ja revisados no mes
-//   GET  /resumo                 — stats do mes corrente
-//   POST /:kpi_id/revisar        — registrar revisao
+//   GET  /pendentes              — KPIs em vermelho/amarelo não revisados no mês
+//   GET  /revisados              — KPIs já revisados no mês
+//   GET  /resumo                 — stats do mês corrente
+//   POST /:kpi_id/revisar        — registrar revisão
 //   PATCH /revisao/:id           — atualizar (executar/cancelar)
-//   GET  /historico              — historico de revisoes (filtravel)
+//   GET  /historico              — histórico de revisões (filtravel)
 // ============================================================================
 
 const router = require('express').Router();
@@ -24,7 +24,7 @@ function periodoMensalAtual() {
 }
 
 // ----------------------------------------------------------------------------
-// GET /resumo - estatisticas do mes corrente
+// GET /resumo - estatísticas do mês corrente
 // ----------------------------------------------------------------------------
 router.get('/resumo', async (req, res) => {
   try {
@@ -40,7 +40,7 @@ router.get('/resumo', async (req, res) => {
     );
     const totalAlerta = emAlerta.length;
 
-    // Quantos ja foram revisados no mes
+    // Quantos já foram revisados no mês
     const ids = emAlerta.map(t => t.kpi_id);
     let revisadosIds = new Set();
     if (ids.length > 0) {
@@ -55,7 +55,7 @@ router.get('/resumo', async (req, res) => {
     const totalRevisados = revisadosIds.size;
     const totalPendentes = totalAlerta - totalRevisados;
 
-    // Dias ate fim do mes
+    // Dias até fim do mês
     const hoje = new Date();
     const ultimoDia = new Date(hoje.getFullYear(), hoje.getMonth() + 1, 0);
     const diasRestantes = Math.max(0, Math.ceil((ultimoDia - hoje) / (1000 * 60 * 60 * 24)));
@@ -75,7 +75,7 @@ router.get('/resumo', async (req, res) => {
 });
 
 // ----------------------------------------------------------------------------
-// GET /pendentes - KPIs em alerta nao revisados no mes
+// GET /pendentes - KPIs em alerta não revisados no mês
 // ----------------------------------------------------------------------------
 router.get('/pendentes', async (req, res) => {
   try {
@@ -95,7 +95,7 @@ router.get('/pendentes', async (req, res) => {
       .select('id, indicador, area, valores, periodicidade, meta_descricao, unidade, is_okr, lider_funcionario_id, objetivo_geral_id')
       .in('id', ids);
 
-    // Quem ja foi revisado no periodo
+    // Quem já foi revisado no período
     const { data: revs } = await supabase
       .from('okr_revisoes')
       .select('kpi_id')
@@ -103,7 +103,7 @@ router.get('/pendentes', async (req, res) => {
       .eq('periodo_referencia', periodo);
     const revisadosSet = new Set((revs || []).map(r => r.kpi_id));
 
-    // Buscar lideres em batch
+    // Buscar líderes em batch
     const liderIds = (kpis || []).map(k => k.lider_funcionario_id).filter(Boolean);
     let lideresMap = {};
     if (liderIds.length > 0) {
@@ -146,7 +146,7 @@ router.get('/pendentes', async (req, res) => {
 });
 
 // ----------------------------------------------------------------------------
-// GET /revisados - KPIs ja revisados no mes
+// GET /revisados - KPIs já revisados no mês
 // ----------------------------------------------------------------------------
 router.get('/revisados', async (req, res) => {
   try {
@@ -166,7 +166,7 @@ router.get('/revisados', async (req, res) => {
 });
 
 // ----------------------------------------------------------------------------
-// POST /:kpi_id/revisar - registrar revisao
+// POST /:kpi_id/revisar - registrar revisão
 // ----------------------------------------------------------------------------
 router.post('/:kpi_id/revisar', async (req, res) => {
   try {
@@ -174,16 +174,16 @@ router.post('/:kpi_id/revisar', async (req, res) => {
     const periodo = b.periodo_referencia || periodoMensalAtual();
 
     if (!b.causa_desvio || !b.decisao) {
-      return res.status(400).json({ error: 'causa_desvio e decisao obrigatorios' });
+      return res.status(400).json({ error: 'causa_desvio e decisão obrigatórios' });
     }
 
-    // Marcar KPI como is_okr=true se ainda nao for (auto-promocao)
+    // Marcar KPI como is_okr=true se ainda não for (auto-promocao)
     const { data: kpi } = await supabase
       .from('kpi_indicadores_taticos')
       .select('id, is_okr, indicador')
       .eq('id', req.params.kpi_id)
       .maybeSingle();
-    if (!kpi) return res.status(404).json({ error: 'KPI nao encontrado' });
+    if (!kpi) return res.status(404).json({ error: 'KPI não encontrado' });
     if (!kpi.is_okr) {
       await supabase.from('kpi_indicadores_taticos').update({ is_okr: true }).eq('id', kpi.id);
     }
@@ -208,7 +208,7 @@ router.post('/:kpi_id/revisar', async (req, res) => {
       .single();
     if (error) {
       if (error.code === '23505') {
-        return res.status(409).json({ error: 'Ja existe revisao deste KPI neste periodo' });
+        return res.status(409).json({ error: 'Já existe revisão deste KPI neste período' });
       }
       throw error;
     }
@@ -220,7 +220,7 @@ router.post('/:kpi_id/revisar', async (req, res) => {
 });
 
 // ----------------------------------------------------------------------------
-// PATCH /revisao/:id - atualizar revisao (executar / cancelar)
+// PATCH /revisao/:id - atualizar revisão (executar / cancelar)
 // ----------------------------------------------------------------------------
 router.patch('/revisao/:id', async (req, res) => {
   try {
@@ -251,7 +251,7 @@ router.patch('/revisao/:id', async (req, res) => {
 });
 
 // ----------------------------------------------------------------------------
-// GET /historico - todas as revisoes (filtravel)
+// GET /historico - todas as revisões (filtravel)
 // ----------------------------------------------------------------------------
 router.get('/historico', async (req, res) => {
   try {

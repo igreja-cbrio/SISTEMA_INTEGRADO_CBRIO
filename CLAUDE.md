@@ -69,6 +69,169 @@ Follow-ups (próximas PRs): "engajou" cruzar com o sinal real do valor (grupo/vo
 fechar-o-loop (aceite na área cria o pedido de grupo / inscrição de voluntário nativos),
 funil de analytics encaminhados→aderiram.
 
+## ⚠️ REGRA GLOBAL · acentuação correta do português do Brasil (SEMPRE)
+
+**Toda vez** que implementar QUALQUER coisa neste sistema (nova feature, fix,
+refactor, label, mensagem de toast, placeholder, título, texto de botão, texto
+de notificação, e-mail, copy de página, comentário visível ao usuário, etc.),
+o texto em português **DEVE** estar com a **acentuação correta do português do
+Brasil**. Isso é obrigatório e não-negociável — não regredir.
+
+- Acentos agudos (á é í ó ú), circunflexos (â ê ô), til (ã õ), crase/grave (à),
+  cedilha (ç) e trema histórico quando aplicável. Ex.: "você", "usuário",
+  "permissões", "configurações", "ministério", "relatório", "ação", "não",
+  "está", "três", "código", "horário", "será", "número", "página", "área",
+  "índice", "saúde", "também", "responsável", "início", "próximo".
+- Vale para **todo texto visível ao usuário** no frontend (`src/`), mensagens
+  do backend (`backend/`), e-mails/notificações, e qualquer copy nova.
+
+**Exceção crítica (NÃO acentuar):** identificadores de código e dados nunca
+recebem acento — **slugs** de módulo/rota (`permissoes`, `solicitacoes`,
+`integracao`, `configuracoes`), **valores de enum** do banco, **chaves de
+objeto**, nomes de **variáveis/funções/arquivos**, **colunas** SQL e qualquer
+string que seja comparada/persistida como identificador. Acentuar esses quebra
+matching, RLS, rotas e o banco. A regra de acentuar vale para o **conteúdo
+exibido**, não para os identificadores técnicos.
+
+## Totem Kids · integração com PAGERS físicos (2026-06-02)
+
+Eduardo/Marcos: integrar os pagers que a igreja já usa ao pickup do Totem Kids —
+no check-in o voluntário entrega um pager numerado à família; no pickup o sistema
+faz **aquele** pager vibrar ("caso vibre, suba para ver sua criança").
+
+**Hardware real (confirmado por foto):** transmissor **LRS Freedom T7470** com
+porta **RJ-45 (rede)** + coasters redondos da LRS. (Há também um Retekess TD163 +
+coasters R8500, mas a LRS foi escolhida porque o **protocolo é público**: LRSN =
+XML sobre TCP, comando `<PageRequest pager="2;NUMERO" color="R" message="Flash5Min"/>`.)
+
+**Arquitetura — agente local (mesmo padrão do Brother/worker financeiro):** o
+Vercel serverless não alcança o transmissor físico, então um **agente local**
+(`pager-bridge/`, Node puro) roda num PC da recepção, na rede do Freedom. Ele faz
+só conexões de **saída** (HTTPS pro backend + TCP pro Freedom) e autentica por
+**bearer token** (`PAGER_BRIDGE_TOKEN`) — **não** carrega service_role nem abre porta.
+
+**Migration `20260602140000_kids_pagers.sql`** (ADITIVA · idempotente):
+- `kids_pagers` · catálogo de cada pager (`numero` = ID no LRS, `cor` char R/B/G/Y/O/P/W,
+  `tipo_lrs` default 2 = Guest, `responsavel_padrao_id`, `ativo`, soft-delete · na
+  whitelist `app_soft_deletable_tables()`).
+- `kids_checkins.pager_id` · qual pager a família levou (FK SET NULL).
+- `kids_pager_envios` · fila de saída que o agente consome (`status`
+  pendente→enviado/erro/cancelado, `origem` chamada/rechamada/teste/manual, snapshot
+  `pager_numero`/`cor`).
+- Trigger `fn_kids_checkout_cancela_pager` · cancela envios pendentes quando a
+  criança já saiu (checkout). RLS contextual `current_user_module_level('kids')`
+  (read≥1 · write≥3 · delete super-admin · service_role all).
+
+**Backend (`routes/totemKids.js`):** CRUD `/pager/pagers` (kids≥3), `/pager/em-uso`
+(quem está com cada pager agora), `/pager/pagers/:id/testar` (enfileira toque de teste),
+`/pager/envios` (histórico). No `POST /chamadas` (pickup, já existia e aciona a TV da
+sala), se o checkin tem `pager_id` ativo → insere `kids_pager_envios`. Endpoints do
+agente (bearer token · bypassam JWT): `GET /pager/bridge/fila` + `POST
+/pager/bridge/envios/:id/resultado`. `POST /checkin` aceita `pager_id`.
+
+**Frontend:** nova aba **"Pagers"** em `/admin/totem-kids` (CRUD + cor + vínculo a
+responsável padrão + botão "Testar toque" + aviso do agente). No check-in
+(`TotemKidsCheckin.tsx`) um select opcional "Pager da família" (lista só ativos e não
+em uso). `api.js`: `totemKids.pagers.{list,create,update,remove,testar,emUso,envios}`.
+
+**Agente `pager-bridge/`:** `index.js` (poll da fila → LRSN/TCP → reporta) + `.env.example`
++ `README.md`. Roda com `npm start` (Node 18+). `DRY_RUN=1` testa sem hardware.
+
+**⚠️ Pendências operacionais (não-código):**
+- **Aplicar a migration** antes do merge (o backend chama as tabelas novas).
+- Definir `PAGER_BRIDGE_TOKEN` no **Vercel** (backend) e no `.env` do agente (mesmo valor).
+- Confirmar com a LRS que a **Ethernet do Freedom aceita paging local (NetPage/LRSN)** e
+  qual a **porta TCP** (`LRS_PORT`, default 5000 é chute). Se a Ethernet só servir SMS em
+  nuvem, habilitar NetPage ou usar um TX-7471 — o comando LRSN já está implementado.
+
+## Monitoramento OKR · aba /monitoramento-okr (2026-06-02)
+
+Marcos pediu uma aba nova na **Inteligência** reproduzindo a planilha
+**"CBRio_cabeca_Juninho"** (ótica enxuta do Pr. Juninho · 1 NSM → 9 OKRs em 4
+blocos de Área Responsável → ~25 indicadores táticos), que se alimente sozinha
+onde já temos dado. **Decisão explícita do Marcos:** NÃO integrar à lógica dos
+25 OKRs / 150 KPIs do `/painel` — é uma ótica paralela, só reproduzir e exibir
+(não questionar a lógica da planilha).
+
+**Arquitetura (read-only · SEM migration · não toca o sistema OKR existente):**
+- **A estrutura fixa da planilha vive no frontend** (`src/pages/MonitoramentoOkr.jsx`,
+  consts `NSM`/`BLOCOS`) — textos, alvos, objetivos, área envolvida e memória de
+  cálculo exatos da planilha. É o modelo do Juninho, versionado em código.
+- **O backend devolve só os VALORES VIVOS** dos indicadores com fonte real
+  (`GET /api/painel/monitoramento-okr` em `backend/routes/painel.js`), indexados
+  por chave estável em `metricas[chave]`. Indicador sem fonte → o front mostra
+  pílula **"manual"** + a memória de cálculo (honesto · a maioria das fontes
+  operacionais ainda é nascente — ver abaixo).
+- Rota `/monitoramento-okr` (`App.tsx`, lazy) · item "Monitoramento OKR" em
+  Inteligência > Visão macro (`AppShell.jsx`, `module:'painel-cbrio'`, ícone
+  Compass) · `api.painel.monitoramentoOkr()`. Cache de 5 min (mesmo
+  `painelCache` do resto de `/painel`).
+
+**7 indicadores auto-alimentados (colunas verificadas contra o banco em 2026-06-02):**
+- **NSM central** (`vw_nsm_painel` segmento='central') = a Estrela do Norte do
+  Juninho na veia · hoje 5,9% vs alvo ≥50%.
+- **OKR Batismos** = batismos realizados 90d ÷ conversões 90d (`cultos`) · ~14,5%.
+- **Nº batismos/mês** (`batismo_inscricoes` status='realizado' · último mês
+  completo + média de 6 meses).
+- **Tempo decisão→batismo** = avg(`batismo_inscricoes.data_batismo` −
+  `mem_trilha_valores`(etapa='conversao')`.data_conclusao`) · ~57d (alvo ≤90).
+- **Nº DS online** = soma `cultos.decisoes_online` 90d.
+- **% assentos ocupados** = média `cultos.presencial_adulto` do Templo
+  (Domingo+Quarta+AMI, exclui Bridge via `vol_service_types.name`) ÷ 1200 ·
+  ~30,3% (mesma regra do card de ocupação da Integração).
+- **Rotatividade staff** = demissões 12m ÷ ativos (`rh_funcionarios`) · ~2%.
+
+**Manual (sem fonte ainda · mostram alvo + memória de cálculo):** prazo/café/Next,
+% grupos, % voluntários, % dizimistas (tabelas `mem_grupo_membros` /
+`mem_voluntarios` / `mem_contribuicoes` ainda **vazias** em prod), NPS culto
+on/presencial, follow-up online, retenção/compart./cliques YouTube, eficiência
+financeira, Q12 (Gallup), treinamentos, cronogramas/orçamentos de expansão.
+Quando essas fontes ganharem dado (módulos NPS, grupos, voluntariado,
+financeiro, produção), basta **adicionar um ramo no endpoint** + a chave `live`
+no tático correspondente em `BLOCOS` — sem mexer na estrutura.
+
+### Ajustes pós-avaliação do Marcos (2026-06-02 · v2)
+
+- **Pílula "manual" removida.** Tático sem fonte mostra só **"—"** (cinza); ao
+  **expandir** ele exibe a memória de cálculo + um bloco **"Para puxar automático,
+  preciso de: …"** (campo `precisa` no `BLOCOS`) — vira a lista do que o Marcos
+  precisa mandar pra cada indicador virar automático.
+- **Número inline + cor binária** em todo tático: verde no alvo / vermelho fora
+  (`avaliar()` agora retorna só verde/vermelho; sem alvo numérico comparável →
+  neutro teal, sem julgar — ex.: "+20% YoY" e "Nº batismos/mês"). NSM e OKR
+  idem (binário).
+- **Linha clicável → expande** (accordion inline, `ChevronDown` rotativo). Quando
+  o indicador tem série, mostra **gráfico de barras mensal** (recharts · 6 meses
+  completos) com linha tracejada no alvo. Backend passou a devolver `serie:
+  [{mes,valor}]` em `okr_batismos`/`batismos_mes` (batismos/mês), `ds_online` e
+  `assentos` (% ocupação/mês). `tempo_batismo`/`rotativ`/NSM ficam só com o número.
+- **"Café" → Acompanhamento "1º Encontro"** em todo o 1º OKR (nome + 2 táticos),
+  a pedido do Marcos.
+
+### Ajustes v3 (2026-06-03 · "0 vs lógica a criar")
+
+- **Memória de cálculo ("Como medir: Planilha…") REMOVIDA** de todos os táticos
+  (a planilha some da visão — o sistema substitui). O campo `memoria` segue no
+  `BLOCOS` mas não renderiza mais.
+- **4 táticos viraram automáticos** porque a fonte já existe no banco (hoje ~0):
+  **% frequência em Grupos**, **% Voluntários ativos**, **% dizimistas regulares**
+  (÷ membros ativos · base 328) e **% convertidos atendidos no Acompanhamento**
+  (`cui_convertidos.atendido_apos_culto` ÷ conversões 90d). Mostram o **número**
+  (0/x% · vermelho fora do alvo) em vez de "—". Backend: 5 queries novas no
+  endpoint (base membros ativos + as 4). `addM` já inclui valor **0** (só pula
+  null/NaN), então 0% aparece.
+- **Distinção pedida pelo Marcos:** **número (incl. 0)** = o sistema já mede ·
+  **"—" + "preciso de"** = lógica de automação ainda a criar (NPS culto,
+  follow-up online, YouTube, eficiência financeira, Q12, treinamentos, expansão,
+  prazo 1º contato, Acompanhamento→Next).
+- ⚠️ **Base do %** = `membros ativos` (`mem_membros.status='membro_ativo'`, hoje
+  328) — provisório. Quando grupos/voluntários/dízimos começarem a popular,
+  confirmar com o Marcos qual é o "total da igreja" certo (a planilha do Juninho
+  diz "total de pessoas na igreja", que pode ser > membros ativos).
+- **Bloco "Ministerial — Geracionais" REMOVIDO** (2026-06-03 · pedido do Marcos):
+  era um bloco de Área Responsável só com a nota do censo e sem OKRs — saiu do
+  `BLOCOS`. Restam 3 blocos: Ministerial · Criativo · Operações (+ a NSM no topo).
+
 ## Produção de Culto · aba /producao (2026-06-02)
 
 Marcos: criar aba pra área de **Produção de Culto** com (A) KPIs técnicos
@@ -122,6 +285,20 @@ Preenchimento (calendário semanal + modal: pontualidade, ocorrências, checklis
 obs), Acumulado, Detalhado, Checklists (admin), Solicitações (fila
 `area_responsavel='producao'` reusando a API `solicitacoes` · andamento por select),
 Desempenho. `api.js` ganhou namespace `producao`. Menu em Criativo (`module:'producao'`).
+
+**Notificações (2026-06-02):** ocorrência crítica (`severidade='critica'`) dispara
+`notificar()` urgente (módulo `producao` · responsáveis da área + regras). Módulo
+`producao` registrado em `NotificacaoRegras.jsx`. Nova solicitação já é notificada
+pelo backbone de Solicitações.
+
+**Intake de Solicitações (2026-06-02 · migration `20260602160000`):** categoria
+**`producao`** no form de Solicitações roteia `area_responsavel='producao'` (só campos
+básicos · uso: movimentação de material, configuração de equipamentos). CHECK de
+`categoria` estendido; SLA da produção já existia (24/72). Backend: `ALLOWED_CATEGORIES`
++ `CATEGORIA_MODULO['producao']='producao'` + `CATEGORIA_TO_AREA_RESP` +
+`MODULO_CATEGORIAS`. Frontend: `CATEGORIAS` + `CATEGORIA_HINT` (sem bloco específico ·
+validação base titulo+categoria). Isso alimenta a fila da aba Solicitações da Produção
++ o KPI `ADM-C-G-PRODUCAO` (SLA).
 
 ## Integração · % de ocupação de assentos na aba Frequência (2026-06-02 · sem migration)
 
@@ -4225,7 +4402,11 @@ preenchidas pela **Alda Lorena** (responsavel da Integracao) em
   manuais `/coletar/ds` e `/coletar/ddus` rodam `backfillCultoVideoIds` antes,
   pra vincular o video ao culto (o coletor so age em culto ja vinculado).
 - **ddus-collect** · cron `30 10 * * *` · pra cultos de 7 dias atras,
-  grava `online_ddus` (views D+1 ate D+7, on-demand).
+  grava `online_ddus` = **on-demand acumulado na semana** = `statistics.viewCount`
+  AGORA (>= D+7) **menos o DS** (snapshot da manha seguinte). Mesma fonte do DS
+  (Data API · sem o atraso da Analytics). So calcula se `online_ds` existe (o DS
+  e o ponto de partida da subtracao · sem ele pula com `ds_ausente`). watch time
+  / retencao do DDUS seguem da Analytics como best-effort.
 
 Override manual continua funcionando · coletor so atualiza se valor `null`
 ou `0` (DS/DDUS), ou se for `pico > online_pico atual`.

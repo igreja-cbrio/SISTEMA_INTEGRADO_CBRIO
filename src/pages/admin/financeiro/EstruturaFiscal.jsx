@@ -95,7 +95,7 @@ function PlanoContasPanel() {
         </select>
         <input
           type="text"
-          placeholder="Buscar por codigo ou nome..."
+          placeholder="Buscar por código ou nome..."
           value={filter.search}
           onChange={e => setFilter(f => ({ ...f, search: e.target.value }))}
           style={{ flex: 1, minWidth: 240, padding: 8, borderRadius: 6, border: `1px solid ${C.border}`, background: 'var(--cbrio-input-bg)', color: C.text }}
@@ -301,7 +301,7 @@ function IdentificadoresPanel() {
           <thead style={{ background: 'var(--cbrio-table-header)' }}>
             <tr>
               <th style={th}>Centavo</th>
-              <th style={th}>Descricao</th>
+              <th style={th}>Descrição</th>
               <th style={th}>Centro de Custo</th>
               <th style={th}>Ativo</th>
               <th style={th}></th>
@@ -427,7 +427,7 @@ function CultoSlotsPanel() {
             <tr>
               <th style={th}>Culto</th>
               <th style={th}>Dia</th>
-              <th style={th}>Inicio</th>
+              <th style={th}>Início</th>
               <th style={th}>Fim</th>
               <th style={th}>Conta dizimo</th>
               <th style={th}>Conta oferta</th>
@@ -457,7 +457,7 @@ function CultoSlotsPanel() {
 }
 
 // ============================================================
-// REGRAS DE CLASSIFICACAO
+// REGRAS DE CLASSIFICAÇÃO
 // ============================================================
 function RegrasPanel() {
   const [data, setData] = useState([]);
@@ -477,7 +477,7 @@ function RegrasPanel() {
             <tr>
               <th style={th}>Nome</th>
               <th style={th}>Tipo</th>
-              <th style={th}>Padrao</th>
+              <th style={th}>Padrão</th>
               <th style={th}>Aplica a</th>
               <th style={th}>Conta destino</th>
               <th style={th}>Prio</th>

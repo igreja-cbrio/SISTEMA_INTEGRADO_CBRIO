@@ -9,10 +9,10 @@ import TrocarSenhaForm from './TrocarSenhaForm';
 const DISMISS_KEY = 'cbrio_primeiro_acesso_dismissed';
 
 /**
- * Detecta usuario que ainda nao trocou a senha padrao (password_changed_at IS NULL)
- * e mostra modal sugerindo trocar. Dismissable · so reaparece no proximo login.
+ * Detecta usuário que ainda não trocou a senha padrão (password_changed_at IS NULL)
+ * e mostra modal sugerindo trocar. Dismissable · so reaparece no próximo login.
  *
- * So aparece pra logins email/password (OAuth Google/MS nao tem senha pra trocar).
+ * So aparece pra logins email/password (OAuth Google/MS não tem senha pra trocar).
  */
 export default function PrimeiroAcessoSenhaModal() {
   const { user, profile } = useAuth();
@@ -22,7 +22,7 @@ export default function PrimeiroAcessoSenhaModal() {
 
   useEffect(() => {
     if (!user || !profile) return;
-    if (profile.password_changed_at) return; // ja trocou
+    if (profile.password_changed_at) return; // já trocou
     const provider = user?.app_metadata?.provider;
     if (provider && provider !== 'email') return; // OAuth · ignorar
     try {
@@ -59,7 +59,7 @@ export default function PrimeiroAcessoSenhaModal() {
           </div>
           {modo === 'aviso' && (
             <DialogDescription className="text-left">
-              Voce esta usando a <strong>senha padrao</strong> do sistema. Por seguranca,
+              Voce esta usando a <strong>senha padrão</strong> do sistema. Por seguranca,
               recomendamos trocar agora por uma senha pessoal. Voce pode adiar e fazer depois
               em <em>Meu Perfil</em>.
             </DialogDescription>

@@ -14,8 +14,8 @@ const painelCache = require('../services/painelCache');
 
 router.use(authenticate);
 
-// Toda mutacao de OKR/KR/KPI invalida o cache do painel · usuario ve mudanca
-// no proximo refresh sem esperar TTL. Aplicado a TODAS as rotas POST/PUT/PATCH/DELETE
+// Toda mutacao de OKR/KR/KPI invalida o cache do painel · usuário ve mudança
+// no próximo refresh sem esperar TTL. Aplicado a TODAS as rotas POST/PUT/PATCH/DELETE
 // deste router automaticamente.
 router.use((req, res, next) => {
   if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method)) {
@@ -134,7 +134,7 @@ router.get('/objetivos/:id', async (req, res) => {
       .eq('id', req.params.id)
       .maybeSingle();
     if (error) throw error;
-    if (!obj) return res.status(404).json({ error: 'Objetivo nao encontrado' });
+    if (!obj) return res.status(404).json({ error: 'Objetivo não encontrado' });
 
     // KPIs vinculados
     const { data: kpis } = await supabase
@@ -144,7 +144,7 @@ router.get('/objetivos/:id', async (req, res) => {
       .eq('ativo', true)
       .order('area');
 
-    // Ultimo valor calculado de cada KPI (pra mostrar no desdobramento operacional)
+    // Último valor calculado de cada KPI (pra mostrar no desdobramento operacional)
     let valoresPorKpi = {};
     if ((kpis || []).length > 0) {
       const ids = kpis.map(k => k.id);
@@ -163,7 +163,7 @@ router.get('/objetivos/:id', async (req, res) => {
       ultimo_periodo: valoresPorKpi[k.id]?.periodo_referencia ?? null,
     }));
 
-    // KRs (gerais + especificos por area · ordenado: gerais primeiro, depois por area)
+    // KRs (gerais + especificos por área · ordenado: gerais primeiro, depois por área)
     const { data: krs } = await supabase
       .from('kpi_krs')
       .select('*')
@@ -195,7 +195,7 @@ router.post('/objetivos', authorize('admin', 'diretor'), async (req, res) => {
     if (error) throw error;
     res.status(201).json(data);
   } catch (e) {
-    if (e.code === '23505') return res.status(409).json({ error: 'Ja existe objetivo com esse nome' });
+    if (e.code === '23505') return res.status(409).json({ error: 'Já existe objetivo com esse nome' });
     res.status(500).json({ error: e.message });
   }
 });
@@ -271,7 +271,7 @@ router.post('/krs', authorize('admin', 'diretor'), async (req, res) => {
       return res.status(400).json({ error: 'KR deve estar ligado a um objetivo geral OU a um KPI' });
     }
     if (payload.objetivo_geral_id && payload.kpi_id) {
-      return res.status(400).json({ error: 'KR nao pode estar ligado a ambos (objetivo E KPI)' });
+      return res.status(400).json({ error: 'KR não pode estar ligado a ambos (objetivo E KPI)' });
     }
     payload.ativo = true;
 
@@ -335,7 +335,7 @@ router.post('/metas-institucionais', authorize('admin', 'diretor'), async (req, 
     const payload = {};
     for (const [k, v] of Object.entries(req.body || {})) if (allowed.includes(k)) payload[k] = v;
     if (!payload.tipo_kpi || !payload.ano || !payload.meta_descricao) {
-      return res.status(400).json({ error: 'tipo_kpi, ano e meta_descricao obrigatorios' });
+      return res.status(400).json({ error: 'tipo_kpi, ano e meta_descricao obrigatórios' });
     }
     const { data, error } = await supabase
       .from('kpi_metas_institucionais')
@@ -374,7 +374,7 @@ router.get('/okrs-por-tipo', async (req, res) => {
       .order('tipo_okr')
       .order('ordem');
     if (error) throw error;
-    // tipo_okr aceita varios buckets · agrupar dinamicamente em vez de
+    // tipo_okr aceita vários buckets · agrupar dinamicamente em vez de
     // assumir apenas qualitativo/quantitativo/sem_tipo (tinha 'operacional'
     // gerando erro 'cannot read properties of undefined' antes).
     const agrupado = { qualitativo: [], quantitativo: [], sem_tipo: [] };

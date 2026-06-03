@@ -92,7 +92,7 @@ export default function ImportarExtratos() {
         {/* PIX */}
         <UploadCard
           title="Extrato PIX (Excel/CSV)"
-          subtitle="Importa o relatorio detalhado de PIX recebidos com horario exato (extraido do End-to-End ID). Cruzamento automatico com lancamentos OFX."
+          subtitle="Importa o relatório detalhado de PIX recebidos com horario exato (extraido do End-to-End ID). Cruzamento automático com lancamentos OFX."
           accept=".xlsx,.xls,.csv"
           icon="🔄"
           color={C.primary}
@@ -118,9 +118,9 @@ export default function ImportarExtratos() {
       {resultadoOfx && <ResultadoCard r={resultadoOfx} />}
       {resultadoPix && <ResultadoCard r={resultadoPix} />}
 
-      {/* Historico de uploads */}
+      {/* Histórico de uploads */}
       <div style={{ marginTop: 24 }}>
-        <h3 style={{ fontSize: 15, fontWeight: 700, marginBottom: 12, color: C.text }}>Historico de importacoes</h3>
+        <h3 style={{ fontSize: 15, fontWeight: 700, marginBottom: 12, color: C.text }}>Histórico de importacoes</h3>
         <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 8, overflow: 'hidden' }}>
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
             <thead style={{ background: 'var(--cbrio-table-header)' }}>
@@ -155,7 +155,7 @@ export default function ImportarExtratos() {
                 </tr>
               ))}
               {uploads.length === 0 && (
-                <tr><td colSpan={9} style={{ padding: 24, textAlign: 'center', color: C.text3 }}>Nenhuma importacao ainda</td></tr>
+                <tr><td colSpan={9} style={{ padding: 24, textAlign: 'center', color: C.text3 }}>Nenhuma importação ainda</td></tr>
               )}
             </tbody>
           </table>
@@ -217,7 +217,7 @@ function UploadCard({ title, subtitle, accept, icon, color, colorBg, processando
         onDragLeave={() => setDrag(false)}
         onDrop={onDrop}
         onClick={(e) => {
-          // Fallback explicito · alguns browsers nao disparam click via htmlFor
+          // Fallback explicito · alguns browsers não disparam click via htmlFor
           // quando o input esta off-screen. Click direto garante.
           if (!processando && inputRef.current) {
             e.preventDefault();
@@ -253,7 +253,7 @@ function ResultadoCard({ r }) {
   return (
     <div style={{ background: C.greenBg, border: `1px solid ${C.green}`, padding: 16, borderRadius: 8, marginBottom: 16 }}>
       <div style={{ fontSize: 13, color: C.text, marginBottom: 8 }}>
-        <strong>✓ Importacao concluida</strong>
+        <strong>✓ Importação concluída</strong>
         {r.periodo && <span style={{ marginLeft: 8, color: C.text2 }}>{r.periodo.inicio} a {r.periodo.fim}</span>}
       </div>
       <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', fontSize: 12, color: C.text2 }}>

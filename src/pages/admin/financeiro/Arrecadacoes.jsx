@@ -30,9 +30,9 @@ export default function Arrecadacoes() {
   const [loading, setLoading] = useState(true);
   const [filtroTipo, setFiltroTipo] = useState('todas');
 
-  // Filtros de periodo
+  // Filtros de período
   const hoje = new Date();
-  const [modo, setModo] = useState('mes'); // 'mes' | 'ano' | 'custom'
+  const [modo, setModo] = useState('mes'); // 'mês' | 'ano' | 'custom'
   const [ano, setAno] = useState(hoje.getFullYear());
   const [mes, setMes] = useState(hoje.getMonth());
   const [inicioCustom, setInicioCustom] = useState(new Date(hoje.getFullYear(), hoje.getMonth(), 1).toISOString().slice(0, 10));
@@ -62,7 +62,7 @@ export default function Arrecadacoes() {
   const totalOutras = items.filter(t => (t.plano_contas_codigo || '').startsWith('3.01.03')).reduce((s, t) => s + Number(t.valor || 0), 0);
   const doadoresUnicos = new Set(items.map(t => t.membro_id).filter(Boolean)).size;
 
-  // Lista de anos disponiveis (2022 ate ano corrente + 1)
+  // Lista de anos disponíveis (2022 até ano corrente + 1)
   const anosDisponiveis = useMemo(() => {
     const arr = [];
     for (let y = hoje.getFullYear() + 1; y >= 2022; y--) arr.push(y);
@@ -91,7 +91,7 @@ export default function Arrecadacoes() {
         </Button>
       </div>
 
-      {/* Filtros de periodo */}
+      {/* Filtros de período */}
       <Card>
         <CardContent className="pt-4 pb-4">
           <div className="flex items-center gap-2 flex-wrap">

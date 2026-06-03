@@ -141,18 +141,22 @@ router.post('/funcionarios', async (req, res) => {
       return res.status(400).json({ error: 'Nome, cargo e data de admissão são obrigatórios' });
     }
 
+    // Remuneracao no cadastro inicial · so quem tem nivel alto em RH define.
+    const podeRemun = ['admin', 'diretor'].includes(req.user.role) || getEffectiveLevel(req, 'rh') >= 4;
+    const insertPayload = {
+      nome, cpf: cpf || null, email: email || null, telefone: telefone || null,
+      cargo, area: area || null, tipo_contrato: tipo_contrato || 'clt',
+      data_admissao,
+      salario: podeRemun ? (salario || null) : null,
+      remuneracao_bruta: podeRemun ? (remuneracao_bruta || null) : null,
+      grau_id: podeRemun ? (grau_id || null) : null,
+      data_enquadramento: podeRemun ? (data_enquadramento || (grau_id ? new Date().toISOString().slice(0, 10) : null)) : null,
+      observacoes: observacoes || null,
+      created_by: req.user.userId,
+    };
     const { data, error } = await supabase
       .from('rh_funcionarios')
-      .insert({
-        nome, cpf: cpf || null, email: email || null, telefone: telefone || null,
-        cargo, area: area || null, tipo_contrato: tipo_contrato || 'clt',
-        data_admissao, salario: salario || null,
-        remuneracao_bruta: remuneracao_bruta || null,
-        grau_id: grau_id || null,
-        data_enquadramento: data_enquadramento || (grau_id ? new Date().toISOString().slice(0, 10) : null),
-        observacoes: observacoes || null,
-        created_by: req.user.userId,
-      })
+      .insert(insertPayload)
       .select()
       .single();
 
@@ -177,6 +181,14 @@ router.post('/funcionarios', async (req, res) => {
   }
 });
 
+// Campos sensiveis (remuneracao + status de vinculo) · so editaveis por quem tem
+// nivel alto em RH (>=4) ou admin/diretor. Antes, um nivel-2 (data entry) editava
+// salario de qualquer funcionario — inclusive o proprio — ou demitia alguem.
+function podeEditarRemuneracao(req) {
+  return ['admin', 'diretor'].includes(req.user.role) || getEffectiveLevel(req, 'rh') >= 4;
+}
+const CAMPOS_RH_SENSIVEIS = ['salario', 'remuneracao_bruta', 'grau_id', 'data_enquadramento', 'status', 'data_demissao'];
+
 // PUT /api/rh/funcionarios/:id
 router.put('/funcionarios/:id', async (req, res) => {
   try {
@@ -190,6 +202,10 @@ router.put('/funcionarios/:id', async (req, res) => {
     if (remuneracao_bruta !== undefined) updatePayload.remuneracao_bruta = remuneracao_bruta;
     if (grau_id !== undefined) updatePayload.grau_id = grau_id || null;
     if (data_enquadramento !== undefined) updatePayload.data_enquadramento = data_enquadramento || null;
+    // Bloqueia edicao de remuneracao/status por quem nao tem nivel suficiente.
+    if (!podeEditarRemuneracao(req)) {
+      for (const f of CAMPOS_RH_SENSIVEIS) delete updatePayload[f];
+    }
     const { data, error } = await supabase
       .from('rh_funcionarios')
       .update(updatePayload)
@@ -669,8 +685,8 @@ router.delete('/avaliacoes/:id', async (req, res) => {
   }
 });
 
-// Submeter notas dos 6 fatores numa fonte (autoavaliacao | lider | calibracao)
-// fatores: [{ criterio_id, nivel, observacao? }]
+// Submeter notas dos 6 fatores numa fonte (autoavaliacao | líder | calibracao)
+// fatores: [{ criterio_id, nível, observação? }]
 router.post('/avaliacoes/:id/fatores', async (req, res) => {
   try {
     const { fonte, fatores } = req.body;
@@ -716,7 +732,7 @@ router.post('/avaliacoes/:id/fatores', async (req, res) => {
 
     // Calcula pontuação total da fonte (soma de pontos = 100-500)
     const totalPontos = rows.reduce((acc, r) => acc + Number(r.pontos || 0), 0);
-    // Converte para escala 0-5 (multiplica nivel médio ponderado / 5 * 5 = nivel ponderado mesmo)
+    // Converte para escala 0-5 (multiplica nível médio ponderado / 5 * 5 = nível ponderado mesmo)
     let pontuacao5 = 0;
     let pesoSum = 0;
     for (const r of rows) {
@@ -783,7 +799,7 @@ router.post('/avaliacoes/:id/fatores', async (req, res) => {
   }
 });
 
-// Conclui o ciclo (calibração aprovada → status concluida)
+// Conclui o ciclo (calibração aprovada → status concluída)
 router.post('/avaliacoes/:id/concluir', async (req, res) => {
   const { data, error } = await supabase
     .from('rh_avaliacoes')

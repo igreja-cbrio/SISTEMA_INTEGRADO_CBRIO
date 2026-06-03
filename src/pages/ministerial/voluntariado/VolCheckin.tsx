@@ -57,7 +57,7 @@ export default function VolCheckin() {
     // If the scanned content is a totem URL, extract the volunteer-facing self-checkin URL
     // and advise to use a volunteer's QR code instead.
     if (qrCode.includes('/voluntariado/self-checkin')) {
-      toast.error('Este e o QR do totem. Use o QR pessoal do voluntario.');
+      toast.error('Este e o QR do totem. Use o QR pessoal do voluntário.');
       return;
     }
     try {
@@ -142,7 +142,7 @@ export default function VolCheckin() {
           <TabsContent value="face">
             <Card>
               <CardHeader><CardTitle>Reconhecimento Facial</CardTitle></CardHeader>
-              <CardContent><FaceScanner onMatch={handleFaceMatch} onNoMatch={() => toast.error('Rosto nao reconhecido')} /></CardContent>
+              <CardContent><FaceScanner onMatch={handleFaceMatch} onNoMatch={() => toast.error('Rosto não reconhecido')} /></CardContent>
             </Card>
           </TabsContent>
         </Tabs>

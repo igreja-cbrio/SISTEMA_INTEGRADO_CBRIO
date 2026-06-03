@@ -68,7 +68,7 @@ export default function TotemKidsCheckout() {
     } catch (e: unknown) {
       const err = e as { message?: string };
       console.warn('[checkout] chamar TV falhou:', err?.message);
-      // Nao bloqueia o fluxo · checkout segue normal
+      // Não bloqueia o fluxo · checkout segue normal
     }
   }
 
@@ -117,7 +117,7 @@ export default function TotemKidsCheckout() {
         payload.responsavel_id = responsavelPickup;
         payload.responsavel_nome = r?.membro?.nome;
       } else {
-        // codigo_digitado · usa o nome do responsavel do checkin
+        // codigo_digitado · usa o nome do responsável do checkin
         payload.responsavel_id = null;
         payload.responsavel_nome = checkin.responsavel_checkin_nome;
       }

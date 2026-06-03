@@ -105,7 +105,7 @@ export default function TotemKidsPainel() {
       } else {
         toast.info(`Decisão desmarcada de ${c.crianca.nome}`);
       }
-      // Atualiza agregado da sessao em background
+      // Atualiza agregado da sessão em background
       carregar(true);
     } catch (e: unknown) {
       toast.error((e as { message?: string })?.message || 'Erro');
@@ -306,7 +306,7 @@ export default function TotemKidsPainel() {
         )}
       </div>
 
-      {/* Modal de detalhe da sala · lista crianças + marca decisao Jesus */}
+      {/* Modal de detalhe da sala · lista crianças + marca decisão Jesus */}
       <Dialog open={!!salaDetalhe} onOpenChange={(o) => !o && setSalaDetalhe(null)}>
         <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>

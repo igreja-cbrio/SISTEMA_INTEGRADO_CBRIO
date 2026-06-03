@@ -14,13 +14,13 @@ import { playCheckinSound } from '@/lib/sounds';
 import MemberWalletDialog from '@/components/membresia/MemberWalletDialog';
 
 type State =
-  | 'loading'      // avaliando sessao / carregando perfil
-  | 'checking'     // fazendo checkin do usuario logado
+  | 'loading'      // avaliando sessão / carregando perfil
+  | 'checking'     // fazendo checkin do usuário logado
   | 'success'      // checkin ok
-  | 'already'      // ja tinha checkin
+  | 'already'      // já tinha checkin
   | 'error'
-  | 'cpf'          // pedindo CPF (usuario nao autenticado)
-  | 'register'     // cadastro completo (CPF nao existe em lugar nenhum)
+  | 'cpf'          // pedindo CPF (usuário não autenticado)
+  | 'register'     // cadastro completo (CPF não existe em lugar nenhum)
   | 'sent';        // magic link enviado
 
 // Formata CPF enquanto digita (000.000.000-00)
@@ -45,7 +45,7 @@ export default function VolSelfCheckin() {
   const [errorMsg, setErrorMsg] = useState('');
   const [wasUnscheduled, setWasUnscheduled] = useState(false);
 
-  // Fluxo nao autenticado
+  // Fluxo não autenticado
   const [cpf, setCpf] = useState('');
   const [maskedEmail, setMaskedEmail] = useState('');
   const [regName, setRegName] = useState('');
@@ -75,7 +75,7 @@ export default function VolSelfCheckin() {
     try {
       const { profile } = await voluntariado.me.get();
       if (!profile) {
-        setErrorMsg('Perfil de voluntario nao encontrado. Complete seu cadastro primeiro.');
+        setErrorMsg('Perfil de voluntário não encontrado. Complete seu cadastro primeiro.');
         setState('error');
         return;
       }
@@ -153,13 +153,13 @@ export default function VolSelfCheckin() {
     try {
       const lookup = await publicVoluntariado.lookupCpf(clean);
       if (!lookup.found) {
-        // Nao achou em nenhum cadastro — pedir dados completos
+        // Não achou em nenhum cadastro — pedir dados completos
         setState('register');
         setBusy(false);
         return;
       }
       if (!lookup.hasEmail) {
-        setErrorMsg('Seu cadastro nao tem email. Procure um lider para atualizar.');
+        setErrorMsg('Seu cadastro não tem email. Procure um líder para atualizar.');
         setBusy(false);
         return;
       }
@@ -250,8 +250,8 @@ export default function VolSelfCheckin() {
           {state === 'already' && (
             <>
               <CheckCircle2 className="h-20 w-20 text-yellow-400 mb-4" />
-              <h2 className="text-2xl font-bold text-white">Voce ja fez check-in!</h2>
-              <p className="text-sm text-white/60 mt-2">Seu check-in ja foi registrado anteriormente</p>
+              <h2 className="text-2xl font-bold text-white">Você já fez check-in!</h2>
+              <p className="text-sm text-white/60 mt-2">Seu check-in já foi registrado anteriormente</p>
               <Button
                 className="mt-6 bg-[#00B39D] hover:bg-[#00B39D]/80"
                 onClick={() => navigate('/voluntariado/checkin')}
@@ -283,7 +283,7 @@ export default function VolSelfCheckin() {
             <div className="w-full text-left">
               <div className="flex flex-col items-center text-center mb-6">
                 <IdCard className="h-12 w-12 text-[#00B39D] mb-2" />
-                <h2 className="text-xl font-bold text-white">Check-in de voluntario</h2>
+                <h2 className="text-xl font-bold text-white">Check-in de voluntário</h2>
                 <p className="text-sm text-white/60 mt-1">
                   Digite seu CPF para acessar o sistema
                 </p>
@@ -330,7 +330,7 @@ export default function VolSelfCheckin() {
             <div className="w-full text-left">
               <div className="flex flex-col items-center text-center mb-6">
                 <UserPlus className="h-12 w-12 text-[#00B39D] mb-2" />
-                <h2 className="text-xl font-bold text-white">Cadastro de voluntario</h2>
+                <h2 className="text-xl font-bold text-white">Cadastro de voluntário</h2>
                 <p className="text-sm text-white/60 mt-1">
                   Nao encontramos seu CPF. Preencha para criar seu cadastro.
                 </p>

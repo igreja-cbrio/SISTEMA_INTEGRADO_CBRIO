@@ -1,17 +1,17 @@
 // Service de contas correntes Santander
-// Endpoints cobertos: lista contas, saldo, extrato (com fatia automatica de 30d)
+// Endpoints cobertos: lista contas, saldo, extrato (com fatia automática de 30d)
 const { callApi, BANK_ID, AGENCIA, CONTA } = require('./httpClient');
 const { supabase } = require('../../utils/supabase');
 
 const BASE = '/bank_account_information/v1';
 
-// Santander exige formato AGENCIA.CONTA · 4 digitos de agencia + 12 de conta
+// Santander exige formato AGENCIA.CONTA · 4 digitos de agência + 12 de conta
 // Ex: 3957.000130004222 (zero-padding a esquerda na conta se vier curta)
 function padAgencia(a) { return String(a || '').padStart(4, '0'); }
 function padConta(c) { return String(c || '').padStart(12, '0'); }
 
 function balanceId() {
-  if (!AGENCIA || !CONTA) throw new Error('SANTANDER_AGENCIA / SANTANDER_CONTA nao configurados');
+  if (!AGENCIA || !CONTA) throw new Error('SANTANDER_AGENCIA / SANTANDER_CONTA não configurados');
   return `${padAgencia(AGENCIA)}.${padConta(CONTA)}`;
 }
 
@@ -21,7 +21,7 @@ async function listarContas({ userId } = {}) {
 
 // Busca info de limite de cheque especial via endpoint /accounts
 // (o endpoint /balances retorna so saldo, sem limite)
-// Retorna 0 silenciosamente se a chamada falhar ou a conta nao tiver limite
+// Retorna 0 silenciosamente se a chamada falhar ou a conta não tiver limite
 async function buscarLimiteOverdraft({ userId } = {}) {
   try {
     const raw = await callApi(`${BASE}/banks/${BANK_ID}/accounts`, { userId });
@@ -59,7 +59,7 @@ async function buscarLimiteOverdraft({ userId } = {}) {
       rawAccount: myAccount,
     };
   } catch (e) {
-    // Best-effort · nao quebra a chamada de saldo. Persiste erro pra debug.
+    // Best-effort · não quebra a chamada de saldo. Persiste erro pra debug.
     console.warn('[Santander] /accounts falhou:', e.message);
     return {
       overdraftLimit: 0,
@@ -130,7 +130,7 @@ async function historicoSaldo({ dias = 30 } = {}) {
   return data || [];
 }
 
-// Fatiar periodo em janelas de max 30 dias (limite da API)
+// Fatiar período em janelas de max 30 dias (limite da API)
 function fatiarPeriodo(inicio, fim) {
   const fatias = [];
   let cursor = new Date(inicio);
@@ -162,7 +162,7 @@ async function buscarExtratoSantander({ inicio, fim, userId }) {
 }
 
 async function consultarExtrato({ inicio, fim, usarCache = true, userId } = {}) {
-  if (!inicio || !fim) throw new Error('inicio e fim obrigatorios (YYYY-MM-DD)');
+  if (!inicio || !fim) throw new Error('início e fim obrigatórios (YYYY-MM-DD)');
 
   // Cache curto · 10min · valido apenas pra janelas exatas
   if (usarCache && supabase) {

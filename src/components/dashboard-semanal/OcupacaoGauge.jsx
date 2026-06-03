@@ -52,7 +52,7 @@ export default function OcupacaoGauge({ taxa }) {
             {valor}%
           </motion.div>
           <div className="text-[10px] text-muted-foreground">
-            de 1.200 lugares
+            de 1.050 lugares
           </div>
         </div>
       </div>

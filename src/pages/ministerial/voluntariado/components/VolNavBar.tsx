@@ -33,8 +33,8 @@ export default function VolNavBar() {
   const location = useLocation();
   const { isAdmin, isColaborador } = useAuth();
 
-  // Se o usuario nao e admin/colaborador, e um voluntario — mostra navegacao simples.
-  // Tambem, se a URL ja e de voluntario (/voluntariado/checkin/*), mostra navegacao simples.
+  // Se o usuário não e admin/colaborador, e um voluntário — mostra navegacao simples.
+  // Também, se a URL já e de voluntário (/voluntariado/checkin/*), mostra navegacao simples.
   const isSimpleView = !isAdmin && !isColaborador || location.pathname.startsWith('/voluntariado/checkin');
   const NAV_ITEMS = isSimpleView ? VOL_NAV_ITEMS : STAFF_NAV_ITEMS;
 

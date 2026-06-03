@@ -71,7 +71,7 @@ export default function HistoricoCultos() {
   }, [rows, tipoFiltro]);
 
   // Agrega por ano · adiciona batismos do ano via lookup separado.
-  // View agora retorna 1 linha por (ano, area_kpi) · soma todas as areas por ano.
+  // View agora retorna 1 linha por (ano, area_kpi) · soma todas as áreas por ano.
   const porAno = useMemo(() => {
     const batismosMap = new Map<number, number>();
     batismosAno.forEach(b => {

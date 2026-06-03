@@ -100,7 +100,7 @@ async function fetchAllTeamMembers(baseUrl, serviceTypeId, planId, credentials) 
 }
 
 // ── Future + recent past plans (paginated by window) ──────────────────────
-// Janela ampla por padrão: próximos 60 dias + últimos 7 dias. Pagina por
+// Janela ampla por padrão: próximos 60 dias + últimos 7 dias. Página por
 // `offset` até esgotar — assim service types movimentados (Kids, Domingo etc.)
 // não ficam limitados a 5 cultos futuros.
 async function fetchAllPlans(baseUrl, serviceTypeId, credentials) {
@@ -274,7 +274,7 @@ async function processServiceType(supabase, serviceType, plans, credentials) {
     const serviceTypeName = serviceType.attributes.name;
     const dateOnly = serviceDate.slice(0, 10); // 'yyyy-MM-dd'
 
-    // Busca servico gerado internamente com mesmo tipo e data
+    // Busca serviço gerado internamente com mesmo tipo e data
     const { data: internalService } = await supabase
       .from('vol_services')
       .select('id')
@@ -286,20 +286,20 @@ async function processServiceType(supabase, serviceType, plans, credentials) {
 
     let service;
     if (internalService) {
-      // Remove o servico PCO-only com esse plan.id, se existir (evita conflito de unique)
+      // Remove o serviço PCO-only com esse plan.id, se existir (evita conflito de unique)
       await supabase.from('vol_services')
         .delete()
         .eq('planning_center_id', plan.id)
         .is('service_type_id', null);
 
-      // Vincula o plan ID do PCO ao servico interno para proximas sincronizacoes
+      // Vincula o plan ID do PCO ao serviço interno para próximas sincronizacoes
       await supabase.from('vol_services')
         .update({ planning_center_id: plan.id })
         .eq('id', internalService.id);
 
       service = internalService;
     } else {
-      // Sem servico interno para esse tipo+data: cria/atualiza pelo planning_center_id
+      // Sem serviço interno para esse tipo+data: cria/atualiza pelo planning_center_id
       const { data: svc, error: serviceError } = await supabase
         .from('vol_services')
         .upsert({
@@ -653,7 +653,7 @@ async function fetchPcoCpfMap(credentials) {
 }
 
 // Preenche vol_profiles.cpf onde estiver vazio, casando por planning_center_id.
-// NUNCA sobrescreve um CPF ja existente. O trigger BEFORE UPDATE OF cpf cuida
+// NUNCA sobrescreve um CPF já existente. O trigger BEFORE UPDATE OF cpf cuida
 // de vincular ao mem_membros automaticamente.
 async function backfillVolProfilesCpf(supabase, credentials) {
   const cpfMap = await fetchPcoCpfMap(credentials);

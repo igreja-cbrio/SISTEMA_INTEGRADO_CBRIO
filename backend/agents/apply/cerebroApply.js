@@ -9,7 +9,7 @@ async function applyErros({ payload }) {
   await notif({
     modulo: 'cerebro', tipo: 'erros_acumulando',
     titulo: `Cerebro · ${qtd_erros} erros em ${periodo_horas}h`,
-    mensagem: `Pipeline acumulou ${qtd_erros} erros nas ultimas ${periodo_horas} horas. Amostra: ${amostraStr || 'sem detalhes'}. Investigar.`,
+    mensagem: `Pipeline acumulou ${qtd_erros} erros nas últimas ${periodo_horas} horas. Amostra: ${amostraStr || 'sem detalhes'}. Investigar.`,
     link: `/admin/cerebro`,
     severidade: qtd_erros >= 20 ? 'critico' : 'alerta',
     chaveDedup: `cerebro_erros_${new Date().toISOString().slice(0, 10)}`,
@@ -35,7 +35,7 @@ async function applyCusto({ payload }) {
   await notif({
     modulo: 'cerebro', tipo: 'custo_crescente',
     titulo: `Cerebro · custo alto (${tokens_periodo} tokens em ${dias}d)`,
-    mensagem: `Pipeline consumiu ${tokens_periodo.toLocaleString('pt-BR')} tokens nos ultimos ${dias} dias (${itens_processados} itens). Revisar limites.`,
+    mensagem: `Pipeline consumiu ${tokens_periodo.toLocaleString('pt-BR')} tokens nos últimos ${dias} dias (${itens_processados} itens). Revisar limites.`,
     link: `/admin/cerebro`,
     severidade: 'aviso',
     chaveDedup: `cerebro_custo_${new Date().toISOString().slice(0, 10)}`,

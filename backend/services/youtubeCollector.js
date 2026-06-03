@@ -1,14 +1,14 @@
 // ============================================================================
-// YouTube Collector · sincroniza canal CBRio (inscritos, playlists, videos)
+// YouTube Collector · sincroniza canal CBRio (inscritos, playlists, vídeos)
 // para tabelas online_canal_snapshot, online_series, online_videos.
 //
 // Quota da API YouTube v3:
 //   channels.list      = 1 unidade
-//   playlists.list     = 1 unidade × paginas
-//   playlistItems.list = 1 unidade × paginas
+//   playlists.list     = 1 unidade × páginas
+//   playlistItems.list = 1 unidade × páginas
 //   videos.list        = 1 unidade × chunks (50 ids cada)
 //
-// Execucao tipica de canal com 500 videos e 20 series: ~40 unidades/dia.
+// Execucao tipica de canal com 500 vídeos e 20 séries: ~40 unidades/dia.
 // Free tier = 10000 unidades/dia.
 // ============================================================================
 
@@ -16,14 +16,14 @@ const { supabase } = require('../utils/supabase');
 
 const YT_BASE = 'https://www.googleapis.com/youtube/v3';
 
-// Canal oficial CBRio 'IgrejaCBRio' (UCfjMVz...) · onde os videos dos cultos vivem.
+// Canal oficial CBRio 'IgrejaCBRio' (UCfjMVz...) · onde os vídeos dos cultos vivem.
 // Pode ser sobrescrito via env YOUTUBE_CHANNEL_ID se um dia mudarmos.
 const DEFAULT_CHANNEL_ID = 'UCfjMVzaYlCS_VE3JuEJj2vQ';
 
 function getEnv() {
   const apiKey = process.env.YOUTUBE_API_KEY;
   const channelId = process.env.YOUTUBE_CHANNEL_ID || DEFAULT_CHANNEL_ID;
-  if (!apiKey) throw new Error('YOUTUBE_API_KEY nao configurada');
+  if (!apiKey) throw new Error('YOUTUBE_API_KEY não configurada');
   return { apiKey, channelId };
 }
 
@@ -51,7 +51,7 @@ async function fetchChannel(apiKey, channelId) {
   const url = `${YT_BASE}/channels?part=snippet,statistics&id=${channelId}&key=${apiKey}`;
   const data = await fetchJson(url);
   const item = (data.items || [])[0];
-  if (!item) throw new Error(`Canal ${channelId} nao encontrado`);
+  if (!item) throw new Error(`Canal ${channelId} não encontrado`);
   const snip = item.snippet || {};
   const stats = item.statistics || {};
   return {
@@ -90,7 +90,7 @@ async function fetchPlaylists(apiKey, channelId) {
 }
 
 // ---------------------------------------------------------------------------
-// playlistItems.list · todos os videos de uma playlist
+// playlistItems.list · todos os vídeos de uma playlist
 // ---------------------------------------------------------------------------
 async function fetchPlaylistItems(apiKey, playlistId) {
   const ids = [];
@@ -164,7 +164,7 @@ async function syncCanal() {
   }, { onConflict: 'data' });
   if (snapErr) log.erros.push({ etapa: 'snapshot', msg: snapErr.message });
 
-  // 2. Playlists -> series
+  // 2. Playlists -> séries
   const playlists = await fetchPlaylists(apiKey, channelId);
   log.etapas.playlists_qtd = playlists.length;
   const seriesByPlaylistId = new Map();
@@ -180,7 +180,7 @@ async function syncCanal() {
     }
   }
 
-  // 3. Pra cada playlist, pega video ids e mapeia video -> serie
+  // 3. Pra cada playlist, pega vídeo ids e mapeia vídeo -> série
   const videoToSerie = new Map(); // video_id -> serie_id (uuid)
   for (const p of playlists) {
     const serieId = seriesByPlaylistId.get(p.playlist_id);
@@ -192,12 +192,12 @@ async function syncCanal() {
   }
   log.etapas.videos_em_playlists = videoToSerie.size;
 
-  // 4. Pega stats dos videos
+  // 4. Pega stats dos vídeos
   const videoIds = Array.from(videoToSerie.keys());
   const videos = videoIds.length > 0 ? await fetchVideos(apiKey, videoIds) : [];
   log.etapas.videos_processados = videos.length;
 
-  // 5. Upsert videos com serie_id e tenta linkar culto_id por youtube_video_id
+  // 5. Upsert vídeos com serie_id e tenta linkar culto_id por youtube_video_id
   if (videos.length > 0) {
     // Mapeia youtube_video_id -> culto_id (uma query so)
     const { data: cultosLinks } = await supabase
@@ -216,7 +216,7 @@ async function syncCanal() {
       updated_at: new Date().toISOString(),
     }));
 
-    // Upsert em chunks de 200 pra nao estourar payload
+    // Upsert em chunks de 200 pra não estourar payload
     for (let i = 0; i < upserts.length; i += 200) {
       const chunk = upserts.slice(i, i + 200);
       const { error } = await supabase.from('online_videos').upsert(chunk, { onConflict: 'video_id' });

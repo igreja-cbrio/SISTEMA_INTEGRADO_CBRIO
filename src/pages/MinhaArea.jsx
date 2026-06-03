@@ -1,16 +1,16 @@
 // ============================================================================
-// /minha-area — Hub do lider · visualizador de KPIs (refator 2026-05-14)
+// /minha-area — Hub do líder · visualizador de KPIs (refator 2026-05-14)
 //
-// Marcos: "essa aba de edicao e visualizacao de indicadores nao esta boa".
+// Marcos: "essa aba de edição e visualizacao de indicadores não esta boa".
 //
 // Nova arquitetura:
-// - Lista plana com filtros pinned (busca + Pilar + Valor + Area + Status + OKR)
-// - Cards densos: valor grande + sparkline 12 periodos + % meta + delta
+// - Lista plana com filtros pinned (busca + Pilar + Valor + Área + Status + OKR)
+// - Cards densos: valor grande + sparkline 12 períodos + % meta + delta
 // - Drilldown inline ao clicar (sem modal · expande detalhe abaixo do card)
 // - Status vem da view vw_kpi_taticos_status (mesma usada no /painel) ·
-//   sai a logica local "se preencheu vira no_alvo" que estava errada
-// - Toggle de agrupamento: Pilar | Valor | Area | Lista plana
-// - Edicao de meta + revisao OKR continuam abrindo modal (raro · tudo bem)
+//   sai a lógica local "se preencheu vira no_alvo" que estava errada
+// - Toggle de agrupamento: Pilar | Valor | Área | Lista plana
+// - Edição de meta + revisão OKR continuam abrindo modal (raro · tudo bem)
 // ============================================================================
 
 import { useState, useMemo } from 'react';
@@ -48,7 +48,7 @@ const STATUS_OPTS = [
 
 const STATUS_COR = Object.fromEntries(STATUS_OPTS.map(s => [s.key, s.cor]));
 
-// Modulo onde preencher · usado no drilldown
+// Módulo onde preencher · usado no drilldown
 const MODULO_POR_DADO_TIPO = {
   conversoes:                          { titulo: 'Integração',     path: '/ministerial/integracao?tab=frequencia' },
   batismos:                            { titulo: 'Batismos',       path: '/ministerial/integracao?tab=batismos' },
@@ -125,7 +125,7 @@ export default function MinhaArea() {
   const [agrupamento, setAgrupamento] = useState('pilar');
   const [expandedId, setExpandedId] = useState(null);
 
-  // Modal de revisao OKR (uso do lider · operacional, nao e configuracao).
+  // Modal de revisão OKR (uso do líder · operacional, não e configuração).
   // Edicao/criacao de KPI/meta foi pra /gestao · /minha-area e so visualizacao.
   const [revisarKpi, setRevisarKpi] = useState(null);
 
@@ -142,7 +142,7 @@ export default function MinhaArea() {
     staleTime: 60_000,
   });
 
-  // Historico por KPI (12 ultimos periodos · cronologico)
+  // Histórico por KPI (12 últimos períodos · cronologico)
   const historicoPorKpi = useMemo(() => {
     const m = new Map();
     registros.forEach(r => {
@@ -157,18 +157,18 @@ export default function MinhaArea() {
     return m;
   }, [registros]);
 
-  // Filtro de permissao · /minha-area mostra KPIs que o usuario "responde por":
+  // Filtro de permissão · /minha-area mostra KPIs que o usuário "responde por":
   //   · admin/diretor: tudo
   //   · perfil sem kpi_areas/kpi_valores: tudo (legado · MVP)
-  //   · perfil com kpi_areas ou kpi_valores: so KPIs cuja area OU valor batem
+  //   · perfil com kpi_areas ou kpi_valores: so KPIs cuja área OU valor batem
   //
-  // Marcos: "Alda quer ver minha area de kpi so com seguir a Jesus".
+  // Marcos: "Alda quer ver minha área de kpi so com seguir a Jesus".
   // Setando profile.kpi_valores = ['seguir'] no banco, ela ve so esses.
   const kpisAtivos = useMemo(() => {
     return taticos.filter(k => {
       if (k.ativo === false) return false;
       if (isAdmin) return true;
-      // Sem permissoes configuradas · MVP mostra tudo (comportamento legado)
+      // Sem permissões configuradas · MVP mostra tudo (comportamento legado)
       if (kpiAreas.length === 0 && kpiValores.length === 0) return true;
       const area = String(k.area || '').toLowerCase();
       if (kpiAreas.includes(area)) return true;
@@ -177,7 +177,7 @@ export default function MinhaArea() {
     });
   }, [taticos, isAdmin, kpiAreas, kpiValores]);
 
-  // Opcoes derivadas
+  // Opções derivadas
   const pilaresDisponiveis = useMemo(() => {
     const set = new Map();
     kpisAtivos.forEach(k => {
@@ -235,7 +235,7 @@ export default function MinhaArea() {
         map.get(key).kpis.push(k);
       });
     } else if (agrupamento === 'valor') {
-      // 1 KPI pode entrar em varios valores
+      // 1 KPI pode entrar em vários valores
       VALORES.forEach(v => map.set(v.key, { key: v.key, label: v.label, cor: v.cor, kpis: [] }));
       map.set('sem_valor', { key: 'sem_valor', label: 'Sem valor (operações)', kpis: [] });
       kpisFiltrados.forEach(k => {
@@ -482,7 +482,7 @@ function KpiLinha({ kpi, historico, expanded, onToggleExpand, onRevisar }) {
   const ultimoValor = kpi.ultimo_valor;
   const anteriorReg = sparkData.length >= 2 ? sparkData[sparkData.length - 2].y : null;
   const delta = ultimoValor != null && anteriorReg != null ? formatDelta(ultimoValor, anteriorReg) : null;
-  // Meta efetiva: prioriza absoluto (alvo materializado por area), fallback pro %
+  // Meta efetiva: prioriza absoluto (alvo materializado por área), fallback pro %
   const metaEfetiva = kpi.meta_valor_absoluto ?? kpi.meta_valor;
   const usaAbsoluto = kpi.meta_valor_absoluto != null;
   const pctMeta = metaEfetiva && ultimoValor != null && metaEfetiva !== 0
@@ -627,7 +627,7 @@ function KpiLinha({ kpi, historico, expanded, onToggleExpand, onRevisar }) {
             </div>
           )}
 
-          {/* Acoes · /minha-area e so visualizacao · meta editavel em /gestao */}
+          {/* Ações · /minha-area e so visualizacao · meta editavel em /gestao */}
           <div className="flex items-center gap-2 flex-wrap">
             {podeRevisar && (
               <Button size="sm" variant="outline" onClick={onRevisar} className="h-7 text-xs gap-1.5" style={{ borderColor: cor, color: cor }}>

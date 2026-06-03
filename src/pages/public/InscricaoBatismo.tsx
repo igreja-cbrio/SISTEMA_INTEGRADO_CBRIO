@@ -55,7 +55,7 @@ function Field({
   const active = focused || type === 'date' || (value !== undefined && value !== null && String(value).length > 0);
   const Tag: any = as;
   return (
-    <div style={{ position: 'relative', marginBottom: 20 }}>
+    <div style={{ position: 'relative', marginBottom: 20, marginTop: type === 'date' ? 16 : 0 }}>
       <Tag
         id={id} name={id}
         type={as === 'input' ? type : undefined}
@@ -97,6 +97,7 @@ function SelectField({
   onChange: (e: React.ChangeEvent<HTMLSelectElement>) => void;
   options: { value: string; label: string }[]; required?: boolean;
 }) {
+  const { C } = usePublicTheme();
   const [focused, setFocused] = useState(false);
   const active = focused || (value !== undefined && value !== null && String(value).length > 0);
   return (
@@ -154,7 +155,7 @@ function Row({ children }: { children: React.ReactNode }) {
   );
 }
 
-const MESES_PT = ['janeiro', 'fevereiro', 'marco', 'abril', 'maio', 'junho', 'julho', 'agosto', 'setembro', 'outubro', 'novembro', 'dezembro'];
+const MESES_PT = ['janeiro', 'fevereiro', 'março', 'abril', 'maio', 'junho', 'julho', 'agosto', 'setembro', 'outubro', 'novembro', 'dezembro'];
 
 function formatDataLonga(iso: string) {
   if (!iso) return '';
@@ -174,7 +175,7 @@ export default function InscricaoBatismo() {
     limitacao_mobilidade: '',
     motivo: '',
     observacoes: '',
-    horario_culto: '',
+    horario_culto: '10h',
     area_kpi: '', // opcional · 'sede' (default) | 'ami' | 'bridge' | 'online'
     website: '', // honeypot
   });
@@ -202,9 +203,9 @@ export default function InscricaoBatismo() {
     if (form.website) return; // honeypot
     if (!form.nome || form.nome.trim().length < 2) return setError('Informe seu nome.');
     if (!form.sobrenome.trim()) return setError('Informe seu sobrenome.');
-    if (!form.email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email)) return setError('Email invalido.');
-    if (!form.telefone || soDigitos(form.telefone).length < 10) return setError('Telefone invalido.');
-    if (form.cpf && !cpfValido(form.cpf)) return setError('CPF invalido.');
+    if (!form.email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email)) return setError('E-mail inválido.');
+    if (!form.telefone || soDigitos(form.telefone).length < 10) return setError('Telefone inválido.');
+    if (form.cpf && !cpfValido(form.cpf)) return setError('CPF inválido.');
 
     setLoading(true);
     try {
@@ -226,7 +227,7 @@ export default function InscricaoBatismo() {
       });
       setSent(true);
     } catch (err: any) {
-      setError(err?.message || 'Erro ao enviar inscricao.');
+      setError(err?.message || 'Erro ao enviar inscrição.');
     }
     setLoading(false);
   };
@@ -250,10 +251,10 @@ export default function InscricaoBatismo() {
           <img src="/logo-cbrio-icon.png" alt="CBRio"
             style={{ width: 72, height: 72, marginBottom: 12, display: 'inline-block' }} />
           <h1 style={{ fontSize: 24, fontWeight: 800, margin: 0, letterSpacing: -0.5, background: 'linear-gradient(90deg, #00B39D, #00d9bd)', WebkitBackgroundClip: 'text', backgroundClip: 'text', color: 'transparent' }}>
-            Inscricao para batismo
+            Inscrição para batismo
           </h1>
           <p style={{ fontSize: 13, color: C.text3, marginTop: 6, lineHeight: 1.5 }}>
-            "Aquele que crer e for batizado sera salvo." — Marcos 16:16
+            "Aquele que crer e for batizado será salvo." — Marcos 16:16
           </p>
           {proximaData && (
             <div style={{
@@ -263,7 +264,7 @@ export default function InscricaoBatismo() {
               border: '1px solid rgba(0,179,157,0.3)',
               color: '#00B39D', fontSize: 13, fontWeight: 600,
             }}>
-              Proximo batismo: {formatDataLonga(proximaData)}
+              Próximo batismo: {formatDataLonga(proximaData)}
             </div>
           )}
         </div>
@@ -280,14 +281,14 @@ export default function InscricaoBatismo() {
               fontSize: 28, marginBottom: 16,
             }}>&#10003;</div>
             <h2 style={{ fontSize: 18, fontWeight: 700, color: C.text, margin: 0 }}>
-              Inscricao confirmada!
+              Inscrição confirmada!
             </h2>
             <p style={{ fontSize: 13, color: C.text3, marginTop: 10, lineHeight: 1.5 }}>
-              Voce esta inscrito(a) para o batismo de <strong>{formatDataLonga(proximaData)}</strong>.
-              Em breve nossa equipe de Integracao entrara em contato com mais detalhes.
+              Você está inscrito(a) para o batismo de <strong>{formatDataLonga(proximaData)}</strong>.
+              Em breve nossa equipe de Integração entrará em contato com mais detalhes.
             </p>
             <p style={{ fontSize: 12, color: C.textDim, marginTop: 16 }}>
-              Deus te abencoe nessa nova etapa.
+              Deus te abençoe nessa nova etapa.
             </p>
           </div>
         ) : (
@@ -312,17 +313,17 @@ export default function InscricaoBatismo() {
                 <Field id="nome" label="Nome" value={form.nome} onChange={set('nome')} required autoComplete="given-name" />
                 <Field id="sobrenome" label="Sobrenome" value={form.sobrenome} onChange={set('sobrenome')} required autoComplete="family-name" />
               </Row>
-              <Field id="email" label="Email" type="email" value={form.email} onChange={set('email')} required autoComplete="email" inputMode="email" />
+              <Field id="email" label="E-mail" type="email" value={form.email} onChange={set('email')} required autoComplete="email" inputMode="email" />
               <Row>
                 <Field id="telefone" label="Telefone" value={form.telefone} onChange={set('telefone')} required placeholder="(00) 00000-0000" inputMode="tel" autoComplete="tel" />
                 <Field id="cpf" label="CPF (opcional)" value={form.cpf} onChange={set('cpf')} placeholder="000.000.000-00" inputMode="numeric" autoComplete="off" />
               </Row>
               <Field id="data_nascimento" label="Data de nascimento (opcional)" type="date" value={form.data_nascimento} onChange={set('data_nascimento')} autoComplete="bday" />
 
-              <SectionTitle>Endereco</SectionTitle>
+              <SectionTitle>Endereço</SectionTitle>
               <Row>
                 <Field id="cep" label="CEP" value={form.cep} onChange={set('cep')} placeholder="00000-000" inputMode="numeric" autoComplete="postal-code" />
-                <Field id="endereco" label="Endereco" value={form.endereco} onChange={set('endereco')} autoComplete="street-address" />
+                <Field id="endereco" label="Endereço" value={form.endereco} onChange={set('endereco')} autoComplete="street-address" />
               </Row>
 
               <SectionTitle>Sobre o batismo</SectionTitle>
@@ -341,33 +342,34 @@ export default function InscricaoBatismo() {
                   ]}
                 />
                 <SelectField
-                  id="horario_culto" label="Horario do culto"
+                  id="horario_culto" label="Horário do batismo"
                   value={form.horario_culto}
                   onChange={set('horario_culto') as any}
                   options={[
-                    { value: '10h', label: '10h' },
-                    { value: '17h', label: '17h' },
-                    { value: '19h30', label: '19h30' },
+                    { value: '10h', label: 'Domingo · 10h (2º culto da manhã)' },
                   ]}
                 />
               </Row>
               <SelectField
-                id="area_kpi" label="Voce frequenta qual campus? (opcional)"
+                id="area_kpi" label="Você frequenta qual público? (opcional)"
                 value={form.area_kpi}
                 onChange={set('area_kpi') as any}
                 options={[
-                  { value: '', label: 'CBRio Domingo' },
+                  { value: '', label: 'Adultos' },
                   { value: 'ami', label: 'AMI' },
                   { value: 'bridge', label: 'Bridge' },
                   { value: 'online', label: 'Online' },
                 ]}
               />
-              <Field
+              <SelectField
                 id="limitacao_mobilidade"
-                label="Possui alguma limitacao de mobilidade?"
+                label="Possui alguma limitação de mobilidade?"
                 value={form.limitacao_mobilidade}
-                onChange={set('limitacao_mobilidade')}
-                placeholder="Ex: cadeirante, dificuldade de locomocao..."
+                onChange={set('limitacao_mobilidade') as any}
+                options={[
+                  { value: 'Não', label: 'Não' },
+                  { value: 'Sim', label: 'Sim' },
+                ]}
               />
               <Field
                 id="motivo"
@@ -378,7 +380,7 @@ export default function InscricaoBatismo() {
               />
               <Field
                 id="observacoes"
-                label="Comentario adicional (familiares se batizando junto, etc)"
+                label="Comentário adicional (familiares se batizando junto, etc)"
                 as="textarea" rows={2}
                 value={form.observacoes}
                 onChange={set('observacoes')}
@@ -395,14 +397,13 @@ export default function InscricaoBatismo() {
                   marginTop: 12, transition: 'background 0.2s',
                 }}
               >
-                {loading ? 'Enviando...' : 'Confirmar inscricao'}
+                {loading ? 'Enviando...' : 'Confirmar inscrição'}
               </button>
 
               <p style={{
                 fontSize: 11, color: C.textDim, textAlign: 'center', marginTop: 16, lineHeight: 1.5,
               }}>
-                Apos escolher o horario do batismo, nao sera possivel altera-lo.
-                A equipe da Integracao entrara em contato em breve.
+                A equipe da Integração entrará em contato em breve com mais detalhes.
               </p>
             </form>
           </>

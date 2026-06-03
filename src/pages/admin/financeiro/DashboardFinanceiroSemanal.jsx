@@ -39,7 +39,7 @@ const fmtInt = (v) => Number(v || 0).toLocaleString('pt-BR');
 
 const DIAS = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
 
-// Ordem logica dos cultos: Quarta -> Bridge/AMI (sabado) -> Domingos (por horario).
+// Ordem lógica dos cultos: Quarta -> Bridge/AMI (sábado) -> Domingos (por horario).
 // Semana comecando na segunda (Seg=0..Dom=6) + minutos do dia desempata.
 const ordemCulto = (day, time) => {
   const d = day === null || day === undefined ? 99 : ((Number(day) + 6) % 7);
@@ -79,9 +79,9 @@ function useFiltrosGlobais() {
 // ============================================================
 // SEMANAS ISO seg-dom · UNIFICADAS com a aba de cultos (2026-06-01)
 // Antes era qua-ter (corte na terca pelo lag D+1 do extrato). Como a oferta
-// de culto ja e lancada com a data do culto, mudamos pra segunda->domingo pra
+// de culto já e lancada com a data do culto, mudamos pra segunda->domingo pra
 // "Semana 21" bater com os cultos. O backend (fin_semana_qua_ter, nome mantido)
-// tambem foi reescrito pra ISO seg-dom.
+// também foi reescrito pra ISO seg-dom.
 // ============================================================
 function segundaDaSemana(date) {
   const d = new Date(date);
@@ -91,7 +91,7 @@ function segundaDaSemana(date) {
   return d;
 }
 
-// Numero da semana ISO (mesmo criterio do to_char(IW) do Postgres e da aba cultos)
+// Número da semana ISO (mesmo critério do to_char(IW) do Postgres e da aba cultos)
 function numeroSemanaIso(date) {
   const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
   const dayNum = (d.getUTCDay() + 6) % 7; // Seg=0
@@ -231,7 +231,7 @@ export default function DashboardSemanal() {
   };
 
   // Stale-while-revalidate · so bloqueia tela no carregamento INICIAL.
-  // Trocas de semana mantem UI anterior visivel + spinner sutil no header.
+  // Trocas de semana mantem UI anterior visível + spinner sutil no header.
   if (!data) return <LoadingPretty />;
   if (data.erro) return <div className="text-sm text-muted-foreground">Erro: {data.erro}</div>;
 
@@ -407,7 +407,7 @@ function SlideNav({ current, onChange }) {
 }
 
 // ============================================================
-// SLIDES · conteudo de cada aba
+// SLIDES · conteúdo de cada aba
 // ============================================================
 
 function Slide0Resumo({ kpis, cultos, top_contribuintes, historico }) {
@@ -631,7 +631,7 @@ function Slide6Metas({ metas, onMetasChange }) {
 }
 
 // ============================================================
-// CALCULA "valor atual" da meta usando dados ja carregados
+// CALCULA "valor atual" da meta usando dados já carregados
 // ============================================================
 function calcularAtualMeta(meta, ctx) {
   const { completo, receitaSemana } = ctx;
@@ -2272,7 +2272,7 @@ function MetasFinanceirasComFiltros({ metas: metasIniciais, onMetasChange }) {
   const [filtroAno, setFiltroAno] = useState(anoAtual);
   const [filtroMes, setFiltroMes] = useState(''); // '' = todos / 1-12
   const [filtroSemana, setFiltroSemana] = useState(''); // '' = nenhuma / YYYY-MM-DD da quarta
-  // metaId -> { ano?, mes?, semana_inicio? } · override individual por meta
+  // metaId -> { ano?, mês?, semana_inicio? } · override individual por meta
   const [perMetaPeriod, setPerMetaPeriod] = useState({});
   const [filtroTipo, setFiltroTipo] = useState('todos'); // 'todos' | 'receita' | 'despesa' | 'saldo'
 

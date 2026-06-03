@@ -18,7 +18,7 @@ function decodeEndToEndId(e2eId) {
   if (!e2eId || typeof e2eId !== 'string' || !e2eId.startsWith('E') || e2eId.length < 21) {
     return null;
   }
-  // Extrai posicoes (1-indexed do SQL · 0-indexed em JS):
+  // Extrai posições (1-indexed do SQL · 0-indexed em JS):
   // E[1] ISPB[2..9] YYYY[10..13] MM[14..15] DD[16..17] HH[18..19] MI[20..21] suffix[22..]
   const ispb = e2eId.substring(1, 9);
   const yyyy = e2eId.substring(9, 13);
@@ -28,7 +28,7 @@ function decodeEndToEndId(e2eId) {
   const mi   = e2eId.substring(19, 21);
   const suffix = e2eId.substring(21);
 
-  // Validacao numerica
+  // Validação numerica
   if (!/^\d{8}$/.test(ispb) || !/^\d{4}$/.test(yyyy) || !/^\d{2}$/.test(mm) ||
       !/^\d{2}$/.test(dd) || !/^\d{2}$/.test(hh) || !/^\d{2}$/.test(mi)) {
     return null;
@@ -58,7 +58,7 @@ function decodeEndToEndId(e2eId) {
     datetime_brt: brt,
     data: `${brt.getUTCFullYear()}-${pad(brt.getUTCMonth() + 1)}-${pad(brt.getUTCDate())}`,
     hora: `${pad(brt.getUTCHours())}:${pad(brt.getUTCMinutes())}:00`,
-    // Tambem retorna a string ISO sem tz
+    // Também retorna a string ISO sem tz
     datetime_brt_iso: `${brt.getUTCFullYear()}-${pad(brt.getUTCMonth() + 1)}-${pad(brt.getUTCDate())}T${pad(brt.getUTCHours())}:${pad(brt.getUTCMinutes())}:00`,
   };
 }
@@ -121,7 +121,7 @@ function parseValor(raw) {
 }
 
 /**
- * Parseia buffer de Excel ou CSV do relatorio PIX do Santander
+ * Parseia buffer de Excel ou CSV do relatório PIX do Santander
  */
 function parsePixExtrato(buffer, filename = '') {
   const isCSV = /\.csv$/i.test(filename);

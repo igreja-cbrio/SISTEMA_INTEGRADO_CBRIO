@@ -54,10 +54,10 @@ const TRILHA_ETAPAS = [
   { key: 'primeiro_contato', label: 'Chegou na Igreja', icon: Star },
   { key: 'conversao', label: 'Conversao', icon: Heart },
   { key: 'conversa_lider', label: 'Conversa com Pastor/Lider', icon: Users },
-  { key: 'next', label: 'Next (Visao e Cultura CBRio)', icon: Calendar },
+  { key: 'next', label: 'Next (Visão e Cultura CBRio)', icon: Calendar },
   { key: 'voluntariado', label: 'Voluntariado (comecou a servir)', icon: UserPlus },
   { key: 'engajamento', label: 'Engajamento ativo', icon: Activity },
-  { key: 'grupo_vida', label: 'Inscricao em Grupo', icon: Home },
+  { key: 'grupo_vida', label: 'Inscrição em Grupo', icon: Home },
   { key: 'generosidade', label: 'Generosidade (contribuicao)', icon: HandCoins },
 ];
 
@@ -331,7 +331,7 @@ function MembroFormModal({ open, onOpenChange, editData, familias, onSaved }) {
 
   const processarFoto = (file) => {
     if (!file.type.startsWith('image/')) { toast.error('Selecione uma imagem (JPG, PNG ou WebP).'); return; }
-    if (file.size > 5 * 1024 * 1024) { toast.error('A imagem deve ter no maximo 5 MB.'); return; }
+    if (file.size > 5 * 1024 * 1024) { toast.error('A imagem deve ter no máximo 5 MB.'); return; }
     setFotoFile(file);
     const reader = new FileReader();
     reader.onload = (ev) => setFotoPreview(ev.target.result);
@@ -741,7 +741,7 @@ export default function Membresia() {
   const openDetail = async (mOrId) => {
     // Aceita id (string) ou objeto da lista. Quando objeto e passado,
     // aplica render otimista: modal abre na hora com nome/foto/papeis
-    // que ja temos da lista, e os dados completos carregam em background.
+    // que já temos da lista, e os dados completos carregam em background.
     const id = typeof mOrId === 'string' ? mOrId : mOrId?.id;
 
     // Reset de UI sempre (open inicial)
@@ -2028,7 +2028,7 @@ export default function Membresia() {
                   })()}
                 </TabsContent>
 
-                {/* Aba: NEXT (inscricoes em eventos) */}
+                {/* Aba: NEXT (inscrições em eventos) */}
                 <TabsContent value="next" className="mt-4">
                   <Button
                     variant="ghost"
@@ -2120,20 +2120,20 @@ export default function Membresia() {
                               const fonte = isImportado
                                 ? 'historico importado'
                                 : isCulto
-                                  ? 'decisao em culto'
+                                  ? 'decisão em culto'
                                   : 'registrado';
                               return {
                                 detected: true,
                                 detail: `Convertido(a) em ${fmt(t.data_conclusao)} · ${fonte}`,
                               };
                             }
-                            // 2. Fallback · decisao registrada em culto (cultos_decisoes_pessoas)
+                            // 2. Fallback · decisão registrada em culto (cultos_decisoes_pessoas)
                             if (m.decisoes_culto?.length > 0) {
                               const d = m.decisoes_culto[0];
                               const cultoLabel = d.culto?.service_type?.name || 'culto';
                               return {
                                 detected: true,
-                                detail: `Decisao em ${cultoLabel} em ${fmt(d.culto?.data || d.registrado_em)}`,
+                                detail: `Decisão em ${cultoLabel} em ${fmt(d.culto?.data || d.registrado_em)}`,
                               };
                             }
                             return null;
@@ -2144,14 +2144,14 @@ export default function Membresia() {
                               const ultimo = m.jornada180[0];
                               const pastor = ultimo.pastor_lider?.name;
                               const parts = [`${m.jornada180.length} ${m.jornada180.length === 1 ? 'encontro' : 'encontros'}`];
-                              if (ultimo.data_encontro) parts.push(`ultimo em ${fmt(ultimo.data_encontro)}`);
+                              if (ultimo.data_encontro) parts.push(`último em ${fmt(ultimo.data_encontro)}`);
                               if (pastor) parts.push(`com ${pastor}`);
                               return { detected: true, detail: parts.join(' · ') };
                             }
                             return null;
                           }
                           case 'next': {
-                            // Inscricao NEXT com check-in (esteve presente)
+                            // Inscrição NEXT com check-in (esteve presente)
                             const comCheckin = (m.inscricoes_next || []).filter(i => i.check_in_at);
                             if (comCheckin.length > 0) {
                               const ultima = comCheckin[0];
@@ -2169,7 +2169,7 @@ export default function Membresia() {
                               const desde = fmt(m.grupo_atual.entrou_em);
                               return { detected: true, detail: `${g.nome}${desde ? ` · desde ${desde}` : ''}` };
                             }
-                            // Historico · ja esteve em grupo
+                            // Histórico · já esteve em grupo
                             if (m.grupo_historico?.length > 0) {
                               const ultimo = m.grupo_historico[0];
                               const nome = ultimo.grupo?.nome || 'grupo';
@@ -2186,7 +2186,7 @@ export default function Membresia() {
                               return { detected: true, detail: nomes.join(', ') };
                             }
                             if (m.ministerios_historico?.length > 0) {
-                              return { detected: true, detail: `Ja serviu em ${m.ministerios_historico.length} time(s)` };
+                              return { detected: true, detail: `Já serviu em ${m.ministerios_historico.length} time(s)` };
                             }
                             return null;
                           }
@@ -2196,18 +2196,18 @@ export default function Membresia() {
                               const ultima = fmt(m.ultima_contribuicao);
                               const parts = [];
                               if (total > 0) parts.push(`R$ ${total.toLocaleString('pt-BR', { minimumFractionDigits: 2 })} no ano`);
-                              if (ultima) parts.push(`ultima em ${ultima}`);
+                              if (ultima) parts.push(`última em ${ultima}`);
                               return { detected: true, detail: parts.join(' · ') || 'Possui contribuicoes' };
                             }
                             return null;
                           }
                           case 'engajamento': {
-                            // Engajamento = ativo no servico OU tem check-ins recentes
+                            // Engajamento = ativo no serviço OU tem check-ins recentes
                             if (m.checkins?.length >= 3 || m.nivel_servico === 'engajado' || m.nivel_servico === 'ativo') {
                               const ultimo = fmt(m.ultimo_checkin);
                               const parts = [];
                               if (m.checkins?.length > 0) parts.push(`${m.checkins.length} check-ins recentes`);
-                              if (ultimo) parts.push(`ultimo em ${ultimo}`);
+                              if (ultimo) parts.push(`último em ${ultimo}`);
                               return { detected: true, detail: parts.join(' · ') || 'Engajamento detectado' };
                             }
                             return null;

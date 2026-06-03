@@ -1,7 +1,7 @@
 // ============================================================================
-// OkrRevisaoModal — registra revisao de OKR (regra de ouro do ritual mensal)
+// OkrRevisaoModal — registra revisão de OKR (regra de ouro do ritual mensal)
 //
-// "Todo desvio gera causa, decisao, responsavel e proximo passo."
+// "Todo desvio gera causa, decisão, responsável e próximo passo."
 //
 // Props:
 //   open, kpi (objeto KPI), onClose, onSaved
@@ -73,7 +73,7 @@ export default function OkrRevisaoModal({ open, kpi, onClose, onSaved, defaultPe
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
 
   const submit = async () => {
-    if (!form.causa_desvio.trim()) return setErr('Causa do desvio obrigatoria');
+    if (!form.causa_desvio.trim()) return setErr('Causa do desvio obrigatória');
     if (!form.decisao.trim())     return setErr('Decisao tomada obrigatoria');
     if (!form.periodo_referencia) return setErr('Periodo obrigatorio');
 
@@ -129,11 +129,11 @@ export default function OkrRevisaoModal({ open, kpi, onClose, onSaved, defaultPe
               <input value={form.periodo_referencia} onChange={e => set('periodo_referencia', e.target.value)}
                 placeholder="2026-05" style={inp} />
             </Field>
-            <Field label="Status no periodo">
+            <Field label="Status no período">
               <select value={form.status_no_periodo} onChange={e => set('status_no_periodo', e.target.value)} style={inp}>
                 <option value="vermelho">Vermelho — fora do alvo</option>
                 <option value="amarelo">Amarelo — em risco</option>
-                <option value="verde">Verde — no alvo (revisao preventiva)</option>
+                <option value="verde">Verde — no alvo (revisão preventiva)</option>
                 <option value="pendente">Pendente — sem dado</option>
               </select>
             </Field>
@@ -144,23 +144,23 @@ export default function OkrRevisaoModal({ open, kpi, onClose, onSaved, defaultPe
             </FieldFull>
             <FieldFull label="Decisao tomada *">
               <textarea value={form.decisao} onChange={e => set('decisao', e.target.value)}
-                placeholder="O que foi decidido na revisao?"
+                placeholder="O que foi decidido na revisão?"
                 rows={2} style={{ ...inp, resize: 'vertical' }} />
             </FieldFull>
             <Field label="Responsavel (proximo passo)">
               <select value={form.responsavel_funcionario_id} onChange={e => set('responsavel_funcionario_id', e.target.value)} style={inp}>
-                <option value="">— Sem responsavel —</option>
+                <option value="">— Sem responsável —</option>
                 {funcionarios.map(f => (
                   <option key={f.id} value={f.id}>{f.nome}{f.cargo ? ` — ${f.cargo}` : ''}</option>
                 ))}
               </select>
             </Field>
-            <Field label="Prazo do proximo passo">
+            <Field label="Prazo do próximo passo">
               <input type="date" value={form.prazo_proximo_passo} onChange={e => set('prazo_proximo_passo', e.target.value)} style={inp} />
             </Field>
             <FieldFull label="Proximo passo">
               <textarea value={form.proximo_passo} onChange={e => set('proximo_passo', e.target.value)}
-                placeholder="Acao concreta a ser executada"
+                placeholder="Ação concreta a ser executada"
                 rows={2} style={{ ...inp, resize: 'vertical' }} />
             </FieldFull>
           </div>

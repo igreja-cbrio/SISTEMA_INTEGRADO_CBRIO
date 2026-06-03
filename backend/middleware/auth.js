@@ -1,17 +1,17 @@
 const { supabase } = require('../utils/supabase');
 
 // LEGADO · ROLE_MAP é usado apenas internamente por `authorizeCycle` (cycles.js).
-// Manter ate `authorizeCycle` migrar pra autorizacao por modulo (`authorizeModule`).
+// Manter até `authorizeCycle` migrar pra autorizacao por módulo (`authorizeModule`).
 // PERMISSIONS{} e `req.user.permissions` foram removidos em 2026-05-19 (sem
-// consumidores no codigo). Ver CLAUDE.md "Limpeza de codigo morto de permissoes".
+// consumidores no código). Ver CLAUDE.md "Limpeza de código morto de permissões".
 const ROLE_MAP = {
   'diretor': 'pmo', 'admin': 'lider_adm', 'assistente': 'membro_marketing',
   'pmo': 'pmo', 'lider_adm': 'lider_adm', 'lider_marketing': 'lider_marketing',
   'lider_area_adm': 'lider_area_adm', 'membro_marketing': 'membro_marketing',
 };
 
-// ── Mapeamento de rotas API → slugs dos modulos (matriz reuniao 2026-05-18) ──
-// Source of truth: cargo_modulo_permissao (matriz padrao) + permissoes_modulo
+// ── Mapeamento de rotas API → slugs dos módulos (matriz reunião 2026-05-18) ──
+// Source of truth: cargo_modulo_permissao (matriz padrão) + permissoes_modulo
 // (overrides). Slugs definidos em supabase/migrations/20260518200000_*.sql
 const ROUTE_MODULE_MAP = {
   // operacionais
@@ -29,6 +29,7 @@ const ROUTE_MODULE_MAP = {
   'integracao':   ['integracao'],
   'cuidados':     ['cuidados'],
   'online':       ['online'],
+  'wifi':         ['wifi'],
   'next':         ['next'],
   'voluntariado': ['voluntariado'],
   'membresia':    ['membresia'],
@@ -59,9 +60,9 @@ const ROUTE_MODULE_MAP = {
   'apresentacoes': ['apresentacoes'],
 };
 
-// Cache de modulos · TTL CURTISSIMO (30s) pra balancear performance e
-// frescor. Caches longos (era 5min) causam usuario novo perder acesso ate
-// o cache expirar em instancias Vercel que nao receberam o bust.
+// Cache de módulos · TTL CURTISSIMO (30s) pra balancear performance e
+// frescor. Caches longos (era 5min) causam usuário novo perder acesso até
+// o cache expirar em instancias Vercel que não receberam o bust.
 const CACHE_TTL = 30 * 1000; // 30 segundos
 
 let modulosCache = null;
@@ -78,15 +79,15 @@ async function getModulos() {
   return modulosCache;
 }
 
-// Matriz cargo×modulo · SEM CACHE PERSISTENTE entre requests.
+// Matriz cargo×módulo · SEM CACHE PERSISTENTE entre requests.
 //
 // IMPORTANTE · PostgREST do Supabase capa em 1000 linhas por response
-// (`db-max-rows` no projeto). `.range(0, N)` nao passa do cap. Solucao:
-// filtrar por cargo direto no DB (`eq('cargo_id', cargoId)`) ja que so
-// precisamos das linhas do cargo do usuario. Sao ~30 linhas por cargo
+// (`db-max-rows` no projeto). `.range(0, N)` não passa do cap. Solucao:
+// filtrar por cargo direto no DB (`eq('cargo_id', cargoId)`) já que so
+// precisamos das linhas do cargo do usuário. São ~30 linhas por cargo
 // vs 1000+ na matriz inteira · query <20ms.
 //
-// Sem cargoId, retorna ate o cap (uso legado / admin UI que precise
+// Sem cargoId, retorna até o cap (uso legado / admin UI que precise
 // agregar todos cargos · ai vai paginado via /api/permissoes/matriz).
 async function getCargoMatrix(cargoId = null) {
   let query = supabase
@@ -97,11 +98,11 @@ async function getCargoMatrix(cargoId = null) {
   return data || [];
 }
 
-// Mapa: nome de area (normalizado) → slug do modulo que recebe boost de nivel 5.
-// Modelo: cargo `lider-ministerial` tem nivel 1 (so leitura) na matriz pra todos
-// os modulos ministeriais; quando a pessoa tem a area correspondente, escala
-// automaticamente pra nivel 5 (max) naquele modulo. Permite "1 cargo + N areas"
-// em vez de criar cargo separado pra cada lider.
+// Mapa: nome de área (normalizado) → slug do módulo que recebe boost de nível 5.
+// Modelo: cargo `lider-ministerial` tem nível 1 (so leitura) na matriz pra todos
+// os módulos ministeriais; quando a pessoa tem a área correspondente, escala
+// automaticamente pra nível 5 (max) naquele módulo. Permite "1 cargo + N áreas"
+// em vez de criar cargo separado pra cada líder.
 const AREA_MODULO_BOOST = {
   'cuidados':     'cuidados',
   'grupos':       'grupos',
@@ -109,15 +110,15 @@ const AREA_MODULO_BOOST = {
   'voluntariado': 'voluntariado',
   'next':         'next',
   'online':       'online',
-  // Areas de culto (drill-down de KPIs) · modulos kids/ami/bridge
+  // Áreas de culto (drill-down de KPIs) · módulos kids/ami/bridge
   'kids':         'kids',
   'ami':          'ami',
   'bridge':       'bridge',
   // Marketing (Spec 003 · 2026-05-28) · Pedro Paiva + Allan/Caua/Leticia/Lorena
-  // ganham nivel 5 automatico via area "Marketing" em usuario_areas.
+  // ganham nível 5 automático via área "Marketing" em usuario_areas.
   'marketing':    'marketing',
-  // Producao de Culto (2026-06-02) · Pedro Fernandes (area "Produção") vira
-  // admin nivel 5 do modulo producao via boost.
+  // Produção de Culto (2026-06-02) · Pedro Fernandes (área "Produção") vira
+  // admin nível 5 do módulo produção via boost.
   'producao':     'producao',
 };
 
@@ -125,13 +126,13 @@ function _normalizarArea(nome) {
   if (!nome) return '';
   return nome.toString().toLowerCase().trim()
     .normalize('NFD')
-    .replace(/[̀-ͯ]/g, ''); // remove acentos · "Integração" → "integracao"
+    .replace(/[̀-ͯ]/g, ''); // remove acentos · "Integração" → "integração"
 }
 
-// Resolve a permissao efetiva de um usuario por modulo:
+// Resolve a permissão efetiva de um usuário por módulo:
 //   override (permissoes_modulo) ?? default cargo (cargo_modulo_permissao) ?? zero
-// + Boost por area: se a area da pessoa esta em AREA_MODULO_BOOST, escala
-//   leitura+escrita pra 5 no modulo correspondente (e o boost so eleva,
+// + Boost por área: se a área da pessoa esta em AREA_MODULO_BOOST, escala
+//   leitura+escrita pra 5 no módulo correspondente (e o boost so eleva,
 //   nunca rebaixa um override mais alto).
 function resolveEffectivePerms({ overrides, cargoMatrix, cargoId, modulos, areas = [] }) {
   const result = {};
@@ -142,7 +143,7 @@ function resolveEffectivePerms({ overrides, cargoMatrix, cargoId, modulos, areas
     if (r.cargo_id === cargoId) defaultsByMod.set(r.modulo_id, r);
   }
 
-  // Quais modulos recebem boost via area da pessoa
+  // Quais módulos recebem boost via área da pessoa
   const slugsComBoost = new Set();
   for (const a of areas || []) {
     const slug = AREA_MODULO_BOOST[_normalizarArea(a)];
@@ -158,7 +159,7 @@ function resolveEffectivePerms({ overrides, cargoMatrix, cargoId, modulos, areas
     const apr    = o?.pode_aprovar  ?? d?.pode_aprovar  ?? false;
     const esc    = o?.escopo_proprio ?? d?.escopo_proprio ?? false;
 
-    // Boost por area · so eleva, nunca rebaixa override existente
+    // Boost por área · so eleva, nunca rebaixa override existente
     if (m.slug && slugsComBoost.has(m.slug)) {
       nivelL = Math.max(nivelL, 5);
       nivelE = Math.max(nivelE, 5);
@@ -184,8 +185,8 @@ async function authenticate(req, res, next) {
   if (!token) return res.status(401).json({ error: 'Token não fornecido', reason: 'no_token' });
 
   if (!supabase) {
-    console.error('[AUTH] Supabase client nao inicializado · verifique SUPABASE_URL e SUPABASE_SERVICE_ROLE_KEY no Vercel');
-    return res.status(500).json({ error: 'Backend nao configurado (Supabase env vars ausentes)', reason: 'no_supabase_client' });
+    console.error('[AUTH] Supabase client não inicializado · verifique SUPABASE_URL e SUPABASE_SERVICE_ROLE_KEY no Vercel');
+    return res.status(500).json({ error: 'Backend não configurado (Supabase env vars ausentes)', reason: 'no_supabase_client' });
   }
 
   const { data: { user }, error } = await supabase.auth.getUser(token);
@@ -199,7 +200,7 @@ async function authenticate(req, res, next) {
     });
   }
 
-  // Busca perfil do usuário (role, name, area etc.)
+  // Busca perfil do usuário (role, name, área etc.)
   const { data: profile, error: profileError } = await supabase
     .from('profiles')
     .select('id, name, email, role, area, kpi_areas, kpi_valores, ministerio_id, ministerio_papel, is_diretoria_geral, funcao_diretoria, active, membro_id, is_membro_only')
@@ -212,14 +213,14 @@ async function authenticate(req, res, next) {
   }
 
   if (!profile) {
-    return res.status(403).json({ error: 'Perfil nao encontrado pra este usuario', reason: 'no_profile', detail: `auth.uid=${user.id} email=${user.email}` });
+    return res.status(403).json({ error: 'Perfil não encontrado pra este usuário', reason: 'no_profile', detail: `auth.uid=${user.id} email=${user.email}` });
   }
 
   if (!profile.active) {
     return res.status(403).json({ error: 'Usuario inativo', reason: 'inactive_profile' });
   }
 
-  // Auto-sync: se profile não tem area, buscar no RH pelo email
+  // Auto-sync: se profile não tem área, buscar no RH pelo email
   if (!profile.area && profile.email) {
     const { data: rh } = await supabase
       .from('rh_funcionarios')
@@ -234,7 +235,7 @@ async function authenticate(req, res, next) {
     }
   }
 
-  // ── Carregar permissões granulares (se o usuário existe na tabela usuarios) ──
+  // ── Carregar permissões granulares (se o usuário existe na tabela usuários) ──
   let granular = null;
   if (profile.email) {
     let permUser = null;
@@ -246,7 +247,7 @@ async function authenticate(req, res, next) {
 
     permUser = existing;
 
-    // Auto-provisionar: se o usuário não existe em usuarios, criar automaticamente
+    // Auto-provisionar: se o usuário não existe em usuários, criar automaticamente
     // Default = cargo 'membro' (mais restritivo). Admin/diretor (legado) viram
     // 'diretor-administrativo' pra manter retrocompat sem expor dados sensiveis
     // por engano. O ajuste fino de cargo deve ser feito no /admin/permissoes.
@@ -289,7 +290,7 @@ async function authenticate(req, res, next) {
     }
 
     if (permUser) {
-      // Buscar overrides por modulo (incluindo modificadores)
+      // Buscar overrides por módulo (incluindo modificadores)
       const { data: overrides } = await supabase.from('permissoes_modulo')
         .select('modulo_id, nivel_leitura, nivel_escrita, pode_exportar, pode_aprovar, escopo_proprio, expira_em')
         .eq('usuario_id', permUser.id);
@@ -302,7 +303,7 @@ async function authenticate(req, res, next) {
       // Passa cargoId · DB filtra (so ~30 linhas vs 1000+ cap PostgREST)
       const cargoMatrix = await getCargoMatrix(permUser.cargo_id);
 
-      // Carregar areas ANTES de resolver perms · boost por area precisa delas
+      // Carregar áreas ANTES de resolver perms · boost por área precisa delas
       const { data: userAreas } = await supabase.from('usuario_areas')
         .select('area_id, is_principal, areas(nome, setor_id, setores(nome))')
         .eq('usuario_id', permUser.id);
@@ -353,17 +354,17 @@ async function authenticate(req, res, next) {
   next();
 }
 
-// Verifica permissão: primeiro granular (nivel do cargo), fallback pro profiles.role
-// authorize('diretor') = exige nivel >= 4
-// authorize('admin') = exige nivel >= 5
-// authorize('diretor', 'admin') = exige nivel >= 4
+// Verifica permissão: primeiro granular (nível do cargo), fallback pro profiles.role
+// authorize('diretor') = exige nível >= 4
+// authorize('admin') = exige nível >= 5
+// authorize('diretor', 'admin') = exige nível >= 4
 const ROLE_NIVEL = { admin: 5, diretor: 4, assistente: 2 };
 function authorize(...roles) {
   const nivelMinimo = Math.min(...roles.map(r => ROLE_NIVEL[r] || 4));
   return (req, res, next) => {
     if (!req.user) return res.status(401).json({ error: 'Não autenticado' });
 
-    // 1. Checar granular (nivel do cargo na tabela usuarios)
+    // 1. Checar granular (nível do cargo na tabela usuários)
     if (req.user.granular) {
       const nivel = Math.max(req.user.granular.cargoNivelLeitura || 1, req.user.granular.cargoNivelEscrita || 1);
       if (nivel >= nivelMinimo) return next();
@@ -376,10 +377,10 @@ function authorize(...roles) {
   };
 }
 
-// Autoriza edicao/preenchimento de KPI por area:
+// Autoriza edicao/preenchimento de KPI por área:
 // - admin/diretor sempre podem (qualquer area/valor)
-// - lider de area (kpi_areas inclui a area do KPI) pode
-// - lider de valor (kpi_valores tem intersecao com valores do KPI) pode
+// - líder de área (kpi_areas inclui a área do KPI) pode
+// - líder de valor (kpi_valores tem intersecao com valores do KPI) pode
 // - resto e bloqueado
 //
 // Modo de uso:
@@ -395,24 +396,24 @@ function authorizeKpiArea(areaExtractor, valoresExtractor = null) {
       const myAreas = (req.user.kpi_areas || []).map(a => String(a).toLowerCase());
       if (area && myAreas.includes(String(area).toLowerCase())) return next();
 
-      // Fallback · permissao por valor (se informado)
+      // Fallback · permissão por valor (se informado)
       if (valoresExtractor) {
         const valores = (await valoresExtractor(req)) || [];
         const myValores = (req.user.kpi_valores || []).map(v => String(v).toLowerCase());
         if (valores.some(v => myValores.includes(String(v).toLowerCase()))) return next();
       }
 
-      return res.status(403).json({ error: `Sem permissao para editar KPIs da area "${area || '?'}"` });
+      return res.status(403).json({ error: `Sem permissão para editar KPIs da área "${area || '?'}"` });
     } catch (e) {
       console.error('[authorizeKpiArea]', e.message);
-      res.status(500).json({ error: 'Erro ao verificar permissao' });
+      res.status(500).json({ error: 'Erro ao verificar permissão' });
     }
   };
 }
 
 // LEGADO · usado em cycles.js (ciclos criativo). Mantem ROLE_MAP por enquanto
-// porque a logica de papeis aqui ainda nao tem equivalente direto na matriz
-// cargo×modulo. TODO: migrar pra authorizeModule('eventos', nivel) quando
+// porque a lógica de papéis aqui ainda não tem equivalente direto na matriz
+// cargo×módulo. TODO: migrar pra authorizeModule('eventos', nível) quando
 // regras de ciclo forem revisadas.
 function authorizeCycle(...roles) {
   return (req, res, next) => {
@@ -425,22 +426,22 @@ function authorizeCycle(...roles) {
   };
 }
 
-// Padroes de URL "self-service" no modulo de voluntariado — qualquer usuario
-// autenticado pode acessar (o proprio handler ja filtra por auth_user_id).
+// Padrões de URL "self-service" no módulo de voluntariado — qualquer usuário
+// autenticado pode acessar (o próprio handler já filtra por auth_user_id).
 // Isso garante que colaboradores/membros com role 'assistente' (sem granular)
 // consigam fazer check-in, ver suas escalas, marcar disponibilidade etc.
 //
 // Cada item: { re: RegExp, methods?: string[] } — methods restringe verbos HTTP.
-// Se methods nao for informado, qualquer verbo e aceito.
+// Se methods não for informado, qualquer verbo e aceito.
 const VOLUNTARIADO_SELF_SERVICE_PATTERNS = [
   { re: /^\/me(\/|$)/ },                      // /me, /me/wallet/google, /me/face, ...
   { re: /^\/my-/ },                           // /my-schedules, /my-availability, ...
   { re: /^\/self-checkin(\/|$)/ },            // /self-checkin, /self-checkin-qr/:id
   { re: /^\/qr-lookup(\/|$)/ },               // /qr-lookup
-  { re: /^\/quero-servir(\/|$)/ },            // /quero-servir (inscricao inicial)
-  { re: /^\/check-ins$/, methods: ['POST'] }, // criar proprio check-in (GET e admin)
+  { re: /^\/quero-servir(\/|$)/ },            // /quero-servir (inscrição inicial)
+  { re: /^\/check-ins$/, methods: ['POST'] }, // criar próprio check-in (GET e admin)
   { re: /^\/face\/match$/, methods: ['POST'] }, // reconhecimento facial no totem
-  { re: /^\/services\/(upcoming|today)$/, methods: ['GET'] }, // lista de cultos disponiveis
+  { re: /^\/services\/(upcoming|today)$/, methods: ['GET'] }, // lista de cultos disponíveis
 ];
 
 function isVoluntariadoSelfService(req, moduleNames) {
@@ -476,7 +477,7 @@ function authorizeModule(routeKey, nivelMinimo = 2) {
     // Admin/Diretor sempre passam (backward compatibility com profiles.role)
     if (['admin', 'diretor'].includes(req.user.role)) return next();
 
-    // Voluntarios podem acessar rotas de voluntariado / membresia em leitura
+    // Voluntários podem acessar rotas de voluntariado / membresia em leitura
     if (req.user.role === 'voluntario'
         && moduleNames.some(m => m === 'voluntariado' || m === 'membresia' || m === 'Membresia')
         && nivelMinimo <= 1) {
@@ -484,21 +485,21 @@ function authorizeModule(routeKey, nivelMinimo = 2) {
     }
 
     // Self-service de voluntariado: qualquer autenticado pode acessar
-    // os proprios dados (handler filtra por auth_user_id).
+    // os próprios dados (handler filtra por auth_user_id).
     if (isVoluntariadoSelfService(req, moduleNames)) {
       return next();
     }
 
-    // Se nao tem granular, bloquear
+    // Se não tem granular, bloquear
     if (!req.user.granular) {
       return res.status(403).json({ error: 'Acesso negado — permissões não configuradas' });
     }
 
-    // Determinar tipo com base no metodo HTTP
+    // Determinar tipo com base no método HTTP
     const isWrite = ['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method);
     const tipo = isWrite ? 'escrita' : 'leitura';
 
-    // Verificar se tem nivel suficiente em QUALQUER um dos modulos mapeados
+    // Verificar se tem nível suficiente em QUALQUER um dos módulos mapeados
     let hasAccess = false;
     for (const modName of moduleNames) {
       const perm = req.user.granular.modulePerms[modName];
@@ -508,7 +509,7 @@ function authorizeModule(routeKey, nivelMinimo = 2) {
       }
     }
 
-    // Se nao tem modulos mapeados, usar o nivel padrao do cargo
+    // Se não tem módulos mapeados, usar o nível padrão do cargo
     if (moduleNames.length === 0) {
       const nivel = isWrite ? req.user.granular.cargoNivelEscrita : req.user.granular.cargoNivelLeitura;
       hasAccess = nivel >= nivelMinimo;
@@ -530,7 +531,7 @@ function authorizeModule(routeKey, nivelMinimo = 2) {
 async function getMyPermissions(req, res) {
   if (!req.user) return res.status(401).json({ error: 'Não autenticado' });
 
-  // Inclui metadata dos modulos (slug, rota, categoria) para o frontend
+  // Inclui metadata dos módulos (slug, rota, categoria) para o frontend
   // saber montar o menu dinamicamente sem precisar de catalogo hardcoded.
   let modulosMeta = [];
   try {
@@ -539,7 +540,7 @@ async function getMyPermissions(req, res) {
       slug: m.slug, nome: m.nome, rota: m.rota, categoria: m.categoria, ordem: m.ordem,
     })).sort((a, b) => (a.ordem || 0) - (b.ordem || 0));
   } catch (e) {
-    console.warn('[AUTH] falha ao carregar metadata de modulos:', e.message);
+    console.warn('[AUTH] falha ao carregar metadata de módulos:', e.message);
   }
 
   res.json({
@@ -560,8 +561,8 @@ async function getMyPermissions(req, res) {
   });
 }
 
-// Invalida cache de modulos (chamado pela UI de admin apos editar).
-// cargoMatrix nao tem mais cache · sempre fresco.
+// Invalida cache de módulos (chamado pela UI de admin após editar).
+// cargoMatrix não tem mais cache · sempre fresco.
 function bustPermissionCaches() {
   modulosCache = null;
   modulosCacheTime = 0;
@@ -611,7 +612,7 @@ function getUserAreas(req) {
  * @param {object} query - Supabase query builder
  * @param {object} req - Express request (com req.user)
  * @param {string} routeKey - Chave do módulo ('rh', 'financeiro', etc.)
- * @param {object} opts - { areaColumn: 'area', ownerColumn: null, ownerEmail: false }
+ * @param {object} opts - { areaColumn: 'área', ownerColumn: null, ownerEmail: false }
  * @returns {object} query com filtros aplicados
  */
 function applyAccessFilter(query, req, routeKey, opts = {}) {

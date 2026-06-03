@@ -156,7 +156,7 @@ function PessoaPicker({ disponiveis, onPick }) {
   );
 }
 
-// Areas com cor + label amigavel
+// Áreas com cor + label amigavel
 const AREAS = [
   { id: 'ti',                 label: 'TI',                  color: '#3b82f6' },
   { id: 'marketing',          label: 'Marketing',           color: '#ec4899' },
@@ -175,7 +175,7 @@ export default function SolicitacoesResponsaveis() {
   const [profiles, setProfiles] = useState([]);
   const [loading, setLoading] = useState(true);
   const [savingAll, setSavingAll] = useState(false);
-  // Mapa area -> array de profile_ids selecionados (estado local antes de salvar)
+  // Mapa área -> array de profile_ids selecionados (estado local antes de salvar)
   const [editMap, setEditMap] = useState({});
 
   async function load() {
@@ -197,7 +197,7 @@ export default function SolicitacoesResponsaveis() {
 
   async function loadProfiles() {
     try {
-      // Endpoint dedicado: exclui quem veio do formulario de membresia ou voluntariado.
+      // Endpoint dedicado: exclui quem veio do formulário de membresia ou voluntariado.
       // So mostra colaboradores reais do sistema.
       const data = await permissoes.colaboradores();
       setProfiles(data || []);
@@ -225,7 +225,7 @@ export default function SolicitacoesResponsaveis() {
   // Mapa para lookup rapido
   const profileById = Object.fromEntries(profiles.map(p => [p.id, p]));
 
-  // Dados originais por area (pra detectar mudancas)
+  // Dados originais por área (pra detectar mudanças)
   const originalByArea = {};
   AREAS.forEach(a => { originalByArea[a.id] = []; });
   rows.forEach(r => {
@@ -345,7 +345,7 @@ export default function SolicitacoesResponsaveis() {
         {AREAS.map(area => {
           const selecionados = editMap[area.id] || [];
           const dirty = isDirty(area.id);
-          // profiles que ainda nao foram adicionados
+          // profiles que ainda não foram adicionados
           const disponiveis = profiles.filter(p => !selecionados.includes(p.id));
 
           return (
