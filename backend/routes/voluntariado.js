@@ -3,6 +3,7 @@ const { authenticate, authorizeModule } = require('../middleware/auth');
 const { supabase } = require('../utils/supabase');
 const { getPCCredentials, fetchWithRetry, PC_SERVICES_BASE, assignVolunteersToTeams, syncTeamMembersFromSchedules, fetchAllServiceTypes } = require('../services/planningCenter');
 const { enqueueSync } = require('../services/cerebroSync');
+const { resolverVoluntarioPorQr } = require('../services/volCheckinResolver');
 
 router.use(authenticate, authorizeModule('membresia', 1));
 
@@ -1119,18 +1120,20 @@ router.post('/qr-lookup', async (req, res) => {
     const { qr_code } = req.body;
     if (!qr_code) return res.status(400).json({ error: 'qr_code obrigatorio' });
 
-    // Try profiles first
-    const { data: profile } = await supabase.from('vol_profiles')
-      .select('id, planning_center_id, full_name').eq('qr_code', qr_code).maybeSingle();
+    // Resolve o QR · aceita vol_profiles.qr_code, vol_volunteer_qrcodes
+    // ou o mem_qrcodes.token (QR unificado do cartão de membro).
+    const resolucao = await resolverVoluntarioPorQr(qr_code, supabase);
+    if (!resolucao.ok) return res.status(resolucao.statusCode).json({ error: resolucao.error });
+    const volunteerData = resolucao.volunteerData;
 
-    let volunteerData;
-    if (profile) {
-      volunteerData = { type: 'profile', id: profile.id, planning_center_id: profile.planning_center_id, name: profile.full_name || 'Voluntario' };
-    } else {
-      const { data: vqr } = await supabase.from('vol_volunteer_qrcodes')
-        .select('id, planning_center_person_id, volunteer_name').eq('qr_code', qr_code).maybeSingle();
-      if (!vqr) return res.status(404).json({ error: 'Voluntário não encontrado' });
-      volunteerData = { type: 'volunteer_qrcode', id: null, planning_center_id: vqr.planning_center_person_id, name: vqr.volunteer_name };
+    // QR sem identidade resolvível (ex.: voluntário só no mem_voluntarios, sem
+    // perfil de voluntário vinculado) → trata como sem escala pra não casar
+    // escala de outra pessoa.
+    if (!volunteerData.id && !volunteerData.planning_center_id) {
+      return res.json({
+        profile: { id: null, planning_center_id: null, full_name: volunteerData.name, type: volunteerData.type },
+        isUnscheduled: true, volunteerName: volunteerData.name,
+      });
     }
 
     // Find today's schedules (BRT day boundary, not server-UTC)
