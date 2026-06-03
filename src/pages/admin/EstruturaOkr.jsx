@@ -508,6 +508,18 @@ function ResumoGerais({ detalhes, onAddKr, onEditKr, removerKr, onAbrirEspecific
                     : (kr.meta_texto || '—')}
                   {kr.agregacao_cascata && ` · cascata: ${kr.agregacao_cascata}`}
                 </div>
+                {kr.realizado != null && (() => {
+                  const m = ({ verde: ['#10b981', 'no alvo'], amarelo: ['#f59e0b', 'atenção'], vermelho: ['#ef4444', 'fora do alvo'] })[kr.kr_status] || ['#94a3b8', 'sem dado'];
+                  return (
+                    <div style={{ fontSize: 10, fontWeight: 700, color: m[0] }}>
+                      realizado: {kr.realizado}{kr.unidade ? ' ' + kr.unidade : ''} · {m[1]}
+                      {kr.agregado_de ? ` (média de ${kr.agregado_de} áreas)` : ''}
+                    </div>
+                  );
+                })()}
+                {kr.fonte_kpi_id && kr.realizado == null && (
+                  <div style={{ fontSize: 10, color: C.t3 }}>medido por {kr.fonte_kpi_id} · aguardando dado</div>
+                )}
               </div>
               <button onClick={() => onEditKr(kr)} style={btnIcon}><Pencil size={11} /></button>
               <button onClick={() => removerKr(kr)} style={{ ...btnIcon, color: '#ef4444' }}><Trash2 size={11} /></button>

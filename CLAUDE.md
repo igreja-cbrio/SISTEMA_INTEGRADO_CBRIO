@@ -2,6 +2,29 @@
 
 Guia operacional para o Claude Code quando trabalhar neste repositório.
 
+## OKR · KR medido pelo KPI (Frente B1 · 2026-06-03)
+
+Marcos: "o KR é pra ser respondido pelo **KPI central** do indicador · **sem entrada manual**;
+o que precisar de mais coisa pra preencher, **remove**". Diagnóstico (ao vivo): a cascata de KRs
+está OK (1 geral + N área-específicos via `kr_pai_id`+`agregacao_cascata`, **sem duplicata real**),
+MAS **0 KRs eram medidos** e só **5 de 29 objetivos** têm KPI com fonte → **83% dos KRs (428/513)**
+estão sob objetivos **sem nenhuma medição** (voluntários, grupos, doadores, capelania, NPS…). Marcos
+decidiu **NÃO apagar em massa**: ligar os medidos agora + roadmap de dar fonte ao resto.
+
+**B1 (mecanismo · não-destrutivo · migration `20260603220000`):** `kpi_krs.fonte_kpi_id` (→ o KPI
+tático que mede o KR). `estrategia.js` `enriquecerKrs()` anexa `realizado`/`kr_status`/`percentual_meta`
+do **`vw_kpi_trajetoria_atual`** (cobre KPIs manual + calculado); **KR geral agrega dos filhos medidos**
+(avg p/ %). `EstruturaOkr.jsx` mostra "realizado vs meta · no alvo/fora". **Ligados** (12 KRs específicos):
+batismo-90d→`X-BAT90`, reunião→`AMI-21/SED-17/BRG-19/ONL-04`, Next-90d→`X-NEXT90` (criei os específicos
+do Next nesta migration). ⚠️ Importante: a matriz/painel lê `vw_kpi_trajetoria_atual` (que pega
+`kpi_registros` qd `tipo_calculo='manual'`), por isso os KPIs da Frente A aparecem lá.
+
+**PRÓXIMO (B2/B3):** (1) ligar os KRs dos demais objetivos JÁ medidos (frequência cultos, batismo
+crescimento…); (2) **triagem de remoção** — analisar KR a KR e remover os que nenhum KPI responde
+(+ dependentes/filhos); (3) **roadmap**: dar fonte/coletor aos 24 objetivos sem medição (voluntários,
+grupos, doadores, capelania, aconselhamento, NPS…), aí seus KRs passam a ser respondidos. **NUNCA
+entrada manual** (decisão do Marcos). Ver `project_okr_kr_medicao`.
+
 ## Jornada na NSM · 3 marcos medidos + KRs (Frente A · 2026-06-03)
 
 Marcos: levar os 3 marcos pra matriz/mandala, medidos pela lógica de coorte do tracker.
