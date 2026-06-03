@@ -2,6 +2,30 @@
 
 Guia operacional para o Claude Code quando trabalhar neste repositório.
 
+## ⚠️ REGRA GLOBAL · acentuação correta do português do Brasil (SEMPRE)
+
+**Toda vez** que implementar QUALQUER coisa neste sistema (nova feature, fix,
+refactor, label, mensagem de toast, placeholder, título, texto de botão, texto
+de notificação, e-mail, copy de página, comentário visível ao usuário, etc.),
+o texto em português **DEVE** estar com a **acentuação correta do português do
+Brasil**. Isso é obrigatório e não-negociável — não regredir.
+
+- Acentos agudos (á é í ó ú), circunflexos (â ê ô), til (ã õ), crase/grave (à),
+  cedilha (ç) e trema histórico quando aplicável. Ex.: "você", "usuário",
+  "permissões", "configurações", "ministério", "relatório", "ação", "não",
+  "está", "três", "código", "horário", "será", "número", "página", "área",
+  "índice", "saúde", "também", "responsável", "início", "próximo".
+- Vale para **todo texto visível ao usuário** no frontend (`src/`), mensagens
+  do backend (`backend/`), e-mails/notificações, e qualquer copy nova.
+
+**Exceção crítica (NÃO acentuar):** identificadores de código e dados nunca
+recebem acento — **slugs** de módulo/rota (`permissoes`, `solicitacoes`,
+`integracao`, `configuracoes`), **valores de enum** do banco, **chaves de
+objeto**, nomes de **variáveis/funções/arquivos**, **colunas** SQL e qualquer
+string que seja comparada/persistida como identificador. Acentuar esses quebra
+matching, RLS, rotas e o banco. A regra de acentuar vale para o **conteúdo
+exibido**, não para os identificadores técnicos.
+
 ## Totem Kids · integração com PAGERS físicos (2026-06-02)
 
 Eduardo/Marcos: integrar os pagers que a igreja já usa ao pickup do Totem Kids —
