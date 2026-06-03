@@ -1814,6 +1814,7 @@ export const kpis = {
     list: (params) => get('/kpis/batismos' + (params ? '?' + new URLSearchParams(params) : '')),
     create: (data) => post('/kpis/batismos', data),
     update: (id, data) => put(`/kpis/batismos/${id}`, data),
+    coberturaConvertidos: () => get('/kpis/batismos/cobertura-convertidos'),
   },
   // Dashboard & metas
   dashboard: (semanas) => get(`/kpis/dashboard?semanas=${semanas || 12}`),

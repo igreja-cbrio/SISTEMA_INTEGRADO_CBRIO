@@ -55,10 +55,18 @@ devolutiva na caixa de entrada da área.
 - `api.js`: `cuidados.convertidos.{agendarEncontro,cancelarEncontro,desfecho}` + namespace
   `encaminhamentos.{list,resumo,get,contato,updateStatus}`.
 
-⚠️ **Aplicar a migration antes do merge.** Follow-ups (próximas PRs): cobertura de
-**batismo** na Integração (trilho universal · todo convertido chamado), "engajou" cruzar
-com o sinal real do valor (grupo/voluntário), fechar-o-loop (aceite na área cria o pedido
-de grupo / inscrição de voluntário nativos), funil de analytics encaminhados→aderiram.
+**Cobertura de batismo (Integração · mesma PR · SEM migration):** trilho **universal** —
+todo convertido deve ser chamado pro batismo, a Integração acompanha independente do
+Cuidados. `GET /kpis/batismos/cobertura-convertidos` cruza `cui_convertidos` ×
+`batismo_inscricoes` (por `membro_id`, CPF ou nome · **paginado** p/ o cap de 1000 do
+PostgREST) → card **"Convertidos chamados pro batismo"** na aba Batismos (`Batismos.tsx`):
+% batizados + nº inscritos + nº não inscritos + botão "Ver quem falta" (lista dos
+pendentes). `api.kpis.batismos.coberturaConvertidos()`.
+
+⚠️ **Aplicar a migration `20260603120000` antes do merge** (APLICADA em prod 2026-06-03).
+Follow-ups (próximas PRs): "engajou" cruzar com o sinal real do valor (grupo/voluntário),
+fechar-o-loop (aceite na área cria o pedido de grupo / inscrição de voluntário nativos),
+funil de analytics encaminhados→aderiram.
 
 ## Produção de Culto · aba /producao (2026-06-02)
 
