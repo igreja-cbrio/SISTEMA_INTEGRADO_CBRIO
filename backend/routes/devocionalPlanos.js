@@ -1,5 +1,5 @@
 // ============================================================================
-// Devocional · planos mensais (admin) + geracao IA + dashboard de adesao
+// Devocional · planos mensais (admin) + geração IA + dashboard de adesao
 // ============================================================================
 
 const router = require('express').Router();
@@ -7,17 +7,15 @@ const Anthropic = require('@anthropic-ai/sdk');
 const { authenticate, authorize } = require('../middleware/auth');
 const { supabase } = require('../utils/supabase');
 const devSender = require('../services/devocionalSender');
+const { isAuthorizedCron } = require('../utils/cronAuth');
 
 // ─────────────────────────────────────────────────────────────
 // GET|POST /api/devocional-planos/cron/enviar-diario
 //   Endpoint do cron Vercel · 06:00 BRT (09:00 UTC) diario
-//   Autenticado por CRON_SECRET ou user-agent vercel-cron
+//   Autenticado por CRON_SECRET (Vercel injeta Bearer; GitHub Actions x-cron-secret)
 // ─────────────────────────────────────────────────────────────
 async function cronEnviarDiario(req, res) {
-  const auth = req.headers['x-cron-secret'] || req.headers['authorization'];
-  const isVercelCron = req.headers['user-agent']?.includes('vercel-cron');
-  const CRON_SECRET = process.env.CRON_SECRET;
-  if (!isVercelCron && auth !== CRON_SECRET && auth !== `Bearer ${CRON_SECRET}`) {
+  if (!isAuthorizedCron(req)) {
     return res.status(401).json({ error: 'Unauthorized' });
   }
   try {
@@ -32,7 +30,7 @@ async function cronEnviarDiario(req, res) {
 router.get('/cron/enviar-diario', cronEnviarDiario);
 router.post('/cron/enviar-diario', cronEnviarDiario);
 
-// Tudo abaixo requer autenticacao normal
+// Tudo abaixo requer autenticação normal
 router.use(authenticate);
 
 // Helper: yyyy-mm-dd → Date
@@ -92,13 +90,13 @@ router.get('/:id', async (req, res) => {
 
 // ─────────────────────────────────────────────────────────────
 // POST /api/devocional-planos — cria plano (sem itens)
-// body: { titulo, descricao?, data_inicio, data_fim, ativo? }
+// body: { título, descrição?, data_inicio, data_fim, ativo? }
 // ─────────────────────────────────────────────────────────────
 router.post('/', authorize('admin', 'diretor'), async (req, res) => {
   try {
     const { titulo, descricao, data_inicio, data_fim, ativo = true } = req.body || {};
     if (!titulo || !data_inicio || !data_fim) {
-      return res.status(400).json({ error: 'titulo, data_inicio e data_fim sao obrigatorios' });
+      return res.status(400).json({ error: 'título, data_inicio e data_fim são obrigatórios' });
     }
     const { data, error } = await supabase
       .from('devocional_planos')
@@ -156,9 +154,9 @@ router.delete('/:id', authorize('admin', 'diretor'), async (req, res) => {
 // ─────────────────────────────────────────────────────────────
 // POST /api/devocional-planos/:id/gerar-ia
 // body: { tema?, tom?, sobrescrever?, apenas_datas?: string[] }
-// Gera ate 10 itens por chamada usando Haiku (fica dentro do timeout
+// Gera até 10 itens por chamada usando Haiku (fica dentro do timeout
 // de 60s da Vercel). Frontend chama em lotes pra cobrir todo o plano.
-//   - sem apenas_datas: gera ate 10 dias pendentes
+//   - sem apenas_datas: gera até 10 dias pendentes
 //   - com apenas_datas: gera so as datas listadas (filtra existentes)
 // ─────────────────────────────────────────────────────────────
 const BATCH_MAX = 10;
@@ -166,11 +164,11 @@ const BATCH_MAX = 10;
 router.post('/:id/gerar-ia', authorize('admin', 'diretor'), async (req, res) => {
   try {
     if (!process.env.ANTHROPIC_API_KEY) {
-      return res.status(500).json({ error: 'ANTHROPIC_API_KEY nao configurada' });
+      return res.status(500).json({ error: 'ANTHROPIC_API_KEY não configurada' });
     }
     const {
       tema = '',
-      tom = 'pastoral, edificante, com aplicacao pratica',
+      tom = 'pastoral, edificante, com aplicação pratica',
       sobrescrever = false,
       apenas_datas,
     } = req.body || {};
@@ -200,7 +198,7 @@ router.post('/:id/gerar-ia', authorize('admin', 'diretor'), async (req, res) => 
 
     if (diasAlvo.length === 0) {
       return res.json({
-        message: 'Todos os dias solicitados ja tem item',
+        message: 'Todos os dias solicitados já tem item',
         criados: 0,
         restantes: 0,
         total_pendentes: 0,
@@ -208,14 +206,14 @@ router.post('/:id/gerar-ia', authorize('admin', 'diretor'), async (req, res) => 
     }
 
     const client = new Anthropic();
-    const systemPrompt = `Voce e um pastor protestante brasileiro escrevendo devocionais diarios para a Igreja CBRio. Estilo: ${tom}.
+    const systemPrompt = `Você e um pastor protestante brasileiro escrevendo devocionais diarios para a Igreja CBRio. Estilo: ${tom}.
 
 Cada devocional deve ter:
-- **passagem**: referencia biblica curta (1-3 versiculos) · formato "Livro Cap:Vers"
-- **passagem_texto**: o TEXTO COMPLETO da passagem em portugues, traducao NAA ou ARA. NUNCA omita · a pessoa que le o devocional deve poder ler o texto biblico ali mesmo, sem precisar abrir a Biblia.
+- **passagem**: referência bíblica curta (1-3 versiculos) · formato "Livro Cap:Vers"
+- **passagem_texto**: o TEXTO COMPLETO da passagem em portugues, traducao NAA ou ARA. NUNCA omita · a pessoa que le o devocional deve poder ler o texto bíblico ali mesmo, sem precisar abrir a Bíblia.
 - **reflexao**: 4-6 paragrafos curtos
-- **aplicacao**: 1 paragrafo de aplicacao pratica
-- **oracao**: oracao curta encerrando
+- **aplicação**: 1 paragrafo de aplicação pratica
+- **oração**: oração curta encerrando
 
 Use linguagem acessivel e contemporanea. NUNCA cite mais de uma passagem central por devocional.`;
 
@@ -252,7 +250,7 @@ Retorne APENAS um JSON array (sem markdown, sem texto fora do JSON) com ${diasAl
       console.error('IA JSON parse error:', err.message, 'raw:', text.slice(0, 500));
       return res.status(500).json({ error: 'IA retornou JSON invalido', preview: text.slice(0, 300) });
     }
-    if (!Array.isArray(arr)) return res.status(500).json({ error: 'IA nao retornou array' });
+    if (!Array.isArray(arr)) return res.status(500).json({ error: 'IA não retornou array' });
 
     if (sobrescrever) {
       const datasSobrescrever = diasAlvo;
@@ -277,7 +275,7 @@ Retorne APENAS um JSON array (sem markdown, sem texto fora do JSON) com ${diasAl
         gerado_por_ia: true,
       }));
 
-    if (rows.length === 0) return res.status(500).json({ error: 'IA nao retornou itens validos' });
+    if (rows.length === 0) return res.status(500).json({ error: 'IA não retornou itens validos' });
 
     const { error: e2 } = await supabase.from('devocional_itens').insert(rows);
     if (e2) throw e2;
@@ -289,7 +287,7 @@ Retorne APENAS um JSON array (sem markdown, sem texto fora do JSON) com ${diasAl
     });
   } catch (e) {
     console.error('devocional-planos gerar-ia:', e.message);
-    res.status(500).json({ error: e.message || 'Erro na geracao IA' });
+    res.status(500).json({ error: e.message || 'Erro na geração IA' });
   }
 });
 
@@ -298,13 +296,13 @@ Retorne APENAS um JSON array (sem markdown, sem texto fora do JSON) com ${diasAl
 // ─────────────────────────────────────────────────────────────
 // ─────────────────────────────────────────────────────────────
 // POST /api/devocional-planos/:id/itens — criar item manualmente
-// body: { data, titulo, passagem?, reflexao, aplicacao?, oracao? }
+// body: { data, título, passagem?, reflexao, aplicação?, oração? }
 // ─────────────────────────────────────────────────────────────
 router.post('/:id/itens', authorize('admin', 'diretor'), async (req, res) => {
   try {
     const { data, titulo, passagem, reflexao, aplicacao, oracao } = req.body || {};
     if (!data || !titulo || !reflexao) {
-      return res.status(400).json({ error: 'data, titulo e reflexao sao obrigatorios' });
+      return res.status(400).json({ error: 'data, título e reflexao são obrigatórios' });
     }
     const { data: novo, error } = await supabase
       .from('devocional_itens')
@@ -321,7 +319,7 @@ router.post('/:id/itens', authorize('admin', 'diretor'), async (req, res) => {
       .select()
       .single();
     if (error) {
-      if (error.code === '23505') return res.status(409).json({ error: 'Ja existe item pra essa data' });
+      if (error.code === '23505') return res.status(409).json({ error: 'Já existe item pra essa data' });
       throw error;
     }
     res.status(201).json(novo);
@@ -427,7 +425,7 @@ router.post('/:id/enviar-hoje', authorize('admin', 'diretor'), async (req, res) 
       .eq('data', hoje)
       .maybeSingle();
     if (error) throw error;
-    if (!item) return res.status(404).json({ error: 'Plano nao tem item pra hoje' });
+    if (!item) return res.status(404).json({ error: 'Plano não tem item pra hoje' });
     if (!item.devocional_planos?.ativo) return res.status(400).json({ error: 'Plano esta inativo' });
 
     const r = await devSender.enviarDoDia({ item });
@@ -440,7 +438,7 @@ router.post('/:id/enviar-hoje', authorize('admin', 'diretor'), async (req, res) 
 
 // ─────────────────────────────────────────────────────────────
 // GET /api/devocional-planos/:id/envios
-//   Lista envios agregados por item do plano + ultimos N erros.
+//   Lista envios agregados por item do plano + últimos N erros.
 // ─────────────────────────────────────────────────────────────
 router.get('/:id/envios', async (req, res) => {
   try {
@@ -481,10 +479,10 @@ router.get('/:id/envios', async (req, res) => {
 
 // ─────────────────────────────────────────────────────────────
 // GET /api/devocional-planos/metricas-cuidados
-//   Resumo pro dashboard do modulo Cuidados:
+//   Resumo pro dashboard do módulo Cuidados:
 //   - checkins_hoje · membros que fizeram check-in hoje
-//   - checkins_7d · check-ins distintos nos ultimos 7 dias
-//   - membros_engajados_30d · membros com >=1 check-in nos ultimos 30d
+//   - checkins_7d · check-ins distintos nos últimos 7 dias
+//   - membros_engajados_30d · membros com >=1 check-in nos últimos 30d
 //   - planos_ativos · count planos com ativo=true
 //   - adesao_hoje_pct · checkins_hoje / membros logados (is_membro_only=true)
 // ─────────────────────────────────────────────────────────────

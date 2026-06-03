@@ -85,7 +85,7 @@ export default function SantanderTab() {
         ok: false,
         // Se o backend respondeu com configured: false (envs faltando) preserva.
         // Senao (erro 5xx · OAuth/cert falhou), assume configured: true pra cair
-        // no branch "Falha na autenticacao" com o error message detalhado.
+        // no branch "Falha na autenticação" com o error message detalhado.
         configured: e.configured ?? true,
         missing_env: e.missing_env || [],
         ambiente: e.ambiente,
@@ -144,7 +144,7 @@ export default function SantanderTab() {
     if (!paymentId) return;
     setBaixandoId(paymentId);
     try {
-      // Tenta varios campos de data · estrutura varia conforme tipo do pagamento
+      // Tenta vários campos de data · estrutura varia conforme tipo do pagamento
       const data = payment?.payment?.requestValueDateTime
         || payment?.payment?.paymentDate
         || payment?.payment?.processingDateTime
@@ -176,15 +176,15 @@ export default function SantanderTab() {
 
   // Health visual
   if (loadingHealth) {
-    return <div style={{ padding: 24, color: C.text2 }}>Verificando configuracao...</div>;
+    return <div style={{ padding: 24, color: C.text2 }}>Verificando configuração...</div>;
   }
 
   if (!health?.configured) {
     return (
       <div style={styles.section}>
-        <div style={styles.sectionTitle}>Integracao Santander</div>
+        <div style={styles.sectionTitle}>Integração Santander</div>
         <div style={styles.alertBox(C.amberBg, C.amber)}>
-          <strong>Configuracao pendente.</strong> Para usar essa integracao,
+          <strong>Configuração pendente.</strong> Para usar essa integracao,
           configure no Vercel as variaveis de ambiente:
           <ul style={{ margin: '8px 0 0 18px' }}>
             {(health?.missing_env || []).map((v) => (
@@ -199,9 +199,9 @@ export default function SantanderTab() {
   if (!health?.ok) {
     return (
       <div style={styles.section}>
-        <div style={styles.sectionTitle}>Integracao Santander</div>
+        <div style={styles.sectionTitle}>Integração Santander</div>
         <div style={styles.alertBox(C.redBg, C.red)}>
-          <strong>Falha na autenticacao com Santander.</strong>
+          <strong>Falha na autenticação com Santander.</strong>
           <div style={{ marginTop: 6, fontFamily: 'monospace', fontSize: 11, whiteSpace: 'pre-wrap' }}>{health.error}</div>
         </div>
       </div>
@@ -228,7 +228,7 @@ export default function SantanderTab() {
           <>
             <div style={styles.grid3}>
               <div style={styles.kpi} title="Saldo livre pra movimentar agora. Negativo = uso do cheque especial">
-                <div style={styles.kpiLabel}>Disponivel</div>
+                <div style={styles.kpiLabel}>Disponível</div>
                 <div style={{ ...styles.kpiValue, color: saldo.available >= 0 ? C.green : C.red }}>
                   {brl(saldo.available)}
                 </div>
@@ -239,8 +239,8 @@ export default function SantanderTab() {
                 <div style={styles.kpiValue}>{brl(saldo.blocked)}</div>
                 <div style={styles.kpiSub}>Retido temporariamente</div>
               </div>
-              <div style={styles.kpi} title="Aplicacao automatica (ContaMax). Resgata sozinho quando precisa">
-                <div style={styles.kpiLabel}>Investido automatico</div>
+              <div style={styles.kpi} title="Aplicação automática (ContaMax). Resgata sozinho quando precisa">
+                <div style={styles.kpiLabel}>Investido automático</div>
                 <div style={styles.kpiValue}>{brl(saldo.invested)}</div>
                 <div style={styles.kpiSub}>ContaMax</div>
               </div>
@@ -264,7 +264,7 @@ export default function SantanderTab() {
                   </div>
                 </div>
                 <div style={styles.kpi} title="Quanto ainda sobra do limite de cheque especial">
-                  <div style={styles.kpiLabel}>Limite disponivel</div>
+                  <div style={styles.kpiLabel}>Limite disponível</div>
                   <div style={{ ...styles.kpiValue, color: C.green }}>{brl(saldo.overdraftAvailable)}</div>
                   <div style={styles.kpiSub}>Pra usar emergencialmente</div>
                 </div>
@@ -280,7 +280,7 @@ export default function SantanderTab() {
         <SyncFilaCard />
         <div style={styles.filtros}>
           <input type="date" value={extratoInicio} onChange={(e) => setExtratoInicio(e.target.value)} style={styles.input} />
-          <span style={{ color: C.text3 }}>ate</span>
+          <span style={{ color: C.text3 }}>até</span>
           <input type="date" value={extratoFim} onChange={(e) => setExtratoFim(e.target.value)} style={styles.input} />
           <Button onClick={() => loadExtrato(false)} disabled={loadingExtrato}>
             {loadingExtrato ? 'Carregando...' : 'Buscar'}
@@ -302,7 +302,7 @@ export default function SantanderTab() {
         <div style={styles.sectionTitle}><span>Comprovantes de pagamento</span></div>
         <div style={styles.filtros}>
           <input type="date" value={compInicio} onChange={(e) => setCompInicio(e.target.value)} style={styles.input} />
-          <span style={{ color: C.text3 }}>ate</span>
+          <span style={{ color: C.text3 }}>até</span>
           <input type="date" value={compFim} onChange={(e) => setCompFim(e.target.value)} style={styles.input} />
           <select value={compCategoria} onChange={(e) => setCompCategoria(e.target.value)} style={styles.input}>
             {CATEGORIAS.map((c) => <option key={c} value={c}>{c || 'Todas categorias'}</option>)}
@@ -326,7 +326,7 @@ export default function SantanderTab() {
 }
 
 function ExtratoTabela({ conteudo }) {
-  if (!conteudo.length) return <div style={{ color: C.text3, padding: 12 }}>Sem movimentacoes no periodo</div>;
+  if (!conteudo.length) return <div style={{ color: C.text3, padding: 12 }}>Sem movimentacoes no período</div>;
   return (
     <div style={{ overflowX: 'auto' }}>
       <table style={styles.table}>
@@ -334,7 +334,7 @@ function ExtratoTabela({ conteudo }) {
           <tr>
             <th style={styles.th}>Data</th>
             <th style={styles.th}>Tipo</th>
-            <th style={styles.th}>Descricao</th>
+            <th style={styles.th}>Descrição</th>
             <th style={styles.th}>Contraparte</th>
             <th style={{ ...styles.th, textAlign: 'right' }}>Valor</th>
           </tr>
@@ -366,7 +366,7 @@ function ExtratoTabela({ conteudo }) {
 function ComprovantesTabela({ data, baixandoId, onBaixar, onAbrirPdf }) {
   const lista = data?.paymentsReceipts || [];
   const locais = data?.localStatus || {};
-  if (!lista.length) return <div style={{ color: C.text3, padding: 12 }}>Sem comprovantes no periodo</div>;
+  if (!lista.length) return <div style={{ color: C.text3, padding: 12 }}>Sem comprovantes no período</div>;
 
   return (
     <div style={{ overflowX: 'auto' }}>
@@ -378,7 +378,7 @@ function ComprovantesTabela({ data, baixandoId, onBaixar, onAbrirPdf }) {
             <th style={styles.th}>Beneficiario</th>
             <th style={{ ...styles.th, textAlign: 'right' }}>Valor</th>
             <th style={styles.th}>Status</th>
-            <th style={{ ...styles.th, textAlign: 'right' }}>Acoes</th>
+            <th style={{ ...styles.th, textAlign: 'right' }}>Ações</th>
           </tr>
         </thead>
         <tbody>
@@ -417,7 +417,7 @@ function ComprovantesTabela({ data, baixandoId, onBaixar, onAbrirPdf }) {
   );
 }
 
-// ── Sync extrato → fila de classificacao ──────────────────────────────
+// ── Sync extrato → fila de classificação ──────────────────────────────
 function SyncFilaCard() {
   const [historico, setHistorico] = useState([]);
   const [loadingHist, setLoadingHist] = useState(false);

@@ -1,9 +1,9 @@
 // ============================================================================
 // Devocional Sender · dispara devocional do dia via WhatsApp.
 //
-// Publico alvo: membros que ja logaram pelo app (profiles.is_membro_only=true)
+// Público alvo: membros que já logaram pelo app (profiles.is_membro_only=true)
 // e tem telefone em mem_membros. Idempotente · UNIQUE (item_id, membro_id) na
-// tabela devocional_envios garante que o mesmo membro nao recebe 2x.
+// tabela devocional_envios garante que o mesmo membro não recebe 2x.
 // ============================================================================
 
 const { supabase } = require('../utils/supabase');
@@ -55,7 +55,7 @@ async function buscarItemDoDia(dataAlvo) {
 }
 
 // Envia o devocional pra todos os destinatarios elegiveis.
-// Idempotente · pula quem ja tem registro em devocional_envios pro mesmo item.
+// Idempotente · pula quem já tem registro em devocional_envios pro mesmo item.
 // Retorna { enviados, ja_existentes, erros, sem_template, item_id, total }
 async function enviarDoDia(opts = {}) {
   const item = opts.item || await buscarItemDoDia(opts.data);
@@ -68,7 +68,7 @@ async function enviarDoDia(opts = {}) {
     return { motivo: 'sem_destinatarios', item_id: item.id, enviados: 0, ja_existentes: 0, erros: 0, total: 0 };
   }
 
-  // Busca envios ja registrados pro item
+  // Busca envios já registrados pro item
   const membroIds = destinatarios.map(d => d.membro_id);
   const { data: existentes } = await supabase
     .from('devocional_envios')

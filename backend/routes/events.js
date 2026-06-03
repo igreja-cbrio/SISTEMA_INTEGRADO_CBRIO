@@ -393,7 +393,7 @@ router.delete('/:id', authorize('diretor', 'admin'), async (req, res) => {
       await supabase.from('event_tasks').delete().eq('event_id', eid);
     }
 
-    // Reunioes e pendencias
+    // Reuniões e pendências
     const { data: meets } = await supabase.from('meetings').select('id').eq('event_id', eid);
     if (meets?.length > 0) {
       await supabase.from('pendencies').delete().in('meeting_id', meets.map(m => m.id)).catch(() => {});
@@ -736,7 +736,7 @@ router.post('/simple-templates', authorize('admin', 'diretor'), async (req, res)
 
     // Se vinculado a um evento, criar a tarefa diretamente no evento
     if (data.event_id) {
-      // Verificar se ja existe tarefa com mesmo nome
+      // Verificar se já existe tarefa com mesmo nome
       const { data: existing } = await supabase.from('event_tasks').select('id').eq('event_id', data.event_id).eq('name', data.titulo).limit(1);
       if (!existing?.length) {
         await supabase.from('event_tasks').insert({ event_id: data.event_id, name: data.titulo, status: 'pendente', priority: 'media' });

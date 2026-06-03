@@ -16,72 +16,32 @@ import { supabase } from '../supabaseClient';
 import { toast } from 'sonner';
 
 const CATEGORIAS = [
-  { value: 'ti',             label: 'TI',                  color: 'bg-blue-500/15 text-blue-700 dark:text-blue-400',       areaResp: 'ti' },
   { value: 'compras',        label: 'Compras',             color: 'bg-orange-500/15 text-orange-700 dark:text-orange-400', areaResp: 'logistica_compras' },
-  { value: 'reembolso',      label: 'Reembolso',           color: 'bg-green-500/15 text-green-700 dark:text-green-400',    areaResp: 'financeiro' },
+  { value: 'infraestrutura', label: 'Serviços',            color: 'bg-indigo-500/15 text-indigo-700 dark:text-indigo-400', areaResp: 'manutencao' },
+  { value: 'pagamento',      label: 'Pagamento',           color: 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-400', areaResp: 'financeiro', sub: 'pagamento' },
+  { value: 'reembolso',      label: 'Reembolso',           color: 'bg-green-500/15 text-green-700 dark:text-green-400',    areaResp: 'financeiro', sub: 'reembolso' },
   { value: 'reserva_espaco', label: 'Reserva de Espaço',   color: 'bg-purple-500/15 text-purple-700 dark:text-purple-400', areaResp: 'reserva_espaco' },
-  { value: 'infraestrutura', label: 'Infraestrutura',      color: 'bg-yellow-500/15 text-yellow-700 dark:text-yellow-400', areaResp: 'manutencao' },
+  { value: 'ti',             label: 'TI',                  color: 'bg-blue-500/15 text-blue-700 dark:text-blue-400',       areaResp: 'ti' },
   { value: 'marketing',      label: 'Marketing',           color: 'bg-pink-500/15 text-pink-700 dark:text-pink-400',       areaResp: 'marketing' },
-  { value: 'ferias',         label: 'Férias',              color: 'bg-cyan-500/15 text-cyan-700 dark:text-cyan-400',       areaResp: 'rh' },
-  { value: 'licenca',        label: 'Licença',             color: 'bg-teal-500/15 text-teal-700 dark:text-teal-400',       areaResp: 'rh' },
-  { value: 'outro',          label: 'Outro',               color: 'bg-muted text-muted-foreground',                         areaResp: null },
+  { value: 'producao',       label: 'Produção de Culto',   color: 'bg-violet-500/15 text-violet-700 dark:text-violet-400', areaResp: 'producao' },
+  { value: 'ferias',         label: 'Férias',              color: 'bg-cyan-500/15 text-cyan-700 dark:text-cyan-400',       areaResp: 'rh', sub: 'ferias' },
+  { value: 'licenca',        label: 'Licença',             color: 'bg-teal-500/15 text-teal-700 dark:text-teal-400',       areaResp: 'rh', sub: 'licenca' },
 ];
 
-// Areas do solicitante em 2 niveis: macro -> sub
-const AREAS_MACRO = [
-  { value: 'ministerial', label: 'Ministerial', subs: [
-    { value: 'integracao', label: 'Integração' },
-    { value: 'cuidados', label: 'Cuidados' },
-    { value: 'grupos', label: 'Grupos' },
-    { value: 'voluntariado', label: 'Voluntariado' },
-    { value: 'next', label: 'NEXT' },
-    { value: 'kids', label: 'Kids' },
-    { value: 'ami', label: 'AMI' },
-    { value: 'cba', label: 'CBA' },
-  ] },
-  { value: 'criativo', label: 'Criativo', subs: [
-    { value: 'marketing', label: 'Marketing' },
-    { value: 'online', label: 'Online' },
-    { value: 'producao', label: 'Produção' },
-  ] },
-  { value: 'gestao', label: 'Gestão', subs: [
-    { value: 'rh', label: 'RH' },
-    { value: 'financeiro', label: 'Financeiro' },
-    { value: 'logistica', label: 'Logística' },
-    { value: 'patrimonio', label: 'Patrimônio' },
-    { value: 'ti', label: 'TI' },
-    { value: 'compras', label: 'Compras' },
-    { value: 'cozinha', label: 'Cozinha' },
-    { value: 'limpeza', label: 'Limpeza' },
-    { value: 'manutencao', label: 'Manutenção' },
-  ] },
-];
-
-// Lookups derivados
-const SUB_TO_MACRO = {};
-const SUB_LABEL = {};
-AREAS_MACRO.forEach(m => m.subs.forEach(s => { SUB_TO_MACRO[s.value] = m.value; SUB_LABEL[s.value] = s.label; }));
-const subsDaMacro = (macro) => (AREAS_MACRO.find(m => m.value === macro)?.subs) || [];
-
-// Pre-selecao da area do solicitante pelo cargo (slug). Usuario pode trocar.
-const CARGO_TO_SUBAREA = {
-  'coordenador-voluntarios': 'voluntariado',
-  'coordenador-kids':        'kids',
-  'coordenador-ami':         'ami',
-  'coordenador-bridge':      'ami',
-  'coordenador-marketing':   'marketing',
-  'assistente-marketing':    'marketing',
-  'coordenador-online':      'online',
-  'lider-producao':          'producao',
-  'assistente-producao':     'producao',
-  'coordenador-financeiro':  'financeiro',
-  'assistente-financeiro':   'financeiro',
-  'diretor-rh':              'rh',
-  'lider-logistica':         'logistica',
-  'assistente-logistica':    'logistica',
-  'lider-operacoes':         'logistica',
-  'assistente-operacoes':    'logistica',
+// Dica curta por tipo · ajuda o solicitante a escolher o fluxo certo
+// (intencao em linguagem simples · evita confundir Compra/Serviço/Pagamento/Reembolso).
+const CATEGORIA_HINT = {
+  compras:        'Comprar um produto/material. A logística cota e compra.',
+  infraestrutura: 'Pedir um reparo/serviço à manutenção da igreja (goteira, ar-condicionado, elétrica, marcenaria...). Precisa contratar e pagar alguém de fora? Use Pagamento.',
+  pagamento:      'Pagar um fornecedor externo (boleto, nota fiscal) ou contratar/pagar um serviço de fora (gráfica, buffet, transporte...). Já gastou do próprio bolso? Use Reembolso.',
+  reembolso:      'Você já pagou do próprio bolso e quer o dinheiro de volta.',
+  reserva_espaco: 'Reservar um espaço/sala na agenda da igreja.',
+  producao:       'Apoio da equipe de Produção: movimentação de material ou configuração de equipamentos (áudio, vídeo, palco, transmissão).',
 };
+
+// Áreas do solicitante em 2 níveis: macro -> sub
+// Área do solicitante NÃO e' mais escolhida no form (2026-06-01) · o backend
+// deriva de quem preenche (usuario_areas/kpi_areas) e grava em area_cliente p/ KPI.
 
 const URGENCIAS = [
   { value: 'baixa', label: 'Baixa', color: 'bg-muted text-muted-foreground' },
@@ -92,7 +52,7 @@ const URGENCIAS = [
 
 // Cada coluna agrupa os status reais via `match` (o backbone tem 10 status mas o
 // board operacional usa 5 colunas). Sem isso, itens em aguardando_aprovacao_financeira/
-// em_atendimento/aguardando_entrega/avaliado nao caiam em coluna nenhuma e sumiam do board.
+// em_atendimento/aguardando_entrega/avaliado não caiam em coluna nenhuma e sumiam do board.
 // aguardando_aprovacao_origem fica de fora de proposito (vive na aba "Aprovar").
 const KANBAN_COLUMNS = [
   { key: 'pendente',       label: 'Pendente',     icon: Clock,        color: 'border-t-amber-500',   match: ['pendente', 'aguardando_aprovacao_financeira'] },
@@ -125,8 +85,76 @@ function getStatusMeta(status) {
   return STATUS_LABELS[status] || { label: status, color: 'bg-muted text-muted-foreground' };
 }
 
+// Dropzone reutilizavel · comprovante de reembolso, boleto/NF de pagamento,
+// proposta de serviço. Estado de drag interno (self-contained).
+function DocDropzone({ file, onFile, onClear }) {
+  const [drag, setDrag] = useState(false);
+  const inputRef = useRef(null);
+  return (
+    <>
+      <div
+        className={`border-2 border-dashed rounded-lg p-5 text-center transition-colors cursor-pointer
+          ${drag ? 'border-primary bg-primary/5' : 'border-border hover:border-primary/40'}
+          ${file ? 'border-green-500 bg-green-500/5' : ''}`}
+        onDragOver={e => { e.preventDefault(); setDrag(true); }}
+        onDragLeave={() => setDrag(false)}
+        onDrop={e => {
+          e.preventDefault(); setDrag(false);
+          const f = e.dataTransfer.files[0];
+          if (f) onFile(f);
+        }}
+        onClick={() => inputRef.current?.click()}
+      >
+        {file ? (
+          <div className="flex items-center justify-center gap-2">
+            <FileText className="h-5 w-5 text-green-600 shrink-0" />
+            <span className="text-sm text-green-700 truncate max-w-[220px]">{file.name}</span>
+            <button type="button" className="ml-1 text-muted-foreground hover:text-red-500"
+              onClick={e => { e.stopPropagation(); onClear(); if (inputRef.current) inputRef.current.value = ''; }}>
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+        ) : (
+          <div className="flex flex-col items-center gap-1.5">
+            <Upload className="h-7 w-7 text-muted-foreground" />
+            <p className="text-sm text-muted-foreground">Arraste ou clique para selecionar</p>
+            <p className="text-xs text-muted-foreground">PDF, JPG, PNG — até 10 MB</p>
+          </div>
+        )}
+      </div>
+      <input ref={inputRef} type="file" className="hidden" accept=".pdf,.jpg,.jpeg,.png,.webp"
+        onChange={e => { const f = e.target.files[0]; if (f) onFile(f); }} />
+    </>
+  );
+}
+
+// Toggle "é recorrente" + frequência · pagamento e serviço (aluguel, mensalidade)
+function RecorrenteToggle({ form, setForm }) {
+  return (
+    <div className="space-y-2">
+      <label className="flex items-center gap-2 cursor-pointer">
+        <input
+          type="checkbox"
+          checked={form.recorrente}
+          onChange={e => setForm(f => ({ ...f, recorrente: e.target.checked }))}
+          className="h-4 w-4 cursor-pointer"
+        />
+        <span className="text-sm">É recorrente (se repete todo mês/período)</span>
+      </label>
+      {form.recorrente && (
+        <Input
+          value={form.recorrencia}
+          onChange={e => setForm(f => ({ ...f, recorrencia: e.target.value }))}
+          placeholder="Frequência · ex: mensal (todo dia 10), trimestral..."
+          className="ml-6"
+        />
+      )}
+    </div>
+  );
+}
+
 export default function Solicitacoes() {
-  const { profile, isAdmin, cargoSlug } = useAuth();
+  const { profile, isAdmin } = useAuth();
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
@@ -134,12 +162,10 @@ export default function Solicitacoes() {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [detailItem, setDetailItem] = useState(null);
   const [dragOverCol, setDragOverCol] = useState(null);
-  const [dragOver, setDragOver] = useState(false);
-  const fileInputRef = useRef(null);
 
-  // Quem ve a fila "Para Atender": admin/diretor OU responsavel cadastrado de
-  // alguma area (area_solicitacoes_responsaveis). Fonte de verdade no backend
-  // via /meu-papel · colaborador comum so ve "Minhas Solicitacoes".
+  // Quem ve a fila "Para Atender": admin/diretor OU responsável cadastrado de
+  // alguma área (area_solicitacoes_responsaveis). Fonte de verdade no backend
+  // via /meu-papel · colaborador comum so ve "Minhas Solicitações".
   // papel.eh_diretor_origem · habilita aba "Aprovar" (diretor de setor da Spec 001).
   const [papel, setPapel] = useState({ atende: false, admin: false, eh_diretor_origem: false, pendentes_origem: 0 });
   const atendeAreas = papel.atende;
@@ -147,7 +173,7 @@ export default function Solicitacoes() {
   const pendentesOrigem = papel.pendentes_origem || 0;
   const isResponsavel = isAdmin || atendeAreas;
 
-  // View atual · 'minhas' (lista das proprias) | 'atender' (kanban da equipe) | 'aprovar' (diretor de origem).
+  // View atual · 'minhas' (lista das próprias) | 'atender' (kanban da equipe) | 'aprovar' (diretor de origem).
   const [view, setView] = useState('minhas');
   const [viewTouched, setViewTouched] = useState(false);
 
@@ -169,7 +195,7 @@ export default function Solicitacoes() {
     return () => { alive = false; };
   }, []);
 
-  // Responsavel/admin comeca na visao operacional (atender) se ainda nao trocou de aba.
+  // Responsavel/admin comeca na visão operacional (atender) se ainda não trocou de aba.
   // Se for diretor de origem com fila pendente, comeca em 'aprovar'.
   useEffect(() => {
     if (viewTouched) return;
@@ -184,12 +210,14 @@ export default function Solicitacoes() {
   const FORM_INITIAL = {
     titulo: '', descricao: '', justificativa: '',
     categoria: '', urgencia: 'normal', valor_estimado: '',
-    area_macro: '', area_cliente: '',
     eh_urgente: false, justificativa_urgencia: '',
     data_necessaria: '',
     espaco_solicitado: '', data_uso: '', horario_inicio: '', horario_fim: '', qtde_pessoas: '',
     motivo_reembolso: '', data_compra: '',
     forma_pagamento: '', chave_pix: '', banco: '', agencia: '', conta: '', documento_file: null,
+    // Compras / Pagamentos / Serviços (campos estruturados compartilhados)
+    itens: '', link_referencia: '', favorecido_nome: '', favorecido_documento: '',
+    recorrente: false, recorrencia: '',
     // Marketing · intake por DOR · Pedro define entregavel/publico/prazo na triagem
   };
   const [form, setForm] = useState(FORM_INITIAL);
@@ -200,27 +228,15 @@ export default function Solicitacoes() {
   }, []);
 
   // Marketing · intake por DOR (Redesenho 2026-05-30): o solicitante descreve o
-  // problema/objetivo + publico; o Pedro tria e define o entregavel depois.
+  // problema/objetivo + público; o Pedro tria e define o entregavel depois.
   // (sairam daqui: cascata grupo->tipo, carga de etiquetas e estimativa no form)
-
-  // Pre-preenche a area do solicitante pelo CARGO (slug). Fallback: kpi_areas.
-  // Usuario pode trocar livremente depois.
-  useEffect(() => {
-    if (form.area_cliente) return;
-    let sub = CARGO_TO_SUBAREA[cargoSlug] || null;
-    if (!sub) {
-      const minhasAreas = profile?.kpi_areas || [];
-      sub = minhasAreas.find(a => SUB_TO_MACRO[a]) || null;
-    }
-    if (sub) {
-      setForm(f => ({ ...f, area_macro: SUB_TO_MACRO[sub], area_cliente: sub }));
-    }
-  }, [cargoSlug, profile?.kpi_areas]);
+  // Área do solicitante · NÃO ha mais seletor (2026-06-01). O backend deriva a
+  // área de quem preenche (usuario_areas/kpi_areas) e grava em area_cliente p/ KPI.
 
   async function load() {
     try {
       // view='minhas' sempre filtra pelo solicitante atual · view='atender'
-      // delega o filtro pro backend (responsavel ve da area dele, admin ve tudo).
+      // delega o filtro pro backend (responsável ve da área dele, admin ve tudo).
       // view='aprovar' · diretor de origem ve so o que precisa decidir.
       let params = {};
       if (view === 'minhas') params = { mine: 'true' };
@@ -256,18 +272,18 @@ export default function Solicitacoes() {
     }
   }
 
-  // Ref pra sempre chamar a versao MAIS RECENTE do load() (com o view atual)
+  // Ref pra sempre chamar a versão MAIS RECENTE do load() (com o view atual)
   // dentro do callback do Realtime · sem isso o canal capturava o load via
-  // closure de mount e usava `view='atender'` velho mesmo quando o usuario
-  // ja estava em 'minhas', sobrescrevendo a lista 3s depois de trocar de aba.
+  // closure de mount e usava `view='atender'` velho mesmo quando o usuário
+  // já estava em 'minhas', sobrescrevendo a lista 3s depois de trocar de aba.
   const loadRef = useRef(load);
   useEffect(() => { loadRef.current = load; });
 
   useEffect(() => { load(); }, [view]);
 
-  // Realtime · qualquer INSERT/UPDATE/DELETE em `solicitacoes` recarrega
+  // Realtime · qualquer INSERT/UPDATE/DELETE em `solicitações` recarrega
   // o kanban/lista. Debounce 400ms agrega rajadas (ex: trigger de SLA
-  // atualiza a mesma row varias vezes em sequencia).
+  // atualiza a mesma row várias vezes em sequencia).
   useEffect(() => {
     if (!supabase || !profile?.id) return;
     let timeout = null;
@@ -321,9 +337,14 @@ export default function Solicitacoes() {
       if (!payload.espaco_solicitado) delete payload.espaco_solicitado;
       if (!payload.data_compra) delete payload.data_compra;
       if (!payload.motivo_reembolso) delete payload.motivo_reembolso;
-      // Marketing por dor · so titulo+descricao no intake (Pedro define o resto na triagem)
+      if (!payload.itens) delete payload.itens;
+      if (!payload.link_referencia) delete payload.link_referencia;
+      if (!payload.favorecido_nome) delete payload.favorecido_nome;
+      if (!payload.favorecido_documento) delete payload.favorecido_documento;
+      if (!payload.recorrencia) delete payload.recorrencia;
+      // Marketing por dor · so título+descrição no intake (Pedro define o resto na triagem)
 
-      // Upload do comprovante para Supabase Storage (bucket: solicitacoes)
+      // Upload do comprovante para Supabase Storage (bucket: solicitações)
       if (form.documento_file && supabase) {
         const ext = form.documento_file.name.split('.').pop().toLowerCase();
         const path = `comprovantes/${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`;
@@ -339,7 +360,6 @@ export default function Solicitacoes() {
       toast.success('Solicitação criada com sucesso!');
       setDialogOpen(false);
       setForm(FORM_INITIAL);
-      setDragOver(false);
       load();
     } catch (e) {
       console.error('[SOLICITACOES] create error:', e);
@@ -379,21 +399,36 @@ export default function Solicitacoes() {
     }
   }
 
-  const showValueField = ['compras', 'reembolso'].includes(form.categoria);
+  const showValueField = ['compras', 'reembolso', 'pagamento'].includes(form.categoria);
   const isReembolso = form.categoria === 'reembolso';
   const isReservaEspaco = form.categoria === 'reserva_espaco';
+  const isCompras = form.categoria === 'compras';
+  const isPagamento = form.categoria === 'pagamento';
+  // Reembolso e Pagamento compartilham os campos de destino do dinheiro (PIX/banco)
+  const dadosBancariosValid = (forma) => (
+    !!forma &&
+    (forma !== 'pix' || form.chave_pix.trim()) &&
+    (forma !== 'transferencia_bancaria' || (form.banco.trim() && form.agencia.trim() && form.conta.trim()))
+  );
+  // Reembolso · valor EXATO da nota + data da compra + destino do dinheiro.
+  // (o "motivo" saiu · a "Justificativa do pedido" geral já cobre o porquê)
   const reembolsoValid = !isReembolso || (
-    form.motivo_reembolso.trim().length >= 5 &&
+    !!form.valor_estimado &&
     form.data_compra &&
-    form.forma_pagamento &&
-    (form.forma_pagamento !== 'pix' || form.chave_pix.trim()) &&
-    (form.forma_pagamento !== 'transferencia_bancaria' || (form.banco.trim() && form.agencia.trim() && form.conta.trim()))
+    dadosBancariosValid(form.forma_pagamento)
   );
   const reservaEspacoValid = !isReservaEspaco || (form.espaco_solicitado.trim() && form.data_uso);
+  // Compras · descrição do que se precisa (itens) é o campo-chave
+  const comprasValid = !isCompras || form.itens.trim().length >= 3;
+  // Pagamento · favorecido + vencimento (data_necessaria) + forma/destino do dinheiro.
+  // Boleto não exige PIX/banco (o documento carrega a linha de pagamento).
+  const pagamentoValid = !isPagamento || (
+    form.favorecido_nome.trim() &&
+    form.data_necessaria &&
+    form.forma_pagamento &&
+    (form.forma_pagamento === 'boleto' || dadosBancariosValid(form.forma_pagamento))
+  );
   const urgenciaValid = !form.eh_urgente || form.justificativa_urgencia.trim().length >= 5;
-  const areaClienteValid = !!form.area_cliente;
-  // Marketing · intake por dor · publico-alvo obrigatorio (Pedro define o entregavel na triagem)
-  const marketingValid = true; // Marketing por dor · titulo+descricao gerais ja bastam
 
   return (
     <div className="p-6 space-y-6">
@@ -404,10 +439,10 @@ export default function Solicitacoes() {
             <ClipboardList className="h-6 w-6 text-primary" />
             Solicitações
           </h1>
-          <p className="text-sm text-muted-foreground mt-1">TI, marketing, compras, reembolso, infraestrutura, reservas, férias e licenças</p>
+          <p className="text-sm text-muted-foreground mt-1">Compras, serviços, pagamentos, reembolsos, reservas, TI, marketing, infraestrutura, férias e licenças</p>
         </div>
         <div className="flex items-center gap-3">
-          {/* Config de responsaveis · so admin/diretor */}
+          {/* Config de responsáveis · so admin/diretor */}
           {isAdmin && (
             <Button
               variant="outline"
@@ -447,50 +482,35 @@ export default function Solicitacoes() {
                 <DialogTitle>Nova Solicitação</DialogTitle>
               </DialogHeader>
               <div className="space-y-4 mt-2">
-                <div className="grid grid-cols-2 gap-3">
-                  <div className="space-y-2">
-                    <Label>Categoria *</Label>
-                    <Select value={form.categoria} onValueChange={v => setForm(f => ({ ...f, categoria: v }))}>
-                      <SelectTrigger><SelectValue placeholder="Selecione..." /></SelectTrigger>
-                      <SelectContent>
-                        {CATEGORIAS.map(c => <SelectItem key={c.value} value={c.value}>{c.label}</SelectItem>)}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <div className="space-y-2">
-                    <Label>Área *</Label>
-                    <Select
-                      value={form.area_macro}
-                      onValueChange={v => setForm(f => ({ ...f, area_macro: v, area_cliente: '' }))}
-                    >
-                      <SelectTrigger><SelectValue placeholder="Ministerial / Criativo / Gestão" /></SelectTrigger>
-                      <SelectContent>
-                        {AREAS_MACRO.map(m => <SelectItem key={m.value} value={m.value}>{m.label}</SelectItem>)}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                </div>
-                {form.area_macro && (
-                  <div className="space-y-2">
-                    <Label>Sub-área *</Label>
-                    <Select value={form.area_cliente} onValueChange={v => setForm(f => ({ ...f, area_cliente: v }))}>
-                      <SelectTrigger><SelectValue placeholder="Selecione a sub-área" /></SelectTrigger>
-                      <SelectContent>
-                        {subsDaMacro(form.area_macro).map(s => <SelectItem key={s.value} value={s.value}>{s.label}</SelectItem>)}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                )}
                 <div className="space-y-2">
-                  <Label>Título *</Label>
-                  <Input value={form.titulo} onChange={e => setForm(f => ({ ...f, titulo: e.target.value }))} />
+                  <Label>Qual tipo de solicitação? *</Label>
+                  <Select value={form.categoria} onValueChange={v => setForm(f => ({ ...f, categoria: v }))}>
+                    <SelectTrigger><SelectValue placeholder="Selecione..." /></SelectTrigger>
+                    <SelectContent>
+                      {CATEGORIAS.map(c => <SelectItem key={c.value} value={c.value}>{c.label}</SelectItem>)}
+                    </SelectContent>
+                  </Select>
+                  {CATEGORIA_HINT[form.categoria] && (
+                    <p className="text-xs text-muted-foreground">
+                      {CATEGORIA_HINT[form.categoria]}
+                    </p>
+                  )}
                 </div>
                 <div className="space-y-2">
-                  <Label>Descrição</Label>
-                  <Textarea value={form.descricao} onChange={e => setForm(f => ({ ...f, descricao: e.target.value }))} rows={3} />
+                  <Label>Título da solicitação *</Label>
+                  <Input value={form.titulo} onChange={e => setForm(f => ({ ...f, titulo: e.target.value }))} placeholder="Resuma em uma frase" />
                 </div>
                 <div className="space-y-2">
-                  <Label>Justificativa</Label>
+                  <Label>{isReservaEspaco ? 'Descrição da necessidade (qual evento / finalidade)' : 'Descrição da necessidade'}</Label>
+                  <Textarea
+                    value={form.descricao}
+                    onChange={e => setForm(f => ({ ...f, descricao: e.target.value }))}
+                    rows={3}
+                    placeholder={isReservaEspaco ? 'Qual evento/atividade vai acontecer e o que precisa no espaço' : undefined}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label>Justificativa do pedido</Label>
                   <Textarea value={form.justificativa} onChange={e => setForm(f => ({ ...f, justificativa: e.target.value }))} rows={2} />
                 </div>
 
@@ -553,16 +573,127 @@ export default function Solicitacoes() {
                       <Label className="text-xs">Qtde de pessoas (estimada)</Label>
                       <Input type="number" value={form.qtde_pessoas} onChange={e => setForm(f => ({ ...f, qtde_pessoas: e.target.value }))} placeholder="0" />
                     </div>
+                    <div className="space-y-2">
+                      <Label className="text-xs">Material ou arrumação específica (opcional)</Label>
+                      <Textarea
+                        value={form.itens}
+                        onChange={e => setForm(f => ({ ...f, itens: e.target.value }))}
+                        rows={2}
+                        placeholder="Ex: 50 cadeiras em U · som + microfone · projetor · mesa de apoio"
+                      />
+                    </div>
                   </div>
                 )}
 
-                {/* Data necessaria (outras categorias) */}
+                {/* Compras · itens + referência + fornecedor sugerido */}
+                {isCompras && (
+                  <div className="space-y-3 rounded-lg border border-orange-500/30 bg-orange-500/5 p-3">
+                    <p className="text-sm font-semibold text-orange-700 dark:text-orange-400">Detalhes da compra</p>
+                    <div className="space-y-2">
+                      <Label className="text-xs">O que comprar (itens + quantidade) *</Label>
+                      <Textarea
+                        value={form.itens}
+                        onChange={e => setForm(f => ({ ...f, itens: e.target.value }))}
+                        rows={2}
+                        placeholder="Ex: 2 caixas de som JBL · 10 cabos P10 · 1 mesa dobrável"
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label className="text-xs">Link / referência do produto (opcional)</Label>
+                      <Input
+                        value={form.link_referencia}
+                        onChange={e => setForm(f => ({ ...f, link_referencia: e.target.value }))}
+                        placeholder="Cole o link do Mercado Livre / site, se tiver"
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label className="text-xs">Fornecedor sugerido (opcional)</Label>
+                      <Input
+                        value={form.favorecido_nome}
+                        onChange={e => setForm(f => ({ ...f, favorecido_nome: e.target.value }))}
+                        placeholder="Se já sabe de onde comprar"
+                      />
+                    </div>
+                  </div>
+                )}
+
+                {/* Pagamento · favorecido + documento + forma + recorrencia */}
+                {isPagamento && (
+                  <div className="space-y-3 rounded-lg border border-emerald-500/30 bg-emerald-500/5 p-3">
+                    <p className="text-sm font-semibold text-emerald-700 dark:text-emerald-400">Dados do pagamento</p>
+                    <div className="grid grid-cols-2 gap-3">
+                      <div className="space-y-2">
+                        <Label className="text-xs">Favorecido (quem recebe) *</Label>
+                        <Input
+                          value={form.favorecido_nome}
+                          onChange={e => setForm(f => ({ ...f, favorecido_nome: e.target.value }))}
+                          placeholder="Nome ou razão social"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label className="text-xs">CNPJ/CPF (opcional)</Label>
+                        <Input
+                          value={form.favorecido_documento}
+                          onChange={e => setForm(f => ({ ...f, favorecido_documento: e.target.value }))}
+                        />
+                      </div>
+                    </div>
+                    <div className="space-y-2">
+                      <Label className="text-xs">Documento — boleto / nota fiscal / contrato *</Label>
+                      <DocDropzone
+                        file={form.documento_file}
+                        onFile={f => setForm(prev => ({ ...prev, documento_file: f }))}
+                        onClear={() => setForm(prev => ({ ...prev, documento_file: null }))}
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label className="text-xs">Forma de pagamento *</Label>
+                      <Select value={form.forma_pagamento} onValueChange={v => setForm(f => ({ ...f, forma_pagamento: v, chave_pix: '', banco: '', agencia: '', conta: '' }))}>
+                        <SelectTrigger><SelectValue placeholder="Como pagar?" /></SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="boleto">Boleto</SelectItem>
+                          <SelectItem value="pix">PIX</SelectItem>
+                          <SelectItem value="transferencia_bancaria">Transferência Bancária</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    {form.forma_pagamento === 'pix' && (
+                      <div className="space-y-2">
+                        <Label className="text-xs">Chave PIX *</Label>
+                        <Input value={form.chave_pix} onChange={e => setForm(f => ({ ...f, chave_pix: e.target.value }))} placeholder="CPF, e-mail, telefone ou chave aleatória" />
+                      </div>
+                    )}
+                    {form.forma_pagamento === 'transferencia_bancaria' && (
+                      <div className="space-y-3">
+                        <div className="space-y-2">
+                          <Label className="text-xs">Banco *</Label>
+                          <Input value={form.banco} onChange={e => setForm(f => ({ ...f, banco: e.target.value }))} placeholder="Ex: Banco do Brasil, Nubank..." />
+                        </div>
+                        <div className="grid grid-cols-2 gap-3">
+                          <div className="space-y-2">
+                            <Label className="text-xs">Agência *</Label>
+                            <Input value={form.agencia} onChange={e => setForm(f => ({ ...f, agencia: e.target.value }))} placeholder="0000" />
+                          </div>
+                          <div className="space-y-2">
+                            <Label className="text-xs">Conta *</Label>
+                            <Input value={form.conta} onChange={e => setForm(f => ({ ...f, conta: e.target.value }))} placeholder="00000-0" />
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                    <RecorrenteToggle form={form} setForm={setForm} />
+                  </div>
+                )}
+
+                {/* Data necessária · vira "Vencimento" obrigatório pra pagamento */}
                 {form.categoria && form.categoria !== 'reserva_espaco' && (
                   <div className="space-y-2">
-                    <Label>Data necessária (opcional)</Label>
+                    <Label>{isPagamento ? 'Vencimento *' : 'Data necessária (opcional)'}</Label>
                     <Input type="date" value={form.data_necessaria} onChange={e => setForm(f => ({ ...f, data_necessaria: e.target.value }))} />
                     <p className="text-xs text-muted-foreground">
-                      Se preencher, alertaremos caso o SLA padrão não bata.
+                      {isPagamento
+                        ? 'Quando o boleto/nota vence. Priorizamos pra não pagar com atraso.'
+                        : 'Se preencher, alertaremos caso o SLA padrão não bata.'}
                     </p>
                   </div>
                 )}
@@ -585,7 +716,12 @@ export default function Solicitacoes() {
                 {(() => {
                   const cat = CATEGORIAS.find(c => c.value === form.categoria);
                   if (!cat?.areaResp || form.categoria === 'marketing') return null;
-                  const sla = slaDefs.find(s => s.area_responsavel === cat.areaResp && s.eh_urgente === !!form.eh_urgente);
+                  const urg = !!form.eh_urgente;
+                  const sub = cat.sub || 'default';
+                  // Prefere a subcategoria exata · cai pra 'default' · cai pra área
+                  const sla = slaDefs.find(s => s.area_responsavel === cat.areaResp && s.subcategoria === sub && s.eh_urgente === urg)
+                    || slaDefs.find(s => s.area_responsavel === cat.areaResp && s.subcategoria === 'default' && s.eh_urgente === urg)
+                    || slaDefs.find(s => s.area_responsavel === cat.areaResp && s.eh_urgente === urg);
                   if (!sla) return null;
                   return (
                     <div className="rounded-md bg-blue-500/5 border border-blue-500/30 px-3 py-2 text-xs text-blue-700 dark:text-blue-300">
@@ -598,22 +734,14 @@ export default function Solicitacoes() {
                 <div className="grid grid-cols-2 gap-4">
                   {showValueField && (
                     <div className="space-y-2">
-                      <Label>Valor estimado (R$)</Label>
-                      <Input type="number" step="0.01" value={form.valor_estimado} onChange={e => setForm(f => ({ ...f, valor_estimado: e.target.value }))} />
+                      <Label>{isReembolso ? 'Valor (exato da nota) *' : 'Valor estimado (R$)'}</Label>
+                      <Input type="number" step="0.01" value={form.valor_estimado} onChange={e => setForm(f => ({ ...f, valor_estimado: e.target.value }))}
+                        placeholder={isReembolso ? 'Igual ao da nota fiscal' : undefined} />
                     </div>
                   )}
                 </div>
                 {isReembolso && (
                   <>
-                    <div className="space-y-2">
-                      <Label>Motivo do reembolso *</Label>
-                      <Textarea
-                        value={form.motivo_reembolso}
-                        onChange={e => setForm(f => ({ ...f, motivo_reembolso: e.target.value }))}
-                        placeholder="Ex: 'Compra de material gráfico pra Conferência X · não havia tempo de pedir cotação'"
-                        rows={2}
-                      />
-                    </div>
                     <div className="space-y-2">
                       <Label>Data da compra *</Label>
                       <Input type="date" max={new Date().toISOString().slice(0, 10)}
@@ -623,38 +751,11 @@ export default function Solicitacoes() {
                     {/* Comprovante — drag and drop */}
                     <div className="space-y-2">
                       <Label>Comprovante / Documento *</Label>
-                      <div
-                        className={`border-2 border-dashed rounded-lg p-5 text-center transition-colors cursor-pointer
-                          ${dragOver ? 'border-primary bg-primary/5' : 'border-border hover:border-primary/40'}
-                          ${form.documento_file ? 'border-green-500 bg-green-500/5' : ''}`}
-                        onDragOver={e => { e.preventDefault(); setDragOver(true); }}
-                        onDragLeave={() => setDragOver(false)}
-                        onDrop={e => {
-                          e.preventDefault(); setDragOver(false);
-                          const file = e.dataTransfer.files[0];
-                          if (file) setForm(f => ({ ...f, documento_file: file }));
-                        }}
-                        onClick={() => fileInputRef.current?.click()}
-                      >
-                        {form.documento_file ? (
-                          <div className="flex items-center justify-center gap-2">
-                            <FileText className="h-5 w-5 text-green-600 shrink-0" />
-                            <span className="text-sm text-green-700 truncate max-w-[220px]">{form.documento_file.name}</span>
-                            <button type="button" className="ml-1 text-muted-foreground hover:text-red-500"
-                              onClick={e => { e.stopPropagation(); setForm(f => ({ ...f, documento_file: null })); if (fileInputRef.current) fileInputRef.current.value = ''; }}>
-                              <X className="h-4 w-4" />
-                            </button>
-                          </div>
-                        ) : (
-                          <div className="flex flex-col items-center gap-1.5">
-                            <Upload className="h-7 w-7 text-muted-foreground" />
-                            <p className="text-sm text-muted-foreground">Arraste ou clique para selecionar</p>
-                            <p className="text-xs text-muted-foreground">PDF, JPG, PNG — até 10 MB</p>
-                          </div>
-                        )}
-                      </div>
-                      <input ref={fileInputRef} type="file" className="hidden" accept=".pdf,.jpg,.jpeg,.png,.webp"
-                        onChange={e => { const f = e.target.files[0]; if (f) setForm(prev => ({ ...prev, documento_file: f })); }} />
+                      <DocDropzone
+                        file={form.documento_file}
+                        onFile={f => setForm(prev => ({ ...prev, documento_file: f }))}
+                        onClear={() => setForm(prev => ({ ...prev, documento_file: null }))}
+                      />
                     </div>
 
                     {/* Forma de pagamento */}
@@ -699,7 +800,7 @@ export default function Solicitacoes() {
 
                 <div className="flex justify-end gap-2 pt-2">
                   <Button type="button" variant="outline" onClick={() => setDialogOpen(false)}>Cancelar</Button>
-                  <Button onClick={handleCreate} disabled={!form.titulo || !form.categoria || !areaClienteValid || !reembolsoValid || !reservaEspacoValid || !urgenciaValid || !marketingValid || submitting}>
+                  <Button onClick={handleCreate} disabled={!form.titulo || !form.categoria || !reembolsoValid || !reservaEspacoValid || !comprasValid || !pagamentoValid || !urgenciaValid || submitting}>
                     {submitting ? 'Criando...' : 'Criar Solicitação'}
                   </Button>
                 </div>
@@ -709,7 +810,7 @@ export default function Solicitacoes() {
         </div>
       </div>
 
-      {/* Tabs · Aprovar (diretor de origem) · Para Atender (responsavel) · Minhas (todos). */}
+      {/* Tabs · Aprovar (diretor de origem) · Para Atender (responsável) · Minhas (todos). */}
       {(isResponsavel || ehDiretorOrigem) && (
         <div className="flex items-center gap-1 border-b border-border">
           {ehDiretorOrigem && (
@@ -757,7 +858,7 @@ export default function Solicitacoes() {
         </div>
       )}
 
-      {/* Content: Kanban so na view 'atender' · Lista de aprovacao em 'aprovar' · Lista simples nas demais. */}
+      {/* Content: Kanban so na view 'atender' · Lista de aprovação em 'aprovar' · Lista simples nas demais. */}
       {loading ? (
         <div className="flex items-center justify-center min-h-[40vh]">
           <div className="h-6 w-6 animate-spin rounded-full border-2 border-muted-foreground/30 border-t-primary" />
@@ -906,7 +1007,7 @@ export default function Solicitacoes() {
         onStatusChange={handleStatusChange}
         onNpsSubmit={handleNpsSubmit}
         onItemRefresh={async () => {
-          // recarrega a lista e atualiza o detailItem com a versao fresca
+          // recarrega a lista e atualiza o detailItem com a versão fresca
           const data = await api.list();
           setItems(data);
           setDetailItem(curr => (curr ? data.find(d => d.id === curr.id) || curr : curr));
@@ -1073,8 +1174,8 @@ function SolicitacaoCard({ item, isAdmin, onStatusChange, onClick, draggable }) 
   const sla = getSlaBadge(item);
   const st = getStatusMeta(item.status);
   const aguardandoFin = item.status === 'aguardando_aprovacao_financeira';
-  // Status real visivel quando a coluna agrupa varios (ex: "Em Andamento" tem
-  // aprovado/em_atendimento/aguardando_entrega). Os headliners obvios nao repetem.
+  // Status real visível quando a coluna agrupa vários (ex: "Em Andamento" tem
+  // aprovado/em_atendimento/aguardando_entrega). Os headliners obvios não repetem.
   const mostrarStatus = !['pendente', 'em_analise', 'concluido', 'rejeitado', 'aguardando_aprovacao_financeira'].includes(item.status);
 
   return (
@@ -1150,7 +1251,7 @@ const ML_STATUS_META = {
 function statusIndex(status) {
   const i = ML_STATUS_FLOW.findIndex(s => s.key === status);
   if (i >= 0) return i;
-  // status que nao estao no flow (in_transit, out_for_delivery) caem entre shipped e delivered
+  // status que não estão no flow (in_transit, out_for_delivery) caem entre shipped e delivered
   if (status === 'in_transit' || status === 'out_for_delivery') return 3.5;
   return -1;
 }
@@ -1180,7 +1281,7 @@ function MLTrackingBlock({ item, canEdit, onChanged }) {
     setLinking(true);
     try {
       await api.vincularML(item.id, mlInput.trim());
-      toast.success('Pedido vinculado! Voce e o solicitante recebem as atualizacoes automaticamente.');
+      toast.success('Pedido vinculado! Você e o solicitante recebem as atualizações automaticamente.');
       setShowInput(false);
       setMlInput('');
       onChanged?.();
@@ -1205,7 +1306,7 @@ function MLTrackingBlock({ item, canEdit, onChanged }) {
   }
 
   async function unlink() {
-    if (!confirm('Tem certeza que quer desvincular o pedido do Mercado Livre? O tracking sera removido.')) return;
+    if (!confirm('Tem certeza que quer desvincular o pedido do Mercado Livre? O tracking será removido.')) return;
     setUnlinking(true);
     try {
       await api.desvincularML(item.id);
@@ -1333,10 +1434,10 @@ function MLTrackingBlock({ item, canEdit, onChanged }) {
             })}
           </div>
 
-          {/* Historico de eventos */}
+          {/* Histórico de eventos */}
           {eventos.length > 0 && (
             <div className="pt-2 border-t border-border">
-              <p className="text-xs font-semibold text-muted-foreground mb-2">Historico</p>
+              <p className="text-xs font-semibold text-muted-foreground mb-2">Histórico</p>
               <ul className="space-y-1.5">
                 {eventos.slice().reverse().map(ev => {
                   const m = ML_STATUS_META[ev.status] || { label: ev.status, emoji: '•' };
@@ -1377,7 +1478,7 @@ function MLTrackingBlock({ item, canEdit, onChanged }) {
 }
 
 function DetailDialog({ item, onClose, isAdmin, currentUserId, onStatusChange, onNpsSubmit, onItemRefresh }) {
-  const [actionPending, setActionPending] = useState(null); // e.g. 'aprovado', 'rejeitado', 'concluido', 'em_analise'
+  const [actionPending, setActionPending] = useState(null); // e.g. 'aprovado', 'rejeitado', 'concluído', 'em_analise'
   const [obsText, setObsText] = useState('');
 
   if (!item) return null;
@@ -1508,6 +1609,66 @@ function DetailDialog({ item, onClose, isAdmin, currentUserId, onStatusChange, o
             </div>
           )}
 
+          {/* Detalhes da compra */}
+          {item.categoria === 'compras' && (item.itens || item.link_referencia || item.favorecido_nome) && (
+            <div className="space-y-2 pt-3 border-t border-border">
+              <p className="text-sm font-semibold text-foreground">Detalhes da compra</p>
+              {item.itens && (
+                <div><span className="text-xs text-muted-foreground">Itens</span><p className="text-sm whitespace-pre-wrap">{item.itens}</p></div>
+              )}
+              {item.favorecido_nome && (
+                <div><span className="text-xs text-muted-foreground">Fornecedor sugerido</span><p className="text-sm">{item.favorecido_nome}</p></div>
+              )}
+              {item.link_referencia && (
+                item.link_referencia.startsWith('http')
+                  ? <a href={item.link_referencia} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 text-sm text-primary hover:underline">Ver referência →</a>
+                  : <div><span className="text-xs text-muted-foreground">Referência</span><p className="text-sm">{item.link_referencia}</p></div>
+              )}
+            </div>
+          )}
+
+          {/* Detalhes da reserva · espaco/data/horario + material (itens) */}
+          {item.categoria === 'reserva_espaco' && (item.espaco_solicitado || item.data_uso || item.itens) && (
+            <div className="space-y-2 pt-3 border-t border-border">
+              <p className="text-sm font-semibold text-foreground">Detalhes da reserva</p>
+              <div className="grid grid-cols-2 gap-4 text-sm">
+                {item.espaco_solicitado && (<div><span className="text-muted-foreground">Espaço</span><p className="font-medium">{item.espaco_solicitado}</p></div>)}
+                {item.data_uso && (<div><span className="text-muted-foreground">Data</span><p className="font-medium">{new Date(item.data_uso + 'T00:00:00').toLocaleDateString('pt-BR')}{item.horario_inicio ? ` · ${item.horario_inicio}${item.horario_fim ? `–${item.horario_fim}` : ''}` : ''}</p></div>)}
+                {item.qtde_pessoas != null && (<div><span className="text-muted-foreground">Pessoas</span><p className="font-medium">{item.qtde_pessoas}</p></div>)}
+              </div>
+              {item.itens && (
+                <div><span className="text-xs text-muted-foreground">Material / arrumação</span><p className="text-sm whitespace-pre-wrap">{item.itens}</p></div>
+              )}
+            </div>
+          )}
+
+          {/* Dados do pagamento */}
+          {item.categoria === 'pagamento' && (item.favorecido_nome || item.forma_pagamento || item.documento_url) && (
+            <div className="space-y-2 pt-3 border-t border-border">
+              <p className="text-sm font-semibold text-foreground">Dados do pagamento</p>
+              <div className="grid grid-cols-2 gap-4 text-sm">
+                {item.favorecido_nome && (<div><span className="text-muted-foreground">Favorecido</span><p className="font-medium">{item.favorecido_nome}</p></div>)}
+                {item.favorecido_documento && (<div><span className="text-muted-foreground">CNPJ/CPF</span><p className="font-medium font-mono">{item.favorecido_documento}</p></div>)}
+                {item.forma_pagamento && (<div><span className="text-muted-foreground">Forma</span><p className="font-medium">{item.forma_pagamento === 'boleto' ? 'Boleto' : item.forma_pagamento === 'pix' ? 'PIX' : 'Transferência'}</p></div>)}
+                {item.data_necessaria && (<div><span className="text-muted-foreground">Vencimento</span><p className="font-medium">{new Date(item.data_necessaria).toLocaleDateString('pt-BR')}</p></div>)}
+                {item.forma_pagamento === 'pix' && item.chave_pix && (<div><span className="text-muted-foreground">Chave PIX</span><p className="font-medium font-mono">{item.chave_pix}</p></div>)}
+                {item.forma_pagamento === 'transferencia_bancaria' && (<>
+                  {item.banco && <div><span className="text-muted-foreground">Banco</span><p className="font-medium">{item.banco}</p></div>}
+                  {item.agencia && <div><span className="text-muted-foreground">Agência</span><p className="font-medium">{item.agencia}</p></div>}
+                  {item.conta && <div><span className="text-muted-foreground">Conta</span><p className="font-medium">{item.conta}</p></div>}
+                </>)}
+              </div>
+              {item.recorrente && (
+                <Badge className="bg-emerald-500/15 text-emerald-700 dark:text-emerald-400">⟳ Recorrente{item.recorrencia ? ` · ${item.recorrencia}` : ''}</Badge>
+              )}
+              {item.documento_url && (
+                <a href={item.documento_url} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-2 text-sm text-primary hover:underline">
+                  <FileText className="h-4 w-4" /> Ver documento (boleto / NF)
+                </a>
+              )}
+            </div>
+          )}
+
           {isAdmin && !actionPending && (
             <div className="flex flex-wrap gap-2 pt-2 border-t border-border">
               {item.status === 'pendente' && <Button size="sm" onClick={() => setActionPending('em_analise')}>Analisar</Button>}
@@ -1530,7 +1691,7 @@ function DetailDialog({ item, onClose, isAdmin, currentUserId, onStatusChange, o
                 : null
           )}
 
-          {/* NPS pos-conclusao · so pro solicitante apos status concluido */}
+          {/* NPS pos-conclusao · so pro solicitante após status concluído */}
           {item.status === 'concluido'
             && currentUserId
             && item.solicitante_id === currentUserId
@@ -1680,7 +1841,7 @@ function MarketingCampanhaBlock({ campanha, onChanged }) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════
-// MarketingCardBlock · solicitante revisa preview, aprova entrega ou pede revisao (Spec 012 · LEGADO)
+// MarketingCardBlock · solicitante revisa preview, aprova entrega ou pede revisão (Spec 012 · LEGADO)
 // ═══════════════════════════════════════════════════════════════════════
 function MarketingCardBlock({ card, onChanged }) {
   const [entregaveis, setEntregaveis] = useState([]);
@@ -1796,7 +1957,7 @@ function MarketingCardBlock({ card, onChanged }) {
         <p className="text-xs text-muted-foreground italic">Equipe finalizou · preview ainda não anexado.</p>
       ) : null}
 
-      {/* Botoes de acao · so quando aguardando solicitante */}
+      {/* Botoes de ação · so quando aguardando solicitante */}
       {podeAprovar && !revisaoOpen && (
         <div className="flex gap-2 pt-2">
           <Button
@@ -1873,7 +2034,7 @@ function NpsBlock({ item, onSubmit }) {
     try {
       await onSubmit(item.id, nota, comentario.trim() || null);
     } catch {
-      // erro ja foi exibido pelo handler do pai
+      // erro já foi exibido pelo handler do pai
     } finally {
       setSubmitting(false);
     }

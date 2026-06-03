@@ -1,6 +1,6 @@
 const router = require('express').Router();
 const multer = require('multer');
-const { authenticate, authorize } = require('../middleware/auth');
+const { authenticate, authorize, getEffectiveLevel } = require('../middleware/auth');
 const { supabase } = require('../utils/supabase');
 const { uploadModuleFile, SHAREPOINT_CONFIGURED } = require('../services/storageService');
 const { notificar } = require('../services/notificar');
@@ -16,6 +16,18 @@ const uploadMw = multer({
 });
 
 router.use(authenticate);
+
+// Autoriza edicao de um membro especifico pelas rotas "totem":
+//   - staff de membresia (nivel >= 3) ou admin/diretor → qualquer membro
+//   - o proprio usuario logado → so o seu proprio cadastro (req.user.membro_id)
+// Antes, qualquer autenticado podia sobrescrever PII (email/telefone/endereco/
+// foto) de QUALQUER membro só pelo id (IDOR · LGPD).
+function podeEditarMembroTotem(req, membroId) {
+  if (['admin', 'diretor'].includes(req.user.role)) return true;
+  if (getEffectiveLevel(req, 'membresia') >= 3) return true;
+  if (req.user.membro_id && String(req.user.membro_id) === String(membroId)) return true;
+  return false;
+}
 
 // ── Utils ──
 // Nível de generosidade baseado na data da última contribuição.
@@ -69,7 +81,7 @@ router.get('/qr-lookup/:token', async (req, res) => {
       .maybeSingle();
 
     if (!mapping || !mapping.cpf) {
-      return res.status(404).json({ error: 'QR nao encontrado' });
+      return res.status(404).json({ error: 'QR não encontrado' });
     }
 
     // Marca uso (opcional, nao-critico)
@@ -181,7 +193,7 @@ router.get('/qr-lookup/:token', async (req, res) => {
       });
     }
 
-    return res.status(404).json({ error: 'Cadastro nao encontrado' });
+    return res.status(404).json({ error: 'Cadastro não encontrado' });
   } catch (e) {
     console.error('[MEMBRESIA] qr-lookup error:', e.message);
     res.status(500).json({ error: 'Erro ao consultar QR' });
@@ -191,8 +203,8 @@ router.get('/qr-lookup/:token', async (req, res) => {
 // ── CPF Lookup (identidade do membro por CPF) ──
 //
 // GET /api/membresia/cpf-lookup/:cpf
-// Mesma logica do qr-lookup, mas resolve direto pelo CPF (sem token).
-// Usado no totem como alternativa pra quem nao tem a carteirinha digital.
+// Mesma lógica do qr-lookup, mas resolve direto pelo CPF (sem token).
+// Usado no totem como alternativa pra quem não tem a carteirinha digital.
 // CPF e' normalizado pra so digitos antes do match.
 router.get('/cpf-lookup/:cpf', async (req, res) => {
   try {
@@ -298,7 +310,7 @@ router.get('/cpf-lookup/:cpf', async (req, res) => {
       });
     }
 
-    return res.status(404).json({ error: 'Cadastro nao encontrado' });
+    return res.status(404).json({ error: 'Cadastro não encontrado' });
   } catch (e) {
     console.error('[MEMBRESIA] cpf-lookup error:', e.message);
     res.status(500).json({ error: 'Erro ao consultar CPF' });
@@ -311,7 +323,7 @@ router.get('/cpf-lookup/:cpf', async (req, res) => {
 // Query params:
 //   ?status=...        filtra por status (visitante|membro_ativo|...)
 //   ?busca=...         busca por nome
-//   ?papel=...         filtra por papel: voluntario|visitante|grupo_ativo|
+//   ?papel=...         filtra por papel: voluntário|visitante|grupo_ativo|
 //                      contribuinte|inscrito_next|sem_papel
 router.get('/membros', async (req, res) => {
   try {
@@ -329,8 +341,8 @@ router.get('/membros', async (req, res) => {
     if (error) throw error;
     if (!membros || membros.length === 0) return res.json([]);
 
-    // Anotar papeis (vw_pessoas_papeis), batch — evita N+1.
-    // A view ja faz JOIN com vol_profiles, int_visitantes, etc.
+    // Anotar papéis (vw_pessoas_papeis), batch — evita N+1.
+    // A view já faz JOIN com vol_profiles, int_visitantes, etc.
     const ids = membros.map(m => m.id);
     const { data: papeis } = await supabase
       .from('vw_pessoas_papeis')
@@ -519,7 +531,7 @@ router.get('/membros/:id', async (req, res) => {
       ultimoCheckin = checkins[0]?.checked_in_at || null;
       totalCheckins90d = cnt90;
 
-      // Nivel de servico (Ativo <30d / Ausente 30-90 / Sumido >90)
+      // Nível de serviço (Ativo <30d / Ausente 30-90 / Sumido >90)
       if (ultimoCheckin) {
         const dias = Math.floor((Date.now() - new Date(ultimoCheckin).getTime()) / 86400000);
         if (dias <= 30) nivelServico = 'ativo';
@@ -550,7 +562,7 @@ router.get('/membros/:id', async (req, res) => {
       nivel_generosidade: nivelGenerosidade,
       ultima_contribuicao: ultimaContribuicao,
       totais_ano: totaisAno,
-      // Voluntariado (lido de vol_profiles - fonte unica)
+      // Voluntariado (lido de vol_profiles - fonte única)
       vol_profile_id,
       allocation_status,
       ministerios_ativos,
@@ -575,8 +587,8 @@ router.get('/membros/:id', async (req, res) => {
 });
 
 // ────────────────────────────────────────────────────────────────────────
-// GET /api/membresia/orfaos-stats · conta voluntarios e batismos sem
-// link com mem_membros. Ideal = 0 apos a migration 20260515500000.
+// GET /api/membresia/orfaos-stats · conta voluntários e batismos sem
+// link com mem_membros. Ideal = 0 após a migration 20260515500000.
 // ────────────────────────────────────────────────────────────────────────
 router.get('/orfaos-stats', async (_req, res) => {
   try {
@@ -592,13 +604,13 @@ router.get('/orfaos-stats', async (_req, res) => {
 });
 
 // POST /api/membresia/promover-orfaos · forca backfill manual (admin/diretor).
-// A migration ja faz isso uma vez · este endpoint serve pra rodar de novo
+// A migration já faz isso uma vez · este endpoint serve pra rodar de novo
 // caso registros antigos tenham caido pelas brechas (importacoes, etc).
 router.post('/promover-orfaos', authorize('admin', 'diretor'), async (_req, res) => {
   try {
-    // Reusa a logica da fn_link_or_create_membro via RPC.
-    // O trigger ja age em INSERT/UPDATE · pra reprocessar antigos, basta
-    // touchear (UPDATE de nenhum campo nao dispara · forco trigger via UPDATE updated_at).
+    // Reusa a lógica da fn_link_or_create_membro via RPC.
+    // O trigger já age em INSERT/UPDATE · pra reprocessar antigos, basta
+    // touchear (UPDATE de nenhum campo não dispara · forco trigger via UPDATE updated_at).
     const stats = { voluntarios: 0, batismos: 0, erros: [] };
 
     const { data: volOrfaos } = await supabase
@@ -608,7 +620,7 @@ router.post('/promover-orfaos', authorize('admin', 'diretor'), async (_req, res)
       .not('full_name', 'is', null);
 
     for (const v of volOrfaos || []) {
-      // UPDATE no proprio updated_at pra disparar BEFORE UPDATE trigger
+      // UPDATE no próprio updated_at pra disparar BEFORE UPDATE trigger
       const { error } = await supabase
         .from('vol_profiles')
         .update({ updated_at: new Date().toISOString() })
@@ -701,7 +713,7 @@ router.post('/membros/:id/foto', authorize('admin', 'diretor'), uploadMw.single(
     const { error: dbErr } = await supabase.from('mem_membros').update({ foto_url }).eq('id', id);
     if (dbErr) throw dbErr;
 
-    // Copiar para SharePoint "CRM e Pessoas" em background (nao bloqueia resposta)
+    // Copiar para SharePoint "CRM e Pessoas" em background (não bloqueia resposta)
     if (SHAREPOINT_CONFIGURED) {
       (async () => {
         try {
@@ -996,7 +1008,7 @@ router.get('/geocode-cep', async (req, res) => {
     if (cep.length !== 8) return res.status(400).json({ error: 'CEP invalido' });
     const viaCepRes = await fetch(`https://viacep.com.br/ws/${cep}/json/`);
     const viaCep = await viaCepRes.json();
-    if (viaCep.erro) return res.status(404).json({ error: 'CEP nao encontrado' });
+    if (viaCep.erro) return res.status(404).json({ error: 'CEP não encontrado' });
     const q = encodeURIComponent(`${viaCep.logradouro || ''} ${viaCep.localidade} ${viaCep.uf} Brasil`.trim());
     const nomRes = await fetch(`https://nominatim.openstreetmap.org/search?q=${q}&format=json&limit=1`, {
       headers: { 'User-Agent': 'CBRio-Sistema/1.0 (contato@cbrio.com.br)' },
@@ -1033,6 +1045,9 @@ router.post('/totem/grupos/:id/entrar', async (req, res) => {
 router.put('/totem/membros/:id', async (req, res) => {
   try {
     const { id } = req.params;
+    if (!podeEditarMembroTotem(req, id)) {
+      return res.status(403).json({ error: 'Sem permissão para editar este cadastro' });
+    }
     const allowed = ['email', 'telefone', 'data_nascimento', 'endereco', 'bairro', 'cidade', 'cep', 'estado_civil'];
     const updates = {};
     for (const f of allowed) {
@@ -1050,7 +1065,7 @@ router.put('/totem/membros/:id', async (req, res) => {
 
 // ── Totem · NEXT (inscrição + status) ──
 //
-// Helper · acha o proximo evento NEXT agendado (data >= hoje).
+// Helper · acha o próximo evento NEXT agendado (data >= hoje).
 async function _proximoEventoNext() {
   const hoje = new Date().toISOString().slice(0, 10);
   const { data } = await supabase
@@ -1065,8 +1080,8 @@ async function _proximoEventoNext() {
 }
 
 // GET /api/membresia/totem/next/status?membro_id=X&email=Y&cpf=Z
-// Retorna { inscrito: bool, inscricao?, proximo_evento? }.
-// "inscrito = true" significa que o membro tem inscricao ativa pra um
+// Retorna { inscrito: bool, inscrição?, proximo_evento? }.
+// "inscrito = true" significa que o membro tem inscrição ativa pra um
 // evento futuro (status='agendado' do evento e check_in_at NULL).
 router.get('/totem/next/status', async (req, res) => {
   try {
@@ -1074,7 +1089,7 @@ router.get('/totem/next/status', async (req, res) => {
     const hoje = new Date().toISOString().slice(0, 10);
     const proximo = await _proximoEventoNext();
 
-    // Procura inscricao mais recente do membro/email/cpf cujo evento e futuro
+    // Procura inscrição mais recente do membro/email/cpf cujo evento e futuro
     let q = supabase
       .from('next_inscricoes')
       .select('id, nome, sobrenome, email, cpf, check_in_at, evento:next_eventos(id, data, titulo, status)')
@@ -1111,8 +1126,8 @@ router.get('/totem/next/status', async (req, res) => {
 });
 
 // POST /api/membresia/totem/next/inscrever
-// Body: { membro_id?, nome, sobrenome?, cpf?, telefone, email, data_nascimento?, observacoes? }
-// Resolve evento automaticamente (proximo agendado). Idempotente por
+// Body: { membro_id?, nome, sobrenome?, cpf?, telefone, email, data_nascimento?, observações? }
+// Resolve evento automaticamente (próximo agendado). Idempotente por
 // CPF/email do evento (UNIQUE INDEX existente em next_inscricoes).
 router.post('/totem/next/inscrever', async (req, res) => {
   try {
@@ -1177,7 +1192,7 @@ router.post('/totem/next/inscrever', async (req, res) => {
 
     if (insErr) {
       if (insErr.code === '23505') {
-        // Ja inscrito · retorna evento
+        // Já inscrito · retorna evento
         return res.json({ ok: true, ja_inscrito: true, evento: proximo });
       }
       throw insErr;
@@ -1186,7 +1201,7 @@ router.post('/totem/next/inscrever', async (req, res) => {
     try {
       await notificar({
         modulo: 'next',
-        titulo: 'Nova inscricao no NEXT (via totem)',
+        titulo: 'Nova inscrição no NEXT (via totem)',
         mensagem: `${nome} ${sobrenome || ''} (${cleanEmail}) se inscreveu pelo totem.`,
         link: '/ministerial/next?tab=inscritos',
       });
@@ -1201,11 +1216,11 @@ router.post('/totem/next/inscrever', async (req, res) => {
   }
 });
 
-// ── Totem · Apresentacao de Bebes ──
+// ── Totem · Apresentação de Bebes ──
 //
-// Sempre 2 domingo do mes. Helper calcula a proxima data e retorna
-// junto com o culto correspondente (se houver) e a apresentacao
-// existente do membro pra essa data (pra UI mostrar "ja inscrito").
+// Sempre 2 domingo do mês. Helper calcula a próxima data e retorna
+// junto com o culto correspondente (se houver) e a apresentação
+// existente do membro pra essa data (pra UI mostrar "já inscrito").
 function _segundoDomingo(year, month0) {
   const first = new Date(year, month0, 1);
   const dow = first.getDay(); // 0=Dom
@@ -1218,7 +1233,7 @@ function _proximoSegundoDomingo(refDate = new Date()) {
   const ref = new Date(y, m, refDate.getDate()); // strip time
   const candidato = _segundoDomingo(y, m);
   if (candidato >= ref) return candidato;
-  // Proximo mes
+  // Próximo mês
   const ny = m === 11 ? y + 1 : y;
   const nm = m === 11 ? 0 : m + 1;
   return _segundoDomingo(ny, nm);
@@ -1261,14 +1276,14 @@ router.get('/totem/apresentacao-bebe/status', async (req, res) => {
     });
   } catch (e) {
     console.error('[TOTEM] apresentacao-bebe/status error:', e.message);
-    res.status(500).json({ error: 'Erro ao consultar apresentacao de bebes' });
+    res.status(500).json({ error: 'Erro ao consultar apresentação de bebes' });
   }
 });
 
 // POST /api/membresia/totem/apresentacao-bebe
 // Body: { responsavel_membro_id?, responsavel_nome, responsavel_telefone,
 //         responsavel_email?, bebe_nome, bebe_data_nascimento, bebe_sexo?,
-//         nome_pai?, nome_mae?, observacoes? }
+//         nome_pai?, nome_mae?, observações? }
 router.post('/totem/apresentacao-bebe', async (req, res) => {
   try {
     const {
@@ -1277,17 +1292,17 @@ router.post('/totem/apresentacao-bebe', async (req, res) => {
     } = req.body || {};
 
     if (!responsavel_nome || String(responsavel_nome).trim().length < 2) {
-      return res.status(400).json({ error: 'Nome do responsavel obrigatorio' });
+      return res.status(400).json({ error: 'Nome do responsável obrigatório' });
     }
     const cleanTel = String(responsavel_telefone || '').replace(/\D/g, '');
     if (cleanTel.length < 10) {
-      return res.status(400).json({ error: 'Telefone do responsavel invalido' });
+      return res.status(400).json({ error: 'Telefone do responsável invalido' });
     }
     if (!bebe_nome || String(bebe_nome).trim().length < 1) {
-      return res.status(400).json({ error: 'Nome do bebe obrigatorio' });
+      return res.status(400).json({ error: 'Nome do bebe obrigatório' });
     }
     if (!bebe_data_nascimento) {
-      return res.status(400).json({ error: 'Data de nascimento do bebe obrigatoria' });
+      return res.status(400).json({ error: 'Data de nascimento do bebe obrigatória' });
     }
 
     const proxima = _proximoSegundoDomingo();
@@ -1329,8 +1344,8 @@ router.post('/totem/apresentacao-bebe', async (req, res) => {
     try {
       await notificar({
         modulo: 'integracao',
-        titulo: 'Apresentacao de bebe agendada',
-        mensagem: `${responsavel_nome} agendou apresentacao de ${bebe_nome} para ${proximaStr}.`,
+        titulo: 'Apresentação de bebe agendada',
+        mensagem: `${responsavel_nome} agendou apresentação de ${bebe_nome} para ${proximaStr}.`,
         link: '/integracao',
       });
     } catch (e) {
@@ -1340,7 +1355,7 @@ router.post('/totem/apresentacao-bebe', async (req, res) => {
     res.status(201).json({ ok: true, apresentacao: data, data_apresentacao: proximaStr });
   } catch (e) {
     console.error('[TOTEM] apresentacao-bebe POST error:', e.message);
-    res.status(500).json({ error: 'Erro ao agendar apresentacao: ' + e.message });
+    res.status(500).json({ error: 'Erro ao agendar apresentação: ' + e.message });
   }
 });
 
@@ -1349,6 +1364,9 @@ router.post('/totem/membros/:id/foto', uploadMw.single('foto'), async (req, res)
   try {
     if (!req.file) return res.status(400).json({ error: 'Imagem não fornecida' });
     const { id } = req.params;
+    if (!podeEditarMembroTotem(req, id)) {
+      return res.status(403).json({ error: 'Sem permissão para editar este cadastro' });
+    }
     const ext = req.file.mimetype === 'image/png' ? 'png' : req.file.mimetype === 'image/webp' ? 'webp' : 'jpg';
     const path = `membros/${id}.${ext}`;
     const { error: upErr } = await supabase.storage
@@ -1457,7 +1475,7 @@ router.put('/contribuicoes/:id', authorize('admin', 'diretor'), async (req, res)
   }
 });
 
-// DELETE /api/membresia/contribuicoes/:id · soft-delete (preserva historico financeiro)
+// DELETE /api/membresia/contribuicoes/:id · soft-delete (preserva histórico financeiro)
 router.delete('/contribuicoes/:id', authorize('admin', 'diretor'), async (req, res) => {
   try {
     const { error } = await supabase.rpc('app_soft_delete', {
@@ -1844,7 +1862,7 @@ router.post('/cadastros/:id/aprovar', authorize('admin', 'diretor'), async (req,
     // Família: prioriza a escolhida no modal, senão usa sugestão do formulário público
     const familia_id = reqFamiliaId || cad.familia_sugerida_id || null;
 
-    // Observação "Como conheceu" vai para observacoes (mem_membros não tem esse campo).
+    // Observação "Como conheceu" vai para observações (mem_membros não tem esse campo).
     const obsAuto = [
       cad.como_conheceu ? `Como conheceu: ${cad.como_conheceu}` : null,
       observacoes || cad.observacoes,
@@ -2159,7 +2177,7 @@ router.get('/duplicados', async (req, res) => {
 router.post('/duplicados/ignorar', authorize('admin', 'diretor'), async (req, res) => {
   const { membro_a_id, membro_b_id, motivo } = req.body || {};
   if (!membro_a_id || !membro_b_id) {
-    return res.status(400).json({ error: 'membro_a_id e membro_b_id obrigatorios' });
+    return res.status(400).json({ error: 'membro_a_id e membro_b_id obrigatórios' });
   }
   // Ordena pra bater com o CHECK da tabela (a < b)
   const [a, b] = [membro_a_id, membro_b_id].sort();
@@ -2184,7 +2202,7 @@ router.post('/membros/merge', authorize('admin', 'diretor'), async (req, res) =>
   const { keep_id, merge_ids, observacao } = req.body || {};
   if (!keep_id) return res.status(400).json({ error: 'keep_id obrigatorio' });
   if (!Array.isArray(merge_ids) || merge_ids.length === 0) {
-    return res.status(400).json({ error: 'merge_ids obrigatorio (array de uuids)' });
+    return res.status(400).json({ error: 'merge_ids obrigatório (array de uuids)' });
   }
   try {
     const { data, error } = await supabase.rpc('merge_membros', {

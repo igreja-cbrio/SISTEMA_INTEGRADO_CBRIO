@@ -1,19 +1,26 @@
 // ============================================================================
 // /painel/nsm/pessoas — Camada 4 do drilldown (Sistema OKR/NSM 2026)
 //
-// Lista de pessoas que tomaram decisao recentemente, com filtro engajou ou nao.
-// Vira ferramenta de acao pastoral: clicar na NSM, ver quem faltou engajar.
+// Convertidos da NSM + engajamento por valor/atividade. Substitui a antiga
+// leitura de int_visitantes pela fonte real (cultos_decisoes_pessoas).
+//
+// Filtros:
+//   - Ano + Janela (30/60/90/Ano acumulado) · a janela vale pra tudo: quem
+//     decidiu no recorte E o horizonte de engajamento.
+//   - 5 cards de valores (multi-seleção) · cada um abre nas atividades.
+//   - Status: Todos / Engajados / Não engajados.
+//   - E entre valores, OU entre atividades do mesmo valor.
 // ============================================================================
 
-import { useState, useEffect } from 'react';
-import { useNavigate, useSearchParams } from 'react-router-dom';
+import { useState, useEffect, useMemo } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { painel as painelApi } from '../api';
-import { ArrowLeft, Phone, Mail, Calendar, AlertTriangle, CheckCircle2, Clock, Users, HelpCircle, EyeOff } from 'lucide-react';
+import { ArrowLeft, Phone, Mail, Calendar, Users, EyeOff, Check, Filter, X } from 'lucide-react';
 
 const C = {
   bg: 'var(--cbrio-bg)', card: 'var(--cbrio-card)', text: 'var(--cbrio-text)',
   t2: 'var(--cbrio-text2)', t3: 'var(--cbrio-text3)', border: 'var(--cbrio-border)',
-  primary: '#00B39D',
+  inputBg: 'var(--cbrio-input-bg)', primary: '#00B39D',
 };
 
 const VALOR_CORES = {
@@ -24,49 +31,120 @@ const VALOR_CORES = {
   generosidade: '#EC4899',
 };
 
-const SEGMENTO_LABEL = {
-  central: 'CBRio Total',
-  cbrio:   'CBRio Sede',
-  online:  'CBRio Online',
-  // CBA removido · so coleta batismos/aceitacoes via dados_brutos
+const VALOR_LABELS = {
+  seguir:       'Seguir a Jesus',
+  conectar:     'Conectar com Pessoas',
+  investir:     'Investir Tempo com Deus',
+  servir:       'Servir em Comunidade',
+  generosidade: 'Viver Generosamente',
 };
+
+const VALOR_ORDER = ['seguir', 'conectar', 'investir', 'servir', 'generosidade'];
+
+// Catálogo de atividades por valor (espelha o backend · "1º Contato", não "Café").
+const CATALOGO = {
+  seguir:       [{ id: 'primeiro_contato', label: '1º Contato' }, { id: 'batismo', label: 'Batismo' }, { id: 'next', label: 'Next' }],
+  conectar:     [{ id: 'grupo', label: 'Em grupo' }],
+  investir:     [{ id: 'devocional', label: 'Devocional' }, { id: 'jornada180', label: 'Jornada 180' }, { id: 'aconselhamento', label: 'Aconselhamento' }],
+  servir:       [{ id: 'voluntario', label: 'Voluntário' }],
+  generosidade: [{ id: 'dizimo', label: 'Dízimo' }, { id: 'oferta', label: 'Oferta' }],
+};
+
+const labelAtividade = (valor, id) => CATALOGO[valor]?.find(a => a.id === id)?.label || id;
+
+const JANELAS = [
+  { id: '30', label: '30 dias' },
+  { id: '60', label: '60 dias' },
+  { id: '90', label: '90 dias' },
+  { id: 'acumulado', label: 'Ano acumulado' },
+];
+
+const STATUS_OPCOES = [
+  { id: 'todos', label: 'Todos' },
+  { id: 'engajados', label: 'Engajados' },
+  { id: 'nao_engajados', label: 'Não engajados' },
+];
 
 export default function PainelNsmPessoas() {
   const navigate = useNavigate();
-  const [params, setParams] = useSearchParams();
-  const segmento = params.get('segmento') || 'central';
-  // view: 'engajados' | 'nao_engajados' | 'sem_dados'
-  const viewParam = params.get('view');
-  const view = viewParam || (params.get('engajados') === 'true' ? 'engajados' : 'nao_engajados');
-  const dias = Number(params.get('dias')) || 90;
+  const anoAtual = new Date().getFullYear();
+
+  const [tab, setTab] = useState('pessoas');            // pessoas | sem_dados
+  const [ano, setAno] = useState(anoAtual);
+  const [janela, setJanela] = useState('60');
+  const [statusF, setStatusF] = useState('todos');
+  const [valoresSel, setValoresSel] = useState(() => new Set());
+  const [atividadesSel, setAtividadesSel] = useState(() => new Set()); // "valor:atividade"
 
   const [data, setData] = useState(null);
   const [semDados, setSemDados] = useState(null);
   const [loading, setLoading] = useState(true);
   const [erro, setErro] = useState(null);
 
-  useEffect(() => {
-    setLoading(true);
-    setErro(null);
-    if (view === 'sem_dados') {
-      painelApi.nsmSemDados({ dias })
-        .then(setSemDados)
-        .catch(e => setErro(e?.message || 'Erro ao carregar'))
-        .finally(() => setLoading(false));
-    } else {
-      const engajados = view === 'engajados';
-      painelApi.nsmPessoas({ segmento, engajados: String(engajados), dias })
-        .then(setData)
-        .catch(e => setErro(e?.message || 'Erro ao carregar'))
-        .finally(() => setLoading(false));
-    }
-  }, [segmento, view, dias]);
+  const anos = useMemo(() => {
+    const arr = [];
+    for (let y = anoAtual; y >= 2024; y--) arr.push(y);
+    return arr;
+  }, [anoAtual]);
 
-  const setFilter = (key, val) => {
-    const next = new URLSearchParams(params);
-    next.set(key, val);
-    setParams(next, { replace: true });
+  const valoresKey = [...valoresSel].sort().join(',');
+  const atividadesKey = [...atividadesSel].sort().join(',');
+
+  useEffect(() => {
+    if (tab !== 'pessoas') return;
+    setLoading(true); setErro(null);
+    painelApi.nsmPessoas({
+      ano, janela, status: statusF,
+      valores: valoresKey,
+      atividades: atividadesKey,
+    })
+      .then(setData)
+      .catch(e => setErro(e?.message || 'Erro ao carregar'))
+      .finally(() => setLoading(false));
+  }, [tab, ano, janela, statusF, valoresKey, atividadesKey]);
+
+  useEffect(() => {
+    if (tab !== 'sem_dados') return;
+    setLoading(true); setErro(null);
+    const diasMap = { '30': 30, '60': 60, '90': 90, acumulado: 366 };
+    painelApi.nsmSemDados({ dias: diasMap[janela] || 90 })
+      .then(setSemDados)
+      .catch(e => setErro(e?.message || 'Erro ao carregar'))
+      .finally(() => setLoading(false));
+  }, [tab, janela]);
+
+  const toggleValor = (v) => {
+    setValoresSel(prev => {
+      const n = new Set(prev);
+      if (n.has(v)) {
+        n.delete(v);
+        setAtividadesSel(a => new Set([...a].filter(x => !x.startsWith(v + ':'))));
+      } else {
+        n.add(v);
+      }
+      return n;
+    });
   };
+
+  const toggleAtividade = (v, atvId) => {
+    const key = `${v}:${atvId}`;
+    setAtividadesSel(prev => {
+      const n = new Set(prev);
+      if (n.has(key)) n.delete(key); else n.add(key);
+      return n;
+    });
+    setValoresSel(prev => new Set(prev).add(v)); // marca o valor junto
+  };
+
+  const limparFiltros = () => { setValoresSel(new Set()); setAtividadesSel(new Set()); };
+  const temFiltro = valoresSel.size > 0 || atividadesSel.size > 0;
+
+  const descricaoRecorte = useMemo(() => {
+    if (janela === 'acumulado') {
+      return ano === anoAtual ? `${ano} acumulado (até hoje)` : `${ano} (ano completo)`;
+    }
+    return `${ano} · últimos ${janela} dias`;
+  }, [ano, janela, anoAtual]);
 
   return (
     <div style={{ padding: '24px 32px', maxWidth: 1100, margin: '0 auto' }}>
@@ -77,116 +155,215 @@ export default function PainelNsmPessoas() {
       <div style={{ marginTop: 16, marginBottom: 18 }}>
         <h1 style={{ fontSize: 22, fontWeight: 700, color: C.text, margin: 0, display: 'flex', alignItems: 'center', gap: 10 }}>
           <Users size={22} style={{ color: C.primary }} />
-          Pessoas convertidas — {SEGMENTO_LABEL[segmento] || segmento}
+          Pessoas convertidas
         </h1>
         <p style={{ fontSize: 12, color: C.t3, marginTop: 6 }}>
-          Drilldown da NSM · últimas {dias} dias · {
-            view === 'engajados'  ? 'que engajaram em ≥1 valor em 60d'
-          : view === 'sem_dados'  ? 'decisões em culto sem nome/contato registrado (impossível acompanhar)'
-          : 'que NÃO engajaram em 60d (ação pastoral)'
-          }
+          Drilldown da NSM · {descricaoRecorte} · quem decidiu por Jesus e como engajou nos valores
         </p>
       </div>
 
-      {/* Tabs · view */}
-      <div style={{
-        display: 'inline-flex', gap: 4, marginBottom: 14,
-        background: C.card, border: `1px solid ${C.border}`, borderRadius: 8, padding: 4,
-      }}>
+      {/* Tabs */}
+      <div style={{ display: 'inline-flex', gap: 4, marginBottom: 16, background: C.card, border: `1px solid ${C.border}`, borderRadius: 8, padding: 4 }}>
         {[
-          { v: 'nao_engajados', l: 'Não engajados', Icon: AlertTriangle, cor: '#EF4444' },
-          { v: 'engajados',     l: 'Engajados',     Icon: CheckCircle2, cor: '#10B981' },
-          { v: 'sem_dados',     l: 'Sem dados',     Icon: EyeOff,        cor: '#F59E0B' },
+          { v: 'pessoas',   l: 'Pessoas',   Icon: Users },
+          { v: 'sem_dados', l: 'Sem dados', Icon: EyeOff },
         ].map(opt => {
           const Ic = opt.Icon;
-          const ativo = view === opt.v;
+          const ativo = tab === opt.v;
           return (
-            <button
-              key={opt.v}
-              onClick={() => setFilter('view', opt.v)}
-              style={{
-                padding: '6px 12px', fontSize: 12, fontWeight: 600, borderRadius: 6,
-                border: 'none', cursor: 'pointer',
-                background: ativo ? `${opt.cor}1a` : 'transparent',
-                color: ativo ? opt.cor : C.t2,
-                display: 'inline-flex', alignItems: 'center', gap: 6,
-              }}
-            >
+            <button key={opt.v} onClick={() => setTab(opt.v)} style={{
+              padding: '6px 14px', fontSize: 12, fontWeight: 600, borderRadius: 6, border: 'none', cursor: 'pointer',
+              background: ativo ? C.primary + '1a' : 'transparent', color: ativo ? C.primary : C.t2,
+              display: 'inline-flex', alignItems: 'center', gap: 6,
+            }}>
               <Ic size={13} /> {opt.l}
             </button>
           );
         })}
       </div>
 
-      {/* Filtros */}
-      <div style={{
-        display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: 16,
-        background: C.card, border: `1px solid ${C.border}`, borderRadius: 10, padding: 12,
-      }}>
-        {view !== 'sem_dados' && (
-          <Filtro label="Segmento" valor={segmento} options={['central', 'cbrio', 'online']}
-            onChange={v => setFilter('segmento', v)}
-            formato={(v) => SEGMENTO_LABEL[v] || v}
-          />
+      {/* Controles de tempo (valem para as duas abas) */}
+      <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', marginBottom: 16, alignItems: 'flex-end' }}>
+        <Campo label="Ano">
+          <select value={ano} onChange={e => setAno(Number(e.target.value))} style={selectStyle}>
+            {anos.map(y => <option key={y} value={y}>{y}</option>)}
+          </select>
+        </Campo>
+        <Campo label="Janela">
+          <Segmented value={janela} onChange={setJanela} options={JANELAS} />
+        </Campo>
+        {tab === 'pessoas' && (
+          <Campo label="Engajamento">
+            <Segmented value={statusF} onChange={setStatusF} options={STATUS_OPCOES} />
+          </Campo>
         )}
-        <Filtro label="Janela" valor={String(dias)} options={['30', '60', '90', '180']}
-          onChange={v => setFilter('dias', v)}
-          formato={(v) => `${v} dias`}
-        />
       </div>
 
-      {/* Stats · pessoas (não-engajados ou engajados) */}
-      {view !== 'sem_dados' && data && (
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 12, marginBottom: 16 }}>
-          <Stat label="Convertidos no periodo" value={data.total_convertidos} cor={C.t2} />
-          <Stat label="Engajados em 60d" value={data.total_engajados} cor="#10B981" />
-          <Stat label="Ainda nao engajados" value={data.total_nao_engajados} cor="#EF4444" />
-          <Stat
-            label="% engajamento"
-            value={data.total_convertidos > 0
-              ? Math.round((data.total_engajados / data.total_convertidos) * 100) + '%'
-              : '—'}
-            cor={C.primary}
-          />
-        </div>
+      {tab === 'pessoas' && (
+        <>
+          {/* Cards de valores + atividades */}
+          <div style={{ marginBottom: 16 }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+              <span style={{ fontSize: 11, fontWeight: 700, color: C.t3, textTransform: 'uppercase', letterSpacing: 0.5, display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                <Filter size={12} /> Filtrar por valores e atividades
+              </span>
+              {temFiltro && (
+                <button onClick={limparFiltros} style={{ ...btnVoltar, padding: '4px 10px', fontSize: 11 }}>
+                  <X size={12} /> Limpar
+                </button>
+              )}
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(190px, 1fr))', gap: 10 }}>
+              {VALOR_ORDER.map(v => (
+                <ValorCard
+                  key={v}
+                  vkey={v}
+                  label={VALOR_LABELS[v]}
+                  cor={VALOR_CORES[v]}
+                  ativo={valoresSel.has(v)}
+                  atividades={CATALOGO[v] || []}
+                  atividadesSel={atividadesSel}
+                  onToggleValor={toggleValor}
+                  onToggleAtividade={toggleAtividade}
+                />
+              ))}
+            </div>
+            {temFiltro && (
+              <p style={{ fontSize: 11, color: C.t3, marginTop: 8 }}>
+                Mostrando quem fez <strong>todos</strong> os valores marcados (e qualquer atividade marcada dentro de cada um).
+              </p>
+            )}
+          </div>
+
+          {/* Stats */}
+          {data && (
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 12, marginBottom: 16 }}>
+              <Stat label="Convertidos no recorte" value={data.total_convertidos} cor={C.t2} />
+              <Stat label="Engajados" value={data.total_engajados} cor="#10B981" />
+              <Stat label="Não engajados" value={data.total_nao_engajados} cor="#EF4444" />
+              <Stat label="% engajamento" value={(data.pct_engajamento ?? 0) + '%'} cor={C.primary} />
+            </div>
+          )}
+
+          {/* Resultado do filtro */}
+          {data && temFiltro && (
+            <div style={{ fontSize: 13, color: C.t2, marginBottom: 10 }}>
+              <strong style={{ color: C.text }}>{data.total_match}</strong> {data.total_match === 1 ? 'pessoa corresponde' : 'pessoas correspondem'} ao filtro
+            </div>
+          )}
+
+          {/* Lista */}
+          {loading ? (
+            <div style={{ padding: 30, textAlign: 'center', color: C.t3, fontSize: 13 }}>Carregando...</div>
+          ) : erro ? (
+            <div style={{ padding: 30, textAlign: 'center', color: '#ef4444', fontSize: 13 }}>{erro}</div>
+          ) : !data?.pessoas?.length ? (
+            <div style={{ padding: 40, textAlign: 'center', color: C.t3, fontSize: 13, background: C.card, borderRadius: 10, border: `1px dashed ${C.border}` }}>
+              {temFiltro ? 'Ninguém corresponde a essa combinação no recorte.' : 'Sem convertidos nesse recorte.'}
+            </div>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              {data.pessoas.map(p => <PessoaCard key={p.id} pessoa={p} />)}
+            </div>
+          )}
+        </>
       )}
 
-      {/* Stats · sem_dados */}
-      {view === 'sem_dados' && semDados?.resumo && (
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 12, marginBottom: 16 }}>
-          <Stat label="Cultos com decisões" value={semDados.resumo.total_cultos} cor={C.t2} />
-          <Stat label="Total decisões agregado" value={semDados.resumo.total_decisoes} cor="#3B82F6" />
-          <Stat label="Pessoas registradas" value={semDados.resumo.total_registradas} cor="#10B981" />
-          <Stat label="SEM DADOS (gap)" value={semDados.resumo.total_sem_dados} cor="#EF4444" />
-        </div>
+      {tab === 'sem_dados' && (
+        <>
+          {semDados?.resumo && (
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 12, marginBottom: 16 }}>
+              <Stat label="Cultos com decisões" value={semDados.resumo.total_cultos} cor={C.t2} />
+              <Stat label="Total decisões" value={semDados.resumo.total_decisoes} cor="#3B82F6" />
+              <Stat label="Pessoas registradas" value={semDados.resumo.total_registradas} cor="#10B981" />
+              <Stat label="Sem dados (gap)" value={semDados.resumo.total_sem_dados} cor="#EF4444" />
+            </div>
+          )}
+          {loading ? (
+            <div style={{ padding: 30, textAlign: 'center', color: C.t3, fontSize: 13 }}>Carregando...</div>
+          ) : erro ? (
+            <div style={{ padding: 30, textAlign: 'center', color: '#ef4444', fontSize: 13 }}>{erro}</div>
+          ) : !semDados?.items?.length ? (
+            <div style={{ padding: 40, textAlign: 'center', color: C.t3, fontSize: 13, background: C.card, borderRadius: 10, border: `1px dashed ${C.border}` }}>
+              Todas as decisões do recorte têm pessoa registrada.
+            </div>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+              {semDados.items.map(c => <CultoSemDadosCard key={c.culto_id} culto={c} navigate={navigate} />)}
+            </div>
+          )}
+        </>
       )}
+    </div>
+  );
+}
 
-      {/* Lista */}
-      {loading ? (
-        <div style={{ padding: 30, textAlign: 'center', color: C.t3, fontSize: 13 }}>Carregando...</div>
-      ) : erro ? (
-        <div style={{ padding: 30, textAlign: 'center', color: '#ef4444', fontSize: 13 }}>{erro}</div>
-      ) : view === 'sem_dados' ? (
-        !semDados?.items?.length ? (
-          <div style={{ padding: 40, textAlign: 'center', color: C.t3, fontSize: 13, background: C.card, borderRadius: 10, border: `1px dashed ${C.border}` }}>
-            Nenhum culto com decisões em aberto · 100% das decisões têm pessoa registrada 🎉
-          </div>
-        ) : (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-            {semDados.items.map(c => <CultoSemDadosCard key={c.culto_id} culto={c} navigate={navigate} />)}
-          </div>
-        )
-      ) : !data?.pessoas?.length ? (
-        <div style={{ padding: 40, textAlign: 'center', color: C.t3, fontSize: 13, background: C.card, borderRadius: 10, border: `1px dashed ${C.border}` }}>
-          {view === 'engajados'
-            ? 'Ninguém engajou ainda neste segmento.'
-            : 'Todo mundo do segmento engajou — ou não há decisões recentes.'}
-        </div>
-      ) : (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-          {data.pessoas.map(p => (
-            <PessoaCard key={p.id} pessoa={p} engajados={view === 'engajados'} />
-          ))}
+// ----------------------------------------------------------------------------
+function Campo({ label, children }) {
+  return (
+    <div>
+      <div style={{ fontSize: 9, fontWeight: 700, color: C.t3, letterSpacing: 0.5, textTransform: 'uppercase', marginBottom: 5 }}>{label}</div>
+      {children}
+    </div>
+  );
+}
+
+const selectStyle = {
+  padding: '7px 12px', borderRadius: 8, fontSize: 12, fontWeight: 600,
+  border: `1px solid ${C.border}`, background: C.inputBg, color: C.text, cursor: 'pointer',
+};
+
+function Segmented({ value, onChange, options }) {
+  return (
+    <div style={{ display: 'inline-flex', gap: 4, background: C.card, border: `1px solid ${C.border}`, borderRadius: 8, padding: 4, flexWrap: 'wrap' }}>
+      {options.map(o => {
+        const ativo = String(o.id) === String(value);
+        return (
+          <button key={o.id} onClick={() => onChange(o.id)} style={{
+            padding: '6px 12px', fontSize: 11, fontWeight: 600, borderRadius: 6, border: 'none', cursor: 'pointer',
+            background: ativo ? C.primary + '18' : 'transparent', color: ativo ? C.primary : C.t2,
+          }}>
+            {o.label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+function ValorCard({ vkey, label, cor, ativo, atividades, atividadesSel, onToggleValor, onToggleAtividade }) {
+  return (
+    <div style={{
+      background: C.card, border: `1.5px solid ${ativo ? cor : C.border}`,
+      borderRadius: 12, padding: 12, transition: 'border-color .15s',
+    }}>
+      <button onClick={() => onToggleValor(vkey)} style={{
+        display: 'flex', alignItems: 'center', gap: 8, width: '100%',
+        background: 'none', border: 'none', cursor: 'pointer', padding: 0,
+      }}>
+        <span style={{ width: 11, height: 11, borderRadius: '50%', background: cor, flexShrink: 0 }} />
+        <span style={{ fontSize: 12.5, fontWeight: 700, color: C.text, flex: 1, textAlign: 'left' }}>{label}</span>
+        <span style={{
+          width: 18, height: 18, borderRadius: 6, flexShrink: 0,
+          border: `1.5px solid ${ativo ? cor : C.border}`, background: ativo ? cor : 'transparent',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+        }}>
+          {ativo && <Check size={12} color="#fff" strokeWidth={3} />}
+        </span>
+      </button>
+      {ativo && atividades.length > 0 && (
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 10 }}>
+          {atividades.map(a => {
+            const sel = atividadesSel.has(`${vkey}:${a.id}`);
+            return (
+              <button key={a.id} onClick={() => onToggleAtividade(vkey, a.id)} style={{
+                padding: '4px 10px', borderRadius: 99, fontSize: 11, fontWeight: 600, cursor: 'pointer',
+                border: `1px solid ${sel ? cor : C.border}`, background: sel ? cor + '20' : 'transparent', color: sel ? cor : C.t2,
+              }}>
+                {a.label}
+              </button>
+            );
+          })}
         </div>
       )}
     </div>
@@ -202,69 +379,44 @@ function Stat({ label, value, cor }) {
   );
 }
 
-function Filtro({ label, valor, options, onChange, formato }) {
-  return (
-    <div>
-      <div style={{ fontSize: 9, fontWeight: 700, color: C.t3, letterSpacing: 0.5, textTransform: 'uppercase', marginBottom: 4 }}>
-        {label}
-      </div>
-      <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
-        {options.map(o => {
-          const ativo = String(o) === String(valor);
-          return (
-            <button
-              key={o}
-              onClick={() => onChange(o)}
-              style={{
-                padding: '6px 12px', borderRadius: 6, fontSize: 11, fontWeight: 600,
-                border: ativo ? `2px solid ${C.primary}` : `1px solid ${C.border}`,
-                background: ativo ? C.primary + '18' : 'transparent',
-                color: ativo ? C.primary : C.t2,
-                cursor: 'pointer',
-              }}
-            >
-              {formato ? formato(o) : o}
-            </button>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
+function PessoaCard({ pessoa }) {
+  const eng = pessoa.engajado;
+  const cor = eng ? '#10B981' : '#EF4444';
 
-function PessoaCard({ pessoa, engajados }) {
-  const dentro = pessoa.dentro_janela_60d;
-  const corBorda = engajados
-    ? '#10B981'
-    : dentro
-      ? (pessoa.dias_restantes_janela <= 14 ? '#F59E0B' : '#3B82F6')
-      : '#EF4444';
+  // agrupa atividades por valor (ordem canônica)
+  const porValor = {};
+  (pessoa.atividades || []).forEach(a => {
+    (porValor[a.valor] = porValor[a.valor] || new Set()).add(a.atividade);
+  });
+
+  const dataFmt = pessoa.data_decisao
+    ? new Date(pessoa.data_decisao + 'T12:00:00').toLocaleDateString('pt-BR', { day: '2-digit', month: 'short', year: '2-digit' })
+    : '—';
 
   return (
     <div style={{
-      background: C.card, border: `1px solid ${C.border}`, borderLeft: `3px solid ${corBorda}`,
-      borderRadius: 10, padding: 12,
-      display: 'flex', alignItems: 'flex-start', gap: 12, flexWrap: 'wrap',
+      background: C.card, border: `1px solid ${C.border}`, borderLeft: `3px solid ${cor}`,
+      borderRadius: 10, padding: 12, display: 'flex', alignItems: 'flex-start', gap: 12, flexWrap: 'wrap',
     }}>
       <div style={{
-        width: 36, height: 36, borderRadius: '50%', background: corBorda + '20', color: corBorda,
-        display: 'flex', alignItems: 'center', justifyContent: 'center',
-        fontWeight: 700, fontSize: 14, flexShrink: 0,
+        width: 36, height: 36, borderRadius: '50%', background: cor + '20', color: cor,
+        display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700, fontSize: 14, flexShrink: 0,
       }}>
         {(pessoa.nome || '?').charAt(0).toUpperCase()}
       </div>
+
       <div style={{ flex: 1, minWidth: 200 }}>
         <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
           <strong style={{ fontSize: 13, color: C.text }}>{pessoa.nome || 'Sem nome'}</strong>
           {pessoa.tipo_decisao && (
-            <span style={{ fontSize: 9, padding: '1px 6px', borderRadius: 99, background: 'var(--cbrio-input-bg)', color: C.t2, fontWeight: 600 }}>
-              decisao {pessoa.tipo_decisao}
+            <span style={{ fontSize: 9, padding: '1px 6px', borderRadius: 99, background: C.inputBg, color: C.t2, fontWeight: 600 }}>
+              {pessoa.tipo_decisao}
             </span>
           )}
         </div>
         <div style={{ fontSize: 11, color: C.t3, marginTop: 4, display: 'flex', gap: 12, flexWrap: 'wrap' }}>
           <span style={{ display: 'inline-flex', alignItems: 'center', gap: 3 }}>
-            <Calendar size={11} /> Decisao {pessoa.data_decisao} · {pessoa.dias_decorridos}d atras
+            <Calendar size={11} /> Decisão {dataFmt} · {pessoa.dias_decorridos}d atrás
           </span>
           {pessoa.telefone && (
             <span style={{ display: 'inline-flex', alignItems: 'center', gap: 3 }}>
@@ -278,41 +430,22 @@ function PessoaCard({ pessoa, engajados }) {
           )}
         </div>
       </div>
-      <div style={{ minWidth: 160, textAlign: 'right' }}>
-        {engajados ? (
-          <>
-            <div style={{ fontSize: 11, color: '#10B981', fontWeight: 700, display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-              <CheckCircle2 size={13} /> Engajou em {pessoa.valores_engajados.length} valor{pessoa.valores_engajados.length === 1 ? '' : 'es'}
-            </div>
-            <div style={{ marginTop: 6, display: 'flex', gap: 4, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
-              {pessoa.valores_engajados.map(v => (
-                <span key={v} style={{
-                  fontSize: 9, padding: '1px 6px', borderRadius: 99,
-                  background: VALOR_CORES[v] + '20', color: VALOR_CORES[v], fontWeight: 700,
-                }}>
-                  {v}
-                </span>
-              ))}
-            </div>
-          </>
-        ) : dentro ? (
-          <>
-            <div style={{ fontSize: 11, color: corBorda, fontWeight: 700, display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-              <Clock size={13} /> {pessoa.dias_restantes_janela}d restantes
-            </div>
-            <div style={{ fontSize: 10, color: C.t3, marginTop: 2 }}>
-              janela 60d · {pessoa.dias_restantes_janela <= 14 ? 'urgente' : 'em prazo'}
-            </div>
-          </>
+
+      <div style={{ minWidth: 180, maxWidth: 360, textAlign: 'right' }}>
+        {eng ? (
+          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+            {VALOR_ORDER.filter(v => porValor[v]).map(v => (
+              <span key={v} style={{
+                fontSize: 10, padding: '2px 8px', borderRadius: 8, fontWeight: 600,
+                background: VALOR_CORES[v] + '18', color: VALOR_CORES[v],
+                border: `1px solid ${VALOR_CORES[v]}40`,
+              }}>
+                {[...porValor[v]].map(id => labelAtividade(v, id)).join(' · ')}
+              </span>
+            ))}
+          </div>
         ) : (
-          <>
-            <div style={{ fontSize: 11, color: '#EF4444', fontWeight: 700, display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-              <AlertTriangle size={13} /> Janela vencida
-            </div>
-            <div style={{ fontSize: 10, color: C.t3, marginTop: 2 }}>
-              ha {pessoa.dias_decorridos - 60}d · acao pastoral urgente
-            </div>
-          </>
+          <span style={{ fontSize: 11, color: '#EF4444', fontWeight: 600 }}>Ainda não engajou</span>
         )}
       </div>
     </div>
@@ -322,20 +455,17 @@ function PessoaCard({ pessoa, engajados }) {
 const btnVoltar = {
   background: 'transparent', border: `1px solid ${C.border}`,
   padding: '6px 12px', borderRadius: 6, fontSize: 12, fontWeight: 600,
-  color: C.t2, cursor: 'pointer',
-  display: 'inline-flex', alignItems: 'center', gap: 6,
+  color: C.t2, cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 6,
 };
 
-// ============================================================================
-// CultoSemDadosCard · linha mostrando culto com gap entre decisoes e pessoas
-// ============================================================================
+// ----------------------------------------------------------------------------
 function CultoSemDadosCard({ culto, navigate }) {
   const corBorda = culto.gap_status === 'nenhuma_registrada' ? '#EF4444'
-                 : culto.gap_status === 'parcial'             ? '#F59E0B'
-                 :                                              '#10B981';
+                 : culto.gap_status === 'parcial'            ? '#F59E0B'
+                 :                                             '#10B981';
   const labelGap = culto.gap_status === 'nenhuma_registrada' ? 'Nenhuma registrada'
-                 : culto.gap_status === 'parcial'             ? `${culto.sem_dados} sem dados`
-                 :                                              'Completo';
+                 : culto.gap_status === 'parcial'            ? `${culto.sem_dados} sem dados`
+                 :                                             'Completo';
 
   const dataFmt = culto.data_culto
     ? new Date(culto.data_culto + 'T12:00:00').toLocaleDateString('pt-BR', { day: '2-digit', month: 'short', year: '2-digit' })
@@ -343,9 +473,8 @@ function CultoSemDadosCard({ culto, navigate }) {
 
   return (
     <div style={{
-      background: C.card, border: `1px solid ${C.border}`,
-      borderLeft: `3px solid ${corBorda}`, borderRadius: 8,
-      padding: '10px 14px', display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap',
+      background: C.card, border: `1px solid ${C.border}`, borderLeft: `3px solid ${corBorda}`,
+      borderRadius: 8, padding: '10px 14px', display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap',
     }}>
       <div style={{ minWidth: 90 }}>
         <div style={{ fontSize: 11, fontWeight: 700, color: C.text }}>{dataFmt}</div>
@@ -357,16 +486,10 @@ function CultoSemDadosCard({ culto, navigate }) {
           <span style={{ color: C.t3 }}> · {culto.com_membro_vinculado} já com membro vinculado</span>
         )}
       </div>
-      <span style={{
-        fontSize: 10, fontWeight: 700, padding: '3px 10px', borderRadius: 99,
-        background: `${corBorda}1a`, color: corBorda,
-      }}>
+      <span style={{ fontSize: 10, fontWeight: 700, padding: '3px 10px', borderRadius: 99, background: `${corBorda}1a`, color: corBorda }}>
         {labelGap}
       </span>
-      <button
-        onClick={() => navigate(`/ministerial/integracao?tab=frequencia&culto=${culto.culto_id}`)}
-        style={{ ...btnVoltar, padding: '4px 10px', fontSize: 10 }}
-      >
+      <button onClick={() => navigate(`/ministerial/integracao?tab=frequencia&culto=${culto.culto_id}`)} style={{ ...btnVoltar, padding: '4px 10px', fontSize: 10 }}>
         Abrir culto
       </button>
     </div>

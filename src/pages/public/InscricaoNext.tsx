@@ -223,7 +223,7 @@ export default function InscricaoNext() {
       });
       setSent(true);
     } catch (err: any) {
-      setError(err?.message || 'Erro ao enviar inscricao');
+      setError(err?.message || 'Erro ao enviar inscrição');
     }
     setLoading(false);
   };
@@ -248,7 +248,7 @@ export default function InscricaoNext() {
         position: 'relative', zIndex: 1, width: '100%', maxWidth: 640,
         background: C.card, backdropFilter: 'blur(24px)',
         border: `1px solid ${C.cardBorder}`, borderRadius: 20,
-        padding: '40px 36px',
+        padding: 'clamp(28px, 6vw, 40px) clamp(18px, 5vw, 36px)',
       }}>
         <div style={{ textAlign: 'center', marginBottom: 28 }}>
           <img
@@ -256,7 +256,7 @@ export default function InscricaoNext() {
             alt="CBRio"
             style={{ width: 72, height: 72, marginBottom: 12, display: 'inline-block' }}
           />
-          <h1 style={{ fontSize: 24, fontWeight: 800, margin: 0, letterSpacing: -0.5, background: 'linear-gradient(90deg, #00B39D, #00d9bd)', WebkitBackgroundClip: 'text', backgroundClip: 'text', color: 'transparent' }}>Inscricao no NEXT</h1>
+          <h1 style={{ fontSize: 24, fontWeight: 800, margin: 0, letterSpacing: -0.5, background: 'linear-gradient(90deg, #00B39D, #00d9bd)', WebkitBackgroundClip: 'text', backgroundClip: 'text', color: 'transparent' }}>Inscrição no NEXT</h1>
           <p style={{ fontSize: 13, color: C.text3, marginTop: 6, lineHeight: 1.5 }}>
             O NEXT e a porta de entrada da CBRio — onde voce conhece nossa cultura,
             como funciona cada area e descobre os proximos passos.
@@ -306,7 +306,7 @@ export default function InscricaoNext() {
                   <SectionTitle>Evento</SectionTitle>
                   <SelectField
                     id="evento_id"
-                    label="Em qual domingo voce vai participar?"
+                    label="Em qual domingo você vai participar?"
                     value={form.evento_id}
                     onChange={set('evento_id') as any}
                     options={eventoOptions}
@@ -327,7 +327,7 @@ export default function InscricaoNext() {
               </Row>
               <Field id="data_nascimento" label="Data de nascimento (opcional)" type="date" value={form.data_nascimento} onChange={set('data_nascimento')} autoComplete="bday" />
 
-              <SectionTitle>Observacoes</SectionTitle>
+              <SectionTitle>Observações</SectionTitle>
               <Field
                 id="observacoes"
                 label="Quer compartilhar algo com a gente?"

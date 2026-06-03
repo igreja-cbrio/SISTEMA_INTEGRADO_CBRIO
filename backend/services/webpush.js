@@ -1,5 +1,5 @@
 // Web Push wrapper — vira no-op se VAPID_PUBLIC_KEY/VAPID_PRIVATE_KEY
-// nao estiverem configurados. Centraliza envio, remocao automatica de
+// não estiverem configurados. Centraliza envio, remocao automática de
 // subscriptions invalidas (410/404) e logs.
 
 const { supabase } = require('../utils/supabase');

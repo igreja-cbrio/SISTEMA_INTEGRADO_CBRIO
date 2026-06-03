@@ -1,8 +1,8 @@
 // ============================================================================
 // CarrosselMandalas — 6 mandalas em carrossel horizontal
 //
-// Slide 0: visao geral (5 valores agregados)
-// Slides 1-5: foco em cada valor (6 areas dentro daquele valor)
+// Slide 0: visão geral (5 valores agregados)
+// Slides 1-5: foco em cada valor (6 áreas dentro daquele valor)
 //
 // Navegacao:
 //   - Setas laterais (desktop)
@@ -66,7 +66,7 @@ export default function CarrosselMandalas() {
       tipo: 'por_valor',
       key: v,
       titulo: data.por_valor[v]?.label || v,
-      sub: '6 areas · % de KPIs em dia neste valor',
+      sub: '6 áreas · % de KPIs em dia neste valor',
       cor: data.por_valor[v]?.cor,
     })),
   ] : [];
@@ -137,7 +137,7 @@ export default function CarrosselMandalas() {
         </button>
       </div>
 
-      {/* Conteudo */}
+      {/* Conteúdo */}
       <div style={{ position: 'relative', minHeight: 380, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
         {erro ? (
           <div style={{ padding: 40, textAlign: 'center', color: '#ef4444', fontSize: 13 }}>

@@ -3,10 +3,10 @@
 //
 // Modos:
 //   - geral: 5 petalas (valores), centro mostra "5 valores"
-//   - por_valor: 6 petalas (areas), centro mostra % geral do valor
+//   - por_valor: 6 petalas (áreas), centro mostra % geral do valor
 //
-// Cada petala tem cor base do valor (no modo geral, cor propria de cada valor;
-// no modo por_valor, cor unica do valor com opacidade variando por status).
+// Cada petala tem cor base do valor (no modo geral, cor própria de cada valor;
+// no modo por_valor, cor única do valor com opacidade variando por status).
 // Status: verde (≥70%), amarelo (40-69%), vermelho (<40%), sem_dado (0 avaliados)
 // ============================================================================
 
@@ -26,7 +26,7 @@ const STATUS_LABEL = {
   sem_dado: 'Sem dado',
 };
 
-// Geometria do circulo completo
+// Geometria do círculo completo
 const SIZE = 380;
 const CX = SIZE / 2;
 const CY = SIZE / 2;
@@ -56,7 +56,7 @@ function annularSector(rOuter, rInner, startAngle, endAngle) {
 export default function MandalaSlide({ modo, data, onPetalClick }) {
   const isGeral = modo === 'geral';
 
-  // Petalas: 5 (valores) ou 6 (areas) ou N
+  // Petalas: 5 (valores) ou 6 (áreas) ou N
   const items = isGeral ? data.valores : data.areas;
   const n = items.length;
 

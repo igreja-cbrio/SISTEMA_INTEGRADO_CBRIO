@@ -1,5 +1,5 @@
-// Helpers de localStorage pra estacao pareada no device.
-// Cada tablet/celular se vincula a UMA estacao via QR token (parear) e
+// Helpers de localStorage pra estação pareada no device.
+// Cada tablet/celular se vincula a UMA estação via QR token (parear) e
 // daí pra frente todo check-in envia esse estacao_id automaticamente.
 
 const KEY = 'totem_kids_estacao_pareada';

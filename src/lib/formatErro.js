@@ -6,26 +6,26 @@
 //   .catch(e => toast.error(formatErro(e)))
 //
 // Distingue:
-//   - Network · fetch nao chegou (offline, DNS, CORS)
-//   - 401 · sessao expirada
-//   - 403 · sem permissao
-//   - 404 · recurso nao encontrado
+//   - Network · fetch não chegou (offline, DNS, CORS)
+//   - 401 · sessão expirada
+//   - 403 · sem permissão
+//   - 404 · recurso não encontrado
 //   - 5xx · erro do servidor
-//   - Resto · mensagem do backend ou generica
+//   - Resto · mensagem do backend ou genérica
 // ============================================================================
 
 export function formatErro(err, contexto = '') {
-  // TypeError sem status = falha de rede (fetch nao chegou no servidor)
+  // TypeError sem status = falha de rede (fetch não chegou no servidor)
   if (err instanceof TypeError || /fetch|network/i.test(err?.message || '')) {
-    return 'Sem conexao com o servidor. Verifique sua internet.';
+    return 'Sem conexão com o servidor. Verifique sua internet.';
   }
 
   const status = err?.status;
 
-  if (status === 401) return 'Sua sessao expirou. Recarregue a pagina e entre de novo.';
-  if (status === 403) return 'Voce nao tem permissao para essa acao.';
-  if (status === 404) return contexto ? `${contexto} nao encontrado.` : 'Recurso nao encontrado.';
-  if (status === 409) return err?.message || 'Conflito · esse registro ja existe.';
+  if (status === 401) return 'Sua sessão expirou. Recarregue a página e entre de novo.';
+  if (status === 403) return 'Você não tem permissão para essa ação.';
+  if (status === 404) return contexto ? `${contexto} não encontrado.` : 'Recurso não encontrado.';
+  if (status === 409) return err?.message || 'Conflito · esse registro já existe.';
   if (status >= 500) return 'Erro no servidor. Tente novamente em alguns segundos.';
 
   return err?.message || (contexto ? `Erro ao carregar ${contexto.toLowerCase()}.` : 'Erro inesperado.');

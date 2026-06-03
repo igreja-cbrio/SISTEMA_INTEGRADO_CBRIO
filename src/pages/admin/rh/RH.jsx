@@ -1358,7 +1358,7 @@ function OrgChartTab({ funcs, onDetail }) {
   const [expandAll, setExpandAll] = useState(true);
   const [collapsed, setCollapsed] = useState({});
 
-  // Unique areas
+  // Unique áreas
   const areas = [...new Set(ativos.map(f => f.area).filter(Boolean))].sort();
 
   function handleWheel(e) {
@@ -2217,7 +2217,7 @@ function FuncionarioDetailPanel({ open, data, onClose, onEdit, onDelete, onNewDo
     const file = e.target.files?.[0];
     if (!file || !data?.id) return;
     if (!file.type.startsWith('image/')) { alert('Selecione uma imagem'); return; }
-    if (file.size > 10 * 1024 * 1024) { alert('Imagem precisa ter no maximo 10 MB'); return; }
+    if (file.size > 10 * 1024 * 1024) { alert('Imagem precisa ter no máximo 10 MB'); return; }
     setUploadingFoto(true);
     try {
       const result = await rh.funcionarios.uploadFoto(data.id, file);

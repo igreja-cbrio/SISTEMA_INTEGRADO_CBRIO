@@ -1,8 +1,8 @@
 // ============================================================================
-// /admin/grupos/temporadas — gerencia temporadas e abre/fecha inscricoes.
+// /admin/grupos/temporadas — gerencia temporadas e abre/fecha inscrições.
 //
-// Quando inscricoes_abertas = false, o formulario publico /inscricao-grupos
-// retorna 403. O QR continua valido mas mostra mensagem "inscricoes fechadas".
+// Quando inscricoes_abertas = false, o formulário público /inscricao-grupos
+// retorna 403. O QR continua valido mas mostra mensagem "inscrições fechadas".
 // ============================================================================
 
 import { useEffect, useState } from 'react';

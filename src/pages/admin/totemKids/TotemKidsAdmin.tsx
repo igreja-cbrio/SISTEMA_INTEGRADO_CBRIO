@@ -1,7 +1,7 @@
 // ============================================================================
-// Totem Kids · Admin · Sessoes, Salas, Estacoes, Criancas, Auditoria
+// Totem Kids · Admin · Sessões, Salas, Estações, Crianças, Auditoria
 // ============================================================================
-// Uma pagina com tabs · admin do Kids configura tudo aqui.
+// Uma página com tabs · admin do Kids configura tudo aqui.
 // ============================================================================
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -14,7 +14,7 @@ import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
-import { Loader2, Plus, Pencil, Baby, Calendar, MapPin, Printer, ShieldAlert, ExternalLink, ArrowLeft, Sparkles, Upload, Download, AlertTriangle, CheckCircle2, FileSpreadsheet } from 'lucide-react';
+import { Loader2, Plus, Pencil, Baby, Calendar, MapPin, Printer, ShieldAlert, ExternalLink, ArrowLeft, Sparkles, Upload, Download, AlertTriangle, CheckCircle2, FileSpreadsheet, Vibrate, Trash2, Send } from 'lucide-react';
 import { toast } from 'sonner';
 import { totemKids, kpis } from '@/api';
 import { useNavigate } from 'react-router-dom';
@@ -55,12 +55,14 @@ export default function TotemKidsAdmin() {
           <TabsTrigger value="sessoes"><Calendar className="h-4 w-4 mr-1" /> Sessões</TabsTrigger>
           <TabsTrigger value="salas"><MapPin className="h-4 w-4 mr-1" /> Salas</TabsTrigger>
           <TabsTrigger value="estacoes"><Printer className="h-4 w-4 mr-1" /> Estações</TabsTrigger>
+          <TabsTrigger value="pagers"><Vibrate className="h-4 w-4 mr-1" /> Pagers</TabsTrigger>
           <TabsTrigger value="criancas"><Baby className="h-4 w-4 mr-1" /> Crianças</TabsTrigger>
           <TabsTrigger value="auditoria"><ShieldAlert className="h-4 w-4 mr-1" /> Auditoria</TabsTrigger>
         </TabsList>
         <TabsContent value="sessoes"><AbaSessoes /></TabsContent>
         <TabsContent value="salas"><AbaSalas /></TabsContent>
         <TabsContent value="estacoes"><AbaEstacoes /></TabsContent>
+        <TabsContent value="pagers"><AbaPagers /></TabsContent>
         <TabsContent value="criancas"><AbaCriancas /></TabsContent>
         <TabsContent value="auditoria"><AbaAuditoria /></TabsContent>
       </Tabs>
@@ -79,9 +81,9 @@ function AbaSessoes() {
   async function carregar() {
     setCarregando(true);
     try {
-      // Janela de cultos: ultimos 7 + proximos 14 dias.
+      // Janela de cultos: últimos 7 + próximos 14 dias.
       // Filtra so cultos cujo service_type tem has_kids=true · evita
-      // listar AMI/Bridge que nao tem programacao infantil (Marcos 2026-05-21).
+      // listar AMI/Bridge que não tem programacao infantil (Marcos 2026-05-21).
       const hoje = new Date();
       const inicio = new Date(hoje); inicio.setDate(hoje.getDate() - 7);
       const fim = new Date(hoje); fim.setDate(hoje.getDate() + 14);
@@ -316,6 +318,187 @@ function AbaSalas() {
                   <label className="text-xs flex items-center gap-2">
                     <input type="checkbox" checked={editando.ativo} onChange={e => setEditando({ ...editando, ativo: e.target.checked })} />
                     Ativa
+                  </label>
+                  <div className="flex gap-2">
+                    <Button variant="outline" onClick={() => setModalAberto(false)}>Cancelar</Button>
+                    <Button onClick={salvar} className="bg-pink-600 hover:bg-pink-700">Salvar</Button>
+                  </div>
+                </div>
+              </div>
+            )}
+          </DialogContent>
+        </Dialog>
+      </CardContent>
+    </Card>
+  );
+}
+
+// ─── Aba Pagers ──────────────────────────────────────────────────────────────
+// Catalogo dos pagers fisicos (pulseira/coaster) entregues a família no check-in.
+// Integra com o transmissor LRS Freedom via agente local da recepcao.
+const CORES_LRS: { v: string; nome: string; hex: string }[] = [
+  { v: 'R', nome: 'Vermelho', hex: '#EF4444' },
+  { v: 'B', nome: 'Azul', hex: '#3B82F6' },
+  { v: 'G', nome: 'Verde', hex: '#22C55E' },
+  { v: 'Y', nome: 'Amarelo', hex: '#EAB308' },
+  { v: 'O', nome: 'Laranja', hex: '#F97316' },
+  { v: 'P', nome: 'Roxo', hex: '#A855F7' },
+  { v: 'W', nome: 'Branco', hex: '#E5E7EB' },
+];
+function corHex(c?: string) { return CORES_LRS.find(x => x.v === (c || 'R'))?.hex || '#EF4444'; }
+
+function AbaPagers() {
+  const [pagers, setPagers] = useState<any[]>([]);
+  const [emUso, setEmUso] = useState<Record<string, any>>({});
+  const [carregando, setCarregando] = useState(true);
+  const [modalAberto, setModalAberto] = useState(false);
+  const [editando, setEditando] = useState<any>(null);
+  const [testando, setTestando] = useState<string | null>(null);
+
+  async function carregar() {
+    setCarregando(true);
+    try {
+      const [lista, uso] = await Promise.all([
+        totemKids.pagers.list(),
+        totemKids.pagers.emUso().catch(() => ({})),
+      ]);
+      setPagers(lista || []);
+      setEmUso(uso || {});
+    } finally { setCarregando(false); }
+  }
+  useEffect(() => { carregar(); }, []);
+
+  function abrir(p?: any) {
+    setEditando(p || { numero: '', rotulo: '', cor: 'R', tipo_lrs: 2, observacao: '', ativo: true });
+    setModalAberto(true);
+  }
+
+  async function salvar() {
+    if (editando.numero === '' || editando.numero == null) return toast.error('Número do pager obrigatório');
+    try {
+      if (editando.id) await totemKids.pagers.update(editando.id, editando);
+      else await totemKids.pagers.create(editando);
+      toast.success('Pager salvo');
+      setModalAberto(false);
+      carregar();
+    } catch (e: any) {
+      toast.error(e?.message || 'Erro ao salvar');
+    }
+  }
+
+  async function remover(p: any) {
+    if (!confirm(`Remover o pager ${p.numero}? (fica no histórico, some da operação)`)) return;
+    try { await totemKids.pagers.remove(p.id); toast.success('Pager removido'); carregar(); }
+    catch (e: any) { toast.error(e?.message || 'Erro'); }
+  }
+
+  async function testar(p: any) {
+    setTestando(p.id);
+    try {
+      await totemKids.pagers.testar(p.id);
+      toast.success(`Toque de teste enfileirado · o pager ${p.numero} deve vibrar em instantes`);
+    } catch (e: any) {
+      toast.error(e?.message || 'Erro ao testar');
+    } finally { setTestando(null); }
+  }
+
+  return (
+    <Card>
+      <CardContent className="p-4 space-y-3">
+        <div className="flex justify-between items-center gap-2 flex-wrap">
+          <div className="text-sm text-muted-foreground">
+            Pagers físicos entregues à família no check-in. O número é o ID no transmissor LRS.
+          </div>
+          <Button onClick={() => abrir()} size="sm" className="bg-pink-600 hover:bg-pink-700">
+            <Plus className="h-4 w-4 mr-1" /> Novo pager
+          </Button>
+        </div>
+
+        <div className="rounded-md border border-amber-300 bg-amber-50 dark:bg-amber-950/30 p-2 text-xs text-amber-800 dark:text-amber-200">
+          O toque real depende do <b>agente local</b> (pager-bridge) estar rodando no PC da recepção,
+          na mesma rede do transmissor LRS Freedom. Sem ele, os toques ficam enfileirados.
+        </div>
+
+        {carregando ? <Loader2 className="h-6 w-6 animate-spin text-pink-500 mx-auto my-6" /> : (
+          <div className="space-y-2">
+            {pagers.length === 0 && (
+              <div className="text-sm text-muted-foreground text-center py-6">Nenhum pager cadastrado ainda.</div>
+            )}
+            {pagers.map(p => {
+              const uso = emUso[p.id];
+              return (
+                <div key={p.id} className="flex items-center justify-between p-3 border rounded-lg">
+                  <div className="flex items-center gap-3">
+                    <span className="h-7 w-7 rounded-full flex items-center justify-center text-[11px] font-bold text-white shadow" style={{ background: corHex(p.cor) }}>
+                      {p.numero}
+                    </span>
+                    <div>
+                      <div className="font-medium flex items-center gap-2">
+                        {p.rotulo || `Pager ${p.numero}`}
+                        {!p.ativo && <Badge variant="outline">inativo</Badge>}
+                        {uso && <Badge className="bg-emerald-600">em uso · {uso.crianca?.nome || uso.responsavel_checkin_nome}</Badge>}
+                      </div>
+                      <div className="text-xs text-muted-foreground">
+                        nº {p.numero} · cor {CORES_LRS.find(c => c.v === p.cor)?.nome || p.cor}
+                        {p.responsavel?.nome ? ` · padrão: ${p.responsavel.nome}` : ''}
+                        {p.observacao ? ` · ${p.observacao}` : ''}
+                      </div>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-1">
+                    <Button size="sm" variant="outline" disabled={testando === p.id} onClick={() => testar(p)} title="Toque de teste">
+                      {testando === p.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
+                    </Button>
+                    <Button size="sm" variant="ghost" onClick={() => abrir(p)}><Pencil className="h-4 w-4" /></Button>
+                    <Button size="sm" variant="ghost" onClick={() => remover(p)}><Trash2 className="h-4 w-4 text-red-500" /></Button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+        <Dialog open={modalAberto} onOpenChange={(o) => !o && setModalAberto(false)}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>{editando?.id ? 'Editar pager' : 'Novo pager'}</DialogTitle>
+              <DialogDescription>O número precisa bater com o ID programado no pager físico.</DialogDescription>
+            </DialogHeader>
+            {editando && (
+              <div className="space-y-3">
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <label className="text-xs">Número (ID LRS) *</label>
+                    <Input type="number" value={editando.numero} onChange={e => setEditando({ ...editando, numero: e.target.value })} />
+                  </div>
+                  <div>
+                    <label className="text-xs">Cor</label>
+                    <Select value={editando.cor} onValueChange={(v) => setEditando({ ...editando, cor: v })}>
+                      <SelectTrigger><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        {CORES_LRS.map(c => (
+                          <SelectItem key={c.v} value={c.v}>
+                            <span className="inline-flex items-center gap-2">
+                              <span className="h-3 w-3 rounded-full" style={{ background: c.hex }} /> {c.nome}
+                            </span>
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+                <div>
+                  <label className="text-xs">Rótulo (opcional)</label>
+                  <Input placeholder="ex: Pulseira 21" value={editando.rotulo || ''} onChange={e => setEditando({ ...editando, rotulo: e.target.value })} />
+                </div>
+                <div>
+                  <label className="text-xs">Observação (opcional)</label>
+                  <Textarea value={editando.observacao || ''} onChange={e => setEditando({ ...editando, observacao: e.target.value })} />
+                </div>
+                <div className="flex items-center justify-between">
+                  <label className="text-xs flex items-center gap-2">
+                    <input type="checkbox" checked={editando.ativo} onChange={e => setEditando({ ...editando, ativo: e.target.checked })} />
+                    Ativo
                   </label>
                   <div className="flex gap-2">
                     <Button variant="outline" onClick={() => setModalAberto(false)}>Cancelar</Button>

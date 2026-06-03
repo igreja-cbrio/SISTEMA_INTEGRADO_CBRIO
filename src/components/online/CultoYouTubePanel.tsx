@@ -49,7 +49,7 @@ function fmtHoraBRT(isoUtc: string | null): string {
   });
 }
 
-// Duracao em min entre 2 ISO
+// Duração em min entre 2 ISO
 function duracaoMin(inicioIso: string | null, fimIso: string | null): number | null {
   if (!inicioIso || !fimIso) return null;
   return Math.round((new Date(fimIso).getTime() - new Date(inicioIso).getTime()) / 60000);
@@ -61,7 +61,7 @@ const FONTE_LABELS: Record<string, string> = {
   YT_RELATED: 'Sugerido',
   EXT_URL: 'Links externos',
   BROWSE: 'Home/Feed',
-  YT_CHANNEL: 'Pagina do canal',
+  YT_CHANNEL: 'Página do canal',
   YT_PLAYLIST: 'Playlist',
   END_SCREEN: 'Tela final',
   SHORTS: 'Shorts',
@@ -236,7 +236,7 @@ function CultoDetalhe({ c }: { c: CultoMetrica }) {
         </div>
       )}
 
-      {/* Linha 1: numeros detalhados em grid */}
+      {/* Linha 1: números detalhados em grid */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs">
         <BoxNum label="Pico ao vivo" value={fmtNum(c.online_pico)} sub="concurrent viewers" />
         <BoxNum label="DS · views" value={fmtNum(c.online_ds)} sub="acumulado · manhã seguinte" />
@@ -244,7 +244,7 @@ function CultoDetalhe({ c }: { c: CultoMetrica }) {
         <BoxNum label="Subs ganhos" value={fmtNum(c.online_subs_ganhos)} sub={c.online_subs_perdidos ? `${c.online_subs_perdidos} perdidos` : ''} />
       </div>
 
-      {/* Linha 2: 2 graficos lado a lado · curva retencao + split inscritos */}
+      {/* Linha 2: 2 gráficos lado a lado · curva retencao + split inscritos */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
         <div className="lg:col-span-2 rounded-lg bg-card border border-border p-3">
           <h4 className="text-xs font-semibold mb-2 flex items-center gap-1.5">
@@ -270,7 +270,7 @@ function CultoDetalhe({ c }: { c: CultoMetrica }) {
                 />
                 <Tooltip
                   formatter={(v: number) => [`${(v * 100).toFixed(1)}% assistindo`, '']}
-                  labelFormatter={(l) => `${l}% do video`}
+                  labelFormatter={(l) => `${l}% do vídeo`}
                   contentStyle={{ background: 'var(--cbrio-card)', border: '1px solid var(--cbrio-border)', fontSize: 11 }}
                 />
                 <Line type="monotone" dataKey="audience_watch_ratio" stroke="#00B39D" strokeWidth={2} dot={false} />
@@ -288,14 +288,14 @@ function CultoDetalhe({ c }: { c: CultoMetrica }) {
         </div>
       </div>
 
-      {/* Linha 3: bar chart de fontes de trafego */}
+      {/* Linha 3: bar chart de fontes de tráfego */}
       <div className="rounded-lg bg-card border border-border p-3">
         <h4 className="text-xs font-semibold mb-2 flex items-center gap-1.5">
           <TrendingUp className="h-3 w-3 text-primary" />
           De onde vieram os viewers
         </h4>
         {c.trafico.length === 0 ? (
-          <p className="text-xs text-muted-foreground py-8 text-center">Sem dado de trafego ainda · aguarde D+7.</p>
+          <p className="text-xs text-muted-foreground py-8 text-center">Sem dado de tráfego ainda · aguarde D+7.</p>
         ) : (
           <ResponsiveContainer width="100%" height={Math.max(120, c.trafico.length * 24)}>
             <BarChart

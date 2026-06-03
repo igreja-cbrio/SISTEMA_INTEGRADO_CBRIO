@@ -65,7 +65,7 @@ const ACTION_META = {
   'proj.alertar_sem_update':  { icon: '💤', label: 'Projeto sem update',  color: C.amber, bg: C.amberBg },
 };
 
-// Agentes disponiveis pra disparo manual + descricao
+// Agentes disponíveis pra disparo manual + descrição
 const AGENTES_DISPONIVEIS = [
   {
     agentType: 'financeiro_executor',

@@ -14,7 +14,7 @@ import { Input } from '../../components/ui/input';
 import { toast } from 'sonner';
 import Usuarios from './Usuarios';
 
-// Legenda de niveis 0-5 (espelha CLAUDE.md > Permissoes · matriz cargo x modulo)
+// Legenda de níveis 0-5 (espelha CLAUDE.md > Permissões · matriz cargo x módulo)
 const NIVEIS = [
   { v: 0, label: '0 · Sem acesso',                color: 'bg-muted text-muted-foreground' },
   { v: 1, label: '1 · Ver (leitura)',             color: 'bg-blue-500/15 text-blue-700 dark:text-blue-400' },
@@ -108,7 +108,7 @@ function MatrizTab() {
 
   useEffect(() => { load(); }, []);
 
-  // celulas indexadas por (cargo, modulo)
+  // celulas indexadas por (cargo, módulo)
   const celulasMap = useMemo(() => {
     const m = new Map();
     for (const c of celulas) m.set(`${c.cargo_id}:${c.modulo_id}`, c);
@@ -261,7 +261,7 @@ function MatrizTab() {
         </p>
       </Card>
 
-      {/* Matriz por modulo */}
+      {/* Matriz por módulo */}
       {!cargoSelecionado ? (
         <Card className="p-8 text-center text-muted-foreground">
           Escolha um cargo acima para editar a matriz.

@@ -286,7 +286,7 @@ function MySchedulesTab() {
           <CardContent className="flex flex-col items-center py-12 text-center">
             <Calendar className="h-12 w-12 text-muted-foreground/30 mb-4" />
             <p className="text-lg font-medium text-muted-foreground">Nenhuma escala encontrada</p>
-            <p className="text-sm text-muted-foreground/60 mt-1">Quando voce for escalado, aparecera aqui</p>
+            <p className="text-sm text-muted-foreground/60 mt-1">Quando você for escalado, aparecerá aqui</p>
           </CardContent>
         </Card>
       )}
@@ -383,7 +383,7 @@ function MyAvailabilityTab() {
   return (
     <div className="space-y-4">
       <p className="text-sm text-muted-foreground">
-        Toque nos cultos que voce <strong>nao pode comparecer</strong>
+        Toque nos cultos que voce <strong>não pode comparecer</strong>
       </p>
 
       {/* Busca por data */}
@@ -407,7 +407,7 @@ function MyAvailabilityTab() {
           <CardContent className="flex flex-col items-center py-12 text-center">
             <CalendarOff className="h-12 w-12 text-muted-foreground/30 mb-4" />
             <p className="text-muted-foreground">Nenhum culto cadastrado para 2026</p>
-            <p className="text-sm text-muted-foreground/60 mt-1">Peca para o lider gerar os cultos do ano</p>
+            <p className="text-sm text-muted-foreground/60 mt-1">Peca para o líder gerar os cultos do ano</p>
           </CardContent>
         </Card>
       ) : searchResults !== null ? (

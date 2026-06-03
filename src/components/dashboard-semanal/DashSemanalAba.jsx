@@ -132,8 +132,8 @@ export default function DashSemanalAba() {
     const variacao_pct = mediaGeral > 0 ? Math.round(((total - mediaGeral) / mediaGeral) * 100) : 0;
     const totalPresencial = itemsFiltrados.reduce((s, it) => s + (it.total_presencial || 0), 0);
     const taxa_ocupacao_geral = indDef?.usa_ocupacao
-      ? Math.round((total / 1200) * 1000) / 10
-      : Math.round((totalPresencial / 1200) * 1000) / 10;
+      ? Math.round((total / 1050) * 1000) / 10
+      : Math.round((totalPresencial / 1050) * 1000) / 10;
 
     return {
       indicador: indicadoresSel[i],
@@ -151,7 +151,7 @@ export default function DashSemanalAba() {
   const isEmpty = indicadoresSel.length === 0;
   const primario = datasets[0];
 
-  // Nome do culto selecionado (pra mostrar nos titulos quando filtrado)
+  // Nome do culto selecionado (pra mostrar nos títulos quando filtrado)
   const cultoSelInfo = useMemo(() => {
     if (culto === 'todos') return null;
     return (cultos || []).find(c => c.id === culto) || null;
@@ -174,8 +174,9 @@ export default function DashSemanalAba() {
           media: i.media,
           taxa: i.taxa_ocupacao,
           variacao,
+          _order: ordemCulto(i.recurrence_day, i.recurrence_time),
         };
-      });
+      }).sort((a, b) => a._order - b._order);
     }
     // Multi · merge por nome do culto
     const mapPorNome = new Map();
@@ -185,7 +186,7 @@ export default function DashSemanalAba() {
         const row = mapPorNome.get(k) || {
           nome: k,
           service_type_id: i.service_type_id,
-          _order: i.recurrence_day * 100 + parseInt((i.recurrence_time || '0').slice(0, 2), 10),
+          _order: ordemCulto(i.recurrence_day, i.recurrence_time),
         };
         row[d.indicador] = i.valor_absoluto;
         mapPorNome.set(k, row);
@@ -213,8 +214,8 @@ export default function DashSemanalAba() {
     setCulto(prev => prev === entry.service_type_id ? 'todos' : entry.service_type_id);
   };
 
-  // Modo DDUS completo: DDUS so fecha 7 dias depois do culto, entao a semana
-  // que estamos apresentando ainda nao tem dados completos. Esse modo mostra
+  // Modo DDUS completo: DDUS so fecha 7 dias depois do culto, então a semana
+  // que estamos apresentando ainda não tem dados completos. Esse modo mostra
   // SO online_ddus + semana = (semana atual selecionada) - 1, garantindo
   // a janela completa.
   const [modoDdus, setModoDdus] = useState(false);
@@ -758,12 +759,18 @@ export default function DashSemanalAba() {
 
 function shortLabel(nome, day, time) {
   if (!nome) return '—';
-  if (/domingo/i.test(nome)) {
-    const h = (time || '').slice(0, 2);
-    return `D${h}`;
-  }
+  const hhmm = (time || '').slice(0, 5);
+  if (/domingo/i.test(nome)) return hhmm ? `Dom ${hhmm}` : nome;
   if (/quarta/i.test(nome)) return 'Quarta';
   return nome;
+}
+
+// Ordem lógica dos cultos: Quarta -> Bridge/AMI (sábado) -> Domingos (por horario).
+// Semana comecando na segunda (Seg=0..Dom=6) + minutos do dia desempata.
+function ordemCulto(day, time) {
+  const d = day === null || day === undefined ? 99 : ((Number(day) + 6) % 7);
+  const [h, m] = String(time || '0:0').split(':').map(Number);
+  return d * 10000 + (h || 0) * 100 + (m || 0);
 }
 
 function formatBr(iso) {

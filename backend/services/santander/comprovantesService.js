@@ -1,7 +1,7 @@
-// Servico de comprovantes Santander (consult_payment_receipts v2)
+// Serviço de comprovantes Santander (consult_payment_receipts v2)
 // - Listagem
-// - Geracao de PDF (assincrono): POST file_request -> poll -> download -> Supabase Storage
-// - Bulk receipts (mes inteiro)
+// - Geração de PDF (assincrono): POST file_request -> poll -> download -> Supabase Storage
+// - Bulk receipts (mês inteiro)
 const { callApi, downloadBinary } = require('./httpClient');
 const { supabase } = require('../../utils/supabase');
 
@@ -21,7 +21,7 @@ function sleep(ms) {
 // ── Listagem de comprovantes ───────────────────────────────────────────────
 // API limita 30 dias por chamada. Backend pode fatiar e concatenar.
 async function listReceipts({ startDate, endDate, limit = 50, offset = 0, category, beneficiaryDocument, accountAgency, accountNumber, userId = null } = {}) {
-  if (!startDate || !endDate) throw new Error('startDate e endDate sao obrigatorios');
+  if (!startDate || !endDate) throw new Error('startDate e endDate são obrigatórios');
   return callApi(`${BASE}/payment_receipts`, {
     method: 'GET',
     query: {
@@ -41,8 +41,8 @@ async function listReceipts({ startDate, endDate, limit = 50, offset = 0, catego
 // ── File request (assincrono) ──────────────────────────────────────────────
 async function createFileRequest(paymentId, { userId = null, paymentDate = null } = {}) {
   if (!paymentId) throw new Error('paymentId obrigatorio');
-  // Santander erro literal · '016: Campo obrigatorio data do comprovante nao informado'.
-  // Nome exato nao documentado · enviamos varios aliases · Santander usa o que
+  // Santander erro literal · '016: Campo obrigatório data do comprovante não informado'.
+  // Nome exato não documentado · enviamos vários aliases · Santander usa o que
   // reconhecer e ignora os outros.
   const body = paymentDate
     ? {
@@ -54,7 +54,7 @@ async function createFileRequest(paymentId, { userId = null, paymentDate = null 
           valueDate: paymentDate,
           requestValueDateTime: paymentDate,
         },
-        // Tambem no top-level · alguns endpoints Santander leem assim
+        // Também no top-level · alguns endpoints Santander leem assim
         paymentDate,
         date: paymentDate,
       }
@@ -80,7 +80,7 @@ async function listFileRequests(paymentId, { userId = null } = {}) {
   });
 }
 
-// Polling ate AVAILABLE (max ~30s) · 2s intervalo
+// Polling até AVAILABLE (max ~30s) · 2s intervalo
 async function waitForAvailable(paymentId, requestId, { maxTries = 15, intervalMs = 2000, userId = null } = {}) {
   for (let i = 0; i < maxTries; i++) {
     const data = await getFileRequest(paymentId, requestId, { userId });
@@ -101,7 +101,7 @@ async function waitForAvailable(paymentId, requestId, { maxTries = 15, intervalM
 // Fluxo completo: cria file_request -> polla -> baixa do Azure (5min TTL) ->
 // salva em Supabase Storage permanente -> upserta santander_comprovantes
 async function baixarComprovante(paymentId, { userId = null, metadata = {} } = {}) {
-  if (!supabase) throw new Error('Supabase nao configurado');
+  if (!supabase) throw new Error('Supabase não configurado');
 
   // 1. Cria file_request (ou pega existente) · paymentDate vem do metadata
   // (frontend captura de payment.requestValueDateTime · campo do Santander)
@@ -110,7 +110,7 @@ async function baixarComprovante(paymentId, { userId = null, metadata = {} } = {
     paymentDate: metadata?.payment_date || null,
   });
   const requestId = created?.request?.requestId;
-  if (!requestId) throw new Error('Santander nao retornou requestId');
+  if (!requestId) throw new Error('Santander não retornou requestId');
 
   // Marca como requested
   await supabase
@@ -123,7 +123,7 @@ async function baixarComprovante(paymentId, { userId = null, metadata = {} } = {
       raw_metadata: metadata,
     }, { onConflict: 'payment_id' });
 
-  // 2. Poll ate AVAILABLE
+  // 2. Poll até AVAILABLE
   let available;
   try {
     available = await waitForAvailable(paymentId, requestId, { userId });
@@ -191,7 +191,7 @@ async function baixarComprovante(paymentId, { userId = null, metadata = {} } = {
 }
 
 async function getSignedUrl(paymentId, { expiresIn = 60 * 60 * 24 * 7 } = {}) {
-  if (!supabase) throw new Error('Supabase nao configurado');
+  if (!supabase) throw new Error('Supabase não configurado');
   const { data: row } = await supabase
     .from('santander_comprovantes')
     .select('storage_path, status')
@@ -208,7 +208,7 @@ async function getSignedUrl(paymentId, { expiresIn = 60 * 60 * 24 * 7 } = {}) {
 // ── Bulk receipts ──────────────────────────────────────────────────────────
 async function createBulkOrder({ alias, startDate, endDate, categoryCodes, payeeDocument, userId = null } = {}) {
   if (!alias) throw new Error('alias obrigatorio');
-  if (!startDate || !endDate) throw new Error('startDate e endDate obrigatorios');
+  if (!startDate || !endDate) throw new Error('startDate e endDate obrigatórios');
 
   const body = {
     alias,

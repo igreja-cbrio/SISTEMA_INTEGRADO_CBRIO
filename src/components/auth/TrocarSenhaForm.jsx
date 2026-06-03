@@ -21,7 +21,7 @@ export default function TrocarSenhaForm({ onSuccess, compact = false }) {
     e?.preventDefault?.();
     if (!atual) return toast.error('Informe a senha atual');
     if (nova.length < 6) return toast.error('A nova senha precisa de pelo menos 6 caracteres');
-    if (nova !== confirma) return toast.error('As senhas nao conferem');
+    if (nova !== confirma) return toast.error('As senhas não conferem');
     if (nova === atual) return toast.error('A nova senha precisa ser diferente da atual');
     setLoading(true);
     const { error } = await updatePasswordWithCurrent(atual, nova);

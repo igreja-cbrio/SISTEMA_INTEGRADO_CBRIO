@@ -1,8 +1,8 @@
 // ============================================================================
 // uiTokens · cores semanticas + estilos de botao compartilhados
 //
-// Cores e estilos usados em todo o sistema de KPIs (Painel, Gestao, MinhaArea,
-// EstruturaOkr, DadosBrutos). Antes cada pagina redefinia botoes inline e
+// Cores e estilos usados em todo o sistema de KPIs (Painel, Gestão, MinhaArea,
+// EstruturaOkr, DadosBrutos). Antes cada página redefinia botoes inline e
 // cores hex hardcoded.
 // ============================================================================
 
@@ -73,7 +73,7 @@ export const btnIcon = {
   cursor: 'pointer', color: TOKENS.t3,
 };
 
-// Input padrao
+// Input padrão
 export const inpBase = {
   padding: '6px 10px', borderRadius: 6, fontSize: 12,
   border: `1px solid ${TOKENS.border}`, background: TOKENS.inputBg,
@@ -93,7 +93,7 @@ export const STATUS_VISUAL = {
   sem_dado: { Icon: MinusCircle,  cor: COLORS.gray,  bg: COLORS.grayBg,  label: 'Sem dado' },
 };
 
-// Cor por area (kids/ami/bridge/sede/online/cba)
+// Cor por área (kids/ami/bridge/sede/online/cba)
 export const AREA_COR = {
   kids:   COLORS.amber,
   ami:    COLORS.blue,

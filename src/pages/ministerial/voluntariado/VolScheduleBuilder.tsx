@@ -97,7 +97,7 @@ export default function VolScheduleBuilder() {
             <Card>
               <CardContent className="flex flex-col items-center justify-center py-12 text-center">
                 <Users className="h-10 w-10 text-muted-foreground/30 mb-3" />
-                <p className="text-muted-foreground">Nenhum voluntario escalado</p>
+                <p className="text-muted-foreground">Nenhum voluntário escalado</p>
                 <p className="text-sm text-muted-foreground/60">Use os botoes acima para montar a escala</p>
               </CardContent>
             </Card>
@@ -338,7 +338,7 @@ function AddVolunteerDialog({ serviceId, teams, existingSchedules, onClose }: {
         {/* Header */}
         <div className="flex items-center justify-between px-5 pt-5 pb-3 border-b shrink-0">
           <div>
-            <h2 className="text-base font-semibold">Adicionar Voluntario</h2>
+            <h2 className="text-base font-semibold">Adicionar Voluntário</h2>
             <p className="text-xs text-muted-foreground mt-0.5">{pool.length} voluntario(s) no sistema</p>
           </div>
           <Button
@@ -385,8 +385,8 @@ function AddVolunteerDialog({ serviceId, teams, existingSchedules, onClose }: {
               <Users className="h-8 w-8 mx-auto text-muted-foreground/30 mb-2" />
               <p className="text-sm text-muted-foreground">
                 {pool.length === 0
-                  ? 'Nenhum voluntario sincronizado. Clique em Sincronizar.'
-                  : 'Nenhum voluntario encontrado com esse filtro.'}
+                  ? 'Nenhum voluntário sincronizado. Clique em Sincronizar.'
+                  : 'Nenhum voluntário encontrado com esse filtro.'}
               </p>
             </div>
           ) : (
@@ -505,7 +505,7 @@ function CreateServiceDialog({ onClose }: { onClose: () => void }) {
   };
 
   const handleCreate = () => {
-    if (!name.trim() || !scheduledAt) return toast.error('Nome e data obrigatorios');
+    if (!name.trim() || !scheduledAt) return toast.error('Nome e data obrigatórios');
     createService.mutate({
       name: name.trim(),
       service_type_name: name.trim(),

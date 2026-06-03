@@ -1,12 +1,12 @@
 // ============================================================================
-// /meus-kpis — Tela do lider de area
+// /meus-kpis — Tela do líder de área
 //
-// Mostra apenas os KPIs cuja `area` esta em profile.kpi_areas.
+// Mostra apenas os KPIs cuja `área` esta em profile.kpi_areas.
 // Admin/diretor ve todos.
 // Cards agrupados por periodicidade, com botao Preencher (abre
 // KpiQuickFillModal), botao Editar (abre KpiEditorModal), chips dos
-// 5 valores que cada KPI alimenta, e indicador "ja preenchido nesse
-// periodo".
+// 5 valores que cada KPI alimenta, e indicador "já preenchido nesse
+// período".
 // ============================================================================
 
 import { useState, useEffect, useMemo } from 'react';
@@ -46,7 +46,7 @@ const VALORES_LABEL = {
   generosidade: { label: 'Generosidade', cor: '#ec4899' },
 };
 
-// Calcula chave de periodo no cliente (espelha periodoAtual do backend)
+// Calcula chave de período no cliente (espelha periodoAtual do backend)
 function periodKey(periodicidade, date = new Date()) {
   const y = date.getUTCFullYear();
   const m = String(date.getUTCMonth() + 1).padStart(2, '0');
@@ -67,7 +67,7 @@ function periodKey(periodicidade, date = new Date()) {
   }
 }
 
-// Decide se o KPI esta sob responsabilidade do usuario
+// Decide se o KPI esta sob responsabilidade do usuário
 // admin → ve tudo
 // senao → ve se kpi.area in kpiAreas OR kpi.valores ∩ kpiValores
 function isMyKpi(kpi, kpiAreas, kpiValores, isAdmin) {
@@ -83,13 +83,13 @@ export default function MeusKpis() {
   const { kpiAreas, kpiValores, isAdmin, canEditAny } = useMyKpiAreas();
   const [registros, setRegistros] = useState([]);
   const [loadingRegs, setLoadingRegs] = useState(false);
-  // fillKpi removido · cards agora linkam pro modulo (Fase B)
+  // fillKpi removido · cards agora linkam pro módulo (Fase B)
   const [editKpi, setEditKpi] = useState(null);
   const [createOpen, setCreateOpen] = useState(false);
   // Filtro UI · valores selecionados (set vazio = todos)
   const [filtroValores, setFiltroValores] = useState(new Set());
 
-  // KPIs filtrados pela minha responsabilidade (area OU valor)
+  // KPIs filtrados pela minha responsabilidade (área OU valor)
   const meusKpis = useMemo(() => {
     let arr = kpis.filter(k => k.ativo && isMyKpi(k, kpiAreas, kpiValores, isAdmin));
     if (filtroValores.size > 0) {
@@ -115,10 +115,10 @@ export default function MeusKpis() {
     return m;
   }, [meusKpis]);
 
-  // Estado adicional · ultimos dados_brutos por (tipo_id, area)
+  // Estado adicional · últimos dados_brutos por (tipo_id, área)
   const [dadosBrutos, setDadosBrutos] = useState([]);
 
-  // Carrega registros + dados_brutos pra mostrar status "preenchido nesse periodo"
+  // Carrega registros + dados_brutos pra mostrar status "preenchido nesse período"
   useEffect(() => {
     if (!meusKpis.length) { setRegistros([]); setDadosBrutos([]); return; }
     setLoadingRegs(true);
@@ -152,7 +152,7 @@ export default function MeusKpis() {
     })();
   }, [meusKpis]);
 
-  // Index ultimo registro legado por indicador_id
+  // Index último registro legado por indicador_id
   const ultimoRegPorIndicador = useMemo(() => {
     const m = {};
     registros.forEach(r => {
@@ -164,7 +164,7 @@ export default function MeusKpis() {
     return m;
   }, [registros]);
 
-  // Index ultimo dado bruto por (tipo_id::area)
+  // Index último dado bruto por (tipo_id::área)
   const ultimoDadoBrutoPorTipoArea = useMemo(() => {
     const m = {};
     dadosBrutos.forEach(d => {
@@ -209,7 +209,7 @@ export default function MeusKpis() {
     return { tipo: 'atrasado', label: 'Atrasado', cor: C.amber, corBg: C.amberBg, Icon: Clock };
   }
 
-  // handleSaved removido · /meus-kpis nao salva mais dados (Fase B 2026-05-13)
+  // handleSaved removido · /meus-kpis não salva mais dados (Fase B 2026-05-13)
 
   if (isLoading) {
     return <div style={{ padding: 60, textAlign: 'center', color: C.t3 }}>Carregando KPIs...</div>;
@@ -219,7 +219,7 @@ export default function MeusKpis() {
     return (
       <div style={{ padding: '40px 32px', maxWidth: 720, margin: '0 auto', textAlign: 'center' }}>
         <Heart size={32} style={{ color: C.t3, marginBottom: 12 }} />
-        <h1 style={{ fontSize: 18, fontWeight: 700, color: C.text, marginBottom: 8 }}>Voce ainda nao lidera nenhuma area ou valor</h1>
+        <h1 style={{ fontSize: 18, fontWeight: 700, color: C.text, marginBottom: 8 }}>Você ainda não lidera nenhuma área ou valor</h1>
         <p style={{ fontSize: 13, color: C.t3 }}>
           Peca para um administrador atribuir suas areas e/ou valores da Jornada no modulo de Permissoes.
           Depois, voce ve aqui apenas os KPIs que precisa preencher.
@@ -241,12 +241,12 @@ export default function MeusKpis() {
           </p>
           <p style={{ fontSize: 13, color: C.t3, marginTop: 0, display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 6 }}>
             {isAdmin ? (
-              <span>Voce esta vendo <strong>todos os KPIs</strong> (admin/diretor).</span>
+              <span>Você esta vendo <strong>todos os KPIs</strong> (admin/diretor).</span>
             ) : (
               <>
                 {kpiAreas.length > 0 && (
                   <>
-                    <span>Areas:</span>
+                    <span>Áreas:</span>
                     {kpiAreas.map(a => (
                       <span key={a} style={{ padding: '2px 10px', borderRadius: 99, background: C.primaryBg, color: C.primary, fontWeight: 600, fontSize: 11 }}>{a}</span>
                     ))}
@@ -301,7 +301,7 @@ export default function MeusKpis() {
 
       {meusKpis.length === 0 ? (
         <div style={{ padding: 60, textAlign: 'center', color: C.t3, background: C.card, borderRadius: 12, border: `1px dashed ${C.border}` }}>
-          Nenhum KPI ativo nas suas areas ainda. {canEditAny && 'Clique em "Novo KPI da minha area" para criar o primeiro.'}
+          Nenhum KPI ativo nas suas areas ainda. {canEditAny && 'Clique em "Novo KPI da minha área" para criar o primeiro.'}
         </div>
       ) : (
         PERIODICIDADE_ORDER.filter(p => porPeriodicidade[p]?.length).map(p => (
@@ -402,7 +402,7 @@ function SecaoPeriodicidade({ periodicidade, kpis, statusKpi, ultimoRegPorIndica
                 </div>
               )}
 
-              {/* Origem do dado · indica onde preencher (modulo) ou se e automatico */}
+              {/* Origem do dado · indica onde preencher (módulo) ou se e automático */}
               <OrigemDado kpi={kpi} podeEditar={podeEditar} onEditar={onEditar} />
             </div>
           );
@@ -414,9 +414,9 @@ function SecaoPeriodicidade({ periodicidade, kpis, statusKpi, ultimoRegPorIndica
 
 // ============================================================================
 // OrigemDado · indica em 1 card onde o dado e preenchido
-//   - fonte_auto coletor: AUTOMATICO (verde claro)
-//   - dado_tipo nao-manual: AUTO via modulo (link)
-//   - dado_tipo manual: vai pra /dados-brutos (link) OU pra modulo X (link)
+//   - fonte_auto coletor: AUTOMÁTICO (verde claro)
+//   - dado_tipo nao-manual: AUTO via módulo (link)
+//   - dado_tipo manual: vai pra /dados-brutos (link) OU pra módulo X (link)
 // ============================================================================
 const MODULO_POR_DADO_TIPO = {
   // Cultos
@@ -437,7 +437,7 @@ const MODULO_POR_DADO_TIPO = {
   doacoes_qualidade:    { titulo: 'Generosidade', path: '/generosidade' },
   // NEXT
   frequencia_next:        { titulo: 'NEXT',     path: '/next' },
-  // Cuidados (Jornada 180 inscricoes + Devocional + Capelania + Aconselhamento + Convertidos atendidos)
+  // Cuidados (Jornada 180 inscrições + Devocional + Capelania + Aconselhamento + Convertidos atendidos)
   inscricoes_jornada180:  { titulo: 'Cuidados · Jornada 180', path: '/cuidados?tab=agregado' },
   devocionais:            { titulo: 'Cuidados · Devocional',  path: '/cuidados?tab=agregado' },
   solicitacoes_capelania: { titulo: 'Cuidados',  path: '/cuidados?tab=agregado' },
@@ -447,7 +447,7 @@ const MODULO_POR_DADO_TIPO = {
   frequencia_grupos: { titulo: 'Grupos',     path: '/grupos' },
   grupos_ativos:     { titulo: 'Grupos',     path: '/grupos' },
   lideres_grupos:    { titulo: 'Supervisao Grupos', path: '/grupos/supervisao' },
-  // NPS · sempre via modulo NPS
+  // NPS · sempre via módulo NPS
   nps_geral:       { titulo: 'NPS', path: '/nps' },
   nps_next:        { titulo: 'NPS', path: '/nps' },
   nps_lideres:     { titulo: 'NPS', path: '/nps' },
@@ -462,7 +462,7 @@ function OrigemDado({ kpi, podeEditar, onEditar }) {
   const moduloInfo = dadoTipo && MODULO_POR_DADO_TIPO[dadoTipo];
 
   // CASO 1 · KPI com auto-collector (cultos.*, voluntariado.*, etc) ou
-  //          dado_tipo nao-manual (vem direto do modulo via /api)
+  //          dado_tipo nao-manual (vem direto do módulo via /api)
   const isAutomatico = (!!fonteAuto && !dadoTipo) || (!!dadoTipo && !dadoTipoManual);
   if (isAutomatico) {
     return (
@@ -490,7 +490,7 @@ function OrigemDado({ kpi, podeEditar, onEditar }) {
     );
   }
 
-  // CASO 2 · KPI manual · indica modulo OU /dados-brutos
+  // CASO 2 · KPI manual · indica módulo OU /dados-brutos
   const destino = moduloInfo || { titulo: 'Dados Brutos', path: '/dados-brutos' };
   return (
     <div style={{ marginTop: 'auto', padding: '8px 10px', background: 'var(--cbrio-input-bg)', borderRadius: 6 }}>

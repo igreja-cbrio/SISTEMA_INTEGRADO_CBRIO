@@ -28,7 +28,7 @@ const JORNADA = [
   { Icon: Droplet, titulo: 'Batismo', texto: 'Declare ao mundo o seu amor por Jesus num mergulho inesquecível.', cta: 'Quero ser batizado', href: LINKS.batismo },
   { Icon: HandHeart, titulo: 'Voluntariado', texto: 'Servindo, você cresce em fé e amadurece na sua jornada. Deixe Deus agir.', cta: 'Servir como voluntário', href: LINKS.voluntariado },
   { Icon: BookOpen, titulo: 'Investir tempo com Deus', texto: 'No Quarta com Deus, toda quarta às 20h, estudamos a Bíblia e oramos uns pelos outros.', cta: 'Quarta com Deus', hash: 'visita' },
-  { Icon: DoorOpen, titulo: 'Next', texto: 'A porta de entrada pra você conhecer nossa cultura e descobrir como se envolver na CBRio.', cta: 'Em breve', soon: true },
+  { Icon: DoorOpen, titulo: 'Next', texto: 'A porta de entrada pra você conhecer nossa cultura e descobrir como se envolver na CBRio.', cta: 'Inscreva-se no Next', href: LINKS.next },
 ];
 
 const STATS = [

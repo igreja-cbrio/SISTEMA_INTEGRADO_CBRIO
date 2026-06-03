@@ -1,6 +1,6 @@
 // ============================================================================
 // Devocionais (Gap 3) - tracking pessoal/familiar/grupo
-// Alimenta KID-04 (familias com devocionais) via mem_devocionais.
+// Alimenta KID-04 (famílias com devocionais) via mem_devocionais.
 // ============================================================================
 
 const router = require('express').Router();
@@ -39,7 +39,7 @@ router.get('/', async (req, res) => {
 });
 
 // ─────────────────────────────────────────────────────────────
-// GET /api/devocionais/membro/:id — historico de um membro
+// GET /api/devocionais/membro/:id — histórico de um membro
 // ─────────────────────────────────────────────────────────────
 router.get('/membro/:id', async (req, res) => {
   try {
@@ -102,7 +102,7 @@ router.get('/stats', async (req, res) => {
 
 // ─────────────────────────────────────────────────────────────
 // POST /api/devocionais — registrar 1 devocional
-// body: { membro_id, data_devocional?, tipo, topico?, observacoes? }
+// body: { membro_id, data_devocional?, tipo, topico?, observações? }
 // ─────────────────────────────────────────────────────────────
 router.post('/', async (req, res) => {
   try {
@@ -130,7 +130,7 @@ router.post('/', async (req, res) => {
     if (error) {
       // 23505 = unique violation (mesmo membro+data+tipo)
       if (error.code === '23505') {
-        return res.status(409).json({ error: 'Devocional ja registrado para esse membro/dia/tipo' });
+        return res.status(409).json({ error: 'Devocional já registrado para esse membro/dia/tipo' });
       }
       throw error;
     }

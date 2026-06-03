@@ -6,14 +6,14 @@
 //     tom="positivo"             // 'positivo' | 'neutro' | 'alerta'
 //     icone={CheckCircle2}
 //     titulo="Tudo em dia"
-//     mensagem="Nenhum lider com pendencia neste ciclo."
+//     mensagem="Nenhum líder com pendência neste ciclo."
 //   />
 //
 //   <EmptyState
 //     tom="neutro"
 //     icone={Database}
 //     titulo="Nenhum dado registrado"
-//     mensagem="Comece registrando o primeiro dado da sua area."
+//     mensagem="Comece registrando o primeiro dado da sua área."
 //     cta={{ label: 'Registrar dado', onClick: () => setEditando({}) }}
 //   />
 // ============================================================================

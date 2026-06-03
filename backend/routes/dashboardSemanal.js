@@ -22,7 +22,7 @@ const Anthropic = require('@anthropic-ai/sdk');
 
 router.use(authenticate);
 
-const CAPACIDADE_TEMPLO = 1200;
+const CAPACIDADE_TEMPLO = 1050;
 
 const INDICADORES = {
   frequencia:        { coluna: 'frequencia',        rotulo: 'Frequência',        usa_ocupacao: true },
@@ -119,11 +119,11 @@ router.get('/semanas-disponiveis', async (req, res) => {
 
 // ─────────────────────────────────────────────────────────────────────────────
 // GET /semanal · dados da semana selecionada
-//   query: ano, semana, indicador (default frequencia), culto (uuid opcional)
+//   query: ano, semana, indicador (default frequência), culto (uuid opcional)
 //
 // Resposta:
 //   {
-//     ano, semana, inicio, fim, indicador, rotulo,
+//     ano, semana, início, fim, indicador, rotulo,
 //     items: [{ service_type_id, nome, cor, valor_absoluto, media, taxa_ocupacao }],
 //     resumo: { total, media_geral, variacao_pct, taxa_ocupacao_geral },
 //     meta: { meta_valor, indicador } | null
@@ -200,8 +200,8 @@ router.get('/semanal', async (req, res) => {
       };
     });
 
-    // Indicadores de Kids nao se aplicam a cultos sem ministerio infantil
-    // (AMI, Bridge · has_kids=false). Remove pra nao poluir o grafico com zeros.
+    // Indicadores de Kids não se aplicam a cultos sem ministério infantil
+    // (AMI, Bridge · has_kids=false). Remove pra não poluir o gráfico com zeros.
     let itemsVisiveis = items;
     if (indicadorKey.includes('kids')) {
       const { data: semKids } = await supabase
@@ -212,9 +212,12 @@ router.get('/semanal', async (req, res) => {
       itemsVisiveis = items.filter(it => !excluir.has(it.service_type_id));
     }
 
+    // Ordem lógica dos cultos: Quarta -> Bridge/AMI (sab) -> Domingos.
+    // Semana comecando na segunda (Seg=0..Dom=6).
+    const ordemSeg = (d) => (d === null || d === undefined ? 99 : ((Number(d) + 6) % 7));
     itemsVisiveis.sort((a, b) => {
-      const da = a.recurrence_day ?? 99;
-      const db = b.recurrence_day ?? 99;
+      const da = ordemSeg(a.recurrence_day);
+      const db = ordemSeg(b.recurrence_day);
       if (da !== db) return da - db;
       return (a.recurrence_time || '').localeCompare(b.recurrence_time || '');
     });
@@ -247,7 +250,7 @@ router.get('/semanal', async (req, res) => {
       indicador: indicadorKey,
       rotulo: indDef.rotulo,
       capacidade_templo: CAPACIDADE_TEMPLO,
-      items,
+      items: itemsVisiveis,
       resumo: {
         total,
         media_geral: mediaGeral,
@@ -264,15 +267,15 @@ router.get('/semanal', async (req, res) => {
 
 // ─────────────────────────────────────────────────────────────────────────────
 // GET /ranking · melhor e pior semana de um ano (top/bottom 1)
-//   query: ano, indicador (default frequencia), culto (uuid opcional)
+//   query: ano, indicador (default frequência), culto (uuid opcional)
 //
 // Soma o indicador por semana ISO (mesma regra do /semanal · exclui cultos
 // sem kids quando o indicador é de kids, respeita filtro de culto). Considera
 // só semanas com total > 0 (ignora semanas futuras/sem dado).
 //
 // Resposta: { ano, indicador, rotulo,
-//             melhor: { semana, total, label, inicio, fim } | null,
-//             pior:   { semana, total, label, inicio, fim } | null,
+//             melhor: { semana, total, label, início, fim } | null,
+//             pior:   { semana, total, label, início, fim } | null,
 //             amostra }
 // ─────────────────────────────────────────────────────────────────────────────
 router.get('/ranking', async (req, res) => {
@@ -346,12 +349,12 @@ router.get('/ranking', async (req, res) => {
 // Resposta:
 //   {
 //     indicador, rotulo, anos: [...],
-//     series: [{ mes: 1, mes_nome: 'janeiro', '2024': X, '2025': Y, '2026': Z }, ...]
+//     séries: [{ mês: 1, mes_nome: 'janeiro', '2024': X, '2025': Y, '2026': Z }, ...]
 //   }
 // ─────────────────────────────────────────────────────────────────────────────
 
 // ─────────────────────────────────────────────────────────────────────────────
-// GET /yoy · total da mesma semana ISO em varios anos (year-over-year)
+// GET /yoy · total da mesma semana ISO em vários anos (year-over-year)
 //   query: semana, indicador, culto, anos (csv, default 3 anos)
 //
 // Soma o indicador por semana ISO (mesma regra do /semanal: exclui cultos
@@ -410,7 +413,7 @@ router.get('/yoy', async (req, res) => {
     const resultados = anos.map(ano => {
       const acc = porAno.get(ano);
       // tem_dado = ao menos 1 linha de culto naquela (ano, semana). Permite
-      // distinguir "semana 53 nao existe naquele ano" de "semana existe mas
+      // distinguir "semana 53 não existe naquele ano" de "semana existe mas
       // valor 0" (ex: aceitacoes zeradas).
       return {
         ano,
@@ -488,12 +491,12 @@ router.get('/mensal', async (req, res) => {
 // ─────────────────────────────────────────────────────────────────────────────
 // GET /media-movel · média móvel da frequência presencial · comparação ano-a-ano
 //   query:
-//     granularidade · 'semana' | 'mes' (default semana)
+//     granularidade · 'semana' | 'mês' (default semana)
 //     janela        · nº de períodos da média móvel (default 2 · min 2)
 //     anos          · csv (default últimos 3 anos)
 //     culto         · service_type_id opcional (default todos somados)
 //   resposta: { granularidade, janela, anos, rotulo,
-//               series: [{ periodo, label, '2024': mm|null, '2025': mm|null, ... }] }
+//               séries: [{ período, label, '2024': mm|null, '2025': mm|null, ... }] }
 //   regra: cada ano é uma linha própria; MM calculada dentro do próprio ano;
 //          null onde não há dado (a linha para, não cai a 0).
 // ─────────────────────────────────────────────────────────────────────────────
@@ -521,7 +524,7 @@ router.get('/media-movel', async (req, res) => {
     const MES_CURTO = ['Jan','Fev','Mar','Abr','Mai','Jun','Jul','Ago','Set','Out','Nov','Dez'];
     const maxPeriodo = granularidade === 'mes' ? 12 : 53;
 
-    // valores[ano][periodo] = soma da frequência presencial naquele período/ano
+    // valores[ano][período] = soma da frequência presencial naquele período/ano
     const valores = {};
     for (const a of anos) valores[a] = new Map();
 
@@ -590,11 +593,11 @@ router.get('/media-movel', async (req, res) => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// GET /metas/valor-atual · valor acumulado do indicador no periodo corrente
+// GET /metas/valor-atual · valor acumulado do indicador no período corrente
 //   query: indicador, periodicidade (semanal | mensal | anual)
 //
-// Semanal: soma da semana anterior completa (que termina no ultimo domingo)
-// Mensal:  soma do mes atual
+// Semanal: soma da semana anterior completa (que termina no último domingo)
+// Mensal:  soma do mês atual
 // Anual:   soma do ano atual
 // ─────────────────────────────────────────────────────────────────────────────
 router.get('/metas/valor-atual', async (req, res) => {
@@ -659,7 +662,7 @@ router.get('/metas/valor-atual', async (req, res) => {
 //          periodicidade (semanal | mensal · default semanal)
 //          culto (uuid opcional)
 //
-// Retorna: { sugestao, base_label, periodo_referencia, valores_amostra }
+// Retorna: { sugestão, base_label, periodo_referencia, valores_amostra }
 // ─────────────────────────────────────────────────────────────────────────────
 router.get('/metas/sugerir', async (req, res) => {
   try {
@@ -721,8 +724,8 @@ router.get('/metas/sugerir', async (req, res) => {
     if (error) throw error;
 
     // Agrupa por (semana ISO · usando o domingo daquela semana como ancora) ou (mês)
-    // Regra do Marcos: semana so conta se o DOMINGO dela cai dentro do periodo
-    // (mes anterior = 4 ou 5 semanas conforme calendario)
+    // Regra do Marcos: semana so conta se o DOMINGO dela cai dentro do período
+    // (mês anterior = 4 ou 5 semanas conforme calendário)
     const inicioMs = inicio.getTime();
     const fimMs = fim.getTime();
     const grupos = new Map();
@@ -731,7 +734,7 @@ router.get('/metas/sugerir', async (req, res) => {
       let key;
       if (periodicidade === 'semanal') {
         const sun = sundayOfWeek(d);
-        // Filtro: o domingo da semana precisa estar dentro do periodo alvo
+        // Filtro: o domingo da semana precisa estar dentro do período alvo
         if (sun.getTime() < inicioMs || sun.getTime() > fimMs) continue;
         key = sun.toISOString().slice(0, 10);
       } else if (periodicidade === 'mensal') {
@@ -795,7 +798,7 @@ function sundayOfWeek(date) {
   // Mantemos UTC pra evitar ajuste de timezone que poderia trocar o dia.
   const d = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
   const dow = d.getUTCDay(); // 0=Domingo, 1=Segunda, ..., 6=Sabado
-  // ISO trata segunda como inicio · domingo como dia 7 (proximo domingo)
+  // ISO trata segunda como início · domingo como dia 7 (próximo domingo)
   const diasAteDomingo = (7 - dow) % 7;
   d.setUTCDate(d.getUTCDate() + diasAteDomingo);
   return d;
@@ -916,22 +919,22 @@ router.post('/ia/sugerir-indicador', async (req, res) => {
 Tabelas principais do CBRio com dados de cultos:
 - cultos: data, service_type_id, presencial_adulto, presencial_kids,
   decisoes_presenciais, decisoes_online, decisoes_kids, online_pico,
-  online_ds, online_ddus, voluntarios
+  online_ds, online_ddus, voluntários
 - vol_service_types: tipos de culto (Domingo 08:30, 10:00, 11:30, 19:00,
   Quarta com Deus, AMI, Bridge)
 - mem_membros: cadastro de membros
 - mem_contribuicoes: data, membro_id, valor, tipo (dizimo/oferta)
 - mem_grupo_membros: ligação membro-grupo (desde, saiu_em)
-- mem_voluntarios: voluntários ativos (desde, ate)
+- mem_voluntarios: voluntários ativos (desde, até)
 - batismo_inscricoes: status, data_batismo
 - int_visitantes: visitantes
 - mem_devocionais: check-ins de devocional
 - cultos_decisoes_pessoas: pessoas que decidiram em cada culto
 
-Capacidade do templo: 1200 lugares.
+Capacidade do templo: 1050 lugares.
 
 Indicadores já existentes no Dashboard Semanal:
-- frequencia, frequencia_kids, aceitacoes, aceitacoes_online,
+- frequência, frequencia_kids, aceitacoes, aceitacoes_online,
   ao_vivo, online_ds, online_ddus, voluntariado
     `.trim();
 

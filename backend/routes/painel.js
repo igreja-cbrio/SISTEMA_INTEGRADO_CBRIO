@@ -4,21 +4,21 @@
 // Endpoints:
 //   GET /api/painel/mandalas    -> dados das 6 mandalas em uma chamada
 //                                  (1 geral com 5 valores + 5 focadas em
-//                                  cada valor com 6 areas)
+//                                  cada valor com 6 áreas)
 // ============================================================================
 
 const router = require('express').Router();
 const { authenticate } = require('../middleware/auth');
-const { supabase } = require('../utils/supabase');
+const { supabase, query } = require('../utils/supabase');
 
 router.use(authenticate);
 
 // ============================================================================
-// CACHE em memoria (5 min TTL)
+// CACHE em memória (5 min TTL)
 //
-// Painel e a pagina mais visitada · cada usuario refresca = recalcula matriz
-// (multiplas queries agregadas). Cache compartilhado entre todos os usuarios
-// reduz carga em ~95% (10 usuarios simultaneos = 1 calculo).
+// Painel e a página mais visitada · cada usuário refresca = recalcula matriz
+// (multiplas queries agregadas). Cache compartilhado entre todos os usuários
+// reduz carga em ~95% (10 usuários simultaneos = 1 calculo).
 //
 // TTL curto (5 min) garante dados frescos. Em deploy serverless, cada
 // instancia tem seu cache (sem coordenacao · ok pra read-only).
@@ -29,7 +29,7 @@ const cacheGet = painelCache.get;
 const cacheSet = painelCache.set;
 const cacheBust = painelCache.bust;
 
-// Endpoint manual pra invalidar cache (admin/diretor) · util apos ajuste de meta
+// Endpoint manual pra invalidar cache (admin/diretor) · útil após ajuste de meta
 router.post('/cache/bust', (req, res) => {
   if (!['admin', 'diretor'].includes(req.user?.role)) {
     return res.status(403).json({ error: 'Apenas admin/diretor' });
@@ -130,7 +130,7 @@ router.get('/mandalas', async (req, res) => {
     const statusByKpi = {};
     (trajetorias || []).forEach(t => { statusByKpi[t.kpi_id] = t.status_trajetoria; });
 
-    // 3. Areas ativas (para labels e ordem)
+    // 3. Áreas ativas (para labels e ordem)
     const { data: areas } = await supabase
       .from('areas_kpi')
       .select('id, nome, cor_hex, ordem')
@@ -151,7 +151,7 @@ router.get('/mandalas', async (req, res) => {
       };
     });
 
-    // 5. Mandalas 1-5 (focadas em cada valor): 6 areas
+    // 5. Mandalas 1-5 (focadas em cada valor): 6 áreas
     const por_valor = {};
     for (const v of VALORES) {
       const kpisDoValor = (kpis || []).filter(k =>
@@ -159,7 +159,7 @@ router.get('/mandalas', async (req, res) => {
       );
       const tabValor = tabularKpis(kpisDoValor, statusByKpi);
 
-      // Cada area: KPIs daquele valor naquela area
+      // Cada área: KPIs daquele valor naquela área
       const areasDoValor = (areas || []).map(area => {
         const kpisArea = kpisDoValor.filter(k =>
           String(k.area || '').toLowerCase() === area.id
@@ -171,7 +171,7 @@ router.get('/mandalas', async (req, res) => {
           cor_hex: area.cor_hex,
           ...tab,
         };
-      }).filter(a => a.total_kpis > 0); // so areas que tem KPI desse valor
+      }).filter(a => a.total_kpis > 0); // so áreas que tem KPI desse valor
 
       por_valor[v] = {
         key: v,
@@ -199,7 +199,7 @@ router.get('/mandalas', async (req, res) => {
 });
 
 // ----------------------------------------------------------------------------
-// GET /matriz - grid 6 areas x 5 valores, com pior status de cada celula
+// GET /matriz - grid 6 áreas x 5 valores, com pior status de cada celula
 // ----------------------------------------------------------------------------
 router.get('/matriz', async (req, res) => {
   try {
@@ -222,10 +222,10 @@ router.get('/matriz', async (req, res) => {
       .from('areas_kpi')
       .select('id, nome, cor_hex, ordem, categoria')
       .eq('ativa', true)
-      .in('id', ['kids', 'bridge', 'ami', 'sede', 'online']) // 5 areas · CBA removido (so coleta batismos/aceitacoes via dados_brutos)
+      .in('id', ['kids', 'bridge', 'ami', 'sede', 'online']) // 5 áreas · CBA removido (so coleta batismos/aceitacoes via dados_brutos)
       .order('ordem');
 
-    // Pra cada celula (area x valor), agregar
+    // Pra cada celula (área x valor), agregar
     const cells = {};
     for (const area of (areas || [])) {
       for (const v of VALORES) {
@@ -278,12 +278,12 @@ router.get('/matriz', async (req, res) => {
 });
 
 // ----------------------------------------------------------------------------
-// GET /matriz-adm - grid 8 areas adm × 6 areas-cliente
-//   Cada celula: % solicitacoes concluidas no SLA daquela area adm para
-//   aquela area-cliente no mes corrente.
+// GET /matriz-adm - grid 8 áreas adm × 6 areas-cliente
+//   Cada celula: % solicitações concluídas no SLA daquela área adm para
+//   aquela area-cliente no mês corrente.
 // ----------------------------------------------------------------------------
 // 5 grupos visuais · cada um agrega 1 ou mais sub-areas adm
-// (Criativo removido · vai ter matriz/OKR propria por ter natureza diferente)
+// (Criativo removido · vai ter matriz/OKR própria por ter natureza diferente)
 const AREAS_ADM_GRUPOS = [
   { key: 'hospitalidade', label: 'Hospitalidade', cor: '#8B5CF6',
     subareas: ['reserva_espaco', 'cozinha', 'manutencao'],
@@ -299,8 +299,8 @@ const AREAS_ADM_GRUPOS = [
     subareas: ['financeiro'], sub_labels: ['Financeiro'] },
 ];
 
-// Legado mantido para outros endpoints que ainda referenciam areas individuais
-// (Criativo nao listado · matriz separada futura)
+// Legado mantido para outros endpoints que ainda referenciam áreas individuais
+// (Criativo não listado · matriz separada futura)
 const AREAS_ADM = [
   { key: 'reserva_espaco',     label: 'Reserva de Espaço', cor: '#8B5CF6' },
   { key: 'cozinha',            label: 'Cozinha',            cor: '#EC4899' },
@@ -427,13 +427,13 @@ router.get('/matriz-adm', async (req, res) => {
 });
 
 // ----------------------------------------------------------------------------
-// GET /celula-adm/:area_adm/:area_cliente - solicitacoes daquela intersecao
+// GET /celula-adm/:area_adm/:area_cliente - solicitações daquela intersecao
 // ----------------------------------------------------------------------------
 // param area_adm pode ser grupo (hospitalidade) ou subarea (cozinha)
 // Se for grupo, expande pras subareas
 // ----------------------------------------------------------------------------
 // Matriz Criativo · 3 grupos criativos × 6 areas-cliente
-// (Mesma logica da Gestao mas grupos diferentes)
+// (Mesma lógica da Gestão mas grupos diferentes)
 // ----------------------------------------------------------------------------
 const AREAS_CRIATIVO_GRUPOS = [
   { key: 'producao',  label: 'Produção',  cor: '#F97316',
@@ -472,7 +472,7 @@ router.get('/matriz-criativo', async (req, res) => {
 
     // Conta OKRs distintos por celula (grupo x area_cliente)
     // KPIs do mesmo OKR (em cascata) contam como 1 OKR na celula
-    // KPI com area='sede' (cross) entra em todas as colunas; com area especifica so na propria
+    // KPI com area='sede' (cross) entra em todas as colunas; com área especifica so na própria
     const okrsPorCelula = {};
     AREAS_CRIATIVO_GRUPOS.forEach(g => {
       AREAS_CLIENTE.forEach(cli => { okrsPorCelula[`${g.key}:${cli.id}`] = new Set(); });
@@ -582,8 +582,8 @@ router.get('/celula-criativo/:area_adm/:area_cliente', async (req, res) => {
     const kpisDoGrupo = (kpisAll || []).filter(k => {
       const areaResp = k.formula_config?.area_responsavel;
       if (!areaResp || !subareas.includes(areaResp)) return false;
-      // Se o KPI tem area especifica (ex: MKT-ONL-* tem area='online'), filtra
-      // tambem pela area_cliente do clique. Se area do KPI e 'sede' (cross),
+      // Se o KPI tem área especifica (ex: MKT-ONL-* tem area='online'), filtra
+      // também pela area_cliente do clique. Se área do KPI e 'sede' (cross),
       // mostra em qualquer celula.
       if (k.area && k.area !== 'sede' && k.area !== area_cliente) return false;
       return true;
@@ -624,7 +624,7 @@ router.get('/celula-adm/:area_adm/:area_cliente', async (req, res) => {
     const grupo = AREAS_ADM_GRUPOS.find(g => g.key === area_adm);
     const subareas = grupo ? grupo.subareas : [area_adm];
 
-    // Solicitacoes da intersecao (ultimos 30 dias)
+    // Solicitações da intersecao (últimos 30 dias)
     const { data: solicitacoes, error } = await supabase
       .from('vw_solicitacoes_sla')
       .select('id, titulo, status, eh_urgente, sla_resolucao_status, horas_total, created_at, concluido_em, valor_estimado, area_responsavel')
@@ -648,7 +648,7 @@ router.get('/celula-adm/:area_adm/:area_cliente', async (req, res) => {
       return areaResp && subareas.includes(areaResp);
     });
 
-    // Ultimo valor de cada KPI
+    // Último valor de cada KPI
     let ultimoPorKpi = {};
     if (kpisDoGrupo.length > 0) {
       const ids = kpisDoGrupo.map(k => k.id);
@@ -718,7 +718,7 @@ router.get('/celula/:area/:valor', async (req, res) => {
     const trajByKpi = {};
     (trajetorias || []).forEach(t => { trajByKpi[t.kpi_id] = t; });
 
-    // Lider (rh_funcionarios) — buscar nomes em lote
+    // Líder (rh_funcionarios) — buscar nomes em lote
     const liderIds = filtrados.map(k => k.lider_funcionario_id).filter(Boolean);
     let lideresMap = {};
     if (liderIds.length > 0) {
@@ -752,8 +752,8 @@ router.get('/celula/:area/:valor', async (req, res) => {
 
 // ----------------------------------------------------------------------------
 // GET /kpi/:id - Detalhe de 1 KPI (camada 3 do drilldown)
-// Inclui: dados do KPI, trajetoria atual, historico de registros (12),
-// checkpoints (trajetoria completa), ultima revisao OKR (se houver)
+// Inclui: dados do KPI, trajetoria atual, histórico de registros (12),
+// checkpoints (trajetoria completa), última revisão OKR (se houver)
 // ----------------------------------------------------------------------------
 router.get('/kpi/:id', async (req, res) => {
   try {
@@ -766,7 +766,7 @@ router.get('/kpi/:id', async (req, res) => {
       .eq('id', id)
       .maybeSingle();
     if (ek) throw ek;
-    if (!kpi) return res.status(404).json({ error: 'KPI nao encontrado' });
+    if (!kpi) return res.status(404).json({ error: 'KPI não encontrado' });
 
     // Trajetoria atual (status calculado)
     const { data: trajAtual } = await supabase
@@ -782,9 +782,9 @@ router.get('/kpi/:id', async (req, res) => {
       .eq('kpi_id', id)
       .order('periodo_referencia', { ascending: true });
 
-    // Historico de registros (ultimos 12)
-    // Colunas reais: observacoes (plural) e user_id · antes estavam erradas
-    // (`observacao` e `preenchido_por_user_id`) e o SELECT silenciava com
+    // Histórico de registros (últimos 12)
+    // Colunas reais: observações (plural) e user_id · antes estavam erradas
+    // (`observação` e `preenchido_por_user_id`) e o SELECT silenciava com
     // registros=null · histórico aparecia vazio no /painel/kpi/:id.
     const { data: registros } = await supabase
       .from('kpi_registros')
@@ -793,7 +793,7 @@ router.get('/kpi/:id', async (req, res) => {
       .order('periodo_referencia', { ascending: false })
       .limit(12);
 
-    // Lider (rh_funcionarios)
+    // Líder (rh_funcionarios)
     let lider = null;
     if (kpi.lider_funcionario_id) {
       const { data: l } = await supabase
@@ -804,7 +804,7 @@ router.get('/kpi/:id', async (req, res) => {
       lider = l || null;
     }
 
-    // Ultima revisao OKR (se existir tabela e KPI eh OKR)
+    // Última revisão OKR (se existir tabela e KPI eh OKR)
     let revisoes = [];
     try {
       const { data: r } = await supabase
@@ -814,14 +814,14 @@ router.get('/kpi/:id', async (req, res) => {
         .order('data_revisao', { ascending: false })
         .limit(5);
       revisoes = r || [];
-    } catch (_) { /* tabela pode nao existir ainda */ }
+    } catch (_) { /* tabela pode não existir ainda */ }
 
     res.json({
       kpi,
       lider,
       trajetoria_atual: trajAtual,
       checkpoints: checkpoints || [],
-      historico: (registros || []).reverse(), // mais antigo primeiro pra grafico
+      historico: (registros || []).reverse(), // mais antigo primeiro pra gráfico
       revisoes,
     });
   } catch (e) {
@@ -831,146 +831,264 @@ router.get('/kpi/:id', async (req, res) => {
 });
 
 // ----------------------------------------------------------------------------
-// GET /nsm/pessoas - lista de pessoas convertidas (camada 4)
+// Catalogo de atividades por valor · alimenta os sub-filtros da NSM.
+// Cada atividade = um sinal concreto de engajamento naquele valor.
+// (frontend renderiza a partir do que o endpoint devolve em atividades_catalogo)
+// ----------------------------------------------------------------------------
+const NSM_ATIVIDADES = {
+  seguir:       [
+    { id: 'primeiro_contato', label: '1º Contato' },
+    { id: 'batismo',          label: 'Batismo' },
+    { id: 'next',             label: 'Next' },
+  ],
+  conectar:     [
+    { id: 'grupo', label: 'Em grupo' },
+  ],
+  investir:     [
+    { id: 'devocional',     label: 'Devocional' },
+    { id: 'jornada180',     label: 'Jornada 180' },
+    { id: 'aconselhamento', label: 'Aconselhamento' },
+  ],
+  servir:       [
+    { id: 'voluntario', label: 'Voluntário' },
+  ],
+  generosidade: [
+    { id: 'dizimo', label: 'Dízimo' },
+    { id: 'oferta', label: 'Oferta' },
+  ],
+};
+
+// Calcula o intervalo [início, fim] e a janela de engajamento (em dias) a partir
+// do ano selecionado + a janela escolhida (30 | 60 | 90 | acumulado).
+//   - ano atual    -> fim = hoje
+//   - ano anterior -> fim = 31/dez daquele ano
+//   - acumulado    -> início = 1º de janeiro do ano (janela de engajamento = até o fim)
+//   - 30/60/90     -> início = fim - N dias (sem sair do ano) · janela de engajamento = N
+function nsmPeriodo(ano, janela) {
+  const hoje = new Date();
+  const anoNum = Number(ano) || hoje.getFullYear();
+  const ehAtual = anoNum === hoje.getFullYear();
+  const iso = (d) => d.toISOString().slice(0, 10);
+  const fimDate = ehAtual ? hoje : new Date(anoNum, 11, 31);
+  let inicioDate, janelaDias;
+  if (janela === 'acumulado') {
+    inicioDate = new Date(anoNum, 0, 1);
+    janelaDias = null;
+  } else {
+    janelaDias = [30, 60, 90].includes(Number(janela)) ? Number(janela) : 60;
+    inicioDate = new Date(fimDate);
+    inicioDate.setDate(inicioDate.getDate() - janelaDias);
+    const limiteAno = new Date(anoNum, 0, 1);
+    if (inicioDate < limiteAno) inicioDate = limiteAno; // não escapa do ano selecionado
+  }
+  return { ano: anoNum, janela, janelaDias, inicio: iso(inicioDate), fim: iso(fimDate) };
+}
+
+function nsmChunk(arr, n) {
+  const out = [];
+  for (let i = 0; i < arr.length; i += n) out.push(arr.slice(i, i + n));
+  return out;
+}
+
+// Busca todas as atividades de engajamento dos membros entre [início, fim].
+// Retorna Map<membro_id, Array<{ valor, atividade, data, detalhe }>>.
+// (chunk em .in() pra não estourar a URL · 1 leva de queries por chunk)
+async function nsmAtividades(ids, inicio, fim) {
+  const mapa = new Map();
+  if (!ids.length) return mapa;
+  const push = (mid, valor, atividade, data, detalhe) => {
+    if (!mid || !data) return;
+    if (!mapa.has(mid)) mapa.set(mid, []);
+    mapa.get(mid).push({ valor, atividade, data: String(data).slice(0, 10), detalhe: detalhe || null });
+  };
+
+  for (const part of nsmChunk(ids, 150)) {
+    const [trilha, batismos, nexts, grupos, devs, j180, acons, vols, contribs] = await Promise.all([
+      supabase.from('mem_trilha_valores').select('membro_id, etapa, data_conclusao')
+        .is('deleted_at', null).in('membro_id', part).eq('concluida', true)
+        .in('etapa', ['primeiro_contato', 'batismo']).gte('data_conclusao', inicio).lte('data_conclusao', fim),
+      supabase.from('batismo_inscricoes').select('membro_id, data_batismo')
+        .in('membro_id', part).eq('status', 'realizado').gte('data_batismo', inicio).lte('data_batismo', fim),
+      supabase.from('next_inscricoes').select('membro_id, check_in_at')
+        .in('membro_id', part).not('check_in_at', 'is', null)
+        .gte('check_in_at', inicio).lte('check_in_at', fim + 'T23:59:59'),
+      supabase.from('mem_grupo_membros').select('membro_id, entrou_em, grupo_id')
+        .is('deleted_at', null).in('membro_id', part).is('saiu_em', null)
+        .gte('entrou_em', inicio).lte('entrou_em', fim),
+      supabase.from('mem_devocionais').select('membro_id, data_devocional')
+        .in('membro_id', part).eq('concluida', true).gte('data_devocional', inicio).lte('data_devocional', fim),
+      supabase.from('cui_jornada180').select('membro_id, data_encontro, presente')
+        .is('deleted_at', null).in('membro_id', part).gte('data_encontro', inicio).lte('data_encontro', fim),
+      supabase.from('cui_acompanhamentos').select('membro_id, data_inicio, motivo')
+        .in('membro_id', part).gte('data_inicio', inicio).lte('data_inicio', fim),
+      supabase.from('mem_voluntarios').select('membro_id, desde, ministerio_id')
+        .is('deleted_at', null).in('membro_id', part).is('ate', null).gte('desde', inicio).lte('desde', fim),
+      supabase.from('mem_contribuicoes').select('membro_id, data, tipo')
+        .is('deleted_at', null).in('membro_id', part).in('tipo', ['dizimo', 'oferta'])
+        .gte('data', inicio).lte('data', fim),
+    ]);
+
+    (trilha.data || []).forEach(r => push(r.membro_id, 'seguir', r.etapa === 'batismo' ? 'batismo' : 'primeiro_contato', r.data_conclusao));
+    (batismos.data || []).forEach(r => push(r.membro_id, 'seguir', 'batismo', r.data_batismo));
+    (nexts.data || []).forEach(r => push(r.membro_id, 'seguir', 'next', r.check_in_at));
+    (grupos.data || []).forEach(r => push(r.membro_id, 'conectar', 'grupo', r.entrou_em, r.grupo_id));
+    (devs.data || []).forEach(r => push(r.membro_id, 'investir', 'devocional', r.data_devocional));
+    (j180.data || []).forEach(r => { if (r.presente !== false) push(r.membro_id, 'investir', 'jornada180', r.data_encontro); });
+    (acons.data || []).forEach(r => push(r.membro_id, 'investir', 'aconselhamento', r.data_inicio, r.motivo));
+    (vols.data || []).forEach(r => push(r.membro_id, 'servir', 'voluntario', r.desde, r.ministerio_id));
+    (contribs.data || []).forEach(r => push(r.membro_id, 'generosidade', r.tipo === 'dizimo' ? 'dizimo' : 'oferta', r.data));
+  }
+  return mapa;
+}
+
+// ----------------------------------------------------------------------------
+// GET /nsm/pessoas - convertidos + engajamento por valor/atividade (camada 4)
 // query:
-//   ?segmento=cbrio|online|cba|central (default central)
-//   ?engajados=true|false  (default false = quem ainda nao engajou)
-//   ?dias=90               (janela de decisoes a olhar, default 90)
-//   ?limit=200             (max de pessoas)
+//   ?ano=2026                      ano de referência (default ano atual)
+//   ?janela=30|60|90|acumulado     recorte de tempo (default 60)
+//   ?status=todos|engajados|nao_engajados   (default todos)
+//   ?valores=seguir,investir       valores marcados (CSV)
+//   ?atividades=seguir:next,investir:aconselhamento   atividades marcadas (CSV "valor:atividade")
+//   ?segmento=central|online       (online filtra decisões online · default central)
+//   ?limit=300                     max de pessoas retornadas
+//
+// Fonte = cultos_decisoes_pessoas (substitui a antiga int_visitantes). A janela
+// vale pra tudo: define quem decidiu no recorte E o horizonte de engajamento
+// (30->30d após a decisão · acumulado->até o fim do período). Filtro = E entre
+// valores, OU entre atividades do mesmo valor.
 // ----------------------------------------------------------------------------
 router.get('/nsm/pessoas', async (req, res) => {
   try {
     const segmento = String(req.query.segmento || 'central').toLowerCase();
-    const engajados = req.query.engajados === 'true';
-    const dias = Math.min(Number(req.query.dias) || 90, 365);
-    const limit = Math.min(Number(req.query.limit) || 200, 1000);
+    const janelaRaw = String(req.query.janela || '60').toLowerCase();
+    const janela = ['30', '60', '90', 'acumulado'].includes(janelaRaw) ? janelaRaw : '60';
+    const status = String(req.query.status || 'todos').toLowerCase();
+    const limit = Math.min(Number(req.query.limit) || 300, 1000);
 
-    const dataLimite = new Date();
-    dataLimite.setDate(dataLimite.getDate() - dias);
-    const dataLimiteStr = dataLimite.toISOString().slice(0, 10);
+    const valoresSel = String(req.query.valores || '').split(',').map(s => s.trim()).filter(Boolean);
+    const atividadesSel = String(req.query.atividades || '').split(',').map(s => s.trim()).filter(Boolean);
+    const atvPorValor = {};
+    for (const a of atividadesSel) {
+      const [v, id] = a.split(':');
+      if (!v || !id) continue;
+      (atvPorValor[v] = atvPorValor[v] || []).push(id);
+    }
+    const valoresFiltro = [...new Set([...valoresSel, ...Object.keys(atvPorValor)])];
 
-    // Filtro de igrejas conforme segmento
-    let igrejaIds = null;
-    if (segmento !== 'central') {
-      const { data: seg } = await supabase
-        .from('nsm_estado')
-        .select('segmento_filtro, segmento_tipo')
-        .eq('segmento', segmento)
-        .maybeSingle();
+    const periodo = nsmPeriodo(req.query.ano, janela);
 
-      if (seg?.segmento_tipo === 'igreja_tipo' && seg?.segmento_filtro?.tipo) {
-        const { data: igrejas } = await supabase
-          .from('igrejas')
-          .select('id')
-          .eq('tipo', seg.segmento_filtro.tipo)
-          .eq('ativa', true);
-        igrejaIds = (igrejas || []).map(i => i.id);
-      }
+    // 1. Decisões no recorte · cultos_decisoes_pessoas join cultos pela data do culto.
+    //    Página de 1000 (PostgREST capa em 1000 por SELECT).
+    let decisoes = [];
+    let from = 0;
+    const page = 1000;
+    for (;;) {
+      let q = supabase
+        .from('cultos_decisoes_pessoas')
+        .select('membro_id, nome, telefone, email, tipo_decisao, cultos!inner(data)')
+        .not('membro_id', 'is', null)
+        .gte('cultos.data', periodo.inicio)
+        .lte('cultos.data', periodo.fim)
+        .range(from, from + page - 1);
+      if (segmento === 'online') q = q.eq('tipo_decisao', 'online');
+      const { data, error } = await q;
+      if (error) throw error;
+      decisoes = decisoes.concat(data || []);
+      if (!data || data.length < page) break;
+      from += page;
     }
 
-    // 1. Visitantes convertidos no periodo
-    let qVis = supabase
-      .from('int_visitantes')
-      .select('id, nome, telefone, email, data_visita, igreja_id, status, fez_decisao, tipo_decisao, observacoes')
-      .eq('fez_decisao', true)
-      .gte('data_visita', dataLimiteStr);
-    if (igrejaIds && igrejaIds.length > 0) qVis = qVis.in('igreja_id', igrejaIds);
-    else if (igrejaIds && igrejaIds.length === 0) qVis = qVis.eq('igreja_id', '00000000-0000-0000-0000-000000000000');
+    // dedup por membro · mantem a decisão mais recente no período
+    const pessoaPorMembro = new Map();
+    for (const d of decisoes) {
+      const dataDec = d.cultos?.data;
+      if (!dataDec) continue;
+      const cur = pessoaPorMembro.get(d.membro_id);
+      if (!cur || dataDec > cur.data_decisao) {
+        pessoaPorMembro.set(d.membro_id, {
+          id: d.membro_id,
+          nome: d.nome,
+          telefone: d.telefone,
+          email: d.email,
+          tipo_decisao: d.tipo_decisao,
+          data_decisao: dataDec,
+        });
+      }
+    }
+    const pessoas = [...pessoaPorMembro.values()];
+    const totalConvertidos = pessoas.length;
 
-    const { data: visitantes } = await qVis;
+    const baseResp = {
+      segmento, ano: periodo.ano, janela, periodo,
+      atividades_catalogo: NSM_ATIVIDADES,
+      filtro: { valores: valoresFiltro, atividades: atividadesSel, status },
+    };
 
-    // 2. Membros novos (com data_decisao recente)
-    // Por enquanto, focando em visitantes (fonte principal).
-    // mem_membros tambem teria pessoas, mas requer campo data_decisao
-    // que pode nao existir. Quando Fase 1.5 entrar, isso pode ser ampliado.
-
-    const todosConvertidos = (visitantes || []).map(v => ({
-      tipo: 'visitante',
-      id: v.id,
-      nome: v.nome,
-      telefone: v.telefone,
-      email: v.email,
-      data_decisao: v.data_visita,
-      igreja_id: v.igreja_id,
-      status: v.status,
-      tipo_decisao: v.tipo_decisao,
-      observacao: v.observacoes,
-    }));
-
-    if (todosConvertidos.length === 0) {
+    if (totalConvertidos === 0) {
       return res.json({
-        segmento,
-        engajados_filter: engajados,
-        janela_dias: dias,
-        total_convertidos: 0,
-        pessoas: [],
+        ...baseResp,
+        total_convertidos: 0, total_engajados: 0, total_nao_engajados: 0,
+        pct_engajamento: 0, total_match: 0, pessoas: [],
       });
     }
 
-    // 3. Eventos NSM dentro da janela 60d
-    const visIds = todosConvertidos.filter(c => c.tipo === 'visitante').map(c => c.id);
-    let eventos = [];
-    if (visIds.length > 0) {
-      const { data: evs } = await supabase
-        .from('nsm_eventos')
-        .select('id, visitante_id, valor_engajado, data_engajamento, dias_da_decisao, dentro_janela_60d, origem')
-        .in('visitante_id', visIds)
-        .eq('dentro_janela_60d', true);
-      eventos = evs || [];
-    }
+    // 2. Atividades dos membros no período
+    const ids = pessoas.map(p => p.id);
+    const atvMapa = await nsmAtividades(ids, periodo.inicio, periodo.fim);
 
-    // Agrupar eventos por pessoa
-    const eventosPorPessoa = {};
-    for (const e of eventos) {
-      const k = e.visitante_id;
-      if (!eventosPorPessoa[k]) eventosPorPessoa[k] = [];
-      eventosPorPessoa[k].push(e);
-    }
-
-    // Marcar cada convertido como engajado ou nao
+    // 3. Enriquece: so conta atividade feita ENTRE a decisão e o fim da janela de engajamento
     const hoje = new Date();
-    const enriquecidos = todosConvertidos.map(p => {
-      const evs = eventosPorPessoa[p.id] || [];
-      const valoresEngajados = [...new Set(evs.map(e => e.valor_engajado))];
-      const dDecisao = new Date(p.data_decisao);
-      const diasDecorridos = Math.floor((hoje - dDecisao) / (1000 * 60 * 60 * 24));
-      const dentroJanela = diasDecorridos <= 60;
-      const diasRestantes = Math.max(0, 60 - diasDecorridos);
-
+    const enriquecidos = pessoas.map(p => {
+      const dDec = p.data_decisao;
+      let limiteEng = periodo.fim;
+      if (periodo.janelaDias) {
+        const lim = new Date(dDec + 'T12:00:00');
+        lim.setDate(lim.getDate() + periodo.janelaDias);
+        const limStr = lim.toISOString().slice(0, 10);
+        limiteEng = limStr < periodo.fim ? limStr : periodo.fim;
+      }
+      const todas = (atvMapa.get(p.id) || []).filter(a => a.data >= dDec && a.data <= limiteEng);
+      const valoresEng = [...new Set(todas.map(a => a.valor))];
+      const diasDecorridos = Math.floor((hoje - new Date(dDec + 'T12:00:00')) / 86400000);
       return {
         ...p,
-        engajado: valoresEngajados.length > 0,
-        valores_engajados: valoresEngajados,
-        total_eventos: evs.length,
+        atividades: todas,
+        valores_engajados: valoresEng,
+        engajado: valoresEng.length > 0,
         dias_decorridos: diasDecorridos,
-        dentro_janela_60d: dentroJanela,
-        dias_restantes_janela: diasRestantes,
-        ja_passou_janela: !dentroJanela,
       };
     });
 
-    // Filtrar por engajados ou nao
-    const filtrados = enriquecidos.filter(p => engajados ? p.engajado : !p.engajado);
+    const totalEngajados = enriquecidos.filter(p => p.engajado).length;
 
-    // Ordenar: dias_restantes asc (mais urgente primeiro pra nao engajados;
-    // mais recentes primeiro pra engajados)
-    filtrados.sort((a, b) => {
-      if (!engajados) {
-        // nao engajados: ainda na janela primeiro (urgencia), depois por dias_decorridos
-        if (a.dentro_janela_60d !== b.dentro_janela_60d) return a.dentro_janela_60d ? -1 : 1;
-        return a.dias_restantes_janela - b.dias_restantes_janela;
+    // 4. Filtro de valores/atividades · E entre valores, OU dentro do mesmo valor
+    const matchFiltro = (p) => {
+      for (const v of valoresFiltro) {
+        const atvsDoValor = p.atividades.filter(a => a.valor === v);
+        if (atvPorValor[v] && atvPorValor[v].length) {
+          if (!atvsDoValor.some(a => atvPorValor[v].includes(a.atividade))) return false;
+        } else if (atvsDoValor.length === 0) {
+          return false;
+        }
       }
-      return b.dias_decorridos - a.dias_decorridos;
-    });
+      return true;
+    };
+
+    let lista = enriquecidos;
+    if (status === 'engajados') lista = lista.filter(p => p.engajado);
+    else if (status === 'nao_engajados') lista = lista.filter(p => !p.engajado);
+    if (valoresFiltro.length) lista = lista.filter(matchFiltro);
+
+    lista.sort((a, b) => (a.data_decisao < b.data_decisao ? 1 : -1)); // mais recentes primeiro
 
     res.json({
-      segmento,
-      engajados_filter: engajados,
-      janela_dias: dias,
-      total_convertidos: todosConvertidos.length,
-      total_engajados: enriquecidos.filter(p => p.engajado).length,
-      total_nao_engajados: enriquecidos.filter(p => !p.engajado).length,
-      pessoas: filtrados.slice(0, limit),
+      ...baseResp,
+      total_convertidos: totalConvertidos,
+      total_engajados: totalEngajados,
+      total_nao_engajados: totalConvertidos - totalEngajados,
+      pct_engajamento: totalConvertidos > 0 ? Math.round((totalEngajados / totalConvertidos) * 100) : 0,
+      total_match: lista.length,
+      pessoas: lista.slice(0, limit),
     });
   } catch (e) {
     console.error('painel/nsm/pessoas:', e.message);
@@ -1062,11 +1180,11 @@ router.get('/alertas', async (req, res) => {
 });
 
 // ============================================================================
-// GET /nsm/sem-dados · cultos com gap entre decisoes e pessoas registradas
+// GET /nsm/sem-dados · cultos com gap entre decisões e pessoas registradas
 //
 // Marcos: "ao clicar para ver deve ter um filtro 'pessoas sem dados'"
 //
-// Usado no drilldown /painel/nsm/pessoas pra mostrar QUANTAS decisoes nao
+// Usado no drilldown /painel/nsm/pessoas pra mostrar QUANTAS decisões não
 // tem nome/contato cadastrado em cultos_decisoes_pessoas · accountability
 // pela ausencia de dados.
 // ============================================================================
@@ -1105,19 +1223,19 @@ router.get('/nsm/sem-dados', async (req, res) => {
 // ============================================================================
 // GET /serie-temporal · carrossel de valores no painel
 //
-// Marcos: "um carrossel de dados com filtro por valor. Um grafico de linhas
+// Marcos: "um carrossel de dados com filtro por valor. Um gráfico de linhas
 //          por exemplo de Seguir a Jesus com filtro de conversoes, batismo
-//          e frequencia por todos os cultos · seleciona dado, culto, periodo"
+//          e frequência por todos os cultos · seleciona dado, culto, período"
 //
 // Query params:
 //   valor          · seguir | conectar | investir | servir | generosidade
 //   dado           · id do dado (varia por valor · ver /serie-temporal/dados)
 //   culto          · uuid de vol_service_types (opcional · so faz sentido p/ seguir)
-//   inicio         · ISO date (default = hoje - 12 meses)
+//   início         · ISO date (default = hoje - 12 meses)
 //   fim            · ISO date (default = hoje)
-//   granularidade  · mes (default) | semana
+//   granularidade  · mês (default) | semana
 //
-// Retorna: { label, dado, valor, granularidade, serie: [{ periodo, valor }] }
+// Retorna: { label, dado, valor, granularidade, série: [{ período, valor }] }
 // ============================================================================
 
 const SERIE_DADOS = {
@@ -1163,12 +1281,12 @@ function chavePeriodo(dataIso, granularidade) {
     d.setDate(d.getDate() - dow);
     return d.toISOString().slice(0, 10);
   }
-  // mes (default)
+  // mês (default)
   return dataIso.slice(0, 7);
 }
 
 function preencherLacunas(serie, inicio, fim, granularidade) {
-  // Garante pontos pra todos os periodos do range (mesmo zerados)
+  // Garante pontos pra todos os períodos do range (mesmo zerados)
   const mapa = new Map(serie.map(p => [p.periodo, p.valor]));
   const out = [];
   if (granularidade === 'semana') {
@@ -1230,7 +1348,7 @@ async function calcularSerie(valor, dado, { inicio, fim, culto, granularidade })
   }
   // ----- CONECTAR -----
   else if (valor === 'conectar' && dado === 'grupos_ativos') {
-    // Snapshot · grupos com pelo menos 1 membro ativo no fim de cada periodo
+    // Snapshot · grupos com pelo menos 1 membro ativo no fim de cada período
     const { data, error } = await supabase.from('mem_grupo_membros')
       .select('grupo_id, entrou_em, saiu_em');
     if (error) throw error;
@@ -1248,7 +1366,7 @@ async function calcularSerie(valor, dado, { inicio, fim, culto, granularidade })
       agg.set(p, gruposAtivos.size);
     }
   } else if (valor === 'conectar' && dado === 'membros_em_grupos') {
-    // Snapshot por mes: quantos membros estavam ativos em grupos no fim do mes
+    // Snapshot por mês: quantos membros estavam ativos em grupos no fim do mês
     // (entrou_em <= fim_do_mes AND (saiu_em IS NULL OR saiu_em > fim_do_mes))
     const { data, error } = await supabase.from('mem_grupo_membros')
       .select('entrou_em, saiu_em');
@@ -1288,7 +1406,7 @@ async function calcularSerie(valor, dado, { inicio, fim, culto, granularidade })
   }
   // ----- SERVIR -----
   else if (valor === 'servir' && dado === 'voluntarios_ativos') {
-    // Snapshot por periodo: voluntarios com (desde <= fim_periodo AND (ate IS NULL OR ate > fim_periodo))
+    // Snapshot por período: voluntários com (desde <= fim_periodo AND (até IS NULL OR até > fim_periodo))
     const { data, error } = await supabase.from('mem_voluntarios')
       .select('desde, ate');
     if (error) throw error;
@@ -1406,6 +1524,202 @@ router.get('/serie-temporal', async (req, res) => {
   } catch (e) {
     console.error('painel/serie-temporal:', e.message);
     res.status(e.status || 500).json({ error: e.message || 'Erro ao montar série temporal' });
+  }
+});
+
+// ============================================================================
+// GET /api/painel/monitoramento-okr
+//
+// Alimenta a aba "Monitoramento OKR" (planilha do Pr. Juninho · ótica enxuta:
+// 1 NSM → 9 OKRs → ~25 indicadores táticos). A ESTRUTURA da planilha (textos,
+// alvos, objetivos, áreas, memória de cálculo) vive no frontend — é o modelo
+// fixo do Juninho. Aqui devolvemos APENAS os valores VIVOS dos indicadores que
+// já têm fonte de dado real no sistema, indexados por uma chave estável
+// (`metricas[chave]`). Os indicadores sem fonte ficam como preenchimento
+// manual (o frontend mostra o alvo + a memória de cálculo da planilha).
+//
+// Read-only · sem migration · não toca a lógica dos 25 OKRs/150 KPIs do
+// /painel (modelo separado, a pedido do Marcos).
+// ============================================================================
+router.get('/monitoramento-okr', async (req, res) => {
+  try {
+    const cacheKey = 'monitoramento-okr';
+    const cached = cacheGet(cacheKey);
+    if (cached) return res.json(cached);
+
+    // Cada métrica roda isolada: se uma falhar, vira null (não derruba a aba).
+    const uma = async (fn) => { try { return await fn(); } catch (e) { console.warn('[monitoramento-okr]', e.message); return null; } };
+    const num = (v) => (v == null ? null : Number(v));
+
+    const [nsmRow, batRatio, batMes, tempoBat, dsOnline, assentos, rotativ, batSerie, dsSerie, assentosSerie] = await Promise.all([
+      // NSM central · exatamente a estrela-guia do Juninho (engajados em ≤60d)
+      uma(async () => {
+        const r = await query(
+          `SELECT percentual, meta_percentual, status, total_convertidos_periodo,
+                  engajados_em_60d, janela_inicio, janela_fim, atualizado_em
+             FROM vw_nsm_painel WHERE segmento = 'central' LIMIT 1`);
+        return r.rows[0] || null;
+      }),
+      // OKR Batismos · batismos realizados nos últimos 90d ÷ conversões 90d
+      uma(async () => {
+        const r = await query(
+          `WITH b AS (
+             SELECT count(*) n FROM batismo_inscricoes
+              WHERE status='realizado' AND data_batismo >= CURRENT_DATE - INTERVAL '90 days'
+                AND deleted_at IS NULL
+           ), c AS (
+             SELECT coalesce(sum(decisoes_presenciais + decisoes_online),0) n
+               FROM cultos WHERE data >= CURRENT_DATE - INTERVAL '90 days' AND deleted_at IS NULL
+           )
+           SELECT b.n batismos, c.n conversoes,
+                  CASE WHEN c.n > 0 THEN round(b.n::numeric / c.n * 100, 1) ELSE NULL END pct
+             FROM b, c`);
+        return r.rows[0] || null;
+      }),
+      // Nº batismos mensais · último mês completo + média dos últimos 6 meses
+      uma(async () => {
+        const r = await query(
+          `WITH m AS (
+             SELECT date_trunc('month', data_batismo) mes, count(*) n
+               FROM batismo_inscricoes
+              WHERE status='realizado' AND data_batismo IS NOT NULL AND deleted_at IS NULL
+                AND data_batismo >= date_trunc('month', CURRENT_DATE) - INTERVAL '6 months'
+                AND data_batismo <  date_trunc('month', CURRENT_DATE)
+              GROUP BY 1
+           )
+           SELECT (SELECT n FROM m ORDER BY mes DESC LIMIT 1) ultimo,
+                  (SELECT to_char(mes,'MM/YYYY') FROM m ORDER BY mes DESC LIMIT 1) ultimo_label,
+                  round(avg(n),1) media FROM m`);
+        return r.rows[0] || null;
+      }),
+      // Tempo médio decisão → batismo (dias) · só membros com as duas datas
+      uma(async () => {
+        const r = await query(
+          `SELECT round(avg(b.data_batismo - t.data_conclusao)::numeric, 0) media_dias, count(*) n
+             FROM batismo_inscricoes b
+             JOIN mem_trilha_valores t
+               ON t.membro_id = b.membro_id AND t.etapa = 'conversao'
+              AND t.concluida = true AND t.deleted_at IS NULL
+            WHERE b.status='realizado' AND b.data_batismo IS NOT NULL AND b.membro_id IS NOT NULL
+              AND b.deleted_at IS NULL AND (b.data_batismo - t.data_conclusao) >= 0`);
+        return r.rows[0] || null;
+      }),
+      // Nº decisões online (DS) · soma dos últimos 90d
+      uma(async () => {
+        const r = await query(
+          `SELECT coalesce(sum(decisoes_online),0) ds_90d
+             FROM cultos
+            WHERE data >= CURRENT_DATE - INTERVAL '90 days' AND data < CURRENT_DATE
+              AND deleted_at IS NULL`);
+        return r.rows[0] || null;
+      }),
+      // % de assentos ocupados · Templo (Domingo+Quarta+AMI, exclui Bridge) ÷ 1050
+      uma(async () => {
+        const r = await query(
+          `SELECT round(avg(c.presencial_adulto)::numeric, 0) media_pres, count(*) n,
+                  round(avg(c.presencial_adulto)::numeric / 1050 * 100, 1) pct
+             FROM cultos c JOIN vol_service_types st ON st.id = c.service_type_id
+            WHERE c.data >= CURRENT_DATE - INTERVAL '90 days' AND c.presencial_adulto > 0
+              AND c.deleted_at IS NULL AND st.name NOT ILIKE '%bridge%'`);
+        return r.rows[0] || null;
+      }),
+      // Rotatividade do staff · demissões nos últimos 12m ÷ ativos hoje
+      uma(async () => {
+        const r = await query(
+          `SELECT count(*) FILTER (WHERE data_demissao >= CURRENT_DATE - INTERVAL '12 months') demitidos,
+                  count(*) FILTER (WHERE status='ativo') ativos
+             FROM rh_funcionarios WHERE deleted_at IS NULL`);
+        return r.rows[0] || null;
+      }),
+      // Série mensal de batismos (6 meses completos) · expande OKR Batismos / Nº batismos
+      uma(async () => {
+        const r = await query(
+          `SELECT to_char(date_trunc('month', data_batismo),'YYYY-MM') mes, count(*)::int valor
+             FROM batismo_inscricoes
+            WHERE status='realizado' AND data_batismo IS NOT NULL AND deleted_at IS NULL
+              AND data_batismo >= date_trunc('month', CURRENT_DATE) - INTERVAL '6 months'
+              AND data_batismo <  date_trunc('month', CURRENT_DATE)
+            GROUP BY 1 ORDER BY 1`);
+        return r.rows;
+      }),
+      // Série mensal de decisões online (6 meses completos)
+      uma(async () => {
+        const r = await query(
+          `SELECT to_char(date_trunc('month', data),'YYYY-MM') mes, coalesce(sum(decisoes_online),0)::int valor
+             FROM cultos
+            WHERE data >= date_trunc('month', CURRENT_DATE) - INTERVAL '6 months'
+              AND data <  date_trunc('month', CURRENT_DATE) AND deleted_at IS NULL
+            GROUP BY 1 ORDER BY 1`);
+        return r.rows;
+      }),
+      // Série mensal de % de ocupação do Templo (6 meses completos)
+      uma(async () => {
+        const r = await query(
+          `SELECT to_char(date_trunc('month', c.data),'YYYY-MM') mes,
+                  round(avg(c.presencial_adulto)::numeric / 1050 * 100, 1)::float valor
+             FROM cultos c JOIN vol_service_types st ON st.id = c.service_type_id
+            WHERE c.data >= date_trunc('month', CURRENT_DATE) - INTERVAL '6 months'
+              AND c.data <  date_trunc('month', CURRENT_DATE)
+              AND c.presencial_adulto > 0 AND c.deleted_at IS NULL AND st.name NOT ILIKE '%bridge%'
+            GROUP BY 1 ORDER BY 1`);
+        return r.rows;
+      }),
+    ]);
+
+    const nsm = nsmRow ? {
+      percentual: num(nsmRow.percentual),
+      meta: num(nsmRow.meta_percentual),
+      status: nsmRow.status,
+      totalConvertidos: num(nsmRow.total_convertidos_periodo),
+      engajados: num(nsmRow.engajados_em_60d),
+      janelaInicio: nsmRow.janela_inicio,
+      janelaFim: nsmRow.janela_fim,
+      atualizadoEm: nsmRow.atualizado_em,
+    } : null;
+
+    // metricas[chave] = { valor, unidade, detalhe }. Só inclui o que tem dado real.
+    const metricas = {};
+    const serieFmt = (rows) => Array.isArray(rows) ? rows.map(r => ({ mes: r.mes, valor: Number(r.valor) })) : [];
+    const addM = (chave, valor, unidade, detalhe, serie) => {
+      if (valor == null || Number.isNaN(valor)) return;
+      metricas[chave] = { valor, unidade, detalhe };
+      if (serie && serie.length) metricas[chave].serie = serie;
+    };
+
+    const batSerieFmt = serieFmt(batSerie);
+    if (batRatio) {
+      addM('okr_batismos', num(batRatio.pct), '%',
+        `${batRatio.batismos} batismos / ${batRatio.conversoes} convertidos (90 dias)`, batSerieFmt);
+    }
+    if (batMes && batMes.ultimo != null) {
+      addM('batismos_mes', num(batMes.ultimo), '',
+        `${batMes.ultimo_label || 'último mês'} · média ${batMes.media ?? '—'}/mês`, batSerieFmt);
+    }
+    if (tempoBat && tempoBat.media_dias != null && Number(tempoBat.n) > 0) {
+      addM('tempo_batismo', num(tempoBat.media_dias), ' dias',
+        `média de ${tempoBat.n} batizados com data de conversão registrada`);
+    }
+    if (dsOnline) {
+      addM('ds_online', num(dsOnline.ds_90d), '',
+        'decisões online nos últimos 90 dias', serieFmt(dsSerie));
+    }
+    if (assentos && assentos.n > 0) {
+      addM('assentos', num(assentos.pct), '%',
+        `${assentos.media_pres} de 1050 lugares · média do Templo (90 dias)`, serieFmt(assentosSerie));
+    }
+    if (rotativ) {
+      const ativos = num(rotativ.ativos) || 0;
+      const demit = num(rotativ.demitidos) || 0;
+      const pct = ativos > 0 ? Math.round((demit / ativos) * 1000) / 10 : null;
+      addM('rotatividade', pct, '%', `${demit} saída(s) / ${ativos} ativos (12 meses)`);
+    }
+
+    const resp = { geradoEm: new Date().toISOString(), nsm, metricas };
+    cacheSet(cacheKey, resp);
+    res.json(resp);
+  } catch (e) {
+    console.error('painel/monitoramento-okr:', e.message);
+    res.status(500).json({ error: e.message || 'Erro ao montar Monitoramento OKR' });
   }
 });
 

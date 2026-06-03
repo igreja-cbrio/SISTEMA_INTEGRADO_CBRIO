@@ -8,7 +8,7 @@ import { Textarea } from '../../components/ui/textarea';
 import { Select as ShadSelect, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../components/ui/select';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../../components/ui/dialog';
 import { toast } from 'sonner';
-import { Users, MapPin, Clock, Plus, Search, ChevronLeft, UserPlus, X, ArrowRightLeft, FileUp, Trash2, FileText, Image, File as FileIcon, Map as MapIcon, ListChecks, ClipboardCheck, Calendar, Activity, TrendingUp, TrendingDown, Minus, AlertTriangle, Inbox, QrCode, Compass, Copy, Check, Download, ExternalLink, Lock } from 'lucide-react';
+import { Users, MapPin, Clock, Plus, Search, ChevronLeft, UserPlus, X, ArrowRightLeft, FileUp, Trash2, FileText, Image, File as FileIcon, Map as MapIcon, ListChecks, ClipboardCheck, Calendar, Activity, TrendingUp, TrendingDown, Minus, AlertTriangle, Inbox, QrCode, Compass, Copy, Check, Download, ExternalLink, Lock, BarChart3, GraduationCap, Star, UserCog } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import PedidosGrupo from './PedidosGrupo';
 import InscricaoGruposQRCode from '../admin/InscricaoGruposQRCode';
@@ -16,6 +16,9 @@ import GruposGeocode from '../admin/GruposGeocode';
 import TemporadasGrupos from '../admin/TemporadasGrupos';
 import ProcessosTarefas from '../../components/ProcessosTarefas';
 import { GruposMapView } from '@/components/grupos/GruposMapView';
+import { StatisticsCard } from '../../components/ui/statistics-card';
+import { Card, CardContent, CardHeader, CardTitle } from '../../components/ui/card';
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 
 const C = {
   bg: 'var(--cbrio-bg)', card: 'var(--cbrio-card)', primary: '#00B39D', primaryBg: '#00B39D18',
@@ -45,8 +48,8 @@ function fmtDate(d) { if (!d) return ''; try { return new Date(d + 'T12:00:00').
 // v2 - tabs membros/arquivos
 export default function Grupos() {
   const { profile, isAdmin, getAccessLevel } = useAuth();
-  // Lider de area com nivel 1 (so leitura) na matriz: ve tudo mas nao edita.
-  // Admin/diretor/lider com nivel >=3 edita. Sincroniza com cargo_modulo_permissao.
+  // Líder de área com nível 1 (so leitura) na matriz: ve tudo mas não edita.
+  // Admin/diretor/lider com nível >=3 edita. Sincroniza com cargo_modulo_permissao.
   const podeEditarGrupos = isAdmin || (getAccessLevel?.(['grupos']) ?? 0) >= 3;
   const [gruposList, setGruposList] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -215,7 +218,7 @@ export default function Grupos() {
   };
 
   const handleRemoverEncontro = async (encontroId) => {
-    if (!window.confirm('Remover este encontro? As presencas serao revertidas.')) return;
+    if (!window.confirm('Remover este encontro? As presenças serão revertidas.')) return;
     try {
       await api.removerEncontro(encontroId);
       toast.success('Encontro removido');
@@ -305,9 +308,18 @@ export default function Grupos() {
     } catch { toast.error('Erro ao remover'); }
   };
 
+  // Marca/desmarca um membro como "líder em treinamento" naquele grupo (opcional).
+  const handleToggleTreinamento = async (participacaoId, emTreino) => {
+    try {
+      await api.setFuncaoMembro(participacaoId, emTreino ? 'frequentador' : 'lider_treinamento');
+      toast.success(emTreino ? 'Removido de líder em treinamento' : 'Marcado como líder em treinamento');
+      loadDetail(selectedGrupo);
+    } catch (e) { toast.error(e.message || 'Erro ao atualizar função'); }
+  };
+
   const handleUploadMaterial = async (file) => {
     if (!file) return;
-    if (file.size > 10 * 1024 * 1024) { toast.error('Arquivo deve ter no maximo 10MB'); return; }
+    if (file.size > 10 * 1024 * 1024) { toast.error('Arquivo deve ter no máximo 10MB'); return; }
     setUploading(true);
     try {
       const fd = new FormData();
@@ -342,7 +354,7 @@ export default function Grupos() {
     } catch {}
   };
 
-  // Extrair opcoes unicas para filtros
+  // Extrair opções únicas para filtros
   const tiposUnicos = [...new Set(gruposList.map(g => g.categoria).filter(Boolean))].sort();
   const locaisUnicos = [...new Set(gruposList.map(g => g.local).filter(Boolean))].sort();
   const temasUnicos = [...new Set(gruposList.map(g => g.tema).filter(Boolean))].sort();
@@ -388,7 +400,7 @@ export default function Grupos() {
             {g.codigo && <div style={{ fontSize: 11, color: C.t3, fontWeight: 600, fontFamily: 'monospace', marginBottom: 2 }}>{g.codigo}</div>}
             <h1 style={{ fontSize: 22, fontWeight: 700, color: C.text, margin: 0 }}>{g.nome}</h1>
             <div style={{ display: 'flex', gap: 16, marginTop: 6, flexWrap: 'wrap' }}>
-              {g.lider && <span style={{ fontSize: 13, color: C.t2 }}>Lider: <strong style={{ color: C.text }}>{g.lider.nome}</strong></span>}
+              {g.lider && <span style={{ fontSize: 13, color: C.t2 }}>Líder: <strong style={{ color: C.text }}>{g.lider.nome}</strong></span>}
               {(g.bairro || g.local) && (() => {
                 const url = (g.lat != null && g.lng != null)
                   ? `https://www.google.com/maps/search/?api=1&query=${g.lat},${g.lng}`
@@ -455,7 +467,7 @@ export default function Grupos() {
           ))}
         </div>
 
-        {/* Saude do grupo */}
+        {/* Saúde do grupo */}
         {!isOptimistic && metricas && metricas.total_encontros > 0 && (
           <SaudeDoGrupo metricas={metricas} />
         )}
@@ -528,8 +540,9 @@ export default function Grupos() {
                   <th style={{ padding: '8px 16px', textAlign: 'left', fontSize: 11, fontWeight: 600, color: C.t3, textTransform: 'uppercase' }}>Nome</th>
                   <th style={{ padding: '8px 16px', textAlign: 'left', fontSize: 11, fontWeight: 600, color: C.t3, textTransform: 'uppercase' }}>Telefone</th>
                   <th style={{ padding: '8px 16px', textAlign: 'left', fontSize: 11, fontWeight: 600, color: C.t3, textTransform: 'uppercase' }}>Entrou em</th>
-                  <th style={{ padding: '8px 16px', textAlign: 'center', fontSize: 11, fontWeight: 600, color: C.t3, textTransform: 'uppercase' }}>Presencas</th>
+                  <th style={{ padding: '8px 16px', textAlign: 'center', fontSize: 11, fontWeight: 600, color: C.t3, textTransform: 'uppercase' }}>Presenças</th>
                   <th style={{ padding: '8px 16px', textAlign: 'center', fontSize: 11, fontWeight: 600, color: C.t3, textTransform: 'uppercase' }}>Tipo</th>
+                  <th style={{ padding: '8px 16px', textAlign: 'center', fontSize: 11, fontWeight: 600, color: C.t3, textTransform: 'uppercase' }}>Treino</th>
                   <th style={{ padding: '8px 16px', textAlign: 'center', fontSize: 11, fontWeight: 600, color: C.t3 }}></th>
                 </tr>
               </thead>
@@ -549,6 +562,32 @@ export default function Grupos() {
                       <span style={{ fontSize: 11, padding: '2px 8px', borderRadius: 99, background: m.is_visitante ? '#f59e0b20' : '#10b98120', color: m.is_visitante ? C.amber : C.green, fontWeight: 600 }}>
                         {m.is_visitante ? 'Visitante' : 'Membro'}
                       </span>
+                    </td>
+                    <td style={{ padding: '10px 16px', textAlign: 'center' }}>
+                      {(() => {
+                        const emTreino = m.funcao === 'lider_treinamento';
+                        if (podeEditarGrupos) {
+                          return (
+                            <button
+                              onClick={() => handleToggleTreinamento(m.participacao_id, emTreino)}
+                              title={emTreino ? 'Remover de líder em treinamento' : 'Marcar como líder em treinamento'}
+                              style={{
+                                fontSize: 11, padding: '2px 10px', borderRadius: 99, cursor: 'pointer', fontWeight: 600,
+                                display: 'inline-flex', alignItems: 'center', gap: 4,
+                                border: emTreino ? '1px solid #8b5cf6' : `1px dashed ${C.border}`,
+                                background: emTreino ? '#8b5cf620' : 'transparent',
+                                color: emTreino ? '#8b5cf6' : C.t3,
+                              }}>
+                              <GraduationCap size={12} /> {emTreino ? 'Em treino' : 'Marcar'}
+                            </button>
+                          );
+                        }
+                        return emTreino ? (
+                          <span style={{ fontSize: 11, padding: '2px 10px', borderRadius: 99, background: '#8b5cf620', color: '#8b5cf6', fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                            <GraduationCap size={12} /> Em treino
+                          </span>
+                        ) : <span style={{ fontSize: 11, color: C.t3 }}>—</span>;
+                      })()}
                     </td>
                     <td style={{ padding: '10px 16px', textAlign: 'center' }}>
                       <button onClick={() => handleRemoveMembro(m.participacao_id)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: C.red, fontSize: 11 }}><X size={14} /></button>
@@ -601,7 +640,7 @@ export default function Grupos() {
           </div>
         )}
 
-        {/* Historico completo de membros (entradas + saidas + transferencias) */}
+        {/* Histórico completo de membros (entradas + saídas + transferencias) */}
         {!isOptimistic && historicoMembros.length > 0 && (() => {
           const saidas = historicoMembros.filter(h => h.saiu_em);
           if (saidas.length === 0) return null;
@@ -649,15 +688,15 @@ export default function Grupos() {
           );
         })()}
 
-        {/* Observacoes */}
+        {/* Observações */}
         {g.observacoes && (
           <div style={{ background: C.card, borderRadius: 12, padding: 16, border: `1px solid ${C.border}`, marginTop: 16 }}>
-            <div style={{ fontSize: 14, fontWeight: 600, color: C.text, marginBottom: 8 }}>Observacoes</div>
+            <div style={{ fontSize: 14, fontWeight: 600, color: C.text, marginBottom: 8 }}>Observações</div>
             <div style={{ fontSize: 13, color: C.t2, whiteSpace: 'pre-wrap' }}>{g.observacoes}</div>
           </div>
         )}
 
-        {/* Modal de chamada / edicao */}
+        {/* Modal de chamada / edição */}
         <ChamadaModal
           open={chamadaOpen}
           onClose={() => { setChamadaOpen(false); setEncontroEdit(null); }}
@@ -719,6 +758,7 @@ export default function Grupos() {
       <div className="cbrio-grupos-tabs" style={{ display: 'flex', gap: 0, marginBottom: 16, borderBottom: `1px solid ${C.border}` }}>
         {[
           { key: 'grupos', label: 'Grupos', icon: Users },
+          { key: 'relatorios', label: 'Relatórios', icon: BarChart3 },
           { key: 'mapa', label: 'Mapa', icon: MapIcon },
           { key: 'pedidos', label: 'Pedidos', icon: Inbox, badge: pedidosCount },
           { key: 'materiais', label: 'Materiais', icon: FileText },
@@ -773,7 +813,7 @@ export default function Grupos() {
             </div>
             <div style={{ display: 'flex', gap: 10, marginBottom: 10, flexWrap: 'wrap' }}>
               <div style={{ flex: 1, minWidth: 200 }}>
-                <Label style={{ fontSize: 11 }}>Comentario</Label>
+                <Label style={{ fontSize: 11 }}>Comentário</Label>
                 <Input placeholder="Ex: Roteiro semana 14/04, Devocional igreja..." value={uploadComment} onChange={e => setUploadComment(e.target.value)} />
               </div>
             </div>
@@ -935,14 +975,19 @@ export default function Grupos() {
         </div>
       )}
 
+      {/* ═══ TAB RELATÓRIOS ═══ */}
+      {pageTab === 'relatorios' && (
+        <RelatorioGrupos temporada={filterTemporada} />
+      )}
+
       {/* ═══ TAB GRUPOS ═══ */}
       {pageTab === 'grupos' && <>
-      {/* Resumo de saude */}
+      {/* Resumo de saúde */}
       {saudeAgregada && saudeAgregada.total > 0 && (
         <div style={{ background: C.card, borderRadius: 12, padding: 14, border: `1px solid ${C.border}`, marginBottom: 12, display: 'flex', gap: 16, alignItems: 'center', flexWrap: 'wrap' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
             <Activity size={18} style={{ color: C.primary }} />
-            <span style={{ fontSize: 13, fontWeight: 700, color: C.text }}>Saude dos grupos</span>
+            <span style={{ fontSize: 13, fontWeight: 700, color: C.text }}>Saúde dos grupos</span>
           </div>
           <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap' }}>
             <span style={{ fontSize: 12, color: C.t2 }}><strong style={{ color: C.green }}>{saudeAgregada.saudaveis}</strong> saudaveis</span>
@@ -1154,7 +1199,7 @@ export default function Grupos() {
   );
 }
 
-// ── MODAL DE FORMULARIO ──
+// ── MODAL DE FORMULÁRIO ──
 function GrupoQRModal({ open, onClose, grupo, temporada, copied, setCopied }) {
   if (!grupo) return null;
   const baseUrl = typeof window !== 'undefined' ? window.location.origin : '';
@@ -1278,7 +1323,7 @@ function GrupoFormModal({ open, onClose, data, onSave, saving, gruposForSelect, 
 
   const handleSubmit = (e) => {
     e.preventDefault();
-    if (!form.nome?.trim()) { toast.error('Nome e obrigatorio'); return; }
+    if (!form.nome?.trim()) { toast.error('Nome e obrigatório'); return; }
     const { _geocoding, ...rest } = form;
     onSave({
       ...rest,
@@ -1346,14 +1391,14 @@ function GrupoFormModal({ open, onClose, data, onSave, saving, gruposForSelect, 
               <Input value={form.local || ''} onChange={e => set('local', e.target.value)} placeholder="Ex: Barra da Tijuca" />
             </div>
             <div>
-              <Label>Endereco</Label>
+              <Label>Endereço</Label>
               <Input value={form.endereco || ''} onChange={e => set('endereco', e.target.value)} placeholder="Rua, numero" />
             </div>
           </div>
 
           <div>
             <Label>Complemento</Label>
-            <Input value={form.complemento || ''} onChange={e => set('complemento', e.target.value)} placeholder="Apto, bloco, casa, ponto de referencia..." />
+            <Input value={form.complemento || ''} onChange={e => set('complemento', e.target.value)} placeholder="Apto, bloco, casa, ponto de referência..." />
           </div>
 
           <div>
@@ -1395,7 +1440,7 @@ function GrupoFormModal({ open, onClose, data, onSave, saving, gruposForSelect, 
           </div>
 
           <div>
-            <Label>Lider</Label>
+            <Label>Líder</Label>
             <Input placeholder="Buscar lider..." value={liderSearch} onChange={e => setLiderSearch(e.target.value)} />
             {liderSearch.length >= 2 && (
               <div style={{ maxHeight: 150, overflowY: 'auto', border: `1px solid ${C.border}`, borderRadius: 8, marginTop: 4, background: C.card }}>
@@ -1478,12 +1523,12 @@ function GrupoFormModal({ open, onClose, data, onSave, saving, gruposForSelect, 
           </div>
 
           <div>
-            <Label>Descricao</Label>
+            <Label>Descrição</Label>
             <Textarea value={form.descricao || ''} onChange={e => set('descricao', e.target.value)} rows={2} />
           </div>
 
           <div>
-            <Label>Observacoes</Label>
+            <Label>Observações</Label>
             <Textarea value={form.observacoes || ''} onChange={e => set('observacoes', e.target.value)} rows={3} />
           </div>
 
@@ -1497,7 +1542,7 @@ function GrupoFormModal({ open, onClose, data, onSave, saving, gruposForSelect, 
   );
 }
 
-// ── MODAL DE CHAMADA / REGISTRO / EDICAO DE ENCONTRO ──
+// ── MODAL DE CHAMADA / REGISTRO / EDIÇÃO DE ENCONTRO ──
 function ChamadaModal({ open, onClose, membros, onSubmit, encontroEdit }) {
   const [data, setData] = useState('');
   const [tema, setTema] = useState('');
@@ -1518,7 +1563,7 @@ function ChamadaModal({ open, onClose, membros, onSubmit, encontroEdit }) {
         setData(new Date().toISOString().split('T')[0]);
         setTema('');
         setObservacoes('');
-        // Default: todos selecionados (mais comum o lider desmarcar quem faltou)
+        // Default: todos selecionados (mais comum o líder desmarcar quem faltou)
         setPresentes(new Set(membros.map(m => m.id)));
       }
       setSaving(false);
@@ -1597,8 +1642,8 @@ function ChamadaModal({ open, onClose, membros, onSubmit, encontroEdit }) {
           </div>
 
           <div>
-            <Label style={{ fontSize: 11 }}>Observacoes (opcional)</Label>
-            <Textarea value={observacoes} onChange={e => setObservacoes(e.target.value)} rows={2} placeholder="Notas do encontro, oracoes, decisoes..." />
+            <Label style={{ fontSize: 11 }}>Observações (opcional)</Label>
+            <Textarea value={observacoes} onChange={e => setObservacoes(e.target.value)} rows={2} placeholder="Notas do encontro, orações, decisões..." />
           </div>
 
           <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', marginTop: 4 }}>
@@ -1611,7 +1656,7 @@ function ChamadaModal({ open, onClose, membros, onSubmit, encontroEdit }) {
   );
 }
 
-// ── SAUDE DO GRUPO (cards de metricas + sparkline) ──
+// ── SAÚDE DO GRUPO (cards de metricas + sparkline) ──
 function SaudeDoGrupo({ metricas }) {
   const C = {
     text: 'var(--cbrio-text)', t2: 'var(--cbrio-text2)', t3: 'var(--cbrio-text3)',
@@ -1629,7 +1674,7 @@ function SaudeDoGrupo({ metricas }) {
     <div style={{ background: C.card, borderRadius: 12, padding: 16, border: `1px solid ${m.em_risco ? '#ef444460' : C.border}`, marginBottom: 24 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 14 }}>
         <Activity size={16} style={{ color: corScore }} />
-        <span style={{ fontSize: 14, fontWeight: 700, color: C.text }}>Saude do grupo</span>
+        <span style={{ fontSize: 14, fontWeight: 700, color: C.text }}>Saúde do grupo</span>
         {m.em_risco && (
           <span style={{ fontSize: 10, padding: '2px 8px', borderRadius: 99, background: '#ef444420', color: C.red, fontWeight: 600, display: 'flex', alignItems: 'center', gap: 4 }}>
             <AlertTriangle size={10} /> EM RISCO
@@ -1640,7 +1685,7 @@ function SaudeDoGrupo({ metricas }) {
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 10, marginBottom: 14 }}>
         <MetricaCard label="Score" valor={m.score_saude} sufixo="/100" cor={corScore} />
         <MetricaCard label="Frequencia media" valor={m.freq_media} sufixo=" pres." cor={C.primary} />
-        <MetricaCard label="Taxa de presenca" valor={m.taxa_presenca} sufixo="%" cor={C.primary} />
+        <MetricaCard label="Taxa de presença" valor={m.taxa_presenca} sufixo="%" cor={C.primary} />
         <MetricaCard label="Regularidade" valor={m.regularidade} sufixo="%" cor={m.regularidade >= 70 ? C.green : m.regularidade >= 50 ? C.amber : C.red} />
       </div>
 
@@ -1677,6 +1722,168 @@ function MetricaCard({ label, valor, sufixo, cor }) {
         {valor}<span style={{ fontSize: 11, fontWeight: 500, color: t3 }}>{sufixo}</span>
       </div>
       <div style={{ fontSize: 10, color: t3, marginTop: 2 }}>{label}</div>
+    </div>
+  );
+}
+
+// ── RELATÓRIO DE KPIs DO MÓDULO (aba Relatórios) ──
+// Espelha o estilo dos relatórios de Integração: seletor de período + cards de
+// KPI + gráfico de frequência por mês + lista de líderes em treinamento. Os
+// números vêm da RPC agregada (fn_grupos_kpis_relatorio); a lista nominal de
+// líderes em treinamento, do endpoint /kpis/lideres-treinamento.
+const REL_RANGES = [
+  { value: 3, label: '3 meses' },
+  { value: 6, label: '6 meses' },
+  { value: 12, label: '12 meses' },
+  { value: 24, label: '2 anos' },
+];
+const REL_MESES_PT = ['jan', 'fev', 'mar', 'abr', 'mai', 'jun', 'jul', 'ago', 'set', 'out', 'nov', 'dez'];
+const relLabelMes = (ym) => {
+  if (!ym) return '';
+  const [y, m] = ym.split('-');
+  return `${REL_MESES_PT[parseInt(m, 10) - 1]}/${y.slice(2)}`;
+};
+
+function RelatorioGrupos({ temporada }) {
+  const [meses, setMeses] = useState(12);
+  const [data, setData] = useState(null);
+  const [treino, setTreino] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let alive = true;
+    setLoading(true);
+    const params = { meses };
+    if (temporada) params.temporada = temporada;
+    const treinoParams = temporada ? { temporada } : undefined;
+    Promise.all([
+      api.relatorioKpis(params),
+      api.lideresTreinamento(treinoParams).catch(() => []),
+    ])
+      .then(([d, t]) => { if (alive) { setData(d); setTreino(Array.isArray(t) ? t : []); } })
+      .catch(() => { if (alive) { setData(null); setTreino([]); } })
+      .finally(() => { if (alive) setLoading(false); });
+    return () => { alive = false; };
+  }, [meses, temporada]);
+
+  const serie = (data?.frequencia?.serie || []).map(s => ({ ...s, mes: relLabelMes(s.ym) }));
+  const nps = data?.satisfacao_lideres;
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+      {/* Seletor de período */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+        <div style={{ display: 'inline-flex', gap: 2, padding: 2, borderRadius: 12, border: `1px solid ${C.border}`, background: C.bg }}>
+          {REL_RANGES.map(r => (
+            <button key={r.value} onClick={() => setMeses(r.value)} style={{
+              padding: '6px 14px', fontSize: 12, fontWeight: 600, borderRadius: 10, border: 'none', cursor: 'pointer',
+              background: meses === r.value ? C.primary : 'transparent',
+              color: meses === r.value ? '#fff' : C.t3, transition: 'all 0.15s',
+            }}>{r.label}</button>
+          ))}
+        </div>
+        <span style={{ fontSize: 12, color: C.t3 }}>
+          {data?.frequencia?.total_encontros ?? 0} encontro(s) no período
+        </span>
+      </div>
+
+      {loading ? (
+        <div style={{ padding: 40, textAlign: 'center', color: C.t3 }}>Carregando relatório...</div>
+      ) : !data ? (
+        <div style={{ padding: 40, textAlign: 'center', color: C.t3, fontSize: 13 }}>Não foi possível carregar o relatório.</div>
+      ) : (
+        <>
+          {/* KPIs principais */}
+          <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
+            <StatisticsCard title="Grupos ativos" value={data.total_grupos ?? 0} icon={Users} iconColor={C.primary} />
+            <StatisticsCard title="Líderes" value={data.total_lideres ?? 0} icon={UserCog} iconColor={C.blue} subtitle="líderes de grupo" />
+            <StatisticsCard title="Em treinamento" value={data.lideres_treinamento ?? 0} icon={GraduationCap} iconColor="#8b5cf6" subtitle="líderes em formação" />
+            <StatisticsCard
+              title="Satisfação líderes"
+              value={nps ? Number(nps.valor).toLocaleString('pt-BR') : '—'}
+              icon={Star}
+              iconColor={C.amber}
+              subtitle={nps ? `NPS · ${fmtDate(nps.data)}` : 'Sem NPS registrado'}
+            />
+            <StatisticsCard title="Frequência média" value={data.frequencia?.media_por_encontro ?? 0} icon={Activity} iconColor={C.primary} subtitle="presenças / encontro" />
+          </div>
+
+          {/* Frequência por mês */}
+          <Card>
+            <CardHeader className="pb-2 flex flex-row items-center justify-between space-y-0">
+              <CardTitle className="text-sm font-medium flex items-center gap-2">
+                <BarChart3 className="h-4 w-4 text-muted-foreground" />
+                Frequência por mês
+              </CardTitle>
+              <span className="text-xs text-muted-foreground">
+                {(data.frequencia?.total_presencas ?? 0).toLocaleString('pt-BR')} presenças no período
+              </span>
+            </CardHeader>
+            <CardContent>
+              {serie.length === 0 ? (
+                <div style={{ padding: 32, textAlign: 'center', color: C.t3, fontSize: 13 }}>
+                  Nenhum encontro registrado no período. A frequência aparece aqui conforme os líderes registram as chamadas dos encontros.
+                </div>
+              ) : (
+                <div className="h-[260px]">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={serie} margin={{ top: 6, right: 8, left: -16, bottom: 0 }}>
+                      <CartesianGrid strokeDasharray="3 3" opacity={0.25} />
+                      <XAxis dataKey="mes" tick={{ fontSize: 11 }} />
+                      <YAxis tick={{ fontSize: 11 }} allowDecimals={false} />
+                      <Tooltip
+                        cursor={{ fill: 'rgba(0,179,157,0.08)' }}
+                        contentStyle={{ borderRadius: 8, fontSize: 12 }}
+                        formatter={(v) => [Number(v).toLocaleString('pt-BR'), 'Presenças']}
+                        labelFormatter={(l, payload) => {
+                          const p = payload?.[0]?.payload;
+                          return p ? `${l} · ${p.encontros} encontro(s) · média ${p.media}` : l;
+                        }}
+                      />
+                      <Bar dataKey="presencas" name="Presenças" fill={C.primary} radius={[4, 4, 0, 0]} />
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+
+          {/* Líderes em treinamento · quem está em formação, por grupo */}
+          <Card>
+            <CardHeader className="pb-2 flex flex-row items-center justify-between space-y-0">
+              <CardTitle className="text-sm font-medium flex items-center gap-2">
+                <GraduationCap className="h-4 w-4 text-muted-foreground" />
+                Líderes em treinamento
+              </CardTitle>
+              <span className="text-xs text-muted-foreground">{treino.length} pessoa(s)</span>
+            </CardHeader>
+            <CardContent>
+              {treino.length === 0 ? (
+                <div style={{ padding: 24, textAlign: 'center', color: C.t3, fontSize: 13 }}>
+                  Nenhum líder em treinamento. Abra um grupo e marque um membro como "líder em treino" na lista de membros.
+                </div>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                  {treino.map(t => (
+                    <div key={t.participacao_id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 4px', borderBottom: `1px solid ${C.border}` }}>
+                      <div style={{ width: 30, height: 30, borderRadius: '50%', background: t.foto_url ? `url(${t.foto_url}) center/cover` : '#8b5cf620', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, fontSize: 12, fontWeight: 700, color: '#8b5cf6' }}>
+                        {!t.foto_url && (t.nome?.charAt(0) || '?')}
+                      </div>
+                      <span style={{ fontSize: 13, fontWeight: 600, color: C.text, flex: 1, minWidth: 0 }}>{t.nome}</span>
+                      <span style={{ fontSize: 12, color: C.t2 }}>{t.grupo_nome}</span>
+                      {t.desde && <span style={{ fontSize: 11, color: C.t3, width: 96, textAlign: 'right' }}>desde {fmtDate(t.desde)}</span>}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+
+          <div style={{ fontSize: 11, color: C.t3, lineHeight: 1.6 }}>
+            <strong>Fontes:</strong> grupos ativos e líderes (responsáveis pelos grupos) vêm do cadastro de grupos; líderes em treinamento, dos membros marcados como tal em cada grupo; a frequência, das chamadas dos encontros; a satisfação dos líderes, do último NPS registrado em Dados Brutos (tipo "NPS dos líderes").
+          </div>
+        </>
+      )}
     </div>
   );
 }

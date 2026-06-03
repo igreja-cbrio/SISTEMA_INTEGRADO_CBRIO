@@ -499,7 +499,7 @@ export default function Expansao() {
   ];
 
   // ═══════════════════════════════════════════════════════════
-  // RENDER — TAB 0: VISAO GERAL
+  // RENDER — TAB 0: VISÃO GERAL
   // ═══════════════════════════════════════════════════════════
   function renderVisaoGeral() {
     const overallPct = counts.total > 0 ? Math.round((counts.concluido / counts.total) * 100) : 0;
@@ -507,7 +507,7 @@ export default function Expansao() {
     // Workload by responsible
     const workloadMap = {};
     visibleMilestones.forEach(m => {
-      const name = m.responsible || 'Sem responsavel';
+      const name = m.responsible || 'Sem responsável';
       if (!workloadMap[name]) workloadMap[name] = { name, count: 0 };
       workloadMap[name].count++;
     });
@@ -587,7 +587,7 @@ export default function Expansao() {
           {workloadArr.length > 0 && (
             <div style={{ ...styles.card, flex: '1 1 340px', minWidth: 280 }}>
               <div style={{ padding: '20px 24px' }}>
-                <div style={{ fontSize: 15, fontWeight: 700, color: C.text, marginBottom: 12 }}>Carga por Responsavel</div>
+                <div style={{ fontSize: 15, fontWeight: 700, color: C.text, marginBottom: 12 }}>Carga por Responsável</div>
                 {workloadArr.map((w, i) => (
                   <div key={i} onClick={() => { setFResponsible(w.name); setTab(2); }}
                     style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8, cursor: 'pointer', padding: '3px 4px', borderRadius: 6, transition: 'background .1s' }}
@@ -607,9 +607,9 @@ export default function Expansao() {
           {/* Upcoming milestones */}
           <div style={{ ...styles.card, flex: '1 1 340px', minWidth: 280 }}>
             <div style={{ padding: '20px 24px' }}>
-              <div style={{ fontSize: 15, fontWeight: 700, color: C.text, marginBottom: 12 }}>Proximos Marcos (30 dias)</div>
+              <div style={{ fontSize: 15, fontWeight: 700, color: C.text, marginBottom: 12 }}>Próximos Marcos (30 dias)</div>
               {upcoming.length === 0 ? (
-                <div style={{ fontSize: 13, color: C.t3 }}>Nenhum marco nos proximos 30 dias.</div>
+                <div style={{ fontSize: 13, color: C.t3 }}>Nenhum marco nos próximos 30 dias.</div>
               ) : (
                 upcoming.map(m => (
                   <div key={m.id} onClick={() => openDetail(m)}
@@ -688,7 +688,7 @@ export default function Expansao() {
 
     return (
       <>
-        <div style={{ fontSize: 13, color: C.t3, marginBottom: 12 }}>Clique em um marco para ver detalhes. Passe o mouse para informacoes rapidas.</div>
+        <div style={{ fontSize: 13, color: C.t3, marginBottom: 12 }}>Clique em um marco para ver detalhes. Passe o mouse para informações rapidas.</div>
 
         {/* Legend */}
         <div style={{ display: 'flex', gap: 16, marginBottom: 12, flexWrap: 'wrap' }}>
@@ -866,12 +866,12 @@ export default function Expansao() {
           </div>
 
           <select value={fArea} onChange={e => setFArea(e.target.value)} style={styles.select}>
-            <option value="">Todas as areas</option>
+            <option value="">Todas as áreas</option>
             {allAreas.map(a => <option key={a} value={a}>{a}</option>)}
           </select>
 
           <select value={fResponsible} onChange={e => setFResponsible(e.target.value)} style={styles.select}>
-            <option value="">Todos os responsaveis</option>
+            <option value="">Todos os responsáveis</option>
             {allResponsibles.map(r => <option key={r} value={r}>{r}</option>)}
           </select>
 
@@ -905,8 +905,8 @@ export default function Expansao() {
                 <th style={styles.th}>#</th>
                 <th style={styles.th}>Nome</th>
                 <th style={styles.th}>Eixo</th>
-                <th style={styles.th}>Area</th>
-                <th style={styles.th}>Responsavel</th>
+                <th style={styles.th}>Área</th>
+                <th style={styles.th}>Responsável</th>
                 <th style={styles.th}>Prazo</th>
                 <th style={styles.th}>Status</th>
                 <th style={styles.th}>Entrega</th>
@@ -1094,7 +1094,7 @@ export default function Expansao() {
 
           <select value={ganttAreaFilter} onChange={e => setGanttAreaFilter(e.target.value)}
             style={{ fontSize: 12, padding: '4px 8px', borderRadius: 8, border: `1px solid ${C.border}`, background: C.card, color: C.text }}>
-            <option value="">Todas as areas</option>
+            <option value="">Todas as áreas</option>
             {allAreas.map(a => <option key={a} value={a}>{a}</option>)}
           </select>
 
@@ -1281,11 +1281,11 @@ export default function Expansao() {
         <div style={{ ...styles.card, padding: '20px 24px', marginBottom: 16 }}>
           <div style={styles.infoGrid}>
             <div>
-              <div style={styles.infoLabel}>Responsavel</div>
+              <div style={styles.infoLabel}>Responsável</div>
               <div style={styles.infoValue}>{mi.responsible || '\u2014'}</div>
             </div>
             <div>
-              <div style={styles.infoLabel}>Periodo</div>
+              <div style={styles.infoLabel}>Período</div>
               <div style={styles.infoValue}>{fmtDate(mi.date_start)} {'\u2192'} {fmtDate(mi.date_end)}</div>
             </div>
             <div>
@@ -1297,11 +1297,11 @@ export default function Expansao() {
               <div style={styles.infoValue}>{mi.phase || '\u2014'}</div>
             </div>
             <div>
-              <div style={styles.infoLabel}>Eixo Estrategico</div>
+              <div style={styles.infoLabel}>Eixo Estratégico</div>
               <div style={{ ...styles.infoValue, color: ax.color }}>{ax.name || '\u2014'}</div>
             </div>
             <div>
-              <div style={styles.infoLabel}>Objetivo Estrategico</div>
+              <div style={styles.infoLabel}>Objetivo Estratégico</div>
               <div style={styles.infoValue}>{mi.strategic_objective || ax.objective || '\u2014'}</div>
             </div>
             <div>
@@ -1389,7 +1389,7 @@ export default function Expansao() {
     <div style={styles.page}>
       <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: 60, gap: 12 }}>
         <div style={{ width: 28, height: 28, border: `3px solid ${C.border}`, borderTopColor: C.primary, borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
-        <span style={{ fontSize: 13, color: C.t3 }}>Carregando plano de expansao...</span>
+        <span style={{ fontSize: 13, color: C.t3 }}>Carregando plano de expansão...</span>
         <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
       </div>
     </div>
@@ -1400,7 +1400,7 @@ export default function Expansao() {
       {/* Header */}
       <div style={styles.header}>
         <div>
-          <div style={styles.title}>Plano de Expansao 2026-2029</div>
+          <div style={styles.title}>Plano de Expansão 2026-2029</div>
           <div style={styles.subtitle}>Quadrienio estrategico {'\u2014'} Pr. Pedrao</div>
         </div>
         {canEdit && (

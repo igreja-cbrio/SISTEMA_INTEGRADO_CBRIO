@@ -97,7 +97,7 @@ export default function ColetaPendentes({ onChange }) {
           <Check className="h-8 w-8 text-emerald-600" />
         </div>
         <p className="text-sm font-medium text-foreground">Tudo aprovado!</p>
-        <p className="text-xs text-muted-foreground mt-1">Sem submissoes pendentes de aprovacao</p>
+        <p className="text-xs text-muted-foreground mt-1">Sem submissoes pendentes de aprovação</p>
         <Button variant="outline" size="sm" onClick={carregar} className="mt-4 gap-2">
           <RefreshCw className="h-3.5 w-3.5" /> Atualizar
         </Button>
@@ -125,7 +125,7 @@ export default function ColetaPendentes({ onChange }) {
         const sHora = sub.culto?.service_type?.recurrence_time ? String(sub.culto.service_type.recurrence_time).slice(0,5) : '';
         const initials = nomeSubmitter.split(' ').map(n => n[0]).slice(0,2).join('').toUpperCase();
 
-        // Mostrar valor atual no culto (se ja tem) pra coord comparar
+        // Mostrar valor atual no culto (se já tem) pra coord comparar
         const atualPresencial = isKids ? sub.culto?.presencial_kids : sub.culto?.presencial_adulto;
         const atualDecisoes = isKids ? sub.culto?.decisoes_kids : sub.culto?.decisoes_presenciais;
         const temAtual = (atualPresencial != null && atualPresencial > 0) || (atualDecisoes != null && atualDecisoes > 0);
@@ -190,7 +190,7 @@ export default function ColetaPendentes({ onChange }) {
               </div>
             </div>
 
-            {/* Observacao */}
+            {/* Observação */}
             {sub.observacao && (
               <div className="px-4 pb-3 -mt-2">
                 <div className="flex items-start gap-2 text-xs bg-secondary/40 rounded-lg p-2.5">
@@ -200,7 +200,7 @@ export default function ColetaPendentes({ onChange }) {
               </div>
             )}
 
-            {/* Acoes */}
+            {/* Ações */}
             <div className="px-4 py-3 border-t border-border flex gap-2">
               <Button
                 variant="outline"
@@ -235,7 +235,7 @@ export default function ColetaPendentes({ onChange }) {
             </DialogDescription>
           </DialogHeader>
           <Textarea
-            placeholder="Ex: nao bate com a contagem do voluntario..."
+            placeholder="Ex: não bate com a contagem do voluntário..."
             value={rejeitando?.motivo || ''}
             onChange={(e) => setRejeitando(r => ({ ...r, motivo: e.target.value }))}
             rows={3}

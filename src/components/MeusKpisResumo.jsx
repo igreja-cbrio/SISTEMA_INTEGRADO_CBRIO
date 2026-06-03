@@ -82,7 +82,7 @@ export default function MeusKpisResumo() {
     return { total: meus.length, em_dia, atrasado, pendente, faltam: atrasado + pendente };
   }, [meus, ultimoPorIndicador]);
 
-  // Sem area atribuida e nao admin: nao mostra o card
+  // Sem área atribuída e não admin: não mostra o card
   if (!isAdmin && kpiAreas.length === 0) return null;
 
   const tudoEmDia = stats.faltam === 0 && stats.total > 0;

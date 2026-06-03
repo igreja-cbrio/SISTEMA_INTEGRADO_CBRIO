@@ -317,7 +317,7 @@ ${input.isFinalizedEvent ? `- EVENTO ESTÁ FINALIZADO. Use tempo PASSADO ("foi e
   // Pra evento finalizado, todas as seções recebem a lista de tarefas que
   // ficaram em aberto no finalize. Cada seção decide se usa ou não.
   const closedBlock = input.isFinalizedEvent && input.closedWithEvent?.length
-    ? `\n\nTAREFAS QUE FICARAM EM ABERTO QUANDO O EVENTO FOI FINALIZADO (status real não foi concluida):\n${formatClosedWithEvent(input.closedWithEvent)}`
+    ? `\n\nTAREFAS QUE FICARAM EM ABERTO QUANDO O EVENTO FOI FINALIZADO (status real não foi concluída):\n${formatClosedWithEvent(input.closedWithEvent)}`
     : '';
 
   switch (sectionName) {

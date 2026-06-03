@@ -7,10 +7,9 @@ const CRON_SECRET = process.env.CRON_SECRET;
 
 // ── Cron / coletor automatico (auth via x-cron-secret ou Vercel cron) ──
 // Definido ANTES de router.use(authenticate) para nao exigir login.
+const { isAuthorizedCron } = require('../utils/cronAuth');
 async function autorizaCron(req, res, next) {
-  const auth = req.headers['x-cron-secret'] || req.headers['authorization'];
-  const isVercelCron = req.headers['user-agent']?.includes('vercel-cron');
-  if (!isVercelCron && auth !== CRON_SECRET && auth !== `Bearer ${CRON_SECRET}`) {
+  if (!isAuthorizedCron(req)) {
     return res.status(401).json({ error: 'unauthorized' });
   }
   next();
@@ -134,7 +133,7 @@ router.get('/tarefas/list', async (req, res) => {
   try {
     const { area, data_inicio, data_fim } = req.query;
     let q = supabase.from('tarefas_pessoais').select('*').order('data');
-    // FIX: admin/diretor ve todas; demais so as proprias
+    // FIX: admin/diretor ve todas; demais so as próprias
     const isAdmin = ['admin', 'diretor'].includes(req.user.role);
     if (!isAdmin) q = q.eq('created_by', req.user.userId);
     if (area) q = q.eq('area', area);
@@ -202,7 +201,7 @@ router.patch('/tarefas/:id', async (req, res) => {
     if (!isAdmin) q = q.eq('created_by', req.user.userId);
     const { data, error } = await q.select().single();
     if (error) throw error;
-    if (!data) return res.status(403).json({ error: 'Sem permissao' });
+    if (!data) return res.status(403).json({ error: 'Sem permissão' });
     res.json(data);
   } catch (e) {
     console.error('tarefas toggle:', e.message);
@@ -225,7 +224,7 @@ router.delete('/tarefas/:tid', async (req, res) => {
   }
 });
 
-// ═══ Rotas GENERICAS (/:id por ultimo) ═══
+// ═══ Rotas GENERICAS (/:id por último) ═══
 
 router.get('/', async (req, res) => {
   try {
@@ -249,7 +248,7 @@ router.get('/:id', async (req, res) => {
   try {
     const { data, error } = await supabase.from('processos').select('*').eq('id', req.params.id).single();
     if (error) throw error;
-    if (!data) return res.status(404).json({ error: 'Processo nao encontrado' });
+    if (!data) return res.status(404).json({ error: 'Processo não encontrado' });
     res.json(data);
   } catch (e) {
     console.error('processos get:', e.message);

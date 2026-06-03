@@ -1,13 +1,13 @@
 // ============================================================================
-// KPIs V2 - Hierarquia estrategica (NSM -> Direcionadores -> KPIs -> Taticos)
+// KPIs V2 - Hierarquia estratégica (NSM -> Direcionadores -> KPIs -> Taticos)
 //
 // Endpoints:
 //   GET  /api/kpis/v2/nsm                   - NSM do ano corrente
 //   GET  /api/kpis/v2/direcionadores        - 5 direcionadores + KPIs
 //   GET  /api/kpis/v2/estrategicos          - 17 KPIs com rollup dos taticos
 //   GET  /api/kpis/v2/taticos               - 55 indicadores + status atual
-//   GET  /api/kpis/v2/taticos/:id           - detalhe de um tatico + historico
-//   GET  /api/kpis/v2/areas                 - lista de areas com contagens
+//   GET  /api/kpis/v2/taticos/:id           - detalhe de um tatico + histórico
+//   GET  /api/kpis/v2/areas                 - lista de áreas com contagens
 //   POST /api/kpis/v2/registros             - lancar valor
 //   PUT  /api/kpis/v2/registros/:id         - editar lancamento
 //   GET  /api/kpis/v2/registros             - lista filtravel
@@ -24,13 +24,12 @@ const { coletarTodos } = require('../services/kpiAutoCollector');
 const CRON_SECRET = process.env.CRON_SECRET;
 
 // ----------------------------------------------------------------------------
-// Cron / coletor automatico (publico com auth de cron)
-// Definido ANTES do router.use(authenticate) para nao exigir login.
+// Cron / coletor automático (público com auth de cron)
+// Definido ANTES do router.use(authenticate) para não exigir login.
 // ----------------------------------------------------------------------------
+const { isAuthorizedCron } = require('../utils/cronAuth');
 async function autorizaCron(req, res, next) {
-  const auth = req.headers['x-cron-secret'] || req.headers['authorization'];
-  const isVercelCron = req.headers['user-agent']?.includes('vercel-cron');
-  if (!isVercelCron && auth !== CRON_SECRET && auth !== `Bearer ${CRON_SECRET}`) {
+  if (!isAuthorizedCron(req)) {
     return res.status(401).json({ error: 'unauthorized' });
   }
   next();
@@ -58,7 +57,7 @@ router.post('/cron/coletar', autorizaCron, async (_req, res) => {
 
 router.use(authenticate);
 
-// Bust automatico do painel apos mutacoes (edicao de KPI, lancamento de registro)
+// Bust automático do painel após mutacoes (edição de KPI, lancamento de registro)
 router.use((req, res, next) => {
   if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method)) {
     res.on('finish', () => {
@@ -84,7 +83,7 @@ router.post('/coletar', async (req, res) => {
 });
 
 // ----------------------------------------------------------------------------
-// Helpers de periodo
+// Helpers de período
 // ----------------------------------------------------------------------------
 function periodoAtual(periodicidade, date = new Date()) {
   const y = date.getUTCFullYear();
@@ -210,7 +209,7 @@ router.get('/taticos', async (req, res) => {
   if (error) return res.status(500).json({ error: error.message });
 
   // Enriquece com formula_config + entrada_manual do tipo dado_tipo
-  // (a view nao tem essas colunas · precisamos pra UI saber quem e auto/manual)
+  // (a view não tem essas colunas · precisamos pra UI saber quem e auto/manual)
   const ids = (data || []).map(d => d.id);
   let fcByKpi = {};
   if (ids.length) {
@@ -252,7 +251,7 @@ router.get('/taticos', async (req, res) => {
 });
 
 // ----------------------------------------------------------------------------
-// GET /taticos/:id - detalhe + historico de registros
+// GET /taticos/:id - detalhe + histórico de registros
 // ----------------------------------------------------------------------------
 router.get('/taticos/:id', async (req, res) => {
   const { id } = req.params;
@@ -264,7 +263,7 @@ router.get('/taticos/:id', async (req, res) => {
     .eq('id', id)
     .maybeSingle();
   if (e1) return res.status(500).json({ error: e1.message });
-  if (!tatico) return res.status(404).json({ error: 'Indicador nao encontrado' });
+  if (!tatico) return res.status(404).json({ error: 'Indicador não encontrado' });
 
   const { data: registros, error: e2 } = await supabase
     .from('kpi_registros')
@@ -286,12 +285,12 @@ router.get('/taticos/:id', async (req, res) => {
 
 // ----------------------------------------------------------------------------
 // PUT /taticos/:id - editar indicador (apenas admin/diretor)
-// Campos editaveis: indicador, descricao, area, periodicidade, periodo_offset_meses,
+// Campos editaveis: indicador, descrição, área, periodicidade, periodo_offset_meses,
 //                   meta_descricao, meta_valor, unidade, responsavel_area,
 //                   apuracao, sort_order, ativo, kpi_estrategico_id, fonte_auto,
 //                   valores, pilar
 // ----------------------------------------------------------------------------
-// Helper: extrai area de um indicador tatico pelo seu id
+// Helper: extrai área de um indicador tatico pelo seu id
 async function fetchIndicadorArea(indicadorId) {
   if (!indicadorId) return null;
   const { data } = await supabase.from('kpi_indicadores_taticos')
@@ -326,7 +325,7 @@ router.put('/taticos/:id', authorizeKpiArea(req => fetchIndicadorArea(req.params
       update[k] = v === '' ? null : v;
     }
   }
-  // Se vai marcar OKR, exige valores nao-vazio (no payload OU ja existente)
+  // Se vai marcar OKR, exige valores nao-vazio (no payload OU já existente)
   if (update.is_okr === true) {
     let valores = update.valores;
     if (!Array.isArray(valores)) {
@@ -350,13 +349,13 @@ router.put('/taticos/:id', authorizeKpiArea(req => fetchIndicadorArea(req.params
 
 // ----------------------------------------------------------------------------
 // POST /taticos - criar novo indicador (apenas admin/diretor)
-// Body: { id, indicador, area, periodicidade, ... }
-// id deve ser unico (ex: 'GRUP-06') e respeita PK existente.
+// Body: { id, indicador, área, periodicidade, ... }
+// id deve ser único (ex: 'GRUP-06') e respeita PK existente.
 // ----------------------------------------------------------------------------
 router.post('/taticos', authorizeKpiArea(req => req.body?.area), async (req, res) => {
   const b = req.body || {};
   if (!b.id || !b.indicador || !b.area || !b.periodicidade) {
-    return res.status(400).json({ error: 'id, indicador, area e periodicidade sao obrigatorios' });
+    return res.status(400).json({ error: 'id, indicador, área e periodicidade são obrigatórios' });
   }
   const VALID = ['semanal','mensal','trimestral','semestral','anual'];
   if (!VALID.includes(b.periodicidade)) {
@@ -399,14 +398,14 @@ router.post('/taticos', authorizeKpiArea(req => req.body?.area), async (req, res
     .select()
     .single();
   if (error) {
-    if (error.code === '23505') return res.status(409).json({ error: 'id ja existe' });
+    if (error.code === '23505') return res.status(409).json({ error: 'id já existe' });
     return res.status(500).json({ error: error.message });
   }
   res.status(201).json(data);
 });
 
 // ----------------------------------------------------------------------------
-// DELETE /taticos/:id - soft delete (ativo=false). Preserva historico.
+// DELETE /taticos/:id - soft delete (ativo=false). Preserva histórico.
 // Use ?hard=true para remover de fato (requer admin e nenhum registro vinculado).
 // ----------------------------------------------------------------------------
 router.delete('/taticos/:id', authorizeKpiArea(req => fetchIndicadorArea(req.params.id)), async (req, res) => {
@@ -437,7 +436,7 @@ router.delete('/taticos/:id', authorizeKpiArea(req => fetchIndicadorArea(req.par
 });
 
 // ----------------------------------------------------------------------------
-// GET /areas - lista de areas com contagens (saude da area)
+// GET /areas - lista de áreas com contagens (saúde da área)
 // ----------------------------------------------------------------------------
 router.get('/areas', async (req, res) => {
   const { data, error } = await supabase
@@ -482,12 +481,12 @@ router.get('/registros', async (req, res) => {
 });
 
 // ----------------------------------------------------------------------------
-// POST /registros - lancar valor (upsert por indicador+periodo)
+// POST /registros - lancar valor (upsert por indicador+período)
 // ----------------------------------------------------------------------------
 router.post('/registros', async (req, res) => {
   const { indicador_id, periodo_referencia, valor_realizado, valor_texto, observacoes, responsavel } = req.body;
   if (!indicador_id || !periodo_referencia) {
-    return res.status(400).json({ error: 'indicador_id e periodo_referencia sao obrigatorios' });
+    return res.status(400).json({ error: 'indicador_id e periodo_referencia são obrigatórios' });
   }
 
   // Verifica que o indicador existe
@@ -497,13 +496,13 @@ router.post('/registros', async (req, res) => {
     .eq('id', indicador_id)
     .maybeSingle();
   if (eTat) return res.status(500).json({ error: eTat.message });
-  if (!tatico) return res.status(404).json({ error: 'Indicador nao encontrado' });
+  if (!tatico) return res.status(404).json({ error: 'Indicador não encontrado' });
 
-  // Autoriza por area: admin/diretor passa direto; lider so da sua kpi_area
+  // Autoriza por área: admin/diretor passa direto; líder so da sua kpi_area
   if (!['admin', 'diretor'].includes(req.user?.role)) {
     const myAreas = (req.user?.kpi_areas || []).map(a => String(a).toLowerCase());
     if (!myAreas.includes(String(tatico.area || '').toLowerCase())) {
-      return res.status(403).json({ error: `Sem permissao para registrar KPIs da area "${tatico.area}"` });
+      return res.status(403).json({ error: `Sem permissão para registrar KPIs da área "${tatico.area}"` });
     }
   }
 
@@ -519,7 +518,7 @@ router.post('/registros', async (req, res) => {
     updated_at: new Date().toISOString(),
   };
 
-  // Upsert (atualiza se ja existe registro do mesmo indicador+periodo)
+  // Upsert (atualiza se já existe registro do mesmo indicador+período)
   const { data, error } = await supabase
     .from('kpi_registros')
     .upsert(payload, { onConflict: 'indicador_id,periodo_referencia' })
@@ -562,7 +561,7 @@ router.delete('/registros/:id', async (req, res) => {
 });
 
 // ----------------------------------------------------------------------------
-// GET /periodo-atual?periodicidade=semanal - util pro frontend saber o periodo
+// GET /periodo-atual?periodicidade=semanal - útil pro frontend saber o período
 // ----------------------------------------------------------------------------
 router.get('/periodo-atual', (req, res) => {
   const { periodicidade = 'mensal' } = req.query;

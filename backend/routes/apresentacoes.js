@@ -1,8 +1,8 @@
 // =====================================================================
-// /api/apresentacoes · CRUD + geracao IA + viewer publico
+// /api/apresentacoes · CRUD + geração IA + viewer público
 // =====================================================================
-// Nivel minimo 3 (lider+) pra criar/editar. Nivel 1 ve a propria lista.
-// Geracao sincrona dentro do timeout do Vercel (60s Hobby).
+// Nível mínimo 3 (líder+) pra criar/editar. Nível 1 ve a própria lista.
+// Geração sincrona dentro do timeout do Vercel (60s Hobby).
 // =====================================================================
 
 const router = require('express').Router();
@@ -12,20 +12,20 @@ const { supabase } = require('../utils/supabase');
 const { extractText } = require('../services/textExtractor');
 const { gerarApresentacao, MODEL_DEFAULT, MODEL_PREMIUM, PRICING } = require('../services/apresentacaoGenerator');
 
-// Multer em memoria · arquivos pequenos (15MB max por arquivo)
+// Multer em memória · arquivos pequenos (15MB max por arquivo)
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 15 * 1024 * 1024, files: 6 },
 });
 
-// Endpoint publico do viewer (HTML montado) NAO vai aqui · veja
+// Endpoint público do viewer (HTML montado) NÃO vai aqui · veja
 // /api/apresentacoes/:id/render abaixo · ele retorna HTML pra iframe
-// e exige auth via header tambem.
+// e exige auth via header também.
 
 router.use(authenticate);
 
 // ─────────────────────────────────────────────────────────────
-// GET /api/apresentacoes · lista do usuario logado (admin ve tudo)
+// GET /api/apresentacoes · lista do usuário logado (admin ve tudo)
 // query: limit (default 50), status (filtro)
 // ─────────────────────────────────────────────────────────────
 router.get('/', authorizeModule('apresentacoes', 1), async (req, res) => {
@@ -48,15 +48,15 @@ router.get('/', authorizeModule('apresentacoes', 1), async (req, res) => {
     res.json({ data: data || [] });
   } catch (e) {
     console.error('apresentacoes list:', e.message);
-    res.status(500).json({ error: 'Erro ao listar apresentacoes' });
+    res.status(500).json({ error: 'Erro ao listar apresentações' });
   }
 });
 
 // ─────────────────────────────────────────────────────────────
 // GET /api/apresentacoes/contexto/explorar-vault
 // Lista TODOS os .md do vault Cerebro CBRio recursivamente · admin
-// usa pra descobrir o que ja existe e me passar a lista pra eu
-// decidir o que injetar no contexto das apresentacoes.
+// usa pra descobrir o que já existe e me passar a lista pra eu
+// decidir o que injetar no contexto das apresentações.
 // ─────────────────────────────────────────────────────────────
 router.get('/contexto/explorar-vault', authorizeModule('apresentacoes', 5), async (req, res) => {
   try {
@@ -77,7 +77,7 @@ router.get('/contexto/explorar-vault', authorizeModule('apresentacoes', 5), asyn
     const vault = drives.value?.find(d => d.name === 'Cerebro CBRio');
     if (!vault) {
       return res.status(404).json({
-        error: 'Drive "Cerebro CBRio" nao encontrado',
+        error: 'Drive "Cerebro CBRio" não encontrado',
         drives_disponiveis: drives.value?.map(d => d.name) || [],
       });
     }
@@ -115,7 +115,7 @@ router.get('/contexto/explorar-vault', authorizeModule('apresentacoes', 5), asyn
             path: fullPath + '/',
           });
         } else if (item.file) {
-          // Lista TODOS os arquivos (nao so .md) pra Marcos ver
+          // Lista TODOS os arquivos (não so .md) pra Marcos ver
           arquivos.push({
             path: fullPath,
             nome: item.name,
@@ -144,8 +144,8 @@ router.get('/contexto/explorar-vault', authorizeModule('apresentacoes', 5), asyn
 
 // ─────────────────────────────────────────────────────────────
 // GET /api/apresentacoes/contexto/ler-arquivo?path=...
-// Le conteudo de um arquivo .md especifico do vault · admin usa
-// pra confirmar conteudo antes de injetar no contexto.
+// Le conteúdo de um arquivo .md especifico do vault · admin usa
+// pra confirmar conteúdo antes de injetar no contexto.
 // ─────────────────────────────────────────────────────────────
 router.get('/contexto/ler-arquivo', authorizeModule('apresentacoes', 5), async (req, res) => {
   try {
@@ -162,14 +162,14 @@ router.get('/contexto/ler-arquivo', authorizeModule('apresentacoes', 5), async (
     );
     const drives = await drivesRes.json();
     const vault = drives.value?.find(d => d.name === 'Cerebro CBRio');
-    if (!vault) return res.status(404).json({ error: 'vault nao encontrado' });
+    if (!vault) return res.status(404).json({ error: 'vault não encontrado' });
 
     const cleanPath = path.replace(/^\//, '');
     const r = await fetch(
       `https://graph.microsoft.com/v1.0/drives/${vault.id}/root:/${encodeURIComponent(cleanPath).replace(/%2F/g, '/')}:/content`,
       { headers: { Authorization: `Bearer ${token}` } },
     );
-    if (!r.ok) return res.status(r.status).json({ error: 'arquivo nao encontrado', status: r.status });
+    if (!r.ok) return res.status(r.status).json({ error: 'arquivo não encontrado', status: r.status });
     const conteudo = await r.text();
     res.json({ path, tamanho: conteudo.length, conteudo });
   } catch (e) {
@@ -190,9 +190,9 @@ router.get('/:id', authorizeModule('apresentacoes', 1), async (req, res) => {
       .eq('id', req.params.id)
       .single();
     if (error) throw error;
-    if (!apres) return res.status(404).json({ error: 'Apresentacao nao encontrada' });
+    if (!apres) return res.status(404).json({ error: 'Apresentação não encontrada' });
     if (!isAdmin && apres.profile_id !== req.user.id) {
-      return res.status(403).json({ error: 'Sem acesso a esta apresentacao' });
+      return res.status(403).json({ error: 'Sem acesso a esta apresentação' });
     }
 
     const { data: arquivos } = await supabase
@@ -204,13 +204,13 @@ router.get('/:id', authorizeModule('apresentacoes', 1), async (req, res) => {
     res.json({ apresentacao: apres, arquivos: arquivos || [] });
   } catch (e) {
     console.error('apresentacoes get:', e.message);
-    res.status(500).json({ error: 'Erro ao buscar apresentacao' });
+    res.status(500).json({ error: 'Erro ao buscar apresentação' });
   }
 });
 
 // ─────────────────────────────────────────────────────────────
 // POST /api/apresentacoes · cria registro pendente
-// body: { titulo, prompt, tom? }
+// body: { título, prompt, tom? }
 // retorno: { id, status: 'pendente' }
 // ─────────────────────────────────────────────────────────────
 router.post('/', authorizeModule('apresentacoes', 3), async (req, res) => {
@@ -220,7 +220,7 @@ router.post('/', authorizeModule('apresentacoes', 3), async (req, res) => {
       return res.status(400).json({ error: 'titulo obrigatorio (min 3 chars)' });
     }
     if (!prompt || prompt.length < 20) {
-      return res.status(400).json({ error: 'prompt obrigatorio (min 20 chars · descreva o que quer apresentar)' });
+      return res.status(400).json({ error: 'prompt obrigatório (min 20 chars · descreva o que quer apresentar)' });
     }
 
     // Valida modelo (so aceita ids conhecidos no PRICING map)
@@ -244,7 +244,7 @@ router.post('/', authorizeModule('apresentacoes', 3), async (req, res) => {
     res.status(201).json(data);
   } catch (e) {
     console.error('apresentacoes create:', e.message);
-    res.status(500).json({ error: 'Erro ao criar apresentacao' });
+    res.status(500).json({ error: 'Erro ao criar apresentação' });
   }
 });
 
@@ -260,7 +260,7 @@ router.post('/:id/arquivos', authorizeModule('apresentacoes', 3), upload.array('
       .eq('id', req.params.id)
       .single();
     if (e1) throw e1;
-    if (!apres) return res.status(404).json({ error: 'Apresentacao nao encontrada' });
+    if (!apres) return res.status(404).json({ error: 'Apresentação não encontrada' });
     if (apres.profile_id !== req.user.id && req.user.role !== 'admin') {
       return res.status(403).json({ error: 'Sem acesso' });
     }
@@ -334,18 +334,18 @@ router.post('/:id/gerar', authorizeModule('apresentacoes', 3), async (req, res) 
       .eq('id', req.params.id)
       .single();
     if (e1) throw e1;
-    if (!apres) return res.status(404).json({ error: 'Apresentacao nao encontrada' });
+    if (!apres) return res.status(404).json({ error: 'Apresentação não encontrada' });
     if (apres.profile_id !== req.user.id && req.user.role !== 'admin') {
-      return res.status(403).json({ error: 'Sem acesso a esta apresentacao' });
+      return res.status(403).json({ error: 'Sem acesso a esta apresentação' });
     }
     if (apres.status === 'gerando') {
-      return res.status(409).json({ error: 'Apresentacao ja esta sendo gerada' });
+      return res.status(409).json({ error: 'Apresentação já esta sendo gerada' });
     }
     if (apres.status === 'pronto' && !req.body?.regenerar) {
-      return res.status(409).json({ error: 'Ja gerada · use regenerar=true pra sobrescrever' });
+      return res.status(409).json({ error: 'Já gerada · use regenerar=true pra sobrescrever' });
     }
 
-    // Carrega arquivos com texto extraido (contexto CBRio vem do codigo,
+    // Carrega arquivos com texto extraido (contexto CBRio vem do código,
     // veja backend/services/apresentacaoContextoCbrio.js)
     const { data: arquivos } = await supabase
       .from('apresentacoes_arquivos')
@@ -367,7 +367,7 @@ router.post('/:id/gerar', authorizeModule('apresentacoes', 3), async (req, res) 
         contextoCerebro = await coletarContextoCompleto();
         console.log(`[apresentacoes] contexto Cerebro: ${contextoCerebro.notasIncluidas}/${contextoCerebro.totalNotas} notas, ${contextoCerebro.totalChars} chars, ${contextoCerebro.doCache ? 'cache' : 'fresco'} (${contextoCerebro.duracaoMs}ms)`);
       } catch (ctxErr) {
-        console.warn('[apresentacoes] falha ao coletar contexto Cerebro (segue sem):', ctxErr.message);
+        console.warn('[apresentações] falha ao coletar contexto Cerebro (segue sem):', ctxErr.message);
       }
     }
 
@@ -397,7 +397,7 @@ router.post('/:id/gerar', authorizeModule('apresentacoes', 3), async (req, res) 
         .eq('id', apres.id);
       if (e2) throw e2;
 
-      // Agrega telemetria diaria · best effort (upsert · soma manual se ja existir)
+      // Agrega telemetria diaria · best effort (upsert · soma manual se já existir)
       try {
         const hoje = new Date().toISOString().slice(0, 10);
         const { data: existing } = await supabase
@@ -458,14 +458,14 @@ router.post('/:id/gerar', authorizeModule('apresentacoes', 3), async (req, res) 
 
   } catch (e) {
     console.error('apresentacoes gerar:', e.message);
-    res.status(500).json({ error: 'Erro ao iniciar geracao · ' + e.message });
+    res.status(500).json({ error: 'Erro ao iniciar geração · ' + e.message });
   }
 });
 
 // ─────────────────────────────────────────────────────────────
 // POST /api/apresentacoes/:id/reset · marca como erro se travada
-// em 'gerando' ha mais de 90s (timeout da Vercel ja deve ter matado).
-// Permite ao usuario destravar e clicar "Tentar novamente".
+// em 'gerando' ha mais de 90s (timeout da Vercel já deve ter matado).
+// Permite ao usuário destravar e clicar "Tentar novamente".
 // ─────────────────────────────────────────────────────────────
 router.post('/:id/reset', authorizeModule('apresentacoes', 3), async (req, res) => {
   try {
@@ -484,7 +484,7 @@ router.post('/:id/reset', authorizeModule('apresentacoes', 3), async (req, res) 
     const idadeMs = Date.now() - new Date(apres.updated_at).getTime();
     if (idadeMs < 300_000) {
       return res.status(409).json({
-        error: 'Aguarde · ainda esta dentro do tempo normal de geracao (5min)',
+        error: 'Aguarde · ainda esta dentro do tempo normal de geração (5min)',
         idade_segundos: Math.floor(idadeMs / 1000),
       });
     }
@@ -540,15 +540,15 @@ router.get('/:id/render', authorizeModule('apresentacoes', 1), async (req, res) 
       .eq('id', req.params.id)
       .single();
     if (error) throw error;
-    if (!apres) return res.status(404).send('Apresentacao nao encontrada');
+    if (!apres) return res.status(404).send('Apresentação não encontrada');
     if (!isAdmin && apres.profile_id !== req.user.id) {
       return res.status(403).send('Sem acesso');
     }
     if (apres.status !== 'pronto') {
-      return res.status(409).send('Apresentacao ainda nao foi gerada');
+      return res.status(409).send('Apresentação ainda não foi gerada');
     }
 
-    // URL absoluta porque o HTML sera carregado dentro de iframe srcDoc
+    // URL absoluta porque o HTML será carregado dentro de iframe srcDoc
     // (cuja base e' about:srcdoc · paths relativos quebram).
     const frontendOrigin = process.env.FRONTEND_URL
       || (req.get('origin'))

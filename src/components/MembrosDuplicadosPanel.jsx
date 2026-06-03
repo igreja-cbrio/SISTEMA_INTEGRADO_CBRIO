@@ -1,10 +1,10 @@
 // ============================================================================
 // MembrosDuplicadosPanel · aba Duplicados de /ministerial/membresia
 //
-// Marcos: "caso alguem se converta ou levante a mao 2x · ter aba pra juntar".
+// Marcos: "caso alguém se converta ou levante a mão 2x · ter aba pra juntar".
 //
 // Mostra pares potencialmente duplicados (vw_membros_duplicados) · cada par
-// vem com confianca (0-100) e lista de motivos (cpf · telefone · email · etc).
+// vem com confiança (0-100) e lista de motivos (cpf · telefone · email · etc).
 // Opções por par:
 //   1. Fundir mantendo A (deleta B, FKs vão pra A, snapshot em log)
 //   2. Fundir mantendo B (vice-versa)

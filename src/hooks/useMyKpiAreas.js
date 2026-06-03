@@ -2,17 +2,17 @@ import { useMemo } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 
 /**
- * Hook de responsabilidades do usuario logado.
+ * Hook de responsabilidades do usuário logado.
  *
  *   const {
- *     kpiAreas,             // areas que lidera (kids, ami etc)
+ *     kpiAreas,             // áreas que lidera (kids, ami etc)
  *     kpiValores,           // valores que lidera (seguir, conectar etc)
  *     isAdmin,
  *     ministerioId, ministerioPapel,
  *     isDiretoriaGeral,
- *     canEditArea(area), canEditValor(valor), canSeeKpi(kpi),
- *     canEditDado(area, dadoTipoMinisterio),
- *     canValidate(area),
+ *     canEditArea(área), canEditValor(valor), canSeeKpi(kpi),
+ *     canEditDado(área, dadoTipoMinisterio),
+ *     canValidate(área),
  *     canEditAny,
  *   } = useMyKpiAreas();
  */
@@ -44,7 +44,7 @@ export function useMyKpiAreas() {
     return kpiValores.includes(String(valor).toLowerCase());
   };
 
-  // Visibilidade de um KPI: admin ve tudo, demais veem se area E/OU valor batem
+  // Visibilidade de um KPI: admin ve tudo, demais veem se área E/OU valor batem
   const canSeeKpi = (kpi) => {
     if (isAdmin) return true;
     const area = String(kpi?.area_db || kpi?.area || '').toLowerCase();
@@ -53,7 +53,7 @@ export function useMyKpiAreas() {
     return valores.some(v => kpiValores.includes(v));
   };
 
-  // Pode editar dado bruto se admin OU lider de area OU dono do valor OU lider/assistente do ministerio do tipo
+  // Pode editar dado bruto se admin OU líder de área OU dono do valor OU lider/assistente do ministério do tipo
   const canEditDado = (area, dadoTipoMinisterio, valores = []) => {
     if (isAdmin) return true;
     if (kpiAreas.includes(String(area || '').toLowerCase())) return true;
@@ -62,7 +62,7 @@ export function useMyKpiAreas() {
     return false;
   };
 
-  // So lider de area (e admin) valida dado
+  // So líder de área (e admin) valida dado
   const canValidate = (area) => {
     if (isAdmin) return true;
     return kpiAreas.includes(String(area || '').toLowerCase());

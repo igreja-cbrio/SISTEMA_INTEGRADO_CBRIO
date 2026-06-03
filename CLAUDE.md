@@ -2,6 +2,316 @@
 
 Guia operacional para o Claude Code quando trabalhar neste repositório.
 
+## ⚠️ REGRA GLOBAL · acentuação correta do português do Brasil (SEMPRE)
+
+**Toda vez** que implementar QUALQUER coisa neste sistema (nova feature, fix,
+refactor, label, mensagem de toast, placeholder, título, texto de botão, texto
+de notificação, e-mail, copy de página, comentário visível ao usuário, etc.),
+o texto em português **DEVE** estar com a **acentuação correta do português do
+Brasil**. Isso é obrigatório e não-negociável — não regredir.
+
+- Acentos agudos (á é í ó ú), circunflexos (â ê ô), til (ã õ), crase/grave (à),
+  cedilha (ç) e trema histórico quando aplicável. Ex.: "você", "usuário",
+  "permissões", "configurações", "ministério", "relatório", "ação", "não",
+  "está", "três", "código", "horário", "será", "número", "página", "área",
+  "índice", "saúde", "também", "responsável", "início", "próximo".
+- Vale para **todo texto visível ao usuário** no frontend (`src/`), mensagens
+  do backend (`backend/`), e-mails/notificações, e qualquer copy nova.
+
+**Exceção crítica (NÃO acentuar):** identificadores de código e dados nunca
+recebem acento — **slugs** de módulo/rota (`permissoes`, `solicitacoes`,
+`integracao`, `configuracoes`), **valores de enum** do banco, **chaves de
+objeto**, nomes de **variáveis/funções/arquivos**, **colunas** SQL e qualquer
+string que seja comparada/persistida como identificador. Acentuar esses quebra
+matching, RLS, rotas e o banco. A regra de acentuar vale para o **conteúdo
+exibido**, não para os identificadores técnicos.
+
+## Totem Kids · integração com PAGERS físicos (2026-06-02)
+
+Eduardo/Marcos: integrar os pagers que a igreja já usa ao pickup do Totem Kids —
+no check-in o voluntário entrega um pager numerado à família; no pickup o sistema
+faz **aquele** pager vibrar ("caso vibre, suba para ver sua criança").
+
+**Hardware real (confirmado por foto):** transmissor **LRS Freedom T7470** com
+porta **RJ-45 (rede)** + coasters redondos da LRS. (Há também um Retekess TD163 +
+coasters R8500, mas a LRS foi escolhida porque o **protocolo é público**: LRSN =
+XML sobre TCP, comando `<PageRequest pager="2;NUMERO" color="R" message="Flash5Min"/>`.)
+
+**Arquitetura — agente local (mesmo padrão do Brother/worker financeiro):** o
+Vercel serverless não alcança o transmissor físico, então um **agente local**
+(`pager-bridge/`, Node puro) roda num PC da recepção, na rede do Freedom. Ele faz
+só conexões de **saída** (HTTPS pro backend + TCP pro Freedom) e autentica por
+**bearer token** (`PAGER_BRIDGE_TOKEN`) — **não** carrega service_role nem abre porta.
+
+**Migration `20260602140000_kids_pagers.sql`** (ADITIVA · idempotente):
+- `kids_pagers` · catálogo de cada pager (`numero` = ID no LRS, `cor` char R/B/G/Y/O/P/W,
+  `tipo_lrs` default 2 = Guest, `responsavel_padrao_id`, `ativo`, soft-delete · na
+  whitelist `app_soft_deletable_tables()`).
+- `kids_checkins.pager_id` · qual pager a família levou (FK SET NULL).
+- `kids_pager_envios` · fila de saída que o agente consome (`status`
+  pendente→enviado/erro/cancelado, `origem` chamada/rechamada/teste/manual, snapshot
+  `pager_numero`/`cor`).
+- Trigger `fn_kids_checkout_cancela_pager` · cancela envios pendentes quando a
+  criança já saiu (checkout). RLS contextual `current_user_module_level('kids')`
+  (read≥1 · write≥3 · delete super-admin · service_role all).
+
+**Backend (`routes/totemKids.js`):** CRUD `/pager/pagers` (kids≥3), `/pager/em-uso`
+(quem está com cada pager agora), `/pager/pagers/:id/testar` (enfileira toque de teste),
+`/pager/envios` (histórico). No `POST /chamadas` (pickup, já existia e aciona a TV da
+sala), se o checkin tem `pager_id` ativo → insere `kids_pager_envios`. Endpoints do
+agente (bearer token · bypassam JWT): `GET /pager/bridge/fila` + `POST
+/pager/bridge/envios/:id/resultado`. `POST /checkin` aceita `pager_id`.
+
+**Frontend:** nova aba **"Pagers"** em `/admin/totem-kids` (CRUD + cor + vínculo a
+responsável padrão + botão "Testar toque" + aviso do agente). No check-in
+(`TotemKidsCheckin.tsx`) um select opcional "Pager da família" (lista só ativos e não
+em uso). `api.js`: `totemKids.pagers.{list,create,update,remove,testar,emUso,envios}`.
+
+**Agente `pager-bridge/`:** `index.js` (poll da fila → LRSN/TCP → reporta) + `.env.example`
++ `README.md`. Roda com `npm start` (Node 18+). `DRY_RUN=1` testa sem hardware.
+
+**⚠️ Pendências operacionais (não-código):**
+- **Aplicar a migration** antes do merge (o backend chama as tabelas novas).
+- Definir `PAGER_BRIDGE_TOKEN` no **Vercel** (backend) e no `.env` do agente (mesmo valor).
+- Confirmar com a LRS que a **Ethernet do Freedom aceita paging local (NetPage/LRSN)** e
+  qual a **porta TCP** (`LRS_PORT`, default 5000 é chute). Se a Ethernet só servir SMS em
+  nuvem, habilitar NetPage ou usar um TX-7471 — o comando LRSN já está implementado.
+
+## Monitoramento OKR · aba /monitoramento-okr (2026-06-02)
+
+Marcos pediu uma aba nova na **Inteligência** reproduzindo a planilha
+**"CBRio_cabeca_Juninho"** (ótica enxuta do Pr. Juninho · 1 NSM → 9 OKRs em 4
+blocos de Área Responsável → ~25 indicadores táticos), que se alimente sozinha
+onde já temos dado. **Decisão explícita do Marcos:** NÃO integrar à lógica dos
+25 OKRs / 150 KPIs do `/painel` — é uma ótica paralela, só reproduzir e exibir
+(não questionar a lógica da planilha).
+
+**Arquitetura (read-only · SEM migration · não toca o sistema OKR existente):**
+- **A estrutura fixa da planilha vive no frontend** (`src/pages/MonitoramentoOkr.jsx`,
+  consts `NSM`/`BLOCOS`) — textos, alvos, objetivos, área envolvida e memória de
+  cálculo exatos da planilha. É o modelo do Juninho, versionado em código.
+- **O backend devolve só os VALORES VIVOS** dos indicadores com fonte real
+  (`GET /api/painel/monitoramento-okr` em `backend/routes/painel.js`), indexados
+  por chave estável em `metricas[chave]`. Indicador sem fonte → o front mostra
+  pílula **"manual"** + a memória de cálculo (honesto · a maioria das fontes
+  operacionais ainda é nascente — ver abaixo).
+- Rota `/monitoramento-okr` (`App.tsx`, lazy) · item "Monitoramento OKR" em
+  Inteligência > Visão macro (`AppShell.jsx`, `module:'painel-cbrio'`, ícone
+  Compass) · `api.painel.monitoramentoOkr()`. Cache de 5 min (mesmo
+  `painelCache` do resto de `/painel`).
+
+**7 indicadores auto-alimentados (colunas verificadas contra o banco em 2026-06-02):**
+- **NSM central** (`vw_nsm_painel` segmento='central') = a Estrela do Norte do
+  Juninho na veia · hoje 5,9% vs alvo ≥50%.
+- **OKR Batismos** = batismos realizados 90d ÷ conversões 90d (`cultos`) · ~14,5%.
+- **Nº batismos/mês** (`batismo_inscricoes` status='realizado' · último mês
+  completo + média de 6 meses).
+- **Tempo decisão→batismo** = avg(`batismo_inscricoes.data_batismo` −
+  `mem_trilha_valores`(etapa='conversao')`.data_conclusao`) · ~57d (alvo ≤90).
+- **Nº DS online** = soma `cultos.decisoes_online` 90d.
+- **% assentos ocupados** = média `cultos.presencial_adulto` do Templo
+  (Domingo+Quarta+AMI, exclui Bridge via `vol_service_types.name`) ÷ 1200 ·
+  ~30,3% (mesma regra do card de ocupação da Integração).
+- **Rotatividade staff** = demissões 12m ÷ ativos (`rh_funcionarios`) · ~2%.
+
+**Manual (sem fonte ainda · mostram alvo + memória de cálculo):** prazo/café/Next,
+% grupos, % voluntários, % dizimistas (tabelas `mem_grupo_membros` /
+`mem_voluntarios` / `mem_contribuicoes` ainda **vazias** em prod), NPS culto
+on/presencial, follow-up online, retenção/compart./cliques YouTube, eficiência
+financeira, Q12 (Gallup), treinamentos, cronogramas/orçamentos de expansão.
+Quando essas fontes ganharem dado (módulos NPS, grupos, voluntariado,
+financeiro, produção), basta **adicionar um ramo no endpoint** + a chave `live`
+no tático correspondente em `BLOCOS` — sem mexer na estrutura.
+
+### Ajustes pós-avaliação do Marcos (2026-06-02 · v2)
+
+- **Pílula "manual" removida.** Tático sem fonte mostra só **"—"** (cinza); ao
+  **expandir** ele exibe a memória de cálculo + um bloco **"Para puxar automático,
+  preciso de: …"** (campo `precisa` no `BLOCOS`) — vira a lista do que o Marcos
+  precisa mandar pra cada indicador virar automático.
+- **Número inline + cor binária** em todo tático: verde no alvo / vermelho fora
+  (`avaliar()` agora retorna só verde/vermelho; sem alvo numérico comparável →
+  neutro teal, sem julgar — ex.: "+20% YoY" e "Nº batismos/mês"). NSM e OKR
+  idem (binário).
+- **Linha clicável → expande** (accordion inline, `ChevronDown` rotativo). Quando
+  o indicador tem série, mostra **gráfico de barras mensal** (recharts · 6 meses
+  completos) com linha tracejada no alvo. Backend passou a devolver `serie:
+  [{mes,valor}]` em `okr_batismos`/`batismos_mes` (batismos/mês), `ds_online` e
+  `assentos` (% ocupação/mês). `tempo_batismo`/`rotativ`/NSM ficam só com o número.
+- **"Café" → Acompanhamento "1º Encontro"** em todo o 1º OKR (nome + 2 táticos),
+  a pedido do Marcos.
+
+## Produção de Culto · aba /producao (2026-06-02)
+
+Marcos: criar aba pra área de **Produção de Culto** com (A) KPIs técnicos
+preenchidos POR CULTO (espelhando a Integração) e (B) os KPIs gerais que já
+existem (SLA de solicitações + NPS interno).
+
+**Achado que enxugou o trabalho:** `producao` já era área de Solicitações (SLA
+24/72 · coord Pedro Fernandes) e os KPIs gerais já existiam — `ADM-C-G-PRODUCAO`
+(% no SLA) e `ADM-C-Q-PRODUCAO` (NPS interno). A Parte B só **expõe** isso (não
+recria). Ver "OKR Criativo" (`20260512280000`).
+
+**Decisões (Marcos · 2026-06-02):**
+- Ocorrências = **log unificado** (tipo técnica/estrutura · descrição = rastro ·
+  severidade), não 2 campos soltos.
+- Checklist **itemizado** (template editável + marcação por culto → "% executado").
+- Pontualidade: duração-alvo **60 min** (`vol_service_types.meta_duracao_min`,
+  configurável por tipo no futuro) · observação **SEMPRE opcional** (nunca bloqueia
+  salvar, mesmo passando do tempo).
+- Os 4 KPIs por culto são **ESPECÍFICOS, não cascateiam**: `is_okr=false`,
+  `valores='{}'`, `objetivo_geral_id=NULL`. Aparecem no painel da área mas ficam
+  FORA da matriz NSM e da cascata OKR (separação que o Marcos pediu).
+
+**Migration `20260602140000_producao_culto_fundacao.sql`:**
+- Módulo `producao` em `modulos` + matriz copiada de `kids` (read universal nível 1).
+- Tabelas: `culto_producao` (satélite 1:1 de `cultos` · duração + obs),
+  `culto_producao_ocorrencias` (log), `producao_checklist_itens` (template ·
+  `service_type_id` NULL = vale pra todos), `culto_producao_checklist` (marcação).
+- `vol_service_types.meta_duracao_min int default 60`.
+- 4 KPIs `PROD-CULTO-{PONTUAL,CHECKLIST,FALHAS,ESTAB}` (`tipo_kpi='operacional'` ·
+  ⚠️ `tipo_kpi` só aceita `qualitativo|quantitativo|operacional`, NÃO `'tatico'` ·
+  `tipo_calculo='manual'`, `fonte_auto='producao.*'`).
+- Estende `kpi_calcular_valor_auto` com 4 ramos `producao.*` e `kpi_recalcular_para_data`
+  passa a cobrir `fonte_auto LIKE 'producao.%'`. Triggers AFTER ROW em
+  culto_producao/ocorrencias/checklist → recalc em tempo real (data via lookup).
+  Seed de 6 itens de checklist.
+
+**Boost (`backend/middleware/auth.js`):** `AREA_MODULO_BOOST['producao']='producao'`
++ `ROUTE_MODULE_MAP['producao']=['producao']` + `painel-area` inclui producao.
+⚠️ pós-migration: atribuir a área "Produção" ao Pedro Fernandes em /admin/permissoes
++ cache bust + logout/login → vira admin nível 5.
+
+**Backend (`routes/producao.js` · `/api/producao`):** `GET /semana?inicio&fim`
+(cultos da `vw_culto_stats` + produção mesclada); `GET /culto/:id`; `PUT /culto/:id`
+(nível 2 · upsert satélite); `POST /culto/:id/ocorrencias` + `DELETE /ocorrencias/:id`;
+`PUT /culto/:id/checklist` (bulk); `GET/POST/PATCH/DELETE /checklist-itens` (template,
+nível 3); `GET /acumulado`; `GET /desempenho` (KPIs próprios + SLA + NPS comparativo
+via `vw_kpi_trajetoria_atual`).
+
+**Frontend (`src/pages/ministerial/Producao.jsx` · rota `/producao`):** 6 sub-abas —
+Preenchimento (calendário semanal + modal: pontualidade, ocorrências, checklist,
+obs), Acumulado, Detalhado, Checklists (admin), Solicitações (fila
+`area_responsavel='producao'` reusando a API `solicitacoes` · andamento por select),
+Desempenho. `api.js` ganhou namespace `producao`. Menu em Criativo (`module:'producao'`).
+
+**Notificações (2026-06-02):** ocorrência crítica (`severidade='critica'`) dispara
+`notificar()` urgente (módulo `producao` · responsáveis da área + regras). Módulo
+`producao` registrado em `NotificacaoRegras.jsx`. Nova solicitação já é notificada
+pelo backbone de Solicitações.
+
+**Intake de Solicitações (2026-06-02 · migration `20260602160000`):** categoria
+**`producao`** no form de Solicitações roteia `area_responsavel='producao'` (só campos
+básicos · uso: movimentação de material, configuração de equipamentos). CHECK de
+`categoria` estendido; SLA da produção já existia (24/72). Backend: `ALLOWED_CATEGORIES`
++ `CATEGORIA_MODULO['producao']='producao'` + `CATEGORIA_TO_AREA_RESP` +
+`MODULO_CATEGORIAS`. Frontend: `CATEGORIAS` + `CATEGORIA_HINT` (sem bloco específico ·
+validação base titulo+categoria). Isso alimenta a fila da aba Solicitações da Produção
++ o KPI `ADM-C-G-PRODUCAO` (SLA).
+
+## Integração · % de ocupação de assentos na aba Frequência (2026-06-02 · sem migration)
+
+Marcos: card (estilo do de batismo) na aba **Frequência** (`/integracao` →
+`VisualizacaoFrequencia.tsx`, value `vis_frequencia`) com a **% média de assentos
+ocupados**, **toggle Templo/Kids** + **seletor por culto**.
+
+- **Conta:** `% = média da presença por culto ÷ capacidade`. Como a capacidade é
+  constante, isso equivale à média das ocupações por culto. Conta só cultos com
+  presença lançada (>0) no modo escolhido (culto sem dado não derruba a média).
+- **Capacidades (constantes no código):** Templo **1200** · Kids **250**.
+- **Templo** usa `presencial_adulto`; **Kids** usa `presencial_kids` (÷250 · seletor
+  só mostra cultos com Kids = Domingo + Quarta).
+- **Exclui Bridge e Online** do seletor de Templo (`foraDoTemplo` = regex no nome).
+  **AMI entra no Templo** (decisão do Marcos · 2026-06-02). Domingo + Quarta + AMI.
+- **100% client-side:** reusa o `cultos.list({data_inicio,data_fim})` que a aba já
+  carrega — sem backend, sem migration, sem mudança no `api.js`. Respeita o período
+  (3m/6m/12m/2a/5a) já selecionado na aba.
+- **UI:** `Armchair` + número grande (`X%`) + média/culto, nº de cultos e capacidade.
+  `ocupacao.alvo` faz fallback p/ 'todos' quando o culto selecionado não existe no modo.
+
+## Grupos · aba Relatórios de KPIs (2026-06-02)
+
+Marcos: "crie uma área dentro de grupos que seja possível ver os relatórios de
+kpis de grupos, como fizemos em integração... frequência, número de líderes,
+número de grupos, satisfação dos líderes e quantidade de líderes em treinamento".
+
+Nova aba **Relatórios** em `/grupos` (`src/pages/ministerial/Grupos.jsx`),
+espelhando o estilo de relatório da Integração (`VisualizacaoFrequencia.tsx`):
+seletor de período (3/6/12/24 meses) → linha de `StatisticsCard` → gráfico
+Recharts de frequência por mês → lista de líderes em treinamento. Respeita o
+filtro de **temporada** já presente na página. Read-only (visível a qualquer
+nível ≥1 no módulo · não gated por `podeEditarGrupos`).
+
+**5 métricas → fontes reais (todas computadas, não dependem do cache de KPI):**
+- **Nº de grupos** · `mem_grupos` ativos (`deleted_at IS NULL`, `ativo=true`)
+- **Nº de líderes** · count distinct `mem_grupos.lider_id` dos grupos ativos
+- **Líderes em treinamento** · `mem_grupo_membros.funcao='lider_treinamento'` (ativos)
+- **Satisfação dos líderes** · último `dados_brutos` com `tipo_id='nps_lideres'`
+  (preenchido em /dados-brutos ou módulo NPS · mostra "—" se não houver)
+- **Frequência** · `mem_grupo_encontros` + `mem_grupo_encontro_presencas`
+  (`presente=true`) · média por encontro + série mensal de presenças
+
+**Modelo de líder (refinamento Marcos · 2026-06-02):** uma só noção de líder = o
+**responsável pelo grupo** (`mem_grupos.lider_id`). A única outra função relevante
+é **líder em treinamento** (opcional). Por isso o relatório lista nominalmente os
+líderes em treinamento (nome + grupo) em vez da distribuição genérica de papéis.
+
+- **Marcar/desmarcar líder em treinamento** · na lista de membros do grupo
+  (`Grupos.jsx` detalhe) há a coluna **Treino**: quem edita grupos
+  (`podeEditarGrupos`) liga/desliga via `api.setFuncaoMembro(participacao_id, ...)`
+  (`'lider_treinamento'` ↔ `'frequentador'`). `GET /:id` passou a devolver `funcao`
+  em cada membro.
+- **`PUT /membros/:rowId/funcao`** · autorização ampliada (era só
+  admin/coordenador/supervisor da hierarquia): agora aceita também quem tem
+  **grupos ≥ 3** no módulo (mesma regra do `podeEditarGrupos`), pros líderes de
+  área (boost) conseguirem marcar. Ajuste no check do route handler (não em
+  `auth.js`/RLS/login).
+- **`GET /api/grupos/kpis/lideres-treinamento?temporada=`** · lista os
+  `funcao='lider_treinamento'` ativos (nome + grupo) · alimenta o card do relatório
+  (`api.lideresTreinamento`). Volume pequeno (sem risco do cap de 1000 linhas).
+
+**Migration `20260602120000_grupos_kpis_relatorio.sql`** (ADITIVA · `CREATE OR
+REPLACE FUNCTION` · sem mudança de schema): RPC `fn_grupos_kpis_relatorio(p_temporada
+text, p_meses int)` que agrega **tudo numa chamada** (STABLE SECURITY DEFINER).
+Motivo de ser RPC e não query no backend: encontros+presenças crescem rápido e
+bateriam no **cap de 1000 linhas do PostgREST** (silenciaria a frequência). ⚠️
+Aplicar a migration antes do merge (o backend chama a RPC).
+
+**Backend** (`backend/routes/grupos.js`): `GET /api/grupos/kpis/relatorio?temporada=&meses=`
+(nível 1 · só `authenticate`) chama a RPC. Colocado **antes de `/:id`** (senão o
+Express casa `/kpis` como `/:id`).
+
+**Frontend**: `api.relatorioKpis(params)` em `src/api.js`; componente
+`RelatorioGrupos` no fim de `Grupos.jsx`; aba `relatorios` (ícone `BarChart3`)
+logo após "Grupos" na barra de abas.
+
+## Batismos · tempo de conversão até o batismo (2026-06-02 · sem migration)
+
+Marcos: mostrar, na área de Batismos (`/integracao` aba Batismos), o **tempo de
+conversão até o batismo** — por pessoa (na janela do membro) e uma média geral
+em dias de todos os membros batizados.
+
+- **Data de conversão** = `mem_trilha_valores.data_conclusao` da etapa
+  `'conversao'` (mesma fonte do "Seguir a Jesus" da Jornada; criada pelo trigger
+  quando o visitante decide / decisão de culto vira trilha). **Data do batismo** =
+  `batismo_inscricoes.data_batismo`. Dias = `data_batismo − data_conversao`.
+- **Backend** (`routes/kpis.js` `GET /batismos`): além de `membro:membro_id(...)`,
+  busca em **lote** as trilhas `etapa='conversao'` dos membros vinculados e
+  devolve por inscrição `data_conversao` + `dias_conversao_batismo` (campos
+  aditivos · `membro` segue com o mesmo shape). Sem migration · sem mudança no
+  `api.js` (a lista só ganha 2 campos).
+- **Frontend** (`Batismos.tsx`):
+  - **Visão geral** · card "Tempo médio de conversão até o batismo" (após os 4
+    KPIs, antes do gráfico): média em dias entre os batismos **realizados** com
+    conversão registrada, + n de membros, mín e máx. Ignora dias negativos
+    (conversão posterior ao batismo = inconsistência).
+  - **Por membro** · no `ModalDetalheBatismo`, bloco azul que recalcula ao vivo
+    conforme a data do batismo é editada; trata 3 casos (tem conversão+data →
+    "N dias"; tem conversão sem data → pede a data; sem conversão na jornada →
+    aviso). Só aparece quando a inscrição tem `membro_id`.
+- Membros batizados **sem** etapa `conversao` na trilha (ex.: importados direto)
+  ficam de fora da média — honesto: só medimos quando há as duas datas.
+
 ## Marketing · REDESENHO em fases (2026-05-30) · EM ANDAMENTO
 
 Após feedback profundo do Pedro, o módulo Marketing está sendo redesenhado de
@@ -148,7 +458,10 @@ originalmente pensado pra Astro · adaptado num único componente React.
   `public/novosite/brand/`.
 - **Rota** em `src/App.tsx` (seção "Rotas publicas", lazy). Sem backend/migration ·
   rota de frontend (Vercel reescreve não-`/api` pra `index.html`).
-- **Pendente:** só o link de inscrição do **Next** (Marcos confirma depois · hoje fica "Em breve" sem link).
+- **Link do Next LIGADO (2026-06-01):** `LINKS.next = https://www.cbrio.org/next/inscrever`
+  em `novosite/shared.tsx`; o card "Next" da Jornada virou link (`href: LINKS.next`,
+  cta "Inscreva-se no Next", sem mais `soon`). Rota `/next/inscrever` existe em
+  `App.tsx` → `InscricaoNext`. Pendências de conteúdo do /novosite agora: zero.
 - **Ajustes pós-prints (2026-05-30):** galeria virou layout **bento** (1 destaque
   2x2 + apoio · `.ns-gallery-bento`/`.ns-g-feat`); **Jornada com 6 cards** (incluídos
   *Investir tempo com Deus* + *Next*, sem link ainda); **menu sobre o vídeo
@@ -174,6 +487,95 @@ originalmente pensado pra Astro · adaptado num único componente React.
   `/novosite#secao` e `useHashScroll` rola no destino). ⚠️ Botões agora são `<a>` →
   regras `.ns-btn.ns-btn-*` usam **dupla classe** p/ a cor vencer o reset `.ns a`
   (mesma armadilha do menu · não regredir).
+
+## Solicitações · 5 fluxos da administração · +Pagamentos +Serviços (2026-06-01)
+
+Marcos: a administração recebe **5 fluxos distintos com donos diferentes**
+(Reembolso, Reserva de Espaço, Compras, Pagamentos, Serviços), mas só 3 existiam.
+**Compras** era flat (só `valor_estimado`) e **Pagamentos/Serviços não existiam** —
+caíam no "Outro" (`area_responsavel=NULL` · sem dono, sem SLA, sem aprovação
+financeira automática · sumiam do radar e poluíam os KPIs adm). Decisão: adicionar
+os 2 fluxos + enriquecer Compras, com **form guiado por intenção + revelação
+progressiva** (cada fluxo só mostra os próprios campos · não fica mais pesado).
+
+**Migration `20260601120000_solicitacoes_pagamentos_servicos.sql`** (aditiva · idempotente):
+- CHECK de `categoria` aceita `'pagamento'` e `'servico'`.
+- Gatilho `tg_solicitacoes_calcula_sla` · lista de "sempre exige Yago" passa a ser
+  `compras/reembolso/pagamento/servico` (preserva a interação com a aprovação de
+  origem da Spec 001 · o portão financeiro só entra DEPOIS do diretor de origem).
+- Colunas novas (compartilhadas · reuso máximo): `favorecido_nome`,
+  `favorecido_documento`, `itens`, `link_referencia`, `recorrente`, `recorrencia`.
+  Reusa `documento_url`/`forma_pagamento`/`chave_pix`/`banco`/`agencia`/`conta`/
+  `valor_estimado` e **`data_necessaria` como vencimento** do pagamento.
+- Seed SLA: `financeiro/pagamento` (48/120 · urgente 24/48) e
+  `logistica_compras/servico` (72/336 · urgente 24/72). Obs: `financeiro` **não tem
+  subcategoria `default`** → pagamento PRECISA de linha própria (senão cai no
+  fallback 24/48 hardcoded da `calcular_sla_deadlines`).
+
+**Roteamento (backend `routes/solicitacoes.js`):**
+- `pagamento` → `financeiro` (subcat `pagamento`) · módulo notif `financeiro`.
+- `servico` → `logistica_compras` (subcat `servico`) · módulo notif `logistica` ·
+  **dono = Amaury/Compras** (decisão do Marcos · logística já negocia fornecedor).
+- `aprovar-financeiro` pós-Yago: `compras/servico` → `logistica_compras` (status
+  `pendente`, Amaury compra/contrata) · `reembolso/pagamento` → `financeiro` (status
+  `em_atendimento`, financeiro paga). `acaoMsg` por categoria na notificação.
+- `ALLOWED_CATEGORIES`, `CATEGORIA_MODULO`, `CATEGORIA_TO_AREA_RESP`,
+  `MODULO_CATEGORIAS` atualizados. POST aceita os campos novos por fluxo.
+
+**Frontend (`src/pages/Solicitacoes.jsx`):**
+- 2 categorias novas + `CATEGORIA_HINT` (dica curta por categoria · reduz erro de
+  classificação · "já gastou do bolso? use Reembolso").
+- Blocos por fluxo: Compras (itens+qtd, link, fornecedor), Serviço (o quê,
+  fornecedor, proposta, recorrência), Pagamento (favorecido, boleto/NF, vencimento,
+  forma boleto/PIX/transf, recorrência). `data_necessaria` vira "Vencimento *" no
+  pagamento. Validações `comprasValid`/`servicoValid`/`pagamentoValid`.
+- `DocDropzone` extraído (componente reusável · reembolso/pagamento/serviço) ·
+  removidos `dragOver`/`fileInputRef` do nível da página. `RecorrenteToggle` novo.
+- Preview "Prazo esperado" passou a casar **subcategoria** (CATEGORIAS ganhou `sub`)
+  → corrige também o reembolso, que mostrava o SLA de outra subcat.
+- Detalhe renderiza os campos novos por categoria.
+
+**Os 2 portões valem pros novos:** diretor de origem (Spec 001) → Yago (financeiro).
+**Decisões mantidas:** compras/pagamento/serviço **sempre** passam pelo Yago (sem
+bypass por valor · decisão de 22/05). **Follow-up não feito:** expor as subcategorias
+de RH que o backbone já tem (`vaga_nova/treinamento/documentacao/duvida` · hoje o form
+só mostra Férias/Licença). ⚠️ Aplicar a migration antes do merge.
+
+### Ajustes pós-avaliação do Marcos (2026-06-01 · sem migration)
+
+Depois de avaliar em prod, o Marcos refinou o significado dos fluxos. **Tudo
+frontend + backend, sem migration** (reúso da coluna `itens`):
+
+- **"Serviços" agora é MANUTENÇÃO INTERNA** (goteira, ar, elétrica → equipe da
+  igreja). Virou rótulo da categoria `infraestrutura` (→ `manutencao`, **NÃO** passa
+  pelo Yago). A categoria `servico` (contratação externa → logistica_compras + Yago)
+  **saiu do form** · contratar/pagar gente de fora agora é **Pagamento**. Os slugs
+  `servico`/`outro` continuam na CHECK do banco (linhas históricas), só não são mais
+  oferecidos. O SLA `logistica_compras/servico` fica dormente.
+- **"Outro" removido** do form (tirava o pretexto de furar o fluxo).
+- **Reembolso:** campo passa a ser **"Valor (exato da nota)"** obrigatório (era
+  "valor estimado"). **"Motivo do reembolso" removido** — era redundante com a
+  "Justificativa do pedido" (auditoria de redundância pedida pelo Marcos · os blocos
+  extras devem **complementar**, não repetir os campos gerais).
+- **Reserva de Espaço:** a Descrição vira "qual evento/finalidade" + campo novo
+  **"Material ou arrumação específica"** (gravado em `itens`). Detalhe da reserva
+  agora renderiza espaço/data/horário/pessoas + material.
+- **Seletor de área REMOVIDO do form.** O backend deriva `area_cliente` de quem
+  preenche — `kpi_areas[0]` (slug) → 1ª área de `usuario_areas` (nome normalizado p/
+  slug via `_slugArea`) → `profile.area`. Ignora qualquer `area_cliente` do body.
+  Crucial pros KPIs ADM ficarem corretos sem depender do solicitante escolher certo.
+- **Labels:** "Categoria" → **"Qual tipo de solicitação?"**, "Título" → **"Título da
+  solicitação"**, "Descrição" → **"Descrição da necessidade"**, "Justificativa" →
+  **"Justificativa do pedido"**.
+- **`DocDropzone`/`RecorrenteToggle`** seguem reusáveis (reembolso/pagamento). Limpei
+  os órfãos do seletor (`AREAS_MACRO`, `SUB_TO_MACRO`, `CARGO_TO_SUBAREA`, `cargoSlug`).
+- **Amaury** cadastrado em `area_solicitacoes_responsaveis` nas 4 áreas de logística
+  (`logistica_compras` = Compras · `manutencao` = Serviços · `reserva_espaco` ·
+  `logistica_estoque`) · via SQL no painel (limpeza/cozinha ficam com a Jéssica).
+
+**Mapa final de roteamento:** Compras→Amaury(logística)+Yago · Serviços(manutenção
+interna)→Amaury(manutenção, sem Yago) · Pagamento→Yago(financeiro) · Reembolso→Yago ·
+Reserva→Amaury(reserva_espaco) · TI→TI · Marketing→Pedro · Férias/Licença→RH.
 
 ## Solicitações · fix da ENTRADA do fluxo (validação E2E Marketing · 2026-05-28)
 

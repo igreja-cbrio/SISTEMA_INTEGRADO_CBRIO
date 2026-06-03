@@ -151,7 +151,7 @@ export default function DreCentroCusto() {
                       </div>
                     </div>
 
-                    {/* Comparacao com mes anterior */}
+                    {/* Comparacao com mês anterior */}
                     {variacao !== null && Math.abs(variacao) > 5 && (
                       <div className="text-[10px] mt-1.5 text-muted-foreground flex items-center gap-1">
                         {variacao >= 0
@@ -210,7 +210,7 @@ function CentroDetalheDialog({ centro, onClose }) {
           <button onClick={onClose}><X className="h-5 w-5" /></button>
         </div>
 
-        {/* Stats do mes atual */}
+        {/* Stats do mês atual */}
         <div className="grid grid-cols-3 gap-2 mb-4">
           <div className="text-center bg-emerald-500/10 border border-emerald-500/30 rounded p-2">
             <div className="text-[9px] uppercase text-emerald-700 dark:text-emerald-400">Receita</div>

@@ -1,5 +1,5 @@
 // ============================================================================
-// CalendarioCultos — Lista cultos do mes com status de preenchimento
+// CalendarioCultos — Lista cultos do mês com status de preenchimento
 // Click num culto abre modal para preencher os campos nativos da tabela `cultos`.
 // Usado em /minha-area (aba Dados) como forma principal de entrada de dados de culto.
 // ============================================================================
@@ -30,12 +30,12 @@ function toISO(d) { return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.
 function inicioSemana(d) {
   const c = new Date(d.getFullYear(), d.getMonth(), d.getDate());
   const dow = c.getDay();            // 0=dom, 1=seg, ... 6=sab
-  const diff = dow === 0 ? -6 : 1 - dow; // recua ate a segunda
+  const diff = dow === 0 ? -6 : 1 - dow; // recua até a segunda
   c.setDate(c.getDate() + diff);
   return c;
 }
 
-// Numero da semana ISO 8601 (semana com a quinta-feira pertence ao ano)
+// Número da semana ISO 8601 (semana com a quinta-feira pertence ao ano)
 function getISOWeek(d) {
   const date = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
   const dayNum = (date.getUTCDay() + 6) % 7;     // seg=0..dom=6
@@ -83,8 +83,8 @@ function formataDataCurta(dataStr) {
 
 export default function CalendarioCultos() {
   const hoje = new Date();
-  // Abre na SEMANA ANTERIOR por padrao · o fluxo eh preencher o que ja passou
-  // (a semana corrente ainda tem cultos que nao aconteceram). Setas navegam.
+  // Abre na SEMANA ANTERIOR por padrão · o fluxo eh preencher o que já passou
+  // (a semana corrente ainda tem cultos que não aconteceram). Setas navegam.
   const [semanaInicio, setSemanaInicio] = useState(() => {
     const ini = inicioSemana(hoje);
     ini.setDate(ini.getDate() - 7);
@@ -121,7 +121,7 @@ export default function CalendarioCultos() {
   };
   const voltarHoje = () => setSemanaInicio(inicioSemana(new Date()));
 
-  // Tipos unicos pro filtro (a partir dos cultos do mes)
+  // Tipos únicos pro filtro (a partir dos cultos do mês)
   const tiposDisponiveis = useMemo(() => {
     const map = new Map();
     cultos.forEach(c => {
@@ -340,7 +340,7 @@ function MiniCardCulto({ culto, onClick }) {
 }
 
 // ----------------------------------------------------------------------------
-// CardCulto — visual antigo (mantido pra fallback, nao usado na visao semanal)
+// CardCulto — visual antigo (mantido pra fallback, não usado na visão semanal)
 // ----------------------------------------------------------------------------
 function CardCulto({ culto, onClick }) {
   const { dia, diaSemana } = formataDataCurta(culto.data);
@@ -435,12 +435,12 @@ function ModalCulto({ culto, onClose, onSaved }) {
   const hasOnline = culto.service_type_has_online ?? false;
 
   // Valores iniciais (preservados pra detectar dirty)
-  // Marcos pediu pra deixar campos vazios em vez do 0 default · o 0 nao
-  // sai quando o usuario clica pra digitar e atrapalha a UX. Como o schema
-  // tem DEFAULT 0 nas colunas numericas, tratamos 0 como "nao preenchido"
+  // Marcos pediu pra deixar campos vazios em vez do 0 default · o 0 não
+  // sai quando o usuário clica pra digitar e atrapalha a UX. Como o schema
+  // tem DEFAULT 0 nas colunas numericas, tratamos 0 como "não preenchido"
   // pra fins de exibicao · ao salvar, vazio vira 0 de novo (linha ~482).
   // online_pico/ds/ddus/youtube_video_id ficam fora do dirty tracking
-  // porque sao read-only (gerenciados pela integracao com YouTube API).
+  // porque são read-only (gerenciados pela integração com YouTube API).
   const exibir = (v) => (v === 0 || v === null || v === undefined ? '' : String(v));
   const valoresIniciaisRef = useRef({
     presencial_adulto:    exibir(culto.presencial_adulto),
@@ -453,7 +453,7 @@ function ModalCulto({ culto, onClose, onSaved }) {
 
   const [form, setForm] = useState({
     ...valoresIniciaisRef.current,
-    // Estes ficam disponiveis pra exibicao read-only, mas nao entram no dirty
+    // Estes ficam disponíveis pra exibicao read-only, mas não entram no dirty
     online_pico:          culto.online_pico ?? '',
     online_ds:            culto.online_ds ?? '',
     online_ddus:          culto.online_ddus ?? '',
@@ -463,15 +463,15 @@ function ModalCulto({ culto, onClose, onSaved }) {
 
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
 
-  // Detecta alteracoes nao salvas pra avisar antes de fechar
-  // Marcos: "voce clica fora e zera tudo no meio da operacao"
+  // Detecta alteracoes não salvas pra avisar antes de fechar
+  // Marcos: "você clica fora e zera tudo no meio da operação"
   const isDirty = useMemo(() => {
     const orig = valoresIniciaisRef.current;
     return Object.keys(orig).some(k => String(orig[k] ?? '') !== String(form[k] ?? ''));
   }, [form]);
 
   const tentarFechar = useCallback(() => {
-    if (saving) return; // nao fecha durante salvamento
+    if (saving) return; // não fecha durante salvamento
     if (isDirty) {
       const ok = window.confirm(
         'Tem dados preenchidos que ainda não foram salvos.\n\n'
@@ -482,7 +482,7 @@ function ModalCulto({ culto, onClose, onSaved }) {
     onClose?.();
   }, [isDirty, onClose, saving]);
 
-  // ESC tambem usa tentarFechar
+  // ESC também usa tentarFechar
   useEffect(() => {
     const onKey = (e) => { if (e.key === 'Escape') tentarFechar(); };
     window.addEventListener('keydown', onKey);
@@ -492,13 +492,13 @@ function ModalCulto({ culto, onClose, onSaved }) {
   const submit = async () => {
     setSaving(true);
     try {
-      // Zera campos que esse tipo de culto nao usa · evita lixo no banco
-      // se alguem editou e depois o tipo mudou de config
+      // Zera campos que esse tipo de culto não usa · evita lixo no banco
+      // se alguém editou e depois o tipo mudou de config
       // online_pico, online_ds, online_ddus, youtube_video_id NÃO entram no
-      // payload · sao gerenciados pela integracao com a API do YouTube
+      // payload · são gerenciados pela integração com a API do YouTube
       // (cron do Matheus). Mexer aqui sobrescreve o que vem automatizado.
-      // Voluntariado nao entra no payload · alimentado direto do modulo
-      // Voluntariado (Planning Center). Integracao nao deve preencher isso.
+      // Voluntariado não entra no payload · alimentado direto do módulo
+      // Voluntariado (Planning Center). Integração não deve preencher isso.
       const payload = {
         presencial_adulto:    Number(form.presencial_adulto) || 0,
         presencial_kids:      hasKids ? (Number(form.presencial_kids) || 0) : 0,
@@ -697,22 +697,22 @@ const btnGhost = {
 // ============================================================================
 // DecisoesPessoasSection · captura nome/contato de cada pessoa que decidiu
 //
-// Marcos: "sempre que for preenchido as decisoes de pessoas, tenha um campo
-//          para ser inserido os dados de cada um que toma essa decisao em
+// Marcos: "sempre que for preenchido as decisões de pessoas, tenha um campo
+//          para ser inserido os dados de cada um que toma essa decisão em
 //          todos os cultos".
 //
 // UX:
 // - Mostra contador "X de Y registradas" baseado no valor de decisoes_presenciais
-//   + decisoes_online (totalEsperado) e quantas pessoas ja foram registradas
-// - Botao "+ Adicionar pessoa" abre form inline (nome obrigatorio, resto
+//   + decisoes_online (totalEsperado) e quantas pessoas já foram registradas
+// - Botao "+ Adicionar pessoa" abre form inline (nome obrigatório, resto
 //   opcional · CPF tenta vincular a mem_membros existente no backend)
-// - Lista as pessoas ja registradas · click pra editar/remover
+// - Lista as pessoas já registradas · click pra editar/remover
 // ============================================================================
 function DecisoesPessoasSection({ cultoId, totalEsperado, totalKidsEsperado = 0, hasOnline, hasKids }) {
   const [pessoas, setPessoas] = useState([]);
   const [loading, setLoading] = useState(false);
   const [showForm, setShowForm] = useState(false);
-  const [editando, setEditando] = useState(null); // id da pessoa em edicao
+  const [editando, setEditando] = useState(null); // id da pessoa em edição
 
   const carregar = useCallback(async () => {
     if (!cultoId) return;
@@ -744,7 +744,7 @@ function DecisoesPessoasSection({ cultoId, totalEsperado, totalKidsEsperado = 0,
     } catch (e) { toast.error(formatErro(e)); }
   };
 
-  // Contadores separados · kids tem fluxo proprio (sem trilha/NSM)
+  // Contadores separados · kids tem fluxo próprio (sem trilha/NSM)
   const pessoasAdultos = pessoas.filter(p => p.tipo_decisao !== 'kids');
   const pessoasKids    = pessoas.filter(p => p.tipo_decisao === 'kids');
   const registradas    = pessoasAdultos.length;
@@ -753,8 +753,8 @@ function DecisoesPessoasSection({ cultoId, totalEsperado, totalKidsEsperado = 0,
   const faltandoKids   = Math.max(0, totalKidsEsperado - registradasKids);
   const completo       = totalEsperado > 0 && registradas >= totalEsperado;
 
-  // Sempre mostra a secao (mesmo sem decisoes preenchidas) pra ficar visivel
-  // como funcionalidade · so esconde quando culto ainda nao foi salvo
+  // Sempre mostra a secao (mesmo sem decisões preenchidas) pra ficar visível
+  // como funcionalidade · so esconde quando culto ainda não foi salvo
 
   return (
     <div style={{
@@ -807,7 +807,7 @@ function DecisoesPessoasSection({ cultoId, totalEsperado, totalKidsEsperado = 0,
         </div>
       )}
 
-      {/* Lista de pessoas ja registradas */}
+      {/* Lista de pessoas já registradas */}
       {pessoas.length > 0 && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 4, marginBottom: 8 }}>
           {pessoas.map(p => editando === p.id ? (
@@ -895,7 +895,7 @@ function calcularIdade(dataNasc) {
   return idade >= 0 && idade <= 120 ? idade : null;
 }
 
-// Mascaras BR · 11 digitos exatos pra CPF e telefone (DDD + 9 + numero)
+// Mascaras BR · 11 digitos exatos pra CPF e telefone (DDD + 9 + número)
 function maskCpfBr(v) {
   const d = String(v || '').replace(/\D/g, '').slice(0, 11);
   if (d.length <= 3) return d;
@@ -923,7 +923,7 @@ function DecisaoPessoaForm({ cultoId, pessoa, hasOnline, hasKids, onSaved, onCan
     membro_id: pessoa?.membro_id || null,
     tipo_decisao: pessoa?.tipo_decisao || 'presencial',
     observacoes: pessoa?.observacoes || '',
-    // Kids · dados do responsavel (LGPD: crianca nao da os dados dela)
+    // Kids · dados do responsável (LGPD: criança não da os dados dela)
     responsavel_nome:     pessoa?.responsavel_nome || '',
     responsavel_telefone: pessoa?.responsavel_telefone || '',
     responsavel_cpf:      pessoa?.responsavel_cpf || '',
@@ -989,7 +989,7 @@ function DecisaoPessoaForm({ cultoId, pessoa, hasOnline, hasKids, onSaved, onCan
     }
 
     if (ehKids) {
-      // Kids · valida dados do responsavel (crianca nao tem CPF/telefone proprios obrigatorios)
+      // Kids · valida dados do responsável (criança não tem CPF/telefone próprios obrigatórios)
       if (!form.responsavel_nome.trim() || form.responsavel_nome.trim().length < 2) {
         toast.error('Nome do responsável obrigatório');
         return;
@@ -1151,7 +1151,7 @@ function DecisaoPessoaForm({ cultoId, pessoa, hasOnline, hasKids, onSaved, onCan
         </div>
       </div>
 
-      {/* Bloco do responsavel · so aparece quando tipo='kids' (LGPD pra menores) */}
+      {/* Bloco do responsável · so aparece quando tipo='kids' (LGPD pra menores) */}
       {ehKids && (
         <div style={{ background: '#EC489915', border: '1px solid #EC489940', borderRadius: 6, padding: 10, marginTop: 4 }}>
           <div style={{ fontSize: 10, fontWeight: 700, color: '#EC4899', marginBottom: 6, textTransform: 'uppercase', letterSpacing: 0.5 }}>

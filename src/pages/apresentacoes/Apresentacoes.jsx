@@ -194,7 +194,7 @@ export default function Apresentacoes() {
 }
 
 // ─────────────────────────────────────────────────────────────────────
-// Dialog · Nova apresentacao (com upload opcional)
+// Dialog · Nova apresentação (com upload opcional)
 // ─────────────────────────────────────────────────────────────────────
 function NovaApresentacaoDialog({ open, onClose, onCriada }) {
   const [titulo, setTitulo] = useState('');
@@ -229,7 +229,7 @@ function NovaApresentacaoDialog({ open, onClose, onCriada }) {
     }
     setCriando(true);
     try {
-      // 1. Cria registro · backend resolve o modelo (Sonnet com fallback automatico)
+      // 1. Cria registro · backend resolve o modelo (Sonnet com fallback automático)
       const { id } = await api.create({
         titulo: titulo.trim(),
         prompt: prompt.trim(),
@@ -242,9 +242,9 @@ function NovaApresentacaoDialog({ open, onClose, onCriada }) {
         await api.uploadArquivos(id, arquivos);
       }
 
-      // 3. Dispara geracao (background-style · cliente vai mostrar progresso)
+      // 3. Dispara geração (background-style · cliente vai mostrar progresso)
       api.gerar(id).catch(err => {
-        // Erro nao bloqueia · a pagina de detalhe vai pegar o status
+        // Erro não bloqueia · a página de detalhe vai pegar o status
         console.warn('[apresentacoes] gerar falhou (UI mostra erro):', err.message);
       });
 

@@ -62,7 +62,7 @@ export default function Usuarios() {
       const data = await api.usuario(colab.id);
       setUsuarioCarregado(data);
     } catch (e) {
-      toast.error(e.message || 'Erro ao carregar usuario');
+      toast.error(e.message || 'Erro ao carregar usuário');
     }
   }
 
@@ -200,7 +200,7 @@ export default function Usuarios() {
         {filtrados.length} {filtrados.length === 1 ? 'pessoa' : 'pessoas'}
       </p>
 
-      {/* Dialog de edicao */}
+      {/* Dialog de edição */}
       {editando && (
         <EditarUsuarioDialog
           colaborador={editando}
@@ -208,7 +208,7 @@ export default function Usuarios() {
           estrutura={estrutura}
           onClose={fecharEdicao}
           onSaved={async () => {
-            // Recarrega dados do usuario pra refletir mudancas
+            // Recarrega dados do usuário pra refletir mudanças
             try {
               const data = await api.usuario(editando.id);
               setUsuarioCarregado(data);

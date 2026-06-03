@@ -87,7 +87,7 @@ export default function VolDashboard() {
 
       {/* Upcoming services */}
       <Card>
-        <CardHeader><CardTitle className="text-lg">Proximos Cultos</CardTitle></CardHeader>
+        <CardHeader><CardTitle className="text-lg">Próximos Cultos</CardTitle></CardHeader>
         <CardContent>
           {upcomingServices.length === 0 ? (
             <p className="text-muted-foreground text-center py-4">Nenhum culto futuro sincronizado</p>

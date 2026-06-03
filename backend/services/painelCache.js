@@ -1,8 +1,8 @@
 // ============================================================================
-// painelCache · cache em memoria + invalidacao compartilhada
+// painelCache · cache em memória + invalidacao compartilhada
 //
-// Centraliza o cache do painel pra outros modulos (estrategia, dadosBrutos,
-// solicitacoes) poderem invalidar quando mutarem dados que afetam matrizes/
+// Centraliza o cache do painel pra outros módulos (estrategia, dadosBrutos,
+// solicitações) poderem invalidar quando mutarem dados que afetam matrizes/
 // mandalas.
 //
 // Importante: por ser cache de processo Node serverless, cada instancia tem

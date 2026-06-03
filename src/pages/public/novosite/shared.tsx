@@ -20,7 +20,7 @@ export const LINKS = {
   youtube: 'https://cbrio.tv',
   cbzap: 'https://wa.me/5521997567770',
   maps: 'https://www.google.com/maps/search/?api=1&query=CBRio',
-  // next: pendente — Marcos confirma o link de inscrição depois
+  next: 'https://www.cbrio.org/next/inscrever',
 };
 
 export const HOME = '/novosite';
