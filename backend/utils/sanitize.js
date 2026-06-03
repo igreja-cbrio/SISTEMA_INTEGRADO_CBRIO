@@ -22,6 +22,14 @@ const sanitizeObj = (obj) => {
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const isValidUUID = (id) => UUID_RE.test(id);
 
+// Escapa um valor que vai ser interpolado num filtro PostgREST `.or(...)`/`.filter(...)`.
+// Em `.or()`, virgula e parenteses sao ESTRUTURAIS (separadores logicos / grupos) e
+// `%`/`_` sao curingas do LIKE — se nao escapados, um `search` malicioso quebra a
+// expressao e injeta condicoes booleanas arbitrarias. Escapamos com `\` (sintaxe
+// que o PostgREST entende dentro do valor). Ex.: `x,id.gte.0)` deixa de ser estrutural.
+const escapePostgrestValue = (v) =>
+  String(v == null ? '' : v).replace(/[\\%_,()]/g, '\\$&');
+
 // Log de atividade no banco
 const logActivity = async (db, userId, action, entityType, entityId, entityName, oldVal, newVal) => {
   try {
@@ -35,4 +43,4 @@ const logActivity = async (db, userId, action, entityType, entityId, entityName,
   } catch (e) { /* silently fail — audit shouldn't break ops */ }
 };
 
-module.exports = { escapeHtml, sanitizeObj, isValidUUID, logActivity };
+module.exports = { escapeHtml, sanitizeObj, isValidUUID, escapePostgrestValue, logActivity };

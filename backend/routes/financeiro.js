@@ -1,17 +1,15 @@
 const router = require('express').Router();
 const multer = require('multer');
 const XLSX = require('xlsx');
-const { authenticate, authorizeModule } = require('../middleware/auth');
+const { authenticate, authorizeModule, getEffectiveLevel } = require('../middleware/auth');
 const { supabase } = require('../utils/supabase');
 
-const CRON_SECRET_FIN = process.env.CRON_SECRET;
+const { isAuthorizedCron } = require('../utils/cronAuth');
 
 // ── Cron · alertas (definido ANTES de router.use(authenticate)) ──
 router.get('/alertas/cron-gerar', async (req, res) => {
-  const auth = req.headers['x-cron-secret'] || req.headers['authorization'];
-  const isVercelCron = req.headers['user-agent']?.includes('vercel-cron');
-  if (!isVercelCron && auth !== CRON_SECRET_FIN && auth !== `Bearer ${CRON_SECRET_FIN}`) {
-    return res.status(401).json({ erro: 'Não autorizado' });
+  if (!isAuthorizedCron(req)) {
+    return res.status(401).json({ erro: 'Nao autorizado' });
   }
   try {
     const { data, error } = await supabase.rpc('gerar_alertas_financeiros');
@@ -268,6 +266,11 @@ router.patch('/reembolsos/:id', async (req, res) => {
   try {
     const { status } = req.body;
     if (!['aprovado', 'rejeitado', 'pago'].includes(status)) return res.status(400).json({ error: 'Status inválido' });
+    // Aprovar/pagar reembolso e decisao de gasto · exige nivel alto (>=4) ou
+    // admin/diretor. Nivel 2 (lancamento de numeros) NAO libera dinheiro.
+    if (!['admin', 'diretor'].includes(req.user.role) && getEffectiveLevel(req, 'financeiro') < 4) {
+      return res.status(403).json({ error: 'Sem permissão para aprovar/pagar reembolsos' });
+    }
     const { data, error } = await supabase.from('fin_reembolsos')
       .update({ status, aprovado_por: req.user.userId })
       .eq('id', req.params.id).select().single();

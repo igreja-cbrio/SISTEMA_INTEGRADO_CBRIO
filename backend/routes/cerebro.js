@@ -4,6 +4,7 @@ const { getGraphToken } = require('../services/storageService');
 const { processarFila } = require('../services/cerebroProcessor');
 const { processSyncFila, upsertNoteForEntity, getSupportedEntityTypes } = require('../services/cerebroSync');
 const { authenticate, authorize } = require('../middleware/auth');
+const { isAuthorizedCron } = require('../utils/cronAuth');
 
 const CRON_SECRET = process.env.CRON_SECRET;
 const HUB_SITE_ID = 'infracbrio.sharepoint.com,04b50f10-ea32-40ba-84bd-44a3b38ee2a7,94fe6af6-f064-455d-afc5-67a377f5e82c';
@@ -63,10 +64,8 @@ router.get('/webhook', (req, res) => {
 
 // POST /api/cerebro/subscriptions — criar subscriptions pra todas as bibliotecas
 router.post('/subscriptions', async (req, res) => {
-  const auth = req.headers['x-cron-secret'] || req.headers['authorization'];
-  const isVercelCron = req.headers['user-agent']?.includes('vercel-cron');
-  if (!isVercelCron && auth !== CRON_SECRET && auth !== `Bearer ${CRON_SECRET}`) {
-    return res.status(401).json({ erro: 'Não autorizado' });
+  if (!isAuthorizedCron(req)) {
+    return res.status(401).json({ erro: 'Nao autorizado' });
   }
 
   try {
@@ -137,10 +136,8 @@ router.post('/subscriptions', async (req, res) => {
 // ══════════════════════════════════════════════
 
 router.all('/processar', async (req, res) => {
-  const auth = req.headers['x-cron-secret'] || req.headers['authorization'];
-  const isVercelCron = req.headers['user-agent']?.includes('vercel-cron');
-  if (!isVercelCron && auth !== CRON_SECRET && auth !== `Bearer ${CRON_SECRET}`) {
-    return res.status(401).json({ erro: 'Não autorizado' });
+  if (!isAuthorizedCron(req)) {
+    return res.status(401).json({ erro: 'Nao autorizado' });
   }
 
   try {
@@ -261,10 +258,8 @@ async function processarFilaLimitada(limite) {
 
 // POST/GET /api/cerebro/sync-erp — cron que consome a fila de sync reverso
 router.all('/sync-erp', async (req, res) => {
-  const auth = req.headers['x-cron-secret'] || req.headers['authorization'];
-  const isVercelCron = req.headers['user-agent']?.includes('vercel-cron');
-  if (!isVercelCron && auth !== CRON_SECRET && auth !== `Bearer ${CRON_SECRET}`) {
-    return res.status(401).json({ erro: 'Não autorizado' });
+  if (!isAuthorizedCron(req)) {
+    return res.status(401).json({ erro: 'Nao autorizado' });
   }
 
   try {

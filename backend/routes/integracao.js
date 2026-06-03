@@ -2,6 +2,7 @@ const router = require('express').Router();
 const { authenticate } = require('../middleware/auth');
 const { supabase } = require('../utils/supabase');
 const { notificar } = require('../services/notificar');
+const { escapePostgrestValue } = require('../utils/sanitize');
 
 router.use(authenticate);
 
@@ -40,7 +41,7 @@ router.get('/visitantes', async (req, res) => {
     if (responsavel_id) q = q.eq('responsavel_id', responsavel_id);
     if (culto_id) q = q.eq('culto_id', culto_id);
     if (fez_decisao !== undefined) q = q.eq('fez_decisao', fez_decisao === 'true');
-    if (search) q = q.or(`nome.ilike.%${search}%,telefone.ilike.%${search}%,email.ilike.%${search}%`);
+    if (search) { const s = escapePostgrestValue(search); q = q.or(`nome.ilike.%${s}%,telefone.ilike.%${s}%,email.ilike.%${s}%`); }
 
     const { data, error } = await q;
     if (error) return res.status(400).json({ error: error.message });

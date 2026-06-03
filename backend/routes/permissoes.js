@@ -4,6 +4,18 @@ const { supabase } = require('../utils/supabase');
 
 router.use(authenticate, authorize('admin', 'diretor'));
 
+// Anti-escalacao de privilegio: ninguem altera o PROPRIO cargo/areas/overrides.
+// Mudar o proprio cargo pra `dev` (nivel 5 em tudo), se auto-conceder areas (boost
+// pra nivel 5) ou criar override pra si mesmo seria auto-promocao. Mudancas na
+// propria conta tem que passar por OUTRO admin (separacao de funcoes).
+function bloqueiaAutoEdicao(req, resolved) {
+  const sameProfile = req.params.id && String(req.params.id) === String(req.user.userId);
+  const sameUsuario = resolved?.id != null
+    && req.user.granular?.usuarioId != null
+    && String(resolved.id) === String(req.user.granular.usuarioId);
+  return sameProfile || sameUsuario;
+}
+
 // ────────────────────────────────────────────────────────────────────────
 // resolverUsuarioId · ponte entre profile (UUID) e usuários (integer/UUID)
 //
@@ -286,7 +298,7 @@ router.get('/diagnostico/:email', async (req, res) => {
       },
       modulos_resolvidos: modulosLookup.sort((a, b) => (a.slug || '').localeCompare(b.slug || '')),
     });
-  } catch (e) { res.status(500).json({ error: e.message, stack: e.stack }); }
+  } catch (e) { console.error('[PERMISSOES] diagnostico:', e.stack || e.message); res.status(500).json({ error: e.message }); }
 });
 
 // GET /api/permissoes/estrutura — setores, áreas, módulos, cargos
@@ -454,7 +466,10 @@ router.put('/usuario/:id/cargo', async (req, res) => {
   try {
     const { cargo_id } = req.body;
     const resolved = await resolverUsuarioId(req.params.id);
-    if (!resolved) return res.status(404).json({ error: 'Usuário não encontrado' });
+    if (!resolved) return res.status(404).json({ error: 'Usuario nao encontrado' });
+    if (bloqueiaAutoEdicao(req, resolved)) {
+      return res.status(403).json({ error: 'Você não pode alterar o próprio cargo. Peça a outro administrador.' });
+    }
 
     const updatePayload = { cargo_id };
     // updated_at so seta se a coluna existir · em prod a tabela pode não ter
@@ -483,7 +498,10 @@ router.put('/usuario/:id/areas', async (req, res) => {
   try {
     const { area_ids } = req.body; // array of área IDs
     const resolved = await resolverUsuarioId(req.params.id);
-    if (!resolved) return res.status(404).json({ error: 'Usuário não encontrado' });
+    if (!resolved) return res.status(404).json({ error: 'Usuario nao encontrado' });
+    if (bloqueiaAutoEdicao(req, resolved)) {
+      return res.status(403).json({ error: 'Você não pode alterar as próprias áreas. Peça a outro administrador.' });
+    }
     const userId = resolved.id;
 
     // Delete existing
@@ -514,7 +532,10 @@ router.put('/usuario/:id/modulo', async (req, res) => {
     } = req.body;
     if (!req.params.id || !modulo_id) return res.status(400).json({ error: 'usuário e módulo são obrigatórios' });
     const resolved = await resolverUsuarioId(req.params.id);
-    if (!resolved) return res.status(404).json({ error: 'Usuário não encontrado' });
+    if (!resolved) return res.status(404).json({ error: 'Usuario nao encontrado' });
+    if (bloqueiaAutoEdicao(req, resolved)) {
+      return res.status(403).json({ error: 'Você não pode alterar as próprias permissões. Peça a outro administrador.' });
+    }
     const userId = resolved.id;
 
     // Busca a celula default do cargo do usuário para o módulo

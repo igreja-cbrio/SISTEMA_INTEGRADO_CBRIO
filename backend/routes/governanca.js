@@ -7,6 +7,7 @@
  */
 const router = require('express').Router();
 const { authenticate } = require('../middleware/auth');
+const { isAuthorizedCron } = require('../utils/cronAuth');
 const { supabase } = require('../utils/supabase');
 
 router.use(authenticate);
@@ -428,9 +429,10 @@ router.post('/relatorio/:sigla/observacoes', async (req, res) => {
 // ══════════════════════════════════════════════
 
 router.get('/cron/lembrete', async (req, res) => {
-  // Verificar CRON_SECRET
-  const secret = req.headers['x-cron-secret'] || req.query.secret;
-  if (secret !== process.env.CRON_SECRET) return res.status(401).json({ error: 'Unauthorized' });
+  // Verificar CRON_SECRET · NUNCA via query string (vaza em logs/Referer) e
+  // sempre fail-closed/timing-safe (helper). Admin/diretor tambem pode disparar.
+  const isAdmin = ['admin', 'diretor'].includes(req.user?.role);
+  if (!isAuthorizedCron(req) && !isAdmin) return res.status(401).json({ error: 'Unauthorized' });
 
   try {
     const h = hoje();

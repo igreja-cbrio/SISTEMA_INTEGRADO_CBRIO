@@ -82,7 +82,7 @@ router.put('/plano-contas/:id', async (req, res) => {
   } catch (e) { res.status(500).json({ error: 'Erro ao atualizar conta' }); }
 });
 
-router.delete('/plano-contas/:id', async (req, res) => {
+router.delete('/plano-contas/:id', authorizeModule('financeiro', 4), async (req, res) => {
   try {
     // Soft delete · so desativa
     const { error } = await supabase.from('fin_plano_contas')
@@ -143,7 +143,7 @@ router.put('/centros-custo/:id', async (req, res) => {
   } catch (e) { res.status(500).json({ error: 'Erro ao atualizar centro' }); }
 });
 
-router.delete('/centros-custo/:id', async (req, res) => {
+router.delete('/centros-custo/:id', authorizeModule('financeiro', 4), async (req, res) => {
   try {
     const { error } = await supabase.from('fin_centros_custo')
       .update({ ativo: false, updated_at: new Date().toISOString() })
@@ -207,7 +207,7 @@ router.put('/identificadores/:id', async (req, res) => {
   } catch (e) { res.status(500).json({ error: 'Erro ao atualizar identificador' }); }
 });
 
-router.delete('/identificadores/:id', async (req, res) => {
+router.delete('/identificadores/:id', authorizeModule('financeiro', 4), async (req, res) => {
   try {
     const { error } = await supabase.from('fin_identificadores_centavo').delete().eq('id', req.params.id);
     if (error) return res.status(400).json({ error: error.message });
@@ -251,7 +251,7 @@ router.put('/culto-slots/:id', async (req, res) => {
   } catch (e) { res.status(500).json({ error: 'Erro ao atualizar slot' }); }
 });
 
-router.delete('/culto-slots/:id', async (req, res) => {
+router.delete('/culto-slots/:id', authorizeModule('financeiro', 4), async (req, res) => {
   try {
     const { error } = await supabase.from('fin_culto_slots').delete().eq('id', req.params.id);
     if (error) return res.status(400).json({ error: error.message });
@@ -295,7 +295,7 @@ router.put('/regras-classificacao/:id', async (req, res) => {
   } catch (e) { res.status(500).json({ error: 'Erro ao atualizar regra' }); }
 });
 
-router.delete('/regras-classificacao/:id', async (req, res) => {
+router.delete('/regras-classificacao/:id', authorizeModule('financeiro', 4), async (req, res) => {
   try {
     const { error } = await supabase.from('fin_regras_classificacao').delete().eq('id', req.params.id);
     if (error) return res.status(400).json({ error: error.message });
@@ -1734,7 +1734,7 @@ router.put('/metas/:id', async (req, res) => {
   } catch (e) { res.status(500).json({ error: 'Erro ao atualizar meta' }); }
 });
 
-router.delete('/metas/:id', async (req, res) => {
+router.delete('/metas/:id', authorizeModule('financeiro', 4), async (req, res) => {
   try {
     const { error } = await supabase.from('fin_metas').delete().eq('id', req.params.id);
     if (error) return res.status(400).json({ error: error.message });

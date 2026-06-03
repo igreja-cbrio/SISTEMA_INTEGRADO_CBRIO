@@ -6,10 +6,9 @@ const CRON_SECRET = process.env.CRON_SECRET;
 
 // Cron: refresh da view materializada (chamado por Vercel cron horario).
 // Definido ANTES de router.use(authenticate) pra Vercel cron chamar sem login.
+const { isAuthorizedCron } = require('../utils/cronAuth');
 async function autorizaCron(req, res, next) {
-  const auth = req.headers['x-cron-secret'] || req.headers['authorization'];
-  const isVercelCron = req.headers['user-agent']?.includes('vercel-cron');
-  if (!isVercelCron && auth !== CRON_SECRET && auth !== `Bearer ${CRON_SECRET}`) {
+  if (!isAuthorizedCron(req)) {
     return res.status(401).json({ error: 'unauthorized' });
   }
   next();
