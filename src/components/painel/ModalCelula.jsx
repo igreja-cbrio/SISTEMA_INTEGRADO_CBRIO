@@ -1,12 +1,12 @@
 // ============================================================================
 // ModalCelula — modal de drilldown ao clicar uma celula da matriz
 //
-// Mostra os KPIs da intersecao Area × Valor com:
-//   - Indicador, descricao
+// Mostra os KPIs da intersecao Área × Valor com:
+//   - Indicador, descrição
 //   - Status atual da trajetoria
-//   - Ultimo valor + periodo
+//   - Último valor + período
 //   - Meta atual (checkpoint)
-//   - Lider responsavel (rh_funcionarios)
+//   - Líder responsável (rh_funcionarios)
 //   - Badge OKR quando aplicavel
 // ============================================================================
 
@@ -121,7 +121,7 @@ export default function ModalCelula({ area, valor, cell, onClose }) {
           </button>
         </header>
 
-        {/* Conteudo */}
+        {/* Conteúdo */}
         <div style={{ padding: 24 }}>
           {loading ? (
             <div style={{ padding: 30, textAlign: 'center', color: C.t3, fontSize: 13 }}>
@@ -144,7 +144,7 @@ export default function ModalCelula({ area, valor, cell, onClose }) {
         </div>
       </div>
 
-      {/* Click num KPI vai direto pra edicao (sem passar pela tela de detalhe) */}
+      {/* Click num KPI vai direto pra edição (sem passar pela tela de detalhe) */}
       <KpiDetalheModal
         open={!!detalheKpiId}
         kpiId={detalheKpiId}

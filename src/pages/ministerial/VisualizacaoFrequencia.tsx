@@ -16,7 +16,7 @@ const C = { primary: '#00B39D', info: '#3b82f6', warn: '#f59e0b', purple: '#8b5c
 const CAP_TEMPLO = 1050;
 const CAP_KIDS = 250;
 
-// Bridge e Online nao acontecem no templo → ficam de fora da ocupacao.
+// Bridge e Online não acontecem no templo → ficam de fora da ocupacao.
 // (Online nem e tipo de culto · so sai de graca por usarmos presencial.)
 const ehBridge = (nome: string) => /bridge/i.test(nome);
 const ehOnline = (nome: string) => /online/i.test(nome);
@@ -95,7 +95,7 @@ export default function VisualizacaoFrequencia() {
     return { presencial, kids, online, totalPresencial, mediaPresencial, totalCultos: cultos.length, cultosComPresencial };
   }, [cultos]);
 
-  // Por mes · presencial (adulto+kids) + online stacked
+  // Por mês · presencial (adulto+kids) + online stacked
   const porMes = useMemo(() => {
     const map = new Map<string, { mes: string; presencial: number; kids: number; online: number }>();
     cultos.forEach(c => {
@@ -128,7 +128,7 @@ export default function VisualizacaoFrequencia() {
   }, [cultos]);
 
   // Tipos de culto elegiveis pro seletor de ocupacao (exclui Bridge/Online).
-  // No modo Kids, so os tipos que tem presenca de kids registrada no periodo.
+  // No modo Kids, so os tipos que tem presença de kids registrada no período.
   const tiposOcup = useMemo(() => {
     const m = new Map<string, number>();
     cultos.forEach(c => {
@@ -143,9 +143,9 @@ export default function VisualizacaoFrequencia() {
       .sort();
   }, [cultos, modoOcup]);
 
-  // % medio de assentos ocupados · media da presenca por culto ÷ capacidade.
-  // Conta so cultos com presenca lancada (>0) no modo escolhido · culto sem
-  // dado nao derruba a media. Capacidade: Templo 1050 · Kids 250.
+  // % medio de assentos ocupados · media da presença por culto ÷ capacidade.
+  // Conta so cultos com presença lancada (>0) no modo escolhido · culto sem
+  // dado não derruba a media. Capacidade: Templo 1050 · Kids 250.
   const ocupacao = useMemo(() => {
     const cap = modoOcup === 'templo' ? CAP_TEMPLO : CAP_KIDS;
     const alvo = (cultoOcup === 'todos' || tiposOcup.includes(cultoOcup)) ? cultoOcup : 'todos';

@@ -37,7 +37,7 @@ function cpfValido(v: string) {
   return dv1 === parseInt(d[9], 10) && dv2 === parseInt(d[10], 10);
 }
 
-// ── Catalogos (espelham os valores reais que ja existem em vol_inscricoes) ──
+// ── Catalogos (espelham os valores reais que já existem em vol_inscricoes) ──
 const DONS = [
   'Encorajamento', 'Hospitalidade', 'Ensino', 'Liderança', 'Ajuda',
   'Generosidade', 'Misericórdia', 'Cura', 'Fé', 'Sabedoria',
@@ -54,8 +54,8 @@ interface OpcaoServir {
   aviso_texto?: string | null;
 }
 
-// Fallback usado se o endpoint nao responder (ex: migration ainda nao aplicada).
-// As opcoes "de verdade" vem de GET /public/voluntariado/form-opcoes e sao
+// Fallback usado se o endpoint não responder (ex: migration ainda não aplicada).
+// As opções "de verdade" vem de GET /public/voluntariado/form-opcoes e são
 // gerenciadas em /ministerial/voluntariado/admin (ativar/desativar/adicionar).
 const OPCOES_FALLBACK: OpcaoServir[] = [
   { label: 'Kids', area_canonica: 'kids', exige_dados_menor: true,
@@ -94,7 +94,7 @@ function Field({
   const [focused, setFocused] = useState(false);
   const C = usePublicPalette();
   // type=date sempre exibe placeholder nativo (dd/mm/aaaa) · label flutua
-  // pra nao sobrepor.
+  // pra não sobrepor.
   const active = focused || type === 'date' || (value !== undefined && value !== null && String(value).length > 0);
   const Tag: any = as;
   return (
@@ -253,8 +253,8 @@ export default function InscricaoVoluntariado() {
   const [sent, setSent] = useState(false);
   const { C } = usePublicTheme();
 
-  // Opcoes vem do banco (gerenciadas no modulo de voluntariado). Fallback fica
-  // valendo se o endpoint nao responder.
+  // Opções vem do banco (gerenciadas no módulo de voluntariado). Fallback fica
+  // valendo se o endpoint não responder.
   useEffect(() => {
     publicVoluntariado.formOpcoes()
       .then((data: any[]) => {
@@ -273,9 +273,9 @@ export default function InscricaoVoluntariado() {
 
   const MAX_MINISTERIOS = 3;
   const selecionadas = opcoes.filter(o => ministerios.includes(o.label));
-  // Opcoes que exigem dados do menor (LGPD · CPF + nome da mae): Kids/Bridge.
+  // Opções que exigem dados do menor (LGPD · CPF + nome da mae): Kids/Bridge.
   const precisaDadosMenor = selecionadas.some(o => o.exige_dados_menor);
-  // Deriva a area canonica (vol_inscricoes.area) a partir das opcoes marcadas.
+  // Deriva a área canonica (vol_inscricoes.area) a partir das opções marcadas.
   const deriveArea = (mins: string[]): string => {
     const areas = opcoes.filter(o => mins.includes(o.label)).map(o => o.area_canonica);
     for (const a of ['kids', 'bridge', 'ami', 'online']) {

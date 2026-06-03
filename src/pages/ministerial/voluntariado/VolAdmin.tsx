@@ -43,7 +43,7 @@ export default function VolAdmin() {
   };
 
   const handleHistoricalSync = async () => {
-    if (!startDate || !endDate) { toast.error('Selecione datas de inicio e fim'); return; }
+    if (!startDate || !endDate) { toast.error('Selecione datas de início e fim'); return; }
     try {
       const result = await syncHistorical.mutateAsync({ startDate, endDate });
       toast.success(`Sincronizado: ${result.services} cultos, ${result.newSchedules} escalas`);
@@ -59,7 +59,7 @@ export default function VolAdmin() {
       const result = await voluntariado.syncDiagnostics();
       setDiagData(result);
     } catch (err: any) {
-      toast.error('Erro ao buscar diagnostico: ' + err.message);
+      toast.error('Erro ao buscar diagnóstico: ' + err.message);
     } finally {
       setDiagLoading(false);
     }
@@ -75,16 +75,16 @@ export default function VolAdmin() {
     <div className="space-y-6">
       <h1 className="text-2xl font-bold text-foreground">Administracao</h1>
 
-      {/* Opcoes do formulario publico */}
+      {/* Opções do formulário público */}
       <FormOpcoesManager />
 
       {/* PC Diagnostics */}
       <Card>
         <CardHeader>
-          <CardTitle className="flex items-center gap-2"><Stethoscope className="h-5 w-5" /> Diagnostico Planning Center</CardTitle>
+          <CardTitle className="flex items-center gap-2"><Stethoscope className="h-5 w-5" /> Diagnóstico Planning Center</CardTitle>
         </CardHeader>
         <CardContent className="space-y-3">
-          <p className="text-sm text-muted-foreground">Verifica o que o Planning Center tem configurado (tipos de servico, equipes e membros).</p>
+          <p className="text-sm text-muted-foreground">Verifica o que o Planning Center tem configurado (tipos de serviço, equipes e membros).</p>
           <Button variant="outline" onClick={handleDiagnostics} disabled={diagLoading}>
             {diagLoading ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Stethoscope className="h-4 w-4 mr-2" />}
             Rodar Diagnostico
@@ -94,7 +94,7 @@ export default function VolAdmin() {
             <div className="mt-3 space-y-2 text-sm">
               <p className="font-medium">{diagData.serviceTypeCount} tipo(s) de servico encontrado(s) no Planning Center</p>
               {diagData.serviceTypeCount === 0 && (
-                <p className="text-destructive">Nenhum tipo de servico encontrado. Verifique as credenciais ou configure servicos no Planning Center.</p>
+                <p className="text-destructive">Nenhum tipo de serviço encontrado. Verifique as credenciais ou configure serviços no Planning Center.</p>
               )}
               {(diagData.serviceTypes || []).map((st: any) => (
                 <div key={st.id} className="border rounded-lg overflow-hidden">
@@ -111,7 +111,7 @@ export default function VolAdmin() {
                   </button>
                   {diagOpen[st.id] && (
                     <div className="px-3 py-2 space-y-1">
-                      {st.teams.length === 0 && <p className="text-muted-foreground italic">Nenhuma equipe configurada neste tipo de servico.</p>}
+                      {st.teams.length === 0 && <p className="text-muted-foreground italic">Nenhuma equipe configurada neste tipo de serviço.</p>}
                       {st.teams.map((team: any) => (
                         <div key={team.id} className="py-1 border-b last:border-0">
                           <div className="flex items-center justify-between">
@@ -138,9 +138,9 @@ export default function VolAdmin() {
 
       {/* Historical Sync */}
       <Card>
-        <CardHeader><CardTitle className="flex items-center gap-2"><History className="h-5 w-5" /> Sincronizacao Historica</CardTitle></CardHeader>
+        <CardHeader><CardTitle className="flex items-center gap-2"><History className="h-5 w-5" /> Sincronizacao Histórica</CardTitle></CardHeader>
         <CardContent className="space-y-3">
-          <p className="text-sm text-muted-foreground">Sincronize cultos e escalas de um periodo especifico do Planning Center.</p>
+          <p className="text-sm text-muted-foreground">Sincronize cultos e escalas de um período especifico do Planning Center.</p>
           <div className="flex gap-2 flex-wrap">
             <Input type="date" value={startDate} onChange={e => setStartDate(e.target.value)} className="w-auto" />
             <Input type="date" value={endDate} onChange={e => setEndDate(e.target.value)} className="w-auto" />
@@ -154,7 +154,7 @@ export default function VolAdmin() {
 
       {/* User Management */}
       <Card>
-        <CardHeader><CardTitle>Usuarios e Roles</CardTitle></CardHeader>
+        <CardHeader><CardTitle>Usuários e Roles</CardTitle></CardHeader>
         <CardContent className="space-y-4">
           <div className="relative">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />

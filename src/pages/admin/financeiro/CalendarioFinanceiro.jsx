@@ -67,7 +67,7 @@ export default function CalendarioFinanceiro() {
     const dow1 = inicio.getDay();
     // Espacos vazios antes do dia 1
     for (let i = 0; i < dow1; i++) cells.push(null);
-    // Dias do mes
+    // Dias do mês
     for (let d = 1; d <= fim.getDate(); d++) {
       const dt = new Date(inicio); dt.setDate(d);
       cells.push(dt);

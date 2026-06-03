@@ -62,7 +62,7 @@ export default function ColetaCulto() {
   function abrirForm(culto, ambiente) {
     const lock = culto[ambiente];
     if (lock.submissao && (lock.submissao.status === 'pendente' || lock.submissao.status === 'aprovado')) {
-      toast.warning('Este ambiente ja teve dados enviados deste culto.');
+      toast.warning('Este ambiente já teve dados enviados deste culto.');
       return;
     }
     setAberto({ culto, ambiente });
@@ -91,7 +91,7 @@ export default function ColetaCulto() {
       <div className="sticky top-0 z-10 bg-card border-b border-border px-4 py-3 flex items-center justify-between">
         <div>
           <h1 className="text-lg font-bold text-foreground">Coleta de Culto</h1>
-          <p className="text-xs text-muted-foreground">Envie os numeros do culto que acabou</p>
+          <p className="text-xs text-muted-foreground">Envie os números do culto que acabou</p>
         </div>
         <button
           onClick={carregar}

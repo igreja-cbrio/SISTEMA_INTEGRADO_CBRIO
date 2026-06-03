@@ -1,8 +1,8 @@
 // Engine de analise financeira · gera alertas + forecast
 //
-// Roda no cron diario (notificacaoGenerator) e tambem sob demanda
+// Roda no cron diario (notificacaoGenerator) e também sob demanda
 // via endpoint admin. UPSERT em fin_alertas usando chave_dedup pra
-// nao gerar alertas duplicados no mesmo periodo.
+// não gerar alertas duplicados no mesmo período.
 
 const { supabase } = require('../utils/supabase');
 
@@ -69,8 +69,8 @@ async function detectarContribuintesSumidos({ minDoacoes = 3, minDiasSemDoar = 6
     const a = await upsertAlerta({
       tipo: 'contribuinte_sumido',
       severidade: s.dias_sem_doar >= 120 ? 'aviso' : 'info',
-      titulo: `${s.membro_nome} nao doa ha ${s.dias_sem_doar} dias`,
-      mensagem: `Doava em media ${fmtMoney(s.doacao_media)} (${s.doacoes_historico} doacoes nos ultimos 6 meses). Total acumulado: ${fmtMoney(s.total_doado)}. Ultima doacao em ${s.ultima_doacao}.`,
+      titulo: `${s.membro_nome} não doa ha ${s.dias_sem_doar} dias`,
+      mensagem: `Doava em media ${fmtMoney(s.doacao_media)} (${s.doacoes_historico} doacoes nos últimos 6 meses). Total acumulado: ${fmtMoney(s.total_doado)}. Última doacao em ${s.ultima_doacao}.`,
       dados: s,
       chave_dedup: `sumido-${s.membro_id}-${monthKey()}`,
       membro_id: s.membro_id,
@@ -82,7 +82,7 @@ async function detectarContribuintesSumidos({ minDoacoes = 3, minDiasSemDoar = 6
 
 /**
  * 3. Detecta despesas recorrentes fixas atrasadas
- * (proxima_estimada < hoje E sem transacao ligada nos ultimos 7 dias)
+ * (proxima_estimada < hoje E sem transacao ligada nos últimos 7 dias)
  */
 async function detectarDespesasFixasAtrasadas({ tolerantes_dias = 7 } = {}) {
   const hoje = new Date().toISOString().slice(0, 10);
@@ -99,7 +99,7 @@ async function detectarDespesasFixasAtrasadas({ tolerantes_dias = 7 } = {}) {
 
   const criados = [];
   for (const r of recorrencias) {
-    // Confere se ja teve transacao recente ligada
+    // Confere se já teve transacao recente ligada
     const desdeUltima = new Date(r.ultima_ocorrencia);
     desdeUltima.setDate(desdeUltima.getDate() + r.cadencia_dias - 3);
     const desdeStr = desdeUltima.toISOString().slice(0, 10);
@@ -110,7 +110,7 @@ async function detectarDespesasFixasAtrasadas({ tolerantes_dias = 7 } = {}) {
       .eq('recorrencia_id', r.id)
       .gte('data_competencia', desdeStr);
 
-    if (count && count > 0) continue; // ja foi paga
+    if (count && count > 0) continue; // já foi paga
 
     const diasAtraso = Math.floor((new Date() - new Date(r.proxima_estimada)) / 86400000);
     if (diasAtraso <= 0) continue;
@@ -151,15 +151,15 @@ async function detectarPicoAnormal({ multiplicadorPico = 5 } = {}) {
     tipo: 'pico_anormal',
     severidade: 'info',
     titulo: `Pico de receita: ${fmtMoney(atual.receita_total)} na semana ${atual.semana_label}`,
-    mensagem: `Mediana das ultimas 7 semanas: ${fmtMoney(mediana)}. Semana atual ${(Number(atual.receita_total) / mediana).toFixed(1)}x acima.`,
+    mensagem: `Mediana das últimas 7 semanas: ${fmtMoney(mediana)}. Semana atual ${(Number(atual.receita_total) / mediana).toFixed(1)}x acima.`,
     dados: { semana_atual: atual, mediana },
     chave_dedup: `pico-${atual.semana_inicio}`,
   });
 }
 
 /**
- * Forecast simples · media movel 4 semanas anteriores ajustada por sazonalidade
- * Retorna estimativa pras proximas N semanas qua-ter
+ * Forecast simples · media móvel 4 semanas anteriores ajustada por sazonalidade
+ * Retorna estimativa pras próximas N semanas qua-ter
  */
 async function gerarForecast({ semanasAdiante = 4 } = {}) {
   const { data: semanas } = await supabase
@@ -187,14 +187,14 @@ async function gerarForecast({ semanasAdiante = 4 } = {}) {
     const fim = new Date(inicio);
     fim.setDate(fim.getDate() + 6);
 
-    // Estimativa base = media 4 semanas, ajustada por tendencia anual se houver
+    // Estimativa base = media 4 semanas, ajustada por tendência anual se houver
     let estimativa = media4;
     if (mediaAnual && mediaAnual > 0) {
       const tendencia = media4 / mediaAnual;
       estimativa = mediaAnual * tendencia;
     }
 
-    // Intervalo de confianca · ±20% (heuristico)
+    // Intervalo de confiança · ±20% (heuristico)
     previsoes.push({
       semana_inicio: inicio.toISOString().slice(0, 10),
       semana_fim: fim.toISOString().slice(0, 10),

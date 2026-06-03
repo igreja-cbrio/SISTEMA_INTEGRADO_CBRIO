@@ -10,9 +10,9 @@ import {
 } from 'lucide-react';
 import { toast } from 'sonner';
 
-// Planner de capacidade (Fase 4b) · Gantt mensal de DIAS UTEIS (seg-sex).
+// Planner de capacidade (Fase 4b) · Gantt mensal de DIAS ÚTEIS (seg-sex).
 // Raias por pessoa · barras continuas (data_inicio -> data_fim) · arrastaveis.
-const COL_W = 44;    // largura px por dia util
+const COL_W = 44;    // largura px por dia útil
 const LANE_H = 26;   // altura px por faixa (lane de empilhamento)
 const NOME_W = 156;  // largura da coluna de nomes
 const MESES = ['Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho', 'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro'];
@@ -33,7 +33,7 @@ function diasUteisDoMes(ano, mes) {
   return out;
 }
 
-// dias uteis inclusive entre 2 Date
+// dias úteis inclusive entre 2 Date
 function contaDiasUteis(ini, fim) {
   if (fim < ini) return 1;
   let n = 0; const d = new Date(ini);
@@ -41,7 +41,7 @@ function contaDiasUteis(ini, fim) {
   return Math.max(1, n);
 }
 
-// Date do n-esimo dia util a partir de ini (inclusive · pula fds)
+// Date do n-esimo dia útil a partir de ini (inclusive · pula fds)
 function addDiasUteis(ini, nUteis) {
   let restante = Math.max(1, nUteis);
   const d = new Date(ini);
@@ -204,7 +204,7 @@ function RaiaMembro({ membro, cards, dias, hojeStr, podeEditar, onDragStartCard,
       return { ...c, s, e, durUteis: contaDiasUteis(ini, fim) };
     }).filter(Boolean);
     arr.sort((a, b) => a.s - b.s || a.e - b.e);
-    const laneEnd = []; // ultimo endIdx ocupado por lane
+    const laneEnd = []; // último endIdx ocupado por lane
     arr.forEach(it => {
       let lane = laneEnd.findIndex(end => end < it.s);
       if (lane === -1) { lane = laneEnd.length; laneEnd.push(it.e); } else laneEnd[lane] = it.e;

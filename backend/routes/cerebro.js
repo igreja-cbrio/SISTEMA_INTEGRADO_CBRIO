@@ -11,13 +11,13 @@ const HUB_SITE_ID = 'infracbrio.sharepoint.com,04b50f10-ea32-40ba-84bd-44a3b38ee
 const EXTENSOES = new Set(['pdf', 'xlsx', 'csv', 'docx', 'pptx', 'txt', 'md', 'json', 'png', 'jpg', 'jpeg']);
 
 // ══════════════════════════════════════════════
-// WEBHOOK — Microsoft Graph envia notificacoes aqui
+// WEBHOOK — Microsoft Graph envia notificações aqui
 // ══════════════════════════════════════════════
 
-// POST /api/cerebro/webhook — recebe notificacoes do Graph
-// Tambem responde ao GET de validacao (obrigatorio pra criar subscription)
+// POST /api/cerebro/webhook — recebe notificações do Graph
+// Também responde ao GET de validação (obrigatório pra criar subscription)
 router.post('/webhook', async (req, res) => {
-  // Validacao: Graph envia validationToken ao criar subscription
+  // Validação: Graph envia validationToken ao criar subscription
   if (req.query.validationToken) {
     console.log('[CEREBRO WEBHOOK] Validacao recebida');
     return res.set('Content-Type', 'text/plain').status(200).send(req.query.validationToken);
@@ -26,7 +26,7 @@ router.post('/webhook', async (req, res) => {
   // Responder 202 imediatamente (Graph exige resposta rapida)
   res.status(202).send('accepted');
 
-  // Processar notificacoes em background
+  // Processar notificações em background
   try {
     const notifications = req.body?.value || [];
     console.log(`[CEREBRO WEBHOOK] ${notifications.length} notificacao(es) recebida(s)`);
@@ -49,7 +49,7 @@ router.post('/webhook', async (req, res) => {
   }
 });
 
-// GET /api/cerebro/webhook — validacao do Graph (duplicado pra garantir)
+// GET /api/cerebro/webhook — validação do Graph (duplicado pra garantir)
 router.get('/webhook', (req, res) => {
   if (req.query.validationToken) {
     return res.set('Content-Type', 'text/plain').status(200).send(req.query.validationToken);
@@ -66,7 +66,7 @@ router.post('/subscriptions', async (req, res) => {
   const auth = req.headers['x-cron-secret'] || req.headers['authorization'];
   const isVercelCron = req.headers['user-agent']?.includes('vercel-cron');
   if (!isVercelCron && auth !== CRON_SECRET && auth !== `Bearer ${CRON_SECRET}`) {
-    return res.status(401).json({ erro: 'Nao autorizado' });
+    return res.status(401).json({ erro: 'Não autorizado' });
   }
 
   try {
@@ -140,7 +140,7 @@ router.all('/processar', async (req, res) => {
   const auth = req.headers['x-cron-secret'] || req.headers['authorization'];
   const isVercelCron = req.headers['user-agent']?.includes('vercel-cron');
   if (!isVercelCron && auth !== CRON_SECRET && auth !== `Bearer ${CRON_SECRET}`) {
-    return res.status(401).json({ erro: 'Nao autorizado' });
+    return res.status(401).json({ erro: 'Não autorizado' });
   }
 
   try {
@@ -264,7 +264,7 @@ router.all('/sync-erp', async (req, res) => {
   const auth = req.headers['x-cron-secret'] || req.headers['authorization'];
   const isVercelCron = req.headers['user-agent']?.includes('vercel-cron');
   if (!isVercelCron && auth !== CRON_SECRET && auth !== `Bearer ${CRON_SECRET}`) {
-    return res.status(401).json({ erro: 'Nao autorizado' });
+    return res.status(401).json({ erro: 'Não autorizado' });
   }
 
   try {

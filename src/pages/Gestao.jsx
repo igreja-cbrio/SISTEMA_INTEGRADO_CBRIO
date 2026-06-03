@@ -2,15 +2,15 @@
 // /gestao — Painel administrativo do PMO (Marcos + Matheus + Eduardo)
 //
 // 4 abas (consolidacao Maio/2026):
-//   - Diagnostico  → fusao Pulso + Saude (lideres pendentes + KPIs criticos +
-//                    saude por area + KPIs sem meta/dono/registro)
+//   - Diagnóstico  → fusao Pulso + Saúde (líderes pendentes + KPIs criticos +
+//                    saúde por área + KPIs sem meta/dono/registro)
 //   - Estrutura OKR → hierarquia Direcionador → Objetivo → KR → KPI
-//   - Operacional   → SLA / NPS / urgencia das solicitacoes
-//   - Configurar    → Cruzamentos, Regras de Notificacao, Metas Institucionais
+//   - Operacional   → SLA / NPS / urgência das solicitações
+//   - Configurar    → Cruzamentos, Regras de Notificação, Metas Institucionais
 //
 // Redirecionamentos das abas antigas:
-//   ?aba=pulso    → diagnostico
-//   ?aba=saude    → diagnostico
+//   ?aba=pulso    → diagnóstico
+//   ?aba=saude    → diagnóstico
 //   ?aba=metas    → configurar
 //   ?aba=painel_adm → operacional
 // ============================================================================
@@ -124,7 +124,7 @@ export default function Gestao() {
 }
 
 // ============================================================================
-// ABA · DIAGNOSTICO (fusao Pulso + Saude)
+// ABA · DIAGNÓSTICO (fusao Pulso + Saúde)
 // Carrega ambos endpoints em paralelo e renderiza em secoes.
 // ============================================================================
 function AbaDiagnostico() {
@@ -156,7 +156,7 @@ function AbaDiagnostico() {
       await gestaoApi.cobrar(lider.id);
       toast.success(`Lembrete enviado para ${lider.nome}`);
     } catch (e) {
-      toast.error(formatErro(e) + ' (lider tem profile vinculado?)');
+      toast.error(formatErro(e) + ' (líder tem profile vinculado?)');
     }
   };
 
@@ -165,11 +165,11 @@ function AbaDiagnostico() {
 
   return (
     <>
-      {/* Stats globais · fusao Pulso + Saude */}
+      {/* Stats globais · fusao Pulso + Saúde */}
       <Stats stats={[
         { label: 'KPIs ativos', value: pulso?.total_kpis_ativos ?? saude?.total_kpis_ativos ?? 0, cor: C.text },
         { label: 'KPIs criticos', value: pulso?.cronicamente_vermelhos?.length || 0, cor: '#EF4444' },
-        { label: 'Lideres com pendencia', value: (pulso?.lideres || []).filter(l => l.criticos > 0 || l.atrasados > 0).length, cor: '#EF4444' },
+        { label: 'Líderes com pendência', value: (pulso?.lideres || []).filter(l => l.criticos > 0 || l.atrasados > 0).length, cor: '#EF4444' },
         { label: 'Sem registro 60d', value: saude?.sem_registro_60d?.total || 0, cor: '#F59E0B' },
         { label: 'Sem meta', value: saude?.sem_meta?.total || 0, cor: '#9CA3AF' },
         { label: 'Sem dono', value: saude?.sem_dono?.total || 0, cor: '#9CA3AF' },
@@ -178,9 +178,9 @@ function AbaDiagnostico() {
       {/* SECAO 1 · STATUS OPERACIONAL (do Pulso) */}
       <h3 style={hSec}>Status operacional</h3>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(440px, 1fr))', gap: 16, marginBottom: 24 }}>
-        <Card title="Lideres com pendencias" subtitle="Ordenado por gravidade (criticos > atrasados > sem dado)">
+        <Card title="Líderes com pendências" subtitle="Ordenado por gravidade (criticos > atrasados > sem dado)">
           {!pulso?.lideres?.length ? (
-            <Vazio>Nenhum lider com pendencia.</Vazio>
+            <Vazio>Nenhum líder com pendência.</Vazio>
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
               {pulso.lideres.slice(0, 12).map(l => (
@@ -214,7 +214,7 @@ function AbaDiagnostico() {
           )}
         </Card>
 
-        <Card title="KPIs cronicamente criticos" subtitle="Indicadores em vermelho que precisam de atencao da diretoria">
+        <Card title="KPIs cronicamente criticos" subtitle="Indicadores em vermelho que precisam de atenção da diretoria">
           {!pulso?.cronicamente_vermelhos?.length ? (
             <Vazio>Nenhum KPI cronicamente vermelho.</Vazio>
           ) : (
@@ -247,8 +247,8 @@ function AbaDiagnostico() {
           )}
         </Card>
 
-        <Card title="Saude por area" subtitle="Percentual de KPIs em dia em cada area" full>
-          {!pulso?.areas?.length ? <Vazio>Nenhuma area cadastrada.</Vazio> : (
+        <Card title="Saúde por área" subtitle="Percentual de KPIs em dia em cada área" full>
+          {!pulso?.areas?.length ? <Vazio>Nenhuma área cadastrada.</Vazio> : (
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))', gap: 10 }}>
               {pulso.areas.map(a => {
                 const cor = a.percentual_em_dia >= 70 ? '#10B981' : a.percentual_em_dia >= 40 ? '#F59E0B' : '#EF4444';
@@ -275,23 +275,23 @@ function AbaDiagnostico() {
         </Card>
       </div>
 
-      {/* SECAO 2 · QUALIDADE DE CADASTRO (do Saude) */}
+      {/* SECAO 2 · QUALIDADE DE CADASTRO (do Saúde) */}
       <h3 style={hSec}>Qualidade do cadastro</h3>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(380px, 1fr))', gap: 16 }}>
         {saude && (<>
           <ListaSaude titulo="Sem meta definida"
             subtitulo="KPIs que precisam de uma meta antes de poder cobrar"
             items={saude.sem_meta.items} cor="#EF4444" onAbrirKpi={setDetalheKpiId} />
-          <ListaSaude titulo="Sem dono atribuido"
-            subtitulo="KPIs sem lider responsavel — ninguem e cobrado"
+          <ListaSaude titulo="Sem dono atribuído"
+            subtitulo="KPIs sem líder responsável — ninguém e cobrado"
             items={saude.sem_dono.items} cor="#F59E0B" onAbrirKpi={setDetalheKpiId} />
           <ListaSaude titulo="Sem objetivo geral vinculado"
-            subtitulo="Nao alimentam cascata automatica" items={saude.sem_objetivo.items} cor="#3B82F6" onAbrirKpi={setDetalheKpiId} />
+            subtitulo="Não alimentam cascata automática" items={saude.sem_objetivo.items} cor="#3B82F6" onAbrirKpi={setDetalheKpiId} />
           <ListaSaude titulo="Sem valores da Jornada"
-            subtitulo="Nao aparecem na matriz nem nas mandalas" items={saude.sem_valores.items} cor="#8B5CF6" onAbrirKpi={setDetalheKpiId} />
-          <ListaSaude titulo="Sem registro nos ultimos 60 dias"
-            subtitulo="KPIs vivos mas que ninguem preenche" items={saude.sem_registro_60d.items} cor="#EF4444" onAbrirKpi={setDetalheKpiId} />
-          <Card title="Cobertura da matriz Valor × Area" subtitle="Quais valores cada area ja tem KPI">
+            subtitulo="Não aparecem na matriz nem nas mandalas" items={saude.sem_valores.items} cor="#8B5CF6" onAbrirKpi={setDetalheKpiId} />
+          <ListaSaude titulo="Sem registro nos últimos 60 dias"
+            subtitulo="KPIs vivos mas que ninguém preenche" items={saude.sem_registro_60d.items} cor="#EF4444" onAbrirKpi={setDetalheKpiId} />
+          <Card title="Cobertura da matriz Valor × Área" subtitle="Quais valores cada área já tem KPI">
             <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
               {saude.matriz_cobertura.map(c => (
                 <div key={c.area} style={{ padding: 10, background: 'var(--cbrio-input-bg)', borderRadius: 6 }}>
@@ -312,7 +312,7 @@ function AbaDiagnostico() {
           </Card>
           {saude.objetivos_sem_kpis.total > 0 && (
             <ListaSaude titulo="Objetivos sem KPIs"
-              subtitulo="Objetivos cadastrados que ninguem mede"
+              subtitulo="Objetivos cadastrados que ninguém mede"
               items={saude.objetivos_sem_kpis.items} cor="#9CA3AF"
               cols={['nome']} idField="id" />
           )}
@@ -358,7 +358,7 @@ function AbaPulso() {
       await gestaoApi.cobrar(lider.id);
       toast.success(`Lembrete enviado para ${lider.nome}`);
     } catch (e) {
-      toast.error(formatErro(e) + ' (lider tem profile vinculado?)');
+      toast.error(formatErro(e) + ' (líder tem profile vinculado?)');
     }
   };
 
@@ -370,15 +370,15 @@ function AbaPulso() {
       <Stats stats={[
         { label: 'KPIs ativos', value: data.total_kpis_ativos, cor: C.text },
         { label: 'KPIs criticos', value: data.cronicamente_vermelhos.length, cor: '#EF4444' },
-        { label: 'Areas em alerta', value: data.areas.filter(a => a.percentual_em_dia < 50).length, cor: '#F59E0B' },
-        { label: 'Lideres com pendencia', value: data.lideres.filter(l => l.criticos > 0 || l.atrasados > 0).length, cor: '#EF4444' },
+        { label: 'Áreas em alerta', value: data.areas.filter(a => a.percentual_em_dia < 50).length, cor: '#F59E0B' },
+        { label: 'Líderes com pendência', value: data.lideres.filter(l => l.criticos > 0 || l.atrasados > 0).length, cor: '#EF4444' },
       ]} />
 
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(440px, 1fr))', gap: 16 }}>
-        {/* Lideres ranqueados por urgencia */}
-        <Card title="Lideres com pendencias" subtitle="Ordenado por gravidade (criticos > atrasados > sem dado)">
+        {/* Líderes ranqueados por urgência */}
+        <Card title="Líderes com pendências" subtitle="Ordenado por gravidade (criticos > atrasados > sem dado)">
           {data.lideres.length === 0 ? (
-            <Vazio>Nenhum lider com pendencia.</Vazio>
+            <Vazio>Nenhum líder com pendência.</Vazio>
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
               {data.lideres.slice(0, 12).map(l => (
@@ -416,7 +416,7 @@ function AbaPulso() {
         </Card>
 
         {/* KPIs cronicamente vermelhos */}
-        <Card title="KPIs cronicamente criticos" subtitle="Indicadores em vermelho que precisam de atencao da diretoria">
+        <Card title="KPIs cronicamente criticos" subtitle="Indicadores em vermelho que precisam de atenção da diretoria">
           {data.cronicamente_vermelhos.length === 0 ? (
             <Vazio>Nenhum KPI cronicamente vermelho.</Vazio>
           ) : (
@@ -452,9 +452,9 @@ function AbaPulso() {
           )}
         </Card>
 
-        {/* Areas (saude por area) */}
-        <Card title="Saude por area" subtitle="Percentual de KPIs em dia em cada area" full>
-          {data.areas.length === 0 ? <Vazio>Nenhuma area cadastrada.</Vazio> : (
+        {/* Áreas (saúde por área) */}
+        <Card title="Saúde por área" subtitle="Percentual de KPIs em dia em cada área" full>
+          {data.areas.length === 0 ? <Vazio>Nenhuma área cadastrada.</Vazio> : (
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))', gap: 10 }}>
               {data.areas.map(a => {
                 const cor = a.percentual_em_dia >= 70 ? '#10B981' : a.percentual_em_dia >= 40 ? '#F59E0B' : '#EF4444';
@@ -494,7 +494,7 @@ function AbaPulso() {
 
 // ============================================================================
 // ABA · PAINEL ADM
-// 8 areas adm (reserva_espaco, cozinha, manutencao, log_estoque, log_compras,
+// 8 áreas adm (reserva_espaco, cozinha, manutenção, log_estoque, log_compras,
 // ti, rh, financeiro) · indicadores operacionais puxados de vw_solicitacoes_sla
 // ============================================================================
 function AbaPainelAdm() {
@@ -614,14 +614,14 @@ function AbaConfigurar() {
   const items = [
     {
       titulo: 'Cruzamentos de pessoas',
-      desc: 'Quem cruza papeis e valores · "voluntarios que dizimam", "NEXT + grupos", etc',
+      desc: 'Quem cruza papéis e valores · "voluntários que dizimam", "NEXT + grupos", etc',
       Icon: Filter,
       path: '/admin/cruzamentos',
       cor: '#00B39D',
     },
     {
-      titulo: 'Regras de Notificacao',
-      desc: 'Quem recebe alertas de cada modulo',
+      titulo: 'Regras de Notificação',
+      desc: 'Quem recebe alertas de cada módulo',
       Icon: Bell,
       path: '/admin/notificacao-regras',
       cor: '#F59E0B',
@@ -675,7 +675,7 @@ function AbaConfigurar() {
 }
 
 // ============================================================================
-// ABA 3 · SAUDE DO SISTEMA
+// ABA 3 · SAÚDE DO SISTEMA
 // ============================================================================
 function AbaSaude() {
   const [data, setData] = useState(null);
@@ -686,7 +686,7 @@ function AbaSaude() {
     setLoading(true);
     gestaoApi.saude()
       .then(setData)
-      .catch(e => toast.error(formatErro(e, 'saude do sistema')))
+      .catch(e => toast.error(formatErro(e, 'saúde do sistema')))
       .finally(() => setLoading(false));
   }, []);
 
@@ -706,16 +706,16 @@ function AbaSaude() {
         <ListaSaude titulo="Sem meta definida"
           subtitulo="KPIs que precisam de uma meta antes de poder cobrar"
           items={data.sem_meta.items} cor="#EF4444" onAbrirKpi={setDetalheKpiId} />
-        <ListaSaude titulo="Sem dono atribuido"
-          subtitulo="KPIs sem lider responsavel — ninguem e cobrado"
+        <ListaSaude titulo="Sem dono atribuído"
+          subtitulo="KPIs sem líder responsável — ninguém e cobrado"
           items={data.sem_dono.items} cor="#F59E0B" onAbrirKpi={setDetalheKpiId} />
         <ListaSaude titulo="Sem objetivo geral vinculado"
-          subtitulo="Nao alimentam cascata automatica" items={data.sem_objetivo.items} cor="#3B82F6" onAbrirKpi={setDetalheKpiId} />
+          subtitulo="Não alimentam cascata automática" items={data.sem_objetivo.items} cor="#3B82F6" onAbrirKpi={setDetalheKpiId} />
         <ListaSaude titulo="Sem valores da Jornada"
-          subtitulo="Nao aparecem na matriz nem nas mandalas" items={data.sem_valores.items} cor="#8B5CF6" onAbrirKpi={setDetalheKpiId} />
-        <ListaSaude titulo="Sem registro nos ultimos 60 dias"
-          subtitulo="KPIs vivos mas que ninguem preenche" items={data.sem_registro_60d.items} cor="#EF4444" onAbrirKpi={setDetalheKpiId} />
-        <Card title="Cobertura da matriz Valor × Area" subtitle="Quais valores cada area ja tem KPI">
+          subtitulo="Não aparecem na matriz nem nas mandalas" items={data.sem_valores.items} cor="#8B5CF6" onAbrirKpi={setDetalheKpiId} />
+        <ListaSaude titulo="Sem registro nos últimos 60 dias"
+          subtitulo="KPIs vivos mas que ninguém preenche" items={data.sem_registro_60d.items} cor="#EF4444" onAbrirKpi={setDetalheKpiId} />
+        <Card title="Cobertura da matriz Valor × Área" subtitle="Quais valores cada área já tem KPI">
           <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
             {data.matriz_cobertura.map(c => (
               <div key={c.area} style={{ padding: 10, background: 'var(--cbrio-input-bg)', borderRadius: 6 }}>
@@ -736,7 +736,7 @@ function AbaSaude() {
         </Card>
         {data.objetivos_sem_kpis.total > 0 && (
           <ListaSaude titulo="Objetivos sem KPIs"
-            subtitulo="Objetivos cadastrados que ninguem mede"
+            subtitulo="Objetivos cadastrados que ninguém mede"
             items={data.objetivos_sem_kpis.items} cor="#9CA3AF"
             cols={['nome']} idField="id" />
         )}
@@ -1289,7 +1289,7 @@ function ListaSaude({ titulo, subtitulo, items, cor, cols = ['indicador', 'area'
                 <span style={{ fontSize: 9, padding: '1px 4px', borderRadius: 4, background: C.card, color: C.t3, fontWeight: 600, minWidth: 60, textAlign: 'center' }}>{item.id}</span>
               )}
               <span style={{ flex: 1, color: C.text }}>
-                {/* Pra KPI: prefere a descricao (nome especifico) sobre o indicador (formula generica). */}
+                {/* Pra KPI: prefere a descrição (nome especifico) sobre o indicador (formula genérica). */}
                 {cols[0] === 'indicador' ? (item.descricao || item.indicador || item.nome) : (item[cols[0]] || item.nome)}
               </span>
               {cols.includes('area') && item.area && (
@@ -1314,7 +1314,7 @@ function Badge({ cor, label, title, bg }) {
   );
 }
 
-// "Vazio" no /gestao quase sempre e noticia boa (sem pendencia, sem critico,
+// "Vazio" no /gestao quase sempre e noticia boa (sem pendência, sem critico,
 // tudo certo). Usa EmptyState compacto com tom positivo + icone de check.
 function Vazio({ children, tom = 'positivo' }) {
   return (

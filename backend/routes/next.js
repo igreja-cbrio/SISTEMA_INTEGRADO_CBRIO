@@ -1,13 +1,13 @@
 // ============================================================================
-// Modulo NEXT - rotas autenticadas
+// Módulo NEXT - rotas autenticadas
 //
 // Eventos:
 //   GET    /eventos                       - lista eventos (com contagem)
 //   POST   /eventos                       - criar evento
 //   PUT    /eventos/:id                   - atualizar
-//   POST   /eventos/auto-create-mes       - cria 3 eventos do mes (1o-3o domingo)
+//   POST   /eventos/auto-create-mes       - cria 3 eventos do mês (1o-3o domingo)
 //
-// Inscricoes:
+// Inscrições:
 //   GET    /inscricoes                    - lista (filtros: evento_id, search, status)
 //   GET    /inscricoes/:id                - detalhe
 //   POST   /inscricoes                    - inscrever manualmente
@@ -19,7 +19,7 @@
 //   PUT    /indicacoes/:id                - atualizar status
 //
 // Dashboard:
-//   GET    /dashboard                     - resumo do mes corrente
+//   GET    /dashboard                     - resumo do mês corrente
 // ============================================================================
 
 const express = require('express');
@@ -29,8 +29,8 @@ const { supabase } = require('../utils/supabase');
 const { notificar } = require('../services/notificar');
 const { coletarTodos } = require('../services/kpiAutoCollector');
 
-// Re-calcula KPIs do NEXT em background (nao bloqueia a resposta).
-// Chamado apos qualquer mudanca em inscricoes ou indicacoes.
+// Re-calcula KPIs do NEXT em background (não bloqueia a resposta).
+// Chamado após qualquer mudança em inscrições ou indicacoes.
 function recalcularKpisNext() {
   setImmediate(async () => {
     try {
@@ -65,7 +65,7 @@ router.get('/eventos', async (req, res) => {
   if (error) return res.status(500).json({ error: error.message });
 
   // Contagem agregada via view (1 row por evento) — evita o limite default
-  // de 1000 rows do supabase ao agregar em memoria com 2.4k+ inscricoes.
+  // de 1000 rows do supabase ao agregar em memória com 2.4k+ inscrições.
   const ids = (data || []).map(e => e.id);
   let counts = {};
   if (ids.length) {
@@ -117,7 +117,7 @@ router.put('/eventos/:id', async (req, res) => {
   res.json(data);
 });
 
-// Cria os 3 primeiros domingos do mes informado (idempotente)
+// Cria os 3 primeiros domingos do mês informado (idempotente)
 router.post('/eventos/auto-create-mes', async (req, res) => {
   const ano = Number(req.body?.ano) || new Date().getFullYear();
   const mes = Number(req.body?.mes) || (new Date().getMonth() + 1);
@@ -143,7 +143,7 @@ router.post('/eventos/auto-create-mes', async (req, res) => {
 });
 
 // ----------------------------------------------------------------------------
-// Inscricoes
+// Inscrições
 // ----------------------------------------------------------------------------
 router.get('/inscricoes', async (req, res) => {
   const { evento_id, search, com_checkin, com_indicacao, origem_lista, limit } = req.query;
@@ -173,7 +173,7 @@ router.get('/inscricoes/:id', async (req, res) => {
     .eq('id', req.params.id)
     .maybeSingle();
   if (error) return res.status(500).json({ error: error.message });
-  if (!data) return res.status(404).json({ error: 'Inscricao nao encontrada' });
+  if (!data) return res.status(404).json({ error: 'Inscrição não encontrada' });
   res.json(data);
 });
 
@@ -181,13 +181,13 @@ const { findOrCreateMembro } = require('./pessoas');
 
 router.post('/inscricoes', async (req, res) => {
   const { evento_id, nome, sobrenome, cpf, telefone, email, data_nascimento, observacoes, origem_lista } = req.body || {};
-  if (!nome || !evento_id) return res.status(400).json({ error: 'nome e evento_id obrigatorios' });
+  if (!nome || !evento_id) return res.status(400).json({ error: 'nome e evento_id obrigatórios' });
   const cleanCpf = cpf ? String(cpf).replace(/\D/g, '') : null;
   const validOrigemLista = ['impressa', 'manuscrito'].includes(origem_lista) ? origem_lista : null;
 
-  // ANTES de criar a inscricao: garantir que existe mem_membros (cria se necessario).
-  // Membresia e fonte unica — toda pessoa que se inscreve no NEXT vira membro
-  // (status='visitante' no minimo) e fica acessivel em /ministerial/membresia.
+  // ANTES de criar a inscrição: garantir que existe mem_membros (cria se necessário).
+  // Membresia e fonte única — toda pessoa que se inscreve no NEXT vira membro
+  // (status='visitante' no mínimo) e fica acessivel em /ministerial/membresia.
   let membro_id = null;
   try {
     const r = await findOrCreateMembro({
@@ -198,7 +198,7 @@ router.post('/inscricoes', async (req, res) => {
     membro_id = r.membro_id;
   } catch (e) {
     console.error('next/inscricoes findOrCreateMembro failed:', e.message);
-    // segue sem membro_id - inscricao ainda e criada pra nao perder dado
+    // segue sem membro_id - inscrição ainda e criada pra não perder dado
   }
 
   const { data, error } = await supabase
@@ -278,7 +278,7 @@ router.post('/inscricoes/:id/indicacoes', async (req, res) => {
     const validos = tipos.filter(t => TIPOS_AREA[t]);
     if (validos.length === 0) return res.status(400).json({ error: 'Nenhum tipo valido' });
 
-    // Atualiza flags na inscricao
+    // Atualiza flags na inscrição
     const update = {
       indicacao_observacoes: observacoes || null,
       indicacao_marcada_em: new Date().toISOString(),
@@ -310,7 +310,7 @@ router.post('/inscricoes/:id/indicacoes', async (req, res) => {
         .upsert(linha, { onConflict: 'inscricao_id,tipo' });
     }
 
-    // Notificar areas
+    // Notificar áreas
     for (const t of validos) {
       try {
         await notificar({
@@ -322,7 +322,7 @@ router.post('/inscricoes/:id/indicacoes', async (req, res) => {
       } catch (e) { console.error('[next] notificar:', e.message); }
     }
 
-    // Recalcula KPIs do NEXT em background (nao bloqueia)
+    // Recalcula KPIs do NEXT em background (não bloqueia)
     recalcularKpisNext();
 
     res.json({ ok: true, indicacoes: linhas.length });

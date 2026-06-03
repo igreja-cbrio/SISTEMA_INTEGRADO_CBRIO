@@ -19,7 +19,7 @@ export default function DashMensalAba() {
   const anoAtual = new Date().getFullYear();
   const [indicador, setIndicador] = useState('aceitacoes');
   const [culto, setCulto] = useState('todos');
-  const [tipoGrafico, setTipoGrafico] = useState('barra'); // barra | linha | area
+  const [tipoGrafico, setTipoGrafico] = useState('barra'); // barra | linha | área
   const [anos, setAnos] = useState([anoAtual - 2, anoAtual - 1, anoAtual]);
   const [mesesAtivos, setMesesAtivos] = useState([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]);
 
@@ -43,7 +43,7 @@ export default function DashMensalAba() {
   const indDef = INDICADORES.find(i => i.key === indicador);
   const series = data?.series || [];
 
-  // Mes selecionado pra comparar entre anos (clique no grafico ou no select)
+  // Mês selecionado pra comparar entre anos (clique no gráfico ou no select)
   const [mesSel, setMesSel] = useState(null);
 
   // So meses que tem ao menos 1 ano com dado (>0 OR != null)
@@ -52,7 +52,7 @@ export default function DashMensalAba() {
     [series, anos]
   );
 
-  // Mantem selecao valida · default = ultimo mes com dado
+  // Mantem seleção valida · default = último mês com dado
   useEffect(() => {
     if (!mesesComDado.length) { setMesSel(null); return; }
     setMesSel(prev => {
@@ -66,8 +66,8 @@ export default function DashMensalAba() {
     [series, mesSel]
   );
 
-  // Cards comparativos · 1 por ano (ordem do grafico) com valor + Δ% vs ano
-  // anterior comparado que tem dado naquele mes.
+  // Cards comparativos · 1 por ano (ordem do gráfico) com valor + Δ% vs ano
+  // anterior comparado que tem dado naquele mês.
   const cardsComparativo = useMemo(() => {
     if (!linhaSel) return [];
     return anos.map((ano, idx) => {
@@ -331,7 +331,7 @@ export default function DashMensalAba() {
         </CardContent>
       </Card>
 
-      {/* Comparativo entre anos · mes selecionado */}
+      {/* Comparativo entre anos · mês selecionado */}
       {mesesComDado.length > 0 && (
         <Card>
           <CardHeader className="pb-2 flex flex-row items-center justify-between gap-3 space-y-0">

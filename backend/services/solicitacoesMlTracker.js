@@ -1,12 +1,12 @@
-// Tracker · processa solicitacoes com pedido ML vinculado.
+// Tracker · processa solicitações com pedido ML vinculado.
 //
-// Chamado pelo cron a cada 15min. Para cada solicitacao com ml_shipment_id e
+// Chamado pelo cron a cada 15min. Para cada solicitação com ml_shipment_id e
 // status != delivered/cancelled:
 //   1. Busca shipment na API ML
-//   2. Se status mudou: insere evento, atualiza solicitacao, dispara notificacao
+//   2. Se status mudou: insere evento, atualiza solicitação, dispara notificação
 //      in-app + WhatsApp (quando configurado)
 //
-// Tambem expoe linkOrder(): chamado quando o comprador cola URL/ID do ML.
+// Também expoe linkOrder(): chamado quando o comprador cola URL/ID do ML.
 
 const { supabase } = require('../utils/supabase');
 const { getMLConfig, mlFetch } = require('./mercadoLivreService');
@@ -35,7 +35,7 @@ function statusLabel(status) {
 function extractOrderId(input) {
   if (!input) return null;
   const s = String(input).trim();
-  // Numero puro
+  // Número puro
   if (/^\d{8,}$/.test(s)) return s;
   // URL com /pedidos/NUMERO/
   const m = s.match(/\/pedidos?\/(\d{8,})/);
@@ -43,22 +43,22 @@ function extractOrderId(input) {
   // URL com order_id=NUMERO
   const m2 = s.match(/[?&]order_id=(\d{8,})/);
   if (m2) return m2[1];
-  // Qualquer numero de 10+ digitos na string
+  // Qualquer número de 10+ digitos na string
   const m3 = s.match(/\b(\d{10,})\b/);
   if (m3) return m3[1];
   return null;
 }
 
-// Vincula um pedido ML a uma solicitacao (chamado pelo POST /vincular-ml)
+// Vincula um pedido ML a uma solicitação (chamado pelo POST /vincular-ml)
 async function linkOrder({ solicitacaoId, mlOrderInput, profileId }) {
   const orderId = extractOrderId(mlOrderInput);
   if (!orderId) {
-    return { ok: false, error: 'Nao foi possivel extrair o ID do pedido. Cole a URL completa ou apenas o numero.' };
+    return { ok: false, error: 'Não foi possível extrair o ID do pedido. Cole a URL completa ou apenas o número.' };
   }
 
   const config = await getMLConfig();
   if (!config?.access_token) {
-    return { ok: false, error: 'Mercado Livre nao esta conectado. Conecte em /logistica antes.' };
+    return { ok: false, error: 'Mercado Livre não esta conectado. Conecte em /logistica antes.' };
   }
 
   // 1. Busca o pedido
@@ -66,10 +66,10 @@ async function linkOrder({ solicitacaoId, mlOrderInput, profileId }) {
   try {
     order = await mlFetch(config, `/orders/${orderId}`);
   } catch (e) {
-    return { ok: false, error: `Pedido ${orderId} nao encontrado no Mercado Livre: ${e.message}` };
+    return { ok: false, error: `Pedido ${orderId} não encontrado no Mercado Livre: ${e.message}` };
   }
 
-  // 2. Tenta buscar o shipment (pode nao existir ainda se for pagamento pendente)
+  // 2. Tenta buscar o shipment (pode não existir ainda se for pagamento pendente)
   let shipment = null;
   const shippingId = order.shipping?.id || null;
   if (shippingId) {
@@ -91,7 +91,7 @@ async function linkOrder({ solicitacaoId, mlOrderInput, profileId }) {
     || shipment?.status_history?.date_first_visit
     || null;
 
-  // 3. Atualiza solicitacao
+  // 3. Atualiza solicitação
   const { data: updated, error: upErr } = await supabase
     .from('solicitacoes')
     .update({
@@ -130,7 +130,7 @@ async function linkOrder({ solicitacaoId, mlOrderInput, profileId }) {
     status,
     descricao: itemTitle
       ? `Compra realizada · ${itemTitle}`
-      : 'Sua solicitacao foi comprada no Mercado Livre',
+      : 'Sua solicitação foi comprada no Mercado Livre',
     isFirstLink: true,
   }).catch(e => console.error('[ML-TRACK] notify error:', e.message));
 
@@ -144,11 +144,11 @@ async function linkOrder({ solicitacaoId, mlOrderInput, profileId }) {
   };
 }
 
-// Cron · varre solicitacoes pendentes, atualiza status, dispara notificacoes
+// Cron · varre solicitações pendentes, atualiza status, dispara notificações
 async function processarUpdates({ batchSize = 30, throttleMs = 200 } = {}) {
   const config = await getMLConfig();
   if (!config?.access_token) {
-    return { ok: false, error: 'ML nao conectado', checked: 0, updated: 0 };
+    return { ok: false, error: 'ML não conectado', checked: 0, updated: 0 };
   }
 
   const { data: pendentes, error } = await supabase
@@ -198,7 +198,7 @@ async function processarUpdates({ batchSize = 30, throttleMs = 200 } = {}) {
           },
         });
 
-        // Busca a solicitacao completa para notificar
+        // Busca a solicitação completa para notificar
         const { data: full } = await supabase
           .from('solicitacoes')
           .select('id, titulo, solicitante_id, ml_order_id, ml_last_status, ml_tracking_number')
@@ -210,7 +210,7 @@ async function processarUpdates({ batchSize = 30, throttleMs = 200 } = {}) {
             solicitacao: full,
             status: novoStatus,
             descricao: shipment.tracking_number
-              ? `Codigo de rastreio: ${shipment.tracking_number}`
+              ? `Código de rastreio: ${shipment.tracking_number}`
               : '',
           }).catch(e => console.error('[ML-TRACK] notify cron error:', e.message));
         }
@@ -218,7 +218,7 @@ async function processarUpdates({ batchSize = 30, throttleMs = 200 } = {}) {
     } catch (e) {
       erros.push({ solicitacao_id: s.id, erro: e.message });
       console.error('[ML-TRACK] erro %s: %s', s.id, e.message);
-      // Marca como checada mesmo em erro pra nao bloquear a fila
+      // Marca como checada mesmo em erro pra não bloquear a fila
       await supabase.from('solicitacoes')
         .update({ ml_last_checked_at: new Date().toISOString() })
         .eq('id', s.id);

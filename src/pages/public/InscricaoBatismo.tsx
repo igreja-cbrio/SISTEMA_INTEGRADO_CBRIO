@@ -227,7 +227,7 @@ export default function InscricaoBatismo() {
       });
       setSent(true);
     } catch (err: any) {
-      setError(err?.message || 'Erro ao enviar inscricao.');
+      setError(err?.message || 'Erro ao enviar inscrição.');
     }
     setLoading(false);
   };
@@ -254,7 +254,7 @@ export default function InscricaoBatismo() {
             Inscricao para batismo
           </h1>
           <p style={{ fontSize: 13, color: C.text3, marginTop: 6, lineHeight: 1.5 }}>
-            "Aquele que crer e for batizado sera salvo." — Marcos 16:16
+            "Aquele que crer e for batizado será salvo." — Marcos 16:16
           </p>
           {proximaData && (
             <div style={{
@@ -320,7 +320,7 @@ export default function InscricaoBatismo() {
               </Row>
               <Field id="data_nascimento" label="Data de nascimento (opcional)" type="date" value={form.data_nascimento} onChange={set('data_nascimento')} autoComplete="bday" />
 
-              <SectionTitle>Endereco</SectionTitle>
+              <SectionTitle>Endereço</SectionTitle>
               <Row>
                 <Field id="cep" label="CEP" value={form.cep} onChange={set('cep')} placeholder="00000-000" inputMode="numeric" autoComplete="postal-code" />
                 <Field id="endereco" label="Endereco" value={form.endereco} onChange={set('endereco')} autoComplete="street-address" />
@@ -351,7 +351,7 @@ export default function InscricaoBatismo() {
                 />
               </Row>
               <SelectField
-                id="area_kpi" label="Voce frequenta qual campus? (opcional)"
+                id="area_kpi" label="Você frequenta qual campus? (opcional)"
                 value={form.area_kpi}
                 onChange={set('area_kpi') as any}
                 options={[
@@ -377,7 +377,7 @@ export default function InscricaoBatismo() {
               />
               <Field
                 id="observacoes"
-                label="Comentario adicional (familiares se batizando junto, etc)"
+                label="Comentário adicional (familiares se batizando junto, etc)"
                 as="textarea" rows={2}
                 value={form.observacoes}
                 onChange={set('observacoes')}

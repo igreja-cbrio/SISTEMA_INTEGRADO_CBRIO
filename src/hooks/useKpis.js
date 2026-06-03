@@ -13,10 +13,10 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { kpis as kpisApi } from '../api';
 
-// DB usa areas em lowercase. Frontend usa label amigavel.
-// 6 areas oficiais (cleanup pos-OKR 2026 · ver migration 20260507400000).
-// Cuidados/Grupos/Integracao/Voluntariado/NEXT/Generosidade sao MINISTERIOS,
-// nao areas KPI · nao aparecem aqui.
+// DB usa áreas em lowercase. Frontend usa label amigavel.
+// 6 áreas oficiais (cleanup pos-OKR 2026 · ver migration 20260507400000).
+// Cuidados/Grupos/Integracao/Voluntariado/NEXT/Generosidade são MINISTÉRIOS,
+// não áreas KPI · não aparecem aqui.
 const AREA_DB_TO_FRONTEND = {
   kids:   'CBKids',
   ami:    'AMI',
@@ -80,8 +80,8 @@ async function fetchAll(force = false) {
   if (_cachePromise && !force) return _cachePromise;
   _cachePromise = (async () => {
     const rows = await kpisApi.v2.taticos();
-    // Filtra inativos por padrao · cache so contem KPIs ativos. KPIs com
-    // ativo=false (legacy KID-01..05, etc) ficam de fora pra nao poluir
+    // Filtra inativos por padrão · cache so contem KPIs ativos. KPIs com
+    // ativo=false (legacy KID-01..05, etc) ficam de fora pra não poluir
     // /minha-area, /meus-kpis, painel etc.
     _cache = (rows || [])
       .filter(r => r.ativo !== false)

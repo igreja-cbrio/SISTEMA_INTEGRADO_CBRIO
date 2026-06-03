@@ -39,8 +39,8 @@ const CATEGORIA_HINT = {
   producao:       'Apoio da equipe de Produção: movimentação de material ou configuração de equipamentos (áudio, vídeo, palco, transmissão).',
 };
 
-// Areas do solicitante em 2 niveis: macro -> sub
-// Area do solicitante NAO e' mais escolhida no form (2026-06-01) · o backend
+// Áreas do solicitante em 2 níveis: macro -> sub
+// Área do solicitante NÃO e' mais escolhida no form (2026-06-01) · o backend
 // deriva de quem preenche (usuario_areas/kpi_areas) e grava em area_cliente p/ KPI.
 
 const URGENCIAS = [
@@ -52,7 +52,7 @@ const URGENCIAS = [
 
 // Cada coluna agrupa os status reais via `match` (o backbone tem 10 status mas o
 // board operacional usa 5 colunas). Sem isso, itens em aguardando_aprovacao_financeira/
-// em_atendimento/aguardando_entrega/avaliado nao caiam em coluna nenhuma e sumiam do board.
+// em_atendimento/aguardando_entrega/avaliado não caiam em coluna nenhuma e sumiam do board.
 // aguardando_aprovacao_origem fica de fora de proposito (vive na aba "Aprovar").
 const KANBAN_COLUMNS = [
   { key: 'pendente',       label: 'Pendente',     icon: Clock,        color: 'border-t-amber-500',   match: ['pendente', 'aguardando_aprovacao_financeira'] },
@@ -86,7 +86,7 @@ function getStatusMeta(status) {
 }
 
 // Dropzone reutilizavel · comprovante de reembolso, boleto/NF de pagamento,
-// proposta de servico. Estado de drag interno (self-contained).
+// proposta de serviço. Estado de drag interno (self-contained).
 function DocDropzone({ file, onFile, onClear }) {
   const [drag, setDrag] = useState(false);
   const inputRef = useRef(null);
@@ -128,7 +128,7 @@ function DocDropzone({ file, onFile, onClear }) {
   );
 }
 
-// Toggle "é recorrente" + frequência · pagamento e servico (aluguel, mensalidade)
+// Toggle "é recorrente" + frequência · pagamento e serviço (aluguel, mensalidade)
 function RecorrenteToggle({ form, setForm }) {
   return (
     <div className="space-y-2">
@@ -163,9 +163,9 @@ export default function Solicitacoes() {
   const [detailItem, setDetailItem] = useState(null);
   const [dragOverCol, setDragOverCol] = useState(null);
 
-  // Quem ve a fila "Para Atender": admin/diretor OU responsavel cadastrado de
-  // alguma area (area_solicitacoes_responsaveis). Fonte de verdade no backend
-  // via /meu-papel · colaborador comum so ve "Minhas Solicitacoes".
+  // Quem ve a fila "Para Atender": admin/diretor OU responsável cadastrado de
+  // alguma área (area_solicitacoes_responsaveis). Fonte de verdade no backend
+  // via /meu-papel · colaborador comum so ve "Minhas Solicitações".
   // papel.eh_diretor_origem · habilita aba "Aprovar" (diretor de setor da Spec 001).
   const [papel, setPapel] = useState({ atende: false, admin: false, eh_diretor_origem: false, pendentes_origem: 0 });
   const atendeAreas = papel.atende;
@@ -173,7 +173,7 @@ export default function Solicitacoes() {
   const pendentesOrigem = papel.pendentes_origem || 0;
   const isResponsavel = isAdmin || atendeAreas;
 
-  // View atual · 'minhas' (lista das proprias) | 'atender' (kanban da equipe) | 'aprovar' (diretor de origem).
+  // View atual · 'minhas' (lista das próprias) | 'atender' (kanban da equipe) | 'aprovar' (diretor de origem).
   const [view, setView] = useState('minhas');
   const [viewTouched, setViewTouched] = useState(false);
 
@@ -195,7 +195,7 @@ export default function Solicitacoes() {
     return () => { alive = false; };
   }, []);
 
-  // Responsavel/admin comeca na visao operacional (atender) se ainda nao trocou de aba.
+  // Responsavel/admin comeca na visão operacional (atender) se ainda não trocou de aba.
   // Se for diretor de origem com fila pendente, comeca em 'aprovar'.
   useEffect(() => {
     if (viewTouched) return;
@@ -228,15 +228,15 @@ export default function Solicitacoes() {
   }, []);
 
   // Marketing · intake por DOR (Redesenho 2026-05-30): o solicitante descreve o
-  // problema/objetivo + publico; o Pedro tria e define o entregavel depois.
+  // problema/objetivo + público; o Pedro tria e define o entregavel depois.
   // (sairam daqui: cascata grupo->tipo, carga de etiquetas e estimativa no form)
-  // Area do solicitante · NAO ha mais seletor (2026-06-01). O backend deriva a
-  // area de quem preenche (usuario_areas/kpi_areas) e grava em area_cliente p/ KPI.
+  // Área do solicitante · NÃO ha mais seletor (2026-06-01). O backend deriva a
+  // área de quem preenche (usuario_areas/kpi_areas) e grava em area_cliente p/ KPI.
 
   async function load() {
     try {
       // view='minhas' sempre filtra pelo solicitante atual · view='atender'
-      // delega o filtro pro backend (responsavel ve da area dele, admin ve tudo).
+      // delega o filtro pro backend (responsável ve da área dele, admin ve tudo).
       // view='aprovar' · diretor de origem ve so o que precisa decidir.
       let params = {};
       if (view === 'minhas') params = { mine: 'true' };
@@ -272,18 +272,18 @@ export default function Solicitacoes() {
     }
   }
 
-  // Ref pra sempre chamar a versao MAIS RECENTE do load() (com o view atual)
+  // Ref pra sempre chamar a versão MAIS RECENTE do load() (com o view atual)
   // dentro do callback do Realtime · sem isso o canal capturava o load via
-  // closure de mount e usava `view='atender'` velho mesmo quando o usuario
-  // ja estava em 'minhas', sobrescrevendo a lista 3s depois de trocar de aba.
+  // closure de mount e usava `view='atender'` velho mesmo quando o usuário
+  // já estava em 'minhas', sobrescrevendo a lista 3s depois de trocar de aba.
   const loadRef = useRef(load);
   useEffect(() => { loadRef.current = load; });
 
   useEffect(() => { load(); }, [view]);
 
-  // Realtime · qualquer INSERT/UPDATE/DELETE em `solicitacoes` recarrega
+  // Realtime · qualquer INSERT/UPDATE/DELETE em `solicitações` recarrega
   // o kanban/lista. Debounce 400ms agrega rajadas (ex: trigger de SLA
-  // atualiza a mesma row varias vezes em sequencia).
+  // atualiza a mesma row várias vezes em sequencia).
   useEffect(() => {
     if (!supabase || !profile?.id) return;
     let timeout = null;
@@ -342,9 +342,9 @@ export default function Solicitacoes() {
       if (!payload.favorecido_nome) delete payload.favorecido_nome;
       if (!payload.favorecido_documento) delete payload.favorecido_documento;
       if (!payload.recorrencia) delete payload.recorrencia;
-      // Marketing por dor · so titulo+descricao no intake (Pedro define o resto na triagem)
+      // Marketing por dor · so título+descrição no intake (Pedro define o resto na triagem)
 
-      // Upload do comprovante para Supabase Storage (bucket: solicitacoes)
+      // Upload do comprovante para Supabase Storage (bucket: solicitações)
       if (form.documento_file && supabase) {
         const ext = form.documento_file.name.split('.').pop().toLowerCase();
         const path = `comprovantes/${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`;
@@ -411,14 +411,14 @@ export default function Solicitacoes() {
     (forma !== 'transferencia_bancaria' || (form.banco.trim() && form.agencia.trim() && form.conta.trim()))
   );
   // Reembolso · valor EXATO da nota + data da compra + destino do dinheiro.
-  // (o "motivo" saiu · a "Justificativa do pedido" geral ja cobre o porquê)
+  // (o "motivo" saiu · a "Justificativa do pedido" geral já cobre o porquê)
   const reembolsoValid = !isReembolso || (
     !!form.valor_estimado &&
     form.data_compra &&
     dadosBancariosValid(form.forma_pagamento)
   );
   const reservaEspacoValid = !isReservaEspaco || (form.espaco_solicitado.trim() && form.data_uso);
-  // Compras · descricao do que se precisa (itens) é o campo-chave
+  // Compras · descrição do que se precisa (itens) é o campo-chave
   const comprasValid = !isCompras || form.itens.trim().length >= 3;
   // Pagamento · favorecido + vencimento (data_necessaria) + forma/destino do dinheiro.
   // Boleto não exige PIX/banco (o documento carrega a linha de pagamento).
@@ -442,7 +442,7 @@ export default function Solicitacoes() {
           <p className="text-sm text-muted-foreground mt-1">Compras, serviços, pagamentos, reembolsos, reservas, TI, marketing, infraestrutura, férias e licenças</p>
         </div>
         <div className="flex items-center gap-3">
-          {/* Config de responsaveis · so admin/diretor */}
+          {/* Config de responsáveis · so admin/diretor */}
           {isAdmin && (
             <Button
               variant="outline"
@@ -585,7 +585,7 @@ export default function Solicitacoes() {
                   </div>
                 )}
 
-                {/* Compras · itens + referencia + fornecedor sugerido */}
+                {/* Compras · itens + referência + fornecedor sugerido */}
                 {isCompras && (
                   <div className="space-y-3 rounded-lg border border-orange-500/30 bg-orange-500/5 p-3">
                     <p className="text-sm font-semibold text-orange-700 dark:text-orange-400">Detalhes da compra</p>
@@ -685,7 +685,7 @@ export default function Solicitacoes() {
                   </div>
                 )}
 
-                {/* Data necessaria · vira "Vencimento" obrigatorio pra pagamento */}
+                {/* Data necessária · vira "Vencimento" obrigatório pra pagamento */}
                 {form.categoria && form.categoria !== 'reserva_espaco' && (
                   <div className="space-y-2">
                     <Label>{isPagamento ? 'Vencimento *' : 'Data necessária (opcional)'}</Label>
@@ -718,7 +718,7 @@ export default function Solicitacoes() {
                   if (!cat?.areaResp || form.categoria === 'marketing') return null;
                   const urg = !!form.eh_urgente;
                   const sub = cat.sub || 'default';
-                  // Prefere a subcategoria exata · cai pra 'default' · cai pra area
+                  // Prefere a subcategoria exata · cai pra 'default' · cai pra área
                   const sla = slaDefs.find(s => s.area_responsavel === cat.areaResp && s.subcategoria === sub && s.eh_urgente === urg)
                     || slaDefs.find(s => s.area_responsavel === cat.areaResp && s.subcategoria === 'default' && s.eh_urgente === urg)
                     || slaDefs.find(s => s.area_responsavel === cat.areaResp && s.eh_urgente === urg);
@@ -810,7 +810,7 @@ export default function Solicitacoes() {
         </div>
       </div>
 
-      {/* Tabs · Aprovar (diretor de origem) · Para Atender (responsavel) · Minhas (todos). */}
+      {/* Tabs · Aprovar (diretor de origem) · Para Atender (responsável) · Minhas (todos). */}
       {(isResponsavel || ehDiretorOrigem) && (
         <div className="flex items-center gap-1 border-b border-border">
           {ehDiretorOrigem && (
@@ -858,7 +858,7 @@ export default function Solicitacoes() {
         </div>
       )}
 
-      {/* Content: Kanban so na view 'atender' · Lista de aprovacao em 'aprovar' · Lista simples nas demais. */}
+      {/* Content: Kanban so na view 'atender' · Lista de aprovação em 'aprovar' · Lista simples nas demais. */}
       {loading ? (
         <div className="flex items-center justify-center min-h-[40vh]">
           <div className="h-6 w-6 animate-spin rounded-full border-2 border-muted-foreground/30 border-t-primary" />
@@ -1007,7 +1007,7 @@ export default function Solicitacoes() {
         onStatusChange={handleStatusChange}
         onNpsSubmit={handleNpsSubmit}
         onItemRefresh={async () => {
-          // recarrega a lista e atualiza o detailItem com a versao fresca
+          // recarrega a lista e atualiza o detailItem com a versão fresca
           const data = await api.list();
           setItems(data);
           setDetailItem(curr => (curr ? data.find(d => d.id === curr.id) || curr : curr));
@@ -1174,8 +1174,8 @@ function SolicitacaoCard({ item, isAdmin, onStatusChange, onClick, draggable }) 
   const sla = getSlaBadge(item);
   const st = getStatusMeta(item.status);
   const aguardandoFin = item.status === 'aguardando_aprovacao_financeira';
-  // Status real visivel quando a coluna agrupa varios (ex: "Em Andamento" tem
-  // aprovado/em_atendimento/aguardando_entrega). Os headliners obvios nao repetem.
+  // Status real visível quando a coluna agrupa vários (ex: "Em Andamento" tem
+  // aprovado/em_atendimento/aguardando_entrega). Os headliners obvios não repetem.
   const mostrarStatus = !['pendente', 'em_analise', 'concluido', 'rejeitado', 'aguardando_aprovacao_financeira'].includes(item.status);
 
   return (
@@ -1251,7 +1251,7 @@ const ML_STATUS_META = {
 function statusIndex(status) {
   const i = ML_STATUS_FLOW.findIndex(s => s.key === status);
   if (i >= 0) return i;
-  // status que nao estao no flow (in_transit, out_for_delivery) caem entre shipped e delivered
+  // status que não estão no flow (in_transit, out_for_delivery) caem entre shipped e delivered
   if (status === 'in_transit' || status === 'out_for_delivery') return 3.5;
   return -1;
 }
@@ -1281,7 +1281,7 @@ function MLTrackingBlock({ item, canEdit, onChanged }) {
     setLinking(true);
     try {
       await api.vincularML(item.id, mlInput.trim());
-      toast.success('Pedido vinculado! Voce e o solicitante recebem as atualizacoes automaticamente.');
+      toast.success('Pedido vinculado! Você e o solicitante recebem as atualizações automaticamente.');
       setShowInput(false);
       setMlInput('');
       onChanged?.();
@@ -1306,7 +1306,7 @@ function MLTrackingBlock({ item, canEdit, onChanged }) {
   }
 
   async function unlink() {
-    if (!confirm('Tem certeza que quer desvincular o pedido do Mercado Livre? O tracking sera removido.')) return;
+    if (!confirm('Tem certeza que quer desvincular o pedido do Mercado Livre? O tracking será removido.')) return;
     setUnlinking(true);
     try {
       await api.desvincularML(item.id);
@@ -1434,10 +1434,10 @@ function MLTrackingBlock({ item, canEdit, onChanged }) {
             })}
           </div>
 
-          {/* Historico de eventos */}
+          {/* Histórico de eventos */}
           {eventos.length > 0 && (
             <div className="pt-2 border-t border-border">
-              <p className="text-xs font-semibold text-muted-foreground mb-2">Historico</p>
+              <p className="text-xs font-semibold text-muted-foreground mb-2">Histórico</p>
               <ul className="space-y-1.5">
                 {eventos.slice().reverse().map(ev => {
                   const m = ML_STATUS_META[ev.status] || { label: ev.status, emoji: '•' };
@@ -1478,7 +1478,7 @@ function MLTrackingBlock({ item, canEdit, onChanged }) {
 }
 
 function DetailDialog({ item, onClose, isAdmin, currentUserId, onStatusChange, onNpsSubmit, onItemRefresh }) {
-  const [actionPending, setActionPending] = useState(null); // e.g. 'aprovado', 'rejeitado', 'concluido', 'em_analise'
+  const [actionPending, setActionPending] = useState(null); // e.g. 'aprovado', 'rejeitado', 'concluído', 'em_analise'
   const [obsText, setObsText] = useState('');
 
   if (!item) return null;
@@ -1691,7 +1691,7 @@ function DetailDialog({ item, onClose, isAdmin, currentUserId, onStatusChange, o
                 : null
           )}
 
-          {/* NPS pos-conclusao · so pro solicitante apos status concluido */}
+          {/* NPS pos-conclusao · so pro solicitante após status concluído */}
           {item.status === 'concluido'
             && currentUserId
             && item.solicitante_id === currentUserId
@@ -1841,7 +1841,7 @@ function MarketingCampanhaBlock({ campanha, onChanged }) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════
-// MarketingCardBlock · solicitante revisa preview, aprova entrega ou pede revisao (Spec 012 · LEGADO)
+// MarketingCardBlock · solicitante revisa preview, aprova entrega ou pede revisão (Spec 012 · LEGADO)
 // ═══════════════════════════════════════════════════════════════════════
 function MarketingCardBlock({ card, onChanged }) {
   const [entregaveis, setEntregaveis] = useState([]);
@@ -1957,7 +1957,7 @@ function MarketingCardBlock({ card, onChanged }) {
         <p className="text-xs text-muted-foreground italic">Equipe finalizou · preview ainda não anexado.</p>
       ) : null}
 
-      {/* Botoes de acao · so quando aguardando solicitante */}
+      {/* Botoes de ação · so quando aguardando solicitante */}
       {podeAprovar && !revisaoOpen && (
         <div className="flex gap-2 pt-2">
           <Button
@@ -2034,7 +2034,7 @@ function NpsBlock({ item, onSubmit }) {
     try {
       await onSubmit(item.id, nota, comentario.trim() || null);
     } catch {
-      // erro ja foi exibido pelo handler do pai
+      // erro já foi exibido pelo handler do pai
     } finally {
       setSubmitting(false);
     }

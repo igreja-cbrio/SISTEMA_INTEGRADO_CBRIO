@@ -1,4 +1,4 @@
-// Endpoints publicos (sem auth) para o formulario de cadastro / inscricao
+// Endpoints públicos (sem auth) para o formulário de cadastro / inscrição
 // poder buscar grupos. Read-only — sem mutation aqui.
 const router = require('express').Router();
 const { supabase } = require('../utils/supabase');
@@ -34,7 +34,7 @@ router.get('/buscar', async (req, res) => {
     let query = supabase.from('mem_grupos')
       .select('id, codigo, nome, categoria, dia_semana, horario, recorrencia, local, descricao, bairro, lat, lng, lider_id, status_temporada, temporada, foto_url')
       .eq('ativo', true);
-    // Por padrao mostra so grupos com status que aceitam novos (ativo + novo + a_confirmar)
+    // Por padrão mostra so grupos com status que aceitam novos (ativo + novo + a_confirmar)
     query = query.in('status_temporada', ['ativo', 'novo', 'a_confirmar']);
     if (categoria) query = query.eq('categoria', categoria);
     if (bairro) query = query.eq('bairro', bairro);
@@ -44,7 +44,7 @@ router.get('/buscar', async (req, res) => {
     const { data: grupos, error } = await query;
     if (error) throw error;
 
-    // Enriquecer com lider
+    // Enriquecer com líder
     const liderIds = [...new Set((grupos || []).map(g => g.lider_id).filter(Boolean))];
     let lideresMap = {};
     if (liderIds.length > 0) {
@@ -129,7 +129,7 @@ router.get('/lideres/buscar', async (req, res) => {
   } catch { res.status(500).json({ error: 'Erro' }); }
 });
 
-// GET /api/public/grupos/:id — usado pelo formulario publico
+// GET /api/public/grupos/:id — usado pelo formulário público
 // quando o link vem com ?grupo=<id> (ex.: clique no mapa).
 router.get('/:id', async (req, res) => {
   try {
@@ -139,7 +139,7 @@ router.get('/:id', async (req, res) => {
       .eq('id', req.params.id)
       .maybeSingle();
     if (error) throw error;
-    if (!grupo || !grupo.ativo) return res.status(404).json({ error: 'Grupo nao encontrado' });
+    if (!grupo || !grupo.ativo) return res.status(404).json({ error: 'Grupo não encontrado' });
 
     let lider_nome = null;
     let lider_foto = null;
@@ -169,7 +169,7 @@ router.get('/lideres/:liderId/grupos', async (req, res) => {
   } catch { res.status(500).json({ error: 'Erro' }); }
 });
 
-// ── Inscricao publica em grupo (POST sem auth) ──
+// ── Inscrição publica em grupo (POST sem auth) ──
 const { notificar } = require('../services/notificar');
 
 function soDigitos(v) { return (v || '').toString().replace(/\D+/g, ''); }
@@ -190,8 +190,8 @@ function cpfValido(cpfMasked) {
 function ehEmailValido(e) { return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e || ''); }
 
 // POST /api/public/grupos/inscrever
-// Formulario publico dedicado (acessado pelo QR code de inscricao).
-// Cria mem_cadastros_pendentes (se a pessoa ainda nao for membro) +
+// Formulário público dedicado (acessado pelo QR code de inscrição).
+// Cria mem_cadastros_pendentes (se a pessoa ainda não for membro) +
 // mem_grupo_pedidos com origem='formulario_publico'.
 router.post('/inscrever', async (req, res) => {
   try {
@@ -210,17 +210,17 @@ router.post('/inscrever', async (req, res) => {
 
     if (website && String(website).trim() !== '') return res.status(201).json({ ok: true });
 
-    if (!grupo_id) return res.status(400).json({ error: 'Grupo obrigatorio.' });
-    if (!nome || nome.trim().length < 3) return res.status(400).json({ error: 'Nome obrigatorio (min 3 caracteres).' });
-    if (!telefone || soDigitos(telefone).length < 10) return res.status(400).json({ error: 'Celular obrigatorio.' });
+    if (!grupo_id) return res.status(400).json({ error: 'Grupo obrigatório.' });
+    if (!nome || nome.trim().length < 3) return res.status(400).json({ error: 'Nome obrigatório (min 3 caracteres).' });
+    if (!telefone || soDigitos(telefone).length < 10) return res.status(400).json({ error: 'Celular obrigatório.' });
     if (!cpf || !cpfValido(cpf)) return res.status(400).json({ error: 'CPF invalido.' });
     if (email && !ehEmailValido(email)) return res.status(400).json({ error: 'E-mail invalido.' });
-    if (!aceita_termos) return res.status(400).json({ error: 'E necessario aceitar os termos.' });
+    if (!aceita_termos) return res.status(400).json({ error: 'E necessário aceitar os termos.' });
 
     const cpfLimpo = soDigitos(cpf);
     const emailLimpo = email ? email.trim().toLowerCase() : null;
 
-    // Verifica se ja existe membro pelo CPF (evita duplicar cadastros)
+    // Verifica se já existe membro pelo CPF (evita duplicar cadastros)
     let membroId = null;
     if (cpfLimpo) {
       const { data: m } = await supabase.from('mem_membros')
@@ -232,10 +232,10 @@ router.post('/inscrever', async (req, res) => {
     const { data: grupo } = await supabase.from('mem_grupos')
       .select('id, nome, ativo, status_temporada, temporada, lider_id').eq('id', grupo_id).single();
     if (!grupo || !grupo.ativo) {
-      return res.status(404).json({ error: 'Grupo nao encontrado ou inativo.' });
+      return res.status(404).json({ error: 'Grupo não encontrado ou inativo.' });
     }
 
-    // Verifica se a temporada do grupo esta com inscricoes abertas
+    // Verifica se a temporada do grupo esta com inscrições abertas
     if (grupo.temporada) {
       const { data: temporada } = await supabase.from('mem_temporadas')
         .select('inscricoes_abertas, label').eq('id', grupo.temporada).maybeSingle();
@@ -288,15 +288,15 @@ router.post('/inscrever', async (req, res) => {
 
     const { data: pedido, error: ePed } = await supabase.from('mem_grupo_pedidos').insert(pedidoBase).select('id').single();
     if (ePed) {
-      // 23505 = conflito (ja existe pedido pendente)
+      // 23505 = conflito (já existe pedido pendente)
       if (ePed.code === '23505') {
-        return res.status(409).json({ error: 'Voce ja tem um pedido pendente para este grupo.' });
+        return res.status(409).json({ error: 'Você já tem um pedido pendente para este grupo.' });
       }
       console.error('[public grupos inscrever] pedido:', ePed.message);
       return res.status(500).json({ error: 'Erro ao registrar pedido.' });
     }
 
-    // Notifica lider do grupo (se tiver login) + admins via fallback
+    // Notifica líder do grupo (se tiver login) + admins via fallback
     (async () => {
       try {
         let liderAuthUserId = null;
@@ -321,7 +321,7 @@ router.post('/inscrever', async (req, res) => {
     res.status(201).json({ ok: true, pedido_id: pedido.id });
   } catch (e) {
     console.error('[public grupos inscrever]', e.message);
-    res.status(500).json({ error: 'Erro ao processar inscricao.' });
+    res.status(500).json({ error: 'Erro ao processar inscrição.' });
   }
 });
 

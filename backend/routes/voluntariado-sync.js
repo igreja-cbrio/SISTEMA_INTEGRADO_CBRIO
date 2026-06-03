@@ -7,7 +7,7 @@ const {
   fetchAllServiceTypes, backfillVolProfilesCpf,
 } = require('../services/planningCenter');
 
-// Sync do Planning Center e operacoes administrativas pesadas — apenas admin/diretor.
+// Sync do Planning Center e operações administrativas pesadas — apenas admin/diretor.
 router.use(authenticate, authorize('admin', 'diretor'));
 
 // ══════════════════════════════════════════════════════════════
@@ -48,7 +48,7 @@ router.post('/sync', async (req, res) => {
       totalMembersFound += result.membersFound;
       totalMembersProcessed += result.membersProcessed;
       for (const [k, v] of result.volunteers) allVolunteers.set(k, v);
-      // teamPersons complementa com quem nao aparece nos planos recentes
+      // teamPersons complementa com quem não aparece nos planos recentes
       for (const [k, v] of teamPersons) {
         if (!allVolunteers.has(k)) allVolunteers.set(k, v);
       }
@@ -71,10 +71,10 @@ router.post('/sync', async (req, res) => {
 });
 
 // ══════════════════════════════════════════════════════════════
-// DIAGNOSTICO — por que schedules_synced = 0?
+// DIAGNÓSTICO — por que schedules_synced = 0?
 // Replica o caminho de escalas do sync pra UM dia (default hoje) e
 // retorna o status cru da API do PCO + contagem de team_members por
-// plano. Read-only · nao grava nada. Igual padrao do pco-cpf-check.
+// plano. Read-only · não grava nada. Igual padrão do pco-cpf-check.
 // ══════════════════════════════════════════════════════════════
 router.get('/pco-schedule-debug', async (req, res) => {
   try {
@@ -156,7 +156,7 @@ router.get('/pco-schedule-debug', async (req, res) => {
 router.post('/sync-historical', async (req, res) => {
   try {
     const { startDate, endDate } = req.body;
-    if (!startDate || !endDate) return res.status(400).json({ error: 'startDate e endDate obrigatorios' });
+    if (!startDate || !endDate) return res.status(400).json({ error: 'startDate e endDate obrigatórios' });
 
     const { basic: credentials } = getPCCredentials();
 
@@ -324,10 +324,10 @@ router.get('/diagnostics', async (req, res) => {
 });
 
 // ══════════════════════════════════════════════════════════════
-// DIAGNOSTICO · existe CPF no Planning Center?
+// DIAGNÓSTICO · existe CPF no Planning Center?
 // Verifica se ha campo custom de CPF no People do PCO e mede a cobertura
 // (quantas pessoas tem o campo preenchido). Usado pra decidir se da pra
-// migrar voluntarios do PCO pro nosso sistema linkando por CPF.
+// migrar voluntários do PCO pro nosso sistema linkando por CPF.
 // GET /api/voluntariado/pco-cpf-check
 // ══════════════════════════════════════════════════════════════
 const PC_PEOPLE_BASE = 'https://api.planningcenteronline.com/people/v2';
@@ -360,7 +360,7 @@ router.get('/pco-cpf-check', async (req, res) => {
       if (!r.ok) {
         return res.status(r.status).json({
           error: `Planning Center respondeu ${r.status} ao listar field_definitions. ` +
-            `Provavelmente o token nao tem escopo do produto People (so Services).`,
+            `Provavelmente o token não tem escopo do produto People (so Services).`,
         });
       }
       const j = await r.json();
@@ -412,7 +412,7 @@ router.get('/pco-cpf-check', async (req, res) => {
       total_custom_fields: fieldDefs.length,
       tem_campo_cpf: candidatos.length > 0,
       candidatos_cpf: cobertura,
-      // Lista geral pra inspecao manual caso o regex nao tenha pego
+      // Lista geral pra inspecao manual caso o regex não tenha pego
       todos_custom_fields: fieldDefs.map(f => f.name),
       conclusao: candidatos.length === 0
         ? 'Nenhum custom field parecido com CPF no Planning Center. Migrar por email.'
@@ -444,7 +444,7 @@ router.post('/backfill-cpf', async (req, res) => {
 // ══════════════════════════════════════════════════════════════
 // Helpers de unificacao vol_profiles <-> mem_membros (frente 1)
 // ══════════════════════════════════════════════════════════════
-// Pagina vol_profiles sem cpf que ja tem membresia_id (link feito pelo
+// Página vol_profiles sem cpf que já tem membresia_id (link feito pelo
 // trigger trg_vol_profiles_link_membro). vol_profiles tem ~centenas de
 // linhas · paginacao defensiva contra o cap de 1000 do PostgREST.
 async function _fetchVolSemCpfComLink() {
@@ -487,7 +487,7 @@ async function _fetchCpfPorMembro(memIds) {
 }
 
 // ══════════════════════════════════════════════════════════════
-// DIAGNOSTICO · cobertura de CPF dos voluntarios (read-only)
+// DIAGNÓSTICO · cobertura de CPF dos voluntários (read-only)
 // GET /api/voluntariado/vol-cpf-coverage
 // ══════════════════════════════════════════════════════════════
 router.get('/vol-cpf-coverage', async (req, res) => {
@@ -514,7 +514,7 @@ router.get('/vol-cpf-coverage', async (req, res) => {
       com_membro_vinculado: com_membro,
       sem_membro_vinculado: total - com_membro,
       backfill_possivel_agora: backfillavel,
-      explicacao: 'backfill_possivel_agora = voluntarios sem CPF cujo membro vinculado JA tem CPF. Rode POST /backfill-cpf-from-membro pra aplicar.',
+      explicacao: 'backfill_possivel_agora = voluntários sem CPF cujo membro vinculado JÁ tem CPF. Rode POST /backfill-cpf-from-membro pra aplicar.',
     });
   } catch (e) {
     console.error('[VOL-CPF-COVERAGE] Error:', e.message);
@@ -523,10 +523,10 @@ router.get('/vol-cpf-coverage', async (req, res) => {
 });
 
 // ══════════════════════════════════════════════════════════════
-// ACAO · copia CPF do mem_membros vinculado pro vol_profiles onde faltar
+// AÇÃO · copia CPF do mem_membros vinculado pro vol_profiles onde faltar
 // POST /api/voluntariado/backfill-cpf-from-membro
-// Seguro: nunca sobrescreve CPF existente. O trigger nao re-linka porque
-// membresia_id ja esta preenchido.
+// Seguro: nunca sobrescreve CPF existente. O trigger não re-linka porque
+// membresia_id já esta preenchido.
 // ══════════════════════════════════════════════════════════════
 router.post('/backfill-cpf-from-membro', async (req, res) => {
   try {
@@ -557,14 +557,14 @@ router.post('/backfill-cpf-from-membro', async (req, res) => {
 });
 
 // ══════════════════════════════════════════════════════════════
-// DIAGNOSTICO · CPF "escondido" por mau vinculo (read-only)
-// Cruza o email do voluntario SEM cpf direto com mem_membros que TEM cpf,
+// DIAGNÓSTICO · CPF "escondido" por mau vinculo (read-only)
+// Cruza o email do voluntário SEM cpf direto com mem_membros que TEM cpf,
 // ignorando o vinculo atual. Se achar, da pra re-linkar e aproveitar.
 // GET /api/voluntariado/vol-cpf-hidden-check
 // ══════════════════════════════════════════════════════════════
 router.get('/vol-cpf-hidden-check', async (req, res) => {
   try {
-    // 1. Voluntarios sem cpf, com email (paginado)
+    // 1. Voluntários sem cpf, com email (paginado)
     const vols = [];
     let from = 0;
     const page = 1000;
@@ -582,7 +582,7 @@ router.get('/vol-cpf-hidden-check', async (req, res) => {
       from += page;
     }
 
-    // 2. Mapa email(lower) -> [voluntarios]
+    // 2. Mapa email(lower) -> [voluntários]
     const emailToVols = new Map();
     for (const v of vols) {
       const e = String(v.email || '').toLowerCase().trim();
@@ -595,7 +595,7 @@ router.get('/vol-cpf-hidden-check', async (req, res) => {
     // 3. Busca membros COM cpf cujo email (lower) casa
     const matchedVolIds = new Set();
     let comLinkMasMislinkado = 0; // vol tem membresia_id mas o membro com cpf eh outro
-    let semLink = 0;              // vol nao tem nenhum vinculo
+    let semLink = 0;              // vol não tem nenhum vinculo
     const membrosComCpfCasados = new Set();
 
     for (let i = 0; i < emails.length; i += 200) {
@@ -628,7 +628,7 @@ router.get('/vol-cpf-hidden-check', async (req, res) => {
       destes_sem_link: semLink,                 // sem vinculo · so linkar
       membros_com_cpf_casados: membrosComCpfCasados.size,
       leitura: matchedVolIds.size === 0
-        ? 'Nenhum CPF escondido. O CPF realmente nao existe pra esses voluntarios · partir pra coleta no cadastro (frente 2).'
+        ? 'Nenhum CPF escondido. O CPF realmente não existe pra esses voluntários · partir pra coleta no cadastro (frente 2).'
         : 'Existe CPF aproveitavel via email · vale um re-link + backfill.',
     });
   } catch (e) {

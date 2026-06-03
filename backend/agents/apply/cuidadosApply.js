@@ -1,4 +1,4 @@
-// Handlers do cuidados_watcher · cria notificacoes pros responsaveis pastorais.
+// Handlers do cuidados_watcher · cria notificações pros responsáveis pastorais.
 
 const { supabase } = require('../../utils/supabase');
 
@@ -31,8 +31,8 @@ async function applyAlertarVisitante({ payload }) {
     tipo: 'visitante_sem_followup',
     titulo: `Visitante sem follow-up · ${nome_visitante}`,
     mensagem: fez_decisao
-      ? `${nome_visitante} fez decisao ha ${dias_desde_visita} dias e ainda sem responsavel atribuido. PRIORIDADE.`
-      : `${nome_visitante} visitou ha ${dias_desde_visita} dias e ainda sem follow-up. Atribuir responsavel.`,
+      ? `${nome_visitante} fez decisão ha ${dias_desde_visita} dias e ainda sem responsável atribuído. PRIORIDADE.`
+      : `${nome_visitante} visitou ha ${dias_desde_visita} dias e ainda sem follow-up. Atribuir responsável.`,
     link: `/integracao`,
     severidade: fez_decisao ? 'critico' : 'aviso',
     chaveDedup: `cui_visit_${visitante_id}`,
@@ -47,7 +47,7 @@ async function applyAlertarAcompanhamento({ payload }) {
     modulo: 'cuidados',
     tipo: 'acompanhamento_estagnado',
     titulo: `Acompanhamento aberto ha ${dias_aberto}d · ${nome_acompanhado || 'pessoa'}`,
-    mensagem: `Acompanhamento pastoral de ${nome_acompanhado} esta aberto sem atualizacao ha ${dias_aberto} dias.`,
+    mensagem: `Acompanhamento pastoral de ${nome_acompanhado} esta aberto sem atualização ha ${dias_aberto} dias.`,
     link: `/ministerial/cuidados`,
     severidade: dias_aberto > 60 ? 'critico' : 'aviso',
     chaveDedup: `cui_acomp_${acompanhamento_id}_${new Date().toISOString().slice(0, 7)}`,

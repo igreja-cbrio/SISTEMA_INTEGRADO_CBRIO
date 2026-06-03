@@ -31,7 +31,7 @@ export function useDeleteAvailability() {
   });
 }
 
-// Retorna todos os cultos do ano com flag is_unavailable para o voluntario logado
+// Retorna todos os cultos do ano com flag is_unavailable para o voluntário logado
 export function useMyServices(year: number) {
   return useQuery({
     queryKey: ['vol', 'my-services', year],

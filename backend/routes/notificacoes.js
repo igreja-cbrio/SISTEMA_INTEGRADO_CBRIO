@@ -177,7 +177,7 @@ const webpushService = require('../services/webpush');
 
 // GET /api/notificacoes/push/vapid-key — retorna a chave publica VAPID
 // para o browser usar no PushManager.subscribe(). Retorna 204 se push
-// nao estiver configurado (sem VAPID_PUBLIC_KEY).
+// não estiver configurado (sem VAPID_PUBLIC_KEY).
 router.get('/push/vapid-key', (req, res) => {
   const key = webpushService.getVapidPublicKey();
   if (!key) return res.status(204).end();

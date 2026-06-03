@@ -1,8 +1,8 @@
 // Cliente HTTP base para Santander Open APIs
 // Responsabilidades: mTLS, OAuth token, retries leves, logging de erro
 //
-// IMPORTANTE: o fetch nativo do Node 18+ (undici) NAO aceita https.Agent.
-// Precisa usar undici.Agent passado via opcao 'dispatcher'. Caso contrario,
+// IMPORTANTE: o fetch nativo do Node 18+ (undici) NÃO aceita https.Agent.
+// Precisa usar undici.Agent passado via opção 'dispatcher'. Caso contrario,
 // a request vai sem mTLS e a Akamai do Santander rejeita com 403 Access Denied.
 const { Agent, fetch: undiciFetch } = require('undici');
 const { supabase } = require('../../utils/supabase');
@@ -16,7 +16,7 @@ const BASE_URL = IS_PROD
 
 const OAUTH_PATH = '/auth/oauth/v2/token';
 
-// Bank ID para Santander (codigo compe). Pode ser sobrescrito por env.
+// Bank ID para Santander (código compe). Pode ser sobrescrito por env.
 const BANK_ID = process.env.SANTANDER_BANK_ID || '90400888000142';
 
 // Conta da CBRio (env)
@@ -38,9 +38,9 @@ let httpsAgentCache = null;
 function buildHttpsAgent() {
   if (httpsAgentCache) return httpsAgentCache;
   if (!CERT_B64 || !KEY_B64) {
-    throw new Error('Santander mTLS nao configurado: defina SANTANDER_CERT_PEM_BASE64 e SANTANDER_KEY_PEM_BASE64');
+    throw new Error('Santander mTLS não configurado: defina SANTANDER_CERT_PEM_BASE64 e SANTANDER_KEY_PEM_BASE64');
   }
-  // undici.Agent · usado via opcao 'dispatcher' do fetch (NAO 'agent')
+  // undici.Agent · usado via opção 'dispatcher' do fetch (NÃO 'agent')
   httpsAgentCache = new Agent({
     connect: {
       cert: Buffer.from(CERT_B64, 'base64'),
@@ -87,7 +87,7 @@ function tokenIsValid(token) {
 
 async function fetchNewToken() {
   if (!CLIENT_ID || !CLIENT_SECRET) {
-    throw new Error('Santander OAuth nao configurado: defina SANTANDER_CLIENT_ID e SANTANDER_CLIENT_SECRET');
+    throw new Error('Santander OAuth não configurado: defina SANTANDER_CLIENT_ID e SANTANDER_CLIENT_SECRET');
   }
 
   const agent = buildHttpsAgent();
@@ -123,7 +123,7 @@ async function fetchNewToken() {
     throw new Error(`Santander OAuth falhou (${res.status}): ${text?.slice(0, 200)}`);
   }
 
-  // Resposta padrao: { access_token, token_type, expires_in (segundos) }
+  // Resposta padrão: { access_token, token_type, expires_in (segundos) }
   const expiresIn = Number(json.expires_in || 900);
   const token = {
     access_token: json.access_token,
@@ -159,7 +159,7 @@ async function logCall({ endpoint, method, status_code, duration_ms, trace_id, e
     await supabase.from('santander_sync_log').insert({
       endpoint, method, status_code, duration_ms, trace_id, error_message, request_summary, user_id,
     });
-  } catch (_) { /* nao quebra a request por causa do log */ }
+  } catch (_) { /* não quebra a request por causa do log */ }
 }
 
 async function callApi(path, { method = 'GET', query, body, retries = 1, userId = null } = {}) {
@@ -219,9 +219,9 @@ async function callApi(path, { method = 'GET', query, body, retries = 1, userId 
 
   if (!res.ok) {
     // Inclui body do Santander na mensagem · ajuda diagnosticar 4xx
-    // Santander usa padrao com underscore: _errorCode, _message, _details,
+    // Santander usa padrão com underscore: _errorCode, _message, _details,
     // _errors: [{ _code, _field, _message }]
-    // Tambem aceita formatos OAuth (error_description) e generico (message)
+    // Também aceita formatos OAuth (error_description) e genérico (message)
     let bodyMsg = '';
     if (json && typeof json === 'object') {
       const errorsArr = Array.isArray(json._errors) ? json._errors
@@ -276,7 +276,7 @@ module.exports = {
   downloadBinary,
   getAccessToken,
   logCall,
-  // helpers de diagnostico
+  // helpers de diagnóstico
   isConfigured: () => Boolean(CLIENT_ID && CLIENT_SECRET && APPLICATION_KEY && CERT_B64 && KEY_B64 && AGENCIA && CONTA),
   missingEnv: () => {
     const miss = [];

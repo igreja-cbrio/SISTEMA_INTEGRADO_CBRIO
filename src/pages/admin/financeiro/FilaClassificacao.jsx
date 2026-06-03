@@ -47,7 +47,7 @@ export default function FilaClassificacao() {
   const [bulkProcessing, setBulkProcessing] = useState(false);
   const [confiancaMin, setConfiancaMin] = useState(0.8);
   const [selecionados, setSelecionados] = useState(new Set());
-  // Filtro por click nos cards · 'todos' | 'auto' (alta confianca) | 'sem_sugestao' | 'memoria' | 'baixa_confianca'
+  // Filtro por click nos cards · 'todos' | 'auto' (alta confiança) | 'sem_sugestao' | 'memória' | 'baixa_confianca'
   const [filtroCard, setFiltroCard] = useState('todos');
 
   const toggleSel = (id) => {
@@ -125,7 +125,7 @@ export default function FilaClassificacao() {
   }, []);
 
   const aprovarMassa = async () => {
-    if (!confirm(`Aprovar TODAS as ${stats?.pendentes || 0} sugestoes com confianca >= ${Math.round(confiancaMin * 100)}%?`)) return;
+    if (!confirm(`Aprovar TODAS as ${stats?.pendentes || 0} sugestões com confiança >= ${Math.round(confiancaMin * 100)}%?`)) return;
     setBulkProcessing(true);
     try {
       const r = await financeiro.filaClassificacao.aprovarMassa(confiancaMin);
@@ -160,7 +160,7 @@ export default function FilaClassificacao() {
   };
 
   const ignorar = async (item) => {
-    if (!confirm('Ignorar este lancamento? Ele nao virara transacao final.')) return;
+    if (!confirm('Ignorar este lancamento? Ele não virara transacao final.')) return;
     await financeiroV2.fila.ignorar(item.id);
     load();
   };
@@ -193,7 +193,7 @@ export default function FilaClassificacao() {
     return true;
   });
 
-  // Selecao opera apenas sobre a lista filtrada (declarado DEPOIS de filaFiltrada
+  // Seleção opera apenas sobre a lista filtrada (declarado DEPOIS de filaFiltrada
   // pra evitar TDZ "Cannot access 'ue' before initialization" no build minificado)
   const todosMarcados = filaFiltrada.length > 0 && filaFiltrada.every(i => selecionados.has(i.id));
   const algunsMarcados = selecionados.size > 0 && !todosMarcados;
@@ -203,7 +203,7 @@ export default function FilaClassificacao() {
     <div>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
         <div>
-          <h2 style={{ fontSize: 18, fontWeight: 700, color: C.text, margin: 0 }}>Fila de classificacao</h2>
+          <h2 style={{ fontSize: 18, fontWeight: 700, color: C.text, margin: 0 }}>Fila de classificação</h2>
           <div style={{ fontSize: 12, color: C.text2, marginTop: 4 }}>
             {fila.length} lancamento{fila.length === 1 ? '' : 's'} aguardando revisao
           </div>
@@ -278,7 +278,7 @@ export default function FilaClassificacao() {
         </div>
       )}
 
-      {/* Acoes em massa */}
+      {/* Ações em massa */}
       {fila.length > 0 && (
         <div style={{
           display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16, padding: 12,
@@ -308,7 +308,7 @@ export default function FilaClassificacao() {
         </div>
       )}
 
-      {/* Barra de selecao · marcar todos + acoes em selecionados */}
+      {/* Barra de seleção · marcar todos + ações em selecionados */}
       {fila.length > 0 && (
         <div style={{
           display: 'flex', alignItems: 'center', gap: 12, marginBottom: 12, padding: '10px 14px',
@@ -648,7 +648,7 @@ function ModalEditarClassificacao({ item, onClose, planos, centros, onSalvar }) 
               placeholder="ex: 17" maxLength={2} style={inputSt} />
           </div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-            <label style={labelSt}>Observacoes</label>
+            <label style={labelSt}>Observações</label>
             <input value={obs} onChange={e => setObs(e.target.value)} style={inputSt} />
           </div>
 
@@ -698,7 +698,7 @@ function ModalEditarClassificacao({ item, onClose, planos, centros, onSalvar }) 
   );
 }
 
-// Combobox com busca · digita pra filtrar codigo+nome, click pra selecionar
+// Combobox com busca · digita pra filtrar código+nome, click pra selecionar
 function HistoricoPagadorBlock({ nome, documento, valorAtual, planos, onAplicarPlano }) {
   const [hist, setHist] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -732,8 +732,8 @@ function HistoricoPagadorBlock({ nome, documento, valorAtual, planos, onAplicarP
         border: `1px dashed ${C.border}`, marginBottom: 12,
         fontSize: 12, color: C.text3,
       }}>
-        <span style={{ fontWeight: 600, color: C.text2 }}>Primeira classificacao deste pagador</span>
-        {' · sem historico anterior'}
+        <span style={{ fontWeight: 600, color: C.text2 }}>Primeira classificação deste pagador</span>
+        {' · sem histórico anterior'}
       </div>
     );
   }

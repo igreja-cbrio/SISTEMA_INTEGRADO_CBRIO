@@ -19,7 +19,7 @@ export default function DevocionalLogin() {
   const [err, setErr] = useState('');
 
   // Flag setada pelo redirect do CadastroMembresia quando a pessoa cria conta
-  // mas ainda nao virou membro · entao precisa esperar admin aprovar antes
+  // mas ainda não virou membro · então precisa esperar admin aprovar antes
   // de ter acesso ao devocional.
   const queryParams = new URLSearchParams(window.location.search);
   const acabouDeCadastrar = queryParams.get('cadastrado') === '1';
@@ -75,7 +75,7 @@ export default function DevocionalLogin() {
             <p className="text-xs text-muted-foreground">
               Verifique sua caixa de entrada em <strong>{maskedEmail}</strong> e clique no link pra entrar.
             </p>
-            <p className="text-xs text-muted-foreground">Pode demorar ate 1min · cheque tambem o spam.</p>
+            <p className="text-xs text-muted-foreground">Pode demorar até 1min · cheque também o spam.</p>
           </div>
         ) : (
           <>

@@ -54,7 +54,7 @@ export default function VolQrCodes() {
           <h1 className="text-xl md:text-2xl font-bold text-foreground flex items-center gap-2">
             <QrCode className="h-5 w-5 md:h-6 md:w-6" /> Gestao de QR Codes
           </h1>
-          <p className="text-sm text-muted-foreground">Voluntarios ativos nos ultimos 3 meses</p>
+          <p className="text-sm text-muted-foreground">Voluntários ativos nos últimos 3 meses</p>
         </div>
         <Button variant="outline" className="gap-2 w-full sm:w-auto" onClick={() => document.getElementById('pc-search-section')?.scrollIntoView({ behavior: 'smooth' })}>
           <Search className="h-4 w-4" /> Buscar no Planning Center

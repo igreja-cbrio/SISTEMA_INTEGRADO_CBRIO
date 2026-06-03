@@ -1,5 +1,5 @@
 // ============================================================================
-// MatrizValorArea — grid 6 areas x 5 valores no /painel
+// MatrizValorArea — grid 6 áreas x 5 valores no /painel
 //
 // Cada celula e um cliente de 1 cor (verde/amarelo/vermelho/cinza),
 // representando o pior status entre os KPIs daquela intersecao.
@@ -17,7 +17,7 @@ const C = {
   primary: '#00B39D',
 };
 
-// Mapa de cor por status (cores fortes para celulas — chamam atencao)
+// Mapa de cor por status (cores fortes para celulas — chamam atenção)
 const STATUS_COR = {
   verde:    '#10B981',
   amarelo:  '#F59E0B',

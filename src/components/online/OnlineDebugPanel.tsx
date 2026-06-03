@@ -27,7 +27,7 @@ export function OnlineDebugPanel() {
       <CardContent className="p-5 space-y-4">
         <div className="flex items-center gap-2">
           <Bug className="h-4 w-4 text-amber-600 dark:text-amber-400" />
-          <h2 className="text-base font-bold leading-tight">Diagnostico (admin)</h2>
+          <h2 className="text-base font-bold leading-tight">Diagnóstico (admin)</h2>
         </div>
         <p className="text-xs text-muted-foreground">
           Pra descobrir por que as metricas voltam zeradas. Roda os 2 testes e me passa o resultado.
@@ -66,16 +66,16 @@ export function OnlineDebugPanel() {
               {canais.total === 0 && (
                 <div className="text-xs flex items-start gap-1.5 text-amber-600 dark:text-amber-400">
                   <AlertTriangle className="h-3.5 w-3.5 mt-0.5 shrink-0" />
-                  <span>Conta OAuth nao gerencia nenhum canal · reconectar com conta dona do canal CBRio.</span>
+                  <span>Conta OAuth não gerencia nenhum canal · reconectar com conta dona do canal CBRio.</span>
                 </div>
               )}
             </div>
           )}
         </div>
 
-        {/* Teste 2 · analytics dum video */}
+        {/* Teste 2 · analytics dum vídeo */}
         <div className="rounded-lg border border-border bg-card p-3 space-y-2">
-          <div className="text-sm font-semibold">2. Chamada Analytics pra um video</div>
+          <div className="text-sm font-semibold">2. Chamada Analytics pra um vídeo</div>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
             <div>
               <label className="text-[10px] text-muted-foreground">video_id</label>

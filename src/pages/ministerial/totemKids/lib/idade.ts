@@ -1,5 +1,5 @@
 // Helpers de idade · LGPD com menores
-// Dado data_nascimento pode ser null (responsavel nao quis informar).
+// Dado data_nascimento pode ser null (responsável não quis informar).
 
 export function calcIdadeMeses(dataNascimento: string | null | undefined): number | null {
   if (!dataNascimento) return null;

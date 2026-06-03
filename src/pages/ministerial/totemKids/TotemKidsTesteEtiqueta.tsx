@@ -1,12 +1,12 @@
 // ============================================================================
 // Totem Kids · Teste de Etiqueta
 // ============================================================================
-// Pagina pra gerar e visualizar as 2 etiquetas sem precisar fazer check-in.
+// Página pra gerar e visualizar as 2 etiquetas sem precisar fazer check-in.
 // 2 modos:
-//   - Preview · abre em popup visivel (Ctrl+P pra ver dialogo)
-//   - Imprimir · dispara pra impressora padrao (Brother no totem)
+//   - Preview · abre em popup visível (Ctrl+P pra ver dialogo)
+//   - Imprimir · dispara pra impressora padrão (Brother no totem)
 //
-// Util pra:
+// Útil pra:
 //   - Calibrar impressora Brother antes do primeiro culto
 //   - Conferir layout 62x100mm
 //   - Testar troca de etiqueta (DK-22251 etc)

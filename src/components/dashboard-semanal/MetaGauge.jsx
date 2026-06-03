@@ -8,7 +8,7 @@ import { cn } from '@/lib/utils';
  * - Arco preenchido com cor que transiciona de vermelho → amarelo → teal
  * - Ponteiro circular branco + linha colorida saindo da ponta
  * - Glow filter no arco preenchido · drop-shadow no ponteiro
- * - Animação inicial (0 → percentual) de duracao `duration`
+ * - Animação inicial (0 → percentual) de duração `duration`
  *
  * Props:
  *   atual    · valor atual
@@ -129,7 +129,7 @@ export default function MetaGauge({
         </motion.g>
       </svg>
 
-      {/* Numero central */}
+      {/* Número central */}
       <div
         className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none"
         style={{ marginTop: size * 0.15 }}

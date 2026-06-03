@@ -233,7 +233,7 @@ router.get('/historico', async (req, res) => {
 router.delete('/projeto/:id', authorize('admin', 'diretor'), async (req, res) => {
   try {
     const { data: item } = await supabase.from('projects').select('id, name').eq('id', req.params.id).single();
-    if (!item) return res.status(404).json({ error: 'Projeto nao encontrado' });
+    if (!item) return res.status(404).json({ error: 'Projeto não encontrado' });
 
     // Cascade: tarefas, fases, milestones, riscos, kpis, budget, retrospectiva
     const { data: tasks } = await supabase.from('project_tasks').select('id').eq('project_id', req.params.id);
@@ -266,7 +266,7 @@ router.delete('/projeto/:id', authorize('admin', 'diretor'), async (req, res) =>
 router.delete('/expansao/:id', authorize('admin', 'diretor'), async (req, res) => {
   try {
     const { data: item } = await supabase.from('expansion_milestones').select('id, name').eq('id', req.params.id).single();
-    if (!item) return res.status(404).json({ error: 'Marco nao encontrado' });
+    if (!item) return res.status(404).json({ error: 'Marco não encontrado' });
 
     // Cascade: tarefas, subtarefas, dependencias
     const { data: tasks } = await supabase.from('expansion_tasks').select('id').eq('milestone_id', req.params.id);

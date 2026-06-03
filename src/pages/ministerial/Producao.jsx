@@ -241,7 +241,7 @@ function ModalProducao({ culto, onClose, onSaved }) {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [form, setForm] = useState({ duracao_minutos: '', pontualidade_obs: '', observacoes: '' });
-  const [marks, setMarks] = useState({}); // item_id -> {feito, observacao}
+  const [marks, setMarks] = useState({}); // item_id -> {feito, observação}
   const [novaOcorr, setNovaOcorr] = useState({ tipo: 'tecnica', severidade: 'media', momento: '', descricao: '' });
 
   const meta = det?.culto?.meta_duracao_min ?? culto.producao?.meta_duracao_min ?? 60;

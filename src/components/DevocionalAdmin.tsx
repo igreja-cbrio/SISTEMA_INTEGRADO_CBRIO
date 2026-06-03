@@ -169,16 +169,16 @@ function NovoPlanoModal({ onClose, onSaved }: { onClose: () => void; onSaved: (i
         <DialogHeader><DialogTitle>Novo plano de devocional</DialogTitle></DialogHeader>
         <div className="space-y-3">
           <div>
-            <Label>Titulo *</Label>
+            <Label>Título *</Label>
             <Input value={form.titulo} onChange={e => setForm({ ...form, titulo: e.target.value })} placeholder="Devocional Junho 2026" />
           </div>
           <div>
-            <Label>Descricao / contexto</Label>
+            <Label>Descrição / contexto</Label>
             <Textarea rows={3} value={form.descricao} onChange={e => setForm({ ...form, descricao: e.target.value })} placeholder="Tema, serie biblica, foco pastoral..." />
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <Label>Inicio</Label>
+              <Label>Início</Label>
               <Input type="date" value={form.data_inicio} onChange={e => setForm({ ...form, data_inicio: e.target.value })} />
             </div>
             <div>
@@ -271,7 +271,7 @@ function PlanoDetalhe({ planoId, onVoltar, podeEditar }: { planoId: string; onVo
           <TabsTrigger value="itens">Itens diarios</TabsTrigger>
           <TabsTrigger value="adesao">Adesao</TabsTrigger>
           <TabsTrigger value="envios">Envios</TabsTrigger>
-          <TabsTrigger value="estudo">Estudo biblico</TabsTrigger>
+          <TabsTrigger value="estudo">Estudo bíblico</TabsTrigger>
         </TabsList>
 
         <TabsContent value="itens" className="space-y-3">
@@ -340,7 +340,7 @@ function PlanoDetalhe({ planoId, onVoltar, podeEditar }: { planoId: string; onVo
 
 function GerarIAModal({ plano, onClose, onDone }: { plano: Plano; onClose: () => void; onDone: () => void }) {
   const [tema, setTema] = useState('');
-  const [tom, setTom] = useState('pastoral, edificante, com aplicacao pratica');
+  const [tom, setTom] = useState('pastoral, edificante, com aplicação pratica');
   const [sobrescrever, setSobrescrever] = useState(false);
   const [gerando, setGerando] = useState(false);
   const [progresso, setProgresso] = useState({ feitos: 0, total: 0 });
@@ -373,7 +373,7 @@ function GerarIAModal({ plano, onClose, onDone }: { plano: Plano; onClose: () =>
     setProgresso({ feitos: 0, total: n });
     let totalCriados = 0;
     try {
-      // Backend gera ate 10 dias por chamada · loop ate cobrir tudo
+      // Backend gera até 10 dias por chamada · loop até cobrir tudo
       for (let i = 0; i < 20; i++) {
         const r: any = await planosApi.gerarIA(plano.id, { tema, tom, sobrescrever, apenas_datas });
         const criados = r.criados || 0;
@@ -419,8 +419,8 @@ function GerarIAModal({ plano, onClose, onDone }: { plano: Plano; onClose: () =>
             </p>
           </div>
           <div>
-            <Label>Tema / serie biblica (opcional)</Label>
-            <Input value={tema} onChange={e => setTema(e.target.value)} placeholder="Ex: Caminhar com Deus · Salmos · Vida no Espirito" />
+            <Label>Tema / série bíblica (opcional)</Label>
+            <Input value={tema} onChange={e => setTema(e.target.value)} placeholder="Ex: Caminhar com Deus · Salmos · Vida no Espírito" />
           </div>
           <div>
             <Label>Tom / estilo</Label>
@@ -454,7 +454,7 @@ function GerarIAModal({ plano, onClose, onDone }: { plano: Plano; onClose: () =>
 }
 
 function NovoItemModal({ plano, itens, onClose, onSaved }: { plano: Plano; itens: Item[]; onClose: () => void; onSaved: () => void }) {
-  // Sugere a primeira data do plano que ainda nao tem item
+  // Sugere a primeira data do plano que ainda não tem item
   const datasUsadas = useMemo(() => new Set(itens.map(i => i.data)), [itens]);
   const proxData = useMemo(() => {
     const cur = new Date(plano.data_inicio + 'T12:00');
@@ -481,7 +481,7 @@ function NovoItemModal({ plano, itens, onClose, onSaved }: { plano: Plano; itens
     if (!form.titulo.trim()) return toast.error('Titulo obrigatorio');
     if (!form.reflexao.trim()) return toast.error('Reflexao obrigatoria');
     if (form.data < plano.data_inicio || form.data > plano.data_fim) {
-      return toast.error('Data fora do periodo do plano');
+      return toast.error('Data fora do período do plano');
     }
     setSaving(true);
     try {
@@ -515,7 +515,7 @@ function NovoItemModal({ plano, itens, onClose, onSaved }: { plano: Plano; itens
             </div>
           </div>
           <div>
-            <Label>Titulo *</Label>
+            <Label>Título *</Label>
             <Input value={form.titulo} onChange={e => setForm({ ...form, titulo: e.target.value })} placeholder="O amor de Deus" />
           </div>
           <div>
@@ -523,12 +523,12 @@ function NovoItemModal({ plano, itens, onClose, onSaved }: { plano: Plano; itens
             <Textarea rows={6} value={form.reflexao} onChange={e => setForm({ ...form, reflexao: e.target.value })} placeholder="Corpo principal do devocional..." />
           </div>
           <div>
-            <Label>Aplicacao</Label>
+            <Label>Aplicação</Label>
             <Textarea rows={3} value={form.aplicacao} onChange={e => setForm({ ...form, aplicacao: e.target.value })} placeholder="Como aplicar hoje · pergunta pratica" />
           </div>
           <div>
-            <Label>Oracao</Label>
-            <Textarea rows={3} value={form.oracao} onChange={e => setForm({ ...form, oracao: e.target.value })} placeholder="Sugestao de oracao curta" />
+            <Label>Oração</Label>
+            <Textarea rows={3} value={form.oracao} onChange={e => setForm({ ...form, oracao: e.target.value })} placeholder="Sugestão de oração curta" />
           </div>
         </div>
         <DialogFooter>
@@ -567,11 +567,11 @@ function EditarItemModal({ item, onClose, onSaved }: { item: Item; onClose: () =
       <DialogContent className="max-w-2xl">
         <DialogHeader><DialogTitle>Editar item · {fmt(item.data)}</DialogTitle></DialogHeader>
         <div className="space-y-3 max-h-[60vh] overflow-y-auto">
-          <div><Label>Titulo</Label><Input value={form.titulo} onChange={e => setForm({ ...form, titulo: e.target.value })} /></div>
+          <div><Label>Título</Label><Input value={form.titulo} onChange={e => setForm({ ...form, titulo: e.target.value })} /></div>
           <div><Label>Passagem</Label><Input value={form.passagem} onChange={e => setForm({ ...form, passagem: e.target.value })} placeholder="Joao 3:16" /></div>
           <div><Label>Reflexao</Label><Textarea rows={8} value={form.reflexao} onChange={e => setForm({ ...form, reflexao: e.target.value })} /></div>
-          <div><Label>Aplicacao</Label><Textarea rows={3} value={form.aplicacao} onChange={e => setForm({ ...form, aplicacao: e.target.value })} /></div>
-          <div><Label>Oracao</Label><Textarea rows={3} value={form.oracao} onChange={e => setForm({ ...form, oracao: e.target.value })} /></div>
+          <div><Label>Aplicação</Label><Textarea rows={3} value={form.aplicacao} onChange={e => setForm({ ...form, aplicacao: e.target.value })} /></div>
+          <div><Label>Oração</Label><Textarea rows={3} value={form.oracao} onChange={e => setForm({ ...form, oracao: e.target.value })} /></div>
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={onClose}>Cancelar</Button>
@@ -603,7 +603,7 @@ function AdesaoView({ planoId }: { planoId: string }) {
 
   useEffect(() => { load(); }, [load]);
 
-  // Filtra por periodo
+  // Filtra por período
   const diasFiltrados = useMemo(() => {
     if (!dias.length) return [];
     const hoje = new Date().toISOString().slice(0, 10);
@@ -625,7 +625,7 @@ function AdesaoView({ planoId }: { planoId: string }) {
     return dias;
   }, [dias, periodo]);
 
-  // Estatisticas baseadas no filtro
+  // Estatísticas baseadas no filtro
   const diasComCheckin = diasFiltrados.filter(d => d.check_ins > 0);
   const mediaAdesao = diasComCheckin.length
     ? Math.round(diasComCheckin.reduce((s, d) => s + d.pct_adesao, 0) / diasComCheckin.length)
@@ -660,7 +660,7 @@ function AdesaoView({ planoId }: { planoId: string }) {
 
   return (
     <div className="space-y-4">
-      {/* Filtros de periodo */}
+      {/* Filtros de período */}
       <div className="flex items-center justify-between gap-2 flex-wrap">
         <div className="inline-flex rounded-lg border bg-card overflow-hidden">
           {[
@@ -680,7 +680,7 @@ function AdesaoView({ planoId }: { planoId: string }) {
         <Button variant="ghost" size="sm" onClick={load}><RefreshCw className="h-4 w-4" /></Button>
       </div>
 
-      {/* Cards de estatistica */}
+      {/* Cards de estatística */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
         <Card className="p-3">
           <div className="flex items-center gap-2 text-xs text-muted-foreground"><Users className="h-3 w-3" /> Membros</div>
@@ -838,18 +838,18 @@ function EnviosView({ planoId, podeEnviar, planoItens }: { planoId: string; pode
   }
 
   async function copiarMensagem() {
-    if (!itemHoje) return toast.error('Plano nao tem item pra hoje');
+    if (!itemHoje) return toast.error('Plano não tem item pra hoje');
     const texto = buildMensagem(itemHoje);
     try {
       await navigator.clipboard.writeText(texto);
       toast.success('Mensagem copiada · cole no WhatsApp/Telegram/grupo');
     } catch {
-      toast.error('Nao consegui copiar · selecione manualmente abaixo');
+      toast.error('Não consegui copiar · selecione manualmente abaixo');
     }
   }
 
   function abrirWhatsAppWeb() {
-    if (!itemHoje) return toast.error('Plano nao tem item pra hoje');
+    if (!itemHoje) return toast.error('Plano não tem item pra hoje');
     const texto = encodeURIComponent(buildMensagem(itemHoje));
     window.open(`https://wa.me/?text=${texto}`, '_blank');
   }
@@ -859,13 +859,13 @@ function EnviosView({ planoId, podeEnviar, planoItens }: { planoId: string; pode
     try {
       const r: any = await planosApi.enviarHoje(planoId);
       if (r.motivo === 'sem_item_hoje') {
-        toast.error('Plano nao tem item pra hoje');
+        toast.error('Plano não tem item pra hoje');
       } else if (r.motivo === 'sem_destinatarios') {
         toast.error('Nenhum membro elegivel (precisa ter logado pelo /devocional + telefone)');
       } else if (r.motivo === 'whatsapp_desabilitado') {
         toast.warning('WhatsApp desabilitado · WHATSAPP_ENABLED=true e credenciais precisam estar no Vercel');
       } else {
-        toast.success(`Enviados: ${r.enviados} · Erros: ${r.erros} · Ja existentes: ${r.ja_existentes}`);
+        toast.success(`Enviados: ${r.enviados} · Erros: ${r.erros} · Já existentes: ${r.ja_existentes}`);
       }
       load();
     } catch (e: any) { toast.error(e.message); }
@@ -874,7 +874,7 @@ function EnviosView({ planoId, podeEnviar, planoItens }: { planoId: string; pode
 
   return (
     <div className="space-y-4">
-      {/* Opcao Link · sempre disponivel · nao depende de template aprovado */}
+      {/* Opção Link · sempre disponível · não depende de template aprovado */}
       <Card className="p-4 space-y-3 border-primary/30 bg-primary/5">
         <div className="flex items-center gap-2">
           <Link2 className="h-4 w-4 text-primary" />
@@ -900,7 +900,7 @@ function EnviosView({ planoId, podeEnviar, planoItens }: { planoId: string; pode
         )}
       </Card>
 
-      {/* Opcao envio automatico via WhatsApp API */}
+      {/* Opção envio automático via WhatsApp API */}
       <div className="flex items-center justify-between">
         <p className="text-sm text-muted-foreground">
           Cron diario 06:00 BRT envia via WhatsApp Business API (precisa do template aprovado pelo Meta).

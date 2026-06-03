@@ -41,7 +41,7 @@ function extractTag(block, tag) {
   const xmlMatch = block.match(new RegExp(`<${tag}>([^<]*)</${tag}>`, 'i'));
   if (xmlMatch) return xmlMatch[1].trim();
 
-  // SGML: <TAG>valor (termina na proxima tag ou fim de linha)
+  // SGML: <TAG>valor (termina na próxima tag ou fim de linha)
   const sgmlMatch = block.match(new RegExp(`<${tag}>([^<\\n\\r]*)`, 'i'));
   if (sgmlMatch) return sgmlMatch[1].trim();
 
@@ -92,7 +92,7 @@ function extractDocumento(memo) {
   // CPF: procura sequencia exata de 11 digitos
   const sequencias = memo.match(/\d{11}/g);
   if (sequencias && sequencias.length > 0) {
-    // Retorna a primeira que nao faz parte de um numero maior
+    // Retorna a primeira que não faz parte de um número maior
     for (const seq of sequencias) {
       const idx = memo.indexOf(seq);
       const before = idx > 0 ? memo[idx - 1] : '';
@@ -124,13 +124,13 @@ function extractNomeContraparte(memo) {
   }
   // Remove digitos longos (CPF/CNPJ/IDs)
   s = s.replace(/\d{8,}/g, '').replace(/\s+/g, ' ').trim();
-  // Se sobrou so codigo (ex: "3957.4900010396-D-000008"), retorna null
+  // Se sobrou so código (ex: "3957.4900010396-D-000008"), retorna null
   if (!s || /^[\d.\-/]+$/.test(s)) return null;
   return s || null;
 }
 
 /**
- * Parseia conteudo completo do OFX
+ * Parseia conteúdo completo do OFX
  */
 function parseOfx(buffer) {
   const content = typeof buffer === 'string' ? buffer : decodeBuffer(buffer);

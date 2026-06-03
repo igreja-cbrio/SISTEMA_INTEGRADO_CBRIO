@@ -99,7 +99,7 @@ export default function CultoAoVivo() {
             next.delete(novo.id);
             return next;
           }), 5_000);
-          // Atualiza stats apos receber novo PIX
+          // Atualiza stats após receber novo PIX
           loadStats();
         }
       )

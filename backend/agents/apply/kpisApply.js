@@ -1,26 +1,26 @@
-// Handlers que APLICAM acoes propostas pelo agente kpis_watcher
-// apos aprovacao humana.
+// Handlers que APLICAM ações propostas pelo agente kpis_watcher
+// após aprovação humana.
 
 const { supabase } = require('../../utils/supabase');
 
 // ─────────────────────────────────────────────────────────────────────
 // kpis.alertar_lider
-// Cria notificacao in-app pro lider via tabela notificacoes_app.
+// Cria notificação in-app pro líder via tabela notificacoes_app.
 // ─────────────────────────────────────────────────────────────────────
 async function applyAlertarLider({ payload, reviewedBy }) {
   const { kpi_id, lider_funcionario_id, severidade, titulo, mensagem } = payload || {};
   if (!kpi_id) return { ok: false, error: 'kpi_id ausente' };
   if (!lider_funcionario_id) return { ok: false, error: 'lider_funcionario_id ausente' };
-  if (!titulo || !mensagem) return { ok: false, error: 'titulo e mensagem obrigatorios' };
+  if (!titulo || !mensagem) return { ok: false, error: 'título e mensagem obrigatórios' };
 
-  // Resolve email do lider a partir de rh_funcionarios pra achar profile_id
+  // Resolve email do líder a partir de rh_funcionarios pra achar profile_id
   const { data: func, error: errFunc } = await supabase
     .from('rh_funcionarios')
     .select('id, nome, email')
     .eq('id', lider_funcionario_id)
     .maybeSingle();
   if (errFunc) return { ok: false, error: errFunc.message };
-  if (!func) return { ok: false, error: 'funcionario nao encontrado' };
+  if (!func) return { ok: false, error: 'funcionário não encontrado' };
 
   // Profile match por email (case-insensitive)
   let profileId = null;
@@ -36,11 +36,11 @@ async function applyAlertarLider({ payload, reviewedBy }) {
   if (!profileId) {
     return {
       ok: false,
-      error: `funcionario ${func.nome} sem profile linkado · nao da pra notificar`,
+      error: `funcionário ${func.nome} sem profile linkado · não da pra notificar`,
     };
   }
 
-  // Usa o servico notificar.js direto · padrao do sistema
+  // Usa o serviço notificar.js direto · padrão do sistema
   const { notificar } = require('../../services/notificar');
   await notificar({
     modulo: 'kpis',

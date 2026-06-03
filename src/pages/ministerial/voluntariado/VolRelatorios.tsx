@@ -31,7 +31,7 @@ export default function VolRelatorios() {
   const { data: teams = [] } = useVolTeams();
   const inactiveData = inactiveMode === 'checkin' ? inactiveByCheckin : inactiveBySchedule;
 
-  // ── Overview stats (Visao Geral) ──
+  // ── Overview stats (Visão Geral) ──
   const overviewStats = useMemo(() => {
     if (!reportData) return { rate: 0, uniqueVol: 0, totalServices: 0, unscheduledCount: 0 };
     const scheduled = reportData.schedules.length;
@@ -54,7 +54,7 @@ export default function VolRelatorios() {
       });
   }, [reportData]);
 
-  // ── Weekly/Report stats (Relatorio Semanal + Por Culto) ──
+  // ── Weekly/Report stats (Relatório Semanal + Por Culto) ──
   const weeklyStats = useMemo(() => {
     if (!reportData) return { scheduled: 0, checkedIn: 0, rate: 0, uniqueVol: 0 };
     const scheduled = reportData.schedules.length;
@@ -84,8 +84,8 @@ export default function VolRelatorios() {
       {/* Header */}
       <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
         <div>
-          <h1 className="text-xl md:text-2xl font-bold text-foreground">Relatorios</h1>
-          <p className="text-sm text-muted-foreground">Analise de presenca</p>
+          <h1 className="text-xl md:text-2xl font-bold text-foreground">Relatórios</h1>
+          <p className="text-sm text-muted-foreground">Analise de presença</p>
         </div>
         <div className="flex gap-2 items-center w-full sm:w-auto">
           <Button variant="outline" size="sm" className="gap-1 hidden sm:flex" onClick={() => window.print()}>
@@ -110,8 +110,8 @@ export default function VolRelatorios() {
         <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2">
           <div className="w-full sm:w-auto overflow-x-auto scrollbar-hide">
             <TabsList className="inline-flex w-auto min-w-max">
-              <TabsTrigger value="weekly" className="gap-1 text-xs sm:text-sm"><Calendar className="h-4 w-4 shrink-0" /><span className="hidden sm:inline">Relatorio</span> Semanal</TabsTrigger>
-              <TabsTrigger value="overview" className="gap-1 text-xs sm:text-sm"><BarChart3 className="h-4 w-4 shrink-0" /><span className="hidden sm:inline">Visao</span> Geral</TabsTrigger>
+              <TabsTrigger value="weekly" className="gap-1 text-xs sm:text-sm"><Calendar className="h-4 w-4 shrink-0" /><span className="hidden sm:inline">Relatório</span> Semanal</TabsTrigger>
+              <TabsTrigger value="overview" className="gap-1 text-xs sm:text-sm"><BarChart3 className="h-4 w-4 shrink-0" /><span className="hidden sm:inline">Visão</span> Geral</TabsTrigger>
               <TabsTrigger value="inactive" className="gap-1 text-xs sm:text-sm"><UserX className="h-4 w-4 shrink-0" />Inativos</TabsTrigger>
               <TabsTrigger value="thermometer" className="gap-1 text-xs sm:text-sm"><Flame className="h-4 w-4 shrink-0" />Termometro</TabsTrigger>
             </TabsList>
@@ -120,7 +120,7 @@ export default function VolRelatorios() {
         </div>
 
         {/* ═══════════════════════════════════════════════════════════════
-            RELATORIO SEMANAL — stats + por culto
+            RELATÓRIO SEMANAL — stats + por culto
         ═══════════════════════════════════════════════════════════════ */}
         <TabsContent value="weekly">
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
@@ -142,7 +142,7 @@ export default function VolRelatorios() {
             <Card><CardContent className="p-4 text-center">
               <Users className="h-5 w-5 mx-auto mb-1 text-purple-600" />
               <p className="text-2xl font-bold">{weeklyStats.uniqueVol}</p>
-              <p className="text-xs text-muted-foreground">Vol. Unicos</p>
+              <p className="text-xs text-muted-foreground">Vol. Únicos</p>
             </CardContent></Card>
           </div>
 
@@ -150,7 +150,7 @@ export default function VolRelatorios() {
             <CardContent className="p-4">
               <h3 className="font-semibold mb-4">Por Culto</h3>
               {serviceBreakdown.length === 0 ? (
-                <p className="text-center text-muted-foreground py-8">Nenhum culto no periodo</p>
+                <p className="text-center text-muted-foreground py-8">Nenhum culto no período</p>
               ) : (
                 <div className="space-y-3">
                   {serviceBreakdown.map(svc => (
@@ -182,7 +182,7 @@ export default function VolRelatorios() {
         </TabsContent>
 
         {/* ═══════════════════════════════════════════════════════════════
-            VISAO GERAL — taxa, voluntarios, cultos, sem escala + lista
+            VISÃO GERAL — taxa, voluntários, cultos, sem escala + lista
         ═══════════════════════════════════════════════════════════════ */}
         <TabsContent value="overview">
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
@@ -194,7 +194,7 @@ export default function VolRelatorios() {
             <Card><CardContent className="p-4 text-center">
               <Users className="h-5 w-5 mx-auto mb-1 text-purple-600" />
               <p className="text-2xl font-bold">{overviewStats.uniqueVol}</p>
-              <p className="text-xs text-muted-foreground">Voluntarios</p>
+              <p className="text-xs text-muted-foreground">Voluntários</p>
             </CardContent></Card>
             <Card><CardContent className="p-4 text-center">
               <Calendar className="h-5 w-5 mx-auto mb-1 text-muted-foreground" />
@@ -216,13 +216,13 @@ export default function VolRelatorios() {
                 <h3 className="font-semibold">Check-ins sem Escala</h3>
               </div>
               {unscheduledCheckIns.length === 0 ? (
-                <p className="text-center text-muted-foreground py-8">Nenhum check-in sem escala no periodo</p>
+                <p className="text-center text-muted-foreground py-8">Nenhum check-in sem escala no período</p>
               ) : (
                 <div className="space-y-2">
                   {unscheduledCheckIns.map(ci => (
                     <div key={ci.id} className="flex items-center justify-between p-3 rounded-lg border bg-card">
                       <div className="min-w-0">
-                        <p className="font-medium text-sm">{ci.volunteer?.full_name || 'Voluntario nao identificado'}</p>
+                        <p className="font-medium text-sm">{ci.volunteer?.full_name || 'Voluntário não identificado'}</p>
                         <p className="text-xs text-muted-foreground">{ci.serviceName}</p>
                       </div>
                       <div className="flex items-center gap-2 shrink-0">
@@ -307,7 +307,7 @@ export default function VolRelatorios() {
                     </div>
                   </div>
                 ))}
-                {inactiveData.length === 0 && <p className="text-center text-muted-foreground py-8">Nenhum voluntario inativo encontrado</p>}
+                {inactiveData.length === 0 && <p className="text-center text-muted-foreground py-8">Nenhum voluntário inativo encontrado</p>}
               </div>
             </CardContent>
           </Card>

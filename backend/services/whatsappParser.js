@@ -1,14 +1,14 @@
-// Parser de mensagem livre do lider -> dado estruturado, via Claude Haiku.
-// Lider nao decora sintaxe · manda "tivemos 12 hoje na celula, 2 visitantes
-// e 1 decisao" e o modelo extrai os numeros + identifica o modulo.
+// Parser de mensagem livre do líder -> dado estruturado, via Claude Haiku.
+// Líder não decora sintaxe · manda "tivemos 12 hoje na celula, 2 visitantes
+// e 1 decisão" e o modelo extrai os números + identifica o módulo.
 //
-// Retorna SEMPRE um objeto (nunca lanca) pra nao derrubar o webhook:
-//   { intent, modulo, dados, confianca, resumo }
+// Retorna SEMPRE um objeto (nunca lanca) pra não derrubar o webhook:
+//   { intent, módulo, dados, confiança, resumo }
 //   intent  · 'reportar_dado' | 'saudacao' | 'duvida' | 'desconhecido'
-//   modulo  · 'grupos' | 'integracao' | 'desconhecido'
-//   dados   · numeros extraidos (ver schema no prompt)
-//   confianca · 0..1 (quao seguro o modelo esta da extracao)
-//   resumo  · frase curta pt-BR pra ecoar de volta pro lider
+//   módulo  · 'grupos' | 'integração' | 'desconhecido'
+//   dados   · números extraidos (ver schema no prompt)
+//   confiança · 0..1 (quao seguro o modelo esta da extracao)
+//   resumo  · frase curta pt-BR pra ecoar de volta pro líder
 
 const Anthropic = require('@anthropic-ai/sdk');
 
@@ -52,7 +52,7 @@ const FALLBACK = {
   resumo: '',
 };
 
-// dicaModulo (opcional): se o lider so tem escopo de 1 modulo, passamos
+// dicaModulo (opcional): se o líder so tem escopo de 1 módulo, passamos
 // como contexto pra desambiguar mensagens curtas.
 async function parseMensagem(texto, dicaModulo) {
   if (!texto || !texto.trim()) return { ...FALLBACK };
@@ -63,7 +63,7 @@ async function parseMensagem(texto, dicaModulo) {
   try {
     const client = new Anthropic();
     const contexto = dicaModulo
-      ? `\n\nContexto: este lider normalmente reporta o modulo "${dicaModulo}". Prefira esse modulo se a mensagem for ambigua.`
+      ? `\n\nContexto: este líder normalmente reporta o módulo "${dicaModulo}". Prefira esse módulo se a mensagem for ambigua.`
       : '';
     const msg = await client.messages.create({
       model: MODEL,
@@ -72,7 +72,7 @@ async function parseMensagem(texto, dicaModulo) {
       messages: [{ role: 'user', content: texto.trim() + contexto }],
     });
     const raw = (msg?.content?.[0]?.text || '').trim();
-    // Defensivo · remove cercas de codigo se o modelo escorregar
+    // Defensivo · remove cercas de código se o modelo escorregar
     const limpo = raw.replace(/^```(?:json)?/i, '').replace(/```$/, '').trim();
     const parsed = JSON.parse(limpo);
     return {

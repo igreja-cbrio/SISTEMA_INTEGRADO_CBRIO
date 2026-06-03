@@ -1,18 +1,18 @@
-// Engine de classificacao financeira
+// Engine de classificação financeira
 //
 // Pra cada lancamento bruto, tenta classificar usando esta ordem de prioridade:
 //   1. Identificador de centavo (config UI)
-//   2. Memoria historica (mesma contraparte/valor ja classificado N vezes)
+//   2. Memória histórica (mesma contraparte/valor já classificado N vezes)
 //   3. Regras explicitas (regex memo / palavra-chave / cnpj contraparte)
 //   4. (Futuro) Claude Haiku pra casos ambiguos
 //
-// Tambem cruza lancamentos OFX com fin_pix_detalhe usando (data, valor, CPF/CNPJ)
+// Também cruza lancamentos OFX com fin_pix_detalhe usando (data, valor, CPF/CNPJ)
 // pra obter hora real e identificar culto.
 
 const { supabase } = require('../utils/supabase');
 
 /**
- * Extrai centavo (2 digitos apos virgula) do valor
+ * Extrai centavo (2 digitos após virgula) do valor
  */
 function extractCentavo(valor) {
   if (valor === null || valor === undefined) return null;
@@ -32,7 +32,7 @@ function normalize(s) {
 
 /**
  * Tenta classificar 1 lancamento bruto
- * Retorna { plano_contas_id, centro_custo_id, origem, confianca, explicacao, identificador_centavo }
+ * Retorna { plano_contas_id, centro_custo_id, origem, confiança, explicacao, identificador_centavo }
  */
 async function classificarLancamento(lancamento) {
   const {
@@ -56,8 +56,8 @@ async function classificarLancamento(lancamento) {
         .maybeSingle();
 
       if (ident) {
-        // Se o identificador tem plano definido · sugestao completa (1.0)
-        // Se nao tem · sugestao parcial (centro custo + identificador, sem conta)
+        // Se o identificador tem plano definido · sugestão completa (1.0)
+        // Se não tem · sugestão parcial (centro custo + identificador, sem conta)
         // O admin escolhe a conta na fila
         return {
           plano_contas_id: ident.plano_contas_id || null,
@@ -74,7 +74,7 @@ async function classificarLancamento(lancamento) {
   }
 
   // ───────────────────────────────────────────────
-  // 2. MEMORIA HISTORICA
+  // 2. MEMÓRIA HISTÓRICA
   // ───────────────────────────────────────────────
   // Prioridade: documento > nome > memo
   let memChave = null;
@@ -146,12 +146,12 @@ async function classificarLancamento(lancamento) {
     }
   }
 
-  // Sem classificacao automatica
+  // Sem classificação automática
   return null;
 }
 
 /**
- * Atualiza memoria historica apos classificacao manual
+ * Atualiza memória histórica após classificação manual
  */
 async function aprenderClassificacao({ documento, nome, plano_contas_id, centro_custo_id }) {
   if (!plano_contas_id) return;
@@ -161,7 +161,7 @@ async function aprenderClassificacao({ documento, nome, plano_contas_id, centro_
   if (nome) chaves.push({ chave: normalize(nome), tipo: 'nome' });
 
   for (const { chave, tipo } of chaves) {
-    // Tenta incrementar ocorrencias se ja existe combinacao
+    // Tenta incrementar ocorrências se já existe combinacao
     const { data: existing } = await supabase
       .from('fin_memoria_classificacao')
       .select('id, ocorrencias')
@@ -236,7 +236,7 @@ async function resolverMembroPorDocumento(documento, nome) {
  * Score = data igual + valor igual + (CPF igual = bonus)
  *
  * Pra cada lancamento bruto pendente de match, procura PIX no mesmo dia
- * com mesmo valor. Se acha 1, score alto. Se acha varios, refina por CPF.
+ * com mesmo valor. Se acha 1, score alto. Se acha vários, refina por CPF.
  */
 async function matchOfxPix({ uploadId, conta_id } = {}) {
   // Pega lancamentos brutos sem hora ainda
@@ -277,7 +277,7 @@ async function matchOfxPix({ uploadId, conta_id } = {}) {
         const porDoc = candidatos.find(c => c.pagador_documento === lanc.documento_contraparte);
         if (porDoc) escolhido = porDoc;
       }
-      // Se ainda nao escolheu e tem nome, refina por nome
+      // Se ainda não escolheu e tem nome, refina por nome
       if (!escolhido && lanc.memo) {
         const memoNorm = normalize(lanc.memo);
         const porNome = candidatos.find(c => c.pagador_nome && memoNorm.includes(normalize(c.pagador_nome)));
@@ -316,8 +316,8 @@ async function matchOfxPix({ uploadId, conta_id } = {}) {
 }
 
 /**
- * Aplica classificacao em massa pros lancamentos brutos sem classificacao
- * Cria entradas em fin_fila_classificacao com sugestoes
+ * Aplica classificação em massa pros lancamentos brutos sem classificação
+ * Cria entradas em fin_fila_classificacao com sugestões
  */
 async function classificarBatch({ uploadId } = {}) {
   const q = supabase
@@ -343,7 +343,7 @@ async function classificarBatch({ uploadId } = {}) {
       if (res) membro_id = res.membro_id;
     }
 
-    // Cria entrada na fila (UPSERT pois pode ja ter classificacao pendente)
+    // Cria entrada na fila (UPSERT pois pode já ter classificação pendente)
     await supabase
       .from('fin_fila_classificacao')
       .upsert({

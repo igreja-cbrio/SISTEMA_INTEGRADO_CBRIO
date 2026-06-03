@@ -1,4 +1,4 @@
-// Handlers do voluntariado_watcher · cria notificacao pro lider do ministerio.
+// Handlers do voluntariado_watcher · cria notificação pro líder do ministério.
 
 const { supabase } = require('../../utils/supabase');
 
@@ -41,7 +41,7 @@ async function applyAlertarPausa({ payload }) {
   await notif({
     modulo: 'voluntariado',
     tipo: 'voluntario_pausa',
-    titulo: `Voluntario em pausa · ${nome_voluntario}`,
+    titulo: `Voluntário em pausa · ${nome_voluntario}`,
     mensagem: `${nome_voluntario}${min?.nome ? ` (${min.nome})` : ''} sem check-in ha ${dias_sem_checkin} dias (tinha ${checkins_antes} check-ins antes). Bom momento pra um oi.`,
     link: '/voluntariado',
     severidade: 'aviso',

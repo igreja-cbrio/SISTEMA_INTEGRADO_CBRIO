@@ -1,7 +1,7 @@
 // =====================================================================
 // apresentacaoGenerator · gera slides HTML via Claude Opus
 // =====================================================================
-// O coracao do modulo: monta o system prompt com a "DSL" do deck-stage
+// O coração do módulo: monta o system prompt com a "DSL" do deck-stage
 // (web component em /public/apresentacoes/deck-stage.js) + exemplos
 // compactos de slides bem desenhados, e chama Claude Opus.
 //
@@ -9,9 +9,9 @@
 // respeitar a estrutura <section class="slide">...</section> que o
 // deck-stage espera, e usar classes de animacao .anim/.anim-fade/etc.
 //
-// Output esperado da IA: JSON { titulo, slides_count, css, html } onde
-// `html` e' o conteudo interno do <deck-stage> (varios <section> seguidos)
-// e `css` e' o CSS proprio da apresentacao (alem dos baseline definidos
+// Output esperado da IA: JSON { título, slides_count, css, html } onde
+// `html` e' o conteúdo interno do <deck-stage> (vários <section> seguidos)
+// e `css` e' o CSS próprio da apresentação (além dos baseline definidos
 // no viewer.html).
 // =====================================================================
 
@@ -19,13 +19,13 @@ const Anthropic = require('@anthropic-ai/sdk');
 const { getContextoCompleto } = require('./apresentacaoContextoCbrio');
 
 // Default: Sonnet · rapido e cabe no timeout 60s da Vercel Hobby.
-// Lista de IDs em ordem de preferencia · se o primeiro nao for reconhecido
-// pela SDK, tenta o proximo. Cobre o caso do alias `claude-sonnet-4-6`
-// nao funcionar na versao 0.86.1 do SDK em prod.
+// Lista de IDs em ordem de preferência · se o primeiro não for reconhecido
+// pela SDK, tenta o próximo. Cobre o caso do alias `claude-sonnet-4-6`
+// não funcionar na versão 0.86.1 do SDK em prod.
 const SONNET_IDS = [
   process.env.APRESENTACOES_MODEL,        // override manual (env)
   'claude-sonnet-4-6',                     // alias 4.6
-  'claude-sonnet-4-6-20250101',            // possivel ID com data
+  'claude-sonnet-4-6-20250101',            // possível ID com data
   'claude-sonnet-4-5',                     // alias 4.5
   'claude-sonnet-4-20250514',              // Sonnet 4 (existe em agentService.js)
 ].filter(Boolean);
@@ -33,7 +33,7 @@ const SONNET_IDS = [
 const MODEL_DEFAULT = SONNET_IDS[0] || 'claude-sonnet-4-6';
 const MODEL_PREMIUM = 'claude-opus-4-7';
 
-// Pricing publico Anthropic (USD por milhao de tokens)
+// Pricing público Anthropic (USD por milhao de tokens)
 const PRICING = {
   'claude-sonnet-4-6':            { input: 3,  output: 15 },
   'claude-sonnet-4-6-20250101':   { input: 3,  output: 15 },
@@ -43,7 +43,7 @@ const PRICING = {
 };
 
 // Limite Vercel Pro = 300s · Sonnet ~80 tok/s ≈ 24k tokens max seguros.
-// 16k de output deixa margem confortavel pra apresentacoes ricas (12-15 slides).
+// 16k de output deixa margem confortavel pra apresentações ricas (12-15 slides).
 const MAX_TOKENS_BY_MODEL = {
   'claude-sonnet-4-6':            16000,
   'claude-sonnet-4-6-20250101':   16000,
@@ -125,12 +125,12 @@ Capricho > completude. Vai pra diretoria.`;
 // User prompt builder
 // ─────────────────────────────────────────────────────────────────────
 async function buildUserPrompt({ titulo, prompt, tom, arquivos, contextoCerebro }) {
-  // Contexto CBRio: hardcoded (arquivo de codigo) + dinamico (vault SharePoint pasta curada)
+  // Contexto CBRio: hardcoded (arquivo de código) + dinâmico (vault SharePoint pasta curada)
   const contexto = await getContextoCompleto();
   const tomDescricoes = {
-    executivo:  'tom corporativo serio, focado em decisao · paleta dark premium · numeros grandes · bento grids',
+    executivo:  'tom corporativo serio, focado em decisão · paleta dark premium · números grandes · bento grids',
     comercial:  'tom comercial atrativo, focado em vendas · paleta vibrante · CTAs claros · destaques visuais',
-    relatorio:  'tom analitico, denso em dados · paleta neutra · tabelas e graficos · tipografia precisa',
+    relatorio:  'tom analitico, denso em dados · paleta neutra · tabelas e gráficos · tipografia precisa',
     criativo:   'tom criativo expressivo, focado em conceito · paleta arriscada · tipografia grande · espaco em branco',
   };
 
@@ -138,10 +138,10 @@ async function buildUserPrompt({ titulo, prompt, tom, arquivos, contextoCerebro 
 
   // Contexto organizacional · injetado SEMPRE que houver entries ativas.
   // Isso garante que pedidos tipo "5 valores da CBRio" sejam respondidos
-  // com os 5 valores corretos, nao alucinados.
+  // com os 5 valores corretos, não alucinados.
   if (contexto && contexto.length > 0) {
-    p += `# Contexto da organizacao (CBRio · use isso como fonte de verdade)\n\n`;
-    p += `Quando o briefing mencionar algo dessa lista, use exatamente esses dados · NUNCA invente fatos sobre a organizacao.\n\n`;
+    p += `# Contexto da organização (CBRio · use isso como fonte de verdade)\n\n`;
+    p += `Quando o briefing mencionar algo dessa lista, use exatamente esses dados · NUNCA invente fatos sobre a organização.\n\n`;
     for (const c of contexto) {
       p += `## ${c.titulo}\n\n${c.conteudo}\n\n`;
     }
@@ -155,24 +155,24 @@ async function buildUserPrompt({ titulo, prompt, tom, arquivos, contextoCerebro 
 
   if (contextoCerebro && contextoCerebro.textoCompleto) {
     p += `# Contexto institucional CBRio (Cerebro CBRio)\n\n`;
-    p += `Abaixo estao ${contextoCerebro.notasIncluidas} notas resumidas da base de conhecimento da Igreja CBRio`;
+    p += `Abaixo estão ${contextoCerebro.notasIncluidas} notas resumidas da base de conhecimento da Igreja CBRio`;
     if (contextoCerebro.truncado) p += ` (de ${contextoCerebro.totalNotas} totais · truncadas as mais antigas)`;
-    p += `. Use como fonte de verdade pra fatos, nomes, processos, numeros e narrativa institucional. `;
-    p += `Se o briefing acima for vago, escolha os recortes mais relevantes desta base pra montar a apresentacao. NAO invente dados que nao apareçam aqui ou nos arquivos anexados.\n`;
+    p += `. Use como fonte de verdade pra fatos, nomes, processos, números e narrativa institucional. `;
+    p += `Se o briefing acima for vago, escolha os recortes mais relevantes desta base pra montar a apresentação. NÃO invente dados que não apareçam aqui ou nos arquivos anexados.\n`;
     p += contextoCerebro.textoCompleto;
     p += `\n\n---\n\n`;
   }
 
   if (arquivos && arquivos.length > 0) {
-    p += `# Material de referencia (anexado pelo usuario)\n\n`;
-    p += `Use o conteudo abaixo como fonte de verdade pra dados e narrativa. NAO invente numeros.\n\n`;
+    p += `# Material de referência (anexado pelo usuário)\n\n`;
+    p += `Use o conteúdo abaixo como fonte de verdade pra dados e narrativa. NÃO invente números.\n\n`;
     arquivos.forEach((a, i) => {
       const trecho = (a.texto_extraido || '').slice(0, 3500);
       p += `## Arquivo ${i + 1}: ${a.nome}\n\n${trecho}\n\n---\n\n`;
     });
   }
 
-  p += `\n# Tarefa\n\nGere uma apresentacao de 8 a 14 slides seguindo TODAS as diretrizes do system prompt. Capriche no design · esta apresentacao sera mostrada pra diretoria.`;
+  p += `\n# Tarefa\n\nGere uma apresentação de 8 a 14 slides seguindo TODAS as diretrizes do system prompt. Capriche no design · esta apresentação será mostrada pra diretoria.`;
 
   return p;
 }
@@ -182,8 +182,8 @@ async function buildUserPrompt({ titulo, prompt, tom, arquivos, contextoCerebro 
 // quando CSS/HTML grande tem newlines/quotes literais.
 // ─────────────────────────────────────────────────────────────────────
 function extractTag(text, tag) {
-  // Regex tolerante: aceita espacos, quebras de linha entre a tag e o conteudo,
-  // e pega o ULTIMO fechamento (greedy) pra cobrir casos onde o HTML interno
+  // Regex tolerante: aceita espacos, quebras de linha entre a tag e o conteúdo,
+  // e pega o ÚLTIMO fechamento (greedy) pra cobrir casos onde o HTML interno
   // contem tags similares.
   const re = new RegExp(`<${tag}>([\\s\\S]*?)<\\/${tag}>`, 'i');
   const m = text.match(re);
@@ -235,9 +235,9 @@ function estimarCusto(modelo, tokens_input, tokens_output) {
 }
 
 // ─────────────────────────────────────────────────────────────────────
-// Funcao principal · chama Claude e retorna o resultado parseado
+// Função principal · chama Claude e retorna o resultado parseado
 // ─────────────────────────────────────────────────────────────────────
-// Detecta erro de "modelo nao encontrado/invalido" da SDK Anthropic
+// Detecta erro de "modelo não encontrado/invalido" da SDK Anthropic
 function isModelError(err) {
   const msg = String(err?.message || '').toLowerCase();
   return msg.includes('not_found') || msg.includes('not found')
@@ -257,14 +257,14 @@ async function callAnthropic({ client, model, maxTokens, system, userPrompt }) {
 
 async function gerarApresentacao({ titulo, prompt, tom, arquivos, modelo, contextoCerebro }) {
   if (!process.env.ANTHROPIC_API_KEY) {
-    throw new Error('ANTHROPIC_API_KEY nao configurada no ambiente');
+    throw new Error('ANTHROPIC_API_KEY não configurada no ambiente');
   }
 
   const client = new Anthropic();
   const t0 = Date.now();
 
   // Se modelo foi explicitamente pedido (e existe no PRICING), tenta so ele.
-  // Caso contrario, tenta a lista de Sonnet IDs em ordem (fallback automatico).
+  // Caso contrario, tenta a lista de Sonnet IDs em ordem (fallback automático).
   const modelosATentar = modelo && PRICING[modelo]
     ? [modelo]
     : SONNET_IDS;
@@ -286,7 +286,7 @@ async function gerarApresentacao({ titulo, prompt, tom, arquivos, modelo, contex
     } catch (err) {
       ultimoErro = err;
       console.warn(`[apresentacoes] modelo ${m} falhou: ${err.message}`);
-      // So tenta proximo se for erro de modelo invalido · outros erros (timeout,
+      // So tenta próximo se for erro de modelo invalido · outros erros (timeout,
       // rate limit, etc) propagam imediatamente.
       if (!isModelError(err)) throw err;
     }
@@ -294,7 +294,7 @@ async function gerarApresentacao({ titulo, prompt, tom, arquivos, modelo, contex
 
   if (!resp) {
     throw new Error(
-      `Nenhum modelo aceito pela API. Ultimo erro: ${ultimoErro?.message || 'desconhecido'}. ` +
+      `Nenhum modelo aceito pela API. Último erro: ${ultimoErro?.message || 'desconhecido'}. ` +
       `Tentados: ${modelosATentar.join(', ')}. ` +
       `Defina APRESENTACOES_MODEL no Vercel com um ID valido.`
     );
@@ -311,11 +311,11 @@ async function gerarApresentacao({ titulo, prompt, tom, arquivos, modelo, contex
   const tokens_output = resp.usage?.output_tokens || 0;
   const custo_usd     = estimarCusto(modeloFinal, tokens_input, tokens_output);
 
-  // Parse output em tags <TITULO>/<CSS>/<HTML> · com fallback pra JSON
+  // Parse output em tags <TÍTULO>/<CSS>/<HTML> · com fallback pra JSON
   const parsed = parseOutput(text);
   if (!parsed) {
     const preview = text.slice(0, 800);
-    throw new Error('IA retornou formato invalido. Inicio: ' + preview);
+    throw new Error('IA retornou formato invalido. Início: ' + preview);
   }
   if (!parsed.html) throw new Error('IA nao retornou <HTML> dos slides');
   if (!parsed.css)  throw new Error('IA nao retornou <CSS> da apresentacao');

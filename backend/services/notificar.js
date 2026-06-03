@@ -77,7 +77,7 @@ async function notificar({ modulo, tipo, titulo, mensagem, link, severidade = 'i
 
   console.log(`[notificar] modulo=${modulo} alvos=${destinatarios.length} inseridos=${inserted} pulados=${skipped} falhas=${failed}${failed ? ' erros=' + erros.slice(0, 3).join('; ') : ''}`);
 
-  // Dispara push em background (no-op se VAPID nao configurado)
+  // Dispara push em background (no-op se VAPID não configurado)
   if (usersInseridos.length) {
     enviarPushParaUsers(usersInseridos, {
       title: titulo,

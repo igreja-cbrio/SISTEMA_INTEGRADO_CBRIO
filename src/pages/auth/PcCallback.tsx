@@ -43,7 +43,7 @@ export default function PcCallback() {
       <div style={{ textAlign: 'center' }}>
         {error ? (
           <>
-            <p style={{ fontSize: 18, fontWeight: 600, color: '#ef4444' }}>Erro na autenticacao</p>
+            <p style={{ fontSize: 18, fontWeight: 600, color: '#ef4444' }}>Erro na autenticação</p>
             <p style={{ fontSize: 14, color: '#737373', marginTop: 8 }}>{error}</p>
             <p style={{ fontSize: 12, color: '#525252', marginTop: 16 }}>Redirecionando para login...</p>
           </>

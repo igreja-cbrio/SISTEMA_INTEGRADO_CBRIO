@@ -313,7 +313,7 @@ export default function Eventos() {
   const accessLevel = getAccessLevel(['eventos', 'Agenda']);
   const isPMO = accessLevel >= 4;
   // Cargos com escopo_proprio em eventos (ex: coord-marketing, lider-producao)
-  // sao tratados como "lider" pra filtrar kanban pela area deles.
+  // são tratados como "líder" pra filtrar kanban pela área deles.
   const eventosEscopoProprio = !!modulePerms?.eventos?.escopo_proprio;
 
   // URL params para drill-down (ex: /eventos?status=atrasado&id=xxx)
@@ -690,10 +690,10 @@ export default function Eventos() {
   const [reportModal, setReportModal] = useState(null); // null | { step: 'event' | 'scope' | 'phase' | 'generating' | 'done', eventId, eventName, type, phaseName, result, error }
 
   // ── Kanban (dois níveis)
-  // isLider · qualquer pessoa com escopo proprio (coord-marketing, lider-producao,
-  // lider-ministerial) ou com nivel >= 3. Esses tem o kanban filtrado pela area.
+  // isLider · qualquer pessoa com escopo próprio (coord-marketing, lider-producao,
+  // lider-ministerial) ou com nível >= 3. Esses tem o kanban filtrado pela área.
   const isLider = !isPMO && (accessLevel >= 3 || eventosEscopoProprio);
-  // Líderes: visão PMO filtrada pela area deles. PMO: visão completa.
+  // Líderes: visão PMO filtrada pela área deles. PMO: visão completa.
   const [kanbanViewMode, setKanbanViewMode] = useState('pmo');
   const defaultArea = isLider && userAreas.length > 0 ? userAreas[0].toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '') : 'all';
   const [kanbanArea, setKanbanArea] = useState(defaultArea);
@@ -744,7 +744,7 @@ export default function Eventos() {
     const d = kpiData;
     const CAT_COLORS = { marketing: '#00B39D', producao: '#6366f1', compras: '#3b82f6', financeiro: '#10b981', manutencao: '#f59e0b', limpeza: '#8b5cf6', cozinha: '#ec4899', adm: '#0ea5e9' };
     const CAT_LABELS = { marketing: 'Marketing', producao: 'Producao', compras: 'Compras', financeiro: 'Financeiro', manutencao: 'Manutencao', limpeza: 'Limpeza', cozinha: 'Cozinha', adm: 'Administrativo' };
-    // scoreColor movido para nivel do componente
+    // scoreColor movido para nível do componente
 
     const ScoreLegend = () => (
       <div style={{ display: 'flex', gap: 12, padding: '10px 16px', background: C.bg, borderRadius: 10, marginBottom: 16, flexWrap: 'wrap', alignItems: 'center', border: `1px solid ${C.border}` }}>
@@ -794,8 +794,8 @@ export default function Eventos() {
 
           <ScoreLegend />
 
-          {/* KPI por area com breakdown */}
-          <div style={{ fontSize: 14, fontWeight: 700, color: C.text, marginBottom: 10 }}>Performance por Area</div>
+          {/* KPI por área com breakdown */}
+          <div style={{ fontSize: 14, fontWeight: 700, color: C.text, marginBottom: 10 }}>Performance por Área</div>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 12, marginBottom: 20 }}>
             {(ev.kpi_areas || []).map(a => {
               const b = a.breakdown || {};
@@ -827,13 +827,13 @@ export default function Eventos() {
               <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                 <thead><tr style={{ background: 'var(--cbrio-table-header)' }}>
                   <th style={{ padding: '8px 12px', textAlign: 'left', fontSize: 11, fontWeight: 600, color: C.t3, textTransform: 'uppercase' }}>Documento</th>
-                  <th style={{ padding: '8px 12px', textAlign: 'left', fontSize: 11, fontWeight: 600, color: C.t3, textTransform: 'uppercase' }}>Area</th>
+                  <th style={{ padding: '8px 12px', textAlign: 'left', fontSize: 11, fontWeight: 600, color: C.t3, textTransform: 'uppercase' }}>Área</th>
                   <th style={{ padding: '8px 12px', textAlign: 'center', fontSize: 11, fontWeight: 600, color: C.t3, textTransform: 'uppercase' }}>Prazo</th>
                   <th style={{ padding: '8px 12px', textAlign: 'center', fontSize: 11, fontWeight: 600, color: C.t3, textTransform: 'uppercase' }}>Qualidade</th>
                   <th style={{ padding: '8px 12px', textAlign: 'center', fontSize: 11, fontWeight: 600, color: C.t3, textTransform: 'uppercase' }}>Aprovado</th>
                   <th style={{ padding: '8px 12px', textAlign: 'center', fontSize: 11, fontWeight: 600, color: C.t3, textTransform: 'uppercase' }}>Arquivo</th>
                   <th style={{ padding: '8px 12px', textAlign: 'center', fontSize: 11, fontWeight: 600, color: C.t3, textTransform: 'uppercase' }}>Score</th>
-                  <th style={{ padding: '8px 12px', textAlign: 'center', fontSize: 11, fontWeight: 600, color: C.t3, textTransform: 'uppercase' }}>Acoes</th>
+                  <th style={{ padding: '8px 12px', textAlign: 'center', fontSize: 11, fontWeight: 600, color: C.t3, textTransform: 'uppercase' }}>Ações</th>
                 </tr></thead>
                 <tbody>
                   {(ev.documentos || []).map(doc => {
@@ -930,7 +930,7 @@ export default function Eventos() {
                 <div style={{ fontSize: 11, color: C.t3, marginTop: 4 }}>{d.eventos?.length || 0} eventos com ciclo criativo</div>
               </div>
 
-              {/* Top 3 areas */}
+              {/* Top 3 áreas */}
               {(d.ranking_areas || []).slice(0, 3).map((a, i) => (
                 <div key={a.area} style={{ background: C.card, borderRadius: 14, padding: 16, border: `1px solid ${C.border}`, flex: '1 1 150px' }}>
                   <div style={{ fontSize: 10, color: C.t3, textTransform: 'uppercase', fontWeight: 600, marginBottom: 4 }}>{i === 0 ? 'Melhor area' : `#${i + 1}`}</div>
@@ -941,8 +941,8 @@ export default function Eventos() {
               ))}
             </div>
 
-            {/* Ranking de areas */}
-            <div style={{ fontSize: 14, fontWeight: 700, color: C.text, marginBottom: 10 }}>Ranking de Areas</div>
+            {/* Ranking de áreas */}
+            <div style={{ fontSize: 14, fontWeight: 700, color: C.text, marginBottom: 10 }}>Ranking de Áreas</div>
             <div style={{ background: C.card, borderRadius: 10, border: `1px solid ${C.border}`, marginBottom: 24, overflow: 'hidden' }}>
               {(d.ranking_areas || []).map((a, i) => (
                 <div key={a.area} style={{ padding: '12px 16px', borderBottom: `1px solid ${C.border}`, display: 'flex', alignItems: 'center', gap: 12 }}>
@@ -994,7 +994,7 @@ export default function Eventos() {
       <div style={{ position: 'fixed', inset: 0, zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(0,0,0,0.6)' }}>
         <div style={{ background: 'var(--cbrio-modal-bg)', borderRadius: 16, padding: 24, maxWidth: 500, width: '90%', maxHeight: '85vh', overflowY: 'auto', boxShadow: '0 20px 60px rgba(0,0,0,0.3)' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-            <span style={{ fontSize: 16, fontWeight: 700, color: C.text }}>Pesos de Area por Categoria</span>
+            <span style={{ fontSize: 16, fontWeight: 700, color: C.text }}>Pesos de Área por Categoria</span>
             <button onClick={() => setKpiConfigOpen(false)} style={{ background: 'none', border: 'none', fontSize: 18, color: C.t3, cursor: 'pointer' }}>{'\u2715'}</button>
           </div>
           <div style={{ fontSize: 12, color: C.t3, marginBottom: 12 }}>
@@ -1077,7 +1077,7 @@ export default function Eventos() {
 
         {/* Novo template */}
         <div style={{ background: C.card, borderRadius: 10, padding: 14, marginBottom: 24, border: `1px solid ${C.border}` }}>
-          <div style={{ fontSize: 13, fontWeight: 600, color: C.text, marginBottom: 10 }}>Adicionar tarefa padrao</div>
+          <div style={{ fontSize: 13, fontWeight: 600, color: C.text, marginBottom: 10 }}>Adicionar tarefa padrão</div>
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'flex-end' }}>
             <div>
               <div style={{ fontSize: 10, color: C.t3, marginBottom: 2 }}>Fase</div>
@@ -1087,14 +1087,14 @@ export default function Eventos() {
               </select>
             </div>
             <div>
-              <div style={{ fontSize: 10, color: C.t3, marginBottom: 2 }}>Area</div>
+              <div style={{ fontSize: 10, color: C.t3, marginBottom: 2 }}>Área</div>
               <select value={newTplForm.area} onChange={e => setNewTplForm(f => ({ ...f, area: e.target.value }))} style={{ padding: 6, borderRadius: 6, border: `1px solid ${C.border}`, background: C.card, color: C.text, fontSize: 12, minWidth: 130 }}>
                 <option value="">Selecione</option>
                 {AREAS.map(a => <option key={a} value={a}>{CAT_LABELS[a]}</option>)}
               </select>
             </div>
             <div style={{ flex: 1, minWidth: 200 }}>
-              <div style={{ fontSize: 10, color: C.t3, marginBottom: 2 }}>Titulo da tarefa</div>
+              <div style={{ fontSize: 10, color: C.t3, marginBottom: 2 }}>Título da tarefa</div>
               <input value={newTplForm.titulo} onChange={e => setNewTplForm(f => ({ ...f, titulo: e.target.value }))} placeholder="Ex: Criar briefing visual do evento" style={{ width: '100%', padding: 6, borderRadius: 6, border: `1px solid ${C.border}`, background: C.card, color: C.text, fontSize: 12 }} onKeyDown={async e => {
                 if (e.key === 'Enter' && newTplForm.area && newTplForm.etapa && newTplForm.titulo) { await cyclesApi.createAdmTemplate(newTplForm); await reloadTemplates(); setNewTplForm(f => ({ ...f, titulo: '' })); }
               }} />
@@ -1160,7 +1160,7 @@ export default function Eventos() {
               <span><strong>{tpls.length}</strong> tarefas padrao</span>
               <span><strong>{tpls.filter(t => t.ativo).length}</strong> ativas</span>
               <span><strong>{tpls.reduce((a, t) => a + (t.adm_task_template_subtasks?.length || 0), 0)}</strong> subtarefas</span>
-              <span style={{ color: C.t3, fontSize: 11 }}>Ao adicionar/excluir, as alteracoes sao aplicadas em todos os eventos ativos</span>
+              <span style={{ color: C.t3, fontSize: 11 }}>Ao adicionar/excluir, as alteracoes são aplicadas em todos os eventos ativos</span>
             </div>
           </div>
         )}
@@ -1258,7 +1258,7 @@ export default function Eventos() {
           <button onClick={async () => { if (newName.trim()) { await events.createSimpleTemplate({ titulo: newName.trim() }); setNewName(''); await reload(); } }} style={{ padding: '4px 12px', borderRadius: 6, border: 'none', background: C.primary, color: '#fff', fontSize: 11, fontWeight: 600, cursor: 'pointer' }}>+</button>
         </div>
         {stpls.length === 0 ? (
-          <div style={{ padding: 20, textAlign: 'center', color: C.t3, fontSize: 12 }}>Nenhuma tarefa padrao. Adicione acima.</div>
+          <div style={{ padding: 20, textAlign: 'center', color: C.t3, fontSize: 12 }}>Nenhuma tarefa padrão. Adicione acima.</div>
         ) : stpls.map(t => (
           <div key={t.id} style={{ padding: '8px 16px', borderBottom: `1px solid ${C.border}`, display: 'flex', alignItems: 'center', gap: 8, opacity: t.ativo ? 1 : 0.4 }}>
             <span style={{ fontSize: 13, color: C.text, flex: 1 }}>{t.titulo}</span>
@@ -1311,7 +1311,7 @@ export default function Eventos() {
       }
       // Filtrar por evento
       if (kanbanEvent !== 'all' && t.event_id !== kanbanEvent) return false;
-      // Líderes: filtrar pela area automaticamente (sem opcao de mudar)
+      // Líderes: filtrar pela área automaticamente (sem opção de mudar)
       if (isLider && lowerUserAreas.length > 0) {
         const cat = getCat(t);
         if (!lowerUserAreas.includes(cat)) return false;
@@ -1322,7 +1322,7 @@ export default function Eventos() {
       }
       return true;
     });
-    // Filtro de area manual (so PMO usa)
+    // Filtro de área manual (so PMO usa)
     if (kanbanArea !== 'all') phaseTasks = phaseTasks.filter(t => getCat(t) === kanbanArea);
     phaseTasks = filterByHorizon(phaseTasks, kanbanHorizon, 'prazo');
 
@@ -1578,8 +1578,8 @@ export default function Eventos() {
                   </div>
                   <div style={{ display: 'flex', gap: 16, fontSize: 12, color: 'var(--cbrio-text2)' }}>
                     {evName && <div><span style={{ fontWeight: 600 }}>Evento:</span> {evName}</div>}
-                    <div><span style={{ fontWeight: 600 }}>Responsavel:</span> {task.responsavel_nome || '—'}</div>
-                    {phase?.data_inicio_prevista && <div><span style={{ fontWeight: 600 }}>Inicio:</span> {fmtDate(phase.data_inicio_prevista)}</div>}
+                    <div><span style={{ fontWeight: 600 }}>Responsável:</span> {task.responsavel_nome || '—'}</div>
+                    {phase?.data_inicio_prevista && <div><span style={{ fontWeight: 600 }}>Início:</span> {fmtDate(phase.data_inicio_prevista)}</div>}
                     {p && <div><span style={{ fontWeight: 600 }}>Entrega:</span> {fmtDate(p)} {daysColor && <span style={{ color: daysColor, fontWeight: 700 }}> ({diff < 0 ? `${Math.abs(diff)}d atrás` : diff === 0 ? 'Hoje' : `${diff}d`})</span>}</div>}
                   </div>
                 </div>
@@ -2829,7 +2829,7 @@ export default function Eventos() {
 
         {!hasCycle && (
           <div style={{ background: C.bg, borderRadius: 10, padding: 16, border: `1px solid ${C.border}`, textAlign: 'center' }}>
-            <div style={{ fontSize: 13, color: C.t3 }}>Este evento nao tem ciclo criativo.</div>
+            <div style={{ fontSize: 13, color: C.t3 }}>Este evento não tem ciclo criativo.</div>
           </div>
         )}
 
@@ -3540,7 +3540,7 @@ export default function Eventos() {
               </div>
             ) : (
               <div style={{ padding: 16, textAlign: 'center', color: C.t3, fontSize: 12, background: C.bg, borderRadius: 10, border: `1px solid ${C.border}` }}>
-                {kpiDocModal.file_name ? 'Documento ainda nao processado pelo Cerebro. O resumo aparece apos o proximo ciclo do agente.' : 'Nenhum arquivo anexado a este card.'}
+                {kpiDocModal.file_name ? 'Documento ainda não processado pelo Cerebro. O resumo aparece após o próximo ciclo do agente.' : 'Nenhum arquivo anexado a este card.'}
               </div>
             )}
 

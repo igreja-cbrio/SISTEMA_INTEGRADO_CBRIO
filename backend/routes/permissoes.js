@@ -5,22 +5,22 @@ const { supabase } = require('../utils/supabase');
 router.use(authenticate, authorize('admin', 'diretor'));
 
 // ────────────────────────────────────────────────────────────────────────
-// resolverUsuarioId · ponte entre profile (UUID) e usuarios (integer/UUID)
+// resolverUsuarioId · ponte entre profile (UUID) e usuários (integer/UUID)
 //
-// Tabela usuarios em prod tem id INTEGER e linka com profile por email
+// Tabela usuários em prod tem id INTEGER e linka com profile por email
 // (legado da migration 20260410). Endpoints PUT/DELETE recebem profile.id
-// do frontend (UUID), entao precisamos:
-//   1. Se ja eh integer/numeric, retorna direto
+// do frontend (UUID), então precisamos:
+//   1. Se já eh integer/numeric, retorna direto
 //   2. Senao, busca o profile pelo UUID → pega email
 //   3. Busca usuarios.email → se existir, retorna usuarios.id
-//   4. Senao, cria registro novo em usuarios + retorna id criado
+//   4. Senao, cria registro novo em usuários + retorna id criado
 //
-// Retorna { id, criado } ou null se profile nao existir.
+// Retorna { id, criado } ou null se profile não existir.
 // ────────────────────────────────────────────────────────────────────────
 async function resolverUsuarioId(idParam) {
   if (idParam == null) return null;
 
-  // Ja eh numero (legado · alguns clientes podem mandar int direto)
+  // Já eh número (legado · alguns clientes podem mandar int direto)
   if (/^\d+$/.test(String(idParam))) {
     return { id: Number(idParam), criado: false };
   }
@@ -29,7 +29,7 @@ async function resolverUsuarioId(idParam) {
   let { data: profile } = await supabase.from('profiles')
     .select('id, email, name').eq('id', idParam).maybeSingle();
 
-  // Fallback · pode ser id de rh_funcionarios (funcionario cadastrado pelo
+  // Fallback · pode ser id de rh_funcionarios (funcionário cadastrado pelo
   // RH antes do primeiro login · ver GET /colaboradores)
   if (!profile?.email) {
     const { data: func } = await supabase.from('rh_funcionarios')
@@ -43,7 +43,7 @@ async function resolverUsuarioId(idParam) {
 
   const email = profile.email.toLowerCase().trim();
 
-  // Procura usuario existente por email
+  // Procura usuário existente por email
   const { data: existing } = await supabase.from('usuarios')
     .select('id').eq('email', email).maybeSingle();
   if (existing?.id != null) {
@@ -62,11 +62,11 @@ async function resolverUsuarioId(idParam) {
 
 // ────────────────────────────────────────────────────────────────────────
 // GET /api/permissoes/colaboradores
-// Retorna profiles que sao colaboradores reais do sistema (nao membros).
+// Retorna profiles que são colaboradores reais do sistema (não membros).
 // Exclui quem:
 //   - existe em vol_profiles.auth_user_id (signup via voluntariado)
-//   - tem email em mem_cadastros_pendentes (signup via formulario membresia)
-// Usado pela tela de "Responsaveis por Solicitacao" no dropdown.
+//   - tem email em mem_cadastros_pendentes (signup via formulário membresia)
+// Usado pela tela de "Responsáveis por Solicitação" no dropdown.
 // ────────────────────────────────────────────────────────────────────────
 router.get('/colaboradores', async (_req, res) => {
   try {
@@ -85,7 +85,7 @@ router.get('/colaboradores', async (_req, res) => {
       .not('auth_user_id', 'is', null);
     const volSet = new Set((volIds || []).map(v => v.auth_user_id));
 
-    // 3. Emails que vieram do formulario publico de membresia
+    // 3. Emails que vieram do formulário público de membresia
     const { data: cadEmails } = await supabase
       .from('mem_cadastros_pendentes')
       .select('email')
@@ -95,7 +95,7 @@ router.get('/colaboradores', async (_req, res) => {
       .filter(Boolean));
 
     // 4. Cargos por email · enriquece com cargo_id, cargo_slug, cargo_nome
-    //    (LEFT JOIN simulado: pessoa sem registro em usuarios fica com cargo null)
+    //    (LEFT JOIN simulado: pessoa sem registro em usuários fica com cargo null)
     const { data: usuariosRows } = await supabase
       .from('usuarios')
       .select('email, cargo_id, cargos(id, slug, nome, nome_completo)')
@@ -124,8 +124,8 @@ router.get('/colaboradores', async (_req, res) => {
         return { ...p, ...cargoInfo, origem: 'profile' };
       });
 
-    // 6. Funcionarios ativos sem profile ainda (ex: cadastrados pelo RH
-    //    antes do primeiro login). Aparecem na lista com origem='funcionario'
+    // 6. Funcionários ativos sem profile ainda (ex: cadastrados pelo RH
+    //    antes do primeiro login). Aparecem na lista com origem='funcionário'
     //    pra Marcos atribuir cargo/areas mesmo antes do signup do Supabase.
     const profileEmails = new Set(
       (profiles || [])
@@ -141,7 +141,7 @@ router.get('/colaboradores', async (_req, res) => {
     for (const f of funcionariosRows || []) {
       const emailKey = (f.email || '').toLowerCase().trim();
       if (!emailKey) continue;
-      if (profileEmails.has(emailKey)) continue; // ja veio via profile
+      if (profileEmails.has(emailKey)) continue; // já veio via profile
       const cargoInfo = cargoByEmail.get(emailKey) || {
         cargo_id: null, cargo_slug: null, cargo_nome: null,
       };
@@ -167,8 +167,8 @@ router.get('/colaboradores', async (_req, res) => {
 });
 
 // POST /api/permissoes/cache/bust · forca invalidacao dos caches de
-// modulos + matriz cargo×modulo. Usar quando matriz foi alterada via
-// SQL direto (fora do fluxo PUT /matriz/celula que ja faz bust auto).
+// módulos + matriz cargo×módulo. Usar quando matriz foi alterada via
+// SQL direto (fora do fluxo PUT /matriz/celula que já faz bust auto).
 router.post('/cache/bust', async (_req, res) => {
   try {
     bustPermissionCaches();
@@ -177,8 +177,8 @@ router.post('/cache/bust', async (_req, res) => {
 });
 
 // GET /api/permissoes/diagnostico/:email · simula em profundidade a
-// computacao de permissoes pra um usuario, com TODOS os intermediarios
-// expostos. Usado pra debug quando alguem nao consegue acessar um modulo
+// computacao de permissões pra um usuário, com TODOS os intermediarios
+// expostos. Usado pra debug quando alguém não consegue acessar um módulo
 // apesar do banco estar correto.
 router.get('/diagnostico/:email', async (req, res) => {
   try {
@@ -253,7 +253,7 @@ router.get('/diagnostico/:email', async (req, res) => {
       nivel_matriz: defaultsByMod.get(m.id)?.nivel ?? null,
     }));
 
-    // Compara tipos: id de modulos vs modulo_id na matriz
+    // Compara tipos: id de módulos vs modulo_id na matriz
     const tipoModulosId = sampleModulo ? typeof sampleModulo.id : null;
     const tipoCmpModuloId = sampleMatrixRow ? typeof sampleMatrixRow.modulo_id : null;
     const tipoCmpCargoId = sampleMatrixRow ? typeof sampleMatrixRow.cargo_id : null;
@@ -309,8 +309,8 @@ router.get('/estrutura', async (req, res) => {
 
 // ────────────────────────────────────────────────────────────────────────
 // GET /api/permissoes/matriz
-// Retorna a matriz cargo x modulo (defaults por cargo).
-// Resposta: { cargos: [...], modulos: [...], celulas: [{cargo_id, modulo_id, nivel, ...}] }
+// Retorna a matriz cargo x módulo (defaults por cargo).
+// Resposta: { cargos: [...], módulos: [...], celulas: [{cargo_id, modulo_id, nível, ...}] }
 // ────────────────────────────────────────────────────────────────────────
 router.get('/matriz', async (_req, res) => {
   try {
@@ -320,7 +320,7 @@ router.get('/matriz', async (_req, res) => {
     ]);
 
     // PostgREST capa em 1000 linhas por response · paginamos via .range()
-    // ate exaurir. Matriz tem ~1073 linhas hoje (29 cargos × 37 modulos).
+    // até exaurir. Matriz tem ~1073 linhas hoje (29 cargos × 37 módulos).
     let celulas = [];
     let offset = 0;
     const pageSize = 1000;
@@ -345,14 +345,14 @@ router.get('/matriz', async (_req, res) => {
 
 // ────────────────────────────────────────────────────────────────────────
 // PUT /api/permissoes/matriz/celula
-// Atualiza uma celula da matriz cargo x modulo (default por cargo).
-// Body: { cargo_id, modulo_id, nivel, pode_exportar, pode_aprovar, escopo_proprio }
+// Atualiza uma celula da matriz cargo x módulo (default por cargo).
+// Body: { cargo_id, modulo_id, nível, pode_exportar, pode_aprovar, escopo_proprio }
 // ────────────────────────────────────────────────────────────────────────
 router.put('/matriz/celula', async (req, res) => {
   try {
     const { cargo_id, modulo_id, nivel, pode_exportar, pode_aprovar, escopo_proprio } = req.body;
-    if (!cargo_id || !modulo_id) return res.status(400).json({ error: 'cargo_id e modulo_id sao obrigatorios' });
-    if (typeof nivel !== 'number' || nivel < 0 || nivel > 5) return res.status(400).json({ error: 'nivel deve estar entre 0 e 5' });
+    if (!cargo_id || !modulo_id) return res.status(400).json({ error: 'cargo_id e modulo_id são obrigatórios' });
+    if (typeof nivel !== 'number' || nivel < 0 || nivel > 5) return res.status(400).json({ error: 'nível deve estar entre 0 e 5' });
 
     const { error } = await supabase.from('cargo_modulo_permissao').upsert({
       cargo_id, modulo_id, nivel,
@@ -368,14 +368,14 @@ router.put('/matriz/celula', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-// GET /api/permissoes/cargo/:id — detalhes de um cargo + matriz por modulo
+// GET /api/permissoes/cargo/:id — detalhes de um cargo + matriz por módulo
 router.get('/cargo/:id', async (req, res) => {
   try {
     const [cargo, celulas] = await Promise.all([
       supabase.from('cargos').select('*').eq('id', req.params.id).single(),
       supabase.from('cargo_modulo_permissao').select('*, modulos(slug, nome, categoria, ordem)').eq('cargo_id', req.params.id),
     ]);
-    if (cargo.error) return res.status(404).json({ error: 'Cargo nao encontrado' });
+    if (cargo.error) return res.status(404).json({ error: 'Cargo não encontrado' });
     res.json({ cargo: cargo.data, celulas: celulas.data || [] });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -385,16 +385,16 @@ router.get('/usuario/:id', async (req, res) => {
   try {
     const resolved = await resolverUsuarioId(req.params.id);
     if (!resolved) {
-      // Profile nao existe · retorna vazio (UI mostra "sem dados")
+      // Profile não existe · retorna vazio (UI mostra "sem dados")
       return res.json({ usuario: null, areas: [], overrides: [], extraScopes: [] });
     }
     const userId = resolved.id;
 
-    // Get user from usuarios table (permissions system)
+    // Get user from usuários table (permissions system)
     const { data: usuario } = await supabase.from('usuarios')
       .select('*, cargos(*)').eq('id', userId).maybeSingle();
 
-    // Get user areas
+    // Get user áreas
     const { data: userAreas } = await supabase.from('usuario_areas')
       .select('*, areas(nome, setor_id, setores(nome))').eq('usuario_id', userId);
 
@@ -454,10 +454,10 @@ router.put('/usuario/:id/cargo', async (req, res) => {
   try {
     const { cargo_id } = req.body;
     const resolved = await resolverUsuarioId(req.params.id);
-    if (!resolved) return res.status(404).json({ error: 'Usuario nao encontrado' });
+    if (!resolved) return res.status(404).json({ error: 'Usuário não encontrado' });
 
     const updatePayload = { cargo_id };
-    // updated_at so seta se a coluna existir · em prod a tabela pode nao ter
+    // updated_at so seta se a coluna existir · em prod a tabela pode não ter
     try {
       const { error } = await supabase.from('usuarios')
         .update({ ...updatePayload, updated_at: new Date().toISOString() }).eq('id', resolved.id);
@@ -478,12 +478,12 @@ router.put('/usuario/:id/cargo', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-// PUT /api/permissoes/usuario/:id/areas — set user areas
+// PUT /api/permissoes/usuario/:id/areas — set user áreas
 router.put('/usuario/:id/areas', async (req, res) => {
   try {
-    const { area_ids } = req.body; // array of area IDs
+    const { area_ids } = req.body; // array of área IDs
     const resolved = await resolverUsuarioId(req.params.id);
-    if (!resolved) return res.status(404).json({ error: 'Usuario nao encontrado' });
+    if (!resolved) return res.status(404).json({ error: 'Usuário não encontrado' });
     const userId = resolved.id;
 
     // Delete existing
@@ -501,7 +501,7 @@ router.put('/usuario/:id/areas', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-// PUT /api/permissoes/usuario/:id/modulo — set/clear override por modulo
+// PUT /api/permissoes/usuario/:id/modulo — set/clear override por módulo
 // Body: { modulo_id, nivel_leitura, nivel_escrita, pode_exportar?, pode_aprovar?,
 //         escopo_proprio?, motivo?, expira_em? }
 // Se os valores coincidirem com a matriz default do cargo, o override e' removido.
@@ -512,12 +512,12 @@ router.put('/usuario/:id/modulo', async (req, res) => {
       pode_exportar = false, pode_aprovar = false, escopo_proprio = false,
       motivo = null, expira_em = null,
     } = req.body;
-    if (!req.params.id || !modulo_id) return res.status(400).json({ error: 'usuario e modulo sao obrigatorios' });
+    if (!req.params.id || !modulo_id) return res.status(400).json({ error: 'usuário e módulo são obrigatórios' });
     const resolved = await resolverUsuarioId(req.params.id);
-    if (!resolved) return res.status(404).json({ error: 'Usuario nao encontrado' });
+    if (!resolved) return res.status(404).json({ error: 'Usuário não encontrado' });
     const userId = resolved.id;
 
-    // Busca a celula default do cargo do usuario para o modulo
+    // Busca a celula default do cargo do usuário para o módulo
     const { data: user } = await supabase.from('usuarios')
       .select('cargo_id').eq('id', userId).maybeSingle();
 
@@ -567,7 +567,7 @@ router.put('/usuario/:id/modulo', async (req, res) => {
 router.delete('/usuario/:id/modulo/:moduloId', async (req, res) => {
   try {
     const resolved = await resolverUsuarioId(req.params.id);
-    if (!resolved) return res.status(404).json({ error: 'Usuario nao encontrado' });
+    if (!resolved) return res.status(404).json({ error: 'Usuário não encontrado' });
     const { error } = await supabase.from('permissoes_modulo')
       .delete()
       .eq('usuario_id', resolved.id)

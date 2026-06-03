@@ -597,7 +597,7 @@ function AuditoriasTab() {
 
   useEffect(() => { loadRuns(); loadStats(); loadScores(); }, [loadRuns, loadStats, loadScores]);
 
-  // Deep-link ?run=<id> abre a run direto (vindo da notificacao)
+  // Deep-link ?run=<id> abre a run direto (vindo da notificação)
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const runId = params.get('run');

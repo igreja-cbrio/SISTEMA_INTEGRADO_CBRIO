@@ -426,7 +426,7 @@ function CreateModal({ onClose, onCreated }) {
               <select value={area} onChange={e => {
                 const novaArea = e.target.value;
                 setArea(novaArea);
-                // Sugere contexto_kpi automaticamente · area de culto -> nps_culto
+                // Sugere contexto_kpi automaticamente · área de culto -> nps_culto
                 if (['kids', 'ami', 'bridge', 'sede', 'online'].includes(novaArea) && contextoKpi === 'nps_geral') {
                   setContextoKpi('nps_culto');
                 }
@@ -512,7 +512,7 @@ function DetalheModal({ id, onClose, onChanged, canWrite, onResponder }) {
         try {
           const r = await api.respostas(id);
           setRespostas(r || []);
-        } catch { /* sem permissao */ }
+        } catch { /* sem permissão */ }
       }
     } catch (e) {
       toast.error(e.message);

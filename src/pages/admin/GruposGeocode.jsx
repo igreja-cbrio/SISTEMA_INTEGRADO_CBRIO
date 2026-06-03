@@ -65,7 +65,7 @@ export default function GruposGeocode() {
         offset = r.proximo_offset || offset;
         setProgresso({ atual: offset, total });
         if (!r.has_more) break;
-        // Atualiza resultado parcial pra usuario ver evolucao
+        // Atualiza resultado parcial pra usuário ver evolucao
         setResultado({
           total_geral: total,
           ok_count: acumulado.ok.length,

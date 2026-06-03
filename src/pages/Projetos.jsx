@@ -236,9 +236,9 @@ export default function Projetos() {
   const isPMO = ['diretor', 'admin'].includes(userRole);
   const accessLevel = getAccessLevel(['Projetos', 'Tarefas']);
   const userId = user?.id;
-  // Lider ministerial · escopo_proprio em projetos. Hoje significa:
+  // Líder ministerial · escopo_proprio em projetos. Hoje significa:
   // 1. UI restrita · so aba "Lista" (esconde Home/Kanban/Gantt/Novo Projeto)
-  // 2. Lista filtrada por AREA (projeto cujo p.area bate com userAreas)
+  // 2. Lista filtrada por ÁREA (projeto cujo p.area bate com userAreas)
   // Admin/diretor sempre veem tudo + todas as abas.
   const escopoProprioProjetos = !isAdmin && !isDiretor
     && !!modulePerms?.projetos?.escopo_proprio;
@@ -251,7 +251,7 @@ export default function Projetos() {
 
   const [tab, setTab] = useState(urlStatus ? 1 : urlId ? 4 : (apenasListaProjetos ? 1 : 0));
 
-  // Lider ministerial fica preso na aba Lista (ou Detail · tab 4)
+  // Líder ministerial fica preso na aba Lista (ou Detail · tab 4)
   useEffect(() => {
     if (apenasListaProjetos && tab !== 1 && tab !== 4) setTab(1);
   }, [apenasListaProjetos, tab]);
@@ -280,7 +280,7 @@ export default function Projetos() {
   const [kanbanHorizon, setKanbanHorizon] = useState(30);
   const [kanbanPhase, setKanbanPhase] = useState(null); // phase_order selecionada (1-7)
   const [kanbanProject, setKanbanProject] = useState('all'); // projeto específico ou 'all'
-  const [kanbanViewMode, setKanbanViewMode] = useState(isPMO ? 'pmo' : accessLevel >= 3 ? 'area' : 'minhas'); // pmo | area | minhas
+  const [kanbanViewMode, setKanbanViewMode] = useState(isPMO ? 'pmo' : accessLevel >= 3 ? 'area' : 'minhas'); // pmo | área | minhas
   const [kanbanExpanded, setKanbanExpanded] = useState(null);
   const [dragId, setDragId] = useState(null);
   const [dropCol, setDropCol] = useState(null);
@@ -342,9 +342,9 @@ export default function Projetos() {
       if (fPriority) params.priority = fPriority;
       if (fYear) params.year = fYear;
       const todos = await projects.list(params);
-      // Escopo proprio (lider ministerial) · filtra por AREA da pessoa.
+      // Escopo próprio (líder ministerial) · filtra por ÁREA da pessoa.
       // Compara case-insensitive · p.area pode ser "Integração" e userAreas
-      // pode ter "Integracao" se algum ponto normalizou.
+      // pode ter "Integração" se algum ponto normalizou.
       if (escopoProprioProjetos) {
         const minhasAreas = (userAreas || []).map(a => (a || '').toLowerCase().trim());
         setList(todos.filter(p => {
@@ -651,7 +651,7 @@ export default function Projetos() {
     // Workload: group by leader/responsible
     const workloadMap = {};
     list.forEach(p => {
-      const name = p.leader || p.responsible || 'Sem responsavel';
+      const name = p.leader || p.responsible || 'Sem responsável';
       if (!workloadMap[name]) workloadMap[name] = { name, tasks: 0 };
       workloadMap[name].tasks += (p.tasks_total || 0);
     });
@@ -778,7 +778,7 @@ export default function Projetos() {
   // RENDER — LISTA
   // ═══════════════════════════════════════════════════════════
   function renderList() {
-    // Escopo proprio ja foi aplicado em loadList(). Aqui so visualizacao.
+    // Escopo próprio já foi aplicado em loadList(). Aqui so visualizacao.
     let filtered = [...list];
     if (hideDone) filtered = filtered.filter(p => p.status !== 'concluido');
     if (fLeader) filtered = filtered.filter(p => p.leader === fLeader);
@@ -832,7 +832,7 @@ export default function Projetos() {
             {Object.entries(PRIORITY_MAP).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
           </select>
           <select value={fLeader} onChange={e => setFLeader(e.target.value)} style={styles.select}>
-            <option value="">Todos os lideres</option>
+            <option value="">Todos os líderes</option>
             {[...new Set(list.map(p => p.leader).filter(Boolean))].sort().map(l => (
               <option key={l} value={l}>{l}</option>
             ))}
@@ -1113,7 +1113,7 @@ export default function Projetos() {
                       }}
                       onMouseEnter={e => e.currentTarget.style.boxShadow = '0 2px 8px rgba(0,0,0,0.08)'}
                       onMouseLeave={e => e.currentTarget.style.boxShadow = 'none'}>
-                      {/* Area badge */}
+                      {/* Área badge */}
                       <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 3 }}>
                         <span style={{ fontSize: 9, padding: '1px 6px', borderRadius: 99, background: `${C.primary}15`, color: C.primary, fontWeight: 500 }}>{task.area || 'gestao'}</span>
                         {task.priority && task.priority !== 'media' && <Badge status={task.priority} map={PRIORITY_MAP} />}
@@ -1287,7 +1287,7 @@ export default function Projetos() {
               })}
             </div>
 
-            {/* Scrollable right area */}
+            {/* Scrollable right área */}
             <div style={{ flex: 1, overflowX: 'auto' }}>
               <div style={{ minWidth: 800, position: 'relative' }}>
                 {/* Month header */}
@@ -1438,10 +1438,10 @@ export default function Projetos() {
             {/* Info grid */}
             <div style={{ ...styles.card, padding: 20, marginBottom: 20 }}>
               <div style={styles.infoGrid}>
-                <div><div style={styles.infoLabel}>Lider</div><div style={styles.infoValue}>{p.leader || p.responsible || '\u2014'}</div></div>
-                <div><div style={styles.infoLabel}>Area</div><div style={styles.infoValue}>{p.area || '\u2014'}</div></div>
-                <div><div style={styles.infoLabel}>Periodo</div><div style={styles.infoValue}>{fmtDate(p.date_start)} - {fmtDate(p.date_end)}</div></div>
-                <div><div style={styles.infoLabel}>Frequencia</div><div style={styles.infoValue}>{p.frequency || '\u2014'}</div></div>
+                <div><div style={styles.infoLabel}>Líder</div><div style={styles.infoValue}>{p.leader || p.responsible || '\u2014'}</div></div>
+                <div><div style={styles.infoLabel}>Área</div><div style={styles.infoValue}>{p.area || '\u2014'}</div></div>
+                <div><div style={styles.infoLabel}>Período</div><div style={styles.infoValue}>{fmtDate(p.date_start)} - {fmtDate(p.date_end)}</div></div>
+                <div><div style={styles.infoLabel}>Frequência</div><div style={styles.infoValue}>{p.frequency || '\u2014'}</div></div>
                 <div><div style={styles.infoLabel}>Publico-alvo</div><div style={styles.infoValue}>{p.public_target || '\u2014'}</div></div>
                 <div><div style={styles.infoLabel}>Complexidade</div><div style={styles.infoValue}>{COMPLEXITY_MAP[p.complexity] || p.complexity || '\u2014'}</div></div>
                 <div><div style={styles.infoLabel}>Impacto</div><div style={styles.infoValue}>{IMPACT_MAP[p.impact] || p.impact || '\u2014'}</div></div>
@@ -1456,7 +1456,7 @@ export default function Projetos() {
                 {[
                   { label: 'Passa no Ourico?', value: p.ourico_test },
                   { label: 'Gera Unidade?', value: p.generates_unity },
-                  { label: 'Colabora com Expansao?', value: p.collaborates_expansion },
+                  { label: 'Colabora com Expansão?', value: p.collaborates_expansion },
                 ].map(item => {
                   const val = item.value === true || item.value === 'sim' ? 'Sim' : item.value === false || item.value === 'nao' ? 'Nao' : 'N/A';
                   const color = val === 'Sim' ? C.green : val === 'Nao' ? C.red : C.t3;
@@ -1530,7 +1530,7 @@ export default function Projetos() {
             {/* Description & Notes */}
             {p.description && (
               <div style={{ ...styles.card, padding: 20, marginBottom: 16 }}>
-                <div style={{ fontSize: 14, fontWeight: 700, color: C.text, marginBottom: 8 }}>Descricao</div>
+                <div style={{ fontSize: 14, fontWeight: 700, color: C.text, marginBottom: 8 }}>Descrição</div>
                 <div style={{ fontSize: 13, color: C.t2, lineHeight: 1.6, whiteSpace: 'pre-wrap' }}>{p.description}</div>
               </div>
             )}
@@ -1669,11 +1669,11 @@ export default function Projetos() {
 
                       <div style={styles.infoGrid}>
                         <div>
-                          <div style={styles.infoLabel}>Periodo</div>
+                          <div style={styles.infoLabel}>Período</div>
                           <div style={styles.infoValue}>{fmtDate(selectedPhase.date_start || selectedPhase.start_date)} - {fmtDate(selectedPhase.date_end || selectedPhase.end_date)}</div>
                         </div>
                         <div>
-                          <div style={styles.infoLabel}>Responsavel</div>
+                          <div style={styles.infoLabel}>Responsável</div>
                           <div style={styles.infoValue}>{selectedPhase.responsible || '\u2014'}</div>
                         </div>
                       </div>
@@ -2038,12 +2038,12 @@ export default function Projetos() {
                 <table style={styles.table}>
                   <thead>
                     <tr>
-                      <th style={styles.th}>Descricao</th>
+                      <th style={styles.th}>Descrição</th>
                       <th style={styles.th}>Categoria</th>
                       <th style={styles.th}>Planejado</th>
                       <th style={styles.th}>Real</th>
                       <th style={styles.th}>Data</th>
-                      {canEdit && <th style={styles.th}>Acoes</th>}
+                      {canEdit && <th style={styles.th}>Ações</th>}
                     </tr>
                   </thead>
                   <tbody>
@@ -2080,7 +2080,7 @@ export default function Projetos() {
           <>
             {/* Rating */}
             <div style={{ ...styles.card, padding: 20, marginBottom: 20, textAlign: 'center' }}>
-              <div style={{ fontSize: 14, fontWeight: 700, color: C.text, marginBottom: 12 }}>Avaliacao Geral</div>
+              <div style={{ fontSize: 14, fontWeight: 700, color: C.text, marginBottom: 12 }}>Avaliação Geral</div>
               <div style={{ display: 'flex', gap: 8, justifyContent: 'center' }}>
                 {[1, 2, 3, 4, 5].map(star => (
                   <span key={star} onClick={() => setRetroForm(f => ({ ...f, rating: star }))}
@@ -2105,7 +2105,7 @@ export default function Projetos() {
                   value={retroForm.what_to_improve || ''} onChange={e => setRetroForm(f => ({ ...f, what_to_improve: e.target.value }))} />
               </div>
               <div style={{ ...styles.card, padding: 20 }}>
-                <div style={{ fontSize: 14, fontWeight: 700, color: C.blue, marginBottom: 8 }}>Acoes</div>
+                <div style={{ fontSize: 14, fontWeight: 700, color: C.blue, marginBottom: 8 }}>Ações</div>
                 <textarea style={{ ...styles.input, minHeight: 80, resize: 'vertical' }}
                   value={retroForm.actions || ''} onChange={e => setRetroForm(f => ({ ...f, actions: e.target.value }))} />
               </div>
@@ -2139,7 +2139,7 @@ export default function Projetos() {
         )}
       </div>
 
-      {/* Tabs (hide Detail tab from bar) · lideres ministeriais so veem Lista */}
+      {/* Tabs (hide Detail tab from bar) · líderes ministeriais so veem Lista */}
       {tab !== 4 && !apenasListaProjetos && (
         <div style={styles.tabs} data-tour="projetos-tabs">
           {TABS.map((t, i) => (
@@ -2196,7 +2196,7 @@ function ProjectFormModal({ open, data, categories, onClose, onSave, isDiretor, 
   if (!open || !isDiretor) return null;
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
   const handleSave = () => {
-    if (!form.name) { alert('Nome e obrigatorio'); return; }
+    if (!form.name) { alert('Nome e obrigatório'); return; }
     onSave(form);
   };
   return (
@@ -2249,7 +2249,7 @@ function ProjectFormModal({ open, data, categories, onClose, onSave, isDiretor, 
         <Select label="Ourico" value={form.ourico_test || ''} onChange={e => set('ourico_test', e.target.value)}>
           <option value="">Selecione</option>
           <option value="sim">Sim</option>
-          <option value="nao">Nao</option>
+          <option value="nao">Não</option>
         </Select>
       </div>
       <div style={styles.formRow}>
@@ -2294,7 +2294,7 @@ function TaskFormModal({ open, data, milestones, usersList, onClose, onSave, mod
   if (!open) return null;
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
   const handleSave = () => {
-    if (!form.name) { alert('Nome e obrigatorio'); return; }
+    if (!form.name) { alert('Nome e obrigatório'); return; }
     onSave(form);
   };
   return (
@@ -2302,7 +2302,7 @@ function TaskFormModal({ open, data, milestones, usersList, onClose, onSave, mod
       footer={<><button style={styles.btn('ghost')} onClick={onClose}>Cancelar</button><button disabled={modalSaving} style={{ ...styles.btn('primary'), opacity: modalSaving ? 0.5 : 1 }} onClick={handleSave}>{modalSaving ? 'Salvando...' : 'Salvar'}</button></>}>
       <Input label="Nome *" value={form.name || ''} onChange={e => set('name', e.target.value)} />
       <div style={styles.formGroup}>
-        <label style={styles.label}>Responsavel</label>
+        <label style={styles.label}>Responsável</label>
         <input style={styles.input} list="users-list-task" value={form.responsible || ''} onChange={e => set('responsible', e.target.value)} placeholder="Digite o nome..." />
         <datalist id="users-list-task">
           {usersList.map((u, i) => <option key={i} value={u.name || u.email} />)}
@@ -2337,7 +2337,7 @@ function RiskFormModal({ open, data, onClose, onSave, modalSaving }) {
   if (!open) return null;
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
   const handleSave = () => {
-    if (!form.title) { alert('Titulo e obrigatorio'); return; }
+    if (!form.title) { alert('Título e obrigatório'); return; }
     onSave(form);
   };
   return (
@@ -2354,7 +2354,7 @@ function RiskFormModal({ open, data, onClose, onSave, modalSaving }) {
         </Select>
       </div>
       <Textarea label="Mitigacao" value={form.mitigation || ''} onChange={e => set('mitigation', e.target.value)} />
-      <Input label="Responsavel do Risco" value={form.owner_name || ''} onChange={e => set('owner_name', e.target.value)} />
+      <Input label="Responsável do Risco" value={form.owner_name || ''} onChange={e => set('owner_name', e.target.value)} />
     </Modal>
   );
 }
@@ -2365,7 +2365,7 @@ function KpiFormModal({ open, data, onClose, onSave, modalSaving }) {
   if (!open) return null;
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
   const handleSave = () => {
-    if (!form.name) { alert('Nome e obrigatorio'); return; }
+    if (!form.name) { alert('Nome e obrigatório'); return; }
     onSave(form);
   };
   return (
@@ -2390,7 +2390,7 @@ function BudgetItemFormModal({ open, data, onClose, onSave, modalSaving }) {
   if (!open) return null;
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
   const handleSave = () => {
-    if (!form.description) { alert('Descricao e obrigatoria'); return; }
+    if (!form.description) { alert('Descrição e obrigatória'); return; }
     onSave(form);
   };
   return (
@@ -2416,7 +2416,7 @@ function MilestoneFormModal({ open, data, onClose, onSave, modalSaving }) {
   if (!open) return null;
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
   const handleSave = () => {
-    if (!form.name) { alert('Nome e obrigatorio'); return; }
+    if (!form.name) { alert('Nome e obrigatório'); return; }
     onSave(form);
   };
   return (

@@ -76,7 +76,7 @@ async function main() {
 
   const { data: modulos } = await supabase.from('modulos').select('slug, nome, rota, ativo').eq('slug', 'marketing');
   if (modulos?.length) ok(`modulo marketing existe · rota ${modulos[0].rota} · ativo=${modulos[0].ativo}`);
-  else fail('modulo marketing NÃO existe em public.modulos');
+  else fail('módulo marketing NÃO existe em public.modulos');
 
   // setor_diretor (Spec 001)
   const { data: setores } = await supabase.from('setor_diretor').select('*').order('setor');
@@ -169,10 +169,10 @@ async function main() {
       .eq('modulo_id', (await supabase.from('modulos').select('id').eq('slug', 'marketing').single()).data?.id)
       .gt('nivel', 0)
       .order('nivel', { ascending: false });
-    log('Cargos com acesso (nivel > 0)', matriz?.map(m => `${m.cargos.slug}: nivel ${m.nivel} ${m.escopo_proprio ? '+escopo' : ''}`));
+    log('Cargos com acesso (nível > 0)', matriz?.map(m => `${m.cargos.slug}: nivel ${m.nivel} ${m.escopo_proprio ? '+escopo' : ''}`));
   }
 
-  // boost por area
+  // boost por área
   const { data: peresChecagem } = await supabase
     .from('usuario_areas')
     .select('usuario_id, areas:area_id(nome), usuarios:usuario_id(nome, cargo_id)')
@@ -241,7 +241,7 @@ async function main() {
   console.log('\n[9] NOTIFICAÇÕES · regras configuradas');
   const { data: regras } = await supabase.from('notificacao_regras')
     .select('modulo, tipo, destinatarios').eq('modulo', 'marketing').limit(10);
-  ok(`regras notificacao marketing · ${regras?.length || 0}`);
+  ok(`regras notificação marketing · ${regras?.length || 0}`);
   if (regras?.length === 0) warn('Sem regras configuradas · usa fallback (admins/diretores)');
 
   // ════════════════════════════════════════════════════════════
@@ -249,14 +249,14 @@ async function main() {
   // ════════════════════════════════════════════════════════════
   console.log('\n[10] CONSISTÊNCIA');
 
-  // Cards com solicitacao_id apontando pra solicitacao apagada?
+  // Cards com solicitacao_id apontando pra solicitação apagada?
   const { data: cardsOrfaos } = await supabase
     .from('marketing_kanban_cards')
     .select('id, solicitacao_id, solicitacoes:solicitacao_id(id, deleted_at)')
     .not('solicitacao_id', 'is', null)
     .is('deleted_at', null);
   const orfaosSolic = (cardsOrfaos || []).filter(c => !c.solicitacoes || c.solicitacoes.deleted_at);
-  if (orfaosSolic.length > 0) warn(`${orfaosSolic.length} cards com solicitacao apagada (FK SET NULL pendente)`);
+  if (orfaosSolic.length > 0) warn(`${orfaosSolic.length} cards com solicitação apagada (FK SET NULL pendente)`);
   else ok('Nenhum card órfão de solicitação');
 
   // Cards com etiqueta tipo desativada?

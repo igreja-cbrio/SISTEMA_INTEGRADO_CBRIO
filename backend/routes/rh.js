@@ -669,8 +669,8 @@ router.delete('/avaliacoes/:id', async (req, res) => {
   }
 });
 
-// Submeter notas dos 6 fatores numa fonte (autoavaliacao | lider | calibracao)
-// fatores: [{ criterio_id, nivel, observacao? }]
+// Submeter notas dos 6 fatores numa fonte (autoavaliacao | líder | calibracao)
+// fatores: [{ criterio_id, nível, observação? }]
 router.post('/avaliacoes/:id/fatores', async (req, res) => {
   try {
     const { fonte, fatores } = req.body;
@@ -716,7 +716,7 @@ router.post('/avaliacoes/:id/fatores', async (req, res) => {
 
     // Calcula pontuação total da fonte (soma de pontos = 100-500)
     const totalPontos = rows.reduce((acc, r) => acc + Number(r.pontos || 0), 0);
-    // Converte para escala 0-5 (multiplica nivel médio ponderado / 5 * 5 = nivel ponderado mesmo)
+    // Converte para escala 0-5 (multiplica nível médio ponderado / 5 * 5 = nível ponderado mesmo)
     let pontuacao5 = 0;
     let pesoSum = 0;
     for (const r of rows) {
@@ -783,7 +783,7 @@ router.post('/avaliacoes/:id/fatores', async (req, res) => {
   }
 });
 
-// Conclui o ciclo (calibração aprovada → status concluida)
+// Conclui o ciclo (calibração aprovada → status concluída)
 router.post('/avaliacoes/:id/concluir', async (req, res) => {
   const { data, error } = await supabase
     .from('rh_avaliacoes')

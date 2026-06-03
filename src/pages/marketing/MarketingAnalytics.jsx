@@ -65,7 +65,7 @@ export default function MarketingAnalytics() {
         <MarketingNav />
       </div>
 
-      {/* Filtro de periodo */}
+      {/* Filtro de período */}
       <div className="flex items-center gap-2">
         <span className="text-sm text-muted-foreground">Período da série:</span>
         <Select value={semanas} onValueChange={setSemanas}>
@@ -122,7 +122,7 @@ export default function MarketingAnalytics() {
             })}
           </div>
 
-          {/* Grafico temporal · 1 linha por KPI */}
+          {/* Gráfico temporal · 1 linha por KPI */}
           <Card className="p-4">
             <p className="text-sm font-semibold text-foreground mb-3">Evolução temporal · últimas {semanas} semanas</p>
             <SeriesChart serie={kpis.serie} />
@@ -173,7 +173,7 @@ export default function MarketingAnalytics() {
 }
 
 function SeriesChart({ serie }) {
-  // Monta dataset unificado · 1 linha por periodo · valor de cada KPI como coluna
+  // Monta dataset unificado · 1 linha por período · valor de cada KPI como coluna
   const data = useMemo(() => {
     const periodos = new Set();
     Object.values(serie || {}).forEach(arr => (arr || []).forEach(r => periodos.add(r.periodo)));

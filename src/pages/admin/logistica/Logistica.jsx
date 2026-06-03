@@ -113,9 +113,9 @@ function Badge({ status, map }) {
 // ── TABS ────────────────────────────────────────────────────
 // Aba "Solicitações" foi removida em 19/05/2026 · Marcos pediu pra unificar
 // com /solicitacoes (sistema unificado de TI/compras/reembolso/espaco/etc).
-// Quem precisa abrir solicitacao de compras hoje vai em /solicitacoes,
+// Quem precisa abrir solicitação de compras hoje vai em /solicitacoes,
 // escolhe categoria=compras e o fluxo segue com SLA/NPS/notificacao do
-// solicitante automatica.
+// solicitante automática.
 const TABS = ['Dashboard', 'Fornecedores', 'Pedidos', 'Notas Fiscais', 'Compras ML', 'Rastreio'];
 
 // ═══════════════════════════════════════════════════════════
@@ -426,8 +426,8 @@ function StatCard({ label, value, bg, svg, hint, onClick }) {
 
 function DashboardTab({ dash, onRefresh, onNavigate }) {
   if (!dash) return <div style={styles.empty}>Carregando dashboard...</div>;
-  // Tab indices: 1=Fornecedores, 2=Pedidos, 4=Compras ML
-  // Solicitacoes de compra agora vivem em /solicitacoes (categoria=compras) ·
+  // Tab índices: 1=Fornecedores, 2=Pedidos, 4=Compras ML
+  // Solicitações de compra agora vivem em /solicitacoes (categoria=compras) ·
   // KPIs de "Solic. Pendentes/Aprovadas" foram removidos daqui · aparecem na
   // tela unificada com SLA e NPS.
   const kpis = [
@@ -1163,7 +1163,7 @@ function ComprasMLTab() {
       })}
     </div>}
 
-    {/* Paginação */}
+    {/* Páginação */}
     {paging.total > 20 && (
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 16 }}>
         <span style={{ fontSize: 12, color: C.text2 }}>Mostrando {paging.offset + 1}–{Math.min(paging.offset + 20, paging.total)} de {paging.total}</span>

@@ -1,5 +1,5 @@
 // ============================================================================
-// /admin/estrutura-okr — gestao da estrutura OKR completa
+// /admin/estrutura-okr — gestão da estrutura OKR completa
 //
 // Administra:
 //   - Direcionadores (UNIDADE, etc)
@@ -7,7 +7,7 @@
 //   - KRs Gerais (vinculados a objetivos)
 //
 // KRs especificos de cada KPI ficam editaveis no KpiEditorModal
-// (Fase 2.5B-2). KPIs em si ficam editaveis na pagina de Meus KPIs.
+// (Fase 2.5B-2). KPIs em si ficam editaveis na página de Meus KPIs.
 // ============================================================================
 
 import { useState, useEffect, useCallback, useMemo } from 'react';
@@ -49,7 +49,7 @@ const CATEGORIAS = [
 ];
 
 // Helpers · distingue OKR operacional adm vs criativo pelo nome
-// Criativo: contem "criativo" OU subareas "producao"/"adoracao"/"marketing"
+// Criativo: contem "criativo" OU subareas "produção"/"adoracao"/"marketing"
 const isOkrCriativo = (o) => {
   if (o.tipo_okr !== 'operacional') return false;
   const n = (o.nome || '').toLowerCase();
@@ -466,7 +466,7 @@ function ObjetivoLinha({ objetivo, expanded, onToggle, onEdit, onRemove, onAddKr
 
 // ============================================================================
 // ResumoGerais — vista compacta default (KPI geral + KRs gerais)
-// Mostra apenas o nivel "geral" do objetivo · botao abre modal com cascata.
+// Mostra apenas o nível "geral" do objetivo · botao abre modal com cascata.
 // ============================================================================
 function ResumoGerais({ detalhes, onAddKr, onEditKr, removerKr, onAbrirEspecificos }) {
   const krsGerais = (detalhes.krs || []).filter(k => !k.kr_pai_id);
@@ -593,24 +593,24 @@ function ModalEspecificos({ detalhes, onClose, onEditKr, removerKr }) {
 
 // ============================================================================
 // TabelaCascataOkr — vista de cascata em 4 colunas
-// KR Geral · KPI Geral · KR Especifico (por area) · KPI Especifico
-// KR Geral e KPI Geral usam rowSpan agrupando as N areas de cada KR.
-// Suporta ministerial (6 areas culto) e operacional adm (9 areas adm).
+// KR Geral · KPI Geral · KR Especifico (por área) · KPI Especifico
+// KR Geral e KPI Geral usam rowSpan agrupando as N áreas de cada KR.
+// Suporta ministerial (6 áreas culto) e operacional adm (9 áreas adm).
 // ============================================================================
 const CFG_CULTURA = {
-  // 5 areas · CBA removido (so coleta batismos/aceitacoes via dados_brutos)
+  // 5 áreas · CBA removido (so coleta batismos/aceitacoes via dados_brutos)
   AREAS: ['kids', 'ami', 'bridge', 'sede', 'online'],
   COR: {
     kids:   '#F59E0B', ami: '#3B82F6', bridge: '#8B5CF6',
     sede:   '#10B981', online: '#EC4899',
   },
-  LABEL: null, // usa a area string maiuscula
+  LABEL: null, // usa a área string maiuscula
   // KPI.area = KR.area (mesmo string)
   getKpiArea: (k) => String(k.area || '').toLowerCase(),
 };
 
 const CFG_CRIATIVO = {
-  // 3 grupos criativos · KR especifico tem area='producao'/'adoracao'/'marketing'
+  // 3 grupos criativos · KR especifico tem area='produção'/'adoracao'/'marketing'
   AREAS: ['producao', 'adoracao', 'marketing'],
   COR: {
     producao:  '#F97316',
@@ -622,12 +622,12 @@ const CFG_CRIATIVO = {
     adoracao:  'Adoração',
     marketing: 'Marketing',
   },
-  // KPI.area='sede' mas formula_config.area_responsavel='producao' etc
+  // KPI.area='sede' mas formula_config.area_responsavel='produção' etc
   getKpiArea: (k) => String(k.formula_config?.area_responsavel || '').toLowerCase(),
 };
 
 const CFG_ADM = {
-  // 8 areas adm · Criativo removido (matriz/OKR proprio futuro)
+  // 8 áreas adm · Criativo removido (matriz/OKR próprio futuro)
   AREAS: [
     'reserva_espaco', 'cozinha', 'manutencao',
     'logistica_estoque', 'logistica_compras',
@@ -637,7 +637,7 @@ const CFG_ADM = {
     reserva_espaco:    '#8B5CF6', // hospitalidade
     cozinha:           '#A78BFA',
     manutencao:        '#7C3AED',
-    logistica_estoque: '#3B82F6', // logistica
+    logistica_estoque: '#3B82F6', // logística
     logistica_compras: '#60A5FA',
     ti:                '#10B981',
     rh:                '#EF4444',
@@ -658,7 +658,7 @@ const CFG_ADM = {
 };
 
 function TabelaCascataOkr({ detalhes, onAddKr, onEditKr, removerKr, semHeader = false }) {
-  // Pick config baseado nas areas reais dos KR especificos
+  // Pick config baseado nas áreas reais dos KR especificos
   const krFilhos = (detalhes.krs || []).filter(k => k.kr_pai_id);
   const cfg = (() => {
     if (krFilhos.length === 0) {
@@ -794,7 +794,7 @@ function TabelaCascataOkr({ detalhes, onAddKr, onEditKr, removerKr, semHeader = 
                         </td>
                       )}
 
-                      {/* KR Especifico · 1 por linha (por area) */}
+                      {/* KR Especifico · 1 por linha (por área) */}
                       <td style={{ ...td, borderLeft: `3px solid ${cor}` }}>
                         {filho ? (
                           <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
@@ -819,7 +819,7 @@ function TabelaCascataOkr({ detalhes, onAddKr, onEditKr, removerKr, semHeader = 
                         )}
                       </td>
 
-                      {/* KPI Especifico · ID + descricao do KPI tatico daquela area */}
+                      {/* KPI Especifico · ID + descrição do KPI tatico daquela área */}
                       <td style={td}>
                         {kpisDaArea.length === 0 ? (
                           <span style={{ color: C.t3, fontStyle: 'italic', fontSize: 11 }}>—</span>
@@ -845,7 +845,7 @@ function TabelaCascataOkr({ detalhes, onAddKr, onEditKr, removerKr, semHeader = 
                         )}
                       </td>
 
-                      {/* Acoes filho */}
+                      {/* Ações filho */}
                       <td style={{ ...td, textAlign: 'right', whiteSpace: 'nowrap' }}>
                         {filho && (
                           <button onClick={() => onEditKr(filho)} style={btnIcon} title="Editar meta desta área"><Pencil size={11} /></button>
@@ -916,7 +916,7 @@ function ModalObjetivo({ objetivo, direcionadores, onClose, onSaved }) {
       </Field>
       <Field label="Indicador Geral (como medir no agregado)">
         <input value={form.indicador_geral} onChange={e => set('indicador_geral', e.target.value)} style={inp}
-          placeholder='Ex: "% crescimento de batismos em relacao ao ultimo evento"' />
+          placeholder='Ex: "% crescimento de batismos em relação ao último evento"' />
       </Field>
       <Field label="Valores da Jornada (alimentados por este objetivo)">
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
@@ -1018,7 +1018,7 @@ function ModalKr({ kr, onClose, onSaved }) {
       </Field>
       <Field label="Formula de calculo">
         <input value={form.formula_calculo} onChange={e => set('formula_calculo', e.target.value)} style={inp}
-          placeholder='Ex: "media(frequencia_diaria) no mes"' />
+          placeholder='Ex: "media(frequencia_diaria) no mês"' />
       </Field>
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
         <Field label="Meta (valor)">
@@ -1030,7 +1030,7 @@ function ModalKr({ kr, onClose, onSaved }) {
       </div>
       <Field label="Meta (texto descritivo, alternativa)">
         <input value={form.meta_texto} onChange={e => set('meta_texto', e.target.value)} style={inp}
-          placeholder="ex: '60% dos lideres treinados em 12 meses'" />
+          placeholder="ex: '60% dos líderes treinados em 12 meses'" />
       </Field>
       <Field label="Ordem">
         <input type="number" value={form.ordem} onChange={e => set('ordem', Number(e.target.value) || 99)} style={inp} />

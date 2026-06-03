@@ -79,7 +79,7 @@ router.patch('/service-types/:id/meta', authorizeModule('producao', 3), async (r
 router.get('/semana', authorizeModule('producao', 1), async (req, res) => {
   try {
     const { inicio, fim } = req.query;
-    if (!inicio || !fim) return res.status(400).json({ error: 'inicio e fim são obrigatórios' });
+    if (!inicio || !fim) return res.status(400).json({ error: 'início e fim são obrigatórios' });
 
     const { data: cultos, error } = await supabase
       .from('vw_culto_stats')
@@ -217,7 +217,7 @@ router.post('/culto/:id/ocorrencias', authorizeModule('producao', 2), async (req
   try {
     const cultoId = req.params.id;
     const { tipo, descricao, severidade, momento } = req.body || {};
-    if (!TIPOS_OCORR.includes(tipo)) return res.status(400).json({ error: 'tipo inválido (tecnica|estrutura)' });
+    if (!TIPOS_OCORR.includes(tipo)) return res.status(400).json({ error: 'tipo inválido (técnica|estrutura)' });
     if (!descricao || String(descricao).trim().length < 3) {
       return res.status(400).json({ error: 'descrição obrigatória (o rastro do erro)' });
     }
@@ -273,7 +273,7 @@ router.delete('/ocorrencias/:id', authorizeModule('producao', 2), async (req, re
 });
 
 // ── Checklist por culto · bulk upsert das marcações ──────────────────────────
-// Body: { marks: [{ item_id, feito, observacao }] }
+// Body: { marks: [{ item_id, feito, observação }] }
 router.put('/culto/:id/checklist', authorizeModule('producao', 2), async (req, res) => {
   try {
     const cultoId = req.params.id;

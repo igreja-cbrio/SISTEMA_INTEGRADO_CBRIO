@@ -1,4 +1,4 @@
-// Handlers que APLICAM acoes propostas pelo rh_executor apos aprovacao.
+// Handlers que APLICAM ações propostas pelo rh_executor após aprovação.
 
 const { supabase } = require('../../utils/supabase');
 
@@ -8,7 +8,7 @@ async function resolverProfileDoFuncionario(funcionario_id) {
     .select('id, nome, email, gestor_id')
     .eq('id', funcionario_id)
     .maybeSingle();
-  if (!func) return { ok: false, error: 'funcionario nao encontrado' };
+  if (!func) return { ok: false, error: 'funcionário não encontrado' };
 
   let profileId = null;
   if (func.email) {
@@ -74,7 +74,7 @@ async function applyAlertarFerias({ payload, reviewedBy }) {
     modulo: 'rh',
     tipo: 'ferias_vencendo',
     titulo: `Ferias a vencer · ${r.func.nome}`,
-    mensagem: `${r.func.nome} (admissao ${data_admissao}) esta com periodo aquisitivo de ferias vencendo. Programar.`,
+    mensagem: `${r.func.nome} (admissão ${data_admissao}) esta com período aquisitivo de férias vencendo. Programar.`,
     link: `/rh/funcionarios/${funcionario_id}`,
     severidade: 'alerta',
     chaveDedup: `rh_ferias_${funcionario_id}_${new Date().toISOString().slice(0, 7)}`,

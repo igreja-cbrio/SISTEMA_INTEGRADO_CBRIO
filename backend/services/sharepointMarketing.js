@@ -5,7 +5,7 @@
 // Reaproveita o pipeline do storageService.js (Microsoft Graph + retry).
 //
 // Path no SharePoint: Criativo / Marketing / <YYYY> / <YYYY-MM> / <card_id>_<arquivo>
-// (organiza por ano/mes pra facilitar consulta historica)
+// (organiza por ano/mes pra facilitar consulta histórica)
 //
 // Banco: 1 linha em marketing_entregaveis por arquivo.
 // ============================================================================
@@ -59,13 +59,13 @@ async function withRetry(fn) {
 async function uploadEntregavel({ cardId, userId, file, tipo }) {
   const tipoFinal = tipo === 'referencia' ? 'referencia' : 'entregavel';
   if (!storage.SHAREPOINT_CONFIGURED) {
-    throw new Error('SharePoint nao configurado · entregaveis precisam de Microsoft Graph (configure MICROSOFT_TENANT_ID / CLIENT_ID / CLIENT_SECRET / SHAREPOINT_SITE_ID).');
+    throw new Error('SharePoint não configurado · entregaveis precisam de Microsoft Graph (configure MICROSOFT_TENANT_ID / CLIENT_ID / CLIENT_SECRET / SHAREPOINT_SITE_ID).');
   }
   if (!file?.buffer) throw new Error('Arquivo invalido · sem buffer');
   if (!file.originalname) throw new Error('Arquivo invalido · sem nome');
   if (file.size > MAX_BYTES) throw new Error(`Arquivo excede ${Math.round(MAX_BYTES / 1024 / 1024)}MB`);
 
-  // Confirma que o card existe e nao foi soft-deletado
+  // Confirma que o card existe e não foi soft-deletado
   const { data: card, error: cardErr } = await supabase
     .from('marketing_kanban_cards')
     .select('id, titulo, origem, solicitacao_id')
@@ -73,7 +73,7 @@ async function uploadEntregavel({ cardId, userId, file, tipo }) {
     .is('deleted_at', null)
     .maybeSingle();
   if (cardErr) throw cardErr;
-  if (!card) throw new Error('Card nao encontrado ou ja excluido');
+  if (!card) throw new Error('Card não encontrado ou já excluido');
 
   const subFolder = buildSubfolder(card, tipoFinal);
   const safeName = `${cardId.slice(0, 8)}_${Date.now()}_${sanitizeFileName(file.originalname)}`;
@@ -129,7 +129,7 @@ async function getDownloadUrl(entregavelId) {
     .is('deleted_at', null)
     .maybeSingle();
   if (error) throw error;
-  if (!row) throw new Error('Entregavel nao encontrado');
+  if (!row) throw new Error('Entregavel não encontrado');
   if (!row.sharepoint_item_id) throw new Error('Entregavel sem sharepoint_item_id · upload incompleto');
 
   // graphRequest existe no storageService · usamos pra pegar metadata do item
@@ -139,13 +139,13 @@ async function getDownloadUrl(entregavelId) {
     headers: { Authorization: `Bearer ${token}` },
   });
   if (!res.ok) {
-    // Tenta via /drives/{driveId}/items/{itemId} caso a busca pelo site nao funcione
+    // Tenta via /drives/{driveId}/items/{itemId} caso a busca pelo site não funcione
     const txt = await res.text().catch(() => '');
     throw new Error(`Graph download falhou ${res.status}: ${txt.slice(0, 200)}`);
   }
   const data = await res.json();
   const url = data['@microsoft.graph.downloadUrl'];
-  if (!url) throw new Error('Graph nao retornou downloadUrl');
+  if (!url) throw new Error('Graph não retornou downloadUrl');
   return { url, nome_arquivo: row.nome_arquivo, tipo_mime: row.tipo_mime };
 }
 
