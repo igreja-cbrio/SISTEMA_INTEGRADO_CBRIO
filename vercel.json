@@ -39,7 +39,7 @@
     },
     {
       "path": "/api/wifi/cron/sync",
-      "schedule": "30 5 * * *"
+      "schedule": "0 2 * * 0,1,4"
     },
     {
       "path": "/api/online/cron/sync",
