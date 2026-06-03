@@ -232,6 +232,30 @@ no tático correspondente em `BLOCOS` — sem mexer na estrutura.
   era um bloco de Área Responsável só com a nota do censo e sem OKRs — saiu do
   `BLOCOS`. Restam 3 blocos: Ministerial · Criativo · Operações (+ a NSM no topo).
 
+### 🔴 Fix · endpoint usava pool pg direto (não conectava no Vercel) → RPC (2026-06-03)
+
+**Sintoma:** a aba mostrava "—" em TUDO (até batismos/mês e assentos, que têm
+dado). A request `GET /api/painel/monitoramento-okr` devolvia **`200` com
+`metricas: {}`** (vazio) em produção — confirmado no DevTools do Marcos. Em
+testes locais sempre vinha cheio, o que mascarou o problema por dias.
+
+**Causa raiz:** o endpoint era o **único do `/painel` usando o pool pg direto**
+(`query()` de `utils/supabase`, que conecta via `DATABASE_URL`). Esse pool **não
+conecta no serverless do Vercel** (o resto do painel usa o cliente `supabase`
+REST sobre HTTPS, que sempre funciona). As 15 queries estouravam, o wrapper
+`uma()` engolia cada erro e devolvia `metricas` vazio com `200`. Por isso nunca
+apareceu dado em prod — só nos testes locais (a máquina alcança o Postgres direto).
+
+**Correção (migration `20260603220000_fn_monitoramento_okr_raw.sql` + `painel.js`):**
+- Função SQL **`fn_monitoramento_okr_raw()`** (STABLE SECURITY DEFINER) devolve as
+  ~15 métricas em JSONB — **1 query no banco** em vez de 15 no pool.
+- O endpoint passa a chamar **`supabase.rpc('fn_monitoramento_okr_raw')`** (mesmo
+  canal REST do resto do painel) e monta `metricas` com a MESMA lógica de antes
+  (guardas + `addM` + série). Nenhuma mudança de comportamento/valores.
+- ⚠️ **Lição:** no Vercel, preferir o cliente `supabase` (REST) a `query()`/pool
+  pg em rotas serverless. Se precisar de SQL complexo, encapsular numa função e
+  chamar via `supabase.rpc()` (padrão da `fn_grupos_kpis_relatorio`).
+
 ## Produção de Culto · aba /producao (2026-06-02)
 
 Marcos: criar aba pra área de **Produção de Culto** com (A) KPIs técnicos
