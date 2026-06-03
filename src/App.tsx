@@ -242,6 +242,7 @@ const DevocionalLogin = lazyWithRetry(() => import('./pages/devocional/Devociona
 const DevocionalHoje = lazyWithRetry(() => import('./pages/devocional/DevocionalHoje'));
 const DevocionalHistorico = lazyWithRetry(() => import('./pages/devocional/DevocionalHistorico'));
 const Integracao = lazyWithRetry(() => import('./pages/ministerial/Integracao'));
+const WifiModulo = lazyWithRetry(() => import('./pages/ministerial/Wifi'));
 const Producao = lazyWithRetry(() => import('./pages/ministerial/Producao'));
 const ColetaCulto = lazyWithRetry(() => import('./pages/ministerial/coleta/ColetaCulto'));
 const Next = lazyWithRetry(() => import('./pages/ministerial/Next'));
@@ -470,6 +471,7 @@ function AppRoutes() {
         <Route path="/grupos/supervisao" element={<Suspense fallback={<Loading />}><GruposSupervisao /></Suspense>} />
         <Route path="/grupos/pedidos" element={<Suspense fallback={<Loading />}><PedidosGrupo /></Suspense>} />
         <Route path="/ministerial/cuidados" element={<ModuleGuard moduleSlug="cuidados"><Suspense fallback={<Loading />}><Cuidados /></Suspense></ModuleGuard>} />
+        <Route path="/wifi" element={<ModuleGuard moduleSlug="wifi"><Suspense fallback={<Loading />}><WifiModulo /></Suspense></ModuleGuard>} />
         <Route path="/ministerial/devocional" element={<Navigate to="/ministerial/cuidados?tab=devocional" replace />} />
         <Route path="/ministerial/jornada" element={<Navigate to="/ministerial/membresia" replace />} />
         <Route path="/ministerial/integracao" element={<ModuleGuard permKey="canMembresia"><Suspense fallback={<Loading />}><Integracao /></Suspense></ModuleGuard>} />
