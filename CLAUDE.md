@@ -403,6 +403,40 @@ apareceu dado em prod — só nos testes locais (a máquina alcança o Postgres 
   pg em rotas serverless. Se precisar de SQL complexo, encapsular numa função e
   chamar via `supabase.rpc()` (padrão da `fn_grupos_kpis_relatorio`).
 
+### Engajamento de Conteúdo · estrutura no Online + 0 no monitoramento (2026-06-03)
+
+Marcos: os 3 táticos do OKR **"Engajamento de Conteúdo"** (Retenção média ≥40%,
+Taxa de compartilhamento ≥5%, Cliques em séries ≥15%) — que viriam da API do
+YouTube — devem virar **KPI específico no módulo Online**, com a **estrutura pronta
+pra receber** o dado e o `/monitoramento-okr` mostrando **0** (não "—") até a 1ª
+coleta. (Exceção explícita à raia "não mexer em outros módulos" — o Marcos avisou.)
+
+**Migration `20260603260000_online_engajamento.sql`:**
+- Tabela `online_engajamento` (channel-level **mensal** · `mes` UNIQUE ·
+  `retencao_media_pct`/`taxa_compartilhamento_pct`/`cliques_series_pct` ·
+  `fonte` default 'manual' · não é PII, sem soft-delete · RLS no padrão das
+  `online_*`: `service_role FOR ALL` + `authenticated FOR SELECT`). Um futuro
+  coletor da YouTube Analytics faz UPSERT por mês.
+- `CREATE OR REPLACE fn_monitoramento_okr_raw()` += chave **`engajamento`** via
+  subqueries escalares com `COALESCE 0` → **sempre 1 linha (0 quando a tabela está
+  vazia)**, pra a aba mostrar 0 e não "—". Resto da função idêntico.
+
+**Backend:** `painel.js` (monitoramento-okr) destrutura `r.engajamento` + 3 `addM`
+(`eng_retencao`/`eng_compartilhamento`/`eng_cliques_series`, '%'). `online.js`:
+`GET /engajamento` (authenticate · level 1) devolve o mês mais recente ou zeros.
+
+**Frontend:** `MonitoramentoOkr.jsx` — os 3 táticos ganharam `live`+`alvoNum`+
+`cmp:'gte'` (mesmo shape de `freq_grupos`), perderam `memoria`/`precisa` → mostram
+**0% em vermelho** (abaixo do alvo). `Online.tsx` — card **"Engajamento de conteúdo"**
+(3 `StatCard`: retenção/compartilhamento/cliques) lendo `online.engajamento()`,
+com aviso "aguardando API do YouTube". `api.js`: `online.engajamento()`.
+
+**⚠️ A API do YouTube NÃO foi ligada** (retenção até existe por culto em
+`cultos.online_retencao_pct_*`; compartilhamento e CTR de séries não têm coleta —
+exigem YouTube Analytics custom report). Só a **estrutura** ficou pronta. Pra ligar
+de verdade: coletor que faz UPSERT em `online_engajamento` por mês. ⚠️ Aplicar a
+migration antes do merge.
+
 ## Produção de Culto · aba /producao (2026-06-02)
 
 Marcos: criar aba pra área de **Produção de Culto** com (A) KPIs técnicos

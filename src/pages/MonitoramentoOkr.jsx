@@ -134,9 +134,9 @@ const BLOCOS = [
         objetivo: 'Estimular a interação e o relacionamento da igreja com os conteúdos institucionais, fortalecendo a comunicação e o senso de pertencimento',
         envolvida: 'Marketing / Online',
         taticos: [
-          { ind: 'Retenção média em vídeos', alvo: '≥40%', memoria: 'Planilha com dados analíticos das plataformas — mensal, média MoM', precisa: 'a exportação do YouTube Analytics (retenção média) — dá pra automatizar via API se você autorizar o acesso analytics do canal' },
-          { ind: 'Taxa de compartilhamento', alvo: '≥5%', memoria: 'Planilha com dados analíticos das plataformas — mensal, média MoM', precisa: 'YouTube / Instagram Analytics (compartilhamentos ÷ alcance)' },
-          { ind: 'Cliques em séries de mensagens no YouTube', alvo: '≥15%', memoria: 'Planilha com dados analíticos das plataformas — mensal, média MoM', precisa: 'YouTube Analytics (CTR dos cards/links das séries)' },
+          { ind: 'Retenção média em vídeos', alvo: '≥40%', live: 'eng_retencao', alvoNum: 40, cmp: 'gte' },
+          { ind: 'Taxa de compartilhamento', alvo: '≥5%', live: 'eng_compartilhamento', alvoNum: 5, cmp: 'gte' },
+          { ind: 'Cliques em séries de mensagens no YouTube', alvo: '≥15%', live: 'eng_cliques_series', alvoNum: 15, cmp: 'gte' },
         ],
       },
     ],

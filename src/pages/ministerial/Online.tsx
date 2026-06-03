@@ -513,6 +513,12 @@ export default function Online() {
     queryFn: () => online.dashboard(),
   });
 
+  // Engajamento de conteúdo (KPIs da cabeça do Juninho) · 0 até a API do YouTube alimentar
+  const { data: eng } = useQuery<any>({
+    queryKey: ['online', 'engajamento'],
+    queryFn: () => online.engajamento(),
+  });
+
   const syncMutation = useMutation({
     mutationFn: () => online.sync(),
     onSuccess: () => {
@@ -683,6 +689,28 @@ export default function Online() {
           <StatCard icon={PlayCircle}  label="Videos publicados"    value={formatNumber(canal.video_count)}       delta={data?.delta?.video}       accentClass="from-emerald-500/15 to-teal-500/5" />
         </div>
       )}
+
+      {/* Engajamento de conteúdo · KPIs do Monitoramento OKR (Pr. Juninho).
+          Estrutura pronta pra receber da API do YouTube · mostra 0 até a 1ª coleta. */}
+      <Card className="overflow-hidden">
+        <div className="p-4 md:p-5 flex items-center gap-3 border-b border-border bg-gradient-to-r from-primary/5 to-transparent">
+          <div className="rounded-xl bg-primary/10 p-2"><Youtube className="h-5 w-5 text-primary" /></div>
+          <div className="flex-1 min-w-0">
+            <h2 className="text-base font-bold leading-tight">Engajamento de conteúdo</h2>
+            <p className="text-xs text-muted-foreground mt-0.5">
+              Indicadores do Monitoramento OKR (Pr. Juninho).{' '}
+              {eng?.mes_label
+                ? `Referência ${eng.mes_label}.`
+                : 'Aguardando integração com a API do YouTube — exibindo 0 até a primeira coleta.'}
+            </p>
+          </div>
+        </div>
+        <CardContent className="p-4 md:p-5 grid grid-cols-1 md:grid-cols-3 gap-3">
+          <StatCard icon={Eye}          label="Retenção média em vídeos (alvo ≥40%)"        value={`${eng?.retencao ?? 0}%`}          accentClass="from-blue-500/15 to-cyan-500/5" />
+          <StatCard icon={ExternalLink} label="Taxa de compartilhamento (alvo ≥5%)"          value={`${eng?.compartilhamento ?? 0}%`}  accentClass="from-pink-500/15 to-rose-500/5" />
+          <StatCard icon={Zap}          label="Cliques em séries no YouTube (alvo ≥15%)"     value={`${eng?.cliques_series ?? 0}%`}    accentClass="from-amber-500/15 to-yellow-500/5" />
+        </CardContent>
+      </Card>
 
       {/* Top vídeos */}
       {((data?.top_views_mes?.length || 0) > 0 || (data?.top_engajamento_mes?.length || 0) > 0) && (

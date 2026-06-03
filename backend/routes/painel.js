@@ -1571,6 +1571,7 @@ router.get('/monitoramento-okr', async (req, res) => {
     const voluntAtivos = r.voluntAtivos || null;
     const dizimistas = r.dizimistas || null;
     const cafeAtend = r.cafeAtend || null;
+    const engajamento = r.engajamento || null;
 
     const nsm = nsmRow ? {
       percentual: num(nsmRow.percentual),
@@ -1633,6 +1634,16 @@ router.get('/monitoramento-okr', async (req, res) => {
     }
     if (cafeAtend) {
       addM('cafe_atendidos', num(cafeAtend.pct), '%', `${num(cafeAtend.atendidos)} de ${num(cafeAtend.total)} convertidos atendidos (90 dias)`);
+    }
+    // Engajamento de conteúdo (Online · YouTube). Estrutura pronta em
+    // online_engajamento; mostra 0 até a 1ª coleta da API (não "—").
+    if (engajamento) {
+      const sufEng = engajamento.mes_label
+        ? ` · ${engajamento.mes_label}`
+        : ' · aguardando dados da API do YouTube';
+      addM('eng_retencao', num(engajamento.retencao), '%', `retenção média em vídeos${sufEng}`);
+      addM('eng_compartilhamento', num(engajamento.compartilhamento), '%', `compartilhamentos ÷ alcance${sufEng}`);
+      addM('eng_cliques_series', num(engajamento.cliques_series), '%', `CTR de séries de mensagens${sufEng}`);
     }
 
     const resp = { geradoEm: new Date().toISOString(), nsm, metricas };
