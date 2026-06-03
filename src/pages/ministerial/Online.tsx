@@ -409,8 +409,8 @@ function OAuthStatusCardInner() {
     onSuccess: (r: any) => {
       const linkados = r?.backfill?.linkados || 0;
       const sufixo = linkados ? ` (+${linkados} vídeo vinculado)` : '';
-      if (r?.processados > 0) {
-        toast.success(`DDUS · ${r.processados} culto(s)${sufixo}`);
+      if (r?.coletados > 0) {
+        toast.success(`DDUS · ${r.coletados} culto(s)${sufixo}`);
       } else if (r?.motivo === 'sem_cultos_d7_com_video') {
         toast.message('Nenhum culto de ~7 dias atrás com vídeo vinculado.');
       } else {

@@ -177,7 +177,7 @@ function CultoCard({ c, expanded, onToggle }: { c: CultoMetrica; expanded: boole
             )}
           </div>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs">
-            <Stat icon={<Eye className="h-3 w-3" />} label="Views D+7" value={fmtNum(totalViews)} />
+            <Stat icon={<Eye className="h-3 w-3" />} label="Views totais" value={fmtNum(totalViews)} />
             <Stat icon={<Clock className="h-3 w-3" />} label="Watch time" value={fmtMinutos(c.online_watch_minutes_ddus)} />
             <Stat
               icon={c.online_retencao_pct_ddus && c.online_retencao_pct_ddus >= 50 ? <TrendingUp className="h-3 w-3" /> : <TrendingDown className="h-3 w-3" />}
@@ -239,8 +239,8 @@ function CultoDetalhe({ c }: { c: CultoMetrica }) {
       {/* Linha 1: números detalhados em grid */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs">
         <BoxNum label="Pico ao vivo" value={fmtNum(c.online_pico)} sub="concurrent viewers" />
-        <BoxNum label="Views dia D" value={fmtNum(c.online_ds)} sub="ao vivo" />
-        <BoxNum label="Views D+1..D+7" value={fmtNum(c.online_ddus)} sub="on-demand" />
+        <BoxNum label="DS · views" value={fmtNum(c.online_ds)} sub="acumulado · manhã seguinte" />
+        <BoxNum label="DDUS · views" value={fmtNum(c.online_ddus)} sub="on-demand · D+7 − DS" />
         <BoxNum label="Subs ganhos" value={fmtNum(c.online_subs_ganhos)} sub={c.online_subs_perdidos ? `${c.online_subs_perdidos} perdidos` : ''} />
       </div>
 
