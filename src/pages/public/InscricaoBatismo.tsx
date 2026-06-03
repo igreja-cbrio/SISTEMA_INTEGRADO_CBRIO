@@ -175,7 +175,7 @@ export default function InscricaoBatismo() {
     limitacao_mobilidade: '',
     motivo: '',
     observacoes: '',
-    horario_culto: '',
+    horario_culto: '10h',
     area_kpi: '', // opcional · 'sede' (default) | 'ami' | 'bridge' | 'online'
     website: '', // honeypot
   });
@@ -342,13 +342,11 @@ export default function InscricaoBatismo() {
                   ]}
                 />
                 <SelectField
-                  id="horario_culto" label="Horario do culto"
+                  id="horario_culto" label="Horario do batismo"
                   value={form.horario_culto}
                   onChange={set('horario_culto') as any}
                   options={[
-                    { value: '10h', label: '10h' },
-                    { value: '17h', label: '17h' },
-                    { value: '19h30', label: '19h30' },
+                    { value: '10h', label: 'Domingo · 10h (2º culto da manhã)' },
                   ]}
                 />
               </Row>
