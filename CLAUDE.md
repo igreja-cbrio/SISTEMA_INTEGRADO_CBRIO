@@ -141,6 +141,27 @@ no tático correspondente em `BLOCOS` — sem mexer na estrutura.
 - **"Café" → Acompanhamento "1º Encontro"** em todo o 1º OKR (nome + 2 táticos),
   a pedido do Marcos.
 
+### Ajustes v3 (2026-06-03 · "0 vs lógica a criar")
+
+- **Memória de cálculo ("Como medir: Planilha…") REMOVIDA** de todos os táticos
+  (a planilha some da visão — o sistema substitui). O campo `memoria` segue no
+  `BLOCOS` mas não renderiza mais.
+- **4 táticos viraram automáticos** porque a fonte já existe no banco (hoje ~0):
+  **% frequência em Grupos**, **% Voluntários ativos**, **% dizimistas regulares**
+  (÷ membros ativos · base 328) e **% convertidos atendidos no Acompanhamento**
+  (`cui_convertidos.atendido_apos_culto` ÷ conversões 90d). Mostram o **número**
+  (0/x% · vermelho fora do alvo) em vez de "—". Backend: 5 queries novas no
+  endpoint (base membros ativos + as 4). `addM` já inclui valor **0** (só pula
+  null/NaN), então 0% aparece.
+- **Distinção pedida pelo Marcos:** **número (incl. 0)** = o sistema já mede ·
+  **"—" + "preciso de"** = lógica de automação ainda a criar (NPS culto,
+  follow-up online, YouTube, eficiência financeira, Q12, treinamentos, expansão,
+  prazo 1º contato, Acompanhamento→Next).
+- ⚠️ **Base do %** = `membros ativos` (`mem_membros.status='membro_ativo'`, hoje
+  328) — provisório. Quando grupos/voluntários/dízimos começarem a popular,
+  confirmar com o Marcos qual é o "total da igreja" certo (a planilha do Juninho
+  diz "total de pessoas na igreja", que pode ser > membros ativos).
+
 ## Produção de Culto · aba /producao (2026-06-02)
 
 Marcos: criar aba pra área de **Produção de Culto** com (A) KPIs técnicos
