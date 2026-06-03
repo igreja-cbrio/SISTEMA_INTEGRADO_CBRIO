@@ -79,6 +79,7 @@ const NAV_ITEMS = [
           { label: 'NPS', description: 'Pesquisas de satisfação geradas por IA · análise automática', icon: MessageSquare, path: '/nps', module: 'nps' },
           { label: 'Gestão (PMO)', description: 'Pulso · Estrutura OKR · Saúde · Configurar (admin)', icon: Settings, path: '/gestao', module: 'gestao' },
           { label: 'Assistente IA', description: 'Agentes de auditoria e análise', icon: BrainCircuit, path: '/assistente-ia', perm: 'canIA' },
+          { label: 'WiFi', description: 'Visitantes do WiFi · frequência por culto e cruzamento com a membresia', icon: Wifi, path: '/wifi', module: 'wifi' },
           { label: 'Apresentações', description: 'Gera slides HTML premium via Claude Opus · upload opcional', icon: Sparkles, path: '/admin/apresentacoes', module: 'apresentacoes' },
         ],
       },
@@ -106,7 +107,6 @@ const NAV_ITEMS = [
         title: 'Áreas ministeriais',
         items: [
           { label: 'Integração', description: 'Batismo, apresentação e cultos', icon: UserCheck, path: '/ministerial/integracao' },
-          { label: 'WiFi', description: 'Visitantes do WiFi · frequência por culto e cruzamento com a membresia', icon: Wifi, path: '/wifi', module: 'wifi' },
           { label: 'Membresia', description: 'Cadastros, trilha dos valores e Jornada', icon: BookOpen, path: '/ministerial/membresia', perm: 'canMembresia' },
           { label: 'Cuidados', description: 'Capelania e aconselhamento', icon: Heart, path: '/ministerial/cuidados', module: 'cuidados' },
           { label: 'Grupos', description: 'Grupos de conexão · pedidos · QR · mapa', icon: UsersRound, path: '/grupos' },
