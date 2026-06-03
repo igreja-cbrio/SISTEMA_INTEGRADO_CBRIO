@@ -28,6 +28,7 @@ const { authenticate } = require('../middleware/auth');
 const { supabase } = require('../utils/supabase');
 const { notificar } = require('../services/notificar');
 const { coletarTodos } = require('../services/kpiAutoCollector');
+const { escapePostgrestValue } = require('../utils/sanitize');
 
 // Re-calcula KPIs do NEXT em background (nao bloqueia a resposta).
 // Chamado apos qualquer mudanca em inscricoes ou indicacoes.
@@ -158,7 +159,7 @@ router.get('/inscricoes', async (req, res) => {
     q = q.or('indicou_batismo.eq.true,indicou_servir.eq.true,indicou_grupo.eq.true,indicou_dizimo.eq.true');
   }
   if (search) {
-    const s = `%${search}%`;
+    const s = `%${escapePostgrestValue(search)}%`;
     q = q.or(`nome.ilike.${s},sobrenome.ilike.${s},email.ilike.${s},cpf.ilike.${s}`);
   }
   const { data, error } = await q;

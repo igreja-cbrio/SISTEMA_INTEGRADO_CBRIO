@@ -1,6 +1,6 @@
 const router = require('express').Router();
 const multer = require('multer');
-const { authenticate, authorize } = require('../middleware/auth');
+const { authenticate, authorize, getEffectiveLevel } = require('../middleware/auth');
 const { supabase } = require('../utils/supabase');
 const { uploadModuleFile, SHAREPOINT_CONFIGURED } = require('../services/storageService');
 const { notificar } = require('../services/notificar');
@@ -16,6 +16,18 @@ const uploadMw = multer({
 });
 
 router.use(authenticate);
+
+// Autoriza edicao de um membro especifico pelas rotas "totem":
+//   - staff de membresia (nivel >= 3) ou admin/diretor → qualquer membro
+//   - o proprio usuario logado → so o seu proprio cadastro (req.user.membro_id)
+// Antes, qualquer autenticado podia sobrescrever PII (email/telefone/endereco/
+// foto) de QUALQUER membro só pelo id (IDOR · LGPD).
+function podeEditarMembroTotem(req, membroId) {
+  if (['admin', 'diretor'].includes(req.user.role)) return true;
+  if (getEffectiveLevel(req, 'membresia') >= 3) return true;
+  if (req.user.membro_id && String(req.user.membro_id) === String(membroId)) return true;
+  return false;
+}
 
 // ── Utils ──
 // Nível de generosidade baseado na data da última contribuição.
@@ -1033,6 +1045,9 @@ router.post('/totem/grupos/:id/entrar', async (req, res) => {
 router.put('/totem/membros/:id', async (req, res) => {
   try {
     const { id } = req.params;
+    if (!podeEditarMembroTotem(req, id)) {
+      return res.status(403).json({ error: 'Sem permissão para editar este cadastro' });
+    }
     const allowed = ['email', 'telefone', 'data_nascimento', 'endereco', 'bairro', 'cidade', 'cep', 'estado_civil'];
     const updates = {};
     for (const f of allowed) {
@@ -1349,6 +1364,9 @@ router.post('/totem/membros/:id/foto', uploadMw.single('foto'), async (req, res)
   try {
     if (!req.file) return res.status(400).json({ error: 'Imagem não fornecida' });
     const { id } = req.params;
+    if (!podeEditarMembroTotem(req, id)) {
+      return res.status(403).json({ error: 'Sem permissão para editar este cadastro' });
+    }
     const ext = req.file.mimetype === 'image/png' ? 'png' : req.file.mimetype === 'image/webp' ? 'webp' : 'jpg';
     const path = `membros/${id}.${ext}`;
     const { error: upErr } = await supabase.storage

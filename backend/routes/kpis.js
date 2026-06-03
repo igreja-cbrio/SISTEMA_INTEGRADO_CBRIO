@@ -5,6 +5,7 @@ const { supabase } = require('../utils/supabase');
 const { notificar } = require('../services/notificar');
 const { coletarTodos } = require('../services/kpiAutoCollector');
 const painelCache = require('../services/painelCache');
+const { isAuthorizedCron } = require('../utils/cronAuth');
 
 router.use(authenticate);
 
@@ -375,11 +376,8 @@ router.delete('/decisoes-pessoas/:id', authorizeIntegracao, async (req, res) => 
 // Idempotente: ON CONFLICT DO NOTHING via índice único (service_type_id, data, hora).
 // weeks=N: backfill das últimas N semanas (default 1 = só semana corrente).
 router.post('/cultos/auto-create', async (req, res) => {
-  const authHeader = req.headers.authorization;
-  const cronSecret = process.env.CRON_SECRET;
-  const isVercelCron = req.headers['x-vercel-cron'] === '1';
   const isAdmin = ['admin', 'diretor'].includes(req.user?.role);
-  if (!isVercelCron && authHeader !== cronSecret && authHeader !== `Bearer ${cronSecret}` && !isAdmin) {
+  if (!isAuthorizedCron(req) && !isAdmin) {
     return res.status(401).json({ error: 'Não autorizado' });
   }
 
@@ -684,11 +682,8 @@ router.get('/youtube/status', async (req, res) => {
 
 // ── YouTube sync (chamado pelo cron Vercel) ───────────────────────────────────
 router.post('/youtube/sync', async (req, res) => {
-  const authHeader = req.headers.authorization;
-  const cronSecret = process.env.CRON_SECRET;
-  const isVercelCron = req.headers['x-vercel-cron'] === '1';
   const isAdmin = ['admin', 'diretor'].includes(req.user?.role);
-  if (!isVercelCron && authHeader !== cronSecret && authHeader !== `Bearer ${cronSecret}` && !isAdmin) {
+  if (!isAuthorizedCron(req) && !isAdmin) {
     return res.status(401).json({ error: 'Não autorizado' });
   }
 
@@ -1012,11 +1007,8 @@ router.delete('/cultura/pense/:id', authorize('admin', 'diretor'), async (req, r
 
 // POST /kpis/cultura/pense/sync — atualiza views via YouTube API
 router.post('/cultura/pense/sync', async (req, res) => {
-  const authHeader = req.headers.authorization;
-  const cronSecret = process.env.CRON_SECRET;
-  const isVercelCron = req.headers['x-vercel-cron'] === '1';
   const isAdmin = ['admin', 'diretor'].includes(req.user?.role);
-  if (!isVercelCron && authHeader !== cronSecret && authHeader !== `Bearer ${cronSecret}` && !isAdmin) {
+  if (!isAuthorizedCron(req) && !isAdmin) {
     return res.status(401).json({ error: 'Não autorizado' });
   }
 

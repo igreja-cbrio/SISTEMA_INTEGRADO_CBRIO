@@ -20,6 +20,7 @@ const multer = require('multer');
 const XLSX = require('xlsx');
 const { authenticate, authorizeModule } = require('../middleware/auth');
 const { supabase } = require('../utils/supabase');
+const { safeEqual } = require('../utils/cronAuth');
 
 // authenticate aplicado condicionalmente abaixo · rotas /display/* e
 // /chamadas com estacao_token bypassam pra display sem login
@@ -1133,7 +1134,7 @@ router.post('/estacoes/parear', async (req, res) => {
 
     if (!estacao) return res.status(404).json({ error: 'Estacao nao encontrada' });
     if (!estacao.ativo) return res.status(400).json({ error: 'Estacao inativa' });
-    if (estacao.token_pareamento !== token) {
+    if (!estacao.token_pareamento || !safeEqual(String(token), String(estacao.token_pareamento))) {
       return res.status(403).json({ error: 'Token invalido · pareamento foi revogado · peca admin pra gerar QR novo' });
     }
 
@@ -1856,7 +1857,7 @@ function bridgeAutorizado(req) {
   if (!expected) return false;
   const header = String(req.headers.authorization || '');
   const token = header.replace(/^Bearer\s+/i, '').trim() || String(req.query.token || '');
-  return token.length > 0 && token === expected;
+  return token.length > 0 && safeEqual(token, expected);
 }
 
 // ─── CRUD do catalogo de pagers (admin do modulo) ───────────────────────────

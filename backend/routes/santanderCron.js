@@ -19,15 +19,14 @@ const {
 const contasService = require('../services/santander/contasService');
 const pixApiService = require('../services/santander/pixApiService');
 const { matchOfxPix, classificarBatch } = require('../services/financeiroClassificador');
+const { isAuthorizedCron } = require('../utils/cronAuth');
 
 function checkCronSecret(req, res, next) {
-  const sent = req.headers['x-cron-secret'] || req.headers['authorization']?.replace('Bearer ', '');
-  const expected = process.env.CRON_SECRET;
-  const isVercelCron = req.headers['user-agent']?.includes('vercel-cron');
-  if (!expected) {
+  if (!process.env.CRON_SECRET) {
     return res.status(500).json({ error: 'CRON_SECRET nao configurado' });
   }
-  if (!isVercelCron && (!sent || sent !== expected)) {
+  // NAO confiar em User-Agent (header controlavel pelo cliente). So o secret vale.
+  if (!isAuthorizedCron(req)) {
     return res.status(401).json({ error: 'Cron secret invalido' });
   }
   next();
@@ -199,8 +198,8 @@ async function handlerSync(req, res) {
       duracao_ms: Date.now() - startTime,
     });
   } catch (e) {
-    console.error('[SANTANDER-CRON] erro:', e);
-    res.status(500).json({ error: e.message || 'Erro no sync', stack: e.stack });
+    console.error('[SANTANDER-CRON] erro:', e.stack || e);
+    res.status(500).json({ error: e.message || 'Erro no sync' });
   }
 }
 

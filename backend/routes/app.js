@@ -222,6 +222,14 @@ router.post('/membro/vincular', limiterStrict, authApp, async (req, res) => {
       return res.status(400).json({ error: 'Data de nascimento não confere' });
     }
 
+    // SEGURANCA: nao permitir re-vincular um cadastro ja reivindicado por OUTRA
+    // conta. CPF+nascimento sao de baixa entropia (frequentemente vazados no BR);
+    // sem essa trava, quem adivinhasse esses dados sequestraria o cadastro de um
+    // membro ja vinculado. Idempotente se ja for o proprio usuario.
+    if (membro.auth_user_id && membro.auth_user_id !== req.user.id) {
+      return res.status(409).json({ error: 'Este cadastro já está vinculado a outra conta. Fale com a secretaria.' });
+    }
+
     // Vincula
     await supabase
       .from('mem_membros')

@@ -6,13 +6,12 @@ const painelCache = require('../services/painelCache');
 const mlTracker = require('../services/solicitacoesMlTracker');
 
 const CRON_SECRET = process.env.CRON_SECRET;
+const { isAuthorizedCron } = require('../utils/cronAuth');
 
 // ── CRON · ATUALIZAR STATUS DE PEDIDOS ML VINCULADOS ───────────────────
-// Montado ANTES do authenticate · usa CRON_SECRET ou x-vercel-cron header.
+// Montado ANTES do authenticate · auth via CRON_SECRET (Vercel/GitHub Actions).
 router.post('/cron/atualizar-ml', async (req, res) => {
-  const auth = req.headers['x-cron-secret'] || req.headers['authorization'];
-  const isVercelCron = req.headers['user-agent']?.includes('vercel-cron');
-  if (!isVercelCron && auth !== CRON_SECRET && auth !== `Bearer ${CRON_SECRET}`) {
+  if (!isAuthorizedCron(req)) {
     return res.status(401).json({ erro: 'Nao autorizado' });
   }
   try {
@@ -668,25 +667,57 @@ router.patch('/:id/rejeitar-origem', async (req, res) => {
 // ── UPDATE (status, responsavel, observacoes) ───────────────
 router.patch('/:id', async (req, res) => {
   try {
+    const userId = req.user.userId;
     const userName = req.user.name;
 
     const { status, responsavel_id, observacoes,
             // Fase A · novos campos editaveis
             proposta_orcamento, proposta_cronograma,
-            nps_nota, nps_comentario,
-            aprovado_financeiro_em } = req.body;
+            nps_nota, nps_comentario } = req.body;
+    // SEGURANCA: `aprovado_financeiro_em`/`aprovado_financeiro_por` NUNCA sao
+    // aceitos aqui. O portao de gasto so e liberado pelo endpoint dedicado
+    // POST /:id/aprovar-financeiro (gated por podeAprovarFinanceiro). Antes, este
+    // PATCH (sem authz) aceitava o campo do body → qualquer autenticado liberava
+    // pagamento de qualquer solicitacao.
+
+    // ── Autorizacao · carrega a solicitacao e decide quem pode editar ──
+    const { data: sol } = await supabase
+      .from('solicitacoes')
+      .select('id, solicitante_id, responsavel_id, area_responsavel')
+      .eq('id', req.params.id)
+      .maybeSingle();
+    if (!sol) return res.status(404).json({ error: 'Solicitação não encontrada' });
+
+    const isAdmin = ['admin', 'diretor'].includes(req.user.role);
+    const isResponsavel = sol.responsavel_id === userId;
+    const isSolicitante = sol.solicitante_id === userId;
+    let isAreaResp = false;
+    if (!isAdmin && !isResponsavel && sol.area_responsavel) {
+      const { data: respRow } = await supabase
+        .from('area_solicitacoes_responsaveis')
+        .select('profile_id')
+        .eq('area', sol.area_responsavel)
+        .eq('profile_id', userId)
+        .maybeSingle();
+      isAreaResp = !!respRow;
+    }
+    const podeGerir = isAdmin || isResponsavel || isAreaResp;
+    if (!podeGerir && !isSolicitante) {
+      return res.status(403).json({ error: 'Sem permissão para alterar esta solicitação' });
+    }
+
     const update = {};
-    if (status) update.status = status;
-    if (responsavel_id !== undefined) update.responsavel_id = responsavel_id;
-    if (observacoes !== undefined) update.observacoes = observacoes;
-    if (proposta_orcamento !== undefined) update.proposta_orcamento = proposta_orcamento;
-    if (proposta_cronograma !== undefined) update.proposta_cronograma = proposta_cronograma;
+    // Gestao (status/responsavel/observacoes/propostas) · so quem administra a fila.
+    if (podeGerir) {
+      if (status) update.status = status;
+      if (responsavel_id !== undefined) update.responsavel_id = responsavel_id;
+      if (observacoes !== undefined) update.observacoes = observacoes;
+      if (proposta_orcamento !== undefined) update.proposta_orcamento = proposta_orcamento;
+      if (proposta_cronograma !== undefined) update.proposta_cronograma = proposta_cronograma;
+    }
+    // Avaliacao NPS · o solicitante (dono) tambem pode registrar a propria nota.
     if (nps_nota !== undefined) update.nps_nota = nps_nota;
     if (nps_comentario !== undefined) update.nps_comentario = nps_comentario;
-    if (aprovado_financeiro_em !== undefined) {
-      update.aprovado_financeiro_em = aprovado_financeiro_em;
-      update.aprovado_financeiro_por = req.user.userId;
-    }
 
     if (!Object.keys(update).length) return res.status(400).json({ error: 'Nada para atualizar' });
 

@@ -7,17 +7,15 @@ const Anthropic = require('@anthropic-ai/sdk');
 const { authenticate, authorize } = require('../middleware/auth');
 const { supabase } = require('../utils/supabase');
 const devSender = require('../services/devocionalSender');
+const { isAuthorizedCron } = require('../utils/cronAuth');
 
 // ─────────────────────────────────────────────────────────────
 // GET|POST /api/devocional-planos/cron/enviar-diario
 //   Endpoint do cron Vercel · 06:00 BRT (09:00 UTC) diario
-//   Autenticado por CRON_SECRET ou user-agent vercel-cron
+//   Autenticado por CRON_SECRET (Vercel injeta Bearer; GitHub Actions x-cron-secret)
 // ─────────────────────────────────────────────────────────────
 async function cronEnviarDiario(req, res) {
-  const auth = req.headers['x-cron-secret'] || req.headers['authorization'];
-  const isVercelCron = req.headers['user-agent']?.includes('vercel-cron');
-  const CRON_SECRET = process.env.CRON_SECRET;
-  if (!isVercelCron && auth !== CRON_SECRET && auth !== `Bearer ${CRON_SECRET}`) {
+  if (!isAuthorizedCron(req)) {
     return res.status(401).json({ error: 'Unauthorized' });
   }
   try {
