@@ -276,37 +276,61 @@ function paramsDe(f) {
 }
 
 // ─────────────────────────── Aba Pessoas ───────────────────────────
+const CATS = [
+  ['membro', 'Membro', '#3B82F6'], ['serve', 'Serve', '#F59E0B'],
+  ['grupo', 'Em grupo', '#8B5CF6'], ['dizima', 'Dízima/oferta', '#10B981'],
+  ['batismo', 'Batizado', '#06B6D4'], ['next', 'NEXT', '#0EA5E9'],
+  ['decisao', 'Decisão', '#EC4899'],
+];
+
 function AbaPessoas({ onPick }) {
   const [busca, setBusca] = useState('');
   const [buscaDeb, setBuscaDeb] = useState('');
+  const [cats, setCats] = useState({});
   const [data, setData] = useState({ pessoas: [], total: 0 });
   const [page, setPage] = useState(1);
   const [loading, setLoading] = useState(false);
   const limit = 50;
 
   useEffect(() => { const t = setTimeout(() => setBuscaDeb(busca), 350); return () => clearTimeout(t); }, [busca]);
-  useEffect(() => { setPage(1); }, [buscaDeb]);
+  useEffect(() => { setPage(1); }, [buscaDeb, cats]);
 
   const carregar = useCallback(async () => {
     setLoading(true);
     try {
       const params = { page, limit };
       if (buscaDeb) params.busca = buscaDeb;
+      CATS.forEach(([k]) => { if (cats[k]) params[k] = 1; });
       setData(await wifiApi.pessoas(params));
     } catch (e) { toast.error(formatErro(e)); }
     finally { setLoading(false); }
-  }, [page, buscaDeb]);
+  }, [page, buscaDeb, cats]);
   useEffect(() => { carregar(); }, [carregar]);
 
   const totalPages = Math.max(1, Math.ceil(data.total / limit));
+  const algumFiltro = CATS.some(([k]) => cats[k]);
   return (
     <div>
-      <div style={{ position: 'relative', marginBottom: 14 }}>
+      <div style={{ position: 'relative', marginBottom: 12 }}>
         <Search size={16} style={{ position: 'absolute', left: 12, top: 11, color: C.t3 }} />
         <input value={busca} onChange={e => setBusca(e.target.value)} placeholder="Buscar por nome ou CPF…"
           style={{ width: '100%', padding: '9px 12px 9px 36px', borderRadius: 10, border: `1px solid ${C.border}`, background: C.inputBg, color: C.text, fontSize: 14 }} />
       </div>
-      <div style={{ fontSize: 12, color: C.t3, marginBottom: 8 }}>{data.total} pessoa(s)</div>
+      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 12, alignItems: 'center' }}>
+        {CATS.map(([k, lbl, cor]) => {
+          const on = !!cats[k];
+          return (
+            <button key={k} onClick={() => setCats(c => ({ ...c, [k]: !c[k] }))} style={{
+              padding: '6px 12px', borderRadius: 999, fontSize: 12.5, fontWeight: 600, cursor: 'pointer',
+              border: `1px solid ${cor}`, background: on ? cor : 'transparent', color: on ? '#fff' : cor,
+            }}>{lbl}</button>
+          );
+        })}
+        {algumFiltro && <button onClick={() => setCats({})} style={{ ...chipStyle(false), padding: '6px 10px', fontSize: 12.5 }}>Limpar</button>}
+      </div>
+      <div style={{ fontSize: 12, color: C.t3, marginBottom: 8 }}>
+        {data.total} pessoa(s){algumFiltro ? ' · combinando os filtros (E)' : ''}
+      </div>
       <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 14, overflow: 'hidden' }}>
         {loading && <div style={{ padding: 24, textAlign: 'center', color: C.t3 }}>Carregando…</div>}
         {!loading && data.pessoas.length === 0 && <div style={{ padding: 32, textAlign: 'center', color: C.t3 }}>Nenhuma pessoa encontrada.</div>}
