@@ -195,7 +195,7 @@ function ContatoDialog({ enc, canWrite, onClose, onChanged }: {
 export default function EncaminhamentosInbox({ destino, canWrite = true }: { destino: 'grupos' | 'voluntarios' | 'jornada180'; canWrite?: boolean }) {
   const [items, setItems] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
-  const [filtro, setFiltro] = useState<'a_fazer' | 'engajou' | 'todos'>('a_fazer');
+  const [filtro, setFiltro] = useState<'a_fazer' | 'atendidos' | 'engajou' | 'todos'>('a_fazer');
   const [aberto, setAberto] = useState<any | null>(null);
 
   const reload = useCallback(() => {
@@ -208,10 +208,12 @@ export default function EncaminhamentosInbox({ destino, canWrite = true }: { des
   const filtrados = useMemo(() => {
     if (filtro === 'todos') return items;
     if (filtro === 'engajou') return items.filter(i => i.status === 'engajou');
+    if (filtro === 'atendidos') return items.filter(i => !!i.recebido_em); // já recebeu contato do líder
     return items.filter(i => ['pendente', 'nao_respondeu', 'em_duvida'].includes(i.status)); // a fazer
   }, [items, filtro]);
 
   const aFazer = useMemo(() => items.filter(i => ['pendente', 'nao_respondeu', 'em_duvida'].includes(i.status)).length, [items]);
+  const atendidos = useMemo(() => items.filter(i => !!i.recebido_em).length, [items]);
   const engajaram = useMemo(() => items.filter(i => i.status === 'engajou').length, [items]);
 
   return (
@@ -219,12 +221,13 @@ export default function EncaminhamentosInbox({ destino, canWrite = true }: { des
       <div className="flex items-center justify-between gap-3 flex-wrap">
         <div className="text-sm text-muted-foreground flex items-center gap-2">
           <Inbox className="h-4 w-4 text-primary" />
-          <strong className="text-foreground">{aFazer}</strong> a contatar · <strong className="text-foreground">{engajaram}</strong> engajaram
+          <strong className="text-foreground">{aFazer}</strong> a contatar · <strong className="text-foreground">{atendidos}</strong> já atendidos · <strong className="text-foreground">{engajaram}</strong> engajaram
         </div>
         <Select value={filtro} onValueChange={(v: any) => setFiltro(v)}>
           <SelectTrigger className="w-48"><SelectValue /></SelectTrigger>
           <SelectContent>
             <SelectItem value="a_fazer">A contatar</SelectItem>
+            <SelectItem value="atendidos">Já atendidos</SelectItem>
             <SelectItem value="engajou">Engajaram</SelectItem>
             <SelectItem value="todos">Todos</SelectItem>
           </SelectContent>

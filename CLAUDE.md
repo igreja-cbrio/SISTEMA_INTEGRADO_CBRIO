@@ -48,7 +48,8 @@ devolutiva na caixa de entrada da área.
   botões na linha da tabela. Bloco de encontro saiu do `ConvertidoModal` (virou fluxo
   dedicado). Aba **Jornada 180** recebe `<EncaminhamentosInbox destino="jornada180">`.
 - **Componente reusável** `src/components/EncaminhamentosInbox.tsx` (lista + dialog com
-  log de contato + form de devolutiva) usado nos 3 destinos.
+  log de contato + form de devolutiva) usado nos 3 destinos. Filtros: **A contatar /
+  Já atendidos** (recebido_em set · já houve contato) **/ Engajaram / Todos** + contagem no topo.
 - **Grupos.jsx**: aba **"Encaminhados"** (`pageTab='encaminhados'` · `destino=grupos`).
 - **Voluntariado**: `VolEncaminhados.tsx` + rota `encaminhados` no `index.tsx` + item no
   `VolNavBar` (`destino=voluntarios`).
