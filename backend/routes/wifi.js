@@ -79,17 +79,64 @@ router.get('/pessoas/:cpf', authorizeModule('wifi', 1), async (req, res) => {
   }
 });
 
-// Conexões por faixa de culto (período)
+// Tipos de culto (faixas de horário) para o dropdown de filtro
+router.get('/servicos', authorizeModule('wifi', 1), async (_req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('vol_service_types')
+      .select('id,name,recurrence_day,recurrence_time')
+      .eq('is_active', true)
+      .order('recurrence_day', { ascending: true })
+      .order('recurrence_time', { ascending: true });
+    if (error) throw error;
+    res.json({ servicos: data || [] });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Conexões por faixa de culto · filtros: período/data + serviço + dia da semana
 router.get('/cultos', authorizeModule('wifi', 1), async (req, res) => {
   try {
     const { data, error } = await supabase.rpc('fn_wifi_cultos', {
       p_inicio: req.query.inicio || null,
       p_fim: req.query.fim || null,
+      p_service_type: req.query.service_type || null,
+      p_dow: req.query.dow != null && req.query.dow !== '' ? parseInt(req.query.dow) : null,
     });
     if (error) throw error;
     res.json({ cultos: data || [] });
   } catch (e) {
     console.error('[wifi/cultos]', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Comparação por semana (presença lançada × WiFi)
+router.get('/semanas', authorizeModule('wifi', 1), async (req, res) => {
+  try {
+    const { data, error } = await supabase.rpc('fn_wifi_semanas', {
+      p_inicio: req.query.inicio || null,
+      p_fim: req.query.fim || null,
+      p_service_type: req.query.service_type || null,
+      p_dow: req.query.dow != null && req.query.dow !== '' ? parseInt(req.query.dow) : null,
+    });
+    if (error) throw error;
+    res.json({ semanas: data || [] });
+  } catch (e) {
+    console.error('[wifi/semanas]', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Alertas de frequência (regras): afastando / em risco / voltou / novo / fiel
+router.get('/alertas', authorizeModule('wifi', 1), async (_req, res) => {
+  try {
+    const { data, error } = await supabase.rpc('fn_wifi_alertas');
+    if (error) throw error;
+    res.json({ alertas: data || [] });
+  } catch (e) {
+    console.error('[wifi/alertas]', e.message);
     res.status(500).json({ error: e.message });
   }
 });

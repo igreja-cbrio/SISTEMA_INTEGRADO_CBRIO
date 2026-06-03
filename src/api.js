@@ -2188,6 +2188,9 @@ export const wifi = {
   pessoas: (params) => get('/wifi/pessoas' + (params ? '?' + new URLSearchParams(params) : '')),
   pessoa: (cpf) => get('/wifi/pessoas/' + encodeURIComponent(cpf)),
   cultos: (params) => get('/wifi/cultos' + (params ? '?' + new URLSearchParams(params) : '')),
+  semanas: (params) => get('/wifi/semanas' + (params ? '?' + new URLSearchParams(params) : '')),
+  alertas: () => get('/wifi/alertas'),
+  servicos: () => get('/wifi/servicos'),
   sync: () => post('/wifi/sync', {}),
 };
 
