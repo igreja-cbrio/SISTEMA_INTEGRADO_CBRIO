@@ -1,8 +1,9 @@
 import { useState, useEffect, useMemo } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { cuidados as cuidadosApi, devocionalPlanos as devPlanosApi } from '../../api';
+import { cuidados as cuidadosApi, devocionalPlanos as devPlanosApi, users as usersApi } from '../../api';
 import ProcessosTarefas from '../../components/ProcessosTarefas';
 import DevocionalAdmin from '../../components/DevocionalAdmin';
+import EncaminhamentosInbox from '../../components/EncaminhamentosInbox';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '../../components/ui/tabs';
 import { Button } from '../../components/ui/button';
 import { Input } from '../../components/ui/input';
@@ -12,7 +13,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../../components/ui/table';
 import { Badge } from '../../components/ui/badge';
 import { StatisticsCard } from '../../components/ui/statistics-card';
-import { Heart, BookOpen, HandHelping, Users, UserCheck, CheckCircle2, Plus, Trash2, Loader2, Search, Sparkles, CalendarCheck } from 'lucide-react';
+import { Heart, BookOpen, HandHelping, Users, UserCheck, CheckCircle2, Plus, Trash2, Loader2, Search, Sparkles, CalendarCheck, CalendarPlus, ClipboardCheck, ArrowRight } from 'lucide-react';
 import { toast } from 'sonner';
 import { useAuth } from '../../contexts/AuthContext';
 
@@ -192,6 +193,20 @@ const TAG_COLORS: Record<string, string> = {
   outro: '#94a3b8',
 };
 
+const ENCONTRO_STATUS: Record<string, { label: string; color: string }> = {
+  agendado:  { label: 'Agendado',  color: '#3b82f6' },
+  realizado: { label: 'Realizado', color: '#10b981' },
+  faltou:    { label: 'Faltou',    color: '#ef4444' },
+  cancelado: { label: 'Cancelado', color: '#6b7280' },
+};
+
+// destinos do encaminhamento da jornada · mapeiam pros próximos valores
+const DESTINOS_ENC = [
+  { v: 'jornada180',  l: 'Jornada 180', sub: 'firmar na fé (Investir)' },
+  { v: 'grupos',      l: 'Grupos',      sub: 'conectar / comunidade' },
+  { v: 'voluntarios', l: 'Voluntários', sub: 'servir' },
+];
+
 function emptyConvertidoForm() {
   return {
     nome: '',
@@ -200,8 +215,6 @@ function emptyConvertidoForm() {
     data_culto: new Date().toISOString().slice(0, 10),
     atendido_apos_culto: true,
     cadastrado: false,
-    encontro_marcado: false,
-    data_encontro: '',
     tags: [] as string[],
     observacoes: '',
   };
@@ -231,8 +244,6 @@ function ConvertidoModal({
         data_culto: initial.data_culto || new Date().toISOString().slice(0, 10),
         atendido_apos_culto: !!initial.atendido_apos_culto,
         cadastrado: !!initial.cadastrado,
-        encontro_marcado: !!initial.encontro_marcado,
-        data_encontro: initial.data_encontro || '',
         tags: Array.isArray(initial.tags) ? initial.tags : [],
         observacoes: initial.observacoes || '',
       });
@@ -254,9 +265,6 @@ function ConvertidoModal({
     setSaving(true);
     try {
       const payload: any = { ...form };
-      // marcar encontro implica ter data · se desmarcou, limpa a data
-      if (!payload.encontro_marcado) payload.data_encontro = null;
-      else if (!payload.data_encontro) payload.data_encontro = null;
       if (editing) {
         await cuidadosApi.convertidos.update(initial.id, payload);
         toast.success('Convertido atualizado');
@@ -288,19 +296,10 @@ function ConvertidoModal({
             <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={form.atendido_apos_culto} onChange={e => setForm({ ...form, atendido_apos_culto: e.target.checked })} />Atendido após culto</label>
             <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={form.cadastrado} onChange={e => setForm({ ...form, cadastrado: e.target.checked })} />Cadastrado</label>
           </div>
-          <div className="rounded-md border border-border p-3 space-y-2" style={{ background: 'var(--cbrio-input-bg)' }}>
-            <label className="flex items-center gap-2 text-sm font-medium">
-              <input type="checkbox" checked={form.encontro_marcado} onChange={e => setForm({ ...form, encontro_marcado: e.target.checked, data_encontro: e.target.checked ? form.data_encontro : '' })} />
-              <CalendarCheck className="h-4 w-4 text-primary" />
-              Encontro pastoral marcado
-            </label>
-            {form.encontro_marcado && (
-              <div>
-                <Label className="text-xs">Data do encontro</Label>
-                <Input type="date" value={form.data_encontro} onChange={e => setForm({ ...form, data_encontro: e.target.value })} />
-              </div>
-            )}
-          </div>
+          <p className="text-xs text-muted-foreground rounded-md border border-border p-2.5" style={{ background: 'var(--cbrio-input-bg)' }}>
+            <CalendarPlus className="h-3.5 w-3.5 text-primary inline mr-1" />
+            O encontro pastoral (data, hora e quem vai atender) é agendado pelo botão <strong>Agendar encontro</strong> na lista ou na ficha da pessoa.
+          </p>
           <div>
             <Label>Tags pastorais</Label>
             <p className="text-xs text-muted-foreground mb-2">Marque tudo que aplica · serve pra triagem do time de cuidados.</p>
@@ -347,12 +346,14 @@ function ConvertidoModal({
 }
 
 function ConvertidoDetailDialog({
-  convertido, onClose, onEdit, onRemove, canEdit,
+  convertido, onClose, onEdit, onRemove, onAgendar, onDesfecho, canEdit,
 }: {
   convertido: any | null;
   onClose: () => void;
   onEdit: () => void;
   onRemove: () => void;
+  onAgendar: () => void;
+  onDesfecho: () => void;
   canEdit: boolean;
 }) {
   if (!convertido) return null;
@@ -412,17 +413,35 @@ function ConvertidoDetailDialog({
             </dl>
           </section>
 
-          <section className="rounded-md border border-border p-3" style={{ background: 'var(--cbrio-input-bg)' }}>
-            <h3 className="text-xs font-semibold uppercase tracking-wide mb-2 flex items-center gap-1.5">
+          <section className="rounded-md border border-border p-3 space-y-2" style={{ background: 'var(--cbrio-input-bg)' }}>
+            <h3 className="text-xs font-semibold uppercase tracking-wide flex items-center gap-1.5">
               <CalendarCheck className="h-3.5 w-3.5 text-primary" />
-              Acompanhamento pastoral
+              Encontro pastoral
             </h3>
             {c.encontro_marcado ? (
-              <div className="text-sm">
-                Encontro marcado para <strong className="text-primary">{fmtData(c.data_encontro)}</strong>
+              <div className="text-sm space-y-0.5">
+                <div>Quando: <strong className="text-primary">{fmtData(c.data_encontro)}{c.encontro_hora ? ' · ' + String(c.encontro_hora).slice(0, 5) : ''}</strong></div>
+                {c.encontro_responsavel_nome && <div>Quem atende: <strong>{c.encontro_responsavel_nome}</strong></div>}
+                {c.encontro_status && (
+                  <div>Status: <span style={{ color: ENCONTRO_STATUS[c.encontro_status]?.color }} className="font-medium">{ENCONTRO_STATUS[c.encontro_status]?.label || c.encontro_status}</span>
+                    {c.encontro_status === 'realizado' && c.encontro_compareceu === false && ' · não compareceu'}
+                  </div>
+                )}
               </div>
             ) : (
-              <div className="text-sm text-muted-foreground">Nenhum encontro marcado ainda · clique em Editar pra agendar.</div>
+              <div className="text-sm text-muted-foreground">Nenhum encontro agendado ainda.</div>
+            )}
+            {canEdit && (
+              <div className="flex gap-2 pt-1 flex-wrap">
+                <Button size="sm" variant="outline" onClick={onAgendar}>
+                  <CalendarPlus className="h-3.5 w-3.5 mr-1" />{c.encontro_marcado ? 'Reagendar' : 'Agendar encontro'}
+                </Button>
+                {c.encontro_status === 'agendado' && (
+                  <Button size="sm" onClick={onDesfecho}>
+                    <ClipboardCheck className="h-3.5 w-3.5 mr-1" />Registrar desfecho
+                  </Button>
+                )}
+              </div>
             )}
           </section>
 
@@ -470,6 +489,148 @@ function ConvertidoDetailDialog({
   );
 }
 
+// Agendar encontro pastoral · data + hora + quem vai atender (cria nada de tarefa;
+// notifica o pastor). É o "primeiro contato", o diferencial pedido pelo Marcos.
+function AgendarEncontroModal({ open, convertido, usersList, onClose, onSaved }: {
+  open: boolean; convertido: any | null; usersList: any[]; onClose: () => void; onSaved: () => void;
+}) {
+  const [form, setForm] = useState({ data_encontro: '', encontro_hora: '', responsavel_id: '' });
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    if (open && convertido) setForm({
+      data_encontro: convertido.data_encontro || new Date().toISOString().slice(0, 10),
+      encontro_hora: convertido.encontro_hora ? String(convertido.encontro_hora).slice(0, 5) : '',
+      responsavel_id: convertido.encontro_responsavel_id || '',
+    });
+  }, [open, convertido]);
+
+  async function save() {
+    if (!form.data_encontro) return toast.error('Escolha a data do encontro');
+    setSaving(true);
+    try {
+      const u = usersList.find((x: any) => x.id === form.responsavel_id);
+      await cuidadosApi.convertidos.agendarEncontro(convertido.id, {
+        data_encontro: form.data_encontro,
+        encontro_hora: form.encontro_hora || null,
+        encontro_responsavel_id: form.responsavel_id || null,
+        encontro_responsavel_nome: u?.name || null,
+      });
+      toast.success('Encontro agendado');
+      onSaved(); onClose();
+    } catch (e: any) { toast.error(e.message); }
+    finally { setSaving(false); }
+  }
+
+  if (!convertido) return null;
+  return (
+    <Dialog open={open} onOpenChange={(v) => !v && onClose()}>
+      <DialogContent>
+        <DialogHeader><DialogTitle>Agendar encontro — {convertido.nome}</DialogTitle></DialogHeader>
+        <div className="space-y-3">
+          <div className="grid grid-cols-2 gap-3">
+            <div><Label>Data *</Label><Input type="date" value={form.data_encontro} onChange={e => setForm({ ...form, data_encontro: e.target.value })} /></div>
+            <div><Label>Hora</Label><Input type="time" value={form.encontro_hora} onChange={e => setForm({ ...form, encontro_hora: e.target.value })} /></div>
+          </div>
+          <div>
+            <Label>Quem vai atender</Label>
+            <Select value={form.responsavel_id || '__none'} onValueChange={(v) => setForm({ ...form, responsavel_id: v === '__none' ? '' : v })}>
+              <SelectTrigger><SelectValue placeholder="Selecione o pastor/líder" /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="__none">A definir</SelectItem>
+                {usersList.map((u: any) => <SelectItem key={u.id} value={u.id}>{u.name}</SelectItem>)}
+              </SelectContent>
+            </Select>
+          </div>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose}>Cancelar</Button>
+          <Button onClick={save} disabled={saving}>{saving ? 'Salvando...' : 'Agendar'}</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// Desfecho do encontro · compareceu? + pra onde a pessoa segue (encaminhamento).
+// Sem "não converteu": ninguém é interrompido · toda pessoa sai com uma indicação.
+function DesfechoModal({ open, convertido, onClose, onSaved }: {
+  open: boolean; convertido: any | null; onClose: () => void; onSaved: () => void;
+}) {
+  const [compareceu, setCompareceu] = useState(true);
+  const [destinos, setDestinos] = useState<Record<string, boolean>>({});
+  const [notas, setNotas] = useState<Record<string, string>>({});
+  const [obs, setObs] = useState('');
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    if (open) { setCompareceu(true); setDestinos({}); setNotas({}); setObs(''); }
+  }, [open]);
+
+  async function save() {
+    if (compareceu && !DESTINOS_ENC.some(d => destinos[d.v])) {
+      return toast.error('Toda pessoa sai com uma indicação · escolha ao menos um próximo passo');
+    }
+    setSaving(true);
+    try {
+      const encaminhamentos = compareceu
+        ? DESTINOS_ENC.filter(d => destinos[d.v]).map(d => ({ destino: d.v, observacao: notas[d.v]?.trim() || null }))
+        : [];
+      await cuidadosApi.convertidos.desfecho(convertido.id, { compareceu, encaminhamentos, observacoes: obs.trim() || null });
+      toast.success('Desfecho registrado');
+      onSaved(); onClose();
+    } catch (e: any) { toast.error(e.message); }
+    finally { setSaving(false); }
+  }
+
+  if (!convertido) return null;
+  return (
+    <Dialog open={open} onOpenChange={(v) => !v && onClose()}>
+      <DialogContent className="max-w-lg">
+        <DialogHeader><DialogTitle>Desfecho do encontro — {convertido.nome}</DialogTitle></DialogHeader>
+        <div className="space-y-4 max-h-[70vh] overflow-y-auto pr-1">
+          <div>
+            <Label>A pessoa compareceu?</Label>
+            <div className="flex gap-2 mt-1">
+              <Button type="button" variant={compareceu ? 'default' : 'outline'} size="sm" onClick={() => setCompareceu(true)}>Compareceu</Button>
+              <Button type="button" variant={!compareceu ? 'default' : 'outline'} size="sm" onClick={() => setCompareceu(false)}>Faltou</Button>
+            </div>
+            {!compareceu && <p className="text-xs text-muted-foreground mt-1">Faltou · você pode reagendar depois pela ficha.</p>}
+          </div>
+
+          {compareceu && (
+            <div className="space-y-2">
+              <Label>Pra onde encaminhar? <span className="text-muted-foreground font-normal">(toda pessoa sai com uma indicação)</span></Label>
+              {DESTINOS_ENC.map(d => (
+                <div key={d.v} className="rounded-md border border-border p-2.5" style={{ background: 'var(--cbrio-input-bg)' }}>
+                  <label className="flex items-center gap-2 text-sm font-medium cursor-pointer">
+                    <input type="checkbox" checked={!!destinos[d.v]} onChange={e => setDestinos(s => ({ ...s, [d.v]: e.target.checked }))} />
+                    <ArrowRight className="h-3.5 w-3.5 text-primary" />{d.l}
+                    <span className="text-xs text-muted-foreground font-normal">· {d.sub}</span>
+                  </label>
+                  {destinos[d.v] && (
+                    <Input className="mt-2" placeholder="Observação discreta (opcional)" value={notas[d.v] || ''} onChange={e => setNotas(s => ({ ...s, [d.v]: e.target.value }))} />
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+
+          <div>
+            <Label>Observação geral <span className="text-muted-foreground font-normal">(fica na ficha · opcional)</span></Label>
+            <textarea className="w-full min-h-[64px] rounded-md border border-border p-2 text-sm" style={{ background: 'var(--cbrio-input-bg)' }}
+              value={obs} onChange={e => setObs(e.target.value)} placeholder="Resumo do encontro, contexto..." />
+          </div>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose}>Cancelar</Button>
+          <Button onClick={save} disabled={saving}>{saving ? 'Salvando...' : 'Salvar desfecho'}</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 // ──────────────────────────────────────────────────────────────────
 // Página principal
 // ──────────────────────────────────────────────────────────────────
@@ -506,9 +667,12 @@ export default function Cuidados() {
   const [modalConvert, setModalConvert] = useState(false);
   const [editConvert, setEditConvert] = useState<any | null>(null);
   const [detailConvert, setDetailConvert] = useState<any | null>(null);
+  const [agendarConv, setAgendarConv] = useState<any | null>(null);
+  const [desfechoConv, setDesfechoConv] = useState<any | null>(null);
+  const [usersList, setUsersList] = useState<any[]>([]);
   const [convertTags, setConvertTags] = useState<string[]>([]);
   const [convertSearch, setConvertSearch] = useState('');
-  const [convertFilter, setConvertFilter] = useState<'todos' | 'pendentes' | 'encontro_marcado' | 'sem_encontro'>('todos');
+  const [convertFilter, setConvertFilter] = useState<'todos' | 'pendentes' | 'atendidos' | 'encontro_marcado' | 'sem_encontro' | 'aguardando_desfecho'>('todos');
   const [convertFilterTag, setConvertFilterTag] = useState<string>('');
   const [convertFilterFrom, setConvertFilterFrom] = useState<string>('');
   const [convertFilterTo, setConvertFilterTo] = useState<string>('');
@@ -542,12 +706,19 @@ export default function Cuidados() {
     cuidadosApi.convertidos.tags().then(setConvertTags).catch(() => {});
   }, []);
 
+  // Usuarios · select de "quem vai atender" no agendamento do encontro
+  useEffect(() => {
+    usersApi.list().then(setUsersList).catch(() => {});
+  }, []);
+
   const convertidosFiltrados = useMemo(() => {
     const q = convertSearch.trim().toLowerCase();
     return convertidos.filter((c: any) => {
       if (convertFilter === 'pendentes' && c.atendido_apos_culto) return false;
+      if (convertFilter === 'atendidos' && !c.atendido_apos_culto) return false;
       if (convertFilter === 'encontro_marcado' && !c.encontro_marcado) return false;
       if (convertFilter === 'sem_encontro' && c.encontro_marcado) return false;
+      if (convertFilter === 'aguardando_desfecho' && c.encontro_status !== 'agendado') return false;
       if (convertFilterTag && !(Array.isArray(c.tags) && c.tags.includes(convertFilterTag))) return false;
       if (convertFilterFrom && c.data_culto < convertFilterFrom) return false;
       if (convertFilterTo && c.data_culto > convertFilterTo) return false;
@@ -726,7 +897,13 @@ export default function Cuidados() {
 
         {/* Jornada 180 */}
         <TabsContent value="jornada" className="space-y-4">
-          <div className="flex items-center justify-end">
+          <div className="rounded-lg border border-border bg-card p-4">
+            <h3 className="font-semibold text-sm flex items-center gap-2 mb-1"><ArrowRight className="h-4 w-4 text-primary" />Encaminhados pra firmar</h3>
+            <p className="text-xs text-muted-foreground mb-3">Pessoas que o cuidado pastoral encaminhou pra Jornada 180. Faça o primeiro contato e registre a devolutiva.</p>
+            <EncaminhamentosInbox destino="jornada180" canWrite={podeEditarCuidados} />
+          </div>
+          <div className="flex items-center justify-between">
+            <h3 className="font-semibold text-sm text-muted-foreground">Encontros registrados</h3>
             {podeEditarCuidados && (
               <Button onClick={() => setModalJornada(true)}><Plus className="h-4 w-4 mr-2" />Registrar encontro</Button>
             )}
@@ -786,8 +963,10 @@ export default function Cuidados() {
               <SelectContent>
                 <SelectItem value="todos">Todos</SelectItem>
                 <SelectItem value="pendentes">Pendentes de atendimento</SelectItem>
+                <SelectItem value="atendidos">Já atendidas</SelectItem>
                 <SelectItem value="encontro_marcado">Com encontro marcado</SelectItem>
                 <SelectItem value="sem_encontro">Sem encontro marcado</SelectItem>
+                <SelectItem value="aguardando_desfecho">Aguardando desfecho</SelectItem>
               </SelectContent>
             </Select>
             <Select value={convertFilterTag || '__all'} onValueChange={(v: any) => setConvertFilterTag(v === '__all' ? '' : v)}>
@@ -876,6 +1055,12 @@ export default function Cuidados() {
                       <TableCell className="text-right whitespace-nowrap">
                         {podeEditarCuidados && (
                           <>
+                            {!c.encontro_marcado && (
+                              <Button variant="ghost" size="sm" title="Agendar encontro" onClick={() => setAgendarConv(c)}><CalendarPlus className="h-3.5 w-3.5 text-primary" /></Button>
+                            )}
+                            {c.encontro_status === 'agendado' && (
+                              <Button variant="ghost" size="sm" title="Registrar desfecho" onClick={() => setDesfechoConv(c)}><ClipboardCheck className="h-3.5 w-3.5 text-primary" /></Button>
+                            )}
                             <Button variant="ghost" size="sm" onClick={() => { setEditConvert(c); setModalConvert(true); }}>Editar</Button>
                             <Button variant="ghost" size="sm" onClick={async () => { if (confirm('Remover?')) { await cuidadosApi.convertidos.remove(c.id); loadAll(); } }}><Trash2 className="h-3.5 w-3.5 text-destructive" /></Button>
                           </>
@@ -969,6 +1154,8 @@ export default function Cuidados() {
           setDetailConvert(null);
           setModalConvert(true);
         }}
+        onAgendar={() => { setAgendarConv(detailConvert); setDetailConvert(null); }}
+        onDesfecho={() => { setDesfechoConv(detailConvert); setDetailConvert(null); }}
         onRemove={async () => {
           if (!detailConvert) return;
           if (!confirm(`Remover ${detailConvert.nome}?`)) return;
@@ -976,6 +1163,19 @@ export default function Cuidados() {
           setDetailConvert(null);
           loadAll();
         }}
+      />
+      <AgendarEncontroModal
+        open={!!agendarConv}
+        convertido={agendarConv}
+        usersList={usersList}
+        onClose={() => setAgendarConv(null)}
+        onSaved={loadAll}
+      />
+      <DesfechoModal
+        open={!!desfechoConv}
+        convertido={desfechoConv}
+        onClose={() => setDesfechoConv(null)}
+        onSaved={loadAll}
       />
     </div>
   );

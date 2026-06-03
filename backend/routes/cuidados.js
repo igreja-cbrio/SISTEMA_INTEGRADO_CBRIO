@@ -297,6 +297,129 @@ router.delete('/convertidos/:id', async (req, res) => {
 });
 
 // ─────────────────────────────────────────────────────────────
+// Encontro pastoral + desfecho (encaminhamento da jornada)
+// ─────────────────────────────────────────────────────────────
+// destino do encaminhamento → valor da jornada + módulo de notificação + label
+const DESTINO_META = {
+  jornada180:  { valor: 'investir', modulo: 'cuidados',     label: 'Jornada 180',  link: '/ministerial/cuidados?tab=jornada' },
+  grupos:      { valor: 'conectar', modulo: 'grupos',       label: 'Grupos',       link: '/grupos' },
+  voluntarios: { valor: 'servir',   modulo: 'voluntariado', label: 'Voluntários',  link: '/ministerial/voluntariado/encaminhados' },
+};
+
+// POST /api/cuidados/convertidos/:id/agendar-encontro
+// Marca o encontro pastoral com data + hora + quem vai atender e notifica o pastor.
+router.post('/convertidos/:id/agendar-encontro', async (req, res) => {
+  try {
+    const { data_encontro, encontro_hora, encontro_responsavel_id, encontro_responsavel_nome, observacoes } = req.body;
+    if (!data_encontro) return res.status(400).json({ error: 'Data do encontro é obrigatória' });
+    const patch = {
+      encontro_marcado: true,
+      encontro_status: 'agendado',
+      data_encontro,
+      encontro_hora: encontro_hora || null,
+      encontro_responsavel_id: encontro_responsavel_id || null,
+      encontro_responsavel_nome: encontro_responsavel_nome || null,
+    };
+    if (observacoes != null) patch.observacoes = observacoes;
+    const { data, error } = await supabase
+      .from('cui_convertidos').update(patch).eq('id', req.params.id).select().single();
+    if (error) throw error;
+
+    // Notifica o pastor que vai atender
+    if (encontro_responsavel_id) {
+      const quando = `${new Date(data_encontro + 'T12:00:00').toLocaleDateString('pt-BR')}${encontro_hora ? ' ' + String(encontro_hora).slice(0, 5) : ''}`;
+      notificar({
+        modulo: 'cuidados',
+        tipo: 'encontro_agendado',
+        titulo: `Encontro pastoral — ${data.nome}`,
+        mensagem: `Você tem um encontro com ${data.nome} em ${quando}.`,
+        link: '/ministerial/cuidados?tab=convertidos',
+        severidade: 'info',
+        chaveDedup: `cui_encontro_${data.id}_${data_encontro}`,
+        targetIds: [encontro_responsavel_id],
+      }).catch(() => {});
+    }
+    res.json(data);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// POST /api/cuidados/convertidos/:id/cancelar-encontro
+router.post('/convertidos/:id/cancelar-encontro', async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('cui_convertidos')
+      .update({ encontro_marcado: false, encontro_status: 'cancelado' })
+      .eq('id', req.params.id).select().single();
+    if (error) throw error;
+    res.json(data);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// POST /api/cuidados/convertidos/:id/desfecho
+// body: { compareceu, encaminhamentos: [{ destino, observacao? }], observacoes? }
+// Registra o desfecho do encontro e encaminha a pessoa pros próximos valores.
+router.post('/convertidos/:id/desfecho', async (req, res) => {
+  try {
+    const { compareceu, encaminhamentos = [], observacoes } = req.body;
+    const userId = req.user.userId || req.user.id;
+
+    // 1) Desfecho no convertido
+    const { data: conv, error: e1 } = await supabase
+      .from('cui_convertidos')
+      .update({
+        encontro_compareceu: !!compareceu,
+        encontro_status: compareceu ? 'realizado' : 'faltou',
+        desfecho_em: new Date().toISOString(),
+        desfecho_por: userId,
+        desfecho_observacoes: observacoes ?? null,
+      })
+      .eq('id', req.params.id).select().single();
+    if (e1) throw e1;
+
+    // 2) Encaminhamentos (só se a pessoa compareceu)
+    const criados = [];
+    if (compareceu && Array.isArray(encaminhamentos)) {
+      for (const enc of encaminhamentos) {
+        const meta = DESTINO_META[enc?.destino];
+        if (!meta) continue;
+        const { data: row, error: e2 } = await supabase
+          .from('jornada_encaminhamentos')
+          .insert({
+            origem: 'cuidados',
+            convertido_id: conv.id,
+            membro_id: conv.membro_id || null,
+            nome: conv.nome,
+            telefone: conv.telefone || null,
+            destino: enc.destino,
+            valor_alvo: meta.valor,
+            observacao: enc.observacao || null,
+            encaminhado_por: userId,
+          })
+          .select().single();
+        if (e2) { console.warn('[cuidados/desfecho] encaminhamento falhou:', e2.message); continue; }
+        criados.push(row);
+        notificar({
+          modulo: meta.modulo,
+          tipo: 'novo_encaminhamento',
+          titulo: `Encaminhado: ${conv.nome} → ${meta.label}`,
+          mensagem: `${conv.nome} foi encaminhado(a) pelo cuidado pastoral. Faça o primeiro contato e registre a devolutiva.`,
+          link: meta.link,
+          severidade: 'info',
+          chaveDedup: `enc_${row.id}`,
+        }).catch(() => {});
+      }
+    }
+    res.json({ convertido: conv, encaminhamentos: criados });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ─────────────────────────────────────────────────────────────
 // Agregado (aconselhamento / capelania mensal)
 // ─────────────────────────────────────────────────────────────
 router.get('/agregado', async (req, res) => {
