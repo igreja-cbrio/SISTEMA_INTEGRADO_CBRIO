@@ -29,6 +29,7 @@ const ROUTE_MODULE_MAP = {
   'integracao':   ['integracao'],
   'cuidados':     ['cuidados'],
   'online':       ['online'],
+  'wifi':         ['wifi'],
   'next':         ['next'],
   'voluntariado': ['voluntariado'],
   'membresia':    ['membresia'],

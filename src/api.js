@@ -2183,6 +2183,14 @@ export const online = {
   },
 };
 
+export const wifi = {
+  resumo: () => get('/wifi/resumo'),
+  pessoas: (params) => get('/wifi/pessoas' + (params ? '?' + new URLSearchParams(params) : '')),
+  pessoa: (cpf) => get('/wifi/pessoas/' + encodeURIComponent(cpf)),
+  cultos: (params) => get('/wifi/cultos' + (params ? '?' + new URLSearchParams(params) : '')),
+  sync: () => post('/wifi/sync', {}),
+};
+
 // ─── Planejamento Anual ────────────────────────────────────────────────
 export const planejamento = {
   // Setores (Criativo, Ministerial, Gestão)
