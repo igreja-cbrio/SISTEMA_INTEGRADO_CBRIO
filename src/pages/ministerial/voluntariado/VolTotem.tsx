@@ -120,7 +120,7 @@ export default function VolTotem() {
         verbose: false,
         // So QR — evita tentar outros formatos e acelera a decodificacao
         formatsToSupport: [Html5QrcodeSupportedFormats.QR_CODE],
-        // Native BarcodeDetector quando disponivel (Chrome/Edge/Safari 17+) — ~10x mais rapido
+        // Native BarcodeDetector quando disponível (Chrome/Edge/Safari 17+) — ~10x mais rapido
         useBarCodeDetectorIfSupported: true,
       });
       scannerRef.current = scanner;
@@ -182,7 +182,7 @@ export default function VolTotem() {
           position: lookupResult.schedule.position_name,
         });
       } else {
-        throw new Error('QR code nao encontrado');
+        throw new Error('QR code não encontrado');
       }
 
       setState('success');
@@ -226,7 +226,7 @@ export default function VolTotem() {
           });
 
           if (!matchResult?.match) {
-            throw new Error('Rosto nao reconhecido. Cadastre seu rosto primeiro.');
+            throw new Error('Rosto não reconhecido. Cadastre seu rosto primeiro.');
           }
 
           const profileId = matchResult.profile_id || matchResult.volunteer_id;
@@ -378,7 +378,7 @@ export default function VolTotem() {
   const MODE_OPTIONS: { key: CheckinMode; label: string; icon: any; desc: string }[] = [
     { key: 'qr_scan', label: 'QR Code', icon: QrCode, desc: 'Escanear cracha' },
     { key: 'facial', label: 'Facial', icon: ScanFace, desc: 'Reconhecimento facial' },
-    { key: 'qr_fixo', label: 'QR Fixo', icon: Smartphone, desc: 'Voluntario escaneia com celular' },
+    { key: 'qr_fixo', label: 'QR Fixo', icon: Smartphone, desc: 'Voluntário escaneia com celular' },
     { key: 'manual', label: 'Manual', icon: Hand, desc: 'Buscar na lista' },
   ];
 
@@ -649,9 +649,9 @@ export default function VolTotem() {
               <div className="text-center py-12 space-y-2">
                 <p className="text-white/60 text-lg">
                   {schedules.length === 0 && !manualSearch.trim()
-                    ? 'Nenhum voluntario escalado para este culto'
+                    ? 'Nenhum voluntário escalado para este culto'
                     : manualSearch.trim()
-                      ? 'Voluntario nao encontrado. Procure um lider.'
+                      ? 'Voluntário não encontrado. Procure um líder.'
                       : 'Nenhum voluntario encontrado'}
                 </p>
                 {manualSearch && (
@@ -777,8 +777,8 @@ export default function VolTotem() {
         <div className="flex-1 flex items-center justify-center animate-in fade-in p-4">
           <div className="text-center space-y-4 md:space-y-6">
             <CheckCircle2 className="h-24 w-24 md:h-32 md:w-32 mx-auto text-yellow-400" />
-            <h2 className="text-2xl md:text-3xl font-bold">Ja fez check-in!</h2>
-            <p className="text-base md:text-xl text-white/60">Check-in ja registrado anteriormente</p>
+            <h2 className="text-2xl md:text-3xl font-bold">Já fez check-in!</h2>
+            <p className="text-base md:text-xl text-white/60">Check-in já registrado anteriormente</p>
           </div>
         </div>
       )}

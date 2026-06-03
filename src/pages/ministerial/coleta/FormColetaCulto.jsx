@@ -183,7 +183,7 @@ export default function FormColetaCulto({ culto, ambiente, onVoltar, onEnviado }
               style={{ '--tw-ring-color': cor }}
               autoComplete="off"
             />
-            <p className="text-xs text-muted-foreground mt-1 text-center">Quantos levantaram a mao / aceitaram a Jesus</p>
+            <p className="text-xs text-muted-foreground mt-1 text-center">Quantos levantaram a mão / aceitaram a Jesus</p>
           </div>
 
           <div>

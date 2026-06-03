@@ -37,7 +37,7 @@ export default function DevocionalHistorico() {
           </Button>
           <div className="flex items-center gap-2">
             <History className="h-4 w-4 text-primary" />
-            <span className="text-sm font-semibold">Meu historico</span>
+            <span className="text-sm font-semibold">Meu histórico</span>
           </div>
         </div>
       </header>

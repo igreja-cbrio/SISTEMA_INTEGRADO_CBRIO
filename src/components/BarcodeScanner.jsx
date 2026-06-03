@@ -178,7 +178,7 @@ export default function BarcodeScanner({ active, onDetect, onError, formats }) {
 
       const reader = new BrowserMultiFormatReader(hints, { delayBetweenScanAttempts: 100 });
 
-      // Usa o video element que já está com o stream da câmera
+      // Usa o vídeo element que já está com o stream da câmera
       const controls = await reader.decodeFromVideoElement(videoRef.current, (result, err) => {
         if (detectedRef.current) return;
         if (result) {

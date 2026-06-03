@@ -15,11 +15,11 @@ import {
 
 const STATUS_LABELS: Record<string, string> = {
   integrado: 'Integrado',
-  enviado_ministerio: 'Enviado ao ministerio',
+  enviado_ministerio: 'Enviado ao ministério',
   inscrito: 'Inscrito (triagem)',
   kids: 'Kids',
-  nao_responde: 'Nao responde',
-  nao_pode_ou_duplicata: 'Nao pode / duplicata',
+  nao_responde: 'Não responde',
+  nao_pode_ou_duplicata: 'Não pode / duplicata',
 };
 
 const STATUS_COLORS: Record<string, string> = {
@@ -192,7 +192,7 @@ export default function VolInscricoes() {
     <div className="space-y-6">
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
         <div>
-          <h1 className="text-xl md:text-2xl font-bold text-foreground">Inscricoes de Voluntariado</h1>
+          <h1 className="text-xl md:text-2xl font-bold text-foreground">Inscrições de Voluntariado</h1>
           <p className="text-sm text-muted-foreground mt-1">
             Compara quem se inscreveu (formulario) vs quem foi efetivamente integrado.
           </p>
@@ -207,7 +207,7 @@ export default function VolInscricoes() {
           <Select value={area} onValueChange={setArea}>
             <SelectTrigger className="w-[130px]"><SelectValue /></SelectTrigger>
             <SelectContent>
-              <SelectItem value="todas">Todas areas</SelectItem>
+              <SelectItem value="todas">Todas áreas</SelectItem>
               <SelectItem value="kids">Kids</SelectItem>
               <SelectItem value="sede">Sede</SelectItem>
             </SelectContent>
@@ -215,7 +215,7 @@ export default function VolInscricoes() {
         </div>
       </div>
 
-      {/* Link do formulario publico · compartilhar por WhatsApp/bio/QR */}
+      {/* Link do formulário público · compartilhar por WhatsApp/bio/QR */}
       <Card className="border-[#00B39D]/30 bg-[#00B39D]/5">
         <CardContent className="p-4 flex flex-col sm:flex-row sm:items-center gap-3">
           <div className="flex items-center gap-2 min-w-0 flex-1">
@@ -267,7 +267,7 @@ export default function VolInscricoes() {
             </div>
             <div>
               <div className="text-2xl md:text-3xl font-bold">{total.alocadas}</div>
-              <div className="text-xs text-muted-foreground">Voluntarios integrados</div>
+              <div className="text-xs text-muted-foreground">Voluntários integrados</div>
             </div>
           </CardContent>
         </Card>
@@ -281,13 +281,13 @@ export default function VolInscricoes() {
               <div className="text-2xl md:text-3xl font-bold">
                 {total.taxa !== null ? `${total.taxa}%` : '-'}
               </div>
-              <div className="text-xs text-muted-foreground">Taxa de integracao</div>
+              <div className="text-xs text-muted-foreground">Taxa de integração</div>
             </div>
           </CardContent>
         </Card>
       </div>
 
-      {/* Breakdown por area */}
+      {/* Breakdown por área */}
       <Card>
         <CardHeader className="pb-3">
           <CardTitle className="text-base">Por segmento</CardTitle>
@@ -328,10 +328,10 @@ export default function VolInscricoes() {
         </CardContent>
       </Card>
 
-      {/* Grafico de barras comparativo */}
+      {/* Gráfico de barras comparativo */}
       <Card>
         <CardHeader className="pb-3">
-          <CardTitle className="text-base">Inscritos vs Integrados por mes</CardTitle>
+          <CardTitle className="text-base">Inscritos vs Integrados por mês</CardTitle>
         </CardHeader>
         <CardContent>
           {chartData.length === 0 ? (
@@ -356,11 +356,11 @@ export default function VolInscricoes() {
         </CardContent>
       </Card>
 
-      {/* Grafico de linha taxa */}
+      {/* Gráfico de linha taxa */}
       {chartData.length > 0 && chartData.some(d => d.Taxa !== null) && (
         <Card>
           <CardHeader className="pb-3">
-            <CardTitle className="text-base">Taxa de integracao mensal</CardTitle>
+            <CardTitle className="text-base">Taxa de integração mensal</CardTitle>
           </CardHeader>
           <CardContent>
             <div className="h-[240px]">
@@ -388,7 +388,7 @@ export default function VolInscricoes() {
             <table className="w-full text-sm">
               <thead className="text-xs text-muted-foreground border-b">
                 <tr>
-                  <th className="text-left px-4 py-2 font-medium">Mes</th>
+                  <th className="text-left px-4 py-2 font-medium">Mês</th>
                   <th className="text-right px-4 py-2 font-medium">Inscritos</th>
                   <th className="text-right px-4 py-2 font-medium">Integrados</th>
                   <th className="text-right px-4 py-2 font-medium">Taxa</th>
@@ -454,10 +454,10 @@ export default function VolInscricoes() {
               <thead className="text-xs text-muted-foreground border-b">
                 <tr>
                   <th className="text-left px-4 py-2 font-medium">Nome</th>
-                  <th className="text-left px-4 py-2 font-medium">Inscricao</th>
-                  <th className="text-left px-4 py-2 font-medium">Area</th>
+                  <th className="text-left px-4 py-2 font-medium">Inscrição</th>
+                  <th className="text-left px-4 py-2 font-medium">Área</th>
                   <th className="text-left px-4 py-2 font-medium">Status</th>
-                  <th className="text-left px-4 py-2 font-medium">Ministerio</th>
+                  <th className="text-left px-4 py-2 font-medium">Ministério</th>
                   <th className="text-left px-4 py-2 font-medium">Contato</th>
                   <th className="text-center px-4 py-2 font-medium">Membro</th>
                 </tr>
@@ -467,7 +467,7 @@ export default function VolInscricoes() {
                   <tr><td colSpan={7} className="text-center text-muted-foreground py-6">Carregando...</td></tr>
                 )}
                 {!loadingList && lista?.rows?.length === 0 && (
-                  <tr><td colSpan={7} className="text-center text-muted-foreground py-6">Nenhuma inscricao com esses filtros</td></tr>
+                  <tr><td colSpan={7} className="text-center text-muted-foreground py-6">Nenhuma inscrição com esses filtros</td></tr>
                 )}
                 {lista?.rows?.map(p => (
                   <tr
@@ -532,7 +532,7 @@ export default function VolInscricoes() {
         </CardContent>
       </Card>
 
-      {/* Detalhe da inscricao · clique numa linha pra abrir */}
+      {/* Detalhe da inscrição · clique numa linha pra abrir */}
       <Dialog open={!!selected} onOpenChange={(o) => { if (!o) setSelected(null); }}>
         <DialogContent className="max-w-lg">
           {selected && (
@@ -557,13 +557,13 @@ export default function VolInscricoes() {
                 <Info label="Dom predominante" value={selected.dom_predominante || '-'} />
                 <Info label="Origem" value={origemLabel(selected.origem)} />
                 <div className="sm:col-span-2">
-                  <Info label="Areas de interesse" value={selected.ministerios_interesse || '-'} />
+                  <Info label="Áreas de interesse" value={selected.ministerios_interesse || '-'} />
                 </div>
                 <Info
                   label="Vinculo de membro"
                   value={selected.membro_id
                     ? <span className="text-green-600 font-medium">Vinculado</span>
-                    : 'Nao vinculado'}
+                    : 'Não vinculado'}
                 />
                 {selected.integrado_em && <Info label="Integrado em" value={selected.integrado_em} />}
                 {selected.feedback && (

@@ -1,7 +1,7 @@
 // ============================================================================
 // Totem Kids · Tela de Check-in (manned)
 // ============================================================================
-// Voluntario opera. Busca pelo nome da criança, encontra, confirma com a mãe,
+// Voluntário opera. Busca pelo nome da criança, encontra, confirma com a mãe,
 // imprime 2 etiquetas (criança + responsável). Equivalente ao PC Check-Ins.
 // ============================================================================
 
@@ -54,7 +54,7 @@ export default function TotemKidsCheckin() {
   const [resultados, setResultados] = useState<Crianca[]>([]);
   const [buscando, setBuscando] = useState(false);
 
-  // Selecao
+  // Seleção
   const [crianca, setCrianca] = useState<Crianca | null>(null);
   const [salaSelecionada, setSalaSelecionada] = useState<string>('');
   const [responsavelSelecionado, setResponsavelSelecionado] = useState<string>('');
@@ -63,7 +63,7 @@ export default function TotemKidsCheckin() {
   const [usarRespManual, setUsarRespManual] = useState(false);
   const [imprimindo, setImprimindo] = useState(false);
 
-  // Pagers (pulseira/coaster entregue a familia · opcional)
+  // Pagers (pulseira/coaster entregue a família · opcional)
   const [pagers, setPagers] = useState<any[]>([]);
   const [pagerSelecionado, setPagerSelecionado] = useState<string>('');
 
@@ -95,7 +95,7 @@ export default function TotemKidsCheckin() {
     } catch { setPagers([]); }
   }
 
-  // Foco no input apos limpar selecao
+  // Foco no input após limpar seleção
   useEffect(() => {
     if (!crianca) {
       setTimeout(() => buscaRef.current?.focus(), 50);
@@ -371,7 +371,7 @@ export default function TotemKidsCheckin() {
           onConfirmar={confirmarCheckin}
           imprimindo={imprimindo}
           onResponsavelCadastrado={async () => {
-            // Recarrega dados da crianca (com os responsaveis novos)
+            // Recarrega dados da criança (com os responsáveis novos)
             try {
               const fresh = await totemKids.criancas.get(crianca.id);
               setCrianca({ ...crianca, responsaveis: fresh.responsaveis || [] });
@@ -423,7 +423,7 @@ function CheckinSelecao(props: {
     respManualNome, setRespManualNome, respManualTel, setRespManualTel,
     onCancelar, onConfirmar, imprimindo, onResponsavelCadastrado } = props;
 
-  // Auto-abre modal de cadastro se crianca chegar sem responsavel
+  // Auto-abre modal de cadastro se criança chegar sem responsável
   const [modalCadResp, setModalCadResp] = useState(false);
   useEffect(() => {
     if (crianca.responsaveis.filter(r => r.autorizado_buscar).length === 0) {
@@ -712,7 +712,7 @@ function ModalNovaCrianca(props: {
                 </SelectContent>
               </Select>
             </div>
-            <Input placeholder="Alergia / medicação (opcional)" value={criancaObsMed} onChange={e => setCriancaObsMed(e.target.value)} />
+            <Input placeholder="Alergia / médicação (opcional)" value={criancaObsMed} onChange={e => setCriancaObsMed(e.target.value)} />
           </div>
           <div className="space-y-2">
             <div className="text-sm font-semibold text-pink-700 dark:text-pink-300">Responsável</div>
@@ -748,7 +748,7 @@ function ModalNovaCrianca(props: {
   );
 }
 
-// ── Modal: cadastrar responsavel rápido (auto-abre se criança sem responsável) ──
+// ── Modal: cadastrar responsável rápido (auto-abre se criança sem responsável) ──
 function ModalCadastrarResponsavel(props: {
   open: boolean;
   onClose: () => void;

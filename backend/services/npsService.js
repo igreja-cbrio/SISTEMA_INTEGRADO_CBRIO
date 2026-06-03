@@ -27,8 +27,8 @@ function parseJson(text, fallback) {
 }
 
 // ── Geração de perguntas ────────────────────────────────────────────
-// Recebe {valor?, objetivo, contextoKpi, area?} e devolve a estrutura de perguntas
-// que será persistida na pesquisa. Pelo menos um de (valor, area específica) é
+// Recebe {valor?, objetivo, contextoKpi, área?} e devolve a estrutura de perguntas
+// que será persistida na pesquisa. Pelo menos um de (valor, área específica) é
 // obrigatório — define o foco da pesquisa.
 async function gerarPerguntas({ valor, objetivo, contextoKpi, area }) {
   const info = valor ? VALORES_INFO[valor] : null;

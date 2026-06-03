@@ -22,7 +22,7 @@ function corDoScore(n) {
 /**
  * Formulário NPS reutilizável (logado e público).
  * pesquisa.perguntas = { pergunta_nps, perguntas_extras: [{id, tipo, texto}] }
- * onSubmit({ score, respostas, comentario }) — comentario é a resposta da
+ * onSubmit({ score, respostas, comentário }) — comentário é a resposta da
  *   pergunta cujo id começa com "motivo" ou a primeira texto_longo.
  */
 export default function NpsForm({ pesquisa, onSubmit, enviando, extraHeader }) {

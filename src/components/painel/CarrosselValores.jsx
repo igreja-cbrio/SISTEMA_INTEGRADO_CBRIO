@@ -1,13 +1,13 @@
 // ============================================================================
-// CarrosselValores · 5 slides (1 por valor) com filtro de dado + culto + periodo
+// CarrosselValores · 5 slides (1 por valor) com filtro de dado + culto + período
 //
-// Marcos: "um carrossel de dados com filtro por valor. Um grafico de linhas
+// Marcos: "um carrossel de dados com filtro por valor. Um gráfico de linhas
 //          por exemplo de Seguir a Jesus com filtro de conversoes, batismo e
-//          frequencia por todos os cultos · seleciona dado, culto, periodo"
+//          frequência por todos os cultos · seleciona dado, culto, período"
 //
 // Cada slide tem:
-//   · Filtros (dado, culto opcional, periodo)
-//   · Grafico de linha (Recharts)
+//   · Filtros (dado, culto opcional, período)
+//   · Gráfico de linha (Recharts)
 //   · Totais agregados
 //
 // Navegacao igual CarrosselMandalas: setas + dots + swipe + teclado.
@@ -77,8 +77,8 @@ export default function CarrosselValores() {
   const [indice, setIndice] = useState(0);
   // Filtros separados por valor (mantem ao voltar pro slide)
   const [filtros, setFiltros] = useState({});
-  // Cache de series por chave (valor:dado:culto:periodo) -> { data?, loading?, erro? }
-  // Atualizacao via ref + bump pra evitar stale closure nos prefetches concorrentes
+  // Cache de séries por chave (valor:dado:culto:período) -> { data?, loading?, erro? }
+  // Atualização via ref + bump pra evitar stale closure nos prefetches concorrentes
   const cacheRef = useRef({});
   const [, bumpCache] = useState(0);
   const containerRef = useRef(null);
@@ -92,7 +92,7 @@ export default function CarrosselValores() {
     bumpCache(n => n + 1);
   }, []);
 
-  // Carrega 1 serie e popula o cache. Idempotente · se ja tem dado fresco, no-op.
+  // Carrega 1 série e popula o cache. Idempotente · se já tem dado fresco, no-op.
   const carregarSerie = useCallback(async (valor, dado, culto, periodo, { force = false } = {}) => {
     const chave = chaveSerie(valor, dado, culto, periodo);
     const atual = cacheRef.current[chave];
@@ -117,7 +117,7 @@ export default function CarrosselValores() {
     try {
       const r = await painelApi.serieTemporalDados();
       setCatalogo(r);
-      // Filtros default: 1o dado de cada valor, periodo 12m, sem culto
+      // Filtros default: 1o dado de cada valor, período 12m, sem culto
       const ini = {};
       (r.valores || []).forEach(v => {
         ini[v.key] = {
@@ -130,7 +130,7 @@ export default function CarrosselValores() {
 
       // PREFETCH · dispara todas as combinacoes (valor × dado) com culto=null
       // periodo=12m em paralelo. ~11 chamadas. Cache backend (5min) garante que
-      // recargas seguintes sejam quase instantaneas. Quem ja ta no cache local
+      // recargas seguintes sejam quase instantaneas. Quem já ta no cache local
       // e ignorado · noop.
       (r.valores || []).forEach(v => {
         (v.dados || []).forEach(d => {
@@ -308,10 +308,10 @@ export default function CarrosselValores() {
 }
 
 // ----------------------------------------------------------------------------
-// SlideValor · um slide com filtros + grafico de linha
+// SlideValor · um slide com filtros + gráfico de linha
 //
-// Le do `cache` (controlado pelo pai). Se a chave atual nao esta carregada,
-// pede ao pai via `onRequire`. Stale-while-revalidate · se ja tem dado
+// Le do `cache` (controlado pelo pai). Se a chave atual não esta carregada,
+// pede ao pai via `onRequire`. Stale-while-revalidate · se já tem dado
 // anterior, mostra ele e atualiza em background quando o novo chega.
 // ----------------------------------------------------------------------------
 function SlideValor({ meta, cultos, filtro, onChange, cache, onRequire }) {
@@ -324,7 +324,7 @@ function SlideValor({ meta, cultos, filtro, onChange, cache, onRequire }) {
   const chave = meta && filtro.dado ? chaveSerie(meta.key, filtro.dado, cultoEfetivo, filtro.periodo) : null;
   const entry = chave ? cache[chave] : null;
   const serie = entry?.data || null;
-  const loading = !!entry?.loading && !serie; // so mostra "carregando" se nao tem nada cacheado
+  const loading = !!entry?.loading && !serie; // so mostra "carregando" se não tem nada cacheado
   const erro = entry?.erro && !serie ? entry.erro : null;
 
   // Garante que o cache vai ser populado pra essa chave (idempotente).
@@ -388,7 +388,7 @@ function SlideValor({ meta, cultos, filtro, onChange, cache, onRequire }) {
           </select>
         )}
 
-        {/* Periodo */}
+        {/* Período */}
         <div style={{ display: 'inline-flex', borderRadius: 8, border: `1px solid ${C.border}`, background: 'var(--cbrio-input-bg)', padding: 2, marginLeft: 'auto' }}>
           {PERIODOS.map(p => {
             const ativo = filtro.periodo === p.v;
@@ -420,7 +420,7 @@ function SlideValor({ meta, cultos, filtro, onChange, cache, onRequire }) {
         </div>
       )}
 
-      {/* Grafico */}
+      {/* Gráfico */}
       <div style={{ width: '100%', height: 260, position: 'relative' }}>
         {loading ? (
           <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', color: C.t3, fontSize: 12 }}>

@@ -1,18 +1,18 @@
 // Engine de deteccao de despesas recorrentes
 //
 // Estrategia:
-//   - Olha fin_transacoes tipo='despesa' dos ultimos 6 meses
+//   - Olha fin_transacoes tipo='despesa' dos últimos 6 meses
 //   - Agrupa por documento_contraparte (ou nome normalizado se sem documento)
-//   - Pra cada grupo com 3+ ocorrencias:
+//   - Pra cada grupo com 3+ ocorrências:
 //     - Calcula valor medio + min + max
 //     - Calcula cadencia media (dias entre lancamentos consecutivos)
 //     - Se a variacao do valor < 25% E cadencia 25-35 dias → marca como recorrente fixa
 //     - Variacao 25-50% ou cadencia 50-70 dias → variavel
 //     - Resto → eventual
 //   - UPSERT em fin_despesas_recorrentes (UNIQUE chave + tipo)
-//   - Liga ja todas as transacoes ao registro de recorrencia (FK)
+//   - Liga já todas as transacoes ao registro de recorrencia (FK)
 //
-// Roda sob demanda via endpoint admin · pode ser chamado tambem do cron diario.
+// Roda sob demanda via endpoint admin · pode ser chamado também do cron diario.
 
 const { supabase } = require('../utils/supabase');
 
@@ -81,7 +81,7 @@ async function detectarRecorrencias({ mesesHistorico = 6, dryRun = false } = {})
     grupos.get(chave).lancamentos.push(t);
   }
 
-  // 3. Pra cada grupo com 3+ ocorrencias, calcula stats
+  // 3. Pra cada grupo com 3+ ocorrências, calcula stats
   let padroesDetectados = 0;
   let transacoesLigadas = 0;
   const resultado = [];
@@ -111,13 +111,13 @@ async function detectarRecorrencias({ mesesHistorico = 6, dryRun = false } = {})
       : 30;
 
     const { classe, confianca } = classificarRecorrencia({ variacaoValor, cadenciaMediaDias });
-    if (confianca < 0.50) continue; // descarta eventuais com baixa confianca · poluiria a base
+    if (confianca < 0.50) continue; // descarta eventuais com baixa confiança · poluiria a base
 
     const ultimaData = ordenados[ordenados.length - 1].data_competencia;
     const proximaEstimada = new Date(ultimaData);
     proximaEstimada.setDate(proximaEstimada.getDate() + Math.round(cadenciaMediaDias));
 
-    // Plano e centro herdados do ultimo lancamento (mais recente · provavelmente correto)
+    // Plano e centro herdados do último lancamento (mais recente · provavelmente correto)
     const planoContasId = ordenados[ordenados.length - 1].plano_contas_id;
 
     const descricaoCurta = (ordenados[ordenados.length - 1].descricao || '')

@@ -556,7 +556,7 @@ export default function TabCadastros({ onMembrosChange }) {
             </p>
             {/* Família */}
             <div style={{ marginBottom: 14 }}>
-              <Label>Familia</Label>
+              <Label>Família</Label>
               {familiaEscolhida && familiaEscolhida !== '__nova__' && (() => {
                 const fam = familiasDisponiveis.find(f => f.id === familiaEscolhida);
                 return fam ? (
@@ -576,23 +576,23 @@ export default function TabCadastros({ onMembrosChange }) {
               })()}
               <Select value={familiaEscolhida || '__nenhuma__'} onValueChange={setFamiliaEscolhida}>
                 <SelectTrigger className="mt-1">
-                  <SelectValue placeholder="Sem familia" />
+                  <SelectValue placeholder="Sem família" />
                 </SelectTrigger>
                 <SelectContent className="z-[1200]">
-                  <SelectItem value="__nenhuma__">Sem familia</SelectItem>
+                  <SelectItem value="__nenhuma__">Sem família</SelectItem>
                   {familiasDisponiveis.map((f) => (
                     <SelectItem key={f.id} value={f.id}>
                       {f.nome}{f.membros?.length ? ` (${f.membros.length} membro${f.membros.length > 1 ? 's' : ''})` : ''}
                     </SelectItem>
                   ))}
-                  <SelectItem value="__nova__">+ Criar nova familia</SelectItem>
+                  <SelectItem value="__nova__">+ Criar nova família</SelectItem>
                 </SelectContent>
               </Select>
             </div>
 
             {familiaEscolhida === '__nova__' && (
               <div style={{ marginBottom: 14 }}>
-                <Label htmlFor="nova-familia">Nome da nova familia</Label>
+                <Label htmlFor="nova-familia">Nome da nova família</Label>
                 <Input
                   id="nova-familia"
                   value={familiaNovaNome}
@@ -611,8 +611,8 @@ export default function TabCadastros({ onMembrosChange }) {
                     <SelectValue placeholder="Selecione..." />
                   </SelectTrigger>
                   <SelectContent className="z-[1200]">
-                    <SelectItem value="__nenhum__">Nao informado</SelectItem>
-                    <SelectItem value="responsavel">Responsavel</SelectItem>
+                    <SelectItem value="__nenhum__">Não informado</SelectItem>
+                    <SelectItem value="responsavel">Responsável</SelectItem>
                     <SelectItem value="conjuge">Conjuge</SelectItem>
                     <SelectItem value="filho">Filho(a)</SelectItem>
                     <SelectItem value="outro">Outro</SelectItem>
@@ -621,7 +621,7 @@ export default function TabCadastros({ onMembrosChange }) {
               </div>
             )}
 
-            <Label htmlFor="obs-aprov">Observacoes (opcional)</Label>
+            <Label htmlFor="obs-aprov">Observações (opcional)</Label>
             <Textarea
               id="obs-aprov"
               rows={2}

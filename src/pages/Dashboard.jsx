@@ -15,7 +15,7 @@ import MandalaCultura from '../components/cultura/MandalaCultura';
 import MeusKpisResumo from '../components/MeusKpisResumo';
 
 // path='VOLUNTARIADO_DYNAMIC' e tratado no click handler (vai para painel do
-// voluntario ou visao admin conforme o perfil do usuario logado)
+// voluntário ou visão admin conforme o perfil do usuário logado)
 const MODULES = [
   { label: 'Recursos Humanos', desc: 'Colaboradores e DP', icon: Users, path: '/admin/rh', color: '#8b5cf6', perm: 'canRH' },
   { label: 'Financeiro', desc: 'Contas e transações', icon: DollarSign, path: '/admin/financeiro', color: '#10b981', perm: 'canFinanceiro' },
@@ -151,7 +151,7 @@ export default function Dashboard() {
       {/* Mandala Cultura CBRio */}
       <MandalaCultura />
 
-      {/* Resumo dos KPIs da minha area — link para /meus-kpis */}
+      {/* Resumo dos KPIs da minha área — link para /meus-kpis */}
       <MeusKpisResumo />
 
       {/* KPI Cards */}

@@ -29,11 +29,11 @@ export default function Voluntariado() {
   const location = useLocation();
   useHomeScreenMeta('checkin');
 
-  // Se URL começa com /voluntariado/checkin → portal do voluntario SEMPRE,
-  // independente do role (VolunteerShell ja foi aplicada pelo App.tsx).
+  // Se URL começa com /voluntariado/checkin → portal do voluntário SEMPRE,
+  // independente do role (VolunteerShell já foi aplicada pelo App.tsx).
   const isVolunteerRoute = location.pathname.startsWith('/voluntariado/checkin');
 
-  // Usuarios sem permissoes de gestao (nao-admin, nao-colaborador) veem
+  // Usuários sem permissões de gestão (nao-admin, nao-colaborador) veem
   // sempre o portal simples, mesmo em /ministerial/voluntariado.
   const shouldShowVolunteerPortal = isVolunteerRoute || (!isAdmin && !isColaborador);
 

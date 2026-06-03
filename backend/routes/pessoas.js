@@ -1,8 +1,8 @@
 // ============================================================================
 // /api/pessoas/* - lookup unificado e helpers de pessoa
 //
-// Pedido do Marcos: Membresia e fonte unica. Antes de criar visitante /
-// inscricao Next / voluntario, busca CPF aqui pra evitar duplicacao.
+// Pedido do Marcos: Membresia e fonte única. Antes de criar visitante /
+// inscrição Next / voluntário, busca CPF aqui pra evitar duplicacao.
 // ============================================================================
 
 const router = require('express').Router();
@@ -66,7 +66,7 @@ async function findOrCreateMembro({ cpf, email, telefone, nome, status = 'visita
 // ---------------------------------------------------------------------------
 // GET /api/pessoas/lookup
 // Query: ?cpf=xxx&email=yyy&telefone=zzz
-// Retorna pessoa em mem_membros + papeis ativos (voluntario, visitante,
+// Retorna pessoa em mem_membros + papéis ativos (voluntário, visitante,
 // inscrito_next).
 // ---------------------------------------------------------------------------
 router.get('/lookup', async (req, res) => {
@@ -121,14 +121,14 @@ router.get('/lookup', async (req, res) => {
       }
       return res.json({
         found: true,
-        membro: null, // ainda nao virou mem_membros
+        membro: null, // ainda não virou mem_membros
         sugestao_visitante: (visitantes || [])[0] || null,
         sugestao_inscricao_next: (inscricoes || [])[0] || null,
       });
     }
 
     const m = membros[0];
-    // Busca papeis ativos
+    // Busca papéis ativos
     const [vol, visitante, inscNext, grupo, contribuicao] = await Promise.all([
       supabase.from('vol_profiles').select('id, planning_center_id, full_name').eq('membresia_id', m.id).maybeSingle(),
       supabase.from('int_visitantes').select('id, status, data_visita').eq('membresia_id', m.id).order('data_visita', { ascending: false }).limit(1),

@@ -198,7 +198,7 @@ function SerieCard({ s }: { s: Serie }) {
         <div className="grid grid-cols-3 gap-2 text-center">
           <div>
             <div className="font-bold text-lg leading-none">{s.videos_publicados}</div>
-            <div className="text-[10px] text-muted-foreground uppercase tracking-wide mt-1">videos</div>
+            <div className="text-[10px] text-muted-foreground uppercase tracking-wide mt-1">vídeos</div>
           </div>
           <div className="border-x border-border">
             <div className="font-bold text-lg leading-none">{formatNumber(s.total_views)}</div>
@@ -336,14 +336,14 @@ function ValorGroupCard({ valor, kpis, open, onOpenChange }: {
 }
 
 // ────────────────────────────────────────────────────────────────────────────
-// Pagina
+// Página
 // ────────────────────────────────────────────────────────────────────────────
 
 function OAuthStatusCard() {
   const { getAccessLevel, isAdmin } = useAuth();
   const podeEditarOnline = isAdmin || (getAccessLevel?.(['online']) ?? 0) >= 3;
-  // Quem nao edita nao vê o card de admin · early return ANTES dos hooks
-  // de queries/mutations pra nao disparar fetches desnecessarios
+  // Quem não edita não vê o card de admin · early return ANTES dos hooks
+  // de queries/mutations pra não disparar fetches desnecessarios
   if (!podeEditarOnline) return null;
   return <OAuthStatusCardInner />;
 }
@@ -365,7 +365,7 @@ function OAuthStatusCardInner() {
       window.history.replaceState({}, '', url.pathname + url.search);
       refetch();
     } else if (url.searchParams.get('oauth_error')) {
-      toast.error(`Falha na conexao: ${url.searchParams.get('oauth_error')}`);
+      toast.error(`Falha na conexão: ${url.searchParams.get('oauth_error')}`);
       url.searchParams.delete('oauth_error');
       window.history.replaceState({}, '', url.pathname + url.search);
     }
@@ -374,7 +374,7 @@ function OAuthStatusCardInner() {
   const conectar = useMutation({
     mutationFn: () => online.oauth.authorize(),
     onSuccess: (r: any) => { if (r?.url) window.location.href = r.url; },
-    onError: (e: any) => toast.error(e?.message || 'Erro ao iniciar conexao'),
+    onError: (e: any) => toast.error(e?.message || 'Erro ao iniciar conexão'),
   });
 
   const desconectar = useMutation({
@@ -437,7 +437,7 @@ function OAuthStatusCardInner() {
         </div>
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 flex-wrap">
-            <h2 className="font-bold text-base">Coleta automatica YouTube</h2>
+            <h2 className="font-bold text-base">Coleta automática YouTube</h2>
             {conectado ? (
               <Badge variant="outline" className="bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border-emerald-500/40">
                 Conectado · {status?.channel_title || status?.channel_id}
@@ -450,7 +450,7 @@ function OAuthStatusCardInner() {
           </div>
           <p className="text-sm text-muted-foreground mt-1 leading-relaxed">
             {conectado ? (
-              <>Coleta automatica de <strong>pico online</strong> (5/5min · janela do culto),
+              <>Coleta automática de <strong>pico online</strong> (5/5min · janela do culto),
                 <strong> DS</strong> (todo dia 10h) e <strong>DDUS</strong> (10h30) ativa.</>
             ) : (
               <>Conecte o canal CBRio com OAuth pra automatizar pico online, DS e DDUS via YouTube Analytics API.</>
@@ -515,7 +515,7 @@ export default function Online() {
   const syncMutation = useMutation({
     mutationFn: () => online.sync(),
     onSuccess: () => {
-      toast.success('Sincronizacao com YouTube concluida.');
+      toast.success('Sincronizacao com YouTube concluída.');
       refetch();
     },
     onError: (err: any) => toast.error(err?.message || 'Erro ao sincronizar'),
@@ -530,11 +530,11 @@ export default function Online() {
       const syncRes: any = await online.sync();
       const linkados = syncRes?.log?.etapas?.backfill_cultos?.linkados ?? 0;
 
-      // 2. catch-up em batches de 5 cultos por chamada · loop ate remaining=0
-      // pra nao estourar o limite de 60s da serverless do Vercel.
+      // 2. catch-up em batches de 5 cultos por chamada · loop até remaining=0
+      // pra não estourar o limite de 60s da serverless do Vercel.
       const acc = { processados: 0, pico: 0, ds: 0, ddus: 0, subs: 0, trafico: 0, retencao_curva: 0, sub_status: 0 };
       let batches = 0;
-      while (batches < 30) { // ~150 cultos no maximo
+      while (batches < 30) { // ~150 cultos no máximo
         const r: any = await online.coletar.catchUp(5);
         acc.processados   += r?.processados   ?? 0;
         acc.pico          += r?.pico          ?? 0;
@@ -630,7 +630,7 @@ export default function Online() {
                 variant="secondary"
                 size="lg"
                 className="gap-2 bg-red-700 text-white hover:bg-red-800 shadow-lg border border-white/20"
-                title="Linka cultos do passado por proximidade temporal com videos do canal + puxa todas as 7 metricas (pico ao vivo, DS, DDUS, watch time, retencao, subs, trafego, sub-status) onde estiver faltando dado. Pico recuperado via peakConcurrentViewers do Analytics (delay de 1-2 dias). Pode demorar 1-3min."
+                title="Linka cultos do passado por proximidade temporal com vídeos do canal + puxa todas as 7 metricas (pico ao vivo, DS, DDUS, watch time, retencao, subs, tráfego, sub-status) onde estiver faltando dado. Pico recuperado via peakConcurrentViewers do Analytics (delay de 1-2 dias). Pode demorar 1-3min."
               >
                 {recoletarMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
                 Recoletar tudo
@@ -669,7 +669,7 @@ export default function Online() {
         </div>
       )}
 
-      {/* Top videos */}
+      {/* Top vídeos */}
       {((data?.top_views_mes?.length || 0) > 0 || (data?.top_engajamento_mes?.length || 0) > 0) && (
         <Card className="overflow-hidden">
           <div className="p-4 md:p-5 flex flex-col md:flex-row md:items-center md:justify-between gap-3 border-b border-border bg-gradient-to-r from-primary/5 to-transparent">
@@ -678,7 +678,7 @@ export default function Online() {
                 <TrendingUp className="h-5 w-5 text-primary" />
               </div>
               <div>
-                <h2 className="text-base font-bold leading-tight">Top videos do mes</h2>
+                <h2 className="text-base font-bold leading-tight">Top vídeos do mês</h2>
                 <p className="text-xs text-muted-foreground mt-0.5">Melhores performances de {new Date().toLocaleDateString('pt-BR', { month: 'long' })}</p>
               </div>
             </div>
@@ -737,7 +737,7 @@ export default function Online() {
         </Card>
       )}
 
-      {/* Series */}
+      {/* Séries */}
       {(data?.series?.length || 0) > 0 && (
         <Card className="overflow-hidden">
           <div className="p-4 md:p-5 flex items-center justify-between gap-3 border-b border-border bg-gradient-to-r from-purple-500/10 to-transparent">
@@ -746,7 +746,7 @@ export default function Online() {
                 <PlayCircle className="h-5 w-5 text-purple-600 dark:text-purple-400" />
               </div>
               <div>
-                <h2 className="text-base font-bold leading-tight">Series de pregacao</h2>
+                <h2 className="text-base font-bold leading-tight">Séries de pregacao</h2>
                 <p className="text-xs text-muted-foreground mt-0.5">
                   {data?.series?.length || 0} serie(s) ativa(s) · ordenadas por views
                 </p>
@@ -803,7 +803,7 @@ export default function Online() {
       {/* Performance por Culto · novas metricas YT (PRs #524, #525, #527, #530, #531) */}
       <CultoYouTubePanel />
 
-      {/* Diagnostico · so admin · pra investigar zeros nas metricas */}
+      {/* Diagnóstico · so admin · pra investigar zeros nas metricas */}
       {isAdmin && <OnlineDebugPanel />}
 
       {/* Footer info */}

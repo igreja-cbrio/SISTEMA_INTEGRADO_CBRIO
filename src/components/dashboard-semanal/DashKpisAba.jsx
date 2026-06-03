@@ -10,7 +10,7 @@ import {
   LineChart, Line, BarChart, Bar, Cell, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine, Legend,
 } from 'recharts';
 
-// Mesma paleta dos outros graficos do dashboard
+// Mesma paleta dos outros gráficos do dashboard
 const COR_LINHA = '#00B39D';
 const COR_META = '#E97A3F';
 
@@ -89,7 +89,7 @@ export default function DashKpisAba() {
     });
   }, [kpisFiltrados]);
 
-  // Lista de areas distintas do dataset (pra popular o filtro com o que existe)
+  // Lista de áreas distintas do dataset (pra popular o filtro com o que existe)
   const areasDistintas = useMemo(() => {
     const set = new Set();
     kpis.forEach(k => k.area && set.add(k.area));
@@ -216,15 +216,15 @@ function KpiDetalhe({ id, resumo }) {
 
   // HOOKS · todas antes de qualquer early return (regra dos hooks · React #310).
   // O default do tipo de chart depende de resumo.tipo_calculo (prop estavel,
-  // nao precisa de data). Como o componente esta keyed por id no pai, o
+  // não precisa de data). Como o componente esta keyed por id no pai, o
   // useState reseta ao trocar de KPI.
   const tipoCalculo = resumo?.tipo_calculo;
   const ehDelta = tipoCalculo === 'delta_pct' || tipoCalculo === 'delta_abs';
   const [tipoChart, setTipoChart] = useState(ehDelta ? 'barra' : 'linha');
 
-  // Serie pro grafico · usa data?.historico de forma segura (data pode ainda
-  // estar carregando). Corta zeros/null no FIM (semanas nao fechadas) · mesmo
-  // padrao do /media-movel e /mensal pra linha parar no ultimo ponto real.
+  // Série pro gráfico · usa data?.histórico de forma segura (data pode ainda
+  // estar carregando). Corta zeros/null no FIM (semanas não fechadas) · mesmo
+  // padrão do /media-movel e /mensal pra linha parar no último ponto real.
   const serie = useMemo(() => {
     const historico = data?.historico || [];
     const arr = historico.map(h => ({
@@ -266,7 +266,7 @@ function KpiDetalhe({ id, resumo }) {
     return v >= 0 ? '#10b981' : '#ef4444';
   };
 
-  // Delta vs periodo anterior (mesmo na serie)
+  // Delta vs período anterior (mesmo na série)
   const ultimo = serie[serie.length - 1];
   const penultimo = serie[serie.length - 2];
   let deltaPct = null;
@@ -327,7 +327,7 @@ function KpiDetalhe({ id, resumo }) {
         </CardContent>
       </Card>
 
-      {/* Mini stats: ultimo valor, periodo, delta */}
+      {/* Mini stats: último valor, período, delta */}
       {ultimo && (
         <div className="grid grid-cols-3 gap-3">
           <div className="rounded-lg border border-border bg-card p-3">
@@ -365,7 +365,7 @@ function KpiDetalhe({ id, resumo }) {
         </div>
       )}
 
-      {/* Grafico · historico · linha (default) ou barra (delta) */}
+      {/* Gráfico · histórico · linha (default) ou barra (delta) */}
       <Card>
         <CardHeader className="pb-2 flex flex-row items-center justify-between gap-3 space-y-0">
           <CardTitle className="text-sm font-medium">

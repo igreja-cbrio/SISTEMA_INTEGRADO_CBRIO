@@ -1,7 +1,7 @@
 // ============================================================================
 // Bible API proxy — encaminha chamadas para api.bible (https://rest.api.bible)
-// Mantem a chave server-side e cacheia respostas em memoria por 24h
-// (Biblia raramente muda · reduz chamadas no rate limit gratuito).
+// Mantem a chave server-side e cacheia respostas em memória por 24h
+// (Bíblia raramente muda · reduz chamadas no rate limit gratuito).
 // ============================================================================
 
 const router = require('express').Router();
@@ -38,7 +38,7 @@ async function fetchBible(path, query) {
 function handleErr(res, e, fallbackMsg) {
   const status = e.status || 500;
   const msg = status === 401
-    ? 'Chave da api.bible invalida ou nao configurada (BIBLE_API_KEY)'
+    ? 'Chave da api.bible invalida ou não configurada (BIBLE_API_KEY)'
     : (e.message || fallbackMsg);
   res.status(status).json({ error: msg });
 }
@@ -72,7 +72,7 @@ router.get('/bibles/:bibleId/books/:bookId/chapters', async (req, res) => {
     res.json(data);
   } catch (e) {
     console.error('bible/chapters:', e.message);
-    handleErr(res, e, 'Erro ao listar capitulos');
+    handleErr(res, e, 'Erro ao listar capítulos');
   }
 });
 
@@ -92,7 +92,7 @@ router.get('/bibles/:bibleId/chapters/:chapterId', async (req, res) => {
     res.json(data);
   } catch (e) {
     console.error('bible/chapter:', e.message);
-    handleErr(res, e, 'Erro ao buscar capitulo');
+    handleErr(res, e, 'Erro ao buscar capítulo');
   }
 });
 

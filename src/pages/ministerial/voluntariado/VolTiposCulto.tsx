@@ -170,7 +170,7 @@ function ServiceTypeFormDialog({ serviceType, onClose }: { serviceType: VolServi
             <Input value={name} onChange={e => setName(e.target.value)} placeholder="Ex: Culto Domingo Manha" />
           </div>
           <div>
-            <Label>Descricao</Label>
+            <Label>Descrição</Label>
             <Input value={description} onChange={e => setDescription(e.target.value)} placeholder="Descricao (opcional)" />
           </div>
           <div className="grid grid-cols-2 gap-4">

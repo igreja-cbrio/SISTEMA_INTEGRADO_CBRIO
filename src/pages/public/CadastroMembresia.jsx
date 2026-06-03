@@ -266,19 +266,19 @@ export default function CadastroMembresia() {
   const [buscouFamilia, setBuscouFamilia] = useState(false);
 
   // Lookup proativo por CPF (debounced)
-  // null = nao buscou | { found: false } | { found: true, primeiroNome, ... }
+  // null = não buscou | { found: false } | { found: true, primeiroNome, ... }
   const [cpfLookup, setCpfLookup] = useState(null);
   const [cpfChecando, setCpfChecando] = useState(false);
 
   // Lookup proativo por nome + telefone (debounced).
-  // Reconhece novos convertidos ja cadastrados (importados ou registrados em
+  // Reconhece novos convertidos já cadastrados (importados ou registrados em
   // culto) e oferece vincular automaticamente em vez de criar duplicata.
-  // null = nao buscou | { found: false } | { found: true, matchId, primeiroNome, telefoneMascarado, ... }
+  // null = não buscou | { found: false } | { found: true, matchId, primeiroNome, telefoneMascarado, ... }
   const [nomeTelLookup, setNomeTelLookup] = useState(null);
   const [nomeTelChecando, setNomeTelChecando] = useState(false);
-  // matchConfirmado: id do mem_membros confirmado pelo usuario ("sou eu")
+  // matchConfirmado: id do mem_membros confirmado pelo usuário ("sou eu")
   const [matchConfirmado, setMatchConfirmado] = useState(null);
-  const [matchDescartado, setMatchDescartado] = useState(false); // "nao sou eu" → para de perguntar
+  const [matchDescartado, setMatchDescartado] = useState(false); // "não sou eu" → para de perguntar
 
   const origem = useMemo(() => {
     try {
@@ -310,7 +310,7 @@ export default function CadastroMembresia() {
     }
   };
 
-  // Debounce: 600ms apos parar de digitar CPF, se CPF for valido, faz lookup
+  // Debounce: 600ms após parar de digitar CPF, se CPF for valido, faz lookup
   useEffect(() => {
     const cpf = form.cpf;
     if (!cpfValido(cpf)) {
@@ -332,9 +332,9 @@ export default function CadastroMembresia() {
     return () => clearTimeout(t);
   }, [form.cpf]);
 
-  // Debounce: 700ms apos parar de digitar nome/telefone — busca cadastro
+  // Debounce: 700ms após parar de digitar nome/telefone — busca cadastro
   // pre-existente (novo convertido importado, etc.) por primeiro nome +
-  // telefone exatos. Para de buscar se usuario ja confirmou ou descartou.
+  // telefone exatos. Para de buscar se usuário já confirmou ou descartou.
   useEffect(() => {
     if (matchConfirmado || matchDescartado) {
       setNomeTelChecando(false);
@@ -365,7 +365,7 @@ export default function CadastroMembresia() {
 
   const processarFoto = useCallback((file) => {
     if (!file.type.startsWith('image/')) { setError('Selecione um arquivo de imagem (JPG, PNG ou WebP).'); return; }
-    if (file.size > 5 * 1024 * 1024) { setError('A imagem deve ter no maximo 5 MB.'); return; }
+    if (file.size > 5 * 1024 * 1024) { setError('A imagem deve ter no máximo 5 MB.'); return; }
     setFotoFile(file);
     const reader = new FileReader();
     reader.onload = (ev) => setFotoPreview(ev.target.result);
@@ -648,8 +648,8 @@ export default function CadastroMembresia() {
             </h2>
             <p style={{ fontSize: 13, color: C.text3, lineHeight: 1.5, marginBottom: 20 }}>
               {familiaOpcoes.length === 1
-                ? `Existe a familia "${familiaOpcoes[0].nome}" cadastrada. Voce faz parte dessa familia?`
-                : `Encontramos familias com sobrenome parecido. Voce faz parte de alguma delas?`}
+                ? `Existe a família "${familiaOpcoes[0].nome}" cadastrada. Você faz parte dessa família?`
+                : `Encontramos famílias com sobrenome parecido. Você faz parte de alguma delas?`}
             </p>
 
             <div style={{ display: 'flex', flexDirection: 'column', gap: 10, maxWidth: 360, margin: '0 auto' }}>
@@ -681,7 +681,7 @@ export default function CadastroMembresia() {
                   cursor: 'pointer', transition: 'all 0.2s',
                 }}
               >
-                {loading ? 'Enviando...' : 'Nao, nao faco parte de nenhuma dessas familias'}
+                {loading ? 'Enviando...' : 'Não, não faco parte de nenhuma dessas famílias'}
               </button>
             </div>
           </div>
@@ -794,7 +794,7 @@ export default function CadastroMembresia() {
                           </>
                         ) : (
                           <>
-                            <strong>Ja existe um cadastro com este CPF</strong>
+                            <strong>Já existe um cadastro com este CPF</strong>
                             <div style={{ color: 'var(--cbrio-text3)', marginTop: 2 }}>
                               Em nome de {cpfLookup.primeiroNome} {cpfLookup.iniciaisSobrenome} (em analise).
                               Se for voce, pode continuar — vamos atualizar.
@@ -826,8 +826,8 @@ export default function CadastroMembresia() {
                         </div>
                         <div style={{ color: 'var(--cbrio-text3)', marginTop: 4, fontSize: 12 }}>
                           {nomeTelLookup.cadastroCompleto
-                            ? 'Esse cadastro ja existe no sistema. E voce mesmo?'
-                            : 'Provavelmente voce e um novo convertido ja registrado no nosso sistema. E voce?'}
+                            ? 'Esse cadastro já existe no sistema. E você mesmo?'
+                            : 'Provavelmente você e um novo convertido já registrado no nosso sistema. E você?'}
                         </div>
                       </div>
                       <div style={{ display: 'flex', gap: 8 }}>
@@ -1073,7 +1073,7 @@ export default function CadastroMembresia() {
               )}
             </MultistepFormShell>
 
-            {/* "Ja fiz meu cadastro e quero meu QR de membro" */}
+            {/* "Já fiz meu cadastro e quero meu QR de membro" */}
             <div style={{
               marginTop: 20, padding: '16px 0 0',
               borderTop: `1px solid ${C.cardBorder}`,

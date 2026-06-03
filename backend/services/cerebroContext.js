@@ -1,18 +1,18 @@
 // =====================================================================
 // cerebroContext · coleta TODO o markdown do vault "Cerebro CBRio"
-// pra injetar como contexto institucional em apresentacoes geradas por IA
+// pra injetar como contexto institucional em apresentações geradas por IA
 // =====================================================================
 // Estrategia:
 //   1. Lista recursivamente todos os .md da biblioteca SharePoint
 //      "Cerebro CBRio" via Microsoft Graph
-//   2. Baixa o conteudo em paralelo (concurrency 6)
+//   2. Baixa o conteúdo em paralelo (concurrency 6)
 //   3. Concatena com cabeçalho de path por nota
 //   4. Trunca em MAX_CHARS pra caber no contexto do Sonnet com folga
-//   5. Cache em memoria com TTL · um cold start pode demorar mas as
-//      proximas chamadas saem na hora
+//   5. Cache em memória com TTL · um cold start pode demorar mas as
+//      próximas chamadas saem na hora
 //
 // O Cerebro CBRio guarda resumos (gerados pelo Haiku) das documentos do
-// SharePoint · entao cada nota ja vem destilada. Perfeita pra alimentar
+// SharePoint · então cada nota já vem destilada. Perfeita pra alimentar
 // outra IA sem estourar o contexto.
 // =====================================================================
 
@@ -25,7 +25,7 @@ const VAULT_NAME = 'Cerebro CBRio';
 // pro contexto. A 4 chars/token, 200K chars = ~50K tokens. Folga grande.
 const DEFAULT_MAX_CHARS = 200_000;
 
-// Cache em memoria (sobrevive entre invocacoes warm da serverless)
+// Cache em memória (sobrevive entre invocacoes warm da serverless)
 let _cache = null;
 let _cacheExpiry = 0;
 const CACHE_TTL_MS = 15 * 60 * 1000; // 15min
@@ -48,7 +48,7 @@ async function graphFetch(url, token) {
 async function obterVaultDriveId(token) {
   const data = await graphFetch(`https://graph.microsoft.com/v1.0/sites/${HUB_SITE_ID}/drives`, token);
   const drive = (data.value || []).find(d => d.name === VAULT_NAME);
-  if (!drive) throw new Error(`Biblioteca "${VAULT_NAME}" nao encontrada no CBRio Hub`);
+  if (!drive) throw new Error(`Biblioteca "${VAULT_NAME}" não encontrada no CBRio Hub`);
   return drive.id;
 }
 
@@ -70,7 +70,7 @@ async function listarMarkdownsRecursivo(token, driveId) {
         if (it.folder) {
           fila.push({ pasta: it.id, caminho: caminho ? `${caminho}/${it.name}` : it.name });
         } else if (it.file && it.name.toLowerCase().endsWith('.md')) {
-          // Ignora AGENTE-REGRAS.md · sao instrucoes do processador, nao contexto
+          // Ignora AGENTE-REGRAS.md · são instrucoes do processador, não contexto
           if (it.name === 'AGENTE-REGRAS.md') continue;
           itens.push({
             itemId: it.id,
@@ -148,7 +148,7 @@ async function _coletarCompleto(maxChars) {
     DOWNLOAD_CONCURRENCY
   );
 
-  // Concatena ate maxChars
+  // Concatena até maxChars
   const partes = [];
   let totalChars = 0;
   let notasIncluidas = 0;

@@ -3,13 +3,13 @@ const rateLimit = require('express-rate-limit');
 const { supabase } = require('../utils/supabase');
 const { notificar } = require('../services/notificar');
 
-// Rate limit: 10 inscricoes por IP a cada 15 min
+// Rate limit: 10 inscrições por IP a cada 15 min
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 10,
   standardHeaders: true,
   legacyHeaders: false,
-  message: { error: 'Muitas inscricoes deste endereco. Tente novamente mais tarde.' },
+  message: { error: 'Muitas inscrições deste endereço. Tente novamente mais tarde.' },
 });
 
 function soDigitos(v) {
@@ -30,7 +30,7 @@ function cpfValido(v) {
     && calc(d.slice(0, 10), 11) === parseInt(d[10], 10);
 }
 
-// Calcula o 4o domingo de um mes
+// Calcula o 4o domingo de um mês
 function quartoDomingo(year, month /* 0-11 */) {
   const primeiro = new Date(year, month, 1);
   const offset = (7 - primeiro.getDay()) % 7;
@@ -52,14 +52,14 @@ function proximoQuartoDomingoISO() {
 }
 
 // GET /api/public/batismo/proxima-data
-// Retorna a proxima data agendada (4o domingo do mes) - usada pelo form
-// para mostrar ao usuario quando ele sera batizado.
+// Retorna a próxima data agendada (4o domingo do mês) - usada pelo form
+// para mostrar ao usuário quando ele será batizado.
 router.get('/proxima-data', (_req, res) => {
   res.json({ data_batismo: proximoQuartoDomingoISO() });
 });
 
 // POST /api/public/batismo
-// Endpoint publico (sem autenticacao) que recebe inscricao do formulario.
+// Endpoint público (sem autenticação) que recebe inscrição do formulário.
 router.post('/', limiter, async (req, res) => {
   try {
     const {
@@ -70,7 +70,7 @@ router.post('/', limiter, async (req, res) => {
       eh_crianca, possui_deficiencia, deficiencia_descricao,
     } = req.body || {};
 
-    // Validacoes basicas
+    // Validacoes básicas
     if (!nome || !String(nome).trim() || String(nome).trim().length < 2) {
       return res.status(400).json({ error: 'Informe o nome.' });
     }
@@ -93,7 +93,7 @@ router.post('/', limiter, async (req, res) => {
     const nomeT = String(nome).trim();
     const sobrenomeT = String(sobrenome).trim();
 
-    // Dedup: nao deixa a mesma pessoa se inscrever duas vezes pro mesmo
+    // Dedup: não deixa a mesma pessoa se inscrever duas vezes pro mesmo
     // batismo (mesmo CPF ou email+telefone + status pendente/confirmado)
     if (cpfNorm) {
       const { data: dup } = await supabase
@@ -106,7 +106,7 @@ router.post('/', limiter, async (req, res) => {
         return res.status(200).json({
           ok: true,
           duplicado: true,
-          mensagem: `Voce ja tem uma inscricao em andamento (status: ${dup.status}). Sua data sera mantida.`,
+          mensagem: `Você já tem uma inscrição em andamento (status: ${dup.status}). Sua data será mantida.`,
         });
       }
     }
@@ -126,7 +126,7 @@ router.post('/', limiter, async (req, res) => {
 
     const dataBatismo = proximoQuartoDomingoISO();
 
-    // Observacoes agora so guarda o que nao tem coluna propria
+    // Observações agora so guarda o que não tem coluna própria
     const obsParts = [];
     if (cep) obsParts.push(`CEP: ${String(cep).trim().slice(0, 20)}`);
     if (horario_culto) obsParts.push(`Culto: ${String(horario_culto).trim().slice(0, 80)}`);
@@ -174,14 +174,14 @@ router.post('/', limiter, async (req, res) => {
       .single();
     if (error) {
       console.error('[publicBatismo] insert error:', error.message);
-      return res.status(500).json({ error: 'Nao foi possivel registrar sua inscricao.' });
+      return res.status(500).json({ error: 'Não foi possível registrar sua inscrição.' });
     }
 
-    // Notifica responsaveis pela integracao (assincrono)
+    // Notifica responsáveis pela integração (assincrono)
     notificar({
       modulo: 'batismos',
       tipo: 'nova_inscricao_batismo',
-      titulo: 'Nova inscricao de batismo',
+      titulo: 'Nova inscrição de batismo',
       mensagem: `${nomeT} ${sobrenomeT} se inscreveu para o batismo de ${dataBatismo}.`,
       link: '/ministerial/integracao?tab=batismos',
       severidade: 'info',

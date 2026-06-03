@@ -183,10 +183,10 @@ router.get('/kanban/all', async (req, res) => {
 async function activateCycleForEvent(eventId, userId) {
   try {
     const { data: event, error: evErr } = await supabase.from('events').select('id, date, name, category_id').eq('id', eventId).single();
-    if (evErr || !event) throw new Error('Evento nao encontrado');
+    if (evErr || !event) throw new Error('Evento não encontrado');
 
     const { data: existing } = await supabase.from('event_cycles').select('id').eq('event_id', eventId).maybeSingle();
-    if (existing) throw new Error('Ciclo ja ativado para este evento');
+    if (existing) throw new Error('Ciclo já ativado para este evento');
 
     const diaDDate = event.date;
     const { data: cycle, error: cycleErr } = await supabase.from('event_cycles')
@@ -306,7 +306,7 @@ router.post('/activate/:eventId', authorize('admin', 'diretor'), async (req, res
 });
 
 // ══════════════════════════════════════════════
-// TAREFAS PADRAO (DEVE vir antes de /:eventId)
+// TAREFAS PADRÃO (DEVE vir antes de /:eventId)
 // ══════════════════════════════════════════════
 
 // GET /api/cycles/adm-templates
@@ -349,7 +349,7 @@ router.get('/:eventId', async (req, res) => {
     const subsMap = await fetchSubtasksBatched(taskIds);
     const tasksWithSubs = (tasksRes.data || []).map(t => ({ ...t, subtasks: subsMap[t.id] || [] }));
 
-    // Enriquecer fases com dados do template (entregas_padrao, descricao)
+    // Enriquecer fases com dados do template (entregas_padrao, descrição)
     const phases = (phasesRes.data || []).map(p => ({
       ...p,
       entregas_padrao: p.cycle_phase_templates?.entregas_padrao || null,
@@ -560,7 +560,7 @@ async function getOrCreateCompletion(taskId, userId, userName) {
 
   // Buscar dados do task
   const { data: task } = await supabase.from('cycle_phase_tasks').select('*, event_cycle_phases(numero_fase, nome_fase)').eq('id', taskId).single();
-  if (!task) throw new Error('Task nao encontrada');
+  if (!task) throw new Error('Task não encontrada');
 
   const { data: cc, error } = await supabase.from('card_completions').insert({
     task_id: taskId, event_id: task.event_id, event_phase_id: task.event_phase_id,
@@ -598,12 +598,12 @@ router.patch('/card-completions/:taskId/quality', async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// GET /api/cycles/kpis/evento/:eventId — KPI de um evento especifico (nivel 2+3)
+// GET /api/cycles/kpis/evento/:eventId — KPI de um evento especifico (nível 2+3)
 router.get('/kpis/evento/:eventId', async (req, res) => {
   try {
-    // KPI por area (nivel 2) — vem da view que calcula direto dos cards
+    // KPI por área (nível 2) — vem da view que calcula direto dos cards
     const { data: areas } = await supabase.from('vw_event_area_kpi').select('*').eq('event_id', req.params.eventId);
-    // KPI do evento (nivel 3)
+    // KPI do evento (nível 3)
     const { data: evento } = await supabase.from('vw_event_kpi').select('*').eq('event_id', req.params.eventId).maybeSingle();
     // Cards individuais (as entregas reais)
     const { data: tasks } = await supabase.from('cycle_phase_tasks').select('*, event_cycle_phases(nome_fase, data_fim_prevista)').eq('event_id', req.params.eventId).order('area');
@@ -628,7 +628,7 @@ router.get('/kpis/evento/:eventId', async (req, res) => {
       };
     });
 
-    // Calcular breakdown por area
+    // Calcular breakdown por área
     const breakdownMap = {};
     docs.forEach(d => {
       if (!breakdownMap[d.area]) breakdownMap[d.area] = { total: 0, no_prazo: 0, aprovados: 0, qualidade_ok: 0, com_arquivo: 0, score_prazo: 0, score_aprovacao: 0, score_qualidade: 0, score_arquivo: 0 };
@@ -640,7 +640,7 @@ router.get('/kpis/evento/:eventId', async (req, res) => {
       if (d.file_name) { b.com_arquivo++; b.score_arquivo += 10; }
     });
 
-    // Enriquecer areas com breakdown
+    // Enriquecer áreas com breakdown
     const areasComBreakdown = (areas || []).map(a => ({
       ...a,
       breakdown: breakdownMap[a.area] || { total: 0, no_prazo: 0, aprovados: 0, qualidade_ok: 0, com_arquivo: 0, score_prazo: 0, score_aprovacao: 0, score_qualidade: 0, score_arquivo: 0 },
@@ -650,10 +650,10 @@ router.get('/kpis/evento/:eventId', async (req, res) => {
   } catch (err) { console.error('[KPI evento]', err.message); res.status(500).json({ error: err.message }); }
 });
 
-// GET /api/cycles/kpis/cross — KPI cross-eventos (nivel 4) com filtro serie/evento
+// GET /api/cycles/kpis/cross — KPI cross-eventos (nível 4) com filtro serie/evento
 router.get('/kpis/cross', async (req, res) => {
   try {
-    const { tipo } = req.query; // 'serie' | 'evento' | undefined (todos)
+    const { tipo } = req.query; // 'série' | 'evento' | undefined (todos)
 
     // Buscar todos os eventos com ciclo criativo
     let q = supabase.from('event_cycles').select('event_id, events(id, name, status, date, category_id, event_categories(name))').eq('status', 'ativo');
@@ -663,7 +663,7 @@ router.get('/kpis/cross', async (req, res) => {
       .filter(c => c.events?.status !== 'concluido')
       .map(c => c.event_id);
 
-    // Filtrar por tipo (serie vs evento)
+    // Filtrar por tipo (série vs evento)
     if (tipo === 'serie') {
       eventIds = (cycles || []).filter(c => c.events?.event_categories?.name === 'Série').map(c => c.event_id);
     } else if (tipo === 'evento') {
@@ -686,7 +686,7 @@ router.get('/kpis/cross', async (req, res) => {
     const scores = eventos.map(e => e.kpi_evento).filter(s => s != null);
     const kpiMedio = scores.length > 0 ? Math.round(scores.reduce((a, b) => a + b, 0) / scores.length) : 0;
 
-    // Ranking de areas cross-eventos
+    // Ranking de áreas cross-eventos
     const areaMap = {};
     (areaKpis || []).forEach(a => {
       if (!areaMap[a.area]) areaMap[a.area] = { scores: [], total_docs: 0, docs_ok: 0 };
@@ -732,7 +732,7 @@ router.get('/kpis/doc-resumo/:taskId', async (req, res) => {
       }
     }
 
-    res.json({ resumo: null, file_name: cc.file_name, file_url: cc.file_url, message: 'Documento ainda nao processado pelo Cerebro' });
+    res.json({ resumo: null, file_name: cc.file_name, file_url: cc.file_url, message: 'Documento ainda não processado pelo Cerebro' });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
@@ -747,7 +747,7 @@ router.patch('/tasks/:taskId/critical', authorize('admin', 'diretor'), async (re
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// GET /api/cycles/kpis/area-weights — pesos de area por categoria
+// GET /api/cycles/kpis/area-weights — pesos de área por categoria
 router.get('/kpis/area-weights', async (req, res) => {
   try {
     const { data, error } = await supabase.from('event_area_weights').select('*, event_categories(name)');
@@ -766,7 +766,7 @@ router.put('/kpis/area-weights/:id', authorize('admin', 'diretor'), async (req, 
 });
 
 // ══════════════════════════════════════════════
-// TAREFAS PADRAO — CRUD (GET ja registrado acima de /:eventId)
+// TAREFAS PADRÃO — CRUD (GET já registrado acima de /:eventId)
 // ══════════════════════════════════════════════
 
 // Helper: propagar template para todos os eventos ativos com ciclo
@@ -811,7 +811,7 @@ router.post('/adm-templates', authorize('admin', 'diretor'), async (req, res) =>
     }).select('*, adm_task_template_subtasks(*)').single();
     if (error) throw error;
 
-    // Propagar para eventos ativos nao concluidos
+    // Propagar para eventos ativos não concluídos
     const propagados = await propagarParaEventosAtivos(data);
     res.json({ ...data, propagados });
   } catch (err) { res.status(500).json({ error: err.message }); }
@@ -830,18 +830,18 @@ router.put('/adm-templates/:id', authorize('admin', 'diretor'), async (req, res)
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// DELETE /api/cycles/adm-templates/:id — remove template + tarefas nao concluidas dos eventos ativos
+// DELETE /api/cycles/adm-templates/:id — remove template + tarefas não concluídas dos eventos ativos
 router.delete('/adm-templates/:id', authorize('admin', 'diretor'), async (req, res) => {
   try {
     // Buscar template antes de deletar pra saber titulo/area
     const { data: tmpl } = await supabase.from('adm_task_templates').select('titulo, area').eq('id', req.params.id).single();
 
-    // Remover tarefas nao concluidas de eventos ativos que batem com esse template
+    // Remover tarefas não concluídas de eventos ativos que batem com esse template
     if (tmpl) {
       const { data: cycles } = await supabase.from('event_cycles').select('event_id').eq('status', 'ativo');
       const eventIds = (cycles || []).map(c => c.event_id);
       if (eventIds.length > 0) {
-        // Buscar tasks que batem titulo+area e nao estao concluidas
+        // Buscar tasks que batem título+área e não estão concluídas
         const { data: tasks } = await supabase.from('cycle_phase_tasks').select('id').in('event_id', eventIds).eq('titulo', tmpl.titulo).eq('area', tmpl.area).neq('status', 'concluida');
         const taskIds = (tasks || []).map(t => t.id);
         if (taskIds.length > 0) {
@@ -876,7 +876,7 @@ router.post('/adm-templates/:id/subtasks', authorize('admin', 'diretor'), async 
     }).select().single();
     if (error) throw error;
 
-    // Propagar: adicionar subtarefa em todas as tasks nao concluidas dos eventos ativos
+    // Propagar: adicionar subtarefa em todas as tasks não concluídas dos eventos ativos
     const { data: tmpl } = await supabase.from('adm_task_templates').select('titulo, area').eq('id', req.params.id).single();
     if (tmpl) {
       const { data: cycles } = await supabase.from('event_cycles').select('event_id').eq('status', 'ativo');
@@ -902,7 +902,7 @@ router.delete('/adm-template-subtasks/:id', authorize('admin', 'diretor'), async
     if (sub) {
       const { data: tmpl } = await supabase.from('adm_task_templates').select('titulo, area').eq('id', sub.template_id).single();
       if (tmpl) {
-        // Encontrar tasks nao concluidas nos eventos ativos
+        // Encontrar tasks não concluídas nos eventos ativos
         const { data: cycles } = await supabase.from('event_cycles').select('event_id').eq('status', 'ativo');
         const eventIds = (cycles || []).map(c => c.event_id);
         if (eventIds.length > 0) {
@@ -934,14 +934,14 @@ router.get('/area-responsaveis', async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// PUT /api/cycles/area-responsaveis/:area — atualizar responsável de uma área
+// PUT /api/cycles/area-responsaveis/:área — atualizar responsável de uma área
 // Aceita responsavel_id (UUID FK profiles) opcional · senao resolve via nome
 router.put('/area-responsaveis/:area', authorize('admin', 'diretor'), async (req, res) => {
   try {
     const { responsavel_nome, responsavel_id } = req.body;
     if (!responsavel_nome?.trim()) return res.status(400).json({ error: 'responsavel_nome é obrigatório' });
 
-    // Se responsavel_id nao fornecido, tenta resolver via nome (LOWER + TRIM)
+    // Se responsavel_id não fornecido, tenta resolver via nome (LOWER + TRIM)
     let respId = responsavel_id || null;
     if (!respId) {
       const { data: profile } = await supabase.from('profiles')

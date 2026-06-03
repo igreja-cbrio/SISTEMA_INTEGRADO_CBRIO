@@ -27,13 +27,13 @@ export default function RevisaoEstrategica() {
 
   const loadDiag = useCallback(async () => {
     setLoading(true);
-    try { setDiag(await revisoes.diagnostico()); } catch { toast.error('Erro ao carregar diagnostico'); }
+    try { setDiag(await revisoes.diagnostico()); } catch { toast.error('Erro ao carregar diagnóstico'); }
     finally { setLoading(false); }
   }, []);
 
   useEffect(() => { loadDiag(); }, [loadDiag]);
 
-  if (loading || !diag) return <div style={{ padding: 60, textAlign: 'center', color: C.t3, fontSize: 14 }}>Carregando diagnostico...</div>;
+  if (loading || !diag) return <div style={{ padding: 60, textAlign: 'center', color: C.t3, fontSize: 14 }}>Carregando diagnóstico...</div>;
 
   const hoje = new Date().toISOString().split('T')[0];
   const { projetos: p, expansao: e, dependencias: dep } = diag;
@@ -61,7 +61,7 @@ export default function RevisaoEstrategica() {
 
   return (
     <div style={{ padding: '24px 32px', maxWidth: 1200, margin: '0 auto' }}>
-      <h1 style={{ fontSize: 22, fontWeight: 700, color: C.text, margin: '0 0 20px' }}>Revisao Estrategica</h1>
+      <h1 style={{ fontSize: 22, fontWeight: 700, color: C.text, margin: '0 0 20px' }}>Revisão Estratégica</h1>
 
       {/* KPIs */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(155px, 1fr))', gap: 12, marginBottom: 20 }}>
@@ -100,7 +100,7 @@ export default function RevisaoEstrategica() {
         <span style={{ fontSize: 11, color: C.t3, marginLeft: 'auto' }}>{filtered.length} itens</span>
       </div>
 
-      {/* Lista — clica e abre pagina de detalhe */}
+      {/* Lista — clica e abre página de detalhe */}
       <div style={{ background: C.card, borderRadius: 12, border: `1px solid ${C.border}`, overflow: 'hidden' }}>
         <div style={{ maxHeight: 600, overflowY: 'auto' }}>
           {filtered.length === 0 && <div style={{ padding: 32, textAlign: 'center', color: C.t3, fontSize: 13 }}>Nenhum item encontrado.</div>}
@@ -120,7 +120,7 @@ export default function RevisaoEstrategica() {
                 {atrasado ? (
                   <span style={{ fontSize: 11, fontWeight: 700, color: C.red, flexShrink: 0, minWidth: 65, textAlign: 'right' }}>{item._dias}d atraso</span>
                 ) : item.status === 'concluido' ? (
-                  <span style={{ fontSize: 10, padding: '2px 8px', borderRadius: 99, background: '#10b98118', color: C.green, fontWeight: 600, flexShrink: 0 }}>Concluido</span>
+                  <span style={{ fontSize: 10, padding: '2px 8px', borderRadius: 99, background: '#10b98118', color: C.green, fontWeight: 600, flexShrink: 0 }}>Concluído</span>
                 ) : item.date_end && item._dias <= 0 ? (
                   <span style={{ fontSize: 11, fontWeight: 700, color: C.green, flexShrink: 0, minWidth: 65, textAlign: 'right' }}>{Math.abs(item._dias)}d restantes</span>
                 ) : (

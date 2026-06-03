@@ -1,8 +1,8 @@
 // ============================================================================
-// Rotas publicas do modulo NEXT
+// Rotas publicas do módulo NEXT
 //
 // GET  /api/public/next/eventos - eventos com status='agendado' (data >= hoje)
-// POST /api/public/next/inscrever - cria inscricao (sem auth)
+// POST /api/public/next/inscrever - cria inscrição (sem auth)
 // ============================================================================
 
 const express = require('express');
@@ -11,7 +11,7 @@ const rateLimit = require('express-rate-limit');
 const { supabase } = require('../utils/supabase');
 const { notificar } = require('../services/notificar');
 
-// Rate limit dedicado para inscricoes (anti-spam)
+// Rate limit dedicado para inscrições (anti-spam)
 const limiter = rateLimit({
   windowMs: 60 * 1000, // 1 min
   max: 10,
@@ -82,7 +82,7 @@ router.post('/inscrever', async (req, res) => {
     const cleanCpf = cpf ? soDigitos(cpf) : null;
     const cleanEmail = String(email).toLowerCase().trim();
 
-    // Resolver evento: se nao informado, pegar o proximo agendado
+    // Resolver evento: se não informado, pegar o próximo agendado
     let eventoId = evento_id || null;
     if (!eventoId) {
       const hoje = new Date().toISOString().slice(0, 10);
@@ -97,8 +97,8 @@ router.post('/inscrever', async (req, res) => {
       eventoId = prox?.id || null;
     }
 
-    // Membresia e fonte unica: garante que existe mem_membros (cria se nao
-    // existe). Apos esta chamada, toda inscricao NEXT estara vinculada a
+    // Membresia e fonte única: garante que existe mem_membros (cria se não
+    // existe). Após esta chamada, toda inscrição NEXT estará vinculada a
     // /ministerial/membresia automaticamente.
     let jaBatizado = false, jaVoluntario = false, jaDoador = false;
     let membroId = null;
@@ -152,18 +152,18 @@ router.post('/inscrever', async (req, res) => {
       .single();
 
     if (insErr) {
-      // CPF/email duplicado no mesmo evento: nao quebrar, retornar OK
+      // CPF/email duplicado no mesmo evento: não quebrar, retornar OK
       if (insErr.code === '23505') {
         return res.status(200).json({ ok: true, ja_inscrito: true });
       }
       return res.status(500).json({ error: insErr.message });
     }
 
-    // Notificacao para responsaveis do NEXT
+    // Notificação para responsáveis do NEXT
     try {
       await notificar({
         modulo: 'next',
-        titulo: 'Nova inscricao no NEXT',
+        titulo: 'Nova inscrição no NEXT',
         mensagem: `${nome} ${sobrenome || ''} (${cleanEmail}) se inscreveu para o NEXT.`,
         link: '/ministerial/next?tab=inscritos',
       });

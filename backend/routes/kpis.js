@@ -10,20 +10,20 @@ const { isAuthorizedCron } = require('../utils/cronAuth');
 router.use(authenticate);
 
 // Helper: permite escrita em cultos/decisoes/batismos pra admin/diretor OU
-// quem tem 'integracao' em kpi_areas (Lorena, lider de Integracao).
+// quem tem 'integração' em kpi_areas (Lorena, líder de Integração).
 // Auditoria de pre-liberacao identificou que essas rotas estavam so com
-// authenticate · qualquer usuario logado escrevia. Agora restringido.
+// authenticate · qualquer usuário logado escrevia. Agora restringido.
 function authorizeIntegracao(req, res, next) {
   const u = req.user || {};
   if (['admin', 'diretor'].includes(u.role)) return next();
   const areas = (u.kpi_areas || []).map(a => String(a).toLowerCase());
   if (areas.includes('integracao')) return next();
   return res.status(403).json({
-    error: 'Sem permissao · necessario ser admin, diretor ou lider de Integracao',
+    error: 'Sem permissão · necessário ser admin, diretor ou líder de Integração',
   });
 }
 
-// Helper: valida numero >= 0 (rejeita negativos antes do INSERT/UPDATE)
+// Helper: valida número >= 0 (rejeita negativos antes do INSERT/UPDATE)
 function nonNeg(v, fallback = 0) {
   const n = Number(v);
   if (Number.isNaN(n) || n < 0) return fallback;
@@ -121,7 +121,7 @@ router.put('/cultos/:id', authorizeIntegracao, async (req, res) => {
     .from('cultos').update(update).eq('id', req.params.id).select().single();
   if (error) return res.status(500).json({ error: error.message });
 
-  // KPIs auto-cultos/batismos sao recalculados via trigger SQL (migration
+  // KPIs auto-cultos/batismos são recalculados via trigger SQL (migration
   // 20260514210000_kpis_trigger_realtime.sql · trg_kpi_recalcular_culto).
   // Aqui so limpa o cache do /painel pra forcar releitura do dado novo.
   painelCache.bust('');
@@ -135,7 +135,7 @@ router.delete('/cultos/:id', authorize('admin', 'diretor'), async (req, res) => 
   res.json({ ok: true });
 });
 
-// Conta automatica de voluntarios escalados/checkin · usada no modal pra
+// Conta automática de voluntários escalados/checkin · usada no modal pra
 // mostrar valor sugerido. Quando user salva nas colunas manuais, sobrescreve.
 router.get('/cultos/:id/voluntarios', async (req, res) => {
   const { data, error } = await supabase
@@ -160,10 +160,10 @@ router.get('/cultos/:id/decisoes-pessoas', async (req, res) => {
   res.json(data || []);
 });
 
-// Decisoes historicas que foram importadas (planilha, etc) e NAO tem
+// Decisões históricas que foram importadas (planilha, etc) e NÃO tem
 // culto vinculado. Vem de mem_trilha_valores etapa='conversao' filtrando
 // por observacoes/origem. Alimenta a aba Pessoas em /integracao/decisoes
-// pra incluir esse historico junto com as decisoes registradas em cultos.
+// pra incluir esse histórico junto com as decisões registradas em cultos.
 router.get('/decisoes-pessoas/historico-importado', async (req, res) => {
   try {
     const limit = Math.min(Number(req.query.limit) || 500, 2000);
@@ -206,8 +206,8 @@ router.get('/decisoes-pessoas/historico-importado', async (req, res) => {
   }
 });
 
-// Decisoes com cadastro incompleto (sem CPF ou sem data_nascimento)
-// Marcos: "futuramente quando tivermos esse convertido ja alinhado na
+// Decisões com cadastro incompleto (sem CPF ou sem data_nascimento)
+// Marcos: "futuramente quando tivermos esse convertido já alinhado na
 // jornada vamos conseguir buscar melhor esses dados em um censo posterior"
 router.get('/decisoes-pessoas/incompletos', async (req, res) => {
   const limit = Math.min(Number(req.query.limit) || 200, 1000);
@@ -279,9 +279,9 @@ router.post('/cultos/:id/decisoes-pessoas', authorizeIntegracao, async (req, res
   const tipo = ['presencial', 'online', 'kids'].includes(tipo_decisao) ? tipo_decisao : 'presencial';
 
   // Validacoes diferentes conforme tipo:
-  // - presencial/online: telefone da pessoa eh obrigatorio (11 digitos)
-  // - kids: nome da crianca + dados do responsavel (telefone responsavel
-  //   obrigatorio · CPF responsavel opcional)
+  // - presencial/online: telefone da pessoa eh obrigatório (11 digitos)
+  // - kids: nome da criança + dados do responsável (telefone responsável
+  //   obrigatório · CPF responsável opcional)
   let telLimpo = telefone ? String(telefone).replace(/\D/g, '') : '';
   let cpfLimpo = cpf ? String(cpf).replace(/\D/g, '') : null;
   let respTelLimpo = responsavel_telefone ? String(responsavel_telefone).replace(/\D/g, '') : '';
@@ -289,18 +289,18 @@ router.post('/cultos/:id/decisoes-pessoas', authorizeIntegracao, async (req, res
 
   if (tipo === 'kids') {
     if (!responsavel_nome || String(responsavel_nome).trim().length < 2) {
-      return res.status(400).json({ error: 'Nome do responsavel obrigatorio (min 2 chars) pra decisao Kids' });
+      return res.status(400).json({ error: 'Nome do responsável obrigatório (min 2 chars) pra decisão Kids' });
     }
     if (respTelLimpo.length !== 11) {
-      return res.status(400).json({ error: 'Telefone do responsavel deve ter 11 digitos pra decisao Kids' });
+      return res.status(400).json({ error: 'Telefone do responsável deve ter 11 digitos pra decisão Kids' });
     }
     if (respCpfLimpo && respCpfLimpo.length !== 11) {
-      return res.status(400).json({ error: 'CPF do responsavel deve ter 11 digitos (ou deixe vazio)' });
+      return res.status(400).json({ error: 'CPF do responsável deve ter 11 digitos (ou deixe vazio)' });
     }
-    // Crianca nao precisa de telefone proprio
+    // Criança não precisa de telefone próprio
     telLimpo = telLimpo || '';
     if (telLimpo && telLimpo.length !== 11) {
-      return res.status(400).json({ error: 'Telefone da crianca (se preenchido) deve ter 11 digitos' });
+      return res.status(400).json({ error: 'Telefone da criança (se preenchido) deve ter 11 digitos' });
     }
   } else {
     // presencial / online
@@ -312,8 +312,8 @@ router.post('/cultos/:id/decisoes-pessoas', authorizeIntegracao, async (req, res
     }
   }
 
-  // Se nao veio membro_id explicito, trigger BEFORE INSERT resolve/cria
-  // (trigger pula tipo='kids' · nao cria mem_membros pra crianca por LGPD)
+  // Se não veio membro_id explicito, trigger BEFORE INSERT resolve/cria
+  // (trigger pula tipo='kids' · não cria mem_membros pra criança por LGPD)
   const { data, error } = await supabase
     .from('cultos_decisoes_pessoas')
     .insert({
@@ -706,13 +706,13 @@ router.post('/youtube/sync', async (req, res) => {
   const onlineTypeIds = new Set((onlineTypes || []).map(t => t.id));
   const isOnline = (c) => !c.service_type_id || onlineTypeIds.has(c.service_type_id);
 
-  // Backfill-friendly: pega TODOS os cultos com video pendente ate a data limite,
-  // nao so a data exata. Se o cron falhou em algum dia, na proxima execucao ele
+  // Backfill-friendly: pega TODOS os cultos com vídeo pendente até a data limite,
+  // não so a data exata. Se o cron falhou em algum dia, na próxima execucao ele
   // ainda recupera o dado (best-effort com viewCount atual). O cron diario
   // limita o backlog a poucos itens.
   //
-  // D+1 (online_ds): cultos com data <= ontem, com video, sem online_ds
-  // D+7 (online_ddus): cultos com data <= 7 dias atras, com video, com online_ds, sem online_ddus
+  // D+1 (online_ds): cultos com data <= ontem, com vídeo, sem online_ds
+  // D+7 (online_ddus): cultos com data <= 7 dias atras, com vídeo, com online_ds, sem online_ddus
   const [{ data: cultosDSRaw }, { data: cultosDDUSRaw }] = await Promise.all([
     supabase.from('cultos').select('id, data, youtube_video_id, service_type_id').is('deleted_at', null).lte('data', ontemStr).not('youtube_video_id', 'is', null).is('online_ds', null).order('data', { ascending: false }).limit(50),
     supabase.from('cultos').select('id, data, youtube_video_id, online_ds, service_type_id').is('deleted_at', null).lte('data', seteDiasStr).not('youtube_video_id', 'is', null).not('online_ds', 'is', null).is('online_ddus', null).order('data', { ascending: false }).limit(50),
@@ -801,8 +801,8 @@ function parseMes(input) {
   const inicio = new Date(Date.UTC(y, m - 1, 1));
   const fimExclusivo = new Date(Date.UTC(y, m, 1));
   const diasNoMes = new Date(Date.UTC(y, m, 0)).getUTCDate();
-  // Semanas "completas" · domingo (D) E quarta (D+3) ambos dentro do mes.
-  // Regra do negocio: so contam semanas com ambos os dias de culto (dom+qua).
+  // Semanas "completas" · domingo (D) E quarta (D+3) ambos dentro do mês.
+  // Regra do negócio: so contam semanas com ambos os dias de culto (dom+qua).
   // Ex.: abr/26 → 4 semanas (dom 5/12/19/26 + qua 8/15/22/29 todos em abril)
   //      jun/26 → 3 semanas (dom 28/jun + qua 1/jul cai fora)
   let semanasNoMes = 0;
@@ -893,7 +893,7 @@ router.get('/cultura', async (req, res) => {
     };
 
     // Valores manuais de cultura_mensal tem prioridade sobre o agregado de
-    // cultos · permite lancar mes consolidado sem cultos individuais.
+    // cultos · permite lancar mês consolidado sem cultos individuais.
     const presencialSemanal = cm?.freq_presencial_semanal != null
       ? cm.freq_presencial_semanal
       : Math.round(presencialTotal / semanasNoMes);
@@ -930,14 +930,14 @@ router.get('/cultura', async (req, res) => {
   }
 });
 
-// POST /kpis/cultura/mensal — upsert (mes, qtd_dizimistas, qtd_ofertantes, observacoes)
+// POST /kpis/cultura/mensal — upsert (mês, qtd_dizimistas, qtd_ofertantes, observações)
 router.post('/cultura/mensal', authorize('admin', 'diretor'), async (req, res) => {
   const {
     mes, qtd_dizimistas, qtd_ofertantes, observacoes,
     freq_presencial_semanal, freq_online_semanal, decisoes_total, freq_grupos_total,
   } = req.body || {};
   if (!mes || !/^\d{4}-\d{2}/.test(mes)) {
-    return res.status(400).json({ error: 'Campo "mes" obrigatório no formato YYYY-MM' });
+    return res.status(400).json({ error: 'Campo "mês" obrigatório no formato YYYY-MM' });
   }
   // Sempre dia 01
   const mesDate = `${mes.slice(0, 7)}-01`;

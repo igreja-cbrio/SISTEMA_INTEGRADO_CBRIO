@@ -1,8 +1,8 @@
 // ============================================================================
-// /api/dados-brutos/* — Dados brutos (numeros absolutos)
+// /api/dados-brutos/* — Dados brutos (números absolutos)
 //
-// Conceito: lider preenche numeros absolutos (frequencia, conversoes,
-// batismos, etc). KPIs com tipo_calculo automatico leem daqui e calculam.
+// Conceito: líder preenche números absolutos (frequência, conversoes,
+// batismos, etc). KPIs com tipo_calculo automático leem daqui e calculam.
 //
 // Endpoints:
 //   GET    /tipos                        - catalogo de tipos
@@ -19,7 +19,7 @@ const { authenticate, authorize, authorizeKpiArea } = require('../middleware/aut
 const { supabase } = require('../utils/supabase');
 const painelCache = require('../services/painelCache');
 
-// Helper · usuario tem permissao por valor se algum KPI que consome esse tipo_id+area
+// Helper · usuário tem permissão por valor se algum KPI que consome esse tipo_id+área
 // tem valor que bate com profile.kpi_valores
 async function temPermissaoPorValor(req, registro) {
   const myValores = (req.user?.kpi_valores || []).map(v => String(v).toLowerCase());
@@ -36,7 +36,7 @@ async function temPermissaoPorValor(req, registro) {
 
 router.use(authenticate);
 
-// Bust automatico do painel · qualquer mutacao em dado bruto recalcula KPI
+// Bust automático do painel · qualquer mutacao em dado bruto recalcula KPI
 router.use((req, res, next) => {
   if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method)) {
     res.on('finish', () => {
@@ -68,7 +68,7 @@ router.post('/tipos', authorize('admin', 'diretor'), async (req, res) => {
     const payload = {};
     for (const [k, v] of Object.entries(req.body || {})) if (allowed.includes(k)) payload[k] = v;
     if (!payload.id || !payload.nome) {
-      return res.status(400).json({ error: 'id e nome obrigatorios' });
+      return res.status(400).json({ error: 'id e nome obrigatórios' });
     }
     const { data, error } = await supabase
       .from('tipos_dado_bruto')
@@ -78,7 +78,7 @@ router.post('/tipos', authorize('admin', 'diretor'), async (req, res) => {
     if (error) throw error;
     res.status(201).json(data);
   } catch (e) {
-    if (e.code === '23505') return res.status(409).json({ error: 'Ja existe tipo com esse id' });
+    if (e.code === '23505') return res.status(409).json({ error: 'Já existe tipo com esse id' });
     res.status(500).json({ error: e.message });
   }
 });
@@ -131,7 +131,7 @@ router.get('/', async (req, res) => {
 router.post('/',
   authorizeKpiArea(
     req => (req.body?.area || '').toLowerCase(),
-    // Fallback · descobre os valores dos KPIs que consomem esse tipo_id+area
+    // Fallback · descobre os valores dos KPIs que consomem esse tipo_id+área
     async (req) => {
       if (!req.body?.tipo_id || !req.body?.area) return [];
       const { data } = await supabase
@@ -148,7 +148,7 @@ router.post('/',
     try {
       const b = req.body || {};
       if (!b.tipo_id || !b.area || !b.data || b.valor == null) {
-        return res.status(400).json({ error: 'tipo_id, area, data e valor obrigatorios' });
+        return res.status(400).json({ error: 'tipo_id, área, data e valor obrigatórios' });
       }
       const payload = {
         tipo_id: b.tipo_id,
@@ -175,20 +175,20 @@ router.post('/',
 
 router.put('/:id', async (req, res) => {
   try {
-    // Para edicao: validar permissao via area do registro existente
+    // Para edição: validar permissão via área do registro existente
     const { data: cur, error: errCur } = await supabase
       .from('dados_brutos')
       .select('area, tipo_id')
       .eq('id', req.params.id)
       .maybeSingle();
     if (errCur) throw errCur;
-    if (!cur) return res.status(404).json({ error: 'Registro nao encontrado' });
+    if (!cur) return res.status(404).json({ error: 'Registro não encontrado' });
 
-    // Se nao admin/diretor, conferir kpi_areas OU kpi_valores
+    // Se não admin/diretor, conferir kpi_areas OU kpi_valores
     if (!['admin', 'diretor'].includes(req.user?.role)) {
       const myAreas = (req.user.kpi_areas || []).map(a => a.toLowerCase());
       const ok = myAreas.includes(cur.area.toLowerCase()) || await temPermissaoPorValor(req, cur);
-      if (!ok) return res.status(403).json({ error: 'Sem permissao para esta area/valor' });
+      if (!ok) return res.status(403).json({ error: 'Sem permissão para esta area/valor' });
     }
 
     const allowed = ['valor', 'contexto', 'observacao'];
@@ -212,7 +212,7 @@ router.put('/:id', async (req, res) => {
 });
 
 // ----------------------------------------------------------------------------
-// POST /:id/validar — lider de area da OK (validacao final de ciclo)
+// POST /:id/validar — líder de área da OK (validação final de ciclo)
 // ----------------------------------------------------------------------------
 router.post('/:id/validar', async (req, res) => {
   try {
@@ -221,13 +221,13 @@ router.post('/:id/validar', async (req, res) => {
       .select('area, validado_em')
       .eq('id', req.params.id)
       .maybeSingle();
-    if (!cur) return res.status(404).json({ error: 'Registro nao encontrado' });
+    if (!cur) return res.status(404).json({ error: 'Registro não encontrado' });
 
-    // Conferir permissao de validacao (lider de area + admin/diretor)
+    // Conferir permissão de validação (líder de área + admin/diretor)
     if (!['admin', 'diretor'].includes(req.user?.role)) {
       const myAreas = (req.user.kpi_areas || []).map(a => a.toLowerCase());
       if (!myAreas.includes(cur.area.toLowerCase())) {
-        return res.status(403).json({ error: 'Apenas lider de area pode validar dados da sua area' });
+        return res.status(403).json({ error: 'Apenas líder de área pode validar dados da sua área' });
       }
     }
 
@@ -247,7 +247,7 @@ router.post('/:id/validar', async (req, res) => {
   }
 });
 
-// DELETE /:id/validar — desfaz validacao
+// DELETE /:id/validar — desfaz validação
 router.delete('/:id/validar', async (req, res) => {
   try {
     const { data: cur } = await supabase
@@ -255,12 +255,12 @@ router.delete('/:id/validar', async (req, res) => {
       .select('area')
       .eq('id', req.params.id)
       .maybeSingle();
-    if (!cur) return res.status(404).json({ error: 'Registro nao encontrado' });
+    if (!cur) return res.status(404).json({ error: 'Registro não encontrado' });
 
     if (!['admin', 'diretor'].includes(req.user?.role)) {
       const myAreas = (req.user.kpi_areas || []).map(a => a.toLowerCase());
       if (!myAreas.includes(cur.area.toLowerCase())) {
-        return res.status(403).json({ error: 'Sem permissao' });
+        return res.status(403).json({ error: 'Sem permissão' });
       }
     }
 
@@ -282,12 +282,12 @@ router.delete('/:id', async (req, res) => {
       .select('area')
       .eq('id', req.params.id)
       .maybeSingle();
-    if (!cur) return res.status(404).json({ error: 'Registro nao encontrado' });
+    if (!cur) return res.status(404).json({ error: 'Registro não encontrado' });
 
     if (!['admin', 'diretor'].includes(req.user?.role)) {
       const myAreas = (req.user.kpi_areas || []).map(a => a.toLowerCase());
       if (!myAreas.includes(cur.area.toLowerCase())) {
-        return res.status(403).json({ error: 'Sem permissao' });
+        return res.status(403).json({ error: 'Sem permissão' });
       }
     }
 

@@ -5,7 +5,7 @@ import AnimatedBackground from './public/AnimatedBackground';
 import { PublicThemeToggle } from './public/publicTheme';
 import { useTheme } from '../contexts/ThemeContext';
 
-// Paleta fixa do login · pagina sempre dark independente do tema do usuario,
+// Paleta fixa do login · página sempre dark independente do tema do usuário,
 // senao a fonte fica invisivel em quem ta no tema claro.
 const mkCOL = (isDark) => isDark ? {
   text: '#f5f5f5', textMuted: '#a3a3a3', textDim: '#737373',
@@ -142,10 +142,10 @@ export default function Login() {
         pc_oauth_denied: 'Login com Planning Center foi cancelado.',
         pc_no_email: 'Nenhum e-mail encontrado na sua conta do Planning Center.',
         pc_oauth_failed: 'Erro ao autenticar com Planning Center. Tente novamente.',
-        verify_failed: 'Erro ao verificar sessao. Tente novamente.',
+        verify_failed: 'Erro ao verificar sessão. Tente novamente.',
         server_error: 'Erro no provedor de login. Tente novamente.',
       };
-      const baseMessage = msgs[authError] || 'Erro na autenticacao.';
+      const baseMessage = msgs[authError] || 'Erro na autenticação.';
       const detail = errorDescription || errorCode;
       setError(detail ? `${baseMessage} Detalhe: ${detail}` : baseMessage);
       window.history.replaceState({}, '', '/login');
@@ -167,7 +167,7 @@ export default function Login() {
     try {
       if (rememberMe) localStorage.setItem(REMEMBER_KEY, email);
       else localStorage.removeItem(REMEMBER_KEY);
-    } catch { /* localStorage pode estar bloqueado (modo anonimo) */ }
+    } catch { /* localStorage pode estar bloqueado (modo anônimo) */ }
     navigate('/');
   }
 
@@ -205,7 +205,7 @@ export default function Login() {
     }
     setEsqueciMsg({
       type: 'success',
-      text: 'Pronto! Se este e-mail existir no sistema, voce recebera um link em alguns minutos.',
+      text: 'Pronto! Se este e-mail existir no sistema, você receberá um link em alguns minutos.',
     });
   }
 

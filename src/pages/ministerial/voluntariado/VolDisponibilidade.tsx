@@ -41,7 +41,7 @@ export default function VolDisponibilidade() {
     const map = new Map<string, typeof services>();
     for (const s of services) {
       const d = parseISO(s.scheduled_at);
-      // Chave: inicio da semana (domingo)
+      // Chave: início da semana (domingo)
       const sunday = new Date(d);
       sunday.setDate(d.getDate() - d.getDay());
       const key = format(sunday, 'yyyy-MM-dd');
@@ -64,7 +64,7 @@ export default function VolDisponibilidade() {
             Cultos do mes com ausencias registradas pelos voluntarios
           </p>
         </div>
-        {/* Navegacao de mes */}
+        {/* Navegacao de mês */}
         <div className="flex items-center gap-2">
           <button
             onClick={() => setMonthOffset(o => o - 1)}
@@ -102,7 +102,7 @@ export default function VolDisponibilidade() {
       ) : totalCultos === 0 ? (
         <div className="flex flex-col items-center justify-center py-20 text-center">
           <CalendarOff className="h-12 w-12 text-muted-foreground/30 mb-4" />
-          <p className="font-medium text-muted-foreground">Nenhum culto neste mes</p>
+          <p className="font-medium text-muted-foreground">Nenhum culto neste mês</p>
           <p className="text-sm text-muted-foreground/60 mt-1">
             Va em "Tipos de Culto" e clique "Gerar 2026 inteiro"
           </p>

@@ -137,14 +137,14 @@ export default function DevocionalHoje() {
 
               {item.aplicacao && (
                 <div className="bg-primary/5 border border-primary/20 rounded-lg p-4">
-                  <h3 className="text-xs font-semibold uppercase tracking-wide text-primary mb-1">Aplicacao</h3>
+                  <h3 className="text-xs font-semibold uppercase tracking-wide text-primary mb-1">Aplicação</h3>
                   <p className="text-sm whitespace-pre-wrap">{item.aplicacao}</p>
                 </div>
               )}
 
               {item.oracao && (
                 <div className="bg-muted rounded-lg p-4">
-                  <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-1">Oracao</h3>
+                  <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-1">Oração</h3>
                   <p className="text-sm whitespace-pre-wrap italic">{item.oracao}</p>
                 </div>
               )}
@@ -157,7 +157,7 @@ export default function DevocionalHoje() {
                   rows={4}
                   value={obs}
                   onChange={e => setObs(e.target.value)}
-                  placeholder="Pode ficar em branco se preferir so marcar como concluido."
+                  placeholder="Pode ficar em branco se preferir so marcar como concluído."
                 />
               </Card>
             )}

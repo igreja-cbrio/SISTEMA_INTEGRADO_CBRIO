@@ -1,12 +1,12 @@
 // ============================================================================
-// /inscricao-grupos — formulario publico para inscricao em grupo de conexao.
+// /inscricao-grupos — formulário público para inscrição em grupo de conexão.
 //
-// Acessado via QR code distribuido nos cultos / redes sociais durante
-// periodo de inscricao. Usa o GrupoSelector em modo "full" (todos os
-// filtros: lider, categoria, bairro, CEP, lista, mapa) e um form
-// minimo de identificacao (nome, CPF, email, telefone, DOB).
+// Acessado via QR code distribuído nos cultos / redes sociais durante
+// período de inscrição. Usa o GrupoSelector em modo "full" (todos os
+// filtros: líder, categoria, bairro, CEP, lista, mapa) e um form
+// mínimo de identificacao (nome, CPF, email, telefone, DOB).
 //
-// Submit: cria mem_cadastros_pendentes (se ainda nao for membro) +
+// Submit: cria mem_cadastros_pendentes (se ainda não for membro) +
 // mem_grupo_pedidos com origem='formulario_publico'.
 // ============================================================================
 
@@ -17,7 +17,7 @@ import { usePublicTheme, PublicThemeToggle, PublicPaletteCtx, usePublicPalette }
 import GrupoSelector from '../../components/grupos/GrupoSelector';
 import { CheckCircle2, ArrowLeft, Users } from 'lucide-react';
 
-const TEXTO_CONSENTIMENTO = `Ao enviar este formulario, voce autoriza a CBRio a utilizar seus dados pessoais para fins de comunicacao com a igreja e participacao em grupo de conexao, conforme a LGPD.`;
+const TEXTO_CONSENTIMENTO = `Ao enviar este formulário, você autoriza a CBRio a utilizar seus dados pessoais para fins de comunicacao com a igreja e participação em grupo de conexão, conforme a LGPD.`;
 
 function soDigitos(v) { return (v || '').toString().replace(/\D+/g, ''); }
 function mascaraCpf(v) {
@@ -88,7 +88,7 @@ export default function InscricaoGrupos() {
 
   const submit = async () => {
     if (!grupoEscolhido) { setError('Escolha um grupo primeiro.'); return; }
-    if (!formValido()) { setError('Preencha os campos obrigatorios.'); return; }
+    if (!formValido()) { setError('Preencha os campos obrigatórios.'); return; }
     setLoading(true);
     setError('');
     try {
@@ -106,7 +106,7 @@ export default function InscricaoGrupos() {
       });
       setStep(2);
     } catch (e) {
-      setError(e.message || 'Nao foi possivel enviar. Tente novamente.');
+      setError(e.message || 'Não foi possível enviar. Tente novamente.');
     } finally { setLoading(false); }
   };
 

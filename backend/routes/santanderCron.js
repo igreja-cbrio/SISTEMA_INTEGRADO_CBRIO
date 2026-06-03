@@ -1,11 +1,11 @@
-// Rota de cron pra sync automatico do Santander
-// NAO usa authenticate · protegida por header X-Cron-Secret (CRON_SECRET env)
+// Rota de cron pra sync automático do Santander
+// NÃO usa authenticate · protegida por header X-Cron-Secret (CRON_SECRET env)
 //
 // Fluxo do POST /api/santander/cron/sync:
 //   1. Valida CRON_SECRET
-//   2. Verifica se ENVs Santander estao configuradas (se nao, no-op)
+//   2. Verifica se ENVs Santander estão configuradas (se não, no-op)
 //   3. Busca contas Santander · acha conta cadastrada local
-//   4. Pega extrato dos ultimos N dias via API
+//   4. Pega extrato dos últimos N dias via API
 //   5. Insere em fin_lancamentos_brutos (idempotente via FITID unique)
 //   6. Roda matchOfxPix + classificarBatch
 //   7. Retorna resumo
@@ -138,7 +138,7 @@ async function handlerSync(req, res) {
       const tipoTrn = Number(t.valor) >= 0 ? 'CREDIT' : 'DEBIT';
       const memo = t.descricao || '';
 
-      // Preferencia: doc da Santander (partieDoc), fallback regex no memo
+      // Preferência: doc da Santander (partieDoc), fallback regex no memo
       let documento = t.partieDoc || null;
       if (!documento) {
         const cnpjM = memo.match(/\d{14}/);
@@ -170,7 +170,7 @@ async function handlerSync(req, res) {
       }
     }
 
-    // 6. Roda match com PIX detalhe + classificacao
+    // 6. Roda match com PIX detalhe + classificação
     const matchResult = await matchOfxPix({ uploadId: uploadRow?.id });
     const classifResult = await classificarBatch({ uploadId: uploadRow?.id });
 
@@ -210,8 +210,8 @@ router.get('/sync', handlerSync);  // Vercel cron usa GET
 // POST /api/santander/cron/pix-sync · sync rapido em janelas de culto
 // ─────────────────────────────────────────────────────────────────────
 // Diferente do /sync diario (puxa 3 dias completos), este puxa apenas
-// as ultimas 4h do extrato. Roda a cada 3min durante cultos pra alimentar
-// a aba "Culto ao Vivo". Idempotente · transacoes ja inseridas viram
+// as últimas 4h do extrato. Roda a cada 3min durante cultos pra alimentar
+// a aba "Culto ao Vivo". Idempotente · transacoes já inseridas viram
 // duplicados via FITID UNIQUE.
 router.post('/pix-sync', async (req, res) => {
   const startTime = Date.now();
@@ -315,7 +315,7 @@ router.post('/pix-sync', async (req, res) => {
       }
     }
 
-    // Roda match com PIX detalhe + classificacao em batch
+    // Roda match com PIX detalhe + classificação em batch
     const matchResult = await matchOfxPix({ conta_id: contaLocal.id });
     const classifResult = await classificarBatch({});
 
@@ -338,7 +338,7 @@ router.post('/pix-sync', async (req, res) => {
 
 // ─────────────────────────────────────────────────────────────────────
 // GET/POST /api/santander/cron/saldo · atualiza snapshot do saldo + fin_contas
-// Roda de hora em hora pra manter o dashboard atualizado sem usuario sincronizar.
+// Roda de hora em hora pra manter o dashboard atualizado sem usuário sincronizar.
 // ─────────────────────────────────────────────────────────────────────
 async function handlerSaldoCron(req, res) {
   if (!isConfigured()) {

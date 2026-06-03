@@ -246,8 +246,8 @@ async function gerarNotificacoesFinanceiro() {
     });
   }
 
-  // 4. Fila de classificacao acumulada (PR B · estrutura fiscal)
-  // Tabela pode nao existir em ambientes antigos · try/catch silencioso
+  // 4. Fila de classificação acumulada (PR B · estrutura fiscal)
+  // Tabela pode não existir em ambientes antigos · try/catch silencioso
   try {
     const { count: filaCount } = await supabase
       .from('fin_fila_classificacao')
@@ -259,15 +259,15 @@ async function gerarNotificacoesFinanceiro() {
       count += await notificar({
         modulo: 'financeiro',
         tipo: 'fila_classificacao_alta',
-        titulo: `Fila de classificacao com ${filaCount} itens`,
-        mensagem: `Ha ${filaCount} lancamentos aguardando classificacao. Revise em /admin/financeiro -> Fila de classificacao.`,
+        titulo: `Fila de classificação com ${filaCount} itens`,
+        mensagem: `Ha ${filaCount} lancamentos aguardando classificação. Revise em /admin/financeiro -> Fila de classificação.`,
         link: '/admin/financeiro',
         severidade: filaCount >= 50 ? 'urgente' : 'aviso',
         chaveDedup: `fila_classificacao_alta_${hoje}`,
       });
     }
 
-    // 5. Lancamentos brutos pendentes ha muito tempo (>7d sem classificacao)
+    // 5. Lancamentos brutos pendentes ha muito tempo (>7d sem classificação)
     const seteDiasAtras = new Date(Date.now() - 7 * 86400000).toISOString();
     const { count: brutosVelhos } = await supabase
       .from('fin_lancamentos_brutos')
@@ -280,7 +280,7 @@ async function gerarNotificacoesFinanceiro() {
         modulo: 'financeiro',
         tipo: 'lancamentos_pendentes_antigos',
         titulo: `${brutosVelhos} lancamentos sem classificar ha >7 dias`,
-        mensagem: `Ha ${brutosVelhos} transacoes importadas ha mais de 7 dias ainda sem classificacao. Verifique a fila.`,
+        mensagem: `Ha ${brutosVelhos} transacoes importadas ha mais de 7 dias ainda sem classificação. Verifique a fila.`,
         link: '/admin/financeiro',
         severidade: 'aviso',
         chaveDedup: `lanc_pendentes_antigos_${hoje}`,
@@ -302,7 +302,7 @@ async function gerarNotificacoesFinanceiro() {
           modulo: 'financeiro',
           tipo: 'sem_upload_recente',
           titulo: `Sem importar extrato ha ${diasSemUpload} dias`,
-          mensagem: `Ultimo upload foi ha ${diasSemUpload} dias. Considere importar o extrato mais recente.`,
+          mensagem: `Último upload foi ha ${diasSemUpload} dias. Considere importar o extrato mais recente.`,
           link: '/admin/financeiro',
           severidade: 'aviso',
           chaveDedup: `sem_upload_${hoje}`,
@@ -310,7 +310,7 @@ async function gerarNotificacoesFinanceiro() {
       }
     }
   } catch (e) {
-    // Tabelas da PR B podem nao existir em ambientes antigos · ignora
+    // Tabelas da PR B podem não existir em ambientes antigos · ignora
     if (!String(e.message || '').includes('does not exist')) {
       console.warn('[NOTIF-FIN] Erro nas regras PR B:', e.message);
     }
@@ -580,7 +580,7 @@ async function gerarNotificacoesGrupos() {
       .in('grupo_id', grupoIds)
       .order('data', { ascending: false });
 
-    // Mapeia ultimo encontro por grupo
+    // Mapeia último encontro por grupo
     const ultimoPorGrupo = {};
     for (const e of encontros || []) {
       if (!ultimoPorGrupo[e.grupo_id]) ultimoPorGrupo[e.grupo_id] = e.data;
@@ -601,9 +601,9 @@ async function gerarNotificacoesGrupos() {
       const lider = g.mem_membros?.nome ? ` (lider: ${g.mem_membros.nome})` : '';
       const msg = ultimo
         ? `Grupo ${g.nome}${lider} esta sem encontro registrado ha ${dias} dias.`
-        : `Grupo ${g.nome}${lider} ainda nao teve encontro registrado.`;
+        : `Grupo ${g.nome}${lider} ainda não teve encontro registrado.`;
 
-      // Dedup em janelas de "limiteDias" para nao alertar todo dia o mesmo grupo
+      // Dedup em janelas de "limiteDias" para não alertar todo dia o mesmo grupo
       const janela = Math.floor(dias / limiteDias);
       count += await notificar({
         modulo: 'grupos',
@@ -639,13 +639,13 @@ async function gerarNotificacoesGrupos() {
 
     for (const m of semGrupo) {
       const dias = Math.floor((now - new Date(m.created_at).getTime()) / 86400000);
-      // Dedup mensal pra nao spammar
+      // Dedup mensal pra não spammar
       const janela = Math.floor(dias / 30);
       count += await notificar({
         modulo: 'grupos',
         tipo: 'membro_sem_grupo',
         titulo: `Membro sem grupo — ${m.nome}`,
-        mensagem: `${m.nome} e membro ha ${dias} dias mas ainda nao esta em nenhum grupo de conexao.`,
+        mensagem: `${m.nome} e membro ha ${dias} dias mas ainda não esta em nenhum grupo de conexão.`,
         link: '/grupos',
         severidade: dias >= 180 ? 'aviso' : 'info',
         chaveDedup: `membro_sem_grupo_${m.id}_${janela}`,
@@ -675,7 +675,7 @@ async function gerarNotificacoesRitual() {
     .eq('active', true);
   const targetIds = (diretoria || []).map(d => d.id);
 
-  // KPIs em alerta este mes
+  // KPIs em alerta este mês
   const { data: trajs } = await supabase
     .from('vw_kpi_trajetoria_atual')
     .select('kpi_id, status_trajetoria');
@@ -686,7 +686,7 @@ async function gerarNotificacoesRitual() {
 
   if (totalAlerta === 0) return 0;
 
-  // Quantos ja revisados
+  // Quantos já revisados
   const ids = emAlerta.map(t => t.kpi_id);
   const { data: revs } = await supabase
     .from('okr_revisoes')
@@ -702,7 +702,7 @@ async function gerarNotificacoesRitual() {
       modulo: 'kpis',
       tipo: 'ritual_aberto',
       titulo: `Ritual Mensal — ${totalPendentes} OKR(s) aguardando revisao`,
-      mensagem: `${totalAlerta} KPIs em alerta este mes (${revisados.size} ja revisados, ${totalPendentes} pendentes). Acesse o Ritual Mensal para registrar causa, decisao, responsavel e proximo passo.`,
+      mensagem: `${totalAlerta} KPIs em alerta este mês (${revisados.size} já revisados, ${totalPendentes} pendentes). Acesse o Ritual Mensal para registrar causa, decisão, responsável e próximo passo.`,
       link: '/ritual',
       severidade: 'aviso',
       chaveDedup: `ritual_aberto_${periodo}`,
@@ -710,13 +710,13 @@ async function gerarNotificacoesRitual() {
     });
   }
 
-  // ─── Aviso dia 15: meio do mes ───
+  // ─── Aviso dia 15: meio do mês ───
   if (dia === 15 && totalPendentes > 0 && targetIds.length > 0) {
     count += await notificar({
       modulo: 'kpis',
       tipo: 'ritual_meio_mes',
-      titulo: `Ritual ainda nao concluido — ${totalPendentes} pendentes`,
-      mensagem: `Metade do mes ja passou. Faltam ${totalPendentes} OKRs em alerta sem revisao registrada.`,
+      titulo: `Ritual ainda não concluído — ${totalPendentes} pendentes`,
+      mensagem: `Metade do mês já passou. Faltam ${totalPendentes} OKRs em alerta sem revisão registrada.`,
       link: '/ritual',
       severidade: 'aviso',
       chaveDedup: `ritual_meio_${periodo}`,
@@ -730,7 +730,7 @@ async function gerarNotificacoesRitual() {
       modulo: 'kpis',
       tipo: 'ritual_fim_mes',
       titulo: `Ritual fecha em 5 dias — ${totalPendentes} ainda pendentes`,
-      mensagem: `O mes esta acabando e ainda ha ${totalPendentes} OKRs em alerta sem revisao. Ate o fim do mes.`,
+      mensagem: `O mês esta acabando e ainda ha ${totalPendentes} OKRs em alerta sem revisão. Até o fim do mês.`,
       link: '/ritual',
       severidade: 'critico',
       chaveDedup: `ritual_fim_${periodo}`,
@@ -738,8 +738,8 @@ async function gerarNotificacoesRitual() {
     });
   }
 
-  // ─── Aviso dia 30+: KPIs nao revisados viram pendencia visivel ───
-  // (gerado depois pelo proprio painel — aqui so notificamos)
+  // ─── Aviso dia 30+: KPIs não revisados viram pendência visível ───
+  // (gerado depois pelo próprio painel — aqui so notificamos)
 
   // ─── Lembrete semanal (toda quarta) pra preencher KPIs semanais atrasados ───
   if (hoje.getDay() === 3) { // quarta-feira
@@ -768,7 +768,7 @@ async function gerarNotificacoesRitual() {
           modulo: 'kpis',
           tipo: 'kpis_semanais_pendentes',
           titulo: `${pendentes.length} KPI(s) semanal(is) pendente(s)`,
-          mensagem: `Voce tem ${pendentes.length} indicadores semanais sem registro nesta semana. Preenche em "Meus KPIs".`,
+          mensagem: `Você tem ${pendentes.length} indicadores semanais sem registro nesta semana. Preenche em "Meus KPIs".`,
           link: '/meus-kpis',
           severidade: 'info',
           chaveDedup: `kpis_semanais_${semanaKey}`,
@@ -782,8 +782,8 @@ async function gerarNotificacoesRitual() {
 
 // ═══════════════════════════════════════════════════════════
 // SOLICITAÇÕES · lembrete de avaliação NPS pós-conclusão
-// Solicitacao concluida ha >=24h e <=14d sem nps_nota · pede avaliacao.
-// Sem isso os KPIs ADM-*-Q (NPS Gestao+Criativo · 11 KPIs) ficam zerados.
+// Solicitação concluída ha >=24h e <=14d sem nps_nota · pede avaliação.
+// Sem isso os KPIs ADM-*-Q (NPS Gestão+Criativo · 11 KPIs) ficam zerados.
 // ═══════════════════════════════════════════════════════════
 async function gerarNotificacoesSolicitacoes() {
   let count = 0;
@@ -801,12 +801,12 @@ async function gerarNotificacoesSolicitacoes() {
     .lte('concluido_em', ha24h);
 
   for (const s of concluidas || []) {
-    // Lembrete unico por solicitacao · se ignorar, o badge "Avalie" na tela cobre o resto
+    // Lembrete único por solicitação · se ignorar, o badge "Avalie" na tela cobre o resto
     count += await notificar({
       modulo: 'administrativo',
       tipo: 'solicitacao_avaliar_lembrete',
       titulo: `Lembrete: avalie "${s.titulo}"`,
-      mensagem: 'Sua solicitacao foi concluida · 30 segundos pra avaliar ajudam o time a melhorar.',
+      mensagem: 'Sua solicitação foi concluída · 30 segundos pra avaliar ajudam o time a melhorar.',
       link: '/solicitacoes',
       severidade: 'info',
       chaveDedup: `solic_avaliar_${s.id}`,
@@ -814,9 +814,9 @@ async function gerarNotificacoesSolicitacoes() {
     });
   }
 
-  // Aprovacao hierarquica · lembrete pro diretor de origem com fila parada
-  // ≥24h (Spec 001). Antes da escalacao automatica (Fase 11), o ping diario
-  // chama atencao da fila travada · 1 lembrete por solicitacao por dia.
+  // Aprovação hierarquica · lembrete pro diretor de origem com fila parada
+  // ≥24h (Spec 001). Antes da escalacao automática (Fase 11), o ping diario
+  // chama atenção da fila travada · 1 lembrete por solicitação por dia.
   const { data: aguardandoOrigem } = await supabase
     .from('solicitacoes')
     .select('id, titulo, aprovacao_origem_diretor_id, created_at')
@@ -844,7 +844,7 @@ async function gerarNotificacoesSolicitacoes() {
 
 // ═══════════════════════════════════════════════════════════
 // MARKETING · cards aguardando solicitante ha >=24h (Spec 014)
-// Cron diario · lembra solicitante a aprovar/sugerir revisao.
+// Cron diario · lembra solicitante a aprovar/sugerir revisão.
 // ═══════════════════════════════════════════════════════════
 async function gerarNotificacoesMarketing() {
   let count = 0;
@@ -891,10 +891,10 @@ async function gerarNotificacoesMarketing() {
 }
 
 // ═══════════════════════════════════════════════════════════
-// ONLINE · BLINDAGEM da coleta automatica do YouTube
+// ONLINE · BLINDAGEM da coleta automática do YouTube
 // Alerta quando: (a) o token OAuth caiu/esta com erro · (b) um culto online
-// ja encerrado nao recebeu as metricas automaticas (pico/DS/video_id).
-// Fonte do diagnostico: collectors.verificarColetaOnline().
+// já encerrado não recebeu as metricas automáticas (pico/DS/video_id).
+// Fonte do diagnóstico: collectors.verificarColetaOnline().
 // ═══════════════════════════════════════════════════════════
 async function gerarNotificacoesOnline() {
   let count = 0;
@@ -909,7 +909,7 @@ async function gerarNotificacoesOnline() {
         modulo: 'online',
         tipo: 'online_oauth_desconectado',
         titulo: 'YouTube desconectado · coleta online parada',
-        mensagem: 'O canal do YouTube nao esta conectado (sem token OAuth valido). Pico, views e demais metricas dos cultos online NAO estao sendo coletadas. Reconecte em /online > Conectar canal.',
+        mensagem: 'O canal do YouTube não esta conectado (sem token OAuth valido). Pico, views e demais metricas dos cultos online NÃO estão sendo coletadas. Reconecte em /online > Conectar canal.',
         link: '/online',
         severidade: 'alta',
         chaveDedup: `online_oauth_desconectado_${hojeKey}`,
@@ -920,37 +920,37 @@ async function gerarNotificacoesOnline() {
         modulo: 'online',
         tipo: 'online_oauth_erro',
         titulo: 'Coleta online com erro recente',
-        mensagem: `A ultima coleta do YouTube reportou erro: ${String(r.token.last_error || '').slice(0, 180)}. Verifique a conexao em /online.`,
+        mensagem: `A última coleta do YouTube reportou erro: ${String(r.token.last_error || '').slice(0, 180)}. Verifique a conexão em /online.`,
         link: '/online',
         severidade: 'media',
         chaveDedup: `online_oauth_erro_${hojeKey}`,
       });
     }
 
-    // 3. Cultos online encerrados sem metricas automaticas
+    // 3. Cultos online encerrados sem metricas automáticas
     for (const c of r.problemas || []) {
       count += await notificar({
         modulo: 'online',
         tipo: 'online_culto_sem_metricas',
         titulo: `Culto online sem dados: ${c.nome} (${c.data})`,
-        mensagem: `A coleta automatica nao preencheu: ${c.faltando.join(', ')}. Pode ser falha do token OAuth, live nao detectada ou latencia do YouTube. Verifique em /online.`,
+        mensagem: `A coleta automática não preencheu: ${c.faltando.join(', ')}. Pode ser falha do token OAuth, live não detectada ou latencia do YouTube. Verifique em /online.`,
         link: '/online',
         severidade: 'media',
         chaveDedup: `online_culto_sem_metricas_${c.id}_${hojeKey}`,
       });
     }
 
-    // 4. Lembrete · decisoes online nunca confirmadas (form/manual nao tocaram).
-    //    Roteia pra integracao (quem lanca decisoes) · severidade baixa.
+    // 4. Lembrete · decisões online nunca confirmadas (form/manual não tocaram).
+    //    Roteia pra integração (quem lanca decisões) · severidade baixa.
     for (const c of r.decisoesPendentes || []) {
       const dica = c.chat_detectou > 0
-        ? ` O chat ao vivo detectou ~${c.chat_detectou} possivel(is) decisao(oes) · confirme o numero real.`
+        ? ` O chat ao vivo detectou ~${c.chat_detectou} possível(is) decisão(oes) · confirme o número real.`
         : '';
       count += await notificar({
         modulo: 'integracao',
         tipo: 'online_decisoes_a_confirmar',
-        titulo: `Confirme as decisoes online: ${c.nome} (${c.data})`,
-        mensagem: `O culto online de ${c.data} ainda nao teve as decisoes/conversoes online confirmadas.${dica} Lance em /integracao (aba Cultos), mesmo que tenha sido zero.`,
+        titulo: `Confirme as decisões online: ${c.nome} (${c.data})`,
+        mensagem: `O culto online de ${c.data} ainda não teve as decisoes/conversoes online confirmadas.${dica} Lance em /integracao (aba Cultos), mesmo que tenha sido zero.`,
         link: '/integracao',
         severidade: 'baixa',
         chaveDedup: `online_decisoes_a_confirmar_${c.id}_${hojeKey}`,
@@ -979,7 +979,7 @@ async function rodarAnaliseFinanceiraDiaria() {
     if (r.pico) count++;
     return count;
   } catch (e) {
-    // Tabelas ainda nao existem em ambientes antigos · ignora
+    // Tabelas ainda não existem em ambientes antigos · ignora
     if (!String(e.message || '').includes('does not exist')) {
       console.warn('[Analise financeira] Erro:', e.message);
     }

@@ -1,18 +1,18 @@
 // ============================================================================
-// KpiQuickFillModal - modal minimo pra preencher um KPI em 2 cliques
+// KpiQuickFillModal - modal mínimo pra preencher um KPI em 2 cliques
 //
 // Aberto a partir de /meus-kpis. Mostra nome do KPI + input valor + botao OK.
-// Salva direto no kpi_registros via upsert (substitui se ja tem registro do
-// mesmo periodo).
+// Salva direto no kpi_registros via upsert (substitui se já tem registro do
+// mesmo período).
 //
-// Por padrao usa o periodo passado em props (periodKey). Se o usuario clicar
-// em "alterar periodo", abre um seletor pra escolher um periodo passado
-// (uteis pra preenchimento historico).
+// Por padrão usa o período passado em props (periodKey). Se o usuário clicar
+// em "alterar período", abre um seletor pra escolher um período passado
+// (úteis pra preenchimento histórico).
 //
 // Props:
 //   open: boolean
 //   kpi: { id, indicador, periodicidade, unidade, ... } | null
-//   periodKey: string (ex '2026-W18', '2026-04')  - periodo default (corrente)
+//   periodKey: string (ex '2026-W18', '2026-04')  - período default (corrente)
 //   onClose: () => void
 //   onSaved: (registro) => void
 // ============================================================================
@@ -21,7 +21,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { kpis as kpisApi, dadosBrutos as dadosBrutosApi } from '../api';
 
 // Converte periodKey ('2026-05', '2026-W19', '2026-Q2'…) em data ISO 'YYYY-MM-DD'
-// Pra escrever em dados_brutos · usamos o 1o dia do periodo
+// Pra escrever em dados_brutos · usamos o 1o dia do período
 function periodKeyParaData(periodKey, periodicidade) {
   if (!periodKey) return new Date().toISOString().slice(0, 10);
   // semanal: 2026-W19
@@ -90,7 +90,7 @@ function calcPeriodKey(periodicidade, date) {
 
 const MES_LABEL = ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez'];
 
-// Gera lista de periodos passados (incluindo o atual) para o seletor
+// Gera lista de períodos passados (incluindo o atual) para o seletor
 function gerarPeriodosPassados(periodicidade, qtd = 12) {
   const out = [];
   const hoje = new Date();
@@ -231,7 +231,7 @@ export default function KpiQuickFillModal({ open, kpi, periodKey, onClose, onSav
           )}
         </div>
 
-        {/* Seletor de periodo (so abre quando o usuario clica em "alterar") */}
+        {/* Seletor de período (so abre quando o usuário clica em "alterar") */}
         {editPeriod && !done && (
           <div style={{ marginBottom: 10, padding: 10, background: C.bg, borderRadius: 8, border: `1px solid ${C.border}` }}>
             <label style={{ display: 'block', fontSize: 11, fontWeight: 600, color: C.t2, marginBottom: 6 }}>

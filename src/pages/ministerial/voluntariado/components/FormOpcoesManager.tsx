@@ -59,7 +59,7 @@ export default function FormOpcoesManager() {
       </CardHeader>
       <CardContent className="space-y-3">
         <p className="text-sm text-muted-foreground">
-          Controla o que aparece em "Onde voce quer servir" no formulario publico de inscricao.
+          Controla o que aparece em "Onde você quer servir" no formulario publico de inscricao.
           Desative uma opcao (ex: Online) quando as vagas encherem — ela some do formulario sem
           ser apagada. Kids e Bridge pedem CPF + nome da mae e mostram o aviso de antecedentes.
         </p>
@@ -95,14 +95,14 @@ export default function FormOpcoesManager() {
                     onClick={() => toggle.mutate(o)}
                     disabled={toggle.isPending}
                     className="gap-1.5"
-                    title={o.ativo ? 'Ocultar do formulario' : 'Mostrar no formulario'}
+                    title={o.ativo ? 'Ocultar do formulário' : 'Mostrar no formulário'}
                   >
                     {o.ativo ? <><Eye className="h-3.5 w-3.5" /> Ativo</> : <><EyeOff className="h-3.5 w-3.5" /> Oculto</>}
                   </Button>
                   <Button
                     size="icon"
                     variant="ghost"
-                    onClick={() => { if (confirm(`Remover "${o.label}" do formulario?`)) remove.mutate(o.id); }}
+                    onClick={() => { if (confirm(`Remover "${o.label}" do formulário?`)) remove.mutate(o.id); }}
                     disabled={remove.isPending}
                     className="text-muted-foreground hover:text-red-500"
                     title="Remover"
@@ -113,7 +113,7 @@ export default function FormOpcoesManager() {
               </div>
             ))}
             {opcoes.length === 0 && (
-              <p className="text-sm text-muted-foreground py-4 text-center">Nenhuma opcao cadastrada.</p>
+              <p className="text-sm text-muted-foreground py-4 text-center">Nenhuma opção cadastrada.</p>
             )}
           </div>
         )}
@@ -133,7 +133,7 @@ function OpcaoFormDialog({ onClose, onSaved }: { onClose: () => void; onSaved: (
   const [saving, setSaving] = useState(false);
 
   const save = async () => {
-    if (!label.trim()) { toast.error('Informe o nome da opcao'); return; }
+    if (!label.trim()) { toast.error('Informe o nome da opção'); return; }
     setSaving(true);
     try {
       await voluntariado.formOpcoes.create({
@@ -147,7 +147,7 @@ function OpcaoFormDialog({ onClose, onSaved }: { onClose: () => void; onSaved: (
       onSaved();
       onClose();
     } catch (e: any) {
-      toast.error(e?.message || 'Erro ao criar opcao');
+      toast.error(e?.message || 'Erro ao criar opção');
     } finally {
       setSaving(false);
     }
@@ -157,15 +157,15 @@ function OpcaoFormDialog({ onClose, onSaved }: { onClose: () => void; onSaved: (
     <Dialog open onOpenChange={onClose}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>Nova opcao do formulario</DialogTitle>
+          <DialogTitle>Nova opção do formulário</DialogTitle>
         </DialogHeader>
         <div className="space-y-4 py-2">
           <div>
-            <label className="text-xs font-medium text-muted-foreground block mb-1">Nome (como aparece no formulario)</label>
+            <label className="text-xs font-medium text-muted-foreground block mb-1">Nome (como aparece no formulário)</label>
             <Input value={label} onChange={e => setLabel(e.target.value)} placeholder="Ex: Louvor" />
           </div>
           <div>
-            <label className="text-xs font-medium text-muted-foreground block mb-1">Area</label>
+            <label className="text-xs font-medium text-muted-foreground block mb-1">Área</label>
             <Select value={area} onValueChange={setArea}>
               <SelectTrigger><SelectValue /></SelectTrigger>
               <SelectContent>
@@ -183,8 +183,8 @@ function OpcaoFormDialog({ onClose, onSaved }: { onClose: () => void; onSaved: (
           {exigeMenor && (
             <div className="space-y-2 pl-1 border-l-2 border-[#00B39D]/30">
               <div className="pl-2">
-                <label className="text-xs font-medium text-muted-foreground block mb-1">Titulo do aviso (opcional)</label>
-                <Input value={avisoTitulo} onChange={e => setAvisoTitulo(e.target.value)} placeholder="Para servir nesta area, precisamos de..." />
+                <label className="text-xs font-medium text-muted-foreground block mb-1">Título do aviso (opcional)</label>
+                <Input value={avisoTitulo} onChange={e => setAvisoTitulo(e.target.value)} placeholder="Para servir nesta área, precisamos de..." />
               </div>
               <div className="pl-2">
                 <label className="text-xs font-medium text-muted-foreground block mb-1">Texto do aviso (opcional)</label>

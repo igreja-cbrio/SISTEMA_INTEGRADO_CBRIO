@@ -1,14 +1,14 @@
 /**
- * Rotas publicas do modulo de voluntariado.
+ * Rotas publicas do módulo de voluntariado.
  *
- * Usado quando alguem escaneia o QR de self-checkin no celular SEM estar
+ * Usado quando alguém escaneia o QR de self-checkin no celular SEM estar
  * autenticado. Permite:
- *   1. Lookup por CPF (descobrir se ja existe em algum cadastro do sistema)
- *   2. Login magico: enviar link de acesso por email para usuario existente
- *      (colaborador, membro ou voluntario). Cria vol_profile se necessario.
- *   3. Registro: cadastro completo quando o CPF nao existe em lugar nenhum.
+ *   1. Lookup por CPF (descobrir se já existe em algum cadastro do sistema)
+ *   2. Login magico: enviar link de acesso por email para usuário existente
+ *      (colaborador, membro ou voluntário). Cria vol_profile se necessário.
+ *   3. Registro: cadastro completo quando o CPF não existe em lugar nenhum.
  *
- * Seguranca:
+ * Segurança:
  *   - Rate limit de 10 req/IP em 15 min (alinhado com publicMembresia)
  *   - CPF validado (algoritmo oficial)
  *   - Emails retornados ao cliente sempre mascarados (d***@dominio.com)
@@ -24,7 +24,7 @@ const publicLimiter = rateLimit({
   max: 10,
   standardHeaders: true,
   legacyHeaders: false,
-  message: { error: 'Muitas tentativas deste endereco. Tente novamente em alguns minutos.' },
+  message: { error: 'Muitas tentativas deste endereço. Tente novamente em alguns minutos.' },
 });
 
 function soDigitos(v) {
@@ -78,7 +78,7 @@ function getFrontendUrl() {
 async function lookupByCpf(cpf) {
   const cleanCpf = soDigitos(cpf);
 
-  // 1. Voluntario existente (vol_profiles)
+  // 1. Voluntário existente (vol_profiles)
   const { data: vol } = await supabase.from('vol_profiles')
     .select('id, auth_user_id, full_name, email, cpf')
     .eq('cpf', cleanCpf)
@@ -109,8 +109,8 @@ async function lookupByCpf(cpf) {
 }
 
 // ── POST /api/public/voluntariado/lookup-cpf ──────────────────────────
-// Cliente envia CPF, backend responde se ja existe em algum cadastro.
-// Nunca expoe email completo — apenas mascarado para o usuario confirmar.
+// Cliente envia CPF, backend responde se já existe em algum cadastro.
+// Nunca expoe email completo — apenas mascarado para o usuário confirmar.
 router.post('/lookup-cpf', publicLimiter, async (req, res) => {
   try {
     const { cpf, website } = req.body || {};
@@ -141,8 +141,8 @@ router.post('/lookup-cpf', publicLimiter, async (req, res) => {
 });
 
 // ── POST /api/public/voluntariado/request-login ───────────────────────
-// Para usuarios existentes (colaborador, membro, voluntario): cria vol_profile
-// se ainda nao tiver, garante auth user, e envia magic link por email.
+// Para usuários existentes (colaborador, membro, voluntário): cria vol_profile
+// se ainda não tiver, garante auth user, e envia magic link por email.
 // O link redireciona para /voluntariado/self-checkin?serviceId=... (se vier)
 // ou para /voluntariado/checkin/painel.
 router.post('/request-login', publicLimiter, async (req, res) => {
@@ -157,19 +157,19 @@ router.post('/request-login', publicLimiter, async (req, res) => {
     const result = await lookupByCpf(cpf);
 
     if (result.type === 'none') {
-      return res.status(404).json({ error: 'Cadastro nao encontrado', needsRegistration: true });
+      return res.status(404).json({ error: 'Cadastro não encontrado', needsRegistration: true });
     }
 
     if (!result.email || !ehEmailValido(result.email)) {
       return res.status(400).json({
-        error: 'Seu cadastro nao tem email valido. Procure um lider para atualizar.',
+        error: 'Seu cadastro não tem email valido. Procure um líder para atualizar.',
       });
     }
 
     const email = result.email.toLowerCase().trim();
     const cleanCpf = soDigitos(cpf);
 
-    // Garantir auth user (criar se ainda nao existe)
+    // Garantir auth user (criar se ainda não existe)
     let authUserId = null;
     if (result.type === 'voluntario' && result.record.auth_user_id) {
       authUserId = result.record.auth_user_id;
@@ -192,7 +192,7 @@ router.post('/request-login', publicLimiter, async (req, res) => {
         }
         authUserId = created.user.id;
 
-        // Criar profile (role voluntario, nao sobrescreve se ja existir por trigger)
+        // Criar profile (role voluntário, não sobrescreve se já existir por trigger)
         await supabase.from('profiles').upsert({
           id: authUserId,
           email,
@@ -206,18 +206,18 @@ router.post('/request-login', publicLimiter, async (req, res) => {
 
     // Garantir vol_profile (criar ou linkar)
     if (result.type === 'voluntario') {
-      // Ja existe vol_profile, so linkar auth_user_id se faltar
+      // Já existe vol_profile, so linkar auth_user_id se faltar
       if (!result.record.auth_user_id) {
         await supabase.from('vol_profiles')
           .update({ auth_user_id: authUserId })
           .eq('id', result.record.id);
       }
     } else {
-      // Nao tem vol_profile ainda: criar
+      // Não tem vol_profile ainda: criar
       const origem = result.type === 'colaborador' ? 'manual' : 'membresia';
       const membresiaId = result.type === 'membro' ? result.record.id : null;
 
-      // Verificar se ja existe vol_profile pelo CPF ou auth_user_id (defesa)
+      // Verificar se já existe vol_profile pelo CPF ou auth_user_id (defesa)
       const { data: existingVol } = await supabase.from('vol_profiles')
         .select('id')
         .or(`cpf.eq.${cleanCpf},auth_user_id.eq.${authUserId}`)
@@ -270,8 +270,8 @@ router.post('/request-login', publicLimiter, async (req, res) => {
 });
 
 // ── POST /api/public/voluntariado/register ────────────────────────────
-// Cadastro completo quando o CPF nao existe em nenhum lugar.
-// Cria auth user + profile (role='voluntario') + vol_profile, envia magic link.
+// Cadastro completo quando o CPF não existe em nenhum lugar.
+// Cria auth user + profile (role='voluntário') + vol_profile, envia magic link.
 router.post('/register', publicLimiter, async (req, res) => {
   try {
     const { cpf, full_name, email: rawEmail, phone, serviceId, website } = req.body || {};
@@ -286,14 +286,14 @@ router.post('/register', publicLimiter, async (req, res) => {
     const email = rawEmail.toLowerCase().trim().slice(0, 200);
     const cleanCpf = soDigitos(cpf);
 
-    // Defesa: se ja existe em algum lugar, rejeitar (o fluxo de request-login
+    // Defesa: se já existe em algum lugar, rejeitar (o fluxo de request-login
     // deveria ter sido usado)
     const existing = await lookupByCpf(cleanCpf);
     if (existing.type !== 'none') {
-      return res.status(409).json({ error: 'CPF ja cadastrado. Use "Entrar" em vez de cadastrar.', type: existing.type });
+      return res.status(409).json({ error: 'CPF já cadastrado. Use "Entrar" em vez de cadastrar.', type: existing.type });
     }
 
-    // Verificar se o email ja tem profile
+    // Verificar se o email já tem profile
     const { data: profileByEmail } = await supabase.from('profiles')
       .select('id').eq('email', email).maybeSingle();
 
@@ -311,7 +311,7 @@ router.post('/register', publicLimiter, async (req, res) => {
       authUserId = created.user.id;
     }
 
-    // Upsert profile (role voluntario)
+    // Upsert profile (role voluntário)
     await supabase.from('profiles').upsert({
       id: authUserId,
       email,
@@ -321,7 +321,7 @@ router.post('/register', publicLimiter, async (req, res) => {
       updated_at: new Date().toISOString(),
     }, { onConflict: 'id' });
 
-    // Membresia e fonte unica: garantir mem_membros antes de criar vol_profile
+    // Membresia e fonte única: garantir mem_membros antes de criar vol_profile
     let membresiaId = null;
     try {
       const { findOrCreateMembro } = require('./pessoas');
@@ -375,10 +375,10 @@ router.post('/register', publicLimiter, async (req, res) => {
 
 // ============================================================================
 // POST /api/public/voluntariado/inscrever-form
-// Formulario publico de inscricao "quero ser voluntario" · grava em
+// Formulário público de inscrição "quero ser voluntário" · grava em
 // vol_inscricoes com status='inscrito' pra entrar no funil de alocacao.
 // Espelha o Google Form descontinuado (mesmos campos · compat com 749 linhas
-// historicas em vol_inscricoes).
+// históricas em vol_inscricoes).
 // ============================================================================
 const AREAS_VALIDAS = new Set(['kids', 'sede', 'ami', 'bridge', 'online']);
 
@@ -410,17 +410,17 @@ router.post('/inscrever-form', publicLimiter, async (req, res) => {
       return res.status(400).json({ error: 'CPF invalido' });
     }
     if (!area || !AREAS_VALIDAS.has(String(area).toLowerCase())) {
-      return res.status(400).json({ error: 'Selecione uma area' });
+      return res.status(400).json({ error: 'Selecione uma área' });
     }
 
     // Kids/Bridge (menores · LGPD) exigem data de nascimento e nome da mae
     const areaLower = String(area).toLowerCase();
     const exigeDadosMenor = areaLower === 'kids' || areaLower === 'bridge';
     if (exigeDadosMenor && !data_nascimento) {
-      return res.status(400).json({ error: 'Data de nascimento obrigatoria para Kids/Bridge' });
+      return res.status(400).json({ error: 'Data de nascimento obrigatória para Kids/Bridge' });
     }
     if (exigeDadosMenor && (!nome_mae || String(nome_mae).trim().length < 2)) {
-      return res.status(400).json({ error: 'Nome da mae obrigatorio para Kids/Bridge' });
+      return res.status(400).json({ error: 'Nome da mae obrigatório para Kids/Bridge' });
     }
 
     const nomeCompleto = [cleanNome, cleanSobrenome].filter(Boolean).join(' ');
@@ -473,7 +473,7 @@ router.post('/inscrever-form', publicLimiter, async (req, res) => {
 
     if (insErr) {
       console.error('[PublicVol/inscrever-form] insert:', insErr.message);
-      return res.status(500).json({ error: 'Erro ao registrar inscricao' });
+      return res.status(500).json({ error: 'Erro ao registrar inscrição' });
     }
 
     try {
@@ -494,14 +494,14 @@ router.post('/inscrever-form', publicLimiter, async (req, res) => {
     return res.json({ ok: true, id: insc.id });
   } catch (err) {
     console.error('[PublicVol/inscrever-form] error:', err.message);
-    res.status(500).json({ error: 'Erro ao registrar inscricao' });
+    res.status(500).json({ error: 'Erro ao registrar inscrição' });
   }
 });
 
 // ---------------------------------------------------------------------------
-// GET /form-opcoes · opcoes ativas do formulario "Onde voce quer servir".
-// Publico (leitura de catalogo · sem PII). Cai num fallback vazio se a tabela
-// ainda nao existir (migration nao aplicada) pra nao quebrar o formulario.
+// GET /form-opcoes · opções ativas do formulário "Onde você quer servir".
+// Público (leitura de catalogo · sem PII). Cai num fallback vazio se a tabela
+// ainda não existir (migration não aplicada) pra não quebrar o formulário.
 // ---------------------------------------------------------------------------
 router.get('/form-opcoes', async (req, res) => {
   try {

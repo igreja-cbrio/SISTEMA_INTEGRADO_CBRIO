@@ -5,7 +5,7 @@
  *   1. Membro acessa /devocional pelo celular sem login
  *   2. Digita o email
  *   3. Backend valida que existe em mem_membros, garante auth user +
- *      profile (com is_membro_only=true se profile nao existir ainda)
+ *      profile (com is_membro_only=true se profile não existir ainda)
  *      e dispara magic link via Supabase
  *   4. Membro clica no email -> redirect pra /devocional/hoje autenticado
  */
@@ -67,7 +67,7 @@ router.post('/login', publicLimiter, async (req, res) => {
       return res.status(500).json({ error: 'Erro ao buscar cadastro' });
     }
     if (!membro) {
-      return res.status(404).json({ error: 'Email nao cadastrado como membro. Procure um lider.' });
+      return res.status(404).json({ error: 'Email não cadastrado como membro. Procure um líder.' });
     }
 
     // 2) Achar auth user
@@ -88,7 +88,7 @@ router.post('/login', publicLimiter, async (req, res) => {
       }
       authUserId = created.user?.id;
     }
-    if (!authUserId) return res.status(500).json({ error: 'Erro ao obter usuario' });
+    if (!authUserId) return res.status(500).json({ error: 'Erro ao obter usuário' });
 
     // 3) Garantir profile + linkar
     const { data: profile } = await supabase

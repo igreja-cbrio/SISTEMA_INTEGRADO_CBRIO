@@ -1,13 +1,13 @@
 // ============================================================================
-// PainelArea v3 · drill-down de KPIs + CULTOS + DADOS BRUTOS + saude por area
+// PainelArea v3 · drill-down de KPIs + CULTOS + DADOS BRUTOS + saúde por área
 // ============================================================================
-// Mudancas v3 (2026-05-21 · varredura fina):
-//   - Nova aba "Cultos" (default) · puxa cultos recentes da area direto da
+// Mudanças v3 (2026-05-21 · varredura fina):
+//   - Nova aba "Cultos" (default) · puxa cultos recentes da área direto da
 //     vw_culto_stats · resolve o problema "aba Dados sempre vazia"
-//   - Filtro de periodo (30d/90d/180d/365d) no header · backend respeita
-//   - Score com label maior + diagnostico em destaque
+//   - Filtro de período (30d/90d/180d/365d) no header · backend respeita
+//   - Score com label maior + diagnóstico em destaque
 //   - Botao "Voltar ao painel mestre" no header
-//   - Variacao % nos KPIs (mesma logica dos dados)
+//   - Variacao % nos KPIs (mesma lógica dos dados)
 //   - Sparkline com hover tooltip
 //   - Filtro "Sem valor" so aparece quando > 0
 // ============================================================================
@@ -220,7 +220,7 @@ export default function PainelArea({ area }) {
           </div>
         </div>
 
-        {/* Score de saúde · agora com diagnostico em destaque */}
+        {/* Score de saúde · agora com diagnóstico em destaque */}
         <div className="flex items-center gap-4">
           <div
             className="w-32 h-32 rounded-full flex flex-col items-center justify-center border-4"
@@ -247,9 +247,9 @@ export default function PainelArea({ area }) {
         </div>
       </div>
 
-      {/* ─────────────────── FILTRO DE PERIODO ─────────────────── */}
+      {/* ─────────────────── FILTRO DE PERÍODO ─────────────────── */}
       <div className="flex items-center gap-2 text-xs">
-        <span className="text-muted-foreground">Periodo:</span>
+        <span className="text-muted-foreground">Período:</span>
         {PERIODOS.map(p => (
           <button
             key={p.id}
@@ -537,7 +537,7 @@ function TotaisCultoCards({ totais, area, accent }) {
     { label: 'Frequência total', value: totais.presencial_adulto + totais.presencial_kids },
     { label: 'Decisões total', value: totais.decisoes_total },
   ];
-  // Cards extras especificos por area
+  // Cards extras especificos por área
   if (area === 'online') {
     cards.push({ label: 'Pico online (soma)', value: totais.online_pico_total });
     cards.push({ label: 'Views D+7 (DDUS)', value: totais.online_ddus_total });

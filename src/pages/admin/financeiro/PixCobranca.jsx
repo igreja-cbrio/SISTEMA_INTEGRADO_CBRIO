@@ -23,7 +23,7 @@ export default function PixCobranca() {
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
-  const [showQr, setShowQr] = useState(null); // cobranca recém-criada / selecionada
+  const [showQr, setShowQr] = useState(null); // cobrança recém-criada / selecionada
 
   useEffect(() => {
     santander.pixCob.health().then(setHealth).catch(() => setHealth({ habilitado: false }));

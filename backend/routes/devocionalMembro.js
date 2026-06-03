@@ -86,7 +86,7 @@ router.get('/hoje', async (req, res) => {
 
 // ─────────────────────────────────────────────────────────────
 // POST /api/devocional-membro/check-in
-//   body: { item_id?, observacoes? }
+//   body: { item_id?, observações? }
 //   Cria mem_devocionais pro membro logado (data = hoje, tipo=pessoal).
 //   item_id e' opcional · se passar, linka pra contar adesao.
 // ─────────────────────────────────────────────────────────────
@@ -94,12 +94,12 @@ router.post('/check-in', async (req, res) => {
   try {
     const membro = await resolveMembro(req);
     if (!membro) {
-      return res.status(403).json({ error: 'Profile nao linkado a um membro' });
+      return res.status(403).json({ error: 'Profile não linkado a um membro' });
     }
     const hoje = new Date().toISOString().slice(0, 10);
     const { item_id, observacoes } = req.body || {};
 
-    // Se ja existe pra hoje, retorna 200 com o existente (idempotente)
+    // Se já existe pra hoje, retorna 200 com o existente (idempotente)
     const { data: existente } = await supabase
       .from('mem_devocionais')
       .select('*')
@@ -107,7 +107,7 @@ router.post('/check-in', async (req, res) => {
       .eq('data_devocional', hoje)
       .maybeSingle();
     if (existente) {
-      // Se mandou novo observacoes/item_id e ainda nao tinha, atualiza
+      // Se mandou novo observacoes/item_id e ainda não tinha, atualiza
       const patch = {};
       if (item_id && !existente.devocional_item_id) patch.devocional_item_id = item_id;
       if (observacoes && !existente.observacoes) patch.observacoes = observacoes;
@@ -148,7 +148,7 @@ router.post('/check-in', async (req, res) => {
 
 // ─────────────────────────────────────────────────────────────
 // GET /api/devocional-membro/historico
-//   Ultimos 30 check-ins do membro logado.
+//   Últimos 30 check-ins do membro logado.
 // ─────────────────────────────────────────────────────────────
 router.get('/historico', async (req, res) => {
   try {
@@ -166,7 +166,7 @@ router.get('/historico', async (req, res) => {
     res.json({ data: data || [] });
   } catch (e) {
     console.error('devocional-membro/historico:', e.message);
-    res.status(500).json({ error: 'Erro ao listar historico' });
+    res.status(500).json({ error: 'Erro ao listar histórico' });
   }
 });
 

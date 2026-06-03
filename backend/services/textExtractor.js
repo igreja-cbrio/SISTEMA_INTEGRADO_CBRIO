@@ -1,7 +1,7 @@
 /**
  * Text Extractor — extrai texto de arquivos (PDF, DOCX, XLSX, PPTX).
  * Retorna '[IMAGEM]' para imagens e PDFs escaneados (digest usa visão).
- * Retorna '[VIDEO:nome]' para vídeos (só registra no relatório).
+ * Retorna '[VÍDEO:nome]' para vídeos (só registra no relatório).
  */
 
 const IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/gif', 'image/webp', 'image/bmp'];

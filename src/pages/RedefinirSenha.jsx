@@ -22,7 +22,7 @@ export default function RedefinirSenha() {
   const navigate = useNavigate();
   const { updatePasswordOnly } = useAuth();
   // Quando o link do e-mail eh aberto, Supabase coloca tokens no hash da URL.
-  // O onAuthStateChange dispara PASSWORD_RECOVERY · ai a sessao ja estah valida.
+  // O onAuthStateChange dispara PASSWORD_RECOVERY · ai a sessão já estah valida.
   const [pronto, setPronto] = useState(false);
   const [erroSessao, setErroSessao] = useState('');
 
@@ -35,10 +35,10 @@ export default function RedefinirSenha() {
 
   useEffect(() => {
     if (!supabase) {
-      setErroSessao('Sistema de autenticacao indisponivel.');
+      setErroSessao('Sistema de autenticação indisponível.');
       return;
     }
-    // Se ja tem sessao (Supabase parseou o hash), libera direto
+    // Se já tem sessão (Supabase parseou o hash), libera direto
     supabase.auth.getSession().then(({ data }) => {
       if (data?.session) setPronto(true);
     });
@@ -60,7 +60,7 @@ export default function RedefinirSenha() {
     e.preventDefault();
     setErro('');
     if (senha.length < 6) return setErro('A senha precisa ter pelo menos 6 caracteres.');
-    if (senha !== confirma) return setErro('As senhas nao conferem.');
+    if (senha !== confirma) return setErro('As senhas não conferem.');
     setLoading(true);
     const { error } = await updatePasswordOnly(senha);
     setLoading(false);

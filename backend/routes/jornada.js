@@ -34,9 +34,9 @@ router.use(authenticate);
  * Calcula os 5 valores para cada membro:
  * 1. Seguir a Jesus: conversao/batismo (trilha_valores, batismo_inscricoes, cui_convertidos)
  * 2. Conectar-se com Pessoas: em grupo ativo (mem_grupo_membros)
- * 3. Investir Tempo com Deus: jornada 180 com encontro nos ultimos 90 dias (cui_jornada180)
- * 4. Servir em Comunidade: voluntario ativo (mem_voluntarios ate IS NULL)
- * 5. Viver Generosamente: contribuicao nos ultimos 90 dias (mem_contribuicoes)
+ * 3. Investir Tempo com Deus: jornada 180 com encontro nos últimos 90 dias (cui_jornada180)
+ * 4. Servir em Comunidade: voluntário ativo (mem_voluntarios até IS NULL)
+ * 5. Viver Generosamente: contribuição nos últimos 90 dias (mem_contribuicoes)
  */
 
 function daysAgo(n) { return new Date(Date.now() - n * 86400000).toISOString().slice(0, 10); }
@@ -49,7 +49,7 @@ router.get('/dashboard', async (req, res) => {
       .is('deleted_at', null)
       .eq('active', true);
 
-    // 1. Seguir a Jesus: trilha_valores com conversao/primeiro_contato concluida
+    // 1. Seguir a Jesus: trilha_valores com conversao/primeiro_contato concluída
     let seguirCount = 0;
     const { count: seguirQ } = await supabase.from('mem_trilha_valores')
       .select('membro_id', { count: 'exact', head: true })
@@ -64,20 +64,20 @@ router.get('/dashboard', async (req, res) => {
       .is('deleted_at', null)
       .is('saiu_em', null);
 
-    // 3. Investir: jornada 180 com encontro nos ultimos 90 dias (usa data_encontro)
+    // 3. Investir: jornada 180 com encontro nos últimos 90 dias (usa data_encontro)
     const { data: j180Ids } = await supabase
       .from('cui_jornada180').select('membro_id')
       .is('deleted_at', null)
       .gte('data_encontro', daysAgo(90));
     const investirCount = new Set((j180Ids || []).map(r => r.membro_id).filter(Boolean)).size;
 
-    // 4. Servir: voluntario ativo (ate IS NULL)
+    // 4. Servir: voluntário ativo (até IS NULL)
     const { count: servir } = await supabase
       .from('mem_voluntarios').select('membro_id', { count: 'exact', head: true })
       .is('deleted_at', null)
       .is('ate', null);
 
-    // 5. Generosidade: contribuicao nos ultimos 90 dias
+    // 5. Generosidade: contribuição nos últimos 90 dias
     const { data: genIds } = await supabase
       .from('mem_contribuicoes').select('membro_id')
       .is('deleted_at', null)
@@ -143,11 +143,11 @@ router.get('/membros', async (req, res) => {
       return { ...m, valores: v, total_valores: Object.values(v).filter(Boolean).length };
     });
 
-    // FIX: filtro "Sem: X" = membros que NAO tem o valor (! correto)
+    // FIX: filtro "Sem: X" = membros que NÃO tem o valor (! correto)
     let filtered = result;
     if (valor) filtered = result.filter(m => !m.valores[valor]);
 
-    // FIX: total reflete resultado filtrado, nao o total geral
+    // FIX: total reflete resultado filtrado, não o total geral
     res.json({ membros: filtered, total: valor ? filtered.length : (totalCount || 0) });
   } catch (e) {
     console.error('jornada membros:', e.message);
@@ -169,7 +169,7 @@ router.get('/membro/:id', async (req, res) => {
       supabase.from('mem_contribuicoes').select('*').is('deleted_at', null).eq('membro_id', id).order('data', { ascending: false }).limit(10),
     ]);
 
-    if (membro.error || !membro.data) return res.status(404).json({ error: 'Membro nao encontrado' });
+    if (membro.error || !membro.data) return res.status(404).json({ error: 'Membro não encontrado' });
 
     const grupoAtivo = (grupo.data || []).find(g => !g.saiu_em);
     const volAtivo = (vol.data || []).find(v => !v.ate);
@@ -205,13 +205,13 @@ router.get('/membro/:id', async (req, res) => {
 });
 
 // ── POST /api/jornada/cruzar ──
-// Cruza combinacoes livres de criterios entre os 5 valores da Jornada
-// e papeis (voluntario, visitante, NEXT, grupos ativos, contribuinte).
+// Cruza combinacoes livres de critérios entre os 5 valores da Jornada
+// e papéis (voluntário, visitante, NEXT, grupos ativos, contribuinte).
 //
-// Le da vw_pessoas_papeis_mat via funcao SQL cruzar_pessoas() · 1 query.
-// Escala ate 100k+ pessoas (antes carregava 50k linhas em memoria JS).
+// Le da vw_pessoas_papeis_mat via função SQL cruzar_pessoas() · 1 query.
+// Escala até 100k+ pessoas (antes carregava 50k linhas em memória JS).
 //
-// Body: { criterios: { seguir: 'tem'|'nao_tem'|null, ... }, limit, offset }
+// Body: { critérios: { seguir: 'tem'|'nao_tem'|null, ... }, limit, offset }
 router.post('/cruzar', async (req, res) => {
   try {
     const criterios = req.body?.criterios || {};
@@ -225,7 +225,7 @@ router.post('/cruzar', async (req, res) => {
     });
     if (error) throw error;
 
-    // Set de criterios ativos pra retornar pro client (debug/exibicao)
+    // Set de critérios ativos pra retornar pro client (debug/exibicao)
     const VALIDOS = ['seguir', 'conectar', 'investir', 'servir', 'generosidade',
                      'voluntario', 'visitante', 'inscrito_next', 'grupo_ativo', 'contribuinte'];
     const ativos = {};
@@ -241,7 +241,7 @@ router.post('/cruzar', async (req, res) => {
 });
 
 // ── POST /api/jornada/refresh-papeis (manual · admin/diretor) ──
-// Refresh forcado da view materializada. Quando voce acabou de inserir
+// Refresh forcado da view materializada. Quando você acabou de inserir
 // dados e quer ver no /cruzamentos sem esperar o cron horario.
 router.post('/refresh-papeis', async (req, res) => {
   if (!['admin', 'diretor'].includes(req.user?.role)) {

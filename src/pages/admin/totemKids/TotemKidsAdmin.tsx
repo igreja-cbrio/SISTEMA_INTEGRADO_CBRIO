@@ -1,7 +1,7 @@
 // ============================================================================
-// Totem Kids · Admin · Sessoes, Salas, Estacoes, Criancas, Auditoria
+// Totem Kids · Admin · Sessões, Salas, Estações, Crianças, Auditoria
 // ============================================================================
-// Uma pagina com tabs · admin do Kids configura tudo aqui.
+// Uma página com tabs · admin do Kids configura tudo aqui.
 // ============================================================================
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -81,9 +81,9 @@ function AbaSessoes() {
   async function carregar() {
     setCarregando(true);
     try {
-      // Janela de cultos: ultimos 7 + proximos 14 dias.
+      // Janela de cultos: últimos 7 + próximos 14 dias.
       // Filtra so cultos cujo service_type tem has_kids=true · evita
-      // listar AMI/Bridge que nao tem programacao infantil (Marcos 2026-05-21).
+      // listar AMI/Bridge que não tem programacao infantil (Marcos 2026-05-21).
       const hoje = new Date();
       const inicio = new Date(hoje); inicio.setDate(hoje.getDate() - 7);
       const fim = new Date(hoje); fim.setDate(hoje.getDate() + 14);
@@ -334,7 +334,7 @@ function AbaSalas() {
 }
 
 // ─── Aba Pagers ──────────────────────────────────────────────────────────────
-// Catalogo dos pagers fisicos (pulseira/coaster) entregues a familia no check-in.
+// Catalogo dos pagers fisicos (pulseira/coaster) entregues a família no check-in.
 // Integra com o transmissor LRS Freedom via agente local da recepcao.
 const CORES_LRS: { v: string; nome: string; hex: string }[] = [
   { v: 'R', nome: 'Vermelho', hex: '#EF4444' },
