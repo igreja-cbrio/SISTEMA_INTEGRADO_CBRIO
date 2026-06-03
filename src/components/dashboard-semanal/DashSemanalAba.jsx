@@ -132,8 +132,8 @@ export default function DashSemanalAba() {
     const variacao_pct = mediaGeral > 0 ? Math.round(((total - mediaGeral) / mediaGeral) * 100) : 0;
     const totalPresencial = itemsFiltrados.reduce((s, it) => s + (it.total_presencial || 0), 0);
     const taxa_ocupacao_geral = indDef?.usa_ocupacao
-      ? Math.round((total / 1200) * 1000) / 10
-      : Math.round((totalPresencial / 1200) * 1000) / 10;
+      ? Math.round((total / 1050) * 1000) / 10
+      : Math.round((totalPresencial / 1050) * 1000) / 10;
 
     return {
       indicador: indicadoresSel[i],

@@ -1613,11 +1613,11 @@ router.get('/monitoramento-okr', async (req, res) => {
               AND deleted_at IS NULL`);
         return r.rows[0] || null;
       }),
-      // % de assentos ocupados · Templo (Domingo+Quarta+AMI, exclui Bridge) ÷ 1200
+      // % de assentos ocupados · Templo (Domingo+Quarta+AMI, exclui Bridge) ÷ 1050
       uma(async () => {
         const r = await query(
           `SELECT round(avg(c.presencial_adulto)::numeric, 0) media_pres, count(*) n,
-                  round(avg(c.presencial_adulto)::numeric / 1200 * 100, 1) pct
+                  round(avg(c.presencial_adulto)::numeric / 1050 * 100, 1) pct
              FROM cultos c JOIN vol_service_types st ON st.id = c.service_type_id
             WHERE c.data >= CURRENT_DATE - INTERVAL '90 days' AND c.presencial_adulto > 0
               AND c.deleted_at IS NULL AND st.name NOT ILIKE '%bridge%'`);
@@ -1656,7 +1656,7 @@ router.get('/monitoramento-okr', async (req, res) => {
       uma(async () => {
         const r = await query(
           `SELECT to_char(date_trunc('month', c.data),'YYYY-MM') mes,
-                  round(avg(c.presencial_adulto)::numeric / 1200 * 100, 1)::float valor
+                  round(avg(c.presencial_adulto)::numeric / 1050 * 100, 1)::float valor
              FROM cultos c JOIN vol_service_types st ON st.id = c.service_type_id
             WHERE c.data >= date_trunc('month', CURRENT_DATE) - INTERVAL '6 months'
               AND c.data <  date_trunc('month', CURRENT_DATE)
@@ -1705,7 +1705,7 @@ router.get('/monitoramento-okr', async (req, res) => {
     }
     if (assentos && assentos.n > 0) {
       addM('assentos', num(assentos.pct), '%',
-        `${assentos.media_pres} de 1200 lugares · média do Templo (90 dias)`, serieFmt(assentosSerie));
+        `${assentos.media_pres} de 1050 lugares · média do Templo (90 dias)`, serieFmt(assentosSerie));
     }
     if (rotativ) {
       const ativos = num(rotativ.ativos) || 0;
