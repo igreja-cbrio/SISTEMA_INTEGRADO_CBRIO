@@ -99,6 +99,57 @@ function isAmiBridgeCulto(c) {
 
 // ── Coletores por fonte ─────────────────────────────────────────────────────
 
+// Coorte dos primeiros 90 dias: dos convertidos do período/área, % que cumpriu
+// o marco (batismo ou Next) em <=90 dias da conversão. Cruza por membro/cpf/nome.
+async function cohortNoPrazoPct({ inicio, fim, area, marco }) {
+  const DIA = 86400000;
+  const dig = (v) => String(v || '').replace(/\D/g, '');
+  const fetchAll = async (table, columns, applyFilter) => {
+    const out = []; let from = 0; const page = 1000;
+    while (true) {
+      let q = supabase.from(table).select(columns).range(from, from + page - 1);
+      if (applyFilter) q = applyFilter(q);
+      const { data, error } = await q;
+      if (error) throw error;
+      out.push(...(data || []));
+      if (!data || data.length < page) break;
+      from += page;
+    }
+    return out;
+  };
+
+  let cq = supabase.from('cui_convertidos')
+    .select('id, nome, cpf, membro_id, data_culto')
+    .is('deleted_at', null).gte('data_culto', inicio).lt('data_culto', fim);
+  if (area) cq = cq.eq('area', area);
+  const { data: convs } = await cq;
+  if (!convs || !convs.length) return null;
+
+  const byMembro = new Map(), byCpf = new Map(), byNome = new Map();
+  const put = (m, k, d) => { if (!k || !d) return; const c = m.get(k); if (!c || d < c) m.set(k, d); }; // guarda a data mais antiga
+  if (marco === 'batismo') {
+    const rows = await fetchAll('batismo_inscricoes', 'membro_id, cpf, nome, data_batismo',
+      q => q.eq('status', 'realizado').is('deleted_at', null).not('data_batismo', 'is', null));
+    for (const b of rows) { put(byMembro, b.membro_id, b.data_batismo); put(byCpf, dig(b.cpf).length === 11 ? dig(b.cpf) : null, b.data_batismo); put(byNome, String(b.nome || '').trim().toLowerCase() || null, b.data_batismo); }
+  } else {
+    const rows = await fetchAll('next_inscricoes', 'membro_id, nome, check_in_at', q => q.not('check_in_at', 'is', null));
+    for (const n of rows) { const d = String(n.check_in_at).slice(0, 10); put(byMembro, n.membro_id, d); put(byNome, String(n.nome || '').trim().toLowerCase() || null, d); }
+  }
+  const dataEventoDe = (c) => {
+    const cands = [c.membro_id ? byMembro.get(c.membro_id) : null, dig(c.cpf).length === 11 ? byCpf.get(dig(c.cpf)) : null, byNome.get(String(c.nome || '').trim().toLowerCase())].filter(Boolean);
+    return cands.length ? cands.sort()[0] : null;
+  };
+
+  let noPrazo = 0;
+  for (const c of convs) {
+    const dEvento = dataEventoDe(c);
+    if (!dEvento) continue;
+    const dias = Math.floor((new Date(dEvento + 'T12:00:00').getTime() - new Date(c.data_culto + 'T12:00:00').getTime()) / DIA);
+    if (dias >= 0 && dias <= 90) noPrazo++;
+  }
+  return { valor: Math.round((noPrazo / convs.length) * 100), observacao: `${noPrazo} de ${convs.length} em <=90 dias` };
+}
+
 const COLLECTORS = {
   // ── Cultos: AMI (separado de Bridge) ──
   'cultos.ami_freq': async ({ inicio, fim }) => {
@@ -235,6 +286,22 @@ const COLLECTORS = {
     const pct = Math.round((atendidos / total) * 100);
     return { valor: pct, observacao: `${atendidos} de ${total} atendidos` };
   },
+
+  // ── Jornada do novo convertido · 3 marcos (alimentam a matriz Seguir × Área) ──
+  // coorte mensal por área · o coletor recebe `area` (passado em coletarTodos)
+  'cuidados.reuniao_aceita_pct': async ({ inicio, fim, area }) => {
+    let q = supabase.from('cui_convertidos').select('id, encontro_marcado')
+      .is('deleted_at', null).gte('data_culto', inicio).lt('data_culto', fim);
+    if (area) q = q.eq('area', area);
+    const { data } = await q;
+    if (!data || !data.length) return null;
+    const aceitos = data.filter(c => c.encontro_marcado).length;
+    return { valor: Math.round((aceitos / data.length) * 100), observacao: `${aceitos} de ${data.length} aceitaram a reunião` };
+  },
+
+  'cuidados.batismo_90d_pct': async ({ inicio, fim, area }) => cohortNoPrazoPct({ inicio, fim, area, marco: 'batismo' }),
+
+  'cuidados.next_90d_pct': async ({ inicio, fim, area }) => cohortNoPrazoPct({ inicio, fim, area, marco: 'next' }),
 
   'cuidados.jornada180': async ({ inicio, fim }) => {
     const { count } = await supabase.from('cui_jornada180').select('id', { count: 'exact', head: true }).gte('data_encontro', inicio).lt('data_encontro', fim);
@@ -840,7 +907,7 @@ async function coletarTodos({ dryRun = false, fontes = null, areas = null, refer
     const range = periodoRange(periodo, ind.periodicidade);
 
     try {
-      const result = await collector({ ...range, periodo, periodicidade: ind.periodicidade });
+      const result = await collector({ ...range, periodo, periodicidade: ind.periodicidade, area: ind.area });
       if (result == null) {
         resultados.push({ id: ind.id, status: 'sem_dado', periodo });
         continue;
