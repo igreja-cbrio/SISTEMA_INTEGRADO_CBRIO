@@ -12,7 +12,7 @@ import { useState, useEffect, useCallback } from 'react';
 import {
   Wifi, Search, Users, HandHeart, UsersRound, Droplet, X,
   RefreshCw, Clock, ChevronRight, CalendarDays, ShieldCheck, ShieldAlert,
-  TrendingDown, AlertTriangle, RotateCcw, Sparkles, HeartHandshake,
+  TrendingDown, AlertTriangle, RotateCcw, Sparkles, HeartHandshake, Info,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { wifi as wifiApi } from '../../api';
@@ -92,6 +92,40 @@ function chipStyle(ativo) {
   };
 }
 const selStyle = { padding: '7px 10px', borderRadius: 9, fontSize: 13, border: `1px solid ${C.border}`, background: C.inputBg, color: C.text };
+
+// Legenda sempre visível pra quem está analisando entender cada termo.
+function Legenda({ itens, nota }) {
+  return (
+    <div style={{ background: C.inputBg, border: `1px solid ${C.border}`, borderRadius: 12, padding: '10px 14px', marginBottom: 14 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, fontWeight: 700, color: C.t2, marginBottom: 6 }}>
+        <Info size={14} /> Legenda
+      </div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+        {itens.map(([t, d, cor]) => (
+          <div key={t} style={{ fontSize: 12, color: C.t3, lineHeight: 1.45 }}>
+            <strong style={{ color: cor || C.text }}>{t}:</strong> {d}
+          </div>
+        ))}
+      </div>
+      {nota && <div style={{ fontSize: 11.5, color: C.t3, marginTop: 7, fontStyle: 'italic' }}>{nota}</div>}
+    </div>
+  );
+}
+
+const LEGENDA_CULTO = [
+  ['Presença', 'total que o ministério lançou como presente no culto (no /integração).'],
+  ['Conexões', 'nº de logins no WiFi — a mesma pessoa pode logar mais de uma vez.'],
+  ['Dispositivos', 'aparelhos (MACs) distintos que conectaram. É a melhor aproximação da presença real pelo WiFi.'],
+  ['Captação', 'dispositivos ÷ presença = % dos presentes que entraram no WiFi (verde ≥60% · âmbar ≥35% · vermelho abaixo).'],
+  ['Identificadas', 'dispositivos que o sistema conseguiu ligar a uma pessoa (CPF) já cadastrada.'],
+];
+const LEGENDA_SEMANA = [
+  ['Semana', 'agrupamento de segunda a domingo (semana ISO), igual à lógica dos cultos do ministerial.'],
+  ['Presença', 'soma da presença lançada no ministerial nos cultos da semana.'],
+  ['Dispositivos', 'aparelhos (MACs) distintos que conectaram na semana — presença aproximada via WiFi.'],
+  ['Captação', 'dispositivos ÷ presença = % da galera que pegou o WiFi naquela semana.'],
+  ['Identificadas', 'quantas conexões da semana foram ligadas a uma pessoa cadastrada.'],
+];
 
 function PessoaRow({ p, onClick }) {
   return (
@@ -307,10 +341,7 @@ function AbaCultos({ servicos, onPick }) {
   return (
     <div>
       <FiltroBar servicos={servicos} value={filtros} onChange={setFiltros} />
-      <p style={{ fontSize: 12, color: C.t3, marginBottom: 10 }}>
-        <strong>Presença</strong> = lançada no ministerial · <strong>Dispositivos</strong> = MACs distintos (presença aproximada) ·
-        <strong> Captação</strong> = dispositivos ÷ presença · <strong>Identificadas</strong> = ligadas a uma pessoa. Clique num culto para ver as pessoas.
-      </p>
+      <Legenda itens={LEGENDA_CULTO} nota="Clique num culto para ver as pessoas que se conectaram nele. A presença aparece “—” enquanto não for lançada no ministerial." />
       <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 14, overflow: 'hidden' }}>
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 90px 90px 100px 90px 90px', padding: '10px 16px', fontSize: 12, fontWeight: 700, color: C.t3, borderBottom: `1px solid ${C.border}`, background: C.inputBg }}>
           <span>Culto</span>
@@ -398,9 +429,7 @@ function AbaSemana({ servicos }) {
   return (
     <div>
       <FiltroBar servicos={servicos} value={filtros} onChange={setFiltros} />
-      <p style={{ fontSize: 12, color: C.t3, marginBottom: 10 }}>
-        Semana ISO (segunda a domingo) · compara a <strong>presença lançada no ministerial</strong> com quantos <strong>se conectaram no WiFi</strong>.
-      </p>
+      <Legenda itens={LEGENDA_SEMANA} nota="Permite “bater” as semanas: comparar a presença real lançada com quantos foram captados pelo WiFi." />
       <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 14, overflow: 'hidden' }}>
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 80px 90px 100px 90px 90px', padding: '10px 16px', fontSize: 12, fontWeight: 700, color: C.t3, borderBottom: `1px solid ${C.border}`, background: C.inputBg }}>
           <span>Semana</span>
@@ -447,9 +476,10 @@ function AbaAlertas({ onPick }) {
 
   return (
     <div>
-      <p style={{ fontSize: 12, color: C.t3, marginBottom: 12 }}>
-        Padrões calculados automaticamente a partir das conexões em cultos. Clique numa pessoa para ver o perfil completo.
-      </p>
+      <Legenda
+        itens={Object.values(ALERTA_META).map(m => [m.label, m.desc + '.', m.cor])}
+        nota="Padrões calculados automaticamente pelas conexões em cultos. “Semanas seguidas” = semanas (seg–dom) consecutivas com presença. Clique numa pessoa pro perfil completo."
+      />
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 14 }}>
         <button onClick={() => setFiltro('todos')} style={chipStyle(filtro === 'todos')}>Todos ({alertas.length})</button>
         {cats.map(cat => {
