@@ -1882,6 +1882,7 @@ export const kpis = {
 
 export const cuidados = {
   dashboard: () => get('/cuidados/dashboard'),
+  jornadaConvertidos: (params) => get('/cuidados/jornada-convertidos' + (params ? '?' + new URLSearchParams(params) : '')),
   acompanhamentos: {
     list: (params) => get('/cuidados/acompanhamentos' + (params ? '?' + new URLSearchParams(params) : '')),
     create: (data) => post('/cuidados/acompanhamentos', data),
@@ -1901,6 +1902,7 @@ export const cuidados = {
     tags: () => get('/cuidados/convertidos/tags'),
     agendarEncontro: (id, data) => post(`/cuidados/convertidos/${id}/agendar-encontro`, data),
     cancelarEncontro: (id) => post(`/cuidados/convertidos/${id}/cancelar-encontro`, {}),
+    registrarContato: (id) => post(`/cuidados/convertidos/${id}/registrar-contato`, {}),
     desfecho: (id, data) => post(`/cuidados/convertidos/${id}/desfecho`, data),
   },
   agregado: {

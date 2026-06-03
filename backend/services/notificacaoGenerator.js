@@ -17,6 +17,7 @@ async function gerarTodasNotificacoes() {
     total += await gerarNotificacoesMembresia();
     total += await gerarNotificacoesKpis();
     total += await gerarNotificacoesCuidados();
+    total += await gerarNotificacoesJornadaConvertidos();
     total += await gerarNotificacoesGrupos();
     total += await gerarNotificacoesRitual();
     total += await gerarNotificacoesSolicitacoes();
@@ -555,6 +556,59 @@ async function gerarNotificacoesCuidados() {
     });
   }
 
+  return count;
+}
+
+// ═══════════════════════════════════════════════════════════
+// JORNADA NOVOS CONVERTIDOS — contato pastoral em até 3 dias
+// Líder da área cobra no 2º dia · escala pro Marcelo (Cuidados) no 3º+.
+// ═══════════════════════════════════════════════════════════
+async function gerarNotificacoesJornadaConvertidos() {
+  let count = 0;
+  const DIA = 86400000;
+  const hojeStr = new Date().toISOString().slice(0, 10);
+  const desde = new Date(Date.now() - 30 * DIA).toISOString().slice(0, 10);
+
+  const { data: convs } = await supabase
+    .from('cui_convertidos')
+    .select('id, nome, data_culto, area')
+    .is('deleted_at', null)
+    .is('primeiro_contato_em', null)
+    .gte('data_culto', desde);
+
+  const ehArea = (a) => ['ami', 'bridge', 'online'].includes(a);
+  const moduloArea = (a) => ehArea(a) ? a : 'cuidados';
+  const linkArea = (a) => ehArea(a) ? `/${a}` : '/ministerial/cuidados?tab=primeiros-passos';
+
+  for (const c of convs || []) {
+    const dias = Math.floor((Date.now() - new Date(c.data_culto + 'T12:00:00').getTime()) / DIA);
+    if (dias < 2) continue;
+    const area = c.area || 'sede';
+
+    // 2º dia: líder da área
+    count += await notificar({
+      modulo: moduloArea(area),
+      tipo: 'convertido_sem_contato',
+      titulo: `Sem contato pastoral: ${c.nome}`,
+      mensagem: `${c.nome} se converteu há ${dias} dias e ainda não recebeu contato. Faça o contato e marque o encontro (meta: 3 dias).`,
+      link: linkArea(area),
+      severidade: dias > 3 ? 'warning' : 'info',
+      chaveDedup: `jornada_contato_${c.id}_${hojeStr}`,
+    });
+
+    // 3º+ dia: escala pro Marcelo (Cuidados) cobrar o líder
+    if (dias > 3 && moduloArea(area) !== 'cuidados') {
+      count += await notificar({
+        modulo: 'cuidados',
+        tipo: 'convertido_sem_contato_atrasado',
+        titulo: `Atrasado (${area}): ${c.nome}`,
+        mensagem: `${c.nome} (${area}) está há ${dias} dias sem contato pastoral — passou do prazo de 3 dias. Cobrar o líder da área.`,
+        link: '/ministerial/cuidados?tab=primeiros-passos',
+        severidade: 'warning',
+        chaveDedup: `jornada_contato_esc_${c.id}_${hojeStr}`,
+      });
+    }
+  }
   return count;
 }
 

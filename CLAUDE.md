@@ -2,6 +2,48 @@
 
 Guia operacional para o Claude Code quando trabalhar neste repositório.
 
+## Jornada do novo convertido · 90 dias + responsabilidade por área (2026-06-03)
+
+Marcos: medir 3 marcos por novo convertido a partir da conversão — **Contato pastoral ≤3d**,
+**Batismo ≤90d**, **Next ≤90d** — com a responsabilidade seguindo a **ÁREA DE CULTO** da
+conversão. Cadeia: Integração CONTA → Cuidados REÚNE no encontro e PONTUA o destino → **líder
+da área** acompanha as fases → **Marcelo Soares** (`supervisor-jornada`) supervisiona de Cuidados
+e **cobra** quem não fez o contato. Áreas→líder: AMI→Arthur · Online→Renata · Bridge→Lillian ·
+Domingo/Sede→Marcelo. Kids fora (LGPD · não vira convertido).
+
+**Migration `20260603160000_jornada_novos_convertidos.sql`** (aditiva): `cui_convertidos` +=
+`area` (ami/bridge/online/sede), `primeiro_contato_em`, `primeiro_contato_por`. Trigger
+`tg_cultos_dec_pessoas_to_cuidados` recriado pra gravar `area` (online se a decisão foi online;
+senão pelo nome do tipo de culto). Backfill da `area` pelos cultos existentes (+ override 'online'
+via `cultos_decisoes_pessoas`).
+
+**Backend (`routes/cuidados.js`):**
+- `agendar-encontro` e o novo `registrar-contato` carimbam `primeiro_contato_em` na 1ª vez (SLA 3d).
+- `GET /cuidados/jornada-convertidos?area=` → convertidos com os 3 marcos (status semáforo:
+  feito/no_prazo/vencendo/atrasado/inscrito) + resumo (% por marco). Cruza `batismo_inscricoes`
+  + `next_inscricoes` por membro/cpf/nome (paginado p/ o cap de 1000).
+- `registrar-contato` deixa o líder marcar o contato sem precisar agendar a reunião ainda.
+
+**Escalação (`notificacaoGenerator.js` · `gerarNotificacoesJornadaConvertidos`):** sem contato
+em ~2 dias → notifica o **módulo da área** (líder); >3 dias → também notifica **cuidados**
+(Marcelo cobra). Dedup por convertido/dia. ⚠️ pra mirar Arthur/Renata/Lillian, configurar os
+destinatários dos módulos `ami`/`bridge`/`online` em `/admin` (NotificacaoRegras) · senão cai
+no fallback admin.
+
+**Frontend — componente reusável `src/components/JornadaConvertidos.tsx`** (3 marcos semáforo +
+% no topo + filtros + botão "marcar contato"), montado em:
+- **Cuidados** aba **"Primeiros passos"** (cockpit do Marcelo · todas as áreas + filtro).
+- **`/ami` e `/bridge`** (PainelArea) e **`/online`** (Online.tsx) → filtrado pela área
+  (Arthur/Lillian/Renata veem só a sua gente).
+- **Integração** aba **"Next"** (`view="next"` · cobertura do Next em 90d, todas as áreas).
+- `api.js`: `cuidados.jornadaConvertidos` + `cuidados.convertidos.registrarContato`.
+
+**Next em Integração:** decisão do Marcos = aba de **cobertura/funil** reusando `/api/next`
+(o módulo `/next` standalone continua pro admin de eventos). **Fase 2:** formalizar os 3 marcos
+como **KPIs na matriz/NSM** (hoje os % já aparecem no tracker, mas fora da matriz).
+
+⚠️ **Aplicar a migration `20260603160000` antes do merge.**
+
 ## Cuidados · Encontro pastoral + Encaminhamento da jornada (2026-06-03)
 
 Marcos: na aba **Convertidos** (`/ministerial/cuidados`), (1) filtro **"Já atendidas"**;

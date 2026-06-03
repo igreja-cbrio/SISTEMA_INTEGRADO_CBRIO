@@ -15,6 +15,7 @@ import { toast } from 'sonner';
 import { useAuth } from '@/contexts/AuthContext';
 import { CultoYouTubePanel } from '@/components/online/CultoYouTubePanel';
 import { OnlineDebugPanel } from '@/components/online/OnlineDebugPanel';
+import JornadaConvertidos from '@/components/JornadaConvertidos';
 
 const VALOR_META: Record<string, { label: string; cor: string; corClara: string; icon: any }> = {
   seguir:        { label: 'Seguir a Jesus',          cor: '#8B5CF6', corClara: 'from-violet-500/15 to-violet-500/5', icon: Cross },
@@ -639,6 +640,20 @@ export default function Online() {
           )}
         </div>
       </div>
+
+      {/* Novos convertidos online · primeiros 90 dias (acompanhamento da Renata) */}
+      <Card>
+        <CardContent className="p-4 md:p-5 space-y-3">
+          <div className="flex items-center gap-3">
+            <div className="rounded-xl bg-primary/10 p-2"><HeartHandshake className="h-5 w-5 text-primary" /></div>
+            <div>
+              <h2 className="text-base font-bold leading-tight">Novos convertidos · primeiros 90 dias</h2>
+              <p className="text-xs text-muted-foreground mt-0.5">Quem decidiu no Online: contato pastoral (3 dias), batismo e Next (90 dias). Atrasados em vermelho.</p>
+            </div>
+          </div>
+          <JornadaConvertidos area="online" />
+        </CardContent>
+      </Card>
 
       <OAuthStatusCard />
 
