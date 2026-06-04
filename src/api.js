@@ -241,6 +241,7 @@ export const dashboardSemanal = {
 
 export const grupos = {
   list: (params) => get('/grupos' + (params ? '?' + new URLSearchParams(params) : '')),
+  meu: () => get('/grupos/meu'),
   get: (id) => get(`/grupos/${id}`),
   create: (data) => post('/grupos', data),
   update: (id, data) => put(`/grupos/${id}`, data),

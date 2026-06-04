@@ -801,6 +801,110 @@ router.get('/pedidos/count', async (req, res) => {
   }
 });
 
+// ─────────────────────────────────────────────────────────────
+// GET /api/grupos/meu — grupos do MEMBRO logado (app do membro).
+// Resolve o mem_membros do usuário (profiles.membro_id → fallback email),
+// devolve onde ele participa e/ou lidera (com endereço, dia/horário, líder e
+// nº de membros) + os pedidos pendentes que ELE fez. Leitura · sem nível.
+// ─────────────────────────────────────────────────────────────
+async function resolverMembroLogado(req) {
+  const u = req.user;
+  if (!u) return null;
+  if (u.membro_id) {
+    const { data: m } = await supabase.from('mem_membros')
+      .select('id, nome, foto_url').eq('id', u.membro_id).maybeSingle();
+    if (m) return m;
+  }
+  if (u.email) {
+    const { data: m } = await supabase.from('mem_membros')
+      .select('id, nome, foto_url').ilike('email', u.email).eq('active', true).maybeSingle();
+    if (m) {
+      await supabase.from('profiles').update({ membro_id: m.id }).eq('id', u.id);
+      return m;
+    }
+  }
+  return null;
+}
+
+const DIAS_SEMANA = ['Domingo', 'Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta', 'Sábado'];
+
+router.get('/meu', async (req, res) => {
+  try {
+    const membro = await resolverMembroLogado(req);
+    if (!membro) return res.json({ membro_id: null, grupos: [], pedidos_pendentes: [] });
+
+    // Participações ativas + grupos que lidera
+    const [{ data: parts }, { data: liderados }] = await Promise.all([
+      supabase.from('mem_grupo_membros')
+        .select('grupo_id, funcao, entrou_em')
+        .eq('membro_id', membro.id).is('saiu_em', null).is('deleted_at', null),
+      supabase.from('mem_grupos')
+        .select('id').eq('lider_id', membro.id).eq('ativo', true).is('deleted_at', null),
+    ]);
+
+    const papelPorGrupo = {};
+    (parts || []).forEach(p => { papelPorGrupo[p.grupo_id] = { papel: 'membro', funcao: p.funcao, entrou_em: p.entrou_em }; });
+    (liderados || []).forEach(g => { papelPorGrupo[g.id] = { ...(papelPorGrupo[g.id] || {}), papel: 'lider' }; });
+
+    const grupoIds = Object.keys(papelPorGrupo);
+    let grupos = [];
+    if (grupoIds.length) {
+      const { data: gs } = await supabase.from('mem_grupos')
+        .select('id, codigo, nome, categoria, dia_semana, horario, recorrencia, local, complemento, endereco, bairro, lat, lng, foto_url, descricao, tema, lider_id, status_temporada, temporada')
+        .in('id', grupoIds).is('deleted_at', null);
+
+      const liderIds = [...new Set((gs || []).map(g => g.lider_id).filter(Boolean))];
+      let lideres = {};
+      if (liderIds.length) {
+        const { data: ls } = await supabase.from('mem_membros')
+          .select('id, nome, telefone, foto_url').in('id', liderIds);
+        (ls || []).forEach(l => { lideres[l.id] = l; });
+      }
+
+      // Contagem de membros ativos por grupo
+      const contagem = {};
+      await Promise.all(grupoIds.map(async (gid) => {
+        const { count } = await supabase.from('mem_grupo_membros')
+          .select('id', { count: 'exact', head: true })
+          .eq('grupo_id', gid).is('saiu_em', null).is('deleted_at', null);
+        contagem[gid] = count || 0;
+      }));
+
+      grupos = (gs || []).map(g => {
+        const meta = papelPorGrupo[g.id] || {};
+        const lider = lideres[g.lider_id] || null;
+        const ondePartes = [g.local, g.complemento, g.bairro].filter(Boolean);
+        return {
+          ...g,
+          papel: meta.papel || 'membro',
+          funcao: meta.funcao || null,
+          entrou_em: meta.entrou_em || null,
+          dia_semana_label: g.dia_semana != null ? DIAS_SEMANA[g.dia_semana] : null,
+          horario_label: g.horario ? String(g.horario).slice(0, 5) : null,
+          endereco_resumo: ondePartes.length ? ondePartes.join(' — ') : null,
+          total_membros: contagem[g.id] || 0,
+          lider: lider ? { id: lider.id, nome: lider.nome, telefone: lider.telefone, foto_url: lider.foto_url } : null,
+        };
+      });
+    }
+
+    // Pedidos pendentes que o próprio membro fez
+    const { data: pend } = await supabase.from('mem_grupo_pedidos')
+      .select('id, grupo_id, status, created_at, mem_grupos(nome, codigo)')
+      .eq('membro_id', membro.id).eq('status', 'pendente').is('deleted_at', null)
+      .order('created_at', { ascending: false });
+    const pedidos_pendentes = (pend || []).map(p => ({
+      id: p.id, grupo_id: p.grupo_id, status: p.status, created_at: p.created_at,
+      grupo_nome: p.mem_grupos?.nome || null, grupo_codigo: p.mem_grupos?.codigo || null,
+    }));
+
+    res.json({ membro_id: membro.id, grupos, pedidos_pendentes });
+  } catch (e) {
+    console.error('[Grupos meu]', e.message);
+    res.status(500).json({ error: 'Erro ao carregar meus grupos' });
+  }
+});
+
 // GET /api/grupos/:id/historico-membros — lista de entradas/saidas do grupo
 // com origem e destino (para mostrar transferencias).
 router.get('/:id/historico-membros', async (req, res) => {
