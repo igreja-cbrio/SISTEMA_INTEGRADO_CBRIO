@@ -287,4 +287,221 @@ router.post('/inscricoes', limiterStrict, tryAuth, async (req, res) => {
   }
 });
 
+// ── Voluntariado · self-service do membro (app) ───────────────────────────
+// Carteira é UNIFICADA (um cartão por membro = mem_qrcodes.token) — não há
+// cartão de voluntário aqui. Estes endpoints cobrem: status da inscrição,
+// área, escalas (confirmar/recusar) e indisponibilidade (culto ou período).
+
+// Resolve o mem_membros do usuário logado (profiles.membro_id → fallback email)
+async function resolveMembroApp(req) {
+  const authId = req.user?.id;
+  const email = req.user?.email || null;
+  if (authId) {
+    const { data: prof } = await supabase.from('profiles').select('membro_id').eq('id', authId).maybeSingle();
+    if (prof?.membro_id) {
+      const { data: m } = await supabase.from('mem_membros')
+        .select('id, nome, cpf, email, telefone').eq('id', prof.membro_id).maybeSingle();
+      if (m) return m;
+    }
+  }
+  if (email) {
+    const { data: m } = await supabase.from('mem_membros')
+      .select('id, nome, cpf, email, telefone').ilike('email', email).is('deleted_at', null).maybeSingle();
+    if (m) return m;
+  }
+  return null;
+}
+
+async function escalasDoVoluntario(vp) {
+  if (!vp) return [];
+  const conds = [`volunteer_id.eq.${vp.id}`];
+  if (vp.planning_center_id) conds.push(`planning_center_person_id.eq.${vp.planning_center_id}`);
+  const { data: schedules } = await supabase.from('vol_schedules')
+    .select('*, service:vol_services!inner(*)')
+    .or(conds.join(','))
+    .gte('service.scheduled_at', new Date().toISOString())
+    .order('service(scheduled_at)', { ascending: true });
+  const ids = (schedules || []).map(s => s.id);
+  let checked = new Set();
+  if (ids.length) {
+    const { data: ci } = await supabase.from('vol_check_ins').select('schedule_id').in('schedule_id', ids);
+    checked = new Set((ci || []).map(c => c.schedule_id));
+  }
+  return (schedules || []).map(s => ({ ...s, has_checkin: checked.has(s.id) }));
+}
+
+// GET /api/app/voluntariado/me — agregador: inscrição + área + escalas + indisponibilidades
+router.get('/voluntariado/me', authApp, limiterNormal, async (req, res) => {
+  try {
+    const membro = await resolveMembroApp(req);
+
+    const { data: vp } = await supabase.from('vol_profiles')
+      .select('id, full_name, allocation_status, planning_center_id')
+      .eq('auth_user_id', req.user.id).maybeSingle();
+
+    // Inscrição mais recente (por membro_id ou e-mail)
+    let inscricao = null;
+    const orParts = [];
+    if (membro?.id) orParts.push(`membro_id.eq.${membro.id}`);
+    if (req.user.email) orParts.push(`email.ilike.${req.user.email}`);
+    if (orParts.length) {
+      const { data: ins } = await supabase.from('vol_inscricoes')
+        .select('id, status, area, ministerios_interesse, data_inscricao, enviado_lider_em, integrado_em')
+        .or(orParts.join(',')).order('data_inscricao', { ascending: false }).limit(1).maybeSingle();
+      inscricao = ins || null;
+    }
+
+    const ativo = vp?.allocation_status === 'active';
+    const [escalas, indispRes] = await Promise.all([
+      escalasDoVoluntario(vp),
+      vp ? supabase.from('vol_availability').select('*').eq('volunteer_profile_id', vp.id).order('unavailable_from') : Promise.resolve({ data: [] }),
+    ]);
+
+    res.json({
+      membro_id: membro?.id || null,
+      vol_profile_id: vp?.id || null,
+      voluntario_ativo: ativo,
+      inscricao,                              // status: inscrito | enviado_ministerio | integrado
+      area: inscricao?.area || null,
+      ministerios: inscricao?.ministerios_interesse || null,
+      escalas,
+      indisponibilidades: indispRes.data || [],
+    });
+  } catch (e) {
+    console.error('[APP vol/me]', e.message);
+    res.status(500).json({ error: 'Erro ao carregar voluntariado' });
+  }
+});
+
+// POST /api/app/voluntariado/solicitar-area — pede pra servir (em outra área também)
+// body: { areas: [labels], nome_mae? }  · cai na triagem do voluntariado
+router.post('/voluntariado/solicitar-area', authApp, limiterStrict, async (req, res) => {
+  try {
+    const { areas, nome_mae } = req.body || {};
+    if (!Array.isArray(areas) || areas.length === 0) {
+      return res.status(400).json({ error: 'Selecione ao menos uma área' });
+    }
+    const membro = await resolveMembroApp(req);
+    if (!membro) return res.status(404).json({ error: 'Cadastro de membro não encontrado' });
+
+    const nomeCompleto = (membro.nome || '').trim();
+    const nome = nomeCompleto.split(' ')[0] || nomeCompleto || 'Membro';
+    const sobrenome = nomeCompleto.split(' ').slice(1).join(' ') || '-';
+
+    // Insere em app_inscricoes → a trigger cria a inscrição em vol_inscricoes
+    const { error } = await supabase.from('app_inscricoes').insert({
+      tipo: 'voluntariado',
+      auth_user_id: req.user.id,
+      status: 'pendente',
+      dados: {
+        nome, sobrenome, nome_completo: nomeCompleto || nome,
+        cpf: membro.cpf || null, email: membro.email || req.user.email || null,
+        telefone: membro.telefone || null,
+        nome_mae: nome_mae || null,
+        areas, membro_id: membro.id,
+      },
+    });
+    if (error) throw error;
+    res.status(201).json({ ok: true, message: 'Pedido enviado! A coordenação de voluntários vai falar com você.' });
+  } catch (e) {
+    console.error('[APP vol/solicitar-area]', e.message);
+    res.status(500).json({ error: 'Erro ao enviar pedido' });
+  }
+});
+
+// GET /api/app/voluntariado/escalas — próximas escalas do voluntário
+router.get('/voluntariado/escalas', authApp, limiterNormal, async (req, res) => {
+  try {
+    const { data: vp } = await supabase.from('vol_profiles')
+      .select('id, planning_center_id').eq('auth_user_id', req.user.id).maybeSingle();
+    res.json(await escalasDoVoluntario(vp));
+  } catch (e) {
+    console.error('[APP vol/escalas]', e.message);
+    res.status(500).json({ error: 'Erro ao buscar escalas' });
+  }
+});
+
+// POST /api/app/voluntariado/escalas/:id/responder — { status: 'confirmed'|'declined' }
+router.post('/voluntariado/escalas/:id/responder', authApp, limiterNormal, async (req, res) => {
+  try {
+    const { status } = req.body || {};
+    if (!['confirmed', 'declined'].includes(status)) {
+      return res.status(400).json({ error: "status deve ser 'confirmed' ou 'declined'" });
+    }
+    const { data: vp } = await supabase.from('vol_profiles')
+      .select('id').eq('auth_user_id', req.user.id).maybeSingle();
+    if (!vp) return res.status(404).json({ error: 'Perfil de voluntário não encontrado' });
+    // só responde escala própria
+    const { data, error } = await supabase.from('vol_schedules')
+      .update({ confirmation_status: status })
+      .eq('id', req.params.id).eq('volunteer_id', vp.id).select().maybeSingle();
+    if (error) throw error;
+    if (!data) return res.status(404).json({ error: 'Escala não encontrada' });
+    res.json(data);
+  } catch (e) {
+    console.error('[APP vol/responder]', e.message);
+    res.status(500).json({ error: 'Erro ao responder escala' });
+  }
+});
+
+// GET /api/app/voluntariado/indisponibilidades
+router.get('/voluntariado/indisponibilidades', authApp, limiterNormal, async (req, res) => {
+  try {
+    const { data: vp } = await supabase.from('vol_profiles')
+      .select('id').eq('auth_user_id', req.user.id).maybeSingle();
+    if (!vp) return res.json([]);
+    const { data } = await supabase.from('vol_availability')
+      .select('*').eq('volunteer_profile_id', vp.id).order('unavailable_from');
+    res.json(data || []);
+  } catch (e) {
+    console.error('[APP vol/indisp list]', e.message);
+    res.status(500).json({ error: 'Erro ao buscar indisponibilidade' });
+  }
+});
+
+// POST /api/app/voluntariado/indisponibilidade
+// body: { service_id } (culto específico) OU { inicio, fim } (faixa de datas) + motivo?
+router.post('/voluntariado/indisponibilidade', authApp, limiterNormal, async (req, res) => {
+  try {
+    const { service_id, inicio, fim, motivo } = req.body || {};
+    const { data: vp } = await supabase.from('vol_profiles')
+      .select('id').eq('auth_user_id', req.user.id).maybeSingle();
+    if (!vp) return res.status(404).json({ error: 'Perfil de voluntário não encontrado' });
+
+    let from = inicio; let to = fim || inicio;
+    if (service_id) {
+      const { data: s } = await supabase.from('vol_services').select('scheduled_at').eq('id', service_id).maybeSingle();
+      if (!s) return res.status(404).json({ error: 'Culto não encontrado' });
+      from = s.scheduled_at.split('T')[0]; to = from;
+    }
+    if (!from) return res.status(400).json({ error: 'Informe service_id ou inicio/fim' });
+
+    const { data, error } = await supabase.from('vol_availability').insert({
+      volunteer_profile_id: vp.id, service_id: service_id || null,
+      unavailable_from: from, unavailable_to: to, reason: motivo || null,
+    }).select().single();
+    if (error) throw error;
+    res.status(201).json(data);
+  } catch (e) {
+    console.error('[APP vol/indisp create]', e.message);
+    res.status(500).json({ error: 'Erro ao registrar indisponibilidade' });
+  }
+});
+
+// DELETE /api/app/voluntariado/indisponibilidade/:id
+router.delete('/voluntariado/indisponibilidade/:id', authApp, limiterNormal, async (req, res) => {
+  try {
+    const { data: vp } = await supabase.from('vol_profiles')
+      .select('id').eq('auth_user_id', req.user.id).maybeSingle();
+    if (!vp) return res.status(404).json({ error: 'Perfil não encontrado' });
+    const { error } = await supabase.from('vol_availability')
+      .delete().eq('id', req.params.id).eq('volunteer_profile_id', vp.id);
+    if (error) throw error;
+    res.json({ ok: true });
+  } catch (e) {
+    console.error('[APP vol/indisp delete]', e.message);
+    res.status(500).json({ error: 'Erro ao remover indisponibilidade' });
+  }
+});
+
 module.exports = router;
