@@ -522,8 +522,8 @@ router.delete('/voluntariado/indisponibilidade/:id', authApp, limiterNormal, asy
 // Geofence configurável por env (defina as coordenadas EXATAS no Vercel):
 //   NEXT_CHURCH_LAT, NEXT_CHURCH_LNG, NEXT_CHECKIN_RADIUS_M (default 500)
 const NEXT_CHURCH = {
-  lat: parseFloat(process.env.NEXT_CHURCH_LAT || '-23.0040'),  // Av. das Américas 7907 (aprox · AJUSTAR via env)
-  lng: parseFloat(process.env.NEXT_CHURCH_LNG || '-43.3220'),
+  lat: parseFloat(process.env.NEXT_CHURCH_LAT || '-23.001115'),  // Av. das Américas 7907, Barra da Tijuca/RJ
+  lng: parseFloat(process.env.NEXT_CHURCH_LNG || '-43.388279'),
   raio: parseInt(process.env.NEXT_CHECKIN_RADIUS_M || '500', 10),
 };
 function distanciaMetros(aLat, aLng, bLat, bLng) {
