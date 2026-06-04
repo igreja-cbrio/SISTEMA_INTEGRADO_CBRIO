@@ -517,4 +517,138 @@ router.delete('/voluntariado/indisponibilidade/:id', authApp, limiterNormal, asy
   }
 });
 
+// ── NEXT · inscrição + próximos encontros + check-in geolocalizado ────────
+// Tudo vinculado ao mem_membros (resolveMembroApp) → alimenta a jornada.
+// Geofence configurável por env (defina as coordenadas EXATAS no Vercel):
+//   NEXT_CHURCH_LAT, NEXT_CHURCH_LNG, NEXT_CHECKIN_RADIUS_M (default 500)
+const NEXT_CHURCH = {
+  lat: parseFloat(process.env.NEXT_CHURCH_LAT || '-23.0040'),  // Av. das Américas 7907 (aprox · AJUSTAR via env)
+  lng: parseFloat(process.env.NEXT_CHURCH_LNG || '-43.3220'),
+  raio: parseInt(process.env.NEXT_CHECKIN_RADIUS_M || '500', 10),
+};
+function distanciaMetros(aLat, aLng, bLat, bLng) {
+  const R = 6371000, toR = (x) => (x * Math.PI) / 180;
+  const dLat = toR(bLat - aLat), dLng = toR(bLng - aLng);
+  const s = Math.sin(dLat / 2) ** 2 + Math.cos(toR(aLat)) * Math.cos(toR(bLat)) * Math.sin(dLng / 2) ** 2;
+  return 2 * R * Math.asin(Math.sqrt(s));
+}
+function hojeBRT() { return new Date(Date.now() - 3 * 3600 * 1000).toISOString().slice(0, 10); }
+function partesNome(nomeCompleto) {
+  const n = (nomeCompleto || '').trim();
+  return { nome: n.split(' ')[0] || 'Membro', sobrenome: n.split(' ').slice(1).join(' ') || null };
+}
+
+// GET /api/app/next/me — próximos encontros + status de inscrição/check-in
+router.get('/next/me', authApp, limiterNormal, async (req, res) => {
+  try {
+    const membro = await resolveMembroApp(req);
+    const hoje = hojeBRT();
+    const { data: eventos } = await supabase.from('next_eventos')
+      .select('id, data, titulo, status').eq('status', 'agendado')
+      .gte('data', hoje).order('data', { ascending: true }).limit(12);
+
+    let byEvento = {};
+    if (membro && (eventos || []).length) {
+      const { data: ins } = await supabase.from('next_inscricoes')
+        .select('evento_id, check_in_at').eq('membro_id', membro.id)
+        .in('evento_id', eventos.map(e => e.id));
+      (ins || []).forEach(i => { byEvento[i.evento_id] = i; });
+    }
+    const encontros = (eventos || []).map(e => ({
+      id: e.id, data: e.data, titulo: e.titulo,
+      inscrito: !!byEvento[e.id],
+      check_in_at: byEvento[e.id]?.check_in_at || null,
+      pode_checkin_hoje: e.data === hoje,
+    }));
+    res.json({
+      membro_id: membro?.id || null,
+      inscrito_next: encontros.some(e => e.inscrito),
+      encontros,
+      igreja: { lat: NEXT_CHURCH.lat, lng: NEXT_CHURCH.lng, raio_m: NEXT_CHURCH.raio },
+    });
+  } catch (e) {
+    console.error('[APP next/me]', e.message);
+    res.status(500).json({ error: 'Erro ao carregar NEXT' });
+  }
+});
+
+// POST /api/app/next/inscrever — inscreve o membro no próximo encontro
+router.post('/next/inscrever', authApp, limiterStrict, async (req, res) => {
+  try {
+    const membro = await resolveMembroApp(req);
+    if (!membro) return res.status(404).json({ error: 'Cadastro de membro não encontrado' });
+
+    const { data: prox } = await supabase.from('next_eventos')
+      .select('id, data, titulo').eq('status', 'agendado')
+      .gte('data', hojeBRT()).order('data').limit(1).maybeSingle();
+    if (!prox) return res.status(400).json({ error: 'Não há encontros do NEXT agendados no momento.' });
+
+    const { data: ja } = await supabase.from('next_inscricoes')
+      .select('id').eq('membro_id', membro.id).eq('evento_id', prox.id).maybeSingle();
+    if (ja) return res.json({ ok: true, evento: prox, jaInscrito: true });
+
+    const { nome, sobrenome } = partesNome(membro.nome);
+    const { error } = await supabase.from('next_inscricoes').insert({
+      evento_id: prox.id, nome, sobrenome,
+      cpf: membro.cpf || null, email: membro.email || req.user.email || null,
+      telefone: membro.telefone || null, membro_id: membro.id, origem: 'app',
+    });
+    if (error) throw error;
+    res.status(201).json({ ok: true, evento: prox, message: 'Inscrição no NEXT confirmada!' });
+  } catch (e) {
+    console.error('[APP next/inscrever]', e.message);
+    res.status(500).json({ error: 'Erro ao inscrever no NEXT' });
+  }
+});
+
+// POST /api/app/next/encontros/:eventoId/checkin — body { lat, lng }
+// Só no DIA do encontro (BRT) e dentro do raio da igreja.
+router.post('/next/encontros/:eventoId/checkin', authApp, limiterNormal, async (req, res) => {
+  try {
+    const { lat, lng } = req.body || {};
+    const membro = await resolveMembroApp(req);
+    if (!membro) return res.status(404).json({ error: 'Cadastro de membro não encontrado' });
+
+    const { data: ev } = await supabase.from('next_eventos')
+      .select('id, data, titulo').eq('id', req.params.eventoId).maybeSingle();
+    if (!ev) return res.status(404).json({ error: 'Encontro não encontrado' });
+    if (ev.data !== hojeBRT()) {
+      return res.status(422).json({ error: 'O check-in só fica disponível no dia do encontro.' });
+    }
+    if (lat == null || lng == null || Number.isNaN(Number(lat)) || Number.isNaN(Number(lng))) {
+      return res.status(422).json({ needLocation: true, error: 'Ative a localização para confirmar sua presença.' });
+    }
+    const dist = distanciaMetros(Number(lat), Number(lng), NEXT_CHURCH.lat, NEXT_CHURCH.lng);
+    if (dist > NEXT_CHURCH.raio) {
+      return res.status(403).json({ error: 'Você precisa estar na igreja para fazer o check-in.', distancia_m: Math.round(dist) });
+    }
+
+    const agora = new Date().toISOString();
+    const { data: insc } = await supabase.from('next_inscricoes')
+      .select('id, check_in_at').eq('membro_id', membro.id).eq('evento_id', ev.id).maybeSingle();
+
+    if (insc) {
+      if (insc.check_in_at) return res.json({ ok: true, jaCheckin: true, check_in_at: insc.check_in_at });
+      const { data: up, error } = await supabase.from('next_inscricoes')
+        .update({ check_in_at: agora, check_in_by: req.user.id, updated_at: agora })
+        .eq('id', insc.id).select('check_in_at').single();
+      if (error) throw error;
+      return res.json({ ok: true, check_in_at: up.check_in_at });
+    }
+
+    const { nome, sobrenome } = partesNome(membro.nome);
+    const { data: novo, error } = await supabase.from('next_inscricoes').insert({
+      evento_id: ev.id, nome, sobrenome,
+      cpf: membro.cpf || null, email: membro.email || req.user.email || null,
+      telefone: membro.telefone || null, membro_id: membro.id, origem: 'app',
+      check_in_at: agora, check_in_by: req.user.id,
+    }).select('check_in_at').single();
+    if (error) throw error;
+    res.status(201).json({ ok: true, check_in_at: novo.check_in_at });
+  } catch (e) {
+    console.error('[APP next/checkin]', e.message);
+    res.status(500).json({ error: 'Erro ao fazer check-in' });
+  }
+});
+
 module.exports = router;
