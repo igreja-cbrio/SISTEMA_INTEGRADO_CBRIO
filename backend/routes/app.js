@@ -384,6 +384,19 @@ router.post('/voluntariado/solicitar-area', authApp, limiterStrict, async (req, 
     const membro = await resolveMembroApp(req);
     if (!membro) return res.status(404).json({ error: 'Cadastro de membro não encontrado' });
 
+    // Dedup: já existe uma inscrição em aberto (em análise) pra essa pessoa?
+    const { data: aberta } = await supabase.from('vol_inscricoes')
+      .select('id, status, area')
+      .eq('membro_id', membro.id)
+      .in('status', ['inscrito', 'enviado_ministerio'])
+      .limit(1).maybeSingle();
+    if (aberta) {
+      return res.status(409).json({
+        error: 'Você já tem uma inscrição em análise. Aguarde a equipe entrar em contato.',
+        jaInscrito: true, inscricao_status: aberta.status,
+      });
+    }
+
     const nomeCompleto = (membro.nome || '').trim();
     const nome = nomeCompleto.split(' ')[0] || nomeCompleto || 'Membro';
     const sobrenome = nomeCompleto.split(' ').slice(1).join(' ') || '-';

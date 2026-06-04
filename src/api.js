@@ -1636,6 +1636,8 @@ export const voluntariado = {
     const s = qs.toString();
     return get(`/voluntariado/inscricoes${s ? `?${s}` : ''}`);
   },
+  // Triagem: muda o status da inscrição (inscrito → enviado_ministerio → integrado)
+  atualizarInscricao: (id, status) => patch(`/voluntariado/inscricoes/${id}`, { status }),
   // Encontros 1x1 mensais (líder <-> voluntário)
   teamMembers: (teamId, yearMonth) =>
     get(`/voluntariado/team/${teamId}/members${yearMonth ? `?year_month=${yearMonth}` : ''}`),

@@ -5,7 +5,8 @@ import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { toast } from 'sonner';
 import { voluntariado } from '@/api';
 import { Inbox, CheckCircle2, Percent, Search, Link2 } from 'lucide-react';
 import {
@@ -133,6 +134,18 @@ export default function VolInscricoes() {
   const [copied, setCopied] = useState(false);
   const [selected, setSelected] = useState<InscricaoRow | null>(null);
   const pageSize = 50;
+  const queryClient = useQueryClient();
+
+  const mudarStatus = useMutation({
+    mutationFn: ({ id, status }: { id: string; status: string }) => voluntariado.atualizarInscricao(id, status),
+    onSuccess: (_data, vars) => {
+      setSelected((prev) => (prev ? { ...prev, status: vars.status } : prev));
+      queryClient.invalidateQueries({ queryKey: ['vol', 'inscricoes-list'] });
+      queryClient.invalidateQueries({ queryKey: ['vol', 'inscricoes-summary'] });
+      toast.success('Status atualizado.');
+    },
+    onError: (e: any) => toast.error(e?.message || 'Erro ao atualizar status.'),
+  });
 
   const { data, isLoading } = useQuery<InscricoesSummary>({
     queryKey: ['vol', 'inscricoes-summary', ano, area],
@@ -570,6 +583,34 @@ export default function VolInscricoes() {
                   <div className="sm:col-span-2">
                     <Info label="Observacoes" value={selected.feedback} />
                   </div>
+                )}
+              </div>
+
+              {/* Ações de triagem · inscrito → enviado ao ministério → integrado */}
+              <div className="flex flex-wrap gap-2 pt-4 mt-2 border-t">
+                {selected.status === 'inscrito' && (
+                  <Button size="sm" disabled={mudarStatus.isPending}
+                    onClick={() => mudarStatus.mutate({ id: selected.id, status: 'enviado_ministerio' })}>
+                    Enviar ao ministério
+                  </Button>
+                )}
+                {(selected.status === 'inscrito' || selected.status === 'enviado_ministerio') && (
+                  <Button size="sm" variant="default" disabled={mudarStatus.isPending}
+                    onClick={() => mudarStatus.mutate({ id: selected.id, status: 'integrado' })}>
+                    Integrar
+                  </Button>
+                )}
+                {selected.status === 'enviado_ministerio' && (
+                  <Button size="sm" variant="outline" disabled={mudarStatus.isPending}
+                    onClick={() => mudarStatus.mutate({ id: selected.id, status: 'inscrito' })}>
+                    Voltar pra triagem
+                  </Button>
+                )}
+                {selected.status === 'integrado' && (
+                  <Button size="sm" variant="outline" disabled={mudarStatus.isPending}
+                    onClick={() => mudarStatus.mutate({ id: selected.id, status: 'enviado_ministerio' })}>
+                    Reverter integração
+                  </Button>
                 )}
               </div>
             </>

@@ -1,9 +1,10 @@
 const router = require('express').Router();
-const { authenticate, authorizeModule } = require('../middleware/auth');
+const { authenticate, authorizeModule, getEffectiveLevel } = require('../middleware/auth');
 const { supabase } = require('../utils/supabase');
 const { getPCCredentials, fetchWithRetry, PC_SERVICES_BASE, assignVolunteersToTeams, syncTeamMembersFromSchedules, fetchAllServiceTypes } = require('../services/planningCenter');
 const { enqueueSync } = require('../services/cerebroSync');
 const { resolverVoluntarioPorQr } = require('../services/volCheckinResolver');
+const { notificar } = require('../services/notificar');
 
 router.use(authenticate, authorizeModule('membresia', 1));
 
@@ -2237,6 +2238,65 @@ router.get('/inscricoes', async (req, res) => {
   } catch (e) {
     console.error('[inscricoes-list]', e.message);
     res.status(500).json({ error: 'Erro ao listar inscrições' });
+  }
+});
+
+// PATCH /api/voluntariado/inscricoes/:id — triagem: muda o status
+// inscrito → enviado_ministerio → integrado (ou volta). Ação da coordenação.
+const VOL_INSCRICAO_STATUS = ['inscrito', 'enviado_ministerio', 'integrado'];
+router.patch('/inscricoes/:id', async (req, res) => {
+  try {
+    const { status, feedback } = req.body || {};
+    if (!VOL_INSCRICAO_STATUS.includes(status)) {
+      return res.status(400).json({ error: 'status inválido' });
+    }
+    const isAdmin = ['admin', 'diretor'].includes(req.user.role);
+    const lvl = Math.max(getEffectiveLevel(req, 'voluntariado') || 0, getEffectiveLevel(req, 'membresia') || 0);
+    if (!isAdmin && lvl < 3) {
+      return res.status(403).json({ error: 'Sem permissão para alterar a inscrição' });
+    }
+
+    const patch = { status, updated_at: new Date().toISOString() };
+    if (status === 'enviado_ministerio') patch.enviado_lider_em = new Date().toISOString();
+    if (status === 'integrado') patch.integrado_em = new Date().toISOString().slice(0, 10);
+    if (feedback !== undefined) patch.feedback = feedback || null;
+
+    const { data, error } = await supabase.from('vol_inscricoes')
+      .update(patch).eq('id', req.params.id).select().single();
+    if (error) throw error;
+
+    // Notifica a pessoa (se tiver login vinculado)
+    (async () => {
+      try {
+        if (!data.membro_id) return;
+        const { data: prof } = await supabase.from('vol_profiles')
+          .select('auth_user_id').eq('membresia_id', data.membro_id).maybeSingle();
+        const targetId = prof?.auth_user_id;
+        if (!targetId) return;
+        if (status === 'integrado') {
+          await notificar({
+            modulo: 'voluntariado', tipo: 'vol_integrado',
+            titulo: 'Você agora faz parte do time! 🎉',
+            mensagem: `Sua inscrição para servir (${data.area}) foi integrada. Bem-vindo(a)!`,
+            link: '/voluntariado', severidade: 'info',
+            chaveDedup: `vol_integrado_${data.id}`, targetIds: [targetId],
+          });
+        } else if (status === 'enviado_ministerio') {
+          await notificar({
+            modulo: 'voluntariado', tipo: 'vol_enviado',
+            titulo: 'Sua inscrição avançou',
+            mensagem: `Encaminhamos sua inscrição (${data.area}) ao ministério. Em breve o líder fala com você.`,
+            link: '/voluntariado', severidade: 'info',
+            chaveDedup: `vol_enviado_${data.id}`, targetIds: [targetId],
+          });
+        }
+      } catch (e) { console.warn('[inscricao status notify]', e.message); }
+    })();
+
+    res.json(data);
+  } catch (e) {
+    console.error('[inscricao status]', e.message);
+    res.status(500).json({ error: 'Erro ao atualizar inscrição' });
   }
 });
 
