@@ -20,8 +20,9 @@ do Next nesta migration). ⚠️ Importante: a matriz/painel lê `vw_kpi_trajeto
 `kpi_registros` qd `tipo_calculo='manual'`), por isso os KPIs da Frente A aparecem lá.
 
 **PRÓXIMO (B2/B3):** (1) ligar os KRs dos demais objetivos JÁ medidos (frequência cultos, batismo
-crescimento…); (2) **triagem de remoção** — analisar KR a KR e remover os que nenhum KPI responde
-(+ dependentes/filhos); (3) **roadmap**: dar fonte/coletor aos 24 objetivos sem medição (voluntários,
+crescimento…); (2) **triagem de remoção ✅ FEITA** (migration `20260603230000` · Marcos aprovou):
+201 KRs não-mensuráveis-por-KPI desativados (`ativo=false`, reversível) — floor "0 X", contagem-de-meses,
+processo/cadência e o vago "Make a Difference". Sobram ~316, todos "número vs meta". (3) **roadmap**: dar fonte/coletor aos 24 objetivos sem medição (voluntários,
 grupos, doadores, capelania, aconselhamento, NPS…), aí seus KRs passam a ser respondidos. **NUNCA
 entrada manual** (decisão do Marcos). Ver `project_okr_kr_medicao`.
 
