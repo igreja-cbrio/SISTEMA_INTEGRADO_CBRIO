@@ -1,5 +1,5 @@
 const router = require('express').Router();
-const { authenticate } = require('../middleware/auth');
+const { authenticate, authorizeModule } = require('../middleware/auth');
 const { supabase } = require('../utils/supabase');
 const { notificar } = require('../services/notificar');
 const { escapePostgrestValue } = require('../utils/sanitize');
@@ -34,6 +34,7 @@ router.get('/visitantes', async (req, res) => {
         responsavel:vol_profiles!int_visitantes_responsavel_id_fkey(id, full_name, avatar_url),
         culto:vol_services(id, name, scheduled_at)
       `)
+      .is('deleted_at', null)
       .order('data_visita', { ascending: false })
       .order('created_at', { ascending: false });
 
@@ -127,9 +128,16 @@ router.put('/visitantes/:id', async (req, res) => {
 });
 
 // ── DELETE /visitantes/:id ──────────────────────────────────────────────────
-router.delete('/visitantes/:id', async (req, res) => {
+// Soft-delete (int_visitantes tem PII + está na whitelist app_soft_deletable_tables)
+// + guarda de módulo: só nível 4 (deletar) em integração remove visitante. Antes
+// era hard-delete sem authorize → qualquer logado destruía PII (auditoria 2026-06-08).
+router.delete('/visitantes/:id', authorizeModule('integracao', 4), async (req, res) => {
   try {
-    const { error } = await supabase.from('int_visitantes').delete().eq('id', req.params.id);
+    const { error } = await supabase.rpc('app_soft_delete', {
+      p_table_name: 'int_visitantes',
+      p_row_id: req.params.id,
+      p_deleted_by: req.user?.id ?? null,
+    });
     if (error) return res.status(400).json({ error: error.message });
     res.json({ success: true });
   } catch (e) {

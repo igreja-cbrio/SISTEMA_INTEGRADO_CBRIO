@@ -240,6 +240,42 @@ SQL direto. **SEM migration** (é `UPDATE` em `profiles` via service_role).
   acesso no frontend (toast já avisa). É a mesma capacidade do `setCargo` (que via
   boost de área concede nível 5), só que sobre o role — escopo aprovado pelo Marcos.
 
+## Auditoria do sistema (2026-06-08) · correção dos 4 CRÍTICOS
+
+Auditoria ampla do ERP (workflow multi-agente · find → verificação adversarial →
+síntese): **29 achados confirmados** (4 críticos · 13 altos · 8 médios · 4 baixos).
+Fio condutor: backend roda com `service_role` (bem guardado), mas o **frontend usa a
+anon key** e várias tabelas **escaparam das ondas de lockdown de RLS** → acesso direto
+ao banco só com a RLS no caminho. Esta entrega corrige **só os 4 críticos**.
+
+**Migration `20260608120000_auditoria_criticos_rls_fn.sql`** (restritiva · idempotente):
+- **#1 `usuarios`**: as policies `"Authenticated write/update/delete usuarios"` eram
+  `USING(true)`/`WITH CHECK(true)` → qualquer logado editava o próprio `cargo_id` pela
+  anon key (**escalonamento de privilégio**). Dropadas; write recriado com
+  `is_super_admin()`; SELECT segue aberto (ModuleGuard lê o cargo); `usuarios_service`
+  FOR ALL pro backend. + trigger `trg_audit_usuarios` (`audit_log_changes('cargo_id,deleted_at')`).
+- **#2 `cui_atendimentos`** (timeline pastoral · PII): policies `USING(true)` (escapou
+  da Onda 2). Travadas por nível de módulo (`cuidados`/`integracao`: SELECT≥1, INSERT≥2,
+  UPDATE≥3), DELETE só `is_super_admin()`, + `service_role FOR ALL`. (Follow-up: `deleted_at`
+  + whitelist — não feito agora pra não mexer nas leituras.)
+- **#4 `fin_metas_progresso`**: a 20260529070000 recriou com 3º param (`p_meta_id` DEFAULT)
+  sem dropar a versão `(date,date)` → overload ambíguo (o RPC do Dashboard Financeiro
+  podia resolver errado). `DROP FUNCTION ...(date,date)` deixa só a de 3 args.
+
+**Fix #3 (backend, sem migration) — `routes/integracao.js`:** `DELETE /visitantes/:id`
+fazia **hard-delete sem authorize** (qualquer logado destruía PII — o endpoint usa
+service_role, bypassa a RLS). Agora: `authorizeModule('integracao', 4)` + `app_soft_delete`
+(`int_visitantes` já tem `deleted_at` + está na whitelist) + GET `/visitantes` passou a
+filtrar `deleted_at IS NULL`.
+
+**⚠️ Aplicar a migration `20260608120000` antes do merge.** Após aplicar, **bust de
+cache** de permissões não é necessário (RLS é avaliada no banco), mas o efeito é imediato.
+**Restam 25 achados** (13 altos − 1 crítico-virou-fix + …) p/ próximas levas: família de
+hard-deletes (devocionais/cultos/grupos/projects/rh), injeção PostgREST em `pessoas.js`
+(`.or()` com email cru → `escapePostgrestValue`), cascata de meta sobrescrevendo % (BAT90/
+NEXT90), rotas no pool pg (agents/meetings), `/cerebro/status` e webhook do Cérebro sem auth,
+API.Bible key hardcoded. Relatório completo arquivado.
+
 ## ⚠️ REGRA GLOBAL · acentuação correta do português do Brasil (SEMPRE)
 
 **Toda vez** que implementar QUALQUER coisa neste sistema (nova feature, fix,
