@@ -159,7 +159,14 @@ async function processarMensagem(m, cfg) {
       console.error('[whatsapp webhook] dedup form:', dupErr.message);
     }
     if (podeForm) {
-      await flowColeta.enviarFormularioCulto(telefone);
+      const fres = await flowColeta.enviarFormularioCulto(telefone);
+      // Diagnóstico: se o Flow não abriu (estado draft/publish na Meta, etc),
+      // grava o erro da Graph na própria coleta pra inspeção via banco.
+      if (fres && fres.ok === false && fres.error !== 'sem_cultos') {
+        await supabase.from('whatsapp_coletas')
+          .update({ erro: ('flow_fail: ' + String(fres.error || '?')).slice(0, 250) })
+          .eq('whatsapp_message_id', messageId);
+      }
     } else {
       // Líder só de grupos (ou Flows não configurados): grupos não tem
       // formulário (encontro exige lista nominal) → orientação templated.

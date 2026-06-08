@@ -60,8 +60,11 @@ async function enviarFlow(telefone, opts) {
     });
     const data = await resp.json().catch(() => ({}));
     if (!resp.ok) {
+      const err = data?.error || {};
+      // error_data.details traz o motivo real da Meta (ex: "Flow X is not published")
+      const detalhe = err.error_data?.details || err.message || `HTTP ${resp.status}`;
       console.error('[whatsappFlows] erro Graph API:', resp.status, JSON.stringify(data));
-      return { ok: false, error: data?.error?.message || `HTTP ${resp.status}` };
+      return { ok: false, error: detalhe, code: err.code, status: resp.status };
     }
     return { ok: true, message_id: data?.messages?.[0]?.id || null };
   } catch (e) {

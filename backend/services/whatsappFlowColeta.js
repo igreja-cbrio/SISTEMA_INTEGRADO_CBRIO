@@ -53,6 +53,9 @@ function parseReply(m) {
 }
 
 // Envia o Flow do culto · pre-carrega a lista de cultos recentes (rapido).
+// Retorna { ok, error? }. Se o formulário não puder abrir (estado draft/publish
+// na Meta, permissão, etc) NÃO deixa o líder no silêncio: cai pro texto, pra ele
+// reportar por número (a coleta conversacional assume).
 async function enviarFormularioCulto(telefone) {
   const hoje = new Date().toISOString().slice(0, 10);
   const limite = new Date(); limite.setDate(limite.getDate() - 14);
@@ -68,9 +71,9 @@ async function enviarFormularioCulto(telefone) {
   }));
   if (!opcoes.length) {
     await enviarTexto(telefone, 'Não achei cultos recentes pra lançar. Avisa a equipe, por favor. 🙏');
-    return;
+    return { ok: false, error: 'sem_cultos' };
   }
-  await enviarFlow(telefone, {
+  const res = await enviarFlow(telefone, {
     flowId: process.env.WHATSAPP_FLOW_CULTO_ID,
     flowToken: 'culto',
     cta: 'Preencher culto',
@@ -78,6 +81,13 @@ async function enviarFormularioCulto(telefone) {
     data: { cultos: opcoes },
     body: 'Vamos lançar os dados do culto. Toque pra preencher frequência e decisões 👇',
   });
+  if (!res.ok) {
+    console.error('[flowColeta] enviarFlow(culto) falhou:', res.error);
+    await enviarTexto(telefone,
+      'Não consegui abrir o formulário agora 😕. Sem problema: me manda os números por texto, '
+      + 'ex: "1100 presencial, 12 decisões, 30 kids". Eu registro. 🙏');
+  }
+  return res;
 }
 
 async function enviarFormularioPessoa(telefone, coletaId, indice, total) {
