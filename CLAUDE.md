@@ -2239,6 +2239,58 @@ mesmo padrão do mobile `cultos_dados_submissoes`). Cobaias: Grupos + Integraç�
 `https://[dominio]/api/whatsapp/webhook`. Sem essas envs o backend sobe
 normal · só não envia/recebe (parser e tela funcionam pra teste).
 
+## Bot WhatsApp · agente IA + coleta por FORMULÁRIO (Flows) (2026-06-08)
+
+Evolução do bot passivo (acima) em **2 personas conversacionais** + **coleta
+por formulário nativo (WhatsApp Flows)**. Tudo no webhook `routes/publicWhatsapp.js`
+(responde 200 imediato · processa async · HMAC fail-closed em prod · cap de 20
+msgs/evento · toggle global `whatsapp_config.ia_ativa`). Número do bot: **21 99907-9031**.
+
+**2 personas (`services/whatsappParser.js` · Claude Haiku):**
+- **Número desconhecido → assistente INSTITUCIONAL** (`responderInstitucional`):
+  responde missão/visão/horários a partir de `whatsapp_config.institucional`
+  (jsonb editável em `/admin/whatsapp`). NÃO coleta dado.
+- **Líder cadastrado → coleta** (`parseConversa`): multi-turno, mantém estado numa
+  coleta `aguardando_info` por **7 dias** (`JANELA_CONVERSA_MIN`), pergunta o que
+  falta, ao completar vira `parseado` (fila do coordenador em `/admin/whatsapp`).
+
+**Coleta por FORMULÁRIO (Flows) — o caminho principal do líder:**
+- `services/whatsappFlows.js` · `enviarFlow()` manda formulário de tela cheia
+  (interactive `type:'flow'`). `WHATSAPP_FLOW_MODE=draft` no env permite testar
+  como admin enquanto o app Meta está em modo dev (publish bloqueado por
+  "integridade"). Em produção real (app Live): remover essa env.
+- `services/whatsappFlowColeta.js` · orquestra: líder pede → Flow **culto**
+  (seleciona culto dos últimos 14d + frequência presencial/kids/online + decisões
+  presencial/online/kids) → se decisões > 0, **loop** pedindo Flow **pessoa** pra
+  cada uma (entra na jornada) → ao completar vira `parseado`.
+- Estado vive em `whatsapp_coletas.parsed` (`fonte:'flow'`, culto_id, freq, dec,
+  pessoas[], pendentes) · **sem migration**. `flow_token` correlaciona a resposta:
+  `'culto'` | `'pessoa:<coletaId>'`. Resposta chega no webhook como `nfm_reply`.
+- JSONs em `backend/whatsapp-flows/{flow-culto,flow-pessoa}.json` · publicados na
+  Meta pelo `backend/scripts/publish-whatsapp-flows.js` (roda 1×, devolve os ids).
+  **Flow ids (draft):** culto `1163668689265932` · pessoa `1941771723206900`.
+  ⚠️ tela Decisões usa campos **number** (não string) e **não** usa `visible`
+  condicional (não suportado nessa versão de Flow) · senão a validação no publish quebra.
+
+**Roteamento do líder (fix 2026-06-08 · `pedeFormulario`):** o gatilho antigo exigia
+verbo (lançar/preencher) **E** substantivo (culto/decisão) na mesma frase → "quero o
+formulário" não casava e caía na conversa lenta ("grupos ou integração?"). Regra nova,
+robusta e **instantânea (sem LLM)**: líder que manda mensagem **sem números soltos** →
+oferece o formulário do culto na hora (se escopo inclui `integracao` + Flows
+configurados); só de grupos → orientação templated pra mandar os números por texto
+(grupos não tem formulário · encontro exige lista nominal). O Haiku (mais lento) só
+entra quando o líder **digita números soltos**. Coletas de formulário (`fonte:'flow'`)
+são isoladas da sessão conversacional pros 2 modos não colidirem. Insert de dedup
+defensivo (reentrega da Meta) antes de responder.
+
+**Envs (Vercel · além das do bot passivo):** `WHATSAPP_FLOW_CULTO_ID`,
+`WHATSAPP_FLOW_PESSOA_ID`, `WHATSAPP_FLOW_MODE=draft` (só enquanto o app não vai
+Live), `WHATSAPP_BUSINESS_ACCOUNT_ID` (só pro script de publish). Sem
+`FLOW_CULTO_ID`/`FLOW_PESSOA_ID`, `flowsConfigurados()` é false → o bot cai na
+orientação por texto (diagnóstico: se o líder de integração não recebe o formulário,
+checar essas envs no Vercel). `services/whatsappService.js` é OUTRO componente
+(envio de templates transacionais · devocional/solicitações) · não é o webhook.
+
 ## ⚠️ Regra contábil · empréstimos NÃO são receita ordinária (2026-05-28)
 
 Decisão do Marcos: em qualquer cálculo, agregação, KPI ou visualização de
