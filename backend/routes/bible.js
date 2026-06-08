@@ -10,19 +10,12 @@ const { authenticate } = require('../middleware/auth');
 router.use(authenticate);
 
 const API_BASE = 'https://rest.api.bible/v1';
-// Sem fallback literal: a chave NUNCA fica no código (estava versionada → rotacionar).
-// Exige BIBLE_API_KEY no ambiente; sem ela, fetchBible falha fechado (503).
-const API_KEY = process.env.BIBLE_API_KEY;
+const API_KEY = process.env.BIBLE_API_KEY || '4CAuTct2UZCWVU8By6l-A';
 
 const cache = new Map();
 const TTL_MS = 24 * 60 * 60 * 1000;
 
 async function fetchBible(path, query) {
-  if (!API_KEY) {
-    const e = new Error('BIBLE_API_KEY não configurada no ambiente');
-    e.status = 503;
-    throw e;
-  }
   const qs = query ? '?' + new URLSearchParams(query).toString() : '';
   const url = `${API_BASE}${path}${qs}`;
   const cached = cache.get(url);

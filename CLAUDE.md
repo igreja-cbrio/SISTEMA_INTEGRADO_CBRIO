@@ -385,9 +385,10 @@ API.Bible key hardcoded. Relatório completo arquivado.
   em prod, então sem efeito lá.
 - **`membresia.js` `/totem/next/status`**: `membro_id`/`email` no `.or()` passam por
   `escapePostgrestValue` (injeção PostgREST · cpf é digit-only).
-- **`bible.js`**: removida a **chave da API.Bible hardcoded** (`process.env.BIBLE_API_KEY`
-  sem fallback literal; `fetchBible` falha 503 se faltar). ⚠️ **AÇÃO MARCOS antes do merge:**
-  garantir `BIBLE_API_KEY` no Vercel **e rotacionar** a chave exposta (estava no git).
+- **`bible.js`** (chave API.Bible hardcoded): fix pronto, mas **em PR separado e
+  represado** (módulo devocional é do Matheus). Bloqueado em: setar `BIBLE_API_KEY` no
+  Vercel + **rotacionar** a chave exposta `4CAuTct2…` (está no histórico do git → comprometida).
+  Mergear só depois disso, senão `/bible` → 503 e o devocional para de puxar o texto bíblico.
 
 ## ⚠️ REGRA GLOBAL · acentuação correta do português do Brasil (SEMPRE)
 
