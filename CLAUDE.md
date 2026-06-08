@@ -312,6 +312,21 @@ hard-deletes (devocionais/cultos/grupos/projects/rh), injeção PostgREST em `pe
 NEXT90), rotas no pool pg (agents/meetings), `/cerebro/status` e webhook do Cérebro sem auth,
 API.Bible key hardcoded. Relatório completo arquivado.
 
+### Remediação · em andamento (2026-06-08)
+- ✅ **Injeção PostgREST em `pessoas.js`** corrigida (`GET /lookup` + fallbacks
+  `int_visitantes`/`next_inscricoes`): `req.query.email` agora passa por
+  `escapePostgrestValue` antes de entrar no `.or()` (cpf/tel já eram digit-only).
+- ⚠️ **A "família de hard-deletes" NÃO é troca mecânica uniforme** (medido o raio de
+  impacto): `cultos` (82 refs em migrations), `kpi_indicadores_taticos` (74),
+  `cultos_decisoes_pessoas` (23), `mem_grupo_encontros` (14) são **agregados em
+  KPI/NSM** → soft-delete ingênuo deixa a linha "deletada" **continuando a contar**
+  (pior que hard-delete). Esses exigem varredura de filtro `deleted_at IS NULL` em
+  todos os read-sites + funções SQL — tarefa deliberada, NÃO um swap de 1 linha.
+  Seguros pra troca rápida: `rh_documentos` (não agregado) e `projects` (a
+  `projects.js` já faz soft-delete → reads já filtram). Os demais aguardam decisão.
+- Lição reforçada: validar achado contra o **schema/uso vivo**, não só o arquivo
+  (ver o caso `cui_atendimentos`, que nem existe em prod).
+
 ## ⚠️ REGRA GLOBAL · acentuação correta do português do Brasil (SEMPRE)
 
 **Toda vez** que implementar QUALQUER coisa neste sistema (nova feature, fix,

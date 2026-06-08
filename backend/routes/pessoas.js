@@ -8,6 +8,7 @@
 const router = require('express').Router();
 const { authenticate } = require('../middleware/auth');
 const { supabase } = require('../utils/supabase');
+const { escapePostgrestValue } = require('../utils/sanitize');
 
 router.use(authenticate);
 
@@ -73,6 +74,8 @@ router.get('/lookup', async (req, res) => {
   try {
     const cpf = cleanCpf(req.query.cpf);
     const email = req.query.email ? String(req.query.email).trim().toLowerCase() : null;
+    // email escapado p/ interpolar com segurança no .or() do PostgREST (cpf/tel são digit-only)
+    const emailEsc = email ? escapePostgrestValue(email) : null;
     const tel = req.query.telefone ? String(req.query.telefone).replace(/\D/g, '') : null;
 
     if (!cpf && !email && !tel) {
@@ -83,7 +86,7 @@ router.get('/lookup', async (req, res) => {
     let q = supabase.from('mem_membros').select('id, nome, email, telefone, cpf, status, foto_url, familia_id');
     const ors = [];
     if (cpf && cpf.length === 11) ors.push(`cpf.eq.${cpf}`);
-    if (email) ors.push(`email.ilike.${email}`);
+    if (email) ors.push(`email.ilike.${emailEsc}`);
     if (tel) ors.push(`telefone.ilike.%${tel}%`);
     if (ors.length === 0) return res.json({ found: false });
 
@@ -97,7 +100,7 @@ router.get('/lookup', async (req, res) => {
             .select('id, nome, email, telefone, cpf, status, membresia_id, data_visita')
             .or([
               cpf && cpf.length === 11 ? `cpf.eq.${cpf}` : null,
-              email ? `email.ilike.${email}` : null,
+              email ? `email.ilike.${emailEsc}` : null,
               tel ? `telefone.ilike.%${tel}%` : null,
             ].filter(Boolean).join(','))
             .order('data_visita', { ascending: false })
@@ -109,7 +112,7 @@ router.get('/lookup', async (req, res) => {
             .select('id, nome, email, cpf, evento_id, membro_id, created_at')
             .or([
               cpf && cpf.length === 11 ? `cpf.eq.${cpf}` : null,
-              email ? `email.ilike.${email}` : null,
+              email ? `email.ilike.${emailEsc}` : null,
             ].filter(Boolean).join(','))
             .order('created_at', { ascending: false })
             .limit(1)
