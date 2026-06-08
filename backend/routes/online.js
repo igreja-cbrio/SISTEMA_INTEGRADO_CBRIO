@@ -88,16 +88,19 @@ router.get('/cron/verificar', autorizaCron, async (_req, res) => {
 // ── OAuth callback eh público (Google redireciona, sem nosso JWT) ──
 // State carrega: userId + nonce assinado com CRON_SECRET pra anti-CSRF
 function signState(payload) {
+  // Falha fechado: sem CRON_SECRET não assina (antes caía no literal 'dev', previsível)
+  if (!CRON_SECRET) throw new Error('CRON_SECRET não configurada — OAuth state não pode ser assinado');
   const json = JSON.stringify(payload);
-  const sig = crypto.createHmac('sha256', CRON_SECRET || 'dev').update(json).digest('hex').slice(0, 16);
+  const sig = crypto.createHmac('sha256', CRON_SECRET).update(json).digest('hex').slice(0, 16);
   return Buffer.from(json).toString('base64url') + '.' + sig;
 }
 function verifyState(state) {
   try {
+    if (!CRON_SECRET) return null;
     const [b64, sig] = (state || '').split('.');
     if (!b64 || !sig) return null;
     const json = Buffer.from(b64, 'base64url').toString();
-    const expected = crypto.createHmac('sha256', CRON_SECRET || 'dev').update(json).digest('hex').slice(0, 16);
+    const expected = crypto.createHmac('sha256', CRON_SECRET).update(json).digest('hex').slice(0, 16);
     if (expected !== sig) return null;
     const payload = JSON.parse(json);
     if (Date.now() - (payload.ts || 0) > 10 * 60 * 1000) return null;

@@ -5,6 +5,7 @@ const { supabase } = require('../utils/supabase');
 const { uploadModuleFile, SHAREPOINT_CONFIGURED } = require('../services/storageService');
 const { notificar } = require('../services/notificar');
 const { enqueueSync } = require('../services/cerebroSync');
+const { escapePostgrestValue } = require('../utils/sanitize');
 
 const uploadMw = multer({
   storage: multer.memoryStorage(),
@@ -1097,8 +1098,8 @@ router.get('/totem/next/status', async (req, res) => {
       .limit(1);
 
     const filtros = [];
-    if (membro_id) filtros.push(`membro_id.eq.${membro_id}`);
-    if (email) filtros.push(`email.eq.${String(email).toLowerCase().trim()}`);
+    if (membro_id) filtros.push(`membro_id.eq.${escapePostgrestValue(String(membro_id))}`);
+    if (email) filtros.push(`email.eq.${escapePostgrestValue(String(email).toLowerCase().trim())}`);
     if (cpf) filtros.push(`cpf.eq.${String(cpf).replace(/\D/g, '')}`);
     if (filtros.length === 0) {
       return res.json({ inscrito: false, proximo_evento: proximo });
