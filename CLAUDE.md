@@ -11,8 +11,10 @@ Migration `20260527150000_whatsapp_agente_ia.sql`.
 - Entende texto livre, mescla com o que já coletou, **pergunta o que faltou**
   (campos obrigatórios: grupos=presentes+decisões, integração=presencial+decisões),
   tira dúvida de como reportar. Quando completa → status `parseado` (fila).
-- Estado da conversa fica numa coleta `status='aguardando_info'` por **30 min**
-  (`JANELA_CONVERSA_MIN`). Mensagem seguinte do mesmo telefone continua a sessão.
+- Estado da conversa fica numa coleta `status='aguardando_info'` por **7 dias**
+  (`JANELA_CONVERSA_MIN`, ajustado 2026-06-08 · era 30 min e fragmentava em 2 cards
+  quando o líder mandava frequência e decisões em momentos diferentes). Mensagem
+  seguinte do mesmo telefone continua a sessão até completar (aí vira `parseado`).
 - Novo status `aguardando_info` no CHECK de `whatsapp_coletas`.
 
 **Persona 2 · número desconhecido → assistente INSTITUCIONAL:**

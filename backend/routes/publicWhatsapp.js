@@ -16,7 +16,12 @@ const { enviarTexto, normalizarTelefone } = require('../services/whatsappSend');
 const { parseConversa, responderInstitucional } = require('../services/whatsappParser');
 const { safeEqual } = require('../utils/cronAuth');
 
-const JANELA_CONVERSA_MIN = 30; // tempo pra considerar mensagens da mesma "sessao"
+// Janela da "sessao" de coleta: enquanto houver uma coleta em aberto
+// (status='aguardando_info') do lider, a proxima mensagem CONTINUA ela e
+// completa os dados que faltam — nao fragmenta o relatorio em 2 cards.
+// 7 dias cobre "mando o resto mais tarde/amanha" sem grudar no relatorio
+// da semana seguinte (alem disso, ao completar vira 'parseado' e sai do radar).
+const JANELA_CONVERSA_MIN = 60 * 24 * 7; // 7 dias
 
 // ── GET · verificacao ───────────────────────────────────────────────
 router.get('/', (req, res) => {
