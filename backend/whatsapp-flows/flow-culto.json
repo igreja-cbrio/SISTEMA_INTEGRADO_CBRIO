@@ -1,0 +1,123 @@
+{
+  "version": "7.0",
+  "screens": [
+    {
+      "id": "SELECIONAR_CULTO",
+      "title": "Qual culto?",
+      "data": {
+        "cultos": {
+          "type": "array",
+          "items": { "type": "object", "properties": { "id": { "type": "string" }, "title": { "type": "string" } } },
+          "__example__": [
+            { "id": "exemplo", "title": "Domingo 10:00 · 08/06" }
+          ]
+        }
+      },
+      "layout": {
+        "type": "SingleColumnLayout",
+        "children": [
+          {
+            "type": "Form",
+            "name": "form_culto",
+            "children": [
+              {
+                "type": "Dropdown",
+                "name": "culto_id",
+                "label": "Culto",
+                "required": true,
+                "data-source": "${data.cultos}"
+              },
+              {
+                "type": "Footer",
+                "label": "Continuar",
+                "on-click-action": {
+                  "name": "navigate",
+                  "next": { "type": "screen", "name": "FREQUENCIA" },
+                  "payload": { "culto_id": "${form.culto_id}" }
+                }
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "FREQUENCIA",
+      "title": "Frequência",
+      "data": {
+        "culto_id": { "type": "string", "__example__": "x" }
+      },
+      "layout": {
+        "type": "SingleColumnLayout",
+        "children": [
+          {
+            "type": "Form",
+            "name": "form_freq",
+            "children": [
+              { "type": "TextSubheading", "text": "Quantas pessoas no culto?" },
+              { "type": "TextInput", "name": "presencial", "label": "Presencial (adultos)", "input-type": "number", "required": false },
+              { "type": "TextInput", "name": "kids", "label": "Kids", "input-type": "number", "required": false },
+              { "type": "TextInput", "name": "online", "label": "Online (pico)", "input-type": "number", "required": false },
+              {
+                "type": "Footer",
+                "label": "Continuar",
+                "on-click-action": {
+                  "name": "navigate",
+                  "next": { "type": "screen", "name": "DECISOES" },
+                  "payload": {
+                    "culto_id": "${data.culto_id}",
+                    "presencial": "${form.presencial}",
+                    "kids": "${form.kids}",
+                    "online": "${form.online}"
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "DECISOES",
+      "title": "Decisões",
+      "terminal": true,
+      "data": {
+        "culto_id": { "type": "string", "__example__": "x" },
+        "presencial": { "type": "string", "__example__": "0" },
+        "kids": { "type": "string", "__example__": "0" },
+        "online": { "type": "string", "__example__": "0" }
+      },
+      "layout": {
+        "type": "SingleColumnLayout",
+        "children": [
+          {
+            "type": "Form",
+            "name": "form_dec",
+            "children": [
+              { "type": "TextSubheading", "text": "Quantas decisões por Jesus?" },
+              { "type": "TextInput", "name": "dec_presencial", "label": "Decisões presenciais", "input-type": "number", "required": false },
+              { "type": "TextInput", "name": "dec_online", "label": "Decisões online", "input-type": "number", "required": false },
+              { "type": "TextInput", "name": "dec_kids", "label": "Decisões Kids", "input-type": "number", "required": false },
+              {
+                "type": "Footer",
+                "label": "Enviar",
+                "on-click-action": {
+                  "name": "complete",
+                  "payload": {
+                    "culto_id": "${data.culto_id}",
+                    "presencial": "${data.presencial}",
+                    "kids": "${data.kids}",
+                    "online": "${data.online}",
+                    "dec_presencial": "${form.dec_presencial}",
+                    "dec_online": "${form.dec_online}",
+                    "dec_kids": "${form.dec_kids}"
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      }
+    }
+  ]
+}
