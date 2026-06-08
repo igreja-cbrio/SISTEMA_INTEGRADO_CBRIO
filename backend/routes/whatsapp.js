@@ -148,6 +148,59 @@ router.get('/coletas', podeGerir, async (req, res) => {
   }
 });
 
+// Aplica uma coleta vinda do FORMULÁRIO (Flow): usa o culto escolhido pelo
+// líder, cria submissão(ões) de frequência (templo/kids · fila de pendentes)
+// e materializa cada pessoa que decidiu em cultos_decisoes_pessoas (entra na
+// jornada/NSM · trigger resolve membro). Pessoas já vêm normalizadas no parsed.
+async function aplicarColetaFlow(coleta, req, res) {
+  const p = coleta.parsed || {};
+  if (!p.culto_id) {
+    return res.status(422).json({ error: 'Formulário sem culto vinculado. Lance manualmente.' });
+  }
+  const obs = 'Via WhatsApp (formulário) · ' + (p.resumo || '');
+  const freq = p.freq || {};
+  const dec = p.dec || {};
+  const submissoes = [];
+  async function criarSub(ambiente, presencial, decisoes) {
+    if ((presencial === null || presencial === undefined) && !decisoes) return;
+    const { data: sub, error } = await supabase.from('cultos_dados_submissoes')
+      .insert({
+        culto_id: p.culto_id, ambiente,
+        presencial: Math.round(presencial || 0), decisoes: Math.round(decisoes || 0),
+        observacao: obs, status: 'pendente', submitted_by: req.user?.userId || null,
+      })
+      .select('id').single();
+    if (error && error.code !== '23505') throw new Error(error.message); // 23505 = já existe pendente, ignora
+    if (sub) submissoes.push(sub.id);
+  }
+  await criarSub('templo', freq.presencial, dec.presencial);
+  if (freq.kids !== null && freq.kids !== undefined || dec.kids) await criarSub('kids', freq.kids, dec.kids);
+
+  // Pessoas que decidiram · 1 row por pessoa (não bloqueia se uma falhar)
+  let pessoasOk = 0, pessoasErro = 0;
+  const pessoas = Array.isArray(p.pessoas) ? p.pessoas : [];
+  for (const pe of pessoas) {
+    if (!pe?.nome) { pessoasErro++; continue; }
+    const { error } = await supabase.from('cultos_decisoes_pessoas').insert({
+      culto_id: p.culto_id,
+      tipo_decisao: ['presencial', 'online', 'kids'].includes(pe.tipo) ? pe.tipo : 'presencial',
+      nome: pe.nome,
+      telefone: pe.telefone || null,
+      cpf: pe.cpf || null,
+      responsavel_nome: pe.responsavel_nome || null,
+      responsavel_telefone: pe.responsavel_telefone || null,
+      responsavel_cpf: pe.responsavel_cpf || null,
+    });
+    if (error) { pessoasErro++; console.error('[whatsapp] decisao pessoa', error.message); }
+    else pessoasOk++;
+  }
+
+  await supabase.from('whatsapp_coletas')
+    .update({ status: 'aplicado', aplicado_em: new Date().toISOString(), aplicado_por: req.user?.userId || null, destino_ref: submissoes[0] || null })
+    .eq('id', coleta.id);
+  return res.json({ ok: true, destino: 'submissao_pendente', submissoes, pessoas_ok: pessoasOk, pessoas_erro: pessoasErro });
+}
+
 // POST /api/whatsapp/coletas/:id/aplicar
 // integração · cria submissao pendente no culto mais recente (cai na fila
 //              existente /integracao?tab=pendentes pro coord aprovar)
@@ -168,6 +221,10 @@ router.post('/coletas/:id/aplicar', podeGerir, async (req, res) => {
     const dados = coleta.parsed?.dados || {};
 
     if (coleta.modulo_destino === 'integracao') {
+      // Coleta via formulário (Flow): culto escolhido + pessoas que decidiram
+      if (coleta.parsed?.fonte === 'flow') {
+        return await aplicarColetaFlow(coleta, req, res);
+      }
       // Acha o culto mais recente dos últimos 7 dias
       const hoje = new Date().toISOString().slice(0, 10);
       const limite = new Date(); limite.setDate(limite.getDate() - 7);

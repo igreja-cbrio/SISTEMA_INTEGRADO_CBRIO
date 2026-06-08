@@ -2,6 +2,53 @@
 
 Guia operacional para o Claude Code quando trabalhar neste repositório.
 
+## Bot WhatsApp · coleta por FORMULÁRIO (WhatsApp Flows · 2026-06-08)
+
+Marcos pediu um **formulário nativo** (WhatsApp Flows) pra facilitar o
+lançamento — em vez de digitar "culto das 8:30 - 200". Fluxo desenhado:
+líder PEDE pra lançar → bot manda o Flow **Culto** (seletor de culto →
+frequência → decisões) → se houver decisões, bot pede os dados de **cada
+pessoa que decidiu** (Flow **Pessoa**, em loop) pra ela **entrar na jornada**
+(nome, celular, CPF opcional + tipo presencial/online/kids · Kids = dados do
+**responsável**, LGPD) → vira coleta `parseado` (fila do coordenador aplicar).
+
+**Decisões de arquitetura (performance + segurança):**
+- Flow **navega entre telas localmente** (sem endpoint por tela) → rápido, não
+  espera servidor entre campos. Seletor de culto vai **pré-carregado** no envio.
+- Webhook responde 200 imediato; processa async. Ao enviar, ack na hora.
+- **Atrás de env-gate:** sem `WHATSAPP_FLOW_CULTO_ID`/`WHATSAPP_FLOW_PESSOA_ID`
+  o bot fica **idêntico ao de hoje** (texto livre). Só ativa quando os Flows
+  forem publicados na Meta e os ids setados no Vercel + redeploy.
+- **Sem migration:** estado fica no `whatsapp_coletas.parsed`
+  (`{fonte:'flow', culto_id, freq, dec, pessoas:[...], pendentes}`). Mantém a
+  **revisão-antes-de-aplicar** (nada entra direto no banco).
+
+**Arquivos:**
+- `backend/whatsapp-flows/flow-culto.json` (3 telas) + `flow-pessoa.json` (1 tela
+  com campos do responsável `visible` quando tipo=kids). Flow JSON v7.0.
+- `services/whatsappFlows.js` · `enviarFlow()` (mensagem interactive type=flow) +
+  `flowsConfigurados()`.
+- `services/whatsappFlowColeta.js` · orquestra: `pedeFormulario(texto)` (heurística),
+  `enviarFormularioCulto()` (lista cultos 14d), `tratarFlowReply()` (roteia por
+  `flow_token`: `culto` cria a coleta + dispara loop de pessoas; `pessoa:<id>`
+  empilha a pessoa e manda a próxima até `pendentes=0`).
+- `publicWhatsapp.js` · webhook agora aceita `interactive`/`nfm_reply`
+  (`processarFlowReply`) e, pra líder reconhecido que PEDE lançar, manda o Flow
+  em vez da coleta conversacional.
+- `routes/whatsapp.js` · `aplicarColetaFlow()` no `POST /coletas/:id/aplicar`:
+  usa `parsed.culto_id`, cria submissão(ões) templo/kids (fila `/integracao`) e
+  insere cada pessoa em `cultos_decisoes_pessoas` (trigger resolve membro/NSM).
+- `scripts/publish-whatsapp-flows.js` · publica os 2 Flows na WABA → devolve os
+  flow_id (exige `WHATSAPP_BUSINESS_ACCOUNT_ID` + token com
+  `whatsapp_business_management`).
+
+**⚠️ Pra ativar (ordem):** rodar `node backend/scripts/publish-whatsapp-flows.js`
+→ setar `WHATSAPP_FLOW_CULTO_ID` e `WHATSAPP_FLOW_PESSOA_ID` no Vercel → redeploy.
+**Limitações v1 (refinar no teste E2E):** Flow JSON v7.0 precisa validar no
+publish (pode pedir ajuste de versão/sintaxe); reentrega de resposta de PESSOA
+não tem dedup por message_id (só a do CULTO tem); frequência online (pico) não
+vira submissão (só as decisões online viram pessoa). `pessoas[]` no parsed.
+
 ## Bot WhatsApp · agente IA conversacional + institucional (2026-05-27, 2ª PR)
 
 Evolução do bot passivo: agora tem **2 personas** (Claude Haiku nas duas).

@@ -15,6 +15,7 @@ const { supabase } = require('../utils/supabase');
 const { enviarTexto, normalizarTelefone } = require('../services/whatsappSend');
 const { parseConversa, responderInstitucional } = require('../services/whatsappParser');
 const { safeEqual } = require('../utils/cronAuth');
+const flowColeta = require('../services/whatsappFlowColeta');
 
 // Janela da "sessao" de coleta: enquanto houver uma coleta em aberto
 // (status='aguardando_info') do lider, a proxima mensagem CONTINUA ela e
@@ -76,13 +77,20 @@ async function processarEvento(req) {
       const value = ch.value || {};
       const mensagens = value.messages || [];
       for (const m of mensagens) {
-        if (m.type !== 'text') continue; // MVP · so texto
+        const ehTexto = m.type === 'text';
+        const ehFlowReply = m.type === 'interactive' && m.interactive?.type === 'nfm_reply';
+        if (!ehTexto && !ehFlowReply) continue; // MVP · texto ou resposta de formulário
         if (++processadas > MAX_MSGS) {
           console.warn('[whatsapp webhook] limite de mensagens por evento atingido · ignorando excedente');
           return;
         }
-        await processarMensagem(m, cfg).catch(err =>
-          console.error('[whatsapp webhook] mensagem:', err.message));
+        if (ehFlowReply) {
+          await processarFlowReply(m).catch(err =>
+            console.error('[whatsapp webhook] flow:', err.message));
+        } else {
+          await processarMensagem(m, cfg).catch(err =>
+            console.error('[whatsapp webhook] mensagem:', err.message));
+        }
       }
     }
   }
@@ -114,6 +122,15 @@ async function processarMensagem(m, cfg) {
       status: 'ignorado', erro: 'institucional', modulo_destino: 'institucional',
     });
     await enviarTexto(telefone, resposta);
+    return;
+  }
+
+  // ── Atalho · FORMULÁRIO (Flow) quando o líder PEDE pra lançar ──────
+  // Só quando os Flows estão publicados (env) e o texto é um pedido (sem
+  // números soltos). Senão, segue a coleta conversacional de sempre.
+  if (flowColeta.flowsConfigurados() && flowColeta.pedeFormulario(texto)) {
+    await enviarTexto(telefone, 'Boa! Já te mando o formulário pra preencher. 📋');
+    await flowColeta.enviarFormularioCulto(telefone);
     return;
   }
 
@@ -165,6 +182,21 @@ async function processarMensagem(m, cfg) {
     ? 'Recebi! Um lider vai conferir e lancar no sistema. Obrigado! 🙌'
     : 'Pode me mandar os numeros do encontro? Ex: "12 presentes, 2 visitantes, 1 decisao". 🙏');
   await enviarTexto(telefone, resposta);
+}
+
+// Resposta de FORMULÁRIO (Flow) · identifica o líder e delega pro orquestrador.
+async function processarFlowReply(m) {
+  const telefone = normalizarTelefone(m.from);
+  // Idempotência (cobre o Flow do culto, que insere coleta com este message_id).
+  const { data: jaVisto } = await supabase
+    .from('whatsapp_coletas').select('id').eq('whatsapp_message_id', m.id).maybeSingle();
+  if (jaVisto) return;
+  const { data: lider } = await supabase
+    .from('whatsapp_lideres')
+    .select('id, nome_exibicao, escopo, grupo_id')
+    .eq('telefone', telefone).eq('ativo', true).is('deleted_at', null)
+    .maybeSingle();
+  await flowColeta.tratarFlowReply(m, telefone, lider);
 }
 
 module.exports = router;

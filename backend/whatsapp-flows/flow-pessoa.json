@@ -1,0 +1,59 @@
+{
+  "version": "7.0",
+  "screens": [
+    {
+      "id": "PESSOA",
+      "title": "Dados da pessoa",
+      "terminal": true,
+      "data": {
+        "indice": { "type": "string", "__example__": "1 de 4" }
+      },
+      "layout": {
+        "type": "SingleColumnLayout",
+        "children": [
+          {
+            "type": "Form",
+            "name": "form_pessoa",
+            "children": [
+              { "type": "TextCaption", "text": "Pessoa ${data.indice}" },
+              {
+                "type": "RadioButtonsGroup",
+                "name": "tipo",
+                "label": "Onde decidiu?",
+                "required": true,
+                "data-source": [
+                  { "id": "presencial", "title": "Presencial" },
+                  { "id": "online", "title": "Online" },
+                  { "id": "kids", "title": "Kids (criança)" }
+                ]
+              },
+              { "type": "TextInput", "name": "nome", "label": "Nome completo", "required": true, "helper-text": "Da pessoa que decidiu (ou da criança, se Kids)" },
+              { "type": "TextInput", "name": "celular", "label": "Celular (com DDD)", "input-type": "phone", "required": false },
+              { "type": "TextInput", "name": "cpf", "label": "CPF (se conseguir)", "input-type": "number", "required": false },
+              { "type": "TextSubheading", "text": "Se for Kids · dados do responsável", "visible": "${form.tipo == 'kids'}" },
+              { "type": "TextInput", "name": "resp_nome", "label": "Nome do responsável", "required": false, "visible": "${form.tipo == 'kids'}" },
+              { "type": "TextInput", "name": "resp_celular", "label": "Celular do responsável", "input-type": "phone", "required": false, "visible": "${form.tipo == 'kids'}" },
+              { "type": "TextInput", "name": "resp_cpf", "label": "CPF do responsável", "input-type": "number", "required": false, "visible": "${form.tipo == 'kids'}" },
+              {
+                "type": "Footer",
+                "label": "Salvar pessoa",
+                "on-click-action": {
+                  "name": "complete",
+                  "payload": {
+                    "tipo": "${form.tipo}",
+                    "nome": "${form.nome}",
+                    "celular": "${form.celular}",
+                    "cpf": "${form.cpf}",
+                    "resp_nome": "${form.resp_nome}",
+                    "resp_celular": "${form.resp_celular}",
+                    "resp_cpf": "${form.resp_cpf}"
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      }
+    }
+  ]
+}
